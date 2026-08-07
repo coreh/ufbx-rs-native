@@ -12,16 +12,21 @@
    together; the C side is green by construction.
 2. `./rust/regen.sh` — regenerates IR, `generated.rs`, and layout assertions.
    Header changes (new fields/types/functions) surface here mechanically.
-3. Route the `ufbx.c` diff: each hunk's enclosing `ufbxi_*`/`ufbx_*` function
+3. `python3 rust/tools/remap_line_refs.py <prev-upstream-sha> <new-upstream-sha>
+   --apply` — remaps every `ufbx.c:N`/`ufbx.h:N[-M]` anchor comment in
+   `rust/**/*.rs`, `PORTING.md`, and `UPSTREAM.md` to the new line numbers.
+   Refs landing inside changed hunks get a `?stale` suffix and a nonzero exit;
+   resolve each `?stale` marker by hand (grep for `?stale`) before moving on.
+4. Route the `ufbx.c` diff: each hunk's enclosing `ufbxi_*`/`ufbx_*` function
    maps to one module under `rust/ufbx/src/native/` (section list in
    `native/mod.rs`; PORTING.md has the naming rules). Port each hunk 1:1;
    adversarial review per PORTING.md pipeline.
-4. Diff `test/unit_tests.c` — port any new white-box tests to Rust `#[test]`s.
-5. C oracle regenerates `hashes.txt`; run the full matrix
+5. Diff `test/unit_tests.c` — port any new white-box tests to Rust `#[test]`s.
+6. C oracle regenerates `hashes.txt`; run the full matrix
    (`misc/run_tests.py tests hashes --rust-lib rust/target/release/libufbx.a`).
-6. If error paths moved, regenerate the Rust-side fuzz table (`runner --fuzz`
+7. If error paths moved, regenerate the Rust-side fuzz table (`runner --fuzz`
    against the Rust build).
-7. Record the ported upstream SHA above.
+8. Record the ported upstream SHA above.
 
 ## Local modifications to upstream-owned files (keep this list complete)
 
