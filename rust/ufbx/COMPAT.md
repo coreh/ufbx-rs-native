@@ -26,6 +26,7 @@ plus an entry in §2 of this file.
 | Cargo features `subdivision`/`tessellation`/`geometry-cache`/`scene-eval`/`skinning-eval`/`baking`/`triangulation`/`index-gen`/`obj` (default-on), `error-stack`, `dev`, `regression`, `real-is-float`, `c-abi` | Mirror ufbx.c's compile-time configuration (`UFBX_NO_*`, `UFBX_DEV`, `UFBX_REGRESSION`, `UFBX_REAL_IS_FLOAT`); ufbx-rust has only `mint`/`nightly`. |
 | `nightly` feature enables branch hints (`core::hint::likely/unlikely`) | In ufbx-rust the feature is declared but unused. Optimizer-only; API-invisible. |
 | `prelude::RawEnum<T>` | New public type; see §2 for the signature it appears in. Pattern + name follow rustc's internal `RawEnum<T>` for LLVM C APIs. |
+| `AllocatorOpts: Clone + Copy` | Extra trait impls (additive). The native `ufbxi_allocator` embeds it by value and stack-copies it (`ufbxi_release_ref`, ufbx.c:30277-30283); `derive(Copy)` requires field types to be `Copy`. All fields are trivially copyable. Generator allowlist `copy_derive_types`. |
 
 ## 2. Deliberate API divergences vs ufbx-rust 0.11.2
 
