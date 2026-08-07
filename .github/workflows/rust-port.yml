@@ -1,0 +1,61 @@
+name: rust-port
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # C reference build — the oracle. Generates hashes.txt consumed by rust jobs.
+  c_oracle_hashes:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build reference hash_scene (clang -O2, ieee754)
+        run: |
+          mkdir -p build
+          clang -O2 -ffp-contract=off -o build/hash_scene_c test/hash_scene.c extra/ufbx_math.c
+      - name: Generate hashes.txt
+        run: python3 misc/generate_hashses.py --exe build/hash_scene_c -o build/hashes.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hashes
+          path: build/hashes.txt
+
+  rust_unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate bindings + layout assertions (must be clean)
+        run: |
+          ./rust/regen.sh
+          git diff --exit-code rust/ufbx/src/generated.rs rust/ufbx/tests/layout.rs
+      - name: cargo test (default + real-is-float)
+        working-directory: rust
+        run: |
+          cargo test
+          cargo test --features real-is-float
+      - name: Build c-abi staticlib
+        working-directory: rust
+        run: cargo build --features c-abi --release
+
+  # Port progress meter: number of ufbx_* symbols still unresolved when linking
+  # the unmodified C test runner against the Rust staticlib. Reaches zero when
+  # the C ABI surface is fully ported; then the real test jobs take over.
+  link_work_queue:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build staticlib
+        working-directory: rust
+        run: cargo build --features c-abi --release
+      - name: Count undefined ufbx_* symbols
+        run: |
+          set +e
+          clang -DUFBX_DEV -o /tmp/runner test/runner.c rust/target/release/libufbx.a -lpthread -lm 2> /tmp/link.log
+          if [ $? -eq 0 ]; then
+            echo "LINK OK — running C test suite against Rust build"
+            python3 misc/run_tests.py tests --rust-lib rust/target/release/libufbx.a --compiler clang
+          else
+            COUNT=$(grep -oE 'ufbx_[a-z0-9_]+' /tmp/link.log | sort -u | wc -l)
+            echo "Port work queue: $COUNT ufbx_* symbols still undefined (informational until 0)"
+          fi

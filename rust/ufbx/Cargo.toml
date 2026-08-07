@@ -1,0 +1,46 @@
+# Native Rust port of ufbx (https://github.com/ufbx/ufbx).
+# API-compatible with the ufbx-rust FFI crate (https://github.com/ufbx/ufbx-rust);
+# prelude.rs / lib.rs / impl_mint.rs and the generated.rs generator are adapted from
+# ufbx-rust (c) bqqbarbhg, MIT OR PDDL-1.0 — same license as this crate.
+[package]
+name = "ufbx"
+version = "0.11.2"
+edition = "2021"
+description = "Native Rust port of ufbx (drop-in for the ufbx FFI bindings)"
+license = "MIT OR PDDL-1.0"
+repository = "https://github.com/coreh/ufbx-rs-native"
+
+[dependencies]
+mint = { version = "0.5.8", optional = true, default-features = false }
+
+[features]
+# C feature gates are opt-OUT (UFBX_NO_*, all on by default); Cargo features are
+# additive, so parity lives in this default list (see PORTING.md "Macros & feature gates").
+default = ["subdivision", "tessellation", "geometry-cache", "scene-eval",
+           "skinning-eval", "baking", "triangulation", "index-gen", "obj"]
+subdivision = []
+tessellation = []
+geometry-cache = []   # implies internal XML support (UFBXI_FEATURE_XML)
+scene-eval = []
+skinning-eval = []
+baking = []
+triangulation = []    # implies internal KD support (UFBXI_FEATURE_KD)
+index-gen = []
+obj = []
+# OFF by default, mirroring C: error stack only under UFBX_DEV.
+error-stack = []
+dev = ["error-stack"]           # mirrors UFBX_DEV (test builds use this)
+regression = []                 # mirrors UFBX_REGRESSION — changes algorithm constants, not just asserts
+nightly = []
+# Expose the exact ufbx.h C ABI (#[no_mangle] ufbx_* symbols) so the upstream C
+# test suite can link against this crate as a staticlib. Test/validation only.
+c-abi = []
+# Real = f32 (mirrors UFBX_REAL_IS_FLOAT)
+real-is-float = []
+
+[lib]
+crate-type = ["rlib", "staticlib"]
+
+[dev-dependencies]
+panic-message = "0.3.0"
+libc = "0.2"

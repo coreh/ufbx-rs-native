@@ -281,7 +281,9 @@ int main(int argc, char **argv)
 	return num_fail > 0 ? 3 : 0;
 }
 
+#ifndef EXTERNAL_UFBX
 #define UFBX_EXTERNAL_MATH
 
 #include "../ufbx.c"
+#endif
 

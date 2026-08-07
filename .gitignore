@@ -23,3 +23,7 @@ __pycache__/
 # FBX backup files
 
 *.bck/
+
+# ufbx-rs-native
+rust/target/
+bindgen/build/

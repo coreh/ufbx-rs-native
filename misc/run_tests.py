@@ -35,7 +35,16 @@ parser.add_argument("--strict", action="store_true", help="Require strict checks
 parser.add_argument("--hash-threads", action="store_true", help="Use threading for hashes")
 parser.add_argument("--fail-on-pre-test", action="store_true", help="Indicate failure if pre-test checks fail")
 parser.add_argument("--force-opt", help="Force compiler optimization level")
+parser.add_argument("--rust-lib", help="Path to a Rust-built ufbx staticlib; replaces ufbx.c in test builds (ufbx-rs-native)")
 argv = parser.parse_args()
+
+# ufbx-rs-native: when --rust-lib is given, every occurrence of "ufbx.c" in a
+# target's sources is replaced by the prebuilt staticlib, so the unmodified C
+# test suite links against and validates the Rust port.
+def apply_rust_lib(sources):
+    if not argv.rust_lib:
+        return sources
+    return [argv.rust_lib if s == "ufbx.c" else s for s in sources]
 
 color_out = sys.stdout
 
@@ -199,7 +208,7 @@ class CLCompiler(Compiler):
         if config.get("ubsan"):
             return run_fail("CL: ubsan not supported")
 
-        sources = config["sources"]
+        sources = apply_rust_lib(config["sources"])
         output = config["output"]
 
         args = []
@@ -309,7 +318,7 @@ class GCCCompiler(Compiler):
         pass
 
     def compile(self, config):
-        sources = config["sources"]
+        sources = apply_rust_lib(config["sources"])
         output = config["output"]
 
         args = []
@@ -1535,6 +1544,12 @@ async def main():
                 "ieee754": True,
                 "defines": { },
             }
+
+            # ufbx-rs-native: hash_scene normally single-TU-includes ufbx.c;
+            # with --rust-lib, define EXTERNAL_UFBX and link the Rust staticlib.
+            if argv.rust_lib:
+                hash_scene_config["sources"] = ["test/hash_scene.c", "extra/ufbx_math.c", argv.rust_lib]
+                hash_scene_config["defines"]["EXTERNAL_UFBX"] = ""
 
             if argv.hash_threads:
                 hash_scene_config["threads"] = True
