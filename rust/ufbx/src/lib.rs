@@ -29,9 +29,9 @@ pub fn open_memory(data: &[u8], opts: OpenMemoryOpts) -> Result<Stream> {
 }
 */
 
-/// Register a handler for ufbx panics (API-misuse reports from the non-`catch`
-/// entry points; see `ufbx_panic_handler` in ufbx.c). Native-port extension —
-/// the C library only allows a compile-time `#define` override. The handler
+/// Native-port extension: register a handler for ufbx panics (API-misuse
+/// reports from the non-`catch` entry points; see `ufbx_panic_handler` in
+/// ufbx.c). The C library only allows a compile-time `#define` override. The handler
 /// may return, in which case the panicking call bails out gracefully with a
 /// zero/default result exactly as in C; the default handler (when none is
 /// registered) prints to stderr and asserts. The cost is a single atomic load,
