@@ -299,6 +299,15 @@ default_derive_types = {
     "ufbx_panic",
 }
 
+# NOTE(ufbx-rs-native): non-POD structs that must still derive Clone, Copy —
+# C struct assignment is memcpy (PORTING.md checklist #15) and the native port
+# copies these by value (e.g. `ufbxi_allocator` embeds ufbx_allocator_opts and
+# is stack-copied in ufbxi_release_ref, ufbx.c:30277-30283). All fields are
+# trivially copyable (fn pointers / raw pointers / usize).
+copy_derive_types = {
+    "ufbx_allocator_opts",
+}
+
 ignore_types = {
     "ufbx_string",
     "ufbx_blob",
@@ -940,7 +949,10 @@ def emit_struct(rs: RustStruct):
 
     emit()
     emit(f"#[repr(C)]")
-    if rs.ir.is_pod:
+    # NOTE(ufbx-rs-native): callback/interface structs ({fn, user} pairs) and
+    # `copy_derive_types` derive Clone, Copy so C-style by-value struct
+    # assignment stays memcpy-like in the native port (PORTING.md #15).
+    if rs.ir.is_pod or rs.ir.is_callback or rs.ir.is_interface or rs.ir.name in copy_derive_types:
         emit(f"#[derive(Clone, Copy)]")
     if rs.ir.name in default_derive_types or rs.ir.is_pod or rs.ir.is_input:
         emit(f"#[derive(Default)]")

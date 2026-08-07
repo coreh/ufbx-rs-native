@@ -2354,6 +2354,7 @@ pub struct RawVertexStream {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct RawAllocator {
     pub alloc_fn: Option<unsafe extern "C" fn (*mut c_void, usize) -> *mut c_void>,
     pub realloc_fn: Option<unsafe extern "C" fn (*mut c_void, *mut c_void, usize, usize) -> *mut c_void>,
@@ -2375,6 +2376,7 @@ impl Default for RawAllocator {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 #[derive(Default)]
 pub struct RawAllocatorOpts {
     pub allocator: RawAllocator,
@@ -2385,6 +2387,7 @@ pub struct RawAllocatorOpts {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct RawStream {
     pub read_fn: Option<unsafe extern "C" fn (*mut c_void, *mut c_void, usize) -> usize>,
     pub skip_fn: Option<unsafe extern "C" fn (*mut c_void, usize) -> bool>,
@@ -2425,6 +2428,7 @@ pub struct OpenFileInfo {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct RawOpenFileCb {
     pub fn_: Option<unsafe extern "C" fn (*mut c_void, *mut RawStream, *const u8, usize, *const OpenFileInfo) -> bool>,
     pub user: *mut c_void,
@@ -2449,6 +2453,7 @@ pub struct RawOpenFileOpts {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct RawCloseMemoryCb {
     pub fn_: Option<unsafe extern "C" fn (*mut c_void, *mut c_void, usize)>,
     pub user: *mut c_void,
@@ -2552,6 +2557,7 @@ impl Default for ProgressResult {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct RawProgressCb {
     pub fn_: Option<unsafe extern "C" fn (*mut c_void, *const Progress) -> RawEnum<ProgressResult>>,
     pub user: *mut c_void,
@@ -2738,6 +2744,7 @@ pub struct ThreadPoolInfo {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct RawThreadPool {
     pub init_fn: Option<unsafe extern "C" fn (*mut c_void, ThreadPoolContext, *const ThreadPoolInfo) -> bool>,
     pub run_fn: Option<unsafe extern "C" fn (*mut c_void, ThreadPoolContext, u32, u32, u32)>,
