@@ -83,6 +83,19 @@ pub(crate) unsafe fn strcmp(a: *const u8, b: *const u8) -> i32 {
     }
 }
 
+// C `memcmp` semantics: lexicographic compare of `n` bytes as unsigned chars;
+// returns the difference at the first mismatch.
+pub(crate) unsafe fn memcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
+    let mut i: usize = 0;
+    while i < n {
+        let ca = *a.add(i);
+        let cb = *b.add(i);
+        if ca != cb { return ca as i32 - cb as i32; }
+        i += 1;
+    }
+    0
+}
+
 // ufbx.c:387-397 `ufbxi_panic_handler` (the default `ufbx_panic_handler`).
 // C allows a compile-time user override via `#define ufbx_panic_handler`; the
 // cargo-world analogue is runtime registration via `crate::set_panic_handler`
@@ -502,6 +515,15 @@ macro_rules! ufbxi_check_err_msg {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::fail_imp_err($err,
                 $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_ptr(),
+                $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!());
+            return Err($crate::native::error::Fail);
+        }
+    }};
+    ($err:expr, $cond:expr, $msg:literal, $c_cond_str:literal) => {{
+        let cond = $cond;
+        if $crate::native::platform::unlikely(!cond) {
+            $crate::native::error::fail_imp_err($err,
+                $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str).as_ptr(),
                 $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!());
             return Err($crate::native::error::Fail);
         }

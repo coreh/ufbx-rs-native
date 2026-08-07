@@ -948,6 +948,16 @@ pub(crate) mod math {
     pub(crate) const NAN: f64 = f64::NAN;
     // ufbx.c:351-357 `UFBX_FLT_EPSILON`
     pub(crate) const FLT_EPSILON: f32 = f32::EPSILON;
+    // ufbx.c:68-72 `UFBX_EPSILON`
+    // C comment: By default enough to have squares be non-denormal
+    // C: `sizeof(ufbx_real) == sizeof(float) ? (ufbx_real)1.0842021795674597e-19f
+    //     : (ufbx_real)1.4916681462400413e-154` — same compile-time select.
+    pub(crate) const EPSILON: crate::prelude::Real =
+        if core::mem::size_of::<crate::prelude::Real>() == core::mem::size_of::<f32>() {
+            1.0842021795674597e-19
+        } else {
+            1.4916681462400413e-154
+        };
     // ufbx.c:358-368 `UFBX_FLT_EVAL_METHOD`
     // C-parity: 0 on every target this port supports — Rust never evaluates
     // f32/f64 at excess precision (no x87 codegen on supported targets). The

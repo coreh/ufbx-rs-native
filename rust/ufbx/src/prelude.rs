@@ -219,6 +219,10 @@ impl<T> OptionRef<T> {
 }
 
 #[repr(C)]
+// Clone/Copy: C `ufbx_string` assignment is a memcpy (PORTING.md checklist
+// #15); the native string-pool port stores `ufbx_string` values in the
+// interning hashmap and copies them by value.
+#[derive(Clone, Copy)]
 pub struct String {
     // pub(crate): the native error/string-pool port writes `data` directly
     // (C: `err->description.data = ...`); still private outside the crate.
@@ -228,6 +232,13 @@ pub struct String {
 }
 
 impl String {
+    // Raw constructor for the native port (C: `ufbx_string s = { data, len };`).
+    // `_marker` is private to this module, so aggregate construction is only
+    // possible here. `const` so the static `ufbxi_strings[]` table can use it.
+    pub(crate) const fn new_c(data: *const u8, length: usize) -> String {
+        String { data, length, _marker: PhantomData }
+    }
+
     pub(crate) unsafe fn as_static_ref(&self) -> &'static str {
         str::from_utf8_unchecked(slice_from_ptr(self.data, self.length))
     }
@@ -272,7 +283,10 @@ impl Debug for String {
 
 #[repr(C)]
 pub struct Blob {
-    data: *const u8,
+    // pub(crate): the native string-pool port interns blob payloads in place
+    // (C: `p_blob->data = ufbxi_push_string(...)`); still private outside the
+    // crate.
+    pub(crate) data: *const u8,
     pub size: usize,
     _marker: PhantomData<u8>,
 }
