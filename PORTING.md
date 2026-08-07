@@ -326,7 +326,12 @@ oracle output.
     banned in ported paths; all memory via `ufbxi_allocator`. Includes the
     paired `ufbxi_grow_array`-before-sort calls.
 13. **Error-string parity**: `$`-descriptions, stringified conditions, AND the
-    `ufbxi_fix_error_type` default descriptions — byte-identical.
+    `ufbxi_fix_error_type` default descriptions — byte-identical. Where Rust
+    `stringify!` of the ported condition differs from C's `#cond` bytes
+    (`ator->x` vs `(*ator).x`, `SIZE_MAX` vs `usize::MAX`, `ptr` vs
+    `!ptr.is_null()`), pass the verbatim C condition text as the check macro's
+    optional trailing string literal (arms on `ufbxi_cond_str!` /
+    `ufbxi_error_msg_cond!` and the check macros in `native/error.rs`).
 14. **Statics**: const tables → `static`; the mutable panic handler → atomic
     with C's synchronization assumptions; **`volatile` reads (strtod probe) →
     `ptr::read_volatile`**.
