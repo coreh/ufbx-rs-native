@@ -40,10 +40,12 @@ pub fn set_panic_handler(handler: fn(&str)) {
     native::error::set_user_panic_handler(handler);
 }
 
-/// Vec-resizing convenience wrapper over `triangulate_face` (which fills a
-/// caller-sized `&mut [u32]` like the C API). No C counterpart: this is
-/// ufbx-rust's own hand-written addition to its generated surface, reproduced
-/// verbatim (warts included) for drop-in parity — bevy_ufbx calls it.
+/// ufbx-rust extension: Vec-resizing convenience wrapper over
+/// `triangulate_face` (which fills a caller-sized `&mut [u32]` like the C API).
+///
+/// No C counterpart — ufbx-rust's own hand-written addition to its generated
+/// surface, reproduced verbatim (warts included) for drop-in parity;
+/// bevy_ufbx calls it.
 pub fn triangulate_face_vec(mut indices: &mut Vec<u32>, mesh: &Mesh, face: Face) -> u32 {
     if face.num_indices < 3 {
         indices.clear();

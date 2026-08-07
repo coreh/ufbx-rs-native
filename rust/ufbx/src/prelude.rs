@@ -332,7 +332,8 @@ impl<T> Unsafe<T> {
     pub unsafe fn new(t: T) -> Self { Self(t) }
 }
 
-/// Wrapper for a raw (open, unvalidated) enum value crossing the C ABI, e.g.
+/// Native-port extension: wrapper for a raw (open, unvalidated) enum value
+/// crossing the C ABI, e.g.
 /// returned by a user callback: ABI-wise a bare `u32` (`#[repr(transparent)]`),
 /// because C only guarantees an integer comes back — materializing `T` directly
 /// from a misbehaving callback would be UB for out-of-range values. Compare

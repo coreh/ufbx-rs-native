@@ -3,9 +3,20 @@
 Registry of every intentional difference. Phase 3's API-diff against ufbx-rust
 treats this file as the allowlist: any diff NOT listed here is a bug.
 
-Convention: public items that exist only in the native port carry a doc comment
-whose first line is `Native-port extension:` (greppable). No name prefixes —
-if extensions multiply, they get grouped under an `ufbx::ext` module instead.
+Doc convention for provenance (uniform, greppable; no name prefixes — if
+extensions multiply they get grouped under an `ufbx::ext` module instead).
+The FIRST LINE of the doc comment is a provenance tag matching this file's
+sections, then a one-line summary; detail paragraphs follow:
+
+| Tag | Meaning |
+|---|---|
+| `Native-port extension:` | Exists only in this crate (§1). |
+| `ufbx-rust extension:` | Hand-written ufbx-rust addition with no C counterpart, reproduced verbatim for drop-in parity. |
+| `Native-port divergence:` | Public shape differs from ufbx-rust (§2); the doc names the baseline shape and links here. |
+
+Generated code (`generated.rs`) cannot carry hand-written doc tags — its
+divergences are documented by `NOTE(ufbx-rs-native)` comments in the GENERATOR
+plus an entry in §2 of this file.
 
 ## 1. Native-only additions (semver-additive; cannot break drop-in use)
 
