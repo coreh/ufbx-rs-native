@@ -1,3 +1,4 @@
+#![cfg_attr(feature = "nightly", feature(likely_unlikely))]
 #![allow(unused_braces)]
 
 pub mod generated;
