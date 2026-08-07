@@ -84,9 +84,31 @@ pub(crate) unsafe fn strcmp(a: *const u8, b: *const u8) -> i32 {
 }
 
 // ufbx.c:387-397 `ufbxi_panic_handler` (the default `ufbx_panic_handler`).
-// C allows a compile-time user override via `#define ufbx_panic_handler` —
-// no cargo analogue; the default handler is always used.
+// C allows a compile-time user override via `#define ufbx_panic_handler`; the
+// cargo-world analogue is runtime registration via `crate::set_panic_handler`
+// (an atomic fn-pointer read paid only on the panic path). Matching C: a user
+// handler that RETURNS makes the ufbxi_panicf caller take its graceful
+// bail-out path (ufbx.c:3405-3406), so the registered handler is not required
+// to abort.
+static USER_PANIC_HANDLER: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+pub(crate) fn set_user_panic_handler(f: fn(&str)) {
+    USER_PANIC_HANDLER.store(f as usize, core::sync::atomic::Ordering::Release);
+}
+
 pub(crate) unsafe fn panic_handler(message: *const u8) {
+    let user = USER_PANIC_HANDLER.load(core::sync::atomic::Ordering::Acquire);
+    if user != 0 {
+        let f: fn(&str) = core::mem::transmute(user);
+        let bytes = core::slice::from_raw_parts(message, strlen(message));
+        f(&std::string::String::from_utf8_lossy(bytes));
+        return;
+    }
+    default_panic_handler(message)
+}
+
+unsafe fn default_panic_handler(message: *const u8) {
     // C: fprintf(stderr, "ufbx panic: %s\n", message);
     // (slice use is confined to the stderr IO boundary)
     use std::io::Write;
@@ -418,12 +440,21 @@ pub(crate) unsafe fn fail_imp_err_no_stack(err: *mut Error) -> i32 {
 // verbatim. Conditions are bound to a local first — evaluated exactly once.
 
 // ufbx.c:3550 `ufbxi_check_err(err, cond)`
+// Optional trailing literal: the verbatim C condition text (see `ufbxi_cond_str`).
 macro_rules! ufbxi_check_err {
     ($err:expr, $cond:expr) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::ufbxi_fail_err_no_msg!($err,
                 $crate::native::error::ufbxi_cond_str!($cond).as_ptr());
+            return Err($crate::native::error::Fail);
+        }
+    }};
+    ($err:expr, $cond:expr, $c_cond_str:literal) => {{
+        let cond = $cond;
+        if $crate::native::platform::unlikely(!cond) {
+            $crate::native::error::ufbxi_fail_err_no_msg!($err,
+                $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_ptr());
             return Err($crate::native::error::Fail);
         }
     }};

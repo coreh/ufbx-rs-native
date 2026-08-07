@@ -29,6 +29,17 @@ pub fn open_memory(data: &[u8], opts: OpenMemoryOpts) -> Result<Stream> {
 }
 */
 
+/// Register a handler for ufbx panics (API-misuse reports from the non-`catch`
+/// entry points; see `ufbx_panic_handler` in ufbx.c). Native-port extension —
+/// the C library only allows a compile-time `#define` override. The handler
+/// may return, in which case the panicking call bails out gracefully with a
+/// zero/default result exactly as in C; the default handler (when none is
+/// registered) prints to stderr and asserts. The cost is a single atomic load,
+/// paid only on the panic path.
+pub fn set_panic_handler(handler: fn(&str)) {
+    native::error::set_user_panic_handler(handler);
+}
+
 pub fn triangulate_face_vec(mut indices: &mut Vec<u32>, mesh: &Mesh, face: Face) -> u32 {
     if face.num_indices < 3 {
         indices.clear();
