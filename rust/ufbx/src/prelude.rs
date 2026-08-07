@@ -220,7 +220,9 @@ impl<T> OptionRef<T> {
 
 #[repr(C)]
 pub struct String {
-    data: *const u8,
+    // pub(crate): the native error/string-pool port writes `data` directly
+    // (C: `err->description.data = ...`); still private outside the crate.
+    pub(crate) data: *const u8,
     pub length: usize,
     _marker: PhantomData<u8>,
 }
@@ -316,20 +318,22 @@ impl<T> Unsafe<T> {
     pub unsafe fn new(t: T) -> Self { Self(t) }
 }
 
-/// An enum value as returned by a raw C callback: ABI-wise a bare `u32`
-/// (`#[repr(transparent)]`), because C only guarantees an integer comes back —
-/// materializing `T` directly from a misbehaving callback would be UB for
-/// out-of-range values. Compare with `.raw()` against `T as u32` (what the C
-/// code does), or validate explicitly where a genuine `T` is needed.
+/// Wrapper for a raw (open, unvalidated) enum value crossing the C ABI, e.g.
+/// returned by a user callback: ABI-wise a bare `u32` (`#[repr(transparent)]`),
+/// because C only guarantees an integer comes back — materializing `T` directly
+/// from a misbehaving callback would be UB for out-of-range values. Compare
+/// `.as_raw()` against `T as u32` (what the C code does), or validate
+/// explicitly where a genuine `T` is needed.
+/// (Same pattern and name as rustc's internal `RawEnum<T>` for LLVM C APIs.)
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Unchecked<T>(u32, PhantomData<T>);
+pub struct RawEnum<T>(u32, PhantomData<fn() -> T>);
 
-impl<T> Unchecked<T> {
+impl<T> RawEnum<T> {
     #[inline(always)]
     pub fn from_raw(v: u32) -> Self { Self(v, PhantomData) }
     #[inline(always)]
-    pub fn raw(self) -> u32 { self.0 }
+    pub fn as_raw(self) -> u32 { self.0 }
 }
 
 impl<T> Unsafe<T> where T: Default {
@@ -630,11 +634,11 @@ impl Stream {
     }
 }
 
-pub unsafe extern "C" fn call_progress_cb<F>(user: *mut c_void, progress: *const Progress) -> Unchecked<ProgressResult>
+pub unsafe extern "C" fn call_progress_cb<F>(user: *mut c_void, progress: *const Progress) -> RawEnum<ProgressResult>
     where F: FnMut(&Progress) -> ProgressResult
 {
     let func: &mut F = &mut *(user as *mut F);
-    Unchecked::<ProgressResult>::from_raw((func)(&*progress) as u32)
+    RawEnum::<ProgressResult>::from_raw((func)(&*progress) as u32)
 }
 
 pub unsafe extern "C" fn call_open_file_cb<F>(user: *mut c_void, dst: *mut RawStream, path: *const u8, path_len: usize, info: *const OpenFileInfo) -> bool

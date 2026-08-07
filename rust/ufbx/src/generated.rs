@@ -7,7 +7,7 @@ use std::ffi::{c_void};
 use std::{marker, result, ptr, mem, str};
 use std::fmt::{self, Debug};
 use std::ops::{Deref, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, FnMut, Index};
-use crate::prelude::{Real, List, Ref, RefList, String, Blob, RawString, RawBlob, RawList, Unsafe, Unchecked, ExternalRef, InlineBuf, VertexStream, Arena, FromRust, StringOpt, BlobOpt, ListOpt, ThreadPoolContext, OpenFileContext, format_flags};
+use crate::prelude::{Real, List, Ref, RefList, String, Blob, RawString, RawBlob, RawList, Unsafe, RawEnum, ExternalRef, InlineBuf, VertexStream, Arena, FromRust, StringOpt, BlobOpt, ListOpt, ThreadPoolContext, OpenFileContext, format_flags};
 use crate::prelude::{Allocator, Stream, call_open_file_cb, call_close_memory_cb, call_progress_cb, ThreadPool};
 
 #[repr(C)]
@@ -257,7 +257,7 @@ impl BitXorAssign for PropFlags {
 #[repr(C)]
 pub struct Prop {
     pub name: String,
-    _internal_key: u32,
+    pub(crate) _internal_key: u32,
     pub type_: PropType,
     pub flags: PropFlags,
     pub value_str: String,
@@ -1671,7 +1671,7 @@ pub struct ShaderBinding {
 #[repr(C)]
 pub struct PropOverride {
     pub element_id: u32,
-    _internal_key: u32,
+    pub(crate) _internal_key: u32,
     pub prop_name: String,
     pub value: Vec4,
     pub value_str: String,
@@ -1711,7 +1711,7 @@ pub struct AnimStack {
 #[repr(C)]
 pub struct AnimProp {
     pub element: Ref<Element>,
-    _internal_key: u32,
+    pub(crate) _internal_key: u32,
     pub prop_name: String,
     pub anim_value: Ref<AnimValue>,
 }
@@ -1728,9 +1728,9 @@ pub struct AnimLayer {
     pub anim_values: RefList<AnimValue>,
     pub anim_props: List<AnimProp>,
     pub anim: Ref<Anim>,
-    _min_element_id: u32,
-    _max_element_id: u32,
-    _element_id_bitmask: [u32; 4],
+    pub(crate) _min_element_id: u32,
+    pub(crate) _max_element_id: u32,
+    pub(crate) _element_id_bitmask: [u32; 4],
 }
 
 #[repr(C)]
@@ -1948,7 +1948,7 @@ pub struct MetadataObject {
 pub struct NameElement {
     pub name: String,
     pub type_: ElementType,
-    _internal_key: u32,
+    pub(crate) _internal_key: u32,
     pub element: Ref<Element>,
 }
 
@@ -2521,8 +2521,8 @@ pub struct Error {
     pub description: String,
     pub stack_size: u32,
     pub stack: [ErrorFrame; 8],
-    info_length: usize,
-    info_buf: InlineBuf<[u8; 256]>,
+    pub(crate) info_length: usize,
+    pub(crate) info_buf: InlineBuf<[u8; 256]>,
 }
 
 impl Error {
@@ -2553,7 +2553,7 @@ impl Default for ProgressResult {
 
 #[repr(C)]
 pub struct RawProgressCb {
-    pub fn_: Option<unsafe extern "C" fn (*mut c_void, *const Progress) -> Unchecked<ProgressResult>>,
+    pub fn_: Option<unsafe extern "C" fn (*mut c_void, *const Progress) -> RawEnum<ProgressResult>>,
     pub user: *mut c_void,
 }
 
@@ -3037,8 +3037,8 @@ pub struct RawGeometryCacheDataOpts {
 #[derive(Default)]
 pub struct Panic {
     pub did_panic: bool,
-    message_length: usize,
-    message_buf: InlineBuf<[u8; 128]>,
+    pub(crate) message_length: usize,
+    pub(crate) message_buf: InlineBuf<[u8; 128]>,
 }
 
 impl Panic {

@@ -12,7 +12,7 @@ use std::ffi::{c_void};
 use std::{marker, result, ptr, mem, str};
 use std::fmt::{self, Debug};
 use std::ops::{Deref, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, FnMut, Index};
-use crate::prelude::{Real, List, Ref, RefList, String, Blob, RawString, RawBlob, RawList, Unsafe, Unchecked, ExternalRef, InlineBuf, VertexStream, Arena, FromRust, StringOpt, BlobOpt, ListOpt, ThreadPoolContext, OpenFileContext, format_flags};
+use crate::prelude::{Real, List, Ref, RefList, String, Blob, RawString, RawBlob, RawList, Unsafe, RawEnum, ExternalRef, InlineBuf, VertexStream, Arena, FromRust, StringOpt, BlobOpt, ListOpt, ThreadPoolContext, OpenFileContext, format_flags};
 """.strip()
 
 post_ffi = r"""
@@ -522,12 +522,12 @@ class RustType:
             else:
                 ret_str = ret_type.fmt_raw()
                 # NOTE(ufbx-rs-native): enum returns in raw C callback signatures are
-                # emitted as Unchecked<Enum> (#[repr(transparent)] u32) — C only
+                # emitted as RawEnum<Enum> (#[repr(transparent)] u32) — C only
                 # guarantees an integer comes back (and casts it, e.g. progress_cb at
                 # ufbx.c:2152-2153); materializing a Rust enum from an arbitrary C
                 # return value would be UB for out-of-range values.
                 if ret_type.ir and ret_type.ir.kind == "enum":
-                    ret_str = f"Unchecked<{ret_str}>"
+                    ret_str = f"RawEnum<{ret_str}>"
                 return f"Option<unsafe extern \"C\" fn ({arg_str}) -> {ret_str}>"
         elif self.kind == "pointer":
             if self.ir.is_const:
@@ -950,7 +950,11 @@ def emit_struct(rs: RustStruct):
     indent()
 
     for field in rs.fields:
-        prefix = ""
+        # NOTE(ufbx-rs-native): private/inline-buf fields are pub(crate) rather
+        # than fully private — the native port (crate::native) writes them
+        # directly (e.g. ufbx_error.info_buf/info_length, ufbx_panic.message_buf),
+        # exactly as ufbx.c does. External API visibility is unchanged.
+        prefix = "pub(crate) "
         if (not field.ir.private and field.ir.kind not in ("inlineBuf", "inlineBufLength")) or rs.ir.is_input:
             prefix = "pub "
         lifetime = "a"
