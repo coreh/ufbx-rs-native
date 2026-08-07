@@ -17,7 +17,7 @@
    `rust/**/*.rs`, `PORTING.md`, and `UPSTREAM.md` to the new line numbers.
    Run it once without `--apply` first to read the table.
    - Refs landing inside a changed hunk get a `?stale` suffix; refs whose
-     target line text no longer matches get `?review`. Both exit nonzero.
+     target line text differs between the two commits get `?review`. Both exit nonzero.
    - **A `?stale`/`?review` number still refers to the PREVIOUS base commit**
      (`?review` was renumbered, but the text underneath moved). Resolve every
      marker by hand (`grep -rn '?stale\|?review'`) **before the next sync** —
