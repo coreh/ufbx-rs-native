@@ -316,6 +316,22 @@ impl<T> Unsafe<T> {
     pub unsafe fn new(t: T) -> Self { Self(t) }
 }
 
+/// An enum value as returned by a raw C callback: ABI-wise a bare `u32`
+/// (`#[repr(transparent)]`), because C only guarantees an integer comes back —
+/// materializing `T` directly from a misbehaving callback would be UB for
+/// out-of-range values. Compare with `.raw()` against `T as u32` (what the C
+/// code does), or validate explicitly where a genuine `T` is needed.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Unchecked<T>(u32, PhantomData<T>);
+
+impl<T> Unchecked<T> {
+    #[inline(always)]
+    pub fn from_raw(v: u32) -> Self { Self(v, PhantomData) }
+    #[inline(always)]
+    pub fn raw(self) -> u32 { self.0 }
+}
+
 impl<T> Unsafe<T> where T: Default {
     pub fn take(&mut self) -> T { mem::take(&mut self.0) }
 }
@@ -614,11 +630,11 @@ impl Stream {
     }
 }
 
-pub unsafe extern "C" fn call_progress_cb<F>(user: *mut c_void, progress: *const Progress) -> u32
+pub unsafe extern "C" fn call_progress_cb<F>(user: *mut c_void, progress: *const Progress) -> Unchecked<ProgressResult>
     where F: FnMut(&Progress) -> ProgressResult
 {
     let func: &mut F = &mut *(user as *mut F);
-    (func)(&*progress) as u32
+    Unchecked::<ProgressResult>::from_raw((func)(&*progress) as u32)
 }
 
 pub unsafe extern "C" fn call_open_file_cb<F>(user: *mut c_void, dst: *mut RawStream, path: *const u8, path_len: usize, info: *const OpenFileInfo) -> bool

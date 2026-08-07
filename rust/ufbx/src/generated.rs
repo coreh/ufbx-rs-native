@@ -7,7 +7,7 @@ use std::ffi::{c_void};
 use std::{marker, result, ptr, mem, str};
 use std::fmt::{self, Debug};
 use std::ops::{Deref, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, FnMut, Index};
-use crate::prelude::{Real, List, Ref, RefList, String, Blob, RawString, RawBlob, RawList, Unsafe, ExternalRef, InlineBuf, VertexStream, Arena, FromRust, StringOpt, BlobOpt, ListOpt, ThreadPoolContext, OpenFileContext, format_flags};
+use crate::prelude::{Real, List, Ref, RefList, String, Blob, RawString, RawBlob, RawList, Unsafe, Unchecked, ExternalRef, InlineBuf, VertexStream, Arena, FromRust, StringOpt, BlobOpt, ListOpt, ThreadPoolContext, OpenFileContext, format_flags};
 use crate::prelude::{Allocator, Stream, call_open_file_cb, call_close_memory_cb, call_progress_cb, ThreadPool};
 
 #[repr(C)]
@@ -2553,7 +2553,7 @@ impl Default for ProgressResult {
 
 #[repr(C)]
 pub struct RawProgressCb {
-    pub fn_: Option<unsafe extern "C" fn (*mut c_void, *const Progress) -> u32>,
+    pub fn_: Option<unsafe extern "C" fn (*mut c_void, *const Progress) -> Unchecked<ProgressResult>>,
     pub user: *mut c_void,
 }
 

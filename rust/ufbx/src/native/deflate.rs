@@ -411,9 +411,9 @@ pub(crate) unsafe fn bit_yield(s: *mut BitStream, ptr: *const u8) -> *const u8 {
             bytes_read: (*s).progress_bias.wrapping_add(num_read as u64),
             bytes_total: (*s).progress_total,
         };
-        // C: `(uint32_t)s->progress_cb.fn(...)` — the raw fn type returns u32
-        // (not ProgressResult) so a contract-violating callback is not UB.
-        let result = ((*s).progress_cb.fn_.unwrap())((*s).progress_cb.user, &progress);
+        // C: `(uint32_t)s->progress_cb.fn(...)` — the raw fn type returns
+        // Unchecked<ProgressResult> so a contract-violating callback is not UB.
+        let result = ((*s).progress_cb.fn_.unwrap())((*s).progress_cb.user, &progress).raw();
         ufbx_assert!(
             result == ProgressResult::Continue as u32 || result == ProgressResult::Cancel as u32
         );
