@@ -614,11 +614,11 @@ impl Stream {
     }
 }
 
-pub unsafe extern "C" fn call_progress_cb<F>(user: *mut c_void, progress: *const Progress) -> ProgressResult
+pub unsafe extern "C" fn call_progress_cb<F>(user: *mut c_void, progress: *const Progress) -> u32
     where F: FnMut(&Progress) -> ProgressResult
 {
     let func: &mut F = &mut *(user as *mut F);
-    (func)(&*progress)
+    (func)(&*progress) as u32
 }
 
 pub unsafe extern "C" fn call_open_file_cb<F>(user: *mut c_void, dst: *mut RawStream, path: *const u8, path_len: usize, info: *const OpenFileInfo) -> bool

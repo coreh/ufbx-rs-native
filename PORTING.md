@@ -11,6 +11,13 @@ line references are to the current upstream state and are re-anchored on sync.
 
 ## Ground rules
 
+0. **NEVER hand-edit `rust/ufbx/src/generated.rs` or `rust/ufbx/tests/layout.rs`**
+   — both are produced by `./rust/regen.sh` and silently overwritten on every
+   upstream sync (CI enforces diff-cleanliness). A wrong type/signature in
+   generated code is a bug in `rust/ufbx/bindgen/generate_rust.py`: fix the
+   generator, re-run regen.sh, and leave a NOTE(ufbx-rs-native) comment there
+   (precedents: the uint8_t→u8 field fix; enum-return callbacks emitted as u32).
+
 1. **One C function → one Rust function, same name minus prefix (see Naming),
    same argument order, same control flow.** Keep C comments.
 2. **Do not reorder fields, computations, allocations, or error checks.**

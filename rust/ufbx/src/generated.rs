@@ -1,3 +1,8 @@
+// GENERATED FILE — do not edit by hand. Produced by rust/regen.sh from
+// ufbx.h via bindgen/ufbx_ir.py + rust/ufbx/bindgen/generate_rust.py.
+// Fixes belong in the GENERATOR (see PORTING.md); hand edits are
+// silently overwritten on the next regeneration and CI diffs this file.
+
 use std::ffi::{c_void};
 use std::{marker, result, ptr, mem, str};
 use std::fmt::{self, Debug};
@@ -2548,7 +2553,7 @@ impl Default for ProgressResult {
 
 #[repr(C)]
 pub struct RawProgressCb {
-    pub fn_: Option<unsafe extern "C" fn (*mut c_void, *const Progress) -> ProgressResult>,
+    pub fn_: Option<unsafe extern "C" fn (*mut c_void, *const Progress) -> u32>,
     pub user: *mut c_void,
 }
 

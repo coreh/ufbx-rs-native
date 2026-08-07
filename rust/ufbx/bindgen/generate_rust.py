@@ -521,6 +521,12 @@ class RustType:
                 return f"Option<unsafe extern \"C\" fn ({arg_str})>"
             else:
                 ret_str = ret_type.fmt_raw()
+                # NOTE(ufbx-rs-native): enum returns in raw C callback signatures are
+                # emitted as u32 — C only guarantees an integer comes back (and casts
+                # it, e.g. progress_cb at ufbx.c:2152-2153); materializing a Rust enum
+                # from an arbitrary C return value would be UB for out-of-range values.
+                if ret_type.ir and ret_type.ir.kind == "enum":
+                    ret_str = "u32"
                 return f"Option<unsafe extern \"C\" fn ({arg_str}) -> {ret_str}>"
         elif self.kind == "pointer":
             if self.ir.is_const:
@@ -1616,6 +1622,11 @@ def emit_element_data():
     emit("}")
 
 def emit_file():
+    emit("// GENERATED FILE — do not edit by hand. Produced by rust/regen.sh from")
+    emit("// ufbx.h via bindgen/ufbx_ir.py + rust/ufbx/bindgen/generate_rust.py.")
+    emit("// Fixes belong in the GENERATOR (see PORTING.md); hand edits are")
+    emit("// silently overwritten on the next regeneration and CI diffs this file.")
+    emit("")
     emit_lines(uses)
 
     rust_uses = []
