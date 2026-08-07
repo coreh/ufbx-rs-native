@@ -141,7 +141,9 @@ compensates ±1 because `_InterlockedIncrement64` returns the new value). Port a
 `AtomicUsize::fetch_add/fetch_sub(1, Ordering::SeqCst)` — do not "optimize" to
 `Relaxed`. `ufbxi_atomic_counter_load` is `fetch_add(0)` (ufbx.c:647), port as
 `fetch_add(0, SeqCst)`. Use sites depend on the previous-value convention:
-`if dec(...) > 0 { return }` frees when the previous value was 1.
+the counter starts at 0 (`ufbxi_init_ref`, ufbx.c:30255, no self-retain), and
+`ufbxi_release_ref` (ufbx.c:30273) does `if dec(...) > 0 { return }` — the
+object is freed when the previous value was 0.
 
 ### Integer semantics (TRAP-DENSE — see checklist)
 
@@ -150,6 +152,7 @@ compensates ±1 because `_InterlockedIncrement64` returns the new value). Port a
 | unsigned arithmetic (wraps) | `wrapping_*` — bare ops panic in debug builds; a debug panic is a bug in the port. Canonical wrap sites: `value + (((size_t)0 - value) & mask)` (3626) → `0usize.wrapping_sub`; `(int64_t)(0 - abs_val)` (1827) → `(0u64.wrapping_sub(abs_val)) as i64`; string hashes `hash * seed` / `hash *= 0x7feb352d` (4717-4726) → `wrapping_mul` (and the duplicate `ufbxi_hash_string_check_ascii` must match bit-for-bit); ring-buffer index `(ix - suffix_len) & wrap_mask` (7366-7371). |
 | `x >> n` where `n` may be ≥ 64 | C: `ufbxi_wrap_shr64` (ufbx.c:907-912; 10 uses, all in the DEFLATE fast path). The portable C branch masks `& 63`; the fast branch relies on x86/ARM implicit masking. **Rust: always `x >> (n & 63)`.** There is NO wrapping-left-shift helper; every `<<` in ufbx.c has statically bounded amounts — port as plain `<<`. |
 | `(int)size_t` / narrowing casts | `as` casts (truncating, C-equivalent) — do NOT use `try_into`. Exception: `ufbxi_to_size` (1129-1136) becomes an asserting function under `UFBX_REGRESSION`. |
+| **f64→i64 boundary** (`ufbxi_f64_to_i64`, 1121-1128) | At `value == +2^63` the C guard admits the value (`(double)INT64_MAX` rounds to 2^63) and the `(int64_t)` cast is UB with target-split results: x86-64 `cvttsd2si` → INT64_MIN, AArch64 `fcvtzs` → INT64_MAX. No portable port matches both C builds. **Decision: Rust `as` (saturating, = AArch64 behavior) on all targets.** Known, accepted divergence vs an x86-64-built C oracle for exactly this one input. `ufbxi_f64_to_i32` has no such boundary (`(double)INT32_MAX` is exact; 2^31 fails the guard). |
 | `if (ptr)` / `if (n)` truthiness | explicit `!ptr.is_null()` / `n != 0` |
 | `char` | `u8` everywhere; the C `(uint8_t)` casts at use sites become no-ops, but the **arithmetic still needs widening** (see promotion trap). |
 | `--x` / `x++` in expressions, `a = b = c` | decompose into statements preserving evaluation order |
