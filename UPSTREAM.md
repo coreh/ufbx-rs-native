@@ -15,8 +15,22 @@
 3. `python3 rust/tools/remap_line_refs.py <prev-upstream-sha> <new-upstream-sha>
    --apply` — remaps every `ufbx.c:N`/`ufbx.h:N[-M]` anchor comment in
    `rust/**/*.rs`, `PORTING.md`, and `UPSTREAM.md` to the new line numbers.
-   Refs landing inside changed hunks get a `?stale` suffix and a nonzero exit;
-   resolve each `?stale` marker by hand (grep for `?stale`) before moving on.
+   Run it once without `--apply` first to read the table.
+   - Refs landing inside a changed hunk get a `?stale` suffix; refs whose
+     target line text no longer matches get `?review`. Both exit nonzero.
+   - **A `?stale`/`?review` number still refers to the PREVIOUS base commit**
+     (`?review` was renumbered, but the text underneath moved). Resolve every
+     marker by hand (`grep -rn '?stale\|?review'`) **before the next sync** —
+     otherwise the following run remaps an already-outdated number.
+   - Ranges whose *interior* changed are listed under
+     "interior changed — re-read these regions". Numbers are correct, the
+     ported code may not be; re-read those regions while routing the diff.
+   - The anchor base the tree is currently numbered against is recorded in a
+     `<!-- line-ref-anchor-base: SHA -->` marker in the State section above
+     (the tool inserts and maintains it). `--apply` refuses
+     to run unless `<prev-upstream-sha>` matches it (this is what stops a
+     double-apply from silently corrupting every ref) and advances it on
+     success. First ever run: add `--init-anchor`. `--force` overrides.
 4. Route the `ufbx.c` diff: each hunk's enclosing `ufbxi_*`/`ufbx_*` function
    maps to one module under `rust/ufbx/src/native/` (section list in
    `native/mod.rs`; PORTING.md has the naming rules). Port each hunk 1:1;
