@@ -292,17 +292,172 @@ pub unsafe extern "C" fn ufbx_get_compatible_matrix_for_normals(
     crate::native::api::get_compatible_matrix_for_normals(node)
 }
 
-// ufbx.c:30827-31176 the `ufbx_evaluate_*` entry points: NO shims — the impls
-// are DEFERRED(m9) in `native::api` until `// -- Animation evaluation`
-// (`native::evaluate`) is ported. Leaving these undefined is deliberate so the
-// linker work queue reflects the truth.
+// ufbx.c:30827-30830 `ufbx_evaluate_curve` (impl: native/api.rs `evaluate_curve`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_curve(
+    curve: *const crate::generated::AnimCurve,
+    time: f64,
+    default_value: crate::prelude::Real,
+) -> crate::prelude::Real {
+    crate::native::api::evaluate_curve(curve, time, default_value)
+}
+
+// ufbx.c:30832-30914 `ufbx_evaluate_curve_flags` (impl: native/api.rs
+// `evaluate_curve_flags`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_curve_flags(
+    curve: *const crate::generated::AnimCurve,
+    time: f64,
+    default_value: crate::prelude::Real,
+    flags: u32,
+) -> crate::prelude::Real {
+    crate::native::api::evaluate_curve_flags(curve, time, default_value, flags)
+}
+
+// ufbx.c:30916-30919 `ufbx_evaluate_anim_value_real` (impl: native/api.rs
+// `evaluate_anim_value_real`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_anim_value_real(
+    anim_value: *const crate::generated::AnimValue,
+    time: f64,
+) -> crate::prelude::Real {
+    crate::native::api::evaluate_anim_value_real(anim_value, time)
+}
+
+// ufbx.c:30921-30924 `ufbx_evaluate_anim_value_vec3` (impl: native/api.rs
+// `evaluate_anim_value_vec3`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_anim_value_vec3(
+    anim_value: *const crate::generated::AnimValue,
+    time: f64,
+) -> crate::generated::Vec3 {
+    crate::native::api::evaluate_anim_value_vec3(anim_value, time)
+}
+
+// ufbx.c:30926-30935 `ufbx_evaluate_anim_value_real_flags` (impl: native/api.rs
+// `evaluate_anim_value_real_flags`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_anim_value_real_flags(
+    anim_value: *const crate::generated::AnimValue,
+    time: f64,
+    flags: u32,
+) -> crate::prelude::Real {
+    crate::native::api::evaluate_anim_value_real_flags(anim_value, time, flags)
+}
+
+// ufbx.c:30937-30949 `ufbx_evaluate_anim_value_vec3_flags` (impl: native/api.rs
+// `evaluate_anim_value_vec3_flags`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_anim_value_vec3_flags(
+    anim_value: *const crate::generated::AnimValue,
+    time: f64,
+    flags: u32,
+) -> crate::generated::Vec3 {
+    crate::native::api::evaluate_anim_value_vec3_flags(anim_value, time, flags)
+}
+
+// ufbx.c:30951-30954 `ufbx_evaluate_prop_len` (impl: native/api.rs
+// `evaluate_prop_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_prop_len(
+    anim: *const crate::generated::Anim,
+    element: *const crate::generated::Element,
+    name: *const u8,
+    name_len: usize,
+    time: f64,
+) -> crate::generated::Prop {
+    crate::native::api::evaluate_prop_len(anim, element, name, name_len, time)
+}
+
+// ufbx.c:30956-30989 `ufbx_evaluate_prop_flags_len` (impl: native/api.rs
+// `evaluate_prop_flags_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_prop_flags_len(
+    anim: *const crate::generated::Anim,
+    element: *const crate::generated::Element,
+    name: *const u8,
+    name_len: usize,
+    time: f64,
+    flags: u32,
+) -> crate::generated::Prop {
+    crate::native::api::evaluate_prop_flags_len(anim, element, name, name_len, time, flags)
+}
+
+// ufbx.c:30991-30994 `ufbx_evaluate_props` (impl: native/api.rs `evaluate_props`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_props(
+    anim: *const crate::generated::Anim,
+    element: *const crate::generated::Element,
+    time: f64,
+    buffer: *mut crate::generated::Prop,
+    buffer_size: usize,
+) -> crate::generated::Props {
+    crate::native::api::evaluate_props(anim, element, time, buffer, buffer_size)
+}
+
+// ufbx.c:30996-31023 `ufbx_evaluate_props_flags` (impl: native/api.rs
+// `evaluate_props_flags`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_props_flags(
+    anim: *const crate::generated::Anim,
+    element: *const crate::generated::Element,
+    time: f64,
+    buffer: *mut crate::generated::Prop,
+    buffer_size: usize,
+    flags: u32,
+) -> crate::generated::Props {
+    crate::native::api::evaluate_props_flags(anim, element, time, buffer, buffer_size, flags)
+}
+
+// ufbx.c:31025-31028 `ufbx_evaluate_transform` (impl: native/api.rs
+// `evaluate_transform`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_transform(
+    anim: *const crate::generated::Anim,
+    node: *const crate::generated::Node,
+    time: f64,
+) -> crate::generated::Transform {
+    crate::native::api::evaluate_transform(anim, node, time)
+}
+
+// ufbx.c:31062-31160 `ufbx_evaluate_transform_flags` (impl: native/api.rs
+// `evaluate_transform_flags`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_transform_flags(
+    anim: *const crate::generated::Anim,
+    node: *const crate::generated::Node,
+    time: f64,
+    flags: u32,
+) -> crate::generated::Transform {
+    crate::native::api::evaluate_transform_flags(anim, node, time, flags)
+}
+
+// ufbx.c:31162-31165 `ufbx_evaluate_blend_weight` (impl: native/api.rs
+// `evaluate_blend_weight`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_blend_weight(
+    anim: *const crate::generated::Anim,
+    channel: *const crate::generated::BlendChannel,
+    time: f64,
+) -> crate::prelude::Real {
+    crate::native::api::evaluate_blend_weight(anim, channel, time)
+}
+
+// ufbx.c:31167-31176 `ufbx_evaluate_blend_weight_flags` (impl: native/api.rs
+// `evaluate_blend_weight_flags`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_blend_weight_flags(
+    anim: *const crate::generated::Anim,
+    channel: *const crate::generated::BlendChannel,
+    time: f64,
+    flags: u32,
+) -> crate::prelude::Real {
+    crate::native::api::evaluate_blend_weight_flags(anim, channel, time, flags)
+}
 
 // ufbx.c:31178-31192 `ufbx_evaluate_scene` (impl: native/api.rs
-// `evaluate_scene`). The shim carries the SAME cfg as the impl: C only has a
-// callable body for this entry point when scene evaluation is compiled out,
-// and the enabled arm is DEFERRED(m9). Under the default feature set the
-// symbol stays undefined, as it should.
-#[cfg(not(feature = "scene-eval"))]
+// `evaluate_scene` — a cfg'd fn per C arm, so the shim itself is
+// unconditional).
 #[no_mangle]
 pub unsafe extern "C" fn ufbx_evaluate_scene(
     scene: *const crate::generated::Scene,
@@ -314,7 +469,15 @@ pub unsafe extern "C" fn ufbx_evaluate_scene(
     crate::native::api::evaluate_scene(scene, anim, time, opts, error)
 }
 
-// ufbx.c:31194-31218 `ufbx_create_anim`: NO shim — DEFERRED(m9).
+// ufbx.c:31194-31218 `ufbx_create_anim` (impl: native/api.rs `create_anim`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_create_anim(
+    scene: *const crate::generated::Scene,
+    opts: *const crate::generated::RawAnimOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::Anim {
+    crate::native::api::create_anim(scene, opts, error)
+}
 
 // ufbx.c:31220-31229 `ufbx_free_anim` (impl: native/api.rs `free_anim`)
 #[no_mangle]
@@ -328,9 +491,8 @@ pub unsafe extern "C" fn ufbx_retain_anim(anim: *mut crate::generated::Anim) {
     crate::native::api::retain_anim(anim)
 }
 
-// ufbx.c:31242-31289 `ufbx_bake_anim` (impl: native/api.rs `bake_anim`).
-// Same cfg rationale as `ufbx_evaluate_scene` above.
-#[cfg(not(feature = "baking"))]
+// ufbx.c:31242-31289 `ufbx_bake_anim` (impl: native/api.rs `bake_anim` — a
+// cfg'd fn per C arm, so the shim itself is unconditional).
 #[no_mangle]
 pub unsafe extern "C" fn ufbx_bake_anim(
     scene: *const crate::generated::Scene,
@@ -680,17 +842,51 @@ pub unsafe extern "C" fn ufbx_add_blend_vertex_offsets(
     crate::native::api::add_blend_vertex_offsets(blend, vertices, num_vertices, weight)
 }
 
-// `ufbx_evaluate_nurbs_basis` (ufbx.c:32097) and `ufbx_evaluate_nurbs_curve`
-// (ufbx.c:32168): NO shims — the impls are DEFERRED(m10) in `native::api`
-// until `// -- NURBS` (`ufbxi_nurbs_weight`/`ufbxi_nurbs_deriv`) is ported.
+// ufbx.c:32097-32166 `ufbx_evaluate_nurbs_basis` (impl: native/api.rs
+// `evaluate_nurbs_basis`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_nurbs_basis(
+    basis: *const crate::generated::NurbsBasis,
+    u: crate::prelude::Real,
+    weights: *mut crate::prelude::Real,
+    num_weights: usize,
+    derivatives: *mut crate::prelude::Real,
+    num_derivatives: usize,
+) -> usize {
+    crate::native::api::evaluate_nurbs_basis(
+        basis,
+        u,
+        weights,
+        num_weights,
+        derivatives,
+        num_derivatives,
+    )
+}
 
-// `ufbx_evaluate_nurbs_surface` (ufbx.c:32214): NO shim — DEFERRED(m10) (needs
-// `ufbx_evaluate_nurbs_basis`).
+// ufbx.c:32168-32212 `ufbx_evaluate_nurbs_curve` (impl: native/api.rs
+// `evaluate_nurbs_curve`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_nurbs_curve(
+    curve: *const crate::generated::NurbsCurve,
+    u: crate::prelude::Real,
+) -> crate::generated::CurvePoint {
+    crate::native::api::evaluate_nurbs_curve(curve, u)
+}
+
+// ufbx.c:32214-32280 `ufbx_evaluate_nurbs_surface` (impl: native/api.rs
+// `evaluate_nurbs_surface`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_nurbs_surface(
+    surface: *const crate::generated::NurbsSurface,
+    u: crate::prelude::Real,
+    v: crate::prelude::Real,
+) -> crate::generated::SurfacePoint {
+    crate::native::api::evaluate_nurbs_surface(surface, u, v)
+}
 
 // ufbx.c:32282-32318 `ufbx_tessellate_nurbs_curve` (impl: native/api.rs
-// `tessellate_nurbs_curve`). The shim carries the SAME cfg as the impl: only
-// the `#else` FEATURE_DISABLED arm is ported.
-#[cfg(not(feature = "tessellation"))]
+// `tessellate_nurbs_curve` — a cfg'd fn per C arm, so the shim itself is
+// unconditional).
 #[no_mangle]
 pub unsafe extern "C" fn ufbx_tessellate_nurbs_curve(
     curve: *const crate::generated::NurbsCurve,
@@ -702,7 +898,6 @@ pub unsafe extern "C" fn ufbx_tessellate_nurbs_curve(
 
 // ufbx.c:32320-32357 `ufbx_tessellate_nurbs_surface` (impl: native/api.rs
 // `tessellate_nurbs_surface`). Same cfg rationale.
-#[cfg(not(feature = "tessellation"))]
 #[no_mangle]
 pub unsafe extern "C" fn ufbx_tessellate_nurbs_surface(
     surface: *const crate::generated::NurbsSurface,
@@ -712,8 +907,19 @@ pub unsafe extern "C" fn ufbx_tessellate_nurbs_surface(
     crate::native::api::tessellate_nurbs_surface(surface, opts, error)
 }
 
-// `ufbx_free_line_curve` / `ufbx_retain_line_curve` (ufbx.c:32359/32370): NO
-// shims — DEFERRED(m9) (`ufbxi_line_curve_imp` unported).
+// ufbx.c:32359-32368 `ufbx_free_line_curve` (impl: native/api.rs
+// `free_line_curve`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_free_line_curve(line_curve: *mut crate::generated::LineCurve) {
+    crate::native::api::free_line_curve(line_curve)
+}
+
+// ufbx.c:32370-32379 `ufbx_retain_line_curve` (impl: native/api.rs
+// `retain_line_curve`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_retain_line_curve(line_curve: *mut crate::generated::LineCurve) {
+    crate::native::api::retain_line_curve(line_curve)
+}
 
 // ufbx.c:32381-32390 `ufbx_find_face_index` (impl: native/api.rs
 // `find_face_index`)
@@ -726,9 +932,8 @@ pub unsafe extern "C" fn ufbx_find_face_index(
 }
 
 // ufbx.c:32392-32475 `ufbx_catch_triangulate_face` (impl: native/api.rs
-// `catch_triangulate_face`). Same cfg as the impl: only the `#else`
-// FEATURE_DISABLED arm is ported.
-#[cfg(not(feature = "triangulation"))]
+// `catch_triangulate_face`). Both `#if UFBXI_FEATURE_TRIANGULATION` arms are
+// ported, so the shim is unconditional.
 #[no_mangle]
 pub unsafe extern "C" fn ufbx_catch_triangulate_face(
     panic: *mut crate::generated::Panic,
@@ -740,8 +945,17 @@ pub unsafe extern "C" fn ufbx_catch_triangulate_face(
     crate::native::api::catch_triangulate_face(panic, indices, num_indices, mesh, face)
 }
 
-// `ufbx_catch_compute_topology` (ufbx.c:32477): NO shim — DEFERRED(m9)
-// (`ufbxi_compute_topology` unported).
+// ufbx.c:32477-32482 `ufbx_catch_compute_topology` (impl: native/api.rs
+// `catch_compute_topology`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_compute_topology(
+    panic: *mut crate::generated::Panic,
+    mesh: *const crate::generated::Mesh,
+    indices: *mut crate::generated::TopoEdge,
+    num_indices: usize,
+) {
+    crate::native::api::catch_compute_topology(panic, mesh, indices, num_indices)
+}
 
 // ufbx.c:32484-32492 `ufbx_catch_topo_next_vertex_edge` (impl: native/api.rs
 // `catch_topo_next_vertex_edge`)
@@ -778,9 +992,49 @@ pub unsafe extern "C" fn ufbx_catch_get_weighted_face_normal(
     crate::native::api::catch_get_weighted_face_normal(panic, positions, face)
 }
 
-// `ufbx_catch_generate_normal_mapping` / `ufbx_generate_normal_mapping`
-// (ufbx.c:32534/32580): NO shims — DEFERRED(m9) (`ufbxi_is_edge_smooth`
-// unported).
+// ufbx.c:32534-32578 `ufbx_catch_generate_normal_mapping` (impl: native/api.rs
+// `catch_generate_normal_mapping`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_generate_normal_mapping(
+    panic: *mut crate::generated::Panic,
+    mesh: *const crate::generated::Mesh,
+    topo: *const crate::generated::TopoEdge,
+    num_topo: usize,
+    normal_indices: *mut u32,
+    num_normal_indices: usize,
+    assume_smooth: bool,
+) -> usize {
+    crate::native::api::catch_generate_normal_mapping(
+        panic,
+        mesh,
+        topo,
+        num_topo,
+        normal_indices,
+        num_normal_indices,
+        assume_smooth,
+    )
+}
+
+// ufbx.c:32580-32583 `ufbx_generate_normal_mapping` (impl: native/api.rs
+// `generate_normal_mapping`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_generate_normal_mapping(
+    mesh: *const crate::generated::Mesh,
+    topo: *const crate::generated::TopoEdge,
+    num_topo: usize,
+    normal_indices: *mut u32,
+    num_normal_indices: usize,
+    assume_smooth: bool,
+) -> usize {
+    crate::native::api::generate_normal_mapping(
+        mesh,
+        topo,
+        num_topo,
+        normal_indices,
+        num_normal_indices,
+        assume_smooth,
+    )
+}
 
 // ufbx.c:32585-32612 `ufbx_catch_compute_normals` (impl: native/api.rs
 // `catch_compute_normals`)
@@ -826,8 +1080,18 @@ pub unsafe extern "C" fn ufbx_compute_normals(
     )
 }
 
-// `ufbx_subdivide_mesh` (ufbx.c:32619): NO shim — DEFERRED(m9)
-// (`ufbxi_subdivide_mesh` unported).
+// ufbx.c:32619-32625 `ufbx_subdivide_mesh` (impl: native/api.rs
+// `subdivide_mesh`). Unconditional: the `UFBXI_FEATURE_SUBDIVISION` split lives
+// in `ufbxi_subdivide_mesh` (native/subdivision.rs), which keeps both arms.
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_subdivide_mesh(
+    mesh: *const crate::generated::Mesh,
+    level: usize,
+    opts: *const crate::generated::RawSubdivideOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::Mesh {
+    crate::native::api::subdivide_mesh(mesh, level, opts, error)
+}
 
 // ufbx.c:32627-32636 `ufbx_free_mesh` (impl: native/api.rs `free_mesh`)
 #[no_mangle]
@@ -841,8 +1105,28 @@ pub unsafe extern "C" fn ufbx_retain_mesh(mesh: *mut crate::generated::Mesh) {
     crate::native::api::retain_mesh(mesh)
 }
 
-// `ufbx_load_geometry_cache` / `_len` (ufbx.c:32649/32657): NO shims —
-// DEFERRED(m9) (`ufbxi_load_geometry_cache` unported).
+// ufbx.c:32649-32655 `ufbx_load_geometry_cache` (impl: native/api.rs
+// `load_geometry_cache`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_load_geometry_cache(
+    filename: *const u8,
+    opts: *const crate::generated::RawGeometryCacheOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::GeometryCache {
+    crate::native::api::load_geometry_cache(filename, opts, error)
+}
+
+// ufbx.c:32657-32664 `ufbx_load_geometry_cache_len` (impl: native/api.rs
+// `load_geometry_cache_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_load_geometry_cache_len(
+    filename: *const u8,
+    filename_len: usize,
+    opts: *const crate::generated::RawGeometryCacheOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::GeometryCache {
+    crate::native::api::load_geometry_cache_len(filename, filename_len, opts, error)
+}
 
 // ufbx.c:32666-32675 `ufbx_free_geometry_cache` (impl: native/api.rs
 // `free_geometry_cache`)
@@ -919,8 +1203,26 @@ pub unsafe extern "C" fn ufbx_dom_find_len(
     crate::native::api::dom_find_len(parent, name, name_len)
 }
 
-// `ufbx_generate_indices` (ufbx.c:32966): NO shim — DEFERRED(m10)
-// (`ufbxi_generate_indices` unported).
+// ufbx.c:32966-32974 `ufbx_generate_indices` (impl: native/api.rs
+// `generate_indices`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_generate_indices(
+    streams: *const crate::generated::RawVertexStream,
+    num_streams: usize,
+    indices: *mut u32,
+    num_indices: usize,
+    allocator: *const crate::generated::RawAllocatorOpts,
+    error: *mut crate::generated::Error,
+) -> usize {
+    crate::native::api::generate_indices(
+        streams,
+        num_streams,
+        indices,
+        num_indices,
+        allocator,
+        error,
+    )
+}
 
 // `ufbx_thread_pool_run_task` (ufbx.c:32976): NO shim — DEFERRED(m10)
 // (`ufbxi_thread_pool_execute` unported).
@@ -1435,8 +1737,29 @@ pub unsafe extern "C" fn ufbx_find_anim_prop(
     crate::native::api::find_anim_prop(layer, element, prop)
 }
 
-// ufbx.c:33155-33156 `ufbx_evaluate_prop` / `ufbx_evaluate_prop_flags`: NO
-// shims — their `_len` impls are DEFERRED(m9) (see above).
+// ufbx.c:33155 `ufbx_evaluate_prop` (impl: native/api.rs `evaluate_prop`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_prop(
+    anim: *const crate::generated::Anim,
+    element: *const crate::generated::Element,
+    name: *const u8,
+    time: f64,
+) -> crate::generated::Prop {
+    crate::native::api::evaluate_prop(anim, element, name, time)
+}
+
+// ufbx.c:33156 `ufbx_evaluate_prop_flags` (impl: native/api.rs
+// `evaluate_prop_flags`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_prop_flags(
+    anim: *const crate::generated::Anim,
+    element: *const crate::generated::Element,
+    name: *const u8,
+    time: f64,
+    flags: u32,
+) -> crate::generated::Prop {
+    crate::native::api::evaluate_prop_flags(anim, element, name, time, flags)
+}
 
 // ufbx.c:33157 `ufbx_find_prop_texture` (impl: native/api.rs `find_prop_texture`)
 #[no_mangle]
@@ -1490,8 +1813,7 @@ pub unsafe extern "C" fn ufbx_dom_find(
 // state.
 
 // ufbx.c:33165-33167 `ufbx_triangulate_face` (impl: native/api.rs
-// `triangulate_face`; DEFERRED(m9) when `feature = "triangulation"`).
-#[cfg(not(feature = "triangulation"))]
+// `triangulate_face`)
 #[no_mangle]
 pub unsafe extern "C" fn ufbx_triangulate_face(
     indices: *mut u32,
@@ -1502,7 +1824,16 @@ pub unsafe extern "C" fn ufbx_triangulate_face(
     crate::native::api::triangulate_face(indices, num_indices, mesh, face)
 }
 
-// `ufbx_compute_topology` (ufbx.c:33168): NO shim — DEFERRED(m9).
+// ufbx.c:33168-33170 `ufbx_compute_topology` (impl: native/api.rs
+// `compute_topology`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_compute_topology(
+    mesh: *const crate::generated::Mesh,
+    topo: *mut crate::generated::TopoEdge,
+    num_topo: usize,
+) {
+    crate::native::api::compute_topology(mesh, topo, num_topo)
+}
 
 // ufbx.c:33171-33173 `ufbx_topo_next_vertex_edge` (impl: native/api.rs
 // `topo_next_vertex_edge`)

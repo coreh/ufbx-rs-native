@@ -15,26 +15,30 @@
 //!
 //! Sequential coverage then continues over ufbx.c:30635-31176 — the
 //! `ufbx_find_*` lookup family (30635-30825, including the String API
-//! wrappers at 33142-33154 that delegate to it) is ported; the
-//! animation-evaluation entry points (30827-31176) carry DEFERRED(m9)
-//! markers. ufbx.c:31178-31721 is likewise covered in C order: the anim /
-//! baked-anim refcount pairs, the baked lookup + `ufbx_evaluate_baked_*`
-//! sampling functions and the whole quaternion math family are ported, while
-//! `ufbx_create_anim` and the feature-enabled arms of `ufbx_evaluate_scene` /
-//! `ufbx_bake_anim` carry DEFERRED(m9) markers (their `#else` arms ARE ported
-//! — that is C's FEATURE_DISABLED behavior, not a stub). ufbx.c:31723-32095
+//! wrappers at 33142-33160 that delegate to it) and the animation-evaluation
+//! entry points (30827-31176, backed by `native::evaluate`) are ported.
+//! ufbx.c:31178-31721 is likewise covered in C order: `ufbx_evaluate_scene`
+//! (both arms; the enabled arm under `feature = "scene-eval"`),
+//! `ufbx_create_anim`, the anim / baked-anim refcount pairs, `ufbx_bake_anim`
+//! (both arms; the enabled arm under `feature = "baking"`, backed by
+//! `native::evaluate`), the baked lookup + `ufbx_evaluate_baked_*` sampling
+//! functions and the whole quaternion math family are ported.
+//! ufbx.c:31723-32095
 //! is then covered in C order: the `ufbx_matrix_*` / `ufbx_transform_*` math
 //! (31723-31926, ported ahead of order by earlier units — this unit adds the
 //! missing `capi.rs` shims), `ufbx_catch_get_skin_vertex_matrix`
 //! (31928-32018) and the blend-shape offset family (32020-32095). The NURBS
-//! evaluation entry points at ufbx.c:32097+ carry DEFERRED(m10) markers.
-//! ufbx.c:32214-32687 is then covered in C order: `ufbx_find_face_index`, the
+//! evaluation entry points (`ufbx_evaluate_nurbs_basis` / `_curve` /
+//! `_surface`, ufbx.c:32097-32280) and both arms of the tessellation entry
+//! points + `ufbx_free_line_curve` / `ufbx_retain_line_curve`
+//! (ufbx.c:32282-32379, backed by `native::nurbs`) are ported.
+//! ufbx.c:32381-32687 is then covered in C order: `ufbx_find_face_index`, the
 //! `ufbx_catch_topo_*` / `ufbx_catch_get_weighted_face_normal` /
 //! `ufbx_catch_compute_normals` geometry helpers and the `ufbx_free_*` /
 //! `ufbx_retain_*` refcount pairs for meshes and geometry caches are ported;
-//! `ufbx_evaluate_nurbs_surface`, tessellation, triangulation, topology
+//! triangulation, topology
 //! (`compute_topology` / `generate_normal_mapping`), subdivision, and the
-//! geometry-cache loaders carry DEFERRED markers (the tessellation /
+//! geometry-cache loaders carry DEFERRED markers (the
 //! triangulation `#else` FEATURE_DISABLED arms ARE ported under their cfgs).
 //! The `ufbx_catch_*` non-catch wrappers at ufbx.c:33165-33179 are pulled
 //! forward alongside the `ufbx_find_*` string wrappers (33142-33160), each
@@ -57,43 +61,50 @@
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 
-#[cfg(not(feature = "baking"))]
 use crate::generated::RawBakeOpts;
-#[cfg(not(feature = "scene-eval"))]
-use crate::generated::RawEvaluateOpts;
+use crate::generated::{
+    EvaluateFlags, Interpolation, Keyframe, PropFlags, RawAnimOpts, RawEvaluateOpts,
+    TransformFlags,
+};
 use crate::generated::{
     Anim, AnimCurve, AnimLayer, AnimProp, AnimStack, AnimValue, AudioClip, AudioLayer, BakedAnim,
     BakedElement, BakedKeyFlags, BakedNode, BakedQuat, BakedVec3, BlendChannel, BlendDeformer,
     BlendKeyframe, BlendShape, Bone, BonePose, CacheChannel, CacheDeformer, CacheFile, CacheFrame,
-    Camera, CameraSwitcher, Character, Constraint, CoordinateAxes, CoordinateAxis, DisplayLayer,
-    DomNode, DomValue, DomValueType, Element, ElementType, Empty, Error, ErrorFrame, Face,
-    GeometryCache, Light, LineCurve, LodGroup, Marker, Material, MaterialTexture, Matrix, Mesh,
-    MetadataObject, NameElement, Node, NurbsCurve, NurbsSurface, NurbsTrimBoundary,
-    NurbsTrimSurface, OpenFileInfo, Panic, Pose, ProceduralGeometry, Prop, Props, Quat,
-    RawGeometryCacheDataOpts, RawOpenFileOpts, RawOpenMemoryOpts, RawStream, RotationOrder, Scene,
-    SelectionNode, SelectionSet, Shader, ShaderBinding, ShaderPropBinding, ShaderTexture,
-    ShaderTextureInput, SkinCluster, SkinDeformer, SkinVertex, SkinWeight, StereoCamera, Texture,
+    Camera, CameraSwitcher, Character, Constraint, CoordinateAxes, CoordinateAxis, CurvePoint,
+    DisplayLayer, DomNode, DomValue, DomValueType, Element, ElementType, Empty, Error, ErrorFrame,
+    Face, GeometryCache, Light, LineCurve, LodGroup, Marker, Material, MaterialTexture, Matrix,
+    Mesh, MetadataObject, NameElement, Node, NurbsBasis, NurbsCurve, NurbsSurface,
+    NurbsTrimBoundary, NurbsTrimSurface, OpenFileInfo, Panic, Pose, ProceduralGeometry, Prop,
+    Props, Quat, RawAllocatorOpts, RawGeometryCacheDataOpts, RawGeometryCacheOpts, RawOpenFileOpts,
+    RawOpenMemoryOpts, RawStream, RawVertexStream, RotationOrder, Scene, SelectionNode,
+    SelectionSet, Shader, ShaderBinding, ShaderPropBinding, ShaderTexture, ShaderTextureInput,
+    SkinCluster, SkinDeformer, SkinVertex, SkinWeight, StereoCamera, SurfacePoint, Texture,
     TopoEdge, Transform, Unknown, Vec2, Vec3, Vec4, VertexReal, VertexVec2, VertexVec3, VertexVec4,
     Video,
 };
 #[cfg(feature = "geometry-cache")]
 use crate::generated::{CacheDataEncoding, CacheDataFormat, OpenFileType, RawOpenFileCb};
+#[cfg(feature = "tessellation")]
+use crate::generated::{RawTessellateCurveOpts, RawTessellateSurfaceOpts};
+#[cfg(feature = "baking")]
+use crate::native::allocator::free;
 use crate::native::allocator::{
     align_to_mask, alloc, free_ator, Allocator, ANIM_IMP_MAGIC, BAKED_ANIM_IMP_MAGIC,
-    CACHE_IMP_MAGIC, MESH_IMP_MAGIC, REFCOUNT_IMP_MAGIC, SCENE_IMP_MAGIC,
+    CACHE_IMP_MAGIC, LINE_CURVE_IMP_MAGIC, MESH_IMP_MAGIC, REFCOUNT_IMP_MAGIC, SCENE_IMP_MAGIC,
 };
 use crate::native::buf::{buf_free, Buf};
 use crate::native::cache::{free_geometry_cache_imp, GeometryCacheImp};
+#[cfg(feature = "geometry-cache")]
+use crate::native::error::ufbxi_check_opts_return_no_error;
 use crate::native::error::{
     strlen, ufbxi_panicf, ufbxi_snprintf, EMPTY_CHAR, ERROR_INFO_LENGTH, ERROR_STACK_MAX_DEPTH,
 };
 #[cfg(feature = "geometry-cache")]
-use crate::native::error::ufbxi_check_opts_return_no_error;
-#[cfg(feature = "geometry-cache")]
 use crate::native::platform::{min64, to_size, MAX_SKIP_SIZE};
 use crate::native::thread::ThreadPool;
-// The `#else` (feature-disabled) arms of `ufbx_evaluate_scene` / `ufbx_bake_anim`.
-#[cfg(not(feature = "scene-eval"))]
+// Used by the feature-enabled arms of `ufbx_bake_anim` /
+// `ufbx_tessellate_nurbs_curve` / `_surface` and unconditionally by
+// `ufbx_subdivide_mesh` / `ufbx_load_geometry_cache_len`.
 use crate::native::error::ufbxi_check_opts_ptr;
 #[cfg(any(
     not(feature = "scene-eval"),
@@ -101,26 +112,46 @@ use crate::native::error::ufbxi_check_opts_ptr;
     not(feature = "tessellation")
 ))]
 use crate::native::error::{ufbxi_fmt_err_info, ufbxi_report_err_msg};
+use crate::native::error::{clear_error, fix_error_type};
+use crate::native::evaluate;
 use crate::native::evaluate::BakedAnimImp;
+#[cfg(feature = "tessellation")]
+use crate::native::hash::map_free;
 use crate::native::io::{
     begin_file_context, end_file_context, memory_close, memory_read, memory_size, memory_skip,
     stdio_open, FileContext, MemoryStream,
 };
-use crate::native::parse::{get_imp, get_name_key, MeshImp, Refcount, SceneImp, ELEMENT_TYPE_COUNT};
+use crate::native::nurbs::{nurbs_deriv, nurbs_weight, LineCurveImp, MAX_NURBS_ORDER};
+#[cfg(feature = "tessellation")]
+use crate::native::nurbs::{
+    tessellate_nurbs_curve_imp, tessellate_nurbs_surface_imp, TessellateCurveContext,
+    TessellateSurfaceContext,
+};
+use crate::native::parse::{
+    find_enum, find_real as ufbxi_find_real, get_imp, get_name_key, MeshImp, Refcount, SceneImp,
+    ELEMENT_TYPE_COUNT,
+};
 use crate::native::platform::{
     add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
-    macro_lower_bound_eq, macro_upper_bound_eq, math, min_sz, ufbx_assert, ufbxi_ignore, NO_INDEX,
-    SOURCE_VERSION, THREAD_SAFE,
+    macro_lower_bound_eq, macro_upper_bound_eq, math, min_sz, ufbx_assert, ufbxi_ignore,
+    ufbxi_unreachable, NO_INDEX, SOURCE_VERSION, THREAD_SAFE,
 };
 use crate::native::read::{opt_ptr, ref_ptr};
 use crate::native::scene_process::{
     add_weighted_mat, add_weighted_quat, add_weighted_vec3, cmp_name_element_less_ref,
-    cmp_prop_less_concat, cmp_prop_less_ref, fetch_dst_element, mul_quat, AnimImp,
+    cmp_prop_less_concat, cmp_prop_less_ref, fetch_dst_element, get_rotation, get_scale,
+    get_transform, mul_quat, AnimImp,
 };
+use crate::native::string_pool as sp;
 use crate::native::string_pool::{
     add3, concat_str_cmp, cross3, get_concat_key, length3, lerp3, mul3, normalize3, safe_string,
-    str_equal, str_less, sub3, DEG_TO_RAD_DOUBLE, DPI, RAD_TO_DEG_DOUBLE,
+    str_equal, str_less, sub3, DEG_TO_RAD_DOUBLE, DPI, ONE_VEC3, RAD_TO_DEG_DOUBLE,
 };
+// `ufbxi_dot3` is only reached from the `#if UFBXI_FEATURE_TRIANGULATION` arm of
+// `ufbx_catch_triangulate_face`.
+#[cfg(feature = "triangulation")]
+use crate::native::string_pool::dot3;
+use crate::native::topology::is_edge_smooth;
 use crate::prelude::{Blob, List, OpenFileContext, Real, String, ThreadPoolContext};
 
 // ufbx.c:30243-30247 `ufbxi_free_scene_imp`
@@ -655,8 +686,7 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
     offset
 }
 
-// ufbx.c:30635-32095 is ported in C order below (the evaluation entry points
-// as DEFERRED(m9) markers). PARTIAL: past the CONTINUATION marker at
+// ufbx.c:30635-32095 is ported in C order below. PARTIAL: past the CONTINUATION marker at
 // ufbx.c:32214 the API-section entry points are still ported out of C order,
 // ahead of their own unit, because the `// -- Scene processing` unit calls
 // `ufbx_get_bone_pose` / `ufbx_euler_to_quat` and friends. The intervening
@@ -1034,42 +1064,593 @@ pub(crate) unsafe fn get_compatible_matrix_for_normals(node: *const Node) -> Mat
     norm_mat
 }
 
-// The animation-evaluation entry points (ufbx.c:30827-31176) are DEFERRED: the
-// machinery they call — `ufbxi_extrapolate_curve`, `ufbxi_find_cubic_bezier_t`,
-// `ufbxi_find_prop_override`, `ufbxi_evaluate_connected_prop`,
-// `ufbxi_evaluate_props`, `ufbxi_init_prop_iter`/`ufbxi_next_prop` and
-// `ufbxi_evaluate_selected_props` — lives in the `// -- Animation evaluation`
-// section (`native::evaluate`), which is not ported yet. No `capi.rs` shims
-// either, so the linker work queue reflects the truth.
-/* DEFERRED(m9): ufbx.c:30827-30830 `ufbx_evaluate_curve` */
-/* DEFERRED(m9): ufbx.c:30832-30914 `ufbx_evaluate_curve_flags` */
-/* DEFERRED(m9): ufbx.c:30916-30919 `ufbx_evaluate_anim_value_real` */
-/* DEFERRED(m9): ufbx.c:30921-30924 `ufbx_evaluate_anim_value_vec3` */
-/* DEFERRED(m9): ufbx.c:30926-30935 `ufbx_evaluate_anim_value_real_flags` */
-/* DEFERRED(m9): ufbx.c:30937-30949 `ufbx_evaluate_anim_value_vec3_flags` */
-/* DEFERRED(m9): ufbx.c:30951-30954 `ufbx_evaluate_prop_len` */
-/* DEFERRED(m9): ufbx.c:30956-30989 `ufbx_evaluate_prop_flags_len` */
-/* DEFERRED(m9): ufbx.c:30991-30994 `ufbx_evaluate_props` */
-/* DEFERRED(m9): ufbx.c:30996-31023 `ufbx_evaluate_props_flags` */
-/* DEFERRED(m9): ufbx.c:31025-31028 `ufbx_evaluate_transform` */
-// The four static `const char *const[]` tables at ufbx.c:31030-31060
-// (`ufbxi_transform_props_all` / `_rotation` / `_scale` / `_rotation_scale`)
-// exist only for `ufbx_evaluate_transform_flags`, so they land with it.
-/* DEFERRED(m9): ufbx.c:31030-31060 `ufbxi_transform_props_*` tables */
-/* DEFERRED(m9): ufbx.c:31062-31160 `ufbx_evaluate_transform_flags` */
-/* DEFERRED(m9): ufbx.c:31162-31165 `ufbx_evaluate_blend_weight` */
-/* DEFERRED(m9): ufbx.c:31167-31176 `ufbx_evaluate_blend_weight_flags` */
+// ufbx.c:30827-30830 `ufbx_evaluate_curve`
+pub(crate) unsafe fn evaluate_curve(curve: *const AnimCurve, time: f64, default_value: Real) -> Real {
+    evaluate_curve_flags(curve, time, default_value, 0)
+}
+
+// ufbx.c:30832-30914 `ufbx_evaluate_curve_flags`
+pub(crate) unsafe fn evaluate_curve_flags(
+    curve: *const AnimCurve,
+    time: f64,
+    default_value: Real,
+    flags: u32,
+) -> Real {
+    if curve.is_null() {
+        return default_value;
+    }
+    if (*curve).keyframes.count <= 1 {
+        if (*curve).keyframes.count == 1 {
+            return (*(*curve).keyframes.data.add(0)).value;
+        } else {
+            return default_value;
+        }
+    }
+
+    if (flags & EvaluateFlags::NO_EXTRAPOLATION.raw()) == 0 {
+        if time < (*curve).min_time || time > (*curve).max_time {
+            return evaluate::extrapolate_curve(curve, time, flags);
+        }
+    }
+
+    let mut begin: usize = 0;
+    let mut end: usize = (*curve).keyframes.count;
+    let keys: *const Keyframe = (*curve).keyframes.data;
+    while end - begin >= 8 {
+        let mid: usize = (begin + end) >> 1;
+        if (*keys.add(mid)).time <= time {
+            begin = mid + 1;
+        } else {
+            end = mid;
+        }
+    }
+
+    end = (*curve).keyframes.count;
+    // C: `for (; begin < end; begin++)` — every switch arm returns, so the
+    // increment is only reached through the `continue`.
+    while begin < end {
+        let next: *const Keyframe = keys.add(begin);
+        if (*next).time <= time {
+            begin += 1;
+            continue;
+        }
+
+        // First keyframe
+        if begin == 0 {
+            return (*next).value;
+        }
+
+        let prev: *const Keyframe = next.sub(1);
+
+        // Exact keyframe
+        if (*prev).time == time {
+            return (*prev).value;
+        }
+
+        let rcp_delta: f64 = 1.0 / ((*next).time - (*prev).time);
+        let mut t: f64 = (time - (*prev).time) * rcp_delta;
+
+        match (*prev).interpolation {
+            Interpolation::ConstantPrev => return (*prev).value,
+
+            Interpolation::ConstantNext => return (*next).value,
+
+            Interpolation::Linear => {
+                // C: `return (ufbx_real)(prev->value*(1.0 - t) + next->value*t);`
+                return ((*prev).value * (1.0 - t) + (*next).value * t) as Real;
+            }
+
+            Interpolation::Cubic => {
+                // C: tangent `dx`/`dy` are float, promoted to double.
+                let x1: f64 = (*prev).right.dx as f64 * rcp_delta;
+                let x2: f64 = 1.0 - (*next).left.dx as f64 * rcp_delta;
+                t = evaluate::find_cubic_bezier_t(x1, x2, t);
+
+                let t2: f64 = t * t;
+                let t3: f64 = t2 * t;
+                let u: f64 = 1.0 - t;
+                let u2: f64 = u * u;
+                let u3: f64 = u2 * u;
+
+                let y0: f64 = (*prev).value;
+                let y3: f64 = (*next).value;
+                let y1: f64 = y0 + (*prev).right.dy as f64;
+                let y2: f64 = y3 - (*next).left.dy as f64;
+
+                // C: `return (ufbx_real)(u3*y0 + 3.0 * (u2*t*y1 + u*t2*y2) + t3*y3);`
+                return (u3 * y0 + 3.0 * (u2 * t * y1 + u * t2 * y2) + t3 * y3) as Real;
+            }
+
+            // C `default:` — unreachable in Rust because the match above is
+            // exhaustive over the `#[repr(u32)]` enum.
+            #[allow(unreachable_patterns)]
+            _ => {
+                ufbxi_unreachable!("Bad interpolation mode");
+                #[allow(unreachable_code)]
+                return 0.0;
+            }
+        }
+    }
+
+    // Last keyframe
+    (*(*curve).keyframes.data.add((*curve).keyframes.count - 1)).value
+}
+
+// ufbx.c:30916-30919 `ufbx_evaluate_anim_value_real`
+#[inline(never)]
+pub(crate) unsafe fn evaluate_anim_value_real(anim_value: *const AnimValue, time: f64) -> Real {
+    evaluate_anim_value_real_flags(anim_value, time, 0)
+}
+
+// ufbx.c:30921-30924 `ufbx_evaluate_anim_value_vec3`
+#[inline(never)]
+pub(crate) unsafe fn evaluate_anim_value_vec3(anim_value: *const AnimValue, time: f64) -> Vec3 {
+    evaluate_anim_value_vec3_flags(anim_value, time, 0)
+}
+
+// ufbx.c:30926-30935 `ufbx_evaluate_anim_value_real_flags`
+#[inline(never)]
+pub(crate) unsafe fn evaluate_anim_value_real_flags(
+    anim_value: *const AnimValue,
+    time: f64,
+    flags: u32,
+) -> Real {
+    if anim_value.is_null() {
+        return 0.0;
+    }
+
+    let mut res: Real = (*anim_value).default_value.x;
+    // C: `if (anim_value->curves[0]) res = ufbx_evaluate_curve_flags(anim_value->curves[0], time, res, flags);`
+    let curve0: *mut AnimCurve = opt_ptr(core::ptr::addr_of!((*anim_value).curves[0]));
+    if !curve0.is_null() {
+        res = evaluate_curve_flags(curve0, time, res, flags);
+    }
+    res
+}
+
+// ufbx.c:30937-30949 `ufbx_evaluate_anim_value_vec3_flags`
+#[inline(never)]
+pub(crate) unsafe fn evaluate_anim_value_vec3_flags(
+    anim_value: *const AnimValue,
+    time: f64,
+    flags: u32,
+) -> Vec3 {
+    if anim_value.is_null() {
+        // C: `ufbx_vec3 zero = { 0.0f };`
+        let zero: Vec3 = Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        return zero;
+    }
+
+    let mut res: Vec3 = (*anim_value).default_value;
+    let curve0: *mut AnimCurve = opt_ptr(core::ptr::addr_of!((*anim_value).curves[0]));
+    if !curve0.is_null() {
+        res.x = evaluate_curve_flags(curve0, time, res.x, flags);
+    }
+    let curve1: *mut AnimCurve = opt_ptr(core::ptr::addr_of!((*anim_value).curves[1]));
+    if !curve1.is_null() {
+        res.y = evaluate_curve_flags(curve1, time, res.y, flags);
+    }
+    let curve2: *mut AnimCurve = opt_ptr(core::ptr::addr_of!((*anim_value).curves[2]));
+    if !curve2.is_null() {
+        res.z = evaluate_curve_flags(curve2, time, res.z, flags);
+    }
+    res
+}
+
+// ufbx.c:30951-30954 `ufbx_evaluate_prop_len`
+#[inline(never)]
+pub(crate) unsafe fn evaluate_prop_len(
+    anim: *const Anim,
+    element: *const Element,
+    name: *const u8,
+    name_len: usize,
+    time: f64,
+) -> Prop {
+    evaluate_prop_flags_len(anim, element, name, name_len, time, 0)
+}
+
+// ufbx.c:30956-30989 `ufbx_evaluate_prop_flags_len`
+#[inline(never)]
+pub(crate) unsafe fn evaluate_prop_flags_len(
+    anim: *const Anim,
+    element: *const Element,
+    name: *const u8,
+    name_len: usize,
+    time: f64,
+    flags: u32,
+) -> Prop {
+    // C: `ufbx_prop result;`
+    let mut result: Prop;
+
+    let prop: *mut Prop = find_prop_len(core::ptr::addr_of!((*element).props), name, name_len);
+    if !prop.is_null() {
+        result = *prop;
+    } else {
+        // C: `memset(&result, 0, sizeof(result));`
+        result = MaybeUninit::zeroed().assume_init();
+        result.name.data = name;
+        result.name.length = name_len;
+        result._internal_key = get_name_key(name, name_len);
+        result.flags = PropFlags::NOT_FOUND;
+        result.value_str.data = EMPTY_CHAR.as_ptr();
+        result.value_str.length = 0;
+        result.value_blob.data = core::ptr::null();
+        result.value_blob.size = 0;
+    }
+
+    if (*anim).prop_overrides.count > 0 {
+        evaluate::find_prop_override(
+            core::ptr::addr_of!((*anim).prop_overrides),
+            (*element).element_id,
+            &mut result,
+        );
+        return result;
+    }
+
+    if (result.flags.raw() & (PropFlags::ANIMATED.raw() | PropFlags::CONNECTED.raw())) == 0 {
+        return result;
+    }
+
+    // C-parity: `prop->flags` — `prop` is non-NULL here because the NOT_FOUND
+    // branch above always takes the early return.
+    if ((*prop).flags.raw() & PropFlags::CONNECTED.raw()) != 0 && !(*anim).ignore_connections {
+        evaluate::evaluate_connected_prop(&mut result, anim, element, (*prop).name.data, time, flags);
+    }
+
+    evaluate::evaluate_props(anim, element, time, &mut result, 1, flags);
+
+    result
+}
+
+// ufbx.c:30991-30994 `ufbx_evaluate_props`
+#[inline(never)]
+pub(crate) unsafe fn evaluate_props(
+    anim: *const Anim,
+    element: *const Element,
+    time: f64,
+    buffer: *mut Prop,
+    buffer_size: usize,
+) -> Props {
+    evaluate_props_flags(anim, element, time, buffer, buffer_size, 0)
+}
+
+// ufbx.c:30996-31023 `ufbx_evaluate_props_flags`
+#[inline(never)]
+pub(crate) unsafe fn evaluate_props_flags(
+    anim: *const Anim,
+    element: *const Element,
+    time: f64,
+    buffer: *mut Prop,
+    buffer_size: usize,
+    flags: u32,
+) -> Props {
+    // C: `ufbx_props ret = { NULL };`
+    let mut ret: Props = MaybeUninit::zeroed().assume_init();
+    if element.is_null() {
+        return ret;
+    }
+
+    let mut num_anim: usize = 0;
+    let mut iter = MaybeUninit::<evaluate::PropIter>::uninit(); // ufbxi_uninit
+    let iter: *mut evaluate::PropIter = iter.as_mut_ptr();
+    evaluate::init_prop_iter(iter, anim, element);
+    // C: `while ((prop = ufbxi_next_prop(&iter)) != NULL)`
+    loop {
+        let prop: *const Prop = evaluate::next_prop(iter);
+        if prop.is_null() {
+            break;
+        }
+        if ((*prop).flags.raw()
+            & (PropFlags::ANIMATED.raw() | PropFlags::OVERRIDDEN.raw() | PropFlags::CONNECTED.raw()))
+            == 0
+        {
+            continue;
+        }
+        if num_anim >= buffer_size {
+            break;
+        }
+
+        // C: `ufbx_prop *dst = &buffer[num_anim++];`
+        let dst: *mut Prop = buffer.add(num_anim);
+        num_anim += 1;
+        *dst = *prop;
+
+        if ((*prop).flags.raw() & PropFlags::CONNECTED.raw()) != 0 && !(*anim).ignore_connections {
+            evaluate::evaluate_connected_prop(dst, anim, element, (*prop).name.data, time, flags);
+        }
+    }
+
+    evaluate::evaluate_props(anim, element, time, buffer, num_anim, flags);
+
+    ret.props.data = buffer;
+    // C: `ret.props.count = ret.num_animated = num_anim;`
+    ret.props.count = num_anim;
+    ret.num_animated = num_anim;
+    // C: `ret.defaults = (ufbx_props*)&element->props;` — raw pointer store
+    // into the `Option<Ref<Props>>` slot (same layout).
+    *(core::ptr::addr_of_mut!(ret.defaults) as *mut *const Props) =
+        core::ptr::addr_of!((*element).props);
+    ret
+}
+
+// ufbx.c:31025-31028 `ufbx_evaluate_transform`
+#[inline(never)]
+pub(crate) unsafe fn evaluate_transform(anim: *const Anim, node: *const Node, time: f64) -> Transform {
+    evaluate_transform_flags(anim, node, time, 0)
+}
+
+// ufbx.c:31030-31060 `ufbxi_transform_props_*` tables — raw pointers into the
+// interned-string statics; the wrapper struct provides the `Sync` the raw
+// pointers lack (same treatment as `StringTable` in `native::string_pool`).
+#[repr(transparent)]
+struct PropNameTable<const N: usize>([*const u8; N]);
+unsafe impl<const N: usize> Sync for PropNameTable<N> {}
+
+// ufbx.c:31030-31041 `ufbxi_transform_props_all` — the count const is the Rust
+// spelling of `ufbxi_arraycount(ufbxi_transform_props_all)`: the initializer
+// list is checked against it, and the `buf` scratch array in
+// `evaluate_transform_flags` derives from it.
+const TRANSFORM_PROPS_ALL_COUNT: usize = 10;
+static TRANSFORM_PROPS_ALL: PropNameTable<TRANSFORM_PROPS_ALL_COUNT> = PropNameTable([
+    sp::Lcl_Rotation.as_ptr(),
+    sp::Lcl_Scaling.as_ptr(),
+    sp::Lcl_Translation.as_ptr(),
+    sp::PostRotation.as_ptr(),
+    sp::PreRotation.as_ptr(),
+    sp::RotationOffset.as_ptr(),
+    sp::RotationOrder.as_ptr(),
+    sp::RotationPivot.as_ptr(),
+    sp::ScalingOffset.as_ptr(),
+    sp::ScalingPivot.as_ptr(),
+]);
+
+// ufbx.c:31043-31048 `ufbxi_transform_props_rotation`
+static TRANSFORM_PROPS_ROTATION: PropNameTable<4> = PropNameTable([
+    sp::Lcl_Rotation.as_ptr(),
+    sp::PostRotation.as_ptr(),
+    sp::PreRotation.as_ptr(),
+    sp::RotationOrder.as_ptr(),
+]);
+
+// ufbx.c:31050-31052 `ufbxi_transform_props_scale`
+static TRANSFORM_PROPS_SCALE: PropNameTable<1> = PropNameTable([sp::Lcl_Scaling.as_ptr()]);
+
+// ufbx.c:31054-31060 `ufbxi_transform_props_rotation_scale`
+static TRANSFORM_PROPS_ROTATION_SCALE: PropNameTable<5> = PropNameTable([
+    sp::Lcl_Rotation.as_ptr(),
+    sp::Lcl_Scaling.as_ptr(),
+    sp::PostRotation.as_ptr(),
+    sp::PreRotation.as_ptr(),
+    sp::RotationOrder.as_ptr(),
+]);
+
+// ufbx.c:31062-31160 `ufbx_evaluate_transform_flags`
+#[inline(never)]
+pub(crate) unsafe fn evaluate_transform_flags(
+    anim: *const Anim,
+    node: *const Node,
+    time: f64,
+    flags: u32,
+) -> Transform {
+    let mut flags = flags;
+    ufbx_assert!(!anim.is_null());
+    ufbx_assert!(!node.is_null());
+    if node.is_null() {
+        return IDENTITY_TRANSFORM;
+    }
+    if anim.is_null() {
+        return (*node).local_transform;
+    }
+    if (*node).is_root {
+        return (*node).local_transform;
+    }
+
+    if (flags & TransformFlags::EXPLICIT_INCLUDES.raw()) == 0 {
+        flags |= TransformFlags::INCLUDE_ROTATION.raw()
+            | TransformFlags::INCLUDE_SCALE.raw()
+            | TransformFlags::INCLUDE_TRANSLATION.raw();
+    }
+
+    let mut prop_names: *const *const u8 = TRANSFORM_PROPS_ALL.0.as_ptr();
+    let mut num_prop_names: usize = TRANSFORM_PROPS_ALL.0.len();
+    let components: u32 = flags
+        & (TransformFlags::INCLUDE_ROTATION.raw()
+            | TransformFlags::INCLUDE_SCALE.raw()
+            | TransformFlags::INCLUDE_TRANSLATION.raw());
+    if components == (TransformFlags::INCLUDE_ROTATION.raw() | TransformFlags::INCLUDE_SCALE.raw())
+    {
+        prop_names = TRANSFORM_PROPS_ROTATION_SCALE.0.as_ptr();
+        num_prop_names = TRANSFORM_PROPS_ROTATION_SCALE.0.len();
+    } else if components == TransformFlags::INCLUDE_ROTATION.raw() {
+        prop_names = TRANSFORM_PROPS_ROTATION.0.as_ptr();
+        num_prop_names = TRANSFORM_PROPS_ROTATION.0.len();
+    } else if components == TransformFlags::INCLUDE_SCALE.raw() {
+        prop_names = TRANSFORM_PROPS_SCALE.0.as_ptr();
+        num_prop_names = TRANSFORM_PROPS_SCALE.0.len();
+    } else if components == 0 {
+        return IDENTITY_TRANSFORM;
+    }
+
+    let mut translation_scale: *const Vec3 = core::ptr::null();
+    let mut helper_scale = MaybeUninit::<Prop>::uninit(); // ufbxi_uninit
+    let mut scale_factor: Vec3 = ONE_VEC3;
+    let mut use_scale_factor: bool = false;
+
+    if !opt_ptr(core::ptr::addr_of!((*node).parent)).is_null()
+        && (flags & (TransformFlags::INCLUDE_SCALE.raw() | TransformFlags::INCLUDE_TRANSLATION.raw()))
+            != 0
+    {
+        let parent: *mut Node = opt_ptr(core::ptr::addr_of!((*node).parent));
+
+        if (flags & TransformFlags::IGNORE_COMPONENTWISE_SCALE.raw()) == 0
+            && !opt_ptr(core::ptr::addr_of!((*parent).inherit_scale_node)).is_null()
+        {
+            let mut p: *mut Node = opt_ptr(core::ptr::addr_of!((*parent).inherit_scale_node));
+
+            if (*node).is_scale_helper {
+                use_scale_factor = true;
+            }
+
+            while !p.is_null() && !opt_ptr(core::ptr::addr_of!((*p).scale_helper)).is_null() {
+                // C: `ufbx_prop scale = ufbx_evaluate_prop(anim, &p->scale_helper->element, ufbxi_Lcl_Scaling, time);`
+                let scale: Prop = evaluate_prop(
+                    anim,
+                    core::ptr::addr_of!(
+                        (*opt_ptr(core::ptr::addr_of!((*p).scale_helper))).element
+                    ),
+                    sp::Lcl_Scaling.as_ptr(),
+                    time,
+                );
+                // C: `scale.value_vec3.{x,y,z}` — the value union's 3-real view.
+                scale_factor.x *= scale.value_vec4.x;
+                scale_factor.y *= scale.value_vec4.y;
+                scale_factor.z *= scale.value_vec4.z;
+                p = opt_ptr(core::ptr::addr_of!((*p).inherit_scale_node));
+            }
+        }
+
+        if !opt_ptr(core::ptr::addr_of!((*parent).scale_helper)).is_null()
+            && (flags & TransformFlags::IGNORE_SCALE_HELPER.raw()) == 0
+        {
+            helper_scale.write(evaluate_prop(
+                anim,
+                core::ptr::addr_of!(
+                    (*opt_ptr(core::ptr::addr_of!((*parent).scale_helper))).element
+                ),
+                sp::Lcl_Scaling.as_ptr(),
+                time,
+            ));
+            let hs: *mut Prop = helper_scale.as_mut_ptr();
+            if ((*hs).flags.raw() & PropFlags::NOT_FOUND.raw()) != 0 {
+                (*hs).value_vec4.x = 1.0;
+                (*hs).value_vec4.y = 1.0;
+                (*hs).value_vec4.z = 1.0;
+            }
+            (*hs).value_vec4.x *= scale_factor.x;
+            (*hs).value_vec4.y *= scale_factor.y;
+            (*hs).value_vec4.z *= scale_factor.z;
+            // C: `translation_scale = &helper_scale.value_vec3;`
+            translation_scale = core::ptr::addr_of!((*hs).value_vec4) as *const Vec3;
+        }
+    }
+
+    let mut eval_flags: u32 = 0;
+    if (flags & TransformFlags::NO_EXTRAPOLATION.raw()) != 0 {
+        eval_flags |= EvaluateFlags::NO_EXTRAPOLATION.raw();
+    }
+
+    // C: `ufbx_prop buf[ufbxi_arraycount(ufbxi_transform_props_all)]; // ufbxi_uninit`
+    let mut buf = MaybeUninit::<[Prop; TRANSFORM_PROPS_ALL_COUNT]>::uninit(); // ufbxi_uninit
+    let props: Props = evaluate::evaluate_selected_props(
+        anim,
+        core::ptr::addr_of!((*node).element),
+        time,
+        buf.as_mut_ptr() as *mut Prop,
+        prop_names,
+        num_prop_names,
+        eval_flags,
+    );
+    // C: `(ufbx_rotation_order)ufbxi_find_enum(...)` — clamped to the valid range.
+    let order: RotationOrder = core::mem::transmute::<u32, RotationOrder>(find_enum(
+        &props,
+        sp::RotationOrder.as_ptr(),
+        RotationOrder::Xyz as i64,
+        RotationOrder::Spheric as i64,
+    ) as u32);
+
+    // C: `ufbx_transform transform; // ufbxi_uninit`
+    let mut transform = MaybeUninit::<Transform>::uninit(); // ufbxi_uninit
+    let t: *mut Transform = transform.as_mut_ptr();
+    if (components & TransformFlags::INCLUDE_TRANSLATION.raw()) != 0 {
+        core::ptr::write(t, get_transform(&props, order, node, translation_scale));
+    } else {
+        (*t).translation = ZERO_VEC3;
+        if (components & TransformFlags::INCLUDE_ROTATION.raw()) != 0 {
+            (*t).rotation = get_rotation(&props, order, node);
+        } else {
+            (*t).rotation = IDENTITY_QUAT;
+        }
+        if (components & TransformFlags::INCLUDE_SCALE.raw()) != 0 {
+            (*t).scale = get_scale(&props, node);
+        } else {
+            (*t).scale = ONE_VEC3;
+        }
+    }
+
+    if use_scale_factor {
+        (*t).scale.x *= scale_factor.x;
+        (*t).scale.y *= scale_factor.y;
+        (*t).scale.z *= scale_factor.z;
+    }
+    transform.assume_init()
+}
+
+// ufbx.c:31162-31165 `ufbx_evaluate_blend_weight`
+pub(crate) unsafe fn evaluate_blend_weight(
+    anim: *const Anim,
+    channel: *const BlendChannel,
+    time: f64,
+) -> Real {
+    evaluate_blend_weight_flags(anim, channel, time, 0)
+}
+
+// ufbx.c:31167-31176 `ufbx_evaluate_blend_weight_flags`
+pub(crate) unsafe fn evaluate_blend_weight_flags(
+    anim: *const Anim,
+    channel: *const BlendChannel,
+    time: f64,
+    flags: u32,
+) -> Real {
+    // C: `const char *prop_names[] = { ufbxi_DeformPercent, };` — the count
+    // const is the Rust spelling of `ufbxi_arraycount(prop_names)`: the array
+    // literal is checked against it, and `buf` below derives from it.
+    const NUM_PROP_NAMES: usize = 1;
+    let prop_names: [*const u8; NUM_PROP_NAMES] = [sp::DeformPercent.as_ptr()];
+
+    // C: `ufbx_prop buf[ufbxi_arraycount(prop_names)]; // ufbxi_uninit`
+    let mut buf = MaybeUninit::<[Prop; NUM_PROP_NAMES]>::uninit(); // ufbxi_uninit
+    let props: Props = evaluate::evaluate_selected_props(
+        anim,
+        core::ptr::addr_of!((*channel).element),
+        time,
+        buf.as_mut_ptr() as *mut Prop,
+        prop_names.as_ptr(),
+        prop_names.len(),
+        flags,
+    );
+    // C: `ufbxi_find_real(&props, ufbxi_DeformPercent, channel->weight * (ufbx_real)100.0) * (ufbx_real)0.01`
+    ufbxi_find_real(
+        &props,
+        sp::DeformPercent.as_ptr(),
+        (*channel).weight * (100.0 as Real),
+    ) * (0.01 as Real)
+}
 
 // ufbx.c:31178-31192 `ufbx_evaluate_scene`
-// C forks on `#if UFBXI_FEATURE_SCENE_EVALUATION`. The enabled arm needs
-// `ufbxi_eval_context` / `ufbxi_evaluate_scene` (ufbx.c:26046-26068 /
-// 26446-26483, `native::evaluate`), which is not ported — so only the `#else`
-// arm has a body here, the same split `ufbxi_obj_load` uses in `native::obj`.
-// That arm is C parity, NOT a stub: a build without `feature = "scene-eval"`
+// C forks on `#if UFBXI_FEATURE_SCENE_EVALUATION`; the arms are split into
+// cfg-gated fns (the same split `ufbxi_obj_load` uses in `native::obj`). The
+// `#else` arm is C parity, NOT a stub: a build without `feature = "scene-eval"`
 // must report `UFBX_ERROR_FEATURE_DISABLED` exactly like a C build with
 // `UFBX_MINIMAL`. Note that `ufbxi_check_opts_ptr` (ufbx.c:31180) sits BEFORE
-// the `#if`, so it is ported here; the deferred arm is only 31182-31183.
-/* DEFERRED(m9): ufbx.c:31182-31183 `ufbx_evaluate_scene` (feature-enabled arm) */
+// the `#if`, so both arms run it.
+#[cfg(feature = "scene-eval")]
+pub(crate) unsafe fn evaluate_scene(
+    scene: *const Scene,
+    anim: *const Anim,
+    time: f64,
+    opts: *const RawEvaluateOpts,
+    error: *mut Error,
+) -> *mut Scene {
+    ufbxi_check_opts_ptr!(Scene, opts, error);
+    // C: `ufbxi_eval_context ec = { 0 };`
+    let mut ec = MaybeUninit::<evaluate::EvalContext>::zeroed();
+    evaluate::evaluate_scene(ec.as_mut_ptr(), scene as *mut Scene, anim, time, opts, error)
+}
+
 #[cfg(not(feature = "scene-eval"))]
 pub(crate) unsafe fn evaluate_scene(
     scene: *const Scene,
@@ -1089,11 +1670,45 @@ pub(crate) unsafe fn evaluate_scene(
     core::ptr::null_mut()
 }
 
-// `ufbx_create_anim` has no `#if` fork: it drives `ufbxi_create_anim_context`
-// / `ufbxi_create_anim_imp` (ufbx.c:26487-26496 / 26552-26668,
-// `native::evaluate`)
-// unconditionally, and none of that is ported. No body, no `capi.rs` shim.
-/* DEFERRED(m9): ufbx.c:31194-31218 `ufbx_create_anim` */
+// ufbx.c:31194-31218 `ufbx_create_anim`
+// No `#if` fork in C: it drives `ufbxi_create_anim_context` /
+// `ufbxi_create_anim_imp` (`native::evaluate`) unconditionally.
+pub(crate) unsafe fn create_anim(
+    scene: *const Scene,
+    opts: *const RawAnimOpts,
+    error: *mut Error,
+) -> *mut Anim {
+    ufbxi_check_opts_ptr!(Anim, opts, error);
+    ufbx_assert!(!scene.is_null());
+
+    // C: `ufbxi_create_anim_context ac = { UFBX_ERROR_NONE };`
+    let mut ac = MaybeUninit::<evaluate::CreateAnimContext>::zeroed();
+    let ac: *mut evaluate::CreateAnimContext = ac.as_mut_ptr();
+    if !opts.is_null() {
+        // C: `ac.opts = *opts;` (struct assignment)
+        core::ptr::copy_nonoverlapping(opts, core::ptr::addr_of_mut!((*ac).opts), 1);
+    }
+
+    (*ac).scene = scene;
+
+    // C: `int ok = ufbxi_create_anim_imp(&ac);`
+    let ok = evaluate::create_anim_imp(ac);
+
+    if ok.is_ok() {
+        clear_error(error);
+        let imp: *mut AnimImp = (*ac).imp;
+        core::ptr::addr_of_mut!((*imp).anim)
+    } else {
+        fix_error_type(
+            core::ptr::addr_of_mut!((*ac).error),
+            b"Failed to create anim\0".as_ptr(),
+            error,
+        );
+        buf_free(core::ptr::addr_of_mut!((*ac).result));
+        free_ator(core::ptr::addr_of_mut!((*ac).ator_result));
+        core::ptr::null_mut()
+    }
+}
 
 // ufbx.c:31220-31229 `ufbx_free_anim`
 pub(crate) unsafe fn free_anim(anim: *mut Anim) {
@@ -1131,12 +1746,70 @@ pub(crate) unsafe fn retain_anim(anim: *mut Anim) {
 
 // ufbx.c:31242-31289 `ufbx_bake_anim`
 // Same `#if` split as `ufbx_evaluate_scene` above: the
-// `UFBXI_FEATURE_ANIMATION_BAKING` arm needs `ufbxi_bake_context` /
+// `UFBXI_FEATURE_ANIMATION_BAKING` arm uses `ufbxi_bake_context` /
 // `ufbxi_bake_anim_imp` (ufbx.c:26687-26723 / 27707-27765,
 // `native::evaluate`). Note that `ufbx_assert(scene)` sits BEFORE the `#if`
 // (so both arms run it) while `ufbxi_check_opts_ptr` sits INSIDE the enabled
 // arm — do not hoist it.
-/* DEFERRED(m9): ufbx.c:31246-31280 `ufbx_bake_anim` (feature-enabled arm) */
+#[cfg(feature = "baking")]
+pub(crate) unsafe fn bake_anim(
+    scene: *const Scene,
+    anim: *const Anim,
+    opts: *const RawBakeOpts,
+    error: *mut Error,
+) -> *mut BakedAnim {
+    ufbx_assert!(!scene.is_null());
+    ufbxi_check_opts_ptr!(BakedAnim, opts, error);
+    let mut anim = anim;
+    if anim.is_null() {
+        anim = ref_ptr(core::ptr::addr_of!((*scene).anim));
+    }
+
+    // C: `ufbxi_bake_context bc = { UFBX_ERROR_NONE };`
+    let mut bc = MaybeUninit::<evaluate::BakeContext>::zeroed();
+    let bc: *mut evaluate::BakeContext = bc.as_mut_ptr();
+    if !opts.is_null() {
+        // C: `bc.opts = *opts;` (struct assignment)
+        core::ptr::copy_nonoverlapping(opts, core::ptr::addr_of_mut!((*bc).opts), 1);
+    }
+
+    (*bc).scene = scene;
+
+    // C: `int ok = ufbxi_bake_anim_imp(&bc, anim);`
+    let ok = evaluate::bake_anim_imp(bc, anim);
+
+    buf_free(core::ptr::addr_of_mut!((*bc).tmp));
+    buf_free(core::ptr::addr_of_mut!((*bc).tmp_prop));
+    buf_free(core::ptr::addr_of_mut!((*bc).tmp_times));
+    buf_free(core::ptr::addr_of_mut!((*bc).tmp_bake_props));
+    buf_free(core::ptr::addr_of_mut!((*bc).tmp_nodes));
+    buf_free(core::ptr::addr_of_mut!((*bc).tmp_elements));
+    buf_free(core::ptr::addr_of_mut!((*bc).tmp_props));
+    buf_free(core::ptr::addr_of_mut!((*bc).tmp_bake_stack));
+    // C: `ufbxi_free(&bc.ator_tmp, char, bc.tmp_arr, bc.tmp_arr_size);`
+    free::<u8>(
+        core::ptr::addr_of_mut!((*bc).ator_tmp),
+        (*bc).tmp_arr,
+        (*bc).tmp_arr_size,
+    );
+    free_ator(core::ptr::addr_of_mut!((*bc).ator_tmp));
+
+    if ok.is_ok() {
+        clear_error(error);
+        let imp: *mut BakedAnimImp = (*bc).imp;
+        core::ptr::addr_of_mut!((*imp).bake)
+    } else {
+        fix_error_type(
+            core::ptr::addr_of_mut!((*bc).error),
+            b"Failed to bake anim\0".as_ptr(),
+            error,
+        );
+        buf_free(core::ptr::addr_of_mut!((*bc).result));
+        free_ator(core::ptr::addr_of_mut!((*bc).ator_result));
+        core::ptr::null_mut()
+    }
+}
+
 #[cfg(not(feature = "baking"))]
 pub(crate) unsafe fn bake_anim(
     scene: *const Scene,
@@ -2474,28 +3147,328 @@ pub(crate) unsafe fn add_blend_vertex_offsets(
     }
 }
 
-// The NURBS evaluation entry points below need `ufbxi_nurbs_weight` /
-// `ufbxi_nurbs_deriv` (ufbx.c:27771-27791), which live in the `// -- NURBS`
-// banner section — `native::nurbs` is still empty, so they are DEFERRED rather
-// than stubbed (the linker queue keeps reporting them as missing).
-/* DEFERRED(m10): ufbx.c:32097-32166 `ufbx_evaluate_nurbs_basis` */
-/* DEFERRED(m10): ufbx.c:32168-32212 `ufbx_evaluate_nurbs_curve` */
+// ufbx.c:32097-32166 `ufbx_evaluate_nurbs_basis`
+pub(crate) unsafe fn evaluate_nurbs_basis(
+    basis: *const NurbsBasis,
+    mut u: Real,
+    weights: *mut Real,
+    num_weights: usize,
+    mut derivatives: *mut Real,
+    num_derivatives: usize,
+) -> usize {
+    ufbx_assert!(!basis.is_null());
+    if basis.is_null() {
+        return usize::MAX;
+    }
+    if (*basis).order == 0 {
+        return usize::MAX;
+    }
+    if !(*basis).valid {
+        return usize::MAX;
+    }
 
-// `ufbx_evaluate_nurbs_surface` (ufbx.c:32214-32280) is pure math but drives
-// `ufbx_evaluate_nurbs_basis` (DEFERRED(m10) above) and reads
-// `UFBXI_MAX_NURBS_ORDER` from the `// -- NURBS` banner section — DEFERRED with
-// its basis dependency, no `capi.rs` shim.
-/* DEFERRED(m10): ufbx.c:32214-32280 `ufbx_evaluate_nurbs_surface` */
+    let degree: usize = ((*basis).order - 1) as usize;
+    ufbx_assert!(degree >= 1);
+
+    // Binary search for the knot span `[min_u, max_u]` where `min_u <= u < max_u`
+    // C: `ufbx_real_list knots = basis->knot_vector;` — a by-value list copy;
+    // `List` is not `Copy`, so read through a pointer to the same data.
+    let knots: *const List<Real> = &(*basis).knot_vector;
+    let mut knot: usize = usize::MAX;
+
+    if u <= (*basis).t_min {
+        knot = degree;
+        u = (*basis).t_min;
+    } else if u >= (*basis).t_max {
+        knot = (*basis)
+            .knot_vector
+            .count
+            .wrapping_sub(degree)
+            .wrapping_sub(2);
+        u = (*basis).t_max;
+    } else {
+        macro_lower_bound_eq::<Real>(
+            8,
+            &mut knot,
+            (*knots).data,
+            0,
+            (*knots).count.wrapping_sub(1),
+            // C: `( a[1] <= u )`
+            |a| *a.add(1) <= u,
+            // C: `( a[0] <= u && u < a[1] )`
+            |a| *a.add(0) <= u && u < *a.add(1),
+        );
+    }
+
+    // The found effective control points are found left from `knot`, locally
+    // we use `knot - ix` here as it's more convenient for the following algorithm
+    // but we return it as `knot - degree` so that users can find the control points
+    // at `points[knot], points[knot+1], ..., points[knot+degree]`
+    if knot < degree {
+        return usize::MAX;
+    }
+
+    if num_derivatives == 0 {
+        derivatives = core::ptr::null_mut();
+    }
+    if num_weights < (*basis).order as usize {
+        return knot - degree;
+    }
+    if weights.is_null() {
+        return knot - degree;
+    }
+
+    *weights.add(0) = 1.0f32 as Real;
+    for p in 1..=degree {
+        let mut prev: Real = 0.0f32 as Real;
+        let mut g: Real = 1.0f32 as Real - nurbs_weight(knots, knot - p + 1, p, u);
+        let mut dg: Real = 0.0f32 as Real;
+        if !derivatives.is_null() && p == degree {
+            dg = nurbs_deriv(knots, knot - p + 1, p);
+        }
+
+        // C: `for (size_t i = p; i > 0; i--)`
+        let mut i: usize = p;
+        while i > 0 {
+            let f: Real = nurbs_weight(knots, knot - p + i, p, u);
+            let weight: Real = *weights.add(i - 1);
+            *weights.add(i) = f * weight + g * prev;
+
+            if !derivatives.is_null() && p == degree {
+                let df: Real = nurbs_deriv(knots, knot - p + i, p);
+                if i < num_derivatives {
+                    *derivatives.add(i) = df * weight - dg * prev;
+                }
+                dg = df;
+            }
+
+            prev = weight;
+            g = 1.0f32 as Real - f;
+            i -= 1;
+        }
+
+        *weights.add(0) = g * prev;
+        if !derivatives.is_null() && p == degree {
+            *derivatives.add(0) = -dg * prev;
+        }
+    }
+
+    knot - degree
+}
+
+// ufbx.c:32168-32212 `ufbx_evaluate_nurbs_curve`
+#[inline(never)]
+pub(crate) unsafe fn evaluate_nurbs_curve(curve: *const NurbsCurve, u: Real) -> CurvePoint {
+    // C: `ufbx_curve_point result = { false };`
+    let mut result: CurvePoint = core::mem::zeroed();
+
+    ufbx_assert!(!curve.is_null());
+    if curve.is_null() {
+        return result;
+    }
+
+    let mut weights: [Real; MAX_NURBS_ORDER] = core::mem::zeroed(); // ufbxi_uninit
+    let mut derivs: [Real; MAX_NURBS_ORDER] = core::mem::zeroed(); // ufbxi_uninit
+    let base: usize = evaluate_nurbs_basis(
+        &(*curve).basis,
+        u,
+        weights.as_mut_ptr(),
+        MAX_NURBS_ORDER,
+        derivs.as_mut_ptr(),
+        MAX_NURBS_ORDER,
+    );
+    if base == usize::MAX {
+        return result;
+    }
+
+    let mut p: Vec4 = core::mem::zeroed();
+    let mut d: Vec4 = core::mem::zeroed();
+
+    let order: usize = (*curve).basis.order as usize;
+    if order > MAX_NURBS_ORDER {
+        return result;
+    }
+    if (*curve).control_points.count == 0 {
+        return result;
+    }
+
+    for i in 0..order {
+        let ix: usize = base.wrapping_add(i) % (*curve).control_points.count;
+        let cp: Vec4 = *(*curve).control_points.data.add(ix);
+        let weight: Real = weights[i] * cp.w;
+        let deriv: Real = derivs[i] * cp.w;
+
+        p.x += cp.x * weight;
+        p.y += cp.y * weight;
+        p.z += cp.z * weight;
+        p.w += weight;
+
+        d.x += cp.x * deriv;
+        d.y += cp.y * deriv;
+        d.z += cp.z * deriv;
+        d.w += deriv;
+    }
+
+    let rcp_w: Real = 1.0f32 as Real / p.w;
+    result.valid = true;
+    result.position.x = p.x * rcp_w;
+    result.position.y = p.y * rcp_w;
+    result.position.z = p.z * rcp_w;
+    result.derivative.x = (d.x - d.w * result.position.x) * rcp_w;
+    result.derivative.y = (d.y - d.w * result.position.y) * rcp_w;
+    result.derivative.z = (d.z - d.w * result.position.z) * rcp_w;
+    result
+}
+
+// ufbx.c:32214-32280 `ufbx_evaluate_nurbs_surface`
+#[inline(never)]
+pub(crate) unsafe fn evaluate_nurbs_surface(
+    surface: *const NurbsSurface,
+    u: Real,
+    v: Real,
+) -> SurfacePoint {
+    // C: `ufbx_surface_point result = { false };`
+    let mut result: SurfacePoint = core::mem::zeroed();
+
+    ufbx_assert!(!surface.is_null());
+    if surface.is_null() {
+        return result;
+    }
+
+    let mut weights_u: [Real; MAX_NURBS_ORDER] = core::mem::zeroed(); // ufbxi_uninit
+    let mut weights_v: [Real; MAX_NURBS_ORDER] = core::mem::zeroed(); // ufbxi_uninit
+    let mut derivs_u: [Real; MAX_NURBS_ORDER] = core::mem::zeroed(); // ufbxi_uninit
+    let mut derivs_v: [Real; MAX_NURBS_ORDER] = core::mem::zeroed(); // ufbxi_uninit
+    let base_u: usize = evaluate_nurbs_basis(
+        &(*surface).basis_u,
+        u,
+        weights_u.as_mut_ptr(),
+        MAX_NURBS_ORDER,
+        derivs_u.as_mut_ptr(),
+        MAX_NURBS_ORDER,
+    );
+    let base_v: usize = evaluate_nurbs_basis(
+        &(*surface).basis_v,
+        v,
+        weights_v.as_mut_ptr(),
+        MAX_NURBS_ORDER,
+        derivs_v.as_mut_ptr(),
+        MAX_NURBS_ORDER,
+    );
+    if base_u == usize::MAX || base_v == usize::MAX {
+        return result;
+    }
+
+    let mut p: Vec4 = core::mem::zeroed();
+    let mut du: Vec4 = core::mem::zeroed();
+    let mut dv: Vec4 = core::mem::zeroed();
+
+    let num_u: usize = (*surface).num_control_points_u;
+    let num_v: usize = (*surface).num_control_points_v;
+    let order_u: usize = (*surface).basis_u.order as usize;
+    let order_v: usize = (*surface).basis_v.order as usize;
+    if order_u > MAX_NURBS_ORDER || order_v > MAX_NURBS_ORDER {
+        return result;
+    }
+    if num_u == 0 || num_v == 0 {
+        return result;
+    }
+
+    for vi in 0..order_v {
+        let vix: usize = base_v.wrapping_add(vi) % num_v;
+        let weight_v: Real = weights_v[vi];
+        let deriv_v: Real = derivs_v[vi];
+
+        for ui in 0..order_u {
+            let uix: usize = base_u.wrapping_add(ui) % num_u;
+            let weight_u: Real = weights_u[ui];
+            let deriv_u: Real = derivs_u[ui];
+            let cp: Vec4 = *(*surface)
+                .control_points
+                .data
+                .add(vix.wrapping_mul(num_u).wrapping_add(uix));
+
+            let weight: Real = weight_u * weight_v * cp.w;
+            let wderiv_u: Real = deriv_u * weight_v * cp.w;
+            let wderiv_v: Real = deriv_v * weight_u * cp.w;
+
+            p.x += cp.x * weight;
+            p.y += cp.y * weight;
+            p.z += cp.z * weight;
+            p.w += weight;
+
+            du.x += cp.x * wderiv_u;
+            du.y += cp.y * wderiv_u;
+            du.z += cp.z * wderiv_u;
+            du.w += wderiv_u;
+
+            dv.x += cp.x * wderiv_v;
+            dv.y += cp.y * wderiv_v;
+            dv.z += cp.z * wderiv_v;
+            dv.w += wderiv_v;
+        }
+    }
+
+    let rcp_w: Real = 1.0f32 as Real / p.w;
+    result.valid = true;
+    result.position.x = p.x * rcp_w;
+    result.position.y = p.y * rcp_w;
+    result.position.z = p.z * rcp_w;
+    result.derivative_u.x = (du.x - du.w * result.position.x) * rcp_w;
+    result.derivative_u.y = (du.y - du.w * result.position.y) * rcp_w;
+    result.derivative_u.z = (du.z - du.w * result.position.z) * rcp_w;
+    result.derivative_v.x = (dv.x - dv.w * result.position.x) * rcp_w;
+    result.derivative_v.y = (dv.y - dv.w * result.position.y) * rcp_w;
+    result.derivative_v.z = (dv.z - dv.w * result.position.z) * rcp_w;
+    result
+}
 
 // ufbx.c:32282-32318 `ufbx_tessellate_nurbs_curve`
 // C forks on `#if UFBXI_FEATURE_TESSELLATION`; the whole body is inside the
-// fork (no shared prologue). The enabled arm needs
-// `ufbxi_tessellate_curve_context` / `ufbxi_tessellate_nurbs_curve_imp`
-// (ufbx.c:27799+, `// -- Tessellation`), which is not ported. Only the `#else`
-// arm has a body here — same split as `ufbx_evaluate_scene`; that arm is C
-// parity (a build without `feature = "tessellation"` reports
-// `UFBX_ERROR_FEATURE_DISABLED`), NOT a stub.
-/* DEFERRED(m9): ufbx.c:32285-32308 `ufbx_tessellate_nurbs_curve` (feature-enabled arm) */
+// fork (no shared prologue), so each arm is a separate cfg'd fn — the same
+// split `ufbxi_obj_load` uses in `native::obj`.
+#[cfg(feature = "tessellation")]
+pub(crate) unsafe fn tessellate_nurbs_curve(
+    curve: *const NurbsCurve,
+    opts: *const RawTessellateCurveOpts,
+    error: *mut Error,
+) -> *mut LineCurve {
+    ufbxi_check_opts_ptr!(LineCurve, opts, error);
+    ufbx_assert!(!curve.is_null());
+    if curve.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    // C: `ufbxi_tessellate_curve_context tc = { UFBX_ERROR_NONE };`
+    let mut tc = MaybeUninit::<TessellateCurveContext>::zeroed();
+    let tc: *mut TessellateCurveContext = tc.as_mut_ptr();
+    if !opts.is_null() {
+        // C: `tc.opts = *opts` — struct assignment (memcpy).
+        core::ptr::copy_nonoverlapping(opts, &mut (*tc).opts, 1);
+    }
+
+    (*tc).curve = curve;
+
+    // C: `int ok = ufbxi_tessellate_nurbs_curve_imp(&tc);`
+    let ok: bool = tessellate_nurbs_curve_imp(tc).is_ok();
+
+    free_ator(&mut (*tc).ator_tmp);
+
+    if ok {
+        clear_error(error);
+        let imp: *mut LineCurveImp = (*tc).imp;
+        &mut (*imp).curve
+    } else {
+        fix_error_type(&mut (*tc).error, b"Failed to tessellate\0".as_ptr(), error);
+        buf_free(&mut (*tc).result);
+        free_ator(&mut (*tc).ator_result);
+        core::ptr::null_mut()
+    }
+}
+
+// ufbx.c:32282-32318 `ufbx_tessellate_nurbs_curve` (`#else` arm — feature
+// disabled). That arm is C parity (a build without `feature = "tessellation"`
+// reports `UFBX_ERROR_FEATURE_DISABLED`), NOT a stub.
 #[cfg(not(feature = "tessellation"))]
 pub(crate) unsafe fn tessellate_nurbs_curve(
     curve: *const crate::generated::NurbsCurve,
@@ -2513,11 +3486,53 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
 }
 
 // ufbx.c:32320-32357 `ufbx_tessellate_nurbs_surface`
-// Same `#if UFBXI_FEATURE_TESSELLATION` split; the enabled arm needs
-// `ufbxi_tessellate_surface_context` / `ufbxi_tessellate_nurbs_surface_imp`.
-// C-parity note: this `#else` arm has NO `ufbxi_fmt_err_info` call (unlike
+// Same `#if UFBXI_FEATURE_TESSELLATION` split as `ufbx_tessellate_nurbs_curve`
+// above. C-parity notes: `ufbx_assert(surface)` sits BEFORE
+// `ufbxi_check_opts_ptr` here (the curve variant has the opposite order).
+#[cfg(feature = "tessellation")]
+pub(crate) unsafe fn tessellate_nurbs_surface(
+    surface: *const NurbsSurface,
+    opts: *const RawTessellateSurfaceOpts,
+    error: *mut Error,
+) -> *mut Mesh {
+    ufbx_assert!(!surface.is_null());
+    ufbxi_check_opts_ptr!(Mesh, opts, error);
+    if surface.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    // C: `ufbxi_tessellate_surface_context tc = { UFBX_ERROR_NONE };`
+    let mut tc = MaybeUninit::<TessellateSurfaceContext>::zeroed();
+    let tc: *mut TessellateSurfaceContext = tc.as_mut_ptr();
+    if !opts.is_null() {
+        // C: `tc.opts = *opts` — struct assignment (memcpy).
+        core::ptr::copy_nonoverlapping(opts, &mut (*tc).opts, 1);
+    }
+
+    (*tc).surface = surface;
+
+    // C: `int ok = ufbxi_tessellate_nurbs_surface_imp(&tc);`
+    let ok: bool = tessellate_nurbs_surface_imp(tc).is_ok();
+
+    buf_free(&mut (*tc).tmp);
+    map_free(&mut (*tc).position_map);
+    free_ator(&mut (*tc).ator_tmp);
+
+    if ok {
+        clear_error(error);
+        let imp: *mut MeshImp = (*tc).imp;
+        &mut (*imp).mesh
+    } else {
+        fix_error_type(&mut (*tc).error, b"Failed to tessellate\0".as_ptr(), error);
+        buf_free(&mut (*tc).result);
+        free_ator(&mut (*tc).ator_result);
+        core::ptr::null_mut()
+    }
+}
+
+// ufbx.c:32320-32357 `ufbx_tessellate_nurbs_surface` (`#else` arm — feature
+// disabled). C-parity note: this arm has NO `ufbxi_fmt_err_info` call (unlike
 // `ufbx_tessellate_nurbs_curve` above) — do not add one.
-/* DEFERRED(m9): ufbx.c:32322-32349 `ufbx_tessellate_nurbs_surface` (feature-enabled arm) */
 #[cfg(not(feature = "tessellation"))]
 pub(crate) unsafe fn tessellate_nurbs_surface(
     surface: *const crate::generated::NurbsSurface,
@@ -2533,13 +3548,41 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     core::ptr::null_mut()
 }
 
-// `ufbx_free_line_curve` (ufbx.c:32359-32368) / `ufbx_retain_line_curve`
-// (32370-32379) dereference `ufbxi_line_curve_imp` (ufbx.c:27791-27795), whose
-// definition lives in the `// -- Tessellation` banner section — not yet ported
-// — so the refcount offset (`ufbxi_get_imp`) has no struct to key off. DEFERRED
-// with that type; no `capi.rs` shims.
-/* DEFERRED(m9): ufbx.c:32359-32368 `ufbx_free_line_curve` */
-/* DEFERRED(m9): ufbx.c:32370-32379 `ufbx_retain_line_curve` */
+// ufbx.c:32359-32368 `ufbx_free_line_curve`
+// Not feature-gated in C: `ufbxi_line_curve_imp` sits before the
+// `#if UFBXI_FEATURE_TESSELLATION` fork (see `native::nurbs`).
+pub(crate) unsafe fn free_line_curve(line_curve: *mut LineCurve) {
+    if line_curve.is_null() {
+        return;
+    }
+    if !(*line_curve).from_tessellated_nurbs {
+        return;
+    }
+
+    let imp: *mut LineCurveImp = get_imp(line_curve as *mut c_void);
+    ufbx_assert!((*imp).magic == LINE_CURVE_IMP_MAGIC);
+    if (*imp).magic != LINE_CURVE_IMP_MAGIC {
+        return;
+    }
+    release_ref(&mut (*imp).refcount);
+}
+
+// ufbx.c:32370-32379 `ufbx_retain_line_curve`
+pub(crate) unsafe fn retain_line_curve(line_curve: *mut LineCurve) {
+    if line_curve.is_null() {
+        return;
+    }
+    if !(*line_curve).from_tessellated_nurbs {
+        return;
+    }
+
+    let imp: *mut LineCurveImp = get_imp(line_curve as *mut c_void);
+    ufbx_assert!((*imp).magic == LINE_CURVE_IMP_MAGIC);
+    if (*imp).magic != LINE_CURVE_IMP_MAGIC {
+        return;
+    }
+    retain_ref(&mut (*imp).refcount);
+}
 
 // ufbx.c:32381-32390 `ufbx_find_face_index`
 pub(crate) unsafe fn find_face_index(mesh: *mut Mesh, index: usize) -> u32 {
@@ -2567,13 +3610,151 @@ pub(crate) unsafe fn find_face_index(mesh: *mut Mesh, index: usize) -> u32 {
 }
 
 // ufbx.c:32392-32475 `ufbx_catch_triangulate_face`
-// C forks on `#if UFBXI_FEATURE_TRIANGULATION`; the enabled arm needs
-// `ufbxi_ngon_context` / `ufbxi_triangulate_ngon` (ufbx.c:28xxx,
-// `// -- Triangulation`), which is not ported. The `#else` arm just records a
-// panic and returns 0 — ported under `feature = "triangulation"` off (C
-// parity). The non-catch `ufbx_triangulate_face` wrapper (ufbx.c:33165) rides
-// the same cfg since it calls this.
-/* DEFERRED(m9): ufbx.c:32394-32470 `ufbx_catch_triangulate_face` (feature-enabled arm) */
+// C forks on `#if UFBXI_FEATURE_TRIANGULATION`; the enabled arm drives
+// `ufbxi_ngon_context` / `ufbxi_triangulate_ngon` (`native/topology.rs`), the
+// `#else` arm just records a panic and returns 0. Both arms are ported.
+// C: `ufbx_abi ufbxi_noinline` (ufbx.c:32392).
+#[cfg(feature = "triangulation")]
+#[inline(never)]
+pub(crate) unsafe fn catch_triangulate_face(
+    panic: *mut Panic,
+    indices: *mut u32,
+    num_indices: usize,
+    mesh: *const Mesh,
+    face: Face,
+) -> u32 {
+    if face.num_indices < 3 {
+        return 0;
+    }
+
+    let required_indices: usize = (face.num_indices as usize).wrapping_sub(2).wrapping_mul(3);
+    if ufbxi_panicf!(
+        panic,
+        num_indices >= required_indices,
+        "Face needs at least %zu indices for triangles, got space for %zu",
+        required_indices,
+        num_indices,
+    ) {
+        return 0;
+    }
+    if ufbxi_panicf!(
+        panic,
+        (face.index_begin as usize) < (*mesh).num_indices,
+        "Face index begin (%u) out of bounds (%zu)",
+        face.index_begin,
+        (*mesh).num_indices,
+    ) {
+        return 0;
+    }
+    if ufbxi_panicf!(
+        panic,
+        (*mesh).num_indices.wrapping_sub(face.index_begin as usize) >= face.num_indices as usize,
+        "Face index end (%u + %u) out of bounds (%zu)",
+        face.index_begin,
+        face.num_indices,
+        (*mesh).num_indices,
+    ) {
+        return 0;
+    }
+
+    if face.num_indices == 3 {
+        // Fast case: Already a triangle
+        *indices.add(0) = face.index_begin.wrapping_add(0);
+        *indices.add(1) = face.index_begin.wrapping_add(1);
+        *indices.add(2) = face.index_begin.wrapping_add(2);
+        1
+    } else if face.num_indices == 4 {
+        // Quad: Split along the shortest axis unless a vertex crosses the axis
+        let i0: u32 = face.index_begin.wrapping_add(0);
+        let i1: u32 = face.index_begin.wrapping_add(1);
+        let i2: u32 = face.index_begin.wrapping_add(2);
+        let i3: u32 = face.index_begin.wrapping_add(3);
+        let v0: Vec3 = *(*mesh)
+            .vertex_position
+            .values
+            .data
+            .add(*(*mesh).vertex_position.indices.data.add(i0 as usize) as usize);
+        let v1: Vec3 = *(*mesh)
+            .vertex_position
+            .values
+            .data
+            .add(*(*mesh).vertex_position.indices.data.add(i1 as usize) as usize);
+        let v2: Vec3 = *(*mesh)
+            .vertex_position
+            .values
+            .data
+            .add(*(*mesh).vertex_position.indices.data.add(i2 as usize) as usize);
+        let v3: Vec3 = *(*mesh)
+            .vertex_position
+            .values
+            .data
+            .add(*(*mesh).vertex_position.indices.data.add(i3 as usize) as usize);
+
+        let a: Vec3 = sub3(v2, v0);
+        let b: Vec3 = sub3(v3, v1);
+
+        let na1: Vec3 = normalize3(cross3(a, sub3(v1, v0)));
+        let na3: Vec3 = normalize3(cross3(a, sub3(v0, v3)));
+        let nb0: Vec3 = normalize3(cross3(b, sub3(v1, v0)));
+        let nb2: Vec3 = normalize3(cross3(b, sub3(v2, v1)));
+
+        let dot_aa: Real = dot3(a, a);
+        let dot_bb: Real = dot3(b, b);
+        let dot_na: Real = dot3(na1, na3);
+        let dot_nb: Real = dot3(nb0, nb2);
+
+        let mut split_a: bool = dot_aa <= dot_bb;
+
+        if dot_na < 0.0 || dot_nb < 0.0 {
+            split_a = dot_na >= dot_nb;
+        }
+
+        if split_a {
+            *indices.add(0) = i0;
+            *indices.add(1) = i1;
+            *indices.add(2) = i2;
+            *indices.add(3) = i2;
+            *indices.add(4) = i3;
+            *indices.add(5) = i0;
+        } else {
+            *indices.add(0) = i1;
+            *indices.add(1) = i2;
+            *indices.add(2) = i3;
+            *indices.add(3) = i3;
+            *indices.add(4) = i0;
+            *indices.add(5) = i1;
+        }
+
+        2
+    } else {
+        // C: `ufbxi_ngon_context nc = { 0 };`
+        let mut nc: crate::native::topology::NgonContext =
+            core::mem::MaybeUninit::zeroed().assume_init();
+        core::ptr::write(&mut nc.positions, core::ptr::read(&(*mesh).vertex_position));
+        nc.face = face;
+
+        let num_indices_u32: u32 = if num_indices < u32::MAX as usize {
+            num_indices as u32
+        } else {
+            u32::MAX
+        };
+
+        let mut local_indices: [u32; 12] = core::mem::zeroed(); // ufbxi_uninit
+        if num_indices_u32 < 12 {
+            let num_tris: u32 =
+                crate::native::topology::triangulate_ngon(&mut nc, local_indices.as_mut_ptr(), 12);
+            core::ptr::copy_nonoverlapping(
+                local_indices.as_ptr(),
+                indices,
+                num_tris.wrapping_mul(3) as usize,
+            );
+            num_tris
+        } else {
+            crate::native::topology::triangulate_ngon(&mut nc, indices, num_indices_u32)
+        }
+    }
+}
+
 // C: `ufbx_abi ufbxi_noinline` (ufbx.c:32392).
 #[cfg(not(feature = "triangulation"))]
 #[inline(never)]
@@ -2591,11 +3772,25 @@ pub(crate) unsafe fn catch_triangulate_face(
     0
 }
 
-// `ufbx_catch_compute_topology` (ufbx.c:32477-32482) drives
-// `ufbxi_compute_topology` (ufbx.c:29xxx, `// -- Topology`), which is not
-// ported. DEFERRED; the non-catch `ufbx_compute_topology` wrapper (33168) rides
-// with it.
-/* DEFERRED(m9): ufbx.c:32477-32482 `ufbx_catch_compute_topology` */
+// ufbx.c:32477-32482 `ufbx_catch_compute_topology`
+pub(crate) unsafe fn catch_compute_topology(
+    panic: *mut Panic,
+    mesh: *const Mesh,
+    indices: *mut TopoEdge,
+    num_indices: usize,
+) {
+    if ufbxi_panicf!(
+        panic,
+        num_indices >= (*mesh).num_indices,
+        "Required mesh.num_indices (%zu) indices, got %zu",
+        (*mesh).num_indices,
+        num_indices,
+    ) {
+        return;
+    }
+
+    crate::native::topology::compute_topology(mesh, indices);
+}
 
 // ufbx.c:32484-32492 `ufbx_catch_topo_next_vertex_edge`
 pub(crate) unsafe fn catch_topo_next_vertex_edge(
@@ -2620,7 +3815,11 @@ pub(crate) unsafe fn catch_topo_next_vertex_edge(
     if twin == NO_INDEX {
         return NO_INDEX;
     }
-    if ufbxi_panicf!(panic, (twin as usize) < num_topo, "Corrupted topology structure") {
+    if ufbxi_panicf!(
+        panic,
+        (twin as usize) < num_topo,
+        "Corrupted topology structure"
+    ) {
         return NO_INDEX;
     }
     (*topo.add(twin as usize)).next
@@ -2647,6 +3846,17 @@ pub(crate) unsafe fn catch_topo_prev_vertex_edge(
     }
     // C: `topo[topo[index].prev].twin`.
     (*topo.add((*topo.add(index as usize)).prev as usize)).twin
+}
+
+// ufbx.h:5763 `ufbx_get_vertex_real` (an `ufbx_inline`, not `ufbx_abi`, so no
+// shim); same `(int32_t)` index cast as `ufbx_get_vertex_vec3` below.
+#[inline(always)]
+pub(crate) unsafe fn get_vertex_real(v: *const crate::generated::VertexReal, index: usize) -> Real {
+    ufbx_assert!(index < (*v).indices.count);
+    *(*v)
+        .values
+        .data
+        .offset(*(*v).indices.data.add(index) as i32 as isize)
 }
 
 // ufbx.h:5765 `ufbx_get_vertex_vec3` (an `ufbx_inline`, not `ufbx_abi`, so no
@@ -2680,7 +3890,10 @@ pub(crate) unsafe fn catch_get_weighted_face_normal(
     }
     if ufbxi_panicf!(
         panic,
-        (*positions).indices.count.wrapping_sub(face.index_begin as usize)
+        (*positions)
+            .indices
+            .count
+            .wrapping_sub(face.index_begin as usize)
             >= face.num_indices as usize,
         "Face index end (%u + %u) out of bounds (%zu)",
         face.index_begin,
@@ -2707,7 +3920,11 @@ pub(crate) unsafe fn catch_get_weighted_face_normal(
         // Newell's Method
         let mut result: Vec3 = ZERO_VEC3;
         for i in 0..face.num_indices as usize {
-            let next: usize = if i + 1 < face.num_indices as usize { i + 1 } else { 0 };
+            let next: usize = if i + 1 < face.num_indices as usize {
+                i + 1
+            } else {
+                0
+            };
             let a: Vec3 = get_vertex_vec3(positions, (face.index_begin as usize).wrapping_add(i));
             let b: Vec3 =
                 get_vertex_vec3(positions, (face.index_begin as usize).wrapping_add(next));
@@ -2719,13 +3936,105 @@ pub(crate) unsafe fn catch_get_weighted_face_normal(
     }
 }
 
-// `ufbx_catch_generate_normal_mapping` (ufbx.c:32534-32578) walks the topology
-// via `ufbx_topo_next/prev_vertex_edge` (ported below) but also calls
-// `ufbxi_is_edge_smooth` (ufbx.c:29xxx, `// -- Topology`), which is not ported.
-// DEFERRED with it; the `ufbx_generate_normal_mapping` wrapper (32580) rides
-// along.
-/* DEFERRED(m9): ufbx.c:32534-32578 `ufbx_catch_generate_normal_mapping` */
-/* DEFERRED(m9): ufbx.c:32580-32583 `ufbx_generate_normal_mapping` */
+// ufbx.c:32534-32578 `ufbx_catch_generate_normal_mapping`
+// C-parity: this one is declared WITHOUT `ufbx_abi` in ufbx.c (the `ufbx.h`
+// declaration carries it) — no behavioral difference here.
+pub(crate) unsafe fn catch_generate_normal_mapping(
+    panic: *mut Panic,
+    mesh: *const Mesh,
+    topo: *const TopoEdge,
+    num_topo: usize,
+    normal_indices: *mut u32,
+    num_normal_indices: usize,
+    assume_smooth: bool,
+) -> usize {
+    let mut next_index: u32 = 0;
+    if ufbxi_panicf!(
+        panic,
+        num_normal_indices >= (*mesh).num_indices,
+        "Expected at least mesh.num_indices (%zu), got %zu",
+        (*mesh).num_indices,
+        num_normal_indices,
+    ) {
+        return 0;
+    }
+
+    for i in 0..(*mesh).num_indices {
+        *normal_indices.add(i) = NO_INDEX;
+    }
+
+    // Walk around vertices and merge around smooth edges
+    for vi in 0..(*mesh).num_vertices {
+        let original_start: u32 = *(*mesh).vertex_first_index.data.add(vi);
+        if original_start == NO_INDEX {
+            continue;
+        }
+        let mut start: u32 = original_start;
+        let mut cur: u32 = start;
+
+        loop {
+            let prev: u32 = topo_next_vertex_edge(topo, num_topo, cur);
+            if !is_edge_smooth(mesh, topo, num_topo, cur, assume_smooth) {
+                start = cur;
+            }
+            if prev == NO_INDEX {
+                start = cur;
+                break;
+            }
+            if prev == original_start {
+                break;
+            }
+            cur = prev;
+        }
+
+        // C: `normal_indices[start] = next_index++;`
+        *normal_indices.add(start as usize) = next_index;
+        next_index = next_index.wrapping_add(1);
+        let mut next: u32 = start;
+        loop {
+            next = topo_prev_vertex_edge(topo, num_topo, next);
+            if next == NO_INDEX || next == start {
+                break;
+            }
+
+            if !is_edge_smooth(mesh, topo, num_topo, next, assume_smooth) {
+                next_index = next_index.wrapping_add(1);
+            }
+            *normal_indices.add(next as usize) = next_index.wrapping_sub(1);
+        }
+    }
+
+    // Assign non-manifold indices
+    for i in 0..(*mesh).num_indices {
+        if *normal_indices.add(i) == NO_INDEX {
+            // C: `normal_indices[i] = next_index++;`
+            *normal_indices.add(i) = next_index;
+            next_index = next_index.wrapping_add(1);
+        }
+    }
+
+    next_index as usize
+}
+
+// ufbx.c:32580-32583 `ufbx_generate_normal_mapping`
+pub(crate) unsafe fn generate_normal_mapping(
+    mesh: *const Mesh,
+    topo: *const TopoEdge,
+    num_topo: usize,
+    normal_indices: *mut u32,
+    num_normal_indices: usize,
+    assume_smooth: bool,
+) -> usize {
+    catch_generate_normal_mapping(
+        core::ptr::null_mut(),
+        mesh,
+        topo,
+        num_topo,
+        normal_indices,
+        num_normal_indices,
+        assume_smooth,
+    )
+}
 
 // ufbx.c:32585-32612 `ufbx_catch_compute_normals`
 pub(crate) unsafe fn catch_compute_normals(
@@ -2747,14 +4056,17 @@ pub(crate) unsafe fn catch_compute_normals(
         return;
     }
 
-    core::ptr::write_bytes(normals as *mut u8, 0, size_of::<Vec3>().wrapping_mul(num_normals));
+    core::ptr::write_bytes(
+        normals as *mut u8,
+        0,
+        size_of::<Vec3>().wrapping_mul(num_normals),
+    );
 
     for fi in 0..(*mesh).num_faces {
         let face: Face = *(*mesh).faces.data.add(fi);
         let normal: Vec3 = get_weighted_face_normal(positions, face);
         for ix in 0..face.num_indices as usize {
-            let index: u32 =
-                *normal_indices.add((face.index_begin as usize).wrapping_add(ix));
+            let index: u32 = *normal_indices.add((face.index_begin as usize).wrapping_add(ix));
 
             if ufbxi_panicf!(
                 panic,
@@ -2802,11 +4114,25 @@ pub(crate) unsafe fn compute_normals(
     );
 }
 
-// `ufbx_subdivide_mesh` (ufbx.c:32619-32625) drives `ufbxi_subdivide_mesh`
-// (ufbx.c:29xxx, `// -- Subdivision`), which is not ported. The public function
-// has no `#if`/`#else` fork (it always delegates), so there is no partial arm
-// to port — DEFERRED whole, no `capi.rs` shim.
-/* DEFERRED(m9): ufbx.c:32619-32625 `ufbx_subdivide_mesh` */
+// ufbx.c:32619-32625 `ufbx_subdivide_mesh`
+// The public function has no `#if`/`#else` fork — it always delegates to
+// `ufbxi_subdivide_mesh` (native/subdivision.rs `subdivide_mesh`), which is the
+// one that carries the `UFBXI_FEATURE_SUBDIVISION` split.
+pub(crate) unsafe fn subdivide_mesh(
+    mesh: *const Mesh,
+    level: usize,
+    opts: *const crate::generated::RawSubdivideOpts,
+    error: *mut Error,
+) -> *mut Mesh {
+    ufbxi_check_opts_ptr!(Mesh, opts, error);
+    if mesh.is_null() {
+        return core::ptr::null_mut();
+    }
+    if level == 0 {
+        return mesh as *mut Mesh;
+    }
+    crate::native::subdivision::subdivide_mesh(mesh, level, opts, error)
+}
 
 // ufbx.c:32627-32636 `ufbx_free_mesh`
 pub(crate) unsafe fn free_mesh(mesh: *mut Mesh) {
@@ -2842,12 +4168,35 @@ pub(crate) unsafe fn retain_mesh(mesh: *mut Mesh) {
     retain_ref(&mut (*imp).refcount);
 }
 
-// `ufbx_load_geometry_cache` (ufbx.c:32649-32655) / `_len` (32657-32664) drive
-// `ufbxi_load_geometry_cache` (ufbx.c:24xxx, `// -- Geometry cache`), which is
-// not ported. Both delegate unconditionally (no feature fork in the public
-// entry points), so DEFERRED whole; no `capi.rs` shims.
-/* DEFERRED(m9): ufbx.c:32649-32655 `ufbx_load_geometry_cache` */
-/* DEFERRED(m9): ufbx.c:32657-32664 `ufbx_load_geometry_cache_len` */
+// ufbx.c:32649-32655 `ufbx_load_geometry_cache`
+pub(crate) unsafe fn load_geometry_cache(
+    filename: *const u8,
+    opts: *const RawGeometryCacheOpts,
+    error: *mut Error,
+) -> *mut GeometryCache {
+    load_geometry_cache_len(
+        filename,
+        crate::native::error::strlen(filename),
+        opts,
+        error,
+    )
+}
+
+// ufbx.c:32657-32664 `ufbx_load_geometry_cache_len`
+// Both entry points delegate unconditionally — there is no feature fork here;
+// `ufbxi_load_geometry_cache` (`native::cache`) owns the
+// `UFBXI_FEATURE_GEOMETRY_CACHE` split and its `#else` arm reports
+// `UFBX_ERROR_FEATURE_DISABLED`.
+pub(crate) unsafe fn load_geometry_cache_len(
+    filename: *const u8,
+    filename_len: usize,
+    opts: *const RawGeometryCacheOpts,
+    error: *mut Error,
+) -> *mut GeometryCache {
+    ufbxi_check_opts_ptr!(GeometryCache, opts, error);
+    let str_: String = safe_string(filename, filename_len);
+    crate::native::cache::load_geometry_cache(str_, opts, error)
+}
 
 // ufbx.c:32666-32675 `ufbx_free_geometry_cache`
 pub(crate) unsafe fn free_geometry_cache(cache: *mut GeometryCache) {
@@ -2944,9 +4293,7 @@ pub(crate) unsafe fn read_geometry_cache_real(
         match (*frame).data_format {
             CacheDataFormat::Unknown => src_count = 0,
             CacheDataFormat::RealFloat => src_count = (*frame).data_count as usize,
-            CacheDataFormat::Vec3Float => {
-                src_count = (*frame).data_count.wrapping_mul(3) as usize
-            }
+            CacheDataFormat::Vec3Float => src_count = (*frame).data_count.wrapping_mul(3) as usize,
             CacheDataFormat::RealDouble => {
                 src_count = (*frame).data_count as usize;
                 use_double = true;
@@ -3276,7 +4623,13 @@ pub(crate) unsafe fn sample_geometry_cache_vec3(
         if data.is_null() {
             return 0;
         }
-        sample_geometry_cache_real(channel, time, data as *mut Real, count.wrapping_mul(3), opts) / 3
+        sample_geometry_cache_real(
+            channel,
+            time,
+            data as *mut Real,
+            count.wrapping_mul(3),
+            opts,
+        ) / 3
     }
     #[cfg(not(feature = "geometry-cache"))]
     {
@@ -3305,10 +4658,32 @@ pub(crate) unsafe fn dom_find_len(
     core::ptr::null_mut()
 }
 
-// `ufbx_generate_indices` (ufbx.c:32966-32974) delegates to
-// `ufbxi_generate_indices` (`// -- Vertex streams`), which is not ported
-// (`native/index_gen.rs`). DEFERRED whole; no `capi.rs` shim.
-/* DEFERRED(m10): ufbx.c:32966-32974 `ufbx_generate_indices` */
+// ufbx.c:32966-32974 `ufbx_generate_indices` — delegates to
+// `ufbxi_generate_indices` (`// -- Utility`, `native/index_gen.rs`), which
+// carries the `UFBXI_FEATURE_INDEX_GENERATION` fork itself.
+pub(crate) unsafe fn generate_indices(
+    streams: *const RawVertexStream,
+    num_streams: usize,
+    indices: *mut u32,
+    num_indices: usize,
+    allocator: *const RawAllocatorOpts,
+    error: *mut Error,
+) -> usize {
+    let mut local_error = MaybeUninit::<Error>::uninit(); // ufbxi_uninit
+    let mut error = error;
+    if error.is_null() {
+        error = local_error.as_mut_ptr();
+    }
+    core::ptr::write_bytes(error as *mut u8, 0, size_of::<Error>());
+    crate::native::index_gen::generate_indices(
+        streams,
+        num_streams,
+        indices,
+        num_indices,
+        allocator,
+        error,
+    )
+}
 
 // `ufbx_thread_pool_run_task` (ufbx.c:32976-32979) delegates to
 // `ufbxi_thread_pool_execute` (`// -- Threading`, ufbx.c:6023), which is not
@@ -4002,9 +5377,26 @@ pub(crate) unsafe fn find_anim_prop(
     find_anim_prop_len(layer, element, prop, strlen(prop))
 }
 
-// Both wrap `_len` entry points that are themselves DEFERRED(m9) above.
-/* DEFERRED(m9): ufbx.c:33155 `ufbx_evaluate_prop` */
-/* DEFERRED(m9): ufbx.c:33156 `ufbx_evaluate_prop_flags` */
+// ufbx.c:33155 `ufbx_evaluate_prop`
+pub(crate) unsafe fn evaluate_prop(
+    anim: *const Anim,
+    element: *const Element,
+    name: *const u8,
+    time: f64,
+) -> Prop {
+    evaluate_prop_len(anim, element, name, strlen(name), time)
+}
+
+// ufbx.c:33156 `ufbx_evaluate_prop_flags`
+pub(crate) unsafe fn evaluate_prop_flags(
+    anim: *const Anim,
+    element: *const Element,
+    name: *const u8,
+    time: f64,
+    flags: u32,
+) -> Prop {
+    evaluate_prop_flags_len(anim, element, name, strlen(name), time, flags)
+}
 
 // ufbx.c:33157 `ufbx_find_prop_texture`
 pub(crate) unsafe fn find_prop_texture(material: *const Material, name: *const u8) -> *mut Texture {
@@ -4041,9 +5433,7 @@ pub(crate) unsafe fn dom_find(parent: *const DomNode, name: *const u8) -> *mut D
 // `ufbx_catch_*` counterparts with `panic == NULL`. Each rides the same cfg /
 // DEFERRED state as the catch impl it delegates to.
 
-// ufbx.c:33165-33167 `ufbx_triangulate_face` (delegates to
-// `ufbx_catch_triangulate_face`, whose enabled arm is DEFERRED(m9)).
-#[cfg(not(feature = "triangulation"))]
+// ufbx.c:33165-33167 `ufbx_triangulate_face`
 pub(crate) unsafe fn triangulate_face(
     indices: *mut u32,
     num_indices: usize,
@@ -4053,9 +5443,10 @@ pub(crate) unsafe fn triangulate_face(
     catch_triangulate_face(core::ptr::null_mut(), indices, num_indices, mesh, face)
 }
 
-// `ufbx_compute_topology` (ufbx.c:33168-33170) delegates to
-// `ufbx_catch_compute_topology`, DEFERRED(m9) above.
-/* DEFERRED(m9): ufbx.c:33168-33170 `ufbx_compute_topology` */
+// ufbx.c:33168-33170 `ufbx_compute_topology`
+pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge, num_topo: usize) {
+    catch_compute_topology(core::ptr::null_mut(), mesh, topo, num_topo)
+}
 
 // ufbx.c:33171-33173 `ufbx_topo_next_vertex_edge`
 pub(crate) unsafe fn topo_next_vertex_edge(

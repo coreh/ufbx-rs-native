@@ -10312,7 +10312,7 @@ pub(crate) unsafe fn update_scene_metadata(metadata: *mut Metadata) {
 // explicitly cast to `ufbx_real` — kept verbatim (all are exactly
 // representable at both widths except the negative powers, whose `double`
 // values C uses directly).
-static POW10_TARGETS: [Real; 19] = [
+pub(crate) static POW10_TARGETS: [Real; 19] = [
     0.0f32 as Real,
     1e-8 as Real,
     1e-7 as Real,
