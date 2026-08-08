@@ -17,7 +17,10 @@
 //! the `ufbx_retain_baked_anim` / `ufbx_free_baked_anim` pair) plus the
 //! `ufbxi_bake_context` .. `ufbxi_bake_anim_imp` block under
 //! `feature = "baking"`, backing `ufbx_bake_anim` in `native::api`.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};

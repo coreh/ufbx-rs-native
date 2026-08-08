@@ -7,7 +7,10 @@
 //! public entry point of its own: it exists only to feed
 //! `ufbxi_cache_load_xml` in `native::cache`, so there is nothing to keep
 //! callable when the feature is off.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 #![cfg(feature = "geometry-cache")]
 
 use core::ffi::c_void;

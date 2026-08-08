@@ -37,14 +37,12 @@
 //! `ufbx_retain_*` refcount pairs for meshes and geometry caches are ported;
 //! triangulation, topology
 //! (`compute_topology` / `generate_normal_mapping`), subdivision, and the
-//! geometry-cache loaders carry DEFERRED markers (the
-//! triangulation `#else` FEATURE_DISABLED arms ARE ported under their cfgs).
+//! geometry-cache loaders are fully ported (backed by `native/topology.rs`,
+//! `native/subdivision.rs`, `native/cache.rs`), with the `#else`
+//! FEATURE_DISABLED arms under their cfgs.
 //! The `ufbx_catch_*` non-catch wrappers at ufbx.c:33165-33179 are pulled
 //! forward alongside the `ufbx_find_*` string wrappers (33142-33160), each
-//! riding its catch impl's cfg / DEFERRED state.
-//! CONTINUATION for the next API unit: ufbx.c:32688
-//! `ufbx_read_geometry_cache_real`. Entry points past that are only partially
-//! ported (see the PARTIAL note below).
+//! riding its catch impl's cfg.
 //!
 //! HIGHEST-STAKES invariants (PORTING.md "Allocator + ufbxi_buf" /
 //! "Atomics / refcount"):
@@ -55,7 +53,10 @@
 //! - The counter starts at 0 (`init_ref` does no self-retain); inc/dec return
 //!   the PREVIOUS value (SeqCst); the object is freed when the previous value
 //!   was 0 (`if dec(...) > 0 { return }`).
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
@@ -768,12 +769,11 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
     offset
 }
 
-// ufbx.c:30635-32095 is ported in C order below. PARTIAL: past the CONTINUATION marker at
-// ufbx.c:32214 the API-section entry points are still ported out of C order,
-// ahead of their own unit, because the `// -- Scene processing` unit calls
-// `ufbx_get_bone_pose` / `ufbx_euler_to_quat` and friends. The intervening
-// entry points are still unported — insert them in C order as the remaining
-// API units land.
+// ufbx.c:30635-32095 is ported in C order below. Past ufbx.c:32214 some
+// API-section entry points sit out of C order, ahead of their own unit,
+// because the `// -- Scene processing` unit calls `ufbx_get_bone_pose` /
+// `ufbx_euler_to_quat` and friends. All entry points are ported (203/203
+// ufbx_abi exports).
 
 // ufbx.c:30635-30650 `ufbx_find_prop_len`
 pub(crate) unsafe fn find_prop_len(
@@ -5536,8 +5536,8 @@ pub(crate) unsafe fn dom_find(parent: *const DomNode, name: *const u8) -> *mut D
 }
 
 // -- Catch API (ufbx.c:33163-33179): the non-catch wrappers that call their
-// `ufbx_catch_*` counterparts with `panic == NULL`. Each rides the same cfg /
-// DEFERRED state as the catch impl it delegates to.
+// `ufbx_catch_*` counterparts with `panic == NULL`. Each rides the same cfg
+// as the catch impl it delegates to.
 
 // ufbx.c:33165-33167 `ufbx_triangulate_face`
 pub(crate) unsafe fn triangulate_face(

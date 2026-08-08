@@ -18,7 +18,10 @@
 //! (`ufbx_catch_triangulate_face`, `ufbx_catch_compute_topology`,
 //! `ufbx_catch_generate_normal_mapping`) live in `native/api.rs` with the rest
 //! of the API surface.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 use crate::generated::{Edge, Face, Mesh, TopoEdge, TopoFlags, Vec3};
 #[cfg(feature = "triangulation")]

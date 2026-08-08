@@ -22,9 +22,10 @@
 //! `ufbxi_release_ref`, C prototypes ufbx.c:6229-6230) are defined by C in the
 //! API section (ufbx.c:30248-30300) — ported in `native::api` following the
 //! C's own placement.
-//!
-//! Phase 1: most types have no consumers yet.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -751,8 +752,10 @@ pub(crate) unsafe fn report_progress(uc: *mut Context) -> Result<(), Fail> {
 
 // TODO: Remove `ufbxi_unused` when it's not needed anymore
 // ufbx.c:6704-6712 `ufbxi_progress` (C: `ufbxi_unused ufbxi_nodiscard static
-// ufbxi_forceinline int` — the `ufbxi_unused` marker maps to the module-level
-// `allow(dead_code)`)
+// ufbxi_forceinline int`)
+// C-parity: ufbx.c has zero call sites and silences the warning with its own
+// `ufbxi_unused` marker, which maps to this item-level attribute.
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) unsafe fn progress(uc: *mut Context, work_units: usize) -> Result<(), Fail> {
     if (*uc).opts.progress_cb.fn_.is_none() {
@@ -3731,12 +3734,20 @@ pub(crate) fn is_quat_identity(v: Quat) -> bool {
 }
 
 // ufbx.c:11594-11597 `ufbxi_is_vec3_equal` (C: `ufbxi_unused`)
+// C's only call site is the `ufbxi_regression_assert` at ufbx.c:22902, i.e. live
+// under `UFBX_REGRESSION` (`feature = "regression"`) and stranded otherwise —
+// which is exactly why C marks it `ufbxi_unused`.
+#[cfg_attr(not(feature = "regression"), allow(dead_code))]
 #[inline(always)]
 pub(crate) fn is_vec3_equal(a: Vec3, b: Vec3) -> bool {
     ((a.x == b.x) as u8 & (a.y == b.y) as u8 & (a.z == b.z) as u8) != 0
 }
 
 // ufbx.c:11599-11602 `ufbxi_is_quat_equal` (C: `ufbxi_unused`)
+// C's only call site is the `ufbxi_regression_assert` at ufbx.c:22901, i.e. live
+// under `UFBX_REGRESSION` (`feature = "regression"`) and stranded otherwise —
+// which is exactly why C marks it `ufbxi_unused`.
+#[cfg_attr(not(feature = "regression"), allow(dead_code))]
 #[inline(always)]
 pub(crate) fn is_quat_equal(a: Quat, b: Quat) -> bool {
     ((a.x == b.x) as u8 & (a.y == b.y) as u8 & (a.z == b.z) as u8 & (a.w == b.w) as u8) != 0

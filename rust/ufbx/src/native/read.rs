@@ -84,7 +84,10 @@
 //! `ufbxi_open_file` callback shim, and the shared mesh finalizer
 //! (`ufbxi_patch_zero`, `ufbxi_update_vertex_first_index`,
 //! `ufbxi_finalize_mesh`), and the legacy driver `ufbxi_read_legacy_root`.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -4309,9 +4312,17 @@ pub(crate) unsafe fn read_blend_channel(
 }
 
 // ufbx.c:14088-14104 `typedef enum { ... } ufbxi_key_flags;`
+// C-parity: `UFBXI_KEY_INTERPOLATION_LINEAR` (ufbx.c:14090) and
+// `UFBXI_KEY_TANGENT_AUTO` (ufbx.c:14092) are enumerators defined for
+// completeness with zero references in ufbx.c, and `UFBXI_KEY_VELOCITY_RIGHT` /
+// `UFBXI_KEY_VELOCITY_NEXT_LEFT` (ufbx.c:14102-14103) are referenced only from
+// the `#if 0` block at ufbx.c:14356-14372 (ported as the commented-out block
+// below). C does not warn on unreferenced enumerators.
 pub(crate) const KEY_INTERPOLATION_CONSTANT: u32 = 0x2;
+#[allow(dead_code)]
 pub(crate) const KEY_INTERPOLATION_LINEAR: u32 = 0x4;
 pub(crate) const KEY_INTERPOLATION_CUBIC: u32 = 0x8;
+#[allow(dead_code)]
 pub(crate) const KEY_TANGENT_AUTO: u32 = 0x100;
 pub(crate) const KEY_TANGENT_TCB: u32 = 0x200;
 pub(crate) const KEY_TANGENT_USER: u32 = 0x400;
@@ -4322,7 +4333,9 @@ pub(crate) const KEY_TIME_INDEPENDENT: u32 = 0x2000;
 pub(crate) const KEY_CLAMP_PROGRESSIVE: u32 = 0x4000;
 pub(crate) const KEY_WEIGHTED_RIGHT: u32 = 0x1000000;
 pub(crate) const KEY_WEIGHTED_NEXT_LEFT: u32 = 0x2000000;
+#[allow(dead_code)]
 pub(crate) const KEY_VELOCITY_RIGHT: u32 = 0x10000000;
+#[allow(dead_code)]
 pub(crate) const KEY_VELOCITY_NEXT_LEFT: u32 = 0x20000000;
 
 // ufbx.c:14106-14167 `ufbxi_solve_auto_tangent`
@@ -8833,9 +8846,9 @@ pub(crate) unsafe fn finalize_mesh(
 }
 
 // CONTINUATION POINT (milestone 6i ends here): ufbx.c:16766 — the
-// `// -- Pre-7000 "Take" based animation` banner section is now ported except
-// for the two DEFERRED functions below. Next up is the `// -- .obj file`
-// banner section (ufbx.c:16767), owned by `native/obj.rs`.
+// `// -- Pre-7000 "Take" based animation` banner section is fully ported.
+// The `// -- .obj file` banner section (ufbx.c:16767) is owned by
+// `native/obj.rs`.
 //
 // `// -- Reading the parsed data` section complete (ufbx.c:11762-16765),
 // including `ufbxi_read_root` (ufbx.c:15844-15936) and

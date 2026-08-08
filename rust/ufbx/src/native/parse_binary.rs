@@ -17,7 +17,10 @@
 //! The big-endian path is live here (PORTING.md "Byte order"): `ufbxi_swap*`
 //! materialize a byte-swapped copy in `uc->swap_arr` and hand back a pointer
 //! into it, so every reader downstream stays little-endian.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 use core::ffi::c_void;
 use core::mem::size_of;

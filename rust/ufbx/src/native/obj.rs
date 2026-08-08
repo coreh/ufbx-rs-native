@@ -24,7 +24,10 @@
 //!
 //! The whole section is gated on `UFBXI_FEATURE_FORMAT_OBJ`
 //! (`#[cfg(feature = "obj")]`).
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 #[cfg(feature = "obj")]
 use crate::generated::{
@@ -1000,6 +1003,9 @@ pub(crate) const fn obj_cmd2(a: u8, b: u8) -> u32 {
 }
 
 // ufbx.c:17410 `#define ufbxi_obj_cmd3(a,b,c) ((uint32_t)(a)<<24u | (uint32_t)(b)<<16 | (uint32_t)(c)<<8u)`
+// C-parity: the `ufbxi_obj_cmd3` macro has zero call sites in ufbx.c (every
+// dispatched OBJ keyword is two characters); kept alongside `ufbxi_obj_cmd2`.
+#[allow(dead_code)]
 #[cfg(feature = "obj")]
 #[inline(always)]
 pub(crate) const fn obj_cmd3(a: u8, b: u8, c: u8) -> u32 {

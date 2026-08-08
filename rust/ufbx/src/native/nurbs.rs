@@ -12,7 +12,10 @@
 //! (tessellated positions/normals feed scene hashes) — operation order and the
 //! C `f`-suffixed literals (`0.0f`, `1.0f`, `0.0000001f` ported as
 //! `0.0f32 as Real`, ...) are verbatim.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 #[cfg(feature = "tessellation")]
 use core::ffi::c_void;

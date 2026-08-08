@@ -15,7 +15,10 @@
 //! `malloc` externs in `native::allocator`: libc is already linked on std
 //! targets. The `UFBX_EXTERNAL_STDIO` branch (ufbx.c:7149-7188) has no
 //! corresponding cargo feature and is not ported.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};

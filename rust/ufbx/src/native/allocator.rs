@@ -11,9 +11,10 @@
 //!
 //! See PORTING.md "Allocator + ufbxi_buf": exact size/limit accounting, exact
 //! allocation sequence (fuzz-observable), raw pointers throughout.
-//!
-//! Phase 1: not all items have consumers yet.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -394,6 +395,9 @@ pub(crate) unsafe fn alloc<T>(ator: *mut Allocator, n: usize) -> *mut T {
 }
 
 // ufbx.c:3802 `ufbxi_realloc(ator, type, old_ptr, old_n, n)`
+// C-parity: the `ufbxi_realloc` macro has zero call sites in ufbx.c (C never
+// warns about an unexpanded macro); kept for 1:1 coverage of the alloc family.
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) unsafe fn realloc<T>(
     ator: *mut Allocator,

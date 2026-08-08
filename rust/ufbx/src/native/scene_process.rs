@@ -73,9 +73,8 @@
 //! `index_mapping[-1] = UFBX_NO_INDEX` sentinel slot for edge endpoints),
 //! `ufbxi_postprocess_scene`, and the filename relativization trio
 //! `ufbxi_next_path_segment` / `ufbxi_absolute_to_relative_path` /
-//! `ufbxi_resolve_filenames`.
-//! DEFERRED from this unit: `ufbxi_modify_geometry` (ufbx.c:21165-21332) —
-//! cleared by the eighth unit below.
+//! `ufbxi_resolve_filenames`. `ufbxi_modify_geometry` (ufbx.c:21165-21332)
+//! lives at its C-order slot; the eighth unit below carries its dependencies.
 //!
 //! EIGHTH UNIT: ufbx.c:21452-21638 — the last helpers `ufbxi_finalize_scene()`
 //! is built on: the `ufbxi_file_content` interning family
@@ -182,7 +181,10 @@
 //! constants.
 //! Public leaves pulled forward for it: `ufbx_coordinate_axes_valid` and
 //! `ufbx_transform_direction` in `native::api`.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
@@ -2673,6 +2675,11 @@ pub(crate) unsafe extern "C" fn mat_transform_blender_shininess(v: *mut Vec4) {
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum MatTransform {
+    // C-parity: `UFBXI_MAT_TRANSFORM_IDENTITY` (ufbx.c:19382) is never named in
+    // ufbx.c either — the mapping tables spell the identity transform as the
+    // literal `0` and ufbx.c:20052 tests `if (mapping->transform)`. C does not
+    // warn on an unreferenced enumerator.
+    #[allow(dead_code)]
     Identity,
     InvertX,
     UnknownShininess,
@@ -3246,16 +3253,28 @@ pub(crate) const MAT_SHEEN: u32 = 1 << MaterialFeature::Sheen as u32;
 pub(crate) const MAT_TRANSMISSION: u32 = 1 << MaterialFeature::Transmission as u32;
 pub(crate) const MAT_OPACITY: u32 = 1 << MaterialFeature::Opacity as u32;
 pub(crate) const MAT_AMBIENT_OCCLUSION: u32 = 1 << MaterialFeature::AmbientOcclusion as u32;
+// C-parity: the following `UFBXI_MAT_*` enumerators (ufbx.c:19864-19873) mirror
+// the full `ufbx_material_feature_flags` bit set but are never referenced in
+// ufbx.c — no shader mapping table sets them. C does not warn on unreferenced
+// enumerators; they are kept so the bit set stays 1:1 with the public enum.
+#[allow(dead_code)]
 pub(crate) const MAT_MATTE: u32 = 1 << MaterialFeature::Matte as u32;
+#[allow(dead_code)]
 pub(crate) const MAT_UNLIT: u32 = 1 << MaterialFeature::Unlit as u32;
 pub(crate) const MAT_IOR: u32 = 1 << MaterialFeature::Ior as u32;
 pub(crate) const MAT_DIFFUSE_ROUGHNESS: u32 = 1 << MaterialFeature::DiffuseRoughness as u32;
+#[allow(dead_code)]
 pub(crate) const MAT_TRANSMISSION_ROUGHNESS: u32 =
     1 << MaterialFeature::TransmissionRoughness as u32;
+#[allow(dead_code)]
 pub(crate) const MAT_THIN_WALLED: u32 = 1 << MaterialFeature::ThinWalled as u32;
+#[allow(dead_code)]
 pub(crate) const MAT_CAUSTICS: u32 = 1 << MaterialFeature::Caustics as u32;
+#[allow(dead_code)]
 pub(crate) const MAT_EXIT_TO_BACKGROUND: u32 = 1 << MaterialFeature::ExitToBackground as u32;
+#[allow(dead_code)]
 pub(crate) const MAT_INTERNAL_REFLECTIONS: u32 = 1 << MaterialFeature::InternalReflections as u32;
+#[allow(dead_code)]
 pub(crate) const MAT_DOUBLE_SIDED: u32 = 1 << MaterialFeature::DoubleSided as u32;
 
 // C: `{ NULL, 0 }` — the zero-initialized `ufbx_string` the tables below use
@@ -4963,6 +4982,9 @@ pub(crate) unsafe fn deduplicate_textures(
 // keeps plain integer constants and compares the widened byte rather than
 // introducing a Rust `enum` (which would need a fallible transmute the C never
 // performs).
+// C-parity: `UFBXI_FILE_TEXTURE_FETCH_INITIAL` (ufbx.c:20870) is the implicit
+// zero state of the `states` byte array and is never named in ufbx.c either.
+#[allow(dead_code)]
 pub(crate) const FILE_TEXTURE_FETCH_INITIAL: u32 = 0;
 pub(crate) const FILE_TEXTURE_FETCH_STARTED: u32 = 1;
 pub(crate) const FILE_TEXTURE_FETCH_FINISHED: u32 = 2;

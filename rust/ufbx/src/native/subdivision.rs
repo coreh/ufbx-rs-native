@@ -5,7 +5,10 @@
 //! keeps `ufbxi_subdivide_mesh` present and reporting
 //! `UFBX_ERROR_FEATURE_DISABLED`, ported here as well so the module's contract
 //! is complete in both feature configurations.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 #[cfg(feature = "subdivision")]
 use crate::generated::{

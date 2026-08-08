@@ -9,9 +9,10 @@
 //! doubling, align rounding); `ufbxi_buf_chunk` flexible array member becomes a
 //! header-only struct + pointer arithmetic; `UFBXI_HUGE_MAX_SCAN` and
 //! `ator->huge_size` are two different mechanisms — both kept.
-//!
-//! Phase 1: not all items have consumers yet.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -99,6 +100,9 @@ pub(crate) struct Buf {
 }
 
 // ufbx.c:3872-3876 `ufbxi_buf_state`
+// C-parity: `ufbxi_buf_state` has no users in ufbx.c either (C does not warn on
+// an unreferenced typedef); kept so the `ufbxi_buf` type family is complete.
+#[allow(dead_code)]
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct BufState {
@@ -775,6 +779,9 @@ pub(crate) unsafe fn pop<T>(b: *mut Buf, n: usize, dst: *mut T) {
 }
 
 // ufbx.c:4352 `#define ufbxi_peek(b, type, n, dst)`
+// C-parity: the `ufbxi_peek` macro has zero call sites in ufbx.c (only its
+// sibling `ufbxi_pop` is used); kept for 1:1 coverage of the pop/peek family.
+#[allow(dead_code)]
 #[inline(always)]
 pub(crate) unsafe fn peek<T>(b: *mut Buf, n: usize, dst: *mut T) {
     pop_size(b, size_of::<T>(), n, dst as *mut c_void, true)

@@ -35,7 +35,10 @@
 //! `ufbxi_thread_pool_create_task` / `ufbxi_thread_pool_run_task`
 //! (`native::thread`) and falls back to the inline
 //! `ufbxi_ascii_array_task_imp` when no task slot is available.
-#![allow(dead_code)]
+// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
+// (an orphaned stub that no ported call site reaches); leaner feature sets
+// legitimately strand items, so the lint is only armed for the full build.
+#![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 use core::ffi::c_void;
 
