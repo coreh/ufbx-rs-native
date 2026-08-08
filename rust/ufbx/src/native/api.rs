@@ -22,9 +22,10 @@ use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 
 use crate::generated::{
-    Element, ElementType, Error, Material, MaterialTexture, Matrix, OpenFileInfo, Prop, Props,
-    Quat, RawOpenFileOpts, RawOpenMemoryOpts, RawStream, RotationOrder, Shader, ShaderBinding,
-    ShaderPropBinding, ShaderTexture, ShaderTextureInput, Texture, Transform, Vec3,
+    BonePose, CoordinateAxes, CoordinateAxis, Element, ElementType, Error, Material,
+    MaterialTexture, Matrix, Node, OpenFileInfo, Pose, Prop, Props, Quat, RawOpenFileOpts,
+    RawOpenMemoryOpts, RawStream, RotationOrder, Shader, ShaderBinding, ShaderPropBinding,
+    ShaderTexture, ShaderTextureInput, Texture, Transform, Vec3, Vec4,
 };
 use crate::native::allocator::{
     align_to_mask, alloc, free_ator, Allocator, CACHE_IMP_MAGIC, REFCOUNT_IMP_MAGIC,
@@ -43,8 +44,11 @@ use crate::native::platform::{
     macro_lower_bound_eq, macro_upper_bound_eq, math, ufbx_assert, ufbxi_ignore,
 };
 use crate::native::read::ref_ptr;
-use crate::native::scene_process::{cmp_prop_less_ref, fetch_dst_element};
-use crate::native::string_pool::{safe_string, str_equal, str_less, DEG_TO_RAD_DOUBLE};
+use crate::native::scene_process::{cmp_prop_less_concat, cmp_prop_less_ref, fetch_dst_element};
+use crate::native::string_pool::{
+    concat_str_cmp, get_concat_key, length3, mul3, safe_string, str_equal, str_less,
+    DEG_TO_RAD_DOUBLE,
+};
 use crate::prelude::{Blob, List, OpenFileContext, Real, String};
 
 // ufbx.c:30243-30247 `ufbxi_free_scene_imp`
@@ -333,6 +337,16 @@ pub(crate) static ZERO_VEC3: Vec3 = Vec3 {
     z: 0.0,
 };
 
+// ufbx.c:30346 `ufbx_abi_data_def const ufbx_quat ufbx_identity_quat = { 0,0,0,1 };`
+// Ported ahead of its banner section because `ufbx_matrix_to_transform` below
+// needs it.
+pub(crate) static IDENTITY_QUAT: Quat = Quat {
+    x: 0.0,
+    y: 0.0,
+    z: 0.0,
+    w: 1.0,
+};
+
 // ufbx.c:30635-30650 `ufbx_find_prop_len`
 pub(crate) unsafe fn find_prop_len(
     props: *const Props,
@@ -380,6 +394,27 @@ pub(crate) unsafe fn find_real_len(
         // real; the generated struct keeps only `value_vec4` (same mapping as
         // `native::parse::find_real`).
         (*prop).value_vec4.x
+    } else {
+        def
+    }
+}
+
+// ufbx.c:30662-30670 `ufbx_find_vec3_len`
+// Ported ahead of its banner section because `ufbxi_update_constraint`
+// (ufbx.c:23416, `native::scene_process`) calls `ufbx_find_vec3`.
+#[inline(never)]
+pub(crate) unsafe fn find_vec3_len(
+    props: *const Props,
+    name: *const u8,
+    name_len: usize,
+    def: Vec3,
+) -> Vec3 {
+    let prop: *mut Prop = find_prop_len(props, name, name_len);
+    if !prop.is_null() {
+        // C-parity: `prop->value_vec3` is the `ufbx_prop` value union's 3-real
+        // view; the generated struct keeps only `value_vec4` (same mapping as
+        // `native::parse::find_vec3`).
+        *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
     } else {
         def
     }
@@ -448,6 +483,42 @@ pub(crate) unsafe fn find_blob_len(
     }
 }
 
+// ufbx.c:30712-30727 `ufbx_find_prop_concat`
+// Ported ahead of its banner section because `ufbxi_update_constraint`
+// (ufbx.c:23416, `native::scene_process`) calls it.
+pub(crate) unsafe fn find_prop_concat(
+    props: *const Props,
+    parts: *const String,
+    num_parts: usize,
+) -> *mut Prop {
+    let key: u32 = get_concat_key(parts, num_parts);
+
+    let mut props = props;
+    while !props.is_null() {
+        let mut index: usize = usize::MAX;
+
+        macro_lower_bound_eq::<Prop>(
+            2,
+            &mut index,
+            (*props).props.data,
+            0,
+            (*props).props.count,
+            |a| cmp_prop_less_concat(a, parts, num_parts, key),
+            |a| (*a)._internal_key == key && concat_str_cmp(&(*a).name, parts, num_parts) == 0,
+        );
+        if index != usize::MAX {
+            return (*props).props.data.add(index) as *mut Prop;
+        }
+
+        props = match &(*props).defaults {
+            Some(defaults) => defaults.as_ref() as *const Props,
+            None => core::ptr::null(),
+        };
+    }
+
+    core::ptr::null_mut()
+}
+
 // ufbx.c:30743-30748 `ufbx_get_prop_element`
 pub(crate) unsafe fn get_prop_element(
     element: *const Element,
@@ -459,6 +530,30 @@ pub(crate) unsafe fn get_prop_element(
         return core::ptr::null_mut();
     }
     fetch_dst_element(element as *mut Element, false, (*prop).name.data, type_)
+}
+
+// ufbx.c:31405-31412 `ufbx_get_bone_pose`
+// Ported ahead of its banner section because `ufbxi_update_pose`
+// (ufbx.c:23271, `native::scene_process`) calls it.
+pub(crate) unsafe fn get_bone_pose(pose: *const Pose, node: *const Node) -> *mut BonePose {
+    if pose.is_null() || node.is_null() {
+        return core::ptr::null_mut();
+    }
+    let mut index: usize = usize::MAX;
+    macro_lower_bound_eq::<BonePose>(
+        8,
+        &mut index,
+        (*pose).bone_poses.data,
+        0,
+        (*pose).bone_poses.count,
+        |a| (*ref_ptr(&(*a).bone_node)).element.typed_id < (*node).element.typed_id,
+        |a| ref_ptr(&(*a).bone_node) as *const Node == node,
+    );
+    if index < usize::MAX {
+        (*pose).bone_poses.data.add(index) as *mut BonePose
+    } else {
+        core::ptr::null_mut()
+    }
 }
 
 // ufbx.c:31414-31423 `ufbx_find_prop_texture_len`
@@ -572,6 +667,40 @@ pub(crate) unsafe fn find_shader_texture_input_len(
     core::ptr::null_mut()
 }
 
+// ufbx.c:31478-31489 `ufbx_coordinate_axes_valid`
+// Ported ahead of its banner section because `ufbxi_update_adjust_transforms`
+// and `ufbxi_update_scene_settings_obj` (ufbx.c:23694/23937,
+// `native::scene_process`) call it.
+//
+// C compares the `ufbx_coordinate_axis` enum members as `int`s; the generated
+// enum is `#[repr(u32)]`, so the comparisons go through `as u32`. The
+// `< UFBX_COORDINATE_AXIS_POSITIVE_X` (i.e. `< 0`) halves are dead for an
+// unsigned repr but are kept verbatim — they are the C source text.
+pub(crate) unsafe fn coordinate_axes_valid(axes: CoordinateAxes) -> bool {
+    if (axes.right as u32) < CoordinateAxis::PositiveX as u32
+        || axes.right as u32 > CoordinateAxis::NegativeZ as u32
+    {
+        return false;
+    }
+    if (axes.up as u32) < CoordinateAxis::PositiveX as u32
+        || axes.up as u32 > CoordinateAxis::NegativeZ as u32
+    {
+        return false;
+    }
+    if (axes.front as u32) < CoordinateAxis::PositiveX as u32
+        || axes.front as u32 > CoordinateAxis::NegativeZ as u32
+    {
+        return false;
+    }
+
+    // Check that all the positive/negative axes are used
+    let mut mask: u32 = 0;
+    mask |= 1u32 << ((axes.right as u32) >> 1);
+    mask |= 1u32 << ((axes.up as u32) >> 1);
+    mask |= 1u32 << ((axes.front as u32) >> 1);
+    (mask & 0x7u32) == 0x7u32
+}
+
 // ufbx.c:31554-31564 `ufbx_quat_rotate_vec3`
 // Ported ahead of its banner section because `ufbxi_mul_rotate` and friends
 // (ufbx.c:22695+, `native::scene_process`) call it.
@@ -655,16 +784,101 @@ pub(crate) unsafe fn euler_to_quat(v: Vec3, order: RotationOrder) -> Quat {
     q
 }
 
+// ufbx.c:31723-31747 `ufbx_matrix_mul`
+// Ported ahead of its banner section because `ufbxi_update_node`
+// (ufbx.c:22955, `native::scene_process`) calls it.
+#[inline(never)]
+pub(crate) unsafe fn matrix_mul(a: *const Matrix, b: *const Matrix) -> Matrix {
+    // C: `ufbx_assert(a && b);`
+    ufbx_assert!(!a.is_null() && !b.is_null());
+    if a.is_null() || b.is_null() {
+        return IDENTITY_MATRIX;
+    }
+
+    // C: `ufbx_matrix dst;` — every field is written below before the return,
+    // so the zero-fill is inert (upstream carries no `// ufbxi_uninit` marker).
+    let mut dst: Matrix = core::mem::zeroed();
+
+    dst.m03 = (*a).m00 * (*b).m03 + (*a).m01 * (*b).m13 + (*a).m02 * (*b).m23 + (*a).m03;
+    dst.m13 = (*a).m10 * (*b).m03 + (*a).m11 * (*b).m13 + (*a).m12 * (*b).m23 + (*a).m13;
+    dst.m23 = (*a).m20 * (*b).m03 + (*a).m21 * (*b).m13 + (*a).m22 * (*b).m23 + (*a).m23;
+
+    dst.m00 = (*a).m00 * (*b).m00 + (*a).m01 * (*b).m10 + (*a).m02 * (*b).m20;
+    dst.m10 = (*a).m10 * (*b).m00 + (*a).m11 * (*b).m10 + (*a).m12 * (*b).m20;
+    dst.m20 = (*a).m20 * (*b).m00 + (*a).m21 * (*b).m10 + (*a).m22 * (*b).m20;
+
+    dst.m01 = (*a).m00 * (*b).m01 + (*a).m01 * (*b).m11 + (*a).m02 * (*b).m21;
+    dst.m11 = (*a).m10 * (*b).m01 + (*a).m11 * (*b).m11 + (*a).m12 * (*b).m21;
+    dst.m21 = (*a).m20 * (*b).m01 + (*a).m21 * (*b).m11 + (*a).m22 * (*b).m21;
+
+    dst.m02 = (*a).m00 * (*b).m02 + (*a).m01 * (*b).m12 + (*a).m02 * (*b).m22;
+    dst.m12 = (*a).m10 * (*b).m02 + (*a).m11 * (*b).m12 + (*a).m12 * (*b).m22;
+    dst.m22 = (*a).m20 * (*b).m02 + (*a).m21 * (*b).m12 + (*a).m22 * (*b).m22;
+
+    dst
+}
+
 // ufbx.c:31749-31754 `ufbx_matrix_determinant`
 // Ported ahead of its banner section because `ufbx_matrix_for_normals` below
 // needs it.
 pub(crate) unsafe fn matrix_determinant(m: *const Matrix) -> Real {
-    -((*m).m02 * (*m).m11 * (*m).m20)
+    -(*m).m02 * (*m).m11 * (*m).m20
         + (*m).m01 * (*m).m12 * (*m).m20
         + (*m).m02 * (*m).m10 * (*m).m21
         - (*m).m00 * (*m).m12 * (*m).m21
         - (*m).m01 * (*m).m10 * (*m).m22
         + (*m).m00 * (*m).m11 * (*m).m22
+}
+
+// ufbx.c:31756-31782 `ufbx_matrix_invert`
+// Ported ahead of its banner section because `ufbxi_update_pose`
+// (ufbx.c:23271, `native::scene_process`) calls it.
+pub(crate) unsafe fn matrix_invert(m: *const Matrix) -> Matrix {
+    let det: Real = matrix_determinant(m);
+
+    // C: `ufbx_matrix r;` — the early-out arm `memset`s it and the fall-through
+    // arm writes every field, so the zero-fill is inert (upstream carries no
+    // `// ufbxi_uninit` marker).
+    let mut r: Matrix = core::mem::zeroed();
+    if math::fabs(det) <= math::EPSILON {
+        // C: `memset(&r, 0, sizeof(r));`
+        r = core::mem::zeroed();
+        return r;
+    }
+
+    let rcp_det: Real = 1.0 / det;
+
+    r.m00 = (-(*m).m12 * (*m).m21 + (*m).m11 * (*m).m22) * rcp_det;
+    r.m10 = ((*m).m12 * (*m).m20 - (*m).m10 * (*m).m22) * rcp_det;
+    r.m20 = (-(*m).m11 * (*m).m20 + (*m).m10 * (*m).m21) * rcp_det;
+    r.m01 = ((*m).m02 * (*m).m21 - (*m).m01 * (*m).m22) * rcp_det;
+    r.m11 = (-(*m).m02 * (*m).m20 + (*m).m00 * (*m).m22) * rcp_det;
+    r.m21 = ((*m).m01 * (*m).m20 - (*m).m00 * (*m).m21) * rcp_det;
+    r.m02 = (-(*m).m02 * (*m).m11 + (*m).m01 * (*m).m12) * rcp_det;
+    r.m12 = ((*m).m02 * (*m).m10 - (*m).m00 * (*m).m12) * rcp_det;
+    r.m22 = (-(*m).m01 * (*m).m10 + (*m).m00 * (*m).m11) * rcp_det;
+    r.m03 = ((*m).m03 * (*m).m12 * (*m).m21
+        - (*m).m02 * (*m).m13 * (*m).m21
+        - (*m).m03 * (*m).m11 * (*m).m22
+        + (*m).m01 * (*m).m13 * (*m).m22
+        + (*m).m02 * (*m).m11 * (*m).m23
+        - (*m).m01 * (*m).m12 * (*m).m23)
+        * rcp_det;
+    r.m13 = ((*m).m02 * (*m).m13 * (*m).m20 - (*m).m03 * (*m).m12 * (*m).m20
+        + (*m).m03 * (*m).m10 * (*m).m22
+        - (*m).m00 * (*m).m13 * (*m).m22
+        - (*m).m02 * (*m).m10 * (*m).m23
+        + (*m).m00 * (*m).m12 * (*m).m23)
+        * rcp_det;
+    r.m23 = ((*m).m03 * (*m).m11 * (*m).m20
+        - (*m).m01 * (*m).m13 * (*m).m20
+        - (*m).m03 * (*m).m10 * (*m).m21
+        + (*m).m00 * (*m).m13 * (*m).m21
+        + (*m).m01 * (*m).m10 * (*m).m23
+        - (*m).m00 * (*m).m11 * (*m).m23)
+        * rcp_det;
+
+    r
 }
 
 // ufbx.c:31784-31802 `ufbx_matrix_for_normals`
@@ -677,15 +891,15 @@ pub(crate) unsafe fn matrix_for_normals(m: *const Matrix) -> Matrix {
 
     // C: `ufbx_matrix r;` — every field is written below before the return.
     let mut r: Matrix = core::mem::zeroed();
-    r.m00 = (-((*m).m12 * (*m).m21) + (*m).m11 * (*m).m22) * det_sign;
+    r.m00 = (-(*m).m12 * (*m).m21 + (*m).m11 * (*m).m22) * det_sign;
     r.m01 = ((*m).m12 * (*m).m20 - (*m).m10 * (*m).m22) * det_sign;
-    r.m02 = (-((*m).m11 * (*m).m20) + (*m).m10 * (*m).m21) * det_sign;
+    r.m02 = (-(*m).m11 * (*m).m20 + (*m).m10 * (*m).m21) * det_sign;
     r.m10 = ((*m).m02 * (*m).m21 - (*m).m01 * (*m).m22) * det_sign;
-    r.m11 = (-((*m).m02 * (*m).m20) + (*m).m00 * (*m).m22) * det_sign;
+    r.m11 = (-(*m).m02 * (*m).m20 + (*m).m00 * (*m).m22) * det_sign;
     r.m12 = ((*m).m01 * (*m).m20 - (*m).m00 * (*m).m21) * det_sign;
-    r.m20 = (-((*m).m02 * (*m).m11) + (*m).m01 * (*m).m12) * det_sign;
+    r.m20 = (-(*m).m02 * (*m).m11 + (*m).m01 * (*m).m12) * det_sign;
     r.m21 = ((*m).m02 * (*m).m10 - (*m).m00 * (*m).m12) * det_sign;
-    r.m22 = (-((*m).m01 * (*m).m10) + (*m).m00 * (*m).m11) * det_sign;
+    r.m22 = (-(*m).m01 * (*m).m10 + (*m).m00 * (*m).m11) * det_sign;
     // C: `r.m03 = r.m13 = r.m23 = 0.0f;`
     r.m23 = 0.0;
     r.m13 = r.m23;
@@ -710,6 +924,25 @@ pub(crate) unsafe fn transform_position(m: *const Matrix, v: Vec3) -> Vec3 {
     r.x = (*m).m00 * v.x + (*m).m01 * v.y + (*m).m02 * v.z + (*m).m03;
     r.y = (*m).m10 * v.x + (*m).m11 * v.y + (*m).m12 * v.z + (*m).m13;
     r.z = (*m).m20 * v.x + (*m).m21 * v.y + (*m).m22 * v.z + (*m).m23;
+    r
+}
+
+// ufbx.c:31816-31826 `ufbx_transform_direction`
+// Ported ahead of its banner section because `ufbxi_update_adjust_transforms`
+// (ufbx.c:23705, `native::scene_process`) calls it.
+#[inline(never)]
+pub(crate) unsafe fn transform_direction(m: *const Matrix, v: Vec3) -> Vec3 {
+    ufbx_assert!(!m.is_null());
+    if m.is_null() {
+        return ZERO_VEC3;
+    }
+
+    // C: `ufbx_vec3 r;` — every field is written below before the return,
+    // so the zero-fill is inert (upstream carries no `// ufbxi_uninit` marker).
+    let mut r: Vec3 = core::mem::zeroed();
+    r.x = (*m).m00 * v.x + (*m).m01 * v.y + (*m).m02 * v.z;
+    r.y = (*m).m10 * v.x + (*m).m11 * v.y + (*m).m12 * v.z;
+    r.z = (*m).m20 * v.x + (*m).m21 * v.y + (*m).m22 * v.z;
     r
 }
 
@@ -752,6 +985,123 @@ pub(crate) unsafe fn transform_to_matrix(t: *const Transform) -> Matrix {
     m
 }
 
+// ufbx.c:31854-31926 `ufbx_matrix_to_transform`
+// Ported ahead of its banner section because `ufbxi_update_skin_cluster`
+// (ufbx.c:23289, `native::scene_process`) calls it.
+#[inline(never)]
+pub(crate) unsafe fn matrix_to_transform(m: *const Matrix) -> Transform {
+    ufbx_assert!(!m.is_null());
+    if m.is_null() {
+        return IDENTITY_TRANSFORM;
+    }
+
+    let det: Real = matrix_determinant(m);
+
+    // C indexes the `ufbx_matrix` value union's `ufbx_vec3 cols[4]` view; the
+    // generated struct keeps only the `m00`..`m23` scalars, so the index is
+    // pointer arithmetic from the struct base (same device as
+    // `native::scene_process::add_weighted_matrix`).
+    let m_cols: *const Vec3 = m as *const Vec3;
+
+    // C: `ufbx_transform t;` — every member is written below before the return,
+    // so the zero-fill is inert (upstream carries no `// ufbxi_uninit` marker).
+    let mut t: Transform = core::mem::zeroed();
+    t.translation = *m_cols.add(3);
+    t.scale.x = length3(*m_cols.add(0));
+    t.scale.y = length3(*m_cols.add(1));
+    t.scale.z = length3(*m_cols.add(2));
+
+    // Flip a single non-zero axis if negative determinant
+    let mut sign_x: Real = 1.0;
+    let mut sign_y: Real = 1.0;
+    let mut sign_z: Real = 1.0;
+    if det < 0.0 {
+        if t.scale.x > 0.0 {
+            sign_x = -1.0;
+        } else if t.scale.y > 0.0 {
+            sign_y = -1.0;
+        } else if t.scale.z > 0.0 {
+            sign_z = -1.0;
+        }
+    }
+
+    let x: Vec3 = mul3(
+        *m_cols.add(0),
+        if t.scale.x > 0.0 {
+            sign_x / t.scale.x
+        } else {
+            0.0
+        },
+    );
+    let y: Vec3 = mul3(
+        *m_cols.add(1),
+        if t.scale.y > 0.0 {
+            sign_y / t.scale.y
+        } else {
+            0.0
+        },
+    );
+    let z: Vec3 = mul3(
+        *m_cols.add(2),
+        if t.scale.z > 0.0 {
+            sign_z / t.scale.z
+        } else {
+            0.0
+        },
+    );
+    let trace: Real = x.x + y.y + z.z;
+    if trace > 0.0 {
+        let a: Real = math::sqrt(math::fmax(0.0, trace + 1.0));
+        let b: Real = if a != 0.0 { 0.5 / a } else { 0.0 };
+        t.rotation.x = (y.z - z.y) * b;
+        t.rotation.y = (z.x - x.z) * b;
+        t.rotation.z = (x.y - y.x) * b;
+        t.rotation.w = 0.5 * a;
+    } else if x.x > y.y && x.x > z.z {
+        let a: Real = math::sqrt(math::fmax(0.0, 1.0 + x.x - y.y - z.z));
+        let b: Real = if a != 0.0 { 0.5 / a } else { 0.0 };
+        t.rotation.x = 0.5 * a;
+        t.rotation.y = (y.x + x.y) * b;
+        t.rotation.z = (z.x + x.z) * b;
+        t.rotation.w = (y.z - z.y) * b;
+    } else if y.y > z.z {
+        let a: Real = math::sqrt(math::fmax(0.0, 1.0 - x.x + y.y - z.z));
+        let b: Real = if a != 0.0 { 0.5 / a } else { 0.0 };
+        t.rotation.x = (y.x + x.y) * b;
+        t.rotation.y = 0.5 * a;
+        t.rotation.z = (z.y + y.z) * b;
+        t.rotation.w = (z.x - x.z) * b;
+    } else {
+        let a: Real = math::sqrt(math::fmax(0.0, 1.0 - x.x - y.y + z.z));
+        let b: Real = if a != 0.0 { 0.5 / a } else { 0.0 };
+        t.rotation.x = (z.x + x.z) * b;
+        t.rotation.y = (z.y + y.z) * b;
+        t.rotation.z = 0.5 * a;
+        t.rotation.w = (x.y - y.x) * b;
+    }
+
+    let len: Real = t.rotation.x * t.rotation.x
+        + t.rotation.y * t.rotation.y
+        + t.rotation.z * t.rotation.z
+        + t.rotation.w * t.rotation.w;
+    if math::fabs(len - 1.0) > math::EPSILON {
+        if math::fabs(len) <= math::EPSILON {
+            t.rotation = IDENTITY_QUAT;
+        } else {
+            t.rotation.x /= len;
+            t.rotation.y /= len;
+            t.rotation.z /= len;
+            t.rotation.w /= len;
+        }
+    }
+
+    t.scale.x *= sign_x;
+    t.scale.y *= sign_y;
+    t.scale.z *= sign_z;
+
+    t
+}
+
 // ufbx.c:33142 `ufbx_find_prop`
 pub(crate) unsafe fn find_prop(props: *const Props, name: *const u8) -> *mut Prop {
     find_prop_len(props, name, strlen(name))
@@ -760,6 +1110,11 @@ pub(crate) unsafe fn find_prop(props: *const Props, name: *const u8) -> *mut Pro
 // ufbx.c:33143 `ufbx_find_real`
 pub(crate) unsafe fn find_real(props: *const Props, name: *const u8, def: Real) -> Real {
     find_real_len(props, name, strlen(name), def)
+}
+
+// ufbx.c:33144 `ufbx_find_vec3`
+pub(crate) unsafe fn find_vec3(props: *const Props, name: *const u8, def: Vec3) -> Vec3 {
+    find_vec3_len(props, name, strlen(name), def)
 }
 
 // ufbx.c:33145 `ufbx_find_int`

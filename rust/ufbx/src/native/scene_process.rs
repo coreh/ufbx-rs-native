@@ -124,6 +124,70 @@
 //! (ufbx.c:22062-22064) stays commented out until `// -- Topology` lands, so
 //! `ufbx_load_opts.generate_missing_normals` is a no-op until then — see the
 //! note at the mesh loop and at the function's C-order slot.
+//!
+//! TENTH UNIT: ufbx.c:22786-23062 — the node-transform derivation head of
+//! `// -- Updating state from properties`: `ufbxi_get_rotation` /
+//! `ufbxi_get_scale` (the rotation-only and scale-only fast paths that
+//! `ufbxi_get_transform`'s `ufbxi_regression_assert`s pin to it),
+//! `ufbxi_get_transform` itself (the
+//! `T * Roff * Rp * Rpre * R * Rpost * Rp-1 * Soff * Sp * S * Sp-1`
+//! composition with the inverted PostRotation, the `use_rotation_space`
+//! fork and the `has_adjust_transform` pre/post fixups),
+//! `ufbxi_get_texture_transform`, `ufbxi_get_constraint_transform`,
+//! `ufbxi_update_node` (rotation order, the scale-helper /
+//! `inherit_scale_node` chain, the sorted `ufbx_transform_override` lookup and
+//! the three inherit-mode matrix products) and `ufbxi_update_light`. Pure float
+//! composition: no allocation, so the parity surface is the operation ORDER
+//! (PORTING.md "Floats") — every `ufbxi_mul_*`/`ufbxi_add_translate` call and
+//! every `ufbx_matrix_mul` operand order is verbatim.
+//! Public leaf pulled forward for it: `ufbx_matrix_mul` in `native::api`.
+//!
+//! ELEVENTH UNIT: ufbx.c:23064-23495 — the rest of
+//! `// -- Updating state from properties`'s per-element finalizers: the
+//! `ufbxi_aperture_format` record + `ufbxi_aperture_formats` fixed-point table
+//! and `ufbxi_update_camera` (the aspect/film-size/gate-fit/aperture-mode
+//! cascade that derives `resolution`, `aspect_ratio`, `aperture_size_inch`,
+//! `orthographic_size`, `field_of_view_deg`/`_tan` and `projection_plane`),
+//! then `ufbxi_update_bone`, `ufbxi_update_line_curve`, `ufbxi_update_pose`
+//! (the bind-pose parent walk through `ufbx_get_bone_pose`),
+//! `ufbxi_update_skin_cluster`, `ufbxi_update_blend_channel` (the
+//! split-around-zero keyframe scan and its `{ NULL }` sentinel keyframe),
+//! `ufbxi_update_material`, `ufbxi_update_texture`, `ufbxi_update_anim_stack`,
+//! `ufbxi_update_display_layer`, `ufbxi_find_bool3` (the `X`/`Y`/`Z`-suffixed
+//! name assembly in a 64-byte stack buffer), `ufbxi_update_constraint` (the
+//! `ufbx_find_prop_concat` per-target `.Weight`/`.Offset T|R|S` lookups and the
+//! per-constraint-type `constrain_*` flag fills) and `ufbxi_update_anim`.
+//! Pure property reads and float composition: no allocation, so the parity
+//! surface is the operation ORDER plus `ufbxi_find_*` (internal, 4-byte key)
+//! vs `ufbx_find_*` (public, `ufbxi_get_name_key`) at every call site.
+//! Public leaves pulled forward for it: `ufbx_find_vec3(_len)`,
+//! `ufbx_find_prop_concat`, `ufbx_get_bone_pose`, `ufbx_matrix_invert`,
+//! `ufbx_matrix_to_transform` and the `ufbx_identity_quat` datum in
+//! `native::api`.
+//!
+//! TWELFTH UNIT: ufbx.c:23497-23944 — the tail of
+//! `// -- Updating state from properties`, i.e. the scene-wide drivers: the
+//! `ufbxi_mirror_matrix_dst`/`_src`/`ufbxi_mirror_matrix` trio (dst mirrors a
+//! ROW across all four columns, src mirrors ONE column — not the same walk),
+//! `ufbxi_update_initial_clusters` (bind-matrix space conversion followed by
+//! the `mesh_node_to_bone` patch-up through `ufbxi_fetch_src_element` and the
+//! geometry-transform-helper HACK), `ufbxi_find_axis`, the
+//! `ufbxi_time_mode_fps` table, `ufbxi_axis_matrix` (the axis-enum remap whose
+//! `>> 1` selects the axis and whose parity selects the sign),
+//! `ufbxi_update_adjust_transforms` (the root/unit-scale split between
+//! `geometry_scale` and `root_scale`, the per-node `adjust_*` fills and the
+//! light/camera post-rotations), `ufbxi_update_scene` (the fixed per-list
+//! update ORDER, with `ufbxi_update_initial_clusters` + `ufbxi_update_pose`
+//! only under `initial`), `ufbxi_update_scene_metadata`, the
+//! `ufbxi_pow10_targets` table + `ufbxi_round_if_near`,
+//! `ufbxi_update_scene_settings` and `ufbxi_update_scene_settings_obj`.
+//! Still no allocation, so the parity surface is operation ORDER plus two
+//! literal-width traps: `ufbxi_time_mode_fps` is an `ufbx_real[]` initialized
+//! from `float` constants (29.97/23.976/59.94 are `(double)(float)x`, NOT the
+//! `double` nearest values) while `ufbxi_pow10_targets` uses `double`
+//! constants.
+//! Public leaves pulled forward for it: `ufbx_coordinate_axes_valid` and
+//! `ufbx_transform_direction` in `native::api`.
 #![allow(dead_code)]
 
 use core::ffi::c_void;
@@ -131,35 +195,40 @@ use core::mem::{size_of, MaybeUninit};
 use core::ptr;
 
 use crate::generated::{
-    Anim, AnimCurve, AnimLayer, AnimProp, AnimStack, AnimValue, AudioClip, AudioLayer,
-    BlendChannel, BlendDeformer, BlendKeyframe, BlendMode, BlendShape, Bone, BonePose,
-    CacheDeformer, CacheFile, CacheFileFormat, Camera, ColorSet, Connection, Constraint,
-    ConstraintTarget, DisplayLayer, Edge, Element, ElementType, Error, Exporter, Face, FileFormat,
-    GeometryTransformHandling, IndexErrorHandling, InheritMode, InheritModeHandling, Light,
-    LineCurve, LodDisplay, LodGroup, LodLevel, Material, MaterialFbxMap, MaterialFbxMaps,
-    MaterialFeature, MaterialFeatureInfo, MaterialFeatures, MaterialMap, MaterialPbrMap,
-    MaterialPbrMaps, MaterialTexture, Matrix, Mesh, MeshPart, MirrorAxis, NameElement, Node,
-    NurbsBasis, NurbsCurve, NurbsSurface, NurbsTopology, PivotHandling, Pose, Prop, PropFlags,
-    PropType, Props, Quat, RotationOrder, Scene, SelectionNode, SelectionSet, Shader,
-    ShaderBinding, ShaderPropBinding, ShaderTexture, ShaderTextureInput, ShaderTextureType,
-    ShaderType, SkinCluster, SkinDeformer, SkinVertex, SkinWeight, SkinningMethod, SpaceConversion,
-    StereoCamera, Texture, TextureFile, TextureLayer, TextureType, Transform, UvSet, Vec3, Vec4,
-    Video, VoidList, WarningType,
+    Anim, AnimCurve, AnimLayer, AnimProp, AnimStack, AnimValue, ApertureFormat, ApertureMode,
+    AspectMode, AudioClip, AudioLayer, BlendChannel, BlendDeformer, BlendKeyframe, BlendMode,
+    BlendShape, Bone, BonePose, CacheDeformer, CacheFile, CacheFileFormat, Camera, ColorSet,
+    Connection, Constraint, ConstraintAimUpType, ConstraintTarget, ConstraintType, CoordinateAxes,
+    CoordinateAxis, DisplayLayer, Edge, Element, ElementType, Error, Exporter, Face, FileFormat,
+    GateFit, GeometryTransformHandling, IndexErrorHandling, InheritMode, InheritModeHandling,
+    Light, LightAreaShape, LightDecay, LightType, LineCurve, LodDisplay, LodGroup, LodLevel,
+    Material, MaterialFbxMap, MaterialFbxMaps, MaterialFeature, MaterialFeatureInfo,
+    MaterialFeatures, MaterialMap, MaterialPbrMap, MaterialPbrMaps, MaterialTexture, Matrix, Mesh,
+    MeshPart, Metadata, MirrorAxis, NameElement, Node, NurbsBasis, NurbsCurve, NurbsSurface,
+    NurbsTopology, PivotHandling, Pose, ProjectionMode, Prop, PropFlags, PropType, Props, Quat,
+    RotationOrder, Scene, SceneSettings, SelectionNode, SelectionSet, Shader, ShaderBinding,
+    ShaderPropBinding, ShaderTexture, ShaderTextureInput, ShaderTextureType, ShaderType,
+    SkinCluster, SkinDeformer, SkinVertex, SkinWeight, SkinningMethod, SnapMode, SpaceConversion,
+    StereoCamera, Texture, TextureFile, TextureLayer, TextureType, TimeMode, TimeProtocol,
+    Transform, TransformOverride, UvSet, Vec2, Vec3, Vec4, Video, VoidList, WarningType, WrapMode,
 };
 use crate::native::allocator::grow_array;
 use crate::native::api::{
-    euler_to_quat, find_blob, find_bool as api_find_bool, find_int as api_find_int,
-    find_int_len as api_find_int_len, find_prop as api_find_prop, find_prop_len,
-    find_prop_texture_len, find_real as api_find_real, find_real_len as api_find_real_len,
-    find_shader_prop_bindings_len, find_shader_texture_input, find_shader_texture_input_len,
-    find_string, get_prop_element, matrix_for_normals, quat_rotate_vec3, transform_position,
-    transform_to_matrix, EMPTY_BLOB, EMPTY_STRING, IDENTITY_MATRIX, IDENTITY_TRANSFORM, ZERO_VEC3,
+    coordinate_axes_valid, euler_to_quat, find_blob, find_bool as api_find_bool,
+    find_int as api_find_int, find_int_len as api_find_int_len, find_prop as api_find_prop,
+    find_prop_concat, find_prop_len, find_prop_texture_len, find_real as api_find_real,
+    find_real_len as api_find_real_len, find_shader_prop_bindings_len, find_shader_texture_input,
+    find_shader_texture_input_len, find_string, find_vec3 as api_find_vec3, get_bone_pose,
+    get_prop_element, matrix_for_normals, matrix_invert, matrix_mul, matrix_to_transform,
+    quat_rotate_vec3, transform_direction, transform_position, transform_to_matrix, EMPTY_BLOB,
+    EMPTY_STRING, IDENTITY_MATRIX, IDENTITY_QUAT, IDENTITY_TRANSFORM, ZERO_VEC3,
 };
 use crate::native::buf::{
     buf_clear, buf_free, pop, push, push_copy, push_peek, push_pop, push_zero, Buf,
 };
 use crate::native::error::{
-    memcmp, strcmp, ufbxi_check, ufbxi_check_err, ufbxi_check_msg, ufbxi_snprintf, Fail, EMPTY_CHAR,
+    memcmp, strcmp, strlen, ufbxi_check, ufbxi_check_err, ufbxi_check_msg, ufbxi_snprintf, Fail,
+    EMPTY_CHAR,
 };
 use crate::native::hash::{hash64, hash_ptr, map_find, map_insert};
 use crate::native::parse::{
@@ -169,21 +238,25 @@ use crate::native::parse::{
     MeshExtra, Refcount, TextureExtra, TextureFileEntry, TmpBonePose, TmpConnection,
     TmpMaterialTexture, TmpMeshTexture, ELEMENT_TYPE_COUNT,
 };
+// Only reachable from the two `ufbxi_regression_assert`s in `ufbxi_get_transform`
+// (ufbx.c:22901-22902), which is why C marks both `ufbxi_unused` (11594/11599).
+#[cfg(feature = "regression")]
+use crate::native::parse::{is_quat_equal, is_vec3_equal};
 use crate::native::platform::{
     add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, macro_upper_bound_eq, math,
     max32, max_sz, min32, min_sz, pack_version, stable_sort, to_size, ufbx_assert,
-    ufbxi_dev_assert, ufbxi_ignore, ufbxi_string_literal, ufbxi_unreachable, unstable_sort,
-    NO_INDEX,
+    ufbxi_dev_assert, ufbxi_ignore, ufbxi_regression_assert, ufbxi_string_literal,
+    ufbxi_unreachable, unstable_sort, NO_INDEX,
 };
 use crate::native::read::{
     deduplicate_properties, find_fbx_id, fix_index, init_synthetic_vec3_prop, mesh_part_add_face,
     opt_ptr, opt_ref, ref_ptr, resolve_relative_filename, set_own_prop_vec3_uniform,
     setup_geometry_transform_helper, setup_scale_helper, sort_properties, strblob_data,
-    strblob_length, strblob_set, update_vertex_first_index, NodeExtra, Strblob,
-    SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
+    strblob_length, strblob_set, unscaled_transform_to_matrix, update_vertex_first_index,
+    NodeExtra, Strblob, SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
 };
 use crate::native::string_pool::{
-    self as sp, add3, concat_str_cmp, neg3, normalize3, str_cmp, str_less, sub3,
+    self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
 };
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::{Blob, List, Real, Ref, RefList, String};
@@ -8316,9 +8389,10 @@ pub(crate) unsafe fn mul_inv_rotate(t: *mut Transform, v: Vec3, order: RotationO
 
 // -- Updating state from properties (ufbx.c:22743-…)
 //
-// Only the head of this banner section is ported here — the three helpers
-// `ufbxi_modify_geometry` (ufbx.c:21165) depends on. The rest starts at
-// `ufbxi_get_rotation` (ufbx.c:22786).
+// The head of this banner section (ufbx.c:22745-22784) was ported by the
+// eighth unit — the three helpers `ufbxi_modify_geometry` (ufbx.c:21165)
+// depends on. The tenth unit continues at `ufbxi_get_rotation`
+// (ufbx.c:22786) and runs through `ufbxi_update_light` (ufbx.c:23062).
 
 // ufbx.c:22745-22749 `ufbxi_mirror_translation`
 // C indexes the `ufbx_vec3` value union's `ufbx_real v[3]` view; the generated
@@ -8396,18 +8470,2011 @@ pub(crate) unsafe fn get_geometry_transform(props: *const Props, node: *mut Node
     t
 }
 
+// ufbx.c:22786-22815 `ufbxi_get_rotation`
+// Fast path for `ufbxi_get_transform` below: the rotation-only subset of that
+// function's composition chain. The two are pinned together by the
+// `ufbxi_regression_assert` at ufbx.c:22901.
+#[inline(never)]
+pub(crate) unsafe fn get_rotation(
+    props: *const Props,
+    order: RotationOrder,
+    node: *const Node,
+) -> Quat {
+    let rotation: Vec3 = find_vec3(props, sp::Lcl_Rotation.as_ptr(), 0.0, 0.0, 0.0);
+    let pre_rotation: Vec3 = find_vec3(props, sp::PreRotation.as_ptr(), 0.0, 0.0, 0.0);
+    let post_rotation: Vec3 = find_vec3(props, sp::PostRotation.as_ptr(), 0.0, 0.0, 0.0);
+
+    // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
+    let mut t: Transform = Transform {
+        translation: Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        rotation: Quat {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+        },
+        scale: Vec3 {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+        },
+    };
+
+    if (*node).has_adjust_transform {
+        mul_rotate_quat(&mut t, (*node).adjust_post_rotation);
+    }
+
+    if (*node).use_rotation_space {
+        mul_inv_rotate(&mut t, post_rotation, RotationOrder::Xyz);
+        mul_rotate(&mut t, rotation, order);
+        mul_rotate(&mut t, pre_rotation, RotationOrder::Xyz);
+    } else {
+        mul_rotate(&mut t, rotation, RotationOrder::Xyz);
+    }
+
+    if (*node).has_adjust_transform {
+        mul_rotate_quat(&mut t, (*node).adjust_pre_rotation);
+    }
+
+    // C: `if (node->adjust_mirror_axis)` — enum truthiness.
+    if (*node).adjust_mirror_axis != MirrorAxis::None {
+        mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis);
+    }
+
+    t.rotation
+}
+
+// ufbx.c:22817-22834 `ufbxi_get_scale`
+// Scale-only fast path, pinned to `ufbxi_get_transform` by the
+// `ufbxi_regression_assert` at ufbx.c:22902.
+#[inline(never)]
+pub(crate) unsafe fn get_scale(props: *const Props, node: *const Node) -> Vec3 {
+    let scaling: Vec3 = find_vec3(props, sp::Lcl_Scaling.as_ptr(), 1.0, 1.0, 1.0);
+
+    // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
+    let mut t: Transform = Transform {
+        translation: Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        rotation: Quat {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+        },
+        scale: Vec3 {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+        },
+    };
+
+    if (*node).has_adjust_transform {
+        mul_scale_real(&mut t, (*node).adjust_post_scale);
+    }
+
+    mul_scale(&mut t, scaling);
+
+    if (*node).has_adjust_transform {
+        mul_scale_real(&mut t, (*node).adjust_pre_scale);
+    }
+
+    t.scale
+}
+
+// ufbx.c:22836-22905 `ufbxi_get_transform`
+#[inline(never)]
+pub(crate) unsafe fn get_transform(
+    props: *const Props,
+    order: RotationOrder,
+    node: *const Node,
+    translation_scale: *const Vec3,
+) -> Transform {
+    let scale_pivot: Vec3 = find_vec3(props, sp::ScalingPivot.as_ptr(), 0.0, 0.0, 0.0);
+    let rot_pivot: Vec3 = find_vec3(props, sp::RotationPivot.as_ptr(), 0.0, 0.0, 0.0);
+    let scale_offset: Vec3 = find_vec3(props, sp::ScalingOffset.as_ptr(), 0.0, 0.0, 0.0);
+    let rot_offset: Vec3 = find_vec3(props, sp::RotationOffset.as_ptr(), 0.0, 0.0, 0.0);
+
+    let mut translation: Vec3 = find_vec3(props, sp::Lcl_Translation.as_ptr(), 0.0, 0.0, 0.0);
+    let rotation: Vec3 = find_vec3(props, sp::Lcl_Rotation.as_ptr(), 0.0, 0.0, 0.0);
+    let scaling: Vec3 = find_vec3(props, sp::Lcl_Scaling.as_ptr(), 1.0, 1.0, 1.0);
+
+    let pre_rotation: Vec3 = find_vec3(props, sp::PreRotation.as_ptr(), 0.0, 0.0, 0.0);
+    let post_rotation: Vec3 = find_vec3(props, sp::PostRotation.as_ptr(), 0.0, 0.0, 0.0);
+
+    // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
+    let mut t: Transform = Transform {
+        translation: Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        rotation: Quat {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+        },
+        scale: Vec3 {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+        },
+    };
+
+    // WorldTransform = ParentWorldTransform * T * Roff * Rp * Rpre * R * Rpost * Rp-1 * Soff * Sp * S * Sp-1
+    // NOTE: Rpost is inverted (!) after converting from PostRotation Euler angles
+
+    if !translation_scale.is_null() {
+        translation.x *= (*translation_scale).x;
+        translation.y *= (*translation_scale).y;
+        translation.z *= (*translation_scale).z;
+    }
+
+    if (*node).has_adjust_transform {
+        mul_rotate_quat(&mut t, (*node).adjust_post_rotation);
+        mul_scale_real(&mut t, (*node).adjust_post_scale);
+    }
+
+    sub_translate(&mut t, scale_pivot);
+    mul_scale(&mut t, scaling);
+    add_translate(&mut t, scale_pivot);
+
+    add_translate(&mut t, scale_offset);
+
+    sub_translate(&mut t, rot_pivot);
+    if (*node).use_rotation_space {
+        mul_inv_rotate(&mut t, post_rotation, RotationOrder::Xyz);
+        mul_rotate(&mut t, rotation, order);
+        mul_rotate(&mut t, pre_rotation, RotationOrder::Xyz);
+    } else {
+        mul_rotate(&mut t, rotation, RotationOrder::Xyz);
+    }
+    add_translate(&mut t, rot_pivot);
+
+    add_translate(&mut t, rot_offset);
+
+    add_translate(&mut t, translation);
+
+    if (*node).has_adjust_transform {
+        add_translate(&mut t, (*node).adjust_pre_translation);
+        mul_rotate_quat(&mut t, (*node).adjust_pre_rotation);
+        mul_scale_real(&mut t, (*node).adjust_pre_scale);
+        t.translation.x *= (*node).adjust_translation_scale;
+        t.translation.y *= (*node).adjust_translation_scale;
+        t.translation.z *= (*node).adjust_translation_scale;
+    }
+
+    // C: `if (node->adjust_mirror_axis)` — enum truthiness.
+    if (*node).adjust_mirror_axis != MirrorAxis::None {
+        mirror_translation(&mut t.translation, (*node).adjust_mirror_axis);
+        mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis);
+    }
+
+    // Make sure the fast paths are identical to this function.
+    ufbxi_regression_assert!(is_quat_equal(t.rotation, get_rotation(props, order, node)));
+    ufbxi_regression_assert!(is_vec3_equal(t.scale, get_scale(props, node)));
+
+    t
+}
+
+// ufbx.c:22907-22936 `ufbxi_get_texture_transform`
+#[inline(never)]
+pub(crate) unsafe fn get_texture_transform(props: *const Props) -> Transform {
+    let scale_pivot: Vec3 = find_vec3(props, sp::TextureScalingPivot.as_ptr(), 0.0, 0.0, 0.0);
+    let rot_pivot: Vec3 = find_vec3(props, sp::TextureRotationPivot.as_ptr(), 0.0, 0.0, 0.0);
+
+    let translation: Vec3 = find_vec3(props, sp::Translation.as_ptr(), 0.0, 0.0, 0.0);
+    let rotation: Vec3 = find_vec3(props, sp::Rotation.as_ptr(), 0.0, 0.0, 0.0);
+    let scaling: Vec3 = find_vec3(props, sp::Scaling.as_ptr(), 1.0, 1.0, 1.0);
+
+    // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
+    let mut t: Transform = Transform {
+        translation: Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        rotation: Quat {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+        },
+        scale: Vec3 {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+        },
+    };
+
+    sub_translate(&mut t, scale_pivot);
+    mul_scale(&mut t, scaling);
+    add_translate(&mut t, scale_pivot);
+
+    sub_translate(&mut t, rot_pivot);
+    mul_rotate(&mut t, rotation, RotationOrder::Xyz);
+    add_translate(&mut t, rot_pivot);
+
+    add_translate(&mut t, translation);
+
+    if find_int(props, sp::UVSwap.as_ptr(), 0) != 0 {
+        let swap_scale: Vec3 = Vec3 {
+            x: -1.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        let swap_rotate: Vec3 = Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: -90.0,
+        };
+        mul_scale(&mut t, swap_scale);
+        mul_rotate(&mut t, swap_rotate, RotationOrder::Xyz);
+    }
+
+    t
+}
+
+// ufbx.c:22938-22953 `ufbxi_get_constraint_transform`
+#[inline(never)]
+pub(crate) unsafe fn get_constraint_transform(props: *const Props) -> Transform {
+    let translation: Vec3 = find_vec3(props, sp::Translation.as_ptr(), 0.0, 0.0, 0.0);
+    let rotation: Vec3 = find_vec3(props, sp::Rotation.as_ptr(), 0.0, 0.0, 0.0);
+    let rotation_offset: Vec3 = find_vec3(props, sp::RotationOffset.as_ptr(), 0.0, 0.0, 0.0);
+    let scaling: Vec3 = find_vec3(props, sp::Scaling.as_ptr(), 1.0, 1.0, 1.0);
+
+    // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
+    let mut t: Transform = Transform {
+        translation: Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        rotation: Quat {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+        },
+        scale: Vec3 {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+        },
+    };
+
+    mul_scale(&mut t, scaling);
+    mul_rotate(&mut t, rotation, RotationOrder::Xyz);
+    mul_rotate(&mut t, rotation_offset, RotationOrder::Xyz);
+    add_translate(&mut t, translation);
+
+    t
+}
+
+// ufbx.c:22955-23042 `ufbxi_update_node`
+#[inline(never)]
+pub(crate) unsafe fn update_node(
+    node: *mut Node,
+    overrides: *const TransformOverride,
+    num_overrides: usize,
+) {
+    // C: `(ufbx_rotation_order)ufbxi_find_enum(...)` — `ufbxi_find_enum` clamps
+    // the result to `[0, UFBX_ROTATION_ORDER_SPHERIC]`, every value of which is
+    // a valid `ufbx_rotation_order`.
+    (*node).rotation_order = core::mem::transmute::<u32, RotationOrder>(find_enum(
+        &(*node).element.props,
+        sp::RotationOrder.as_ptr(),
+        RotationOrder::Xyz as i64,
+        RotationOrder::Spheric as i64,
+    ) as u32);
+    (*node).euler_rotation = find_vec3(
+        &(*node).element.props,
+        sp::Lcl_Rotation.as_ptr(),
+        0.0,
+        0.0,
+        0.0,
+    );
+
+    if !(*node).is_root {
+        let rotation_active: bool =
+            find_int(&(*node).element.props, sp::RotationActive.as_ptr(), 1) != 0;
+        let rotation_limit_only: bool = find_int(
+            &(*node).element.props,
+            sp::RotationSpaceForLimitOnly.as_ptr(),
+            0,
+        ) != 0;
+        (*node).use_rotation_space = rotation_active && !rotation_limit_only;
+
+        let mut transform_scale: *const Vec3 = ptr::null();
+        // C: `if (node->parent && node->parent->scale_helper)` — the field is
+        // re-read in the body, as in C.
+        if !opt_ptr(&(*node).parent).is_null()
+            && !opt_ptr(&(*opt_ptr(&(*node).parent)).scale_helper).is_null()
+        {
+            transform_scale = &(*opt_ptr(&(*opt_ptr(&(*node).parent)).scale_helper))
+                .local_transform
+                .scale;
+        }
+        (*node).local_transform = get_transform(
+            &(*node).element.props,
+            (*node).rotation_order,
+            node,
+            transform_scale,
+        );
+        if (*node).is_scale_helper
+            && !opt_ptr(&(*node).parent).is_null()
+            && !opt_ptr(&(*opt_ptr(&(*node).parent)).inherit_scale_node).is_null()
+        {
+            let scale_parent: *mut Node = opt_ptr(&(*opt_ptr(&(*node).parent)).inherit_scale_node);
+            if !opt_ptr(&(*scale_parent).scale_helper).is_null() {
+                let inherit_scale: Vec3 = (*opt_ptr(&(*scale_parent).scale_helper))
+                    .local_transform
+                    .scale;
+                (*node).local_transform.scale.x *= inherit_scale.x;
+                (*node).local_transform.scale.y *= inherit_scale.y;
+                (*node).local_transform.scale.z *= inherit_scale.z;
+            }
+        }
+
+        if num_overrides > 0 {
+            let typed_id: u32 = (*node).element.typed_id;
+            let mut override_ix: usize = usize::MAX;
+            // C: `ufbxi_macro_lower_bound_eq(ufbx_transform_override, 16,
+            // &override_ix, overrides, 0, num_overrides,
+            // ( a->node_id < typed_id ), ( a->node_id == typed_id ));`
+            macro_lower_bound_eq::<TransformOverride>(
+                16,
+                &mut override_ix,
+                overrides,
+                0,
+                num_overrides,
+                |a| (*a).node_id < typed_id,
+                |a| (*a).node_id == typed_id,
+            );
+            if override_ix != usize::MAX {
+                (*node).local_transform = (*overrides.add(override_ix)).transform;
+            }
+        }
+        (*node).node_to_parent = transform_to_matrix(&(*node).local_transform);
+        (*node).geometry_transform = get_geometry_transform(&(*node).element.props, node);
+    } else {
+        (*node).geometry_transform = IDENTITY_TRANSFORM;
+    }
+
+    let unscaled_node_to_parent: Matrix = unscaled_transform_to_matrix(&(*node).local_transform);
+
+    (*node).inherit_scale = (*node).local_transform.scale;
+
+    let parent: *mut Node = opt_ptr(&(*node).parent);
+    if !parent.is_null() {
+        if (*node).inherit_mode == InheritMode::Normal {
+            (*node).node_to_world = matrix_mul(&(*parent).node_to_world, &(*node).node_to_parent);
+            (*node).unscaled_node_to_world =
+                matrix_mul(&(*parent).node_to_world, &unscaled_node_to_parent);
+        } else {
+            let mut transform: Transform = (*node).local_transform;
+
+            let mut parent_scale: Vec3 = ONE_VEC3;
+            if !opt_ptr(&(*node).inherit_scale_node).is_null() {
+                parent_scale = (*opt_ptr(&(*node).inherit_scale_node)).inherit_scale;
+            }
+
+            transform.scale.x *= parent_scale.x;
+            transform.scale.y *= parent_scale.y;
+            transform.scale.z *= parent_scale.z;
+            transform.translation.x *= (*parent).inherit_scale.x;
+            transform.translation.y *= (*parent).inherit_scale.y;
+            transform.translation.z *= (*parent).inherit_scale.z;
+
+            let node_to_unscaled_parent: Matrix = transform_to_matrix(&transform);
+            let unscaled_node_to_unscaled_parent: Matrix = unscaled_transform_to_matrix(&transform);
+
+            (*node).inherit_scale = transform.scale;
+            (*node).node_to_world =
+                matrix_mul(&(*parent).unscaled_node_to_world, &node_to_unscaled_parent);
+            (*node).unscaled_node_to_world = matrix_mul(
+                &(*parent).unscaled_node_to_world,
+                &unscaled_node_to_unscaled_parent,
+            );
+        }
+    } else {
+        (*node).node_to_world = (*node).node_to_parent;
+        (*node).unscaled_node_to_world = unscaled_node_to_parent;
+    }
+
+    if !is_transform_identity(&(*node).geometry_transform) {
+        (*node).geometry_to_node = transform_to_matrix(&(*node).geometry_transform);
+        (*node).geometry_to_world = matrix_mul(&(*node).node_to_world, &(*node).geometry_to_node);
+        (*node).has_geometry_transform = true;
+    } else {
+        (*node).geometry_to_node = IDENTITY_MATRIX;
+        (*node).geometry_to_world = (*node).node_to_world;
+        (*node).has_geometry_transform = false;
+    }
+
+    (*node).visible = find_int(&(*node).element.props, sp::Visibility.as_ptr(), 1) != 0;
+}
+
+// ufbx.c:23044-23062 `ufbxi_update_light`
+#[inline(never)]
+pub(crate) unsafe fn update_light(light: *mut Light) {
+    // NOTE: FBX seems to store intensities 100x of what's specified in at least
+    // Maya and Blender, should there be a quirks mode to not do this for specific
+    // exporters. Does the FBX SDK do this transparently as well?
+    (*light).intensity = find_real(
+        &(*light).element.props,
+        sp::Intensity.as_ptr(),
+        100.0 as Real,
+    ) / (100.0 as Real);
+
+    (*light).color = find_vec3(&(*light).element.props, sp::Color.as_ptr(), 1.0, 1.0, 1.0);
+    // C: `(ufbx_light_type)ufbxi_find_enum(...)` etc — `ufbxi_find_enum` clamps
+    // each result to its enum's `[0, LAST]` range.
+    (*light).type_ = core::mem::transmute::<u32, LightType>(find_enum(
+        &(*light).element.props,
+        sp::LightType.as_ptr(),
+        0,
+        LightType::Volume as i64,
+    ) as u32);
+    (*light).decay = core::mem::transmute::<u32, LightDecay>(find_enum(
+        &(*light).element.props,
+        sp::DecayType.as_ptr(),
+        LightDecay::None as i64,
+        LightDecay::Cubic as i64,
+    ) as u32);
+    (*light).area_shape = core::mem::transmute::<u32, LightAreaShape>(find_enum(
+        &(*light).element.props,
+        sp::AreaLightShape.as_ptr(),
+        0,
+        LightAreaShape::Sphere as i64,
+    ) as u32);
+    (*light).inner_angle = find_real(&(*light).element.props, sp::HotSpot.as_ptr(), 0.0);
+    (*light).inner_angle = find_real(
+        &(*light).element.props,
+        sp::InnerAngle.as_ptr(),
+        (*light).inner_angle,
+    );
+    (*light).outer_angle = find_real(&(*light).element.props, sp::Cone_angle.as_ptr(), 0.0);
+    (*light).outer_angle = find_real(
+        &(*light).element.props,
+        sp::ConeAngle.as_ptr(),
+        (*light).outer_angle,
+    );
+    (*light).outer_angle = find_real(
+        &(*light).element.props,
+        sp::OuterAngle.as_ptr(),
+        (*light).outer_angle,
+    );
+    (*light).cast_light = find_int(&(*light).element.props, sp::CastLight.as_ptr(), 1) != 0;
+    (*light).cast_shadows = find_int(&(*light).element.props, sp::CastShadows.as_ptr(), 0) != 0;
+}
+
+// ufbx.c:23064-23067 `ufbxi_aperture_format`
+// NAMING DEVIATION: the PORTING.md rule would spell this `ApertureFormat`,
+// which is already taken by the generated public enum `ufbx_aperture_format`
+// (the very enum this record is indexed by). Suffixed `Info` to resolve the
+// collision; the table below keeps the C name.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct ApertureFormatInfo {
+    // 1/1000 decimal fixed point for size
+    pub film_size_x: u16,
+    pub film_size_y: u16,
+}
+
+// ufbx.c:23069-23082 `ufbxi_aperture_formats`
+static APERTURE_FORMATS: [ApertureFormatInfo; 12] = [
+    // UFBX_APERTURE_FORMAT_CUSTOM
+    ApertureFormatInfo {
+        film_size_x: 1000,
+        film_size_y: 1000,
+    },
+    // UFBX_APERTURE_FORMAT_16MM_THEATRICAL
+    ApertureFormatInfo {
+        film_size_x: 404,
+        film_size_y: 295,
+    },
+    // UFBX_APERTURE_FORMAT_SUPER_16MM
+    ApertureFormatInfo {
+        film_size_x: 493,
+        film_size_y: 292,
+    },
+    // UFBX_APERTURE_FORMAT_35MM_ACADEMY
+    ApertureFormatInfo {
+        film_size_x: 864,
+        film_size_y: 630,
+    },
+    // UFBX_APERTURE_FORMAT_35MM_TV_PROJECTION
+    ApertureFormatInfo {
+        film_size_x: 816,
+        film_size_y: 612,
+    },
+    // UFBX_APERTURE_FORMAT_35MM_FULL_APERTURE
+    ApertureFormatInfo {
+        film_size_x: 980,
+        film_size_y: 735,
+    },
+    // UFBX_APERTURE_FORMAT_35MM_185_PROJECTION
+    ApertureFormatInfo {
+        film_size_x: 825,
+        film_size_y: 446,
+    },
+    // UFBX_APERTURE_FORMAT_35MM_ANAMORPHIC
+    ApertureFormatInfo {
+        film_size_x: 864,
+        film_size_y: 732,
+    },
+    // UFBX_APERTURE_FORMAT_70MM_PROJECTION
+    ApertureFormatInfo {
+        film_size_x: 2066,
+        film_size_y: 906,
+    },
+    // UFBX_APERTURE_FORMAT_VISTAVISION
+    ApertureFormatInfo {
+        film_size_x: 1485,
+        film_size_y: 991,
+    },
+    // UFBX_APERTURE_FORMAT_DYNAVISION
+    ApertureFormatInfo {
+        film_size_x: 2080,
+        film_size_y: 1480,
+    },
+    // UFBX_APERTURE_FORMAT_IMAX
+    ApertureFormatInfo {
+        film_size_x: 2772,
+        film_size_y: 2072,
+    },
+];
+
+// ufbx.c:23084-23252 `ufbxi_update_camera`
+#[inline(never)]
+pub(crate) unsafe fn update_camera(scene: *mut Scene, camera: *mut Camera) {
+    // C: `(ufbx_projection_mode)ufbxi_find_enum(...)` etc — `ufbxi_find_enum`
+    // clamps each result to its enum's `[0, LAST]` range (same device as
+    // `ufbxi_update_light` above).
+    (*camera).projection_mode = core::mem::transmute::<u32, ProjectionMode>(find_enum(
+        &(*camera).element.props,
+        sp::CameraProjectionType.as_ptr(),
+        0,
+        ProjectionMode::Orthographic as i64,
+    ) as u32);
+    (*camera).aspect_mode = core::mem::transmute::<u32, AspectMode>(find_enum(
+        &(*camera).element.props,
+        sp::AspectRatioMode.as_ptr(),
+        0,
+        AspectMode::FixedHeight as i64,
+    ) as u32);
+    (*camera).aperture_mode = core::mem::transmute::<u32, ApertureMode>(find_enum(
+        &(*camera).element.props,
+        sp::ApertureMode.as_ptr(),
+        ApertureMode::Vertical as i64,
+        ApertureMode::FocalLength as i64,
+    ) as u32);
+    (*camera).aperture_format = core::mem::transmute::<u32, ApertureFormat>(find_enum(
+        &(*camera).element.props,
+        sp::ApertureFormat.as_ptr(),
+        ApertureFormat::Custom as i64,
+        ApertureFormat::Imax as i64,
+    ) as u32);
+    (*camera).gate_fit = core::mem::transmute::<u32, GateFit>(find_enum(
+        &(*camera).element.props,
+        sp::GateFit.as_ptr(),
+        0,
+        GateFit::Stretch as i64,
+    ) as u32);
+
+    (*camera).near_plane = find_real(&(*camera).element.props, sp::NearPlane.as_ptr(), 0.0);
+    (*camera).far_plane = find_real(&(*camera).element.props, sp::FarPlane.as_ptr(), 0.0);
+
+    // Search both W/H and Width/Height but prefer the latter
+    let mut aspect_x: Real = find_real(&(*camera).element.props, sp::AspectW.as_ptr(), 0.0);
+    let mut aspect_y: Real = find_real(&(*camera).element.props, sp::AspectH.as_ptr(), 0.0);
+    aspect_x = find_real(&(*camera).element.props, sp::AspectWidth.as_ptr(), aspect_x);
+    aspect_y = find_real(
+        &(*camera).element.props,
+        sp::AspectHeight.as_ptr(),
+        aspect_y,
+    );
+
+    let fov: Real = find_real(&(*camera).element.props, sp::FieldOfView.as_ptr(), 0.0);
+    let fov_x: Real = find_real(&(*camera).element.props, sp::FieldOfViewX.as_ptr(), 0.0);
+    let fov_y: Real = find_real(&(*camera).element.props, sp::FieldOfViewY.as_ptr(), 0.0);
+
+    let focal_length: Real = find_real(&(*camera).element.props, sp::FocalLength.as_ptr(), 0.0);
+    let mut ortho_extent: Real = (*scene).metadata.ortho_size_unit
+        * find_real(&(*camera).element.props, sp::OrthoZoom.as_ptr(), 1.0);
+
+    let format: ApertureFormatInfo = APERTURE_FORMATS[(*camera).aperture_format as usize];
+    let mut film_size: Vec2 = Vec2 {
+        x: format.film_size_x as Real * (0.001 as Real),
+        y: format.film_size_y as Real * (0.001 as Real),
+    };
+    let mut squeeze_ratio: Real = if (*camera).aperture_format == ApertureFormat::E35MmAnamorphic {
+        2.0
+    } else {
+        1.0
+    };
+
+    film_size.x = find_real(
+        &(*camera).element.props,
+        sp::FilmWidth.as_ptr(),
+        film_size.x,
+    );
+    film_size.y = find_real(
+        &(*camera).element.props,
+        sp::FilmHeight.as_ptr(),
+        film_size.y,
+    );
+    squeeze_ratio = find_real(
+        &(*camera).element.props,
+        sp::FilmSqueezeRatio.as_ptr(),
+        squeeze_ratio,
+    );
+
+    if aspect_x <= 0.0 && aspect_y <= 0.0 {
+        aspect_x = if film_size.x > 0.0 { film_size.x } else { 1.0 };
+        aspect_y = if film_size.y > 0.0 { film_size.y } else { 1.0 };
+    } else if aspect_x <= 0.0 {
+        if film_size.x > 0.0 && film_size.y > 0.0 {
+            aspect_x = aspect_y / film_size.y * film_size.x;
+        } else {
+            aspect_x = aspect_y;
+        }
+    } else if aspect_y <= 0.0 {
+        if film_size.x > 0.0 && film_size.y > 0.0 {
+            aspect_y = aspect_x / film_size.x * film_size.y;
+        } else {
+            aspect_y = aspect_x;
+        }
+    }
+
+    film_size.y *= squeeze_ratio;
+
+    // TODO: Should this be done always?
+    ortho_extent *= (*scene).metadata.geometry_scale;
+    (*camera).near_plane *= (*scene).metadata.geometry_scale;
+    (*camera).far_plane *= (*scene).metadata.geometry_scale;
+
+    (*camera).focal_length_mm = focal_length;
+    (*camera).film_size_inch = film_size;
+    (*camera).squeeze_ratio = squeeze_ratio;
+    (*camera).orthographic_extent = ortho_extent;
+
+    match (*camera).aspect_mode {
+        AspectMode::WindowSize | AspectMode::FixedRatio => {
+            (*camera).resolution_is_pixels = false;
+            (*camera).resolution.x = aspect_x;
+            (*camera).resolution.y = aspect_y;
+        }
+        AspectMode::FixedResolution => {
+            (*camera).resolution_is_pixels = true;
+            (*camera).resolution.x = aspect_x;
+            (*camera).resolution.y = aspect_y;
+        }
+        AspectMode::FixedWidth => {
+            (*camera).resolution_is_pixels = true;
+            (*camera).resolution.x = aspect_x;
+            (*camera).resolution.y = aspect_x * aspect_y;
+        }
+        AspectMode::FixedHeight => {
+            (*camera).resolution_is_pixels = true;
+            (*camera).resolution.x = aspect_y * aspect_x;
+            (*camera).resolution.y = aspect_y;
+        }
+        // C `default:` (ufbx.c:23167-23168) — unreachable in Rust because the
+        // match above is exhaustive over the enum, but kept for diff parity.
+        #[allow(unreachable_patterns)]
+        _ => {
+            ufbxi_unreachable!("Unexpected aspect mode");
+        }
+    }
+
+    let aspect_ratio: Real = (*camera).resolution.x / (*camera).resolution.y;
+    let film_ratio: Real = film_size.x / film_size.y;
+
+    (*camera).aspect_ratio = aspect_ratio;
+
+    let mut effective_fit: GateFit = (*camera).gate_fit;
+    if effective_fit == GateFit::Fill {
+        effective_fit = if aspect_ratio > film_ratio {
+            GateFit::Horizontal
+        } else {
+            GateFit::Vertical
+        };
+    } else if effective_fit == GateFit::Overscan {
+        effective_fit = if aspect_ratio < film_ratio {
+            GateFit::Horizontal
+        } else {
+            GateFit::Vertical
+        };
+    }
+
+    match effective_fit {
+        GateFit::None => {
+            (*camera).aperture_size_inch = (*camera).film_size_inch;
+            (*camera).orthographic_size.x = ortho_extent;
+            (*camera).orthographic_size.y = ortho_extent;
+        }
+        GateFit::Vertical => {
+            (*camera).aperture_size_inch.x = (*camera).film_size_inch.y * aspect_ratio;
+            (*camera).aperture_size_inch.y = (*camera).film_size_inch.y;
+            (*camera).orthographic_size.x = ortho_extent * aspect_ratio;
+            (*camera).orthographic_size.y = ortho_extent;
+        }
+        GateFit::Horizontal => {
+            (*camera).aperture_size_inch.x = (*camera).film_size_inch.x;
+            (*camera).aperture_size_inch.y = (*camera).film_size_inch.x / aspect_ratio;
+            (*camera).orthographic_size.x = ortho_extent;
+            (*camera).orthographic_size.y = ortho_extent / aspect_ratio;
+        }
+        GateFit::Fill | GateFit::Overscan => {
+            (*camera).aperture_size_inch = (*camera).film_size_inch;
+            (*camera).orthographic_size.x = ortho_extent;
+            (*camera).orthographic_size.y = ortho_extent;
+            // C: `ufbxi_unreachable(...)` mid-arm — it is NOT a return, the
+            // arm's assignments above it already ran (PORTING.md "Asserts").
+            ufbxi_unreachable!("Unreachable, set to vertical/horizontal above");
+        }
+        GateFit::Stretch => {
+            (*camera).aperture_size_inch = (*camera).film_size_inch;
+            (*camera).orthographic_size.x = ortho_extent;
+            (*camera).orthographic_size.y = ortho_extent;
+            // TODO: Not sure what to do here...
+        }
+        // C `default:` (ufbx.c:23214-23215).
+        #[allow(unreachable_patterns)]
+        _ => {
+            ufbxi_unreachable!("Unexpected gate fit");
+        }
+    }
+
+    match (*camera).aperture_mode {
+        ApertureMode::HorizontalAndVertical => {
+            (*camera).field_of_view_deg.x = fov_x;
+            (*camera).field_of_view_deg.y = fov_y;
+            // C: `(ufbx_real)ufbx_tan((double)(...))` — both casts are no-ops
+            // for `Real == f64`.
+            (*camera).field_of_view_tan.x = math::tan(fov_x * (sp::DEG_TO_RAD * 0.5));
+            (*camera).field_of_view_tan.y = math::tan(fov_y * (sp::DEG_TO_RAD * 0.5));
+        }
+        ApertureMode::Horizontal => {
+            (*camera).field_of_view_deg.x = fov;
+            (*camera).field_of_view_tan.x = math::tan(fov * (sp::DEG_TO_RAD * 0.5));
+            (*camera).field_of_view_tan.y = (*camera).field_of_view_tan.x / aspect_ratio;
+            (*camera).field_of_view_deg.y =
+                math::atan((*camera).field_of_view_tan.y) * sp::RAD_TO_DEG * 2.0;
+        }
+        ApertureMode::Vertical => {
+            (*camera).field_of_view_deg.y = fov;
+            (*camera).field_of_view_tan.y = math::tan(fov * (sp::DEG_TO_RAD * 0.5));
+            (*camera).field_of_view_tan.x = (*camera).field_of_view_tan.y * aspect_ratio;
+            (*camera).field_of_view_deg.x =
+                math::atan((*camera).field_of_view_tan.x) * sp::RAD_TO_DEG * 2.0;
+        }
+        ApertureMode::FocalLength => {
+            (*camera).field_of_view_tan.x =
+                (*camera).aperture_size_inch.x / ((*camera).focal_length_mm * sp::MM_TO_INCH) * 0.5;
+            (*camera).field_of_view_tan.y =
+                (*camera).aperture_size_inch.y / ((*camera).focal_length_mm * sp::MM_TO_INCH) * 0.5;
+            (*camera).field_of_view_deg.x =
+                math::atan((*camera).field_of_view_tan.x) * sp::RAD_TO_DEG * 2.0;
+            (*camera).field_of_view_deg.y =
+                math::atan((*camera).field_of_view_tan.y) * sp::RAD_TO_DEG * 2.0;
+        }
+        // C `default:` (ufbx.c:23243-23244).
+        #[allow(unreachable_patterns)]
+        _ => {
+            ufbxi_unreachable!("Unexpected aperture mode");
+        }
+    }
+
+    if (*camera).projection_mode == ProjectionMode::Perspective {
+        (*camera).projection_plane = (*camera).field_of_view_tan;
+    } else {
+        (*camera).projection_plane = (*camera).orthographic_size;
+    }
+}
+
+// ufbx.c:23254-23264 `ufbxi_update_bone`
+#[inline(never)]
+pub(crate) unsafe fn update_bone(scene: *mut Scene, bone: *mut Bone) {
+    let unit: Real = (*scene).metadata.bone_prop_size_unit;
+
+    (*bone).radius = find_real(&(*bone).element.props, sp::Size.as_ptr(), unit) / unit;
+    if (*scene).metadata.bone_prop_limb_length_relative {
+        (*bone).relative_length = find_real(&(*bone).element.props, sp::LimbLength.as_ptr(), 1.0);
+    } else {
+        (*bone).relative_length = 1.0;
+    }
+}
+
+// ufbx.c:23266-23269 `ufbxi_update_line_curve`
+#[inline(never)]
+pub(crate) unsafe fn update_line_curve(line: *mut LineCurve) {
+    (*line).color = find_vec3(&(*line).element.props, sp::Color.as_ptr(), 1.0, 1.0, 1.0);
+}
+
+// ufbx.c:23271-23287 `ufbxi_update_pose`
+#[inline(never)]
+pub(crate) unsafe fn update_pose(pose: *mut Pose) {
+    // C: `ufbxi_for_list(ufbx_bone_pose, bone, pose->bone_poses)`
+    let mut bone: *mut BonePose = (*pose).bone_poses.data as *mut BonePose;
+    let bone_end: *mut BonePose = add_ptr(bone, (*pose).bone_poses.count);
+    while bone != bone_end {
+        let node: *mut Node = ref_ptr(&(*bone).bone_node);
+
+        let mut parent_to_world: *const Matrix = &IDENTITY_MATRIX;
+        let bone_pose: *mut BonePose = get_bone_pose(pose, opt_ptr(&(*node).parent));
+        if !bone_pose.is_null() {
+            parent_to_world = &(*bone_pose).bone_to_world;
+        } else if !opt_ptr(&(*node).parent).is_null() {
+            parent_to_world = &(*opt_ptr(&(*node).parent)).node_to_world;
+        }
+
+        let world_to_parent: Matrix = matrix_invert(parent_to_world);
+        (*bone).bone_to_parent = matrix_mul(&world_to_parent, &(*bone).bone_to_world);
+
+        bone = bone.add(1);
+    }
+}
+
+// ufbx.c:23289-23297 `ufbxi_update_skin_cluster`
+#[inline(never)]
+pub(crate) unsafe fn update_skin_cluster(cluster: *mut SkinCluster) {
+    // C: `if (cluster->bone_node)` — pointer truthiness.
+    let bone_node: *mut Node = opt_ptr(&(*cluster).bone_node);
+    if !bone_node.is_null() {
+        (*cluster).geometry_to_world =
+            matrix_mul(&(*bone_node).node_to_world, &(*cluster).geometry_to_bone);
+    } else {
+        (*cluster).geometry_to_world =
+            matrix_mul(&(*cluster).bind_to_world, &(*cluster).geometry_to_bone);
+    }
+    (*cluster).geometry_to_world_transform = matrix_to_transform(&(*cluster).geometry_to_world);
+}
+
+// ufbx.c:23299-23342 `ufbxi_update_blend_channel`
+#[inline(never)]
+pub(crate) unsafe fn update_blend_channel(channel: *mut BlendChannel) {
+    let weight: Real =
+        find_real(&(*channel).element.props, sp::DeformPercent.as_ptr(), 0.0) * (0.01 as Real);
+    (*channel).weight = weight;
+
+    let num_keys: isize = (*channel).keyframes.count as isize;
+    if num_keys > 0 {
+        let keys: *mut BlendKeyframe = (*channel).keyframes.data as *mut BlendKeyframe;
+
+        // Reset the effective weights to zero and find the split around zero
+        let mut last_negative: isize = -1;
+        let mut i: isize = 0;
+        while i < num_keys {
+            (*keys.offset(i)).effective_weight = 0.0 as Real;
+            if (*keys.offset(i)).target_weight < 0.0 {
+                last_negative = i;
+            }
+            i += 1;
+        }
+
+        // C: `ufbx_blend_keyframe zero_key = { NULL };` — a zeroed keyframe used
+        // only as a `{ target_weight = 0, effective_weight = 0 }` sentinel.
+        // `ufbx_blend_keyframe.shape` is a non-nullable `Ref<BlendShape>`
+        // (`NonNull`), so the zeroed storage stays in `MaybeUninit` and is only
+        // ever reached through a raw `*mut BlendKeyframe` — the `shape` member
+        // is never read (C-parity: C reads it just as little).
+        let mut zero_key_storage: MaybeUninit<BlendKeyframe> = MaybeUninit::zeroed();
+        let zero_key: *mut BlendKeyframe = zero_key_storage.as_mut_ptr();
+        let mut prev: *mut BlendKeyframe = zero_key;
+        let mut next: *mut BlendKeyframe = zero_key;
+        if weight > 0.0 {
+            if last_negative >= 0 {
+                prev = keys.offset(last_negative);
+            }
+            let mut i: isize = last_negative + 1;
+            while i < num_keys {
+                prev = next;
+                next = keys.offset(i);
+                if (*next).target_weight > weight {
+                    break;
+                }
+                i += 1;
+            }
+        } else {
+            if last_negative + 1 < num_keys {
+                prev = keys.offset(last_negative + 1);
+            }
+            let mut i: isize = last_negative;
+            while i >= 0 {
+                prev = next;
+                next = keys.offset(i);
+                if (*next).target_weight < weight {
+                    break;
+                }
+                i -= 1;
+            }
+        }
+
+        // Linearly interpolate between the endpoints with the weight
+        let delta: Real = (*next).target_weight - (*prev).target_weight;
+        if delta != 0.0 {
+            let t: Real = (weight - (*prev).target_weight) / delta;
+            (*prev).effective_weight = 1.0 - t;
+            (*next).effective_weight = t;
+        }
+    }
+}
+
+// ufbx.c:23344-23349 `ufbxi_update_material`
+#[inline(never)]
+pub(crate) unsafe fn update_material(scene: *mut Scene, material: *mut Material) {
+    if (*material).element.props.num_animated > 0 {
+        fetch_maps(scene, material);
+    }
+}
+
+// ufbx.c:23351-23369 `ufbxi_update_texture`
+#[inline(never)]
+pub(crate) unsafe fn update_texture(texture: *mut Texture) {
+    (*texture).uv_transform = get_texture_transform(&(*texture).element.props);
+    if !is_transform_identity(&(*texture).uv_transform) {
+        (*texture).has_uv_transform = true;
+        (*texture).texture_to_uv = transform_to_matrix(&(*texture).uv_transform);
+        (*texture).uv_to_texture = matrix_invert(&(*texture).texture_to_uv);
+    } else {
+        (*texture).has_uv_transform = false;
+        (*texture).texture_to_uv = IDENTITY_MATRIX;
+        (*texture).uv_to_texture = IDENTITY_MATRIX;
+    }
+    // C: `(ufbx_wrap_mode)ufbxi_find_enum(...)` — clamped to `[0, LAST]`.
+    (*texture).wrap_u = core::mem::transmute::<u32, WrapMode>(find_enum(
+        &(*texture).element.props,
+        sp::WrapModeU.as_ptr(),
+        0,
+        WrapMode::Clamp as i64,
+    ) as u32);
+    (*texture).wrap_v = core::mem::transmute::<u32, WrapMode>(find_enum(
+        &(*texture).element.props,
+        sp::WrapModeV.as_ptr(),
+        0,
+        WrapMode::Clamp as i64,
+    ) as u32);
+
+    // C: `if (texture->shader)` — pointer truthiness.
+    let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
+    if !shader.is_null() {
+        update_shader_texture(texture, shader);
+    }
+}
+
+// ufbx.c:23371-23388 `ufbxi_update_anim_stack`
+#[inline(never)]
+pub(crate) unsafe fn update_anim_stack(scene: *mut Scene, stack: *mut AnimStack) {
+    // C: `ufbx_prop *begin, *end;` — both are assigned before any read.
+    let mut begin: *mut Prop;
+    let mut end: *mut Prop;
+    begin = find_prop(&(*stack).element.props, sp::LocalStart.as_ptr());
+    end = find_prop(&(*stack).element.props, sp::LocalStop.as_ptr());
+    if begin.is_null() || end.is_null() {
+        begin = find_prop(&(*stack).element.props, sp::ReferenceStart.as_ptr());
+        end = find_prop(&(*stack).element.props, sp::ReferenceStop.as_ptr());
+    }
+
+    if !begin.is_null() && !end.is_null() {
+        (*stack).time_begin = (*begin).value_int as f64 / (*scene).metadata.ktime_second as f64;
+        (*stack).time_end = (*end).value_int as f64 / (*scene).metadata.ktime_second as f64;
+    }
+
+    let anim: *mut Anim = ref_ptr(&(*stack).anim);
+    (*anim).time_begin = (*stack).time_begin;
+    (*anim).time_end = (*stack).time_end;
+}
+
+// ufbx.c:23390-23395 `ufbxi_update_display_layer`
+#[inline(never)]
+pub(crate) unsafe fn update_display_layer(layer: *mut DisplayLayer) {
+    (*layer).visible = find_int(&(*layer).element.props, sp::Show.as_ptr(), 1) != 0;
+    (*layer).frozen = find_int(&(*layer).element.props, sp::Freeze.as_ptr(), 1) != 0;
+    // C-parity: `0.8f` is a `float` literal widened to `ufbx_real` (double) —
+    // NOT the decimal value 0.8 (PORTING.md "Floats").
+    (*layer).ui_color = find_vec3(
+        &(*layer).element.props,
+        sp::Color.as_ptr(),
+        0.8f32 as Real,
+        0.8f32 as Real,
+        0.8f32 as Real,
+    );
+}
+
+// ufbx.c:23397-23414 `ufbxi_find_bool3`
+#[inline(never)]
+pub(crate) unsafe fn find_bool3(
+    dst: *mut bool,
+    props: *mut Props,
+    name: *const u8,
+    default_value: bool,
+) {
+    let name_len: usize = strlen(name);
+    // C: `char local[64];` — an uninitialized local; only `local[0..name_len]`
+    // is ever read back (`local_len == name_len + 1` bytes are written first).
+    let mut local_storage = MaybeUninit::<[u8; 64]>::uninit();
+    let local: *mut u8 = local_storage.as_mut_ptr() as *mut u8;
+    // C: `ufbx_assert(name_len < sizeof(local) - 2);`
+    ufbx_assert!(name_len < size_of::<[u8; 64]>() - 2);
+    ptr::copy_nonoverlapping(name, local, name_len);
+
+    let local_len: usize = name_len + 1;
+    *local.add(local_len) = b'\0';
+
+    let def: i64 = if default_value { 1 } else { 0 };
+    *local.add(name_len) = b'X';
+    *dst.add(0) = api_find_int_len(props, local, local_len, def) != 0;
+    *local.add(name_len) = b'Y';
+    *dst.add(1) = api_find_int_len(props, local, local_len, def) != 0;
+    *local.add(name_len) = b'Z';
+    *dst.add(2) = api_find_int_len(props, local, local_len, def) != 0;
+}
+
+// ufbx.c:23416-23488 `ufbxi_update_constraint`
+#[inline(never)]
+pub(crate) unsafe fn update_constraint(constraint: *mut Constraint) {
+    // C: `ufbx_props *props = &constraint->props;` — kept live across writes
+    // through `constraint`, so this must be an `addr_of_mut!` and never a `&mut`
+    // (which would retag and be invalidated by those writes).
+    let props: *mut Props = ptr::addr_of_mut!((*constraint).element.props);
+    let constraint_type: ConstraintType = (*constraint).type_;
+
+    (*constraint).transform_offset = get_constraint_transform(props);
+
+    // C: `ufbxi_find_real` — the internal 4-byte-key lookup, NOT `ufbx_find_real`.
+    (*constraint).weight = find_real(props, sp::Weight.as_ptr(), 100.0 as Real) / (100.0 as Real);
+
+    // C: `ufbxi_for_list(ufbx_constraint_target, target, constraint->targets)`
+    let mut target: *mut ConstraintTarget = (*constraint).targets.data as *mut ConstraintTarget;
+    let target_end: *mut ConstraintTarget = add_ptr(target, (*constraint).targets.count);
+    while target != target_end {
+        let node: *mut Node = ref_ptr(&(*target).node);
+
+        let mut weight_scale: Real = 100.0 as Real;
+        if constraint_type == ConstraintType::SingleChainIk {
+            // IK weights seem to be not scaled 100x?
+            weight_scale = 1.0 as Real;
+        }
+
+        let mut prop: *mut Prop; // ufbxi_uninit
+        let mut parts_storage = MaybeUninit::<[String; 2]>::uninit(); // ufbxi_uninit
+        let parts: *mut String = parts_storage.as_mut_ptr() as *mut String;
+        *parts.add(0) = (*node).element.name;
+        *parts.add(1) = sp::str_c(b".Weight\0".as_ptr());
+        prop = find_prop_concat(props, parts, 2);
+        // C: `prop->value_real` — the `ufbx_prop` value union's first real.
+        (*target).weight = (if !prop.is_null() {
+            (*prop).value_vec4.x
+        } else {
+            weight_scale
+        }) / weight_scale;
+
+        if constraint_type == ConstraintType::Parent {
+            *parts.add(1) = sp::str_c(b".Offset T\0".as_ptr());
+            prop = find_prop_concat(props, parts, 2);
+            let t: Vec3 = if !prop.is_null() {
+                *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
+            } else {
+                ZERO_VEC3
+            };
+            *parts.add(1) = sp::str_c(b".Offset R\0".as_ptr());
+            prop = find_prop_concat(props, parts, 2);
+            let r: Vec3 = if !prop.is_null() {
+                *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
+            } else {
+                ZERO_VEC3
+            };
+            *parts.add(1) = sp::str_c(b".Offset S\0".as_ptr());
+            prop = find_prop_concat(props, parts, 2);
+            let s: Vec3 = if !prop.is_null() {
+                *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
+            } else {
+                ONE_VEC3
+            };
+
+            (*target).transform.translation = t;
+            (*target).transform.rotation = euler_to_quat(r, RotationOrder::Xyz);
+            (*target).transform.scale = s;
+        }
+
+        target = target.add(1);
+    }
+
+    (*constraint).active = api_find_int(props, b"Active\0".as_ptr(), 1) != 0;
+    if constraint_type == ConstraintType::Aim {
+        find_bool3(
+            (*constraint).constrain_rotation.as_mut_ptr(),
+            props,
+            b"Affect\0".as_ptr(),
+            true,
+        );
+
+        let default_aim: Vec3 = Vec3 {
+            x: 1.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        let default_up: Vec3 = Vec3 {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+        };
+
+        let up_type: i64 = api_find_int(props, b"WorldUpType\0".as_ptr(), 0);
+        if up_type >= 0 && up_type < ConstraintAimUpType::None as i64 {
+            // C: `(ufbx_constraint_aim_up_type)up_type` — the range check above
+            // admits only valid enum values.
+            (*constraint).aim_up_type =
+                core::mem::transmute::<u32, ConstraintAimUpType>(up_type as u32);
+        }
+        (*constraint).aim_vector = api_find_vec3(props, b"AimVector\0".as_ptr(), default_aim);
+        (*constraint).aim_up_vector = api_find_vec3(props, b"UpVector\0".as_ptr(), default_up);
+    } else if constraint_type == ConstraintType::Parent {
+        find_bool3(
+            (*constraint).constrain_translation.as_mut_ptr(),
+            props,
+            b"AffectTranslation\0".as_ptr(),
+            true,
+        );
+        find_bool3(
+            (*constraint).constrain_rotation.as_mut_ptr(),
+            props,
+            b"AffectRotation\0".as_ptr(),
+            true,
+        );
+        find_bool3(
+            (*constraint).constrain_scale.as_mut_ptr(),
+            props,
+            b"AffectScale\0".as_ptr(),
+            false,
+        );
+    } else if constraint_type == ConstraintType::Position {
+        find_bool3(
+            (*constraint).constrain_translation.as_mut_ptr(),
+            props,
+            b"Affect\0".as_ptr(),
+            true,
+        );
+    } else if constraint_type == ConstraintType::Rotation {
+        find_bool3(
+            (*constraint).constrain_rotation.as_mut_ptr(),
+            props,
+            b"Affect\0".as_ptr(),
+            true,
+        );
+    } else if constraint_type == ConstraintType::Scale {
+        find_bool3(
+            (*constraint).constrain_scale.as_mut_ptr(),
+            props,
+            b"Affect\0".as_ptr(),
+            true,
+        );
+    } else if constraint_type == ConstraintType::SingleChainIk {
+        (*constraint).constrain_rotation[0] = true;
+        (*constraint).constrain_rotation[1] = true;
+        (*constraint).constrain_rotation[2] = true;
+        (*constraint).ik_pole_vector =
+            api_find_vec3(props, b"PoleVectorType\0".as_ptr(), ZERO_VEC3);
+    }
+}
+
+// ufbx.c:23490-23495 `ufbxi_update_anim`
+#[inline(never)]
+pub(crate) unsafe fn update_anim(scene: *mut Scene) {
+    if (*scene).anim_stacks.count > 0 {
+        // C: `scene->anim = scene->anim_stacks.data[0]->anim;`
+        let stack: *mut AnimStack = *((*scene).anim_stacks.data as *const *mut AnimStack);
+        (*scene).anim = (*stack).anim;
+    }
+}
+
+// ufbx.c:23497-23505 `ufbxi_mirror_matrix_dst`
+// C indexes the `ufbx_matrix` value union's `ufbx_vec3 cols[4]` view and then
+// each column's `ufbx_real v[3]`; the generated struct keeps only the named
+// `m00`..`m23` scalars, which are laid out as exactly four consecutive
+// `ufbx_vec3` columns (same device as `ufbxi_add_weighted_mat`).
+#[inline(always)]
+pub(crate) unsafe fn mirror_matrix_dst(m: *mut Matrix, axis: MirrorAxis) {
+    // C: `if (axis == 0) return;`
+    if axis as u32 == 0 {
+        return;
+    }
+    let ax: i32 = axis as i32 - 1;
+    let cols: *mut Vec3 = m as *mut Vec3;
+    let c0: *mut Real = cols.add(0) as *mut Real;
+    *c0.add(ax as usize) = -*c0.add(ax as usize);
+    let c1: *mut Real = cols.add(1) as *mut Real;
+    *c1.add(ax as usize) = -*c1.add(ax as usize);
+    let c2: *mut Real = cols.add(2) as *mut Real;
+    *c2.add(ax as usize) = -*c2.add(ax as usize);
+    let c3: *mut Real = cols.add(3) as *mut Real;
+    *c3.add(ax as usize) = -*c3.add(ax as usize);
+}
+
+// ufbx.c:23507-23514 `ufbxi_mirror_matrix_src`
+// Same `cols[4]` overlay as `ufbxi_mirror_matrix_dst`, but here C names the
+// column's `x`/`y`/`z` members directly.
+#[inline(always)]
+pub(crate) unsafe fn mirror_matrix_src(m: *mut Matrix, axis: MirrorAxis) {
+    // C: `if (axis == 0) return;`
+    if axis as u32 == 0 {
+        return;
+    }
+    let ax: i32 = axis as i32 - 1;
+    let cols: *mut Vec3 = m as *mut Vec3;
+    let col: *mut Vec3 = cols.add(ax as usize);
+    (*col).x = -(*col).x;
+    (*col).y = -(*col).y;
+    (*col).z = -(*col).z;
+}
+
+// ufbx.c:23516-23521 `ufbxi_mirror_matrix`
+#[inline(never)]
+pub(crate) unsafe fn mirror_matrix(m: *mut Matrix, axis: MirrorAxis) {
+    // C: `if (axis == 0) return;`
+    if axis as u32 == 0 {
+        return;
+    }
+    mirror_matrix_src(m, axis);
+    mirror_matrix_dst(m, axis);
+}
+
+// ufbx.c:23523-23619 `ufbxi_update_initial_clusters`
+#[inline(never)]
+pub(crate) unsafe fn update_initial_clusters(scene: *mut Scene) {
+    // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
+    let mut p_cluster: *mut *mut SkinCluster = (*scene).skin_clusters.data as *mut *mut SkinCluster;
+    let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*scene).skin_clusters.count);
+    while p_cluster != p_cluster_end {
+        let cluster: *mut SkinCluster = *p_cluster;
+        (*cluster).geometry_to_bone = (*cluster).mesh_node_to_bone;
+        p_cluster = p_cluster.add(1);
+    }
+
+    let mirror_axis: MirrorAxis = (*scene).metadata.mirror_axis;
+    let geometry_scale: Real = (*scene).metadata.geometry_scale;
+
+    // Space conversion for bind matrices
+    {
+        // C: `ufbx_matrix world_to_units;` — written by both arms of the
+        // `if` below (upstream carries no `// ufbxi_uninit` marker).
+        let world_to_units: Matrix;
+        let mut translation_scale: Real = 1.0 as Real;
+
+        if (*scene).metadata.space_conversion == SpaceConversion::TransformRoot
+            && (*scene).metadata.mirror_axis == MirrorAxis::None
+        {
+            world_to_units = (*ref_ptr(&(*scene).root_node)).node_to_parent;
+        } else {
+            // C: `ufbx_transform root_transform;` — every member is written
+            // below before the first read.
+            let mut root_transform: Transform = core::mem::zeroed();
+            root_transform.translation = ZERO_VEC3;
+            root_transform.rotation = (*scene).metadata.root_rotation;
+            root_transform.scale.x = (*scene).metadata.root_scale;
+            root_transform.scale.y = (*scene).metadata.root_scale;
+            root_transform.scale.z = (*scene).metadata.root_scale;
+            world_to_units = transform_to_matrix(&root_transform);
+            translation_scale = (*scene).metadata.geometry_scale;
+        }
+
+        // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
+        let mut p_cluster: *mut *mut SkinCluster =
+            (*scene).skin_clusters.data as *mut *mut SkinCluster;
+        let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*scene).skin_clusters.count);
+        while p_cluster != p_cluster_end {
+            let cluster: *mut SkinCluster = *p_cluster;
+            (*cluster).bind_to_world = matrix_mul(&world_to_units, &(*cluster).bind_to_world);
+            // C: `cluster->bind_to_world.cols[3].x` — the `cols[4]` overlay.
+            let bind_cols: *mut Vec3 = &mut (*cluster).bind_to_world as *mut Matrix as *mut Vec3;
+            (*bind_cols.add(3)).x *= translation_scale;
+            (*bind_cols.add(3)).y *= translation_scale;
+            (*bind_cols.add(3)).z *= translation_scale;
+            mirror_matrix(&mut (*cluster).bind_to_world, mirror_axis);
+            p_cluster = p_cluster.add(1);
+        }
+
+        // C: `ufbxi_for_ptr_list(ufbx_pose, p_pose, scene->poses)`
+        let mut p_pose: *mut *mut Pose = (*scene).poses.data as *mut *mut Pose;
+        let p_pose_end: *mut *mut Pose = add_ptr(p_pose, (*scene).poses.count);
+        while p_pose != p_pose_end {
+            // C: `ufbxi_for_list(ufbx_bone_pose, pose, (*p_pose)->bone_poses)`
+            let mut pose: *mut BonePose = (**p_pose).bone_poses.data as *mut BonePose;
+            let pose_end: *mut BonePose = add_ptr(pose, (**p_pose).bone_poses.count);
+            while pose != pose_end {
+                (*pose).bone_to_world = matrix_mul(&world_to_units, &(*pose).bone_to_world);
+                let pose_cols: *mut Vec3 = &mut (*pose).bone_to_world as *mut Matrix as *mut Vec3;
+                (*pose_cols.add(3)).x *= translation_scale;
+                (*pose_cols.add(3)).y *= translation_scale;
+                (*pose_cols.add(3)).z *= translation_scale;
+                mirror_matrix(&mut (*pose).bone_to_world, mirror_axis);
+                pose = pose.add(1);
+            }
+            p_pose = p_pose.add(1);
+        }
+    }
+
+    // Patch initial `mesh_node_to_bone`
+    // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
+    let mut p_cluster: *mut *mut SkinCluster = (*scene).skin_clusters.data as *mut *mut SkinCluster;
+    let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*scene).skin_clusters.count);
+    while p_cluster != p_cluster_end {
+        let cluster: *mut SkinCluster = *p_cluster;
+
+        let skin: *mut SkinDeformer = fetch_src_element(
+            &mut (*cluster).element,
+            false,
+            ptr::null(),
+            ElementType::SkinDeformer,
+        ) as *mut SkinDeformer;
+        if skin.is_null() {
+            p_cluster = p_cluster.add(1);
+            continue;
+        }
+
+        let mut node: *mut Node =
+            fetch_src_element(&mut (*skin).element, false, ptr::null(), ElementType::Node)
+                as *mut Node;
+        if node.is_null() {
+            let mesh: *mut Mesh =
+                fetch_src_element(&mut (*skin).element, false, ptr::null(), ElementType::Mesh)
+                    as *mut Mesh;
+            // C: `mesh->instances` — the `ufbx_mesh` element-header union view
+            // (ufbx.h), which the generated struct keeps as `element.instances`.
+            if !mesh.is_null() && (*mesh).element.instances.count > 0 {
+                node = *((*mesh).element.instances.data as *const *mut Node);
+            }
+        }
+        if node.is_null() {
+            p_cluster = p_cluster.add(1);
+            continue;
+        }
+
+        // Normalize to the non-helper node
+        if (*node).is_geometry_transform_helper {
+            node = opt_ptr(&(*node).parent);
+        }
+
+        if matrix_all_zero(&(*cluster).mesh_node_to_bone) {
+            // If `mesh_node_to_bone` is not explicitly specified compute it from bind pose.
+            let world_to_bind: Matrix = matrix_invert(&(*cluster).bind_to_world);
+            (*cluster).mesh_node_to_bone = matrix_mul(&world_to_bind, &(*node).node_to_world);
+        } else {
+            // If `mesh_node_to_bone` is explicit, we may need to modify it for space conversion.
+            mirror_matrix(&mut (*cluster).mesh_node_to_bone, mirror_axis);
+            if geometry_scale != 1.0 {
+                let cols: *mut Vec3 = &mut (*cluster).mesh_node_to_bone as *mut Matrix as *mut Vec3;
+                (*cols.add(3)).x *= geometry_scale;
+                (*cols.add(3)).y *= geometry_scale;
+                (*cols.add(3)).z *= geometry_scale;
+            }
+        }
+
+        // HACK: Account for geometry transforms by looking at the transform of the
+        // helper node if one is present. I don't think this is exactly how the skinning
+        // matrices are formed.
+        // TODO: Add a test with moving the skinned mesh root around.
+        // C: `if (node->geometry_transform_helper)` — pointer truthiness.
+        if !opt_ptr(&(*node).geometry_transform_helper).is_null() {
+            let geo_node: *mut Node = opt_ptr(&(*node).geometry_transform_helper);
+            (*cluster).geometry_to_bone =
+                matrix_mul(&(*cluster).mesh_node_to_bone, &(*geo_node).node_to_parent);
+        } else if (*node).has_geometry_transform {
+            (*cluster).geometry_to_bone =
+                matrix_mul(&(*cluster).mesh_node_to_bone, &(*node).geometry_to_node);
+        } else {
+            (*cluster).geometry_to_bone = (*cluster).mesh_node_to_bone;
+        }
+
+        p_cluster = p_cluster.add(1);
+    }
+}
+
+// ufbx.c:23621-23632 `ufbxi_find_axis`
+#[inline(never)]
+pub(crate) unsafe fn find_axis(
+    props: *const Props,
+    axis_name: *const u8,
+    sign_name: *const u8,
+) -> CoordinateAxis {
+    let axis: i64 = find_int(props, axis_name, 3);
+    let sign: i64 = find_int(props, sign_name, 2);
+
+    match axis {
+        0 => {
+            if sign > 0 {
+                CoordinateAxis::PositiveX
+            } else {
+                CoordinateAxis::NegativeX
+            }
+        }
+        1 => {
+            if sign > 0 {
+                CoordinateAxis::PositiveY
+            } else {
+                CoordinateAxis::NegativeY
+            }
+        }
+        2 => {
+            if sign > 0 {
+                CoordinateAxis::PositiveZ
+            } else {
+                CoordinateAxis::NegativeZ
+            }
+        }
+        _ => CoordinateAxis::Unknown,
+    }
+}
+
+// ufbx.c:23634-23653 `ufbxi_time_mode_fps`
+// C initializes an `ufbx_real[]` from `float` constants, so each entry is
+// `(double)(float)literal` when `ufbx_real` is `double` — the non-exact
+// entries (29.97, 23.976, 59.94) are NOT their `double` nearest values.
+static TIME_MODE_FPS: [Real; 18] = [
+    30.0f32 as Real,   // UFBX_TIME_MODE_DEFAULT
+    120.0f32 as Real,  // UFBX_TIME_MODE_120_FPS
+    100.0f32 as Real,  // UFBX_TIME_MODE_100_FPS
+    60.0f32 as Real,   // UFBX_TIME_MODE_60_FPS
+    50.0f32 as Real,   // UFBX_TIME_MODE_50_FPS
+    48.0f32 as Real,   // UFBX_TIME_MODE_48_FPS
+    30.0f32 as Real,   // UFBX_TIME_MODE_30_FPS
+    30.0f32 as Real,   // UFBX_TIME_MODE_30_FPS_DROP
+    29.97f32 as Real,  // UFBX_TIME_MODE_NTSC_DROP_FRAME
+    29.97f32 as Real,  // UFBX_TIME_MODE_NTSC_FULL_FRAME
+    25.0f32 as Real,   // UFBX_TIME_MODE_PAL
+    24.0f32 as Real,   // UFBX_TIME_MODE_24_FPS
+    1000.0f32 as Real, // UFBX_TIME_MODE_1000_FPS
+    23.976f32 as Real, // UFBX_TIME_MODE_FILM_FULL_FRAME
+    24.0f32 as Real,   // UFBX_TIME_MODE_CUSTOM
+    96.0f32 as Real,   // UFBX_TIME_MODE_96_FPS
+    72.0f32 as Real,   // UFBX_TIME_MODE_72_FPS
+    59.94f32 as Real,  // UFBX_TIME_MODE_59_94_FPS
+];
+
+// ufbx.c:23655-23674 `ufbxi_axis_matrix`
+// Returns whether a non-identity matrix was needed
+#[inline(never)]
+pub(crate) unsafe fn axis_matrix(
+    mat: *mut Matrix,
+    src: CoordinateAxes,
+    dst: CoordinateAxes,
+) -> bool {
+    let src_x: u32 = src.right as u32;
+    let dst_x: u32 = dst.right as u32;
+    let src_y: u32 = src.up as u32;
+    let dst_y: u32 = dst.up as u32;
+    let src_z: u32 = src.front as u32;
+    let dst_z: u32 = dst.front as u32;
+
+    if src_x == dst_x && src_y == dst_y && src_z == dst_z {
+        return false;
+    }
+
+    // Remap axes (axis enum divided by 2) potentially flipping if the signs (enum parity) doesn't match
+    ptr::write_bytes(mat as *mut u8, 0, size_of::<Matrix>());
+    // C: `mat->cols[i].v[j]` — the `cols[4]` / `v[3]` union overlay.
+    let cols: *mut Vec3 = mat as *mut Vec3;
+    let cx: *mut Real = cols.add((src_x >> 1) as usize) as *mut Real;
+    *cx.add((dst_x >> 1) as usize) = if ((src_x ^ dst_x) & 1) == 0 {
+        1.0 as Real
+    } else {
+        -1.0 as Real
+    };
+    let cy: *mut Real = cols.add((src_y >> 1) as usize) as *mut Real;
+    *cy.add((dst_y >> 1) as usize) = if ((src_y ^ dst_y) & 1) == 0 {
+        1.0 as Real
+    } else {
+        -1.0 as Real
+    };
+    let cz: *mut Real = cols.add((src_z >> 1) as usize) as *mut Real;
+    *cz.add((dst_z >> 1) as usize) = if ((src_z ^ dst_z) & 1) == 0 {
+        1.0 as Real
+    } else {
+        -1.0 as Real
+    };
+
+    true
+}
+
+// ufbx.c:23676-23804 `ufbxi_update_adjust_transforms`
+#[inline(never)]
+pub(crate) unsafe fn update_adjust_transforms(uc: *mut Context, scene: *mut Scene) {
+    let mut root_transform: Transform = IDENTITY_TRANSFORM;
+    if !matrix_all_zero(&(*uc).axis_matrix) {
+        root_transform = matrix_to_transform(&(*uc).axis_matrix);
+    }
+    root_transform.scale.x *= (*uc).unit_scale;
+    root_transform.scale.y *= (*uc).unit_scale;
+    root_transform.scale.z *= (*uc).unit_scale;
+
+    let conversion: SpaceConversion = (*uc).opts.space_conversion;
+
+    let mut light_post_rotation: Quat = IDENTITY_QUAT;
+    let mut camera_post_rotation: Quat = IDENTITY_QUAT;
+    let mut light_direction: Vec3 = Vec3 {
+        x: 0.0,
+        y: -1.0,
+        z: 0.0,
+    };
+    let mut has_light_transform: bool = false;
+    let mut has_camera_transform: bool = false;
+
+    if coordinate_axes_valid((*uc).opts.target_light_axes) {
+        let mut mat_storage = MaybeUninit::<Matrix>::uninit(); // ufbxi_uninit
+        let mat: *mut Matrix = mat_storage.as_mut_ptr();
+        let light_axes: CoordinateAxes = CoordinateAxes {
+            right: CoordinateAxis::PositiveX,
+            up: CoordinateAxis::NegativeZ,
+            front: CoordinateAxis::PositiveY,
+        };
+        if axis_matrix(mat, (*uc).opts.target_light_axes, light_axes) {
+            light_post_rotation = matrix_to_transform(mat).rotation;
+
+            let inv: Matrix = matrix_invert(mat);
+            light_direction = transform_direction(&inv, light_direction);
+            has_light_transform = true;
+        }
+    }
+
+    if coordinate_axes_valid((*uc).opts.target_camera_axes) {
+        let mut mat_storage = MaybeUninit::<Matrix>::uninit(); // ufbxi_uninit
+        let mat: *mut Matrix = mat_storage.as_mut_ptr();
+        let camera_axes: CoordinateAxes = CoordinateAxes {
+            right: CoordinateAxis::PositiveZ,
+            up: CoordinateAxis::PositiveY,
+            front: CoordinateAxis::NegativeX,
+        };
+        if axis_matrix(mat, (*uc).opts.target_camera_axes, camera_axes) {
+            camera_post_rotation = matrix_to_transform(mat).rotation;
+            has_camera_transform = true;
+        }
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_light, p_light, scene->lights)`
+    let mut p_light: *mut *mut Light = (*scene).lights.data as *mut *mut Light;
+    let p_light_end: *mut *mut Light = add_ptr(p_light, (*scene).lights.count);
+    while p_light != p_light_end {
+        let light: *mut Light = *p_light;
+        (*light).local_direction.x = 0.0;
+        (*light).local_direction.y = -1.0;
+        (*light).local_direction.z = 0.0;
+        p_light = p_light.add(1);
+    }
+
+    (*scene).metadata.space_conversion = conversion;
+    (*scene).metadata.geometry_transform_handling = (*uc).opts.geometry_transform_handling;
+    (*scene).metadata.inherit_mode_handling = (*uc).opts.inherit_mode_handling;
+    (*scene).metadata.pivot_handling = (*uc).opts.pivot_handling;
+    (*scene).metadata.handedness_conversion_axis = (*uc).opts.handedness_conversion_axis;
+
+    let root_scale: Real = min3(root_transform.scale);
+    if conversion == SpaceConversion::ModifyGeometry {
+        (*scene).metadata.geometry_scale = root_scale;
+        (*scene).metadata.root_scale = 1.0 as Real;
+    } else {
+        (*scene).metadata.geometry_scale = 1.0 as Real;
+        (*scene).metadata.root_scale = root_scale;
+    }
+    (*scene).metadata.root_rotation = root_transform.rotation;
+
+    // C: `ufbxi_for_ptr_list(ufbx_node, p_node, scene->nodes)`
+    let mut p_node: *mut *mut Node = (*scene).nodes.data as *mut *mut Node;
+    let p_node_end: *mut *mut Node = add_ptr(p_node, (*scene).nodes.count);
+    while p_node != p_node_end {
+        let node: *mut Node = *p_node;
+
+        (*node).adjust_post_rotation = IDENTITY_QUAT;
+        (*node).adjust_pre_rotation = IDENTITY_QUAT;
+        (*node).adjust_pre_scale = 1.0 as Real;
+        (*node).adjust_post_scale = 1.0 as Real;
+        (*node).adjust_translation_scale = 1.0 as Real;
+
+        if conversion == SpaceConversion::AdjustTransforms {
+            if (*node).node_depth <= 1 && !(*node).is_root {
+                (*node).adjust_pre_rotation = root_transform.rotation;
+                (*node).adjust_pre_scale = root_scale;
+                (*node).has_adjust_transform = true;
+                (*node).has_root_adjust_transform = true;
+            }
+        } else if conversion == SpaceConversion::ModifyGeometry {
+            if !(*node).is_root {
+                if (*node).node_depth <= 1 {
+                    (*node).adjust_pre_rotation = root_transform.rotation;
+                }
+                (*node).adjust_translation_scale = root_scale;
+                (*node).has_adjust_transform = true;
+            }
+        }
+
+        // C: `if (node->parent)` — pointer truthiness.
+        if !opt_ptr(&(*node).parent).is_null() {
+            // We are not inheriting local scale, so propagate root scale manually and
+            // apply scale compensation if necessary.
+            let parent: *mut Node = opt_ptr(&(*node).parent);
+            if (*parent).has_root_adjust_transform
+                && (*node).inherit_mode == InheritMode::IgnoreParentScale
+            {
+                (*node).adjust_post_scale *= root_scale;
+                (*node).has_adjust_transform = true;
+                (*node).has_root_adjust_transform = true;
+            }
+            if (*parent).is_scale_compensate_parent
+                && (*node).original_inherit_mode == InheritMode::IgnoreParentScale
+            {
+                let scale: Vec3 = find_vec3(
+                    &(*parent).element.props,
+                    sp::Lcl_Scaling.as_ptr(),
+                    1.0,
+                    1.0,
+                    1.0,
+                );
+                let mut size: Real = scale.x;
+                if math::fabs(scale.y - 1.0) < math::fabs(size - 1.0) {
+                    size = scale.y;
+                }
+                if math::fabs(scale.z - 1.0) < math::fabs(size - 1.0) {
+                    size = scale.z;
+                }
+                (*node).adjust_post_scale *= 1.0 / size;
+                (*node).has_adjust_transform = true;
+            }
+        }
+
+        if (*node).all_attribs.count == 1 {
+            // C: `if (has_light_transform && node->light)` — pointer truthiness.
+            if has_light_transform && !opt_ptr(&(*node).light).is_null() {
+                (*node).adjust_post_rotation = light_post_rotation;
+                (*opt_ptr(&(*node).light)).local_direction = light_direction;
+                (*node).has_adjust_transform = true;
+            }
+            if has_camera_transform && !opt_ptr(&(*node).camera).is_null() {
+                (*node).adjust_post_rotation = camera_post_rotation;
+                (*opt_ptr(&(*node).camera)).projection_axes = (*uc).opts.target_camera_axes;
+                (*node).has_adjust_transform = true;
+            }
+        }
+
+        p_node = p_node.add(1);
+    }
+}
+
+// ufbx.c:23806-23867 `ufbxi_update_scene`
+#[inline(never)]
+pub(crate) unsafe fn update_scene(
+    scene: *mut Scene,
+    initial: bool,
+    transform_overrides: *const TransformOverride,
+    num_transform_overrides: usize,
+) {
+    // C: `ufbxi_for_ptr_list(ufbx_node, p_node, scene->nodes)`
+    let mut p_node: *mut *mut Node = (*scene).nodes.data as *mut *mut Node;
+    let p_node_end: *mut *mut Node = add_ptr(p_node, (*scene).nodes.count);
+    while p_node != p_node_end {
+        update_node(*p_node, transform_overrides, num_transform_overrides);
+        p_node = p_node.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_light, p_light, scene->lights)`
+    let mut p_light: *mut *mut Light = (*scene).lights.data as *mut *mut Light;
+    let p_light_end: *mut *mut Light = add_ptr(p_light, (*scene).lights.count);
+    while p_light != p_light_end {
+        update_light(*p_light);
+        p_light = p_light.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_camera, p_camera, scene->cameras)`
+    let mut p_camera: *mut *mut Camera = (*scene).cameras.data as *mut *mut Camera;
+    let p_camera_end: *mut *mut Camera = add_ptr(p_camera, (*scene).cameras.count);
+    while p_camera != p_camera_end {
+        update_camera(scene, *p_camera);
+        p_camera = p_camera.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_bone, p_bone, scene->bones)`
+    let mut p_bone: *mut *mut Bone = (*scene).bones.data as *mut *mut Bone;
+    let p_bone_end: *mut *mut Bone = add_ptr(p_bone, (*scene).bones.count);
+    while p_bone != p_bone_end {
+        update_bone(scene, *p_bone);
+        p_bone = p_bone.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_line_curve, p_line, scene->line_curves)`
+    let mut p_line: *mut *mut LineCurve = (*scene).line_curves.data as *mut *mut LineCurve;
+    let p_line_end: *mut *mut LineCurve = add_ptr(p_line, (*scene).line_curves.count);
+    while p_line != p_line_end {
+        update_line_curve(*p_line);
+        p_line = p_line.add(1);
+    }
+
+    if initial {
+        update_initial_clusters(scene);
+
+        // C: `ufbxi_for_ptr_list(ufbx_pose, p_pose, scene->poses)`
+        let mut p_pose: *mut *mut Pose = (*scene).poses.data as *mut *mut Pose;
+        let p_pose_end: *mut *mut Pose = add_ptr(p_pose, (*scene).poses.count);
+        while p_pose != p_pose_end {
+            update_pose(*p_pose);
+            p_pose = p_pose.add(1);
+        }
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
+    let mut p_cluster: *mut *mut SkinCluster = (*scene).skin_clusters.data as *mut *mut SkinCluster;
+    let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*scene).skin_clusters.count);
+    while p_cluster != p_cluster_end {
+        update_skin_cluster(*p_cluster);
+        p_cluster = p_cluster.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_blend_channel, p_channel, scene->blend_channels)`
+    let mut p_channel: *mut *mut BlendChannel =
+        (*scene).blend_channels.data as *mut *mut BlendChannel;
+    let p_channel_end: *mut *mut BlendChannel = add_ptr(p_channel, (*scene).blend_channels.count);
+    while p_channel != p_channel_end {
+        update_blend_channel(*p_channel);
+        p_channel = p_channel.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, scene->textures)`
+    let mut p_texture: *mut *mut Texture = (*scene).textures.data as *mut *mut Texture;
+    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, (*scene).textures.count);
+    while p_texture != p_texture_end {
+        update_texture(*p_texture);
+        p_texture = p_texture.add(1);
+    }
+
+    propagate_main_textures(scene);
+
+    // C: `ufbxi_for_ptr_list(ufbx_material, p_material, scene->materials)`
+    let mut p_material: *mut *mut Material = (*scene).materials.data as *mut *mut Material;
+    let p_material_end: *mut *mut Material = add_ptr(p_material, (*scene).materials.count);
+    while p_material != p_material_end {
+        update_material(scene, *p_material);
+        p_material = p_material.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_anim_stack, p_stack, scene->anim_stacks)`
+    let mut p_stack: *mut *mut AnimStack = (*scene).anim_stacks.data as *mut *mut AnimStack;
+    let p_stack_end: *mut *mut AnimStack = add_ptr(p_stack, (*scene).anim_stacks.count);
+    while p_stack != p_stack_end {
+        update_anim_stack(scene, *p_stack);
+        p_stack = p_stack.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_display_layer, p_layer, scene->display_layers)`
+    let mut p_layer: *mut *mut DisplayLayer =
+        (*scene).display_layers.data as *mut *mut DisplayLayer;
+    let p_layer_end: *mut *mut DisplayLayer = add_ptr(p_layer, (*scene).display_layers.count);
+    while p_layer != p_layer_end {
+        update_display_layer(*p_layer);
+        p_layer = p_layer.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_constraint, p_constraint, scene->constraints)`
+    let mut p_constraint: *mut *mut Constraint = (*scene).constraints.data as *mut *mut Constraint;
+    let p_constraint_end: *mut *mut Constraint = add_ptr(p_constraint, (*scene).constraints.count);
+    while p_constraint != p_constraint_end {
+        update_constraint(*p_constraint);
+        p_constraint = p_constraint.add(1);
+    }
+
+    update_anim(scene);
+}
+
+// ufbx.c:23869-23878 `ufbxi_update_scene_metadata`
+#[inline(never)]
+pub(crate) unsafe fn update_scene_metadata(metadata: *mut Metadata) {
+    let props: *mut Props = &mut (*metadata).scene_props;
+    (*metadata).original_application.vendor = find_string(
+        props,
+        b"Original|ApplicationVendor\0".as_ptr(),
+        EMPTY_STRING.0,
+    );
+    (*metadata).original_application.name = find_string(
+        props,
+        b"Original|ApplicationName\0".as_ptr(),
+        EMPTY_STRING.0,
+    );
+    (*metadata).original_application.version = find_string(
+        props,
+        b"Original|ApplicationVersion\0".as_ptr(),
+        EMPTY_STRING.0,
+    );
+    (*metadata).latest_application.vendor = find_string(
+        props,
+        b"LastSaved|ApplicationVendor\0".as_ptr(),
+        EMPTY_STRING.0,
+    );
+    (*metadata).latest_application.name = find_string(
+        props,
+        b"LastSaved|ApplicationName\0".as_ptr(),
+        EMPTY_STRING.0,
+    );
+    (*metadata).latest_application.version = find_string(
+        props,
+        b"LastSaved|ApplicationVersion\0".as_ptr(),
+        EMPTY_STRING.0,
+    );
+}
+
+// ufbx.c:23880-23887 `ufbxi_pow10_targets`
+// C: the first entry is a `float` constant, the rest are `double` constants
+// explicitly cast to `ufbx_real` — kept verbatim (all are exactly
+// representable at both widths except the negative powers, whose `double`
+// values C uses directly).
+static POW10_TARGETS: [Real; 19] = [
+    0.0f32 as Real,
+    1e-8 as Real,
+    1e-7 as Real,
+    1e-6 as Real,
+    1e-5 as Real,
+    1e-4 as Real,
+    1e-3 as Real,
+    1e-2 as Real,
+    1e-1 as Real,
+    1e+0 as Real,
+    1e+1 as Real,
+    1e+2 as Real,
+    1e+3 as Real,
+    1e+4 as Real,
+    1e+5 as Real,
+    1e+6 as Real,
+    1e+7 as Real,
+    1e+8 as Real,
+    1e+9 as Real,
+];
+
+// ufbx.c:23889-23901 `ufbxi_round_if_near`
+#[inline(never)]
+pub(crate) unsafe fn round_if_near(targets: *const Real, num_targets: usize, value: Real) -> Real {
+    for i in 0..num_targets {
+        let target: f64 = *targets.add(i);
+        let mut error: f64 = target * 9.5367431640625e-7;
+        if error < 0.0 {
+            error = -error;
+        }
+        if error < 7.52316384526264005e-37 {
+            error = 7.52316384526264005e-37;
+        }
+        if value >= target - error && value <= target + error {
+            return target as Real;
+        }
+    }
+    value
+}
+
+// ufbx.c:23903-23931 `ufbxi_update_scene_settings`
+#[inline(never)]
+pub(crate) unsafe fn update_scene_settings(settings: *mut SceneSettings) {
+    let unit_scale_factor: Real = find_real(
+        &(*settings).props,
+        sp::UnitScaleFactor.as_ptr(),
+        1.0 as Real,
+    );
+    let original_unit_scale_factor: Real = find_real(
+        &(*settings).props,
+        sp::OriginalUnitScaleFactor.as_ptr(),
+        unit_scale_factor,
+    );
+
+    (*settings).axes.up = find_axis(
+        &(*settings).props,
+        sp::UpAxis.as_ptr(),
+        sp::UpAxisSign.as_ptr(),
+    );
+    (*settings).axes.front = find_axis(
+        &(*settings).props,
+        sp::FrontAxis.as_ptr(),
+        sp::FrontAxisSign.as_ptr(),
+    );
+    (*settings).axes.right = find_axis(
+        &(*settings).props,
+        sp::CoordAxis.as_ptr(),
+        sp::CoordAxisSign.as_ptr(),
+    );
+    (*settings).unit_meters = round_if_near(
+        POW10_TARGETS.as_ptr(),
+        POW10_TARGETS.len(),
+        unit_scale_factor * (0.01 as Real),
+    );
+    (*settings).original_unit_meters = round_if_near(
+        POW10_TARGETS.as_ptr(),
+        POW10_TARGETS.len(),
+        original_unit_scale_factor * (0.01 as Real),
+    );
+    (*settings).frames_per_second = find_real(
+        &(*settings).props,
+        sp::CustomFrameRate.as_ptr(),
+        24.0 as Real,
+    );
+    (*settings).ambient_color =
+        find_vec3(&(*settings).props, sp::AmbientColor.as_ptr(), 0.0, 0.0, 0.0);
+    (*settings).original_axis_up = find_axis(
+        &(*settings).props,
+        sp::OriginalUpAxis.as_ptr(),
+        sp::OriginalUpAxisSign.as_ptr(),
+    );
+
+    let default_camera: *mut Prop = find_prop(&(*settings).props, sp::DefaultCamera.as_ptr());
+    if !default_camera.is_null() {
+        (*settings).default_camera = (*default_camera).value_str;
+    } else {
+        (*settings).default_camera = EMPTY_STRING.0;
+    }
+
+    // C: `(ufbx_time_mode)ufbxi_find_enum(...)` etc — `ufbxi_find_enum` clamps
+    // each result to its enum's `[0, LAST]` range (same device as
+    // `ufbxi_update_camera` above).
+    (*settings).time_mode = core::mem::transmute::<u32, TimeMode>(find_enum(
+        &(*settings).props,
+        sp::TimeMode.as_ptr(),
+        TimeMode::E24Fps as i64,
+        TimeMode::E5994Fps as i64,
+    ) as u32);
+    (*settings).time_protocol = core::mem::transmute::<u32, TimeProtocol>(find_enum(
+        &(*settings).props,
+        sp::TimeProtocol.as_ptr(),
+        TimeProtocol::Default as i64,
+        TimeProtocol::Default as i64,
+    ) as u32);
+    (*settings).snap_mode = core::mem::transmute::<u32, SnapMode>(find_enum(
+        &(*settings).props,
+        sp::SnapOnFrameMode.as_ptr(),
+        SnapMode::None as i64,
+        SnapMode::SnapAndPlay as i64,
+    ) as u32);
+
+    if (*settings).time_mode != TimeMode::Custom {
+        (*settings).frames_per_second = TIME_MODE_FPS[(*settings).time_mode as u32 as usize];
+    }
+}
+
+// ufbx.c:23933-23944 `ufbxi_update_scene_settings_obj`
+#[inline(never)]
+pub(crate) unsafe fn update_scene_settings_obj(uc: *mut Context) {
+    let settings: *mut SceneSettings = &mut (*uc).scene.settings;
+    // C: `settings->original_unit_meters = settings->unit_meters = uc->opts.obj_unit_meters;`
+    (*settings).unit_meters = (*uc).opts.obj_unit_meters;
+    (*settings).original_unit_meters = (*settings).unit_meters;
+    if coordinate_axes_valid((*uc).opts.obj_axes) {
+        (*settings).axes = (*uc).opts.obj_axes;
+    } else {
+        (*settings).axes.right = CoordinateAxis::Unknown;
+        (*settings).axes.up = CoordinateAxis::Unknown;
+        (*settings).axes.front = CoordinateAxis::Unknown;
+    }
+}
+
 // CONTINUATION POINT: `// -- Scene processing` (ufbx.c:18545-22624) is ported
 // in FULL, including `ufbxi_finalize_scene`, plus
-// `// -- Interpret the read scene` in full (ufbx.c:22626-22741) and the head of
-// `// -- Updating state from properties` (ufbx.c:22743-22784) that
-// `ufbxi_modify_geometry` needs.
+// `// -- Interpret the read scene` in full (ufbx.c:22626-22741) and
+// `// -- Updating state from properties` in FULL (ufbx.c:22743-23944) — this
+// unit finished the banner section at `ufbxi_update_scene_settings_obj`.
 //
-// Next: `ufbxi_get_rotation` (ufbx.c:22786) onwards — the rest of
-// `// -- Updating state from properties`.
+// Next: `// -- Geometry caches` (ufbx.c:23946-24785), gated on
+// `UFBXI_FEATURE_GEOMETRY_CACHE` and blocked on `// -- XML` (ufbx.c:7245-7682,
+// `native::xml`, still a stub).
 //
-// NOTE: ufbx.c:22600's `ufbxi_update_scene()` mention is a COMMENT, not a call;
-// `ufbxi_finalize_scene` has no caller yet (`ufbxi_load_imp`, ufbx.c:30035, is
-// unported).
+// NOTE: ufbx.c:22600's `ufbxi_update_scene()` mention is a COMMENT, not a call.
+// `ufbxi_finalize_scene`, `ufbxi_update_scene`, `ufbxi_update_adjust_transforms`,
+// `ufbxi_update_scene_metadata`, `ufbxi_update_scene_settings` and
+// `ufbxi_update_scene_settings_obj` still have no callers — every one of them is
+// called only from `ufbxi_load_imp` (ufbx.c:25204+, unported) or
+// `ufbxi_evaluate_imp` (ufbx.c:26403, unported). `ufbxi_round_if_near` and
+// `ufbxi_pow10_targets` also have call sites in `ufbxi_scale_unit_scale`
+// (ufbx.c:24986/24989, unported), and `ufbxi_axis_matrix` /
+// `ufbxi_mirror_matrix_dst` in `ufbxi_setup_axis_matrix` (ufbx.c:24949/24957,
+// unported); all of these are ported here because C defines them here.
 //
 // DEFERRED(topology) and still owed from this range: `ufbxi_generate_normals`
 // (ufbx.c:20364-20403) and its call site in `ufbxi_finalize_scene`
@@ -8541,5 +10608,58 @@ mod tests {
         assert_eq!(ShaderTextureType::Unknown as u32, 0);
         assert_eq!(ShaderTextureType::SelectOutput as u32, 1);
         assert_eq!(ShaderTextureType::Osl as u32, 2);
+    }
+
+    // `ufbxi_update_scene_settings` indexes `ufbxi_time_mode_fps` with an
+    // unchecked `settings->time_mode` (ufbx.c:23929), so the table must cover
+    // every `ufbx_time_mode` — `ufbxi_find_enum` only clamps to
+    // `UFBX_TIME_MODE_59_94_FPS`, the last variant.
+    #[test]
+    fn time_mode_fps_table_covers_every_time_mode() {
+        assert_eq!(TIME_MODE_FPS.len(), TimeMode::E5994Fps as usize + 1);
+    }
+
+    // C initializes `ufbxi_time_mode_fps` (an `ufbx_real[]`) from `float`
+    // constants, so with `ufbx_real == double` the non-exact entries are
+    // `(double)(float)literal`, NOT the `double` nearest value. Writing them
+    // as bare `f64` literals would shift `frames_per_second` in the low bits —
+    // straight into the scene hash.
+    #[test]
+    fn time_mode_fps_entries_keep_float_widening() {
+        assert_eq!(TIME_MODE_FPS[8], 29.97f32 as Real);
+        assert_eq!(TIME_MODE_FPS[9], 29.97f32 as Real);
+        assert_eq!(TIME_MODE_FPS[13], 23.976f32 as Real);
+        assert_eq!(TIME_MODE_FPS[17], 59.94f32 as Real);
+        assert_ne!(TIME_MODE_FPS[8], 29.97f64);
+        assert_ne!(TIME_MODE_FPS[13], 23.976f64);
+        assert_ne!(TIME_MODE_FPS[17], 59.94f64);
+    }
+
+    // Conversely `ufbxi_pow10_targets` (ufbx.c:23880-23887) casts `double`
+    // constants, so every entry past the leading `0.0f` IS the `double`
+    // nearest value — the two tables are transcribed with different rules.
+    #[test]
+    fn pow10_targets_table_is_transcribed() {
+        assert_eq!(POW10_TARGETS.len(), 19);
+        assert_eq!(POW10_TARGETS[0], 0.0);
+        assert_eq!(POW10_TARGETS[1], 1e-8f64);
+        assert_eq!(POW10_TARGETS[9], 1e+0f64);
+        assert_eq!(POW10_TARGETS[18], 1e+9f64);
+    }
+
+    // `ufbxi_update_adjust_transforms` builds the light/camera target axes as
+    // brace initializers over `{ right, up, front }` (ufbx.c:23696-23699 and
+    // 23712-23715); a reordered field list here is invisible to the compiler.
+    #[test]
+    fn coordinate_axes_field_order() {
+        let axes = CoordinateAxes {
+            right: CoordinateAxis::PositiveX,
+            up: CoordinateAxis::NegativeZ,
+            front: CoordinateAxis::PositiveY,
+        };
+        let raw: [u32; 3] = unsafe { core::mem::transmute(axes) };
+        assert_eq!(raw[0], CoordinateAxis::PositiveX as u32);
+        assert_eq!(raw[1], CoordinateAxis::NegativeZ as u32);
+        assert_eq!(raw[2], CoordinateAxis::PositiveY as u32);
     }
 }
