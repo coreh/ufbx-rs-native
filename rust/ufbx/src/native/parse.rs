@@ -30,20 +30,22 @@ use core::ffi::c_void;
 use core::mem::size_of;
 
 use crate::generated::{
-    DomNode, DomValue, DomValueType, ElementType, Error, Exporter, InflateRetain, Matrix,
-    MirrorAxis, Progress, ProgressResult, Prop, PropFlags, PropType, Props, Quat, RawLoadOpts,
-    Scene, TextureFile, Transform, Vec3, Vec4,
+    DomNode, DomValue, DomValueType, ElementType, Error, Exporter, FileFormat, InflateRetain,
+    Matrix, MirrorAxis, Progress, ProgressResult, Prop, PropFlags, PropType, Props, Quat,
+    RawLoadOpts, Scene, TextureFile, Transform, Vec3, Vec4,
 };
 use crate::native::allocator::{grow_array, Allocator};
-use crate::native::buf::{buf_clear, pop, push_copy, push_pop, push_size_zero, push_zero, Buf};
+use crate::native::buf::{buf_clear, buf_free, pop, push_copy, push_pop, push_size_zero, push_zero, Buf};
 use crate::native::error::{
-    memcmp, strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail, Fail,
-    EMPTY_CHAR,
+    memchr, memcmp, strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail,
+    Fail, EMPTY_CHAR,
 };
 use crate::native::hash::{hash_uptr, map_find, map_insert, Map, PtrId};
 use crate::native::parse_ascii::is_space;
+use crate::native::parse_binary::{BINARY_HEADER_SIZE, BINARY_MAGIC, BINARY_MAGIC_SIZE};
 use crate::native::platform::{
-    min_sz, to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_ignore, ufbxi_unreachable, AtomicCounter,
+    add_ptr, min_sz, read_u32, to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_ignore,
+    ufbxi_unreachable, AtomicCounter,
 };
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{SanitizedString, StringPool};
@@ -2599,13 +2601,37 @@ pub(crate) unsafe fn retain_toplevel_child(uc: *mut Context, child: *mut Node) -
 }
 
 // -- General parsing (ufbx.c:10855-11407)
-//
-// PARTIAL: only the entry points the `// -- Reading the parsed data` and
-// `// -- .obj file` units call are ported here. `ufbxi_next_line`
-// (ufbx.c:10857-10879), `ufbxi_is_format` (11096-11144),
-// `ufbxi_parse_toplevel` (11252-11329), `ufbxi_parse_legacy_toplevel`
-// (11379-11407) and the rest of the section are still unported — port them
-// here, in C order, when this section's own unit lands.
+
+// ufbx.c:10857-10879 `ufbxi_next_line`
+#[inline(never)]
+pub(crate) unsafe fn next_line(line: *mut String, buf: *mut String, skip_space: bool) -> bool {
+    if (*buf).length == 0 {
+        return false;
+    }
+    let newline: *const u8 = memchr((*buf).data, b'\n', (*buf).length);
+    let length: usize = if !newline.is_null() {
+        to_size(newline as isize - (*buf).data as isize) + 1
+    } else {
+        (*buf).length
+    };
+
+    (*line).data = (*buf).data;
+    (*line).length = length;
+    (*buf).data = (*buf).data.add(length);
+    (*buf).length -= length;
+
+    if skip_space {
+        while (*line).length > 0 && is_space(*(*line).data) {
+            (*line).data = (*line).data.add(1);
+            (*line).length -= 1;
+        }
+        while (*line).length > 0 && is_space(*(*line).data.add((*line).length - 1)) {
+            (*line).length -= 1;
+        }
+    }
+
+    true
+}
 
 // Recursion limited by compile time patterns
 // ufbx.c:10882-10914 `ufbxi_match_skip`
@@ -2892,6 +2918,207 @@ pub(crate) unsafe fn r#match(str_: *const String, fmt: *const u8) -> bool {
     }
 }
 
+// ufbx.c:11096-11128 `ufbxi_is_format`
+#[inline(never)]
+pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat) -> bool {
+    // C: `ufbx_string line, buf = { data, size };` — `line` is written by
+    // `ufbxi_next_line` before any read.
+    let mut line: String = String::new_c(core::ptr::null(), 0);
+    let mut buf: String = String::new_c(data, size);
+
+    if format == FileFormat::Fbx {
+        if size >= BINARY_MAGIC_SIZE
+            && memcmp(data, BINARY_MAGIC.as_ptr(), BINARY_MAGIC_SIZE) == 0
+        {
+            return true;
+        }
+
+        while next_line(&mut line, &mut buf, true) {
+            if r#match(&line, b";\\s*FBX\\s*\\d+\\.\\d+\\.\\d+\\s*project\\s+file\0".as_ptr()) {
+                return true;
+            }
+            if r#match(&line, b"FBXHeaderExtension:.*\0".as_ptr()) {
+                return true;
+            }
+        }
+    } else if format == FileFormat::Obj {
+        while next_line(&mut line, &mut buf, true) {
+            let pattern: *const u8 = b"(vn?\\s+\\F|vt)\\s+\\F\\s+\\F.*|f\\s+[\\-/0-9]+\\s+[\\-/0-9]+\\s*[\\-/0-9]+.*|(usemtl|mtllib)\\s+\\S.*\0".as_ptr();
+            if r#match(&line, pattern) {
+                return true;
+            }
+        }
+    } else if format == FileFormat::Mtl {
+        while next_line(&mut line, &mut buf, true) {
+            let pattern: *const u8 = b"newmtl\\s+\\S.*\0".as_ptr();
+            if r#match(&line, pattern) {
+                return true;
+            }
+        }
+    } else {
+        ufbxi_unreachable!("Unhandled format");
+    }
+
+    false
+}
+
+// ufbx.h:3531 `UFBX_FILE_FORMAT_COUNT` (`UFBX_ENUM_TYPE` terminator for the
+// enum at ufbx.h:3522-3529, consumed at ufbx.c:11147; derived from the
+// generated enum's last variant so an upstream change tracks through
+// regen — precedent: `WARNING_TYPE_COUNT` in `native::warnings`).
+pub(crate) const FILE_FORMAT_COUNT: u32 = FileFormat::Mtl as u32 + 1;
+
+// ufbx.c:58 `#define UFBXI_MIN_FILE_FORMAT_LOOKAHEAD 32`
+pub(crate) const MIN_FILE_FORMAT_LOOKAHEAD: usize = 32;
+
+// ufbx.c:11130-11191 `ufbxi_determine_format`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn determine_format(uc: *mut Context) -> Result<(), Fail> {
+    let mut format: FileFormat = (*uc).opts.file_format;
+
+    if format == FileFormat::Unknown && !(*uc).opts.no_format_from_content {
+        crate::native::io::pause_progress(uc);
+
+        let mut lookahead: usize = MIN_FILE_FORMAT_LOOKAHEAD;
+        while format == FileFormat::Unknown && lookahead <= (*uc).opts.file_format_lookahead {
+            if lookahead > (*uc).data_size {
+                if (*uc).eof {
+                    break;
+                }
+                ufbxi_check!(
+                    uc,
+                    !crate::native::io::refill(uc, lookahead, false).is_null(),
+                    "ufbxi_refill(uc, lookahead, false)"
+                );
+            }
+
+            let data_size: usize = min_sz(lookahead, (*uc).data_size);
+            ufbxi_check_msg!(uc, data_size > 0, "Empty file");
+
+            // C: `for (uint32_t fmt = UFBX_FILE_FORMAT_FBX; fmt < UFBX_FILE_FORMAT_COUNT; fmt++)`
+            let mut fmt: u32 = FileFormat::Fbx as u32;
+            while fmt < FILE_FORMAT_COUNT {
+                if is_format(
+                    (*uc).data,
+                    data_size,
+                    core::mem::transmute::<u32, FileFormat>(fmt),
+                ) {
+                    format = core::mem::transmute::<u32, FileFormat>(fmt);
+                    break;
+                }
+                fmt += 1;
+            }
+
+            if lookahead >= (*uc).opts.file_format_lookahead {
+                break;
+            } else if lookahead < usize::MAX / 2 {
+                lookahead = min_sz(lookahead * 2, (*uc).opts.file_format_lookahead);
+            } else {
+                lookahead = usize::MAX;
+            }
+        }
+
+        crate::native::io::resume_progress(uc)?;
+    }
+
+    if format == FileFormat::Unknown && !(*uc).opts.no_format_from_extension {
+        if (*uc).opts.filename.length > 0 {
+            // C: `ufbx_string extension = uc->opts.filename;`
+            let mut extension: String =
+                String::new_c((*uc).opts.filename.data, (*uc).opts.filename.length);
+            let mut i: usize = extension.length;
+            while i > 0 {
+                if *extension.data.add(i - 1) == b'.' {
+                    extension.data = extension.data.add(i - 1);
+                    extension.length -= i - 1;
+                    break;
+                }
+                i -= 1;
+            }
+
+            if r#match(&extension, b"\\c\\.fbx\0".as_ptr()) {
+                format = FileFormat::Fbx;
+            } else if r#match(&extension, b"\\c\\.obj\0".as_ptr()) {
+                format = FileFormat::Obj;
+            } else if r#match(&extension, b"\\c\\.mtl\0".as_ptr()) {
+                format = FileFormat::Mtl;
+            }
+        }
+    }
+
+    ufbxi_check_msg!(
+        uc,
+        format != FileFormat::Unknown,
+        "Unrecognized file format",
+        "format != UFBX_FILE_FORMAT_UNKNOWN"
+    );
+    (*uc).scene.metadata.file_format = format;
+
+    Ok(())
+}
+
+// ufbx.c:11193-11240 `ufbxi_begin_parse`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn begin_parse(uc: *mut Context) -> Result<(), Fail> {
+    let header: *const u8 = crate::native::io::peek_bytes(uc, BINARY_HEADER_SIZE);
+    ufbxi_check!(uc, !header.is_null(), "header");
+
+    // If the file starts with the binary magic parse it as binary, otherwise
+    // treat it as an ASCII file.
+    if memcmp(header, BINARY_MAGIC.as_ptr(), BINARY_MAGIC_SIZE) == 0 {
+        // The byte after the magic indicates endianness
+        let endian: u8 = *header.add(BINARY_MAGIC_SIZE + 0);
+        (*uc).file_big_endian = endian != 0;
+
+        // Read the version directly from the header
+        let mut version_word: *const u8 = header.add(BINARY_MAGIC_SIZE + 1);
+        if (*uc).file_big_endian {
+            version_word = crate::native::parse_binary::swap_endian(
+                uc,
+                version_word as *const c_void,
+                1,
+                4,
+            );
+            ufbxi_check!(uc, !version_word.is_null(), "version_word");
+        }
+        (*uc).version = read_u32(version_word);
+
+        // This is quite probably an FBX file..
+        (*uc).sure_fbx = true;
+        crate::native::io::consume_bytes(uc, BINARY_HEADER_SIZE);
+    } else {
+        (*uc).from_ascii = true;
+
+        // Use the current read buffer as the initial parse buffer
+        // C: `memset(&uc->ascii, 0, sizeof(uc->ascii));`
+        core::ptr::write_bytes(
+            core::ptr::addr_of_mut!((*uc).ascii) as *mut u8,
+            0,
+            size_of::<Ascii>(),
+        );
+        (*uc).ascii.src = (*uc).data;
+        (*uc).ascii.src_yield = (*uc).data.add((*uc).yield_size);
+        (*uc).ascii.src_end = (*uc).data.add((*uc).data_size + (*uc).yield_size);
+
+        // Initialize the first token
+        crate::native::parse_ascii::ascii_next_token(uc, &mut (*uc).ascii.token)?;
+
+        // Default to version 7400 if not found in header
+        if (*uc).version > 0 {
+            (*uc).sure_fbx = true;
+        } else {
+            if !(*uc).opts.strict {
+                (*uc).version = 7400;
+            }
+            ufbxi_check_msg!(uc, (*uc).version > 0, "Not an FBX file", "uc->version > 0");
+        }
+    }
+
+    Ok(())
+}
+
 // ufbx.c:11242-11251 `ufbxi_parse_toplevel_child_imp`
 pub(crate) unsafe fn parse_toplevel_child_imp(
     uc: *mut Context,
@@ -2906,6 +3133,120 @@ pub(crate) unsafe fn parse_toplevel_child_imp(
     }
 
     Ok(())
+}
+
+// ufbx.c:11253-11330 `ufbxi_parse_toplevel`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn parse_toplevel(uc: *mut Context, name: *const u8) -> Result<(), Fail> {
+    // C: `ufbxi_for(ufbxi_node, node, uc->top_nodes, uc->top_nodes_len)`
+    let mut node: *mut Node = (*uc).top_nodes;
+    let node_end: *mut Node = add_ptr(node, (*uc).top_nodes_len);
+    while node != node_end {
+        if (*node).name == name {
+            (*uc).top_node = node;
+            (*uc).top_child_index = 0;
+            return Ok(());
+        }
+        node = node.add(1);
+    }
+
+    // Reached end and not found in cache
+    if (*uc).parsed_to_end {
+        (*uc).top_node = core::ptr::null_mut();
+        (*uc).top_child_index = 0;
+        return Ok(());
+    }
+
+    loop {
+        // Parse the next top-level node
+        let mut end: bool = false;
+        if (*uc).from_ascii {
+            crate::native::parse_ascii::ascii_parse_node(
+                uc,
+                0,
+                ParseState::Root,
+                &mut end,
+                &mut (*uc).tmp,
+                false,
+            )?;
+        } else {
+            crate::native::parse_binary::binary_parse_node(
+                uc,
+                0,
+                ParseState::Root,
+                &mut end,
+                &mut (*uc).tmp,
+                false,
+            )?;
+        }
+
+        // Top-level node not found
+        if end {
+            (*uc).top_node = core::ptr::null_mut();
+            (*uc).top_child_index = 0;
+            (*uc).parsed_to_end = true;
+            if (*uc).opts.retain_dom {
+                retain_toplevel(uc, core::ptr::null_mut())?;
+            }
+
+            // Not needed anymore
+            buf_free(&mut (*uc).tmp_parse);
+
+            return Ok(());
+        }
+
+        (*uc).top_nodes_len += 1;
+        ufbxi_check!(
+            uc,
+            grow_array(
+                &mut (*uc).ator_tmp,
+                &mut (*uc).top_nodes,
+                &mut (*uc).top_nodes_cap,
+                (*uc).top_nodes_len
+            ),
+            "ufbxi_grow_array(&uc->ator_tmp, &uc->top_nodes, &uc->top_nodes_cap, uc->top_nodes_len)"
+        );
+        let node: *mut Node = (*uc).top_nodes.add((*uc).top_nodes_len - 1);
+        pop::<Node>(&mut (*uc).tmp_stack, 1, node);
+        if (*uc).opts.retain_dom {
+            retain_toplevel(uc, node)?;
+        }
+
+        // Return if we parsed the right one
+        if (*node).name == name {
+            (*uc).top_node = node;
+            (*uc).top_child_index = usize::MAX;
+            return Ok(());
+        }
+
+        // If not we need to parse all the children of the node for later
+        let mut num_children: u32 = 0;
+        let state: ParseState = update_parse_state(ParseState::Root, (*node).name);
+        if (*uc).has_next_child {
+            loop {
+                parse_toplevel_child_imp(uc, state, &mut (*uc).tmp, &mut end)?;
+                if end {
+                    break;
+                }
+                num_children += 1;
+            }
+        }
+
+        (*node).num_children = num_children;
+        (*node).children =
+            push_pop::<Node>(&mut (*uc).tmp, &mut (*uc).tmp_stack, num_children as usize);
+        ufbxi_check!(uc, !(*node).children.is_null(), "node->children");
+
+        if (*uc).opts.retain_dom {
+            // C: `for (size_t i = 0; i < num_children; i++)`
+            let mut i: usize = 0;
+            while i < num_children as usize {
+                retain_toplevel_child(uc, (*node).children.add(i))?;
+                i += 1;
+            }
+        }
+    }
 }
 
 // ufbx.c:11332-11377 `ufbxi_parse_toplevel_child`
@@ -2965,13 +3306,89 @@ pub(crate) unsafe fn parse_toplevel_child(
     Ok(())
 }
 
+// ufbx.c:11379-11407 `ufbxi_parse_legacy_toplevel`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn parse_legacy_toplevel(uc: *mut Context) -> Result<(), Fail> {
+    ufbx_assert!((*uc).top_nodes_len == 0);
+
+    let mut end: bool = false;
+    if (*uc).from_ascii {
+        crate::native::parse_ascii::ascii_parse_node(
+            uc,
+            0,
+            ParseState::Root,
+            &mut end,
+            &mut (*uc).tmp,
+            true,
+        )?;
+    } else {
+        crate::native::parse_binary::binary_parse_node(
+            uc,
+            0,
+            ParseState::Root,
+            &mut end,
+            &mut (*uc).tmp,
+            true,
+        )?;
+    }
+
+    // Top-level node not found
+    if end {
+        (*uc).top_node = core::ptr::null_mut();
+        (*uc).top_child_index = 0;
+        (*uc).parsed_to_end = true;
+        return Ok(());
+    }
+
+    pop::<Node>(&mut (*uc).tmp_stack, 1, &mut (*uc).legacy_node);
+    (*uc).top_child_index = 0;
+    (*uc).top_node = &mut (*uc).legacy_node;
+
+    if (*uc).opts.retain_dom {
+        retain_toplevel(uc, &mut (*uc).legacy_node)?;
+    }
+
+    Ok(())
+}
+
 // -- Setup (ufbx.c:11409-11760)
-//
-// PARTIAL: only the pieces the `// -- Reading the parsed data` unit calls are
-// ported here. The string/map loading (`ufbxi_load_strings` 11411,
-// `ufbxi_load_maps` 11748), the `ufbxi_prop_type_names[]` table (11436-11468)
-// and the rest of the section are still unported — port them here, in C order,
-// when this section's own unit lands.
+
+// ufbx.c:11411-11429 `ufbxi_load_strings`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn load_strings(uc: *mut Context) -> Result<(), Fail> {
+    // C: `#if defined(UFBX_REGRESSION) ufbx_string reg_prev = ufbx_empty_string; #endif`
+    #[cfg(feature = "regression")]
+    let mut reg_prev: String = crate::native::api::EMPTY_STRING.0;
+
+    // Push all the global 'ufbxi_*' strings into the pool without copying them
+    // This allows us to compare name pointers to the global values
+    // C: `ufbxi_for(const ufbx_string, str, ufbxi_strings, ufbxi_arraycount(ufbxi_strings))`
+    for str_ in sp::STRINGS.0.iter() {
+        #[cfg(feature = "regression")]
+        {
+            ufbx_assert!(crate::native::error::strlen(str_.data) == str_.length);
+            ufbx_assert!(sp::str_less(reg_prev, *str_));
+            reg_prev = *str_;
+        }
+        ufbxi_check!(
+            uc,
+            !sp::push_string_imp(
+                &mut (*uc).string_pool,
+                str_.data,
+                str_.length,
+                core::ptr::null_mut(),
+                false,
+                true
+            )
+            .is_null(),
+            "ufbxi_push_string_imp(&uc->string_pool, str->data, str->length, NULL, false, true)"
+        );
+    }
+
+    Ok(())
+}
 
 // ufbx.c:11431-11434 `ufbxi_prop_type_name`
 #[repr(C)]
@@ -2980,6 +3397,48 @@ pub(crate) struct PropTypeName {
     pub name: *const u8,
     pub type_: PropType,
 }
+
+// ufbx.c:11436-11468 `ufbxi_prop_type_names`
+// `PropTypeName` holds a raw pointer (not auto-`Sync`); the table is immutable
+// data pointing at immutable statics, so sharing is sound (precedent:
+// `StringTable` in `native::string_pool`).
+#[repr(transparent)]
+pub(crate) struct PropTypeNameTable(pub [PropTypeName; 31]);
+unsafe impl Sync for PropTypeNameTable {}
+
+pub(crate) static PROP_TYPE_NAMES: PropTypeNameTable = PropTypeNameTable([
+    PropTypeName { name: b"Boolean\0".as_ptr(), type_: PropType::Boolean },
+    PropTypeName { name: b"bool\0".as_ptr(), type_: PropType::Boolean },
+    PropTypeName { name: b"Bool\0".as_ptr(), type_: PropType::Boolean },
+    PropTypeName { name: b"Integer\0".as_ptr(), type_: PropType::Integer },
+    PropTypeName { name: b"int\0".as_ptr(), type_: PropType::Integer },
+    PropTypeName { name: b"enum\0".as_ptr(), type_: PropType::Integer },
+    PropTypeName { name: b"Enum\0".as_ptr(), type_: PropType::Integer },
+    PropTypeName { name: b"Visibility\0".as_ptr(), type_: PropType::Integer },
+    PropTypeName { name: b"Visibility Inheritance\0".as_ptr(), type_: PropType::Integer },
+    PropTypeName { name: b"KTime\0".as_ptr(), type_: PropType::Integer },
+    PropTypeName { name: b"Number\0".as_ptr(), type_: PropType::Number },
+    PropTypeName { name: b"double\0".as_ptr(), type_: PropType::Number },
+    PropTypeName { name: b"Real\0".as_ptr(), type_: PropType::Number },
+    PropTypeName { name: b"Float\0".as_ptr(), type_: PropType::Number },
+    PropTypeName { name: b"Intensity\0".as_ptr(), type_: PropType::Number },
+    PropTypeName { name: b"Vector\0".as_ptr(), type_: PropType::Vector },
+    PropTypeName { name: b"Vector3D\0".as_ptr(), type_: PropType::Vector },
+    PropTypeName { name: b"Color\0".as_ptr(), type_: PropType::Color },
+    PropTypeName { name: b"ColorAndAlpha\0".as_ptr(), type_: PropType::ColorWithAlpha },
+    PropTypeName { name: b"ColorRGB\0".as_ptr(), type_: PropType::Color },
+    PropTypeName { name: b"String\0".as_ptr(), type_: PropType::String },
+    PropTypeName { name: b"KString\0".as_ptr(), type_: PropType::String },
+    PropTypeName { name: b"object\0".as_ptr(), type_: PropType::String },
+    PropTypeName { name: b"DateTime\0".as_ptr(), type_: PropType::DateTime },
+    PropTypeName { name: b"Lcl Translation\0".as_ptr(), type_: PropType::Translation },
+    PropTypeName { name: b"Lcl Rotation\0".as_ptr(), type_: PropType::Rotation },
+    PropTypeName { name: b"Lcl Scaling\0".as_ptr(), type_: PropType::Scaling },
+    PropTypeName { name: b"Distance\0".as_ptr(), type_: PropType::Distance },
+    PropTypeName { name: b"Compound\0".as_ptr(), type_: PropType::Compound },
+    PropTypeName { name: b"Blob\0".as_ptr(), type_: PropType::Blob },
+    PropTypeName { name: b"Reference\0".as_ptr(), type_: PropType::Reference },
+]);
 
 // ufbx.c:11470-11478 `ufbxi_get_prop_type`
 pub(crate) unsafe fn get_prop_type(uc: *mut Context, name: *const u8) -> PropType {
@@ -3265,10 +3724,128 @@ pub(crate) unsafe fn name_key_less(
     prop_len < name_len
 }
 
+// ufbx.c:11645-11718 `ufbxi_node_prop_names`
+// Raw-pointer table behind a `Sync` wrapper — same rationale as
+// `PROP_TYPE_NAMES` above.
+#[repr(transparent)]
+pub(crate) struct NodePropNameTable(pub [*const u8; 72]);
+unsafe impl Sync for NodePropNameTable {}
+
+pub(crate) static NODE_PROP_NAMES: NodePropNameTable = NodePropNameTable([
+    b"AxisLen\0".as_ptr(),
+    b"DefaultAttributeIndex\0".as_ptr(),
+    b"Freeze\0".as_ptr(),
+    b"GeometricRotation\0".as_ptr(),
+    b"GeometricScaling\0".as_ptr(),
+    b"GeometricTranslation\0".as_ptr(),
+    b"InheritType\0".as_ptr(),
+    b"LODBox\0".as_ptr(),
+    b"Lcl Rotation\0".as_ptr(),
+    b"Lcl Scaling\0".as_ptr(),
+    b"Lcl Translation\0".as_ptr(),
+    b"LookAtProperty\0".as_ptr(),
+    b"MaxDampRangeX\0".as_ptr(),
+    b"MaxDampRangeY\0".as_ptr(),
+    b"MaxDampRangeZ\0".as_ptr(),
+    b"MaxDampStrengthX\0".as_ptr(),
+    b"MaxDampStrengthY\0".as_ptr(),
+    b"MaxDampStrengthZ\0".as_ptr(),
+    b"MinDampRangeX\0".as_ptr(),
+    b"MinDampRangeY\0".as_ptr(),
+    b"MinDampRangeZ\0".as_ptr(),
+    b"MinDampStrengthX\0".as_ptr(),
+    b"MinDampStrengthY\0".as_ptr(),
+    b"MinDampStrengthZ\0".as_ptr(),
+    b"NegativePercentShapeSupport\0".as_ptr(),
+    b"PostRotation\0".as_ptr(),
+    b"PreRotation\0".as_ptr(),
+    b"PreferedAngleX\0".as_ptr(),
+    b"PreferedAngleY\0".as_ptr(),
+    b"PreferedAngleZ\0".as_ptr(),
+    b"QuaternionInterpolate\0".as_ptr(),
+    b"RotationActive\0".as_ptr(),
+    b"RotationMax\0".as_ptr(),
+    b"RotationMaxX\0".as_ptr(),
+    b"RotationMaxY\0".as_ptr(),
+    b"RotationMaxZ\0".as_ptr(),
+    b"RotationMin\0".as_ptr(),
+    b"RotationMinX\0".as_ptr(),
+    b"RotationMinY\0".as_ptr(),
+    b"RotationMinZ\0".as_ptr(),
+    b"RotationOffset\0".as_ptr(),
+    b"RotationOrder\0".as_ptr(),
+    b"RotationPivot\0".as_ptr(),
+    b"RotationSpaceForLimitOnly\0".as_ptr(),
+    b"RotationStiffnessX\0".as_ptr(),
+    b"RotationStiffnessY\0".as_ptr(),
+    b"RotationStiffnessZ\0".as_ptr(),
+    b"ScalingActive\0".as_ptr(),
+    b"ScalingMax\0".as_ptr(),
+    b"ScalingMaxX\0".as_ptr(),
+    b"ScalingMaxY\0".as_ptr(),
+    b"ScalingMaxZ\0".as_ptr(),
+    b"ScalingMin\0".as_ptr(),
+    b"ScalingMinX\0".as_ptr(),
+    b"ScalingMinY\0".as_ptr(),
+    b"ScalingMinZ\0".as_ptr(),
+    b"ScalingOffset\0".as_ptr(),
+    b"ScalingPivot\0".as_ptr(),
+    b"Show\0".as_ptr(),
+    b"TranslationActive\0".as_ptr(),
+    b"TranslationMax\0".as_ptr(),
+    b"TranslationMaxX\0".as_ptr(),
+    b"TranslationMaxY\0".as_ptr(),
+    b"TranslationMaxZ\0".as_ptr(),
+    b"TranslationMin\0".as_ptr(),
+    b"TranslationMinX\0".as_ptr(),
+    b"TranslationMinY\0".as_ptr(),
+    b"TranslationMinZ\0".as_ptr(),
+    b"UpVectorProperty\0".as_ptr(),
+    b"Visibility Inheritance\0".as_ptr(),
+    b"Visibility\0".as_ptr(),
+    b"notes\0".as_ptr(),
+]);
+
+// ufbx.c:11720-11734 `ufbxi_init_node_prop_names`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn init_node_prop_names(uc: *mut Context) -> Result<(), Fail> {
+    ufbxi_check!(
+        uc,
+        crate::native::hash::map_grow::<*const u8>(
+            &mut (*uc).node_prop_set,
+            NODE_PROP_NAMES.0.len()
+        ),
+        "ufbxi_map_grow(&uc->node_prop_set, const char*, ufbxi_arraycount(ufbxi_node_prop_names))"
+    );
+    // C: `for (size_t i = 0; i < ufbxi_arraycount(ufbxi_node_prop_names); i++)`
+    let mut i: usize = 0;
+    while i < NODE_PROP_NAMES.0.len() {
+        let name: *const u8 = NODE_PROP_NAMES.0[i];
+        let pooled: *const u8 = sp::push_string_imp(
+            &mut (*uc).string_pool,
+            name,
+            crate::native::error::strlen(name),
+            core::ptr::null_mut(),
+            false,
+            true,
+        );
+        ufbxi_check!(uc, !pooled.is_null(), "pooled");
+        let hash: u32 = crate::native::hash::hash_ptr!(pooled);
+        let entry: *mut *const u8 = map_insert::<*const u8>(
+            &mut (*uc).node_prop_set,
+            hash,
+            &pooled as *const *const u8 as *const c_void,
+        );
+        ufbxi_check!(uc, !entry.is_null(), "entry");
+        *entry = pooled;
+        i += 1;
+    }
+
+    Ok(())
+}
+
 // ufbx.c:11736-11744 `ufbxi_is_node_property_name`
-// Ported ahead of the rest of the `// -- Setup` section because
-// `ufbxi_read_synthetic_attribute` (ufbx.c:14882) needs it; the map itself is
-// filled by the still-unported `ufbxi_init_node_prop_names` (ufbx.c:11746).
 pub(crate) unsafe fn is_node_property_name(uc: *mut Context, name: *const u8) -> bool {
     // You need to call `ufbxi_init_node_prop_names()` before calling this
     ufbx_assert!((*uc).node_prop_set.size > 0);
@@ -3283,6 +3860,47 @@ pub(crate) unsafe fn is_node_property_name(uc: *mut Context, name: *const u8) ->
     );
     !entry.is_null()
 }
+
+// ufbx.c:11746-11760 `ufbxi_load_maps`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn load_maps(uc: *mut Context) -> Result<(), Fail> {
+    ufbxi_check!(
+        uc,
+        crate::native::hash::map_grow::<PropTypeName>(
+            &mut (*uc).prop_type_map,
+            PROP_TYPE_NAMES.0.len()
+        ),
+        "ufbxi_map_grow(&uc->prop_type_map, ufbxi_prop_type_name, ufbxi_arraycount(ufbxi_prop_type_names))"
+    );
+    // C: `ufbxi_for(const ufbxi_prop_type_name, name, ufbxi_prop_type_names, ...)`
+    for name in PROP_TYPE_NAMES.0.iter() {
+        let pooled: *const u8 = sp::push_string_imp(
+            &mut (*uc).string_pool,
+            name.name,
+            crate::native::error::strlen(name.name),
+            core::ptr::null_mut(),
+            false,
+            true,
+        );
+        ufbxi_check!(uc, !pooled.is_null(), "pooled");
+        let hash: u32 = crate::native::hash::hash_ptr!(pooled);
+        let entry: *mut PropTypeName = map_insert::<PropTypeName>(
+            &mut (*uc).prop_type_map,
+            hash,
+            &pooled as *const *const u8 as *const c_void,
+        );
+        ufbxi_check!(uc, !entry.is_null(), "entry");
+        (*entry).type_ = name.type_;
+        (*entry).name = pooled;
+    }
+
+    Ok(())
+}
+
+// CONTINUATION POINT: `// -- Setup` section complete (ufbx.c:11409-11760).
+// Next banner: ufbx.c:11762 `// -- Reading the parsed data` (owned by
+// native/read.rs).
 
 #[cfg(test)]
 mod tests {

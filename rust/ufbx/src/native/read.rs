@@ -74,9 +74,7 @@
 //! `ufbxi_read_legacy_props`, then `ufbxi_read_legacy_material`,
 //! `ufbxi_read_legacy_link`, `ufbxi_read_legacy_light`,
 //! `ufbxi_read_legacy_camera`, `ufbxi_read_legacy_limb_node` and
-//! `ufbxi_read_legacy_mesh`.
-//! DEFERRED from this unit: `ufbxi_read_root` (ufbx.c:15844-15936) — see the
-//! note at its C-order slot below.
+//! `ufbxi_read_legacy_mesh`, and the top-level driver `ufbxi_read_root`.
 //!
 //! ELEVENTH UNIT: ufbx.c:16333-16765 (end of section) — the remaining pre-6000
 //! readers `ufbxi_read_legacy_media` / `ufbxi_read_legacy_model`, the filename
@@ -85,9 +83,7 @@
 //! `ufbxi_is_absolute_path` and `ufbxi_resolve_relative_filename`), the
 //! `ufbxi_open_file` callback shim, and the shared mesh finalizer
 //! (`ufbxi_patch_zero`, `ufbxi_update_vertex_first_index`,
-//! `ufbxi_finalize_mesh`).
-//! DEFERRED from this unit: `ufbxi_read_legacy_root` (ufbx.c:16424-16483) —
-//! same `native/parse.rs` blockers as `ufbxi_read_root`.
+//! `ufbxi_finalize_mesh`), and the legacy driver `ufbxi_read_legacy_root`.
 #![allow(dead_code)]
 
 use core::ffi::c_void;
@@ -117,8 +113,8 @@ use crate::native::buf::{
     buf_clear, pop, push, push_copy, push_copy_fast, push_pop, push_size, push_zero, Buf,
 };
 use crate::native::error::{
-    memchr, memcmp, strcmp, strlen, strncmp, ufbxi_check, ufbxi_check_err, ufbxi_check_return,
-    ufbxi_fail, ufbxi_fail_msg, ufbxi_fmt_err_info, Fail, EMPTY_CHAR,
+    memchr, memcmp, strcmp, strlen, strncmp, ufbxi_check, ufbxi_check_err, ufbxi_check_msg,
+    ufbxi_check_return, ufbxi_fail, ufbxi_fail_msg, ufbxi_fmt_err_info, Fail, EMPTY_CHAR,
 };
 use crate::native::float_parse::parse_double;
 use crate::native::hash::{hash64, hash_ptr_id, map_find, map_insert, PtrId};
@@ -126,10 +122,10 @@ use crate::native::parse::{
     array_type_size, find_array, find_child, find_child_strcmp, find_int, find_prop, find_val1,
     find_val2, find_vec3, get_array, get_dom_node, get_name_key, get_name_key_c, get_prop_type,
     get_val1, get_val2, get_val3, get_val4, get_val5, get_val_at, get_val_type,
-    is_node_property_name, is_vec3_one, is_vec3_zero, parse_toplevel_child, push_element_extra,
-    Ascii, Context, ElementInfo, FbxAttrEntry, FbxIdEntry, MeshExtra, Node, PtrFbxIdEntry,
-    Template, TextureExtra, TmpAnimStack, TmpBonePose, TmpConnection, TmpMeshTexture, ValueArray,
-    ValueType,
+    init_node_prop_names, is_node_property_name, is_vec3_one, is_vec3_zero, parse_legacy_toplevel,
+    parse_toplevel, parse_toplevel_child, push_element_extra, retain_toplevel, Ascii, Context,
+    ElementInfo, FbxAttrEntry, FbxIdEntry, MeshExtra, Node, PtrFbxIdEntry, Template, TextureExtra,
+    TmpAnimStack, TmpBonePose, TmpConnection, TmpMeshTexture, ValueArray, ValueType,
 };
 use crate::native::platform::{
     add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, math, max_real, max_sz, min32,
@@ -6124,7 +6120,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: *mut Context) -> Result<(), Fail>
     while empty_count < THREAD_GROUP_COUNT {
         let batch: *mut ObjectBatch = &mut batches[batch_index];
 
-        thread_pool_wait_group(&mut (*uc).thread_pool)?;
+        thread_pool_wait_group(&raw mut (*uc).thread_pool)?;
 
         if (*batch).num_nodes > 0 {
             // C: `ufbxi_for_ptr(ufbxi_node, p_node, batch->nodes, batch->num_nodes)`
@@ -6193,7 +6189,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: *mut Context) -> Result<(), Fail>
             let mut max_tasks: u32 = (*uc).thread_pool.num_tasks / THREAD_GROUP_COUNT as u32;
             max_tasks = min32(
                 max_tasks,
-                thread_pool_available_tasks(&mut (*uc).thread_pool),
+                thread_pool_available_tasks(&raw mut (*uc).thread_pool),
             );
             let max_memory: usize = (*uc).opts.thread_opts.memory_limit / THREAD_GROUP_COUNT;
 
@@ -6233,7 +6229,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: *mut Context) -> Result<(), Fail>
         // Not safe to refer to this buffer anymore
         (*uc).ascii.src_is_retained = false;
 
-        thread_pool_flush_group(&mut (*uc).thread_pool);
+        thread_pool_flush_group(&raw mut (*uc).thread_pool);
 
         if (*batch).num_nodes == 0 {
             empty_count += 1;
@@ -6242,7 +6238,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: *mut Context) -> Result<(), Fail>
         batch_index = (batch_index + 1) % THREAD_GROUP_COUNT;
     }
 
-    thread_pool_wait_all(&mut (*uc).thread_pool)?;
+    thread_pool_wait_all(&raw mut (*uc).thread_pool)?;
 
     (*uc).parse_threaded = false;
 
@@ -7287,11 +7283,123 @@ pub(crate) fn supports_version(version: u32) -> bool {
     version >= 3000 && version <= 7700
 }
 
-// DEFERRED: `ufbxi_read_root` (ufbx.c:15844-15936) is NOT ported yet — it
-// calls `ufbxi_parse_toplevel` (ufbx.c:11252-11329) and
-// `ufbxi_init_node_prop_names` (ufbx.c:11720-11753), both of which live in the
-// still-PARTIAL `// -- General parsing` / `// -- Setup` sections of
-// `native/parse.rs`. Port it here, in this slot, once those land.
+// ufbx.c:15844-15936 `ufbxi_read_root`
+#[inline(never)]
+pub(crate) unsafe fn read_root(uc: *mut Context) -> Result<(), Fail> {
+    // FBXHeaderExtension: Some metadata (optional)
+    parse_toplevel(uc, sp::FBXHeaderExtension.as_ptr())?;
+    read_header_extension(uc)?;
+
+    // The ASCII exporter version is stored in top-level
+    if (*uc).exporter == Exporter::BlenderAscii {
+        parse_toplevel(uc, sp::Creator.as_ptr())?;
+        if !(*uc).top_node.is_null() {
+            ufbxi_ignore!(get_val1(
+                (*uc).top_node,
+                b"S\0".as_ptr(),
+                core::ptr::addr_of_mut!((*uc).scene.metadata.creator) as *mut core::ffi::c_void,
+            ));
+        }
+    }
+
+    // Resolve the exporter before continuing
+    match_exporter(uc)?;
+    if (*uc).version < 7000 {
+        init_node_prop_names(uc)?;
+    }
+    // Don't allow changing version from this point onwards
+    (*uc).ascii.found_version = true;
+
+    // Document: Read root ID
+    if (*uc).version >= 7000 {
+        parse_toplevel(uc, sp::Documents.as_ptr())?;
+        read_document(uc)?;
+    } else {
+        // Pre-7000: Root node has a specific type-name pair "Model::Scene"
+        // (or reversed in binary). Use the interned name as ID as usual.
+        let mut root_name: *const u8 = if (*uc).from_ascii {
+            b"Model::Scene\0".as_ptr()
+        } else {
+            b"Scene\x00\x01Model\0".as_ptr()
+        };
+        root_name = sp::push_string_imp(
+            &mut (*uc).string_pool,
+            root_name,
+            12,
+            core::ptr::null_mut(),
+            false,
+            true,
+        );
+        ufbxi_check!(uc, !root_name.is_null(), "root_name");
+        (*uc).root_id = synthetic_id_from_string(uc, root_name);
+        ufbxi_check!(uc, (*uc).root_id != 0, "uc->root_id");
+    }
+
+    // Add a nameless root node with the root ID
+    {
+        // C: `ufbxi_element_info root_info = { uc->root_id };`
+        let mut root_info: ElementInfo = core::mem::zeroed();
+        root_info.fbx_id = (*uc).root_id;
+        root_info.name = EMPTY_STRING.0;
+        let root: *mut UfbxNode = push_element::<UfbxNode>(uc, &mut root_info, ElementType::Node);
+        ufbxi_check!(uc, !root.is_null(), "root");
+        setup_root_node(uc, root);
+        ufbxi_check!(
+            uc,
+            !push_copy::<u32>(&mut (*uc).tmp_node_ids, 1, &(*root).element.element_id).is_null(),
+            // C-parity: verbatim post-expansion `#cond` text (see the C11
+            // 6.10.3.1 note in `sort_shader_prop_bindings`).
+            "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&root->element.element_id)))"
+        );
+    }
+
+    // Definitions: Object type counts and property templates (optional)
+    parse_toplevel(uc, sp::Definitions.as_ptr())?;
+    read_definitions(uc)?;
+
+    // Objects: Actual scene data
+    parse_toplevel(uc, sp::Objects.as_ptr())?;
+    if !(*uc).sure_fbx {
+        // If the file is a bit iffy about being a real FBX file reject it if
+        // even the objects are not found.
+        ufbxi_check_msg!(uc, !(*uc).top_node.is_null(), "Not an FBX file", "uc->top_node");
+    }
+    if (*uc).thread_pool.enabled {
+        read_objects_threaded(uc)?;
+    } else {
+        read_objects(uc)?;
+    }
+
+    // Connections: Relationships between nodes
+    parse_toplevel(uc, sp::Connections.as_ptr())?;
+    read_connections(uc)?;
+
+    // Takes: Pre-7000 animation data
+    parse_toplevel(uc, sp::Takes.as_ptr())?;
+    read_takes(uc)?;
+
+    // Check if there's a top-level GlobalSettings that we skimmed over
+    parse_toplevel(uc, sp::GlobalSettings.as_ptr())?;
+    if !(*uc).top_node.is_null() {
+        read_global_settings(uc, (*uc).top_node)?;
+    }
+
+    // Version5: Pre-6000 settings
+    parse_toplevel(uc, sp::Version5.as_ptr())?;
+    if !(*uc).top_node.is_null() {
+        let settings: *mut Node = find_child_strcmp((*uc).top_node, b"Settings\0".as_ptr());
+        if !settings.is_null() {
+            read_legacy_settings(uc, settings)?;
+        }
+    }
+
+    // Force parsing all the nodes by parsing a toplevel that cannot be found
+    if (*uc).opts.retain_dom {
+        parse_toplevel(uc, core::ptr::null())?;
+    }
+
+    Ok(())
+}
 
 // ufbx.c:15938-15943 `typedef struct { const char *prop_name; ufbx_prop_type prop_type; const char *node_name; const char *node_fmt; } ufbxi_legacy_prop;`
 #[repr(C)]
@@ -8214,12 +8322,85 @@ pub(crate) unsafe fn read_legacy_model(uc: *mut Context, node: *mut Node) -> Res
     Ok(())
 }
 
-// DEFERRED: `ufbxi_read_legacy_root` (ufbx.c:16424-16483) is NOT ported yet —
-// like `ufbxi_read_root` (ufbx.c:15844-15936) it calls
-// `ufbxi_init_node_prop_names` (ufbx.c:11720-11753) and
-// `ufbxi_parse_legacy_toplevel` (ufbx.c:11379-11407), both of which live in the
-// still-PARTIAL `// -- General parsing` / `// -- Setup` sections of
-// `native/parse.rs`. Port it here, in this slot, once those land.
+// ufbx.c:16424-16483 `ufbxi_read_legacy_root`
+#[inline(never)]
+pub(crate) unsafe fn read_legacy_root(uc: *mut Context) -> Result<(), Fail> {
+    init_node_prop_names(uc)?;
+
+    // Some legacy FBX files have an `Fbx_Root` node that could be used as the
+    // root node. However no other formats have root node with transforms so it
+    // might be better to leave it as-is and create an empty one.
+    {
+        let root: *mut UfbxNode = push_synthetic_element::<UfbxNode>(
+            uc,
+            &mut (*uc).root_id,
+            core::ptr::null_mut(),
+            EMPTY_CHAR.as_ptr(),
+            ElementType::Node,
+        );
+        ufbxi_check!(uc, !root.is_null(), "root");
+        setup_root_node(uc, root);
+        ufbxi_check!(
+            uc,
+            !push_copy::<u32>(&mut (*uc).tmp_node_ids, 1, &(*root).element.element_id).is_null(),
+            // C-parity: verbatim post-expansion `#cond` text (see the C11
+            // 6.10.3.1 note in `sort_shader_prop_bindings`).
+            "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&root->element.element_id)))"
+        );
+    }
+
+    // NOTE: `ufbxi_read_header_extension()` is optional so use default KTime definition
+    (*uc).ktime_sec = 46186158000;
+    (*uc).ktime_sec_double = (*uc).ktime_sec as f64;
+
+    loop {
+        parse_legacy_toplevel(uc)?;
+        if (*uc).top_node.is_null() {
+            break;
+        }
+
+        let node: *mut Node = (*uc).top_node;
+        if (*node).name == sp::FBXHeaderExtension.as_ptr() {
+            read_header_extension(uc)?;
+        } else if (*node).name == sp::Media.as_ptr() {
+            read_legacy_media(uc, node)?;
+        } else if (*node).name == sp::Takes.as_ptr() {
+            read_takes(uc)?;
+        } else if (*node).name == sp::Model.as_ptr() {
+            read_legacy_model(uc, node)?;
+        } else if strcmp((*node).name, b"Settings\0".as_ptr()) == 0 {
+            read_legacy_settings(uc, node)?;
+        }
+    }
+
+    if (*uc).opts.retain_dom {
+        retain_toplevel(uc, core::ptr::null_mut())?;
+    }
+
+    // Create the implicit animation stack if necessary
+    if (*uc).legacy_implicit_anim_layer_id != 0 {
+        // C: `ufbxi_element_info layer_info = { 0 };`
+        let mut layer_info: ElementInfo = core::mem::zeroed();
+        layer_info.fbx_id = (*uc).legacy_implicit_anim_layer_id;
+        layer_info.name.data = b"(internal)\0".as_ptr();
+        layer_info.name.length = strlen(layer_info.name.data);
+        push_string_place_str(&mut (*uc).string_pool, &mut layer_info.name, true)?;
+        let layer: *mut AnimLayer =
+            push_element::<AnimLayer>(uc, &mut layer_info, ElementType::AnimLayer);
+        ufbxi_check!(uc, !layer.is_null(), "layer");
+
+        // C: `ufbxi_element_info stack_info = layer_info;` (struct copy)
+        let mut stack_info: ElementInfo = core::ptr::read(&layer_info);
+        stack_info.fbx_id = push_synthetic_id(uc);
+        let stack: *mut AnimStack =
+            push_element::<AnimStack>(uc, &mut stack_info, ElementType::AnimStack);
+        ufbxi_check!(uc, !stack.is_null(), "stack");
+
+        connect_oo(uc, layer_info.fbx_id, stack_info.fbx_id)?;
+    }
+
+    Ok(())
+}
 
 // Filename manipulation
 
@@ -8651,8 +8832,6 @@ pub(crate) unsafe fn finalize_mesh(
 // for the two DEFERRED functions below. Next up is the `// -- .obj file`
 // banner section (ufbx.c:16767), owned by `native/obj.rs`.
 //
-// STILL OWED from this section: `ufbxi_read_root` (ufbx.c:15844-15936) and
-// `ufbxi_read_legacy_root` (ufbx.c:16424-16483) — both blocked on
-// `ufbxi_init_node_prop_names` / `ufbxi_parse_toplevel` /
-// `ufbxi_parse_legacy_toplevel` in `native/parse.rs`. See the DEFERRED notes at
-// their C-order slots above.
+// `// -- Reading the parsed data` section complete (ufbx.c:11762-16765),
+// including `ufbxi_read_root` (ufbx.c:15844-15936) and
+// `ufbxi_read_legacy_root` (ufbx.c:16424-16483) at their C-order slots above.

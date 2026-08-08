@@ -73,10 +73,31 @@ pub(crate) unsafe fn ufbx_free(ptr: *mut c_void, old_size: usize) {
 // to catch writes to bad allocations.
 // C-parity: C returns `(void*)ufbxi_zero_size_buffer` — a const object with
 // the constness cast away; writing through the pointer is UB in both trees.
+// C-parity (alignment): the C array is `char[]` (align 1) but is handed out
+// as the zero-size allocation for EVERY element type; C only ever performs
+// zero-count `memset`/`memcpy` through the pointer, which have no alignment
+// demand in practice. Rust's `ptr::write_bytes::<T>`/`copy_nonoverlapping::<T>`
+// carry an alignment precondition even for count 0 (debug builds abort on it),
+// so the static is aligned to `UFBX_MAXIMUM_ALIGNMENT` (ufbx.c:858-860) — the
+// strongest alignment the allocator ever provides. Observable behavior is
+// unchanged: no bytes are read or written either way.
+#[repr(C, align(8))]
+pub(crate) struct ZeroSizeBuffer<const N: usize>(pub(crate) [u8; N]);
+
+impl<const N: usize> ZeroSizeBuffer<N> {
+    #[inline(always)]
+    pub(crate) const fn as_ptr(&self) -> *const u8 {
+        self.0.as_ptr()
+    }
+}
+
+// `#[repr(align(8))]` takes a literal; pin it against `MAXIMUM_ALIGNMENT`.
+const _: () = assert!(core::mem::align_of::<ZeroSizeBuffer<64>>() >= MAXIMUM_ALIGNMENT);
+
 #[cfg(feature = "regression")]
-pub(crate) static ZERO_SIZE_BUFFER: [u8; 4096] = [0; 4096];
+pub(crate) static ZERO_SIZE_BUFFER: ZeroSizeBuffer<4096> = ZeroSizeBuffer([0; 4096]);
 #[cfg(not(feature = "regression"))]
-pub(crate) static ZERO_SIZE_BUFFER: [u8; 64] = [0; 64];
+pub(crate) static ZERO_SIZE_BUFFER: ZeroSizeBuffer<64> = ZeroSizeBuffer([0; 64]);
 
 // ufbx.c:3624-3627 `ufbxi_align_to_mask`
 #[inline(always)]

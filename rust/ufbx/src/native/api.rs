@@ -6,12 +6,11 @@
 //!
 //! Ported so far: the `ufbx_abi_data` globals (ufbx.c:30339-30404), the
 //! `ufbx_open_file`/`ufbx_open_memory`/`ufbx_default_open_file` plumbing
-//! (ufbx.c:30406-30495), `ufbx_is_thread_safe` (30497-30500),
+//! (ufbx.c:30406-30495), `ufbx_is_thread_safe` (30497-30500), the
+//! `ufbx_load_*` family (ufbx.c:30502-30576, backed by `ufbxi_load` /
+//! `ufbxi_load_imp` in `native::evaluate`),
 //! `ufbx_free_scene`/`ufbx_retain_scene` (30578-30596) and
-//! `ufbx_format_error` (30598-30633). The `ufbx_load_*` family
-//! (ufbx.c:30502-30576) is DEFERRED — see the markers below — because
-//! `ufbxi_load` (ufbx.c:25472) and `ufbxi_load_imp` (ufbx.c:25204) are not
-//! ported yet.
+//! `ufbx_format_error` (30598-30633).
 //!
 //! Sequential coverage then continues over ufbx.c:30635-31176 — the
 //! `ufbx_find_*` lookup family (30635-30825, including the String API
@@ -75,8 +74,9 @@ use crate::generated::{
     Face, GeometryCache, Light, LineCurve, LodGroup, Marker, Material, MaterialTexture, Matrix,
     Mesh, MetadataObject, NameElement, Node, NurbsBasis, NurbsCurve, NurbsSurface,
     NurbsTrimBoundary, NurbsTrimSurface, OpenFileInfo, Panic, Pose, ProceduralGeometry, Prop,
-    Props, Quat, RawAllocatorOpts, RawGeometryCacheDataOpts, RawGeometryCacheOpts, RawOpenFileOpts,
-    RawOpenMemoryOpts, RawStream, RawVertexStream, RotationOrder, Scene, SelectionNode,
+    Props, Quat, RawAllocatorOpts, RawGeometryCacheDataOpts, RawGeometryCacheOpts, RawLoadOpts,
+    RawOpenFileOpts, RawOpenMemoryOpts, RawStream, RawVertexStream, RotationOrder, Scene,
+    SelectionNode,
     SelectionSet, Shader, ShaderBinding, ShaderPropBinding, ShaderTexture, ShaderTextureInput,
     SkinCluster, SkinDeformer, SkinVertex, SkinWeight, StereoCamera, SurfacePoint, Texture,
     TopoEdge, Transform, Unknown, Vec2, Vec3, Vec4, VertexReal, VertexVec2, VertexVec3, VertexVec4,
@@ -119,7 +119,7 @@ use crate::native::evaluate::BakedAnimImp;
 use crate::native::hash::map_free;
 use crate::native::io::{
     begin_file_context, end_file_context, memory_close, memory_read, memory_size, memory_skip,
-    stdio_open, FileContext, MemoryStream,
+    stdio_init, stdio_open, FileContext, MemoryStream,
 };
 use crate::native::nurbs::{nurbs_deriv, nurbs_weight, LineCurveImp, MAX_NURBS_ORDER};
 #[cfg(feature = "tessellation")]
@@ -128,8 +128,8 @@ use crate::native::nurbs::{
     TessellateSurfaceContext,
 };
 use crate::native::parse::{
-    find_enum, find_real as ufbxi_find_real, get_imp, get_name_key, MeshImp, Refcount, SceneImp,
-    ELEMENT_TYPE_COUNT,
+    find_enum, find_real as ufbxi_find_real, get_imp, get_name_key, Context, MeshImp, Refcount,
+    SceneImp, ELEMENT_TYPE_COUNT,
 };
 use crate::native::platform::{
     add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
@@ -555,31 +555,115 @@ pub(crate) unsafe fn is_thread_safe() -> bool {
     THREAD_SAFE != 0
 }
 
-/* DEFERRED(m10): ufbx.c:30502-30511 `ufbx_load_memory` */
-/* DEFERRED(m10): ufbx.c:30513-30516 `ufbx_load_file` */
-/* DEFERRED(m10): ufbx.c:30518-30527 `ufbx_load_file_len` */
-/* DEFERRED(m10): ufbx.c:30529-30532 `ufbx_load_stdio` */
-/* DEFERRED(m10): ufbx.c:30534-30554 `ufbx_load_stdio_prefix` */
-/* DEFERRED(m10): ufbx.c:30556-30559 `ufbx_load_stream` */
-/* DEFERRED(m10): ufbx.c:30561-30576 `ufbx_load_stream_prefix` */
-// Three of the seven `ufbx_load_*` entry points are thin wrappers that zero a
-// `ufbxi_context`, seed the data/stream/deferred-load fields and tail-call
-// `ufbxi_load` (ufbx.c:25472): `ufbx_load_memory`, `ufbx_load_file_len` and
-// `ufbx_load_stream_prefix`. The other four delegate: `ufbx_load_file` calls
-// `ufbx_load_file_len`, `ufbx_load_stdio` calls `ufbx_load_stdio_prefix`,
-// `ufbx_load_stream` calls `ufbx_load_stream_prefix`, and
-// `ufbx_load_stdio_prefix` calls `ufbxi_stdio_init` + `ufbx_load_stream_prefix`
-// on the live `!UFBX_NO_STDIO` path (only its `#else` arm touches `ufbxi_load`
-// directly). All seven are therefore transitively blocked on `ufbxi_load`,
-// which drives `ufbxi_load_imp` (ufbx.c:25204) — and `ufbxi_load_imp` in turn
-// needs `ufbxi_load_external_files` (ufbx.c:24878) from the geometry-cache /
-// external-files unit. None of that machinery is ported yet, so per the
-// honesty rule these get NO body and NO `capi.rs` shim: the linker work
-// queue must keep reporting them undefined until `ufbxi_load` lands.
-// `ufbxi_check_opts_ptr` (the per-entry-point opts guard) and
-// `ufbxi_fix_error_type`'s "Failed to load" default description
-// (ufbx.c:25615, applied inside `ufbxi_load`) are already ported in
-// `native::error` and are wired up with them.
+// ufbx.c:30502-30511 `ufbx_load_memory`
+pub(crate) unsafe fn load_memory(
+    data: *const c_void,
+    size: usize,
+    opts: *const RawLoadOpts,
+    error: *mut Error,
+) -> *mut Scene {
+    ufbxi_check_opts_ptr!(Scene, opts, error);
+    // C: `ufbxi_context uc; // ufbxi_uninit` + `memset(&uc, 0, sizeof(ufbxi_context));`
+    let mut uc = MaybeUninit::<Context>::uninit(); // ufbxi_uninit
+    core::ptr::write_bytes(uc.as_mut_ptr() as *mut u8, 0, size_of::<Context>());
+    let uc: *mut Context = uc.as_mut_ptr();
+    // C: `uc.data_begin = uc.data = (const char *)data;`
+    (*uc).data = data as *const u8;
+    (*uc).data_begin = (*uc).data;
+    (*uc).data_size = size;
+    (*uc).progress_bytes_total = size as u64;
+    evaluate::load(uc, opts, error)
+}
+
+// ufbx.c:30513-30516 `ufbx_load_file`
+pub(crate) unsafe fn load_file(
+    filename: *const u8,
+    opts: *const RawLoadOpts,
+    error: *mut Error,
+) -> *mut Scene {
+    load_file_len(filename, usize::MAX, opts, error)
+}
+
+// ufbx.c:30518-30527 `ufbx_load_file_len`
+pub(crate) unsafe fn load_file_len(
+    filename: *const u8,
+    filename_len: usize,
+    opts: *const RawLoadOpts,
+    error: *mut Error,
+) -> *mut Scene {
+    ufbxi_check_opts_ptr!(Scene, opts, error);
+    let mut uc = MaybeUninit::<Context>::uninit(); // ufbxi_uninit
+    core::ptr::write_bytes(uc.as_mut_ptr() as *mut u8, 0, size_of::<Context>());
+    let uc: *mut Context = uc.as_mut_ptr();
+    (*uc).deferred_load = true;
+    (*uc).load_filename = filename;
+    (*uc).load_filename_len = filename_len;
+    evaluate::load(uc, opts, error)
+}
+
+// ufbx.c:30529-30532 `ufbx_load_stdio`
+pub(crate) unsafe fn load_stdio(
+    file_void: *mut c_void,
+    opts: *const RawLoadOpts,
+    error: *mut Error,
+) -> *mut Scene {
+    load_stdio_prefix(file_void, core::ptr::null(), 0, opts, error)
+}
+
+// ufbx.c:30534-30554 `ufbx_load_stdio_prefix`
+pub(crate) unsafe fn load_stdio_prefix(
+    file_void: *mut c_void,
+    prefix: *const c_void,
+    prefix_size: usize,
+    opts: *const RawLoadOpts,
+    error: *mut Error,
+) -> *mut Scene {
+    // C: `#if !defined(UFBX_NO_STDIO)` — always taken (no matching feature);
+    // the disabled `#else` arm reports `"UFBX_NO_STDIO", "Feature disabled"`
+    // through a deferred-failure `ufbxi_load`.
+    if file_void.is_null() {
+        return core::ptr::null_mut();
+    }
+    // C: `ufbx_stream stream = { 0 };`
+    let mut stream: RawStream = MaybeUninit::zeroed().assume_init();
+    stdio_init(&mut stream, file_void, false);
+    load_stream_prefix(&stream, prefix, prefix_size, opts, error)
+}
+
+// ufbx.c:30556-30559 `ufbx_load_stream`
+pub(crate) unsafe fn load_stream(
+    stream: *const RawStream,
+    opts: *const RawLoadOpts,
+    error: *mut Error,
+) -> *mut Scene {
+    load_stream_prefix(stream, core::ptr::null(), 0, opts, error)
+}
+
+// ufbx.c:30561-30576 `ufbx_load_stream_prefix`
+pub(crate) unsafe fn load_stream_prefix(
+    stream: *const RawStream,
+    prefix: *const c_void,
+    prefix_size: usize,
+    opts: *const RawLoadOpts,
+    error: *mut Error,
+) -> *mut Scene {
+    ufbxi_check_opts_ptr!(Scene, opts, error);
+    let mut uc = MaybeUninit::<Context>::uninit(); // ufbxi_uninit
+    core::ptr::write_bytes(uc.as_mut_ptr() as *mut u8, 0, size_of::<Context>());
+    let uc: *mut Context = uc.as_mut_ptr();
+    // C: `uc.data_begin = uc.data = (const char *)prefix;`
+    (*uc).data = prefix as *const u8;
+    (*uc).data_begin = (*uc).data;
+    (*uc).data_size = prefix_size;
+    (*uc).read_fn = (*stream).read_fn;
+    (*uc).skip_fn = (*stream).skip_fn;
+    (*uc).size_fn = (*stream).size_fn;
+    (*uc).close_fn = (*stream).close_fn;
+    (*uc).read_user = (*stream).user;
+
+    let scene: *mut Scene = evaluate::load(uc, opts, error);
+    scene
+}
 
 // ufbx.c:30578-30586 `ufbx_free_scene`
 // C has no `ufbxi_noinline` here (unlike `ufbx_format_error` below).
@@ -4685,10 +4769,11 @@ pub(crate) unsafe fn generate_indices(
     )
 }
 
-// `ufbx_thread_pool_run_task` (ufbx.c:32976-32979) delegates to
-// `ufbxi_thread_pool_execute` (`// -- Threading`, ufbx.c:6023), which is not
-// ported (`native/thread.rs`). DEFERRED; no `capi.rs` shim.
-/* DEFERRED(m10): ufbx.c:32976-32979 `ufbx_thread_pool_run_task` */
+// ufbx.c:32976-32979 `ufbx_thread_pool_run_task` — delegates to
+// `ufbxi_thread_pool_execute` (`// -- Threading`, `native/thread.rs`).
+pub(crate) unsafe fn thread_pool_run_task(ctx: ThreadPoolContext, index: u32) {
+    crate::native::thread::thread_pool_execute(ctx as *mut ThreadPool, index);
+}
 
 // ufbx.c:32981-32985 `ufbx_thread_pool_set_user_ptr`
 pub(crate) unsafe fn thread_pool_set_user_ptr(ctx: ThreadPoolContext, user: *mut c_void) {

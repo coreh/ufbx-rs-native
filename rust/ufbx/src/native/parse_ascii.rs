@@ -29,13 +29,12 @@
 //! Threading: `ua->retain_buf` / `ua->src_is_retained` / `uc->tmp_ascii_spans`
 //! are used by the single-threaded path as well, so they carry no fork. The
 //! `ufbxi_ascii_array_task` family (ufbx.c:9966-10158) IS the threaded array
-//! worker; its body is fully ported here, but the only place it forks off the
-//! single-threaded path is its thread-pool submission site in
-//! `ufbxi_ascii_parse_node` (ufbx.c:10653-10659) — see the
-//! DEFERRED(threading) markers on `ascii_array_task_fn` and inside
-//! `ascii_parse_node`. With the pool unported, `ufbxi_thread_pool_create_task`
-//! is pinned to NULL there and the inline `ufbxi_ascii_array_task_imp`
-//! fallback runs, which is exactly what C does when the pool is unavailable.
+//! worker; the only place it forks off the single-threaded path is its
+//! thread-pool submission site in `ufbxi_ascii_parse_node`
+//! (ufbx.c:10653-10659), which dispatches `ascii_array_task_fn` through
+//! `ufbxi_thread_pool_create_task` / `ufbxi_thread_pool_run_task`
+//! (`native::thread`) and falls back to the inline
+//! `ufbxi_ascii_array_task_imp` when no task slot is available.
 #![allow(dead_code)]
 
 use core::ffi::c_void;
@@ -65,7 +64,7 @@ use crate::native::platform::{
     ufbxi_dev_assert, MIN_THREADED_ASCII_VALUES,
 };
 use crate::native::string_pool::{push_sanitized_string, push_string, push_string_place_str};
-use crate::native::thread::Task;
+use crate::native::thread::{thread_pool_create_task, thread_pool_run_task, Task};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::{Real, String};
 
@@ -1098,10 +1097,8 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
 }
 
 // ufbx.c:10150-10158 `ufbxi_ascii_array_task_fn`
-// DEFERRED(threading): this is the `ufbxi_task_fn` entry point handed to the
-// thread pool by `ufbxi_ascii_parse_node` (ufbx.c:10653-10659, next unit); the pool
-// itself (`ufbxi_thread_pool_*`, ufbx.c:6023-6173) is not ported yet. The
-// function body is fully ported here — only its submission site is deferred.
+// `ufbxi_task_fn` entry point handed to the thread pool by
+// `ufbxi_ascii_parse_node` (ufbx.c:10653-10659).
 #[inline(never)]
 pub(crate) unsafe extern "C" fn ascii_array_task_fn(task: *mut Task) -> bool {
     let t: *mut AsciiArrayTask = (*task).data as *mut AsciiArrayTask;
@@ -1872,19 +1869,12 @@ unsafe fn ascii_parse_node_rec(
                 (*t).offset = 0;
 
                 // TODO: Split these further
-                // DEFERRED(threading): `ufbxi_thread_pool_create_task` /
-                // `ufbxi_thread_pool_run_task` (ufbx.c:6023-6173) are not ported
-                // yet (`native::thread` holds only the type definitions), so
-                // `task` is pinned to NULL and the `ufbxi_ascii_array_task_imp`
-                // fallback below always runs — exactly the path C takes when the
-                // pool is unavailable. Restore verbatim when the pool lands:
-                //
-                // let task: *mut Task = thread_pool_create_task(&raw mut (*uc).thread_pool, ascii_array_task_fn);
-                let task: *mut Task = core::ptr::null_mut();
+                let task: *mut Task =
+                    thread_pool_create_task(&raw mut (*uc).thread_pool, ascii_array_task_fn);
                 if !task.is_null() {
-                    // (*task).data = push_copy::<AsciiArrayTask>(tmp_buf, 1, t) as *mut c_void;
-                    // ufbxi_check!(uc, !(*task).data.is_null(), "task->data");
-                    // thread_pool_run_task(&raw mut (*uc).thread_pool, task);
+                    (*task).data = push_copy::<AsciiArrayTask>(tmp_buf, 1, t) as *mut c_void;
+                    ufbxi_check!(uc, !(*task).data.is_null(), "task->data");
+                    thread_pool_run_task(&raw mut (*uc).thread_pool, task);
                 } else {
                     ufbxi_check_msg!(
                         uc,

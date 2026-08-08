@@ -87,11 +87,81 @@ pub unsafe extern "C" fn ufbx_is_thread_safe() -> bool {
     crate::native::api::is_thread_safe()
 }
 
-// ufbx.c:30502-30576 `ufbx_load_memory` / `ufbx_load_file` / `ufbx_load_file_len` /
-// `ufbx_load_stdio` / `ufbx_load_stdio_prefix` / `ufbx_load_stream` /
-// `ufbx_load_stream_prefix`: NO shims — the impls are DEFERRED in
-// `native::api` until `ufbxi_load` (ufbx.c:25472) is ported. Leaving these
-// undefined is deliberate so the linker work queue reflects the truth.
+// ufbx.c:30502-30511 `ufbx_load_memory` (impl: native/api.rs `load_memory`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_load_memory(
+    data: *const core::ffi::c_void,
+    size: usize,
+    opts: *const crate::generated::RawLoadOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::Scene {
+    crate::native::api::load_memory(data, size, opts, error)
+}
+
+// ufbx.c:30513-30516 `ufbx_load_file` (impl: native/api.rs `load_file`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_load_file(
+    filename: *const u8,
+    opts: *const crate::generated::RawLoadOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::Scene {
+    crate::native::api::load_file(filename, opts, error)
+}
+
+// ufbx.c:30518-30527 `ufbx_load_file_len` (impl: native/api.rs `load_file_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_load_file_len(
+    filename: *const u8,
+    filename_len: usize,
+    opts: *const crate::generated::RawLoadOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::Scene {
+    crate::native::api::load_file_len(filename, filename_len, opts, error)
+}
+
+// ufbx.c:30529-30532 `ufbx_load_stdio` (impl: native/api.rs `load_stdio`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_load_stdio(
+    file_void: *mut core::ffi::c_void,
+    opts: *const crate::generated::RawLoadOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::Scene {
+    crate::native::api::load_stdio(file_void, opts, error)
+}
+
+// ufbx.c:30534-30554 `ufbx_load_stdio_prefix` (impl: native/api.rs `load_stdio_prefix`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_load_stdio_prefix(
+    file_void: *mut core::ffi::c_void,
+    prefix: *const core::ffi::c_void,
+    prefix_size: usize,
+    opts: *const crate::generated::RawLoadOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::Scene {
+    crate::native::api::load_stdio_prefix(file_void, prefix, prefix_size, opts, error)
+}
+
+// ufbx.c:30556-30559 `ufbx_load_stream` (impl: native/api.rs `load_stream`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_load_stream(
+    stream: *const crate::generated::RawStream,
+    opts: *const crate::generated::RawLoadOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::Scene {
+    crate::native::api::load_stream(stream, opts, error)
+}
+
+// ufbx.c:30561-30576 `ufbx_load_stream_prefix` (impl: native/api.rs `load_stream_prefix`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_load_stream_prefix(
+    stream: *const crate::generated::RawStream,
+    prefix: *const core::ffi::c_void,
+    prefix_size: usize,
+    opts: *const crate::generated::RawLoadOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::Scene {
+    crate::native::api::load_stream_prefix(stream, prefix, prefix_size, opts, error)
+}
 
 // ufbx.c:30578-30586 `ufbx_free_scene` (impl: native/api.rs `free_scene`)
 #[no_mangle]
@@ -1224,8 +1294,15 @@ pub unsafe extern "C" fn ufbx_generate_indices(
     )
 }
 
-// `ufbx_thread_pool_run_task` (ufbx.c:32976): NO shim — DEFERRED(m10)
-// (`ufbxi_thread_pool_execute` unported).
+// ufbx.c:32976-32979 `ufbx_thread_pool_run_task` (impl: native/api.rs
+// `thread_pool_run_task`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_thread_pool_run_task(
+    ctx: crate::prelude::ThreadPoolContext,
+    index: u32,
+) {
+    crate::native::api::thread_pool_run_task(ctx, index)
+}
 
 // ufbx.c:32981-32985 `ufbx_thread_pool_set_user_ptr` (impl: native/api.rs
 // `thread_pool_set_user_ptr`)

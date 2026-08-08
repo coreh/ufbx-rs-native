@@ -1,11 +1,12 @@
 //! Port of the `// -- Curve evaluation` / `// -- Animation evaluation` /
 //! `// -- Animation baking` banner sections of ufbx.c.
 //!
-//! Ported so far: the `// -- Curve evaluation` section (ufbx.c:25012-25626) —
+//! Ported: the `// -- Curve evaluation` section (ufbx.c:25012-25626) —
 //! `ufbxi_find_cubic_bezier_t`, `ufbxi_evaluate_skinning` (both
 //! `UFBXI_FEATURE_SKINNING_EVALUATION` arms), `ufbxi_fixup_opts_string`,
-//! `ufbxi_resolve_warning_elements`, `ufbxi_free_temp` and
-//! `ufbxi_free_result` — and the whole `// -- Animation evaluation` section
+//! `ufbxi_resolve_warning_elements`, `ufbxi_load_imp`, `ufbxi_free_temp`,
+//! `ufbxi_free_result` and `ufbxi_load` (the driver behind the `ufbx_load_*`
+//! entry points in `native::api`) — and the whole `// -- Animation evaluation` section
 //! (ufbx.c:25627-26670): the prop-override lookups, `ufbxi_combine_anim_layer`
 //! and `ufbxi_evaluate_props`, the prop iterator, `ufbxi_evaluate_selected_props`,
 //! `ufbxi_extrapolate_curve`, the `UFBXI_FEATURE_SCENE_EVALUATION` block
@@ -16,13 +17,6 @@
 //! the `ufbx_retain_baked_anim` / `ufbx_free_baked_anim` pair) plus the
 //! `ufbxi_bake_context` .. `ufbxi_bake_anim_imp` block under
 //! `feature = "baking"`, backing `ufbx_bake_anim` in `native::api`.
-//!
-//! DEFERRED from the `// -- Curve evaluation` section (slot notes at the
-//! C-order positions below): `ufbxi_load_imp` (ufbx.c:25204-25410) and
-//! `ufbxi_load` (ufbx.c:25472-25625) — the `ufbx_load_*` prerequisites tracked
-//! by the DEFERRED(m10) markers in `native/api.rs`.
-//! DEFERRED(threading) inside `ufbxi_free_temp`: the
-//! `ufbxi_thread_pool_free` call (see the note in the function).
 #![allow(dead_code)]
 
 use core::ffi::c_void;
@@ -30,10 +24,12 @@ use core::mem::{size_of, MaybeUninit};
 use core::ptr;
 
 use crate::generated::{
-    Anim, AnimCurve, AnimLayer, AnimProp, BakedAnim, Connection, Element, Error, Extrapolation,
-    ExtrapolationMode, Keyframe, Prop, PropFlags, PropOverride, PropType, Quat, RawAnimOpts,
-    RawGeometryCacheDataOpts, RawPropOverrideDesc, RotationOrder, Scene, Tangent,
-    TransformOverride, Vec3, Warning,
+    Anim, AnimCurve, AnimLayer, AnimProp, BakedAnim, Connection, DomNode, Element, Error,
+    ErrorType, Extrapolation, ExtrapolationMode, FileFormat, IndexErrorHandling, InflateRetain,
+    Keyframe, OpenFileInfo, OpenFileType, Prop, PropFlags, PropOverride, PropType, Quat,
+    RawAnimOpts, RawGeometryCacheDataOpts, RawLoadOpts, RawOpenFileCb, RawOpenFileOpts,
+    RawPropOverrideDesc, RawStream, RotationOrder, Scene, Tangent, TransformOverride,
+    UnicodeErrorHandling, Vec3, Warning, WarningType,
 };
 #[cfg(any(feature = "skinning-eval", feature = "scene-eval"))]
 use crate::generated::{BlendDeformer, CacheDeformer, Mesh, SkinDeformer};
@@ -71,51 +67,64 @@ use crate::native::api::{evaluate_props_flags, ELEMENT_TYPE_SIZE};
 use crate::native::api::{
     evaluate_baked_vec3, evaluate_transform_flags, quat_fix_antipodal,
 };
-#[cfg(feature = "scene-eval")]
-use crate::native::allocator::SCENE_IMP_MAGIC;
 #[cfg(feature = "baking")]
 use crate::native::allocator::{grow_array, BAKED_ANIM_IMP_MAGIC};
-use crate::native::allocator::{free, free_ator, init_ator, Allocator, ANIM_IMP_MAGIC};
+use crate::native::allocator::{
+    free, free_ator, init_ator, Allocator, ANIM_IMP_MAGIC, SCENE_IMP_MAGIC, ZERO_SIZE_BUFFER,
+};
 #[cfg(feature = "baking")]
 use crate::native::buf::{buf_clear, pop, push_fast};
 use crate::native::buf::{buf_free, push, push_copy, push_pop, push_zero, Buf};
-#[cfg(feature = "scene-eval")]
-use crate::native::error::{clear_error, fix_error_type};
 #[cfg(not(feature = "skinning-eval"))]
 use crate::native::error::ufbxi_report_err_msg;
 use crate::native::error::{
-    strcmp, strlen, ufbxi_check, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_fail_err_msg,
-    ufbxi_fmt_err_info, utf8_valid_length, Fail, EMPTY_CHAR,
+    clear_error, fix_error_type, set_err_info, strcmp, strlen, ufbxi_check, ufbxi_check_err,
+    ufbxi_check_err_msg, ufbxi_check_msg, ufbxi_fail_err_msg, ufbxi_fail_msg, ufbxi_fmt_err_info,
+    utf8_valid_length, Fail, EMPTY_CHAR,
 };
-use crate::native::hash::map_free;
-use crate::native::obj::obj_free;
+use crate::native::api::{coordinate_axes_valid, default_open_file, open_file_ctx};
+use crate::native::cache::{load_external_files, scale_units, transform_to_axes};
+use crate::native::float_parse::parse_double_init_flags;
+use crate::native::hash::{
+    map_cmp_const_char_ptr, map_cmp_ptr_id, map_cmp_uint64, map_cmp_uintptr, map_free, map_init,
+};
+use crate::native::obj::{mtl_load, obj_free, obj_load};
 #[cfg(feature = "baking")]
 use crate::native::parse::{find_prop, is_vec3_zero};
 use crate::native::parse::{
-    get_imp, get_name_key, get_name_key_c, Context, Node, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
+    begin_parse, determine_format, get_imp, get_name_key, get_name_key_c, load_maps, load_strings,
+    Context, Node, Refcount, SceneImp, ELEMENT_TYPE_COUNT, MIN_FILE_FORMAT_LOOKAHEAD,
 };
 #[cfg(feature = "skinning-eval")]
 use crate::native::platform::max_sz;
 #[cfg(feature = "baking")]
-use crate::native::platform::{macro_stable_sort, ufbxi_dev_assert, ufbxi_unreachable};
+use crate::native::platform::{macro_stable_sort, ufbxi_unreachable};
 use crate::native::platform::{
     add_ptr, f64_to_i64, macro_lower_bound_eq, macro_upper_bound_eq, math, ufbx_assert,
-    ufbxi_ignore, unstable_sort,
+    ufbxi_dev_assert, ufbxi_ignore, unstable_sort, PATH_SEPARATOR,
 };
 #[cfg(any(feature = "skinning-eval", feature = "scene-eval", feature = "baking"))]
 use crate::native::read::opt_ptr;
-use crate::native::read::ref_ptr;
+use crate::native::read::{
+    init_file_paths, open_file, read_legacy_root, read_root, ref_ptr, supports_version,
+    SYNTHETIC_ID_START,
+};
 #[cfg(feature = "scene-eval")]
-use crate::native::scene_process::{update_scene, MATERIAL_FBX_MAP_COUNT, MATERIAL_PBR_MAP_COUNT};
-use crate::native::scene_process::{find_anim_prop_start, find_prop_connection, mul_quat, AnimImp};
+use crate::native::scene_process::{MATERIAL_FBX_MAP_COUNT, MATERIAL_PBR_MAP_COUNT};
+use crate::native::scene_process::{
+    find_anim_prop_start, find_prop_connection, finalize_scene, modify_geometry, mul_quat,
+    postprocess_scene, pre_finalize_scene, update_adjust_transforms, update_scene,
+    update_scene_metadata, update_scene_settings, update_scene_settings_obj, AnimImp,
+};
 use crate::native::string_pool as sp;
 #[cfg(feature = "baking")]
 use crate::native::string_pool::lerp3;
 use crate::native::string_pool::{
-    push_string_place_str, str_equal, str_less, string_pool_temp_free, STRINGS,
+    map_cmp_string, push_string_place_str, str_equal, str_less, string_pool_temp_free, STRINGS,
 };
-use crate::native::thread::THREAD_GROUP_COUNT;
-use crate::prelude::{List, Real, Ref, String};
+use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
+use crate::native::warnings::{pop_warnings, ufbxi_warnf};
+use crate::prelude::{List, OpenFileContext, Real, Ref, String};
 
 // -- Curve evaluation (ufbx.c:25012)
 
@@ -467,32 +476,359 @@ pub(crate) unsafe fn resolve_warning_elements(uc: *mut Context) -> Result<(), Fa
     Ok(())
 }
 
-// DEFERRED: `ufbxi_load_imp` (ufbx.c:25204-25410) is NOT ported yet — it calls
-// `ufbxi_load_strings` (11411), `ufbxi_load_maps` (11748),
-// `ufbxi_determine_format` (11391) and `ufbxi_begin_parse` (11252-area) from
-// the still-PARTIAL `// -- Setup` / `// -- General parsing` sections
-// (`native::parse`), `ufbxi_read_root` / `ufbxi_read_legacy_root` (DEFERRED in
-// `native::read`), `ufbxi_thread_pool_init` (ufbx.c:6081, NOT PORTED in
-// `native::thread`), and `ufbxi_transform_to_axes` (24946), `ufbxi_scale_units`
-// (24983) and `ufbxi_load_external_files` (24878) from the unported
-// `// -- External files` banner section (`native::cache`). Its remaining
-// callees — `ufbxi_fixup_opts_string`, `ufbxi_evaluate_skinning` and
-// `ufbxi_resolve_warning_elements` above, plus the scene-processing and
-// refcount machinery — are already ported. Port it here, in this slot, once
-// those land; the DEFERRED(m10) `ufbx_load_*` markers in `native/api.rs` track
-// the public entry points waiting on it.
+// ufbx.c:25204-25410 `ufbxi_load_imp`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
+    // Check for deferred failure
+    if (*uc).deferred_failure {
+        return Err(Fail);
+    }
+    if (*uc).deferred_load {
+        // C: `ufbx_stream stream = { 0 };` / `ufbx_open_file_opts opts = { 0 };`
+        let mut stream: RawStream = MaybeUninit::zeroed().assume_init();
+        let mut opts: RawOpenFileOpts = MaybeUninit::zeroed().assume_init();
+        let filename: *const u8 = (*uc).load_filename;
+        let mut filename_len: usize = (*uc).load_filename_len;
+        let ok: bool;
+        if filename_len == usize::MAX {
+            opts.filename_null_terminated = true;
+            filename_len = strlen(filename);
+        }
+        if (*uc).opts.filename.length == 0 || (*uc).opts.filename.data.is_null() {
+            (*uc).opts.filename.data = filename;
+            (*uc).opts.filename.length = filename_len;
+        }
+        // C: `ufbx_error error; error.type = UFBX_ERROR_NONE;` — C initializes
+        // only `type`; the struct is only copied below after the open-file
+        // path fully wrote it (zero-filled here, C leaves the rest uninit).
+        let mut error: Error = MaybeUninit::zeroed().assume_init();
+        error.type_ = ErrorType::None;
+        // C: `uc->opts.open_file_cb.fn == &ufbx_default_open_file` — compare
+        // by address against the ONE exported `ufbx_default_open_file` object
+        // (`native::api::default_open_file` carries the `export_name`, so the
+        // default stored by `ufbxi_load` and a C caller's assignment both
+        // resolve to that symbol). The lint fears CGU-local duplicates; a
+        // spurious mismatch here would only skip the fast path and route the
+        // same callback through `ufbxi_open_file` below, but the address is
+        // link-unique for the exported item, matching the C comparison.
+        let default_fn: unsafe extern "C" fn(
+            *mut c_void,
+            *mut RawStream,
+            *const u8,
+            usize,
+            *const OpenFileInfo,
+        ) -> bool = default_open_file;
+        #[allow(unpredictable_function_pointer_comparisons)]
+        let open_with_default = (*uc).opts.open_main_file_with_default
+            || (*uc).opts.open_file_cb.fn_ == Some(default_fn);
+        if open_with_default {
+            let ctx: OpenFileContext = ptr::addr_of_mut!((*uc).ator_tmp) as OpenFileContext;
+            ok = open_file_ctx(&mut stream, ctx, filename, filename_len, &opts, &mut error);
+        } else {
+            ok = open_file(
+                ptr::addr_of!((*uc).opts.open_file_cb),
+                &mut stream,
+                (*uc).load_filename,
+                filename_len,
+                ptr::null(),
+                ptr::addr_of_mut!((*uc).ator_tmp),
+                OpenFileType::MainModel,
+            );
+        }
+        if !ok {
+            if error.type_ != ErrorType::None {
+                // cppcheck-suppress uninitStructMember
+                // C: `uc->error = error;` (struct copy)
+                ptr::copy_nonoverlapping(&error, ptr::addr_of_mut!((*uc).error), 1);
+            } else {
+                set_err_info(&mut (*uc).error, filename, filename_len);
+            }
+            ufbxi_fail_msg!(uc, "open_file_fn()", "File not found");
+        }
+        (*uc).read_fn = stream.read_fn;
+        (*uc).skip_fn = stream.skip_fn;
+        (*uc).size_fn = stream.size_fn;
+        (*uc).close_fn = stream.close_fn;
+        (*uc).read_user = stream.user;
+    }
+
+    if (*uc).opts.progress_cb.fn_.is_some()
+        && (*uc).progress_bytes_total == 0
+        && (*uc).size_fn.is_some()
+    {
+        let total: u64 = ((*uc).size_fn.unwrap())((*uc).read_user);
+        ufbxi_check!(uc, total != u64::MAX, "total != UINT64_MAX");
+        (*uc).progress_bytes_total = total;
+    }
+
+    ufbxi_check!(
+        uc,
+        (*uc).opts.path_separator >= 0x20 && (*uc).opts.path_separator <= 0x7e,
+        "uc->opts.path_separator >= 0x20 && uc->opts.path_separator <= 0x7e"
+    );
+
+    // C: `ufbxi_check(ufbxi_<callee>(uc))` — the caller-side check pushes its
+    // own error-stack frame (function/line/#cond) on top of the callee's; a
+    // bare `?` would drop that frame and shorten `ufbx_error.stack_size`
+    // (checklist #13; test `error_format_long` asserts `stack_size >= 2`).
+    ufbxi_check!(
+        uc,
+        fixup_opts_string(uc, ptr::addr_of_mut!((*uc).opts.filename) as *mut String, false)
+            .is_ok(),
+        "ufbxi_fixup_opts_string(uc, &uc->opts.filename, false)"
+    );
+    ufbxi_check!(
+        uc,
+        fixup_opts_string(uc, ptr::addr_of_mut!((*uc).opts.obj_mtl_path) as *mut String, true)
+            .is_ok(),
+        "ufbxi_fixup_opts_string(uc, &uc->opts.obj_mtl_path, true)"
+    );
+    ufbxi_check!(
+        uc,
+        fixup_opts_string(
+            uc,
+            ptr::addr_of_mut!((*uc).opts.geometry_transform_helper_name) as *mut String,
+            true,
+        )
+        .is_ok(),
+        "ufbxi_fixup_opts_string(uc, &uc->opts.geometry_transform_helper_name, true)"
+    );
+    ufbxi_check!(
+        uc,
+        fixup_opts_string(uc, ptr::addr_of_mut!((*uc).opts.scale_helper_name) as *mut String, true)
+            .is_ok(),
+        "ufbxi_fixup_opts_string(uc, &uc->opts.scale_helper_name, true)"
+    );
+
+    ufbxi_check!(
+        uc,
+        thread_pool_init(
+            ptr::addr_of_mut!((*uc).thread_pool),
+            ptr::addr_of_mut!((*uc).error),
+            ptr::addr_of_mut!((*uc).ator_tmp),
+            ptr::addr_of!((*uc).opts.thread_opts),
+        )
+        .is_ok(),
+        "ufbxi_thread_pool_init(&uc->thread_pool, &uc->error, &uc->ator_tmp, &uc->opts.thread_opts)"
+    );
+
+    if !(*uc).opts.allow_unsafe {
+        ufbxi_check_msg!(
+            uc,
+            (*uc).opts.index_error_handling != IndexErrorHandling::UnsafeIgnore,
+            "Unsafe options",
+            "uc->opts.index_error_handling != UFBX_INDEX_ERROR_HANDLING_UNSAFE_IGNORE"
+        );
+        ufbxi_check_msg!(
+            uc,
+            (*uc).opts.unicode_error_handling != UnicodeErrorHandling::UnsafeIgnore,
+            "Unsafe options",
+            "uc->opts.unicode_error_handling != UFBX_UNICODE_ERROR_HANDLING_UNSAFE_IGNORE"
+        );
+    } else {
+        (*uc).scene.metadata.is_unsafe = true;
+    }
+
+    if (*uc).opts.index_error_handling == IndexErrorHandling::NoIndex {
+        (*uc).scene.metadata.may_contain_no_index = true;
+    }
+
+    (*uc).retain_mesh_parts = !(*uc).opts.ignore_geometry && !(*uc).opts.skip_mesh_parts;
+    (*uc).scene.metadata.may_contain_missing_vertex_position =
+        (*uc).opts.allow_missing_vertex_position;
+    (*uc).scene.metadata.may_contain_broken_elements = (*uc).opts.connect_broken_elements;
+
+    (*uc).scene.metadata.creator.data = EMPTY_CHAR.as_ptr();
+
+    (*uc).unit_scale = 1.0;
+    if (*uc).data.is_null() {
+        ufbxi_dev_assert!((*uc).data_begin.is_null());
+        // C: `uc->data_begin = uc->data = ufbxi_zero_size_buffer;`
+        (*uc).data = ZERO_SIZE_BUFFER.as_ptr();
+        (*uc).data_begin = (*uc).data;
+    }
+
+    (*uc).retain_vertex_w =
+        ((*uc).opts.retain_dom || (*uc).opts.retain_vertex_attrib_w) && !(*uc).opts.ignore_geometry;
+
+    ufbxi_check!(uc, load_strings(uc).is_ok(), "ufbxi_load_strings(uc)");
+    ufbxi_check!(uc, load_maps(uc).is_ok(), "ufbxi_load_maps(uc)");
+    ufbxi_check!(uc, determine_format(uc).is_ok(), "ufbxi_determine_format(uc)");
+
+    let format: FileFormat = (*uc).scene.metadata.file_format;
+
+    if format == FileFormat::Fbx {
+        ufbxi_check!(uc, begin_parse(uc).is_ok(), "ufbxi_begin_parse(uc)");
+        if (*uc).version < 6000 {
+            ufbxi_check!(uc, read_legacy_root(uc).is_ok(), "ufbxi_read_legacy_root(uc)");
+        } else {
+            ufbxi_check!(uc, read_root(uc).is_ok(), "ufbxi_read_root(uc)");
+        }
+        if !supports_version((*uc).version) {
+            ufbxi_check!(
+                uc,
+                ufbxi_warnf!(
+                    uc,
+                    WarningType::UnsupportedVersion,
+                    "Unsupported FBX version (%u)",
+                    (*uc).version
+                )
+                .is_ok(),
+                "ufbxi_warnf(UFBX_WARNING_UNSUPPORTED_VERSION, \"Unsupported FBX version (%u)\", uc->version)"
+            );
+        }
+        update_scene_metadata(ptr::addr_of_mut!((*uc).scene.metadata));
+        ufbxi_check!(uc, init_file_paths(uc).is_ok(), "ufbxi_init_file_paths(uc)");
+    } else if format == FileFormat::Obj {
+        ufbxi_check!(uc, obj_load(uc).is_ok(), "ufbxi_obj_load(uc)");
+        update_scene_metadata(ptr::addr_of_mut!((*uc).scene.metadata));
+    } else if format == FileFormat::Mtl {
+        ufbxi_check!(uc, mtl_load(uc).is_ok(), "ufbxi_mtl_load(uc)");
+        update_scene_metadata(ptr::addr_of_mut!((*uc).scene.metadata));
+    }
+
+    // Fake DOM root if necessary
+    if (*uc).opts.retain_dom && (*uc).scene.dom_root.is_none() {
+        let dom_root: *mut DomNode = push_zero::<DomNode>(&mut (*uc).result, 1);
+        ufbxi_check!(uc, !dom_root.is_null(), "dom_root");
+        (*dom_root).name.data = EMPTY_CHAR.as_ptr();
+        (*uc).scene.dom_root = Some(Ref::from_ptr(dom_root));
+    }
+
+    ufbxi_check!(uc, pre_finalize_scene(uc).is_ok(), "ufbxi_pre_finalize_scene(uc)");
+
+    // We can free `tmp_parse` already here as all parsing is done by now.
+    buf_free(&mut (*uc).tmp_parse);
+
+    ufbxi_check!(uc, finalize_scene(uc).is_ok(), "ufbxi_finalize_scene(uc)");
+
+    update_scene_settings(ptr::addr_of_mut!((*uc).scene.settings));
+    if (*uc).scene.metadata.file_format == FileFormat::Obj {
+        update_scene_settings_obj(uc);
+    }
+
+    // Axis conversion
+    if coordinate_axes_valid((*uc).opts.target_axes) {
+        transform_to_axes(uc, (*uc).opts.target_axes);
+    }
+
+    // Unit conversion
+    if (*uc).opts.target_unit_meters > 0.0 {
+        ufbxi_check!(
+            uc,
+            scale_units(uc, (*uc).opts.target_unit_meters).is_ok(),
+            "ufbxi_scale_units(uc, uc->opts.target_unit_meters)"
+        );
+    }
+
+    // TODO: This could be done in evaluate as well with refactoring
+    update_adjust_transforms(uc, ptr::addr_of_mut!((*uc).scene));
+
+    ufbxi_check!(uc, modify_geometry(uc).is_ok(), "ufbxi_modify_geometry(uc)");
+    postprocess_scene(uc);
+
+    update_scene(ptr::addr_of_mut!((*uc).scene), true, ptr::null(), 0);
+
+    // Force a non-NULL anim pointer
+    if ref_ptr(ptr::addr_of!((*uc).scene.anim)).is_null() {
+        // C: `uc->scene.anim = ufbxi_push_zero(&uc->result, ufbx_anim, 1);`
+        // (NOT `ufbxi_check`ed in C — a failed allocation leaves it NULL).
+        *(ptr::addr_of_mut!((*uc).scene.anim) as *mut *mut Anim) =
+            push_zero::<Anim>(&mut (*uc).result, 1);
+    }
+
+    if (*uc).opts.load_external_files {
+        ufbxi_check!(uc, load_external_files(uc).is_ok(), "ufbxi_load_external_files(uc)");
+    }
+
+    // Evaluate skinning if requested
+    if (*uc).opts.evaluate_skinning {
+        // C: `ufbx_geometry_cache_data_opts cache_opts = { 0 };`
+        let mut cache_opts: RawGeometryCacheDataOpts = MaybeUninit::zeroed().assume_init();
+        cache_opts.open_file_cb =
+            ptr::read(ptr::addr_of!((*uc).opts.open_file_cb) as *const RawOpenFileCb);
+        ufbxi_check!(
+            uc,
+            evaluate_skinning(
+                ptr::addr_of_mut!((*uc).scene),
+                ptr::addr_of_mut!((*uc).error),
+                ptr::addr_of_mut!((*uc).result),
+                ptr::addr_of_mut!((*uc).tmp),
+                0.0,
+                (*uc).opts.load_external_files && (*uc).opts.evaluate_caches,
+                &mut cache_opts,
+            )
+            .is_ok(),
+            "ufbxi_evaluate_skinning(&uc->scene, &uc->error, &uc->result, &uc->tmp, 0.0, uc->opts.load_external_files && uc->opts.evaluate_caches, &cache_opts)"
+        );
+    }
+
+    // Pop warnings to metadata
+    ufbxi_check!(
+        uc,
+        pop_warnings(
+            ptr::addr_of_mut!((*uc).warnings),
+            ptr::addr_of_mut!((*uc).scene.metadata.warnings),
+            (*uc).scene.metadata.has_warning.as_mut_ptr(),
+        )
+        .is_ok(),
+        "ufbxi_pop_warnings(&uc->warnings, &uc->scene.metadata.warnings, uc->scene.metadata.has_warning)"
+    );
+    ufbxi_check!(uc, resolve_warning_elements(uc).is_ok(), "ufbxi_resolve_warning_elements(uc)");
+
+    // Copy local data to the scene
+    (*uc).scene.metadata.version = (*uc).version;
+    (*uc).scene.metadata.ascii = (*uc).from_ascii;
+    (*uc).scene.metadata.big_endian = (*uc).file_big_endian;
+    (*uc).scene.metadata.geometry_ignored = (*uc).opts.ignore_geometry;
+    (*uc).scene.metadata.animation_ignored = (*uc).opts.ignore_animation;
+    (*uc).scene.metadata.embedded_ignored = (*uc).opts.ignore_embedded;
+
+    // Retain the scene, this must be the final allocation as we copy
+    // `ator_result` to `ufbx_scene_imp`.
+    let imp: *mut SceneImp = push::<SceneImp>(&mut (*uc).result, 1);
+    ufbxi_check!(uc, !imp.is_null(), "imp");
+
+    init_ref(&mut (*imp).refcount, SCENE_IMP_MAGIC, ptr::null_mut());
+
+    (*imp).magic = SCENE_IMP_MAGIC;
+    // C: `imp->scene = uc->scene;` (struct copy)
+    ptr::copy_nonoverlapping(ptr::addr_of!((*uc).scene), ptr::addr_of_mut!((*imp).scene), 1);
+    (*imp).refcount.ator = (*uc).ator_result;
+    (*imp).refcount.ator.error = ptr::null_mut();
+
+    // Copy retained buffers and translate the allocator struct to the one
+    // contained within `ufbxi_scene_imp`
+    (*imp).refcount.buf = (*uc).result;
+    (*imp).refcount.buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
+    (*imp).string_buf = (*uc).string_pool.buf;
+    (*imp).string_buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
+
+    (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
+    (*imp).scene.metadata.temp_memory_used = (*uc).ator_tmp.current_size;
+    (*imp).scene.metadata.result_allocs = (*imp).refcount.ator.num_allocs;
+    (*imp).scene.metadata.temp_allocs = (*uc).ator_tmp.num_allocs;
+
+    // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, imp->scene.elements)`
+    let mut p_elem: *mut *mut Element = (*imp).scene.elements.data as *mut *mut Element;
+    let p_elem_end: *mut *mut Element = add_ptr(p_elem, (*imp).scene.elements.count);
+    while p_elem != p_elem_end {
+        // C: `(*p_elem)->scene = &imp->scene;`
+        *(ptr::addr_of_mut!((**p_elem).scene) as *mut *mut Scene) =
+            ptr::addr_of_mut!((*imp).scene);
+        p_elem = p_elem.add(1);
+    }
+
+    (*uc).scene_imp = imp;
+
+    Ok(())
+}
 
 // ufbx.c:25412-25462 `ufbxi_free_temp`
 #[inline(never)]
 pub(crate) unsafe fn free_temp(uc: *mut Context) {
-    // DEFERRED(threading): C calls `ufbxi_thread_pool_free(&uc->thread_pool)`
-    // (ufbx.c:25414) first; `ufbxi_thread_pool_free` (ufbx.c:6107) is NOT
-    // PORTED in `native::thread` (see its module docs). Until it lands a pool
-    // initialized by `ufbxi_thread_pool_init` would leak its `tasks` array —
-    // unreachable while `ufbxi_thread_pool_init`/`ufbxi_load_imp` are
-    // themselves unported. Restore verbatim once threading lands:
-    //
-    // thread_pool_free(&mut (*uc).thread_pool);
+    thread_pool_free(&raw mut (*uc).thread_pool);
 
     string_pool_temp_free(&mut (*uc).string_pool);
     buf_free(&mut (*uc).warnings.tmp_stack);
@@ -563,14 +899,237 @@ pub(crate) unsafe fn free_result(uc: *mut Context) {
     free_ator(&mut (*uc).ator_result);
 }
 
-// DEFERRED: `ufbxi_load` (ufbx.c:25472-25625) is NOT ported yet — it drives
-// `ufbxi_load_imp` (see the DEFERRED slot note above) and additionally needs
-// `UFBXI_MIN_FILE_FORMAT_LOOKAHEAD` from the still-PARTIAL `// -- Setup`
-// section (`native::parse`). `ufbxi_free_temp` / `ufbxi_free_result` above and
-// its error plumbing (`ufbxi_clear_error` / `ufbxi_fix_error_type`,
-// `native::error`) are already ported. Port it here, in this slot, together
-// with `ufbxi_load_imp`; the DEFERRED(m10) `ufbx_load_*` markers in
-// `native/api.rs` track the public entry points waiting on it.
+// ufbx.c:25472-25625 `ufbxi_load`
+#[inline(never)]
+pub(crate) unsafe fn load(
+    uc: *mut Context,
+    user_opts: *const RawLoadOpts,
+    p_error: *mut Error,
+) -> *mut Scene {
+    // Test endianness
+    {
+        // C: `uint8_t buf[2]; uint16_t val = 0xbbaa; memcpy(buf, &val, 2);`
+        let val: u16 = 0xbbaa;
+        let buf: [u8; 2] = val.to_ne_bytes();
+        (*uc).local_big_endian = buf[0] == 0xbb;
+    }
+
+    (*uc).double_parse_flags = parse_double_init_flags();
+
+    if !user_opts.is_null() {
+        // C: `uc->opts = *user_opts;` (struct copy)
+        ptr::copy_nonoverlapping(user_opts, ptr::addr_of_mut!((*uc).opts), 1);
+    } else {
+        // C: `memset(&uc->opts, 0, sizeof(uc->opts));`
+        ptr::write_bytes(
+            ptr::addr_of_mut!((*uc).opts) as *mut u8,
+            0,
+            size_of::<RawLoadOpts>(),
+        );
+    }
+
+    if (*uc).opts.file_size_estimate != 0 {
+        (*uc).progress_bytes_total = (*uc).opts.file_size_estimate;
+    }
+
+    if (*uc).opts.ignore_all_content {
+        (*uc).opts.ignore_geometry = true;
+        (*uc).opts.ignore_animation = true;
+        (*uc).opts.ignore_embedded = true;
+    }
+
+    // C: `ufbx_inflate_retain inflate_retain; inflate_retain.initialized = false;`
+    // — only `initialized` is written before use.
+    let mut inflate_retain = MaybeUninit::<InflateRetain>::uninit();
+    ptr::addr_of_mut!((*inflate_retain.as_mut_ptr()).initialized).write(false);
+
+    init_ator(
+        &mut (*uc).error,
+        &mut (*uc).ator_tmp,
+        ptr::addr_of!((*uc).opts.temp_allocator),
+        b"temp\0".as_ptr(),
+    );
+    init_ator(
+        &mut (*uc).error,
+        &mut (*uc).ator_result,
+        ptr::addr_of!((*uc).opts.result_allocator),
+        b"result\0".as_ptr(),
+    );
+
+    if (*uc).opts.read_buffer_size == 0 {
+        (*uc).opts.read_buffer_size = 0x4000;
+    }
+    if (*uc).opts.read_buffer_size <= 32 {
+        (*uc).opts.read_buffer_size = 32;
+    }
+
+    if (*uc).opts.file_format_lookahead == 0 {
+        (*uc).opts.file_format_lookahead = 0x4000;
+    } else if (*uc).opts.file_format_lookahead < MIN_FILE_FORMAT_LOOKAHEAD {
+        (*uc).opts.file_format_lookahead = MIN_FILE_FORMAT_LOOKAHEAD;
+    }
+
+    if (*uc).opts.path_separator == 0 {
+        (*uc).opts.path_separator = PATH_SEPARATOR;
+    }
+
+    if (*uc).opts.progress_cb.fn_.is_none()
+        || (*uc).opts.progress_interval_hint >= usize::MAX as u64
+    {
+        (*uc).progress_interval = usize::MAX;
+    } else if (*uc).opts.progress_interval_hint > 0 {
+        (*uc).progress_interval = (*uc).opts.progress_interval_hint as usize;
+    } else {
+        (*uc).progress_interval = 0x4000;
+    }
+
+    if (*uc).opts.open_file_cb.fn_.is_none() {
+        // C: `uc->opts.open_file_cb.fn = &ufbx_default_open_file;`
+        (*uc).opts.open_file_cb.fn_ = Some(default_open_file);
+    }
+
+    if (*uc).opts.thread_opts.memory_limit == 0 {
+        (*uc).opts.thread_opts.memory_limit = 32 * 1024 * 1024;
+    }
+
+    (*uc).synthetic_id_counter = SYNTHETIC_ID_START;
+
+    (*uc).string_pool.error = ptr::addr_of_mut!((*uc).error);
+    map_init(
+        &mut (*uc).string_pool.map,
+        ptr::addr_of_mut!((*uc).ator_tmp),
+        map_cmp_string,
+        ptr::null_mut(),
+    );
+    (*uc).string_pool.buf.ator = ptr::addr_of_mut!((*uc).ator_result);
+    (*uc).string_pool.buf.unordered = true;
+    (*uc).string_pool.initial_size = 1024;
+    (*uc).string_pool.error_handling = (*uc).opts.unicode_error_handling;
+
+    map_init(
+        &mut (*uc).prop_type_map,
+        ptr::addr_of_mut!((*uc).ator_tmp),
+        map_cmp_const_char_ptr,
+        ptr::null_mut(),
+    );
+    map_init(
+        &mut (*uc).fbx_id_map,
+        ptr::addr_of_mut!((*uc).ator_tmp),
+        map_cmp_uint64,
+        ptr::null_mut(),
+    );
+    map_init(
+        &mut (*uc).ptr_fbx_id_map,
+        ptr::addr_of_mut!((*uc).ator_tmp),
+        map_cmp_ptr_id,
+        ptr::null_mut(),
+    );
+    map_init(
+        &mut (*uc).texture_file_map,
+        ptr::addr_of_mut!((*uc).ator_tmp),
+        map_cmp_const_char_ptr,
+        ptr::null_mut(),
+    );
+    map_init(
+        &mut (*uc).anim_stack_map,
+        ptr::addr_of_mut!((*uc).ator_tmp),
+        map_cmp_const_char_ptr,
+        ptr::null_mut(),
+    );
+    map_init(
+        &mut (*uc).fbx_attr_map,
+        ptr::addr_of_mut!((*uc).ator_tmp),
+        map_cmp_uint64,
+        ptr::null_mut(),
+    );
+    map_init(
+        &mut (*uc).node_prop_set,
+        ptr::addr_of_mut!((*uc).ator_tmp),
+        map_cmp_const_char_ptr,
+        ptr::null_mut(),
+    );
+    map_init(
+        &mut (*uc).dom_node_map,
+        ptr::addr_of_mut!((*uc).ator_tmp),
+        map_cmp_uintptr,
+        ptr::null_mut(),
+    );
+
+    (*uc).tmp.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).tmp_parse.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).tmp_stack.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).tmp_connections.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).tmp_node_ids.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).tmp_elements.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).tmp_element_offsets.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).tmp_element_fbx_ids.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).tmp_element_ptrs.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    for i in 0..ELEMENT_TYPE_COUNT {
+        (*uc).tmp_typed_element_offsets[i].ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    }
+    (*uc).tmp_mesh_textures.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).tmp_full_weights.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).tmp_dom_nodes.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).tmp_element_id.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).tmp_ascii_spans.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+
+    for i in 0..THREAD_GROUP_COUNT {
+        (*uc).tmp_thread_parse[i].ator = ptr::addr_of_mut!((*uc).ator_tmp);
+        (*uc).tmp_thread_parse[i].unordered = true;
+        (*uc).tmp_thread_parse[i].clearable = true;
+    }
+
+    (*uc).result.ator = ptr::addr_of_mut!((*uc).ator_result);
+
+    (*uc).tmp.unordered = true;
+    (*uc).tmp_parse.unordered = true;
+    (*uc).tmp_parse.clearable = true;
+    (*uc).result.unordered = true;
+
+    (*uc).warnings.error = ptr::addr_of_mut!((*uc).error);
+    (*uc).warnings.result = ptr::addr_of_mut!((*uc).result);
+    (*uc).warnings.tmp_stack.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc).string_pool.warnings = ptr::addr_of_mut!((*uc).warnings);
+
+    // Set zero size `swap_arr` to a non-NULL buffer so we can tell the difference between empty
+    // array and an allocation failure.
+    // C: `uc->swap_arr = (char*)ufbxi_zero_size_buffer;` — the const cast is
+    // C-parity: the buffer is replaced by `ufbxi_grow_array` before any write.
+    (*uc).swap_arr = ZERO_SIZE_BUFFER.as_ptr() as *mut u8;
+
+    // NOTE: Though `inflate_retain` leaks out of the scope we don't use it outside this function.
+    // cppcheck-suppress autoVariables
+    (*uc).inflate_retain = inflate_retain.as_mut_ptr();
+
+    let ok: bool = load_imp(uc).is_ok();
+
+    if (*uc).close_fn.is_some() {
+        ((*uc).close_fn.unwrap())((*uc).read_user);
+    }
+
+    free_temp(uc);
+
+    if ok {
+        if !p_error.is_null() {
+            clear_error(p_error);
+        }
+        ptr::addr_of_mut!((*(*uc).scene_imp).scene)
+    } else {
+        fix_error_type(&mut (*uc).error, b"Failed to load\0".as_ptr(), p_error);
+        if !p_error.is_null()
+            && (*p_error).type_ == ErrorType::Unknown
+            && (*uc).scene.metadata.file_format == FileFormat::Fbx
+            && !supports_version((*uc).version)
+        {
+            (*p_error).description.data = b"Unsupported version\0".as_ptr();
+            (*p_error).description.length = strlen(b"Unsupported version\0".as_ptr());
+            (*p_error).type_ = ErrorType::UnsupportedVersion;
+            ufbxi_fmt_err_info!(p_error, "%u", (*uc).version);
+        }
+        free_result(uc);
+        ptr::null_mut()
+    }
+}
 
 // -- Animation evaluation (ufbx.c:25627)
 

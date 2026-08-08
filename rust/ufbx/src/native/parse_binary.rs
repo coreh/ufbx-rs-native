@@ -10,9 +10,9 @@
 //! (`ufbxi_deflate_task` / `ufbxi_deflate_task_fn`), the node record parser
 //! (`ufbxi_binary_parse_node`) and the binary magic constants.
 //!
-//! DEFERRED(threading): `ufbxi_deflate_task_fn` has no dispatcher and the
-//! thread-pool branch inside `ufbxi_binary_parse_node` is commented out until
-//! `ufbxi_thread_pool_*` (ufbx.c:6023-6173) is ported.
+//! The thread-pool branch inside `ufbxi_binary_parse_node` dispatches
+//! `ufbxi_deflate_task_fn` through `ufbxi_thread_pool_create_task` /
+//! `ufbxi_thread_pool_run_task` (`native::thread`).
 //!
 //! The big-endian path is live here (PORTING.md "Byte order"): `ufbxi_swap*`
 //! materialize a byte-swapped copy in `uc->swap_arr` and hand back a pointer
@@ -25,7 +25,7 @@ use core::mem::size_of;
 use crate::generated::{InflateInput, InflateRetain};
 use crate::native::allocator::{does_overflow, grow_array, ZERO_SIZE_BUFFER};
 use crate::native::buf::{push, push_copy, push_pop, push_size, push_zero, Buf};
-use crate::native::deflate::inflate;
+use crate::native::deflate::{inflate, inflate_init_retain};
 use crate::native::error::{
     ufbxi_check, ufbxi_check_err, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail, ufbxi_fail_err,
     Fail, EMPTY_CHAR,
@@ -43,9 +43,10 @@ use crate::native::parse::{
 use crate::native::platform::{
     f64_to_i32, f64_to_i64, min32, read_f32, read_f64, read_i16, read_i32, read_i64, read_u32,
     read_u64, read_u8, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable,
+    MIN_THREADED_DEFLATE_BYTES,
 };
 use crate::native::string_pool::{push_sanitized_string, push_string, push_string_place_str};
-use crate::native::thread::Task;
+use crate::native::thread::{thread_pool_create_task, thread_pool_run_task, Task};
 use crate::prelude::String;
 
 // -- Binary parsing
@@ -604,9 +605,8 @@ pub(crate) struct DeflateTask {
 }
 
 // ufbx.c:8917-8962 `ufbxi_deflate_task_fn`
-// DEFERRED(threading): this is a `ufbxi_task_fn` run from the thread pool;
-// `ufbxi_thread_pool_*` (ufbx.c:6023-6173) is not ported yet, so nothing
-// dispatches it until `ufbxi_binary_parse_node` and the pool land.
+// `ufbxi_task_fn` run from the thread pool; dispatched by the threading branch
+// in `ufbxi_binary_parse_node` below.
 pub(crate) unsafe extern "C" fn deflate_task_fn(task: *mut Task) -> bool {
     let t: *mut DeflateTask = (*task).data as *mut DeflateTask;
 
@@ -819,10 +819,6 @@ unsafe fn binary_parse_node_rec(
             c = b'-';
         }
 
-        // DEFERRED(threading): `deferred` is only ever set by the thread-pool
-        // dispatch below, which is not ported yet — see the marker inside the
-        // `c=='c'||...` branch. It stays `false` until the pool lands.
-        #[allow(unused_mut)]
         let mut deferred: bool = false;
 
         if c == b'c' || c == b'b' || c == b'i' || c == b'l' || c == b'f' || c == b'd' {
@@ -864,52 +860,52 @@ unsafe fn binary_parse_node_rec(
             }
 
             // Threading
-            // DEFERRED(threading): `ufbxi_thread_pool_create_task` /
-            // `ufbxi_thread_pool_run_task` (ufbx.c:6023-6173) are not ported yet
-            // (`native::thread` holds only the type definitions), so the whole
-            // dispatch stays commented out and `deferred` never becomes true.
-            // Restore verbatim — including `MIN_THREADED_DEFLATE_BYTES` and
-            // `inflate_init_retain` — when the pool lands.
-            //
-            // if (*uc).parse_threaded && encoding == 1 && encoded_size as usize >= MIN_THREADED_DEFLATE_BYTES && !(*uc).file_big_endian && !(*uc).local_big_endian {
-            //     let task: *mut Task = thread_pool_create_task(&mut (*uc).thread_pool, deflate_task_fn);
-            //     if !task.is_null() {
-            //         let t: *mut DeflateTask = push_zero::<DeflateTask>(tmp_buf, 1);
-            //         ufbxi_check!(uc, !t.is_null(), "t");
-            //
-            //         inflate_init_retain((*uc).inflate_retain);
-            //
-            //         (*t).src_elem_size = src_elem_size;
-            //         (*t).encoded_size = encoded_size as usize;
-            //         (*t).array_size = size as usize;
-            //         (*t).src_type = src_type;
-            //         (*t).dst_type = dst_type;
-            //         (*t).arr_type = (*arr).type_;
-            //         (*t).dst_data = arr_data as *mut c_void;
-            //         (*t).inflate_retain = (*uc).inflate_retain;
-            //
-            //         if (*uc).read_fn.is_none() {
-            //             // From memory, no need to copy
-            //             (*t).encoded_data = (*uc).data as *const c_void;
-            //         } else {
-            //             let encoded_data: *mut c_void = push::<u8>(tmp_buf, encoded_size as usize) as *mut c_void;
-            //             ufbxi_check!(uc, !encoded_data.is_null(), "encoded_data");
-            //             read_to(uc, encoded_data, encoded_size as usize)?;
-            //             (*t).encoded_data = encoded_data;
-            //         }
-            //
-            //         if src_type != dst_type {
-            //             (*t).decoded_data = push_size(tmp_buf, src_elem_size, size as usize);
-            //             ufbxi_check!(uc, !(*t).decoded_data.is_null(), "t->decoded_data");
-            //         } else {
-            //             (*t).decoded_data = arr_data as *mut c_void;
-            //         }
-            //
-            //         (*task).data = t as *mut c_void;
-            //         thread_pool_run_task(&mut (*uc).thread_pool, task);
-            //         deferred = true;
-            //     }
-            // }
+            if (*uc).parse_threaded
+                && encoding == 1
+                && encoded_size as usize >= MIN_THREADED_DEFLATE_BYTES
+                && !(*uc).file_big_endian
+                && !(*uc).local_big_endian
+            {
+                let task: *mut Task =
+                    thread_pool_create_task(&raw mut (*uc).thread_pool, deflate_task_fn);
+                if !task.is_null() {
+                    let t: *mut DeflateTask = push_zero::<DeflateTask>(tmp_buf, 1);
+                    ufbxi_check!(uc, !t.is_null(), "t");
+
+                    inflate_init_retain((*uc).inflate_retain);
+
+                    (*t).src_elem_size = src_elem_size;
+                    (*t).encoded_size = encoded_size as usize;
+                    (*t).array_size = size as usize;
+                    (*t).src_type = src_type;
+                    (*t).dst_type = dst_type;
+                    (*t).arr_type = (*arr).type_;
+                    (*t).dst_data = arr_data as *mut c_void;
+                    (*t).inflate_retain = (*uc).inflate_retain;
+
+                    if (*uc).read_fn.is_none() {
+                        // From memory, no need to copy
+                        (*t).encoded_data = (*uc).data as *const c_void;
+                    } else {
+                        let encoded_data: *mut c_void =
+                            push::<u8>(tmp_buf, encoded_size as usize) as *mut c_void;
+                        ufbxi_check!(uc, !encoded_data.is_null(), "encoded_data");
+                        read_to(uc, encoded_data, encoded_size as usize)?;
+                        (*t).encoded_data = encoded_data;
+                    }
+
+                    if src_type != dst_type {
+                        (*t).decoded_data = push_size(tmp_buf, src_elem_size, size as usize);
+                        ufbxi_check!(uc, !(*t).decoded_data.is_null(), "t->decoded_data");
+                    } else {
+                        (*t).decoded_data = arr_data as *mut c_void;
+                    }
+
+                    (*task).data = t as *mut c_void;
+                    thread_pool_run_task(&raw mut (*uc).thread_pool, task);
+                    deferred = true;
+                }
+            }
 
             // If the source and destination types are equal and our build is binary-compatible
             // with the FBX format we can read the decoded data directly into the array buffer.

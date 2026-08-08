@@ -26,9 +26,13 @@
 //!   `error-stack` cargo feature (implied by `dev`).
 //! - C records `__FUNCTION__` into `ufbx_error_frame.function`; Rust has no
 //!   stable function-name macro, so `ufbxi_function!` records `module_path!()`
-//!   (NUL-terminated) — `line!()` disambiguates the site. Frame values differ
-//!   from C by design (PORTING.md: the fuzz table is regenerated per-build;
-//!   the mechanism must exist).
+//!   with the `::` separators collapsed to `.` (NUL-terminated) — `line!()`
+//!   disambiguates the site. The collapse is load-bearing: `ufbx_format_error`
+//!   output is parsed back by upstream tests via `sscanf("%u:%63[^:]: ...")`
+//!   (test/test_parse.h:211), so the function string must be colon-free, as C
+//!   `__FUNCTION__` always is. Frame values otherwise differ from C by design
+//!   (PORTING.md: the fuzz table is regenerated per-build; the mechanism must
+//!   exist).
 //!
 //! Dormant references: the `uc`-context macros expand to
 //! `$crate::native::parse::fail_imp` / `fail_imp_no_stack`
@@ -469,12 +473,39 @@ pub(crate) unsafe fn clear_error(err: *mut Error) {
 // ufbx.c:3532-3541
 //   #if UFBXI_FEATURE_ERROR_STACK: ufbxi_function = __FUNCTION__, ufbxi_line =
 //   __LINE__, ufbxi_cond_str(cond) = #cond; else NULL / 0 / "".
-// Rust: `module_path!()` stands in for `__FUNCTION__` (see module docs).
+// Rust: `module_path!()` stands in for `__FUNCTION__`, with `::` collapsed to
+// `.` — the string must be colon-free (see module docs).
+#[cfg(feature = "error-stack")]
+pub(crate) const fn function_name<const N: usize>(src: &str) -> [u8; N] {
+    let bytes = src.as_bytes();
+    let mut out = [0u8; N];
+    let mut i = 0;
+    let mut o = 0;
+    while i < bytes.len() {
+        if bytes[i] == b':' {
+            // Collapse `::` path separators to a single `.`.
+            out[o] = b'.';
+            o += 1;
+            while i < bytes.len() && bytes[i] == b':' {
+                i += 1;
+            }
+        } else {
+            out[o] = bytes[i];
+            o += 1;
+            i += 1;
+        }
+    }
+    // Remaining bytes stay 0 — the string is consumed via `strlen`.
+    out
+}
+
 #[cfg(feature = "error-stack")]
 macro_rules! ufbxi_function {
-    () => {
-        concat!(module_path!(), "\0").as_ptr()
-    };
+    () => {{
+        const LEN: usize = module_path!().len() + 1;
+        static NAME: [u8; LEN] = $crate::native::error::function_name::<LEN>(module_path!());
+        NAME.as_ptr()
+    }};
 }
 #[cfg(not(feature = "error-stack"))]
 macro_rules! ufbxi_function {
