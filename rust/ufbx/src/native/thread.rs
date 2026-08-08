@@ -82,7 +82,8 @@ pub(crate) struct ThreadPool {
 
 // ufbx.c:6023-6031 `ufbxi_thread_pool_execute`
 pub(crate) unsafe fn thread_pool_execute(pool: *mut ThreadPool, index: u32) {
-    let imp: *mut TaskImp = (*pool).tasks.add((index % (*pool).num_tasks) as usize);
+    let p = &*pool;
+    let imp: *mut TaskImp = p.tasks.add((index % p.num_tasks) as usize);
     if ((*imp).fn_.unwrap())(&raw mut (*imp).task) {
         (*imp).task.error = core::ptr::null();
     } else if (*imp).task.error.is_null() {
@@ -94,15 +95,14 @@ pub(crate) unsafe fn thread_pool_execute(pool: *mut ThreadPool, index: u32) {
 // ufbx.c:6033-6043 `ufbxi_thread_pool_update_finished`
 #[inline(never)]
 pub(crate) unsafe fn thread_pool_update_finished(pool: *mut ThreadPool, max_index: u32) {
-    while (*pool).wait_index < max_index {
-        let task: *mut TaskImp = (*pool)
-            .tasks
-            .add(((*pool).wait_index % (*pool).num_tasks) as usize);
-        if !(*pool).failed && !(*task).task.error.is_null() {
-            (*pool).failed = true;
-            (*pool).error_desc = (*task).task.error;
+    let p = &mut *pool;
+    while p.wait_index < max_index {
+        let task: *mut TaskImp = p.tasks.add((p.wait_index % p.num_tasks) as usize);
+        if !p.failed && !(*task).task.error.is_null() {
+            p.failed = true;
+            p.error_desc = (*task).task.error;
         }
-        (*pool).wait_index = (*pool).wait_index.wrapping_add(1);
+        p.wait_index = p.wait_index.wrapping_add(1);
     }
 }
 
@@ -219,16 +219,17 @@ pub(crate) unsafe fn thread_pool_free(pool: *mut ThreadPool) {
         ((*pool).opts.pool.free_fn.unwrap())((*pool).opts.pool.user, pool as ThreadPoolContext);
     }
 
-    free::<TaskImp>((*pool).ator, (*pool).tasks, (*pool).num_tasks as usize);
+    let p = &*pool;
+    free::<TaskImp>(p.ator, p.tasks, p.num_tasks as usize);
 }
 
 // ufbx.c:6124-6127 `ufbxi_thread_pool_available_tasks`
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn thread_pool_available_tasks(pool: *mut ThreadPool) -> u32 {
-    (*pool)
-        .num_tasks
-        .wrapping_sub((*pool).start_index.wrapping_sub((*pool).wait_index))
+    let p = &*pool;
+    p.num_tasks
+        .wrapping_sub(p.start_index.wrapping_sub(p.wait_index))
 }
 
 // ufbx.c:6129-6142 `ufbxi_thread_pool_flush_group`
@@ -257,11 +258,12 @@ pub(crate) unsafe fn thread_pool_flush_group(pool: *mut ThreadPool) {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn thread_pool_create_task(pool: *mut ThreadPool, fn_: TaskFn) -> *mut Task {
-    let index: u32 = (*pool).start_index;
-    if index.wrapping_sub((*pool).wait_index) >= (*pool).num_tasks {
+    let p = &*pool;
+    let index: u32 = p.start_index;
+    if index.wrapping_sub(p.wait_index) >= p.num_tasks {
         // C-parity: the C nests the same condition twice (ufbx.c:6147-6152) —
         // kept verbatim.
-        if index.wrapping_sub((*pool).wait_index) >= (*pool).num_tasks {
+        if index.wrapping_sub(p.wait_index) >= p.num_tasks {
             // No space left
             return core::ptr::null_mut();
         }
@@ -270,8 +272,8 @@ pub(crate) unsafe fn thread_pool_create_task(pool: *mut ThreadPool, fn_: TaskFn)
         return core::ptr::null_mut();
     }
 
-    let imp: *mut TaskImp = (*pool).tasks.add((index % (*pool).num_tasks) as usize);
-    if index < (*pool).num_tasks {
+    let imp: *mut TaskImp = p.tasks.add((index % p.num_tasks) as usize);
+    if index < p.num_tasks {
         core::ptr::write_bytes(imp as *mut u8, 0, size_of::<TaskImp>());
     }
 
@@ -284,7 +286,8 @@ pub(crate) unsafe fn thread_pool_create_task(pool: *mut ThreadPool, fn_: TaskFn)
 pub(crate) unsafe fn thread_pool_run_task(pool: *mut ThreadPool, task: *mut Task) {
     // C: `(void)task;` — `task` is only read by the assert below.
     let _ = task;
-    let index: u32 = (*pool).start_index;
-    ufbx_assert!(task == &raw mut (*(*pool).tasks.add((index % (*pool).num_tasks) as usize)).task);
-    (*pool).start_index = index.wrapping_add(1);
+    let p = &mut *pool;
+    let index: u32 = p.start_index;
+    ufbx_assert!(task == &raw mut (*p.tasks.add((index % p.num_tasks) as usize)).task);
+    p.start_index = index.wrapping_add(1);
 }
