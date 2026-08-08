@@ -374,7 +374,7 @@ pub(crate) unsafe fn sort_properties(
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<Prop>()),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbx_prop))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_prop)))"
     );
     macro_stable_sort::<Prop>(32, props, (*uc).tmp_arr as *mut Prop, count, |a, b| {
         prop_less(a as *mut Prop, b as *mut Prop)
@@ -1052,7 +1052,7 @@ pub(crate) unsafe fn insert_fbx_id(
         ufbxi_check!(
             uc,
             ufbxi_warnf!(uc, WarningType::DuplicateObjectId, "Duplicate object ID").is_ok(),
-            "ufbxi_warnf(UFBX_WARNING_DUPLICATE_OBJECT_ID, \"Duplicate object ID\")"
+            "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_DUPLICATE_OBJECT_ID, ~0u, \"Duplicate object ID\")"
         );
     }
 
@@ -1160,7 +1160,7 @@ pub(crate) unsafe fn push_element_size(
         )
         .is_null(),
         core::ptr::null_mut(),
-        "ufbxi_push_copy_fast(&uc->tmp_typed_element_offsets[type], size_t, 1, &uc->tmp_element_byte_offset)"
+        "((size_t*)ufbxi_push_size_copy_fast((&uc->tmp_typed_element_offsets[type]), sizeof(size_t), (1), (&uc->tmp_element_byte_offset)))"
     );
     ufbxi_check_return!(
         uc,
@@ -1171,13 +1171,13 @@ pub(crate) unsafe fn push_element_size(
         )
         .is_null(),
         core::ptr::null_mut(),
-        "ufbxi_push_copy_fast(&uc->tmp_element_offsets, size_t, 1, &uc->tmp_element_byte_offset)"
+        "((size_t*)ufbxi_push_size_copy_fast((&uc->tmp_element_offsets), sizeof(size_t), (1), (&uc->tmp_element_byte_offset)))"
     );
     ufbxi_check_return!(
         uc,
         !push_copy_fast::<u64>(&mut (*uc).tmp_element_fbx_ids, 1, &(*info).fbx_id).is_null(),
         core::ptr::null_mut(),
-        "ufbxi_push_copy_fast(&uc->tmp_element_fbx_ids, uint64_t, 1, &info->fbx_id)"
+        "((uint64_t*)ufbxi_push_size_copy_fast((&uc->tmp_element_fbx_ids), sizeof(uint64_t), (1), (&info->fbx_id)))"
     );
     (*uc).tmp_element_byte_offset = (*uc).tmp_element_byte_offset.wrapping_add(aligned_size);
 
@@ -1201,7 +1201,7 @@ pub(crate) unsafe fn push_element_size(
         uc,
         !push_copy_fast::<*mut Element>(&mut (*uc).tmp_element_ptrs, 1, &elem).is_null(),
         core::ptr::null_mut(),
-        "ufbxi_push_copy_fast(&uc->tmp_element_ptrs, ufbx_element*, 1, &elem)"
+        "((ufbx_element**)ufbxi_push_size_copy_fast((&uc->tmp_element_ptrs), sizeof(ufbx_element*), (1), (&elem)))"
     );
 
     ufbxi_check_return!(
@@ -1244,7 +1244,7 @@ pub(crate) unsafe fn push_synthetic_element_size(
         )
         .is_null(),
         core::ptr::null_mut(),
-        "ufbxi_push_copy_fast(&uc->tmp_typed_element_offsets[type], size_t, 1, &uc->tmp_element_byte_offset)"
+        "((size_t*)ufbxi_push_size_copy_fast((&uc->tmp_typed_element_offsets[type]), sizeof(size_t), (1), (&uc->tmp_element_byte_offset)))"
     );
     ufbxi_check_return!(
         uc,
@@ -1255,7 +1255,7 @@ pub(crate) unsafe fn push_synthetic_element_size(
         )
         .is_null(),
         core::ptr::null_mut(),
-        "ufbxi_push_copy_fast(&uc->tmp_element_offsets, size_t, 1, &uc->tmp_element_byte_offset)"
+        "((size_t*)ufbxi_push_size_copy_fast((&uc->tmp_element_offsets), sizeof(size_t), (1), (&uc->tmp_element_byte_offset)))"
     );
     (*uc).tmp_element_byte_offset = (*uc).tmp_element_byte_offset.wrapping_add(aligned_size);
 
@@ -1275,7 +1275,7 @@ pub(crate) unsafe fn push_synthetic_element_size(
         uc,
         !push_copy_fast::<*mut Element>(&mut (*uc).tmp_element_ptrs, 1, &elem).is_null(),
         core::ptr::null_mut(),
-        "ufbxi_push_copy_fast(&uc->tmp_element_ptrs, ufbx_element*, 1, &elem)"
+        "((ufbx_element**)ufbxi_push_size_copy_fast((&uc->tmp_element_ptrs), sizeof(ufbx_element*), (1), (&elem)))"
     );
 
     *p_fbx_id = push_synthetic_id(uc);
@@ -1284,7 +1284,7 @@ pub(crate) unsafe fn push_synthetic_element_size(
         uc,
         !push_copy_fast::<u64>(&mut (*uc).tmp_element_fbx_ids, 1, p_fbx_id).is_null(),
         core::ptr::null_mut(),
-        "ufbxi_push_copy_fast(&uc->tmp_element_fbx_ids, uint64_t, 1, p_fbx_id)"
+        "((uint64_t*)ufbxi_push_size_copy_fast((&uc->tmp_element_fbx_ids), sizeof(uint64_t), (1), (p_fbx_id)))"
     );
     ufbxi_check_return!(
         uc,
@@ -1515,7 +1515,7 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
             uc,
             !push_copy::<u32>(&mut (*uc).tmp_node_ids, 1, &(*geo_node).element.element_id)
                 .is_null(),
-            "ufbxi_push_copy(&uc->tmp_node_ids, uint32_t, 1, &geo_node->element.element_id)"
+            "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&geo_node->element.element_id)))"
         );
         // C: `geo_node->element.dom_node = node->element.dom_node;` — pointer
         // copy; `Option<Ref<T>>` is niche-packed to a bare pointer.
@@ -1631,7 +1631,7 @@ pub(crate) unsafe fn setup_scale_helper(
             &(*scale_node).element.element_id
         )
         .is_null(),
-        "ufbxi_push_copy(&uc->tmp_node_ids, uint32_t, 1, &scale_node->element.element_id)"
+        "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&scale_node->element.element_id)))"
     );
     // C: `scale_node->element.dom_node = node->element.dom_node;`
     (*scale_node).element.dom_node = core::ptr::read(&(*node).element.dom_node);
@@ -1692,7 +1692,7 @@ pub(crate) unsafe fn read_model(
     ufbxi_check!(
         uc,
         !push_copy::<u32>(&mut (*uc).tmp_node_ids, 1, &(*elem_node).element.element_id).is_null(),
-        "ufbxi_push_copy(&uc->tmp_node_ids, uint32_t, 1, &elem_node->element.element_id)"
+        "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&elem_node->element.element_id)))"
     );
 
     let inherit_type: i64 = find_int(&(*elem_node).element.props, sp::InheritType.as_ptr(), -1);
@@ -1799,7 +1799,7 @@ pub(crate) unsafe fn fix_index(
             ufbxi_check!(
                 uc,
                 ufbxi_warnf!(uc, WarningType::IndexClamped, "Clamped index").is_ok(),
-                "ufbxi_warnf(UFBX_WARNING_INDEX_CLAMPED, \"Clamped index\")"
+                "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_INDEX_CLAMPED, ~0u, \"Clamped index\")"
             );
         }
         IndexErrorHandling::NoIndex => {
@@ -1912,7 +1912,7 @@ pub(crate) unsafe fn warn_polygon_mapping(
             mapping,
         )
         .is_ok(),
-        "ufbxi_warnf(UFBX_WARNING_MISSING_POLYGON_MAPPING, \"Ignoring geometry '%s' with bad mapping mode '%s'\", data_name, mapping)"
+        "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_POLYGON_MAPPING, ~0u, \"Ignoring geometry '%s' with bad mapping mode '%s'\", data_name, mapping)"
     );
     Ok(())
 }
@@ -2162,7 +2162,7 @@ pub(crate) unsafe fn read_vertex_element(
                         num_elems,
                     )
                     .is_ok(),
-                    "ufbxi_warnf(UFBX_WARNING_BAD_VERTEX_W_ATTRIBUTE, \"Bad W array size %s=%zu, %s=%zu\", w_name, w_data->size, data_name, num_elems)"
+                    "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_BAD_VERTEX_W_ATTRIBUTE, ~0u, \"Bad W array size %s=%zu, %s=%zu\", w_name, w_data->size, data_name, num_elems)"
                 );
             }
         }
@@ -2193,7 +2193,7 @@ pub(crate) unsafe fn read_truncated_array(
                 name,
             )
             .is_ok(),
-            "ufbxi_warnf(UFBX_WARNING_MISSING_GEOMETRY_DATA, \"Missing geometry data: %s\", name)"
+            "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_GEOMETRY_DATA, ~0u, \"Missing geometry data: %s\", name)"
         );
         return Ok(());
     }
@@ -2205,7 +2205,7 @@ pub(crate) unsafe fn read_truncated_array(
         ufbxi_check!(
             uc,
             ufbxi_warnf!(uc, WarningType::TruncatedArray, "Truncated array: %s", name).is_ok(),
-            "ufbxi_warnf(UFBX_WARNING_TRUNCATED_ARRAY, \"Truncated array: %s\", name)"
+            "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_TRUNCATED_ARRAY, ~0u, \"Truncated array: %s\", name)"
         );
 
         let elem_size: usize = array_type_size(fmt);
@@ -2236,7 +2236,7 @@ pub(crate) unsafe fn read_truncated_array(
     Ok(())
 }
 
-// ufbx.c:12943-12948 `ufbxi_uv_set_less`
+// ufbx.c:12962-12967 `ufbxi_uv_set_less`
 #[inline(never)]
 pub(crate) unsafe extern "C" fn uv_set_less(
     user: *mut c_void,
@@ -2249,7 +2249,7 @@ pub(crate) unsafe extern "C" fn uv_set_less(
     (*a).index < (*b).index
 }
 
-// ufbx.c:12950-12955 `ufbxi_color_set_less`
+// ufbx.c:12969-12974 `ufbxi_color_set_less`
 #[inline(never)]
 pub(crate) unsafe extern "C" fn color_set_less(
     user: *mut c_void,
@@ -2277,7 +2277,7 @@ pub(crate) unsafe fn sort_uv_sets(
             &mut (*uc).tmp_arr_size,
             count * size_of::<UvSet>(),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbx_uv_set))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_uv_set)))"
     );
     stable_sort(
         size_of::<UvSet>(),
@@ -2306,7 +2306,7 @@ pub(crate) unsafe fn sort_color_sets(
             &mut (*uc).tmp_arr_size,
             count * size_of::<ColorSet>(),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbx_color_set))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_color_set)))"
     );
     stable_sort(
         size_of::<ColorSet>(),
@@ -2329,7 +2329,7 @@ pub(crate) struct BlendOffset {
     pub normal_offset: Vec3,
 }
 
-// ufbx.c:12977-12982 `ufbxi_blend_offset_less`
+// ufbx.c:12996-13001 `ufbxi_blend_offset_less`
 #[inline(never)]
 pub(crate) unsafe extern "C" fn blend_offset_less(
     user: *mut c_void,
@@ -2357,7 +2357,7 @@ pub(crate) unsafe fn sort_blend_offsets(
             &mut (*uc).tmp_arr_size,
             count * size_of::<BlendOffset>(),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbxi_blend_offset))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_blend_offset)))"
     );
     stable_sort(
         size_of::<BlendOffset>(),
@@ -2371,7 +2371,7 @@ pub(crate) unsafe fn sort_blend_offsets(
     Ok(())
 }
 
-// ufbx.c:12991-13060 `ufbxi_read_shape`
+// ufbx.c:13010-13075 `ufbxi_read_shape`
 #[inline(never)]
 pub(crate) unsafe fn read_shape(
     uc: *mut Context,
@@ -2465,7 +2465,7 @@ pub(crate) unsafe fn read_shape(
     Ok(())
 }
 
-// ufbx.c:13062-13137 `ufbxi_read_synthetic_blend_shapes`
+// ufbx.c:13077-13137 `ufbxi_read_synthetic_blend_shapes`
 #[inline(never)]
 pub(crate) unsafe fn read_synthetic_blend_shapes(
     uc: *mut Context,
@@ -2520,7 +2520,7 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
         ufbxi_check!(
             uc,
             !push_copy::<List<Real>>(&mut (*uc).tmp_full_weights, 1, &weight_list).is_null(),
-            "ufbxi_push_copy(&uc->tmp_full_weights, ufbx_real_list, 1, &weight_list)"
+            "((ufbx_real_list*)ufbxi_push_size_copy((&uc->tmp_full_weights), sizeof(ufbx_real_list), (1), (&weight_list)))"
         );
 
         let num_shape_props: usize = 1;
@@ -8264,7 +8264,7 @@ pub(crate) unsafe fn read_legacy_model(uc: *mut Context, node: *mut Node) -> Res
     ufbxi_check!(
         uc,
         !push_copy::<u32>(&mut (*uc).tmp_node_ids, 1, &(*elem_node).element.element_id).is_null(),
-        "ufbxi_push_copy(&uc->tmp_node_ids, uint32_t, 1, &elem_node->element.element_id)"
+        "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&elem_node->element.element_id)))"
     );
 
     let mut attrib_info: ElementInfo = core::mem::zeroed();

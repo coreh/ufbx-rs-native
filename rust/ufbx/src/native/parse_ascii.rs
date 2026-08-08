@@ -122,7 +122,7 @@ pub(crate) unsafe fn ascii_refill(uc: *mut Context) -> u8 {
                         new_size
                     ),
                     b'\0',
-                    "ufbxi_grow_array(&uc->ator_tmp, &uc->read_buffer, &uc->read_buffer_size, new_size)"
+                    "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->read_buffer)), (&uc->read_buffer), (&uc->read_buffer_size), (new_size))"
                 );
             }
             dst_buffer = (*uc).read_buffer;
@@ -368,7 +368,7 @@ pub(crate) unsafe fn ascii_push_token_char(
                 &raw mut (*token).str_cap,
                 len
             ),
-            "ufbxi_grow_array(&uc->ator_tmp, &token->str_data, &token->str_cap, len)"
+            "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&token->str_data)), (&token->str_data), (&token->str_cap), (len))"
         );
     }
 
@@ -397,7 +397,7 @@ pub(crate) unsafe fn ascii_push_token_string(
                 &raw mut (*token).str_cap,
                 len
             ),
-            "ufbxi_grow_array(&uc->ator_tmp, &token->str_data, &token->str_cap, len)"
+            "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&token->str_data)), (&token->str_data), (&token->str_cap), (len))"
         );
     }
 
@@ -1632,10 +1632,11 @@ unsafe fn ascii_parse_node_rec(
                     let v: *mut u8 = push::<u8>(&raw mut (*uc).tmp_stack, 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     // C-parity: C's `(uint8_t)val` on a `double` is UB out of range; the
-                    // x86-64 oracle emits convert-to-wide-then-narrow (mod 256). `as i64
-                    // as u8` reproduces it; residual divergence only at |val| >= 2^63/NaN
-                    // (PORTING.md "Integer semantics", float-operand cast row).
-                    *v = val as i64 as u8;
+                    // x86-64 oracle emits a 32-bit `cvttsd2si` + low-byte narrow. Plain
+                    // `as` (saturating) per the PORTING.md bare-float-cast row — known,
+                    // accepted divergence, same choice as the `ufbxi_cast_u8` appliers in
+                    // parse_binary.rs.
+                    *v = val as u8;
                 }
                 b'i' => {
                     let v: *mut i32 = push::<i32>(&raw mut (*uc).tmp_stack, 1);

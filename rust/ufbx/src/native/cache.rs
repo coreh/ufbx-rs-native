@@ -177,7 +177,7 @@ pub(crate) unsafe fn cache_read(
     core::ptr::copy_nonoverlapping((*cc).pos, dst as *mut u8, buffered);
     (*cc).pos = (*cc).pos.add(buffered);
     size -= buffered;
-    (*cc).file_offset += buffered as u64;
+    (*cc).file_offset = (*cc).file_offset.wrapping_add(buffered as u64);
     if size == 0 {
         return Ok(());
     }
@@ -200,7 +200,7 @@ pub(crate) unsafe fn cache_read(
                 "num_read == size"
             );
         }
-        (*cc).file_offset += num_read as u64;
+        (*cc).file_offset = (*cc).file_offset.wrapping_add(num_read as u64);
         size -= num_read;
         dst = (dst as *mut u8).add(num_read) as *mut c_void;
     } else {
@@ -228,7 +228,7 @@ pub(crate) unsafe fn cache_read(
 
         core::ptr::copy_nonoverlapping((*cc).pos, dst as *mut u8, size);
         (*cc).pos = (*cc).pos.add(size);
-        (*cc).file_offset += size as u64;
+        (*cc).file_offset = (*cc).file_offset.wrapping_add(size as u64);
 
         let num_written: usize = min_sz(size, num_read);
         size -= num_written;
@@ -466,7 +466,7 @@ pub(crate) unsafe fn cache_load_mc(cc: *mut CacheContext) -> Result<(), Fail> {
                         &mut (*cc).name_cap,
                         padded_length
                     ),
-                    "ufbxi_grow_array(cc->ator_tmp, &cc->name_buf, &cc->name_cap, padded_length)"
+                    "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->name_buf)), (&cc->name_buf), (&cc->name_cap), (padded_length))"
                 );
                 cache_read(cc, (*cc).name_buf as *mut c_void, padded_length, false)?;
                 (*cc).channel_name.data = (*cc).name_buf;
@@ -613,7 +613,7 @@ pub(crate) unsafe fn cache_sort_tmp_channels(
             &mut (*cc).tmp_arr_size,
             count * size_of::<CacheTmpChannel>()
         ),
-        "ufbxi_grow_array(cc->ator_tmp, &cc->tmp_arr, &cc->tmp_arr_size, count * sizeof(ufbxi_cache_tmp_channel))"
+        "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->tmp_arr)), (&cc->tmp_arr), (&cc->tmp_arr_size), (count * sizeof(ufbxi_cache_tmp_channel)))"
     );
     stable_sort(
         size_of::<CacheTmpChannel>(),
@@ -1022,7 +1022,7 @@ pub(crate) unsafe fn cache_sort_frames(
             &mut (*cc).tmp_arr_size,
             count * size_of::<CacheFrame>()
         ),
-        "ufbxi_grow_array(cc->ator_tmp, &cc->tmp_arr, &cc->tmp_arr_size, count * sizeof(ufbx_cache_frame))"
+        "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->tmp_arr)), (&cc->tmp_arr), (&cc->tmp_arr_size), (count * sizeof(ufbx_cache_frame)))"
     );
     stable_sort(
         size_of::<CacheFrame>(),
@@ -1458,7 +1458,7 @@ pub(crate) unsafe fn load_external_cache(
                         (*file).filename.data
                     )
                     .is_ok(),
-                    "ufbxi_warnf(UFBX_WARNING_MISSING_EXTERNAL_FILE, \"Failed to open geometry cache: %s\", file->filename.data)"
+                    "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_EXTERNAL_FILE, ~0u, \"Failed to open geometry cache: %s\", file->filename.data)"
                 );
                 return Ok(());
             } else {

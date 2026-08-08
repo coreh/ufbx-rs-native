@@ -1096,7 +1096,7 @@ pub(crate) unsafe fn sort_name_elements(
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<NameElement>()),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbx_name_element))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_name_element)))"
     );
     macro_stable_sort::<NameElement>(
         32,
@@ -1152,7 +1152,7 @@ pub(crate) unsafe fn sort_node_ptrs(
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<*mut Node>()),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbx_node*))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_node*)))"
     );
     macro_stable_sort::<*mut Node>(32, nodes, (*uc).tmp_arr as *mut *mut Node, count, |a, b| {
         cmp_node_less(*a, *b)
@@ -1194,7 +1194,7 @@ pub(crate) unsafe fn sort_tmp_material_textures(
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<TmpMaterialTexture>()),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbxi_tmp_material_texture))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_tmp_material_texture)))"
     );
     macro_stable_sort::<TmpMaterialTexture>(
         32,
@@ -1255,7 +1255,7 @@ pub(crate) unsafe fn sort_connections(
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<Connection>()),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbx_connection))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_connection)))"
     );
     macro_stable_sort::<Connection>(
         32,
@@ -1366,7 +1366,7 @@ pub(crate) unsafe fn resolve_connections(uc: *mut Context) -> Result<(), Fail> {
                         "Non-node element connected to root"
                     )
                     .is_ok(),
-                    "ufbxi_warnf_tag(UFBX_WARNING_BAD_ELEMENT_CONNECTED_TO_ROOT, src->element_id, \"Non-node element connected to root\")"
+                    "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_BAD_ELEMENT_CONNECTED_TO_ROOT, (src->element_id), \"Non-node element connected to root\")"
                 );
                 continue;
             }
@@ -1586,7 +1586,7 @@ pub(crate) unsafe fn add_connections_to_elements(uc: *mut Context) -> Result<(),
                             copy_start,
                         )
                         .is_null(),
-                        "ufbxi_push_copy(&uc->tmp_stack, ufbx_prop, ufbxi_to_size(prop - copy_start), copy_start)"
+                        "((ufbx_prop*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_prop), (((size_t)(prop - copy_start))), (copy_start)))"
                     );
                     copy_start = prop;
                     needs_copy = true;
@@ -1657,7 +1657,7 @@ pub(crate) unsafe fn add_connections_to_elements(uc: *mut Context) -> Result<(),
                         copy_start,
                     )
                     .is_null(),
-                    "ufbxi_push_copy(&uc->tmp_stack, ufbx_prop, ufbxi_to_size(prop_end - copy_start), copy_start)"
+                    "((ufbx_prop*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_prop), (((size_t)(prop_end - copy_start))), (copy_start)))"
                 );
                 (*elem).props.props.data =
                     push_pop::<Prop>(&mut (*uc).result, &mut (*uc).tmp_stack, num_new_props);
@@ -1953,7 +1953,7 @@ pub(crate) unsafe fn fetch_dst_elements(
                                 (*element).element_id
                             )
                             .is_ok(),
-                            "ufbxi_warnf_tag(UFBX_WARNING_DUPLICATE_CONNECTION, element_id, \"Duplicate connection to %u\", element->element_id)"
+                            "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_DUPLICATE_CONNECTION, (element_id), \"Duplicate connection to %u\", element->element_id)"
                         );
                         continue;
                     }
@@ -2028,7 +2028,7 @@ pub(crate) unsafe fn fetch_src_elements(
                                 (*element).element_id
                             )
                             .is_ok(),
-                            "ufbxi_warnf_tag(UFBX_WARNING_DUPLICATE_CONNECTION, element_id, \"Duplicate connection to %u\", element->element_id)"
+                            "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_DUPLICATE_CONNECTION, (element_id), \"Duplicate connection to %u\", element->element_id)"
                         );
                         continue;
                     }
@@ -2207,7 +2207,7 @@ pub(crate) unsafe fn fetch_mesh_materials(
                 ufbxi_check!(
                     uc,
                     !push_copy::<*mut Material>(&mut (*uc).tmp_stack, 1, &mat).is_null(),
-                    "ufbxi_push_copy(&uc->tmp_stack, ufbx_material*, 1, &mat)"
+                    "((ufbx_material**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_material*), (1), (&mat)))"
                 );
                 num_materials += 1;
             }
@@ -2268,7 +2268,7 @@ pub(crate) unsafe fn fetch_deformers(
                         &(*conn).src as *const Ref<Element> as *const *mut Element,
                     )
                     .is_null(),
-                    "ufbxi_push_copy(&uc->tmp_stack, ufbx_element*, 1, &conn->src)"
+                    "((ufbx_element**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_element*), (1), (&conn->src)))"
                 );
                 num_deformers += 1;
             }
@@ -2316,7 +2316,7 @@ pub(crate) unsafe fn fetch_blend_keyframes(
             ufbxi_check!(
                 uc,
                 !push_copy::<BlendKeyframe>(&mut (*uc).tmp_stack, 1, &key).is_null(),
-                "ufbxi_push_copy(&uc->tmp_stack, ufbx_blend_keyframe, 1, &key)"
+                "((ufbx_blend_keyframe*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_blend_keyframe), (1), (&key)))"
             );
             num_keyframes += 1;
         }
@@ -2368,7 +2368,7 @@ pub(crate) unsafe fn fetch_texture_layers(
             ufbxi_check!(
                 uc,
                 !push_copy::<TextureLayer>(&mut (*uc).tmp_stack, 1, &layer).is_null(),
-                "ufbxi_push_copy(&uc->tmp_stack, ufbx_texture_layer, 1, &layer)"
+                "((ufbx_texture_layer*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture_layer), (1), (&layer)))"
             );
             num_layers += 1;
         }
@@ -2463,7 +2463,7 @@ pub(crate) unsafe fn sort_anim_props(
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<AnimProp>()),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbx_anim_prop))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_anim_prop)))"
     );
     macro_stable_sort::<AnimProp>(32, aprops, (*uc).tmp_arr as *mut AnimProp, count, |a, b| {
         cmp_anim_prop_less(a, b)
@@ -2500,7 +2500,7 @@ pub(crate) unsafe fn sort_material_textures(
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<MaterialTexture>()),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbx_material_texture))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_material_texture)))"
     );
     stable_sort(
         size_of::<MaterialTexture>(),
@@ -2564,7 +2564,7 @@ pub(crate) unsafe fn sort_bone_poses(uc: *mut Context, pose: *mut Pose) -> Resul
             &mut (*uc).tmp_arr_size,
             (*pose).bone_poses.count.wrapping_mul(size_of::<BonePose>()),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, pose->bone_poses.count * sizeof(ufbx_bone_pose))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (pose->bone_poses.count * sizeof(ufbx_bone_pose)))"
     );
     stable_sort(
         size_of::<BonePose>(),
@@ -2595,7 +2595,7 @@ pub(crate) unsafe fn sort_skin_weights(
                 .max_weights_per_vertex
                 .wrapping_mul(size_of::<SkinWeight>()),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, skin->max_weights_per_vertex * sizeof(ufbx_skin_weight))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (skin->max_weights_per_vertex * sizeof(ufbx_skin_weight)))"
     );
 
     for i in 0..(*skin).vertices.count {
@@ -2641,7 +2641,7 @@ pub(crate) unsafe fn sort_blend_keyframes(
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<BlendKeyframe>()),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbx_blend_keyframe))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_blend_keyframe)))"
     );
     stable_sort(
         size_of::<BlendKeyframe>(),
@@ -4615,7 +4615,7 @@ pub(crate) unsafe fn finalize_shader_texture(
                     .wrapping_add(1)
                     .wrapping_mul(size_of::<ShaderTextureInput>()),
             ),
-            "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, (shader->inputs.count + 1) * sizeof(ufbx_shader_texture_input))"
+            "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), ((shader->inputs.count + 1) * sizeof(ufbx_shader_texture_input)))"
         );
         (*shader).inputs.data = (*uc).tmp_arr as *const ShaderTextureInput;
 
@@ -4955,7 +4955,7 @@ pub(crate) unsafe fn deduplicate_textures(
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<OrderedTexture>()),
         ),
-        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbxi_ordered_texture))"
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_ordered_texture)))"
     );
 
     stable_sort(
@@ -6661,13 +6661,13 @@ pub(crate) unsafe fn finalize_scene(uc: *mut Context) -> Result<(), Fail> {
                             ptr::addr_of!((*node).attrib) as *const *mut Element
                         )
                         .is_null(),
-                        "ufbxi_push_copy(&uc->tmp_stack, ufbx_element*, 1, &node->attrib)"
+                        "((ufbx_element**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_element*), (1), (&node->attrib)))"
                     );
                 }
                 ufbxi_check!(
                     uc,
                     !push_copy::<*mut Element>(&mut (*uc).tmp_stack, 1, &elem).is_null(),
-                    "ufbxi_push_copy(&uc->tmp_stack, ufbx_element*, 1, &elem)"
+                    "((ufbx_element**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_element*), (1), (&elem)))"
                 );
             }
 

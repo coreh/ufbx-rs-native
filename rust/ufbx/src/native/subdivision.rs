@@ -481,7 +481,7 @@ pub(crate) unsafe fn subdivide_layer(
             &mut (*sc).inputs_cap,
             min_inputs,
         ),
-        "ufbxi_grow_array(&sc->ator_tmp, &sc->inputs, &sc->inputs_cap, min_inputs)"
+        "ufbxi_grow_array_size((&sc->ator_tmp), sizeof(**(&sc->inputs)), (&sc->inputs), (&sc->inputs_cap), (min_inputs))"
     );
     let mut inputs: *mut SubdivideInput = (*sc).inputs;
 
@@ -653,7 +653,7 @@ pub(crate) unsafe fn subdivide_layer(
                 "sum_fn(sum_user, dst, inputs, 4)"
             );
         }
-        ix += 1;
+        ix = ix.wrapping_add(1);
     }
 
     // Vertex points
@@ -816,7 +816,7 @@ pub(crate) unsafe fn subdivide_layer(
                                 &mut (*sc).inputs_cap,
                                 num_inputs.wrapping_add(1),
                             ),
-                            "ufbxi_grow_array(&sc->ator_tmp, &sc->inputs, &sc->inputs_cap, num_inputs + 1)"
+                            "ufbxi_grow_array_size((&sc->ator_tmp), sizeof(**(&sc->inputs)), (&sc->inputs), (&sc->inputs_cap), (num_inputs + 1))"
                         );
                         let f0: *const u8 = face_values
                             .add(((*topo.add(cur as usize)).face as usize).wrapping_mul(stride));
@@ -851,7 +851,7 @@ pub(crate) unsafe fn subdivide_layer(
                                 &mut (*sc).inputs_cap,
                                 num_inputs.wrapping_add(2),
                             ),
-                            "ufbxi_grow_array(&sc->ator_tmp, &sc->inputs, &sc->inputs_cap, num_inputs + 2)"
+                            "ufbxi_grow_array_size((&sc->ator_tmp), sizeof(**(&sc->inputs)), (&sc->inputs), (&sc->inputs_cap), (num_inputs + 2))"
                         );
                         inputs = (*sc).inputs;
 

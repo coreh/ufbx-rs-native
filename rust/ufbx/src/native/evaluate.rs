@@ -703,7 +703,7 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
                     (*uc).version
                 )
                 .is_ok(),
-                "ufbxi_warnf(UFBX_WARNING_UNSUPPORTED_VERSION, \"Unsupported FBX version (%u)\", uc->version)"
+                "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_UNSUPPORTED_VERSION, ~0u, \"Unsupported FBX version (%u)\", uc->version)"
             );
         }
         update_scene_metadata(ptr::addr_of_mut!((*uc).scene.metadata));
@@ -3525,7 +3525,7 @@ pub(crate) unsafe fn sort_bake_times(
             ptr::addr_of_mut!((*bc).tmp_arr_size),
             count.wrapping_mul(size_of::<BakeTime>()),
         ),
-        "ufbxi_grow_array(&bc->ator_tmp, &bc->tmp_arr, &bc->tmp_arr_size, count * sizeof(ufbxi_bake_time))"
+        "ufbxi_grow_array_size((&bc->ator_tmp), sizeof(**(&bc->tmp_arr)), (&bc->tmp_arr), (&bc->tmp_arr_size), (count * sizeof(ufbxi_bake_time)))"
     );
     macro_stable_sort::<BakeTime>(32, times, (*bc).tmp_arr as *mut BakeTime, count, |a, b| {
         cmp_bake_time(*a, *b) < 0
@@ -3550,7 +3550,7 @@ pub(crate) unsafe fn finalize_bake_times(
                 (*bc).layer_weight_times.data,
             )
             .is_null(),
-            "ufbxi_push_copy(&bc->tmp_times, ufbxi_bake_time, bc->layer_weight_times.count, bc->layer_weight_times.data)"
+            "((ufbxi_bake_time*)ufbxi_push_size_copy((&bc->tmp_times), sizeof(ufbxi_bake_time), (bc->layer_weight_times.count), (bc->layer_weight_times.data)))"
         );
     }
 
@@ -4533,7 +4533,7 @@ pub(crate) unsafe fn bake_node_imp(
                         ptr::addr_of!((*child).element.element_id),
                     )
                     .is_null(),
-                    "ufbxi_push_copy(&bc->tmp_bake_stack, uint32_t, 1, &child->element_id)"
+                    "((uint32_t*)ufbxi_push_size_copy((&bc->tmp_bake_stack), sizeof(uint32_t), (1), (&child->element_id)))"
                 );
             }
             // C: `child->inherit_scale_node && child->inherit_scale_node->scale_helper && child->scale_helper`
@@ -4571,7 +4571,7 @@ pub(crate) unsafe fn bake_node_imp(
                             ptr::addr_of!((*child_scale_helper).element.element_id),
                         )
                         .is_null(),
-                        "ufbxi_push_copy(&bc->tmp_bake_stack, uint32_t, 1, &child->scale_helper->element_id)"
+                        "((uint32_t*)ufbxi_push_size_copy((&bc->tmp_bake_stack), sizeof(uint32_t), (1), (&child->scale_helper->element_id)))"
                     );
                 }
             }

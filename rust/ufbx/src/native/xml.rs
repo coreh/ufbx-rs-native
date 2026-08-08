@@ -158,7 +158,7 @@ pub(crate) unsafe fn xml_push_token_char(xc: *mut XmlContext, c: u8) -> Result<(
                 &mut (*xc).tok_cap,
                 (*xc).tok_len + 1
             ),
-            "ufbxi_grow_array(xc->ator, &xc->tok, &xc->tok_cap, xc->tok_len + 1)"
+            "ufbxi_grow_array_size((xc->ator), sizeof(**(&xc->tok)), (&xc->tok), (&xc->tok_cap), (xc->tok_len + 1))"
         );
     }
     // C: `xc->tok[xc->tok_len++] = c;`

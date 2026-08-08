@@ -196,7 +196,7 @@ pub(crate) unsafe fn obj_push_mesh(uc: *mut Context) -> Result<(), Fail> {
             &(*(*mesh).fbx_node).element.element_id
         )
         .is_null(),
-        "ufbxi_push_copy(&uc->tmp_node_ids, uint32_t, 1, &mesh->fbx_node->element_id)"
+        "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&mesh->fbx_node->element_id)))"
     );
 
     (*uc).obj.face_material = NO_INDEX;
@@ -287,7 +287,7 @@ pub(crate) unsafe fn obj_init(uc: *mut Context) -> Result<(), Fail> {
         ufbxi_check!(
             uc,
             !push_copy::<u32>(&mut (*uc).tmp_node_ids, 1, &(*root).element.element_id).is_null(),
-            "ufbxi_push_copy(&uc->tmp_node_ids, uint32_t, 1, &root->element.element_id)"
+            "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&root->element.element_id)))"
         );
     }
 
@@ -472,7 +472,7 @@ pub(crate) unsafe fn obj_tokenize(uc: *mut Context) -> Result<(), Fail> {
                 &mut (*uc).obj.tokens_cap,
                 index + 1
             ),
-            "ufbxi_grow_array(&uc->ator_tmp, &uc->obj.tokens, &uc->obj.tokens_cap, index + 1)"
+            "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->obj.tokens)), (&uc->obj.tokens), (&uc->obj.tokens_cap), (index + 1))"
         );
 
         let tok: *mut String = (*uc).obj.tokens.add(index);
@@ -726,7 +726,7 @@ pub(crate) unsafe fn obj_parse_indices(
                 "Empty face has been removed"
             )
             .is_ok(),
-            "ufbxi_warnf(UFBX_WARNING_EMPTY_FACE_REMOVED, \"Empty face has been removed\")"
+            "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_EMPTY_FACE_REMOVED, ~0u, \"Empty face has been removed\")"
         );
         return Ok(());
     }
@@ -781,7 +781,7 @@ pub(crate) unsafe fn obj_parse_indices(
                 uc,
                 !push_zero::<u32>(&mut (*uc).obj.tmp_face_group, (*uc).obj.tmp_faces.num_items)
                     .is_null(),
-                "ufbxi_push_zero(&uc->obj.tmp_face_group, uint32_t, uc->obj.tmp_faces.num_items)"
+                "((uint32_t*)ufbxi_push_size_zero((&uc->obj.tmp_face_group), sizeof(uint32_t), (uc->obj.tmp_faces.num_items)))"
             );
         }
 
@@ -980,7 +980,7 @@ pub(crate) unsafe fn obj_parse_material(uc: *mut Context) -> Result<(), Fail> {
                 &mut (*uc).obj.tmp_materials_cap,
                 id + 1
             ),
-            "ufbxi_grow_array(&uc->ator_tmp, &uc->obj.tmp_materials, &uc->obj.tmp_materials_cap, id + 1)"
+            "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->obj.tmp_materials)), (&uc->obj.tmp_materials), (&uc->obj.tmp_materials_cap), (id + 1))"
         );
         *(*uc).obj.tmp_materials.add(id) = material;
     }
@@ -1140,12 +1140,12 @@ pub(crate) unsafe fn obj_pad_colors(uc: *mut Context, num_vertices: usize) -> Re
                 num_pad * 4
             )
             .is_null(),
-            "ufbxi_push_zero(&uc->obj.tmp_vertices[UFBXI_OBJ_ATTRIB_COLOR], ufbx_real, num_pad * 4)"
+            "((ufbx_real*)ufbxi_push_size_zero((&uc->obj.tmp_vertices[UFBXI_OBJ_ATTRIB_COLOR]), sizeof(ufbx_real), (num_pad * 4)))"
         );
         ufbxi_check!(
             uc,
             !push_zero::<bool>(&mut (*uc).obj.tmp_color_valid, num_pad).is_null(),
-            "ufbxi_push_zero(&uc->obj.tmp_color_valid, bool, num_pad)"
+            "((bool*)ufbxi_push_size_zero((&uc->obj.tmp_color_valid), sizeof(bool), (num_pad)))"
         );
         (*uc).obj.vertex_count[ObjAttrib::Color as usize] += num_pad;
     }
@@ -1511,7 +1511,7 @@ pub(crate) unsafe fn obj_parse_file(uc: *mut Context) -> Result<(), Fail> {
                             (*uc).obj.tmp_faces.num_items
                         )
                         .is_null(),
-                        "ufbxi_push_zero(&uc->obj.tmp_face_smoothing, bool, uc->obj.tmp_faces.num_items)"
+                        "((bool*)ufbxi_push_size_zero((&uc->obj.tmp_face_smoothing), sizeof(bool), (uc->obj.tmp_faces.num_items)))"
                     );
                 }
             }
@@ -1552,7 +1552,7 @@ pub(crate) unsafe fn obj_parse_file(uc: *mut Context) -> Result<(), Fail> {
                     "Unknown .obj directive, skipped line"
                 )
                 .is_ok(),
-                "ufbxi_warnf(UFBX_WARNING_UNKNOWN_OBJ_DIRECTIVE, \"Unknown .obj directive, skipped line\")"
+                "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_UNKNOWN_OBJ_DIRECTIVE, ~0u, \"Unknown .obj directive, skipped line\")"
             );
         }
     }
@@ -1864,7 +1864,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
                         (*uc).opts.obj_mtl_path.data
                     )
                     .is_ok(),
-                    "ufbxi_warnf(UFBX_WARNING_MISSING_EXTERNAL_FILE, \"Could not open .mtl file: %s\", uc->opts.obj_mtl_path.data)"
+                    "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_EXTERNAL_FILE, ~0u, \"Could not open .mtl file: %s\", uc->opts.obj_mtl_path.data)"
                 );
             }
         }
@@ -1901,7 +1901,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
                         (*dst).data
                     )
                     .is_ok(),
-                    "ufbxi_warnf(UFBX_WARNING_MISSING_EXTERNAL_FILE, \"Could not open .mtl file: %s\", dst.data)"
+                    "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_EXTERNAL_FILE, ~0u, \"Could not open .mtl file: %s\", dst.data)"
                 );
             }
         }
@@ -1952,7 +1952,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
                             copy as *const u8
                         )
                         .is_ok(),
-                        "ufbxi_warnf(UFBX_WARNING_IMPLICIT_MTL, \"Opened .mtl file derived from .obj filename: %s\", copy)"
+                        "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_IMPLICIT_MTL, ~0u, \"Opened .mtl file derived from .obj filename: %s\", copy)"
                     );
                 }
             }

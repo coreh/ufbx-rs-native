@@ -60,15 +60,16 @@ use crate::prelude::String;
 // operand becomes one of these `macro_rules!` appliers, passed by ident.
 //
 // C-parity: `(uint8_t)` applied to a float operand is undefined behavior in C
-// when the value is out of range; clang (the oracle build) emits
-// convert-to-wide-int-then-narrow (`cvttsd2si` + low byte), i.e. modulo-2^8.
-// `as i64 as u8` reproduces that exact sequence — for integer operands the
-// extra widening is a no-op (same modulo narrowing either way). Residual
-// divergence only for |val| >= 2^63 / NaN, the same narrow class as the
-// `ufbxi_f64_to_i64` boundary row (PORTING.md "Integer semantics").
+// when the value is out of range; clang -O2 on x86-64 emits a 32-bit
+// `cvttsd2si`/`cvttss2si` + low-byte narrow, so the oracle build yields
+// trunc(val) mod 256 for |val| < 2^31 and the integer-indefinite 0x80000000
+// (low byte 0x00) for NaN / |val| >= 2^31. Per the PORTING.md bare-float-cast
+// row the port uses plain `as` (saturating, NaN -> 0) — a known, accepted
+// divergence in this C-UB class; do not hand-roll a truncating helper. For
+// integer operands `as u8` is modulo narrowing, matching C exactly.
 macro_rules! ufbxi_cast_u8 {
     ($e:expr) => {
-        $e as i64 as u8
+        $e as u8
     };
 }
 macro_rules! ufbxi_cast_i32 {
@@ -133,7 +134,7 @@ pub(crate) unsafe fn swap_endian(
                 total_size
             ),
             core::ptr::null_mut(),
-            "ufbxi_grow_array(&uc->ator_tmp, &uc->swap_arr, &uc->swap_arr_size, total_size)"
+            "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->swap_arr)), (&uc->swap_arr), (&uc->swap_arr_size), (total_size))"
         );
     }
     let dst: *mut u8 = (*uc).swap_arr;
@@ -925,7 +926,7 @@ unsafe fn binary_parse_node_rec(
                         &mut (*uc).tmp_arr_size,
                         decoded_data_size
                     ),
-                    "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, decoded_data_size)"
+                    "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (decoded_data_size))"
                 );
                 decoded_data = (*uc).tmp_arr as *mut c_void;
             }

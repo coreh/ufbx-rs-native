@@ -168,8 +168,10 @@ pub(crate) unsafe fn resume_progress(uc: *mut Context) -> Result<(), Fail> {
     if get_read_offset(uc).wrapping_sub((*uc).latest_progress_bytes)
         >= (*uc).progress_interval as u64
     {
-        // C: `ufbxi_check(ufbxi_report_progress(uc));`
-        report_progress(uc)?;
+        // C: `ufbxi_check(ufbxi_report_progress(uc));` — the caller-side check
+        // pushes its own error-stack frame on top of the callee's (a bare `?`
+        // would drop it).
+        ufbxi_check!(uc, report_progress(uc).is_ok(), "ufbxi_report_progress(uc)");
     }
 
     Ok(())
@@ -284,8 +286,8 @@ pub(crate) unsafe fn skip_bytes(uc: *mut Context, mut size: u64) -> Result<(), F
             (*uc).data_size -= size as usize;
         }
 
-        // C: `ufbxi_check(ufbxi_resume_progress(uc));`
-        resume_progress(uc)?;
+        // C: `ufbxi_check(ufbxi_resume_progress(uc));` — caller-side frame.
+        ufbxi_check!(uc, resume_progress(uc).is_ok(), "ufbxi_resume_progress(uc)");
     } else {
         // Read and discard bytes in reasonable chunks
         let skip_size: u64 = max64(
@@ -360,8 +362,8 @@ pub(crate) unsafe fn read_to(
         }
     }
 
-    // C: `ufbxi_check(ufbxi_resume_progress(uc));`
-    resume_progress(uc)?;
+    // C: `ufbxi_check(ufbxi_resume_progress(uc));` — caller-side frame.
+    ufbxi_check!(uc, resume_progress(uc).is_ok(), "ufbxi_resume_progress(uc)");
 
     Ok(())
 }

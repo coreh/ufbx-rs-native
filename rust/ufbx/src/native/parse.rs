@@ -1219,7 +1219,7 @@ pub(crate) unsafe fn push_element_extra_size(
                 id.wrapping_add(1) as usize
             ),
             core::ptr::null_mut(),
-            "ufbxi_grow_array(&uc->ator_tmp, &uc->element_extra_arr, &uc->element_extra_cap, id + 1)"
+            "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->element_extra_arr)), (&uc->element_extra_arr), (&uc->element_extra_cap), (id + 1))"
         );
         core::ptr::write_bytes(
             (*uc).element_extra_arr.add(old_cap) as *mut u8,
@@ -3208,7 +3208,7 @@ pub(crate) unsafe fn parse_toplevel(uc: *mut Context, name: *const u8) -> Result
                 &mut (*uc).top_nodes_cap,
                 (*uc).top_nodes_len
             ),
-            "ufbxi_grow_array(&uc->ator_tmp, &uc->top_nodes, &uc->top_nodes_cap, uc->top_nodes_len)"
+            "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->top_nodes)), (&uc->top_nodes), (&uc->top_nodes_cap), (uc->top_nodes_len))"
         );
         let node: *mut Node = (*uc).top_nodes.add((*uc).top_nodes_len - 1);
         pop::<Node>(&mut (*uc).tmp_stack, 1, node);
@@ -3920,7 +3920,7 @@ pub(crate) unsafe fn init_node_prop_names(uc: *mut Context) -> Result<(), Fail> 
             &mut (*uc).node_prop_set,
             NODE_PROP_NAMES.0.len()
         ),
-        "ufbxi_map_grow(&uc->node_prop_set, const char*, ufbxi_arraycount(ufbxi_node_prop_names))"
+        "ufbxi_map_grow_size((&uc->node_prop_set), sizeof(const char*), ((sizeof(ufbxi_node_prop_names) / sizeof(*(ufbxi_node_prop_names)))))"
     );
     // C: `for (size_t i = 0; i < ufbxi_arraycount(ufbxi_node_prop_names); i++)`
     let mut i: usize = 0;
@@ -3975,7 +3975,7 @@ pub(crate) unsafe fn load_maps(uc: *mut Context) -> Result<(), Fail> {
             &mut (*uc).prop_type_map,
             PROP_TYPE_NAMES.0.len()
         ),
-        "ufbxi_map_grow(&uc->prop_type_map, ufbxi_prop_type_name, ufbxi_arraycount(ufbxi_prop_type_names))"
+        "ufbxi_map_grow_size((&uc->prop_type_map), sizeof(ufbxi_prop_type_name), ((sizeof(ufbxi_prop_type_names) / sizeof(*(ufbxi_prop_type_names)))))"
     );
     // C: `ufbxi_for(const ufbxi_prop_type_name, name, ufbxi_prop_type_names, ...)`
     for name in PROP_TYPE_NAMES.0.iter() {

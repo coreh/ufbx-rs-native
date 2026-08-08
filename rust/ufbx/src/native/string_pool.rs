@@ -354,7 +354,7 @@ pub(crate) unsafe fn sanitize_string(
                 &mut (*pool).temp_cap,
                 length * 2 + 64
             ),
-            "ufbxi_grow_array(pool->map.ator, &pool->temp_str, &pool->temp_cap, length * 2 + 64)"
+            "ufbxi_grow_array_size((pool->map.ator), sizeof(**(&pool->temp_str)), (&pool->temp_str), (&pool->temp_cap), (length * 2 + 64))"
         );
         ptr::copy_nonoverlapping(str_, (*pool).temp_str, length);
         *(*pool).temp_str.add(length) = b'\0';
@@ -375,7 +375,7 @@ pub(crate) unsafe fn sanitize_string(
                 &mut (*pool).temp_cap,
                 length + 64
             ),
-            "ufbxi_grow_array(pool->map.ator, &pool->temp_str, &pool->temp_cap, length + 64)"
+            "ufbxi_grow_array_size((pool->map.ator), sizeof(**(&pool->temp_str)), (&pool->temp_str), (&pool->temp_cap), (length + 64))"
         );
         ptr::copy_nonoverlapping(str_, (*pool).temp_str, index);
     }
@@ -395,7 +395,7 @@ pub(crate) unsafe fn sanitize_string(
                     &mut (*pool).temp_cap,
                     dst_len + 16
                 ),
-                "ufbxi_grow_array(pool->map.ator, &pool->temp_str, &pool->temp_cap, dst_len + 16)"
+                "ufbxi_grow_array_size((pool->map.ator), sizeof(**(&pool->temp_str)), (&pool->temp_str), (&pool->temp_cap), (dst_len + 16))"
             );
             dst = (*pool).temp_str;
         }
@@ -505,7 +505,7 @@ pub(crate) unsafe fn push_sanitized_string(
     ufbxi_check_err!(
         (*pool).error,
         map_grow::<String>(&mut (*pool).map, (*pool).initial_size),
-        "ufbxi_map_grow(&pool->map, ufbx_string, pool->initial_size)"
+        "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
     );
 
     let mut total_data: *const u8 = str_;
@@ -578,7 +578,7 @@ pub(crate) unsafe fn push_string_imp(
         (*pool).error,
         map_grow::<String>(&mut (*pool).map, (*pool).initial_size),
         ptr::null(),
-        "ufbxi_map_grow(&pool->map, ufbx_string, pool->initial_size)"
+        "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
     );
 
     let mut hash: u32;
