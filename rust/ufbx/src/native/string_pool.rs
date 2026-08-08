@@ -250,8 +250,11 @@ pub(crate) unsafe extern "C" fn map_cmp_string(
 }
 
 // ufbx.c:5022-5026 `ufbxi_safe_string`
+// Sound as a safe fn: `data` is only stored (via `String::new_c`), never
+// dereferenced here — the caller still carries the obligation to dereference
+// the resulting `String` soundly.
 #[inline(always)]
-pub(crate) unsafe fn safe_string(data: *const u8, length: usize) -> String {
+pub(crate) fn safe_string(data: *const u8, length: usize) -> String {
     let str_ = String::new_c(
         if length > 0 {
             data
