@@ -21,16 +21,28 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# Curated to cover the distinct hot paths: big ASCII parse, big binary +
-# DEFLATE, legacy 6100, animation-heavy, OBJ, and a string-pool stress file.
+# Curated for breadth across exporters (Maya, Blender, 3ds Max old+new,
+# MotionBuilder, ZBrush, Marvelous Designer, Revit) and feature sets (big
+# ASCII parse, big binary + DEFLATE, legacy 5800/6100, skinning/dual-quat,
+# ngon topology, polygroups, NURBS curves, near-empty scene overhead, OBJ,
+# string-pool stress).
 DEFAULT_FILES = [
     "data/maya_slime_7500_ascii.fbx",
-    "data/motionbuilder_thumbnail_7700_ascii.fbx",
     "data/maya_kenney_character_7700_binary.fbx",
     "data/maya_human_ik_6100_binary.fbx",
     "data/maya_human_ik_6100_ascii.fbx",
-    "data/synthetic_id_collision_7500_ascii.fbx",
+    "data/maya_ngon_maze_7700_binary.fbx",
+    "data/maya_dq_weights_7500_ascii.fbx",
+    "data/motionbuilder_thumbnail_7700_ascii.fbx",
+    "data/motionbuilder_thumbnail_7700_binary.fbx",
+    "data/blender_293_barbarian_7400_binary.fbx",
     "data/blender_293_suzanne_subsurf_uv.obj",
+    "data/max2009_blob_6100_ascii.fbx",
+    "data/max_nurbs_curve_rational_6100_ascii.fbx",
+    "data/zbrush_polygroup_mess_7500_binary.fbx",
+    "data/marvelous_quad_7300_binary.fbx",
+    "data/revit_empty_7400_binary.fbx",
+    "data/synthetic_id_collision_7500_ascii.fbx",
 ]
 
 def run_timed(exe, file):

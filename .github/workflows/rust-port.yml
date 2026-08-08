@@ -88,15 +88,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # No UFBX_DEV on either side: dev asserts must not skew the comparison.
+      # Matched optimization: clang -O3 single TU vs cargo release (opt-level
+      # 3, codegen-units=1 via [profile.release]). No UFBX_DEV on either side:
+      # dev asserts must not skew the comparison.
       - name: Build Rust library
         working-directory: rust
         run: cargo build --features c-abi --release
       - name: Build both scene hashers
         run: |
           mkdir -p build
-          clang -O2 -ffp-contract=off -o build/hash_scene_c test/hash_scene.c extra/ufbx_math.c -lm
-          clang -O2 -std=gnu99 -ffp-contract=off -DEXTERNAL_UFBX \
+          clang -O3 -ffp-contract=off -o build/hash_scene_c test/hash_scene.c extra/ufbx_math.c -lm
+          clang -O3 -std=gnu99 -ffp-contract=off -DEXTERNAL_UFBX \
             -o build/hash_scene_rust test/hash_scene.c extra/ufbx_math.c \
             rust/target/release/libufbx.a -lpthread -lm
       - name: Measure load times

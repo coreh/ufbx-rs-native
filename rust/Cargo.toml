@@ -1,3 +1,9 @@
 [workspace]
 resolver = "2"
 members = ["ufbx"]
+
+[profile.release]
+# ufbx.c is a single translation unit that clang optimizes whole; one codegen
+# unit gives rustc the same whole-crate visibility (also what the benchmark's
+# C-vs-Rust comparison assumes).
+codegen-units = 1
