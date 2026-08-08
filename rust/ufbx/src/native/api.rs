@@ -22,8 +22,9 @@ use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 
 use crate::generated::{
-    Error, Matrix, OpenFileInfo, Prop, Props, Quat, RawOpenFileOpts, RawOpenMemoryOpts, RawStream,
-    Transform, Vec3,
+    Error, Material, MaterialTexture, Matrix, OpenFileInfo, Prop, Props, Quat, RawOpenFileOpts,
+    RawOpenMemoryOpts, RawStream, Shader, ShaderBinding, ShaderPropBinding, Texture, Transform,
+    Vec3,
 };
 use crate::native::allocator::{
     align_to_mask, alloc, free_ator, Allocator, CACHE_IMP_MAGIC, REFCOUNT_IMP_MAGIC,
@@ -38,12 +39,13 @@ use crate::native::io::{
 };
 use crate::native::parse::{get_name_key, Refcount, SceneImp};
 use crate::native::platform::{
-    atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
-    macro_lower_bound_eq, ufbx_assert, ufbxi_ignore,
+    add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
+    macro_lower_bound_eq, macro_upper_bound_eq, ufbx_assert, ufbxi_ignore,
 };
+use crate::native::read::ref_ptr;
 use crate::native::scene_process::cmp_prop_less_ref;
-use crate::native::string_pool::{safe_string, str_equal};
-use crate::prelude::{Blob, OpenFileContext, Real, String};
+use crate::native::string_pool::{safe_string, str_equal, str_less};
+use crate::prelude::{Blob, List, OpenFileContext, Real, String};
 
 // ufbx.c:30243-30247 `ufbxi_free_scene_imp`
 #[inline(never)]
@@ -323,6 +325,14 @@ pub(crate) static IDENTITY_TRANSFORM: Transform = Transform {
     },
 };
 
+// ufbx.c:30344 `ufbx_abi_data_def const ufbx_vec3 ufbx_zero_vec3 = { 0,0,0 };`
+// Plain `Real` fields, so no `Sync` wrapper is needed (see `IDENTITY_MATRIX`).
+pub(crate) static ZERO_VEC3: Vec3 = Vec3 {
+    x: 0.0,
+    y: 0.0,
+    z: 0.0,
+};
+
 // ufbx.c:30635-30650 `ufbx_find_prop_len`
 pub(crate) unsafe fn find_prop_len(
     props: *const Props,
@@ -357,6 +367,24 @@ pub(crate) unsafe fn find_prop_len(
     core::ptr::null_mut()
 }
 
+// ufbx.c:30652-30660 `ufbx_find_real_len`
+pub(crate) unsafe fn find_real_len(
+    props: *const Props,
+    name: *const u8,
+    name_len: usize,
+    def: Real,
+) -> Real {
+    let prop: *mut Prop = find_prop_len(props, name, name_len);
+    if !prop.is_null() {
+        // C-parity: `prop->value_real` is the `ufbx_prop` value union's first
+        // real; the generated struct keeps only `value_vec4` (same mapping as
+        // `native::parse::find_real`).
+        (*prop).value_vec4.x
+    } else {
+        def
+    }
+}
+
 // ufbx.c:30672-30680 `ufbx_find_int_len`
 #[inline(never)]
 pub(crate) unsafe fn find_int_len(
@@ -371,6 +399,106 @@ pub(crate) unsafe fn find_int_len(
     } else {
         def
     }
+}
+
+// ufbx.c:30682-30690 `ufbx_find_bool_len`
+pub(crate) unsafe fn find_bool_len(
+    props: *const Props,
+    name: *const u8,
+    name_len: usize,
+    def: bool,
+) -> bool {
+    let prop: *mut Prop = find_prop_len(props, name, name_len);
+    if !prop.is_null() {
+        (*prop).value_int != 0
+    } else {
+        def
+    }
+}
+
+// ufbx.c:31414-31423 `ufbx_find_prop_texture_len`
+pub(crate) unsafe fn find_prop_texture_len(
+    material: *const Material,
+    name: *const u8,
+    name_len: usize,
+) -> *mut Texture {
+    let name_str: String = safe_string(name, name_len);
+    if material.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    let mut index: usize = usize::MAX;
+    macro_lower_bound_eq::<MaterialTexture>(
+        4,
+        &mut index,
+        (*material).textures.data,
+        0,
+        (*material).textures.count,
+        |a| str_less((*a).material_prop, name_str),
+        |a| str_equal((*a).material_prop, name_str),
+    );
+    if index < usize::MAX {
+        ref_ptr(&(*(*material).textures.data.add(index)).texture)
+    } else {
+        core::ptr::null_mut()
+    }
+}
+
+// ufbx.c:31434-31461 `ufbx_find_shader_prop_bindings_len`
+pub(crate) unsafe fn find_shader_prop_bindings_len(
+    shader: *const Shader,
+    name: *const u8,
+    name_len: usize,
+) -> List<ShaderPropBinding> {
+    // C: `ufbx_shader_prop_binding_list bindings = { NULL, 0 };` — `List<T>`
+    // carries a private `PhantomData` marker, so the C aggregate initializer
+    // becomes a zeroed value with both public fields written (same shape as
+    // `native::scene_process::find_dst_connections`).
+    let mut bindings: List<ShaderPropBinding> = MaybeUninit::zeroed().assume_init();
+    bindings.data = core::ptr::null();
+    bindings.count = 0;
+
+    let name_str: String = safe_string(name, name_len);
+    if shader.is_null() {
+        return bindings;
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_shader_binding, p_bind, shader->bindings)`
+    let mut p_bind: *mut *mut ShaderBinding = (*shader).bindings.data as *mut *mut ShaderBinding;
+    let p_bind_end: *mut *mut ShaderBinding = add_ptr(p_bind, (*shader).bindings.count);
+    while p_bind != p_bind_end {
+        let bind: *mut ShaderBinding = *p_bind;
+
+        let mut begin: usize = usize::MAX;
+        macro_lower_bound_eq::<ShaderPropBinding>(
+            4,
+            &mut begin,
+            (*bind).prop_bindings.data,
+            0,
+            (*bind).prop_bindings.count,
+            |a| str_less((*a).shader_prop, name_str),
+            |a| str_equal((*a).shader_prop, name_str),
+        );
+
+        if begin != usize::MAX {
+            let mut end: usize = begin;
+            macro_upper_bound_eq::<ShaderPropBinding>(
+                4,
+                &mut end,
+                (*bind).prop_bindings.data,
+                begin,
+                (*bind).prop_bindings.count,
+                |a| str_equal((*a).shader_prop, name_str),
+            );
+
+            bindings.data = (*bind).prop_bindings.data.add(begin);
+            bindings.count = end - begin;
+            break;
+        }
+        p_bind = p_bind.add(1);
+    }
+
+    bindings
 }
 
 // ufbx.c:31828-31852 `ufbx_transform_to_matrix`
@@ -417,9 +545,19 @@ pub(crate) unsafe fn find_prop(props: *const Props, name: *const u8) -> *mut Pro
     find_prop_len(props, name, strlen(name))
 }
 
+// ufbx.c:33143 `ufbx_find_real`
+pub(crate) unsafe fn find_real(props: *const Props, name: *const u8, def: Real) -> Real {
+    find_real_len(props, name, strlen(name), def)
+}
+
 // ufbx.c:33145 `ufbx_find_int`
 pub(crate) unsafe fn find_int(props: *const Props, name: *const u8, def: i64) -> i64 {
     find_int_len(props, name, strlen(name), def)
+}
+
+// ufbx.c:33146 `ufbx_find_bool`
+pub(crate) unsafe fn find_bool(props: *const Props, name: *const u8, def: bool) -> bool {
+    find_bool_len(props, name, strlen(name), def)
 }
 
 #[cfg(test)]

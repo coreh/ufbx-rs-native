@@ -567,9 +567,18 @@ pub(crate) unsafe fn swap(a: *mut u8, b: *mut u8, size: usize) {
 //   `ufbxi_for_ptr_list`: pointer-iteration loop sugar — expanded to explicit
 //   pointer loops at use sites. C comment (ufbx.c:1097): "WARNING: Evaluates
 //   `m_list` twice!" — irrelevant once expanded, noted for grep-parity.
-// - ufbx.c:1101 `ufbxi_string_literal(str)`: aggregate initializer
-//   `{ str, sizeof(str) - 1 }` — collapses to the owning module's
-//   `String`/byte-slice constructor at use sites (string_pool unit).
+
+// ufbx.c:1101 `#define ufbxi_string_literal(str) { str, sizeof(str) - 1 }`
+// C: aggregate initializer for `ufbx_string`, deriving the length from the
+// literal so it can never drift. Rust byte-string literals are not
+// NUL-terminated, so the NUL is spelled out in the literal and `.len() - 1` is
+// the exact analogue of `sizeof(str) - 1`.
+macro_rules! ufbxi_string_literal {
+    ($str:expr) => {
+        crate::prelude::String::new_c($str.as_ptr(), $str.len() - 1)
+    };
+}
+pub(crate) use ufbxi_string_literal;
 
 // ufbx.c:1084-1091 `ufbxi_add_ptr(ptr, offset)` / `ufbxi_sub_ptr(ptr, offset)`
 // C: plain pointer arithmetic (ufbx.c:1089-1090); the UBSAN branch

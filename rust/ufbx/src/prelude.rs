@@ -145,6 +145,18 @@ impl<T> Ref<T> {
     }
 }
 
+// Native-port extension: `Ref<T>` is `Clone + Copy` — C struct assignment is
+// memcpy (PORTING.md checklist #15) and the structs embedding `ufbx_element*`
+// (`ufbx_connection`, `ufbx_name_element`) are copied by value through the sort
+// scratch. A manual impl rather than `derive` so the bound is not `T: Copy`.
+// See COMPAT.md §1.
+impl<T> Clone for Ref<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for Ref<T> {}
+
 impl<T> AsRef<T> for Ref<T> {
     fn as_ref(&self) -> &T {
         unsafe { &*self.ptr.as_ptr() }

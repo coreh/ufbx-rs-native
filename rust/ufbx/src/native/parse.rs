@@ -37,12 +37,13 @@ use crate::generated::{
 use crate::native::allocator::{grow_array, Allocator};
 use crate::native::buf::{buf_clear, pop, push_copy, push_pop, push_size_zero, push_zero, Buf};
 use crate::native::error::{
-    strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail, Fail, EMPTY_CHAR,
+    memcmp, strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail, Fail,
+    EMPTY_CHAR,
 };
 use crate::native::hash::{hash_uptr, map_find, map_insert, Map, PtrId};
 use crate::native::parse_ascii::is_space;
 use crate::native::platform::{
-    to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_ignore, ufbxi_unreachable, AtomicCounter,
+    min_sz, to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_ignore, ufbxi_unreachable, AtomicCounter,
 };
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{SanitizedString, StringPool};
@@ -3055,6 +3056,20 @@ pub(crate) unsafe fn find_prop(props: *const Props, name: *const u8) -> *mut Pro
     find_prop_with_key(props, name, key)
 }
 
+// ufbx.c:11520-11528 `ufbxi_find_real`
+#[inline(always)]
+pub(crate) unsafe fn find_real(props: *const Props, name: *const u8, def: Real) -> Real {
+    let prop: *mut Prop = find_prop(props, name);
+    if !prop.is_null() {
+        // C-parity: `prop->value_real` is the `ufbx_prop` value union's first
+        // real; the generated struct keeps only `value_vec4` (same mapping as
+        // `find_vec3` below).
+        (*prop).value_vec4.x
+    } else {
+        def
+    }
+}
+
 // ufbx.c:11530-11539 `ufbxi_find_vec3`
 #[inline(always)]
 pub(crate) unsafe fn find_vec3(
@@ -3091,9 +3106,40 @@ pub(crate) unsafe fn find_int(props: *const Props, name: *const u8, def: i64) ->
     }
 }
 
+// ufbx.c:11551-11564 `ufbxi_find_enum`
+// Ported with the `// -- Scene processing` unit that first needs it
+// (`ufbxi_fetch_texture_layers`, ufbx.c:19251).
+#[inline(always)]
+pub(crate) unsafe fn find_enum(
+    props: *const Props,
+    name: *const u8,
+    def: i64,
+    max_value: i64,
+) -> i64 {
+    let prop: *mut Prop = find_prop(props, name);
+    if !prop.is_null() {
+        let value: i64 = (*prop).value_int;
+        if value >= 0 && value <= max_value {
+            value
+        } else {
+            def
+        }
+    } else {
+        def
+    }
+}
+
 // ufbx.c:11574-11577 `ufbxi_is_vec3_zero`
 #[inline(always)]
 pub(crate) fn is_vec3_zero(v: Vec3) -> bool {
+    ((v.x == 0.0) as u8 & (v.y == 0.0) as u8 & (v.z == 0.0) as u8) != 0
+}
+
+// ufbx.c:11579-11582 `ufbxi_is_vec4_zero`
+// C-parity: the `w` component is deliberately NOT tested (the C body is a
+// verbatim copy of `ufbxi_is_vec3_zero`'s).
+#[inline(always)]
+pub(crate) fn is_vec4_zero(v: Vec4) -> bool {
     ((v.x == 0.0) as u8 & (v.y == 0.0) as u8 & (v.z == 0.0) as u8) != 0
 }
 
@@ -3139,6 +3185,32 @@ pub(crate) unsafe fn get_name_key_c(name: *const u8) -> u32 {
         | (*name.add(1) as u32) << 16
         | (*name.add(2) as u32) << 8
         | (*name.add(3) as u32)
+}
+
+// ufbx.c:11633-11643 `ufbxi_name_key_less`
+// Ported ahead of the rest of the `// -- Setup` section because
+// `ufbxi_add_connections_to_elements` (ufbx.c:18844) needs it.
+#[inline(always)]
+pub(crate) unsafe fn name_key_less(
+    prop: *mut Prop,
+    data: *const u8,
+    name_len: usize,
+    key: u32,
+) -> bool {
+    if (*prop)._internal_key < key {
+        return true;
+    }
+    if (*prop)._internal_key > key {
+        return false;
+    }
+
+    let prop_len: usize = (*prop).name.length;
+    let len: usize = min_sz(prop_len, name_len);
+    let cmp: i32 = memcmp((*prop).name.data, data, len);
+    if cmp != 0 {
+        return cmp < 0;
+    }
+    prop_len < name_len
 }
 
 // ufbx.c:11736-11744 `ufbxi_is_node_property_name`

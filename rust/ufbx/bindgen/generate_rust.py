@@ -315,6 +315,20 @@ copy_derive_types = {
     # (`ufbxi_macro_stable_sort(ufbx_shader_prop_binding, ...)`, ufbx.c:14692)
     # which is a plain C struct assignment through the sort scratch.
     "ufbx_shader_prop_binding",
+    # `ufbx_connection` is sorted by value in `ufbxi_sort_connections`
+    # (`ufbxi_macro_stable_sort(ufbx_connection, ...)`, ufbx.c:18651) and
+    # bulk-copied src->dst in `ufbxi_resolve_connections` (ufbx.c:18769).
+    # Contains `ufbx_element*` (emitted as `Ref<Element>`, Copy in prelude.rs).
+    "ufbx_connection",
+    # `ufbx_name_element` is sorted by value in `ufbxi_sort_name_elements`
+    # (`ufbxi_macro_stable_sort(ufbx_name_element, ...)`, ufbx.c:18587), a plain
+    # C struct assignment through the sort scratch.
+    "ufbx_name_element",
+    # `ufbx_anim_prop` is sorted by value in `ufbxi_sort_anim_props`
+    # (`ufbxi_macro_stable_sort(ufbx_anim_prop, ...)`, ufbx.c:19301), a plain C
+    # struct assignment through the sort scratch. Contains `ufbx_element*` /
+    # `ufbx_anim_value*` (emitted as `Ref<T>`, Copy in prelude.rs).
+    "ufbx_anim_prop",
 }
 
 ignore_types = {

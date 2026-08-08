@@ -1110,12 +1110,25 @@ pub(crate) unsafe fn insert_fbx_attr(
 // `Option<Ref<T>>`; `Ref<T>` is `#[repr(transparent)]` over `NonNull<T>`, so the
 // option is niche-packed to a bare pointer and NULL is `None`.
 #[inline(always)]
-unsafe fn opt_ref<T>(ptr: *mut T) -> Option<Ref<T>> {
+pub(crate) unsafe fn opt_ref<T>(ptr: *mut T) -> Option<Ref<T>> {
     if ptr.is_null() {
         None
     } else {
         Some(Ref::from_ptr(ptr))
     }
+}
+
+// Inverse of `opt_ref`: reads an `Option<Ref<T>>` field back as the bare
+// (possibly NULL) C pointer the field is at the ABI level.
+#[inline(always)]
+pub(crate) unsafe fn opt_ptr<T>(p: *const Option<Ref<T>>) -> *mut T {
+    *(p as *const *mut T)
+}
+
+// Same for a non-optional `Ref<T>` field (C: a plain `ufbx_element*`).
+#[inline(always)]
+pub(crate) unsafe fn ref_ptr<T>(p: *const Ref<T>) -> *mut T {
+    *(p as *const *mut T)
 }
 
 // ufbx.c:12352-12382 `ufbxi_push_element_size`

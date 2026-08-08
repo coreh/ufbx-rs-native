@@ -358,6 +358,7 @@ impl Default for ElementType {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Connection {
     pub src: Ref<Element>,
     pub dst: Ref<Element>,
@@ -1787,6 +1788,7 @@ pub struct AnimStack {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct AnimProp {
     pub element: Ref<Element>,
     pub(crate) _internal_key: u32,
@@ -2029,6 +2031,7 @@ pub struct MetadataObject {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct NameElement {
     pub name: String,
     pub type_: ElementType,
