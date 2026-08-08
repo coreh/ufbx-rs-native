@@ -1,7 +1,7 @@
 name: rust-port
 on:
   push:
-    branches: [main]
+    branches: [main, rust-port]
   pull_request:
 
 jobs:
@@ -13,7 +13,7 @@ jobs:
       - name: Build reference hash_scene (clang -O2, ieee754)
         run: |
           mkdir -p build
-          clang -O2 -ffp-contract=off -o build/hash_scene_c test/hash_scene.c extra/ufbx_math.c
+          clang -O2 -ffp-contract=off -o build/hash_scene_c test/hash_scene.c extra/ufbx_math.c -lm
       - name: Generate hashes.txt
         run: python3 misc/generate_hashses.py --exe build/hash_scene_c -o build/hashes.txt
       - uses: actions/upload-artifact@v4
@@ -29,14 +29,36 @@ jobs:
         run: |
           ./rust/regen.sh
           git diff --exit-code rust/ufbx/src/generated.rs rust/ufbx/tests/layout.rs
-      - name: cargo test (default + real-is-float)
+      # real-is-float leg pending: the feature is declared but Real is still
+      # pinned to f64 (see Cargo.toml note); add the leg when it is wired.
+      - name: cargo test
         working-directory: rust
-        run: |
-          cargo test
-          cargo test --features real-is-float
+        run: cargo test
       - name: Build c-abi staticlib
         working-directory: rust
         run: cargo build --features c-abi --release
+
+  # Golden-hash parity: hash_scene linked against the Rust staticlib
+  # (-DEXTERNAL_UFBX) must reproduce the C oracle's hashes byte-exactly.
+  rust_hashes:
+    needs: c_oracle_hashes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: hashes
+          path: build
+      - name: Build Rust staticlib (c-abi + dev)
+        working-directory: rust
+        run: cargo build --features c-abi,dev --release
+      - name: Build hash_scene against Rust lib
+        run: |
+          clang -O2 -std=gnu99 -DUFBX_DEV -ffp-contract=off -DEXTERNAL_UFBX \
+            -o build/hash_scene_rust test/hash_scene.c extra/ufbx_math.c \
+            rust/target/release/libufbx.a -lpthread -lm
+      - name: Check hashes
+        run: ./build/hash_scene_rust --check build/hashes.txt
 
   # Port progress meter: number of ufbx_* symbols still unresolved when linking
   # the unmodified C test runner against the Rust staticlib. Reaches zero when
