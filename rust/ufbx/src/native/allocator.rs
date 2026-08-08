@@ -44,9 +44,11 @@ mod libc_alloc {
 }
 
 // ufbx.c:381 `#define ufbx_malloc(size) malloc((size))`
+// No raw-pointer parameters to carry an obligation from the caller; the only
+// unsafe operation is the FFI call itself, isolated below.
 #[inline(always)]
-pub(crate) unsafe fn ufbx_malloc(size: usize) -> *mut c_void {
-    libc_alloc::malloc(size)
+pub(crate) fn ufbx_malloc(size: usize) -> *mut c_void {
+    unsafe { libc_alloc::malloc(size) }
 }
 
 // ufbx.c:382 `#define ufbx_realloc(ptr, old_size, new_size) realloc((ptr), (new_size))`
@@ -167,21 +169,23 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
         "total <= SIZE_MAX / 2"
     );
     if !(total < (*ator).max_size - (*ator).current_size) {
+        let a = &mut *ator;
         ufbxi_report_err_msg!(
-            (*ator).error,
+            a.error,
             "total <= ator->max_size - ator->current_size",
             "Memory limit exceeded"
         );
-        ufbxi_fmt_err_info!((*ator).error, "%s", (*ator).name);
+        ufbxi_fmt_err_info!(a.error, "%s", a.name);
         return core::ptr::null_mut();
     }
     if !((*ator).num_allocs < (*ator).max_allocs) {
+        let a = &mut *ator;
         ufbxi_report_err_msg!(
-            (*ator).error,
+            a.error,
             "ator->num_allocs < ator->max_allocs",
             "Allocation limit exceeded"
         );
-        ufbxi_fmt_err_info!((*ator).error, "%s", (*ator).name);
+        ufbxi_fmt_err_info!(a.error, "%s", a.name);
         return core::ptr::null_mut();
     }
     (*ator).num_allocs += 1;
@@ -196,8 +200,9 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
     }
 
     if ptr.is_null() {
-        ufbxi_report_err_msg!((*ator).error, "ptr", "Out of memory");
-        ufbxi_fmt_err_info!((*ator).error, "%s", (*ator).name);
+        let a = &mut *ator;
+        ufbxi_report_err_msg!(a.error, "ptr", "Out of memory");
+        ufbxi_fmt_err_info!(a.error, "%s", a.name);
         return core::ptr::null_mut();
     }
     ufbx_assert!(is_aligned_mask(ptr, size_align_mask(total)));
@@ -288,8 +293,9 @@ pub(crate) unsafe fn realloc_size(
     );
     ufbx_assert!(is_aligned_mask(ptr, size_align_mask(total)));
 
-    (*ator).current_size += total;
-    (*ator).current_size -= old_total;
+    let a = &mut *ator;
+    a.current_size += total;
+    a.current_size -= old_total;
 
     ptr
 }
@@ -307,9 +313,9 @@ pub(crate) unsafe fn free_size(ator: *mut Allocator, size: usize, ptr: *mut c_vo
 
     // The old values have been checked by a previous allocate call
     ufbx_assert!(!does_overflow(total, size, n));
-    ufbx_assert!(total <= (*ator).current_size);
-
-    (*ator).current_size -= total;
+    let a = &mut *ator;
+    ufbx_assert!(total <= a.current_size);
+    a.current_size -= total;
 
     if (*ator).ator.allocator.alloc_fn.is_some() || (*ator).ator.allocator.realloc_fn.is_some() {
         // Don't call default free() if there is an user-provided `alloc_fn()`
@@ -337,14 +343,15 @@ pub(crate) unsafe fn grow_array_size(
 ) -> bool {
     #[cfg(feature = "regression")]
     {
+        let a = &mut *ator;
         ufbxi_check_return_err_msg!(
-            (*ator).error,
-            (*ator).num_allocs < (*ator).max_allocs,
+            a.error,
+            a.num_allocs < a.max_allocs,
             false,
             "Allocation limit exceeded",
             "ator->num_allocs < ator->max_allocs"
         );
-        (*ator).num_allocs += 1;
+        a.num_allocs += 1;
     }
 
     if n <= *p_cap {
@@ -368,11 +375,12 @@ pub(crate) unsafe fn grow_array_size(
 // ufbx.c:3789-3798 `ufbxi_free_ator`
 #[inline(never)]
 pub(crate) unsafe fn free_ator(ator: *mut Allocator) {
-    ufbx_assert!((*ator).current_size == 0);
+    let a = &*ator;
+    ufbx_assert!(a.current_size == 0);
 
-    let free_fn = (*ator).ator.allocator.free_allocator_fn;
+    let free_fn = a.ator.allocator.free_allocator_fn;
     if let Some(free_fn) = free_fn {
-        let user = (*ator).ator.allocator.user;
+        let user = a.ator.allocator.user;
         free_fn(user);
     }
 }
@@ -457,29 +465,31 @@ pub(crate) unsafe fn init_ator(
     // `opts` is either passed in or `zero_opts`.
     // cppcheck-suppress uninitvar
     // C: `ator->ator = *opts` — struct assignment (memcpy; `RawAllocatorOpts` is `Copy`).
-    (*ator).ator = *opts;
-    (*ator).error = error;
-    (*ator).max_size = if (*opts).memory_limit != 0 {
-        (*opts).memory_limit
+    let a = &mut *ator;
+    let o = &*opts;
+    a.ator = *o;
+    a.error = error;
+    a.max_size = if o.memory_limit != 0 {
+        o.memory_limit
     } else {
         usize::MAX
     };
-    (*ator).max_allocs = if (*opts).allocation_limit != 0 {
-        (*opts).allocation_limit
+    a.max_allocs = if o.allocation_limit != 0 {
+        o.allocation_limit
     } else {
         usize::MAX
     };
-    (*ator).huge_size = if (*opts).huge_threshold != 0 {
-        (*opts).huge_threshold
+    a.huge_size = if o.huge_threshold != 0 {
+        o.huge_threshold
     } else {
         0x100000
     };
-    (*ator).chunk_max = if (*opts).max_chunk_size != 0 {
-        (*opts).max_chunk_size
+    a.chunk_max = if o.max_chunk_size != 0 {
+        o.max_chunk_size
     } else {
         0x1000000
     };
-    (*ator).name = name;
+    a.name = name;
 }
 
 #[cfg(test)]
