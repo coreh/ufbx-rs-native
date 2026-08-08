@@ -81,10 +81,7 @@ fn set_hi(x: f64, hi: i32) -> f64 {
 pub(crate) fn copysign(x: f64, y: f64) -> f64 {
     let xb = to_bits(x);
     let yb = to_bits(y);
-    from_bits(
-        (xb.hi & 0x7fffffff) | (yb.hi & 0x80000000u32 as i32),
-        xb.lo,
-    )
+    from_bits((xb.hi & 0x7fffffff) | (yb.hi & 0x80000000u32 as i32), xb.lo)
 }
 
 // ufbx_math.c:155-163 `ufbx_fabs`
@@ -376,14 +373,7 @@ static NPIO2_HW: [i32; 32] = [
 ];
 
 // ufbx_math.c:649-877 `ufbxm_kernel_rem_pio2`
-fn kernel_rem_pio2(
-    x: &[f64],
-    y: &mut [f64],
-    e0: i32,
-    nx: i32,
-    prec: i32,
-    ipio2: &[i32],
-) -> i32 {
+fn kernel_rem_pio2(x: &[f64], y: &mut [f64], e0: i32, nx: i32, prec: i32, ipio2: &[i32]) -> i32 {
     const INIT_JK: [i32; 4] = [2, 3, 4, 6]; /* initial value for jk */
 
     const PIO2: [f64; 8] = [
@@ -440,7 +430,11 @@ fn kernel_rem_pio2(
     m = jx + jk;
     i = 0;
     while i <= m {
-        f[i as usize] = if j < 0 { ZERO } else { ipio2[j as usize] as f64 };
+        f[i as usize] = if j < 0 {
+            ZERO
+        } else {
+            ipio2[j as usize] as f64
+        };
         i += 1;
         j += 1;
     }
@@ -1253,15 +1247,19 @@ pub(crate) fn atan2(y: f64, x: f64) -> f64 {
     /* when y = 0 */
     if (iy | ly as i32) == 0 {
         match m {
-            0 | 1 => return y, /* atan(+-0,+anything)=+-0 */
-            2 => return PI + TINY, /* atan(+0,-anything) = pi */
+            0 | 1 => return y,      /* atan(+-0,+anything)=+-0 */
+            2 => return PI + TINY,  /* atan(+0,-anything) = pi */
             3 => return -PI - TINY, /* atan(-0,-anything) =-pi */
             _ => {}
         }
     }
     /* when x = 0 */
     if (ix | lx as i32) == 0 {
-        return if hy < 0 { -PI_O_2 - TINY } else { PI_O_2 + TINY };
+        return if hy < 0 {
+            -PI_O_2 - TINY
+        } else {
+            PI_O_2 + TINY
+        };
     }
 
     /* when x is INF */
@@ -1286,7 +1284,11 @@ pub(crate) fn atan2(y: f64, x: f64) -> f64 {
     }
     /* when y is INF */
     if iy == 0x7ff00000 {
-        return if hy < 0 { -PI_O_2 - TINY } else { PI_O_2 + TINY };
+        return if hy < 0 {
+            -PI_O_2 - TINY
+        } else {
+            PI_O_2 + TINY
+        };
     }
 
     /* compute y/x */
@@ -1299,10 +1301,10 @@ pub(crate) fn atan2(y: f64, x: f64) -> f64 {
         z = atan(fabs(y / x)); /* safe to do y/x */
     }
     match m {
-        0 => z,                    /* atan(+,+) */
-        1 => -z,                   /* atan(-,+) */
-        2 => PI - (z - PI_LO),     /* atan(+,-) */
-        _ => (z - PI_LO) - PI,     /* case 3: atan(-,-) */
+        0 => z,                /* atan(+,+) */
+        1 => -z,               /* atan(-,+) */
+        2 => PI - (z - PI_LO), /* atan(+,-) */
+        _ => (z - PI_LO) - PI, /* case 3: atan(-,-) */
     }
 }
 
@@ -1498,7 +1500,7 @@ pub(crate) fn pow(x: f64, y: f64) -> f64 {
             };
         }
         /* now |1-x| is tiny <= 2**-20, suffice to compute
-           log(x) by x-x^2/2+x^3/3-x^4/4 */
+        log(x) by x-x^2/2+x^3/3-x^4/4 */
         t = ax - ONE; /* t has 20 trailing zeros */
         w = (t * t) * (0.5 - t * (0.3333333333333333333333 - t * 0.25));
         u = IVLN2_H * t; /* ivln2_h has 21 sig. bits */
@@ -1912,7 +1914,7 @@ mod tests {
             -2.5,
             3.5,
             -3.5,
-            4503599627370496.0,  // 2^52
+            4503599627370496.0, // 2^52
             -4503599627370496.0,
             9007199254740992.0, // 2^53
             f64::MIN_POSITIVE,
@@ -1974,7 +1976,10 @@ mod tests {
                 } else {
                     x.next_down()
                 };
-                assert!(same(got, want), "nextafter({x:?},{y:?}) = {got:?} != {want:?}");
+                assert!(
+                    same(got, want),
+                    "nextafter({x:?},{y:?}) = {got:?} != {want:?}"
+                );
             }
         }
     }

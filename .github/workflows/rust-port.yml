@@ -27,6 +27,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Check formatting
+        working-directory: rust
+        run: cargo fmt --check
       - name: Check generated bindings are clean
         run: |
           ./rust/regen.sh
