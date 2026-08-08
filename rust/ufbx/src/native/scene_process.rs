@@ -49,8 +49,6 @@
 //! `ufbxi_add_constraint_prop` (+ its `ufbxi_constraint_props` name table),
 //! `ufbxi_finalize_nurbs_basis`, `ufbxi_finalize_lod_group` and
 //! `ufbxi_push_prop_prefix`.
-//! DEFERRED(topology) from this unit: `ufbxi_generate_normals`
-//! (ufbx.c:20364-20403) — see the note at its C-order slot below.
 //!
 //! SIXTH UNIT: ufbx.c:20429-20867 — the shader-texture and texture-file
 //! finalizers: `ufbxi_shader_texture_find_prefix` (the two-pass compound /
@@ -120,10 +118,6 @@
 //! Every `ufbxi_push*`/`ufbxi_buf_free` and every paired
 //! `ufbxi_grow_array`+sort inside it is allocation-observable, so the
 //! statement order is verbatim.
-//! DEFERRED(topology) from this unit: the `ufbxi_generate_normals` CALL SITE
-//! (ufbx.c:22062-22064) stays commented out until `// -- Topology` lands, so
-//! `ufbx_load_opts.generate_missing_normals` is a no-op until then — see the
-//! note at the mesh loop and at the function's C-order slot.
 //!
 //! TENTH UNIT: ufbx.c:22786-23062 — the node-transform derivation head of
 //! `// -- Updating state from properties`: `ufbxi_get_rotation` /
@@ -210,18 +204,20 @@ use crate::generated::{
     ShaderPropBinding, ShaderTexture, ShaderTextureInput, ShaderTextureType, ShaderType,
     SkinCluster, SkinDeformer, SkinVertex, SkinWeight, SkinningMethod, SnapMode, SpaceConversion,
     StereoCamera, Texture, TextureFile, TextureLayer, TextureType, TimeMode, TimeProtocol,
-    Transform, TransformOverride, UvSet, Vec2, Vec3, Vec4, Video, VoidList, WarningType, WrapMode,
+    TopoEdge, Transform, TransformOverride, UvSet, Vec2, Vec3, Vec4, Video, VoidList, WarningType,
+    WrapMode,
 };
 use crate::native::allocator::grow_array;
 use crate::native::api::{
-    coordinate_axes_valid, euler_to_quat, find_blob, find_bool as api_find_bool,
-    find_int as api_find_int, find_int_len as api_find_int_len, find_prop as api_find_prop,
-    find_prop_concat, find_prop_len, find_prop_texture_len, find_real as api_find_real,
-    find_real_len as api_find_real_len, find_shader_prop_bindings_len, find_shader_texture_input,
-    find_shader_texture_input_len, find_string, find_vec3 as api_find_vec3, get_bone_pose,
-    get_prop_element, matrix_for_normals, matrix_invert, matrix_mul, matrix_to_transform,
-    quat_rotate_vec3, transform_direction, transform_position, transform_to_matrix, EMPTY_BLOB,
-    EMPTY_STRING, IDENTITY_MATRIX, IDENTITY_QUAT, IDENTITY_TRANSFORM, ZERO_VEC3,
+    compute_normals, compute_topology, coordinate_axes_valid, euler_to_quat, find_blob,
+    find_bool as api_find_bool, find_int as api_find_int, find_int_len as api_find_int_len,
+    find_prop as api_find_prop, find_prop_concat, find_prop_len, find_prop_texture_len,
+    find_real as api_find_real, find_real_len as api_find_real_len, find_shader_prop_bindings_len,
+    find_shader_texture_input, find_shader_texture_input_len, find_string,
+    find_vec3 as api_find_vec3, generate_normal_mapping, get_bone_pose, get_prop_element,
+    matrix_for_normals, matrix_invert, matrix_mul, matrix_to_transform, quat_rotate_vec3,
+    transform_direction, transform_position, transform_to_matrix, EMPTY_BLOB, EMPTY_STRING,
+    IDENTITY_MATRIX, IDENTITY_QUAT, IDENTITY_TRANSFORM, ZERO_VEC3,
 };
 use crate::native::buf::{
     buf_clear, buf_free, pop, push, push_copy, push_peek, push_pop, push_zero, Buf,
@@ -4139,15 +4135,64 @@ pub(crate) unsafe fn finalize_lod_group(uc: *mut Context, lod: *mut LodGroup) ->
     Ok(())
 }
 
-// DEFERRED(topology): `ufbxi_generate_normals` (ufbx.c:20364-20403) — it calls the
-// public topology entry points `ufbx_compute_topology`,
-// `ufbx_generate_normal_mapping` and `ufbx_compute_normals`
-// (ufbx.c:32477-32617), which sit in the not-yet-ported
-// `// -- Topology` banner section (`native::topology`). Port it here, in this
-// C-order slot, once that section lands. Its only caller is
-// `ufbxi_finalize_scene` (ufbx.c:21641), now ported below; the call at
-// ufbx.c:22062-22064 is carried there as a commented-out block to restore
-// together with this function.
+// ufbx.c:20363-20403 `ufbxi_generate_normals`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn generate_normals(uc: *mut Context, mesh: *mut Mesh) -> Result<(), Fail> {
+    let num_indices: usize = (*mesh).num_indices;
+
+    (*mesh).generated_normals = true;
+
+    let topo: *mut TopoEdge = push::<TopoEdge>(&mut (*uc).tmp_stack, num_indices);
+    ufbxi_check!(uc, !topo.is_null(), "topo");
+
+    let normal_indices: *mut u32 = push::<u32>(&mut (*uc).result, num_indices);
+    ufbxi_check!(uc, !normal_indices.is_null(), "normal_indices");
+
+    compute_topology(mesh, topo, num_indices);
+    let num_normals: usize =
+        generate_normal_mapping(mesh, topo, num_indices, normal_indices, num_indices, false);
+
+    if num_normals == (*mesh).num_vertices {
+        (*mesh).vertex_normal.unique_per_vertex = true;
+    }
+
+    let mut normal_data: *mut Vec3 = push::<Vec3>(&mut (*uc).result, num_normals + 1);
+    ufbxi_check!(uc, !normal_data.is_null(), "normal_data");
+
+    // C: `normal_data[0] = ufbx_zero_vec3; normal_data++;`
+    *normal_data = ZERO_VEC3;
+    normal_data = normal_data.add(1);
+
+    compute_normals(
+        mesh,
+        ptr::addr_of!((*mesh).vertex_position),
+        normal_indices,
+        num_indices,
+        normal_data,
+        num_normals,
+    );
+
+    (*mesh).vertex_normal.exists = true;
+    (*mesh).vertex_normal.values.data = normal_data as *const Vec3;
+    (*mesh).vertex_normal.values.count = num_normals;
+    (*mesh).vertex_normal.indices.data = normal_indices as *const u32;
+    (*mesh).vertex_normal.indices.count = num_indices;
+    (*mesh).vertex_normal.value_reals = 3;
+
+    // C: `mesh->skinned_normal = mesh->vertex_normal;` — struct assignment
+    // (memcpy); `VertexVec3` is not `Copy` in the generated bindings, so the
+    // copy is spelled as a byte-identical `copy_nonoverlapping`.
+    ptr::copy_nonoverlapping(
+        ptr::addr_of!((*mesh).vertex_normal),
+        ptr::addr_of_mut!((*mesh).skinned_normal),
+        1,
+    );
+
+    pop::<TopoEdge>(&mut (*uc).tmp_stack, num_indices, ptr::null_mut());
+
+    Ok(())
+}
 
 // ufbx.c:20405-20427 `ufbxi_push_prop_prefix`
 #[inline(never)]
@@ -7158,22 +7203,9 @@ pub(crate) unsafe fn finalize_scene(uc: *mut Context) -> Result<(), Fail> {
             }
 
             // Generate normals if necessary
-            // DEFERRED(topology): `ufbxi_generate_normals` (ufbx.c:20364-20403)
-            // is not ported yet — it calls the public topology entry points
-            // `ufbx_compute_topology` / `ufbx_generate_normal_mapping` /
-            // `ufbx_compute_normals` (ufbx.c:32477-32617), which live in the
-            // unported `// -- Topology` banner section (`native::topology`).
-            // Until then `uc->opts.generate_missing_normals` is a no-op: a mesh
-            // with no normal layer keeps `vertex_normal.exists == false`,
-            // `generated_normals` stays unset, and the `tmp_stack`
-            // push/pop of `ufbx_topo_edge` that C performs here is missing, so
-            // allocation counts diverge from C for that option too.
-            // Restore verbatim, together with the function at its C-order slot
-            // (see the DEFERRED note at ufbx.c:20364 above), once that lands.
-            //
-            // if !(*mesh).vertex_normal.exists && (*uc).opts.generate_missing_normals {
-            //     generate_normals(uc, mesh)?;
-            // }
+            if !(*mesh).vertex_normal.exists && (*uc).opts.generate_missing_normals {
+                generate_normals(uc, mesh)?;
+            }
 
             // Assign first UV and color sets as the "canonical" ones
             if (*mesh).uv_sets.count > 0 {
@@ -10475,11 +10507,6 @@ pub(crate) unsafe fn update_scene_settings_obj(uc: *mut Context) {
 // (ufbx.c:24986/24989, unported), and `ufbxi_axis_matrix` /
 // `ufbxi_mirror_matrix_dst` in `ufbxi_setup_axis_matrix` (ufbx.c:24949/24957,
 // unported); all of these are ported here because C defines them here.
-//
-// DEFERRED(topology) and still owed from this range: `ufbxi_generate_normals`
-// (ufbx.c:20364-20403) and its call site in `ufbxi_finalize_scene`
-// (ufbx.c:22062-22064) — both blocked on `// -- Topology`; see the notes at the
-// function's C-order slot and inside the finalize mesh loop.
 
 #[cfg(test)]
 mod tests {
