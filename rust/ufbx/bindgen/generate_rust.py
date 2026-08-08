@@ -311,6 +311,10 @@ copy_derive_types = {
     # `ufbxi_deduplicate_properties` (`ps[dst++] = ps[src++]`, ufbx.c:11894)
     # are plain C struct assignments.
     "ufbx_prop",
+    # `ufbx_shader_prop_binding` is sorted by value in `ufbxi_sort_shader_prop_bindings`
+    # (`ufbxi_macro_stable_sort(ufbx_shader_prop_binding, ...)`, ufbx.c:14692)
+    # which is a plain C struct assignment through the sort scratch.
+    "ufbx_shader_prop_binding",
 }
 
 ignore_types = {

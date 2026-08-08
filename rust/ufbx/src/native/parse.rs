@@ -2854,6 +2854,25 @@ pub(crate) unsafe fn get_name_key_c(name: *const u8) -> u32 {
         | (*name.add(3) as u32)
 }
 
+// ufbx.c:11736-11744 `ufbxi_is_node_property_name`
+// Ported ahead of the rest of the `// -- Setup` section because
+// `ufbxi_read_synthetic_attribute` (ufbx.c:14882) needs it; the map itself is
+// filled by the still-unported `ufbxi_init_node_prop_names` (ufbx.c:11746).
+pub(crate) unsafe fn is_node_property_name(uc: *mut Context, name: *const u8) -> bool {
+    // You need to call `ufbxi_init_node_prop_names()` before calling this
+    ufbx_assert!((*uc).node_prop_set.size > 0);
+
+    // C takes the address of the parameter itself (`&name`) as the map key.
+    let name: *const u8 = name;
+    let hash = crate::native::hash::hash_ptr!(name);
+    let entry: *mut *const u8 = map_find(
+        &mut (*uc).node_prop_set,
+        hash,
+        &name as *const *const u8 as *const c_void,
+    );
+    !entry.is_null()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

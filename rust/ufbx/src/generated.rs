@@ -1736,6 +1736,7 @@ pub struct Shader {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ShaderPropBinding {
     pub shader_prop: String,
     pub material_prop: String,
