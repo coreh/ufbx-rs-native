@@ -68,6 +68,23 @@ jobs:
       - name: Fuzz math functions against C
         run: rust/tools/mathfuzz/ci.sh
 
+  # Miri over whole small-file loads (memory-based; load_file needs libc).
+  # Aliasing model disabled: guards OOB/UAF/uninit/alignment/leaks, which pass
+  # today. The stricter Stacked Borrows run has 4 known aliasing-model
+  # findings tracked for Phase 4 — promote once they are fixed.
+  miri:
+    name: Miri memory checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly + miri
+        run: |
+          rustup toolchain install nightly --profile minimal
+          rustup +nightly component add miri
+      - name: Run loads under Miri
+        working-directory: rust
+        run: MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-disable-stacked-borrows" cargo +nightly miri test --test miri
+
   # Public API must equal published ufbx-rust 0.11.2 modulo the divergences
   # documented in COMPAT.md (expectations file: rust/tools/api/).
   public_api:
