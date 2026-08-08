@@ -72,6 +72,10 @@ const _: () = assert!(size_of::<BufChunk>() % 8 == 0);
 const _: () = assert!(size_of::<BufPadding>() <= 16);
 
 // ufbx.c:3848 `char data[]` — flexible-array-member accessor.
+// Stays `unsafe fn`: it never dereferences `chunk`, but `.add()` still
+// carries the same-allocation/in-bounds invariant on `chunk` that a
+// dereference would (offsetting a dangling/undersized pointer is UB even
+// without reading through it) — not sound to expose as a safe fn.
 #[inline(always)]
 pub(crate) unsafe fn chunk_data(chunk: *mut BufChunk) -> *mut u8 {
     (chunk as *mut u8).add(size_of::<BufChunk>())
@@ -810,8 +814,11 @@ mod tests {
     use crate::native::allocator::init_ator;
     use core::mem::MaybeUninit;
 
-    unsafe fn make_buf(ator: *mut Allocator, unordered: bool, clearable: bool) -> Buf {
-        let mut buf = MaybeUninit::<Buf>::zeroed().assume_init();
+    fn make_buf(ator: *mut Allocator, unordered: bool, clearable: bool) -> Buf {
+        // SAFETY: `Buf` is all pointers/usizes/bools; the all-zero bit
+        // pattern is a valid value for every field (null pointers, zero
+        // sizes, `false`). No `chunk`/`ator` dereference happens here.
+        let mut buf = unsafe { MaybeUninit::<Buf>::zeroed().assume_init() };
         buf.ator = ator;
         buf.unordered = unordered;
         buf.clearable = clearable;
@@ -850,339 +857,388 @@ mod tests {
 
     #[test]
     fn test_push_basic_geometry() {
+        let mut err = Error::default();
+        let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            let mut err = Error::default();
-            let mut ator = MaybeUninit::<Allocator>::zeroed();
             init_ator(
                 &mut err,
                 ator.as_mut_ptr(),
                 core::ptr::null(),
                 b"test\0".as_ptr(),
             );
-            let ator = ator.as_mut_ptr();
-            let mut buf = make_buf(ator, false, false);
-
-            // Zero-count push returns the shared zero-size buffer.
-            let z = push_size(&mut buf, 4, 0);
-            assert_eq!(z as *const u8, ZERO_SIZE_BUFFER.as_ptr());
-            assert_eq!(buf.num_items, 0);
-
-            let p = push_size(&mut buf, 4, 3) as *mut u32;
-            assert!(!p.is_null());
-            assert_eq!(buf.num_items, 3);
-            // First chunk: next_size 4096, chunk_size = 4096 - header, 16-aligned.
-            let expect_size = align_to_mask(4096 - size_of::<BufChunk>(), 0xf);
-            assert_eq!(buf.size, expect_size);
-            assert_eq!(buf.pos, 12);
-            assert_eq!((*buf.chunks[0]).magic, BUF_CHUNK_IMP_MAGIC as usize);
-
-            // Aligned follow-up push in the same chunk (u64 after 12 bytes pads to 16,
-            // ordered buffer writes a 16-byte padding record).
-            let q = push_size(&mut buf, 8, 1) as *mut u64;
-            assert!(!q.is_null());
-            *q = 0x1122334455667788;
-            assert_eq!(buf.pos, 16 + 16 + 8);
-            assert_eq!((*buf.chunks[0]).padding_pos, 16 + 16 + 1);
-
-            free_all_chunks(&mut buf);
-            assert_eq!((*ator).current_size, 0);
         }
+        let ator = ator.as_mut_ptr();
+        let mut buf = make_buf(ator, false, false);
+
+        // Zero-count push returns the shared zero-size buffer.
+        let z = unsafe { push_size(&mut buf, 4, 0) };
+        assert_eq!(z as *const u8, ZERO_SIZE_BUFFER.as_ptr());
+        assert_eq!(buf.num_items, 0);
+
+        let p = unsafe { push_size(&mut buf, 4, 3) } as *mut u32;
+        assert!(!p.is_null());
+        assert_eq!(buf.num_items, 3);
+        // First chunk: next_size 4096, chunk_size = 4096 - header, 16-aligned.
+        let expect_size = align_to_mask(4096 - size_of::<BufChunk>(), 0xf);
+        assert_eq!(buf.size, expect_size);
+        assert_eq!(buf.pos, 12);
+        assert_eq!(
+            unsafe { (*buf.chunks[0]).magic },
+            BUF_CHUNK_IMP_MAGIC as usize
+        );
+
+        // Aligned follow-up push in the same chunk (u64 after 12 bytes pads to 16,
+        // ordered buffer writes a 16-byte padding record).
+        let q = unsafe { push_size(&mut buf, 8, 1) } as *mut u64;
+        assert!(!q.is_null());
+        unsafe {
+            *q = 0x1122334455667788;
+        }
+        assert_eq!(buf.pos, 16 + 16 + 8);
+        assert_eq!(unsafe { (*buf.chunks[0]).padding_pos }, 16 + 16 + 1);
+
+        unsafe {
+            free_all_chunks(&mut buf);
+        }
+        assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
     #[test]
     fn test_new_block_growth_doubling() {
+        let mut err = Error::default();
+        let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            let mut err = Error::default();
-            let mut ator = MaybeUninit::<Allocator>::zeroed();
             init_ator(
                 &mut err,
                 ator.as_mut_ptr(),
                 core::ptr::null(),
                 b"test\0".as_ptr(),
             );
-            let ator = ator.as_mut_ptr();
-            let mut buf = make_buf(ator, false, false);
-
-            let p = push_size(&mut buf, 1, 100);
-            assert!(!p.is_null());
-            assert_eq!((*buf.chunks[0]).next_size, 4096);
-
-            // Overflow the first chunk: next chunk doubles next_size.
-            let big = buf.size; // larger than remaining space
-            let q = push_size(&mut buf, 1, big);
-            assert!(!q.is_null());
-            assert_eq!((*buf.chunks[0]).next_size, 8192);
-            // Retired chunk stored its final position.
-            assert_eq!((*(*buf.chunks[0]).prev).pushed_pos, 100);
-            assert_eq!(buf.pushed_size, 100);
-
-            free_all_chunks(&mut buf);
-            assert_eq!((*ator).current_size, 0);
         }
+        let ator = ator.as_mut_ptr();
+        let mut buf = make_buf(ator, false, false);
+
+        let p = unsafe { push_size(&mut buf, 1, 100) };
+        assert!(!p.is_null());
+        assert_eq!(unsafe { (*buf.chunks[0]).next_size }, 4096);
+
+        // Overflow the first chunk: next chunk doubles next_size.
+        let big = buf.size; // larger than remaining space
+        let q = unsafe { push_size(&mut buf, 1, big) };
+        assert!(!q.is_null());
+        assert_eq!(unsafe { (*buf.chunks[0]).next_size }, 8192);
+        // Retired chunk stored its final position.
+        assert_eq!(unsafe { (*(*buf.chunks[0]).prev).pushed_pos }, 100);
+        assert_eq!(buf.pushed_size, 100);
+
+        unsafe {
+            free_all_chunks(&mut buf);
+        }
+        assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
     #[test]
     fn test_huge_unordered_second_list() {
+        let mut err = Error::default();
+        let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            let mut err = Error::default();
-            let mut ator = MaybeUninit::<Allocator>::zeroed();
             init_ator(
                 &mut err,
                 ator.as_mut_ptr(),
                 core::ptr::null(),
                 b"test\0".as_ptr(),
             );
-            let ator = ator.as_mut_ptr();
-            let mut buf = make_buf(ator, true, false);
-
-            let huge = (*ator).huge_size; // 0x100000
-            let p = push_size(&mut buf, 1, huge);
-            assert!(!p.is_null());
-            // Huge unordered pushes go to chunks[1]; chunks[0]/pos/size untouched.
-            assert!(buf.chunks[0].is_null());
-            assert!(!buf.chunks[1].is_null());
-            assert_eq!(buf.pos, 0);
-            assert_eq!((*buf.chunks[1]).pushed_pos, huge);
-            assert_eq!(buf.pushed_size, huge);
-
-            free_all_chunks(&mut buf);
-            assert_eq!((*ator).current_size, 0);
         }
+        let ator = ator.as_mut_ptr();
+        let mut buf = make_buf(ator, true, false);
+
+        let huge = unsafe { (*ator).huge_size }; // 0x100000
+        let p = unsafe { push_size(&mut buf, 1, huge) };
+        assert!(!p.is_null());
+        // Huge unordered pushes go to chunks[1]; chunks[0]/pos/size untouched.
+        assert!(buf.chunks[0].is_null());
+        assert!(!buf.chunks[1].is_null());
+        assert_eq!(buf.pos, 0);
+        assert_eq!(unsafe { (*buf.chunks[1]).pushed_pos }, huge);
+        assert_eq!(buf.pushed_size, huge);
+
+        unsafe {
+            free_all_chunks(&mut buf);
+        }
+        assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
     #[test]
     fn test_push_zero_and_copy() {
+        let mut err = Error::default();
+        let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            let mut err = Error::default();
-            let mut ator = MaybeUninit::<Allocator>::zeroed();
             init_ator(
                 &mut err,
                 ator.as_mut_ptr(),
                 core::ptr::null(),
                 b"test\0".as_ptr(),
             );
-            let ator = ator.as_mut_ptr();
-            let mut buf = make_buf(ator, false, false);
-
-            let p = push_size_zero(&mut buf, 1, 32) as *mut u8;
-            assert!(!p.is_null());
-            for i in 0..32 {
-                assert_eq!(*p.add(i), 0);
-            }
-
-            let src: [u32; 4] = [1, 2, 3, 4];
-            let q = push_size_copy(&mut buf, 4, 4, src.as_ptr() as *const core::ffi::c_void)
-                as *mut u32;
-            assert!(!q.is_null());
-            for i in 0..4 {
-                assert_eq!(*q.add(i), src[i]);
-            }
-
-            // Copy with n == 0 succeeds even with NULL data.
-            let z = push_size_copy(&mut buf, 4, 0, core::ptr::null());
-            assert_eq!(z as *const u8, ZERO_SIZE_BUFFER.as_ptr());
-
-            free_all_chunks(&mut buf);
-            assert_eq!((*ator).current_size, 0);
         }
+        let ator = ator.as_mut_ptr();
+        let mut buf = make_buf(ator, false, false);
+
+        let p = unsafe { push_size_zero(&mut buf, 1, 32) } as *mut u8;
+        assert!(!p.is_null());
+        for i in 0..32 {
+            assert_eq!(unsafe { *p.add(i) }, 0);
+        }
+
+        let src: [u32; 4] = [1, 2, 3, 4];
+        let q = unsafe { push_size_copy(&mut buf, 4, 4, src.as_ptr() as *const core::ffi::c_void) }
+            as *mut u32;
+        assert!(!q.is_null());
+        for i in 0..4 {
+            assert_eq!(unsafe { *q.add(i) }, src[i]);
+        }
+
+        // Copy with n == 0 succeeds even with NULL data.
+        let z = unsafe { push_size_copy(&mut buf, 4, 0, core::ptr::null()) };
+        assert_eq!(z as *const u8, ZERO_SIZE_BUFFER.as_ptr());
+
+        unsafe {
+            free_all_chunks(&mut buf);
+        }
+        assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
     #[test]
     fn test_pop_and_peek_across_chunks() {
+        let mut err = Error::default();
+        let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            let mut err = Error::default();
-            let mut ator = MaybeUninit::<Allocator>::zeroed();
             init_ator(
                 &mut err,
                 ator.as_mut_ptr(),
                 core::ptr::null(),
                 b"test\0".as_ptr(),
             );
-            let ator = ator.as_mut_ptr();
-            let mut buf = make_buf(ator, false, false);
+        }
+        let ator = ator.as_mut_ptr();
+        let mut buf = make_buf(ator, false, false);
 
-            // Push enough u32 items to span multiple chunks (first chunk holds
-            // ~4032 bytes; 4096 items = 16384 bytes).
-            const N: usize = 4096;
-            for i in 0..N {
-                let p = push::<u32>(&mut buf, 1);
-                assert!(!p.is_null());
+        // Push enough u32 items to span multiple chunks (first chunk holds
+        // ~4032 bytes; 4096 items = 16384 bytes).
+        const N: usize = 4096;
+        for i in 0..N {
+            let p = unsafe { push::<u32>(&mut buf, 1) };
+            assert!(!p.is_null());
+            unsafe {
                 *p = i as u32;
             }
-            assert_eq!(buf.num_items, N);
-            assert!(!(*buf.chunks[0]).prev.is_null(), "must span chunks");
-
-            // Peek the last 100 items — non-destructive; flattening walks the
-            // chunk chain backwards.
-            let mut out = [0u32; 100];
-            peek::<u32>(&mut buf, 100, out.as_mut_ptr());
-            for i in 0..100 {
-                assert_eq!(out[i], (N - 100 + i) as u32);
-            }
-            assert_eq!(buf.num_items, N);
-
-            // Pop all items in chunks of 300, spanning chunk boundaries.
-            let mut remaining = N;
-            let mut dst = [0u32; 300];
-            while remaining > 0 {
-                let take = remaining.min(300);
-                pop::<u32>(&mut buf, take, dst.as_mut_ptr());
-                for i in 0..take {
-                    assert_eq!(dst[i], (remaining - take + i) as u32);
-                }
-                remaining -= take;
-            }
-            assert_eq!(buf.num_items, 0);
-            assert_eq!(buf.pos, 0);
-
-            buf_free(&mut buf);
-            assert_eq!((*ator).current_size, 0);
         }
+        assert_eq!(buf.num_items, N);
+        assert!(
+            unsafe { !(*buf.chunks[0]).prev.is_null() },
+            "must span chunks"
+        );
+
+        // Peek the last 100 items — non-destructive; flattening walks the
+        // chunk chain backwards.
+        let mut out = [0u32; 100];
+        unsafe {
+            peek::<u32>(&mut buf, 100, out.as_mut_ptr());
+        }
+        for i in 0..100 {
+            assert_eq!(out[i], (N - 100 + i) as u32);
+        }
+        assert_eq!(buf.num_items, N);
+
+        // Pop all items in chunks of 300, spanning chunk boundaries.
+        let mut remaining = N;
+        let mut dst = [0u32; 300];
+        while remaining > 0 {
+            let take = remaining.min(300);
+            unsafe {
+                pop::<u32>(&mut buf, take, dst.as_mut_ptr());
+            }
+            for i in 0..take {
+                assert_eq!(dst[i], (remaining - take + i) as u32);
+            }
+            remaining -= take;
+        }
+        assert_eq!(buf.num_items, 0);
+        assert_eq!(buf.pos, 0);
+
+        unsafe {
+            buf_free(&mut buf);
+        }
+        assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
     #[test]
     fn test_pop_null_dst_rewinds_padding() {
+        let mut err = Error::default();
+        let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            let mut err = Error::default();
-            let mut ator = MaybeUninit::<Allocator>::zeroed();
             init_ator(
                 &mut err,
                 ator.as_mut_ptr(),
                 core::ptr::null(),
                 b"test\0".as_ptr(),
             );
-            let ator = ator.as_mut_ptr();
-            let mut buf = make_buf(ator, false, false);
-
-            // 12 bytes, then an 8-aligned push forces a padding record.
-            let _ = push_size(&mut buf, 4, 3);
-            let q = push_size(&mut buf, 8, 1);
-            assert!(!q.is_null());
-            assert_eq!(buf.pos, 16 + 16 + 8);
-            assert_eq!((*buf.chunks[0]).padding_pos, 16 + 16 + 1);
-
-            // Discarding pop (dst == NULL) rewinds through the padding record.
-            pop_size(&mut buf, 8, 1, core::ptr::null_mut(), false);
-            assert_eq!(buf.pos, 12);
-            assert_eq!((*buf.chunks[0]).padding_pos, 0);
-
-            buf_free(&mut buf);
-            assert_eq!((*ator).current_size, 0);
         }
+        let ator = ator.as_mut_ptr();
+        let mut buf = make_buf(ator, false, false);
+
+        // 12 bytes, then an 8-aligned push forces a padding record.
+        let _ = unsafe { push_size(&mut buf, 4, 3) };
+        let q = unsafe { push_size(&mut buf, 8, 1) };
+        assert!(!q.is_null());
+        assert_eq!(buf.pos, 16 + 16 + 8);
+        assert_eq!(unsafe { (*buf.chunks[0]).padding_pos }, 16 + 16 + 1);
+
+        // Discarding pop (dst == NULL) rewinds through the padding record.
+        unsafe {
+            pop_size(&mut buf, 8, 1, core::ptr::null_mut(), false);
+        }
+        assert_eq!(buf.pos, 12);
+        assert_eq!(unsafe { (*buf.chunks[0]).padding_pos }, 0);
+
+        unsafe {
+            buf_free(&mut buf);
+        }
+        assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
     #[test]
     fn test_push_pop_flatten() {
+        let mut err = Error::default();
+        let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            let mut err = Error::default();
-            let mut ator = MaybeUninit::<Allocator>::zeroed();
             init_ator(
                 &mut err,
                 ator.as_mut_ptr(),
                 core::ptr::null(),
                 b"test\0".as_ptr(),
             );
-            let ator = ator.as_mut_ptr();
-            let mut stack = make_buf(ator, false, false);
-            let mut result = make_buf(ator, false, false);
+        }
+        let ator = ator.as_mut_ptr();
+        let mut stack = make_buf(ator, false, false);
+        let mut result = make_buf(ator, false, false);
 
-            const N: usize = 3000;
-            for i in 0..N {
-                let p = push::<u64>(&mut stack, 1);
-                assert!(!p.is_null());
+        const N: usize = 3000;
+        for i in 0..N {
+            let p = unsafe { push::<u64>(&mut stack, 1) };
+            assert!(!p.is_null());
+            unsafe {
                 *p = i as u64;
             }
-            assert!(!(*stack.chunks[0]).prev.is_null(), "must span chunks");
+        }
+        assert!(
+            unsafe { !(*stack.chunks[0]).prev.is_null() },
+            "must span chunks"
+        );
 
-            // Flatten the non-contiguous stack into a contiguous array.
-            let arr = push_pop::<u64>(&mut result, &mut stack, N);
-            assert!(!arr.is_null());
-            for i in 0..N {
-                assert_eq!(*arr.add(i), i as u64);
-            }
-            assert_eq!(stack.num_items, 0);
-            assert_eq!(result.num_items, N);
+        // Flatten the non-contiguous stack into a contiguous array.
+        let arr = unsafe { push_pop::<u64>(&mut result, &mut stack, N) };
+        assert!(!arr.is_null());
+        for i in 0..N {
+            assert_eq!(unsafe { *arr.add(i) }, i as u64);
+        }
+        assert_eq!(stack.num_items, 0);
+        assert_eq!(result.num_items, N);
 
+        unsafe {
             buf_free(&mut stack);
             buf_free(&mut result);
-            assert_eq!((*ator).current_size, 0);
         }
+        assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
     #[test]
     fn test_buf_free_unused_frees_forward_chunks() {
+        let mut err = Error::default();
+        let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            let mut err = Error::default();
-            let mut ator = MaybeUninit::<Allocator>::zeroed();
             init_ator(
                 &mut err,
                 ator.as_mut_ptr(),
                 core::ptr::null(),
                 b"test\0".as_ptr(),
             );
-            let ator = ator.as_mut_ptr();
-            let mut buf = make_buf(ator, false, false);
+        }
+        let ator = ator.as_mut_ptr();
+        let mut buf = make_buf(ator, false, false);
 
-            // Span two chunks, then pop everything back to zero.
-            let n1 = 4000usize;
+        // Span two chunks, then pop everything back to zero.
+        let n1 = 4000usize;
+        unsafe {
             let _ = push_size(&mut buf, 1, n1);
             let _ = push_size(&mut buf, 1, 1000);
-            assert!(!(*buf.chunks[0]).prev.is_null());
+        }
+        assert!(unsafe { !(*buf.chunks[0]).prev.is_null() });
+        unsafe {
             pop_size(&mut buf, 1, 1000, core::ptr::null_mut(), false);
             pop_size(&mut buf, 1, n1, core::ptr::null_mut(), false);
-            assert_eq!(buf.pos, 0);
+        }
+        assert_eq!(buf.pos, 0);
 
-            // Frees the empty head chunks and the retired next-chain entirely.
+        // Frees the empty head chunks and the retired next-chain entirely.
+        unsafe {
             buf_free_unused(&mut buf);
-            assert!(buf.chunks[0].is_null());
-            assert_eq!(buf.size, 0);
-            assert_eq!((*ator).current_size, 0);
+        }
+        assert!(buf.chunks[0].is_null());
+        assert_eq!(buf.size, 0);
+        assert_eq!(unsafe { (*ator).current_size }, 0);
 
+        unsafe {
             buf_free(&mut buf);
         }
     }
 
     #[test]
     fn test_buf_clear_resets_and_trims_huge() {
+        let mut err = Error::default();
+        let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            let mut err = Error::default();
-            let mut ator = MaybeUninit::<Allocator>::zeroed();
             init_ator(
                 &mut err,
                 ator.as_mut_ptr(),
                 core::ptr::null(),
                 b"test\0".as_ptr(),
             );
-            let ator = ator.as_mut_ptr();
-            let mut buf = make_buf(ator, true, true);
-
-            // Normal chunks plus more huge chunks than UFBXI_HUGE_MAX_SCAN.
-            let _ = push_size(&mut buf, 1, 100);
-            let huge = (*ator).huge_size;
-            for i in 0..(HUGE_MAX_SCAN + 4) {
-                let p = push_size(&mut buf, 1, huge + i);
-                assert!(!p.is_null());
-            }
-            assert!(!buf.chunks[1].is_null());
-
-            buf_clear(&mut buf);
-            assert_eq!(buf.pos, 0);
-            assert_eq!(buf.num_items, 0);
-            assert_eq!(buf.pushed_size, 0);
-            // chunks[0] rewound to root.
-            assert_eq!(buf.chunks[0], (*buf.chunks[0]).root);
-            // Exactly HUGE_MAX_SCAN huge chunks remain, each reset.
-            let mut count = 0usize;
-            let mut c = buf.chunks[1];
-            while !c.is_null() {
-                assert_eq!((*c).pushed_pos, 0);
-                count += 1;
-                c = (*c).next;
-            }
-            assert_eq!(count, HUGE_MAX_SCAN);
-
-            buf_free(&mut buf);
-            assert_eq!((*ator).current_size, 0);
         }
+        let ator = ator.as_mut_ptr();
+        let mut buf = make_buf(ator, true, true);
+
+        // Normal chunks plus more huge chunks than UFBXI_HUGE_MAX_SCAN.
+        unsafe {
+            let _ = push_size(&mut buf, 1, 100);
+        }
+        let huge = unsafe { (*ator).huge_size };
+        for i in 0..(HUGE_MAX_SCAN + 4) {
+            let p = unsafe { push_size(&mut buf, 1, huge + i) };
+            assert!(!p.is_null());
+        }
+        assert!(!buf.chunks[1].is_null());
+
+        unsafe {
+            buf_clear(&mut buf);
+        }
+        assert_eq!(buf.pos, 0);
+        assert_eq!(buf.num_items, 0);
+        assert_eq!(buf.pushed_size, 0);
+        // chunks[0] rewound to root.
+        assert_eq!(buf.chunks[0], unsafe { (*buf.chunks[0]).root });
+        // Exactly HUGE_MAX_SCAN huge chunks remain, each reset.
+        let mut count = 0usize;
+        let mut c = buf.chunks[1];
+        while !c.is_null() {
+            assert_eq!(unsafe { (*c).pushed_pos }, 0);
+            count += 1;
+            c = unsafe { (*c).next };
+        }
+        assert_eq!(count, HUGE_MAX_SCAN);
+
+        unsafe {
+            buf_free(&mut buf);
+        }
+        assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 }
