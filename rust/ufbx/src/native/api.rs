@@ -22,9 +22,9 @@ use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 
 use crate::generated::{
-    Error, Material, MaterialTexture, Matrix, OpenFileInfo, Prop, Props, Quat, RawOpenFileOpts,
-    RawOpenMemoryOpts, RawStream, Shader, ShaderBinding, ShaderPropBinding, Texture, Transform,
-    Vec3,
+    Element, ElementType, Error, Material, MaterialTexture, Matrix, OpenFileInfo, Prop, Props,
+    Quat, RawOpenFileOpts, RawOpenMemoryOpts, RawStream, RotationOrder, Shader, ShaderBinding,
+    ShaderPropBinding, ShaderTexture, ShaderTextureInput, Texture, Transform, Vec3,
 };
 use crate::native::allocator::{
     align_to_mask, alloc, free_ator, Allocator, CACHE_IMP_MAGIC, REFCOUNT_IMP_MAGIC,
@@ -40,11 +40,11 @@ use crate::native::io::{
 use crate::native::parse::{get_name_key, Refcount, SceneImp};
 use crate::native::platform::{
     add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
-    macro_lower_bound_eq, macro_upper_bound_eq, ufbx_assert, ufbxi_ignore,
+    macro_lower_bound_eq, macro_upper_bound_eq, math, ufbx_assert, ufbxi_ignore,
 };
 use crate::native::read::ref_ptr;
-use crate::native::scene_process::cmp_prop_less_ref;
-use crate::native::string_pool::{safe_string, str_equal, str_less};
+use crate::native::scene_process::{cmp_prop_less_ref, fetch_dst_element};
+use crate::native::string_pool::{safe_string, str_equal, str_less, DEG_TO_RAD_DOUBLE};
 use crate::prelude::{Blob, List, OpenFileContext, Real, String};
 
 // ufbx.c:30243-30247 `ufbxi_free_scene_imp`
@@ -416,6 +416,51 @@ pub(crate) unsafe fn find_bool_len(
     }
 }
 
+// ufbx.c:30692-30700 `ufbx_find_string_len`
+#[inline(never)]
+pub(crate) unsafe fn find_string_len(
+    props: *const Props,
+    name: *const u8,
+    name_len: usize,
+    def: String,
+) -> String {
+    let prop: *mut Prop = find_prop_len(props, name, name_len);
+    if !prop.is_null() {
+        (*prop).value_str
+    } else {
+        def
+    }
+}
+
+// ufbx.c:30702-30710 `ufbx_find_blob_len`
+// C has no `ufbxi_noinline` here (unlike `ufbx_find_string_len` above).
+pub(crate) unsafe fn find_blob_len(
+    props: *const Props,
+    name: *const u8,
+    name_len: usize,
+    def: Blob,
+) -> Blob {
+    let prop: *mut Prop = find_prop_len(props, name, name_len);
+    if !prop.is_null() {
+        (*prop).value_blob
+    } else {
+        def
+    }
+}
+
+// ufbx.c:30743-30748 `ufbx_get_prop_element`
+pub(crate) unsafe fn get_prop_element(
+    element: *const Element,
+    prop: *const Prop,
+    type_: ElementType,
+) -> *mut Element {
+    ufbx_assert!(!element.is_null() && !prop.is_null());
+    if element.is_null() || prop.is_null() {
+        return core::ptr::null_mut();
+    }
+    fetch_dst_element(element as *mut Element, false, (*prop).name.data, type_)
+}
+
 // ufbx.c:31414-31423 `ufbx_find_prop_texture_len`
 pub(crate) unsafe fn find_prop_texture_len(
     material: *const Material,
@@ -501,6 +546,173 @@ pub(crate) unsafe fn find_shader_prop_bindings_len(
     bindings
 }
 
+// ufbx.c:31463-31476 `ufbx_find_shader_texture_input_len`
+pub(crate) unsafe fn find_shader_texture_input_len(
+    shader: *const ShaderTexture,
+    name: *const u8,
+    name_len: usize,
+) -> *mut ShaderTextureInput {
+    let name_str: String = safe_string(name, name_len);
+
+    let mut index: usize = usize::MAX;
+    macro_lower_bound_eq::<ShaderTextureInput>(
+        4,
+        &mut index,
+        (*shader).inputs.data,
+        0,
+        (*shader).inputs.count,
+        |a| str_less((*a).name, name_str),
+        |a| str_equal((*a).name, name_str),
+    );
+
+    if index != usize::MAX {
+        return (*shader).inputs.data.add(index) as *mut ShaderTextureInput;
+    }
+
+    core::ptr::null_mut()
+}
+
+// ufbx.c:31554-31564 `ufbx_quat_rotate_vec3`
+// Ported ahead of its banner section because `ufbxi_mul_rotate` and friends
+// (ufbx.c:22695+, `native::scene_process`) call it.
+#[inline(never)]
+pub(crate) unsafe fn quat_rotate_vec3(q: Quat, v: Vec3) -> Vec3 {
+    let xy: Real = q.x * v.y - q.y * v.x;
+    let xz: Real = q.x * v.z - q.z * v.x;
+    let yz: Real = q.y * v.z - q.z * v.y;
+    // C: `ufbx_vec3 r;` — every field is written below before the return.
+    let mut r: Vec3 = core::mem::zeroed();
+    r.x = 2.0 * (q.w * yz + q.y * xy + q.z * xz) + v.x;
+    r.y = 2.0 * (-(q.x * xy) - q.w * xz + q.z * yz) + v.y;
+    r.z = 2.0 * (-(q.x * xz) - q.y * yz + q.w * xy) + v.z;
+    r
+}
+
+// ufbx.c:31566-31620 `ufbx_euler_to_quat`
+// Ported ahead of its banner section because `ufbxi_mul_rotate` /
+// `ufbxi_mul_inv_rotate` (ufbx.c:22695/22726, `native::scene_process`) call it.
+#[inline(never)]
+pub(crate) unsafe fn euler_to_quat(v: Vec3, order: RotationOrder) -> Quat {
+    let vx: f64 = v.x * (DEG_TO_RAD_DOUBLE * 0.5);
+    let vy: f64 = v.y * (DEG_TO_RAD_DOUBLE * 0.5);
+    let vz: f64 = v.z * (DEG_TO_RAD_DOUBLE * 0.5);
+    let cx: f64 = math::cos(vx);
+    let sx: f64 = math::sin(vx);
+    let cy: f64 = math::cos(vy);
+    let sy: f64 = math::sin(vy);
+    let cz: f64 = math::cos(vz);
+    let sz: f64 = math::sin(vz);
+    // C: `ufbx_quat q;` — every arm below writes all four fields.
+    let mut q: Quat = core::mem::zeroed();
+
+    // Generated by `misc/gen_rotation_order.py`
+    match order {
+        RotationOrder::Xyz => {
+            q.x = (-(cx * sy * sz) + cy * cz * sx) as Real;
+            q.y = (cx * cz * sy + cy * sx * sz) as Real;
+            q.z = (cx * cy * sz - cz * sx * sy) as Real;
+            q.w = (cx * cy * cz + sx * sy * sz) as Real;
+        }
+        RotationOrder::Xzy => {
+            q.x = (cx * sy * sz + cy * cz * sx) as Real;
+            q.y = (cx * cz * sy + cy * sx * sz) as Real;
+            q.z = (cx * cy * sz - cz * sx * sy) as Real;
+            q.w = (cx * cy * cz - sx * sy * sz) as Real;
+        }
+        RotationOrder::Yzx => {
+            q.x = (-(cx * sy * sz) + cy * cz * sx) as Real;
+            q.y = (cx * cz * sy - cy * sx * sz) as Real;
+            q.z = (cx * cy * sz + cz * sx * sy) as Real;
+            q.w = (cx * cy * cz + sx * sy * sz) as Real;
+        }
+        RotationOrder::Yxz => {
+            q.x = (-(cx * sy * sz) + cy * cz * sx) as Real;
+            q.y = (cx * cz * sy + cy * sx * sz) as Real;
+            q.z = (cx * cy * sz + cz * sx * sy) as Real;
+            q.w = (cx * cy * cz - sx * sy * sz) as Real;
+        }
+        RotationOrder::Zxy => {
+            q.x = (cx * sy * sz + cy * cz * sx) as Real;
+            q.y = (cx * cz * sy - cy * sx * sz) as Real;
+            q.z = (cx * cy * sz - cz * sx * sy) as Real;
+            q.w = (cx * cy * cz + sx * sy * sz) as Real;
+        }
+        RotationOrder::Zyx => {
+            q.x = (cx * sy * sz + cy * cz * sx) as Real;
+            q.y = (cx * cz * sy - cy * sx * sz) as Real;
+            q.z = (cx * cy * sz + cz * sx * sy) as Real;
+            q.w = (cx * cy * cz - sx * sy * sz) as Real;
+        }
+        _ => {
+            // C: `q.x = q.y = q.z = 0.0f; q.w = 1.0f;`
+            q.z = 0.0;
+            q.y = q.z;
+            q.x = q.y;
+            q.w = 1.0;
+        }
+    }
+
+    q
+}
+
+// ufbx.c:31749-31754 `ufbx_matrix_determinant`
+// Ported ahead of its banner section because `ufbx_matrix_for_normals` below
+// needs it.
+pub(crate) unsafe fn matrix_determinant(m: *const Matrix) -> Real {
+    -((*m).m02 * (*m).m11 * (*m).m20)
+        + (*m).m01 * (*m).m12 * (*m).m20
+        + (*m).m02 * (*m).m10 * (*m).m21
+        - (*m).m00 * (*m).m12 * (*m).m21
+        - (*m).m01 * (*m).m10 * (*m).m22
+        + (*m).m00 * (*m).m11 * (*m).m22
+}
+
+// ufbx.c:31784-31802 `ufbx_matrix_for_normals`
+// Ported ahead of its banner section because `ufbxi_modify_geometry`
+// (ufbx.c:21165, `native::scene_process`) calls it.
+#[inline(never)]
+pub(crate) unsafe fn matrix_for_normals(m: *const Matrix) -> Matrix {
+    let det: Real = matrix_determinant(m);
+    let det_sign: Real = if det >= 0.0 { 1.0 } else { -1.0 };
+
+    // C: `ufbx_matrix r;` — every field is written below before the return.
+    let mut r: Matrix = core::mem::zeroed();
+    r.m00 = (-((*m).m12 * (*m).m21) + (*m).m11 * (*m).m22) * det_sign;
+    r.m01 = ((*m).m12 * (*m).m20 - (*m).m10 * (*m).m22) * det_sign;
+    r.m02 = (-((*m).m11 * (*m).m20) + (*m).m10 * (*m).m21) * det_sign;
+    r.m10 = ((*m).m02 * (*m).m21 - (*m).m01 * (*m).m22) * det_sign;
+    r.m11 = (-((*m).m02 * (*m).m20) + (*m).m00 * (*m).m22) * det_sign;
+    r.m12 = ((*m).m01 * (*m).m20 - (*m).m00 * (*m).m21) * det_sign;
+    r.m20 = (-((*m).m02 * (*m).m11) + (*m).m01 * (*m).m12) * det_sign;
+    r.m21 = ((*m).m02 * (*m).m10 - (*m).m00 * (*m).m12) * det_sign;
+    r.m22 = (-((*m).m01 * (*m).m10) + (*m).m00 * (*m).m11) * det_sign;
+    // C: `r.m03 = r.m13 = r.m23 = 0.0f;`
+    r.m23 = 0.0;
+    r.m13 = r.m23;
+    r.m03 = r.m13;
+
+    r
+}
+
+// ufbx.c:31804-31814 `ufbx_transform_position`
+// Ported ahead of its banner section because `ufbxi_transform_vec3_list`
+// (ufbx.c:21049, `native::scene_process`) calls it.
+#[inline(never)]
+pub(crate) unsafe fn transform_position(m: *const Matrix, v: Vec3) -> Vec3 {
+    ufbx_assert!(!m.is_null());
+    if m.is_null() {
+        return ZERO_VEC3;
+    }
+
+    // C: `ufbx_vec3 r;` — every field is written below before the return,
+    // so the zero-fill is inert (upstream carries no `// ufbxi_uninit` marker).
+    let mut r: Vec3 = core::mem::zeroed();
+    r.x = (*m).m00 * v.x + (*m).m01 * v.y + (*m).m02 * v.z + (*m).m03;
+    r.y = (*m).m10 * v.x + (*m).m11 * v.y + (*m).m12 * v.z + (*m).m13;
+    r.z = (*m).m20 * v.x + (*m).m21 * v.y + (*m).m22 * v.z + (*m).m23;
+    r
+}
+
 // ufbx.c:31828-31852 `ufbx_transform_to_matrix`
 #[inline(never)]
 pub(crate) unsafe fn transform_to_matrix(t: *const Transform) -> Matrix {
@@ -558,6 +770,24 @@ pub(crate) unsafe fn find_int(props: *const Props, name: *const u8, def: i64) ->
 // ufbx.c:33146 `ufbx_find_bool`
 pub(crate) unsafe fn find_bool(props: *const Props, name: *const u8, def: bool) -> bool {
     find_bool_len(props, name, strlen(name), def)
+}
+
+// ufbx.c:33147 `ufbx_find_string`
+pub(crate) unsafe fn find_string(props: *const Props, name: *const u8, def: String) -> String {
+    find_string_len(props, name, strlen(name), def)
+}
+
+// ufbx.c:33148 `ufbx_find_blob`
+pub(crate) unsafe fn find_blob(props: *const Props, name: *const u8, def: Blob) -> Blob {
+    find_blob_len(props, name, strlen(name), def)
+}
+
+// ufbx.c:33160 `ufbx_find_shader_texture_input`
+pub(crate) unsafe fn find_shader_texture_input(
+    shader: *const ShaderTexture,
+    name: *const u8,
+) -> *mut ShaderTextureInput {
+    find_shader_texture_input_len(shader, name, strlen(name))
 }
 
 #[cfg(test)]

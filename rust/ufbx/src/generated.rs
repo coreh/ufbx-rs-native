@@ -1661,7 +1661,7 @@ pub struct ShaderTextureInput {
     pub texture: Option<Ref<Texture>>,
     pub texture_output_index: i64,
     pub texture_enabled: bool,
-    pub prop: Ref<Prop>,
+    pub prop: Option<Ref<Prop>>,
     pub texture_prop: Option<Ref<Prop>>,
     pub texture_enabled_prop: Option<Ref<Prop>>,
 }
@@ -1674,7 +1674,7 @@ pub struct ShaderTexture {
     pub inputs: List<ShaderTextureInput>,
     pub shader_source: String,
     pub raw_shader_source: Blob,
-    pub main_texture: Ref<Texture>,
+    pub main_texture: Option<Ref<Texture>>,
     pub main_texture_output_index: i64,
     pub prop_prefix: String,
 }

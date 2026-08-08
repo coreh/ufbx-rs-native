@@ -49,8 +49,81 @@
 //! `ufbxi_add_constraint_prop` (+ its `ufbxi_constraint_props` name table),
 //! `ufbxi_finalize_nurbs_basis`, `ufbxi_finalize_lod_group` and
 //! `ufbxi_push_prop_prefix`.
-//! DEFERRED from this unit: `ufbxi_generate_normals` (ufbx.c:20360-20403) —
-//! see the note at its C-order slot below.
+//! DEFERRED(topology) from this unit: `ufbxi_generate_normals`
+//! (ufbx.c:20364-20403) — see the note at its C-order slot below.
+//!
+//! SIXTH UNIT: ufbx.c:20429-20867 — the shader-texture and texture-file
+//! finalizers: `ufbxi_shader_texture_find_prefix` (the two-pass compound /
+//! pre-7000 property-prefix search), the `ufbxi_file_shader` quirk table,
+//! `ufbxi_update_shader_texture`, `ufbxi_finalize_shader_texture` (3ds Max
+//! ClassID / MaxTexture shader-type detection, the `uc->tmp_arr`-backed
+//! input list that is searched while it is being built, and the
+//! `ufbx_texture_file` promotion quirk), `ufbxi_propagate_main_textures`,
+//! the texture-file interning pair `ufbxi_insert_texture_file` /
+//! `ufbxi_pop_texture_files` and the `ufbxi_ordered_texture` comparators +
+//! `ufbxi_deduplicate_textures`.
+//!
+//! SEVENTH UNIT: ufbx.c:20869-21450 — `ufbxi_fetch_file_textures` (the
+//! `tmp_stack`-as-worklist two-visit walk over the texture graph that tolerates
+//! cycles via the compressed `ufbxi_file_texture_fetch_state` byte array and
+//! reuses `tmp_parse` as scratch for the two `ufbxi_deduplicate_textures`
+//! passes), the geometry-transform / vec3-list helpers
+//! (`ufbxi_get_geometry_transform_node`, `ufbxi_mirror_vec3_list`,
+//! `ufbxi_scale_vec3_list`, `ufbxi_transform_vec3_list`,
+//! `ufbxi_normalize_vec3_list`), the winding flip pair
+//! (`ufbxi_flip_attrib_winding` / `ufbxi_flip_winding` with its
+//! `index_mapping[-1] = UFBX_NO_INDEX` sentinel slot for edge endpoints),
+//! `ufbxi_postprocess_scene`, and the filename relativization trio
+//! `ufbxi_next_path_segment` / `ufbxi_absolute_to_relative_path` /
+//! `ufbxi_resolve_filenames`.
+//! DEFERRED from this unit: `ufbxi_modify_geometry` (ufbx.c:21165-21332) —
+//! cleared by the eighth unit below.
+//!
+//! EIGHTH UNIT: ufbx.c:21452-21638 — the last helpers `ufbxi_finalize_scene()`
+//! is built on: the `ufbxi_file_content` interning family
+//! (`ufbxi_file_content_less` + its paired `ufbxi_grow_array`/
+//! `ufbxi_stable_sort` wrapper, `ufbxi_push_file_content`,
+//! `ufbxi_fetch_file_content`'s pointer-identity `lower_bound` and
+//! `ufbxi_resolve_file_content`, which pushes every video/audio-clip blob onto
+//! `tmp_stack`, pops the run into `uc->tmp`, sorts it and then hands the
+//! deduplicated content back to the elements), `ufbxi_validate_indices`,
+//! `ufbxi_finalize_mesh_material` (the two-pass per-material face-index
+//! partition plus the `ufbxi_unstable_sort`ed usage order) and the
+//! `ufbxi_anim_imp` refcount record with `ufbxi_push_anim`.
+//! The same unit jumps the `ufbxi_finalize_scene` hole (ufbx.c:21640-22624, a
+//! single ~985-line function that gets its own unit) to port
+//! `// -- Interpret the read scene` in full (ufbx.c:22626-22741: the transform
+//! composition family `ufbxi_add_translate` … `ufbxi_mul_inv_rotate`) plus the
+//! head of `// -- Updating state from properties` (ufbx.c:22743-22784:
+//! `ufbxi_mirror_translation` / `ufbxi_mirror_rotation` /
+//! `ufbxi_get_geometry_transform`), which is what the deferred
+//! `ufbxi_modify_geometry` (ufbx.c:21165-21332, now ported at its C-order slot)
+//! was waiting on. Public leaves pulled forward for it: `ufbx_find_blob(_len)`,
+//! `ufbx_quat_rotate_vec3`, `ufbx_euler_to_quat`, `ufbx_matrix_determinant` and
+//! `ufbx_matrix_for_normals` in `native::api`; `ufbxi_matrix_all_zero`,
+//! `ufbxi_is_quat_identity`, `ufbxi_is_vec3_equal`, `ufbxi_is_quat_equal` and
+//! `ufbxi_is_transform_identity` fill the ufbx.c:11566-11607 gap in
+//! `native::parse`.
+//!
+//! NINTH UNIT: ufbx.c:21641-22624 — `ufbxi_finalize_scene` alone, the single
+//! ~985-line pass that materializes the public element graph: the
+//! `tmp_elements`/`tmp_element_offsets` byte blob turned into `ufbx_element*`
+//! pointers (with the `scale_helper` self-reference patched through
+//! `ufbxi_node_extra`), the per-type `tmp_typed_element_offsets` drained into
+//! the `elements_by_type[]` union view, the sorted `elements_by_name` table,
+//! the connection-driven node children/attribute hookup, the bind-pose bone
+//! filter, the skin vertex/weight prefix-sum build, the blend-channel full
+//! weights, the procedural zero/consecutive index buffers and the per-mesh
+//! material/deformer fetch, then the anim stack/layer/value/curve, shader,
+//! material, legacy LayerElement-texture, texture-file, display-layer,
+//! selection, constraint, audio and LOD passes and the closing metadata.
+//! Every `ufbxi_push*`/`ufbxi_buf_free` and every paired
+//! `ufbxi_grow_array`+sort inside it is allocation-observable, so the
+//! statement order is verbatim.
+//! DEFERRED(topology) from this unit: the `ufbxi_generate_normals` CALL SITE
+//! (ufbx.c:22062-22064) stays commented out until `// -- Topology` lands, so
+//! `ufbx_load_opts.generate_missing_normals` is a no-op until then — see the
+//! note at the mesh loop and at the function's C-order slot.
 #![allow(dead_code)]
 
 use core::ffi::c_void;
@@ -58,44 +131,62 @@ use core::mem::{size_of, MaybeUninit};
 use core::ptr;
 
 use crate::generated::{
-    AnimCurve, AnimLayer, AnimProp, AnimValue, BlendKeyframe, BlendMode, BlendShape, BonePose,
-    Connection, Constraint, ConstraintTarget, Element, ElementType, FileFormat,
-    GeometryTransformHandling, InheritMode, InheritModeHandling, LodDisplay, LodGroup, LodLevel,
-    Material, MaterialFbxMap, MaterialFbxMaps, MaterialFeature, MaterialFeatureInfo,
-    MaterialFeatures, MaterialMap, MaterialPbrMap, MaterialPbrMaps, MaterialTexture, NameElement,
-    Node, NurbsBasis, NurbsTopology, PivotHandling, Pose, Prop, PropFlags, PropType, Scene, Shader,
-    ShaderPropBinding, ShaderType, SkinDeformer, SkinVertex, SkinWeight, Texture, TextureLayer,
-    Vec3, Vec4, WarningType,
+    Anim, AnimCurve, AnimLayer, AnimProp, AnimStack, AnimValue, AudioClip, AudioLayer,
+    BlendChannel, BlendDeformer, BlendKeyframe, BlendMode, BlendShape, Bone, BonePose,
+    CacheDeformer, CacheFile, CacheFileFormat, Camera, ColorSet, Connection, Constraint,
+    ConstraintTarget, DisplayLayer, Edge, Element, ElementType, Error, Exporter, Face, FileFormat,
+    GeometryTransformHandling, IndexErrorHandling, InheritMode, InheritModeHandling, Light,
+    LineCurve, LodDisplay, LodGroup, LodLevel, Material, MaterialFbxMap, MaterialFbxMaps,
+    MaterialFeature, MaterialFeatureInfo, MaterialFeatures, MaterialMap, MaterialPbrMap,
+    MaterialPbrMaps, MaterialTexture, Matrix, Mesh, MeshPart, MirrorAxis, NameElement, Node,
+    NurbsBasis, NurbsCurve, NurbsSurface, NurbsTopology, PivotHandling, Pose, Prop, PropFlags,
+    PropType, Props, Quat, RotationOrder, Scene, SelectionNode, SelectionSet, Shader,
+    ShaderBinding, ShaderPropBinding, ShaderTexture, ShaderTextureInput, ShaderTextureType,
+    ShaderType, SkinCluster, SkinDeformer, SkinVertex, SkinWeight, SkinningMethod, SpaceConversion,
+    StereoCamera, Texture, TextureFile, TextureLayer, TextureType, Transform, UvSet, Vec3, Vec4,
+    Video, VoidList, WarningType,
 };
 use crate::native::allocator::grow_array;
 use crate::native::api::{
-    find_bool as api_find_bool, find_int_len as api_find_int_len, find_prop_len,
+    euler_to_quat, find_blob, find_bool as api_find_bool, find_int as api_find_int,
+    find_int_len as api_find_int_len, find_prop as api_find_prop, find_prop_len,
     find_prop_texture_len, find_real as api_find_real, find_real_len as api_find_real_len,
-    find_shader_prop_bindings_len, EMPTY_BLOB, EMPTY_STRING, IDENTITY_TRANSFORM, ZERO_VEC3,
+    find_shader_prop_bindings_len, find_shader_texture_input, find_shader_texture_input_len,
+    find_string, get_prop_element, matrix_for_normals, quat_rotate_vec3, transform_position,
+    transform_to_matrix, EMPTY_BLOB, EMPTY_STRING, IDENTITY_MATRIX, IDENTITY_TRANSFORM, ZERO_VEC3,
 };
-use crate::native::buf::{buf_free, pop, push, push_copy, push_peek, push_pop, push_zero};
+use crate::native::buf::{
+    buf_clear, buf_free, pop, push, push_copy, push_peek, push_pop, push_zero, Buf,
+};
 use crate::native::error::{
-    strcmp, ufbxi_check, ufbxi_check_msg, ufbxi_snprintf, Fail, EMPTY_CHAR,
+    memcmp, strcmp, ufbxi_check, ufbxi_check_err, ufbxi_check_msg, ufbxi_snprintf, Fail, EMPTY_CHAR,
 };
-use crate::native::hash::{hash64, map_find};
+use crate::native::hash::{hash64, hash_ptr, map_find, map_insert};
 use crate::native::parse::{
-    find_enum, find_prop_with_key, find_real, find_vec3, get_element_extra, get_name_key,
-    is_node_property_name, is_vec3_zero, is_vec4_zero, name_key_less, Context, FbxAttrEntry,
-    FbxIdEntry, TmpConnection, TmpMaterialTexture,
+    find_enum, find_int, find_prop, find_prop_with_key, find_real, find_vec3, get_element_extra,
+    get_name_key, is_node_property_name, is_quat_identity, is_transform_identity, is_vec3_zero,
+    is_vec4_zero, matrix_all_zero, name_key_less, Context, FbxAttrEntry, FbxIdEntry, FileContent,
+    MeshExtra, Refcount, TextureExtra, TextureFileEntry, TmpBonePose, TmpConnection,
+    TmpMaterialTexture, TmpMeshTexture, ELEMENT_TYPE_COUNT,
 };
 use crate::native::platform::{
     add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, macro_upper_bound_eq, math,
-    max32, max_sz, stable_sort, to_size, ufbx_assert, ufbxi_ignore, ufbxi_string_literal,
-    ufbxi_unreachable,
+    max32, max_sz, min32, min_sz, pack_version, stable_sort, to_size, ufbx_assert,
+    ufbxi_dev_assert, ufbxi_ignore, ufbxi_string_literal, ufbxi_unreachable, unstable_sort,
+    NO_INDEX,
 };
 use crate::native::read::{
-    deduplicate_properties, find_fbx_id, init_synthetic_vec3_prop, opt_ptr, opt_ref, ref_ptr,
-    setup_geometry_transform_helper, setup_scale_helper, sort_properties, NodeExtra,
+    deduplicate_properties, find_fbx_id, fix_index, init_synthetic_vec3_prop, mesh_part_add_face,
+    opt_ptr, opt_ref, ref_ptr, resolve_relative_filename, set_own_prop_vec3_uniform,
+    setup_geometry_transform_helper, setup_scale_helper, sort_properties, strblob_data,
+    strblob_length, strblob_set, update_vertex_first_index, NodeExtra, Strblob,
     SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
 };
-use crate::native::string_pool::{self as sp, add3, concat_str_cmp, neg3, str_cmp, str_less, sub3};
+use crate::native::string_pool::{
+    self as sp, add3, concat_str_cmp, neg3, normalize3, str_cmp, str_less, sub3,
+};
 use crate::native::warnings::ufbxi_warnf_tag;
-use crate::prelude::{List, Real, Ref, RefList, String};
+use crate::prelude::{Blob, List, Real, Ref, RefList, String};
 
 // -- Scene pre-processing (ufbx.c:18066-18543)
 
@@ -3975,14 +4066,15 @@ pub(crate) unsafe fn finalize_lod_group(uc: *mut Context, lod: *mut LodGroup) ->
     Ok(())
 }
 
-// DEFERRED: `ufbxi_generate_normals` (ufbx.c:20364-20403) — it calls the
+// DEFERRED(topology): `ufbxi_generate_normals` (ufbx.c:20364-20403) — it calls the
 // public topology entry points `ufbx_compute_topology`,
 // `ufbx_generate_normal_mapping` and `ufbx_compute_normals`
 // (ufbx.c:32477-32617), which sit in the not-yet-ported
 // `// -- Topology` banner section (`native::topology`). Port it here, in this
 // C-order slot, once that section lands. Its only caller is
-// `ufbxi_finalize_scene` (ufbx.c:21641), called at ufbx.c:22063, which is
-// itself unported.
+// `ufbxi_finalize_scene` (ufbx.c:21641), now ported below; the call at
+// ufbx.c:22062-22064 is carried there as a commented-out block to restore
+// together with this function.
 
 // ufbx.c:20405-20427 `ufbxi_push_prop_prefix`
 #[inline(never)]
@@ -4014,12 +4106,4313 @@ pub(crate) unsafe fn push_prop_prefix(
     Ok(())
 }
 
-// CONTINUATION POINT (milestone 7b): `// -- Scene processing` ported through
-// `ufbxi_push_prop_prefix` (ufbx.c:18997-20427). Next:
-// `ufbxi_shader_texture_find_prefix` (ufbx.c:20429) and the rest of the
-// shader-texture / texture-file finalization.
-// DEFERRED and still owed from this range: `ufbxi_generate_normals`
-// (ufbx.c:20364-20403) — see the note at its C-order slot above.
+// ufbx.c:20429-20478 `ufbxi_shader_texture_find_prefix`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn shader_texture_find_prefix(
+    uc: *mut Context,
+    texture: *mut Texture,
+    shader: *mut ShaderTexture,
+) -> Result<(), Fail> {
+    // C: `ufbx_string suffixes[3];` — uninitialized local (no upstream
+    // `// ufbxi_uninit` marker at ufbx.c:20431); only the first
+    // `num_suffixes` entries are ever written, and only those are read.
+    let mut suffixes_storage = MaybeUninit::<[String; 3]>::uninit();
+    let suffixes: *mut String = suffixes_storage.as_mut_ptr() as *mut String;
+    let mut num_suffixes: usize = 0;
+
+    *suffixes.add(num_suffixes) = sp::str_c(b" Parameters/Connections\0".as_ptr());
+    num_suffixes += 1;
+    if (*shader).shader_name.length > 0 {
+        *suffixes.add(num_suffixes) = (*shader).shader_name;
+        num_suffixes += 1;
+    }
+    *suffixes.add(num_suffixes) = sp::str_c(b"3dsMax|parameters\0".as_ptr());
+    num_suffixes += 1;
+
+    // C: `ufbx_assert(num_suffixes <= ufbxi_arraycount(suffixes));`
+    ufbx_assert!(num_suffixes <= 3);
+
+    // C: `ufbxi_for(ufbx_string, p_suffix, suffixes, num_suffixes)`
+    let mut p_suffix: *mut String = suffixes;
+    let p_suffix_end: *mut String = add_ptr(p_suffix, num_suffixes);
+    while p_suffix != p_suffix_end {
+        let suffix: String = *p_suffix;
+
+        // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
+        let mut prop: *mut Prop = (*texture).element.props.props.data as *mut Prop;
+        let prop_end: *mut Prop = add_ptr(prop, (*texture).element.props.props.count);
+        while prop != prop_end {
+            if (*prop).type_ != PropType::Compound {
+                prop = prop.add(1);
+                continue;
+            }
+            if sp::ends_with((*prop).name, suffix) {
+                push_prop_prefix(uc, &mut (*shader).prop_prefix, (*prop).name)?;
+                return Ok(());
+            }
+            prop = prop.add(1);
+        }
+        p_suffix = p_suffix.add(1);
+    }
+
+    // Pre-7000 files don't have explicit Compound properties, so let's look for
+    // any property that has the suffix before the last `|` ...
+    let mut p_suffix: *mut String = suffixes;
+    let p_suffix_end: *mut String = add_ptr(p_suffix, num_suffixes);
+    while p_suffix != p_suffix_end {
+        let suffix: String = *p_suffix;
+
+        // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
+        let mut prop: *mut Prop = (*texture).element.props.props.data as *mut Prop;
+        let prop_end: *mut Prop = add_ptr(prop, (*texture).element.props.props.count);
+        while prop != prop_end {
+            let mut name: String = (*prop).name;
+            while name.length > 0 {
+                if *name.data.add(name.length - 1) == b'|' {
+                    break;
+                }
+                name.length -= 1;
+            }
+            if name.length <= 1 {
+                prop = prop.add(1);
+                continue;
+            }
+            name.length -= 1;
+
+            if sp::ends_with(name, suffix) {
+                push_prop_prefix(uc, &mut (*shader).prop_prefix, name)?;
+                return Ok(());
+            }
+            prop = prop.add(1);
+        }
+        p_suffix = p_suffix.add(1);
+    }
+
+    Ok(())
+}
+
+// ufbx.c:20480-20484 `ufbxi_file_shader`
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct FileShader {
+    pub shader_id: u64,
+    pub shader_name: *const u8,
+    pub input_name: *const u8,
+}
+// The table below is immutable and its `const char *` members reference
+// immutable string literals, so sharing is sound (same rationale as
+// `ConstraintProp` above).
+unsafe impl Sync for FileShader {}
+
+// ufbx.c:20486-20494 `ufbxi_file_shaders`
+// Known shaders that represent sampled images.
+#[rustfmt::skip]
+static FILE_SHADERS: [FileShader; 6] = [
+    FileShader { shader_id: 0x7e73161fad53b12a, shader_name: b"ai_image\0".as_ptr(), input_name: b"filename\0".as_ptr() },
+    FileShader { shader_id: 0, shader_name: b"OSLBitmap\0".as_ptr(), input_name: sp::Filename.as_ptr() },
+    FileShader { shader_id: 0, shader_name: b"OSLBitmap2\0".as_ptr(), input_name: sp::Filename.as_ptr() },
+    FileShader { shader_id: 0, shader_name: b"OSLBitmap3\0".as_ptr(), input_name: sp::Filename.as_ptr() },
+    FileShader { shader_id: 0, shader_name: b"UberBitmap\0".as_ptr(), input_name: sp::Filename.as_ptr() },
+    FileShader { shader_id: 0, shader_name: b"UberBitmap2\0".as_ptr(), input_name: sp::Filename.as_ptr() },
+];
+
+// ufbx.c:20496-20535 `ufbxi_update_shader_texture`
+#[inline(never)]
+pub(crate) unsafe fn update_shader_texture(texture: *mut Texture, shader: *mut ShaderTexture) {
+    // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
+    let mut input: *mut ShaderTextureInput = (*shader).inputs.data as *mut ShaderTextureInput;
+    let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
+    while input != input_end {
+        // C: `ufbx_prop *prop = input->prop;`
+        let mut prop: *mut Prop = opt_ptr(&(*input).prop);
+        if !prop.is_null() {
+            prop = find_prop_len(
+                &(*texture).element.props,
+                (*prop).name.data,
+                (*prop).name.length,
+            );
+            (*input).prop = opt_ref(prop);
+            (*input).value_vec4 = (*prop).value_vec4;
+            (*input).value_int = (*prop).value_int;
+            (*input).value_str = (*prop).value_str;
+            (*input).value_blob = (*prop).value_blob;
+            (*input).texture = opt_ref(get_prop_element(
+                &(*texture).element,
+                opt_ptr(&(*input).prop),
+                ElementType::Texture,
+            ) as *mut Texture);
+        }
+
+        prop = opt_ptr(&(*input).texture_prop);
+        if !prop.is_null() {
+            prop = find_prop_len(
+                &(*texture).element.props,
+                (*prop).name.data,
+                (*prop).name.length,
+            );
+            (*input).texture_prop = opt_ref(prop);
+            let tex: *mut Texture =
+                get_prop_element(&(*texture).element, prop, ElementType::Texture) as *mut Texture;
+            if !tex.is_null() {
+                (*input).texture = opt_ref(tex);
+            }
+        }
+
+        (*input).texture_enabled = !opt_ptr(&(*input).texture).is_null();
+        prop = opt_ptr(&(*input).texture_enabled_prop);
+        if !prop.is_null() {
+            prop = find_prop_len(
+                &(*texture).element.props,
+                (*prop).name.data,
+                (*prop).name.length,
+            );
+            (*input).texture_enabled_prop = opt_ref(prop);
+            (*input).texture_enabled = (*prop).value_int != 0;
+        }
+        input = input.add(1);
+    }
+
+    if (*shader).type_ == ShaderTextureType::SelectOutput {
+        let map: *mut ShaderTextureInput =
+            find_shader_texture_input(shader, b"sourceMap\0".as_ptr());
+        let index: *mut ShaderTextureInput =
+            find_shader_texture_input(shader, b"outputChannelIndex\0".as_ptr());
+        if !index.is_null() {
+            (*shader).main_texture_output_index = (*index).value_int;
+        }
+        if !map.is_null() {
+            (*shader).main_texture = (*map).texture;
+            (*map).texture_output_index = (*shader).main_texture_output_index;
+        }
+    }
+}
+
+// Carrier for C's function-local `static const char *const ...[]` tables
+// (ufbx.c:20563-20569): the arrays are immutable and reference immutable string
+// literals, but a bare `*const u8` is not `Sync`, which a Rust `static`
+// requires (same rationale as `ShaderMapping` above).
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub(crate) struct CharPtr(pub *const u8);
+unsafe impl Sync for CharPtr {}
+
+// ufbx.h:2772 `UFBX_ENUM_TYPE(ufbx_shader_texture_type, UFBX_SHADER_TEXTURE_TYPE, UFBX_SHADER_TEXTURE_OSL);`
+// expanding via ufbx.h:235-236 to `enum { UFBX_SHADER_TEXTURE_TYPE_COUNT = UFBX_SHADER_TEXTURE_OSL + 1 }`.
+pub(crate) const SHADER_TEXTURE_TYPE_COUNT: u32 = ShaderTextureType::Osl as u32 + 1;
+
+// ufbx.c:20537-20690 `ufbxi_finalize_shader_texture`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn finalize_shader_texture(
+    uc: *mut Context,
+    texture: *mut Texture,
+) -> Result<(), Fail> {
+    let classid_a: u32 =
+        api_find_int(&(*texture).element.props, b"3dsMax|ClassIDa\0".as_ptr(), 0) as u64 as u32;
+    let classid_b: u32 =
+        api_find_int(&(*texture).element.props, b"3dsMax|ClassIDb\0".as_ptr(), 0) as u64 as u32;
+    let classid: u64 = (classid_a as u64) << 32 | classid_b as u64;
+
+    let max_texture: String = find_string(
+        &(*texture).element.props,
+        b"3dsMax|MaxTexture\0".as_ptr(),
+        EMPTY_STRING.0,
+    );
+
+    // Check first if the texture looks like it could be a shader.
+    // C: `ufbx_shader_texture_type type = (ufbx_shader_texture_type)UFBX_SHADER_TEXTURE_TYPE_COUNT;`
+    // — the sentinel is out of the enum's range, so it is carried as the raw
+    // `uint32_t` C stores and only transmuted once the range check passed.
+    let mut type_: u32 = SHADER_TEXTURE_TYPE_COUNT;
+
+    if strcmp(max_texture.data, b"MULTIOUTPUT_TO_OSLMap\0".as_ptr()) == 0
+        || classid == 0x896ef2fc44bd743f
+    {
+        type_ = ShaderTextureType::SelectOutput as u32;
+    } else if strcmp(max_texture.data, b"OSLMap\0".as_ptr()) == 0 || classid == 0x7f9a7b9d6fcdf00d {
+        type_ = ShaderTextureType::Osl as u32;
+    } else if (*texture).type_ == TextureType::File
+        && (*texture).relative_filename.length == 0
+        && (*texture).absolute_filename.length == 0
+        && opt_ptr(&(*texture).video).is_null()
+    {
+        type_ = ShaderTextureType::Unknown as u32;
+    }
+
+    if type_ == SHADER_TEXTURE_TYPE_COUNT {
+        return Ok(());
+    }
+
+    let shader: *mut ShaderTexture = push_zero(&mut (*uc).result, 1);
+    ufbxi_check!(uc, !shader.is_null(), "shader");
+
+    (*shader).type_ = core::mem::transmute::<u32, ShaderTextureType>(type_);
+
+    // C: `static const char *const name_props[] = { "3dsMax|params|OSLShaderName" };`
+    static NAME_PROPS: [CharPtr; 1] = [CharPtr(b"3dsMax|params|OSLShaderName\0".as_ptr())];
+
+    // C: `static const char *const source_props[] = { "3dsMax|params|OSLCode" };`
+    static SOURCE_PROPS: [CharPtr; 1] = [CharPtr(b"3dsMax|params|OSLCode\0".as_ptr())];
+
+    (*shader).shader_source.data = EMPTY_CHAR.as_ptr();
+    (*shader).shader_name.data = EMPTY_CHAR.as_ptr();
+
+    // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(name_props); i++)`
+    for i in 0..NAME_PROPS.len() {
+        let prop: *mut Prop = api_find_prop(&(*texture).element.props, NAME_PROPS[i].0);
+        if !prop.is_null() {
+            (*shader).shader_name = (*prop).value_str;
+            break;
+        }
+    }
+
+    // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(source_props); i++)`
+    for i in 0..SOURCE_PROPS.len() {
+        let prop: *mut Prop = api_find_prop(&(*texture).element.props, SOURCE_PROPS[i].0);
+        if !prop.is_null() {
+            (*shader).shader_source = (*prop).value_str;
+            (*shader).raw_shader_source = (*prop).value_blob;
+            break;
+        }
+    }
+
+    shader_texture_find_prefix(uc, texture, shader)?;
+
+    if (*shader).shader_name.length == 0 {
+        let mut name: String = (*shader).prop_prefix;
+        if sp::remove_suffix_c(&mut name, b" Parameters/Connections|\0".as_ptr()) {
+            let mut begin: usize = name.length;
+            while begin > 0 && *name.data.add(begin - 1) != b'|' {
+                begin -= 1;
+            }
+
+            (*shader).shader_name.data = name.data.add(begin);
+            (*shader).shader_name.length = name.length - begin;
+            sp::push_string_place_str(&mut (*uc).string_pool, &mut (*shader).shader_name, false)?;
+        }
+    }
+
+    if (*shader).shader_name.length == 0 {
+        if max_texture.length > 0 {
+            (*shader).shader_name = max_texture;
+        }
+    }
+
+    if classid != 0 {
+        (*shader).shader_type_id = classid;
+    }
+
+    if (*shader).prop_prefix.length == 0 {
+        // If we not find any shader properties so we might have guessed wrong.
+        // We "leak" (freed with scene) the shader in this case but it's negligible.
+        return Ok(());
+    }
+
+    // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
+    let mut prop: *mut Prop = (*texture).element.props.props.data as *mut Prop;
+    let prop_end: *mut Prop = add_ptr(prop, (*texture).element.props.props.count);
+    while prop != prop_end {
+        let mut name: String = (*prop).name;
+        if !sp::remove_prefix_str(&mut name, (*shader).prop_prefix) {
+            prop = prop.add(1);
+            continue;
+        }
+
+        // Check if this property is a modifier to an existing input.
+        let mut base_name: String = name;
+        if sp::remove_suffix_c(&mut base_name, b"_map\0".as_ptr())
+            || sp::remove_suffix_c(&mut base_name, b".shader\0".as_ptr())
+        {
+            let base: *mut ShaderTextureInput =
+                find_shader_texture_input_len(shader, base_name.data, base_name.length);
+            if !base.is_null() {
+                (*base).texture_prop = opt_ref(prop);
+                prop = prop.add(1);
+                continue;
+            }
+        } else if sp::remove_suffix_c(&mut base_name, b".connected\0".as_ptr())
+            || sp::remove_suffix_c(&mut base_name, b"Enabled\0".as_ptr())
+        {
+            let base: *mut ShaderTextureInput =
+                find_shader_texture_input_len(shader, base_name.data, base_name.length);
+            if !base.is_null() {
+                (*base).texture_enabled_prop = opt_ref(prop);
+                prop = prop.add(1);
+                continue;
+            }
+        }
+
+        // Use `uc->tmp_arr` to store the texture inputs so we can search them while we insert new ones.
+        ufbxi_check!(
+            uc,
+            grow_array::<u8>(
+                &mut (*uc).ator_tmp,
+                &mut (*uc).tmp_arr,
+                &mut (*uc).tmp_arr_size,
+                (*shader)
+                    .inputs
+                    .count
+                    .wrapping_add(1)
+                    .wrapping_mul(size_of::<ShaderTextureInput>()),
+            ),
+            "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, (shader->inputs.count + 1) * sizeof(ufbx_shader_texture_input))"
+        );
+        (*shader).inputs.data = (*uc).tmp_arr as *const ShaderTextureInput;
+
+        // Add a new property
+        // C: `ufbx_shader_texture_input *input = &shader->inputs.data[shader->inputs.count++];`
+        let input: *mut ShaderTextureInput =
+            ((*shader).inputs.data as *mut ShaderTextureInput).add((*shader).inputs.count);
+        (*shader).inputs.count += 1;
+        ptr::write_bytes(input, 0, 1);
+
+        // NOTE: This is a bit hackish, we are using a suffix of an interned string. It won't compare
+        // pointer equal to the same string but that shouldn't matter..
+        (*input).name = name;
+
+        // Connect the property only, values and textures etc are fetched in `ufbxi_update_shader_texture()`.
+        (*input).prop = opt_ref(prop);
+
+        prop = prop.add(1);
+    }
+
+    // Retain the shader inputs
+    (*shader).inputs.data = push_copy::<ShaderTextureInput>(
+        &mut (*uc).result,
+        (*shader).inputs.count,
+        (*shader).inputs.data,
+    );
+    ufbxi_check!(uc, !(*shader).inputs.data.is_null(), "shader->inputs.data");
+
+    (*texture).shader = opt_ref(shader);
+    (*texture).type_ = TextureType::Shader;
+    (*uc).scene.metadata.num_shader_textures += 1;
+
+    if !(*uc).opts.disable_quirks {
+        // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(ufbxi_file_shaders); i++)`
+        for i in 0..FILE_SHADERS.len() {
+            let fs: *const FileShader = &FILE_SHADERS[i];
+
+            if ((*fs).shader_id != 0 && (*shader).shader_type_id == (*fs).shader_id)
+                || strcmp((*shader).shader_name.data, (*fs).shader_name) == 0
+            {
+                let input: *mut ShaderTextureInput =
+                    find_shader_texture_input(shader, (*fs).input_name);
+                if !input.is_null() {
+                    // TODO: Support for specifying relative filename here if ever needed
+                    let prop: *mut Prop = opt_ptr(&(*input).prop);
+                    (*texture).absolute_filename = (*prop).value_str;
+                    (*texture).raw_absolute_filename = (*prop).value_blob;
+                    (*texture).type_ = TextureType::File;
+                    break;
+                }
+            }
+        }
+    }
+
+    update_shader_texture(texture, shader);
+
+    Ok(())
+}
+
+// ufbx.c:20692-20752 `ufbxi_propagate_main_textures`
+#[inline(never)]
+pub(crate) unsafe fn propagate_main_textures(scene: *mut Scene) {
+    // We need to do at least 2^(N-1) passes for N shader textures
+    let mut mask: usize = (*scene).metadata.num_shader_textures;
+    while mask != 0 {
+        mask >>= 1;
+
+        // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, scene->textures)`
+        let mut p_texture: *mut *mut Texture = (*scene).textures.data as *mut *mut Texture;
+        let p_texture_end: *mut *mut Texture = add_ptr(p_texture, (*scene).textures.count);
+        while p_texture != p_texture_end {
+            let texture: *mut Texture = *p_texture;
+            let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
+            if shader.is_null() {
+                p_texture = p_texture.add(1);
+                continue;
+            }
+
+            let main_tex: *mut Texture = opt_ptr(&(*shader).main_texture);
+            if main_tex.is_null() || (*shader).main_texture_output_index != 0 {
+                p_texture = p_texture.add(1);
+                continue;
+            }
+
+            let main_shader: *mut ShaderTexture = opt_ptr(&(*main_tex).shader);
+            if main_shader.is_null() || opt_ptr(&(*main_shader).main_texture).is_null() {
+                p_texture = p_texture.add(1);
+                continue;
+            }
+
+            (*shader).main_texture = (*main_shader).main_texture;
+            (*shader).main_texture_output_index = (*main_shader).main_texture_output_index;
+
+            p_texture = p_texture.add(1);
+        }
+    }
+
+    // Remove cyclic main textures
+    // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, scene->textures)`
+    let mut p_texture: *mut *mut Texture = (*scene).textures.data as *mut *mut Texture;
+    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, (*scene).textures.count);
+    while p_texture != p_texture_end {
+        let texture: *mut Texture = *p_texture;
+        let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
+        if shader.is_null()
+            || opt_ptr(&(*shader).main_texture).is_null()
+            || (*shader).main_texture_output_index != 0
+        {
+            p_texture = p_texture.add(1);
+            continue;
+        }
+        let main_tex: *mut Texture = opt_ptr(&(*shader).main_texture);
+        if !main_tex.is_null()
+            && !opt_ptr(&(*main_tex).shader).is_null()
+            && !opt_ptr(&(*opt_ptr(&(*main_tex).shader)).main_texture).is_null()
+        {
+            // Should have been propagated to `texture`
+            (*shader).main_texture = None;
+        }
+        p_texture = p_texture.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, scene->textures)`
+    let mut p_texture: *mut *mut Texture = (*scene).textures.data as *mut *mut Texture;
+    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, (*scene).textures.count);
+    while p_texture != p_texture_end {
+        let texture: *mut Texture = *p_texture;
+        let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
+        if shader.is_null() {
+            p_texture = p_texture.add(1);
+            continue;
+        }
+
+        // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
+        let mut input: *mut ShaderTextureInput = (*shader).inputs.data as *mut ShaderTextureInput;
+        let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
+        while input != input_end {
+            let input_texture: *mut Texture = opt_ptr(&(*input).texture);
+            if input_texture.is_null() || opt_ptr(&(*input_texture).shader).is_null() {
+                input = input.add(1);
+                continue;
+            }
+            let input_shader: *mut ShaderTexture = opt_ptr(&(*input_texture).shader);
+            if !opt_ptr(&(*input_shader).main_texture).is_null() {
+                (*input).texture = (*input_shader).main_texture;
+                (*input).texture_output_index = (*input_shader).main_texture_output_index;
+            }
+            input = input.add(1);
+        }
+
+        p_texture = p_texture.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_material, p_material, scene->materials)`
+    let mut p_material: *mut *mut Material = (*scene).materials.data as *mut *mut Material;
+    let p_material_end: *mut *mut Material = add_ptr(p_material, (*scene).materials.count);
+    while p_material != p_material_end {
+        let material: *mut Material = *p_material;
+
+        // C: `ufbxi_for_list(ufbx_material_texture, tex, material->textures)`
+        let mut tex: *mut MaterialTexture = (*material).textures.data as *mut MaterialTexture;
+        let tex_end: *mut MaterialTexture = add_ptr(tex, (*material).textures.count);
+        while tex != tex_end {
+            let shader: *mut ShaderTexture = opt_ptr(&(*ref_ptr(&(*tex).texture)).shader);
+            if !shader.is_null()
+                && !opt_ptr(&(*shader).main_texture).is_null()
+                && (*shader).main_texture_output_index == 0
+            {
+                // C: `tex->texture = shader->main_texture;` — `main_texture` is
+                // null-checked non-NULL just above, so the non-nullable
+                // `ufbx_material_texture.texture` stays valid.
+                (*tex).texture = Ref::from_ptr(opt_ptr(&(*shader).main_texture));
+            }
+            tex = tex.add(1);
+        }
+
+        p_material = p_material.add(1);
+    }
+}
+
+// ufbx.c:20754-20755 `#define ufbxi_patch_empty(m_dst, m_len, m_src)`
+macro_rules! patch_empty {
+    ($dst:expr, $len:ident, $src:expr) => {{
+        if $dst.$len == 0 {
+            $dst = $src;
+        }
+    }};
+}
+
+// ufbx.c:20757-20800 `ufbxi_insert_texture_file`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn insert_texture_file(
+    uc: *mut Context,
+    texture: *mut Texture,
+) -> Result<(), Fail> {
+    (*texture).file_index = NO_INDEX;
+
+    let mut key: *const u8 = ptr::null();
+
+    // HACK: Even the raw entries have a null terminator so we can offset the
+    // pointer by one for relative filenames. This guarantees that an overlapping
+    // absolute and relative filenames will get separate textures.
+    if (*texture).raw_absolute_filename.size > 0 {
+        key = (*texture).raw_absolute_filename.data;
+    } else if (*texture).raw_relative_filename.size > 0 {
+        key = (*texture).raw_relative_filename.data.add(1);
+    }
+
+    if key.is_null() {
+        return Ok(());
+    }
+    let hash: u32 = hash_ptr!(key);
+    let mut entry: *mut TextureFileEntry = map_find(
+        &mut (*uc).texture_file_map,
+        hash,
+        &key as *const *const u8 as *const c_void,
+    );
+    if entry.is_null() {
+        entry = map_insert(
+            &mut (*uc).texture_file_map,
+            hash,
+            &key as *const *const u8 as *const c_void,
+        );
+        ufbxi_check!(uc, !entry.is_null(), "entry");
+
+        let file: *mut TextureFile = push_zero(&mut (*uc).tmp, 1);
+        ufbxi_check!(uc, !file.is_null(), "file");
+
+        (*file).index = (*uc).texture_file_map.size - 1;
+
+        (*entry).key = key;
+        (*entry).file = file;
+    }
+
+    let file: *mut TextureFile = (*entry).file;
+    (*texture).file_index = (*file).index;
+    (*texture).has_file = true;
+    patch_empty!((*file).filename, length, (*texture).filename);
+    patch_empty!(
+        (*file).relative_filename,
+        length,
+        (*texture).relative_filename
+    );
+    patch_empty!(
+        (*file).absolute_filename,
+        length,
+        (*texture).absolute_filename
+    );
+    patch_empty!((*file).raw_filename, size, (*texture).raw_filename);
+    patch_empty!(
+        (*file).raw_relative_filename,
+        size,
+        (*texture).raw_relative_filename
+    );
+    patch_empty!(
+        (*file).raw_absolute_filename,
+        size,
+        (*texture).raw_absolute_filename
+    );
+    patch_empty!((*file).content, size, (*texture).content);
+
+    Ok(())
+}
+
+// ufbx.c:20802-20817 `ufbxi_pop_texture_files`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn pop_texture_files(uc: *mut Context) -> Result<(), Fail> {
+    let num_files: u32 = (*uc).texture_file_map.size;
+    let files: *mut TextureFile = push(&mut (*uc).result, num_files as usize);
+    ufbxi_check!(uc, !files.is_null(), "files");
+
+    (*uc).scene.texture_files.data = files;
+    (*uc).scene.texture_files.count = num_files as usize;
+
+    let entries: *mut TextureFileEntry = (*uc).texture_file_map.items as *mut TextureFileEntry;
+    for i in 0..num_files as usize {
+        ptr::copy_nonoverlapping((*entries.add(i)).file, files.add(i), 1);
+    }
+
+    Ok(())
+}
+
+// ufbx.c:20819-20822 `ufbxi_ordered_texture`
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct OrderedTexture {
+    pub texture: *mut Texture,
+    pub order: usize,
+}
+
+// ufbx.c:20824-20829 `ufbxi_ordered_texture_less_texture`
+#[inline(never)]
+pub(crate) unsafe extern "C" fn ordered_texture_less_texture(
+    user: *mut c_void,
+    va: *const c_void,
+    vb: *const c_void,
+) -> bool {
+    ufbxi_ignore!(user);
+    let a: *const OrderedTexture = va as *const OrderedTexture;
+    let b: *const OrderedTexture = vb as *const OrderedTexture;
+    (*a).texture < (*b).texture
+}
+
+// ufbx.c:20831-20836 `ufbxi_ordered_texture_less_order`
+#[inline(never)]
+pub(crate) unsafe extern "C" fn ordered_texture_less_order(
+    user: *mut c_void,
+    va: *const c_void,
+    vb: *const c_void,
+) -> bool {
+    ufbxi_ignore!(user);
+    let a: *const OrderedTexture = va as *const OrderedTexture;
+    let b: *const OrderedTexture = vb as *const OrderedTexture;
+    (*a).order < (*b).order
+}
+
+// ufbx.c:20838-20867 `ufbxi_deduplicate_textures`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn deduplicate_textures(
+    uc: *mut Context,
+    dst_buf: *mut Buf,
+    p_dst: *mut *mut OrderedTexture,
+    p_dst_count: *mut usize,
+    count: usize,
+) -> Result<(), Fail> {
+    let textures: *mut OrderedTexture = push_pop(dst_buf, &mut (*uc).tmp_stack, count);
+    ufbxi_check!(uc, !textures.is_null(), "textures");
+
+    ufbxi_check!(
+        uc,
+        grow_array::<u8>(
+            &mut (*uc).ator_tmp,
+            &mut (*uc).tmp_arr,
+            &mut (*uc).tmp_arr_size,
+            count.wrapping_mul(size_of::<OrderedTexture>()),
+        ),
+        "ufbxi_grow_array(&uc->ator_tmp, &uc->tmp_arr, &uc->tmp_arr_size, count * sizeof(ufbxi_ordered_texture))"
+    );
+
+    stable_sort(
+        size_of::<OrderedTexture>(),
+        16,
+        textures as *mut c_void,
+        (*uc).tmp_arr as *mut c_void,
+        count,
+        ordered_texture_less_texture,
+        ptr::null_mut(),
+    );
+
+    // Remove adjacent duplicates
+    let mut dst_ix: usize = 0;
+    for src_ix in 0..count {
+        if src_ix > 0 && (*textures.add(src_ix - 1)).texture == (*textures.add(src_ix)).texture {
+            continue;
+        } else {
+            if src_ix != dst_ix {
+                *textures.add(dst_ix) = *textures.add(src_ix);
+            }
+            dst_ix += 1;
+        }
+    }
+
+    let new_count: usize = dst_ix;
+    stable_sort(
+        size_of::<OrderedTexture>(),
+        16,
+        textures as *mut c_void,
+        (*uc).tmp_arr as *mut c_void,
+        new_count,
+        ordered_texture_less_order,
+        ptr::null_mut(),
+    );
+
+    *p_dst_count = new_count;
+    *p_dst = textures;
+
+    Ok(())
+}
+
+// ufbx.c:20869-20873 `ufbxi_file_texture_fetch_state`
+// C-parity: the states are stored "compressed" into a `uint8_t` array and read
+// back through an explicit `(ufbxi_file_texture_fetch_state)` cast, so the port
+// keeps plain integer constants and compares the widened byte rather than
+// introducing a Rust `enum` (which would need a fallible transmute the C never
+// performs).
+pub(crate) const FILE_TEXTURE_FETCH_INITIAL: u32 = 0;
+pub(crate) const FILE_TEXTURE_FETCH_STARTED: u32 = 1;
+pub(crate) const FILE_TEXTURE_FETCH_FINISHED: u32 = 2;
+
+// Populate `ufbx_texture.file_textures[]` arrays.
+// ufbx.c:20875-21007 `ufbxi_fetch_file_textures`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn fetch_file_textures(uc: *mut Context) -> Result<(), Fail> {
+    // We keep pointers to `ufbx_texture` in `tmp_stack` as a working set, since we don't know
+    // how deep the shader graphs might be.
+
+    // Start by pushing all the textures into the stack
+    let mut num_stack_textures: usize = (*uc).scene.textures.count;
+    ufbxi_check!(
+        uc,
+        !push_copy::<*mut Texture>(
+            &mut (*uc).tmp_stack,
+            num_stack_textures,
+            (*uc).scene.textures.data as *const *mut Texture,
+        )
+        .is_null(),
+        "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (num_stack_textures), (uc->scene.textures.data)))"
+    );
+
+    // Compressed `ufbxi_file_texture_fetch_state`
+    let states: *mut u8 = push_zero(&mut (*uc).tmp, (*uc).scene.textures.count);
+    ufbxi_check!(uc, !states.is_null(), "states");
+
+    // C: `while (num_stack_textures-- > 0)` — the post-decrement runs on every
+    // evaluation of the condition, including the final failing one, so the
+    // counter wraps to `SIZE_MAX` on the way out (dead after the loop).
+    loop {
+        let loop_cond: bool = num_stack_textures > 0;
+        num_stack_textures = num_stack_textures.wrapping_sub(1);
+        if !loop_cond {
+            break;
+        }
+
+        let mut texture: *mut Texture = ptr::null_mut();
+        pop::<*mut Texture>(&mut (*uc).tmp_stack, 1, &mut texture);
+
+        let state: u32 = *states.add((*texture).element.typed_id as usize) as u32;
+        if state == FILE_TEXTURE_FETCH_FINISHED {
+            continue;
+        }
+        let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
+
+        if state == FILE_TEXTURE_FETCH_STARTED {
+            *states.add((*texture).element.typed_id as usize) = FILE_TEXTURE_FETCH_FINISHED as u8;
+
+            // HACK: Reuse `tmp_parse` for storing intermediate information as we can clear it.
+            buf_clear(&mut (*uc).tmp_parse);
+
+            // Now all non-cyclical dependents should be processed.
+            let mut num_deps: usize = 0;
+
+            if (*texture).type_ == TextureType::File {
+                let dst: *mut OrderedTexture = push(&mut (*uc).tmp_stack, 1);
+                ufbxi_check!(uc, !dst.is_null(), "dst");
+                (*dst).texture = texture;
+                (*dst).order = num_deps;
+                num_deps += 1;
+            }
+
+            // C: `ufbxi_for_list(ufbx_texture_layer, layer, texture->layers)`
+            let mut layer: *mut TextureLayer = (*texture).layers.data as *mut TextureLayer;
+            let layer_end: *mut TextureLayer = add_ptr(layer, (*texture).layers.count);
+            while layer != layer_end {
+                let dep_tex: *mut Texture = ref_ptr(&(*layer).texture);
+                if (*dep_tex).file_textures.count > 0 {
+                    let dst: *mut OrderedTexture = push(&mut (*uc).tmp_stack, 1);
+                    ufbxi_check!(uc, !dst.is_null(), "dst");
+                    (*dst).texture = dep_tex;
+                    (*dst).order = num_deps;
+                    num_deps += 1;
+                }
+                layer = layer.add(1);
+            }
+
+            if !shader.is_null() {
+                // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
+                let mut input: *mut ShaderTextureInput =
+                    (*shader).inputs.data as *mut ShaderTextureInput;
+                let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
+                while input != input_end {
+                    let dep_tex: *mut Texture = opt_ptr(&(*input).texture);
+                    if !dep_tex.is_null() && (*dep_tex).file_textures.count > 0 {
+                        let dst: *mut OrderedTexture = push(&mut (*uc).tmp_stack, 1);
+                        ufbxi_check!(uc, !dst.is_null(), "dst");
+                        (*dst).texture = dep_tex;
+                        (*dst).order = num_deps;
+                        num_deps += 1;
+                    }
+                    input = input.add(1);
+                }
+            }
+
+            // Deduplicate the direct dependencies first
+            // C: `ufbxi_ordered_texture *deps;` — `ufbxi_deduplicate_textures`
+            // writes it before the first read (no `// ufbxi_uninit` marker
+            // upstream), so the port keeps it genuinely uninitialized.
+            let mut deps: MaybeUninit<*mut OrderedTexture> = MaybeUninit::uninit();
+            deduplicate_textures(
+                uc,
+                &mut (*uc).tmp_parse,
+                deps.as_mut_ptr(),
+                &mut num_deps,
+                num_deps,
+            )?;
+            let deps: *mut OrderedTexture = deps.assume_init();
+
+            if num_deps == 1 {
+                // If we have only a single dependency (that is not the same one) we can just copy the pointer
+                // C: struct assignment is a memcpy; `RefList<T>` is not `Copy`,
+                // so the two ABI fields are copied individually (and the source
+                // may alias the destination when a texture depends on itself,
+                // which rules out `copy_nonoverlapping`).
+                let src: *const RefList<Texture> =
+                    ptr::addr_of!((*(*deps.add(0)).texture).file_textures);
+                (*texture).file_textures.data = (*src).data;
+                (*texture).file_textures.count = (*src).count;
+            } else {
+                // Now collect all the file textures and deduplicate them
+                let mut num_files: usize = 0;
+                // C: `ufbxi_for(ufbxi_ordered_texture, dep, deps, num_deps)`
+                let mut dep: *mut OrderedTexture = deps;
+                let dep_end: *mut OrderedTexture = add_ptr(dep, num_deps);
+                while dep != dep_end {
+                    // C: `ufbxi_for_ptr_list(ufbx_texture, p_tex, dep->texture->file_textures)`
+                    let mut p_tex: *mut *mut Texture =
+                        (*(*dep).texture).file_textures.data as *mut *mut Texture;
+                    let p_tex_end: *mut *mut Texture =
+                        add_ptr(p_tex, (*(*dep).texture).file_textures.count);
+                    while p_tex != p_tex_end {
+                        let dst: *mut OrderedTexture = push(&mut (*uc).tmp_stack, 1);
+                        ufbxi_check!(uc, !dst.is_null(), "dst");
+                        (*dst).texture = *p_tex;
+                        (*dst).order = num_files;
+                        num_files += 1;
+                        p_tex = p_tex.add(1);
+                    }
+                    dep = dep.add(1);
+                }
+
+                // Deduplicate the file textures
+                let mut files: MaybeUninit<*mut OrderedTexture> = MaybeUninit::uninit();
+                deduplicate_textures(
+                    uc,
+                    &mut (*uc).tmp_parse,
+                    files.as_mut_ptr(),
+                    &mut num_files,
+                    num_files,
+                )?;
+                let files: *mut OrderedTexture = files.assume_init();
+
+                (*texture).file_textures.count = num_files;
+                (*texture).file_textures.data =
+                    push::<*mut Texture>(&mut (*uc).result, num_files) as *const Ref<Texture>;
+                ufbxi_check!(
+                    uc,
+                    !(*texture).file_textures.data.is_null(),
+                    "texture->file_textures.data"
+                );
+
+                for i in 0..num_files {
+                    *((*texture).file_textures.data as *mut *mut Texture).add(i) =
+                        (*files.add(i)).texture;
+                }
+            }
+        } else {
+            if (*texture).type_ == TextureType::File {
+                // Simple case: Just point to self
+                (*texture).file_textures.count = 1;
+                (*texture).file_textures.data =
+                    push::<*mut Texture>(&mut (*uc).result, 1) as *const Ref<Texture>;
+                ufbxi_check!(
+                    uc,
+                    !(*texture).file_textures.data.is_null(),
+                    "texture->file_textures.data"
+                );
+                *((*texture).file_textures.data as *mut *mut Texture).add(0) = texture;
+
+                // In simple cases we can quit here, for more complex file textures queue
+                // the texture in case there are other file textures as inputs.
+                if opt_ptr(&(*texture).shader).is_null() {
+                    *states.add((*texture).element.typed_id as usize) =
+                        FILE_TEXTURE_FETCH_FINISHED as u8;
+                    continue;
+                }
+            }
+
+            // Complex: Process all dependencies first
+            *states.add((*texture).element.typed_id as usize) = FILE_TEXTURE_FETCH_STARTED as u8;
+
+            // Push self first so we can return after processing dependencies
+            ufbxi_check!(
+                uc,
+                !push_copy::<*mut Texture>(&mut (*uc).tmp_stack, 1, &texture).is_null(),
+                "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (1), (&texture)))"
+            );
+            num_stack_textures += 1;
+
+            // C: `ufbxi_for_list(ufbx_texture_layer, layer, texture->layers)`
+            let mut layer: *mut TextureLayer = (*texture).layers.data as *mut TextureLayer;
+            let layer_end: *mut TextureLayer = add_ptr(layer, (*texture).layers.count);
+            while layer != layer_end {
+                ufbxi_check!(
+                    uc,
+                    !push_copy::<*mut Texture>(
+                        &mut (*uc).tmp_stack,
+                        1,
+                        &(*layer).texture as *const Ref<Texture> as *const *mut Texture,
+                    )
+                    .is_null(),
+                    "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (1), (&layer->texture)))"
+                );
+                num_stack_textures += 1;
+                layer = layer.add(1);
+            }
+
+            if !shader.is_null() {
+                // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
+                let mut input: *mut ShaderTextureInput =
+                    (*shader).inputs.data as *mut ShaderTextureInput;
+                let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
+                while input != input_end {
+                    if !opt_ptr(&(*input).texture).is_null() {
+                        ufbxi_check!(
+                            uc,
+                            !push_copy::<*mut Texture>(
+                                &mut (*uc).tmp_stack,
+                                1,
+                                &(*input).texture as *const Option<Ref<Texture>>
+                                    as *const *mut Texture,
+                            )
+                            .is_null(),
+                            "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (1), (&input->texture)))"
+                        );
+                        num_stack_textures += 1;
+                    }
+                    input = input.add(1);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ufbx.c:21009-21016 `ufbxi_get_geometry_transform_node`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn get_geometry_transform_node(element: *mut Element) -> *mut Node {
+    if (*element).instances.count == 1 {
+        let node: *mut Node = ref_ptr((*element).instances.data.add(0));
+        if (*node).has_geometry_transform {
+            return node;
+        }
+    }
+    ptr::null_mut()
+}
+
+// ufbx.c:21018-21031 `ufbxi_mirror_vec3_list`
+#[inline(never)]
+pub(crate) unsafe fn mirror_vec3_list(v_list: *const c_void, axis: MirrorAxis, stride: usize) {
+    let mut stride: usize = stride;
+    let list: *const VoidList = v_list as *const VoidList;
+    if axis == MirrorAxis::None || list.is_null() || (*list).count == 0 {
+        return;
+    }
+    if stride == 0 {
+        stride = size_of::<Vec3>();
+    }
+
+    // C: `(char*)list->data + (size_t)((int)axis - 1) * sizeof(ufbx_real)` —
+    // the enum is narrowed to `int` before the subtraction, and `axis` is
+    // 1..=3 here because `UFBX_MIRROR_AXIS_NONE` returned above.
+    let mut p: *mut u8 = ((*list).data as *mut u8)
+        .wrapping_add(((axis as i32 - 1) as usize).wrapping_mul(size_of::<Real>()));
+    let end: *mut u8 = p.wrapping_add((*list).count.wrapping_mul(stride));
+    while p != end {
+        let v: *mut Real = p as *mut Real;
+        *v = -*v;
+        p = p.wrapping_add(stride);
+    }
+}
+
+// ufbx.c:21033-21047 `ufbxi_scale_vec3_list`
+#[inline(never)]
+pub(crate) unsafe fn scale_vec3_list(v_list: *const c_void, scale: Real, stride: usize) {
+    let mut stride: usize = stride;
+    let list: *const VoidList = v_list as *const VoidList;
+    if list.is_null() || (*list).count == 0 {
+        return;
+    }
+    if stride == 0 {
+        stride = size_of::<Vec3>();
+    }
+
+    let mut p: *mut u8 = (*list).data as *mut u8;
+    let end: *mut u8 = p.wrapping_add((*list).count.wrapping_mul(stride));
+    while p != end {
+        let v: *mut Vec3 = p as *mut Vec3;
+        (*v).x *= scale;
+        (*v).y *= scale;
+        (*v).z *= scale;
+        p = p.wrapping_add(stride);
+    }
+}
+
+// ufbx.c:21049-21061 `ufbxi_transform_vec3_list`
+#[inline(never)]
+pub(crate) unsafe fn transform_vec3_list(
+    v_list: *const c_void,
+    matrix: *const Matrix,
+    stride: usize,
+) {
+    let mut stride: usize = stride;
+    let list: *const VoidList = v_list as *const VoidList;
+    if list.is_null() || (*list).count == 0 {
+        return;
+    }
+    if stride == 0 {
+        stride = size_of::<Vec3>();
+    }
+
+    let mut p: *mut u8 = (*list).data as *mut u8;
+    let end: *mut u8 = p.wrapping_add((*list).count.wrapping_mul(stride));
+    while p != end {
+        let v: *mut Vec3 = p as *mut Vec3;
+        *v = transform_position(matrix, *v);
+        p = p.wrapping_add(stride);
+    }
+}
+
+// ufbx.c:21063-21068 `ufbxi_normalize_vec3_list`
+#[inline(never)]
+pub(crate) unsafe fn normalize_vec3_list(list: *const List<Vec3>) {
+    // C: `ufbxi_nounroll ufbxi_for_list(ufbx_vec3, normal, *list)` — the
+    // no-unroll pragma is optimizer-only and has no Rust analogue.
+    let mut normal: *mut Vec3 = (*list).data as *mut Vec3;
+    let normal_end: *mut Vec3 = add_ptr(normal, (*list).count);
+    while normal != normal_end {
+        *normal = normalize3(*normal);
+        normal = normal.add(1);
+    }
+}
+
+// ufbx.c:21070-21071 forward declaration of `ufbxi_get_geometry_transform`
+// (defined at ufbx.c:22758-22784, in the `// -- Updating state from
+// properties` banner that this same module owns; ported below at its C-order
+// slot). The declaration exists in C only so that `ufbxi_modify_geometry`
+// (ufbx.c:21165-21332, ported below) can call it; Rust needs no forward
+// declaration, so this comment is the whole port of it.
+// C comment: `// Forward declare as we're kind of preprocessing ata here that
+// would usually happen later.`
+
+// ufbx.c:21073-21107 `ufbxi_flip_attrib_winding`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn flip_attrib_winding(
+    uc: *mut Context,
+    mesh: *mut Mesh,
+    indices: *mut List<u32>,
+    is_position: bool,
+) -> Result<(), Fail> {
+    // All zero, no flipping needed
+    if (*indices).data == (*uc).zero_indices || (*indices).count == 0 {
+        return Ok(());
+    }
+
+    if (*indices).data == (*mesh).vertex_position.indices.data && !is_position {
+        // Sharing indices with vertex position, already flipped.
+        return Ok(());
+    } else if (*indices).data == (*uc).consecutive_indices {
+        // Need to duplicate consecutive indices, but we can cache the per mesh.
+        if !(*uc).tmp_mesh_consecutive_indices.is_null() {
+            (*indices).data = (*uc).tmp_mesh_consecutive_indices;
+            return Ok(());
+        }
+        (*indices).data = push_copy::<u32>(&mut (*uc).result, (*indices).count, (*indices).data);
+        ufbxi_check!(uc, !(*indices).data.is_null(), "indices->data");
+        (*uc).tmp_mesh_consecutive_indices = (*indices).data as *mut u32;
+    }
+
+    let data: *mut u32 = (*indices).data as *mut u32;
+    // C: `ufbxi_for_list(ufbx_face, face, mesh->faces)`
+    let mut face: *mut Face = (*mesh).faces.data as *mut Face;
+    let face_end: *mut Face = add_ptr(face, (*mesh).faces.count);
+    while face != face_end {
+        if (*face).num_indices == 0 {
+            face = face.add(1);
+            continue;
+        }
+        // C: both sums are `unsigned int` arithmetic (wrapping) before the
+        // widening to `size_t`.
+        let mut begin: usize = (*face).index_begin.wrapping_add(1) as usize;
+        let mut end: usize = (*face)
+            .index_begin
+            .wrapping_add((*face).num_indices)
+            .wrapping_sub(1) as usize;
+        while begin < end {
+            let tmp: u32 = *data.add(begin);
+            *data.add(begin) = *data.add(end);
+            *data.add(end) = tmp;
+            begin += 1;
+            end -= 1;
+        }
+        face = face.add(1);
+    }
+
+    Ok(())
+}
+
+// ufbx.c:21109-21163 `ufbxi_flip_winding`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn flip_winding(uc: *mut Context, mesh: *mut Mesh) -> Result<(), Fail> {
+    (*uc).tmp_mesh_consecutive_indices = ptr::null_mut();
+    flip_attrib_winding(
+        uc,
+        mesh,
+        ptr::addr_of_mut!((*mesh).vertex_position.indices),
+        true,
+    )?;
+    flip_attrib_winding(
+        uc,
+        mesh,
+        ptr::addr_of_mut!((*mesh).vertex_normal.indices),
+        false,
+    )?;
+    flip_attrib_winding(
+        uc,
+        mesh,
+        ptr::addr_of_mut!((*mesh).vertex_crease.indices),
+        false,
+    )?;
+    if (*mesh).uv_sets.count > 0 {
+        // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
+        let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
+        let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
+        while set != set_end {
+            flip_attrib_winding(uc, mesh, ptr::addr_of_mut!((*set).vertex_uv.indices), false)?;
+            flip_attrib_winding(
+                uc,
+                mesh,
+                ptr::addr_of_mut!((*set).vertex_tangent.indices),
+                false,
+            )?;
+            flip_attrib_winding(
+                uc,
+                mesh,
+                ptr::addr_of_mut!((*set).vertex_bitangent.indices),
+                false,
+            )?;
+            set = set.add(1);
+        }
+        // C: struct assignment (memcpy) of the vertex-attribute headers; the
+        // `Vertex*` structs are not `Copy` in the generated bindings, so the
+        // copy is spelled as a byte-identical `copy_nonoverlapping`.
+        ptr::copy_nonoverlapping(
+            ptr::addr_of!((*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_uv),
+            ptr::addr_of_mut!((*mesh).vertex_uv),
+            1,
+        );
+        ptr::copy_nonoverlapping(
+            ptr::addr_of!((*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_bitangent),
+            ptr::addr_of_mut!((*mesh).vertex_bitangent),
+            1,
+        );
+        ptr::copy_nonoverlapping(
+            ptr::addr_of!((*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_tangent),
+            ptr::addr_of_mut!((*mesh).vertex_tangent),
+            1,
+        );
+    }
+    if (*mesh).color_sets.count > 0 {
+        // C: `ufbxi_for_list(ufbx_color_set, set, mesh->color_sets)`
+        let mut set: *mut ColorSet = (*mesh).color_sets.data as *mut ColorSet;
+        let set_end: *mut ColorSet = add_ptr(set, (*mesh).color_sets.count);
+        while set != set_end {
+            flip_attrib_winding(
+                uc,
+                mesh,
+                ptr::addr_of_mut!((*set).vertex_color.indices),
+                false,
+            )?;
+            set = set.add(1);
+        }
+        ptr::copy_nonoverlapping(
+            ptr::addr_of!((*((*mesh).color_sets.data as *mut ColorSet).add(0)).vertex_color),
+            ptr::addr_of_mut!((*mesh).vertex_color),
+            1,
+        );
+    }
+    flip_attrib_winding(
+        uc,
+        mesh,
+        ptr::addr_of_mut!((*mesh).skinned_position.indices),
+        false,
+    )?;
+    if (*mesh).skinned_normal.indices.data != (*mesh).vertex_normal.indices.data {
+        flip_attrib_winding(
+            uc,
+            mesh,
+            ptr::addr_of_mut!((*mesh).skinned_normal.indices),
+            false,
+        )?;
+    }
+
+    update_vertex_first_index(mesh);
+
+    // Mapping from old index values to flipped ones, reserve index -1
+    // (aka `UFBX_NO_INDEX`) for itself.
+    if (*mesh).edges.count > 0 {
+        ufbxi_check!(
+            uc,
+            grow_array::<u8>(
+                &mut (*uc).ator_tmp,
+                &mut (*uc).tmp_arr,
+                &mut (*uc).tmp_arr_size,
+                (*mesh).num_indices.wrapping_add(1).wrapping_mul(size_of::<u32>()),
+            ),
+            "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), ((mesh->num_indices + 1) * sizeof(uint32_t)))"
+        );
+        let index_mapping: *mut u32 = ((*uc).tmp_arr as *mut u32).add(1);
+        *index_mapping.offset(-1) = NO_INDEX;
+        // C: `ufbxi_for_list(ufbx_face, face, mesh->faces)`
+        let mut face: *mut Face = (*mesh).faces.data as *mut Face;
+        let face_end: *mut Face = add_ptr(face, (*mesh).faces.count);
+        while face != face_end {
+            if (*face).num_indices == 0 {
+                face = face.add(1);
+                continue;
+            }
+            let begin: u32 = (*face).index_begin;
+            let count: u32 = (*face).num_indices.wrapping_sub(1);
+            *index_mapping.add(begin as usize) = begin;
+            let mut i: u32 = 0;
+            while i < count {
+                *index_mapping.add(begin.wrapping_add(1).wrapping_add(i) as usize) =
+                    begin.wrapping_add(count).wrapping_sub(i);
+                i += 1;
+            }
+            face = face.add(1);
+        }
+
+        // C: `ufbxi_for_list(ufbx_edge, p_edge, mesh->edges)`
+        let mut p_edge: *mut Edge = (*mesh).edges.data as *mut Edge;
+        let p_edge_end: *mut Edge = add_ptr(p_edge, (*mesh).edges.count);
+        while p_edge != p_edge_end {
+            // C-parity: the `(int32_t)` casts are load-bearing — a
+            // `UFBX_NO_INDEX` endpoint indexes `index_mapping[-1]`, the slot
+            // reserved above.
+            let a: u32 = *index_mapping.offset((*p_edge).a as i32 as isize);
+            let b: u32 = *index_mapping.offset((*p_edge).b as i32 as isize);
+            (*p_edge).a = b;
+            (*p_edge).b = a;
+            p_edge = p_edge.add(1);
+        }
+    }
+
+    Ok(())
+}
+
+// ufbx.c:21165-21332 `ufbxi_modify_geometry`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn modify_geometry(uc: *mut Context) -> Result<(), Fail> {
+    let mut do_mirror: bool = false;
+    let do_winding: bool = (*uc).opts.reverse_winding;
+    let mut do_scale: bool = false;
+    let mut do_geometry_transforms: bool = false;
+    if (*uc).opts.geometry_transform_handling == GeometryTransformHandling::ModifyGeometry
+        || (*uc).opts.geometry_transform_handling
+            == GeometryTransformHandling::ModifyGeometryNoFallback
+    {
+        // Prefetch geometry transforms for processing, they will later be overwritten in `ufbxi_update_node()`.
+        // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
+        let mut p_node: *mut *mut Node = (*uc).scene.nodes.data as *mut *mut Node;
+        let p_node_end: *mut *mut Node = add_ptr(p_node, (*uc).scene.nodes.count);
+        while p_node != p_node_end {
+            let node: *mut Node = *p_node;
+            if (*node).is_root {
+                p_node = p_node.add(1);
+                continue;
+            }
+
+            (*node).geometry_transform = get_geometry_transform(&(*node).element.props, node);
+            if !is_transform_identity(ptr::addr_of!((*node).geometry_transform)) {
+                (*node).geometry_to_node =
+                    transform_to_matrix(ptr::addr_of!((*node).geometry_transform));
+                (*node).has_geometry_transform = true;
+            } else {
+                (*node).geometry_to_node = IDENTITY_MATRIX;
+                (*node).has_geometry_transform = false;
+            }
+            p_node = p_node.add(1);
+        }
+        do_geometry_transforms = true;
+    }
+    if (*uc).mirror_axis != MirrorAxis::None {
+        do_mirror = true;
+    }
+    if (*uc).scene.metadata.geometry_scale != 1.0 {
+        do_scale = true;
+    }
+
+    let geometry_scale: Real = (*uc).scene.metadata.geometry_scale;
+    let mirror_axis: MirrorAxis = (*uc).mirror_axis;
+
+    // C: `ufbxi_for_ptr_list(ufbx_blend_shape, p_shape, uc->scene.blend_shapes)`
+    let mut p_shape: *mut *mut BlendShape = (*uc).scene.blend_shapes.data as *mut *mut BlendShape;
+    let p_shape_end: *mut *mut BlendShape = add_ptr(p_shape, (*uc).scene.blend_shapes.count);
+    while p_shape != p_shape_end {
+        let shape: *mut BlendShape = *p_shape;
+
+        if do_scale {
+            scale_vec3_list(
+                ptr::addr_of!((*shape).position_offsets) as *const c_void,
+                geometry_scale,
+                0,
+            );
+        }
+
+        if do_mirror {
+            mirror_vec3_list(
+                ptr::addr_of!((*shape).position_offsets) as *const c_void,
+                mirror_axis,
+                0,
+            );
+            mirror_vec3_list(
+                ptr::addr_of!((*shape).normal_offsets) as *const c_void,
+                mirror_axis,
+                0,
+            );
+        }
+        p_shape = p_shape.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
+    let mut p_mesh: *mut *mut Mesh = (*uc).scene.meshes.data as *mut *mut Mesh;
+    let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, (*uc).scene.meshes.count);
+    while p_mesh != p_mesh_end {
+        let mesh: *mut Mesh = *p_mesh;
+
+        if do_scale {
+            scale_vec3_list(
+                ptr::addr_of!((*mesh).vertex_position.values) as *const c_void,
+                geometry_scale,
+                0,
+            );
+        }
+
+        let mut do_flip_winding: bool = do_winding;
+        if do_mirror {
+            mirror_vec3_list(
+                ptr::addr_of!((*mesh).vertex_position.values) as *const c_void,
+                mirror_axis,
+                0,
+            );
+            mirror_vec3_list(
+                ptr::addr_of!((*mesh).vertex_normal.values) as *const c_void,
+                mirror_axis,
+                0,
+            );
+            // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
+            let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
+            let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
+            while set != set_end {
+                mirror_vec3_list(
+                    ptr::addr_of!((*set).vertex_tangent.values) as *const c_void,
+                    mirror_axis,
+                    0,
+                );
+                mirror_vec3_list(
+                    ptr::addr_of!((*set).vertex_bitangent.values) as *const c_void,
+                    mirror_axis,
+                    0,
+                );
+                set = set.add(1);
+            }
+            if !(*uc).opts.handedness_conversion_retain_winding {
+                do_flip_winding = !do_flip_winding;
+            }
+        }
+
+        // Flip face winding retaining the first vertex
+        if do_flip_winding {
+            (*mesh).reversed_winding = true;
+            flip_winding(uc, mesh)?;
+        }
+
+        let geo_node: *mut Node = get_geometry_transform_node(ptr::addr_of_mut!((*mesh).element));
+        if do_geometry_transforms && !geo_node.is_null() {
+            let mut tangent_matrix: Matrix = (*geo_node).geometry_to_node;
+            tangent_matrix.m03 = 0.0;
+            tangent_matrix.m13 = 0.0;
+            tangent_matrix.m23 = 0.0;
+            let normal_matrix: Matrix =
+                matrix_for_normals(ptr::addr_of!((*geo_node).geometry_to_node));
+
+            transform_vec3_list(
+                ptr::addr_of!((*mesh).vertex_position.values) as *const c_void,
+                ptr::addr_of!((*geo_node).geometry_to_node),
+                0,
+            );
+            transform_vec3_list(
+                ptr::addr_of!((*mesh).vertex_normal.values) as *const c_void,
+                &normal_matrix,
+                0,
+            );
+            normalize_vec3_list(ptr::addr_of!((*mesh).vertex_normal.values));
+
+            // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
+            let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
+            let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
+            while set != set_end {
+                transform_vec3_list(
+                    ptr::addr_of!((*set).vertex_tangent.values) as *const c_void,
+                    &tangent_matrix,
+                    0,
+                );
+                transform_vec3_list(
+                    ptr::addr_of!((*set).vertex_bitangent.values) as *const c_void,
+                    &tangent_matrix,
+                    0,
+                );
+                normalize_vec3_list(ptr::addr_of!((*set).vertex_tangent.values));
+                normalize_vec3_list(ptr::addr_of!((*set).vertex_bitangent.values));
+                set = set.add(1);
+            }
+        }
+        p_mesh = p_mesh.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_line_curve, p_curve, uc->scene.line_curves)`
+    let mut p_curve: *mut *mut LineCurve = (*uc).scene.line_curves.data as *mut *mut LineCurve;
+    let p_curve_end: *mut *mut LineCurve = add_ptr(p_curve, (*uc).scene.line_curves.count);
+    while p_curve != p_curve_end {
+        let curve: *mut LineCurve = *p_curve;
+
+        if do_scale {
+            scale_vec3_list(
+                ptr::addr_of!((*curve).control_points) as *const c_void,
+                geometry_scale,
+                0,
+            );
+        }
+
+        if do_mirror {
+            mirror_vec3_list(
+                ptr::addr_of!((*curve).control_points) as *const c_void,
+                mirror_axis,
+                0,
+            );
+        }
+
+        let geo_node: *mut Node = get_geometry_transform_node(ptr::addr_of_mut!((*curve).element));
+        if do_geometry_transforms && !geo_node.is_null() {
+            transform_vec3_list(
+                ptr::addr_of!((*curve).control_points) as *const c_void,
+                ptr::addr_of!((*geo_node).geometry_to_node),
+                0,
+            );
+        }
+        p_curve = p_curve.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_nurbs_curve, p_curve, uc->scene.nurbs_curves)`
+    let mut p_curve: *mut *mut NurbsCurve = (*uc).scene.nurbs_curves.data as *mut *mut NurbsCurve;
+    let p_curve_end: *mut *mut NurbsCurve = add_ptr(p_curve, (*uc).scene.nurbs_curves.count);
+    while p_curve != p_curve_end {
+        let curve: *mut NurbsCurve = *p_curve;
+
+        if do_scale {
+            scale_vec3_list(
+                ptr::addr_of!((*curve).control_points) as *const c_void,
+                geometry_scale,
+                size_of::<Vec4>(),
+            );
+        }
+
+        if do_mirror {
+            mirror_vec3_list(
+                ptr::addr_of!((*curve).control_points) as *const c_void,
+                mirror_axis,
+                size_of::<Vec4>(),
+            );
+        }
+
+        let geo_node: *mut Node = get_geometry_transform_node(ptr::addr_of_mut!((*curve).element));
+        if do_geometry_transforms && !geo_node.is_null() {
+            transform_vec3_list(
+                ptr::addr_of!((*curve).control_points) as *const c_void,
+                ptr::addr_of!((*geo_node).geometry_to_node),
+                size_of::<Vec4>(),
+            );
+        }
+        p_curve = p_curve.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_nurbs_surface, p_surface, uc->scene.nurbs_surfaces)`
+    let mut p_surface: *mut *mut NurbsSurface =
+        (*uc).scene.nurbs_surfaces.data as *mut *mut NurbsSurface;
+    let p_surface_end: *mut *mut NurbsSurface =
+        add_ptr(p_surface, (*uc).scene.nurbs_surfaces.count);
+    while p_surface != p_surface_end {
+        let surface: *mut NurbsSurface = *p_surface;
+
+        if do_scale {
+            scale_vec3_list(
+                ptr::addr_of!((*surface).control_points) as *const c_void,
+                geometry_scale,
+                size_of::<Vec4>(),
+            );
+        }
+
+        if do_mirror {
+            mirror_vec3_list(
+                ptr::addr_of!((*surface).control_points) as *const c_void,
+                mirror_axis,
+                size_of::<Vec4>(),
+            );
+        }
+
+        let geo_node: *mut Node =
+            get_geometry_transform_node(ptr::addr_of_mut!((*surface).element));
+        if do_geometry_transforms && !geo_node.is_null() {
+            transform_vec3_list(
+                ptr::addr_of!((*surface).control_points) as *const c_void,
+                ptr::addr_of!((*geo_node).geometry_to_node),
+                size_of::<Vec4>(),
+            );
+        }
+        p_surface = p_surface.add(1);
+    }
+
+    if (*uc).opts.geometry_transform_handling != GeometryTransformHandling::Preserve {
+        // Reset all geometry transforms if we're not preserving them
+        let mut defaults: *mut Props = ptr::null_mut();
+        // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
+        let mut p_node: *mut *mut Node = (*uc).scene.nodes.data as *mut *mut Node;
+        let p_node_end: *mut *mut Node = add_ptr(p_node, (*uc).scene.nodes.count);
+        while p_node != p_node_end {
+            let node: *mut Node = *p_node;
+            if defaults.is_null() {
+                defaults = opt_ptr(&(*node).element.props.defaults);
+            }
+
+            if (*node).has_geometry_transform {
+                set_own_prop_vec3_uniform(
+                    ptr::addr_of_mut!((*node).element.props),
+                    sp::GeometricTranslation.as_ptr(),
+                    0.0,
+                );
+                set_own_prop_vec3_uniform(
+                    ptr::addr_of_mut!((*node).element.props),
+                    sp::GeometricRotation.as_ptr(),
+                    0.0,
+                );
+                set_own_prop_vec3_uniform(
+                    ptr::addr_of_mut!((*node).element.props),
+                    sp::GeometricScaling.as_ptr(),
+                    1.0,
+                );
+            }
+            p_node = p_node.add(1);
+        }
+
+        if !defaults.is_null() {
+            set_own_prop_vec3_uniform(defaults, sp::GeometricTranslation.as_ptr(), 0.0);
+            set_own_prop_vec3_uniform(defaults, sp::GeometricRotation.as_ptr(), 0.0);
+            set_own_prop_vec3_uniform(defaults, sp::GeometricScaling.as_ptr(), 1.0);
+        }
+    }
+
+    Ok(())
+}
+
+// ufbx.c:21334-21356 `ufbxi_postprocess_scene`
+#[inline(never)]
+pub(crate) unsafe fn postprocess_scene(uc: *mut Context) {
+    if (*uc).opts.normalize_normals || (*uc).opts.normalize_tangents {
+        // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
+        let mut p_mesh: *mut *mut Mesh = (*uc).scene.meshes.data as *mut *mut Mesh;
+        let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, (*uc).scene.meshes.count);
+        while p_mesh != p_mesh_end {
+            let mesh: *mut Mesh = *p_mesh;
+            if (*uc).opts.normalize_normals {
+                normalize_vec3_list(ptr::addr_of!((*mesh).vertex_normal.values));
+            }
+            if (*uc).opts.normalize_tangents {
+                // C-parity: the loop body normalizes the MESH-level tangent and
+                // bitangent lists (not `set->...`), so it repeats the same work
+                // once per UV set. Ported verbatim.
+                let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
+                let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
+                while set != set_end {
+                    normalize_vec3_list(ptr::addr_of!((*mesh).vertex_tangent.values));
+                    normalize_vec3_list(ptr::addr_of!((*mesh).vertex_bitangent.values));
+                    set = set.add(1);
+                }
+            }
+            p_mesh = p_mesh.add(1);
+        }
+    }
+
+    if (*uc).exporter == Exporter::BlenderBinary {
+        (*uc).scene.metadata.ortho_size_unit = 1.0 / (*uc).scene.metadata.geometry_scale;
+    } else {
+        (*uc).scene.metadata.ortho_size_unit = 30.0;
+    }
+}
+
+// ufbx.c:21358-21366 `ufbxi_next_path_segment`
+#[inline(never)]
+pub(crate) unsafe fn next_path_segment(data: *const u8, begin: usize, length: usize) -> usize {
+    let mut i: usize = begin;
+    while i < length {
+        if *data.add(i) == b'/' || *data.add(i) == b'\\' {
+            return i;
+        }
+        i += 1;
+    }
+    length
+}
+
+// ufbx.c:21368-21435 `ufbxi_absolute_to_relative_path`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn absolute_to_relative_path(
+    uc: *mut Context,
+    p_dst: *mut Strblob,
+    p_rel: *const Strblob,
+    p_src: *const Strblob,
+    raw: bool,
+) -> Result<(), Fail> {
+    let rel: *const u8 = strblob_data(p_rel, raw);
+    let src: *const u8 = strblob_data(p_src, raw);
+    let mut rel_length: usize = strblob_length(p_rel, raw);
+    let src_length: usize = strblob_length(p_src, raw);
+
+    if rel_length == 0 || src_length == 0 {
+        return Ok(());
+    }
+
+    // Absolute paths must start with the same character (either drive or '/')
+    if *rel.add(0) != *src.add(0) {
+        return Ok(());
+    }
+
+    // Find the last directory of the path we want to be relative to
+    while rel_length > 0 && (*rel.add(rel_length - 1) != b'/' && *rel.add(rel_length - 1) != b'\\')
+    {
+        rel_length -= 1;
+    }
+
+    if rel_length == 0 {
+        return Ok(());
+    }
+    let separator: u8 = *rel.add(rel_length - 1);
+
+    let max_length: usize = rel_length.wrapping_mul(2).wrapping_add(src_length);
+
+    ufbxi_check!(
+        uc,
+        grow_array::<u8>(
+            &mut (*uc).ator_tmp,
+            &mut (*uc).tmp_arr,
+            &mut (*uc).tmp_arr_size,
+            max_length,
+        ),
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (max_length))"
+    );
+    let tmp: *mut u8 = (*uc).tmp_arr;
+    let mut tmp_length: usize = 0;
+
+    let mut rel_begin: usize = 0;
+    let mut src_begin: usize = 0;
+    while rel_begin < rel_length && src_begin < src_length {
+        let rel_end: usize = next_path_segment(rel, rel_begin, rel_length);
+        let src_end: usize = next_path_segment(src, src_begin, src_length);
+        if rel_end != src_end
+            || memcmp(rel.add(rel_begin), src.add(src_begin), src_end - src_begin) != 0
+        {
+            break;
+        }
+        rel_begin = rel_end + 1;
+        src_begin = src_end + 1;
+    }
+
+    while rel_begin < rel_length {
+        let rel_end: usize = next_path_segment(rel, rel_begin, rel_length);
+        *tmp.add(tmp_length) = b'.';
+        tmp_length += 1;
+        *tmp.add(tmp_length) = b'.';
+        tmp_length += 1;
+        *tmp.add(tmp_length) = separator;
+        tmp_length += 1;
+        rel_begin = rel_end + 1;
+    }
+
+    while src_begin < src_length {
+        let src_end: usize = next_path_segment(src, src_begin, src_length);
+        let len: usize = src_end - src_begin;
+
+        ptr::copy_nonoverlapping(src.add(src_begin), tmp.add(tmp_length), len);
+        tmp_length += len;
+
+        if src_end < src_length {
+            *tmp.add(tmp_length) = separator;
+            tmp_length += 1;
+        }
+
+        src_begin = src_end + 1;
+    }
+
+    ufbx_assert!(tmp_length <= max_length);
+
+    // C-parity: `raw` is hardcoded `true` here, independent of the `raw`
+    // parameter that selected the source/destination strblob members.
+    let dst: *const u8 = sp::push_string(
+        &mut (*uc).string_pool,
+        tmp,
+        tmp_length,
+        ptr::null_mut(),
+        true,
+    );
+    ufbxi_check!(uc, !dst.is_null(), "dst");
+
+    strblob_set(p_dst, dst, tmp_length, raw);
+
+    Ok(())
+}
+
+// ufbx.c:21437-21450 `ufbxi_resolve_filenames`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn resolve_filenames(
+    uc: *mut Context,
+    filename: *mut Strblob,
+    absolute_filename: *mut Strblob,
+    relative_filename: *mut Strblob,
+    raw: bool,
+) -> Result<(), Fail> {
+    if strblob_length(relative_filename, raw) == 0 {
+        let original_file_path: *const Strblob = if raw {
+            &(*uc).scene.metadata.raw_original_file_path as *const Blob as *const Strblob
+        } else {
+            &(*uc).scene.metadata.original_file_path as *const String as *const Strblob
+        };
+
+        absolute_to_relative_path(
+            uc,
+            relative_filename,
+            original_file_path,
+            absolute_filename,
+            raw,
+        )?;
+    }
+
+    resolve_relative_filename(uc, filename, relative_filename, raw)?;
+
+    Ok(())
+}
+
+// ufbx.c:21452-21457 `ufbxi_file_content_less`
+#[inline(never)]
+pub(crate) unsafe extern "C" fn file_content_less(
+    user: *mut c_void,
+    va: *const c_void,
+    vb: *const c_void,
+) -> bool {
+    ufbxi_ignore!(user);
+    let a: *const FileContent = va as *const FileContent;
+    let b: *const FileContent = vb as *const FileContent;
+    str_less((*a).absolute_filename, (*b).absolute_filename)
+}
+
+// ufbx.c:21459-21464 `ufbxi_sort_file_contents`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn sort_file_contents(
+    uc: *mut Context,
+    content: *mut FileContent,
+    count: usize,
+) -> Result<(), Fail> {
+    ufbxi_check!(
+        uc,
+        grow_array::<u8>(
+            &mut (*uc).ator_tmp,
+            &mut (*uc).tmp_arr,
+            &mut (*uc).tmp_arr_size,
+            count.wrapping_mul(size_of::<FileContent>()),
+        ),
+        "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_file_content)))"
+    );
+    stable_sort(
+        size_of::<FileContent>(),
+        32,
+        content as *mut c_void,
+        (*uc).tmp_arr as *mut c_void,
+        count,
+        file_content_less,
+        ptr::null_mut(),
+    );
+    Ok(())
+}
+
+// ufbx.c:21466-21474 `ufbxi_push_file_content`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn push_file_content(
+    uc: *mut Context,
+    p_filename: *mut String,
+    p_data: *mut Blob,
+) -> Result<(), Fail> {
+    if (*p_data).size == 0 || (*p_filename).length == 0 {
+        return Ok(());
+    }
+    let content: *mut FileContent = push::<FileContent>(&mut (*uc).tmp_stack, 1);
+    ufbxi_check!(uc, !content.is_null(), "content");
+
+    (*content).absolute_filename = *p_filename;
+    (*content).content = *p_data;
+    Ok(())
+}
+
+// ufbx.c:21476-21487 `ufbxi_fetch_file_content`
+#[inline(never)]
+pub(crate) unsafe fn fetch_file_content(
+    uc: *mut Context,
+    p_filename: *mut String,
+    p_data: *mut Blob,
+) {
+    if (*p_data).size > 0 {
+        return;
+    }
+    let filename: String = *p_filename;
+    let mut index: usize = usize::MAX;
+    // C: `ufbxi_macro_lower_bound_eq(ufbxi_file_content, 8, &index,
+    // uc->file_content, 0, uc->num_file_content, ...)` — does NOT write
+    // `index` on a miss, hence the `SIZE_MAX` pre-initialization above.
+    macro_lower_bound_eq(
+        8,
+        &mut index,
+        (*uc).file_content as *const FileContent,
+        0,
+        (*uc).num_file_content,
+        |a| str_less((*a).absolute_filename, filename),
+        // C-parity: the equality lambda compares interned string POINTERS, not
+        // the bytes.
+        |a| (*a).absolute_filename.data == filename.data,
+    );
+    if index != usize::MAX {
+        *p_data = (*(*uc).file_content.add(index)).content;
+    }
+}
+
+// ufbx.c:21489-21526 `ufbxi_resolve_file_content`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn resolve_file_content(uc: *mut Context) -> Result<(), Fail> {
+    let initial_stack: usize = (*uc).tmp_stack.num_items;
+
+    // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
+    let mut p_video: *mut *mut Video = (*uc).scene.videos.data as *mut *mut Video;
+    let p_video_end: *mut *mut Video = add_ptr(p_video, (*uc).scene.videos.count);
+    while p_video != p_video_end {
+        let video: *mut Video = *p_video;
+        resolve_filenames(
+            uc,
+            ptr::addr_of_mut!((*video).filename) as *mut Strblob,
+            ptr::addr_of_mut!((*video).absolute_filename) as *mut Strblob,
+            ptr::addr_of_mut!((*video).relative_filename) as *mut Strblob,
+            false,
+        )?;
+        resolve_filenames(
+            uc,
+            ptr::addr_of_mut!((*video).raw_filename) as *mut Strblob,
+            ptr::addr_of_mut!((*video).raw_absolute_filename) as *mut Strblob,
+            ptr::addr_of_mut!((*video).raw_relative_filename) as *mut Strblob,
+            true,
+        )?;
+        push_file_content(
+            uc,
+            ptr::addr_of_mut!((*video).absolute_filename),
+            ptr::addr_of_mut!((*video).content),
+        )?;
+        p_video = p_video.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
+    let mut p_clip: *mut *mut AudioClip = (*uc).scene.audio_clips.data as *mut *mut AudioClip;
+    let p_clip_end: *mut *mut AudioClip = add_ptr(p_clip, (*uc).scene.audio_clips.count);
+    while p_clip != p_clip_end {
+        let clip: *mut AudioClip = *p_clip;
+        (*clip).absolute_filename =
+            find_string(&(*clip).element.props, b"Path\0".as_ptr(), EMPTY_STRING.0);
+        (*clip).relative_filename = find_string(
+            &(*clip).element.props,
+            b"RelPath\0".as_ptr(),
+            EMPTY_STRING.0,
+        );
+        (*clip).raw_absolute_filename =
+            find_blob(&(*clip).element.props, b"Path\0".as_ptr(), EMPTY_BLOB.0);
+        (*clip).raw_relative_filename =
+            find_blob(&(*clip).element.props, b"RelPath\0".as_ptr(), EMPTY_BLOB.0);
+        resolve_filenames(
+            uc,
+            ptr::addr_of_mut!((*clip).filename) as *mut Strblob,
+            ptr::addr_of_mut!((*clip).absolute_filename) as *mut Strblob,
+            ptr::addr_of_mut!((*clip).relative_filename) as *mut Strblob,
+            false,
+        )?;
+        resolve_filenames(
+            uc,
+            ptr::addr_of_mut!((*clip).raw_filename) as *mut Strblob,
+            ptr::addr_of_mut!((*clip).raw_absolute_filename) as *mut Strblob,
+            ptr::addr_of_mut!((*clip).raw_relative_filename) as *mut Strblob,
+            true,
+        )?;
+        push_file_content(
+            uc,
+            ptr::addr_of_mut!((*clip).absolute_filename),
+            ptr::addr_of_mut!((*clip).content),
+        )?;
+        p_clip = p_clip.add(1);
+    }
+
+    (*uc).num_file_content = (*uc).tmp_stack.num_items - initial_stack;
+    (*uc).file_content =
+        push_pop::<FileContent>(&mut (*uc).tmp, &mut (*uc).tmp_stack, (*uc).num_file_content);
+    ufbxi_check!(uc, !(*uc).file_content.is_null(), "uc->file_content");
+    sort_file_contents(uc, (*uc).file_content, (*uc).num_file_content)?;
+
+    // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
+    let mut p_video: *mut *mut Video = (*uc).scene.videos.data as *mut *mut Video;
+    let p_video_end: *mut *mut Video = add_ptr(p_video, (*uc).scene.videos.count);
+    while p_video != p_video_end {
+        let video: *mut Video = *p_video;
+        fetch_file_content(
+            uc,
+            ptr::addr_of_mut!((*video).absolute_filename),
+            ptr::addr_of_mut!((*video).content),
+        );
+        p_video = p_video.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
+    let mut p_clip: *mut *mut AudioClip = (*uc).scene.audio_clips.data as *mut *mut AudioClip;
+    let p_clip_end: *mut *mut AudioClip = add_ptr(p_clip, (*uc).scene.audio_clips.count);
+    while p_clip != p_clip_end {
+        let clip: *mut AudioClip = *p_clip;
+        fetch_file_content(
+            uc,
+            ptr::addr_of_mut!((*clip).absolute_filename),
+            ptr::addr_of_mut!((*clip).content),
+        );
+        p_clip = p_clip.add(1);
+    }
+
+    Ok(())
+}
+
+// ufbx.c:21528-21543 `ufbxi_validate_indices`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn validate_indices(
+    uc: *mut Context,
+    indices: *mut List<u32>,
+    max_index: usize,
+) -> Result<(), Fail> {
+    if max_index == 0 && (*uc).opts.index_error_handling == IndexErrorHandling::Clamp {
+        (*indices).data = ptr::null_mut();
+        (*indices).count = 0;
+        return Ok(());
+    }
+
+    // C: `ufbxi_nounroll ufbxi_for_list(uint32_t, p_ix, *indices)` — the
+    // no-unroll pragma is optimizer-only and has no Rust analogue.
+    let mut p_ix: *mut u32 = (*indices).data as *mut u32;
+    let p_ix_end: *mut u32 = add_ptr(p_ix, (*indices).count);
+    while p_ix != p_ix_end {
+        let ix: u32 = *p_ix;
+        // C: `ix >= max_index` — `ix` is promoted to `size_t` for the compare.
+        if ix as usize >= max_index {
+            fix_index(uc, p_ix, ix, max_index)?;
+        }
+        p_ix = p_ix.add(1);
+    }
+
+    Ok(())
+}
+
+// ufbx.c:21545-21556 `ufbxi_material_part_usage_less`
+pub(crate) unsafe extern "C" fn material_part_usage_less(
+    user: *mut c_void,
+    va: *const c_void,
+    vb: *const c_void,
+) -> bool {
+    let parts: *mut MeshPart = user as *mut MeshPart;
+    let a: u32 = *(va as *const u32);
+    let b: u32 = *(vb as *const u32);
+    let pa: *mut MeshPart = parts.add(a as usize);
+    let pb: *mut MeshPart = parts.add(b as usize);
+    if (*pa).face_indices.count == 0 || (*pb).face_indices.count == 0 {
+        if (*pa).face_indices.count == (*pb).face_indices.count {
+            return a < b;
+        }
+        return (*pa).face_indices.count > (*pb).face_indices.count;
+    }
+    *(*pa).face_indices.data.add(0) < *(*pb).face_indices.data.add(0)
+}
+
+// ufbx.c:21558-21620 `ufbxi_finalize_mesh_material`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn finalize_mesh_material(
+    buf: *mut Buf,
+    error: *mut Error,
+    mesh: *mut Mesh,
+) -> Result<(), Fail> {
+    let num_materials: usize = (*mesh).materials.count;
+    let num_parts: usize = (*mesh).material_parts.count;
+    let num_faces: usize = (*mesh).faces.count;
+
+    let parts: *mut MeshPart = (*mesh).material_parts.data as *mut MeshPart;
+    ufbx_assert!(
+        parts.is_null()
+            || ((*mesh).material_parts.count == num_materials)
+            || ((*mesh).material_parts.count == 1 && num_materials == 0)
+    );
+
+    let face_material: *mut u32 = (*mesh).face_material.data as *mut u32;
+
+    // Count the number of faces and triangles per material
+    // C: `ufbxi_nounroll for (size_t i = 0; i < num_faces; i++)`
+    for i in 0..num_faces {
+        let face: Face = *(*mesh).faces.data.add(i);
+        let mut mat_ix: u32 = 0;
+
+        if !face_material.is_null() {
+            mat_ix = *face_material.add(i);
+            if mat_ix as usize >= num_materials {
+                *face_material.add(i) = 0;
+                mat_ix = 0;
+            }
+        }
+
+        if !parts.is_null() {
+            mesh_part_add_face(parts.add(mat_ix as usize), face.num_indices);
+        }
+    }
+
+    if !parts.is_null() {
+        // Allocate per-material buffers (clear `num_faces` to 0 to re-use it as
+        // an index when fetching the face indices).
+        let mut part_index: u32 = 0;
+        // C: `ufbxi_for(ufbx_mesh_part, part, parts, num_parts)`
+        let mut part: *mut MeshPart = parts;
+        let part_end: *mut MeshPart = add_ptr(part, num_parts);
+        while part != part_end {
+            // C: `part->index = part_index++;` — assigns the pre-increment value.
+            (*part).index = part_index;
+            part_index = part_index.wrapping_add(1);
+            (*part).face_indices.count = (*part).num_faces;
+            (*part).face_indices.data = push::<u32>(buf, (*part).num_faces);
+            ufbxi_check_err!(
+                error,
+                !(*part).face_indices.data.is_null(),
+                "part->face_indices.data"
+            );
+            (*part).num_faces = 0;
+            part = part.add(1);
+        }
+
+        // Fetch the per-material face indices
+        // C: `ufbxi_nounroll for (size_t i = 0; i < num_faces; i++)`
+        for i in 0..num_faces {
+            let mat_ix: u32 = if !face_material.is_null() {
+                *face_material.add(i)
+            } else {
+                0
+            };
+            if (mat_ix as usize) < num_parts {
+                let part: *mut MeshPart = parts.add(mat_ix as usize);
+                // C: `part->face_indices.data[part->num_faces++] = (uint32_t)i;`
+                *((*part).face_indices.data as *mut u32).add((*part).num_faces) = i as u32;
+                (*part).num_faces = (*part).num_faces.wrapping_add(1);
+            }
+        }
+
+        (*mesh).material_part_usage_order.count = num_parts;
+        (*mesh).material_part_usage_order.data = push::<u32>(buf, num_parts);
+        ufbxi_check_err!(
+            error,
+            !(*mesh).material_part_usage_order.data.is_null(),
+            "mesh->material_part_usage_order.data"
+        );
+        for i in 0..num_parts {
+            *((*mesh).material_part_usage_order.data as *mut u32).add(i) = i as u32;
+        }
+        unstable_sort(
+            (*mesh).material_part_usage_order.data as *mut c_void,
+            num_parts,
+            size_of::<u32>(),
+            material_part_usage_less,
+            parts as *mut c_void,
+        );
+    }
+
+    Ok(())
+}
+
+// ufbx.c:21622-21626 `ufbxi_anim_imp`
+// C declares no `ufbx_static_assert` for this one (contrast `ufbxi_scene_imp` /
+// `ufbxi_mesh_imp`), but `ufbxi_get_imp(ufbxi_anim_imp, anim)` (ufbx.c:31225)
+// depends on the same header-then-payload layout, so the offset is pinned here.
+#[repr(C)]
+pub(crate) struct AnimImp {
+    pub refcount: Refcount,
+    pub anim: Anim,
+    pub magic: u32,
+}
+
+const _: () = assert!(core::mem::offset_of!(AnimImp, anim) == size_of::<Refcount>());
+
+// ufbx.c:21628-21638 `ufbxi_push_anim`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn push_anim(
+    uc: *mut Context,
+    p_anim: *mut *mut Anim,
+    layers: *mut *mut AnimLayer,
+    num_layers: usize,
+) -> Result<(), Fail> {
+    let anim: *mut Anim = push_zero::<Anim>(&mut (*uc).result, 1);
+    ufbxi_check!(uc, !anim.is_null(), "anim");
+
+    (*anim).layers.data = layers as *const Ref<AnimLayer>;
+    (*anim).layers.count = num_layers;
+
+    *p_anim = anim;
+    Ok(())
+}
+
+// ufbx.c:21641-22624 `ufbxi_finalize_scene`
+// The single ~985-line pass that turns the parsed element/connection scratch
+// into the public `ufbx_scene` graph. Split into no helpers upstream, so it is
+// ported as one function.
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn finalize_scene(uc: *mut Context) -> Result<(), Fail> {
+    let num_elements: usize = (*uc).num_elements as usize;
+
+    (*uc).scene.elements.count = num_elements;
+    (*uc).scene.elements.data =
+        push::<*mut Element>(&mut (*uc).result, num_elements) as *const Ref<Element>;
+    ufbxi_check!(
+        uc,
+        !(*uc).scene.elements.data.is_null(),
+        "uc->scene.elements.data"
+    );
+
+    (*uc).scene.metadata.element_buffer_size = (*uc).tmp_element_byte_offset;
+    let element_data: *mut u8 = push_pop::<u64>(
+        &mut (*uc).result,
+        &mut (*uc).tmp_elements,
+        (*uc).tmp_element_byte_offset / 8,
+    ) as *mut u8;
+    ufbxi_check!(uc, !element_data.is_null(), "element_data");
+
+    // C reads `uc->tmp_element_offsets.num_items` as the `ufbxi_push_pop()`
+    // count argument; hoisted to a local so the `&mut` borrow of the same
+    // buffer does not overlap the read.
+    let num_element_offsets: usize = (*uc).tmp_element_offsets.num_items;
+    let element_offsets: *mut usize = push_pop::<usize>(
+        &mut (*uc).tmp,
+        &mut (*uc).tmp_element_offsets,
+        num_element_offsets,
+    );
+    buf_free(&mut (*uc).tmp_element_offsets);
+    ufbxi_check!(uc, !element_offsets.is_null(), "element_offsets");
+    for i in 0..num_elements {
+        let element: *mut Element = element_data.add(*element_offsets.add(i)) as *mut Element;
+
+        if (*element).type_ == ElementType::Node {
+            let node: *mut Node = element as *mut Node;
+            if !opt_ptr(&(*node).scale_helper).is_null() {
+                let extra: *mut NodeExtra =
+                    get_element_extra(uc, (*node).element.element_id) as *mut NodeExtra;
+                ufbx_assert!(!extra.is_null());
+                (*node).scale_helper = opt_ref(
+                    element_data.add(*element_offsets.add((*extra).scale_helper_id as usize))
+                        as *mut Node,
+                );
+            }
+        }
+
+        *((*uc).scene.elements.data as *mut *mut Element).add(i) = element;
+    }
+
+    (*uc).scene.elements.count = num_elements;
+    buf_free(&mut (*uc).tmp_element_offsets);
+    buf_free(&mut (*uc).tmp_elements);
+
+    (*uc).tmp_element_flag = push_zero::<u8>(&mut (*uc).tmp, num_elements);
+    ufbxi_check!(
+        uc,
+        !(*uc).tmp_element_flag.is_null(),
+        "uc->tmp_element_flag"
+    );
+
+    (*uc).scene.metadata.original_file_path = find_string(
+        &(*uc).scene.metadata.scene_props,
+        b"DocumentUrl\0".as_ptr(),
+        EMPTY_STRING.0,
+    );
+    (*uc).scene.metadata.raw_original_file_path = find_blob(
+        &(*uc).scene.metadata.scene_props,
+        b"DocumentUrl\0".as_ptr(),
+        EMPTY_BLOB.0,
+    );
+
+    // Resolve and add the connections to elements
+    resolve_connections(uc)?;
+    add_connections_to_elements(uc)?;
+    linearize_nodes(uc)?;
+
+    for type_ in 0..ELEMENT_TYPE_COUNT {
+        let num_typed: usize = (*uc).tmp_typed_element_offsets[type_].num_items;
+        let typed_offsets: *mut usize = push_pop::<usize>(
+            &mut (*uc).tmp,
+            &mut (*uc).tmp_typed_element_offsets[type_],
+            num_typed,
+        );
+        buf_free(&mut (*uc).tmp_typed_element_offsets[type_]);
+        ufbxi_check!(uc, !typed_offsets.is_null(), "typed_offsets");
+
+        // C indexes `uc->scene.elements_by_type[type]`, the `ufbx_element_list`
+        // array view of the `ufbx_scene` per-type list union (ufbx.h:4015); the
+        // generated struct keeps only the named branch, whose first member
+        // (`unknowns`) is the array base.
+        let typed_elems: *mut RefList<Element> =
+            (ptr::addr_of_mut!((*uc).scene.unknowns) as *mut RefList<Element>).add(type_);
+        (*typed_elems).count = num_typed;
+        (*typed_elems).data =
+            push::<*mut Element>(&mut (*uc).result, num_typed) as *const Ref<Element>;
+        ufbxi_check!(uc, !(*typed_elems).data.is_null(), "typed_elems->data");
+
+        for i in 0..num_typed {
+            *((*typed_elems).data as *mut *mut Element).add(i) =
+                element_data.add(*typed_offsets.add(i)) as *mut Element;
+        }
+
+        buf_free(&mut (*uc).tmp_typed_element_offsets[type_]);
+    }
+
+    // Create named elements
+    (*uc).scene.elements_by_name.count = num_elements;
+    (*uc).scene.elements_by_name.data = push::<NameElement>(&mut (*uc).result, num_elements);
+    ufbxi_check!(
+        uc,
+        !(*uc).scene.elements_by_name.data.is_null(),
+        "uc->scene.elements_by_name.data"
+    );
+
+    for i in 0..num_elements {
+        let elem: *mut Element = *((*uc).scene.elements.data as *mut *mut Element).add(i);
+        let name_elem: *mut NameElement =
+            ((*uc).scene.elements_by_name.data as *mut NameElement).add(i);
+
+        (*name_elem).name = (*elem).name;
+        (*name_elem).type_ = (*elem).type_;
+        (*name_elem)._internal_key = get_name_key((*elem).name.data, (*elem).name.length);
+        (*name_elem).element = Ref::from_ptr(elem);
+    }
+
+    sort_name_elements(
+        uc,
+        (*uc).scene.elements_by_name.data as *mut NameElement,
+        num_elements,
+    )?;
+
+    // Setup node children arrays and attribute pointers/lists
+    // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
+    let mut p_node: *mut *mut Node = (*uc).scene.nodes.data as *mut *mut Node;
+    let p_node_end: *mut *mut Node = add_ptr(p_node, (*uc).scene.nodes.count);
+    while p_node != p_node_end {
+        let node: *mut Node = *p_node;
+        let parent: *mut Node = opt_ptr(&(*node).parent);
+        if !parent.is_null() {
+            (*parent).children.count += 1;
+            if (*parent).children.data.is_null() {
+                (*parent).children.data = p_node as *const Ref<Node>;
+            }
+
+            if (*node).is_geometry_transform_helper {
+                (*parent).geometry_transform_helper = opt_ref(node);
+            }
+
+            // Force top-level nodes to have `UFBX_INHERIT_MODE_NORMAL` to make unit scaling work.
+            if (*parent).is_root
+                && (*uc).opts.space_conversion == SpaceConversion::TransformRoot
+                && (*uc).opts.inherit_mode_handling == InheritModeHandling::Preserve
+            {
+                (*node).original_inherit_mode = InheritMode::Normal;
+                (*node).inherit_mode = InheritMode::Normal;
+            }
+
+            // RrSs nodes inherit scale from their parent, Rrs ignore the scale of
+            // their _immediate_ parent, potentially multiple if chained.
+            if (*node).original_inherit_mode == InheritMode::ComponentwiseScale {
+                (*node).inherit_scale_node = opt_ref(parent);
+            } else if (*node).original_inherit_mode == InheritMode::IgnoreParentScale {
+                (*node).inherit_scale_node = (*parent).inherit_scale_node;
+            }
+        }
+
+        let conns: List<Connection> = find_dst_connections(&mut (*node).element, ptr::null());
+
+        // C: `ufbxi_for_list(ufbx_connection, conn, conns)` — indexed here
+        // because the body `continue`s (the C `for` advances in its increment
+        // clause).
+        for conn_ix in 0..conns.count {
+            let conn: *mut Connection = (conns.data as *mut Connection).add(conn_ix);
+            let elem: *mut Element = ref_ptr(&(*conn).src);
+            let type_: ElementType = (*elem).type_;
+            if !(type_ as u32 >= ELEMENT_TYPE_FIRST_ATTRIB
+                && type_ as u32 <= ELEMENT_TYPE_LAST_ATTRIB)
+            {
+                continue;
+            }
+
+            // C: `size_t index = node->all_attribs.count++;` — the
+            // pre-increment value.
+            let index: usize = (*node).all_attribs.count;
+            (*node).all_attribs.count += 1;
+            if index == 0 {
+                (*node).attrib = opt_ref(elem);
+                (*node).attrib_type = type_;
+            } else {
+                if index == 1 {
+                    ufbxi_check!(
+                        uc,
+                        !push_copy::<*mut Element>(
+                            &mut (*uc).tmp_stack,
+                            1,
+                            ptr::addr_of!((*node).attrib) as *const *mut Element
+                        )
+                        .is_null(),
+                        "ufbxi_push_copy(&uc->tmp_stack, ufbx_element*, 1, &node->attrib)"
+                    );
+                }
+                ufbxi_check!(
+                    uc,
+                    !push_copy::<*mut Element>(&mut (*uc).tmp_stack, 1, &elem).is_null(),
+                    "ufbxi_push_copy(&uc->tmp_stack, ufbx_element*, 1, &elem)"
+                );
+            }
+
+            match (*elem).type_ {
+                ElementType::Mesh => (*node).mesh = opt_ref(elem as *mut Mesh),
+                ElementType::Light => (*node).light = opt_ref(elem as *mut Light),
+                ElementType::Camera => (*node).camera = opt_ref(elem as *mut Camera),
+                ElementType::Bone => (*node).bone = opt_ref(elem as *mut Bone),
+                _ => { /* No shorthand */ }
+            }
+        }
+
+        if (*node).all_attribs.count > 1 {
+            (*node).all_attribs.data = push_pop::<*mut Element>(
+                &mut (*uc).result,
+                &mut (*uc).tmp_stack,
+                (*node).all_attribs.count,
+            ) as *const Ref<Element>;
+            ufbxi_check!(
+                uc,
+                !(*node).all_attribs.data.is_null(),
+                "node->all_attribs.data"
+            );
+        } else if (*node).all_attribs.count == 1 {
+            (*node).all_attribs.data = ptr::addr_of!((*node).attrib) as *const Ref<Element>;
+        }
+
+        fetch_dst_elements(
+            uc,
+            ptr::addr_of_mut!((*node).materials) as *mut c_void,
+            &mut (*node).element,
+            false,
+            false,
+            ptr::null(),
+            ElementType::Material,
+        )?;
+        p_node = p_node.add(1);
+    }
+
+    // Resolve bind pose bones that don't use the normal connection system
+    // C: `ufbxi_for_ptr_list(ufbx_pose, p_pose, uc->scene.poses)`
+    let mut p_pose: *mut *mut Pose = (*uc).scene.poses.data as *mut *mut Pose;
+    let p_pose_end: *mut *mut Pose = add_ptr(p_pose, (*uc).scene.poses.count);
+    while p_pose != p_pose_end {
+        let pose: *mut Pose = *p_pose;
+
+        // HACK: Transport `ufbxi_tmp_bone_pose` array through the `ufbx_bone_pose` pointer
+        let num_bones: usize = (*pose).bone_poses.count;
+        let tmp_poses: *mut TmpBonePose = (*pose).bone_poses.data as *mut TmpBonePose;
+        (*pose).bone_poses.data = push::<BonePose>(&mut (*uc).result, num_bones);
+        ufbxi_check!(
+            uc,
+            !(*pose).bone_poses.data.is_null(),
+            "pose->bone_poses.data"
+        );
+
+        // Filter only found bones
+        (*pose).bone_poses.count = 0;
+        for i in 0..num_bones {
+            let elem: *mut Element = find_element_by_fbx_id(uc, (*tmp_poses.add(i)).bone_fbx_id);
+            if elem.is_null() || (*elem).type_ != ElementType::Node {
+                continue;
+            }
+
+            let node: *mut Node = elem as *mut Node;
+            // C: `&pose->bone_poses.data[pose->bone_poses.count++]`
+            let bone: *mut BonePose =
+                ((*pose).bone_poses.data as *mut BonePose).add((*pose).bone_poses.count);
+            (*pose).bone_poses.count += 1;
+            (*bone).bone_node = Ref::from_ptr(node);
+            (*bone).bone_to_world = (*tmp_poses.add(i)).bone_to_world;
+
+            if (*pose).is_bind_pose {
+                if opt_ptr(&(*node).bind_pose).is_null() {
+                    (*node).bind_pose = opt_ref(pose);
+                }
+
+                let node_conns: List<Connection> = find_src_connections(elem, ptr::null());
+                // C: `ufbxi_for_list(ufbx_connection, conn, node_conns)`
+                for conn_ix in 0..node_conns.count {
+                    let conn: *mut Connection = (node_conns.data as *mut Connection).add(conn_ix);
+                    if (*ref_ptr(&(*conn).dst)).type_ != ElementType::SkinCluster {
+                        continue;
+                    }
+                    let cluster: *mut SkinCluster = ref_ptr(&(*conn).dst) as *mut SkinCluster;
+                    if matrix_all_zero(&(*cluster).bind_to_world) {
+                        (*cluster).bind_to_world = (*bone).bone_to_world;
+                    }
+                }
+            }
+        }
+        sort_bone_poses(uc, pose)?;
+        p_pose = p_pose.add(1);
+    }
+
+    // Fetch pointers that may break elements
+
+    // Setup node attribute instances
+    // C: `for (int type = UFBX_ELEMENT_TYPE_FIRST_ATTRIB; type <= UFBX_ELEMENT_TYPE_LAST_ATTRIB; type++)`
+    let mut attrib_type: u32 = ELEMENT_TYPE_FIRST_ATTRIB;
+    while attrib_type <= ELEMENT_TYPE_LAST_ATTRIB {
+        let typed_elems: *mut RefList<Element> = (ptr::addr_of_mut!((*uc).scene.unknowns)
+            as *mut RefList<Element>)
+            .add(attrib_type as usize);
+        // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, uc->scene.elements_by_type[type])`
+        let mut p_elem: *mut *mut Element = (*typed_elems).data as *mut *mut Element;
+        let p_elem_end: *mut *mut Element = add_ptr(p_elem, (*typed_elems).count);
+        while p_elem != p_elem_end {
+            let elem: *mut Element = *p_elem;
+            fetch_src_elements(
+                uc,
+                ptr::addr_of_mut!((*elem).instances) as *mut c_void,
+                elem,
+                false,
+                true,
+                ptr::null(),
+                ElementType::Node,
+            )?;
+            p_elem = p_elem.add(1);
+        }
+        attrib_type += 1;
+    }
+
+    let search_node: bool = (*uc).version < 7000;
+
+    // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, uc->scene.skin_clusters)`
+    let mut p_cluster: *mut *mut SkinCluster =
+        (*uc).scene.skin_clusters.data as *mut *mut SkinCluster;
+    let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*uc).scene.skin_clusters.count);
+    while p_cluster != p_cluster_end {
+        let cluster: *mut SkinCluster = *p_cluster;
+        (*cluster).bone_node = opt_ref(fetch_dst_element(
+            &mut (*cluster).element,
+            false,
+            ptr::null(),
+            ElementType::Node,
+        ) as *mut Node);
+        p_cluster = p_cluster.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_skin_deformer, p_skin, uc->scene.skin_deformers)`
+    let mut p_skin: *mut *mut SkinDeformer =
+        (*uc).scene.skin_deformers.data as *mut *mut SkinDeformer;
+    let p_skin_end: *mut *mut SkinDeformer = add_ptr(p_skin, (*uc).scene.skin_deformers.count);
+    while p_skin != p_skin_end {
+        let skin: *mut SkinDeformer = *p_skin;
+        fetch_dst_elements(
+            uc,
+            ptr::addr_of_mut!((*skin).clusters) as *mut c_void,
+            &mut (*skin).element,
+            false,
+            true,
+            ptr::null(),
+            ElementType::SkinCluster,
+        )?;
+
+        // Remove clusters without a valid `bone`
+        if !(*uc).opts.connect_broken_elements {
+            let clusters: *mut *mut SkinCluster = (*skin).clusters.data as *mut *mut SkinCluster;
+            let mut num_broken: usize = 0;
+            for i in 0..(*skin).clusters.count {
+                if opt_ptr(&(**clusters.add(i)).bone_node).is_null() {
+                    num_broken += 1;
+                } else if num_broken > 0 {
+                    *clusters.add(i - num_broken) = *clusters.add(i);
+                }
+            }
+            (*skin).clusters.count -= num_broken;
+        }
+
+        let mut total_weights: usize = 0;
+        // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, skin->clusters)`
+        let mut p_cluster: *mut *mut SkinCluster = (*skin).clusters.data as *mut *mut SkinCluster;
+        let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*skin).clusters.count);
+        while p_cluster != p_cluster_end {
+            let cluster: *mut SkinCluster = *p_cluster;
+            ufbxi_check!(
+                uc,
+                usize::MAX - total_weights > (*cluster).num_weights,
+                "SIZE_MAX - total_weights > cluster->num_weights"
+            );
+            total_weights += (*cluster).num_weights;
+            p_cluster = p_cluster.add(1);
+        }
+
+        let mut num_vertices: usize = 0;
+
+        // Iterate through meshes so we can pad the vertices to the largest one
+        {
+            let conns: List<Connection> = find_src_connections(&mut (*skin).element, ptr::null());
+            // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
+            for conn_ix in 0..conns.count {
+                let conn: *mut Connection = (conns.data as *mut Connection).add(conn_ix);
+                let mut mesh: *mut Mesh = ptr::null_mut();
+                if (*conn).dst_prop.length > 0 {
+                    continue;
+                }
+                let dst: *mut Element = ref_ptr(&(*conn).dst);
+                if (*dst).type_ == ElementType::Mesh {
+                    mesh = dst as *mut Mesh;
+                } else if (*dst).type_ == ElementType::Node {
+                    let mut node: *mut Node = dst as *mut Node;
+                    if !opt_ptr(&(*node).geometry_transform_helper).is_null() {
+                        node = opt_ptr(&(*node).geometry_transform_helper);
+                    }
+                    mesh = opt_ptr(&(*node).mesh);
+                }
+                if mesh.is_null() {
+                    continue;
+                }
+                num_vertices = max_sz(num_vertices, (*mesh).num_vertices);
+            }
+        }
+
+        if !(*uc).opts.skip_skin_vertices {
+            (*skin).vertices.count = num_vertices;
+            (*skin).vertices.data = push_zero::<SkinVertex>(&mut (*uc).result, num_vertices);
+            ufbxi_check!(uc, !(*skin).vertices.data.is_null(), "skin->vertices.data");
+
+            (*skin).weights.count = total_weights;
+            (*skin).weights.data = push_zero::<SkinWeight>(&mut (*uc).result, total_weights);
+            ufbxi_check!(uc, !(*skin).weights.data.is_null(), "skin->weights.data");
+
+            let retain_all: bool = !(*uc).opts.clean_skin_weights;
+
+            let skin_vertices: *mut SkinVertex = (*skin).vertices.data as *mut SkinVertex;
+            let skin_weights: *mut SkinWeight = (*skin).weights.data as *mut SkinWeight;
+
+            // Count the number of weights per vertex
+            // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, skin->clusters)`
+            let mut p_cluster: *mut *mut SkinCluster =
+                (*skin).clusters.data as *mut *mut SkinCluster;
+            let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*skin).clusters.count);
+            while p_cluster != p_cluster_end {
+                let cluster: *mut SkinCluster = *p_cluster;
+                for i in 0..(*cluster).num_weights {
+                    let vertex: u32 = *(*cluster).vertices.data.add(i);
+                    if (vertex as usize) < num_vertices
+                        && (retain_all || *(*cluster).weights.data.add(i) > 0.0)
+                    {
+                        (*skin_vertices.add(vertex as usize)).num_weights = (*skin_vertices
+                            .add(vertex as usize))
+                        .num_weights
+                        .wrapping_add(1);
+                    }
+                }
+                p_cluster = p_cluster.add(1);
+            }
+
+            let default_dq: Real = if (*skin).skinning_method == SkinningMethod::DualQuaternion {
+                1.0f32 as Real
+            } else {
+                0.0f32 as Real
+            };
+
+            // Prefix sum to assign the vertex weight offsets and set up default DQ values
+            let mut offset: u32 = 0;
+            let mut max_weights: u32 = 0;
+            for i in 0..num_vertices {
+                (*skin_vertices.add(i)).weight_begin = offset;
+                (*skin_vertices.add(i)).dq_weight = default_dq;
+                let num_weights: u32 = (*skin_vertices.add(i)).num_weights;
+                offset = offset.wrapping_add(num_weights);
+                (*skin_vertices.add(i)).num_weights = 0;
+
+                if num_weights > max_weights {
+                    max_weights = num_weights;
+                }
+            }
+            ufbx_assert!(offset as usize <= total_weights);
+            (*skin).max_weights_per_vertex = max_weights as usize;
+
+            // Copy the DQ weights to vertices
+            for i in 0..(*skin).num_dq_weights {
+                let vertex: u32 = *(*skin).dq_vertices.data.add(i);
+                if (vertex as usize) < num_vertices {
+                    (*skin_vertices.add(vertex as usize)).dq_weight =
+                        *(*skin).dq_weights.data.add(i);
+                }
+            }
+
+            // Copy the weights to vertices
+            let mut cluster_index: u32 = 0;
+            // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, skin->clusters)`
+            let mut p_cluster: *mut *mut SkinCluster =
+                (*skin).clusters.data as *mut *mut SkinCluster;
+            let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*skin).clusters.count);
+            while p_cluster != p_cluster_end {
+                let cluster: *mut SkinCluster = *p_cluster;
+                for i in 0..(*cluster).num_weights {
+                    let vertex: u32 = *(*cluster).vertices.data.add(i);
+                    if (vertex as usize) < num_vertices
+                        && (retain_all || *(*cluster).weights.data.add(i) > 0.0)
+                    {
+                        // C: `skin->vertices.data[vertex].num_weights++` — the
+                        // pre-increment value.
+                        let local_index: u32 = (*skin_vertices.add(vertex as usize)).num_weights;
+                        (*skin_vertices.add(vertex as usize)).num_weights =
+                            local_index.wrapping_add(1);
+                        let index: u32 = (*skin_vertices.add(vertex as usize))
+                            .weight_begin
+                            .wrapping_add(local_index);
+                        (*skin_weights.add(index as usize)).cluster_index = cluster_index;
+                        (*skin_weights.add(index as usize)).weight =
+                            *(*cluster).weights.data.add(i);
+                    }
+                }
+                cluster_index = cluster_index.wrapping_add(1);
+                p_cluster = p_cluster.add(1);
+            }
+
+            // Sort the vertex weights by descending weight value
+            sort_skin_weights(uc, skin)?;
+        }
+        p_skin = p_skin.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_blend_deformer, p_blend, uc->scene.blend_deformers)`
+    let mut p_blend: *mut *mut BlendDeformer =
+        (*uc).scene.blend_deformers.data as *mut *mut BlendDeformer;
+    let p_blend_end: *mut *mut BlendDeformer = add_ptr(p_blend, (*uc).scene.blend_deformers.count);
+    while p_blend != p_blend_end {
+        let blend: *mut BlendDeformer = *p_blend;
+        fetch_dst_elements(
+            uc,
+            ptr::addr_of_mut!((*blend).channels) as *mut c_void,
+            &mut (*blend).element,
+            false,
+            true,
+            ptr::null(),
+            ElementType::BlendChannel,
+        )?;
+        p_blend = p_blend.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_cache_deformer, p_deformer, uc->scene.cache_deformers)`
+    let mut p_deformer: *mut *mut CacheDeformer =
+        (*uc).scene.cache_deformers.data as *mut *mut CacheDeformer;
+    let p_deformer_end: *mut *mut CacheDeformer =
+        add_ptr(p_deformer, (*uc).scene.cache_deformers.count);
+    while p_deformer != p_deformer_end {
+        let deformer: *mut CacheDeformer = *p_deformer;
+        (*deformer).channel = find_string(
+            &(*deformer).element.props,
+            b"ChannelName\0".as_ptr(),
+            EMPTY_STRING.0,
+        );
+        (*deformer).file = opt_ref(fetch_dst_element(
+            &mut (*deformer).element,
+            false,
+            ptr::null(),
+            ElementType::CacheFile,
+        ) as *mut CacheFile);
+        p_deformer = p_deformer.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_cache_file, p_cache, uc->scene.cache_files)`
+    let mut p_cache: *mut *mut CacheFile = (*uc).scene.cache_files.data as *mut *mut CacheFile;
+    let p_cache_end: *mut *mut CacheFile = add_ptr(p_cache, (*uc).scene.cache_files.count);
+    while p_cache != p_cache_end {
+        let cache: *mut CacheFile = *p_cache;
+
+        (*cache).absolute_filename = find_string(
+            &(*cache).element.props,
+            b"CacheAbsoluteFileName\0".as_ptr(),
+            EMPTY_STRING.0,
+        );
+        (*cache).relative_filename = find_string(
+            &(*cache).element.props,
+            b"CacheFileName\0".as_ptr(),
+            EMPTY_STRING.0,
+        );
+
+        (*cache).raw_absolute_filename = find_blob(
+            &(*cache).element.props,
+            b"CacheAbsoluteFileName\0".as_ptr(),
+            EMPTY_BLOB.0,
+        );
+        (*cache).raw_relative_filename = find_blob(
+            &(*cache).element.props,
+            b"CacheFileName\0".as_ptr(),
+            EMPTY_BLOB.0,
+        );
+
+        let type_: i64 = api_find_int(&(*cache).element.props, b"CacheFileType\0".as_ptr(), 0);
+        if type_ >= 0 && type_ <= CacheFileFormat::Mc as i64 {
+            // C: `(ufbx_cache_file_format)type` — the guard above pins `type`
+            // into `0..=UFBX_CACHE_FILE_FORMAT_MC`, exactly the enum range.
+            (*cache).format = core::mem::transmute::<u32, CacheFileFormat>(type_ as u32);
+        }
+
+        resolve_filenames(
+            uc,
+            ptr::addr_of_mut!((*cache).filename) as *mut Strblob,
+            ptr::addr_of_mut!((*cache).absolute_filename) as *mut Strblob,
+            ptr::addr_of_mut!((*cache).relative_filename) as *mut Strblob,
+            false,
+        )?;
+        resolve_filenames(
+            uc,
+            ptr::addr_of_mut!((*cache).raw_filename) as *mut Strblob,
+            ptr::addr_of_mut!((*cache).raw_absolute_filename) as *mut Strblob,
+            ptr::addr_of_mut!((*cache).raw_relative_filename) as *mut Strblob,
+            true,
+        )?;
+        p_cache = p_cache.add(1);
+    }
+
+    ufbx_assert!((*uc).tmp_full_weights.num_items == (*uc).scene.blend_channels.count);
+    // C reads `uc->tmp_full_weights.num_items` as the `ufbxi_push_pop()` count
+    // argument; hoisted so the `&mut` borrow does not overlap the read.
+    let num_full_weights: usize = (*uc).tmp_full_weights.num_items;
+    let mut full_weights: *mut List<Real> = push_pop::<List<Real>>(
+        &mut (*uc).tmp,
+        &mut (*uc).tmp_full_weights,
+        num_full_weights,
+    );
+    buf_free(&mut (*uc).tmp_full_weights);
+    ufbxi_check!(uc, !full_weights.is_null(), "full_weights");
+
+    // C: `ufbxi_for_ptr_list(ufbx_blend_channel, p_channel, uc->scene.blend_channels)`
+    let mut p_channel: *mut *mut BlendChannel =
+        (*uc).scene.blend_channels.data as *mut *mut BlendChannel;
+    let p_channel_end: *mut *mut BlendChannel =
+        add_ptr(p_channel, (*uc).scene.blend_channels.count);
+    while p_channel != p_channel_end {
+        let channel: *mut BlendChannel = *p_channel;
+
+        fetch_blend_keyframes(
+            uc,
+            ptr::addr_of_mut!((*channel).keyframes),
+            &mut (*channel).element,
+        )?;
+
+        for i in 0..(*channel).keyframes.count {
+            let key: *mut BlendKeyframe = ((*channel).keyframes.data as *mut BlendKeyframe).add(i);
+            (*key).target_weight = 1.0f32 as Real;
+            if i < (*full_weights).count {
+                if !(*uc).blender_full_weights {
+                    (*key).target_weight = *(*full_weights).data.add(i) / 100.0;
+                } else if (*full_weights).count == (*ref_ptr(&(*key).shape)).num_offsets {
+                    if i == 0 {
+                        // Duplicate `index_data` for modification if we retain DOM
+                        if (*uc).opts.retain_dom {
+                            (*full_weights).data = push_copy::<Real>(
+                                &mut (*uc).result,
+                                (*full_weights).count,
+                                (*full_weights).data,
+                            );
+                            ufbxi_check!(uc, !(*full_weights).data.is_null(), "full_weights->data");
+                        }
+                        // C: `ufbxi_for_list(ufbx_real, p_weight, *full_weights)`
+                        let mut p_weight: *mut Real = (*full_weights).data as *mut Real;
+                        let p_weight_end: *mut Real = add_ptr(p_weight, (*full_weights).count);
+                        while p_weight != p_weight_end {
+                            *p_weight /= 100.0;
+                            p_weight = p_weight.add(1);
+                        }
+                    }
+                    // C: struct assignment (memcpy) of the `ufbx_real_list`
+                    // header; `List<T>` is not `Copy` in the generated
+                    // bindings, so the copy is a byte-identical
+                    // `copy_nonoverlapping`.
+                    ptr::copy_nonoverlapping(
+                        full_weights as *const List<Real>,
+                        ptr::addr_of_mut!((*ref_ptr(&(*key).shape)).offset_weights),
+                        1,
+                    );
+                }
+            }
+        }
+
+        sort_blend_keyframes(
+            uc,
+            (*channel).keyframes.data as *mut BlendKeyframe,
+            (*channel).keyframes.count,
+        )?;
+        full_weights = full_weights.add(1);
+
+        if (*channel).keyframes.count > 0 {
+            (*channel).target_shape = opt_ref(ref_ptr(
+                &(*((*channel).keyframes.data as *mut BlendKeyframe)
+                    .add((*channel).keyframes.count - 1))
+                .shape,
+            ));
+        }
+        p_channel = p_channel.add(1);
+    }
+
+    {
+        // Generate and patch procedural index buffers
+        let zero_indices: *mut u32 = push::<u32>(&mut (*uc).result, (*uc).max_zero_indices);
+        let consecutive_indices: *mut u32 =
+            push::<u32>(&mut (*uc).result, (*uc).max_consecutive_indices);
+        ufbxi_check!(
+            uc,
+            !zero_indices.is_null() && !consecutive_indices.is_null(),
+            "zero_indices && consecutive_indices"
+        );
+
+        ptr::write_bytes(zero_indices, 0, (*uc).max_zero_indices);
+        for i in 0..(*uc).max_consecutive_indices {
+            *consecutive_indices.add(i) = i as u32;
+        }
+
+        (*uc).zero_indices = zero_indices;
+        (*uc).consecutive_indices = consecutive_indices;
+
+        // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
+        let mut p_mesh: *mut *mut Mesh = (*uc).scene.meshes.data as *mut *mut Mesh;
+        let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, (*uc).scene.meshes.count);
+        while p_mesh != p_mesh_end {
+            let mesh: *mut Mesh = *p_mesh;
+
+            patch_index_pointer(
+                uc,
+                ptr::addr_of_mut!((*mesh).vertex_position.indices.data) as *mut *mut u32,
+            );
+            patch_index_pointer(
+                uc,
+                ptr::addr_of_mut!((*mesh).vertex_normal.indices.data) as *mut *mut u32,
+            );
+            patch_index_pointer(
+                uc,
+                ptr::addr_of_mut!((*mesh).vertex_color.indices.data) as *mut *mut u32,
+            );
+            patch_index_pointer(
+                uc,
+                ptr::addr_of_mut!((*mesh).vertex_crease.indices.data) as *mut *mut u32,
+            );
+            patch_index_pointer(
+                uc,
+                ptr::addr_of_mut!((*mesh).face_material.data) as *mut *mut u32,
+            );
+            patch_index_pointer(
+                uc,
+                ptr::addr_of_mut!((*mesh).face_group.data) as *mut *mut u32,
+            );
+
+            patch_index_pointer(
+                uc,
+                ptr::addr_of_mut!((*mesh).skinned_position.indices.data) as *mut *mut u32,
+            );
+            patch_index_pointer(
+                uc,
+                ptr::addr_of_mut!((*mesh).skinned_normal.indices.data) as *mut *mut u32,
+            );
+
+            // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
+            let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
+            let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
+            while set != set_end {
+                patch_index_pointer(
+                    uc,
+                    ptr::addr_of_mut!((*set).vertex_uv.indices.data) as *mut *mut u32,
+                );
+                patch_index_pointer(
+                    uc,
+                    ptr::addr_of_mut!((*set).vertex_bitangent.indices.data) as *mut *mut u32,
+                );
+                patch_index_pointer(
+                    uc,
+                    ptr::addr_of_mut!((*set).vertex_tangent.indices.data) as *mut *mut u32,
+                );
+                set = set.add(1);
+            }
+
+            // C: `ufbxi_for_list(ufbx_color_set, set, mesh->color_sets)`
+            let mut cset: *mut ColorSet = (*mesh).color_sets.data as *mut ColorSet;
+            let cset_end: *mut ColorSet = add_ptr(cset, (*mesh).color_sets.count);
+            while cset != cset_end {
+                patch_index_pointer(
+                    uc,
+                    ptr::addr_of_mut!((*cset).vertex_color.indices.data) as *mut *mut u32,
+                );
+                cset = cset.add(1);
+            }
+
+            // Generate normals if necessary
+            // DEFERRED(topology): `ufbxi_generate_normals` (ufbx.c:20364-20403)
+            // is not ported yet — it calls the public topology entry points
+            // `ufbx_compute_topology` / `ufbx_generate_normal_mapping` /
+            // `ufbx_compute_normals` (ufbx.c:32477-32617), which live in the
+            // unported `// -- Topology` banner section (`native::topology`).
+            // Until then `uc->opts.generate_missing_normals` is a no-op: a mesh
+            // with no normal layer keeps `vertex_normal.exists == false`,
+            // `generated_normals` stays unset, and the `tmp_stack`
+            // push/pop of `ufbx_topo_edge` that C performs here is missing, so
+            // allocation counts diverge from C for that option too.
+            // Restore verbatim, together with the function at its C-order slot
+            // (see the DEFERRED note at ufbx.c:20364 above), once that lands.
+            //
+            // if !(*mesh).vertex_normal.exists && (*uc).opts.generate_missing_normals {
+            //     generate_normals(uc, mesh)?;
+            // }
+
+            // Assign first UV and color sets as the "canonical" ones
+            if (*mesh).uv_sets.count > 0 {
+                // C: struct assignment (memcpy) of the vertex-attribute
+                // headers; the `Vertex*` structs are not `Copy` in the
+                // generated bindings, so the copy is spelled as a
+                // byte-identical `copy_nonoverlapping`.
+                ptr::copy_nonoverlapping(
+                    ptr::addr_of!((*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_uv),
+                    ptr::addr_of_mut!((*mesh).vertex_uv),
+                    1,
+                );
+                ptr::copy_nonoverlapping(
+                    ptr::addr_of!((*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_bitangent),
+                    ptr::addr_of_mut!((*mesh).vertex_bitangent),
+                    1,
+                );
+                ptr::copy_nonoverlapping(
+                    ptr::addr_of!((*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_tangent),
+                    ptr::addr_of_mut!((*mesh).vertex_tangent),
+                    1,
+                );
+            }
+            if (*mesh).color_sets.count > 0 {
+                ptr::copy_nonoverlapping(
+                    ptr::addr_of!(
+                        (*((*mesh).color_sets.data as *mut ColorSet).add(0)).vertex_color
+                    ),
+                    ptr::addr_of_mut!((*mesh).vertex_color),
+                    1,
+                );
+            }
+
+            if (*mesh).face_group_parts.count == 1 {
+                patch_index_pointer(
+                    uc,
+                    ptr::addr_of_mut!(
+                        (*((*mesh).face_group_parts.data as *mut MeshPart).add(0))
+                            .face_indices
+                            .data
+                    ) as *mut *mut u32,
+                );
+            }
+
+            fetch_mesh_materials(
+                uc,
+                ptr::addr_of_mut!((*mesh).materials),
+                &mut (*mesh).element,
+                true,
+            )?;
+
+            // Patch materials to instances if necessary
+            if (*mesh).materials.count > 0 {
+                // C: `ufbxi_for_ptr_list(ufbx_node, p_node, mesh->instances)`
+                let mut p_node: *mut *mut Node = (*mesh).element.instances.data as *mut *mut Node;
+                let p_node_end: *mut *mut Node = add_ptr(p_node, (*mesh).element.instances.count);
+                while p_node != p_node_end {
+                    let node: *mut Node = *p_node;
+                    // C-parity: `mesh->materials.data[0]` may be NULL (broken
+                    // element connections), so the entry is read as the bare
+                    // `ufbx_material*` the `Ref` field is at the ABI level.
+                    let mesh_materials: *mut *mut Material =
+                        (*mesh).materials.data as *mut *mut Material;
+                    if (*node).materials.count < (*mesh).materials.count
+                        && !(*mesh_materials.add(0)).is_null()
+                    {
+                        let materials: *mut *mut Material =
+                            push::<*mut Material>(&mut (*uc).result, (*mesh).materials.count);
+                        ufbxi_check!(uc, !materials.is_null(), "materials");
+                        // C: `ufbxi_nounroll for (...)` — the no-unroll pragma
+                        // is optimizer-only and has no Rust analogue.
+                        for i in 0..(*node).materials.count {
+                            *materials.add(i) =
+                                *((*node).materials.data as *mut *mut Material).add(i);
+                        }
+                        for i in (*node).materials.count..(*mesh).materials.count {
+                            *materials.add(i) = *mesh_materials.add(i);
+                        }
+                        (*node).materials.data = materials as *const Ref<Material>;
+                        (*node).materials.count = (*mesh).materials.count;
+                    }
+                    p_node = p_node.add(1);
+                }
+            }
+
+            if (*uc).retain_mesh_parts {
+                let num_parts: usize = max_sz((*mesh).materials.count, 1);
+                (*mesh).material_parts.data = push_zero::<MeshPart>(&mut (*uc).result, num_parts);
+                ufbxi_check!(
+                    uc,
+                    !(*mesh).material_parts.data.is_null(),
+                    "mesh->material_parts.data"
+                );
+                (*mesh).material_parts.count = num_parts;
+            }
+
+            if (*mesh).materials.count <= 1 {
+                // Use the shared consecutive index buffer for mesh faces if there's only one material
+                // See HACK(consecutive-faces) in `ufbxi_read_mesh()`.
+                if (*mesh).material_parts.count > 0 {
+                    let part: *mut MeshPart = ((*mesh).material_parts.data as *mut MeshPart).add(0);
+                    (*part).num_faces = (*mesh).num_faces;
+                    (*part).num_triangles = (*mesh).num_triangles;
+                    (*part).num_empty_faces = (*mesh).num_empty_faces;
+                    (*part).num_point_faces = (*mesh).num_point_faces;
+                    (*part).num_line_faces = (*mesh).num_line_faces;
+                    (*part).face_indices.data = (*uc).consecutive_indices;
+                    (*part).face_indices.count = (*mesh).num_faces;
+                    (*mesh).material_part_usage_order.data = (*uc).zero_indices;
+                    (*mesh).material_part_usage_order.count = 1;
+                }
+
+                if (*mesh).materials.count == 1 {
+                    (*mesh).face_material.data = (*uc).zero_indices;
+                    (*mesh).face_material.count = (*mesh).num_faces;
+                } else {
+                    (*mesh).face_material.data = ptr::null_mut();
+                    (*mesh).face_material.count = 0;
+                }
+            } else if (*mesh).materials.count > 0 {
+                finalize_mesh_material(&mut (*uc).result, &mut (*uc).error, mesh)?;
+            }
+
+            // Fetch deformers
+            fetch_dst_elements(
+                uc,
+                ptr::addr_of_mut!((*mesh).skin_deformers) as *mut c_void,
+                &mut (*mesh).element,
+                search_node,
+                true,
+                ptr::null(),
+                ElementType::SkinDeformer,
+            )?;
+            fetch_dst_elements(
+                uc,
+                ptr::addr_of_mut!((*mesh).blend_deformers) as *mut c_void,
+                &mut (*mesh).element,
+                search_node,
+                true,
+                ptr::null(),
+                ElementType::BlendDeformer,
+            )?;
+            fetch_dst_elements(
+                uc,
+                ptr::addr_of_mut!((*mesh).cache_deformers) as *mut c_void,
+                &mut (*mesh).element,
+                search_node,
+                true,
+                ptr::null(),
+                ElementType::CacheDeformer,
+            )?;
+            fetch_deformers(
+                uc,
+                ptr::addr_of_mut!((*mesh).all_deformers),
+                &mut (*mesh).element,
+                search_node,
+            )?;
+
+            // Vertex position must always exist if not explicitly allowed to be missing
+            if !(*mesh).vertex_position.exists && !(*uc).opts.allow_missing_vertex_position {
+                ufbxi_check!(uc, (*mesh).num_indices == 0, "mesh->num_indices == 0");
+                (*mesh).vertex_position.exists = true;
+                (*mesh).vertex_position.unique_per_vertex = true;
+                (*mesh).skinned_position.exists = true;
+                (*mesh).skinned_position.unique_per_vertex = true;
+            }
+
+            // Update metadata
+            if (*mesh).max_face_triangles > (*uc).scene.metadata.max_face_triangles {
+                (*uc).scene.metadata.max_face_triangles = (*mesh).max_face_triangles;
+            }
+            p_mesh = p_mesh.add(1);
+        }
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_stereo_camera, p_stereo, uc->scene.stereo_cameras)`
+    let mut p_stereo: *mut *mut StereoCamera =
+        (*uc).scene.stereo_cameras.data as *mut *mut StereoCamera;
+    let p_stereo_end: *mut *mut StereoCamera = add_ptr(p_stereo, (*uc).scene.stereo_cameras.count);
+    while p_stereo != p_stereo_end {
+        let stereo: *mut StereoCamera = *p_stereo;
+        (*stereo).left = opt_ref(fetch_dst_element(
+            &mut (*stereo).element,
+            search_node,
+            sp::LeftCamera.as_ptr(),
+            ElementType::Camera,
+        ) as *mut Camera);
+        (*stereo).right = opt_ref(fetch_dst_element(
+            &mut (*stereo).element,
+            search_node,
+            sp::RightCamera.as_ptr(),
+            ElementType::Camera,
+        ) as *mut Camera);
+        p_stereo = p_stereo.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_nurbs_curve, p_curve, uc->scene.nurbs_curves)`
+    let mut p_nurbs_curve: *mut *mut NurbsCurve =
+        (*uc).scene.nurbs_curves.data as *mut *mut NurbsCurve;
+    let p_nurbs_curve_end: *mut *mut NurbsCurve =
+        add_ptr(p_nurbs_curve, (*uc).scene.nurbs_curves.count);
+    while p_nurbs_curve != p_nurbs_curve_end {
+        let curve: *mut NurbsCurve = *p_nurbs_curve;
+        finalize_nurbs_basis(uc, ptr::addr_of_mut!((*curve).basis))?;
+        p_nurbs_curve = p_nurbs_curve.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_nurbs_surface, p_surface, uc->scene.nurbs_surfaces)`
+    let mut p_surface: *mut *mut NurbsSurface =
+        (*uc).scene.nurbs_surfaces.data as *mut *mut NurbsSurface;
+    let p_surface_end: *mut *mut NurbsSurface =
+        add_ptr(p_surface, (*uc).scene.nurbs_surfaces.count);
+    while p_surface != p_surface_end {
+        let surface: *mut NurbsSurface = *p_surface;
+        finalize_nurbs_basis(uc, ptr::addr_of_mut!((*surface).basis_u))?;
+        finalize_nurbs_basis(uc, ptr::addr_of_mut!((*surface).basis_v))?;
+
+        (*surface).material = opt_ref(fetch_dst_element(
+            &mut (*surface).element,
+            true,
+            ptr::null(),
+            ElementType::Material,
+        ) as *mut Material);
+        p_surface = p_surface.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_anim_stack, p_stack, uc->scene.anim_stacks)`
+    let mut p_stack: *mut *mut AnimStack = (*uc).scene.anim_stacks.data as *mut *mut AnimStack;
+    let p_stack_end: *mut *mut AnimStack = add_ptr(p_stack, (*uc).scene.anim_stacks.count);
+    while p_stack != p_stack_end {
+        let stack: *mut AnimStack = *p_stack;
+        fetch_dst_elements(
+            uc,
+            ptr::addr_of_mut!((*stack).layers) as *mut c_void,
+            &mut (*stack).element,
+            false,
+            true,
+            ptr::null(),
+            ElementType::AnimLayer,
+        )?;
+
+        push_anim(
+            uc,
+            ptr::addr_of_mut!((*stack).anim) as *mut *mut Anim,
+            (*stack).layers.data as *mut *mut AnimLayer,
+            (*stack).layers.count,
+        )?;
+        p_stack = p_stack.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_anim_layer, p_layer, uc->scene.anim_layers)`
+    let mut p_layer: *mut *mut AnimLayer = (*uc).scene.anim_layers.data as *mut *mut AnimLayer;
+    let p_layer_end: *mut *mut AnimLayer = add_ptr(p_layer, (*uc).scene.anim_layers.count);
+    while p_layer != p_layer_end {
+        let layer: *mut AnimLayer = *p_layer;
+        fetch_dst_elements(
+            uc,
+            ptr::addr_of_mut!((*layer).anim_values) as *mut c_void,
+            &mut (*layer).element,
+            false,
+            true,
+            ptr::null(),
+            ElementType::AnimValue,
+        )?;
+
+        push_anim(
+            uc,
+            ptr::addr_of_mut!((*layer).anim) as *mut *mut Anim,
+            p_layer,
+            1,
+        )?;
+
+        let mut min_id: u32 = u32::MAX;
+        let mut max_id: u32 = 0;
+
+        // Combine the animated properties with elements (potentially duplicates!)
+        let mut num_anim_props: usize = 0;
+        // C: `ufbxi_for_ptr_list(ufbx_anim_value, p_value, layer->anim_values)`
+        let mut p_value: *mut *mut AnimValue = (*layer).anim_values.data as *mut *mut AnimValue;
+        let p_value_end: *mut *mut AnimValue = add_ptr(p_value, (*layer).anim_values.count);
+        while p_value != p_value_end {
+            let value: *mut AnimValue = *p_value;
+            // C: `ufbxi_for_list(ufbx_connection, ac, value->element.connections_src)`
+            let mut ac: *mut Connection = (*value).element.connections_src.data as *mut Connection;
+            let ac_end: *mut Connection = add_ptr(ac, (*value).element.connections_src.count);
+            while ac != ac_end {
+                if (*ac).src_prop.length == 0 && (*ac).dst_prop.length > 0 {
+                    let aprop: *mut AnimProp = push::<AnimProp>(&mut (*uc).tmp_stack, 1);
+                    let id: u32 = (*ref_ptr(&(*ac).dst)).element_id;
+                    min_id = min32(min_id, id);
+                    max_id = max32(max_id, id);
+                    // C: `ufbxi_arraycount(layer->_element_id_bitmask) - 1`
+                    let id_mask: u32 = (*layer)._element_id_bitmask.len() as u32 - 1;
+                    (*layer)._element_id_bitmask[((id >> 5) & id_mask) as usize] |=
+                        1u32 << (id & 31);
+                    ufbxi_check!(uc, !aprop.is_null(), "aprop");
+                    (*aprop).anim_value = Ref::from_ptr(value);
+                    (*aprop).element = Ref::from_ptr(ref_ptr(&(*ac).dst));
+                    (*aprop)._internal_key =
+                        get_name_key((*ac).dst_prop.data, (*ac).dst_prop.length);
+                    (*aprop).prop_name = (*ac).dst_prop;
+                    num_anim_props += 1;
+                }
+                ac = ac.add(1);
+            }
+            p_value = p_value.add(1);
+        }
+
+        if min_id != u32::MAX {
+            (*layer)._min_element_id = min_id;
+            (*layer)._max_element_id = max_id;
+        }
+
+        match find_int(&(*layer).element.props, sp::BlendMode.as_ptr(), 0) {
+            0 => {
+                // Additive
+                (*layer).blended = true;
+                (*layer).additive = true;
+            }
+            1 => {
+                // Override
+                (*layer).blended = false;
+                (*layer).additive = false;
+            }
+            2 => {
+                // Override Passthrough
+                (*layer).blended = true;
+                (*layer).additive = false;
+            }
+            _ => {
+                // Unknown
+                (*layer).blended = false;
+                (*layer).additive = false;
+            }
+        }
+
+        let weight_prop: *mut Prop = find_prop(&(*layer).element.props, sp::Weight.as_ptr());
+        if !weight_prop.is_null() {
+            // C-parity: `prop->value_real` is the `ufbx_prop` value union's
+            // first real; the generated struct keeps only `value_vec4`.
+            (*layer).weight = (*weight_prop).value_vec4.x / 100.0;
+            if (*layer).weight < 0.0f32 as Real {
+                (*layer).weight = 0.0f32 as Real;
+            }
+            // C: `0.99999f` — a `float` literal promoted to `ufbx_real`, NOT
+            // the double 0.99999.
+            if (*layer).weight > 0.99999f32 as Real {
+                (*layer).weight = 1.0f32 as Real;
+            }
+            (*layer).weight_is_animated =
+                ((*weight_prop).flags.raw() & PropFlags::ANIMATED.raw()) != 0;
+        } else {
+            (*layer).weight = 1.0f32 as Real;
+            (*layer).weight_is_animated = false;
+        }
+        (*layer).compose_rotation = find_int(
+            &(*layer).element.props,
+            sp::RotationAccumulationMode.as_ptr(),
+            0,
+        ) == 0;
+        (*layer).compose_scale = find_int(
+            &(*layer).element.props,
+            sp::ScaleAccumulationMode.as_ptr(),
+            0,
+        ) == 0;
+
+        // Add a dummy NULL element animated prop at the end so we can iterate
+        // animated props without worrying about boundary conditions..
+        {
+            let aprop: *mut AnimProp = push_zero::<AnimProp>(&mut (*uc).tmp_stack, 1);
+            ufbxi_check!(uc, !aprop.is_null(), "aprop");
+        }
+
+        (*layer).anim_props.data =
+            push_pop::<AnimProp>(&mut (*uc).result, &mut (*uc).tmp_stack, num_anim_props + 1);
+        ufbxi_check!(
+            uc,
+            !(*layer).anim_props.data.is_null(),
+            "layer->anim_props.data"
+        );
+        (*layer).anim_props.count = num_anim_props;
+        sort_anim_props(
+            uc,
+            (*layer).anim_props.data as *mut AnimProp,
+            (*layer).anim_props.count,
+        )?;
+        p_layer = p_layer.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_anim_value, p_value, uc->scene.anim_values)`
+    let mut p_value: *mut *mut AnimValue = (*uc).scene.anim_values.data as *mut *mut AnimValue;
+    let p_value_end: *mut *mut AnimValue = add_ptr(p_value, (*uc).scene.anim_values.count);
+    while p_value != p_value_end {
+        let value: *mut AnimValue = *p_value;
+
+        // TODO: Search for things like d|Visibility with a constructed name
+        (*value).default_value.x = find_real(
+            &(*value).element.props,
+            sp::X.as_ptr(),
+            (*value).default_value.x,
+        );
+        (*value).default_value.x = find_real(
+            &(*value).element.props,
+            sp::d_X.as_ptr(),
+            (*value).default_value.x,
+        );
+        (*value).default_value.y = find_real(
+            &(*value).element.props,
+            sp::Y.as_ptr(),
+            (*value).default_value.y,
+        );
+        (*value).default_value.y = find_real(
+            &(*value).element.props,
+            sp::d_Y.as_ptr(),
+            (*value).default_value.y,
+        );
+        (*value).default_value.z = find_real(
+            &(*value).element.props,
+            sp::Z.as_ptr(),
+            (*value).default_value.z,
+        );
+        (*value).default_value.z = find_real(
+            &(*value).element.props,
+            sp::d_Z.as_ptr(),
+            (*value).default_value.z,
+        );
+
+        // C: `ufbxi_for_list(ufbx_connection, conn, value->element.connections_dst)`
+        let mut conn: *mut Connection = (*value).element.connections_dst.data as *mut Connection;
+        let conn_end: *mut Connection = add_ptr(conn, (*value).element.connections_dst.count);
+        while conn != conn_end {
+            if (*ref_ptr(&(*conn).src)).type_ == ElementType::AnimCurve
+                && (*conn).src_prop.length == 0
+            {
+                let curve: *mut AnimCurve = ref_ptr(&(*conn).src) as *mut AnimCurve;
+
+                let mut index: u32 = 0;
+                let name: *const u8 = (*conn).dst_prop.data;
+                if name == sp::Y.as_ptr() || name == sp::d_Y.as_ptr() {
+                    index = 1;
+                }
+                if name == sp::Z.as_ptr() || name == sp::d_Z.as_ptr() {
+                    index = 2;
+                }
+
+                let prop: *mut Prop = find_prop_len(
+                    &(*value).element.props,
+                    (*conn).dst_prop.data,
+                    (*conn).dst_prop.length,
+                );
+                if !prop.is_null() {
+                    // C indexes the `ufbx_vec3` value union's `ufbx_real v[3]`
+                    // view; the generated struct keeps only `x`/`y`/`z`, so the
+                    // index is pointer arithmetic from the struct base.
+                    let v: *mut Real = ptr::addr_of_mut!((*value).default_value) as *mut Real;
+                    *v.add(index as usize) = (*prop).value_vec4.x;
+                }
+                (*value).curves[index as usize] = opt_ref(curve);
+            }
+            conn = conn.add(1);
+        }
+        p_value = p_value.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_anim_curve, p_curve, uc->scene.anim_curves)`
+    let mut p_anim_curve: *mut *mut AnimCurve = (*uc).scene.anim_curves.data as *mut *mut AnimCurve;
+    let p_anim_curve_end: *mut *mut AnimCurve =
+        add_ptr(p_anim_curve, (*uc).scene.anim_curves.count);
+    while p_anim_curve != p_anim_curve_end {
+        let curve: *mut AnimCurve = *p_anim_curve;
+        if (*curve).keyframes.count > 0 {
+            (*curve).min_time = (*(*curve).keyframes.data.add(0)).time;
+            (*curve).max_time = (*(*curve).keyframes.data.add((*curve).keyframes.count - 1)).time;
+        }
+        p_anim_curve = p_anim_curve.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_shader, p_shader, uc->scene.shaders)`
+    let mut p_shader: *mut *mut Shader = (*uc).scene.shaders.data as *mut *mut Shader;
+    let p_shader_end: *mut *mut Shader = add_ptr(p_shader, (*uc).scene.shaders.count);
+    while p_shader != p_shader_end {
+        let shader: *mut Shader = *p_shader;
+        fetch_dst_elements(
+            uc,
+            ptr::addr_of_mut!((*shader).bindings) as *mut c_void,
+            &mut (*shader).element,
+            false,
+            false,
+            ptr::null(),
+            ElementType::ShaderBinding,
+        )?;
+
+        let api: *mut Prop = api_find_prop(&(*shader).element.props, b"RenderAPI\0".as_ptr());
+        if !api.is_null() {
+            if strcmp((*api).value_str.data, b"ARNOLD_SHADER_ID\0".as_ptr()) == 0 {
+                (*shader).type_ = ShaderType::ArnoldStandardSurface;
+            } else if strcmp((*api).value_str.data, b"OSL\0".as_ptr()) == 0 {
+                (*shader).type_ = ShaderType::OslStandardSurface;
+            } else if strcmp((*api).value_str.data, b"SFX_PBS_SHADER\0".as_ptr()) == 0 {
+                (*shader).type_ = ShaderType::ShaderfxGraph;
+            }
+        }
+        p_shader = p_shader.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_material, p_material, uc->scene.materials)`
+    let mut p_material: *mut *mut Material = (*uc).scene.materials.data as *mut *mut Material;
+    let p_material_end: *mut *mut Material = add_ptr(p_material, (*uc).scene.materials.count);
+    while p_material != p_material_end {
+        let material: *mut Material = *p_material;
+        (*material).shader = opt_ref(fetch_src_element(
+            &mut (*material).element,
+            false,
+            ptr::null(),
+            ElementType::Shader,
+        ) as *mut Shader);
+
+        if strcmp((*material).shading_model_name.data, b"lambert\0".as_ptr()) == 0
+            || strcmp((*material).shading_model_name.data, b"Lambert\0".as_ptr()) == 0
+        {
+            (*material).shader_type = ShaderType::FbxLambert;
+        } else if strcmp((*material).shading_model_name.data, b"phong\0".as_ptr()) == 0
+            || strcmp((*material).shading_model_name.data, b"Phong\0".as_ptr()) == 0
+        {
+            (*material).shader_type = ShaderType::FbxPhong;
+        }
+
+        let material_shader: *mut Shader = opt_ptr(&(*material).shader);
+        if !material_shader.is_null() {
+            (*material).shader_type = (*material_shader).type_;
+        } else {
+            if (*uc).opts.use_blender_pbr_material
+                && (*uc).exporter == Exporter::BlenderBinary
+                && (*uc).exporter_version >= pack_version(4, 12, 0)
+            {
+                (*material).shader_type = ShaderType::BlenderPhong;
+            }
+
+            // TODO: Is this too strict?
+            if (*material).shader_type == ShaderType::Unknown {
+                let classid_a: u32 =
+                    api_find_int(&(*material).element.props, b"3dsMax|ClassIDa\0".as_ptr(), 0)
+                        as u64 as u32;
+                let classid_b: u32 =
+                    api_find_int(&(*material).element.props, b"3dsMax|ClassIDb\0".as_ptr(), 0)
+                        as u64 as u32;
+                if classid_a == 0x3d6b1cecu32 && classid_b == 0xdeadc001u32 {
+                    (*material).shader_type = ShaderType::E3DsMaxPhysicalMaterial;
+                    (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|Parameters|\0");
+                } else if classid_a == 0xf1551e33u32 && classid_b == 0x37fb1337u32 {
+                    (*material).shader_type = ShaderType::OpenpbrMaterial;
+                    (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|Parameters|\0");
+                } else if classid_a == 0x38420192u32 && classid_b == 0x45fe4e1bu32 {
+                    (*material).shader_type = ShaderType::GltfMaterial;
+                    (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|\0");
+                } else if classid_a == 0xd00f1e00u32 && classid_b == 0xbe77e500u32 {
+                    (*material).shader_type = ShaderType::E3DsMaxPbrMetalRough;
+                    (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|main|\0");
+                } else if classid_a == 0xd00f1e00u32 && classid_b == 0x01dbad33u32 {
+                    (*material).shader_type = ShaderType::E3DsMaxPbrSpecGloss;
+                    (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|main|\0");
+                }
+            }
+        }
+
+        fetch_textures(
+            uc,
+            ptr::addr_of_mut!((*material).textures),
+            &mut (*material).element,
+            false,
+        )?;
+        p_material = p_material.add(1);
+    }
+
+    // Ugh.. Patch the textures from meshes for legacy LayerElement-style textures
+    {
+        // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
+        let mut p_mesh: *mut *mut Mesh = (*uc).scene.meshes.data as *mut *mut Mesh;
+        let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, (*uc).scene.meshes.count);
+        while p_mesh != p_mesh_end {
+            let mesh: *mut Mesh = *p_mesh;
+            let num_materials: usize = (*mesh).materials.count;
+
+            let extra: *mut MeshExtra =
+                get_element_extra(uc, (*mesh).element.element_id) as *mut MeshExtra;
+            if extra.is_null() {
+                p_mesh = p_mesh.add(1);
+                continue;
+            }
+            if num_materials == 0 {
+                p_mesh = p_mesh.add(1);
+                continue;
+            }
+
+            // TODO: This leaks currently to result, probably doesn't matter..
+            // C: `ufbx_texture_list textures;` — uninitialized local (no
+            // upstream `// ufbxi_uninit` marker); `ufbxi_fetch_dst_elements`
+            // writes both fields before the first read.
+            let mut textures_storage = MaybeUninit::<RefList<Texture>>::uninit();
+            let textures: *mut RefList<Texture> = textures_storage.as_mut_ptr();
+            fetch_dst_elements(
+                uc,
+                textures as *mut c_void,
+                &mut (*mesh).element,
+                true,
+                false,
+                ptr::null(),
+                ElementType::Texture,
+            )?;
+
+            let mut num_material_textures: usize = 0;
+            // C: `ufbxi_for(ufbxi_tmp_mesh_texture, tex, extra->texture_arr, extra->texture_count)`
+            let mut tex: *mut TmpMeshTexture = (*extra).texture_arr;
+            let tex_end: *mut TmpMeshTexture = add_ptr(tex, (*extra).texture_count);
+            while tex != tex_end {
+                if (*tex).all_same {
+                    let texture_id: i32 = if (*tex).num_faces > 0 {
+                        *(*tex).face_texture.add(0) as i32
+                    } else {
+                        0
+                    };
+                    if texture_id >= 0 && (texture_id as usize) < (*textures).count {
+                        let mat_texs: *mut TmpMaterialTexture =
+                            push::<TmpMaterialTexture>(&mut (*uc).tmp_stack, num_materials);
+                        ufbxi_check!(uc, !mat_texs.is_null(), "mat_texs");
+                        num_material_textures += num_materials;
+                        for i in 0..num_materials {
+                            (*mat_texs.add(i)).material_id = i as i32;
+                            (*mat_texs.add(i)).texture_id = texture_id;
+                            (*mat_texs.add(i)).prop_name = (*tex).prop_name;
+                        }
+                    }
+                } else if (*mesh).face_material.count != 0 {
+                    let num_faces: usize = min_sz((*tex).num_faces, (*mesh).num_faces);
+                    let mut prev_material: i32 = -1;
+                    let mut prev_texture: i32 = -1;
+                    for i in 0..num_faces {
+                        let texture_id: i32 = *(*tex).face_texture.add(i) as i32;
+                        let material_id: i32 = *(*mesh).face_material.data.add(i) as i32;
+                        if texture_id < 0 || (texture_id as usize) >= (*textures).count {
+                            continue;
+                        }
+                        if material_id < 0 || (material_id as usize) >= num_materials {
+                            continue;
+                        }
+                        if material_id == prev_material && texture_id == prev_texture {
+                            continue;
+                        }
+                        prev_material = material_id;
+                        prev_texture = texture_id;
+
+                        let mat_tex: *mut TmpMaterialTexture =
+                            push::<TmpMaterialTexture>(&mut (*uc).tmp_stack, 1);
+                        ufbxi_check!(uc, !mat_tex.is_null(), "mat_tex");
+                        (*mat_tex).material_id = material_id;
+                        (*mat_tex).texture_id = texture_id;
+                        (*mat_tex).prop_name = (*tex).prop_name;
+                        num_material_textures += 1;
+                    }
+                }
+                tex = tex.add(1);
+            }
+
+            // Push a sentinel material texture to the end so we don't need to
+            // duplicate the material texture flushing code twice.
+            {
+                let mat_tex: *mut TmpMaterialTexture =
+                    push::<TmpMaterialTexture>(&mut (*uc).tmp_stack, 1);
+                ufbxi_check!(uc, !mat_tex.is_null(), "mat_tex");
+                (*mat_tex).material_id = -1;
+                (*mat_tex).texture_id = -1;
+                (*mat_tex).prop_name = EMPTY_STRING.0;
+            }
+
+            let mat_texs: *mut TmpMaterialTexture = push_pop::<TmpMaterialTexture>(
+                &mut (*uc).tmp,
+                &mut (*uc).tmp_stack,
+                num_material_textures + 1,
+            );
+            ufbxi_check!(uc, !mat_texs.is_null(), "mat_texs");
+            sort_tmp_material_textures(uc, mat_texs, num_material_textures)?;
+
+            let mut prev_material: i32 = -2;
+            let mut prev_texture: i32 = -2;
+            let mut prev_prop: *const u8 = ptr::null();
+            let mut num_textures_in_material: usize = 0;
+            for i in 0..num_material_textures + 1 {
+                let mat_tex: TmpMaterialTexture = *mat_texs.add(i);
+                if mat_tex.material_id != prev_material {
+                    if prev_material >= 0 && num_textures_in_material > 0 {
+                        let mat: *mut Material = *((*mesh).materials.data as *mut *mut Material)
+                            .add(prev_material as usize);
+                        if !mat.is_null() && (*mat).textures.count == 0 {
+                            let texs: *mut MaterialTexture = push_pop::<MaterialTexture>(
+                                &mut (*uc).result,
+                                &mut (*uc).tmp_stack,
+                                num_textures_in_material,
+                            );
+                            ufbxi_check!(uc, !texs.is_null(), "texs");
+                            (*mat).textures.data = texs;
+                            (*mat).textures.count = num_textures_in_material;
+                        } else {
+                            pop::<MaterialTexture>(
+                                &mut (*uc).tmp_stack,
+                                num_textures_in_material,
+                                ptr::null_mut(),
+                            );
+                        }
+                    }
+
+                    if mat_tex.material_id < 0 {
+                        break;
+                    }
+                    prev_material = mat_tex.material_id;
+                    prev_texture = -1;
+                    prev_prop = ptr::null();
+                    num_textures_in_material = 0;
+                }
+                if mat_tex.texture_id == prev_texture && mat_tex.prop_name.data == prev_prop {
+                    continue;
+                }
+                prev_texture = mat_tex.texture_id;
+                prev_prop = mat_tex.prop_name.data;
+
+                let tex: *mut MaterialTexture = push::<MaterialTexture>(&mut (*uc).tmp_stack, 1);
+                ufbxi_check!(uc, !tex.is_null(), "tex");
+                ufbx_assert!(prev_texture >= 0 && (prev_texture as usize) < (*textures).count);
+                (*tex).texture = *(*textures).data.add(prev_texture as usize);
+                // C: `tex->shader_prop = tex->material_prop = mat_tex.prop_name;`
+                (*tex).material_prop = mat_tex.prop_name;
+                (*tex).shader_prop = (*tex).material_prop;
+                num_textures_in_material += 1;
+            }
+            p_mesh = p_mesh.add(1);
+        }
+    }
+
+    resolve_file_content(uc)?;
+
+    // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, uc->scene.textures)`
+    let mut p_texture: *mut *mut Texture = (*uc).scene.textures.data as *mut *mut Texture;
+    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, (*uc).scene.textures.count);
+    while p_texture != p_texture_end {
+        let texture: *mut Texture = *p_texture;
+        let extra: *mut TextureExtra =
+            get_element_extra(uc, (*texture).element.element_id) as *mut TextureExtra;
+
+        let uv_set: *mut Prop = find_prop(&(*texture).element.props, sp::UVSet.as_ptr());
+        if !uv_set.is_null() {
+            (*texture).uv_set = (*uv_set).value_str;
+        } else {
+            (*texture).uv_set = EMPTY_STRING.0;
+        }
+
+        (*texture).video = opt_ref(fetch_dst_element(
+            &mut (*texture).element,
+            false,
+            ptr::null(),
+            ElementType::Video,
+        ) as *mut Video);
+        let texture_video: *mut Video = opt_ptr(&(*texture).video);
+        if !texture_video.is_null() {
+            (*texture).content = (*texture_video).content;
+        }
+
+        finalize_shader_texture(uc, texture)?;
+
+        resolve_filenames(
+            uc,
+            ptr::addr_of_mut!((*texture).filename) as *mut Strblob,
+            ptr::addr_of_mut!((*texture).absolute_filename) as *mut Strblob,
+            ptr::addr_of_mut!((*texture).relative_filename) as *mut Strblob,
+            false,
+        )?;
+        resolve_filenames(
+            uc,
+            ptr::addr_of_mut!((*texture).raw_filename) as *mut Strblob,
+            ptr::addr_of_mut!((*texture).raw_absolute_filename) as *mut Strblob,
+            ptr::addr_of_mut!((*texture).raw_relative_filename) as *mut Strblob,
+            true,
+        )?;
+
+        // Fetch layered texture layers and patch alphas/blend modes
+        if (*texture).type_ == TextureType::Layered {
+            fetch_texture_layers(
+                uc,
+                ptr::addr_of_mut!((*texture).layers),
+                &mut (*texture).element,
+            )?;
+            if !extra.is_null() {
+                let num: usize = min_sz((*extra).num_alphas, (*texture).layers.count);
+                for i in 0..num {
+                    (*((*texture).layers.data as *mut TextureLayer).add(i)).alpha =
+                        *(*extra).alphas.add(i);
+                }
+                let num: usize = min_sz((*extra).num_blend_modes, (*texture).layers.count);
+                for i in 0..num {
+                    let mode: i32 = *(*extra).blend_modes.add(i);
+                    if mode >= 0 && mode < BlendMode::Overlay as i32 {
+                        // C: `(ufbx_blend_mode)mode` — the guard above pins
+                        // `mode` into the enum's range.
+                        (*((*texture).layers.data as *mut TextureLayer).add(i)).blend_mode =
+                            core::mem::transmute::<u32, BlendMode>(mode as u32);
+                    }
+                }
+            }
+        }
+
+        insert_texture_file(uc, texture)?;
+        p_texture = p_texture.add(1);
+    }
+
+    propagate_main_textures(&mut (*uc).scene);
+    pop_texture_files(uc)?;
+
+    // Second pass to fetch material maps
+    // C: `ufbxi_for_ptr_list(ufbx_material, p_material, uc->scene.materials)`
+    let mut p_material: *mut *mut Material = (*uc).scene.materials.data as *mut *mut Material;
+    let p_material_end: *mut *mut Material = add_ptr(p_material, (*uc).scene.materials.count);
+    while p_material != p_material_end {
+        let material: *mut Material = *p_material;
+
+        sort_material_textures(
+            uc,
+            (*material).textures.data as *mut MaterialTexture,
+            (*material).textures.count,
+        )?;
+        fetch_maps(&mut (*uc).scene, material);
+
+        // Fetch `ufbx_material_texture.shader_prop` names
+        let material_shader: *mut Shader = opt_ptr(&(*material).shader);
+        if !material_shader.is_null() {
+            // C: `ufbxi_for_ptr_list(ufbx_shader_binding, p_binding, material->shader->bindings)`
+            let mut p_binding: *mut *mut ShaderBinding =
+                (*material_shader).bindings.data as *mut *mut ShaderBinding;
+            let p_binding_end: *mut *mut ShaderBinding =
+                add_ptr(p_binding, (*material_shader).bindings.count);
+            while p_binding != p_binding_end {
+                let binding: *mut ShaderBinding = *p_binding;
+
+                // C: `ufbxi_for_list(ufbx_shader_prop_binding, prop, binding->prop_bindings)`
+                let mut prop: *mut ShaderPropBinding =
+                    (*binding).prop_bindings.data as *mut ShaderPropBinding;
+                let prop_end: *mut ShaderPropBinding =
+                    add_ptr(prop, (*binding).prop_bindings.count);
+                while prop != prop_end {
+                    let name: String = (*prop).material_prop;
+
+                    let mut index: usize = usize::MAX;
+                    macro_lower_bound_eq::<MaterialTexture>(
+                        4,
+                        &mut index,
+                        (*material).textures.data,
+                        0,
+                        (*material).textures.count,
+                        |a| str_less((*a).material_prop, name),
+                        |a| (*a).material_prop.data == name.data,
+                    );
+                    while index < (*material).textures.count
+                        && (*((*material).textures.data as *mut MaterialTexture).add(index))
+                            .shader_prop
+                            .data
+                            == name.data
+                    {
+                        (*((*material).textures.data as *mut MaterialTexture).add(index))
+                            .shader_prop = (*prop).shader_prop;
+                        index += 1;
+                    }
+                    prop = prop.add(1);
+                }
+                p_binding = p_binding.add(1);
+            }
+        }
+        p_material = p_material.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_display_layer, p_layer, uc->scene.display_layers)`
+    let mut p_display_layer: *mut *mut DisplayLayer =
+        (*uc).scene.display_layers.data as *mut *mut DisplayLayer;
+    let p_display_layer_end: *mut *mut DisplayLayer =
+        add_ptr(p_display_layer, (*uc).scene.display_layers.count);
+    while p_display_layer != p_display_layer_end {
+        let layer: *mut DisplayLayer = *p_display_layer;
+        fetch_dst_elements(
+            uc,
+            ptr::addr_of_mut!((*layer).nodes) as *mut c_void,
+            &mut (*layer).element,
+            false,
+            true,
+            ptr::null(),
+            ElementType::Node,
+        )?;
+        p_display_layer = p_display_layer.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_selection_set, p_set, uc->scene.selection_sets)`
+    let mut p_set: *mut *mut SelectionSet =
+        (*uc).scene.selection_sets.data as *mut *mut SelectionSet;
+    let p_set_end: *mut *mut SelectionSet = add_ptr(p_set, (*uc).scene.selection_sets.count);
+    while p_set != p_set_end {
+        let set: *mut SelectionSet = *p_set;
+        fetch_dst_elements(
+            uc,
+            ptr::addr_of_mut!((*set).nodes) as *mut c_void,
+            &mut (*set).element,
+            false,
+            true,
+            ptr::null(),
+            ElementType::SelectionNode,
+        )?;
+        p_set = p_set.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_selection_node, p_node, uc->scene.selection_nodes)`
+    let mut p_sel_node: *mut *mut SelectionNode =
+        (*uc).scene.selection_nodes.data as *mut *mut SelectionNode;
+    let p_sel_node_end: *mut *mut SelectionNode =
+        add_ptr(p_sel_node, (*uc).scene.selection_nodes.count);
+    while p_sel_node != p_sel_node_end {
+        let node: *mut SelectionNode = *p_sel_node;
+        (*node).target_node =
+            opt_ref(
+                fetch_dst_element(&mut (*node).element, false, ptr::null(), ElementType::Node)
+                    as *mut Node,
+            );
+        (*node).target_mesh =
+            opt_ref(
+                fetch_dst_element(&mut (*node).element, false, ptr::null(), ElementType::Mesh)
+                    as *mut Mesh,
+            );
+        if opt_ptr(&(*node).target_mesh).is_null() && !opt_ptr(&(*node).target_node).is_null() {
+            (*node).target_mesh = (*opt_ptr(&(*node).target_node)).mesh;
+        } else if opt_ptr(&(*node).target_node).is_null()
+            && !opt_ptr(&(*node).target_mesh).is_null()
+            && (*opt_ptr(&(*node).target_mesh)).element.instances.count > 0
+        {
+            (*node).target_node = opt_ref(
+                *((*opt_ptr(&(*node).target_mesh)).element.instances.data as *mut *mut Node).add(0),
+            );
+        }
+
+        let mesh: *mut Mesh = opt_ptr(&(*node).target_mesh);
+        if !mesh.is_null() {
+            validate_indices(
+                uc,
+                ptr::addr_of_mut!((*node).vertices),
+                (*mesh).num_vertices,
+            )?;
+            validate_indices(uc, ptr::addr_of_mut!((*node).edges), (*mesh).num_edges)?;
+            validate_indices(uc, ptr::addr_of_mut!((*node).faces), (*mesh).num_faces)?;
+        }
+        p_sel_node = p_sel_node.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_constraint, p_constraint, uc->scene.constraints)`
+    let mut p_constraint: *mut *mut Constraint =
+        (*uc).scene.constraints.data as *mut *mut Constraint;
+    let p_constraint_end: *mut *mut Constraint =
+        add_ptr(p_constraint, (*uc).scene.constraints.count);
+    while p_constraint != p_constraint_end {
+        let constraint: *mut Constraint = *p_constraint;
+
+        let tmp_base: usize = (*uc).tmp_stack.num_items;
+
+        // Find property connections in _both_ src and dst connections as they are inconsistent
+        // in pre-7000 files. For example "Constrained Object" is a "PO" connection in 6100.
+        // C: `ufbxi_for_list(ufbx_connection, conn, constraint->element.connections_src)`
+        for conn_ix in 0..(*constraint).element.connections_src.count {
+            let conn: *mut Connection =
+                ((*constraint).element.connections_src.data as *mut Connection).add(conn_ix);
+            if (*conn).src_prop.length == 0 || (*ref_ptr(&(*conn).dst)).type_ != ElementType::Node {
+                continue;
+            }
+            add_constraint_prop(
+                uc,
+                constraint,
+                ref_ptr(&(*conn).dst) as *mut Node,
+                (*conn).src_prop.data,
+            )?;
+        }
+        // C: `ufbxi_for_list(ufbx_connection, conn, constraint->element.connections_dst)`
+        for conn_ix in 0..(*constraint).element.connections_dst.count {
+            let conn: *mut Connection =
+                ((*constraint).element.connections_dst.data as *mut Connection).add(conn_ix);
+            if (*conn).dst_prop.length == 0 || (*ref_ptr(&(*conn).src)).type_ != ElementType::Node {
+                continue;
+            }
+            add_constraint_prop(
+                uc,
+                constraint,
+                ref_ptr(&(*conn).src) as *mut Node,
+                (*conn).dst_prop.data,
+            )?;
+        }
+
+        let num_targets: usize = (*uc).tmp_stack.num_items - tmp_base;
+        (*constraint).targets.count = num_targets;
+        (*constraint).targets.data =
+            push_pop::<ConstraintTarget>(&mut (*uc).result, &mut (*uc).tmp_stack, num_targets);
+        ufbxi_check!(
+            uc,
+            !(*constraint).targets.data.is_null(),
+            "constraint->targets.data"
+        );
+        p_constraint = p_constraint.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_audio_layer, p_layer, uc->scene.audio_layers)`
+    let mut p_audio_layer: *mut *mut AudioLayer =
+        (*uc).scene.audio_layers.data as *mut *mut AudioLayer;
+    let p_audio_layer_end: *mut *mut AudioLayer =
+        add_ptr(p_audio_layer, (*uc).scene.audio_layers.count);
+    while p_audio_layer != p_audio_layer_end {
+        let layer: *mut AudioLayer = *p_audio_layer;
+        fetch_dst_elements(
+            uc,
+            ptr::addr_of_mut!((*layer).clips) as *mut c_void,
+            &mut (*layer).element,
+            false,
+            true,
+            ptr::null(),
+            ElementType::AudioClip,
+        )?;
+        p_audio_layer = p_audio_layer.add(1);
+    }
+
+    // C: `ufbxi_for_ptr_list(ufbx_lod_group, p_lod, uc->scene.lod_groups)`
+    let mut p_lod: *mut *mut LodGroup = (*uc).scene.lod_groups.data as *mut *mut LodGroup;
+    let p_lod_end: *mut *mut LodGroup = add_ptr(p_lod, (*uc).scene.lod_groups.count);
+    while p_lod != p_lod_end {
+        finalize_lod_group(uc, *p_lod)?;
+        p_lod = p_lod.add(1);
+    }
+
+    fetch_file_textures(uc)?;
+
+    // NOTE: This will be patched over in `ufbxi_update_scene()` if there are `anim_layers`
+    if (*uc).scene.anim_layers.count == 0 {
+        push_anim(
+            uc,
+            ptr::addr_of_mut!((*uc).scene.anim) as *mut *mut Anim,
+            ptr::null_mut(),
+            0,
+        )?;
+    }
+
+    (*uc).scene.metadata.ktime_second = (*uc).ktime_sec;
+
+    // Maya seems to use scale of 100/3, Blender binary uses exactly 33, ASCII has always value of 1.0
+    if (*uc).version < 6000 {
+        (*uc).scene.metadata.bone_prop_size_unit = 1.0f32 as Real;
+    } else if (*uc).exporter == Exporter::BlenderBinary {
+        (*uc).scene.metadata.bone_prop_size_unit = 33.0f32 as Real;
+    } else if (*uc).exporter == Exporter::BlenderAscii {
+        (*uc).scene.metadata.bone_prop_size_unit = 1.0f32 as Real;
+    } else {
+        (*uc).scene.metadata.bone_prop_size_unit = (100.0 / 3.0) as Real;
+    }
+    if (*uc).exporter == Exporter::BlenderAscii {
+        (*uc).scene.metadata.bone_prop_limb_length_relative = false;
+    } else {
+        (*uc).scene.metadata.bone_prop_limb_length_relative = true;
+    }
+
+    Ok(())
+}
+
+// -- Interpret the read scene (ufbx.c:22626-22741)
+//
+// This section was ported by the eighth unit, ahead of `ufbxi_finalize_scene`
+// (ufbx.c:21641-22624, then still a hole, filled by the ninth unit and now
+// sitting above at its C-order slot), because `ufbxi_modify_geometry`
+// (ufbx.c:21165) needs `ufbxi_get_geometry_transform` — which is exactly why C
+// forward-declares it at ufbx.c:21070-21071.
+
+// ufbx.c:22628-22633 `ufbxi_add_translate`
+#[inline(always)]
+pub(crate) unsafe fn add_translate(t: *mut Transform, v: Vec3) {
+    (*t).translation.x += v.x;
+    (*t).translation.y += v.y;
+    (*t).translation.z += v.z;
+}
+
+// ufbx.c:22635-22640 `ufbxi_sub_translate`
+#[inline(always)]
+pub(crate) unsafe fn sub_translate(t: *mut Transform, v: Vec3) {
+    (*t).translation.x -= v.x;
+    (*t).translation.y -= v.y;
+    (*t).translation.z -= v.z;
+}
+
+// ufbx.c:22642-22650 `ufbxi_mul_scale`
+#[inline(always)]
+pub(crate) unsafe fn mul_scale(t: *mut Transform, v: Vec3) {
+    (*t).translation.x *= v.x;
+    (*t).translation.y *= v.y;
+    (*t).translation.z *= v.z;
+    (*t).scale.x *= v.x;
+    (*t).scale.y *= v.y;
+    (*t).scale.z *= v.z;
+}
+
+// ufbx.c:22652-22660 `ufbxi_mul_scale_real`
+#[inline(always)]
+pub(crate) unsafe fn mul_scale_real(t: *mut Transform, v: Real) {
+    (*t).translation.x *= v;
+    (*t).translation.y *= v;
+    (*t).translation.z *= v;
+    (*t).scale.x *= v;
+    (*t).scale.y *= v;
+    (*t).scale.z *= v;
+}
+
+// ufbx.c:22662-22670 `ufbxi_mul_quat`
+#[inline(never)]
+pub(crate) unsafe fn mul_quat(a: Quat, b: Quat) -> Quat {
+    // C: `ufbx_quat r;` — every field is written below before the return, so
+    // the zero-fill is inert (upstream carries no `// ufbxi_uninit` marker).
+    let mut r: Quat = core::mem::zeroed();
+    r.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y;
+    r.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x;
+    r.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w;
+    r.w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z;
+    r
+}
+
+// ufbx.c:22672-22677 `ufbxi_add_weighted_vec3`
+#[inline(always)]
+pub(crate) unsafe fn add_weighted_vec3(r: *mut Vec3, b: Vec3, w: Real) {
+    (*r).x += b.x * w;
+    (*r).y += b.y * w;
+    (*r).z += b.z * w;
+}
+
+// ufbx.c:22679-22685 `ufbxi_add_weighted_quat`
+#[inline(always)]
+pub(crate) unsafe fn add_weighted_quat(r: *mut Quat, b: Quat, w: Real) {
+    (*r).x += b.x * w;
+    (*r).y += b.y * w;
+    (*r).z += b.z * w;
+    (*r).w += b.w * w;
+}
+
+// ufbx.c:22687-22693 `ufbxi_add_weighted_mat`
+// C indexes the `ufbx_matrix` value union's `ufbx_vec3 cols[4]` view; the
+// generated struct keeps only the named `m00`..`m23` fields, which are laid out
+// exactly as four consecutive `ufbx_vec3` columns.
+#[inline(never)]
+pub(crate) unsafe fn add_weighted_mat(r: *mut Matrix, b: *const Matrix, w: Real) {
+    let r_cols: *mut Vec3 = r as *mut Vec3;
+    let b_cols: *const Vec3 = b as *const Vec3;
+    add_weighted_vec3(r_cols.add(0), *b_cols.add(0), w);
+    add_weighted_vec3(r_cols.add(1), *b_cols.add(1), w);
+    add_weighted_vec3(r_cols.add(2), *b_cols.add(2), w);
+    add_weighted_vec3(r_cols.add(3), *b_cols.add(3), w);
+}
+
+// ufbx.c:22695-22709 `ufbxi_mul_rotate`
+pub(crate) unsafe fn mul_rotate(t: *mut Transform, v: Vec3, order: RotationOrder) {
+    if is_vec3_zero(v) {
+        return;
+    }
+
+    let q: Quat = euler_to_quat(v, order);
+    if (*t).rotation.w != 1.0 {
+        (*t).rotation = mul_quat(q, (*t).rotation);
+    } else {
+        (*t).rotation = q;
+    }
+
+    if !is_vec3_zero((*t).translation) {
+        (*t).translation = quat_rotate_vec3(q, (*t).translation);
+    }
+}
+
+// ufbx.c:22711-22724 `ufbxi_mul_rotate_quat`
+pub(crate) unsafe fn mul_rotate_quat(t: *mut Transform, q: Quat) {
+    if is_quat_identity(q) {
+        return;
+    }
+
+    if (*t).rotation.w != 1.0 {
+        (*t).rotation = mul_quat(q, (*t).rotation);
+    } else {
+        (*t).rotation = q;
+    }
+
+    if !is_vec3_zero((*t).translation) {
+        (*t).translation = quat_rotate_vec3(q, (*t).translation);
+    }
+}
+
+// ufbx.c:22726-22741 `ufbxi_mul_inv_rotate`
+pub(crate) unsafe fn mul_inv_rotate(t: *mut Transform, v: Vec3, order: RotationOrder) {
+    if is_vec3_zero(v) {
+        return;
+    }
+
+    let mut q: Quat = euler_to_quat(v, order);
+    q.x = -q.x;
+    q.y = -q.y;
+    q.z = -q.z;
+    if (*t).rotation.w != 1.0 {
+        (*t).rotation = mul_quat(q, (*t).rotation);
+    } else {
+        (*t).rotation = q;
+    }
+
+    if !is_vec3_zero((*t).translation) {
+        (*t).translation = quat_rotate_vec3(q, (*t).translation);
+    }
+}
+
+// -- Updating state from properties (ufbx.c:22743-…)
+//
+// Only the head of this banner section is ported here — the three helpers
+// `ufbxi_modify_geometry` (ufbx.c:21165) depends on. The rest starts at
+// `ufbxi_get_rotation` (ufbx.c:22786).
+
+// ufbx.c:22745-22749 `ufbxi_mirror_translation`
+// C indexes the `ufbx_vec3` value union's `ufbx_real v[3]` view; the generated
+// struct keeps only `x`/`y`/`z`, so the index is pointer arithmetic from the
+// struct base (same device as `ufbxi_mirror_vec3_list` above).
+#[inline(always)]
+pub(crate) unsafe fn mirror_translation(p_vec: *mut Vec3, axis: MirrorAxis) {
+    // C: `ufbxi_dev_assert(axis);` — enum truthiness.
+    ufbxi_dev_assert!(axis != MirrorAxis::None);
+    let v: *mut Real = p_vec as *mut Real;
+    // C: `axis - 1` — the enum is promoted to `int` before the subtraction.
+    let i: usize = (axis as i32 - 1) as usize;
+    *v.add(i) = -*v.add(i);
+}
+
+// ufbx.c:22751-22756 `ufbxi_mirror_rotation`
+// Same `ufbx_quat.v[4]` union view as `ufbxi_mirror_translation` above.
+#[inline(always)]
+pub(crate) unsafe fn mirror_rotation(p_quat: *mut Quat, axis: MirrorAxis) {
+    // C: `ufbxi_dev_assert(axis);` — enum truthiness.
+    ufbxi_dev_assert!(axis != MirrorAxis::None);
+    let v: *mut Real = p_quat as *mut Real;
+    // C: `axis % 3` / `(axis + 1) % 3` — the enum is promoted to `int` first.
+    let i0: usize = (axis as i32 % 3) as usize;
+    *v.add(i0) = -*v.add(i0);
+    let i1: usize = ((axis as i32 + 1) % 3) as usize;
+    *v.add(i1) = -*v.add(i1);
+}
+
+// ufbx.c:22758-22784 `ufbxi_get_geometry_transform`
+// (forward-declared at ufbx.c:21070-21071 for `ufbxi_modify_geometry`)
+#[inline(never)]
+pub(crate) unsafe fn get_geometry_transform(props: *const Props, node: *mut Node) -> Transform {
+    let translation: Vec3 = find_vec3(props, sp::GeometricTranslation.as_ptr(), 0.0, 0.0, 0.0);
+    let rotation: Vec3 = find_vec3(props, sp::GeometricRotation.as_ptr(), 0.0, 0.0, 0.0);
+    let scaling: Vec3 = find_vec3(props, sp::GeometricScaling.as_ptr(), 1.0, 1.0, 1.0);
+
+    // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
+    let mut t: Transform = Transform {
+        translation: Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        rotation: Quat {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+        },
+        scale: Vec3 {
+            x: 1.0,
+            y: 1.0,
+            z: 1.0,
+        },
+    };
+
+    // WorldTransform = ParentWorldTransform * T * R * S * (OT * OR * OS)
+
+    mul_scale(&mut t, scaling);
+    mul_rotate(&mut t, rotation, RotationOrder::Xyz);
+    add_translate(&mut t, translation);
+
+    if (*node).has_adjust_transform {
+        t.translation.x *= (*node).adjust_translation_scale;
+        t.translation.y *= (*node).adjust_translation_scale;
+        t.translation.z *= (*node).adjust_translation_scale;
+    }
+
+    if (*node).adjust_mirror_axis != MirrorAxis::None {
+        mirror_translation(&mut t.translation, (*node).adjust_mirror_axis);
+        mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis);
+    }
+
+    t
+}
+
+// CONTINUATION POINT: `// -- Scene processing` (ufbx.c:18545-22624) is ported
+// in FULL, including `ufbxi_finalize_scene`, plus
+// `// -- Interpret the read scene` in full (ufbx.c:22626-22741) and the head of
+// `// -- Updating state from properties` (ufbx.c:22743-22784) that
+// `ufbxi_modify_geometry` needs.
+//
+// Next: `ufbxi_get_rotation` (ufbx.c:22786) onwards — the rest of
+// `// -- Updating state from properties`.
+//
+// NOTE: ufbx.c:22600's `ufbxi_update_scene()` mention is a COMMENT, not a call;
+// `ufbxi_finalize_scene` has no caller yet (`ufbxi_load_imp`, ufbx.c:30035, is
+// unported).
+//
+// DEFERRED(topology) and still owed from this range: `ufbxi_generate_normals`
+// (ufbx.c:20364-20403) and its call site in `ufbxi_finalize_scene`
+// (ufbx.c:22062-22064) — both blocked on `// -- Topology`; see the notes at the
+// function's C-order slot and inside the finalize mesh loop.
 
 #[cfg(test)]
 mod tests {
@@ -4106,5 +8499,47 @@ mod tests {
                 assert!(len > 0);
             }
         }
+    }
+
+    // Transcription guard for the ufbx.c:20486-20494 table:
+    // `ufbxi_finalize_shader_texture` walks `shader_name` with `strcmp` and
+    // hands `input_name` to `ufbx_find_shader_texture_input` (which `strlen`s
+    // it), so both literals need their explicit NUL terminator. The `0`
+    // `shader_id` entries are matched by name only, which is why the guard
+    // insists the names are non-empty.
+    #[test]
+    fn file_shader_table_is_consistent() {
+        unsafe {
+            for fs in FILE_SHADERS.iter() {
+                let mut name_len: usize = 0;
+                while *fs.shader_name.add(name_len) != 0 {
+                    name_len += 1;
+                }
+                assert!(name_len > 0);
+                let mut input_len: usize = 0;
+                while *fs.input_name.add(input_len) != 0 {
+                    input_len += 1;
+                }
+                assert!(input_len > 0);
+            }
+            // Only the first entry carries a class id (ufbx.c:20488).
+            assert_eq!(FILE_SHADERS[0].shader_id, 0x7e73161fad53b12a);
+            for fs in FILE_SHADERS[1..].iter() {
+                assert_eq!(fs.shader_id, 0);
+            }
+        }
+    }
+
+    // `ufbxi_finalize_shader_texture` carries `UFBX_SHADER_TEXTURE_TYPE_COUNT`
+    // as an out-of-range `ufbx_shader_texture_type` sentinel (ufbx.c:20546) and
+    // transmutes the value back once the range check at ufbx.c:20556 passed;
+    // the transmute is only sound while the enum's variants are exactly
+    // `0..COUNT`.
+    #[test]
+    fn shader_texture_type_count_matches_enum() {
+        assert_eq!(SHADER_TEXTURE_TYPE_COUNT, 3);
+        assert_eq!(ShaderTextureType::Unknown as u32, 0);
+        assert_eq!(ShaderTextureType::SelectOutput as u32, 1);
+        assert_eq!(ShaderTextureType::Osl as u32, 2);
     }
 }

@@ -348,6 +348,28 @@ force_mut_args = {
     ("ufbx_generate_indices", 0),
 }
 
+# NOTE(ufbx-rs-native): `(struct, field)` pairs where ufbx.h omits the
+# `ufbx_nullable` annotation on a pointer field that the C implementation
+# nevertheless leaves or sets NULL. Without the override the field is emitted as
+# `Ref<T>` (`#[repr(transparent)]` over `NonNull<T>`) and the port would store an
+# invalid (null) `NonNull` into a live scene field.
+#   * `ufbx_shader_texture.main_texture` (ufbx.h:2843): NULL for every shader
+#     whose type is not `UFBX_SHADER_TEXTURE_SELECT_OUTPUT` (only ufbx.c:20531
+#     ever assigns it), and explicitly re-nulled by the cyclic-main-texture pass
+#     (`shader->main_texture = NULL;` ufbx.c:20723). C null-tests it at
+#     ufbx.c:20705/20708/20719/20735/20747; the doc comment above the field
+#     ("Only specified if ...") describes an optional field.
+#   * `ufbx_shader_texture_input.prop` (ufbx.h:2802): zeroed by
+#     `memset(input, 0, sizeof(ufbx_shader_texture_input))` (ufbx.c:20651) and
+#     null-tested by `ufbxi_update_shader_texture` (ufbx.c:20499) — while the
+#     sibling `texture_prop`/`texture_enabled_prop` two lines down (ufbx.h:2805,
+#     2808) *are* annotated, so the omission is an upstream inconsistency.
+# Remove an entry once upstream ufbx.h annotates the field. See COMPAT.md §2.
+nullable_field_overrides = {
+    ("ufbx_shader_texture", "main_texture"),
+    ("ufbx_shader_texture_input", "prop"),
+}
+
 override_functions = { }
 override_member_functions = { }
 
@@ -843,6 +865,16 @@ def init_fields(rs: RustStruct, field: ir.Field):
         return
 
     rt = init_type(file.types[field.type])
+
+    # NOTE(ufbx-rs-native): upstream-annotation gap fixup, see
+    # `nullable_field_overrides` above.
+    if (rs.ir.name, field.name) in nullable_field_overrides:
+        assert rt.ir.kind == "pointer" and not rt.ir.is_nullable, \
+            f"{rs.ir.name}.{field.name} is no longer a non-nullable pointer, drop the override"
+        nullable_key = f"{rt.ir.base_name}?*"
+        assert nullable_key in file.types, \
+            f"no nullable type {nullable_key} in the IR for {rs.ir.name}.{field.name}"
+        rt = init_type(file.types[nullable_key])
 
     if rs.ir.is_input and rt.ir.key == "ufbx_string":
         rt = RustType(None, None)

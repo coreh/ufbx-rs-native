@@ -31,8 +31,8 @@ use core::mem::size_of;
 
 use crate::generated::{
     DomNode, DomValue, DomValueType, ElementType, Error, Exporter, InflateRetain, Matrix,
-    MirrorAxis, Progress, ProgressResult, Prop, PropFlags, PropType, Props, RawLoadOpts, Scene,
-    Vec3, Vec4,
+    MirrorAxis, Progress, ProgressResult, Prop, PropFlags, PropType, Props, Quat, RawLoadOpts,
+    Scene, TextureFile, Transform, Vec3, Vec4,
 };
 use crate::native::allocator::{grow_array, Allocator};
 use crate::native::buf::{buf_clear, pop, push_copy, push_pop, push_size_zero, push_zero, Buf};
@@ -3043,6 +3043,14 @@ pub(crate) unsafe fn find_prop_with_key(
     core::ptr::null_mut()
 }
 
+// ufbx.c:11511-11514 `ufbxi_texture_file_entry`
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct TextureFileEntry {
+    pub key: *const u8,
+    pub file: *mut TextureFile,
+}
+
 // ufbx.c:11516-11518 `#define ufbxi_find_prop(props, name)`
 // C-parity: the key is assembled from `name[0..3]` unconditionally — all call
 // sites pass a `ufbxi_*` string constant of at least 4 characters. This is NOT
@@ -3129,6 +3137,21 @@ pub(crate) unsafe fn find_enum(
     }
 }
 
+// ufbx.c:11566-11572 `ufbxi_matrix_all_zero`
+// C indexes the `ufbx_matrix` value union's `ufbx_real v[12]` view; the
+// generated struct keeps only the named `m00`..`m23` fields (which are laid out
+// in exactly that order), so the walk is pointer arithmetic from the struct
+// base.
+#[inline(never)]
+pub(crate) unsafe fn matrix_all_zero(matrix: *const Matrix) -> bool {
+    for i in 0..12 {
+        if *(matrix as *const Real).add(i) != 0.0 {
+            return false;
+        }
+    }
+    true
+}
+
 // ufbx.c:11574-11577 `ufbxi_is_vec3_zero`
 #[inline(always)]
 pub(crate) fn is_vec3_zero(v: Vec3) -> bool {
@@ -3147,6 +3170,35 @@ pub(crate) fn is_vec4_zero(v: Vec4) -> bool {
 #[inline(always)]
 pub(crate) fn is_vec3_one(v: Vec3) -> bool {
     ((v.x == 1.0) as u8 & (v.y == 1.0) as u8 & (v.z == 1.0) as u8) != 0
+}
+
+// ufbx.c:11589-11592 `ufbxi_is_quat_identity`
+#[inline(always)]
+pub(crate) fn is_quat_identity(v: Quat) -> bool {
+    ((v.x == 0.0) as u8 & (v.y == 0.0) as u8 & (v.z == 0.0) as u8 & (v.w == 1.0) as u8) != 0
+}
+
+// ufbx.c:11594-11597 `ufbxi_is_vec3_equal` (C: `ufbxi_unused`)
+#[inline(always)]
+pub(crate) fn is_vec3_equal(a: Vec3, b: Vec3) -> bool {
+    ((a.x == b.x) as u8 & (a.y == b.y) as u8 & (a.z == b.z) as u8) != 0
+}
+
+// ufbx.c:11599-11602 `ufbxi_is_quat_equal` (C: `ufbxi_unused`)
+#[inline(always)]
+pub(crate) fn is_quat_equal(a: Quat, b: Quat) -> bool {
+    ((a.x == b.x) as u8 & (a.y == b.y) as u8 & (a.z == b.z) as u8 & (a.w == b.w) as u8) != 0
+}
+
+// ufbx.c:11604-11607 `ufbxi_is_transform_identity`
+#[inline(never)]
+pub(crate) unsafe fn is_transform_identity(t: *const Transform) -> bool {
+    // C: `(bool)((int)ufbxi_is_vec3_zero(..) & (int)ufbxi_is_quat_identity(..)
+    // & (int)ufbxi_is_vec3_one(..))` — a non-short-circuiting bitwise `&`.
+    ((is_vec3_zero((*t).translation) as i32)
+        & (is_quat_identity((*t).rotation) as i32)
+        & (is_vec3_one((*t).scale) as i32))
+        != 0
 }
 
 // ufbx.c:11609-11622 `ufbxi_get_name_key`
