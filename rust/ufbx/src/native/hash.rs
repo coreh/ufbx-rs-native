@@ -747,30 +747,31 @@ pub(crate) unsafe extern "C" fn map_cmp_ptr_id(
 mod tests {
     use super::*;
 
-    unsafe fn hs(b: &[u8]) -> u32 {
-        hash_string(b.as_ptr(), b.len())
+    fn hs(b: &[u8]) -> u32 {
+        // SAFETY: pointer and length come from the same local slice `b`.
+        unsafe { hash_string(b.as_ptr(), b.len()) }
     }
 
-    unsafe fn hsca(b: &[u8]) -> (u32, bool) {
+    fn hsca(b: &[u8]) -> (u32, bool) {
         let mut non_ascii = false;
-        let h = hash_string_check_ascii(b.as_ptr(), b.len(), &mut non_ascii);
+        // SAFETY: pointer and length come from the same local slice `b`;
+        // `p_non_ascii` points at a live local.
+        let h = unsafe { hash_string_check_ascii(b.as_ptr(), b.len(), &mut non_ascii) };
         (h, non_ascii)
     }
 
     // Reference values from the C algorithm (little-endian reads).
     #[test]
     fn hash_string_known_values() {
-        unsafe {
-            assert_eq!(hs(b"a"), 0x88b1a51d);
-            assert_eq!(hs(b"ab"), 0x198f65f0);
-            assert_eq!(hs(b"abc"), 0x021f1b84);
-            assert_eq!(hs(b"abcd"), 0xec8b77cd);
-            assert_eq!(hs(b"abcde"), 0x2fe5a905);
-            assert_eq!(hs(b"Geometry"), 0xf63e5026);
-            assert_eq!(hs(b"ObjectType"), 0x11aa0eb0);
-            assert_eq!(hs(b"\xffx"), 0x732948c2);
-            assert_eq!(hs(b"a\x00b"), 0x257d0e0a);
-        }
+        assert_eq!(hs(b"a"), 0x88b1a51d);
+        assert_eq!(hs(b"ab"), 0x198f65f0);
+        assert_eq!(hs(b"abc"), 0x021f1b84);
+        assert_eq!(hs(b"abcd"), 0xec8b77cd);
+        assert_eq!(hs(b"abcde"), 0x2fe5a905);
+        assert_eq!(hs(b"Geometry"), 0xf63e5026);
+        assert_eq!(hs(b"ObjectType"), 0x11aa0eb0);
+        assert_eq!(hs(b"\xffx"), 0x732948c2);
+        assert_eq!(hs(b"a\x00b"), 0x257d0e0a);
     }
 
     // C comment: "NOTE: _Must_ match `ufbxi_hash_string()`" — verify
@@ -779,40 +780,36 @@ mod tests {
     #[test]
     fn check_ascii_matches_hash_string() {
         let data: &[u8] = b"The quick brown fox jumps over the lazy dog \xff\x00\x80\x01";
-        unsafe {
-            for start in 0..8 {
-                for len in 1..=(data.len() - start) {
-                    let slice = &data[start..start + len];
-                    let (h, _) = hsca(slice);
-                    assert_eq!(h, hs(slice), "mismatch for {:?}", slice);
-                }
+        for start in 0..8 {
+            for len in 1..=(data.len() - start) {
+                let slice = &data[start..start + len];
+                let (h, _) = hsca(slice);
+                assert_eq!(h, hs(slice), "mismatch for {:?}", slice);
             }
         }
     }
 
     #[test]
     fn check_ascii_flag() {
-        unsafe {
-            // Pure ASCII (0x01..=0x7f) must NOT set the flag.
-            assert_eq!(hsca(b"a").1, false);
-            assert_eq!(hsca(b"ab").1, false);
-            assert_eq!(hsca(b"abc").1, false);
-            assert_eq!(hsca(b"abcd").1, false);
-            assert_eq!(hsca(b"abcdefg").1, false);
-            assert_eq!(hsca(b"\x01\x7f").1, false);
-            // High bit set → non-ASCII, in every byte position of both paths.
-            assert_eq!(hsca(b"\x80").1, true);
-            assert_eq!(hsca(b"a\xff").1, true);
-            assert_eq!(hsca(b"ab\x80").1, true);
-            assert_eq!(hsca(b"abc\x80").1, true);
-            assert_eq!(hsca(b"abcd\x80").1, true);
-            assert_eq!(hsca(b"abcdefg\x80").1, true);
-            // Embedded zero → non-ASCII.
-            assert_eq!(hsca(b"a\x00").1, true);
-            assert_eq!(hsca(b"a\x00b").1, true);
-            assert_eq!(hsca(b"abc\x00").1, true);
-            assert_eq!(hsca(b"abcdef\x00h").1, true);
-        }
+        // Pure ASCII (0x01..=0x7f) must NOT set the flag.
+        assert_eq!(hsca(b"a").1, false);
+        assert_eq!(hsca(b"ab").1, false);
+        assert_eq!(hsca(b"abc").1, false);
+        assert_eq!(hsca(b"abcd").1, false);
+        assert_eq!(hsca(b"abcdefg").1, false);
+        assert_eq!(hsca(b"\x01\x7f").1, false);
+        // High bit set → non-ASCII, in every byte position of both paths.
+        assert_eq!(hsca(b"\x80").1, true);
+        assert_eq!(hsca(b"a\xff").1, true);
+        assert_eq!(hsca(b"ab\x80").1, true);
+        assert_eq!(hsca(b"abc\x80").1, true);
+        assert_eq!(hsca(b"abcd\x80").1, true);
+        assert_eq!(hsca(b"abcdefg\x80").1, true);
+        // Embedded zero → non-ASCII.
+        assert_eq!(hsca(b"a\x00").1, true);
+        assert_eq!(hsca(b"a\x00b").1, true);
+        assert_eq!(hsca(b"abc\x00").1, true);
+        assert_eq!(hsca(b"abcdef\x00h").1, true);
     }
 
     #[test]
