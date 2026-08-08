@@ -1,4 +1,4 @@
-name: rust-port
+name: Rust port
 on:
   push:
     branches: [main, rust-port]
@@ -7,14 +7,15 @@ on:
 jobs:
   # C reference build — the oracle. Generates hashes.txt consumed by rust jobs.
   c_oracle_hashes:
+    name: Calculate C scene hashes
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Build reference hash_scene (clang -O2, ieee754)
+      - name: Build C scene hasher
         run: |
           mkdir -p build
           clang -O2 -ffp-contract=off -o build/hash_scene_c test/hash_scene.c extra/ufbx_math.c -lm
-      - name: Generate hashes.txt
+      - name: Fingerprint all test scenes
         run: python3 misc/generate_hashses.py --exe build/hash_scene_c -o build/hashes.txt
       - uses: actions/upload-artifact@v4
         with:
@@ -22,30 +23,37 @@ jobs:
           path: build/hashes.txt
 
   rust_unit:
+    name: Run Rust tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Regenerate bindings + layout assertions (must be clean)
+      - name: Check generated bindings are clean
         run: |
           ./rust/regen.sh
           git diff --exit-code rust/ufbx/src/generated.rs rust/ufbx/tests/layout.rs
       # real-is-float leg pending: the feature is declared but Real is still
       # pinned to f64 (see Cargo.toml note); add the leg when it is wired.
-      - name: cargo test
+      - name: Unit tests + struct layout checks
         working-directory: rust
         run: cargo test
-      - name: Build c-abi staticlib
+      - name: Build C-compatible static library
         working-directory: rust
         run: cargo build --features c-abi --release
-      # Differential math fuzz: native/math.rs vs extra/ufbx_math.c must match
-      # bit-for-bit (~376M deterministic checks incl. edge x random pairs,
-      # ~10s of runtime).
-      - name: Math fuzz (Rust vs C, bit-exact)
+
+  # Differential fuzz: native/math.rs vs extra/ufbx_math.c must match
+  # bit-for-bit (deterministic edge cases + random sweeps, ~10s runtime).
+  math_fuzz:
+    name: Fuzz Rust math against C
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fuzz math functions against C
         run: rust/tools/mathfuzz/ci.sh
 
   # Golden-hash parity: hash_scene linked against the Rust staticlib
   # (-DEXTERNAL_UFBX) must reproduce the C oracle's hashes byte-exactly.
   rust_hashes:
+    name: Verify Rust scene hashes
     needs: c_oracle_hashes
     runs-on: ubuntu-24.04
     steps:
@@ -54,15 +62,15 @@ jobs:
         with:
           name: hashes
           path: build
-      - name: Build Rust staticlib (c-abi + dev)
+      - name: Build Rust library
         working-directory: rust
         run: cargo build --features c-abi,dev --release
-      - name: Build hash_scene against Rust lib
+      - name: Build scene hasher against Rust
         run: |
           clang -O2 -std=gnu99 -DUFBX_DEV -ffp-contract=off -DEXTERNAL_UFBX \
             -o build/hash_scene_rust test/hash_scene.c extra/ufbx_math.c \
             rust/target/release/libufbx.a -lpthread -lm
-      - name: Check hashes
+      - name: Compare fingerprints with C
         run: ./build/hash_scene_rust --check build/hashes.txt
 
   # C test suite (unmodified test/runner.c) linked against the Rust staticlib.
@@ -72,21 +80,22 @@ jobs:
   # matrix additionally has -m32 legs (needs an i686 Rust build) and
   # runner_float (needs real-is-float wiring) — add those when they exist.
   c_suite_vs_rust:
+    name: Run C tests against Rust port
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Build staticlib (c-abi + dev)
+      - name: Build Rust library
         working-directory: rust
         run: cargo build --features c-abi,dev --release
-      - name: Runner (debug)
+      - name: Run suite, debug build
         run: |
           clang -g -std=gnu99 -DUFBX_DEV -o /tmp/runner_debug test/runner.c rust/target/release/libufbx.a -lpthread -lm
           /tmp/runner_debug -d data
-      - name: Runner (release)
+      - name: Run suite, optimized build
         run: |
           clang -O2 -std=gnu99 -DUFBX_DEV -ffp-contract=off -o /tmp/runner_release test/runner.c rust/target/release/libufbx.a -lpthread -lm
           /tmp/runner_release -d data
-      - name: Runner (asan+ubsan harness)
+      - name: Run suite, sanitizers
         run: |
           clang -g -std=gnu99 -DUFBX_DEV -DUFBX_UBSAN -fsanitize=address,undefined -fno-sanitize=float-cast-overflow -fno-sanitize-recover=undefined \
             -o /tmp/runner_san test/runner.c rust/target/release/libufbx.a -lpthread -lm
