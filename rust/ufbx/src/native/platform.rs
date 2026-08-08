@@ -64,6 +64,7 @@
 
 use core::ffi::c_void;
 use core::mem::size_of;
+use core::mem::MaybeUninit;
 
 // -- Asserts (see PORTING.md "Asserts": three distinct gates, do NOT collapse)
 
@@ -367,10 +368,19 @@ const _: () = assert!(SOURCE_VERSION / 1000 == HEADER_VERSION / 1000);
 // `distance >= min(length, 16)`), so `ptr::copy_nonoverlapping`/memcpy
 // semantics would be UB there. Load-then-store is well defined under overlap
 // and bit-identical to the SSE branch.
+//
+// The temporary is `MaybeUninit`: the same copies also OVERREAD, taking a full
+// 16 bytes when fewer remain (`length < 16`), so the tail bytes can be output
+// buffer that nothing has written yet — uninitialized, exactly as C's overread
+// of the `malloc`ed window is. A plain `[u8; 16]` temporary would assert those
+// bytes initialized (a validity requirement `_mm_loadu_si128` does not have);
+// `MaybeUninit` propagates uninitializedness through the copy instead, which is
+// what the SSE branch does at the machine level. Only the valid prefix is ever
+// consumed downstream.
 #[inline(always)]
 pub(crate) unsafe fn copy_16_bytes(dst: *mut u8, src: *const u8) {
-    let t = (src as *const [u8; 16]).read_unaligned();
-    (dst as *mut [u8; 16]).write_unaligned(t);
+    let t = (src as *const MaybeUninit<[u8; 16]>).read_unaligned();
+    (dst as *mut MaybeUninit<[u8; 16]>).write_unaligned(t);
 }
 
 // -- Large fast integer
