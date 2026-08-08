@@ -60,24 +60,29 @@ jobs:
       - name: Check hashes
         run: ./build/hash_scene_rust --check build/hashes.txt
 
-  # Port progress meter: number of ufbx_* symbols still unresolved when linking
-  # the unmodified C test runner against the Rust staticlib. Reaches zero when
-  # the C ABI surface is fully ported; then the real test jobs take over.
-  link_work_queue:
+  # C test suite (unmodified test/runner.c) linked against the Rust staticlib.
+  # The staticlib must carry the `dev` feature: the runner is compiled with
+  # -DUFBX_DEV and asserts dev-only behavior (e.g. error stack depth).
+  # Supported matrix is x86_64 debug/release/sanitize; the full run_tests.py
+  # matrix additionally has -m32 legs (needs an i686 Rust build) and
+  # runner_float (needs real-is-float wiring) — add those when they exist.
+  c_suite_vs_rust:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Build staticlib
+      - name: Build staticlib (c-abi + dev)
         working-directory: rust
-        run: cargo build --features c-abi --release
-      - name: Count undefined ufbx_* symbols
+        run: cargo build --features c-abi,dev --release
+      - name: Runner (debug)
         run: |
-          set +e
-          clang -DUFBX_DEV -o /tmp/runner test/runner.c rust/target/release/libufbx.a -lpthread -lm 2> /tmp/link.log
-          if [ $? -eq 0 ]; then
-            echo "LINK OK — running C test suite against Rust build"
-            python3 misc/run_tests.py tests --rust-lib rust/target/release/libufbx.a --compiler clang
-          else
-            COUNT=$(grep -oE 'ufbx_[a-z0-9_]+' /tmp/link.log | sort -u | wc -l)
-            echo "Port work queue: $COUNT ufbx_* symbols still undefined (informational until 0)"
-          fi
+          clang -g -std=gnu99 -DUFBX_DEV -o /tmp/runner_debug test/runner.c rust/target/release/libufbx.a -lpthread -lm
+          /tmp/runner_debug -d data
+      - name: Runner (release)
+        run: |
+          clang -O2 -std=gnu99 -DUFBX_DEV -ffp-contract=off -o /tmp/runner_release test/runner.c rust/target/release/libufbx.a -lpthread -lm
+          /tmp/runner_release -d data
+      - name: Runner (asan+ubsan harness)
+        run: |
+          clang -g -std=gnu99 -DUFBX_DEV -DUFBX_UBSAN -fsanitize=address,undefined -fno-sanitize=float-cast-overflow -fno-sanitize-recover=undefined \
+            -o /tmp/runner_san test/runner.c rust/target/release/libufbx.a -lpthread -lm
+          /tmp/runner_san -d data
