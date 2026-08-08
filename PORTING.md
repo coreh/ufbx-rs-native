@@ -263,6 +263,30 @@ cross-member reads):
 Flexible array member: `char data[];` (`ufbxi_buf_chunk`, 3848) → header-only
 struct + pointer arithmetic; `size_of` must equal C's header size.
 
+### Raw pointers from places (`&raw`, not `&mut`)
+
+C's `&x` on a field or local is a plain address-of with no aliasing claim. The
+Rust transcription **must be `&raw mut place` / `&raw const place`**, never
+`&mut place as *mut _` (or the implicit coercion at a call site):
+
+| C | Wrong | Right |
+|---|---|---|
+| `f(&uc->ator_tmp)` | `f(&mut (*uc).ator_tmp)` | `f(&raw mut (*uc).ator_tmp)` |
+| `p = &a->src` then `p[i]` | `(&(*a).src as *const _).add(i)` | derive from `a`, keep the whole-object provenance |
+
+Two reasons, both real rather than pedantic:
+
+- A `&mut` retag invalidates every other pointer to the same place — including
+  one C stored earlier and still uses. `ufbxi_obj_init` (ufbx.c: the ~10
+  `&uc->ator_tmp` stores) is exactly this shape.
+- `&mut` lowers to LLVM `noalias`, so the miscompile risk is optimizer-only:
+  it will not show up in a debug oracle run.
+
+Narrowing provenance is the same class: a raw pointer derived from a *field*
+may only address that field, so C's `(&a->src)[index]` idiom must be derived
+from `a`. Reviewers: Miri under Stacked/Tree Borrows is the detector; the
+`tests/miri.rs` harness is the gate.
+
 ### Branch hints
 
 `ufbxi_likely`/`ufbxi_unlikely` (C: `__builtin_expect`, degrading to identity
@@ -343,6 +367,9 @@ oracle output.
     — never translate to an early return.
 17. **Union discipline**: overlays stay unions (see table); both-member reads
     are intentional (`// False positive` comments).
+18. **Address-of parity**: every C `&expr` that becomes a raw pointer uses
+    `&raw mut`/`&raw const`, and pointers that walk past a field are derived
+    from the enclosing object (see Raw pointers from places).
 
 ## Review pipeline
 
