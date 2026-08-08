@@ -1,0 +1,375 @@
+-pub static ufbx::generated::ufbx_empty_blob: ufbx::Blob
+-pub static ufbx::generated::ufbx_empty_string: ufbx::String
+-pub static ufbx::ufbx_empty_blob: ufbx::Blob
+-pub static ufbx::ufbx_empty_string: ufbx::String
+-pub ufbx::generated::MaterialMap::value_components: u32
+-pub ufbx::generated::RawProgressCb::fn_: core::option::Option<fn(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::ProgressResult>
+-pub ufbx::generated::ShaderTexture::main_texture: ufbx::Ref<ufbx::Texture>
+-pub ufbx::generated::ShaderTextureInput::prop: ufbx::Ref<ufbx::Prop>
+-pub ufbx::MaterialMap::value_components: u32
+-pub ufbx::RawProgressCb::fn_: core::option::Option<fn(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::ProgressResult>
+-pub ufbx::ShaderTexture::main_texture: ufbx::Ref<ufbx::Texture>
+-pub ufbx::ShaderTextureInput::prop: ufbx::Ref<ufbx::Prop>
+-pub unsafe c fn ufbx::call_progress_cb<F>(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::ProgressResult where F: core::ops::function::FnMut(&ufbx::Progress) -> ufbx::ProgressResult
+-pub unsafe c fn ufbx::prelude::call_progress_cb<F>(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::ProgressResult where F: core::ops::function::FnMut(&ufbx::Progress) -> ufbx::ProgressResult
++#[repr(transparent)] pub struct ufbx::prelude::RawEnum<T>(_, _)
++#[repr(transparent)] pub struct ufbx::RawEnum<T>(_, _)
++impl core::clone::Clone for ufbx::AnimProp
++impl core::clone::Clone for ufbx::AnimProp
++impl core::clone::Clone for ufbx::Blob
++impl core::clone::Clone for ufbx::Blob
++impl core::clone::Clone for ufbx::Connection
++impl core::clone::Clone for ufbx::Connection
++impl core::clone::Clone for ufbx::NameElement
++impl core::clone::Clone for ufbx::NameElement
++impl core::clone::Clone for ufbx::Prop
++impl core::clone::Clone for ufbx::Prop
++impl core::clone::Clone for ufbx::RawAllocator
++impl core::clone::Clone for ufbx::RawAllocator
++impl core::clone::Clone for ufbx::RawAllocatorOpts
++impl core::clone::Clone for ufbx::RawAllocatorOpts
++impl core::clone::Clone for ufbx::RawCloseMemoryCb
++impl core::clone::Clone for ufbx::RawCloseMemoryCb
++impl core::clone::Clone for ufbx::RawOpenFileCb
++impl core::clone::Clone for ufbx::RawOpenFileCb
++impl core::clone::Clone for ufbx::RawProgressCb
++impl core::clone::Clone for ufbx::RawProgressCb
++impl core::clone::Clone for ufbx::RawStream
++impl core::clone::Clone for ufbx::RawStream
++impl core::clone::Clone for ufbx::RawThreadPool
++impl core::clone::Clone for ufbx::RawThreadPool
++impl core::clone::Clone for ufbx::ShaderPropBinding
++impl core::clone::Clone for ufbx::ShaderPropBinding
++impl core::clone::Clone for ufbx::String
++impl core::clone::Clone for ufbx::String
++impl core::marker::Copy for ufbx::AnimProp
++impl core::marker::Copy for ufbx::AnimProp
++impl core::marker::Copy for ufbx::Blob
++impl core::marker::Copy for ufbx::Blob
++impl core::marker::Copy for ufbx::Connection
++impl core::marker::Copy for ufbx::Connection
++impl core::marker::Copy for ufbx::NameElement
++impl core::marker::Copy for ufbx::NameElement
++impl core::marker::Copy for ufbx::Prop
++impl core::marker::Copy for ufbx::Prop
++impl core::marker::Copy for ufbx::RawAllocator
++impl core::marker::Copy for ufbx::RawAllocator
++impl core::marker::Copy for ufbx::RawAllocatorOpts
++impl core::marker::Copy for ufbx::RawAllocatorOpts
++impl core::marker::Copy for ufbx::RawCloseMemoryCb
++impl core::marker::Copy for ufbx::RawCloseMemoryCb
++impl core::marker::Copy for ufbx::RawOpenFileCb
++impl core::marker::Copy for ufbx::RawOpenFileCb
++impl core::marker::Copy for ufbx::RawProgressCb
++impl core::marker::Copy for ufbx::RawProgressCb
++impl core::marker::Copy for ufbx::RawStream
++impl core::marker::Copy for ufbx::RawStream
++impl core::marker::Copy for ufbx::RawThreadPool
++impl core::marker::Copy for ufbx::RawThreadPool
++impl core::marker::Copy for ufbx::ShaderPropBinding
++impl core::marker::Copy for ufbx::ShaderPropBinding
++impl core::marker::Copy for ufbx::String
++impl core::marker::Copy for ufbx::String
++impl<T, U> core::convert::Into<U> for ufbx::RawEnum<T> where U: core::convert::From<T>
++impl<T, U> core::convert::Into<U> for ufbx::RawEnum<T> where U: core::convert::From<T>
++impl<T, U> core::convert::TryFrom<U> for ufbx::RawEnum<T> where U: core::convert::Into<T>
++impl<T, U> core::convert::TryFrom<U> for ufbx::RawEnum<T> where U: core::convert::Into<T>
++impl<T, U> core::convert::TryInto<U> for ufbx::RawEnum<T> where U: core::convert::TryFrom<T>
++impl<T, U> core::convert::TryInto<U> for ufbx::RawEnum<T> where U: core::convert::TryFrom<T>
++impl<T: core::clone::Clone> core::clone::Clone for ufbx::RawEnum<T>
++impl<T: core::clone::Clone> core::clone::Clone for ufbx::RawEnum<T>
++impl<T: core::cmp::Eq> core::cmp::Eq for ufbx::RawEnum<T>
++impl<T: core::cmp::Eq> core::cmp::Eq for ufbx::RawEnum<T>
++impl<T: core::cmp::PartialEq> core::cmp::PartialEq for ufbx::RawEnum<T>
++impl<T: core::cmp::PartialEq> core::cmp::PartialEq for ufbx::RawEnum<T>
++impl<T: core::cmp::PartialEq> core::marker::StructuralPartialEq for ufbx::RawEnum<T>
++impl<T: core::cmp::PartialEq> core::marker::StructuralPartialEq for ufbx::RawEnum<T>
++impl<T: core::marker::Copy> core::marker::Copy for ufbx::RawEnum<T>
++impl<T: core::marker::Copy> core::marker::Copy for ufbx::RawEnum<T>
++impl<T> alloc::borrow::ToOwned for ufbx::AnimProp where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::AnimProp where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::Blob where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::Blob where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::Connection where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::Connection where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::NameElement where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::NameElement where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::Prop where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::Prop where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawAllocator where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawAllocator where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawAllocatorOpts where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawAllocatorOpts where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawCloseMemoryCb where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawCloseMemoryCb where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawEnum<T> where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawEnum<T> where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawOpenFileCb where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawOpenFileCb where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawProgressCb where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawProgressCb where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawStream where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawStream where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawThreadPool where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::RawThreadPool where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::Ref<T> where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::Ref<T> where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::ShaderPropBinding where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::ShaderPropBinding where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::String where T: core::clone::Clone
++impl<T> alloc::borrow::ToOwned for ufbx::String where T: core::clone::Clone
++impl<T> core::any::Any for ufbx::RawEnum<T> where T: 'static + ?core::marker::Sized
++impl<T> core::any::Any for ufbx::RawEnum<T> where T: 'static + ?core::marker::Sized
++impl<T> core::borrow::Borrow<T> for ufbx::RawEnum<T> where T: ?core::marker::Sized
++impl<T> core::borrow::Borrow<T> for ufbx::RawEnum<T> where T: ?core::marker::Sized
++impl<T> core::borrow::BorrowMut<T> for ufbx::RawEnum<T> where T: ?core::marker::Sized
++impl<T> core::borrow::BorrowMut<T> for ufbx::RawEnum<T> where T: ?core::marker::Sized
++impl<T> core::clone::Clone for ufbx::Ref<T>
++impl<T> core::clone::Clone for ufbx::Ref<T>
++impl<T> core::clone::CloneToUninit for ufbx::AnimProp where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::AnimProp where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::Blob where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::Blob where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::Connection where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::Connection where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::NameElement where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::NameElement where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::Prop where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::Prop where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawAllocator where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawAllocator where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawAllocatorOpts where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawAllocatorOpts where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawCloseMemoryCb where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawCloseMemoryCb where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawEnum<T> where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawEnum<T> where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawOpenFileCb where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawOpenFileCb where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawProgressCb where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawProgressCb where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawStream where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawStream where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawThreadPool where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::RawThreadPool where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::Ref<T> where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::Ref<T> where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::ShaderPropBinding where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::ShaderPropBinding where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::String where T: core::clone::Clone
++impl<T> core::clone::CloneToUninit for ufbx::String where T: core::clone::Clone
++impl<T> core::convert::From<T> for ufbx::RawEnum<T>
++impl<T> core::convert::From<T> for ufbx::RawEnum<T>
++impl<T> core::marker::Copy for ufbx::Ref<T>
++impl<T> core::marker::Copy for ufbx::Ref<T>
++impl<T> core::marker::Freeze for ufbx::RawEnum<T>
++impl<T> core::marker::Freeze for ufbx::RawEnum<T>
++impl<T> core::marker::Send for ufbx::RawEnum<T>
++impl<T> core::marker::Send for ufbx::RawEnum<T>
++impl<T> core::marker::Sync for ufbx::RawEnum<T>
++impl<T> core::marker::Sync for ufbx::RawEnum<T>
++impl<T> core::marker::Unpin for ufbx::RawEnum<T>
++impl<T> core::marker::Unpin for ufbx::RawEnum<T>
++impl<T> core::marker::UnsafeUnpin for ufbx::RawEnum<T>
++impl<T> core::marker::UnsafeUnpin for ufbx::RawEnum<T>
++impl<T> core::panic::unwind_safe::RefUnwindSafe for ufbx::RawEnum<T>
++impl<T> core::panic::unwind_safe::RefUnwindSafe for ufbx::RawEnum<T>
++impl<T> core::panic::unwind_safe::UnwindSafe for ufbx::RawEnum<T>
++impl<T> core::panic::unwind_safe::UnwindSafe for ufbx::RawEnum<T>
++impl<T> ufbx::RawEnum<T>
++impl<T> ufbx::RawEnum<T>
++pub fn ufbx::AnimProp::clone_into(&self, &mut T)
++pub fn ufbx::AnimProp::clone_into(&self, &mut T)
++pub fn ufbx::AnimProp::clone(&self) -> ufbx::AnimProp
++pub fn ufbx::AnimProp::clone(&self) -> ufbx::AnimProp
++pub fn ufbx::AnimProp::to_owned(&self) -> T
++pub fn ufbx::AnimProp::to_owned(&self) -> T
++pub fn ufbx::Blob::clone_into(&self, &mut T)
++pub fn ufbx::Blob::clone_into(&self, &mut T)
++pub fn ufbx::Blob::clone(&self) -> ufbx::Blob
++pub fn ufbx::Blob::clone(&self) -> ufbx::Blob
++pub fn ufbx::Blob::to_owned(&self) -> T
++pub fn ufbx::Blob::to_owned(&self) -> T
++pub fn ufbx::Connection::clone_into(&self, &mut T)
++pub fn ufbx::Connection::clone_into(&self, &mut T)
++pub fn ufbx::Connection::clone(&self) -> ufbx::Connection
++pub fn ufbx::Connection::clone(&self) -> ufbx::Connection
++pub fn ufbx::Connection::to_owned(&self) -> T
++pub fn ufbx::Connection::to_owned(&self) -> T
++pub fn ufbx::NameElement::clone_into(&self, &mut T)
++pub fn ufbx::NameElement::clone_into(&self, &mut T)
++pub fn ufbx::NameElement::clone(&self) -> ufbx::NameElement
++pub fn ufbx::NameElement::clone(&self) -> ufbx::NameElement
++pub fn ufbx::NameElement::to_owned(&self) -> T
++pub fn ufbx::NameElement::to_owned(&self) -> T
++pub fn ufbx::Prop::clone_into(&self, &mut T)
++pub fn ufbx::Prop::clone_into(&self, &mut T)
++pub fn ufbx::Prop::clone(&self) -> ufbx::Prop
++pub fn ufbx::Prop::clone(&self) -> ufbx::Prop
++pub fn ufbx::Prop::to_owned(&self) -> T
++pub fn ufbx::Prop::to_owned(&self) -> T
++pub fn ufbx::RawAllocator::clone_into(&self, &mut T)
++pub fn ufbx::RawAllocator::clone_into(&self, &mut T)
++pub fn ufbx::RawAllocator::clone(&self) -> ufbx::RawAllocator
++pub fn ufbx::RawAllocator::clone(&self) -> ufbx::RawAllocator
++pub fn ufbx::RawAllocator::to_owned(&self) -> T
++pub fn ufbx::RawAllocator::to_owned(&self) -> T
++pub fn ufbx::RawAllocatorOpts::clone_into(&self, &mut T)
++pub fn ufbx::RawAllocatorOpts::clone_into(&self, &mut T)
++pub fn ufbx::RawAllocatorOpts::clone(&self) -> ufbx::RawAllocatorOpts
++pub fn ufbx::RawAllocatorOpts::clone(&self) -> ufbx::RawAllocatorOpts
++pub fn ufbx::RawAllocatorOpts::to_owned(&self) -> T
++pub fn ufbx::RawAllocatorOpts::to_owned(&self) -> T
++pub fn ufbx::RawCloseMemoryCb::clone_into(&self, &mut T)
++pub fn ufbx::RawCloseMemoryCb::clone_into(&self, &mut T)
++pub fn ufbx::RawCloseMemoryCb::clone(&self) -> ufbx::RawCloseMemoryCb
++pub fn ufbx::RawCloseMemoryCb::clone(&self) -> ufbx::RawCloseMemoryCb
++pub fn ufbx::RawCloseMemoryCb::to_owned(&self) -> T
++pub fn ufbx::RawCloseMemoryCb::to_owned(&self) -> T
++pub fn ufbx::RawEnum<T>::as_raw(self) -> u32
++pub fn ufbx::RawEnum<T>::as_raw(self) -> u32
++pub fn ufbx::RawEnum<T>::borrow_mut(&mut self) -> &mut T
++pub fn ufbx::RawEnum<T>::borrow_mut(&mut self) -> &mut T
++pub fn ufbx::RawEnum<T>::borrow(&self) -> &T
++pub fn ufbx::RawEnum<T>::borrow(&self) -> &T
++pub fn ufbx::RawEnum<T>::clone_into(&self, &mut T)
++pub fn ufbx::RawEnum<T>::clone_into(&self, &mut T)
++pub fn ufbx::RawEnum<T>::clone(&self) -> ufbx::RawEnum<T>
++pub fn ufbx::RawEnum<T>::clone(&self) -> ufbx::RawEnum<T>
++pub fn ufbx::RawEnum<T>::eq(&self, &ufbx::RawEnum<T>) -> bool
++pub fn ufbx::RawEnum<T>::eq(&self, &ufbx::RawEnum<T>) -> bool
++pub fn ufbx::RawEnum<T>::from_raw(u32) -> Self
++pub fn ufbx::RawEnum<T>::from_raw(u32) -> Self
++pub fn ufbx::RawEnum<T>::from(T) -> T
++pub fn ufbx::RawEnum<T>::from(T) -> T
++pub fn ufbx::RawEnum<T>::into(self) -> U
++pub fn ufbx::RawEnum<T>::into(self) -> U
++pub fn ufbx::RawEnum<T>::to_owned(&self) -> T
++pub fn ufbx::RawEnum<T>::to_owned(&self) -> T
++pub fn ufbx::RawEnum<T>::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
++pub fn ufbx::RawEnum<T>::try_from(U) -> core::result::Result<T, <T as core::convert::TryFrom<U>>::Error>
++pub fn ufbx::RawEnum<T>::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
++pub fn ufbx::RawEnum<T>::try_into(self) -> core::result::Result<U, <U as core::convert::TryFrom<T>>::Error>
++pub fn ufbx::RawEnum<T>::type_id(&self) -> core::any::TypeId
++pub fn ufbx::RawEnum<T>::type_id(&self) -> core::any::TypeId
++pub fn ufbx::RawOpenFileCb::clone_into(&self, &mut T)
++pub fn ufbx::RawOpenFileCb::clone_into(&self, &mut T)
++pub fn ufbx::RawOpenFileCb::clone(&self) -> ufbx::RawOpenFileCb
++pub fn ufbx::RawOpenFileCb::clone(&self) -> ufbx::RawOpenFileCb
++pub fn ufbx::RawOpenFileCb::to_owned(&self) -> T
++pub fn ufbx::RawOpenFileCb::to_owned(&self) -> T
++pub fn ufbx::RawProgressCb::clone_into(&self, &mut T)
++pub fn ufbx::RawProgressCb::clone_into(&self, &mut T)
++pub fn ufbx::RawProgressCb::clone(&self) -> ufbx::RawProgressCb
++pub fn ufbx::RawProgressCb::clone(&self) -> ufbx::RawProgressCb
++pub fn ufbx::RawProgressCb::to_owned(&self) -> T
++pub fn ufbx::RawProgressCb::to_owned(&self) -> T
++pub fn ufbx::RawStream::clone_into(&self, &mut T)
++pub fn ufbx::RawStream::clone_into(&self, &mut T)
++pub fn ufbx::RawStream::clone(&self) -> ufbx::RawStream
++pub fn ufbx::RawStream::clone(&self) -> ufbx::RawStream
++pub fn ufbx::RawStream::to_owned(&self) -> T
++pub fn ufbx::RawStream::to_owned(&self) -> T
++pub fn ufbx::RawThreadPool::clone_into(&self, &mut T)
++pub fn ufbx::RawThreadPool::clone_into(&self, &mut T)
++pub fn ufbx::RawThreadPool::clone(&self) -> ufbx::RawThreadPool
++pub fn ufbx::RawThreadPool::clone(&self) -> ufbx::RawThreadPool
++pub fn ufbx::RawThreadPool::to_owned(&self) -> T
++pub fn ufbx::RawThreadPool::to_owned(&self) -> T
++pub fn ufbx::Ref<T>::clone_into(&self, &mut T)
++pub fn ufbx::Ref<T>::clone_into(&self, &mut T)
++pub fn ufbx::Ref<T>::clone(&self) -> Self
++pub fn ufbx::Ref<T>::clone(&self) -> Self
++pub fn ufbx::Ref<T>::to_owned(&self) -> T
++pub fn ufbx::Ref<T>::to_owned(&self) -> T
++pub fn ufbx::set_panic_handler(fn(&str))
++pub fn ufbx::ShaderPropBinding::clone_into(&self, &mut T)
++pub fn ufbx::ShaderPropBinding::clone_into(&self, &mut T)
++pub fn ufbx::ShaderPropBinding::clone(&self) -> ufbx::ShaderPropBinding
++pub fn ufbx::ShaderPropBinding::clone(&self) -> ufbx::ShaderPropBinding
++pub fn ufbx::ShaderPropBinding::to_owned(&self) -> T
++pub fn ufbx::ShaderPropBinding::to_owned(&self) -> T
++pub fn ufbx::String::clone_into(&self, &mut T)
++pub fn ufbx::String::clone_into(&self, &mut T)
++pub fn ufbx::String::clone(&self) -> ufbx::String
++pub fn ufbx::String::clone(&self) -> ufbx::String
++pub fn ufbx::String::to_owned(&self) -> T
++pub fn ufbx::String::to_owned(&self) -> T
++pub type ufbx::AnimProp::Owned = T
++pub type ufbx::AnimProp::Owned = T
++pub type ufbx::Blob::Owned = T
++pub type ufbx::Blob::Owned = T
++pub type ufbx::Connection::Owned = T
++pub type ufbx::Connection::Owned = T
++pub type ufbx::NameElement::Owned = T
++pub type ufbx::NameElement::Owned = T
++pub type ufbx::Prop::Owned = T
++pub type ufbx::Prop::Owned = T
++pub type ufbx::RawAllocator::Owned = T
++pub type ufbx::RawAllocator::Owned = T
++pub type ufbx::RawAllocatorOpts::Owned = T
++pub type ufbx::RawAllocatorOpts::Owned = T
++pub type ufbx::RawCloseMemoryCb::Owned = T
++pub type ufbx::RawCloseMemoryCb::Owned = T
++pub type ufbx::RawEnum<T>::Error = <U as core::convert::TryFrom<T>>::Error
++pub type ufbx::RawEnum<T>::Error = <U as core::convert::TryFrom<T>>::Error
++pub type ufbx::RawEnum<T>::Error = core::convert::Infallible
++pub type ufbx::RawEnum<T>::Error = core::convert::Infallible
++pub type ufbx::RawEnum<T>::Owned = T
++pub type ufbx::RawEnum<T>::Owned = T
++pub type ufbx::RawOpenFileCb::Owned = T
++pub type ufbx::RawOpenFileCb::Owned = T
++pub type ufbx::RawProgressCb::Owned = T
++pub type ufbx::RawProgressCb::Owned = T
++pub type ufbx::RawStream::Owned = T
++pub type ufbx::RawStream::Owned = T
++pub type ufbx::RawThreadPool::Owned = T
++pub type ufbx::RawThreadPool::Owned = T
++pub type ufbx::Ref<T>::Owned = T
++pub type ufbx::Ref<T>::Owned = T
++pub type ufbx::ShaderPropBinding::Owned = T
++pub type ufbx::ShaderPropBinding::Owned = T
++pub type ufbx::String::Owned = T
++pub type ufbx::String::Owned = T
++pub ufbx::generated::MaterialMap::value_components: u8
++pub ufbx::generated::RawProgressCb::fn_: core::option::Option<fn(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::RawEnum<ufbx::ProgressResult>>
++pub ufbx::generated::ShaderTexture::main_texture: core::option::Option<ufbx::Ref<ufbx::Texture>>
++pub ufbx::generated::ShaderTextureInput::prop: core::option::Option<ufbx::Ref<ufbx::Prop>>
++pub ufbx::MaterialMap::value_components: u8
++pub ufbx::RawProgressCb::fn_: core::option::Option<fn(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::RawEnum<ufbx::ProgressResult>>
++pub ufbx::ShaderTexture::main_texture: core::option::Option<ufbx::Ref<ufbx::Texture>>
++pub ufbx::ShaderTextureInput::prop: core::option::Option<ufbx::Ref<ufbx::Prop>>
++pub unsafe c fn ufbx::call_progress_cb<F>(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::RawEnum<ufbx::ProgressResult> where F: core::ops::function::FnMut(&ufbx::Progress) -> ufbx::ProgressResult
++pub unsafe c fn ufbx::prelude::call_progress_cb<F>(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::RawEnum<ufbx::ProgressResult> where F: core::ops::function::FnMut(&ufbx::Progress) -> ufbx::ProgressResult
++pub unsafe fn ufbx::AnimProp::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::AnimProp::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::Blob::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::Blob::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::Connection::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::Connection::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::NameElement::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::NameElement::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::Prop::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::Prop::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawAllocator::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawAllocator::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawAllocatorOpts::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawAllocatorOpts::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawCloseMemoryCb::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawCloseMemoryCb::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawEnum<T>::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawEnum<T>::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawOpenFileCb::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawOpenFileCb::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawProgressCb::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawProgressCb::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawStream::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawStream::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawThreadPool::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::RawThreadPool::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::Ref<T>::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::Ref<T>::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::ShaderPropBinding::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::ShaderPropBinding::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::String::clone_to_uninit(&self, *mut u8)
++pub unsafe fn ufbx::String::clone_to_uninit(&self, *mut u8)

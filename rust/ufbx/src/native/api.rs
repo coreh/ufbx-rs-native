@@ -234,7 +234,7 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
 pub(crate) struct EmptyString(pub String);
 unsafe impl Sync for EmptyString {}
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_empty_string")]
-pub(crate) static EMPTY_STRING: EmptyString = EmptyString(String::new_c(EMPTY_CHAR.as_ptr(), 0));
+pub static EMPTY_STRING: EmptyString = EmptyString(String::new_c(EMPTY_CHAR.as_ptr(), 0));
 
 // ufbx.c:30340 `ufbx_abi_data_def const ufbx_blob ufbx_empty_blob = { NULL, 0 };`
 // Same `Sync` wrapper rationale as `EMPTY_STRING` above.
@@ -242,12 +242,12 @@ pub(crate) static EMPTY_STRING: EmptyString = EmptyString(String::new_c(EMPTY_CH
 pub(crate) struct EmptyBlob(pub Blob);
 unsafe impl Sync for EmptyBlob {}
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_empty_blob")]
-pub(crate) static EMPTY_BLOB: EmptyBlob = EmptyBlob(Blob::new_c(core::ptr::null(), 0));
+pub static EMPTY_BLOB: EmptyBlob = EmptyBlob(Blob::new_c(core::ptr::null(), 0));
 
 // ufbx.c:30341 `ufbx_abi_data_def const ufbx_matrix ufbx_identity_matrix = { 1,0,0, 0,1,0, 0,0,1, 0,0,0 };`
 // Plain `Real` fields, so no `Sync` wrapper is needed (unlike `EMPTY_STRING`).
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_identity_matrix")]
-pub(crate) static IDENTITY_MATRIX: Matrix = Matrix {
+pub static IDENTITY_MATRIX: Matrix = Matrix {
     m00: 1.0,
     m10: 0.0,
     m20: 0.0,
@@ -264,7 +264,7 @@ pub(crate) static IDENTITY_MATRIX: Matrix = Matrix {
 
 // ufbx.c:30342 `ufbx_abi_data_def const ufbx_transform ufbx_identity_transform = { {0,0,0}, {0,0,0,1}, {1,1,1} };`
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_identity_transform")]
-pub(crate) static IDENTITY_TRANSFORM: Transform = Transform {
+pub static IDENTITY_TRANSFORM: Transform = Transform {
     translation: Vec3 {
         x: 0.0,
         y: 0.0,
@@ -285,12 +285,12 @@ pub(crate) static IDENTITY_TRANSFORM: Transform = Transform {
 
 // ufbx.c:30343 `ufbx_abi_data_def const ufbx_vec2 ufbx_zero_vec2 = { 0,0 };`
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_zero_vec2")]
-pub(crate) static ZERO_VEC2: Vec2 = Vec2 { x: 0.0, y: 0.0 };
+pub static ZERO_VEC2: Vec2 = Vec2 { x: 0.0, y: 0.0 };
 
 // ufbx.c:30344 `ufbx_abi_data_def const ufbx_vec3 ufbx_zero_vec3 = { 0,0,0 };`
 // Plain `Real` fields, so no `Sync` wrapper is needed (see `IDENTITY_MATRIX`).
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_zero_vec3")]
-pub(crate) static ZERO_VEC3: Vec3 = Vec3 {
+pub static ZERO_VEC3: Vec3 = Vec3 {
     x: 0.0,
     y: 0.0,
     z: 0.0,
@@ -298,7 +298,7 @@ pub(crate) static ZERO_VEC3: Vec3 = Vec3 {
 
 // ufbx.c:30345 `ufbx_abi_data_def const ufbx_vec4 ufbx_zero_vec4 = { 0,0,0,0 };`
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_zero_vec4")]
-pub(crate) static ZERO_VEC4: Vec4 = Vec4 {
+pub static ZERO_VEC4: Vec4 = Vec4 {
     x: 0.0,
     y: 0.0,
     z: 0.0,
@@ -307,7 +307,7 @@ pub(crate) static ZERO_VEC4: Vec4 = Vec4 {
 
 // ufbx.c:30346 `ufbx_abi_data_def const ufbx_quat ufbx_identity_quat = { 0,0,0,1 };`
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_identity_quat")]
-pub(crate) static IDENTITY_QUAT: Quat = Quat {
+pub static IDENTITY_QUAT: Quat = Quat {
     x: 0.0,
     y: 0.0,
     z: 0.0,
@@ -316,7 +316,7 @@ pub(crate) static IDENTITY_QUAT: Quat = Quat {
 
 // ufbx.c:30348-30350 `ufbx_abi_data_def const ufbx_coordinate_axes ufbx_axes_right_handed_y_up`
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_axes_right_handed_y_up")]
-pub(crate) static AXES_RIGHT_HANDED_Y_UP: CoordinateAxes = CoordinateAxes {
+pub static AXES_RIGHT_HANDED_Y_UP: CoordinateAxes = CoordinateAxes {
     right: CoordinateAxis::PositiveX,
     up: CoordinateAxis::PositiveY,
     front: CoordinateAxis::PositiveZ,
@@ -324,7 +324,7 @@ pub(crate) static AXES_RIGHT_HANDED_Y_UP: CoordinateAxes = CoordinateAxes {
 
 // ufbx.c:30351-30353 `ufbx_abi_data_def const ufbx_coordinate_axes ufbx_axes_right_handed_z_up`
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_axes_right_handed_z_up")]
-pub(crate) static AXES_RIGHT_HANDED_Z_UP: CoordinateAxes = CoordinateAxes {
+pub static AXES_RIGHT_HANDED_Z_UP: CoordinateAxes = CoordinateAxes {
     right: CoordinateAxis::PositiveX,
     up: CoordinateAxis::PositiveZ,
     front: CoordinateAxis::NegativeY,
@@ -332,7 +332,7 @@ pub(crate) static AXES_RIGHT_HANDED_Z_UP: CoordinateAxes = CoordinateAxes {
 
 // ufbx.c:30354-30356 `ufbx_abi_data_def const ufbx_coordinate_axes ufbx_axes_left_handed_y_up`
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_axes_left_handed_y_up")]
-pub(crate) static AXES_LEFT_HANDED_Y_UP: CoordinateAxes = CoordinateAxes {
+pub static AXES_LEFT_HANDED_Y_UP: CoordinateAxes = CoordinateAxes {
     right: CoordinateAxis::PositiveX,
     up: CoordinateAxis::PositiveY,
     front: CoordinateAxis::NegativeZ,
@@ -340,7 +340,7 @@ pub(crate) static AXES_LEFT_HANDED_Y_UP: CoordinateAxes = CoordinateAxes {
 
 // ufbx.c:30357-30359 `ufbx_abi_data_def const ufbx_coordinate_axes ufbx_axes_left_handed_z_up`
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_axes_left_handed_z_up")]
-pub(crate) static AXES_LEFT_HANDED_Z_UP: CoordinateAxes = CoordinateAxes {
+pub static AXES_LEFT_HANDED_Z_UP: CoordinateAxes = CoordinateAxes {
     right: CoordinateAxis::PositiveX,
     up: CoordinateAxis::PositiveZ,
     front: CoordinateAxis::PositiveY,
@@ -405,7 +405,7 @@ pub(crate) static ELEMENT_TYPE_SIZE: [usize; ELEMENT_TYPE_COUNT] = [
 // `ufbx_default_open_file` into a callback must pass the loader's
 // compare-by-address fast path (ufbx.c:25224) exactly as in C.
 #[cfg_attr(feature = "c-abi", export_name = "ufbx_default_open_file")]
-pub(crate) unsafe extern "C" fn default_open_file(
+pub unsafe extern "C" fn default_open_file(
     user: *mut c_void,
     stream: *mut RawStream,
     path: *const u8,

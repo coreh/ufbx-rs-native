@@ -68,6 +68,30 @@ jobs:
       - name: Fuzz math functions against C
         run: rust/tools/mathfuzz/ci.sh
 
+  # Public API must equal published ufbx-rust 0.11.2 modulo the divergences
+  # documented in COMPAT.md (expectations file: rust/tools/api/).
+  public_api:
+    name: Check public API against ufbx-rust
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly + cargo-public-api
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo install cargo-public-api --locked
+      - name: Diff public API vs crates.io ufbx 0.11.2
+        run: rust/tools/check_public_api.sh
+
+  # Drop-in proof: ufbx-rust's own test suite (pinned v0.11.2 tag, unmodified)
+  # runs with this crate substituted as the `ufbx` dependency.
+  ufbx_rust_tests:
+    name: Run ufbx-rust tests against port
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run pinned ufbx-rust suite
+        run: rust/tools/run_ufbx_rust_tests.sh
+
   # Golden-hash parity: hash_scene linked against the Rust staticlib
   # (-DEXTERNAL_UFBX) must reproduce the C oracle's hashes byte-exactly.
   rust_hashes:

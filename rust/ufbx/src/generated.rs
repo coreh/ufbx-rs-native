@@ -4222,7 +4222,7 @@ impl<'a> FromRust for GeometryCacheDataOpts<'a> {
 pub type Result<T> = result::Result<T, Error>;
 
 #[allow(unused_imports)]
-pub(crate) use crate::capi::{
+pub use crate::capi::{
     ufbx_add_blend_shape_vertex_offsets, ufbx_add_blend_vertex_offsets, ufbx_as_anim_curve,
     ufbx_as_anim_layer, ufbx_as_anim_stack, ufbx_as_anim_value, ufbx_as_audio_clip,
     ufbx_as_audio_layer, ufbx_as_blend_channel, ufbx_as_blend_deformer, ufbx_as_blend_shape,
@@ -4244,14 +4244,14 @@ pub(crate) use crate::capi::{
     ufbx_coordinate_axes_valid, ufbx_create_anim, ufbx_default_open_file, ufbx_dom_array_size,
     ufbx_dom_as_blob_list, ufbx_dom_as_double_list, ufbx_dom_as_float_list, ufbx_dom_as_int32_list,
     ufbx_dom_as_int64_list, ufbx_dom_as_real_list, ufbx_dom_find, ufbx_dom_find_len,
-    ufbx_dom_is_array, ufbx_empty_blob, ufbx_empty_string, ufbx_euler_to_quat,
-    ufbx_evaluate_anim_value_real, ufbx_evaluate_anim_value_real_flags,
-    ufbx_evaluate_anim_value_vec3, ufbx_evaluate_anim_value_vec3_flags, ufbx_evaluate_baked_quat,
-    ufbx_evaluate_baked_vec3, ufbx_evaluate_blend_weight, ufbx_evaluate_blend_weight_flags,
-    ufbx_evaluate_curve, ufbx_evaluate_curve_flags, ufbx_evaluate_nurbs_basis,
-    ufbx_evaluate_nurbs_curve, ufbx_evaluate_nurbs_surface, ufbx_evaluate_prop,
-    ufbx_evaluate_prop_flags, ufbx_evaluate_prop_flags_len, ufbx_evaluate_prop_len,
-    ufbx_evaluate_props, ufbx_evaluate_props_flags, ufbx_evaluate_scene, ufbx_evaluate_transform,
+    ufbx_dom_is_array, ufbx_euler_to_quat, ufbx_evaluate_anim_value_real,
+    ufbx_evaluate_anim_value_real_flags, ufbx_evaluate_anim_value_vec3,
+    ufbx_evaluate_anim_value_vec3_flags, ufbx_evaluate_baked_quat, ufbx_evaluate_baked_vec3,
+    ufbx_evaluate_blend_weight, ufbx_evaluate_blend_weight_flags, ufbx_evaluate_curve,
+    ufbx_evaluate_curve_flags, ufbx_evaluate_nurbs_basis, ufbx_evaluate_nurbs_curve,
+    ufbx_evaluate_nurbs_surface, ufbx_evaluate_prop, ufbx_evaluate_prop_flags,
+    ufbx_evaluate_prop_flags_len, ufbx_evaluate_prop_len, ufbx_evaluate_props,
+    ufbx_evaluate_props_flags, ufbx_evaluate_scene, ufbx_evaluate_transform,
     ufbx_evaluate_transform_flags, ufbx_find_anim_prop, ufbx_find_anim_prop_len,
     ufbx_find_anim_props, ufbx_find_anim_stack, ufbx_find_anim_stack_len, ufbx_find_baked_element,
     ufbx_find_baked_element_by_element_id, ufbx_find_baked_node, ufbx_find_baked_node_by_typed_id,
@@ -4284,6 +4284,8 @@ pub(crate) use crate::capi::{
     ufbx_transform_position, ufbx_transform_to_matrix, ufbx_triangulate_face, ufbx_vec3_normalize,
     ufbx_zero_vec2, ufbx_zero_vec3, ufbx_zero_vec4,
 };
+#[allow(unused_imports)]
+pub(crate) use crate::capi::{ufbx_empty_blob, ufbx_empty_string};
 pub struct SceneRoot {
     scene: *mut Scene,
     _marker: marker::PhantomData<Scene>,

@@ -15,7 +15,7 @@ pub static ufbx_source_version: u32 = crate::native::platform::SOURCE_VERSION;
 // types — the generator emits no accessor for string/blob globals, so the
 // aliases exist only to satisfy the declaration surface.
 #[allow(unused_imports)]
-pub(crate) use crate::native::api::{
+pub use crate::native::api::{
     default_open_file as ufbx_default_open_file,
     AXES_LEFT_HANDED_Y_UP as ufbx_axes_left_handed_y_up,
     AXES_LEFT_HANDED_Z_UP as ufbx_axes_left_handed_z_up,

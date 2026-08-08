@@ -1743,8 +1743,12 @@ def emit_file():
     # below bind to them with a plain re-export — direct Rust calls, no FFI.
     # The C ABI declarations stay verbatim in capi.rs; `c-abi` only controls
     # whether the symbols are additionally exported with C linkage.
+    # ufbx-rust's extern block items are public API (callers may use the raw
+    # ufbx_* surface directly), so the function re-exports are `pub`. The
+    # string/blob globals are the exception: their statics carry Sync wrapper
+    # types (see COMPAT.md §2), so they stay crate-internal.
     emit("#[allow(unused_imports)]")
-    emit("pub(crate) use crate::capi::{")
+    emit("pub use crate::capi::{")
     indent()
     for decl in file.declarations:
         if decl.kind == "function":
@@ -1752,9 +1756,26 @@ def emit_file():
                 continue
             emit(f"{decl.name},")
         elif decl.kind == "global":
-            if file.types[file.globals[decl.name].type].kind != "const":
+            gl = file.globals[decl.name]
+            typ = file.types[gl.type]
+            if typ.kind != "const":
+                continue
+            if file.types[typ.inner].base_name in ("ufbx_string", "ufbx_blob"):
                 continue
             emit(f"{decl.name},")
+    unindent()
+    emit("};")
+    emit("#[allow(unused_imports)]")
+    emit("pub(crate) use crate::capi::{")
+    indent()
+    for decl in file.declarations:
+        if decl.kind == "global":
+            gl = file.globals[decl.name]
+            typ = file.types[gl.type]
+            if typ.kind != "const":
+                continue
+            if file.types[typ.inner].base_name in ("ufbx_string", "ufbx_blob"):
+                emit(f"{decl.name},")
     unindent()
     emit("};")
 

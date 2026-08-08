@@ -70,6 +70,8 @@ defined.
 | `ShaderTextureInput.prop` | `Ref<Prop>` | `Option<Ref<Prop>>` | Same upstream annotation gap (ufbx.h:2802), and inconsistent with the sibling `texture_prop`/`texture_enabled_prop` (ufbx.h:2805/2808) which *are* `ufbx_nullable`. The field is zeroed by `memset(input, 0, sizeof(ufbx_shader_texture_input))` (ufbx.c:20651) and null-tested by `ufbxi_update_shader_texture` (ufbx.c:20499). NULL here is normally transient (finalize assigns a real prop immediately), but a transient invalid `NonNull` is still invalid. Same generator allowlist. |
 | `Unsafe<T>` unchanged | — | — | (No divergence; listed to record it was considered: migration to native `unsafe fields` deferred until stabilization — see rust-lang/rust#132922.) |
 
+| `pub static ufbx_empty_string` / `ufbx_empty_blob` | `String` / `Blob` | crate-internal, wrapped in `Sync` newtypes | ufbx-rust declares them in an `extern` block, where Rust does not require `Sync`; as native statics they must be `Sync`, and `String`/`Blob` hold raw pointers. The values are reachable as `String::default()`-style zero values; the remaining raw `ufbx_*` fn surface and the 11 plain-typed ABI statics stay public for drop-in use. |
+
 ## 3. Accepted behavioral divergences vs the C build
 
 | Behavior | C | native port | Why |
