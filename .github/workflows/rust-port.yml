@@ -92,14 +92,19 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # Tool version pinned; the nightly floats — the check script normalizes
-      # away rustdoc-version rendering differences (blanket impls, re-export
-      # path canonicalization).
+      # Both the tool and the nightly are pinned: rustdoc's JSON rendering of
+      # a fixed API drifts between nightlies (e.g. the bounds printed on
+      # derived impls), which a signature-level diff reports as an API change.
+      # cargo-public-api 0.52 has no --toolchain flag, so the pin is applied
+      # through rustup's RUSTUP_TOOLCHAIN env var. Bump deliberately, then
+      # refresh rust/tools/api/expected-divergences.txt in the same commit.
       - name: Install nightly + cargo-public-api
         run: |
-          rustup toolchain install nightly --profile minimal
+          rustup toolchain install nightly-2026-08-08 --profile minimal
           cargo install cargo-public-api --version 0.52.0 --locked
       - name: Diff public API vs crates.io ufbx 0.11.2
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2026-08-08
         run: rust/tools/check_public_api.sh
 
   # Drop-in proof: ufbx-rust's own test suite (pinned v0.11.2 tag, unmodified)

@@ -1,10 +1,3 @@
--pub static ufbx::ufbx_empty_blob: ufbx::Blob
--pub static ufbx::ufbx_empty_string: ufbx::String
--pub ufbx::MaterialMap::value_components: u32
--pub ufbx::RawProgressCb::fn_: core::option::Option<fn(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::ProgressResult>
--pub ufbx::ShaderTexture::main_texture: ufbx::Ref<ufbx::Texture>
--pub ufbx::ShaderTextureInput::prop: ufbx::Ref<ufbx::Prop>
--pub unsafe c fn ufbx::call_progress_cb<F>(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::ProgressResult where F: core::ops::function::FnMut(&ufbx::Progress) -> ufbx::ProgressResult
 +#[repr(transparent)] pub struct ufbx::RawEnum<T>(_, _)
 +impl core::clone::Clone for ufbx::AnimProp
 +impl core::clone::Clone for ufbx::Blob
@@ -66,11 +59,18 @@
 +pub fn ufbx::RawStream::clone(&self) -> ufbx::RawStream
 +pub fn ufbx::RawThreadPool::clone(&self) -> ufbx::RawThreadPool
 +pub fn ufbx::Ref<T>::clone(&self) -> Self
-+pub fn ufbx::set_panic_handler(fn(&str))
 +pub fn ufbx::ShaderPropBinding::clone(&self) -> ufbx::ShaderPropBinding
 +pub fn ufbx::String::clone(&self) -> ufbx::String
++pub fn ufbx::set_panic_handler(fn(&str))
 +pub ufbx::MaterialMap::value_components: u8
 +pub ufbx::RawProgressCb::fn_: core::option::Option<fn(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::RawEnum<ufbx::ProgressResult>>
 +pub ufbx::ShaderTexture::main_texture: core::option::Option<ufbx::Ref<ufbx::Texture>>
 +pub ufbx::ShaderTextureInput::prop: core::option::Option<ufbx::Ref<ufbx::Prop>>
 +pub unsafe c fn ufbx::call_progress_cb<F>(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::RawEnum<ufbx::ProgressResult> where F: core::ops::function::FnMut(&ufbx::Progress) -> ufbx::ProgressResult
+-pub static ufbx::ufbx_empty_blob: ufbx::Blob
+-pub static ufbx::ufbx_empty_string: ufbx::String
+-pub ufbx::MaterialMap::value_components: u32
+-pub ufbx::RawProgressCb::fn_: core::option::Option<fn(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::ProgressResult>
+-pub ufbx::ShaderTexture::main_texture: ufbx::Ref<ufbx::Texture>
+-pub ufbx::ShaderTextureInput::prop: ufbx::Ref<ufbx::Prop>
+-pub unsafe c fn ufbx::call_progress_cb<F>(*mut core::ffi::c_void, *const ufbx::Progress) -> ufbx::ProgressResult where F: core::ops::function::FnMut(&ufbx::Progress) -> ufbx::ProgressResult

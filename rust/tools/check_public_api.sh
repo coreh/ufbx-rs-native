@@ -11,9 +11,18 @@
 # blanket/auto impls (rendering varies by rustdoc version) and re-export
 # paths are canonicalized to the crate root (rustdoc versions differ on which
 # duplicate path they report).
+# It is also HOST-agnostic: LC_ALL=C forces byte-wise collation so `sort`
+# produces one canonical order everywhere. Without it a en_US.UTF-8 host
+# (macOS default) folds case and ignores leading punctuation, so `+`/`-`
+# lines interleave and `set_panic_handler` sorts before `ShaderPropBinding`,
+# while a C-locale CI runner orders them the other way — the same item set,
+# rendered in two orders, which `diff` reports as a spurious API change.
+# To reproduce a specific nightly locally: RUSTUP_TOOLCHAIN=nightly-YYYY-MM-DD
+# (cargo-public-api 0.52 has no --toolchain flag; it honours the rustup env).
 # Refresh the expectations after an intentional API change by re-running this
 # script and copying /tmp/api_divergences_actual.txt over the expectations.
 set -euo pipefail
+export LC_ALL=C
 cd "$(dirname "$0")/../.."
 
 cd rust
