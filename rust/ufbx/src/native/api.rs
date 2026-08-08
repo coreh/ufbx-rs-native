@@ -62,10 +62,6 @@ use core::mem::{size_of, MaybeUninit};
 
 use crate::generated::RawBakeOpts;
 use crate::generated::{
-    EvaluateFlags, Interpolation, Keyframe, PropFlags, RawAnimOpts, RawEvaluateOpts,
-    TransformFlags,
-};
-use crate::generated::{
     Anim, AnimCurve, AnimLayer, AnimProp, AnimStack, AnimValue, AudioClip, AudioLayer, BakedAnim,
     BakedElement, BakedKeyFlags, BakedNode, BakedQuat, BakedVec3, BlendChannel, BlendDeformer,
     BlendKeyframe, BlendShape, Bone, BonePose, CacheChannel, CacheDeformer, CacheFile, CacheFrame,
@@ -76,14 +72,16 @@ use crate::generated::{
     NurbsTrimBoundary, NurbsTrimSurface, OpenFileInfo, Panic, Pose, ProceduralGeometry, Prop,
     Props, Quat, RawAllocatorOpts, RawGeometryCacheDataOpts, RawGeometryCacheOpts, RawLoadOpts,
     RawOpenFileOpts, RawOpenMemoryOpts, RawStream, RawVertexStream, RotationOrder, Scene,
-    SelectionNode,
-    SelectionSet, Shader, ShaderBinding, ShaderPropBinding, ShaderTexture, ShaderTextureInput,
-    SkinCluster, SkinDeformer, SkinVertex, SkinWeight, StereoCamera, SurfacePoint, Texture,
-    TopoEdge, Transform, Unknown, Vec2, Vec3, Vec4, VertexReal, VertexVec2, VertexVec3, VertexVec4,
-    Video,
+    SelectionNode, SelectionSet, Shader, ShaderBinding, ShaderPropBinding, ShaderTexture,
+    ShaderTextureInput, SkinCluster, SkinDeformer, SkinVertex, SkinWeight, StereoCamera,
+    SurfacePoint, Texture, TopoEdge, Transform, Unknown, Vec2, Vec3, Vec4, VertexReal, VertexVec2,
+    VertexVec3, VertexVec4, Video,
 };
 #[cfg(feature = "geometry-cache")]
 use crate::generated::{CacheDataEncoding, CacheDataFormat, OpenFileType, RawOpenFileCb};
+use crate::generated::{
+    EvaluateFlags, Interpolation, Keyframe, PropFlags, RawAnimOpts, RawEvaluateOpts, TransformFlags,
+};
 #[cfg(feature = "tessellation")]
 use crate::generated::{RawTessellateCurveOpts, RawTessellateSurfaceOpts};
 #[cfg(feature = "baking")]
@@ -106,13 +104,13 @@ use crate::native::thread::ThreadPool;
 // `ufbx_tessellate_nurbs_curve` / `_surface` and unconditionally by
 // `ufbx_subdivide_mesh` / `ufbx_load_geometry_cache_len`.
 use crate::native::error::ufbxi_check_opts_ptr;
+use crate::native::error::{clear_error, fix_error_type};
 #[cfg(any(
     not(feature = "scene-eval"),
     not(feature = "baking"),
     not(feature = "tessellation")
 ))]
 use crate::native::error::{ufbxi_fmt_err_info, ufbxi_report_err_msg};
-use crate::native::error::{clear_error, fix_error_type};
 use crate::native::evaluate;
 use crate::native::evaluate::BakedAnimImp;
 #[cfg(feature = "tessellation")]
@@ -1149,7 +1147,11 @@ pub(crate) unsafe fn get_compatible_matrix_for_normals(node: *const Node) -> Mat
 }
 
 // ufbx.c:30827-30830 `ufbx_evaluate_curve`
-pub(crate) unsafe fn evaluate_curve(curve: *const AnimCurve, time: f64, default_value: Real) -> Real {
+pub(crate) unsafe fn evaluate_curve(
+    curve: *const AnimCurve,
+    time: f64,
+    default_value: Real,
+) -> Real {
     evaluate_curve_flags(curve, time, default_value, 0)
 }
 
@@ -1382,7 +1384,14 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
     // C-parity: `prop->flags` — `prop` is non-NULL here because the NOT_FOUND
     // branch above always takes the early return.
     if ((*prop).flags.raw() & PropFlags::CONNECTED.raw()) != 0 && !(*anim).ignore_connections {
-        evaluate::evaluate_connected_prop(&mut result, anim, element, (*prop).name.data, time, flags);
+        evaluate::evaluate_connected_prop(
+            &mut result,
+            anim,
+            element,
+            (*prop).name.data,
+            time,
+            flags,
+        );
     }
 
     evaluate::evaluate_props(anim, element, time, &mut result, 1, flags);
@@ -1429,7 +1438,9 @@ pub(crate) unsafe fn evaluate_props_flags(
             break;
         }
         if ((*prop).flags.raw()
-            & (PropFlags::ANIMATED.raw() | PropFlags::OVERRIDDEN.raw() | PropFlags::CONNECTED.raw()))
+            & (PropFlags::ANIMATED.raw()
+                | PropFlags::OVERRIDDEN.raw()
+                | PropFlags::CONNECTED.raw()))
             == 0
         {
             continue;
@@ -1463,7 +1474,11 @@ pub(crate) unsafe fn evaluate_props_flags(
 
 // ufbx.c:31025-31028 `ufbx_evaluate_transform`
 #[inline(never)]
-pub(crate) unsafe fn evaluate_transform(anim: *const Anim, node: *const Node, time: f64) -> Transform {
+pub(crate) unsafe fn evaluate_transform(
+    anim: *const Anim,
+    node: *const Node,
+    time: f64,
+) -> Transform {
     evaluate_transform_flags(anim, node, time, 0)
 }
 
@@ -1565,7 +1580,8 @@ pub(crate) unsafe fn evaluate_transform_flags(
     let mut use_scale_factor: bool = false;
 
     if !opt_ptr(core::ptr::addr_of!((*node).parent)).is_null()
-        && (flags & (TransformFlags::INCLUDE_SCALE.raw() | TransformFlags::INCLUDE_TRANSLATION.raw()))
+        && (flags
+            & (TransformFlags::INCLUDE_SCALE.raw() | TransformFlags::INCLUDE_TRANSLATION.raw()))
             != 0
     {
         let parent: *mut Node = opt_ptr(core::ptr::addr_of!((*node).parent));
@@ -1583,9 +1599,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
                 // C: `ufbx_prop scale = ufbx_evaluate_prop(anim, &p->scale_helper->element, ufbxi_Lcl_Scaling, time);`
                 let scale: Prop = evaluate_prop(
                     anim,
-                    core::ptr::addr_of!(
-                        (*opt_ptr(core::ptr::addr_of!((*p).scale_helper))).element
-                    ),
+                    core::ptr::addr_of!((*opt_ptr(core::ptr::addr_of!((*p).scale_helper))).element),
                     sp::Lcl_Scaling.as_ptr(),
                     time,
                 );
@@ -1732,7 +1746,14 @@ pub(crate) unsafe fn evaluate_scene(
     ufbxi_check_opts_ptr!(Scene, opts, error);
     // C: `ufbxi_eval_context ec = { 0 };`
     let mut ec = MaybeUninit::<evaluate::EvalContext>::zeroed();
-    evaluate::evaluate_scene(ec.as_mut_ptr(), scene as *mut Scene, anim, time, opts, error)
+    evaluate::evaluate_scene(
+        ec.as_mut_ptr(),
+        scene as *mut Scene,
+        anim,
+        time,
+        opts,
+        error,
+    )
 }
 
 #[cfg(not(feature = "scene-eval"))]

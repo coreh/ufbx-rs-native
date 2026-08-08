@@ -20,14 +20,14 @@ use core::mem::size_of;
 
 #[cfg(feature = "tessellation")]
 use crate::generated::Error;
+use crate::generated::LineCurve;
+#[cfg(feature = "tessellation")]
+use crate::generated::{CurvePoint, SurfacePoint};
 #[cfg(feature = "tessellation")]
 use crate::generated::{
     ElementType, Face, LineSegment, Material, Mesh, MeshPart, NurbsCurve, NurbsSurface,
     NurbsTopology, RawTessellateCurveOpts, RawTessellateSurfaceOpts, Vec2, Vec3,
 };
-#[cfg(feature = "tessellation")]
-use crate::generated::{CurvePoint, SurfacePoint};
-use crate::generated::LineCurve;
 #[cfg(feature = "tessellation")]
 use crate::native::allocator::{
     does_overflow, init_ator, Allocator, LINE_CURVE_IMP_MAGIC, MESH_IMP_MAGIC,
@@ -39,9 +39,9 @@ use crate::native::api::{
 #[cfg(feature = "tessellation")]
 use crate::native::buf::{push, push_zero, Buf};
 #[cfg(feature = "tessellation")]
-use crate::native::error::{ufbxi_check_err, ufbxi_check_err_msg, EMPTY_CHAR};
-#[cfg(feature = "tessellation")]
 use crate::native::error::Fail;
+#[cfg(feature = "tessellation")]
+use crate::native::error::{ufbxi_check_err, ufbxi_check_err_msg, EMPTY_CHAR};
 #[cfg(feature = "tessellation")]
 use crate::native::hash::Map;
 use crate::native::parse::Refcount;
@@ -55,9 +55,9 @@ use crate::native::read::{finalize_mesh, opt_ptr, ref_ptr};
 use crate::native::scene_process::finalize_mesh_material;
 #[cfg(feature = "tessellation")]
 use crate::native::string_pool::slow_normalize3;
-use crate::prelude::{List, Real};
 #[cfg(feature = "tessellation")]
 use crate::prelude::Ref;
+use crate::prelude::{List, Real};
 
 // ufbx.c:64-66 `UFBXI_MAX_NURBS_ORDER` (top-of-file config constant, owned by
 // this section — only the NURBS evaluation entry points read it)
@@ -67,7 +67,12 @@ pub(crate) const MAX_NURBS_ORDER: usize = 128;
 // C copies `ufbx_real_list` by value at the call sites and passes `&knots`;
 // `List` is not `Copy`, so the Rust callers pass a pointer to the same data.
 #[inline(always)]
-pub(crate) unsafe fn nurbs_weight(knots: *const List<Real>, knot: usize, degree: usize, u: Real) -> Real {
+pub(crate) unsafe fn nurbs_weight(
+    knots: *const List<Real>,
+    knot: usize,
+    degree: usize,
+    u: Real,
+) -> Real {
     if knot >= (*knots).count {
         return 0.0f32 as Real;
     }
@@ -167,7 +172,9 @@ pub(crate) struct TessellateSurfaceContext {
 #[cfg(feature = "tessellation")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: *mut TessellateCurveContext) -> Result<(), Fail> {
+pub(crate) unsafe fn tessellate_nurbs_curve_imp(
+    tc: *mut TessellateCurveContext,
+) -> Result<(), Fail> {
     // C: `tc->opts.span_subdivision <= 0` — `span_subdivision` is `size_t`.
     if (*tc).opts.span_subdivision == 0 {
         (*tc).opts.span_subdivision = 4;
@@ -214,8 +221,11 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: *mut TessellateCurveContext)
 
     let is_open: bool = (*curve).basis.topology == NurbsTopology::Open;
 
-    let num_indices: usize =
-        num_spans.wrapping_add(num_spans.wrapping_sub(1).wrapping_mul(num_sub.wrapping_sub(1)));
+    let num_indices: usize = num_spans.wrapping_add(
+        num_spans
+            .wrapping_sub(1)
+            .wrapping_mul(num_sub.wrapping_sub(1)),
+    );
     let num_vertices: usize = num_indices.wrapping_sub(if is_open { 0 } else { 1 });
     ufbxi_check_err!(
         &mut (*tc).error,
@@ -539,10 +549,14 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
             *attrib_ix.add(dst_index + 2) = ((face_v + 1) * indices_u + (face_u + 1)) as u32;
             *attrib_ix.add(dst_index + 3) = ((face_v + 1) * indices_u + (face_u + 0)) as u32;
 
-            *vertex_ix.add(dst_index + 0) = *position_ix.add(*attrib_ix.add(dst_index + 0) as usize);
-            *vertex_ix.add(dst_index + 1) = *position_ix.add(*attrib_ix.add(dst_index + 1) as usize);
-            *vertex_ix.add(dst_index + 2) = *position_ix.add(*attrib_ix.add(dst_index + 2) as usize);
-            *vertex_ix.add(dst_index + 3) = *position_ix.add(*attrib_ix.add(dst_index + 3) as usize);
+            *vertex_ix.add(dst_index + 0) =
+                *position_ix.add(*attrib_ix.add(dst_index + 0) as usize);
+            *vertex_ix.add(dst_index + 1) =
+                *position_ix.add(*attrib_ix.add(dst_index + 1) as usize);
+            *vertex_ix.add(dst_index + 2) =
+                *position_ix.add(*attrib_ix.add(dst_index + 2) as usize);
+            *vertex_ix.add(dst_index + 3) =
+                *position_ix.add(*attrib_ix.add(dst_index + 3) as usize);
 
             let mut is_triangle: bool = false;
             for prev_ix in 0..4usize {
@@ -622,8 +636,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     (*mesh).max_face_triangles = 2;
 
     if !opt_ptr(&(*surface).material).is_null() {
-        (*mesh).face_material.data =
-            push_zero::<u32>(&mut (*tc).result, num_faces) as *const u32;
+        (*mesh).face_material.data = push_zero::<u32>(&mut (*tc).result, num_faces) as *const u32;
         ufbxi_check_err!(
             &mut (*tc).error,
             !(*mesh).face_material.data.is_null(),

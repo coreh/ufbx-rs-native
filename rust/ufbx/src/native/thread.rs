@@ -282,8 +282,6 @@ pub(crate) unsafe fn thread_pool_run_task(pool: *mut ThreadPool, task: *mut Task
     // C: `(void)task;` — `task` is only read by the assert below.
     let _ = task;
     let index: u32 = (*pool).start_index;
-    ufbx_assert!(
-        task == &raw mut (*(*pool).tasks.add((index % (*pool).num_tasks) as usize)).task
-    );
+    ufbx_assert!(task == &raw mut (*(*pool).tasks.add((index % (*pool).num_tasks) as usize)).task);
     (*pool).start_index = index.wrapping_add(1);
 }

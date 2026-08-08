@@ -7362,7 +7362,12 @@ pub(crate) unsafe fn read_root(uc: *mut Context) -> Result<(), Fail> {
     if !(*uc).sure_fbx {
         // If the file is a bit iffy about being a real FBX file reject it if
         // even the objects are not found.
-        ufbxi_check_msg!(uc, !(*uc).top_node.is_null(), "Not an FBX file", "uc->top_node");
+        ufbxi_check_msg!(
+            uc,
+            !(*uc).top_node.is_null(),
+            "Not an FBX file",
+            "uc->top_node"
+        );
     }
     if (*uc).thread_pool.enabled {
         read_objects_threaded(uc)?;

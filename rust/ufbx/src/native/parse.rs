@@ -35,7 +35,9 @@ use crate::generated::{
     RawLoadOpts, Scene, TextureFile, Transform, Vec3, Vec4,
 };
 use crate::native::allocator::{grow_array, Allocator};
-use crate::native::buf::{buf_clear, buf_free, pop, push_copy, push_pop, push_size_zero, push_zero, Buf};
+use crate::native::buf::{
+    buf_clear, buf_free, pop, push_copy, push_pop, push_size_zero, push_zero, Buf,
+};
 use crate::native::error::{
     memchr, memcmp, strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail,
     Fail, EMPTY_CHAR,
@@ -2927,14 +2929,16 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
     let mut buf: String = String::new_c(data, size);
 
     if format == FileFormat::Fbx {
-        if size >= BINARY_MAGIC_SIZE
-            && memcmp(data, BINARY_MAGIC.as_ptr(), BINARY_MAGIC_SIZE) == 0
+        if size >= BINARY_MAGIC_SIZE && memcmp(data, BINARY_MAGIC.as_ptr(), BINARY_MAGIC_SIZE) == 0
         {
             return true;
         }
 
         while next_line(&mut line, &mut buf, true) {
-            if r#match(&line, b";\\s*FBX\\s*\\d+\\.\\d+\\.\\d+\\s*project\\s+file\0".as_ptr()) {
+            if r#match(
+                &line,
+                b";\\s*FBX\\s*\\d+\\.\\d+\\.\\d+\\s*project\\s+file\0".as_ptr(),
+            ) {
                 return true;
             }
             if r#match(&line, b"FBXHeaderExtension:.*\0".as_ptr()) {
@@ -3075,12 +3079,8 @@ pub(crate) unsafe fn begin_parse(uc: *mut Context) -> Result<(), Fail> {
         // Read the version directly from the header
         let mut version_word: *const u8 = header.add(BINARY_MAGIC_SIZE + 1);
         if (*uc).file_big_endian {
-            version_word = crate::native::parse_binary::swap_endian(
-                uc,
-                version_word as *const c_void,
-                1,
-                4,
-            );
+            version_word =
+                crate::native::parse_binary::swap_endian(uc, version_word as *const c_void, 1, 4);
             ufbxi_check!(uc, !version_word.is_null(), "version_word");
         }
         (*uc).version = read_u32(version_word);
@@ -3407,37 +3407,130 @@ pub(crate) struct PropTypeNameTable(pub [PropTypeName; 31]);
 unsafe impl Sync for PropTypeNameTable {}
 
 pub(crate) static PROP_TYPE_NAMES: PropTypeNameTable = PropTypeNameTable([
-    PropTypeName { name: b"Boolean\0".as_ptr(), type_: PropType::Boolean },
-    PropTypeName { name: b"bool\0".as_ptr(), type_: PropType::Boolean },
-    PropTypeName { name: b"Bool\0".as_ptr(), type_: PropType::Boolean },
-    PropTypeName { name: b"Integer\0".as_ptr(), type_: PropType::Integer },
-    PropTypeName { name: b"int\0".as_ptr(), type_: PropType::Integer },
-    PropTypeName { name: b"enum\0".as_ptr(), type_: PropType::Integer },
-    PropTypeName { name: b"Enum\0".as_ptr(), type_: PropType::Integer },
-    PropTypeName { name: b"Visibility\0".as_ptr(), type_: PropType::Integer },
-    PropTypeName { name: b"Visibility Inheritance\0".as_ptr(), type_: PropType::Integer },
-    PropTypeName { name: b"KTime\0".as_ptr(), type_: PropType::Integer },
-    PropTypeName { name: b"Number\0".as_ptr(), type_: PropType::Number },
-    PropTypeName { name: b"double\0".as_ptr(), type_: PropType::Number },
-    PropTypeName { name: b"Real\0".as_ptr(), type_: PropType::Number },
-    PropTypeName { name: b"Float\0".as_ptr(), type_: PropType::Number },
-    PropTypeName { name: b"Intensity\0".as_ptr(), type_: PropType::Number },
-    PropTypeName { name: b"Vector\0".as_ptr(), type_: PropType::Vector },
-    PropTypeName { name: b"Vector3D\0".as_ptr(), type_: PropType::Vector },
-    PropTypeName { name: b"Color\0".as_ptr(), type_: PropType::Color },
-    PropTypeName { name: b"ColorAndAlpha\0".as_ptr(), type_: PropType::ColorWithAlpha },
-    PropTypeName { name: b"ColorRGB\0".as_ptr(), type_: PropType::Color },
-    PropTypeName { name: b"String\0".as_ptr(), type_: PropType::String },
-    PropTypeName { name: b"KString\0".as_ptr(), type_: PropType::String },
-    PropTypeName { name: b"object\0".as_ptr(), type_: PropType::String },
-    PropTypeName { name: b"DateTime\0".as_ptr(), type_: PropType::DateTime },
-    PropTypeName { name: b"Lcl Translation\0".as_ptr(), type_: PropType::Translation },
-    PropTypeName { name: b"Lcl Rotation\0".as_ptr(), type_: PropType::Rotation },
-    PropTypeName { name: b"Lcl Scaling\0".as_ptr(), type_: PropType::Scaling },
-    PropTypeName { name: b"Distance\0".as_ptr(), type_: PropType::Distance },
-    PropTypeName { name: b"Compound\0".as_ptr(), type_: PropType::Compound },
-    PropTypeName { name: b"Blob\0".as_ptr(), type_: PropType::Blob },
-    PropTypeName { name: b"Reference\0".as_ptr(), type_: PropType::Reference },
+    PropTypeName {
+        name: b"Boolean\0".as_ptr(),
+        type_: PropType::Boolean,
+    },
+    PropTypeName {
+        name: b"bool\0".as_ptr(),
+        type_: PropType::Boolean,
+    },
+    PropTypeName {
+        name: b"Bool\0".as_ptr(),
+        type_: PropType::Boolean,
+    },
+    PropTypeName {
+        name: b"Integer\0".as_ptr(),
+        type_: PropType::Integer,
+    },
+    PropTypeName {
+        name: b"int\0".as_ptr(),
+        type_: PropType::Integer,
+    },
+    PropTypeName {
+        name: b"enum\0".as_ptr(),
+        type_: PropType::Integer,
+    },
+    PropTypeName {
+        name: b"Enum\0".as_ptr(),
+        type_: PropType::Integer,
+    },
+    PropTypeName {
+        name: b"Visibility\0".as_ptr(),
+        type_: PropType::Integer,
+    },
+    PropTypeName {
+        name: b"Visibility Inheritance\0".as_ptr(),
+        type_: PropType::Integer,
+    },
+    PropTypeName {
+        name: b"KTime\0".as_ptr(),
+        type_: PropType::Integer,
+    },
+    PropTypeName {
+        name: b"Number\0".as_ptr(),
+        type_: PropType::Number,
+    },
+    PropTypeName {
+        name: b"double\0".as_ptr(),
+        type_: PropType::Number,
+    },
+    PropTypeName {
+        name: b"Real\0".as_ptr(),
+        type_: PropType::Number,
+    },
+    PropTypeName {
+        name: b"Float\0".as_ptr(),
+        type_: PropType::Number,
+    },
+    PropTypeName {
+        name: b"Intensity\0".as_ptr(),
+        type_: PropType::Number,
+    },
+    PropTypeName {
+        name: b"Vector\0".as_ptr(),
+        type_: PropType::Vector,
+    },
+    PropTypeName {
+        name: b"Vector3D\0".as_ptr(),
+        type_: PropType::Vector,
+    },
+    PropTypeName {
+        name: b"Color\0".as_ptr(),
+        type_: PropType::Color,
+    },
+    PropTypeName {
+        name: b"ColorAndAlpha\0".as_ptr(),
+        type_: PropType::ColorWithAlpha,
+    },
+    PropTypeName {
+        name: b"ColorRGB\0".as_ptr(),
+        type_: PropType::Color,
+    },
+    PropTypeName {
+        name: b"String\0".as_ptr(),
+        type_: PropType::String,
+    },
+    PropTypeName {
+        name: b"KString\0".as_ptr(),
+        type_: PropType::String,
+    },
+    PropTypeName {
+        name: b"object\0".as_ptr(),
+        type_: PropType::String,
+    },
+    PropTypeName {
+        name: b"DateTime\0".as_ptr(),
+        type_: PropType::DateTime,
+    },
+    PropTypeName {
+        name: b"Lcl Translation\0".as_ptr(),
+        type_: PropType::Translation,
+    },
+    PropTypeName {
+        name: b"Lcl Rotation\0".as_ptr(),
+        type_: PropType::Rotation,
+    },
+    PropTypeName {
+        name: b"Lcl Scaling\0".as_ptr(),
+        type_: PropType::Scaling,
+    },
+    PropTypeName {
+        name: b"Distance\0".as_ptr(),
+        type_: PropType::Distance,
+    },
+    PropTypeName {
+        name: b"Compound\0".as_ptr(),
+        type_: PropType::Compound,
+    },
+    PropTypeName {
+        name: b"Blob\0".as_ptr(),
+        type_: PropType::Blob,
+    },
+    PropTypeName {
+        name: b"Reference\0".as_ptr(),
+        type_: PropType::Reference,
+    },
 ]);
 
 // ufbx.c:11470-11478 `ufbxi_get_prop_type`

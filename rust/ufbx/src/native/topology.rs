@@ -20,13 +20,13 @@
 //! of the API surface.
 #![allow(dead_code)]
 
+use crate::generated::{Edge, Face, Mesh, TopoEdge, TopoFlags, Vec3};
 #[cfg(feature = "triangulation")]
 use crate::generated::{Vec2, VertexVec3};
-use crate::generated::{Edge, Face, Mesh, TopoEdge, TopoFlags, Vec3};
 use crate::native::api::get_vertex_vec3;
+use crate::native::platform::{macro_lower_bound_eq, ufbx_assert, unstable_sort, NO_INDEX};
 #[cfg(feature = "triangulation")]
 use crate::native::platform::{math, max_real, min_real, stable_sort, ufbxi_ignore, KD_FAST_DEPTH};
-use crate::native::platform::{macro_lower_bound_eq, ufbx_assert, unstable_sort, NO_INDEX};
 #[cfg(feature = "triangulation")]
 use crate::native::string_pool::{distsq2, dot3, length3, mul3, slow_normalized_cross3};
 #[cfg(feature = "triangulation")]
@@ -572,10 +572,8 @@ pub(crate) unsafe fn triangulate_ngon(
     ufbx_assert!(face.num_indices > 4);
 
     // Form an orthonormal basis to project the polygon into a 2D plane
-    let mut normal: Vec3 = crate::native::api::get_weighted_face_normal(
-        core::ptr::addr_of!((*nc).positions),
-        face,
-    );
+    let mut normal: Vec3 =
+        crate::native::api::get_weighted_face_normal(core::ptr::addr_of!((*nc).positions), face);
     let len: Real = length3(normal);
     if len > math::EPSILON {
         normal = mul3(normal, 1.0 / len);
@@ -747,7 +745,8 @@ pub(crate) unsafe fn triangulate_ngon(
             point_indices[0] = point_indices[1];
             point_indices[1] = point_indices[2];
             point_indices[2] = point_indices[3];
-            point_indices[3] = *edges.add(point_indices[3].wrapping_mul(2).wrapping_add(1) as usize);
+            point_indices[3] =
+                *edges.add(point_indices[3].wrapping_mul(2).wrapping_add(1) as usize);
             num_steps = num_steps.wrapping_add(1);
 
             // If we have walked around the entire polygon it is irregular and
@@ -819,7 +818,11 @@ pub(crate) unsafe fn triangulate_ngon(
     ufbx_assert!(num_triangles == max_triangles);
     core::ptr::copy_nonoverlapping(
         last_triangles.as_ptr(),
-        indices.add(max_triangles.wrapping_sub(num_last_triangles).wrapping_mul(3) as usize),
+        indices.add(
+            max_triangles
+                .wrapping_sub(num_last_triangles)
+                .wrapping_mul(3) as usize,
+        ),
         num_last_triangles.wrapping_mul(3) as usize,
     );
 
@@ -950,9 +953,7 @@ pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge) {
 
         let a: u32 = (*topo.add(i0)).prev;
         let b: u32 = (*topo.add(i0)).next;
-        while i1 + 1 < num_indices
-            && (*topo.add(i1 + 1)).prev == a
-            && (*topo.add(i1 + 1)).next == b
+        while i1 + 1 < num_indices && (*topo.add(i1 + 1)).prev == a && (*topo.add(i1 + 1)).next == b
         {
             i1 += 1;
         }
@@ -986,9 +987,9 @@ pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge) {
         let mut i: u32 = 0;
         while i < face.num_indices {
             let to: *mut TopoEdge = topo.add(face.index_begin.wrapping_add(i) as usize);
-            (*to).prev = face
-                .index_begin
-                .wrapping_add((i.wrapping_add(face.num_indices).wrapping_sub(1)) % face.num_indices);
+            (*to).prev = face.index_begin.wrapping_add(
+                (i.wrapping_add(face.num_indices).wrapping_sub(1)) % face.num_indices,
+            );
             (*to).next = face
                 .index_begin
                 .wrapping_add(i.wrapping_add(1) % face.num_indices);
