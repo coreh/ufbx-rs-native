@@ -6,15 +6,21 @@
 # divergences) — a new divergence fails, and so does one that silently
 # disappears (e.g. upstream annotating a field would obsolete an override).
 #
-# Requires: rustup nightly toolchain + cargo-public-api.
-# Refresh the expectations after an intentional API change with:
-#   cargo public-api -p ufbx --simplified diff 0.11.2 | grep '^[+-]' | sort \
-#     > rust/tools/api/expected-divergences.txt
+# Requires: rustup nightly toolchain + cargo-public-api 0.52.
+# The comparison is normalized to be toolchain-agnostic: --simplified drops
+# blanket/auto impls (rendering varies by rustdoc version) and re-export
+# paths are canonicalized to the crate root (rustdoc versions differ on which
+# duplicate path they report).
+# Refresh the expectations after an intentional API change by re-running this
+# script and copying /tmp/api_divergences_actual.txt over the expectations.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 cd rust
-cargo public-api -p ufbx --simplified diff 0.11.2 | grep '^[+-]' | sort > /tmp/api_divergences_actual.txt
+cargo public-api -p ufbx --simplified diff 0.11.2 \
+    | grep '^[+-]' \
+    | sed 's/ufbx::generated::/ufbx::/g; s/ufbx::prelude::/ufbx::/g' \
+    | sort -u > /tmp/api_divergences_actual.txt
 cd ..
 
 if diff -u rust/tools/api/expected-divergences.txt /tmp/api_divergences_actual.txt; then

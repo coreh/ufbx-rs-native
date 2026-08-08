@@ -75,13 +75,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # Pinned: rustdoc JSON is unstable, so the expectations file is only
-      # byte-stable against an exact nightly + tool version. Bump both
-      # together (and refresh the expectations) when updating.
-      - name: Install pinned nightly + cargo-public-api
+      # Tool version pinned; the nightly floats — the check script normalizes
+      # away rustdoc-version rendering differences (blanket impls, re-export
+      # path canonicalization).
+      - name: Install nightly + cargo-public-api
         run: |
-          rustup toolchain install nightly-2026-08-07 --profile minimal
-          rustup toolchain link nightly "$(rustc +nightly-2026-08-07 --print sysroot)"
+          rustup toolchain install nightly --profile minimal
           cargo install cargo-public-api --version 0.52.0 --locked
       - name: Diff public API vs crates.io ufbx 0.11.2
         run: rust/tools/check_public_api.sh
