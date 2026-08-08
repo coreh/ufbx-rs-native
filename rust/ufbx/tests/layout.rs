@@ -2,8 +2,8 @@
 // Pins Rust #[repr(C)] layouts to the C layouts computed from ufbx.h by ufbx_ir.py.
 #![allow(deprecated)]
 // The pinned offsets are computed from ufbx.h with ufbx_real = double;
-// under real-is-float the C layouts differ (runner_float is that oracle).
-#![cfg(not(feature = "real-is-float"))]
+// under real-is-f32 the C layouts differ (runner_float is that oracle).
+#![cfg(not(feature = "real-is-f32"))]
 use std::mem::{offset_of, size_of};
 use ufbx::*;
 

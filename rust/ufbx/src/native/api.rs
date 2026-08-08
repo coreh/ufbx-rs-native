@@ -2505,9 +2505,9 @@ pub(crate) unsafe fn quat_to_euler(q: Quat, order: RotationOrder) -> Vec3 {
     // TODO: Derive these rigorously
     // C: `#if defined(UFBX_REAL_IS_FLOAT) const double eps = 0.9999999;
     //     #else const double eps = 0.999999999; #endif`
-    #[cfg(feature = "real-is-float")]
+    #[cfg(feature = "real-is-f32")]
     let eps: f64 = 0.9999999;
-    #[cfg(not(feature = "real-is-float"))]
+    #[cfg(not(feature = "real-is-f32"))]
     let eps: f64 = 0.999999999;
 
     // C: `double vx, vy, vz;` / `double t;` — `t` is deliberately left unset
@@ -5872,7 +5872,7 @@ mod tests {
 
     // The lookup tables the `ufbx_find_*` entry points binary-search are built
     // sorted by the loader (`ufbxi_sort_name_elements` ufbx.c:18578,
-    // `ufbxi_sort_anim_props` ufbx.c:18596); these tests reproduce that order
+    // `ufbxi_sort_anim_props` ufbx.c:19301); these tests reproduce that order
     // with `slice::sort_by` — test scaffolding, not ported code.
     fn zeroed_elements(count: usize) -> std::vec::Vec<Element> {
         let mut v: std::vec::Vec<Element> = std::vec::Vec::new();
@@ -6655,9 +6655,9 @@ mod tests {
             // Round-trip loss scales with the Real width: ~1e-6 degrees at
             // f32 (C itself loosens its gimbal-lock eps under
             // UFBX_REAL_IS_FLOAT, ufbx.c:31625-31630), far below 1e-9 at f64.
-            #[cfg(not(feature = "real-is-float"))]
+            #[cfg(not(feature = "real-is-f32"))]
             let tol: Real = 1e-9;
-            #[cfg(feature = "real-is-float")]
+            #[cfg(feature = "real-is-f32")]
             let tol: Real = 1e-4;
             for order in orders {
                 let q = euler_to_quat(euler, order);

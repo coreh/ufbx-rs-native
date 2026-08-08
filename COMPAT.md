@@ -23,7 +23,7 @@ plus an entry in §2 of this file.
 | Item | Rationale |
 |---|---|
 | `ufbx::set_panic_handler(fn(&str))` | Runtime analogue of C's compile-time `#define ufbx_panic_handler` override; atomic fn-pointer, cost only on the panic path. Handler may return → graceful bail-out, matching C. |
-| Cargo features `subdivision`/`tessellation`/`geometry-cache`/`scene-eval`/`skinning-eval`/`baking`/`triangulation`/`index-gen`/`obj` (default-on), `error-stack`, `dev`, `regression`, `real-is-float`, `c-abi` | Mirror ufbx.c's compile-time configuration (`UFBX_NO_*`, `UFBX_DEV`, `UFBX_REGRESSION`, `UFBX_REAL_IS_FLOAT`); ufbx-rust has only `mint`/`nightly`. |
+| Cargo features beyond ufbx-rust's `mint`/`nightly` | Mirror ufbx.c's compile-time configuration; full mapping in §1b below. |
 | `nightly` feature enables branch hints (`core::hint::likely/unlikely`) | In ufbx-rust the feature is declared but unused. Optimizer-only; API-invisible. |
 | `prelude::RawEnum<T>` | New public type; see §2 for the signature it appears in. Pattern + name follow rustc's internal `RawEnum<T>` for LLVM C APIs. |
 | `<Flags>::from_raw(u32)` / `<Flags>::raw()` on every generated flag type (`pub(crate)`) | C accumulates flag sets as plain `uint32_t` and casts once at the end, including shifted sub-fields no named constant covers (`flags \|= ((uint32_t)(next - '0') & 0xf) << 4;` ufbx.c:11818 → `prop->flags = (ufbx_prop_flags)flags;` ufbx.c:11866). The port needs the same u32 arithmetic. Crate-internal, so the public surface is unchanged; generator `emit_flag`, `NOTE(ufbx-rs-native)` there. |
@@ -33,7 +33,32 @@ plus an entry in §2 of this file.
 | `Connection: Clone + Copy` | Extra trait impls (additive). `ufbxi_sort_connections` sorts connections by value (`ufbxi_macro_stable_sort(ufbx_connection, …)`, ufbx.c:18651) and `ufbxi_resolve_connections` bulk-copies the src array into the dst array (ufbx.c:18769). Fields are `ufbx_element*` (→ `Ref<Element>`) and `ufbx_string`, all trivially copyable. Generator allowlist `copy_derive_types`. |
 | `NameElement: Clone + Copy` | Extra trait impls (additive). `ufbxi_sort_name_elements` sorts by value (`ufbxi_macro_stable_sort(ufbx_name_element, …)`, ufbx.c:18587), a plain C struct assignment through the sort scratch. Generator allowlist `copy_derive_types`. |
 | `AnimProp: Clone + Copy` | Extra trait impls (additive). `ufbxi_sort_anim_props` sorts by value (`ufbxi_macro_stable_sort(ufbx_anim_prop, …)`, ufbx.c:19301), a plain C struct assignment through the sort scratch. Fields are `ufbx_element*`/`ufbx_anim_value*` (→ `Ref<T>`), `uint32_t` and `ufbx_string`, all trivially copyable. Generator allowlist `copy_derive_types`. |
-| `AllocatorOpts: Clone + Copy` | Extra trait impls (additive). The native `ufbxi_allocator` embeds it by value and stack-copies it (`ufbxi_release_ref`, ufbx.c:30277-30283); `derive(Copy)` requires field types to be `Copy`. All fields are trivially copyable. Generator allowlist `copy_derive_types`. |
+| `AllocatorOpts: Clone + Copy` | Extra trait impls (additive). The native `ufbxi_allocator` embeds it by value and stack-copies it (`ufbxi_release_ref`, ufbx.c:30289-30297); `derive(Copy)` requires field types to be `Copy`. All fields are trivially copyable. Generator allowlist `copy_derive_types`. |
+
+## 1b. Cargo feature ↔ C configuration mapping
+
+C's gates are opt-OUT macros (`UFBX_NO_*`, defined = feature removed); cargo
+features are additive opt-IN. Parity therefore lives in the `default` list:
+building with default features matches building ufbx.c with no `UFBX_NO_*`
+defined.
+
+| Cargo feature | C equivalent | Notes |
+|---|---|---|
+| `subdivision` (default) | absence of `UFBX_NO_SUBDIVISION` | |
+| `tessellation` (default) | absence of `UFBX_NO_TESSELLATION` | |
+| `geometry-cache` (default) | absence of `UFBX_NO_GEOMETRY_CACHE` | implies internal XML support (`UFBXI_FEATURE_XML`) |
+| `scene-eval` (default) | absence of `UFBX_NO_SCENE_EVALUATION` | |
+| `skinning-eval` (default) | absence of `UFBX_NO_SKINNING_EVALUATION` | |
+| `baking` (default) | absence of `UFBX_NO_ANIMATION_BAKING` | |
+| `triangulation` (default) | absence of `UFBX_NO_TRIANGULATION` | |
+| `index-gen` (default) | absence of `UFBX_NO_INDEX_GENERATION` | |
+| `obj` (default) | absence of `UFBX_NO_FORMAT_OBJ` | |
+| `error-stack` | absence of `UFBX_NO_ERROR_STACK` | off by default: C only enables the stack in dev builds |
+| `dev` | `UFBX_DEV` | implies `error-stack`; test builds use it |
+| `regression` | `UFBX_REGRESSION` | changes algorithm constants, not just asserts |
+| `real-is-f32` | `UFBX_REAL_IS_FLOAT` | `Real` = f32; Rust name spells the type where C names the intent |
+| `c-abi` | n/a (linkage, not configuration) | exports the `ufbx_*` C symbols so the upstream C test suite links against the crate; test/validation only |
+| `nightly` | n/a | branch hints via `core::hint::likely/unlikely` (in ufbx-rust the feature is declared but unused) |
 
 ## 2. Deliberate API divergences vs ufbx-rust 0.11.2
 

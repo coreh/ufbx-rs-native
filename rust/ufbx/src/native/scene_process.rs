@@ -10714,8 +10714,8 @@ mod tests {
         assert_eq!(TIME_MODE_FPS[13], 23.976f32 as Real);
         assert_eq!(TIME_MODE_FPS[17], 59.94f32 as Real);
         // The float-widening distinction only exists with `Real == f64`; under
-        // `real-is-float` the `f32` and widened values coincide.
-        #[cfg(not(feature = "real-is-float"))]
+        // `real-is-f32` the `f32` and widened values coincide.
+        #[cfg(not(feature = "real-is-f32"))]
         {
             assert_ne!(TIME_MODE_FPS[8], 29.97f64);
             assert_ne!(TIME_MODE_FPS[13], 23.976f64);

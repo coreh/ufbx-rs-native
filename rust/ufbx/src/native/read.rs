@@ -2262,7 +2262,7 @@ pub(crate) unsafe extern "C" fn color_set_less(
     (*a).index < (*b).index
 }
 
-// ufbx.c:12957-12962 `ufbxi_sort_uv_sets`
+// ufbx.c:12976-12981 `ufbxi_sort_uv_sets`
 #[inline(never)]
 pub(crate) unsafe fn sort_uv_sets(
     uc: *mut Context,
@@ -2291,7 +2291,7 @@ pub(crate) unsafe fn sort_uv_sets(
     Ok(())
 }
 
-// ufbx.c:12964-12969 `ufbxi_sort_color_sets`
+// ufbx.c:12983-12988 `ufbxi_sort_color_sets`
 #[inline(never)]
 pub(crate) unsafe fn sort_color_sets(
     uc: *mut Context,
@@ -2320,7 +2320,7 @@ pub(crate) unsafe fn sort_color_sets(
     Ok(())
 }
 
-// ufbx.c:12971-12975 `ufbxi_blend_offset`
+// ufbx.c:12990-12994 `ufbxi_blend_offset`
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct BlendOffset {
@@ -2342,7 +2342,7 @@ pub(crate) unsafe extern "C" fn blend_offset_less(
     (*a).vertex < (*b).vertex
 }
 
-// ufbx.c:12984-12989 `ufbxi_sort_blend_offsets`
+// ufbx.c:13003-13008 `ufbxi_sort_blend_offsets`
 #[inline(never)]
 pub(crate) unsafe fn sort_blend_offsets(
     uc: *mut Context,

@@ -18,11 +18,11 @@ use std::string;
 use std::{ptr, slice, str};
 
 // Mirrors C `ufbx_real` (ufbx.h UFBX_REAL_IS_FLOAT): f64 by default, f32
-// under the `real-is-float` feature. C `double` sites (times, curve math the
+// under the `real-is-f32` feature. C `double` sites (times, curve math the
 // C source spells `double`) stay `f64` regardless — only `ufbx_real` follows.
-#[cfg(not(feature = "real-is-float"))]
+#[cfg(not(feature = "real-is-f32"))]
 pub type Real = f64;
-#[cfg(feature = "real-is-float")]
+#[cfg(feature = "real-is-f32")]
 pub type Real = f32;
 pub type ThreadPoolContext = usize;
 pub type OpenFileContext = usize;

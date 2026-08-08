@@ -15,7 +15,8 @@ mint = { version = "0.5.8", optional = true, default-features = false }
 
 [features]
 # C feature gates are opt-OUT (UFBX_NO_*, all on by default); Cargo features are
-# additive, so parity lives in this default list (see PORTING.md "Macros & feature gates").
+# additive, so parity lives in this default list. Feature ↔ C gate mapping:
+# COMPAT.md §1b; porting rules: PORTING.md "Macros & feature gates".
 default = ["subdivision", "tessellation", "geometry-cache", "scene-eval",
            "skinning-eval", "baking", "triangulation", "index-gen", "obj"]
 subdivision = []
@@ -39,11 +40,11 @@ c-abi = []
 # feature, so building with it type-checks every `(ufbx_real)`/`double` boundary
 # — Real/f64 conflation is a compile error, and promotion/narrowing sites must
 # spell C's casts explicitly (`x as f64` where C promotes, `as Real` where C
-# narrows; see PORTING.md Floats). Caveats: `tests/layout.rs` is cfg'd out (the
-# pinned offsets assume Real = f64; float-mode layouts are unverified in-tree)
-# and no C oracle runs against the f32 build yet (`runner_float` links the C
-# sources only).
-real-is-float = []
+# narrows; see PORTING.md Floats). Caveat: `tests/layout.rs` is cfg'd out (the
+# pinned offsets assume Real = f64); the float-mode oracle is the C suite
+# compiled -DUFBX_REAL_IS_FLOAT and linked against the f32 staticlib
+# (`runner_float` CI leg).
+real-is-f32 = []
 
 [lib]
 crate-type = ["rlib", "staticlib"]

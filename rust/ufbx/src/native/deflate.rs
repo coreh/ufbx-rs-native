@@ -1092,7 +1092,7 @@ pub(crate) unsafe fn init_dynamic_huff(dc: *mut DeflateContext, trees: *mut Tree
 // 64-bit SWAR loop (`UFBX_LITTLE_ENDIAN`), and the plain byte loop. All three
 // produce bit-identical sums (the SIMD/SWAR forms are pure strength
 // reductions of the same modular arithmetic); the Rust port carries the SWAR
-// branch (ufbx.c:2732-2782) on little-endian targets and the plain loop
+// branch (ufbx.c:2746-2790) on little-endian targets and the plain loop
 // otherwise — the SSE branch is intentionally not ported.
 #[inline(never)]
 pub(crate) unsafe fn adler32(data: *const c_void, size: usize) -> u32 {
@@ -1126,7 +1126,7 @@ pub(crate) unsafe fn adler32(data: *const c_void, size: usize) -> u32 {
             p = p.add(1);
         }
 
-        // ufbx.c:2732-2782 `#elif UFBX_LITTLE_ENDIAN` scalar SWAR branch
+        // ufbx.c:2746-2790 `#elif UFBX_LITTLE_ENDIAN` scalar SWAR branch
         #[cfg(target_endian = "little")]
         {
             loop {

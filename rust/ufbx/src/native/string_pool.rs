@@ -1519,7 +1519,7 @@ pub(crate) unsafe fn slow_normalized_cross3(a: *const Vec3, b: *const Vec3) -> V
 
 // CONTINUATION POINT: `// -- String pool` (ufbx.c:4895-5286) and
 // `// -- String constants` (ufbx.c:5288-5979) complete. Next banner:
-// ufbx.c:5981 `// -- Type definitions` (`ufbxi_value` / `ufbxi_node`, owned by
+// ufbx.c:6175 `// -- Type definitions` (`ufbxi_value` / `ufbxi_node`, owned by
 // the parse units).
 
 #[cfg(test)]

@@ -116,7 +116,7 @@ pub(crate) fn size_align_mask(size: usize) -> usize {
 
 // ufbx.c:3635-3645 `ufbxi_allocator`
 // `Clone, Copy` so C by-value copies (e.g. `ufbxi_release_ref`,
-// ufbx.c:30277-30283) stay memcpy-like `=` (PORTING.md checklist #15).
+// ufbx.c:30289-30297) stay memcpy-like `=` (PORTING.md checklist #15).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct Allocator {

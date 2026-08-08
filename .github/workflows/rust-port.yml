@@ -34,11 +34,14 @@ jobs:
         run: |
           ./rust/regen.sh
           git diff --exit-code rust/ufbx/src/generated.rs rust/ufbx/tests/layout.rs
-      # real-is-float leg pending: the feature is declared but Real is still
-      # pinned to f64 (see Cargo.toml note); add the leg when it is wired.
       - name: Unit tests + struct layout checks
         working-directory: rust
         run: cargo test
+      # Same tests with ufbx_real = f32 (layout checks cfg out; the C float
+      # oracle is the runner_float leg in the C-tests job).
+      - name: Unit tests, real-is-f32
+        working-directory: rust
+        run: cargo test --features real-is-f32
       - name: Build C-compatible static library
         working-directory: rust
         run: cargo build --features c-abi --release
@@ -76,12 +79,35 @@ jobs:
       - name: Compare fingerprints with C
         run: ./build/hash_scene_rust --check build/hashes.txt
 
+  # Load-time comparison via the hash_scene harness (identical work both
+  # sides, so the ratio isolates implementation speed; same-runner
+  # measurement cancels machine variance). Report-only — promote to a
+  # --max-ratio gate when Phase 4 unsafe-reduction refactors begin.
+  bench:
+    name: Benchmark Rust against C
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # No UFBX_DEV on either side: dev asserts must not skew the comparison.
+      - name: Build Rust library
+        working-directory: rust
+        run: cargo build --features c-abi --release
+      - name: Build both scene hashers
+        run: |
+          mkdir -p build
+          clang -O2 -ffp-contract=off -o build/hash_scene_c test/hash_scene.c extra/ufbx_math.c -lm
+          clang -O2 -std=gnu99 -ffp-contract=off -DEXTERNAL_UFBX \
+            -o build/hash_scene_rust test/hash_scene.c extra/ufbx_math.c \
+            rust/target/release/libufbx.a -lpthread -lm
+      - name: Measure load times
+        run: python3 rust/tools/bench.py -n 15
+
   # C test suite (unmodified test/runner.c) linked against the Rust staticlib.
   # The staticlib must carry the `dev` feature: the runner is compiled with
   # -DUFBX_DEV and asserts dev-only behavior (e.g. error stack depth).
-  # Supported matrix is x86_64 debug/release/sanitize; the full run_tests.py
-  # matrix additionally has -m32 legs (needs an i686 Rust build) and
-  # runner_float (needs real-is-float wiring) — add those when they exist.
+  # Supported matrix is x86_64 debug/release/sanitize/float; the full
+  # run_tests.py matrix additionally has -m32 legs (needs an i686 Rust
+  # build) — add those when they exist.
   c_suite_vs_rust:
     name: Run C tests against Rust port
     runs-on: ubuntu-24.04
@@ -103,3 +129,10 @@ jobs:
           clang -g -std=gnu99 -DUFBX_DEV -DUFBX_UBSAN -fsanitize=address,undefined -fno-sanitize=float-cast-overflow -fno-sanitize-recover=undefined \
             -o /tmp/runner_san test/runner.c rust/target/release/libufbx.a -lpthread -lm
           /tmp/runner_san -d data
+      - name: Build Rust library, real-is-f32
+        working-directory: rust
+        run: CARGO_TARGET_DIR=target-f32 cargo build --features c-abi,dev,real-is-f32 --release
+      - name: Run suite, ufbx_real = float
+        run: |
+          clang -g -std=gnu99 -DUFBX_DEV -DUFBX_REAL_IS_FLOAT -o /tmp/runner_float test/runner.c rust/target-f32/release/libufbx.a -lpthread -lm
+          /tmp/runner_float -d data

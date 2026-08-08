@@ -111,7 +111,7 @@ pub(crate) unsafe fn hash_string_check_ascii(
 
         ascii_mask |= word;
         // C-parity: at length == 0 the C shift amount is 32 (UB in C,
-        // ufbx.c:4757; masks to `>> 0` on x86/ARM) and would be a debug-build
+        // ufbx.c:4764; masks to `>> 0` on x86/ARM) and would be a debug-build
         // overflow panic here. Unreachable today via the unconditional
         // `ufbx_assert!(length > 0)` above; if that assert is ever feature-
         // gated off (no-assert), this shift must gain a `& 31` mask.
