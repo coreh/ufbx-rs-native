@@ -1111,14 +1111,19 @@ pub(crate) unsafe fn unstable_sort(
 // The C surface is exactly ufbx.c:257-276 (`ufbx_sqrt` .. `ufbx_isnan`).
 // NOTE: the C oracle builds are NOT plain libm: both the test runner
 // (misc/run_tests.py:996) and the hash oracle `hash_scene`
-// (misc/run_tests.py:1542, test/hash_scene.c:285 `UFBX_EXTERNAL_MATH`) link
-// `extra/ufbx_math.c`, so ufbx_math semantics are the parity target. The plan
-// of record (PORTING.md "Floats") routes ALL of these through a port of
-// `extra/ufbx_math.c` for bit-exactness across platforms; that port is a later
-// unit. Until then the transcendentals below delegate to std and carry a
-// `TODO(ufbx_math)` marker; `fmin`/`fmax` already use the ufbx_math ternary
-// forms because std `min`/`max` concretely diverge on NaN (trap #6).
+// (misc/run_tests.py:1542/1551, test/hash_scene.c:285 `UFBX_EXTERNAL_MATH`)
+// link `extra/ufbx_math.c`, so ufbx_math semantics are the parity target and
+// platform libm is NOT usable here. Per PORTING.md "Floats" every entry below
+// routes through `native::math`, the 1:1 port of that file: libm agrees with
+// it only to within ~1 ULP, and the per-call disagreement rate is
+// percent-scale (measured on this target: sin 4.0%, cos 4.7%, tan 39.5%,
+// atan 7.0%, atan2 18.0%, asin 8.8%, acos 17.3%, pow 8.7%), which reaches the
+// scene hashes directly through `ufbx_euler_to_quat` (ufbx.c:31566-31620) and
+// friends. `sqrt`/`fabs` are the exception only in spelling: the C picks SSE/
+// NEON intrinsics for them and `native::math` documents the equivalence.
 pub(crate) mod math {
+    use crate::native::math as ufbxm;
+
     // ufbx.c:337-350 `UFBX_INFINITY` / `UFBX_NAN`
     pub(crate) const INFINITY: f64 = f64::INFINITY;
     pub(crate) const NAN: f64 = f64::NAN;
@@ -1142,156 +1147,115 @@ pub(crate) mod math {
     pub(crate) const FLT_EVAL_METHOD: i32 = 0;
 
     // ufbx.c:259 `ufbx_sqrt`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
     pub(crate) fn sqrt(x: f64) -> f64 {
-        x.sqrt()
+        ufbxm::sqrt(x)
     }
 
     // ufbx.c:262 `ufbx_sin`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
     pub(crate) fn sin(x: f64) -> f64 {
-        x.sin()
+        ufbxm::sin(x)
     }
 
     // ufbx.c:263 `ufbx_cos`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
     pub(crate) fn cos(x: f64) -> f64 {
-        x.cos()
+        ufbxm::cos(x)
     }
 
     // ufbx.c:264 `ufbx_tan`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
     pub(crate) fn tan(x: f64) -> f64 {
-        x.tan()
+        ufbxm::tan(x)
     }
 
     // ufbx.c:265 `ufbx_asin`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
     pub(crate) fn asin(x: f64) -> f64 {
-        x.asin()
+        ufbxm::asin(x)
     }
 
     // ufbx.c:266 `ufbx_acos`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
     pub(crate) fn acos(x: f64) -> f64 {
-        x.acos()
+        ufbxm::acos(x)
     }
 
     // ufbx.c:267 `ufbx_atan`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
     pub(crate) fn atan(x: f64) -> f64 {
-        x.atan()
+        ufbxm::atan(x)
     }
 
     // ufbx.c:268 `ufbx_atan2(y, x)`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
     pub(crate) fn atan2(y: f64, x: f64) -> f64 {
-        y.atan2(x)
+        ufbxm::atan2(y, x)
     }
 
     // ufbx.c:261 `ufbx_pow(x, y)`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
     pub(crate) fn pow(x: f64, y: f64) -> f64 {
-        x.powf(y)
+        ufbxm::pow(x, y)
     }
 
-    // ufbx.c:270 `ufbx_fmin` — ported from ufbx_math.c:1866-1869
-    // (the oracle builds link extra/ufbx_math.c, see module comment).
-    // C: `return a < b ? a : b;` — verbatim ternary; NaN semantics differ from
-    // libm/std `fmin`/`f64::min` (fmin(2.0, NaN) here is NaN, std's is 2.0).
+    // ufbx.c:270 `ufbx_fmin` — C: `return a < b ? a : b;`. NaN semantics
+    // differ from libm/std `fmin`/`f64::min` (fmin(2.0, NaN) here is NaN,
+    // std's is 2.0), trap #6.
     #[inline(always)]
     pub(crate) fn fmin(a: f64, b: f64) -> f64 {
-        if a < b {
-            a
-        } else {
-            b
-        }
+        ufbxm::fmin(a, b)
     }
 
-    // ufbx.c:271 `ufbx_fmax` — ported from ufbx_math.c:1871-1874
-    // C: `return a < b ? b : a;` — verbatim ternary; same NaN caveat as `fmin`.
+    // ufbx.c:271 `ufbx_fmax` — same NaN caveat as `fmin`.
     #[inline(always)]
     pub(crate) fn fmax(a: f64, b: f64) -> f64 {
-        if a < b {
-            b
-        } else {
-            a
-        }
+        ufbxm::fmax(a, b)
     }
 
     // ufbx.c:260 `ufbx_fabs`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness
-    // (trivially bit-exact already: sign-bit clear).
     #[inline(always)]
     pub(crate) fn fabs(x: f64) -> f64 {
-        x.abs()
+        ufbxm::fabs(x)
     }
 
     // ufbx.c:269 `ufbx_copysign(x, y)`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness
-    // (trivially bit-exact already: sign-bit transfer).
     #[inline(always)]
     pub(crate) fn copysign(x: f64, y: f64) -> f64 {
-        x.copysign(y)
+        ufbxm::copysign(x, y)
     }
 
     // ufbx.c:272 `ufbx_nextafter(x, y)`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port
-    // (ufbx_math.c:1876-1946) for bit-exactness; this std formulation matches
-    // it for all non-trap cases (NaN -> x + y, x == y -> x, step toward y).
     #[inline(always)]
     pub(crate) fn nextafter(x: f64, y: f64) -> f64 {
-        if x.is_nan() || y.is_nan() {
-            return x + y;
-        }
-        if x == y {
-            return x;
-        }
-        if y > x {
-            x.next_up()
-        } else {
-            x.next_down()
-        }
+        ufbxm::nextafter(x, y)
     }
 
-    // ufbx.c:273 `ufbx_rint`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port
-    // (ufbx_math.c:2022-2074) for bit-exactness. NOTE: rint is half-to-even —
-    // NEVER `f64::round` (half-away-from-zero); on the keyframe-time
-    // quantization path straight into the hash oracle (PORTING.md "Floats").
+    // ufbx.c:273 `ufbx_rint` — half-to-even, NEVER `f64::round`
+    // (half-away-from-zero); on the keyframe-time quantization path straight
+    // into the hash oracle (PORTING.md "Floats").
     #[inline(always)]
     pub(crate) fn rint(x: f64) -> f64 {
-        x.round_ties_even()
+        ufbxm::rint(x)
     }
 
     // ufbx.c:274 `ufbx_floor`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
     pub(crate) fn floor(x: f64) -> f64 {
-        x.floor()
+        ufbxm::floor(x)
     }
 
     // ufbx.c:275 `ufbx_ceil`
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
     pub(crate) fn ceil(x: f64) -> f64 {
-        x.ceil()
+        ufbxm::ceil(x)
     }
 
     // ufbx.c:276 `ufbx_isnan` (C returns int; used only as a truth value)
-    // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
     pub(crate) fn isnan(x: f64) -> bool {
-        x.is_nan()
+        ufbxm::isnan(x) != 0
     }
 }
 
@@ -1400,6 +1364,71 @@ mod tests {
             copy_16_bytes(p.add(8), p.add(3));
         }
         assert_eq!(buf, expect);
+    }
+
+    // Bit-exactness of the `extra/ufbx_math.c` sin/cos/tan port against the C
+    // implementation the hash oracle links (misc/run_tests.py:1542,1551).
+    // Reference bits produced by compiling `extra/ufbx_math.c` with
+    // `clang -O2 -ffp-contract=off` and printing `ufbx_sin`/`ufbx_cos`/`ufbx_tan`.
+    // The corpus spans every branch: the |x| <= pi/4 kernels, the +-1 and
+    // medium `rem_pio2` arms, the `kernel_rem_pio2` large-argument path, the
+    // tiny-|x| early-outs, and the two `ufbx_euler_to_quat`
+    // (ufbx.c:31566-31620) half-angles where platform libm disagrees by 1 ULP.
+    #[test]
+    fn test_ufbx_math_sin_cos_tan_bits() {
+        // (arg bits, ufbx_sin bits, ufbx_cos bits, ufbx_tan bits)
+        const CASES: &[(u64, u64, u64, u64)] = &[
+            (0x0000000000000000, 0x0000000000000000, 0x3ff0000000000000, 0x0000000000000000),
+            (0x8000000000000000, 0x8000000000000000, 0x3ff0000000000000, 0x8000000000000000),
+            (0x39b4484bfeebc2a0, 0x39b4484bfeebc2a0, 0x3ff0000000000000, 0x39b4484bfeebc2a0),
+            (0xb9b4484bfeebc2a0, 0xb9b4484bfeebc2a0, 0x3ff0000000000000, 0xb9b4484bfeebc2a0),
+            (0x3fb999999999999a, 0x3fb98eaecb8bcb2c, 0x3fefd712f9a817c0, 0x3fb9af8877430b80),
+            (0xbfb999999999999a, 0xbfb98eaecb8bcb2c, 0x3fefd712f9a817c0, 0xbfb9af8877430b80),
+            (0x3fe0000000000000, 0x3fdeaee8744b05f0, 0x3fec1528065b7d50, 0x3fe17b4f5bf3474a),
+            (0x3fe8f5c28f5c28f6, 0x3fe68143d72d4ce4, 0x3fe6bfcdbf817bfa, 0x3fefa807cf826c45),
+            (0x3fe921fb54442d18, 0x3fe6a09e667f3bcc, 0x3fe6a09e667f3bcd, 0x3fefffffffffffff),
+            (0x3fe999999999999a, 0x3fe6f494c2bffecd, 0x3fe64b6bde719865, 0x3ff079664793b60b),
+            (0x3ff0000000000000, 0x3feaed548f090cee, 0x3fe14a280fb5068c, 0x3ff8eb245cbee3a6),
+            (0x3ff921fb54442d18, 0x3ff0000000000000, 0x3c91a62633145c07, 0x434d02967c31cdb5),
+            (0x4000000000000000, 0x3fed18f6ead1b446, 0xbfdaa22657537205, 0xc0017af62e0950f8),
+            (0x4008000000000000, 0x3fc210386db6d55b, 0xbfefae04be85e5d2, 0xbfc23ef71254b86f),
+            (0x400921fb54442d18, 0x3ca1a62633145c07, 0xbff0000000000000, 0xbca1a62633145c07),
+            (0x4010000000000000, 0xbfe837b9dddc1eae, 0xbfe4eaa606db24c1, 0x3ff2866f9be4de14),
+            (0x401921fb54442d18, 0xbcb1a62633145c07, 0x3ff0000000000000, 0xbcb1a62633145c07),
+            (0x4024000000000000, 0xbfe1689ef5f34f52, 0xbfead9ac890c6b1f, 0x3fe4bf5f34be3782),
+            (0x4059000000000000, 0xbfe03425b78c4db8, 0x3feb981dbf665fdf, 0xbfe2ca74d62b5d38),
+            (0x408f400000000000, 0x3fea75cc150a206b, 0x3fe1ff026793f1bc, 0x3ff786729f34311a),
+            (0x40c81cd6e631f8a1, 0xbfe68298a1cec146, 0x3fe6be7c89fe4a8e, 0xbfefabbca285aaa3),
+            (0x412e848000000000, 0xbfd6664b2568d867, 0x3fedf9df9906d32c, 0xbfd7e9768ab734c0),
+            (0x4202a05f20000000, 0xbfdf334c7896a4e3, 0x3febf098901c931a, 0xbfe1de000f443f50),
+            (0x430c6bf526340000, 0x3feb76f88136ceba, 0xbfe06c154609d33e, 0xbffac23600a95be4),
+            (0x412921fa00000000, 0xbfe3bc41ec71c06d, 0x3fe930880dddf826, 0xbfe91238517e869a),
+            (0x4376345785d8a000, 0xbfddbadc7a119fc8, 0xbfec567c5278afcb, 0x3fe0c93726adf98c),
+            (0x4480f0cf064dd592, 0xbfeb453ab76bf397, 0x3fe0be2cef01c8f4, 0xbffa0f79c1b6b258),
+            (0x46293e5939a08cea, 0x3f831c608f107767, 0xbfefffa4b11f1b45, 0xbf831c97177a2330),
+            (0x7e37e43c8800759c, 0xbfea2c16b010e385, 0xbfe2699022adc4c1, 0x3ff6be411f37ac77),
+            (0xc480f0cf064dd592, 0x3feb453ab76bf397, 0x3fe0be2cef01c8f4, 0x3ffa0f79c1b6b258),
+            (0xc0c81cd6e631f8a1, 0x3fe68298a1cec146, 0x3fe6be7c89fe4a8e, 0x3fefabbca285aaa3),
+            (0x4002d97c7f3321d2, 0x3fe6a09e667f3bcd, 0xbfe6a09e667f3bcc, 0xbff0000000000001),
+            (0x3fe921fb54442d3a, 0x3fe6a09e667f3be4, 0x3fe6a09e667f3bb5, 0x3ff0000000000022),
+            (0xbfe921fb7fffd84c, 0xbfe6a09e856bc43e, 0x3fe6a09e4792b331, 0xbff000002bbbab6f),
+            (0x3fe5942800000000, 0x3fe3fae8600608f7, 0x3fe8fef3a3aa8b7e, 0x3fe99427887a14d6),
+            (0x3e2fffffffffffff, 0x3e2fffffffffffff, 0x3ff0000000000000, 0x3e2fffffffffffff),
+            (0xbe2fffffffffffff, 0xbe2fffffffffffff, 0x3ff0000000000000, 0xbe2fffffffffffff),
+        ];
+        for &(arg, s, c, t) in CASES {
+            let x = f64::from_bits(arg);
+            assert_eq!(math::sin(x).to_bits(), s, "sin({arg:016x})");
+            assert_eq!(math::cos(x).to_bits(), c, "cos({arg:016x})");
+            assert_eq!(math::tan(x).to_bits(), t, "tan({arg:016x})");
+        }
+        // sin/cos/tan of Inf and NaN are NaN.
+        assert!(math::sin(f64::INFINITY).is_nan());
+        assert!(math::cos(f64::NEG_INFINITY).is_nan());
+        assert!(math::tan(f64::INFINITY).is_nan());
+        assert!(math::sin(f64::NAN).is_nan());
+        assert!(math::cos(f64::NAN).is_nan());
+        assert!(math::tan(f64::NAN).is_nan());
     }
 
     #[test]

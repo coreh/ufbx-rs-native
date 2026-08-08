@@ -1,6 +1,10 @@
 //! 1:1 port of ufbx.c, one module per C banner section, declared in ufbx.c order.
 //! See PORTING.md for the C→Rust pattern map and the function→module routing table.
 
+// -- extra/ufbx_math.c (not ufbx.c): ufbx's own freestanding libm, which the
+//    C oracle builds link via UFBX_EXTERNAL_MATH; backs the ufbx.c:257-276
+//    math shim in `platform::math` (PORTING.md "Floats").
+pub mod math;
 // -- Platform / Atomic counter / Bit manipulation / Utility
 pub mod platform;
 // -- Float parsing (hand-rolled strtod + bigint)
