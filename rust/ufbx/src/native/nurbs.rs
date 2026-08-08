@@ -76,14 +76,15 @@ pub(crate) unsafe fn nurbs_weight(
     degree: usize,
     u: Real,
 ) -> Real {
-    if knot >= (*knots).count {
+    let knots: &List<Real> = &*knots;
+    if knot >= knots.count {
         return 0.0f32 as Real;
     }
-    if (*knots).count - knot < degree {
+    if knots.count - knot < degree {
         return 0.0f32 as Real;
     }
-    let prev_u: Real = *(*knots).data.add(knot);
-    let next_u: Real = *(*knots).data.add(knot + degree);
+    let prev_u: Real = *knots.data.add(knot);
+    let next_u: Real = *knots.data.add(knot + degree);
     if prev_u >= next_u {
         return 0.0f32 as Real;
     }
@@ -99,14 +100,15 @@ pub(crate) unsafe fn nurbs_weight(
 // ufbx.c:27782-27789 `ufbxi_nurbs_deriv`
 #[inline(always)]
 pub(crate) unsafe fn nurbs_deriv(knots: *const List<Real>, knot: usize, degree: usize) -> Real {
-    if knot >= (*knots).count {
+    let knots: &List<Real> = &*knots;
+    if knot >= knots.count {
         return 0.0f32 as Real;
     }
-    if (*knots).count - knot < degree {
+    if knots.count - knot < degree {
         return 0.0f32 as Real;
     }
-    let prev_u: Real = *(*knots).data.add(knot);
-    let next_u: Real = *(*knots).data.add(knot + degree);
+    let prev_u: Real = *knots.data.add(knot);
+    let next_u: Real = *knots.data.add(knot + degree);
     if prev_u >= next_u {
         return 0.0f32 as Real;
     }
@@ -270,23 +272,24 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(
     (*segments.add(0)).index_begin = 0;
     (*segments.add(0)).num_indices = num_indices as u32;
 
-    (*line).element.name.data = EMPTY_CHAR.as_ptr();
-    (*line).element.type_ = ElementType::LineCurve;
-    (*line).element.typed_id = u32::MAX;
-    (*line).element.element_id = u32::MAX;
+    let line: &mut LineCurve = &mut *line;
+    line.element.name.data = EMPTY_CHAR.as_ptr();
+    line.element.type_ = ElementType::LineCurve;
+    line.element.typed_id = u32::MAX;
+    line.element.element_id = u32::MAX;
 
-    (*line).color.x = 1.0f32 as Real;
-    (*line).color.y = 1.0f32 as Real;
-    (*line).color.z = 1.0f32 as Real;
+    line.color.x = 1.0f32 as Real;
+    line.color.y = 1.0f32 as Real;
+    line.color.z = 1.0f32 as Real;
 
-    (*line).control_points.data = vertices as *const Vec3;
-    (*line).control_points.count = num_vertices;
-    (*line).point_indices.data = indices as *const u32;
-    (*line).point_indices.count = num_indices;
-    (*line).segments.data = segments as *const LineSegment;
-    (*line).segments.count = 1;
+    line.control_points.data = vertices as *const Vec3;
+    line.control_points.count = num_vertices;
+    line.point_indices.data = indices as *const u32;
+    line.point_indices.count = num_indices;
+    line.segments.data = segments as *const LineSegment;
+    line.segments.count = 1;
 
-    (*line).from_tessellated_nurbs = true;
+    line.from_tessellated_nurbs = true;
 
     (*tc).imp = push::<LineCurveImp>(&mut (*tc).result, 1);
     ufbxi_check_err!(&mut (*tc).error, !(*tc).imp.is_null(), "tc->imp");
@@ -588,55 +591,58 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
         "positions && normals"
     );
 
-    (*mesh).element.name.data = EMPTY_CHAR.as_ptr();
-    (*mesh).element.type_ = ElementType::Mesh;
-    (*mesh).element.typed_id = u32::MAX;
-    (*mesh).element.element_id = u32::MAX;
+    {
+        let mesh: &mut Mesh = &mut *mesh;
+        mesh.element.name.data = EMPTY_CHAR.as_ptr();
+        mesh.element.type_ = ElementType::Mesh;
+        mesh.element.typed_id = u32::MAX;
+        mesh.element.element_id = u32::MAX;
 
-    (*mesh).vertices.data = positions as *const Vec3;
-    (*mesh).vertices.count = num_positions as usize;
-    (*mesh).num_vertices = num_positions as usize;
-    (*mesh).vertex_indices.data = vertex_ix as *const u32;
-    (*mesh).vertex_indices.count = dst_index;
+        mesh.vertices.data = positions as *const Vec3;
+        mesh.vertices.count = num_positions as usize;
+        mesh.num_vertices = num_positions as usize;
+        mesh.vertex_indices.data = vertex_ix as *const u32;
+        mesh.vertex_indices.count = dst_index;
 
-    (*mesh).faces.data = faces as *const Face;
-    (*mesh).faces.count = num_faces;
+        mesh.faces.data = faces as *const Face;
+        mesh.faces.count = num_faces;
 
-    (*mesh).vertex_position.exists = true;
-    (*mesh).vertex_position.values.data = positions as *const Vec3;
-    (*mesh).vertex_position.values.count = num_positions as usize;
-    (*mesh).vertex_position.indices.data = vertex_ix as *const u32;
-    (*mesh).vertex_position.indices.count = dst_index;
-    (*mesh).vertex_position.unique_per_vertex = true;
+        mesh.vertex_position.exists = true;
+        mesh.vertex_position.values.data = positions as *const Vec3;
+        mesh.vertex_position.values.count = num_positions as usize;
+        mesh.vertex_position.indices.data = vertex_ix as *const u32;
+        mesh.vertex_position.indices.count = dst_index;
+        mesh.vertex_position.unique_per_vertex = true;
 
-    (*mesh).vertex_uv.exists = true;
-    (*mesh).vertex_uv.values.data = uvs as *const Vec2;
-    (*mesh).vertex_uv.values.count = dst_index;
-    (*mesh).vertex_uv.indices.data = attrib_ix as *const u32;
-    (*mesh).vertex_uv.indices.count = dst_index;
+        mesh.vertex_uv.exists = true;
+        mesh.vertex_uv.values.data = uvs as *const Vec2;
+        mesh.vertex_uv.values.count = dst_index;
+        mesh.vertex_uv.indices.data = attrib_ix as *const u32;
+        mesh.vertex_uv.indices.count = dst_index;
 
-    (*mesh).vertex_normal.exists = true;
-    (*mesh).vertex_normal.values.data = normals as *const Vec3;
-    (*mesh).vertex_normal.values.count = num_positions as usize;
-    (*mesh).vertex_normal.indices.data = vertex_ix as *const u32;
-    (*mesh).vertex_normal.indices.count = dst_index;
+        mesh.vertex_normal.exists = true;
+        mesh.vertex_normal.values.data = normals as *const Vec3;
+        mesh.vertex_normal.values.count = num_positions as usize;
+        mesh.vertex_normal.indices.data = vertex_ix as *const u32;
+        mesh.vertex_normal.indices.count = dst_index;
 
-    (*mesh).vertex_tangent.exists = true;
-    (*mesh).vertex_tangent.values.data = tangents as *const Vec3;
-    (*mesh).vertex_tangent.values.count = dst_index;
-    (*mesh).vertex_tangent.indices.data = attrib_ix as *const u32;
-    (*mesh).vertex_tangent.indices.count = dst_index;
+        mesh.vertex_tangent.exists = true;
+        mesh.vertex_tangent.values.data = tangents as *const Vec3;
+        mesh.vertex_tangent.values.count = dst_index;
+        mesh.vertex_tangent.indices.data = attrib_ix as *const u32;
+        mesh.vertex_tangent.indices.count = dst_index;
 
-    (*mesh).vertex_bitangent.exists = true;
-    (*mesh).vertex_bitangent.values.data = bitangents as *const Vec3;
-    (*mesh).vertex_bitangent.values.count = dst_index;
-    (*mesh).vertex_bitangent.indices.data = attrib_ix as *const u32;
-    (*mesh).vertex_bitangent.indices.count = dst_index;
+        mesh.vertex_bitangent.exists = true;
+        mesh.vertex_bitangent.values.data = bitangents as *const Vec3;
+        mesh.vertex_bitangent.values.count = dst_index;
+        mesh.vertex_bitangent.indices.data = attrib_ix as *const u32;
+        mesh.vertex_bitangent.indices.count = dst_index;
 
-    (*mesh).num_faces = num_faces;
-    (*mesh).num_triangles = num_triangles;
-    (*mesh).num_indices = dst_index;
-    (*mesh).max_face_triangles = 2;
+        mesh.num_faces = num_faces;
+        mesh.num_triangles = num_triangles;
+        mesh.num_indices = dst_index;
+        mesh.max_face_triangles = 2;
+    }
 
     if !opt_ptr(&(*surface).material).is_null() {
         (*mesh).face_material.data = push_zero::<u32>(&mut (*tc).result, num_faces) as *const u32;
