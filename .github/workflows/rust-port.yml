@@ -38,7 +38,8 @@ jobs:
         working-directory: rust
         run: cargo build --features c-abi --release
       # Differential math fuzz: native/math.rs vs extra/ufbx_math.c must match
-      # bit-for-bit (~14M deterministic checks, <1s of runtime).
+      # bit-for-bit (~376M deterministic checks incl. edge x random pairs,
+      # ~10s of runtime).
       - name: Math fuzz (Rust vs C, bit-exact)
         run: rust/tools/mathfuzz/ci.sh
 

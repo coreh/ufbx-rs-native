@@ -142,7 +142,7 @@ static const fn2 fns2[] = {
 enum { NUM_FNS1 = sizeof(fns1) / sizeof(fns1[0]), NUM_FNS2 = sizeof(fns2) / sizeof(fns2[0]) };
 
 int main(int argc, char **argv) {
-	long samples = 400000;
+	long samples = 8000000;
 	if (argc > 1) samples = atol(argv[1]);
 	rng_state = 0x5eed5eed5eed5eedull;
 
@@ -173,10 +173,13 @@ int main(int argc, char **argv) {
 			fprintf(stderr, "MISMATCH isnan(%016llx)\n", (unsigned long long)edge_bits[i]);
 	}
 
-	// Random full-range bit patterns + realistic-range values.
+	// Random full-range bit patterns + realistic-range values, plus
+	// edge x random mixed pairs for the binary ops (e.g. pow(pi, random),
+	// atan2(random, -0)) so corner values also meet arbitrary partners.
 	for (long s = 0; s < samples; s++) {
 		double xb = bits_to_f64(rng_next()), yb = bits_to_f64(rng_next());
 		double xr = rng_realistic(), yr = rng_realistic();
+		double e = bits_to_f64(edge_bits[rng_next() % NUM_EDGES]);
 		for (int f = 0; f < NUM_FNS1; f++) {
 			check1(fns1[f].name, fns1[f].cf, fns1[f].rf, xb);
 			check1(fns1[f].name, fns1[f].cf, fns1[f].rf, xr);
@@ -184,6 +187,8 @@ int main(int argc, char **argv) {
 		for (int f = 0; f < NUM_FNS2; f++) {
 			check2(fns2[f].name, fns2[f].cf, fns2[f].rf, xb, yb);
 			check2(fns2[f].name, fns2[f].cf, fns2[f].rf, xr, yr);
+			check2(fns2[f].name, fns2[f].cf, fns2[f].rf, e, xb);
+			check2(fns2[f].name, fns2[f].cf, fns2[f].rf, xr, e);
 		}
 		int n = (int)(rng_next() % 2201u) - 1100;
 		num_checked++;
