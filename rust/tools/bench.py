@@ -33,18 +33,28 @@ DEFAULT_FILES = [
     "data/blender_293_suzanne_subsurf_uv.obj",
 ]
 
-def time_one(exe, file, runs, warmup=2):
-    times = []
+def run_timed(exe, file):
+    t0 = time.perf_counter_ns()
+    r = subprocess.run([exe, file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    dt = time.perf_counter_ns() - t0
+    if r.returncode != 0:
+        print(f"  ERROR: {exe} {file} exited {r.returncode}", file=sys.stderr)
+        return None
+    return dt
+
+def time_pair(c_exe, rust_exe, file, runs, warmup=2):
+    """Strictly interleaved C/Rust timing (A/B/A/B): transient interference
+    hits both sides' sample sets equally instead of skewing one block."""
+    tc, tr = [], []
     for i in range(warmup + runs):
-        t0 = time.perf_counter_ns()
-        r = subprocess.run([exe, file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        dt = time.perf_counter_ns() - t0
-        if r.returncode != 0:
-            print(f"  ERROR: {exe} {file} exited {r.returncode}", file=sys.stderr)
-            return None
+        c = run_timed(c_exe, file)
+        r = run_timed(rust_exe, file)
+        if c is None or r is None:
+            return None, None
         if i >= warmup:
-            times.append(dt)
-    return min(times) / 1e6  # ms
+            tc.append(c)
+            tr.append(r)
+    return min(tc) / 1e6, min(tr) / 1e6  # ms
 
 def main():
     ap = argparse.ArgumentParser()
@@ -61,13 +71,19 @@ def main():
     if load1 > ncpu * 0.5:
         print(f"WARNING: system load {load1:.1f} on {ncpu} cores — numbers will be noisy\n")
 
+    try:
+        with open("/proc/cpuinfo") as f:
+            model = next(l.split(":", 1)[1].strip() for l in f if l.startswith("model name"))
+    except (OSError, StopIteration):
+        model = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                               capture_output=True, text=True).stdout.strip() or "unknown"
+    print(f"cpu: {model}\n")
+
     print(f"{'file':<44} {'C (ms)':>9} {'Rust (ms)':>10} {'Rust/C':>7}")
     ratios = []
     for f in files:
         name = Path(f).name
-        # interleave to keep thermal/cache conditions comparable
-        tc = time_one(args.c, f, args.n)
-        tr = time_one(args.rust, f, args.n)
+        tc, tr = time_pair(args.c, args.rust, f, args.n)
         if tc is None or tr is None:
             continue
         ratio = tr / tc
