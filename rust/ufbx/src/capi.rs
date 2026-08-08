@@ -16,6 +16,15 @@ pub unsafe extern "C" fn ufbx_inflate(
     crate::native::deflate::inflate(dst, dst_size, input, retain)
 }
 
+// ufbx.c:30339-30404 `ufbx_abi_data_def` globals (`ufbx_empty_string`,
+// `ufbx_empty_blob`, `ufbx_identity_matrix`, `ufbx_identity_transform`,
+// `ufbx_zero_vec2/3/4`, `ufbx_identity_quat`, the four `ufbx_axes_*` and
+// `ufbx_element_type_size`): NO definitions here. C has exactly ONE object per
+// global — the internal reads (`ufbx_element_type_size[src->type]`
+// ufbx.c:26149, `ufbx_zero_vec2` ufbx.c:27997/33003) hit the same object the
+// header exports — so the exports live directly on the impls in
+// `native::api` via `#[export_name]`, same as `ufbx_default_open_file` below.
+
 // ufbx.c:30406-30410 `ufbx_default_open_file`: NO shim here. C compares this
 // callback BY ADDRESS (`uc->opts.open_file_cb.fn == &ufbx_default_open_file`,
 // ufbx.c:25224, stored at 24645/25532/32712), so there must be exactly one
@@ -70,4 +79,1459 @@ pub unsafe extern "C" fn ufbx_open_memory_ctx(
     error: *mut crate::generated::Error,
 ) -> bool {
     crate::native::api::open_memory_ctx(stream, ctx, data, data_size, opts, error)
+}
+
+// ufbx.c:30497-30500 `ufbx_is_thread_safe` (impl: native/api.rs `is_thread_safe`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_is_thread_safe() -> bool {
+    crate::native::api::is_thread_safe()
+}
+
+// ufbx.c:30502-30576 `ufbx_load_memory` / `ufbx_load_file` / `ufbx_load_file_len` /
+// `ufbx_load_stdio` / `ufbx_load_stdio_prefix` / `ufbx_load_stream` /
+// `ufbx_load_stream_prefix`: NO shims — the impls are DEFERRED in
+// `native::api` until `ufbxi_load` (ufbx.c:25472) is ported. Leaving these
+// undefined is deliberate so the linker work queue reflects the truth.
+
+// ufbx.c:30578-30586 `ufbx_free_scene` (impl: native/api.rs `free_scene`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_free_scene(scene: *mut crate::generated::Scene) {
+    crate::native::api::free_scene(scene)
+}
+
+// ufbx.c:30588-30596 `ufbx_retain_scene` (impl: native/api.rs `retain_scene`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_retain_scene(scene: *mut crate::generated::Scene) {
+    crate::native::api::retain_scene(scene)
+}
+
+// ufbx.c:30598-30633 `ufbx_format_error` (impl: native/api.rs `format_error`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_format_error(
+    dst: *mut u8,
+    dst_size: usize,
+    error: *const crate::generated::Error,
+) -> usize {
+    crate::native::api::format_error(dst, dst_size, error)
+}
+
+// ufbx.c:30635-30650 `ufbx_find_prop_len` (impl: native/api.rs `find_prop_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_prop_len(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    name_len: usize,
+) -> *mut crate::generated::Prop {
+    crate::native::api::find_prop_len(props, name, name_len)
+}
+
+// ufbx.c:30652-30660 `ufbx_find_real_len` (impl: native/api.rs `find_real_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_real_len(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    name_len: usize,
+    def: crate::prelude::Real,
+) -> crate::prelude::Real {
+    crate::native::api::find_real_len(props, name, name_len, def)
+}
+
+// ufbx.c:30662-30670 `ufbx_find_vec3_len` (impl: native/api.rs `find_vec3_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_vec3_len(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    name_len: usize,
+    def: crate::generated::Vec3,
+) -> crate::generated::Vec3 {
+    crate::native::api::find_vec3_len(props, name, name_len, def)
+}
+
+// ufbx.c:30672-30680 `ufbx_find_int_len` (impl: native/api.rs `find_int_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_int_len(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    name_len: usize,
+    def: i64,
+) -> i64 {
+    crate::native::api::find_int_len(props, name, name_len, def)
+}
+
+// ufbx.c:30682-30690 `ufbx_find_bool_len` (impl: native/api.rs `find_bool_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_bool_len(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    name_len: usize,
+    def: bool,
+) -> bool {
+    crate::native::api::find_bool_len(props, name, name_len, def)
+}
+
+// ufbx.c:30692-30700 `ufbx_find_string_len` (impl: native/api.rs `find_string_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_string_len(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    name_len: usize,
+    def: crate::prelude::String,
+) -> crate::prelude::String {
+    crate::native::api::find_string_len(props, name, name_len, def)
+}
+
+// ufbx.c:30702-30710 `ufbx_find_blob_len` (impl: native/api.rs `find_blob_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_blob_len(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    name_len: usize,
+    def: crate::prelude::Blob,
+) -> crate::prelude::Blob {
+    crate::native::api::find_blob_len(props, name, name_len, def)
+}
+
+// ufbx.c:30712-30728 `ufbx_find_prop_concat` (impl: native/api.rs `find_prop_concat`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_prop_concat(
+    props: *const crate::generated::Props,
+    parts: *const crate::prelude::String,
+    num_parts: usize,
+) -> *mut crate::generated::Prop {
+    crate::native::api::find_prop_concat(props, parts, num_parts)
+}
+
+// ufbx.c:30730-30741 `ufbx_find_element_len` (impl: native/api.rs `find_element_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_element_len(
+    scene: *const crate::generated::Scene,
+    type_: crate::generated::ElementType,
+    name: *const u8,
+    name_len: usize,
+) -> *mut crate::generated::Element {
+    crate::native::api::find_element_len(scene, type_, name, name_len)
+}
+
+// ufbx.c:30743-30748 `ufbx_get_prop_element` (impl: native/api.rs `get_prop_element`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_get_prop_element(
+    element: *const crate::generated::Element,
+    prop: *const crate::generated::Prop,
+    type_: crate::generated::ElementType,
+) -> *mut crate::generated::Element {
+    crate::native::api::get_prop_element(element, prop, type_)
+}
+
+// ufbx.c:30750-30757 `ufbx_find_prop_element_len` (impl: native/api.rs `find_prop_element_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_prop_element_len(
+    element: *const crate::generated::Element,
+    name: *const u8,
+    name_len: usize,
+    type_: crate::generated::ElementType,
+) -> *mut crate::generated::Element {
+    crate::native::api::find_prop_element_len(element, name, name_len, type_)
+}
+
+// ufbx.c:30760-30763 `ufbx_find_node_len` (impl: native/api.rs `find_node_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_node_len(
+    scene: *const crate::generated::Scene,
+    name: *const u8,
+    name_len: usize,
+) -> *mut crate::generated::Node {
+    crate::native::api::find_node_len(scene, name, name_len)
+}
+
+// ufbx.c:30765-30768 `ufbx_find_anim_stack_len` (impl: native/api.rs `find_anim_stack_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_anim_stack_len(
+    scene: *const crate::generated::Scene,
+    name: *const u8,
+    name_len: usize,
+) -> *mut crate::generated::AnimStack {
+    crate::native::api::find_anim_stack_len(scene, name, name_len)
+}
+
+// ufbx.c:30770-30773 `ufbx_find_material_len` (impl: native/api.rs `find_material_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_material_len(
+    scene: *const crate::generated::Scene,
+    name: *const u8,
+    name_len: usize,
+) -> *mut crate::generated::Material {
+    crate::native::api::find_material_len(scene, name, name_len)
+}
+
+// ufbx.c:30775-30790 `ufbx_find_anim_prop_len` (impl: native/api.rs `find_anim_prop_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_anim_prop_len(
+    layer: *const crate::generated::AnimLayer,
+    element: *const crate::generated::Element,
+    prop: *const u8,
+    prop_len: usize,
+) -> *mut crate::generated::AnimProp {
+    crate::native::api::find_anim_prop_len(layer, element, prop, prop_len)
+}
+
+// ufbx.c:30792-30812 `ufbx_find_anim_props` (impl: native/api.rs `find_anim_props`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_anim_props(
+    layer: *const crate::generated::AnimLayer,
+    element: *const crate::generated::Element,
+) -> crate::prelude::List<crate::generated::AnimProp> {
+    crate::native::api::find_anim_props(layer, element)
+}
+
+// ufbx.c:30814-30825 `ufbx_get_compatible_matrix_for_normals`
+// (impl: native/api.rs `get_compatible_matrix_for_normals`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_get_compatible_matrix_for_normals(
+    node: *const crate::generated::Node,
+) -> crate::generated::Matrix {
+    crate::native::api::get_compatible_matrix_for_normals(node)
+}
+
+// ufbx.c:30827-31176 the `ufbx_evaluate_*` entry points: NO shims — the impls
+// are DEFERRED(m9) in `native::api` until `// -- Animation evaluation`
+// (`native::evaluate`) is ported. Leaving these undefined is deliberate so the
+// linker work queue reflects the truth.
+
+// ufbx.c:31178-31192 `ufbx_evaluate_scene` (impl: native/api.rs
+// `evaluate_scene`). The shim carries the SAME cfg as the impl: C only has a
+// callable body for this entry point when scene evaluation is compiled out,
+// and the enabled arm is DEFERRED(m9). Under the default feature set the
+// symbol stays undefined, as it should.
+#[cfg(not(feature = "scene-eval"))]
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_scene(
+    scene: *const crate::generated::Scene,
+    anim: *const crate::generated::Anim,
+    time: f64,
+    opts: *const crate::generated::RawEvaluateOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::Scene {
+    crate::native::api::evaluate_scene(scene, anim, time, opts, error)
+}
+
+// ufbx.c:31194-31218 `ufbx_create_anim`: NO shim — DEFERRED(m9).
+
+// ufbx.c:31220-31229 `ufbx_free_anim` (impl: native/api.rs `free_anim`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_free_anim(anim: *mut crate::generated::Anim) {
+    crate::native::api::free_anim(anim)
+}
+
+// ufbx.c:31231-31240 `ufbx_retain_anim` (impl: native/api.rs `retain_anim`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_retain_anim(anim: *mut crate::generated::Anim) {
+    crate::native::api::retain_anim(anim)
+}
+
+// ufbx.c:31242-31289 `ufbx_bake_anim` (impl: native/api.rs `bake_anim`).
+// Same cfg rationale as `ufbx_evaluate_scene` above.
+#[cfg(not(feature = "baking"))]
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_bake_anim(
+    scene: *const crate::generated::Scene,
+    anim: *const crate::generated::Anim,
+    opts: *const crate::generated::RawBakeOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::BakedAnim {
+    crate::native::api::bake_anim(scene, anim, opts, error)
+}
+
+// ufbx.c:31291-31299 `ufbx_retain_baked_anim` (impl: native/api.rs
+// `retain_baked_anim`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_retain_baked_anim(bake: *mut crate::generated::BakedAnim) {
+    crate::native::api::retain_baked_anim(bake)
+}
+
+// ufbx.c:31301-31309 `ufbx_free_baked_anim` (impl: native/api.rs
+// `free_baked_anim`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_free_baked_anim(bake: *mut crate::generated::BakedAnim) {
+    crate::native::api::free_baked_anim(bake)
+}
+
+// ufbx.c:31312-31318 `ufbx_find_baked_node_by_typed_id`
+// (impl: native/api.rs `find_baked_node_by_typed_id`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_baked_node_by_typed_id(
+    bake: *mut crate::generated::BakedAnim,
+    typed_id: u32,
+) -> *mut crate::generated::BakedNode {
+    crate::native::api::find_baked_node_by_typed_id(bake, typed_id)
+}
+
+// ufbx.c:31320-31324 `ufbx_find_baked_node` (impl: native/api.rs `find_baked_node`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_baked_node(
+    bake: *mut crate::generated::BakedAnim,
+    node: *mut crate::generated::Node,
+) -> *mut crate::generated::BakedNode {
+    crate::native::api::find_baked_node(bake, node)
+}
+
+// ufbx.c:31326-31332 `ufbx_find_baked_element_by_element_id`
+// (impl: native/api.rs `find_baked_element_by_element_id`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_baked_element_by_element_id(
+    bake: *mut crate::generated::BakedAnim,
+    element_id: u32,
+) -> *mut crate::generated::BakedElement {
+    crate::native::api::find_baked_element_by_element_id(bake, element_id)
+}
+
+// ufbx.c:31334-31338 `ufbx_find_baked_element` (impl: native/api.rs `find_baked_element`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_baked_element(
+    bake: *mut crate::generated::BakedAnim,
+    element: *mut crate::generated::Element,
+) -> *mut crate::generated::BakedElement {
+    crate::native::api::find_baked_element(bake, element)
+}
+
+// ufbx.c:31340-31370 `ufbx_evaluate_baked_vec3` (impl: native/api.rs `evaluate_baked_vec3`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_baked_vec3(
+    keyframes: crate::prelude::List<crate::generated::BakedVec3>,
+    time: f64,
+) -> crate::generated::Vec3 {
+    crate::native::api::evaluate_baked_vec3(keyframes, time)
+}
+
+// ufbx.c:31372-31403 `ufbx_evaluate_baked_quat` (impl: native/api.rs `evaluate_baked_quat`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_evaluate_baked_quat(
+    keyframes: crate::prelude::List<crate::generated::BakedQuat>,
+    time: f64,
+) -> crate::generated::Quat {
+    crate::native::api::evaluate_baked_quat(keyframes, time)
+}
+
+// ufbx.c:31405-31412 `ufbx_get_bone_pose` (impl: native/api.rs `get_bone_pose`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_get_bone_pose(
+    pose: *const crate::generated::Pose,
+    node: *const crate::generated::Node,
+) -> *mut crate::generated::BonePose {
+    crate::native::api::get_bone_pose(pose, node)
+}
+
+// ufbx.c:31414-31423 `ufbx_find_prop_texture_len` (impl: native/api.rs `find_prop_texture_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_prop_texture_len(
+    material: *const crate::generated::Material,
+    name: *const u8,
+    name_len: usize,
+) -> *mut crate::generated::Texture {
+    crate::native::api::find_prop_texture_len(material, name, name_len)
+}
+
+// ufbx.c:31425-31432 `ufbx_find_shader_prop_len` (impl: native/api.rs `find_shader_prop_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_shader_prop_len(
+    shader: *const crate::generated::Shader,
+    name: *const u8,
+    name_len: usize,
+) -> crate::prelude::String {
+    crate::native::api::find_shader_prop_len(shader, name, name_len)
+}
+
+// ufbx.c:31434-31461 `ufbx_find_shader_prop_bindings_len`
+// (impl: native/api.rs `find_shader_prop_bindings_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_shader_prop_bindings_len(
+    shader: *const crate::generated::Shader,
+    name: *const u8,
+    name_len: usize,
+) -> crate::prelude::List<crate::generated::ShaderPropBinding> {
+    crate::native::api::find_shader_prop_bindings_len(shader, name, name_len)
+}
+
+// ufbx.c:31463-31476 `ufbx_find_shader_texture_input_len`
+// (impl: native/api.rs `find_shader_texture_input_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_shader_texture_input_len(
+    shader: *const crate::generated::ShaderTexture,
+    name: *const u8,
+    name_len: usize,
+) -> *mut crate::generated::ShaderTextureInput {
+    crate::native::api::find_shader_texture_input_len(shader, name, name_len)
+}
+
+// ufbx.c:31478-31490 `ufbx_coordinate_axes_valid` (impl: native/api.rs `coordinate_axes_valid`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_coordinate_axes_valid(
+    axes: crate::generated::CoordinateAxes,
+) -> bool {
+    crate::native::api::coordinate_axes_valid(axes)
+}
+
+// ufbx.c:31492-31495 `ufbx_quat_mul` (impl: native/api.rs `quat_mul`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_quat_mul(
+    a: crate::generated::Quat,
+    b: crate::generated::Quat,
+) -> crate::generated::Quat {
+    crate::native::api::quat_mul(a, b)
+}
+
+// ufbx.c:31497-31500 `ufbx_vec3_normalize` (impl: native/api.rs `vec3_normalize`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_vec3_normalize(v: crate::generated::Vec3) -> crate::generated::Vec3 {
+    crate::native::api::vec3_normalize(v)
+}
+
+// ufbx.c:31502-31505 `ufbx_quat_dot` (impl: native/api.rs `quat_dot`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_quat_dot(
+    a: crate::generated::Quat,
+    b: crate::generated::Quat,
+) -> crate::prelude::Real {
+    crate::native::api::quat_dot(a, b)
+}
+
+// ufbx.c:31507-31517 `ufbx_quat_normalize` (impl: native/api.rs `quat_normalize`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_quat_normalize(q: crate::generated::Quat) -> crate::generated::Quat {
+    crate::native::api::quat_normalize(q)
+}
+
+// ufbx.c:31519-31525 `ufbx_quat_fix_antipodal` (impl: native/api.rs `quat_fix_antipodal`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_quat_fix_antipodal(
+    q: crate::generated::Quat,
+    reference: crate::generated::Quat,
+) -> crate::generated::Quat {
+    crate::native::api::quat_fix_antipodal(q, reference)
+}
+
+// ufbx.c:31527-31552 `ufbx_quat_slerp` (impl: native/api.rs `quat_slerp`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_quat_slerp(
+    a: crate::generated::Quat,
+    b: crate::generated::Quat,
+    t: crate::prelude::Real,
+) -> crate::generated::Quat {
+    crate::native::api::quat_slerp(a, b, t)
+}
+
+// ufbx.c:31554-31564 `ufbx_quat_rotate_vec3` (impl: native/api.rs `quat_rotate_vec3`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_quat_rotate_vec3(
+    q: crate::generated::Quat,
+    v: crate::generated::Vec3,
+) -> crate::generated::Vec3 {
+    crate::native::api::quat_rotate_vec3(q, v)
+}
+
+// ufbx.c:31566-31620 `ufbx_euler_to_quat` (impl: native/api.rs `euler_to_quat`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_euler_to_quat(
+    v: crate::generated::Vec3,
+    order: crate::generated::RotationOrder,
+) -> crate::generated::Quat {
+    crate::native::api::euler_to_quat(v, order)
+}
+
+// ufbx.c:31622-31721 `ufbx_quat_to_euler` (impl: native/api.rs `quat_to_euler`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_quat_to_euler(
+    q: crate::generated::Quat,
+    order: crate::generated::RotationOrder,
+) -> crate::generated::Vec3 {
+    crate::native::api::quat_to_euler(q, order)
+}
+
+// ufbx.c:31723-31747 `ufbx_matrix_mul` (impl: native/api.rs `matrix_mul`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_matrix_mul(
+    a: *const crate::generated::Matrix,
+    b: *const crate::generated::Matrix,
+) -> crate::generated::Matrix {
+    crate::native::api::matrix_mul(a, b)
+}
+
+// ufbx.c:31749-31754 `ufbx_matrix_determinant` (impl: native/api.rs `matrix_determinant`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_matrix_determinant(
+    m: *const crate::generated::Matrix,
+) -> crate::prelude::Real {
+    crate::native::api::matrix_determinant(m)
+}
+
+// ufbx.c:31756-31782 `ufbx_matrix_invert` (impl: native/api.rs `matrix_invert`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_matrix_invert(
+    m: *const crate::generated::Matrix,
+) -> crate::generated::Matrix {
+    crate::native::api::matrix_invert(m)
+}
+
+// ufbx.c:31784-31802 `ufbx_matrix_for_normals` (impl: native/api.rs `matrix_for_normals`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_matrix_for_normals(
+    m: *const crate::generated::Matrix,
+) -> crate::generated::Matrix {
+    crate::native::api::matrix_for_normals(m)
+}
+
+// ufbx.c:31804-31814 `ufbx_transform_position` (impl: native/api.rs `transform_position`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_transform_position(
+    m: *const crate::generated::Matrix,
+    v: crate::generated::Vec3,
+) -> crate::generated::Vec3 {
+    crate::native::api::transform_position(m, v)
+}
+
+// ufbx.c:31816-31826 `ufbx_transform_direction` (impl: native/api.rs `transform_direction`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_transform_direction(
+    m: *const crate::generated::Matrix,
+    v: crate::generated::Vec3,
+) -> crate::generated::Vec3 {
+    crate::native::api::transform_direction(m, v)
+}
+
+// ufbx.c:31828-31852 `ufbx_transform_to_matrix` (impl: native/api.rs `transform_to_matrix`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_transform_to_matrix(
+    t: *const crate::generated::Transform,
+) -> crate::generated::Matrix {
+    crate::native::api::transform_to_matrix(t)
+}
+
+// ufbx.c:31854-31926 `ufbx_matrix_to_transform` (impl: native/api.rs `matrix_to_transform`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_matrix_to_transform(
+    m: *const crate::generated::Matrix,
+) -> crate::generated::Transform {
+    crate::native::api::matrix_to_transform(m)
+}
+
+// ufbx.c:31928-32018 `ufbx_catch_get_skin_vertex_matrix`
+// (impl: native/api.rs `catch_get_skin_vertex_matrix`). `ufbx_get_skin_vertex_matrix`
+// is `ufbx_inline` in ufbx.h (5601-5603) and needs no shim.
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_get_skin_vertex_matrix(
+    panic: *mut crate::generated::Panic,
+    skin: *const crate::generated::SkinDeformer,
+    vertex: usize,
+    fallback: *const crate::generated::Matrix,
+) -> crate::generated::Matrix {
+    crate::native::api::catch_get_skin_vertex_matrix(panic, skin, vertex, fallback)
+}
+
+// ufbx.c:32020-32033 `ufbx_get_blend_shape_offset_index`
+// (impl: native/api.rs `get_blend_shape_offset_index`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_get_blend_shape_offset_index(
+    shape: *const crate::generated::BlendShape,
+    vertex: usize,
+) -> u32 {
+    crate::native::api::get_blend_shape_offset_index(shape, vertex)
+}
+
+// ufbx.c:32035-32040 `ufbx_get_blend_shape_vertex_offset`
+// (impl: native/api.rs `get_blend_shape_vertex_offset`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_get_blend_shape_vertex_offset(
+    shape: *const crate::generated::BlendShape,
+    vertex: usize,
+) -> crate::generated::Vec3 {
+    crate::native::api::get_blend_shape_vertex_offset(shape, vertex)
+}
+
+// ufbx.c:32042-32060 `ufbx_get_blend_vertex_offset`
+// (impl: native/api.rs `get_blend_vertex_offset`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_get_blend_vertex_offset(
+    blend: *const crate::generated::BlendDeformer,
+    vertex: usize,
+) -> crate::generated::Vec3 {
+    crate::native::api::get_blend_vertex_offset(blend, vertex)
+}
+
+// ufbx.c:32062-32081 `ufbx_add_blend_shape_vertex_offsets`
+// (impl: native/api.rs `add_blend_shape_vertex_offsets`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_add_blend_shape_vertex_offsets(
+    shape: *const crate::generated::BlendShape,
+    vertices: *mut crate::generated::Vec3,
+    num_vertices: usize,
+    weight: crate::prelude::Real,
+) {
+    crate::native::api::add_blend_shape_vertex_offsets(shape, vertices, num_vertices, weight)
+}
+
+// ufbx.c:32083-32095 `ufbx_add_blend_vertex_offsets`
+// (impl: native/api.rs `add_blend_vertex_offsets`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_add_blend_vertex_offsets(
+    blend: *const crate::generated::BlendDeformer,
+    vertices: *mut crate::generated::Vec3,
+    num_vertices: usize,
+    weight: crate::prelude::Real,
+) {
+    crate::native::api::add_blend_vertex_offsets(blend, vertices, num_vertices, weight)
+}
+
+// `ufbx_evaluate_nurbs_basis` (ufbx.c:32097) and `ufbx_evaluate_nurbs_curve`
+// (ufbx.c:32168): NO shims — the impls are DEFERRED(m10) in `native::api`
+// until `// -- NURBS` (`ufbxi_nurbs_weight`/`ufbxi_nurbs_deriv`) is ported.
+
+// `ufbx_evaluate_nurbs_surface` (ufbx.c:32214): NO shim — DEFERRED(m10) (needs
+// `ufbx_evaluate_nurbs_basis`).
+
+// ufbx.c:32282-32318 `ufbx_tessellate_nurbs_curve` (impl: native/api.rs
+// `tessellate_nurbs_curve`). The shim carries the SAME cfg as the impl: only
+// the `#else` FEATURE_DISABLED arm is ported.
+#[cfg(not(feature = "tessellation"))]
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_tessellate_nurbs_curve(
+    curve: *const crate::generated::NurbsCurve,
+    opts: *const crate::generated::RawTessellateCurveOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::LineCurve {
+    crate::native::api::tessellate_nurbs_curve(curve, opts, error)
+}
+
+// ufbx.c:32320-32357 `ufbx_tessellate_nurbs_surface` (impl: native/api.rs
+// `tessellate_nurbs_surface`). Same cfg rationale.
+#[cfg(not(feature = "tessellation"))]
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_tessellate_nurbs_surface(
+    surface: *const crate::generated::NurbsSurface,
+    opts: *const crate::generated::RawTessellateSurfaceOpts,
+    error: *mut crate::generated::Error,
+) -> *mut crate::generated::Mesh {
+    crate::native::api::tessellate_nurbs_surface(surface, opts, error)
+}
+
+// `ufbx_free_line_curve` / `ufbx_retain_line_curve` (ufbx.c:32359/32370): NO
+// shims — DEFERRED(m9) (`ufbxi_line_curve_imp` unported).
+
+// ufbx.c:32381-32390 `ufbx_find_face_index` (impl: native/api.rs
+// `find_face_index`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_face_index(
+    mesh: *mut crate::generated::Mesh,
+    index: usize,
+) -> u32 {
+    crate::native::api::find_face_index(mesh, index)
+}
+
+// ufbx.c:32392-32475 `ufbx_catch_triangulate_face` (impl: native/api.rs
+// `catch_triangulate_face`). Same cfg as the impl: only the `#else`
+// FEATURE_DISABLED arm is ported.
+#[cfg(not(feature = "triangulation"))]
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_triangulate_face(
+    panic: *mut crate::generated::Panic,
+    indices: *mut u32,
+    num_indices: usize,
+    mesh: *const crate::generated::Mesh,
+    face: crate::generated::Face,
+) -> u32 {
+    crate::native::api::catch_triangulate_face(panic, indices, num_indices, mesh, face)
+}
+
+// `ufbx_catch_compute_topology` (ufbx.c:32477): NO shim — DEFERRED(m9)
+// (`ufbxi_compute_topology` unported).
+
+// ufbx.c:32484-32492 `ufbx_catch_topo_next_vertex_edge` (impl: native/api.rs
+// `catch_topo_next_vertex_edge`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_topo_next_vertex_edge(
+    panic: *mut crate::generated::Panic,
+    topo: *const crate::generated::TopoEdge,
+    num_topo: usize,
+    index: u32,
+) -> u32 {
+    crate::native::api::catch_topo_next_vertex_edge(panic, topo, num_topo, index)
+}
+
+// ufbx.c:32494-32499 `ufbx_catch_topo_prev_vertex_edge` (impl: native/api.rs
+// `catch_topo_prev_vertex_edge`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_topo_prev_vertex_edge(
+    panic: *mut crate::generated::Panic,
+    topo: *const crate::generated::TopoEdge,
+    num_topo: usize,
+    index: u32,
+) -> u32 {
+    crate::native::api::catch_topo_prev_vertex_edge(panic, topo, num_topo, index)
+}
+
+// ufbx.c:32501-32532 `ufbx_catch_get_weighted_face_normal` (impl: native/api.rs
+// `catch_get_weighted_face_normal`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_get_weighted_face_normal(
+    panic: *mut crate::generated::Panic,
+    positions: *const crate::generated::VertexVec3,
+    face: crate::generated::Face,
+) -> crate::generated::Vec3 {
+    crate::native::api::catch_get_weighted_face_normal(panic, positions, face)
+}
+
+// `ufbx_catch_generate_normal_mapping` / `ufbx_generate_normal_mapping`
+// (ufbx.c:32534/32580): NO shims — DEFERRED(m9) (`ufbxi_is_edge_smooth`
+// unported).
+
+// ufbx.c:32585-32612 `ufbx_catch_compute_normals` (impl: native/api.rs
+// `catch_compute_normals`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_compute_normals(
+    panic: *mut crate::generated::Panic,
+    mesh: *const crate::generated::Mesh,
+    positions: *const crate::generated::VertexVec3,
+    normal_indices: *const u32,
+    num_normal_indices: usize,
+    normals: *mut crate::generated::Vec3,
+    num_normals: usize,
+) {
+    crate::native::api::catch_compute_normals(
+        panic,
+        mesh,
+        positions,
+        normal_indices,
+        num_normal_indices,
+        normals,
+        num_normals,
+    )
+}
+
+// ufbx.c:32614-32617 `ufbx_compute_normals` (impl: native/api.rs
+// `compute_normals`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_compute_normals(
+    mesh: *const crate::generated::Mesh,
+    positions: *const crate::generated::VertexVec3,
+    normal_indices: *const u32,
+    num_normal_indices: usize,
+    normals: *mut crate::generated::Vec3,
+    num_normals: usize,
+) {
+    crate::native::api::compute_normals(
+        mesh,
+        positions,
+        normal_indices,
+        num_normal_indices,
+        normals,
+        num_normals,
+    )
+}
+
+// `ufbx_subdivide_mesh` (ufbx.c:32619): NO shim — DEFERRED(m9)
+// (`ufbxi_subdivide_mesh` unported).
+
+// ufbx.c:32627-32636 `ufbx_free_mesh` (impl: native/api.rs `free_mesh`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_free_mesh(mesh: *mut crate::generated::Mesh) {
+    crate::native::api::free_mesh(mesh)
+}
+
+// ufbx.c:32638-32647 `ufbx_retain_mesh` (impl: native/api.rs `retain_mesh`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_retain_mesh(mesh: *mut crate::generated::Mesh) {
+    crate::native::api::retain_mesh(mesh)
+}
+
+// `ufbx_load_geometry_cache` / `_len` (ufbx.c:32649/32657): NO shims —
+// DEFERRED(m9) (`ufbxi_load_geometry_cache` unported).
+
+// ufbx.c:32666-32675 `ufbx_free_geometry_cache` (impl: native/api.rs
+// `free_geometry_cache`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_free_geometry_cache(cache: *mut crate::generated::GeometryCache) {
+    crate::native::api::free_geometry_cache(cache)
+}
+
+// ufbx.c:32677-32686 `ufbx_retain_geometry_cache` (impl: native/api.rs
+// `retain_geometry_cache`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_retain_geometry_cache(cache: *mut crate::generated::GeometryCache) {
+    crate::native::api::retain_geometry_cache(cache)
+}
+
+// ufbx.c:32696-32859 `ufbx_read_geometry_cache_real` (impl: native/api.rs
+// `read_geometry_cache_real`; `#[cfg]` internally returns 0 when
+// `feature = "geometry-cache"` is off, matching C's `#else return 0`).
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_read_geometry_cache_real(
+    frame: *const crate::generated::CacheFrame,
+    data: *mut crate::prelude::Real,
+    num_data: usize,
+    opts: *const crate::generated::RawGeometryCacheDataOpts,
+) -> usize {
+    crate::native::api::read_geometry_cache_real(frame, data, num_data, opts)
+}
+
+// ufbx.c:32861-32931 `ufbx_sample_geometry_cache_real` (impl: native/api.rs
+// `sample_geometry_cache_real`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_sample_geometry_cache_real(
+    channel: *const crate::generated::CacheChannel,
+    time: f64,
+    data: *mut crate::prelude::Real,
+    num_data: usize,
+    opts: *const crate::generated::RawGeometryCacheDataOpts,
+) -> usize {
+    crate::native::api::sample_geometry_cache_real(channel, time, data, num_data, opts)
+}
+
+// ufbx.c:32933-32943 `ufbx_read_geometry_cache_vec3` (impl: native/api.rs
+// `read_geometry_cache_vec3`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_read_geometry_cache_vec3(
+    frame: *const crate::generated::CacheFrame,
+    data: *mut crate::generated::Vec3,
+    num_data: usize,
+    opts: *const crate::generated::RawGeometryCacheDataOpts,
+) -> usize {
+    crate::native::api::read_geometry_cache_vec3(frame, data, num_data, opts)
+}
+
+// ufbx.c:32945-32955 `ufbx_sample_geometry_cache_vec3` (impl: native/api.rs
+// `sample_geometry_cache_vec3`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_sample_geometry_cache_vec3(
+    channel: *const crate::generated::CacheChannel,
+    time: f64,
+    data: *mut crate::generated::Vec3,
+    num_data: usize,
+    opts: *const crate::generated::RawGeometryCacheDataOpts,
+) -> usize {
+    crate::native::api::sample_geometry_cache_vec3(channel, time, data, num_data, opts)
+}
+
+// ufbx.c:32957-32964 `ufbx_dom_find_len` (impl: native/api.rs `dom_find_len`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_dom_find_len(
+    parent: *const crate::generated::DomNode,
+    name: *const u8,
+    name_len: usize,
+) -> *mut crate::generated::DomNode {
+    crate::native::api::dom_find_len(parent, name, name_len)
+}
+
+// `ufbx_generate_indices` (ufbx.c:32966): NO shim — DEFERRED(m10)
+// (`ufbxi_generate_indices` unported).
+
+// `ufbx_thread_pool_run_task` (ufbx.c:32976): NO shim — DEFERRED(m10)
+// (`ufbxi_thread_pool_execute` unported).
+
+// ufbx.c:32981-32985 `ufbx_thread_pool_set_user_ptr` (impl: native/api.rs
+// `thread_pool_set_user_ptr`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_thread_pool_set_user_ptr(
+    ctx: crate::prelude::ThreadPoolContext,
+    user_ptr: *mut core::ffi::c_void,
+) {
+    crate::native::api::thread_pool_set_user_ptr(ctx, user_ptr)
+}
+
+// ufbx.c:32987-32991 `ufbx_thread_pool_get_user_ptr` (impl: native/api.rs
+// `thread_pool_get_user_ptr`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_thread_pool_get_user_ptr(
+    ctx: crate::prelude::ThreadPoolContext,
+) -> *mut core::ffi::c_void {
+    crate::native::api::thread_pool_get_user_ptr(ctx)
+}
+
+// ufbx.c:32993-32999 `ufbx_catch_get_vertex_real` (impl: native/api.rs
+// `catch_get_vertex_real`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_get_vertex_real(
+    panic: *mut crate::generated::Panic,
+    v: *const crate::generated::VertexReal,
+    index: usize,
+) -> crate::prelude::Real {
+    crate::native::api::catch_get_vertex_real(panic, v, index)
+}
+
+// ufbx.c:33001-33007 `ufbx_catch_get_vertex_vec2` (impl: native/api.rs
+// `catch_get_vertex_vec2`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_get_vertex_vec2(
+    panic: *mut crate::generated::Panic,
+    v: *const crate::generated::VertexVec2,
+    index: usize,
+) -> crate::generated::Vec2 {
+    crate::native::api::catch_get_vertex_vec2(panic, v, index)
+}
+
+// ufbx.c:33009-33015 `ufbx_catch_get_vertex_vec3` (impl: native/api.rs
+// `catch_get_vertex_vec3`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_get_vertex_vec3(
+    panic: *mut crate::generated::Panic,
+    v: *const crate::generated::VertexVec3,
+    index: usize,
+) -> crate::generated::Vec3 {
+    crate::native::api::catch_get_vertex_vec3(panic, v, index)
+}
+
+// ufbx.c:33017-33023 `ufbx_catch_get_vertex_vec4` (impl: native/api.rs
+// `catch_get_vertex_vec4`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_get_vertex_vec4(
+    panic: *mut crate::generated::Panic,
+    v: *const crate::generated::VertexVec4,
+    index: usize,
+) -> crate::generated::Vec4 {
+    crate::native::api::catch_get_vertex_vec4(panic, v, index)
+}
+
+// ufbx.c:33025-33032 `ufbx_catch_get_vertex_w_vec3` (impl: native/api.rs
+// `catch_get_vertex_w_vec3`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_catch_get_vertex_w_vec3(
+    panic: *mut crate::generated::Panic,
+    v: *const crate::generated::VertexVec3,
+    index: usize,
+) -> crate::prelude::Real {
+    crate::native::api::catch_get_vertex_w_vec3(panic, v, index)
+}
+
+// ufbx.c:33034-33075 `ufbx_as_*` (impls: native/api.rs `as_*`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_unknown(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Unknown {
+    crate::native::api::as_unknown(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_node(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Node {
+    crate::native::api::as_node(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_mesh(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Mesh {
+    crate::native::api::as_mesh(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_light(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Light {
+    crate::native::api::as_light(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_camera(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Camera {
+    crate::native::api::as_camera(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_bone(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Bone {
+    crate::native::api::as_bone(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_empty(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Empty {
+    crate::native::api::as_empty(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_line_curve(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::LineCurve {
+    crate::native::api::as_line_curve(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_nurbs_curve(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::NurbsCurve {
+    crate::native::api::as_nurbs_curve(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_nurbs_surface(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::NurbsSurface {
+    crate::native::api::as_nurbs_surface(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_nurbs_trim_surface(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::NurbsTrimSurface {
+    crate::native::api::as_nurbs_trim_surface(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_nurbs_trim_boundary(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::NurbsTrimBoundary {
+    crate::native::api::as_nurbs_trim_boundary(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_procedural_geometry(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::ProceduralGeometry {
+    crate::native::api::as_procedural_geometry(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_stereo_camera(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::StereoCamera {
+    crate::native::api::as_stereo_camera(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_camera_switcher(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::CameraSwitcher {
+    crate::native::api::as_camera_switcher(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_marker(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Marker {
+    crate::native::api::as_marker(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_lod_group(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::LodGroup {
+    crate::native::api::as_lod_group(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_skin_deformer(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::SkinDeformer {
+    crate::native::api::as_skin_deformer(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_skin_cluster(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::SkinCluster {
+    crate::native::api::as_skin_cluster(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_blend_deformer(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::BlendDeformer {
+    crate::native::api::as_blend_deformer(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_blend_channel(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::BlendChannel {
+    crate::native::api::as_blend_channel(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_blend_shape(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::BlendShape {
+    crate::native::api::as_blend_shape(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_cache_deformer(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::CacheDeformer {
+    crate::native::api::as_cache_deformer(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_cache_file(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::CacheFile {
+    crate::native::api::as_cache_file(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_material(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Material {
+    crate::native::api::as_material(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_texture(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Texture {
+    crate::native::api::as_texture(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_video(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Video {
+    crate::native::api::as_video(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_shader(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Shader {
+    crate::native::api::as_shader(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_shader_binding(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::ShaderBinding {
+    crate::native::api::as_shader_binding(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_anim_stack(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::AnimStack {
+    crate::native::api::as_anim_stack(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_anim_layer(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::AnimLayer {
+    crate::native::api::as_anim_layer(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_anim_value(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::AnimValue {
+    crate::native::api::as_anim_value(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_anim_curve(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::AnimCurve {
+    crate::native::api::as_anim_curve(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_display_layer(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::DisplayLayer {
+    crate::native::api::as_display_layer(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_selection_set(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::SelectionSet {
+    crate::native::api::as_selection_set(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_selection_node(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::SelectionNode {
+    crate::native::api::as_selection_node(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_character(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Character {
+    crate::native::api::as_character(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_constraint(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Constraint {
+    crate::native::api::as_constraint(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_audio_layer(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::AudioLayer {
+    crate::native::api::as_audio_layer(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_audio_clip(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::AudioClip {
+    crate::native::api::as_audio_clip(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_pose(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::Pose {
+    crate::native::api::as_pose(element)
+}
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_as_metadata_object(
+    element: *const crate::generated::Element,
+) -> *mut crate::generated::MetadataObject {
+    crate::native::api::as_metadata_object(element)
+}
+
+// ufbx.c:33077-33081 `ufbx_dom_is_array` (impl: native/api.rs `dom_is_array`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_dom_is_array(node: *const crate::generated::DomNode) -> bool {
+    crate::native::api::dom_is_array(node)
+}
+// ufbx.c:33082-33084 `ufbx_dom_array_size` (impl: native/api.rs `dom_array_size`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_dom_array_size(node: *const crate::generated::DomNode) -> usize {
+    crate::native::api::dom_array_size(node)
+}
+// ufbx.c:33085-33093 `ufbx_dom_as_int32_list` (impl: native/api.rs `dom_as_int32_list`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_dom_as_int32_list(
+    node: *const crate::generated::DomNode,
+) -> crate::prelude::List<i32> {
+    crate::native::api::dom_as_int32_list(node)
+}
+// ufbx.c:33094-33102 `ufbx_dom_as_int64_list` (impl: native/api.rs `dom_as_int64_list`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_dom_as_int64_list(
+    node: *const crate::generated::DomNode,
+) -> crate::prelude::List<i64> {
+    crate::native::api::dom_as_int64_list(node)
+}
+// ufbx.c:33103-33111 `ufbx_dom_as_float_list` (impl: native/api.rs `dom_as_float_list`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_dom_as_float_list(
+    node: *const crate::generated::DomNode,
+) -> crate::prelude::List<f32> {
+    crate::native::api::dom_as_float_list(node)
+}
+// ufbx.c:33112-33120 `ufbx_dom_as_double_list` (impl: native/api.rs `dom_as_double_list`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_dom_as_double_list(
+    node: *const crate::generated::DomNode,
+) -> crate::prelude::List<f64> {
+    crate::native::api::dom_as_double_list(node)
+}
+// ufbx.c:33121-33129 `ufbx_dom_as_real_list` (impl: native/api.rs `dom_as_real_list`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_dom_as_real_list(
+    node: *const crate::generated::DomNode,
+) -> crate::prelude::List<crate::prelude::Real> {
+    crate::native::api::dom_as_real_list(node)
+}
+// ufbx.c:33130-33138 `ufbx_dom_as_blob_list` (impl: native/api.rs `dom_as_blob_list`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_dom_as_blob_list(
+    node: *const crate::generated::DomNode,
+) -> crate::prelude::List<crate::prelude::Blob> {
+    crate::native::api::dom_as_blob_list(node)
+}
+
+// -- String API (ufbx.c:33140+): the `strlen` wrappers over the `_len` entry
+// points above. Only the wrappers whose `_len` impl exists are defined here.
+
+// ufbx.c:33142 `ufbx_find_prop` (impl: native/api.rs `find_prop`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_prop(
+    props: *const crate::generated::Props,
+    name: *const u8,
+) -> *mut crate::generated::Prop {
+    crate::native::api::find_prop(props, name)
+}
+
+// ufbx.c:33143 `ufbx_find_real` (impl: native/api.rs `find_real`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_real(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    def: crate::prelude::Real,
+) -> crate::prelude::Real {
+    crate::native::api::find_real(props, name, def)
+}
+
+// ufbx.c:33144 `ufbx_find_vec3` (impl: native/api.rs `find_vec3`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_vec3(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    def: crate::generated::Vec3,
+) -> crate::generated::Vec3 {
+    crate::native::api::find_vec3(props, name, def)
+}
+
+// ufbx.c:33145 `ufbx_find_int` (impl: native/api.rs `find_int`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_int(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    def: i64,
+) -> i64 {
+    crate::native::api::find_int(props, name, def)
+}
+
+// ufbx.c:33146 `ufbx_find_bool` (impl: native/api.rs `find_bool`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_bool(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    def: bool,
+) -> bool {
+    crate::native::api::find_bool(props, name, def)
+}
+
+// ufbx.c:33147 `ufbx_find_string` (impl: native/api.rs `find_string`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_string(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    def: crate::prelude::String,
+) -> crate::prelude::String {
+    crate::native::api::find_string(props, name, def)
+}
+
+// ufbx.c:33148 `ufbx_find_blob` (impl: native/api.rs `find_blob`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_blob(
+    props: *const crate::generated::Props,
+    name: *const u8,
+    def: crate::prelude::Blob,
+) -> crate::prelude::Blob {
+    crate::native::api::find_blob(props, name, def)
+}
+
+// ufbx.c:33149 `ufbx_find_prop_element` (impl: native/api.rs `find_prop_element`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_prop_element(
+    element: *const crate::generated::Element,
+    name: *const u8,
+    type_: crate::generated::ElementType,
+) -> *mut crate::generated::Element {
+    crate::native::api::find_prop_element(element, name, type_)
+}
+
+// ufbx.c:33150 `ufbx_find_element` (impl: native/api.rs `find_element`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_element(
+    scene: *const crate::generated::Scene,
+    type_: crate::generated::ElementType,
+    name: *const u8,
+) -> *mut crate::generated::Element {
+    crate::native::api::find_element(scene, type_, name)
+}
+
+// ufbx.c:33151 `ufbx_find_node` (impl: native/api.rs `find_node`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_node(
+    scene: *const crate::generated::Scene,
+    name: *const u8,
+) -> *mut crate::generated::Node {
+    crate::native::api::find_node(scene, name)
+}
+
+// ufbx.c:33152 `ufbx_find_anim_stack` (impl: native/api.rs `find_anim_stack`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_anim_stack(
+    scene: *const crate::generated::Scene,
+    name: *const u8,
+) -> *mut crate::generated::AnimStack {
+    crate::native::api::find_anim_stack(scene, name)
+}
+
+// ufbx.c:33153 `ufbx_find_material` (impl: native/api.rs `find_material`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_material(
+    scene: *const crate::generated::Scene,
+    name: *const u8,
+) -> *mut crate::generated::Material {
+    crate::native::api::find_material(scene, name)
+}
+
+// ufbx.c:33154 `ufbx_find_anim_prop` (impl: native/api.rs `find_anim_prop`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_anim_prop(
+    layer: *const crate::generated::AnimLayer,
+    element: *const crate::generated::Element,
+    prop: *const u8,
+) -> *mut crate::generated::AnimProp {
+    crate::native::api::find_anim_prop(layer, element, prop)
+}
+
+// ufbx.c:33155-33156 `ufbx_evaluate_prop` / `ufbx_evaluate_prop_flags`: NO
+// shims — their `_len` impls are DEFERRED(m9) (see above).
+
+// ufbx.c:33157 `ufbx_find_prop_texture` (impl: native/api.rs `find_prop_texture`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_prop_texture(
+    material: *const crate::generated::Material,
+    name: *const u8,
+) -> *mut crate::generated::Texture {
+    crate::native::api::find_prop_texture(material, name)
+}
+
+// ufbx.c:33158 `ufbx_find_shader_prop` (impl: native/api.rs `find_shader_prop`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_shader_prop(
+    shader: *const crate::generated::Shader,
+    name: *const u8,
+) -> crate::prelude::String {
+    crate::native::api::find_shader_prop(shader, name)
+}
+
+// ufbx.c:33159 `ufbx_find_shader_prop_bindings`
+// (impl: native/api.rs `find_shader_prop_bindings`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_shader_prop_bindings(
+    shader: *const crate::generated::Shader,
+    name: *const u8,
+) -> crate::prelude::List<crate::generated::ShaderPropBinding> {
+    crate::native::api::find_shader_prop_bindings(shader, name)
+}
+
+// ufbx.c:33160 `ufbx_find_shader_texture_input`
+// (impl: native/api.rs `find_shader_texture_input`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_find_shader_texture_input(
+    shader: *const crate::generated::ShaderTexture,
+    name: *const u8,
+) -> *mut crate::generated::ShaderTextureInput {
+    crate::native::api::find_shader_texture_input(shader, name)
+}
+
+// ufbx.c:33161 `ufbx_dom_find` (impl: native/api.rs `dom_find`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_dom_find(
+    parent: *const crate::generated::DomNode,
+    name: *const u8,
+) -> *mut crate::generated::DomNode {
+    crate::native::api::dom_find(parent, name)
+}
+
+// -- Catch API (ufbx.c:33163-33179): non-catch wrappers passing `panic == NULL`
+// to their `ufbx_catch_*` counterparts. Each rides its impl's cfg / DEFERRED
+// state.
+
+// ufbx.c:33165-33167 `ufbx_triangulate_face` (impl: native/api.rs
+// `triangulate_face`; DEFERRED(m9) when `feature = "triangulation"`).
+#[cfg(not(feature = "triangulation"))]
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_triangulate_face(
+    indices: *mut u32,
+    num_indices: usize,
+    mesh: *const crate::generated::Mesh,
+    face: crate::generated::Face,
+) -> u32 {
+    crate::native::api::triangulate_face(indices, num_indices, mesh, face)
+}
+
+// `ufbx_compute_topology` (ufbx.c:33168): NO shim — DEFERRED(m9).
+
+// ufbx.c:33171-33173 `ufbx_topo_next_vertex_edge` (impl: native/api.rs
+// `topo_next_vertex_edge`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_topo_next_vertex_edge(
+    topo: *const crate::generated::TopoEdge,
+    num_topo: usize,
+    index: u32,
+) -> u32 {
+    crate::native::api::topo_next_vertex_edge(topo, num_topo, index)
+}
+
+// ufbx.c:33174-33176 `ufbx_topo_prev_vertex_edge` (impl: native/api.rs
+// `topo_prev_vertex_edge`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_topo_prev_vertex_edge(
+    topo: *const crate::generated::TopoEdge,
+    num_topo: usize,
+    index: u32,
+) -> u32 {
+    crate::native::api::topo_prev_vertex_edge(topo, num_topo, index)
+}
+
+// ufbx.c:33177-33179 `ufbx_get_weighted_face_normal` (impl: native/api.rs
+// `get_weighted_face_normal`)
+#[no_mangle]
+pub unsafe extern "C" fn ufbx_get_weighted_face_normal(
+    positions: *const crate::generated::VertexVec3,
+    face: crate::generated::Face,
+) -> crate::generated::Vec3 {
+    crate::native::api::get_weighted_face_normal(positions, face)
 }
