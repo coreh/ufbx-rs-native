@@ -22,18 +22,30 @@ jobs:
           name: hashes
           path: build/hashes.txt
 
+  fmt:
+    name: Check formatting
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo fmt
+        working-directory: rust
+        run: cargo fmt --check
+
+  bindings:
+    name: Check generated bindings
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate and diff against committed
+        run: |
+          ./rust/regen.sh
+          git diff --exit-code rust/ufbx/src/generated.rs rust/ufbx/tests/layout.rs
+
   rust_unit:
     name: Run Rust tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Check formatting
-        working-directory: rust
-        run: cargo fmt --check
-      - name: Check generated bindings are clean
-        run: |
-          ./rust/regen.sh
-          git diff --exit-code rust/ufbx/src/generated.rs rust/ufbx/tests/layout.rs
       - name: Unit tests + struct layout checks
         working-directory: rust
         run: cargo test
