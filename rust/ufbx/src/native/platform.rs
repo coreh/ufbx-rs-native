@@ -84,7 +84,9 @@ macro_rules! ufbxi_regression_assert {
 #[cfg(not(feature = "regression"))]
 macro_rules! ufbxi_regression_assert {
     // C: `(void)0` — the condition tokens are dropped unexpanded, never evaluated.
-    ($($tt:tt)*) => { () };
+    ($($tt:tt)*) => {
+        ()
+    };
 }
 pub(crate) use ufbxi_regression_assert;
 
@@ -97,7 +99,9 @@ macro_rules! ufbxi_dev_assert {
 #[cfg(not(any(feature = "regression", feature = "dev")))]
 macro_rules! ufbxi_dev_assert {
     // C: `(void)0` — the condition tokens are dropped unexpanded, never evaluated.
-    ($($tt:tt)*) => { () };
+    ($($tt:tt)*) => {
+        ()
+    };
 }
 pub(crate) use ufbxi_dev_assert;
 
@@ -107,7 +111,9 @@ pub(crate) use ufbxi_dev_assert;
 // The reason is a plain string operand in C (`0 && reason`), never a format
 // string — pass it through `"{}"` so `{`/`}` in the literal stay literal.
 macro_rules! ufbxi_unreachable {
-    ($reason:expr) => { $crate::native::platform::ufbx_assert!(false, "{}", $reason) };
+    ($reason:expr) => {
+        $crate::native::platform::ufbx_assert!(false, "{}", $reason)
+    };
 }
 pub(crate) use ufbxi_unreachable;
 
@@ -115,27 +121,35 @@ pub(crate) use ufbxi_unreachable;
 
 // ufbx.c:578-585 `ufbxi_maybe_null` (identity branch, ufbx.c:583)
 macro_rules! ufbxi_maybe_null {
-    ($ptr:expr) => { $ptr };
+    ($ptr:expr) => {
+        $ptr
+    };
 }
 pub(crate) use ufbxi_maybe_null;
 
 // ufbx.c:578-585 `ufbxi_analysis_assert` (identity branch, ufbx.c:584: `(void)0`)
 macro_rules! ufbxi_analysis_assert {
     // Condition tokens dropped unexpanded, never evaluated (matches `(void)0`).
-    ($($tt:tt)*) => { () };
+    ($($tt:tt)*) => {
+        ()
+    };
 }
 pub(crate) use ufbxi_analysis_assert;
 
 // ufbx.c:587-591 `ufbxi_maybe_uninit` (non-analysis branch, ufbx.c:590:
 // expands to `(value)` — cond and def are dropped unexpanded, never evaluated)
 macro_rules! ufbxi_maybe_uninit {
-    ($cond:expr, $value:expr, $def:expr) => { $value };
+    ($cond:expr, $value:expr, $def:expr) => {
+        $value
+    };
 }
 pub(crate) use ufbxi_maybe_uninit;
 
 // ufbx.c:452-456 `ufbxi_ignore(cond)` — evaluate and discard.
 macro_rules! ufbxi_ignore {
-    ($cond:expr) => { { let _ = $cond; } };
+    ($cond:expr) => {{
+        let _ = $cond;
+    }};
 }
 pub(crate) use ufbxi_ignore;
 
@@ -178,16 +192,24 @@ pub(crate) type AtomicCounter = core::sync::atomic::AtomicUsize;
 // Keep call sites where C has them; optimizer-only, cannot affect oracle output.
 #[cfg(feature = "nightly")]
 #[inline(always)]
-pub(crate) fn likely(b: bool) -> bool { core::hint::likely(b) }
+pub(crate) fn likely(b: bool) -> bool {
+    core::hint::likely(b)
+}
 #[cfg(feature = "nightly")]
 #[inline(always)]
-pub(crate) fn unlikely(b: bool) -> bool { core::hint::unlikely(b) }
+pub(crate) fn unlikely(b: bool) -> bool {
+    core::hint::unlikely(b)
+}
 #[cfg(not(feature = "nightly"))]
 #[inline(always)]
-pub(crate) fn likely(b: bool) -> bool { b }
+pub(crate) fn likely(b: bool) -> bool {
+    b
+}
 #[cfg(not(feature = "nightly"))]
 #[inline(always)]
-pub(crate) fn unlikely(b: bool) -> bool { b }
+pub(crate) fn unlikely(b: bool) -> bool {
+    b
+}
 
 // Layout parity with the C `size_t` counter (refcount header layout depends on
 // it). Size equality is guaranteed for `AtomicUsize`; the alignment check is the
@@ -277,7 +299,11 @@ pub(crate) const MIN_THREADED_ASCII_VALUES: usize = 2;
 // C also forces 2 under `UFBX_DEBUG_BINARY_SEARCH` (no cargo feature).
 #[inline(always)]
 pub(crate) const fn clamp_linear_threshold(v: usize) -> usize {
-    if cfg!(feature = "regression") { 2 } else { v }
+    if cfg!(feature = "regression") {
+        2
+    } else {
+        v
+    }
 }
 
 // ufbx.c:1036-1040 `UFBXI_IS_REGRESSION` (runtime-visible, e.g. ufbx.c:7330)
@@ -289,8 +315,11 @@ pub(crate) const IS_REGRESSION: bool = false;
 // -- Alignment
 
 // ufbx.c:858-860 `UFBX_MAXIMUM_ALIGNMENT` (user override unsupported)
-pub(crate) const MAXIMUM_ALIGNMENT: usize =
-    if size_of::<*const u8>() > 8 { size_of::<*const u8>() } else { 8 };
+pub(crate) const MAXIMUM_ALIGNMENT: usize = if size_of::<*const u8>() > 8 {
+    size_of::<*const u8>()
+} else {
+    8
+};
 
 // ufbx.c:862-873 `UFBXI_UINTPTR_SIZE`
 // C: "CHERI lies about UINTPTR_MAX" — C derives this from `UINTPTR_MAX`
@@ -304,7 +333,10 @@ pub(crate) const UINTPTR_SIZE: usize = size_of::<usize>();
 // C computes in unsigned (`1000000u`), which wraps — keep wrapping semantics.
 #[inline(always)]
 pub(crate) const fn pack_version(major: u32, minor: u32, patch: u32) -> u32 {
-    major.wrapping_mul(1000000).wrapping_add(minor.wrapping_mul(1000)).wrapping_add(patch)
+    major
+        .wrapping_mul(1000000)
+        .wrapping_add(minor.wrapping_mul(1000))
+        .wrapping_add(patch)
 }
 
 // ufbx.h:270 `UFBX_HEADER_VERSION`
@@ -552,32 +584,76 @@ pub(crate) fn sub_ptr<T>(ptr: *mut T, offset: usize) -> *mut T {
 
 // ufbx.c:1103 `ufbxi_min32`
 #[inline(always)]
-pub(crate) fn min32(a: u32, b: u32) -> u32 { if a < b { a } else { b } }
+pub(crate) fn min32(a: u32, b: u32) -> u32 {
+    if a < b {
+        a
+    } else {
+        b
+    }
+}
 // ufbx.c:1104 `ufbxi_max32`
 #[inline(always)]
-pub(crate) fn max32(a: u32, b: u32) -> u32 { if a < b { b } else { a } }
+pub(crate) fn max32(a: u32, b: u32) -> u32 {
+    if a < b {
+        b
+    } else {
+        a
+    }
+}
 // ufbx.c:1105 `ufbxi_min64`
 #[inline(always)]
-pub(crate) fn min64(a: u64, b: u64) -> u64 { if a < b { a } else { b } }
+pub(crate) fn min64(a: u64, b: u64) -> u64 {
+    if a < b {
+        a
+    } else {
+        b
+    }
+}
 // ufbx.c:1106 `ufbxi_max64`
 #[inline(always)]
-pub(crate) fn max64(a: u64, b: u64) -> u64 { if a < b { b } else { a } }
+pub(crate) fn max64(a: u64, b: u64) -> u64 {
+    if a < b {
+        b
+    } else {
+        a
+    }
+}
 // ufbx.c:1107 `ufbxi_min_sz`
 #[inline(always)]
-pub(crate) fn min_sz(a: usize, b: usize) -> usize { if a < b { a } else { b } }
+pub(crate) fn min_sz(a: usize, b: usize) -> usize {
+    if a < b {
+        a
+    } else {
+        b
+    }
+}
 // ufbx.c:1108 `ufbxi_max_sz`
 #[inline(always)]
-pub(crate) fn max_sz(a: usize, b: usize) -> usize { if a < b { b } else { a } }
+pub(crate) fn max_sz(a: usize, b: usize) -> usize {
+    if a < b {
+        b
+    } else {
+        a
+    }
+}
 // ufbx.c:1109 `ufbxi_min_real`
 // NaN-parity: `a < b ? a : b` verbatim — NOT `f64::min` (trap #6).
 #[inline(always)]
 pub(crate) fn min_real(a: crate::prelude::Real, b: crate::prelude::Real) -> crate::prelude::Real {
-    if a < b { a } else { b }
+    if a < b {
+        a
+    } else {
+        b
+    }
 }
 // ufbx.c:1110 `ufbxi_max_real`
 #[inline(always)]
 pub(crate) fn max_real(a: crate::prelude::Real, b: crate::prelude::Real) -> crate::prelude::Real {
-    if a < b { b } else { a }
+    if a < b {
+        b
+    } else {
+        a
+    }
 }
 
 // ufbx.c:1112-1119 `ufbxi_f64_to_i32`
@@ -593,7 +669,11 @@ pub(crate) fn f64_to_i32(value: f64) -> i32 {
     if math::fabs(value) <= i32::MAX as f64 {
         value as i32
     } else {
-        if value >= 0.0 { i32::MAX } else { i32::MIN }
+        if value >= 0.0 {
+            i32::MAX
+        } else {
+            i32::MIN
+        }
     }
 }
 
@@ -612,7 +692,11 @@ pub(crate) fn f64_to_i64(value: f64) -> i64 {
     if math::fabs(value) <= i64::MAX as f64 {
         value as i64
     } else {
-        if value >= 0.0 { i64::MAX } else { i64::MIN }
+        if value >= 0.0 {
+            i64::MAX
+        } else {
+            i64::MIN
+        }
     }
 }
 
@@ -656,7 +740,9 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
     let mut base = 0usize;
     while base < size {
         let mut i_end = base + block_size;
-        if i_end > size { i_end = size; }
+        if i_end > size {
+            i_end = size;
+        }
         let mut i = base + 1;
         while i < i_end {
             let mut j = i;
@@ -664,7 +750,9 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
             while j != base {
                 let a: *const T = &*src;
                 let b: *const T = dst.add(j - 1);
-                if !cmp_lambda(a, b) { break; }
+                if !cmp_lambda(a, b) {
+                    break;
+                }
                 *dst.add(j) = *dst.add(j - 1);
                 j -= 1;
             }
@@ -675,7 +763,9 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
     }
     // Merge sort ping-ponging between `m_data` and `m_tmp`
     while block_size < size {
-        let swap = dst; dst = src; src = swap;
+        let swap = dst;
+        dst = src;
+        src = swap;
         let mut base = 0usize;
         while base < size {
             let mut i = base;
@@ -683,8 +773,12 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
             let mut j = i_end;
             let mut j_end = j + block_size;
             let mut k = base;
-            if i_end > size { i_end = size; }
-            if j_end > size { j_end = size; }
+            if i_end > size {
+                i_end = size;
+            }
+            if j_end > size {
+                j_end = size;
+            }
             // C: `(mi_i < mi_i_end) & (mi_j < mi_j_end)` — non-short-circuit.
             while (i < i_end) & (j < j_end) {
                 let a: *const T = src.add(j);
@@ -698,8 +792,16 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
                 }
                 k += 1;
             }
-            while i < i_end { *dst.add(k) = *src.add(i); k += 1; i += 1; }
-            while j < j_end { *dst.add(k) = *src.add(j); k += 1; j += 1; }
+            while i < i_end {
+                *dst.add(k) = *src.add(i);
+                k += 1;
+                i += 1;
+            }
+            while j < j_end {
+                *dst.add(k) = *src.add(j);
+                k += 1;
+                j += 1;
+            }
             base += block_size * 2;
         }
         block_size *= 2;
@@ -732,12 +834,19 @@ pub(crate) unsafe fn macro_lower_bound_eq<T>(
     while hi - lo > linear_size {
         let mid = lo + (hi - lo) / 2;
         let a: *const T = data.add(mid);
-        if cmp_lambda(a) { lo = mid + 1; } else { hi = mid + 1; }
+        if cmp_lambda(a) {
+            lo = mid + 1;
+        } else {
+            hi = mid + 1;
+        }
     }
     // Linearly scan until we find the edge
     while lo < hi {
         let a: *const T = data.add(lo);
-        if eq_lambda(a) { *result_ptr = lo; break; }
+        if eq_lambda(a) {
+            *result_ptr = lo;
+            break;
+        }
         lo += 1;
     }
 }
@@ -761,7 +870,10 @@ pub(crate) unsafe fn macro_upper_bound_eq<T>(
     let mut step = 1usize;
     while step < 100 && hi - lo > step {
         let a: *const T = data.add(lo + step);
-        if !eq_lambda(a) { hi = lo + step; break; }
+        if !eq_lambda(a) {
+            hi = lo + step;
+            break;
+        }
         lo += step;
         step *= 2;
     }
@@ -769,12 +881,18 @@ pub(crate) unsafe fn macro_upper_bound_eq<T>(
     while hi - lo > linear_size {
         let mid = lo + (hi - lo) / 2;
         let a: *const T = data.add(mid);
-        if eq_lambda(a) { lo = mid + 1; } else { hi = mid + 1; }
+        if eq_lambda(a) {
+            lo = mid + 1;
+        } else {
+            hi = mid + 1;
+        }
     }
     // Linearly scan until we find the edge
     while lo < hi {
         let a: *const T = data.add(lo);
-        if !eq_lambda(a) { break; }
+        if !eq_lambda(a) {
+            break;
+        }
         lo += 1;
     }
     *result_ptr = lo;
@@ -812,7 +930,9 @@ pub(crate) unsafe fn stable_sort(
     let mut base = 0usize;
     while base < size {
         let mut i_end = base + block_size;
-        if i_end > size { i_end = size; }
+        if i_end > size {
+            i_end = size;
+        }
         let mut i = base + 1;
         while i < i_end {
             // Early-out (the macro variant lacks this):
@@ -831,13 +951,23 @@ pub(crate) unsafe fn stable_sort(
             // memcpy(src, dst + i * stride, stride);
             core::ptr::copy_nonoverlapping(dst.add(i * stride) as *const u8, src, stride);
             // memcpy(dst + i * stride, dst + j * stride, stride);
-            core::ptr::copy_nonoverlapping(dst.add(j * stride) as *const u8, dst.add(i * stride), stride);
+            core::ptr::copy_nonoverlapping(
+                dst.add(j * stride) as *const u8,
+                dst.add(i * stride),
+                stride,
+            );
             while j != base {
                 let a = src as *const c_void;
                 let b = dst.add((j - 1) * stride);
-                if !less_fn(less_user, a, b as *const c_void) { break; }
+                if !less_fn(less_user, a, b as *const c_void) {
+                    break;
+                }
                 // memcpy(dst + j * stride, dst + (j - 1) * stride, stride);
-                core::ptr::copy_nonoverlapping(dst.add((j - 1) * stride) as *const u8, dst.add(j * stride), stride);
+                core::ptr::copy_nonoverlapping(
+                    dst.add((j - 1) * stride) as *const u8,
+                    dst.add(j * stride),
+                    stride,
+                );
                 j -= 1;
             }
             // memcpy(dst + j * stride, src, stride);
@@ -848,7 +978,9 @@ pub(crate) unsafe fn stable_sort(
     }
     // Merge sort ping-ponging between `data` and `tmp`
     while block_size < size {
-        let swap = dst; dst = src; src = swap;
+        let swap = dst;
+        dst = src;
+        src = swap;
         let mut base = 0usize;
         while base < size {
             let mut i = base;
@@ -856,8 +988,12 @@ pub(crate) unsafe fn stable_sort(
             let mut j = i_end;
             let mut j_end = j + block_size;
             let mut k = base;
-            if i_end > size { i_end = size; }
-            if j_end > size { j_end = size; }
+            if i_end > size {
+                i_end = size;
+            }
+            if j_end > size {
+                j_end = size;
+            }
             // C: `(i < i_end) & (j < j_end)` — non-short-circuit.
             while (i < i_end) & (j < j_end) {
                 let a = src.add(j * stride);
@@ -874,10 +1010,18 @@ pub(crate) unsafe fn stable_sort(
 
             // Bulk-memcpy merge tails (the macro variant uses element loops):
             // memcpy(dst + k * stride, src + i * stride, (i_end - i) * stride);
-            core::ptr::copy_nonoverlapping(src.add(i * stride) as *const u8, dst.add(k * stride), (i_end - i) * stride);
+            core::ptr::copy_nonoverlapping(
+                src.add(i * stride) as *const u8,
+                dst.add(k * stride),
+                (i_end - i) * stride,
+            );
             if j < j_end {
                 // memcpy(dst + (k + (i_end - i)) * stride, src + j * stride, (j_end - j) * stride);
-                core::ptr::copy_nonoverlapping(src.add(j * stride) as *const u8, dst.add((k + (i_end - i)) * stride), (j_end - j) * stride);
+                core::ptr::copy_nonoverlapping(
+                    src.add(j * stride) as *const u8,
+                    dst.add((k + (i_end - i)) * stride),
+                    (j_end - j) * stride,
+                );
             }
             base += block_size * 2;
         }
@@ -899,7 +1043,9 @@ pub(crate) unsafe fn unstable_sort(
     less_fn: LessFn,
     less_user: *mut c_void,
 ) {
-    if size <= 1 { return; }
+    if size <= 1 {
+        return;
+    }
 
     let data = in_data as *mut u8;
     let mut start = (size - 1) >> 1;
@@ -909,12 +1055,30 @@ pub(crate) unsafe fn unstable_sort(
         // C: `while ((child = root*2 + 1) <= end)` — assignment decomposed.
         loop {
             let child = root * 2 + 1;
-            if !(child <= end) { break; }
-            let mut next = if less_fn(less_user, data.add(child * stride) as *const c_void, data.add(root * stride) as *const c_void) { root } else { child };
-            if child + 1 <= end && less_fn(less_user, data.add(next * stride) as *const c_void, data.add((child + 1) * stride) as *const c_void) {
+            if !(child <= end) {
+                break;
+            }
+            let mut next = if less_fn(
+                less_user,
+                data.add(child * stride) as *const c_void,
+                data.add(root * stride) as *const c_void,
+            ) {
+                root
+            } else {
+                child
+            };
+            if child + 1 <= end
+                && less_fn(
+                    less_user,
+                    data.add(next * stride) as *const c_void,
+                    data.add((child + 1) * stride) as *const c_void,
+                )
+            {
                 next = child + 1;
             }
-            if next == root { break; }
+            if next == root {
+                break;
+            }
             swap(data.add(root * stride), data.add(next * stride), stride);
             root = next;
         }
@@ -968,71 +1132,105 @@ pub(crate) mod math {
     // ufbx.c:259 `ufbx_sqrt`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
-    pub(crate) fn sqrt(x: f64) -> f64 { x.sqrt() }
+    pub(crate) fn sqrt(x: f64) -> f64 {
+        x.sqrt()
+    }
 
     // ufbx.c:262 `ufbx_sin`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
-    pub(crate) fn sin(x: f64) -> f64 { x.sin() }
+    pub(crate) fn sin(x: f64) -> f64 {
+        x.sin()
+    }
 
     // ufbx.c:263 `ufbx_cos`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
-    pub(crate) fn cos(x: f64) -> f64 { x.cos() }
+    pub(crate) fn cos(x: f64) -> f64 {
+        x.cos()
+    }
 
     // ufbx.c:264 `ufbx_tan`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
-    pub(crate) fn tan(x: f64) -> f64 { x.tan() }
+    pub(crate) fn tan(x: f64) -> f64 {
+        x.tan()
+    }
 
     // ufbx.c:265 `ufbx_asin`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
-    pub(crate) fn asin(x: f64) -> f64 { x.asin() }
+    pub(crate) fn asin(x: f64) -> f64 {
+        x.asin()
+    }
 
     // ufbx.c:266 `ufbx_acos`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
-    pub(crate) fn acos(x: f64) -> f64 { x.acos() }
+    pub(crate) fn acos(x: f64) -> f64 {
+        x.acos()
+    }
 
     // ufbx.c:267 `ufbx_atan`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
-    pub(crate) fn atan(x: f64) -> f64 { x.atan() }
+    pub(crate) fn atan(x: f64) -> f64 {
+        x.atan()
+    }
 
     // ufbx.c:268 `ufbx_atan2(y, x)`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
-    pub(crate) fn atan2(y: f64, x: f64) -> f64 { y.atan2(x) }
+    pub(crate) fn atan2(y: f64, x: f64) -> f64 {
+        y.atan2(x)
+    }
 
     // ufbx.c:261 `ufbx_pow(x, y)`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
-    pub(crate) fn pow(x: f64, y: f64) -> f64 { x.powf(y) }
+    pub(crate) fn pow(x: f64, y: f64) -> f64 {
+        x.powf(y)
+    }
 
     // ufbx.c:270 `ufbx_fmin` — ported from ufbx_math.c:1866-1869
     // (the oracle builds link extra/ufbx_math.c, see module comment).
     // C: `return a < b ? a : b;` — verbatim ternary; NaN semantics differ from
     // libm/std `fmin`/`f64::min` (fmin(2.0, NaN) here is NaN, std's is 2.0).
     #[inline(always)]
-    pub(crate) fn fmin(a: f64, b: f64) -> f64 { if a < b { a } else { b } }
+    pub(crate) fn fmin(a: f64, b: f64) -> f64 {
+        if a < b {
+            a
+        } else {
+            b
+        }
+    }
 
     // ufbx.c:271 `ufbx_fmax` — ported from ufbx_math.c:1871-1874
     // C: `return a < b ? b : a;` — verbatim ternary; same NaN caveat as `fmin`.
     #[inline(always)]
-    pub(crate) fn fmax(a: f64, b: f64) -> f64 { if a < b { b } else { a } }
+    pub(crate) fn fmax(a: f64, b: f64) -> f64 {
+        if a < b {
+            b
+        } else {
+            a
+        }
+    }
 
     // ufbx.c:260 `ufbx_fabs`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness
     // (trivially bit-exact already: sign-bit clear).
     #[inline(always)]
-    pub(crate) fn fabs(x: f64) -> f64 { x.abs() }
+    pub(crate) fn fabs(x: f64) -> f64 {
+        x.abs()
+    }
 
     // ufbx.c:269 `ufbx_copysign(x, y)`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness
     // (trivially bit-exact already: sign-bit transfer).
     #[inline(always)]
-    pub(crate) fn copysign(x: f64, y: f64) -> f64 { x.copysign(y) }
+    pub(crate) fn copysign(x: f64, y: f64) -> f64 {
+        x.copysign(y)
+    }
 
     // ufbx.c:272 `ufbx_nextafter(x, y)`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port
@@ -1040,9 +1238,17 @@ pub(crate) mod math {
     // it for all non-trap cases (NaN -> x + y, x == y -> x, step toward y).
     #[inline(always)]
     pub(crate) fn nextafter(x: f64, y: f64) -> f64 {
-        if x.is_nan() || y.is_nan() { return x + y; }
-        if x == y { return x; }
-        if y > x { x.next_up() } else { x.next_down() }
+        if x.is_nan() || y.is_nan() {
+            return x + y;
+        }
+        if x == y {
+            return x;
+        }
+        if y > x {
+            x.next_up()
+        } else {
+            x.next_down()
+        }
     }
 
     // ufbx.c:273 `ufbx_rint`
@@ -1051,22 +1257,30 @@ pub(crate) mod math {
     // NEVER `f64::round` (half-away-from-zero); on the keyframe-time
     // quantization path straight into the hash oracle (PORTING.md "Floats").
     #[inline(always)]
-    pub(crate) fn rint(x: f64) -> f64 { x.round_ties_even() }
+    pub(crate) fn rint(x: f64) -> f64 {
+        x.round_ties_even()
+    }
 
     // ufbx.c:274 `ufbx_floor`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
-    pub(crate) fn floor(x: f64) -> f64 { x.floor() }
+    pub(crate) fn floor(x: f64) -> f64 {
+        x.floor()
+    }
 
     // ufbx.c:275 `ufbx_ceil`
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
-    pub(crate) fn ceil(x: f64) -> f64 { x.ceil() }
+    pub(crate) fn ceil(x: f64) -> f64 {
+        x.ceil()
+    }
 
     // ufbx.c:276 `ufbx_isnan` (C returns int; used only as a truth value)
     // TODO(ufbx_math): replace with extra/ufbx_math.c port for bit-exactness.
     #[inline(always)]
-    pub(crate) fn isnan(x: f64) -> bool { x.is_nan() }
+    pub(crate) fn isnan(x: f64) -> bool {
+        x.is_nan()
+    }
 }
 
 #[cfg(test)]
@@ -1097,10 +1311,14 @@ mod tests {
         // construction; spot-check the table math for a few values.
         for &v in &[1u32, 2, 3, 0x1234, 0x8000_0000, 0xFFFF_FFFF] {
             let mut x = v;
-            x |= x >> 1; x |= x >> 2; x |= x >> 4; x |= x >> 8; x |= x >> 16;
+            x |= x >> 1;
+            x |= x >> 2;
+            x |= x >> 4;
+            x |= x >> 8;
+            x |= x >> 16;
             const TABLE: [u8; 32] = [
-                31, 22, 30, 21, 18, 10, 29, 2, 20, 17, 15, 13, 9, 6, 28, 1,
-                23, 19, 11, 3, 16, 14, 7, 24, 12, 4, 8, 25, 5, 26, 27, 0,
+                31, 22, 30, 21, 18, 10, 29, 2, 20, 17, 15, 13, 9, 6, 28, 1, 23, 19, 11, 3, 16, 14,
+                7, 24, 12, 4, 8, 25, 5, 26, 27, 0,
             ];
             let expect = TABLE[(x.wrapping_mul(0x07c4_acdd) >> 27) as usize] as u32;
             assert_eq!(lzcnt32(v), expect);
@@ -1111,9 +1329,8 @@ mod tests {
     fn test_read_unaligned_le() {
         // Offset by 1 to force unaligned access.
         let buf: [u8; 17] = [
-            0xFF,
-            0x78, 0x56, 0x34, 0x12, 0xEF, 0xBE, 0xAD, 0xDE,
-            0x00, 0x00, 0x80, 0x3F, // 1.0f LE
+            0xFF, 0x78, 0x56, 0x34, 0x12, 0xEF, 0xBE, 0xAD, 0xDE, 0x00, 0x00, 0x80,
+            0x3F, // 1.0f LE
             0x01, 0x02, 0x03, 0x04,
         ];
         unsafe {
@@ -1160,7 +1377,9 @@ mod tests {
         // src = dst - 5, 16-byte ranges overlap. Must behave like the C SSE
         // branch: full load, then full store.
         let mut buf = [0u8; 32];
-        for (i, b) in buf.iter_mut().enumerate() { *b = i as u8; }
+        for (i, b) in buf.iter_mut().enumerate() {
+            *b = i as u8;
+        }
         let mut expect = buf;
         let snapshot: [u8; 16] = buf[3..19].try_into().unwrap();
         expect[8..24].copy_from_slice(&snapshot);
@@ -1349,32 +1568,51 @@ mod utility_tests {
         StableFunction,
         UnstableFunction,
     }
-    const SORT_MODES: [SortMode; 3] =
-        [SortMode::StableMacro, SortMode::StableFunction, SortMode::UnstableFunction];
+    const SORT_MODES: [SortMode; 3] = [
+        SortMode::StableMacro,
+        SortMode::StableFunction,
+        SortMode::UnstableFunction,
+    ];
 
     // test/unit_tests.c:32-36 `uint_less`
-    unsafe extern "C" fn uint_less(_user: *mut c_void, va: *const c_void, vb: *const c_void) -> bool {
+    unsafe extern "C" fn uint_less(
+        _user: *mut c_void,
+        va: *const c_void,
+        vb: *const c_void,
+    ) -> bool {
         let a = *(va as *const u32);
         let b = *(vb as *const u32);
         a < b
     }
 
     // test/unit_tests.c:38-42 `pair_less_a`
-    unsafe extern "C" fn pair_less_a(_user: *mut c_void, va: *const c_void, vb: *const c_void) -> bool {
+    unsafe extern "C" fn pair_less_a(
+        _user: *mut c_void,
+        va: *const c_void,
+        vb: *const c_void,
+    ) -> bool {
         let a = *(va as *const UintPair);
         let b = *(vb as *const UintPair);
         a.a < b.a
     }
 
     // test/unit_tests.c:44-48 `pair_less_b`
-    unsafe extern "C" fn pair_less_b(_user: *mut c_void, va: *const c_void, vb: *const c_void) -> bool {
+    unsafe extern "C" fn pair_less_b(
+        _user: *mut c_void,
+        va: *const c_void,
+        vb: *const c_void,
+    ) -> bool {
         let a = *(va as *const UintPair);
         let b = *(vb as *const UintPair);
         a.b < b.b
     }
 
     // test/unit_tests.c:50-54 `str_less`
-    unsafe extern "C" fn str_less(_user: *mut c_void, va: *const c_void, vb: *const c_void) -> bool {
+    unsafe extern "C" fn str_less(
+        _user: *mut c_void,
+        va: *const c_void,
+        vb: *const c_void,
+    ) -> bool {
         let a = *(va as *const *const c_char);
         let b = *(vb as *const *const c_char);
         libc::strcmp(a, b) < 0
@@ -1413,7 +1651,12 @@ mod utility_tests {
     }
 
     // test/unit_tests.c:74-90 `sort_pairs_by_a`
-    fn sort_pairs_by_a(mode: SortMode, linear_size: usize, data: &mut [UintPair], tmp: &mut [UintPair]) {
+    fn sort_pairs_by_a(
+        mode: SortMode,
+        linear_size: usize,
+        data: &mut [UintPair],
+        tmp: &mut [UintPair],
+    ) {
         let size = data.len();
         unsafe {
             match mode {
@@ -1445,7 +1688,12 @@ mod utility_tests {
     }
 
     // test/unit_tests.c:92-108 `sort_pairs_by_b`
-    fn sort_pairs_by_b(mode: SortMode, linear_size: usize, data: &mut [UintPair], tmp: &mut [UintPair]) {
+    fn sort_pairs_by_b(
+        mode: SortMode,
+        linear_size: usize,
+        data: &mut [UintPair],
+        tmp: &mut [UintPair],
+    ) {
         let size = data.len();
         unsafe {
             match mode {
@@ -1527,7 +1775,12 @@ mod utility_tests {
     }
 
     // test/unit_tests.c:137-151 `sort_strings`
-    fn sort_strings(mode: SortMode, linear_size: usize, data: &mut [*const c_char], tmp: &mut [*const c_char]) {
+    fn sort_strings(
+        mode: SortMode,
+        linear_size: usize,
+        data: &mut [*const c_char],
+        tmp: &mut [*const c_char],
+    ) {
         let size = data.len();
         unsafe {
             match mode {
@@ -1753,7 +2006,10 @@ mod utility_tests {
         let mut state = 0xC0FFEEu32;
         for &size in &[0usize, 1, 2, 3, 7, 64, 200] {
             let base: Vec<UintPair> = (0..size)
-                .map(|i| UintPair { a: xorshift32(&mut state) % 8, b: i as u32 })
+                .map(|i| UintPair {
+                    a: xorshift32(&mut state) % 8,
+                    b: i as u32,
+                })
                 .collect();
             let mut m = base.clone();
             let mut f = base.clone();

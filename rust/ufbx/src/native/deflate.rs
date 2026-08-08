@@ -99,8 +99,8 @@ pub(crate) struct BitStream {
     pub progress_total: u64,
     pub progress_interval: usize,
 
-    pub bits: u64,    // < Buffered bits
-    pub left: usize,  // < Number of valid low bits in `bits`
+    pub bits: u64,   // < Buffered bits
+    pub left: usize, // < Number of valid low bits in `bits`
 
     // Progress tracking, maybe `NULL` it not requested
     pub progress_cb: RawProgressCb,
@@ -198,8 +198,8 @@ pub(crate) const HUFF_UNINITIALIZED_SYM: HuffSym = 0x0220;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct HuffTree {
-    pub fast_sym: [HuffSym; HUFF_FAST_SIZE],      // < Lookup from N bytes to symbol information
-    pub long_sym: [HuffSym; HUFF_MAX_LONG_SYMS],  // < Fast long symbol lookup
+    pub fast_sym: [HuffSym; HUFF_FAST_SIZE], // < Lookup from N bytes to symbol information
+    pub long_sym: [HuffSym; HUFF_MAX_LONG_SYMS], // < Fast long symbol lookup
     pub sorted_to_sym: [HuffSym; HUFF_MAX_VALUE], // < Symbol information per sorted index
 
     pub extra_shift_base: [u32; HUFF_MAX_EXTRA_SYMS], // < [0:6] shift [16:32] base value
@@ -343,8 +343,7 @@ pub(crate) unsafe fn bit_stream_init(s: *mut BitStream, input: *const InflateInp
     };
     (*s).chunk_begin = (*input).data as *const u8;
     (*s).chunk_ptr = (*input).data as *const u8;
-    (*s).chunk_end =
-        add_ptr((*input).data as *mut u8, max_sz(8, data_size) - 8) as *const u8;
+    (*s).chunk_end = add_ptr((*input).data as *mut u8, max_sz(8, data_size) - 8) as *const u8;
     (*s).chunk_real_end = add_ptr((*input).data as *mut u8, data_size) as *const u8;
     (*s).input_left = (*input).total_size - data_size;
 
@@ -605,15 +604,18 @@ pub(crate) unsafe fn huff_build_imp(
 
             if count > 0 && bits > fast_bits && bits - fast_bits <= HUFF_MAX_LONG_BITS {
                 let shift = bits - fast_bits;
-                let last_inclusive = if num_codes_left == 0 { (1u32 << shift) - 1u32 } else { 0u32 };
+                let last_inclusive = if num_codes_left == 0 {
+                    (1u32 << shift) - 1u32
+                } else {
+                    0u32
+                };
                 let first_prefix = code >> shift;
                 let last_prefix = (code + count + last_inclusive) >> shift;
                 let mask = (1u32 << shift) - 1u32;
                 let half_step = 1u32 << (shift - 1u32);
                 for prefix in first_prefix..last_prefix {
                     let rev_prefix = bit_reverse(prefix, fast_bits);
-                    (*tree).fast_sym[rev_prefix as usize] =
-                        (mask | (long_offset << 8)) as HuffSym;
+                    (*tree).fast_sym[rev_prefix as usize] = (mask | (long_offset << 8)) as HuffSym;
                     long_offset += half_step;
                 }
 
@@ -1254,8 +1256,8 @@ pub(crate) unsafe fn inflate_block_slow(
         let sym0_value = huff_sym_value(sym0);
         let len_shift_base = (*trees).lit_length().extra_shift_base[sym0_value as usize];
         let len_mask = (*trees).lit_length().extra_mask[sym0_value as usize];
-        let length =
-            (len_shift_base >> 16) + (wrap_shr64(sym_bits, len_shift_base) & len_mask as u64) as u32;
+        let length = (len_shift_base >> 16)
+            + (wrap_shr64(sym_bits, len_shift_base) & len_mask as u64) as u32;
 
         let sym1: HuffSym = huff_decode_bits((*trees).dist(), bits, fast_bits, fast_mask);
         ufbxi_regression_assert!(sym1 != HUFF_UNINITIALIZED_SYM);
@@ -1323,7 +1325,7 @@ pub(crate) unsafe fn inflate_block_slow(
 
 // ufbx.c:2906 `ufbx_static_assert(inflate_huff_fast_bits, ...)`
 const _: () = assert!(HUFF_FAST_BITS <= 11); // `fast lit, fast len, slow dist` in 56 bits
-// ufbx.c:2907 `ufbx_static_assert(inflate_huff_long_bits, ...)`
+                                             // ufbx.c:2907 `ufbx_static_assert(inflate_huff_long_bits, ...)`
 const _: () = assert!(HUFF_FAST_BITS + HUFF_MAX_LONG_BITS >= 15); // Largest code fits in a single long lookup
 
 // ufbx.c:2909-3091 `ufbxi_inflate_block_fast`

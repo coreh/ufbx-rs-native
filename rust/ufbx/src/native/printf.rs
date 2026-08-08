@@ -36,19 +36,29 @@ pub(crate) enum PrintArg {
 }
 
 impl From<i32> for PrintArg {
-    fn from(v: i32) -> PrintArg { PrintArg::Int(v) }
+    fn from(v: i32) -> PrintArg {
+        PrintArg::Int(v)
+    }
 }
 impl From<u32> for PrintArg {
-    fn from(v: u32) -> PrintArg { PrintArg::Uint(v) }
+    fn from(v: u32) -> PrintArg {
+        PrintArg::Uint(v)
+    }
 }
 impl From<usize> for PrintArg {
-    fn from(v: usize) -> PrintArg { PrintArg::Size(v) }
+    fn from(v: usize) -> PrintArg {
+        PrintArg::Size(v)
+    }
 }
 impl From<*const u8> for PrintArg {
-    fn from(v: *const u8) -> PrintArg { PrintArg::Str(v) }
+    fn from(v: *const u8) -> PrintArg {
+        PrintArg::Str(v)
+    }
 }
 impl From<*mut u8> for PrintArg {
-    fn from(v: *mut u8) -> PrintArg { PrintArg::Str(v) }
+    fn from(v: *mut u8) -> PrintArg {
+        PrintArg::Str(v)
+    }
 }
 impl From<&'static str> for PrintArg {
     // Convenience for NUL-terminated static literals at call sites
@@ -57,7 +67,10 @@ impl From<&'static str> for PrintArg {
     // implicitly, Rust ones do not, and `print_append` scans to NUL when the
     // width is unbounded (`%s` without `.*`).
     fn from(v: &'static str) -> PrintArg {
-        debug_assert!(v.ends_with('\0'), "PrintArg %s literals must be \\0-terminated");
+        debug_assert!(
+            v.ends_with('\0'),
+            "PrintArg %s literals must be \\0-terminated"
+        );
         PrintArg::Str(v.as_ptr())
     }
 }
@@ -69,25 +82,37 @@ impl PrintArg {
     fn as_int(self) -> i32 {
         match self {
             PrintArg::Int(v) => v,
-            _ => { ufbxi_unreachable!("Bad printf format"); 0 }
+            _ => {
+                ufbxi_unreachable!("Bad printf format");
+                0
+            }
         }
     }
     fn as_u32(self) -> u32 {
         match self {
             PrintArg::Uint(v) => v,
-            _ => { ufbxi_unreachable!("Bad printf format"); 0 }
+            _ => {
+                ufbxi_unreachable!("Bad printf format");
+                0
+            }
         }
     }
     fn as_size(self) -> usize {
         match self {
             PrintArg::Size(v) => v,
-            _ => { ufbxi_unreachable!("Bad printf format"); 0 }
+            _ => {
+                ufbxi_unreachable!("Bad printf format");
+                0
+            }
         }
     }
     fn as_str(self) -> *const u8 {
         match self {
             PrintArg::Str(v) => v,
-            _ => { ufbxi_unreachable!("Bad printf format"); b"\0".as_ptr() }
+            _ => {
+                ufbxi_unreachable!("Bad printf format");
+                b"\0".as_ptr()
+            }
         }
     }
 }
@@ -120,13 +145,24 @@ pub(crate) const PRINT_STRING: u32 = 0x2;
 pub(crate) const PRINT_SIZE_T: u32 = 0x10;
 
 // ufbx.c:3292-3305 `ufbxi_print_append`
-pub(crate) unsafe fn print_append(buf: *mut PrintBuffer, min_width: usize, max_width: usize, str: *const u8) {
+pub(crate) unsafe fn print_append(
+    buf: *mut PrintBuffer,
+    min_width: usize,
+    max_width: usize,
+    str: *const u8,
+) {
     let mut width: usize = 0;
     while width < max_width {
-        if *str.add(width) == 0 { break; }
+        if *str.add(width) == 0 {
+            break;
+        }
         width += 1;
     }
-    let pad = if min_width > width { min_width - width } else { 0 };
+    let pad = if min_width > width {
+        min_width - width
+    } else {
+        0
+    };
     for _i in 0..pad {
         if (*buf).pos < (*buf).length {
             *(*buf).dst.add((*buf).pos) = b' ';
@@ -151,7 +187,9 @@ pub(crate) unsafe fn print_format_int(mut buffer: *mut u8, mut value: u64) -> *m
         value = value / 10;
         buffer = buffer.sub(1);
         *buffer = b'0' + digit as u8;
-        if !(value > 0) { break; }
+        if !(value > 0) {
+            break;
+        }
     }
     buffer
 }
@@ -166,7 +204,10 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
     while *p != 0 {
         // C: `if (*p == '%' && *++p != '%')` — the increment happens only when
         // `*p == '%'`; on `%%` the else-branch then emits the second '%'.
-        if *p == b'%' && { p = p.add(1); *p != b'%' } {
+        if *p == b'%' && {
+            p = p.add(1);
+            *p != b'%'
+        } {
             let mut min_width: usize = 0;
             let mut max_width: usize = usize::MAX;
             if *p == b'*' {
@@ -180,14 +221,21 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
             }
             let mut flags: u32 = 0;
             match *p {
-                b'z' => { p = p.add(1); flags |= PRINT_SIZE_T; }
+                b'z' => {
+                    p = p.add(1);
+                    flags |= PRINT_SIZE_T;
+                }
                 _ => {}
             }
             let spec = *p;
             p = p.add(1);
             match spec {
-                b'u' => { flags |= PRINT_UNSIGNED; }
-                b's' => { flags |= PRINT_STRING; }
+                b'u' => {
+                    flags |= PRINT_UNSIGNED;
+                }
+                b's' => {
+                    flags |= PRINT_STRING;
+                }
                 _ => {}
             }
             if (flags & PRINT_STRING) != 0 {
@@ -213,7 +261,11 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
         }
     }
     if (*buf).length != 0 && !(*buf).dst.is_null() {
-        let end = if (*buf).pos <= (*buf).length - 1 { (*buf).pos } else { (*buf).length - 1 };
+        let end = if (*buf).pos <= (*buf).length - 1 {
+            (*buf).pos
+        } else {
+            (*buf).length - 1
+        };
         *(*buf).dst.add(end) = b'\0';
     }
 }
@@ -223,7 +275,11 @@ mod tests {
     use super::*;
 
     unsafe fn fmt(buf: &mut [u8], fmt: &str, args: &[PrintArg]) -> (usize, Vec<u8>) {
-        let mut pb = PrintBuffer { dst: buf.as_mut_ptr(), length: buf.len(), pos: 0 };
+        let mut pb = PrintBuffer {
+            dst: buf.as_mut_ptr(),
+            length: buf.len(),
+            pos: 0,
+        };
         let fmt_nul: Vec<u8> = fmt.as_bytes().iter().copied().chain([0u8]).collect();
         vprint(&mut pb, fmt_nul.as_ptr(), args);
         let nul = buf.iter().position(|&b| b == 0).unwrap();
@@ -234,7 +290,11 @@ mod tests {
     fn test_vprint_basic() {
         unsafe {
             let mut buf = [0xAAu8; 64];
-            let (pos, out) = fmt(&mut buf, "hello %u world %s", &[PrintArg::Uint(1234), PrintArg::Str(b"str\0".as_ptr())]);
+            let (pos, out) = fmt(
+                &mut buf,
+                "hello %u world %s",
+                &[PrintArg::Uint(1234), PrintArg::Str(b"str\0".as_ptr())],
+            );
             assert_eq!(out, b"hello 1234 world str");
             assert_eq!(pos, 20);
         }
@@ -244,7 +304,11 @@ mod tests {
     fn test_vprint_zu_and_percent() {
         unsafe {
             let mut buf = [0u8; 64];
-            let (_, out) = fmt(&mut buf, "%zu%%%u", &[PrintArg::Size(usize::MAX), PrintArg::Uint(0)]);
+            let (_, out) = fmt(
+                &mut buf,
+                "%zu%%%u",
+                &[PrintArg::Size(usize::MAX), PrintArg::Uint(0)],
+            );
             let expect = format!("{}%0", usize::MAX);
             assert_eq!(out, expect.as_bytes());
         }
@@ -259,7 +323,11 @@ mod tests {
             assert_eq!(out, b"   42:");
             // "%.*s" — bound a non-NUL-terminated string.
             let mut buf = [0u8; 64];
-            let (_, out) = fmt(&mut buf, "(%.*s)", &[PrintArg::Int(3), PrintArg::Str(b"abcdef\0".as_ptr())]);
+            let (_, out) = fmt(
+                &mut buf,
+                "(%.*s)",
+                &[PrintArg::Int(3), PrintArg::Str(b"abcdef\0".as_ptr())],
+            );
             assert_eq!(out, b"(abc)");
         }
     }

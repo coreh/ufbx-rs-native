@@ -42,7 +42,11 @@ pub(crate) struct Bigint {
 // ufbx.c:1363-1367 `ufbxi_bigint_make`
 // C aggregate init `{ limbs, (uint32_t)capacity }` zero-fills `length`.
 pub(crate) fn bigint_make(limbs: *mut BigintLimb, capacity: usize) -> Bigint {
-    Bigint { limbs, capacity: capacity as u32, length: 0 }
+    Bigint {
+        limbs,
+        capacity: capacity as u32,
+        length: 0,
+    }
 }
 
 // ufbx.c:1369 `#define ufbxi_bigint_array(arr) ufbxi_bigint_make((arr), sizeof(arr) / sizeof(*(arr)))`
@@ -58,10 +62,34 @@ pub(crate) use bigint_array;
 
 // ufbx.c:1371-1376 `ufbxi_pow5_tab`
 pub(crate) static POW5_TAB: [u64; 28] = [
-    0x1, 0x5, 0x19, 0x7d, 0x271, 0xc35, 0x3d09, 0x1312d, 0x5f5e1,
-    0x1dcd65, 0x9502f9, 0x2e90edd, 0xe8d4a51, 0x48c27395, 0x16bcc41e9, 0x71afd498d,
-    0x2386f26fc1, 0xb1a2bc2ec5, 0x3782dace9d9, 0x1158e460913d, 0x56bc75e2d631, 0x1b1ae4d6e2ef5,
-    0x878678326eac9, 0x2a5a058fc295ed, 0xd3c21bcecceda1, 0x422ca8b0a00a425, 0x14adf4b7320334b9, 0x6765c793fa10079d,
+    0x1,
+    0x5,
+    0x19,
+    0x7d,
+    0x271,
+    0xc35,
+    0x3d09,
+    0x1312d,
+    0x5f5e1,
+    0x1dcd65,
+    0x9502f9,
+    0x2e90edd,
+    0xe8d4a51,
+    0x48c27395,
+    0x16bcc41e9,
+    0x71afd498d,
+    0x2386f26fc1,
+    0xb1a2bc2ec5,
+    0x3782dace9d9,
+    0x1158e460913d,
+    0x56bc75e2d631,
+    0x1b1ae4d6e2ef5,
+    0x878678326eac9,
+    0x2a5a058fc295ed,
+    0xd3c21bcecceda1,
+    0x422ca8b0a00a425,
+    0x14adf4b7320334b9,
+    0x6765c793fa10079d,
 ];
 
 // ufbx.c:1378-1380 `ufbxi_pow10_tab_f64`
@@ -72,7 +100,11 @@ pub(crate) static POW10_TAB_F64: [f64; 23] = [
 
 // ufbx.c:1382-1402 `ufbxi_bigint_mad`
 #[inline(never)]
-pub(crate) unsafe fn bigint_mad(bigint: *mut Bigint, multiplicand: BigintAccum, addend: BigintAccum) {
+pub(crate) unsafe fn bigint_mad(
+    bigint: *mut Bigint,
+    multiplicand: BigintAccum,
+    addend: BigintAccum,
+) {
     ufbxi_dev_assert!((multiplicand | addend) >> (BIGINT_ACCUM_BITS - 1) == 0);
     let mut b = *bigint;
     let m_lo = multiplicand as BigintLimb;
@@ -106,7 +138,9 @@ pub(crate) unsafe fn bigint_div(q: *mut Bigint, u: *mut Bigint, v: *mut Bigint) 
     let un = (*u).limbs;
     let vn = (*v).limbs;
     ufbxi_dev_assert!(
-        n >= 2 && m >= 1 && v_hi >> (BIGINT_LIMB_BITS - 1) != 0
+        n >= 2
+            && m >= 1
+            && v_hi >> (BIGINT_LIMB_BITS - 1) != 0
             && *un.add((n + m - 1) as usize) >> (BIGINT_LIMB_BITS - 1) == 0
     );
     *un.add((n + m) as usize) = 0;
@@ -193,8 +227,12 @@ pub(crate) unsafe fn bigint_shift_left(bigint: *mut Bigint, amount: u32) {
     // here `b.length - 1` underflows (debug panic / wild index in release).
     // Unreachable from all callers (they always shift a nonzero bigint), so
     // divergence-in-the-unreachable is accepted per PORTING.md ground rule 4.
-    (*bigint).length +=
-        words + if *b.limbs.add((b.length - 1) as usize) >> 1 >> bits_down != 0 { 1 } else { 0 };
+    (*bigint).length += words
+        + if *b.limbs.add((b.length - 1) as usize) >> 1 >> bits_down != 0 {
+            1
+        } else {
+            0
+        };
     *b.limbs.add(b.length as usize) = 0;
     if b.length <= 3 && words <= 3 {
         let l0: BigintLimb = *b.limbs.add(0);
@@ -212,8 +250,8 @@ pub(crate) unsafe fn bigint_shift_left(bigint: *mut Bigint, amount: u32) {
         let mut i = b.length + 1;
         while i > 1 {
             i -= 1;
-            *b.limbs.add((i + words) as usize) =
-                (*b.limbs.add(i as usize) << bits) | (*b.limbs.add((i - 1) as usize) >> 1 >> bits_down);
+            *b.limbs.add((i + words) as usize) = (*b.limbs.add(i as usize) << bits)
+                | (*b.limbs.add((i - 1) as usize) >> 1 >> bits_down);
         }
         *b.limbs.add(words as usize) = *b.limbs.add(0) << bits;
         for i in 0..words {
@@ -224,7 +262,11 @@ pub(crate) unsafe fn bigint_shift_left(bigint: *mut Bigint, amount: u32) {
 
 // ufbx.c:1490-1492 `ufbxi_bigint_top_limb` (takes the bigint by value, as C does)
 pub(crate) unsafe fn bigint_top_limb(b: Bigint, index: u32) -> BigintLimb {
-    if index < b.length { *b.limbs.add((b.length - 1 - index) as usize) } else { 0 }
+    if index < b.length {
+        *b.limbs.add((b.length - 1 - index) as usize)
+    } else {
+        0
+    }
 }
 
 // ufbx.c:1494-1514 `ufbxi_bigint_extract_high`
@@ -233,7 +275,11 @@ pub(crate) unsafe fn bigint_top_limb(b: Bigint, index: u32) -> BigintLimb {
 // `result` has its top 32 bits nonzero and `shift < 32` — the shifts below are
 // in-range exactly when C's are (out-of-range would be UB in C too).
 #[inline(never)]
-pub(crate) unsafe fn bigint_extract_high(b: Bigint, p_exponent: *mut i32, p_tail: *mut bool) -> u64 {
+pub(crate) unsafe fn bigint_extract_high(
+    b: Bigint,
+    p_exponent: *mut i32,
+    p_tail: *mut bool,
+) -> u64 {
     ufbxi_dev_assert!(b.length != 0);
     let mut result: u64 = 0;
     let limb_count: u32 = 64 / BIGINT_LIMB_BITS;
@@ -356,7 +402,11 @@ pub(crate) unsafe fn parse_inf_nan(
                 p = p.add(1);
             }
         } else if scan_ignorecase(p, end, b"inf") {
-            p = p.add(if scan_ignorecase(p.add(3), end, b"inity") { 8 } else { 3 });
+            p = p.add(if scan_ignorecase(p.add(3), end, b"inity") {
+                8
+            } else {
+                3
+            });
             top_bits = 0x7ff0;
         }
     }
@@ -507,7 +557,11 @@ pub(crate) unsafe fn parse_double(
         }
     } else {
         ufbxi_dev_assert!((num_digits as usize) < POW5_TAB.len());
-        bigint_mad(&mut big_mantissa, POW5_TAB[num_digits as usize] << num_digits, digits);
+        bigint_mad(
+            &mut big_mantissa,
+            POW5_TAB[num_digits as usize] << num_digits,
+            digits,
+        );
     }
 
     let mut enc_sign_shift: u32 = 63;
@@ -595,7 +649,11 @@ pub(crate) unsafe fn parse_double(
     } else if dec_exponent > 0 {
         // C: `dec_exponent + (int32_t)(big_mantissa.length - 1) * 9 >= 310`
         if dec_exponent.wrapping_add((big_mantissa.length.wrapping_sub(1)) as i32 * 9) >= 310 {
-            return if negative { -math::INFINITY } else { math::INFINITY };
+            return if negative {
+                -math::INFINITY
+            } else {
+                math::INFINITY
+            };
         }
 
         exponent += dec_exponent;
@@ -607,7 +665,11 @@ pub(crate) unsafe fn parse_double(
 
     let mut mantissa_shift: u32 = 64 - enc_mantissa_bits;
     if exponent > enc_max_exponent {
-        return if negative { -math::INFINITY } else { math::INFINITY };
+        return if negative {
+            -math::INFINITY
+        } else {
+            math::INFINITY
+        };
     } else if exponent <= -enc_max_exponent {
         mantissa_shift += (-enc_max_exponent + 1 - exponent) as u32;
         exponent = -enc_max_exponent + 1;
@@ -621,8 +683,7 @@ pub(crate) unsafe fn parse_double(
     let mut bits: u64 = mantissa;
     // C: `bits += (uint64_t)(exponent + enc_max_exponent - 1) << (enc_mantissa_bits - 1);`
     // (i32 → u64 sign-extends in both languages; the sum wraps in u64).
-    bits = bits
-        .wrapping_add(((exponent + enc_max_exponent - 1) as u64) << (enc_mantissa_bits - 1));
+    bits = bits.wrapping_add(((exponent + enc_max_exponent - 1) as u64) << (enc_mantissa_bits - 1));
     bits |= sign_bit;
 
     if (flags & PARSE_DOUBLE_AS_BINARY32) != 0 {
@@ -692,7 +753,11 @@ pub(crate) unsafe fn parse_int64(str_: *const u8, end: *mut *const u8) -> i64 {
     *end = str_.add(len);
     // C: `negative ? (int64_t)(0 - abs_val) : (int64_t)abs_val;` — the
     // canonical `0u64.wrapping_sub` site (PORTING.md integer table, ufbx.c:1827).
-    if negative { (0u64.wrapping_sub(abs_val)) as i64 } else { abs_val as i64 }
+    if negative {
+        (0u64.wrapping_sub(abs_val)) as i64
+    } else {
+        abs_val as i64
+    }
 }
 
 // ufbx.c:1830-1846 `ufbxi_parse_uint32_radix`
@@ -785,8 +850,16 @@ mod tests {
     // test/unit_tests.c:408-426 `ufbxt_bigint_format`
     unsafe fn bigint_format(bi: Bigint, radix: BigintLimb) -> String {
         let mut limbs = [0 as BigintLimb; 64];
-        core::ptr::copy_nonoverlapping(bi.limbs as *const BigintLimb, limbs.as_mut_ptr(), bi.length as usize);
-        let mut b = Bigint { limbs: limbs.as_mut_ptr(), capacity: 64, length: bi.length };
+        core::ptr::copy_nonoverlapping(
+            bi.limbs as *const BigintLimb,
+            limbs.as_mut_ptr(),
+            bi.length as usize,
+        );
+        let mut b = Bigint {
+            limbs: limbs.as_mut_ptr(),
+            capacity: 64,
+            length: bi.length,
+        };
 
         let digits = b"0123456789abcdef";
 
@@ -811,13 +884,20 @@ mod tests {
     unsafe fn check_bigint(bi: Bigint, expected_: &str) {
         let mut radix: BigintLimb = 10;
         let mut expected = expected_;
-        if expected.as_bytes().len() >= 2 && expected.as_bytes()[0] == b'0' && expected.as_bytes()[1] == b'x' {
+        if expected.as_bytes().len() >= 2
+            && expected.as_bytes()[0] == b'0'
+            && expected.as_bytes()[1] == b'x'
+        {
             radix = 16;
             expected = &expected[2..];
         }
 
         let parsed = bigint_format(bi, radix);
-        assert_eq!(parsed, expected, "ufbxt_check_bigint() fail: got {}, expected {}", parsed, expected);
+        assert_eq!(
+            parsed, expected,
+            "ufbxt_check_bigint() fail: got {}, expected {}",
+            parsed, expected
+        );
 
         // Leading zero is not allowed
         if bi.length > 0 {
@@ -827,7 +907,11 @@ mod tests {
 
     // test/unit_tests.c:450-455 `ufbxt_bigint_copy`
     unsafe fn bigint_copy(dst: *mut Bigint, src: *const Bigint) {
-        core::ptr::copy_nonoverlapping((*src).limbs as *const BigintLimb, (*dst).limbs, (*src).length as usize);
+        core::ptr::copy_nonoverlapping(
+            (*src).limbs as *const BigintLimb,
+            (*dst).limbs,
+            (*src).length as usize,
+        );
         (*dst).length = (*src).length;
         ufbxi_dev_assert!((*dst).capacity > (*src).length);
     }
@@ -848,7 +932,10 @@ mod tests {
             bigint_parse(&mut a, "0xdead00beef00ab00cd00ef0012003400560079009a");
             check_bigint(a, "0xdead00beef00ab00cd00ef0012003400560079009a");
 
-            bigint_parse(&mut a, "0x0000000000000000000000dead00beef00ab00cd00ef0012003400560079009a");
+            bigint_parse(
+                &mut a,
+                "0x0000000000000000000000dead00beef00ab00cd00ef0012003400560079009a",
+            );
             check_bigint(a, "0xdead00beef00ab00cd00ef0012003400560079009a");
         }
     }
@@ -900,10 +987,13 @@ mod tests {
 
             bigint_parse(&mut a, "1");
             bigint_mul_pow5(&mut a, 300);
-            check_bigint(a, concat!(
+            check_bigint(
+                a,
+                concat!(
                 "49090934652977265530957719549862756429752155124994495651115491171871052547217158",
                 "56460097884037331952277183571565131878513167918610424718902807514824108963452253",
-                "10546445986192853894181098439730703830718994140625"));
+                "10546445986192853894181098439730703830718994140625"),
+            );
 
             bigint_parse(&mut a, "123");
             bigint_mul_pow5(&mut a, 0);
@@ -1029,9 +1119,24 @@ mod tests {
             check_bigint_div("123", "10", "12", true);
             check_bigint_div("120", "10", "12", false);
             check_bigint_div("0xdeadbeef", "0x10000", "0xdead", true);
-            check_bigint_div("82718061255302767487140869206996285356581211090087890625", "9094947017729282379150390625", "9094947017729282379150390625", false);
-            check_bigint_div("82718061255302767487140869206996285356581211090087890625", "9094947017729282379150390624", "9094947017729282379150390626", true);
-            check_bigint_div("82718061255302767487140869206996285356581211090087890625", "9094947017729282379150390626", "9094947017729282379150390624", true);
+            check_bigint_div(
+                "82718061255302767487140869206996285356581211090087890625",
+                "9094947017729282379150390625",
+                "9094947017729282379150390625",
+                false,
+            );
+            check_bigint_div(
+                "82718061255302767487140869206996285356581211090087890625",
+                "9094947017729282379150390624",
+                "9094947017729282379150390626",
+                true,
+            );
+            check_bigint_div(
+                "82718061255302767487140869206996285356581211090087890625",
+                "9094947017729282379150390626",
+                "9094947017729282379150390624",
+                true,
+            );
             check_bigint_div(
                 "9173994463960286046443283581092555673948943761249553509941667449694421519688219440078102364094996072628225",
                 "6277101735386680763495507056286727952620534092958556749825",
@@ -1039,15 +1144,21 @@ mod tests {
             check_bigint_div(
                 "0xffffffffffffffffffffffff00000000",
                 "0x8000000000000000ffffffff",
-                "0x1ffffffff", true);
+                "0x1ffffffff",
+                true,
+            );
             check_bigint_div(
                 "0x7fffffff000000010000000000000000",
                 "0x80000000fffffffefffffffe",
-                "0xfffffffc", true);
+                "0xfffffffc",
+                true,
+            );
             check_bigint_div(
                 "0x7fffffff000000010000000000000000",
                 "0x8000000000000001fffffffe",
-                "0xfffffffd", true);
+                "0xfffffffd",
+                true,
+            );
         }
     }
 
@@ -1109,8 +1220,16 @@ mod tests {
         let b = s.as_bytes();
         let prefix = s[..strtod_prefix_len(s)].trim_start();
         // strtod/strtof return 0.0 when no conversion could be performed.
-        let ref_d: f64 = if prefix.is_empty() { 0.0 } else { prefix.parse().unwrap() };
-        let ref_f: f32 = if prefix.is_empty() { 0.0 } else { prefix.parse().unwrap() };
+        let ref_d: f64 = if prefix.is_empty() {
+            0.0
+        } else {
+            prefix.parse().unwrap()
+        };
+        let ref_f: f32 = if prefix.is_empty() {
+            0.0
+        } else {
+            prefix.parse().unwrap()
+        };
         let mut end: *const u8 = core::ptr::null();
         let slow_d = parse_double(b.as_ptr(), b.len(), &mut end, 0);
         let fast_d = parse_double(b.as_ptr(), b.len(), &mut end, PARSE_DOUBLE_ALLOW_FAST_PATH);
@@ -1120,12 +1239,16 @@ mod tests {
             assert!(
                 slow_d == ref_d,
                 "strtod() mismatch (slow): '{}': reference {:e}, ufbxc {:e}",
-                s, ref_d, slow_d
+                s,
+                ref_d,
+                slow_d
             );
             assert!(
                 fast_d == ref_d,
                 "strtod() mismatch (fast): '{}': reference {:e}, ufbxc {:e}",
-                s, ref_d, fast_d
+                s,
+                ref_d,
+                fast_d
             );
         } else {
             assert!(!fast_d.is_finite());
@@ -1135,7 +1258,9 @@ mod tests {
             assert!(
                 slow_f == ref_f,
                 "strtof() mismatch (slow): '{}': reference {:e}, ufbxc {:e}",
-                s, ref_f, slow_f
+                s,
+                ref_f,
+                slow_f
             );
         } else {
             assert!(!slow_f.is_finite());
@@ -1173,8 +1298,12 @@ mod tests {
     }
 
     // test/unit_tests.c:706-712 `TEST_NINES` (5 x 40 nines) / 713-718 `TEST_ZEROS`
-    fn test_nines() -> String { "9".repeat(200) }
-    fn test_zeros() -> String { "0".repeat(200) }
+    fn test_nines() -> String {
+        "9".repeat(200)
+    }
+    fn test_zeros() -> String {
+        "0".repeat(200)
+    }
 
     // test/unit_tests.c:720-762 `test_double_parse`
     #[test]
@@ -1312,7 +1441,10 @@ mod tests {
     // Expensive sweep (~3.7M parses) — ignored in debug builds only; run via
     // `cargo test --release` (or `cargo test -- --ignored`).
     #[test]
-    #[cfg_attr(debug_assertions, ignore = "expensive sweep; run with `cargo test --release`")]
+    #[cfg_attr(
+        debug_assertions,
+        ignore = "expensive sweep; run with `cargo test --release`"
+    )]
     fn test_double_parse_bits() {
         let bits: u32 = 12;
         let max_width: usize = 12;
@@ -1342,7 +1474,10 @@ mod tests {
     // test/unit_tests.c:296-302 `bigdecimal_init` (out-param in C; returned here)
     fn bigdecimal_init(initial: i32) -> Bigdecimal {
         assert!(initial >= 0 && initial <= 9);
-        let mut d = Bigdecimal { digits: [0u8; BIGDECIMAL_DIGITS + 2 + BIGDECIMAL_SUFFIX], length: 1 };
+        let mut d = Bigdecimal {
+            digits: [0u8; BIGDECIMAL_DIGITS + 2 + BIGDECIMAL_SUFFIX],
+            length: 1,
+        };
         d.digits[BIGDECIMAL_DIGITS + 1] = 0; // '\0'
         d.digits[BIGDECIMAL_DIGITS] = b'0' + initial as u8;
         d
@@ -1360,8 +1495,12 @@ mod tests {
     // test/unit_tests.c:312-320 `bigdecimal_string` (returns an interior
     // pointer in C; an owned copy of the same bytes here)
     fn bigdecimal_string(d: &Bigdecimal) -> String {
-        let nul = BIGDECIMAL_DIGITS + 1
-            + d.digits[BIGDECIMAL_DIGITS + 1..].iter().position(|&c| c == 0).unwrap();
+        let nul = BIGDECIMAL_DIGITS
+            + 1
+            + d.digits[BIGDECIMAL_DIGITS + 1..]
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap();
         for i in (1..=d.length).rev() {
             let idx = BIGDECIMAL_DIGITS - i + 1;
             if d.digits[idx] != b'0' {
@@ -1421,7 +1560,10 @@ mod tests {
     // minutes in debug) — ignored in debug builds only; run via
     // `cargo test --release` (or `cargo test -- --ignored`).
     #[test]
-    #[cfg_attr(debug_assertions, ignore = "expensive sweep; run with `cargo test --release`")]
+    #[cfg_attr(
+        debug_assertions,
+        ignore = "expensive sweep; run with `cargo test --release`"
+    )]
     fn test_double_parse_decimal() {
         let max_pow2 = 128;
         let max_pow5 = 128;
@@ -1445,7 +1587,9 @@ mod tests {
                         for exp in min_exp..=max_exp {
                             bigdecimal_suffix(&mut pow5, &format!("e{:+}", exp));
                             let s = bigdecimal_string(&pow5);
-                            unsafe { check_float(&s); }
+                            unsafe {
+                                check_float(&s);
+                            }
                         }
                         bigdecimal_add(&mut pow5, 1);
                     }
@@ -1454,7 +1598,9 @@ mod tests {
                     for exp in min_exp..=max_exp {
                         bigdecimal_suffix(&mut pow5, &format!("e{:+}", exp));
                         let s = bigdecimal_string(&pow5);
-                        unsafe { check_float(&s); }
+                        unsafe {
+                            check_float(&s);
+                        }
                     }
                 }
 

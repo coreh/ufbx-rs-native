@@ -54,11 +54,11 @@ pub(crate) struct BufChunk {
     // supported targets, so a plain `usize` field maps the union.
     pub magic: usize, // < Magic for debugging
 
-    pub size: usize,        // < Size of the chunk `data`, excluding this header
-    pub pushed_pos: usize,  // < Size of valid data when pushed to the list
-    pub next_size: usize,   // < Next geometrically growing chunk size to allocate
+    pub size: usize,       // < Size of the chunk `data`, excluding this header
+    pub pushed_pos: usize, // < Size of valid data when pushed to the list
+    pub next_size: usize,  // < Next geometrically growing chunk size to allocate
     pub padding_pos: usize, // < One past the offset of the most recent `ufbxi_buf_padding`
-    // char data[]; // < Must be aligned to 8 bytes
+                           // char data[]; // < Must be aligned to 8 bytes
 }
 
 // C header size: 3 pointers + union(size_t/void*) + 4 size_t = 8 words.
@@ -199,13 +199,21 @@ pub(crate) unsafe fn push_size_new_block(b: *mut Buf, size: usize) -> *mut c_voi
     // If `size` is larger than `huge_size` don't grow `next_size` geometrically,
     // but use a dedicated allocation.
     if huge {
-        next_size = if !chunk.is_null() { (*chunk).next_size } else { 4096 };
+        next_size = if !chunk.is_null() {
+            (*chunk).next_size
+        } else {
+            4096
+        };
         if next_size > (*(*b).ator).chunk_max {
             next_size = (*(*b).ator).chunk_max;
         }
         chunk_size = size;
     } else {
-        next_size = if !chunk.is_null() { (*chunk).next_size.wrapping_mul(2) } else { 4096 };
+        next_size = if !chunk.is_null() {
+            (*chunk).next_size.wrapping_mul(2)
+        } else {
+            4096
+        };
         if next_size > (*(*b).ator).chunk_max {
             next_size = (*(*b).ator).chunk_max;
         }
@@ -411,7 +419,12 @@ pub(crate) unsafe fn push_size_zero(b: *mut Buf, size: usize, n: usize) -> *mut 
 // ufbx.c:4114-4124 `ufbxi_push_size_copy`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn push_size_copy(b: *mut Buf, size: usize, n: usize, data: *const c_void) -> *mut c_void {
+pub(crate) unsafe fn push_size_copy(
+    b: *mut Buf,
+    size: usize,
+    n: usize,
+    data: *const c_void,
+) -> *mut c_void {
     // Always succeed with an empty non-NULL buffer for empty allocations, even if `data == NULL`
     ufbx_assert!(size > 0);
     if n == 0 {
@@ -429,7 +442,12 @@ pub(crate) unsafe fn push_size_copy(b: *mut Buf, size: usize, n: usize, data: *c
 // ufbx.c:4126-4136 `ufbxi_push_size_copy_fast`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn push_size_copy_fast(b: *mut Buf, size: usize, n: usize, data: *const c_void) -> *mut c_void {
+pub(crate) unsafe fn push_size_copy_fast(
+    b: *mut Buf,
+    size: usize,
+    n: usize,
+    data: *const c_void,
+) -> *mut c_void {
     // Always succeed with an empty non-NULL buffer for empty allocations, even if `data == NULL`
     ufbx_assert!(size > 0);
     if n == 0 {
@@ -599,7 +617,12 @@ pub(crate) unsafe fn pop_size(b: *mut Buf, size: usize, n: usize, dst: *mut c_vo
 
 // ufbx.c:4262-4268 `ufbxi_push_pop_size`
 #[inline(never)]
-pub(crate) unsafe fn push_pop_size(dst: *mut Buf, src: *mut Buf, size: usize, n: usize) -> *mut c_void {
+pub(crate) unsafe fn push_pop_size(
+    dst: *mut Buf,
+    src: *mut Buf,
+    size: usize,
+    n: usize,
+) -> *mut c_void {
     let data = push_size(dst, size, n);
     if data.is_null() {
         return core::ptr::null_mut();
@@ -610,7 +633,12 @@ pub(crate) unsafe fn push_pop_size(dst: *mut Buf, src: *mut Buf, size: usize, n:
 
 // ufbx.c:4270-4276 `ufbxi_push_peek_size`
 #[inline(never)]
-pub(crate) unsafe fn push_peek_size(dst: *mut Buf, src: *mut Buf, size: usize, n: usize) -> *mut c_void {
+pub(crate) unsafe fn push_peek_size(
+    dst: *mut Buf,
+    src: *mut Buf,
+    size: usize,
+    n: usize,
+) -> *mut c_void {
     let data = push_size(dst, size, n);
     if data.is_null() {
         return core::ptr::null_mut();
@@ -818,7 +846,12 @@ mod tests {
         unsafe {
             let mut err = Error::default();
             let mut ator = MaybeUninit::<Allocator>::zeroed();
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), b"test\0".as_ptr());
+            init_ator(
+                &mut err,
+                ator.as_mut_ptr(),
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
             let ator = ator.as_mut_ptr();
             let mut buf = make_buf(ator, false, false);
 
@@ -854,7 +887,12 @@ mod tests {
         unsafe {
             let mut err = Error::default();
             let mut ator = MaybeUninit::<Allocator>::zeroed();
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), b"test\0".as_ptr());
+            init_ator(
+                &mut err,
+                ator.as_mut_ptr(),
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
             let ator = ator.as_mut_ptr();
             let mut buf = make_buf(ator, false, false);
 
@@ -881,7 +919,12 @@ mod tests {
         unsafe {
             let mut err = Error::default();
             let mut ator = MaybeUninit::<Allocator>::zeroed();
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), b"test\0".as_ptr());
+            init_ator(
+                &mut err,
+                ator.as_mut_ptr(),
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
             let ator = ator.as_mut_ptr();
             let mut buf = make_buf(ator, true, false);
 
@@ -905,7 +948,12 @@ mod tests {
         unsafe {
             let mut err = Error::default();
             let mut ator = MaybeUninit::<Allocator>::zeroed();
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), b"test\0".as_ptr());
+            init_ator(
+                &mut err,
+                ator.as_mut_ptr(),
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
             let ator = ator.as_mut_ptr();
             let mut buf = make_buf(ator, false, false);
 
@@ -916,7 +964,8 @@ mod tests {
             }
 
             let src: [u32; 4] = [1, 2, 3, 4];
-            let q = push_size_copy(&mut buf, 4, 4, src.as_ptr() as *const core::ffi::c_void) as *mut u32;
+            let q = push_size_copy(&mut buf, 4, 4, src.as_ptr() as *const core::ffi::c_void)
+                as *mut u32;
             assert!(!q.is_null());
             for i in 0..4 {
                 assert_eq!(*q.add(i), src[i]);
@@ -936,7 +985,12 @@ mod tests {
         unsafe {
             let mut err = Error::default();
             let mut ator = MaybeUninit::<Allocator>::zeroed();
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), b"test\0".as_ptr());
+            init_ator(
+                &mut err,
+                ator.as_mut_ptr(),
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
             let ator = ator.as_mut_ptr();
             let mut buf = make_buf(ator, false, false);
 
@@ -984,7 +1038,12 @@ mod tests {
         unsafe {
             let mut err = Error::default();
             let mut ator = MaybeUninit::<Allocator>::zeroed();
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), b"test\0".as_ptr());
+            init_ator(
+                &mut err,
+                ator.as_mut_ptr(),
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
             let ator = ator.as_mut_ptr();
             let mut buf = make_buf(ator, false, false);
 
@@ -1010,7 +1069,12 @@ mod tests {
         unsafe {
             let mut err = Error::default();
             let mut ator = MaybeUninit::<Allocator>::zeroed();
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), b"test\0".as_ptr());
+            init_ator(
+                &mut err,
+                ator.as_mut_ptr(),
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
             let ator = ator.as_mut_ptr();
             let mut stack = make_buf(ator, false, false);
             let mut result = make_buf(ator, false, false);
@@ -1043,7 +1107,12 @@ mod tests {
         unsafe {
             let mut err = Error::default();
             let mut ator = MaybeUninit::<Allocator>::zeroed();
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), b"test\0".as_ptr());
+            init_ator(
+                &mut err,
+                ator.as_mut_ptr(),
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
             let ator = ator.as_mut_ptr();
             let mut buf = make_buf(ator, false, false);
 
@@ -1071,7 +1140,12 @@ mod tests {
         unsafe {
             let mut err = Error::default();
             let mut ator = MaybeUninit::<Allocator>::zeroed();
-            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), b"test\0".as_ptr());
+            init_ator(
+                &mut err,
+                ator.as_mut_ptr(),
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
             let ator = ator.as_mut_ptr();
             let mut buf = make_buf(ator, true, true);
 

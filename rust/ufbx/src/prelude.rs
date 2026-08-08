@@ -1,19 +1,21 @@
-use std::any::Any;
-use std::{ptr, str, slice};
-use std::marker::PhantomData;
-use std::ops::{Deref, Index};
-use std::alloc::{self,Layout,System,GlobalAlloc};
-use std::ffi::c_void;
-use std::cmp::min;
-use std::io::{Read,Seek,SeekFrom};
-use std::fs::File;
-use std::mem;
-use std::string;
-use std::ptr::NonNull;
-use std::fmt::{self, Debug, Display, Formatter};
-use crate::{OpenFileInfo, RawThreadPool};
-use crate::generated::{RawStream, RawAllocator, RawVertexStream, Progress, ProgressResult, Error, Vec2, Vec3, Vec4};
 use crate::generated::format_error;
+use crate::generated::{
+    Error, Progress, ProgressResult, RawAllocator, RawStream, RawVertexStream, Vec2, Vec3, Vec4,
+};
+use crate::{OpenFileInfo, RawThreadPool};
+use std::alloc::{self, GlobalAlloc, Layout, System};
+use std::any::Any;
+use std::cmp::min;
+use std::ffi::c_void;
+use std::fmt::{self, Debug, Display, Formatter};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::marker::PhantomData;
+use std::mem;
+use std::ops::{Deref, Index};
+use std::ptr::NonNull;
+use std::string;
+use std::{ptr, slice, str};
 
 pub type Real = f64;
 pub type ThreadPoolContext = usize;
@@ -109,7 +111,9 @@ impl<'a, T> IntoIterator for &'a RefList<T> {
     type Item = &'a T;
     type IntoIter = RefIter<'a, T>;
     fn into_iter(self) -> RefIter<'a, T> {
-        RefIter::<'_, T> { inner: self.as_ref().into_iter() }
+        RefIter::<'_, T> {
+            inner: self.as_ref().into_iter(),
+        }
     }
 }
 
@@ -210,8 +214,12 @@ pub struct OptionRef<T> {
 }
 
 impl<T> OptionRef<T> {
-    pub fn is_some(&self) -> bool { self.ptr.is_null() }
-    pub fn is_none(&self) -> bool { !self.ptr.is_null() }
+    pub fn is_some(&self) -> bool {
+        self.ptr.is_null()
+    }
+    pub fn is_none(&self) -> bool {
+        !self.ptr.is_null()
+    }
 
     pub fn as_ref(&self) -> Option<&T> {
         unsafe { self.ptr.as_ref() }
@@ -236,7 +244,11 @@ impl String {
     // `_marker` is private to this module, so aggregate construction is only
     // possible here. `const` so the static `ufbxi_strings[]` table can use it.
     pub(crate) const fn new_c(data: *const u8, length: usize) -> String {
-        String { data, length, _marker: PhantomData }
+        String {
+            data,
+            length,
+            _marker: PhantomData,
+        }
     }
 
     pub(crate) unsafe fn as_static_ref(&self) -> &'static str {
@@ -258,8 +270,12 @@ impl Deref for String {
 }
 
 impl Default for String {
-    fn default () -> String {
-        String{ data: ptr::null(), length: 0, _marker: PhantomData }
+    fn default() -> String {
+        String {
+            data: ptr::null(),
+            length: 0,
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -321,7 +337,7 @@ pub trait AllocatorInterface {
         self.free(ptr, old_layout);
         self.alloc(new_layout)
     }
-    fn free_allocator(&mut self) { }
+    fn free_allocator(&mut self) {}
 }
 
 #[repr(transparent)]
@@ -329,7 +345,9 @@ pub trait AllocatorInterface {
 pub struct Unsafe<T>(T);
 
 impl<T> Unsafe<T> {
-    pub unsafe fn new(t: T) -> Self { Self(t) }
+    pub unsafe fn new(t: T) -> Self {
+        Self(t)
+    }
 }
 
 /// Native-port extension: wrapper for a raw (open, unvalidated) enum value
@@ -346,13 +364,22 @@ pub struct RawEnum<T>(u32, PhantomData<fn() -> T>);
 
 impl<T> RawEnum<T> {
     #[inline(always)]
-    pub fn from_raw(v: u32) -> Self { Self(v, PhantomData) }
+    pub fn from_raw(v: u32) -> Self {
+        Self(v, PhantomData)
+    }
     #[inline(always)]
-    pub fn as_raw(self) -> u32 { self.0 }
+    pub fn as_raw(self) -> u32 {
+        self.0
+    }
 }
 
-impl<T> Unsafe<T> where T: Default {
-    pub fn take(&mut self) -> T { mem::take(&mut self.0) }
+impl<T> Unsafe<T>
+where
+    T: Default,
+{
+    pub fn take(&mut self) -> T {
+        mem::take(&mut self.0)
+    }
 }
 
 pub trait StreamInterface {
@@ -360,19 +387,26 @@ pub trait StreamInterface {
     fn skip(&mut self, bytes: usize) -> bool {
         #![allow(deprecated)]
         unsafe {
-            let mut local_buf: [mem::MaybeUninit<u8>; 512] = mem::MaybeUninit::uninit().assume_init();
+            let mut local_buf: [mem::MaybeUninit<u8>; 512] =
+                mem::MaybeUninit::uninit().assume_init();
             let mut left = bytes;
             while left > 0 {
                 let to_read = min(left, local_buf.len());
-                let num_read = self.read(mem::transmute(&mut local_buf[0..to_read])).unwrap_or(0);
-                if num_read != to_read { return false }
+                let num_read = self
+                    .read(mem::transmute(&mut local_buf[0..to_read]))
+                    .unwrap_or(0);
+                if num_read != to_read {
+                    return false;
+                }
                 left -= num_read
             }
             true
         }
     }
-    fn size(&mut self) -> u64 { 0 }
-    fn close(&mut self) { }
+    fn size(&mut self) -> u64 {
+        0
+    }
+    fn close(&mut self) {}
 }
 
 pub enum Stream {
@@ -387,7 +421,12 @@ unsafe extern "C" fn global_alloc(_user: *mut c_void, size: usize) -> *mut c_voi
     alloc::alloc(layout) as *mut _
 }
 
-unsafe extern "C" fn global_realloc(_user: *mut c_void, ptr: *mut c_void, old_size: usize, new_size: usize) -> *mut c_void {
+unsafe extern "C" fn global_realloc(
+    _user: *mut c_void,
+    ptr: *mut c_void,
+    old_size: usize,
+    new_size: usize,
+) -> *mut c_void {
     let old_layout = Layout::from_size_align(old_size, 8).unwrap();
     alloc::realloc(ptr as *mut _, old_layout, new_size) as *mut _
 }
@@ -402,7 +441,12 @@ unsafe extern "C" fn system_alloc(_user: *mut c_void, size: usize) -> *mut c_voi
     System.alloc(layout) as *mut _
 }
 
-unsafe extern "C" fn system_realloc(_user: *mut c_void, ptr: *mut c_void, old_size: usize, new_size: usize) -> *mut c_void {
+unsafe extern "C" fn system_realloc(
+    _user: *mut c_void,
+    ptr: *mut c_void,
+    old_size: usize,
+    new_size: usize,
+) -> *mut c_void {
     let old_layout = Layout::from_size_align(old_size, 8).unwrap();
     System.realloc(ptr as *mut _, old_layout, new_size) as *mut _
 }
@@ -418,7 +462,12 @@ unsafe extern "C" fn allocator_imp_alloc(user: *mut c_void, size: usize) -> *mut
     ator.alloc(layout) as *mut _
 }
 
-unsafe extern "C" fn allocator_imp_realloc(user: *mut c_void, ptr: *mut c_void, old_size: usize, new_size: usize) -> *mut c_void {
+unsafe extern "C" fn allocator_imp_realloc(
+    user: *mut c_void,
+    ptr: *mut c_void,
+    old_size: usize,
+    new_size: usize,
+) -> *mut c_void {
     let ator: &mut Box<dyn AllocatorInterface> = &mut *(user as *mut Box<dyn AllocatorInterface>);
     let old_layout = Layout::from_size_align(old_size, 8).unwrap();
     let new_layout = Layout::from_size_align(new_size, 8).unwrap();
@@ -445,47 +494,49 @@ pub enum Allocator {
 }
 
 impl Default for Allocator {
-    fn default() -> Self { Allocator::Global }
+    fn default() -> Self {
+        Allocator::Global
+    }
 }
 
 impl Allocator {
     pub(crate) fn from_rust(&self) -> RawAllocator {
         match self {
-        Allocator::Libc => RawAllocator {
-            alloc_fn: None,
-            realloc_fn: None,
-            free_fn: None,
-            free_allocator_fn: None,
-            user: ptr::null::<c_void>() as *mut c_void,
-        },
-        Allocator::Global => RawAllocator {
-            alloc_fn: Some(global_alloc),
-            realloc_fn: Some(global_realloc),
-            free_fn: Some(global_free),
-            free_allocator_fn: None,
-            user: ptr::null::<c_void>() as *mut c_void,
-        },
-        Allocator::System => RawAllocator {
-            alloc_fn: Some(system_alloc),
-            realloc_fn: Some(system_realloc),
-            free_fn: Some(system_free),
-            free_allocator_fn: None,
-            user: ptr::null::<c_void>() as *mut c_void,
-        },
-        _ => panic!("required mutable reference"),
+            Allocator::Libc => RawAllocator {
+                alloc_fn: None,
+                realloc_fn: None,
+                free_fn: None,
+                free_allocator_fn: None,
+                user: ptr::null::<c_void>() as *mut c_void,
+            },
+            Allocator::Global => RawAllocator {
+                alloc_fn: Some(global_alloc),
+                realloc_fn: Some(global_realloc),
+                free_fn: Some(global_free),
+                free_allocator_fn: None,
+                user: ptr::null::<c_void>() as *mut c_void,
+            },
+            Allocator::System => RawAllocator {
+                alloc_fn: Some(system_alloc),
+                realloc_fn: Some(system_realloc),
+                free_fn: Some(system_free),
+                free_allocator_fn: None,
+                user: ptr::null::<c_void>() as *mut c_void,
+            },
+            _ => panic!("required mutable reference"),
         }
     }
     pub(crate) fn from_rust_mut(&mut self) -> RawAllocator {
         match self {
-        Allocator::Box(b) => RawAllocator {
-            alloc_fn: Some(allocator_imp_alloc),
-            realloc_fn: Some(allocator_imp_realloc),
-            free_fn: Some(allocator_imp_free),
-            free_allocator_fn: Some(allocator_imp_box_free_allocator),
-            user: Box::into_raw(Box::new(b)) as *mut _,
-        },
-        Allocator::Raw(raw) => raw.take(),
-        _ => Self::from_rust(self),
+            Allocator::Box(b) => RawAllocator {
+                alloc_fn: Some(allocator_imp_alloc),
+                realloc_fn: Some(allocator_imp_realloc),
+                free_fn: Some(allocator_imp_free),
+                free_allocator_fn: Some(allocator_imp_box_free_allocator),
+                user: Box::into_raw(Box::new(b)) as *mut _,
+            },
+            Allocator::Raw(raw) => raw.take(),
+            _ => Self::from_rust(self),
         }
     }
 }
@@ -496,31 +547,33 @@ pub enum ThreadPool {
 }
 
 impl Default for ThreadPool {
-    fn default() -> Self { ThreadPool::None }
+    fn default() -> Self {
+        ThreadPool::None
+    }
 }
 impl ThreadPool {
     pub(crate) fn from_rust(&self) -> RawThreadPool {
         match self {
-        ThreadPool::None => RawThreadPool {
-            init_fn: None,
-            run_fn: None,
-            wait_fn: None,
-            free_fn: None,
-            user: ptr::null::<c_void>() as *mut c_void,
-        },
-        _ => panic!("required mutable reference"),
+            ThreadPool::None => RawThreadPool {
+                init_fn: None,
+                run_fn: None,
+                wait_fn: None,
+                free_fn: None,
+                user: ptr::null::<c_void>() as *mut c_void,
+            },
+            _ => panic!("required mutable reference"),
         }
     }
     pub(crate) fn from_rust_mut(&mut self) -> RawThreadPool {
         match self {
-        ThreadPool::None => RawThreadPool {
-            init_fn: None,
-            run_fn: None,
-            wait_fn: None,
-            free_fn: None,
-            user: ptr::null::<c_void>() as *mut c_void,
-        },
-        ThreadPool::Raw(raw) => raw.take(),
+            ThreadPool::None => RawThreadPool {
+                init_fn: None,
+                run_fn: None,
+                wait_fn: None,
+                free_fn: None,
+                user: ptr::null::<c_void>() as *mut c_void,
+            },
+            ThreadPool::Raw(raw) => raw.take(),
         }
     }
 }
@@ -539,24 +592,27 @@ impl VertexStream<'_> {
             vertex_count: data.len(),
             vertex_size: mem::size_of::<T>(),
             _marker: PhantomData,
-        }
+        };
     }
 }
 
 impl<'a> FromRust for [VertexStream<'a>] {
     type Result = Vec<RawVertexStream>;
     fn from_rust_mut(&mut self, _arena: &mut Arena) -> Self::Result {
-        self.iter().map(|s| RawVertexStream {
-            data: s.data,
-            vertex_count: s.vertex_count,
-            vertex_size: s.vertex_size,
-        }).collect()
+        self.iter()
+            .map(|s| RawVertexStream {
+                data: s.data,
+                vertex_count: s.vertex_count,
+                vertex_size: s.vertex_size,
+            })
+            .collect()
     }
 }
 
 unsafe extern "C" fn stream_read_read(user: *mut c_void, buf: *mut c_void, size: usize) -> usize {
     let imp = &mut *(user as *mut Box<dyn Read>);
-    imp.read(slice_from_ptr_mut(buf as *mut u8, size)).unwrap_or(usize::MAX)
+    imp.read(slice_from_ptr_mut(buf as *mut u8, size))
+        .unwrap_or(usize::MAX)
 }
 
 unsafe extern "C" fn stream_read_close(user: *mut c_void) {
@@ -565,7 +621,8 @@ unsafe extern "C" fn stream_read_close(user: *mut c_void) {
 
 unsafe extern "C" fn stream_imp_read(user: *mut c_void, buf: *mut c_void, size: usize) -> usize {
     let imp = &mut *(user as *mut Box<dyn StreamInterface>);
-    imp.read(slice_from_ptr_mut(buf as *mut u8, size)).unwrap_or(usize::MAX)
+    imp.read(slice_from_ptr_mut(buf as *mut u8, size))
+        .unwrap_or(usize::MAX)
 }
 
 unsafe extern "C" fn stream_imp_skip(user: *mut c_void, size: usize) -> bool {
@@ -612,9 +669,9 @@ impl<T: Read + Seek> StreamInterface for StreamReadSeek<T> {
         if let Ok(start) = self.0.stream_position() {
             if let Ok(end) = self.0.seek(SeekFrom::End(0)) {
                 if self.0.seek(SeekFrom::Start(start)).is_ok() {
-                    return end - start
+                    return end - start;
                 } else {
-                    return u64::MAX
+                    return u64::MAX;
                 }
             }
         }
@@ -624,12 +681,15 @@ impl<T: Read + Seek> StreamInterface for StreamReadSeek<T> {
 
 impl Stream {
     pub(crate) fn from_rust_mut(&mut self) -> RawStream {
-        let local = mem::replace(self, Stream::Raw(unsafe { Unsafe::new(Default::default()) }));
+        let local = mem::replace(
+            self,
+            Stream::Raw(unsafe { Unsafe::new(Default::default()) }),
+        );
         match local {
             Stream::File(file) => {
                 let mut inner = Stream::Box(Box::new(StreamReadSeek(file)));
                 inner.from_rust_mut()
-            },
+            }
             Stream::Read(b) => RawStream {
                 read_fn: Some(stream_read_read),
                 skip_fn: None,
@@ -649,15 +709,26 @@ impl Stream {
     }
 }
 
-pub unsafe extern "C" fn call_progress_cb<F>(user: *mut c_void, progress: *const Progress) -> RawEnum<ProgressResult>
-    where F: FnMut(&Progress) -> ProgressResult
+pub unsafe extern "C" fn call_progress_cb<F>(
+    user: *mut c_void,
+    progress: *const Progress,
+) -> RawEnum<ProgressResult>
+where
+    F: FnMut(&Progress) -> ProgressResult,
 {
     let func: &mut F = &mut *(user as *mut F);
     RawEnum::<ProgressResult>::from_raw((func)(&*progress) as u32)
 }
 
-pub unsafe extern "C" fn call_open_file_cb<F>(user: *mut c_void, dst: *mut RawStream, path: *const u8, path_len: usize, info: *const OpenFileInfo) -> bool
-    where F: FnMut(&str, &OpenFileInfo) -> Option<Stream>
+pub unsafe extern "C" fn call_open_file_cb<F>(
+    user: *mut c_void,
+    dst: *mut RawStream,
+    path: *const u8,
+    path_len: usize,
+    info: *const OpenFileInfo,
+) -> bool
+where
+    F: FnMut(&str, &OpenFileInfo) -> Option<Stream>,
 {
     let func: &mut F = &mut *(user as *mut F);
 
@@ -675,8 +746,12 @@ pub unsafe extern "C" fn call_open_file_cb<F>(user: *mut c_void, dst: *mut RawSt
     true
 }
 
-pub unsafe extern "C" fn call_close_memory_cb<F>(user: *mut c_void, data: *mut c_void, data_size: usize)
-    where F: FnMut(*mut c_void, usize) -> ()
+pub unsafe extern "C" fn call_close_memory_cb<F>(
+    user: *mut c_void,
+    data: *mut c_void,
+    data_size: usize,
+) where
+    F: FnMut(*mut c_void, usize) -> (),
 {
     let func: &mut F = &mut *(user as *mut F);
     (func)(data, data_size)
@@ -689,7 +764,9 @@ pub struct InlineBuf<T> {
 
 impl<T> Default for InlineBuf<T> {
     fn default() -> Self {
-        Self { data: mem::MaybeUninit::uninit() }
+        Self {
+            data: mem::MaybeUninit::uninit(),
+        }
     }
 }
 
@@ -697,9 +774,12 @@ impl Debug for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         #![allow(deprecated)]
         unsafe {
-            let mut local_buf: [mem::MaybeUninit<u8>; 1024] = mem::MaybeUninit::uninit().assume_init();
+            let mut local_buf: [mem::MaybeUninit<u8>; 1024] =
+                mem::MaybeUninit::uninit().assume_init();
             let length = format_error(mem::transmute(local_buf.as_mut_slice()), self);
-            f.write_str(str::from_utf8_unchecked(mem::transmute(&local_buf[..length])))
+            f.write_str(str::from_utf8_unchecked(mem::transmute(
+                &local_buf[..length],
+            )))
         }
     }
 }
@@ -738,9 +818,7 @@ pub(crate) struct Arena {
 
 impl Arena {
     pub fn new() -> Arena {
-        Arena{
-            items: Vec::new(),
-        }
+        Arena { items: Vec::new() }
     }
 
     #[allow(unused)]
@@ -750,7 +828,9 @@ impl Arena {
         ptr
     }
     pub fn push_vec<T: 'static>(&mut self, vec: Vec<T>) -> *const T {
-        if vec.len() == 0 { return ptr::null(); }
+        if vec.len() == 0 {
+            return ptr::null();
+        }
         let ptr = vec.as_ptr();
         self.items.push(Box::new(vec));
         ptr
@@ -769,7 +849,7 @@ pub fn format_flags(f: &mut fmt::Formatter<'_>, names: &[(&str, u32)], value: u3
     }
 
     if !has_any {
-            write!(f, "NONE")?;
+        write!(f, "NONE")?;
     }
 
     Ok(())
@@ -792,7 +872,11 @@ impl fmt::Display for Vec3 {
             (None, false) => write!(f, "({}, {}, {})", self.x, self.y, self.z),
             (None, true) => write!(f, "({:+}, {:+}, {:+})", self.x, self.y, self.z),
             (Some(p), false) => write!(f, "({1:.0$}, {2:.0$}, {3:.0$})", p, self.x, self.y, self.z),
-            (Some(p), true) => write!(f, "({1:+.0$}, {2:+.0$}, {3:+.0$})", p, self.x, self.y, self.z),
+            (Some(p), true) => write!(
+                f,
+                "({1:+.0$}, {2:+.0$}, {3:+.0$})",
+                p, self.x, self.y, self.z
+            ),
         }
     }
 }
@@ -802,8 +886,16 @@ impl fmt::Display for Vec4 {
         match (f.precision(), f.sign_plus()) {
             (None, false) => write!(f, "({}, {}, {}, {})", self.x, self.y, self.z, self.w),
             (None, true) => write!(f, "({:+}, {:+}, {:+}, {})", self.x, self.y, self.z, self.w),
-            (Some(p), false) => write!(f, "({1:.0$}, {2:.0$}, {3:.0$}, {4:.0$})", p, self.x, self.y, self.z, self.w),
-            (Some(p), true) => write!(f, "({1:+.0$}, {2:+.0$}, {3:+.0$}, {4:+.0$})", p, self.x, self.y, self.z, self.w),
+            (Some(p), false) => write!(
+                f,
+                "({1:.0$}, {2:.0$}, {3:.0$}, {4:.0$})",
+                p, self.x, self.y, self.z, self.w
+            ),
+            (Some(p), true) => write!(
+                f,
+                "({1:+.0$}, {2:+.0$}, {3:+.0$}, {4:+.0$})",
+                p, self.x, self.y, self.z, self.w
+            ),
         }
     }
 }
@@ -846,9 +938,9 @@ impl<'a> FromRust for StringOpt<'a> {
     type Result = RawString;
     fn from_rust(&self, _arena: &mut Arena) -> Self::Result {
         match self {
-        StringOpt::Unset => RawString::default(),
-        StringOpt::Ref(r) => RawString::new(r.as_bytes()),
-        StringOpt::Owned(r) => RawString::new(r.as_bytes()),
+            StringOpt::Unset => RawString::default(),
+            StringOpt::Ref(r) => RawString::new(r.as_bytes()),
+            StringOpt::Owned(r) => RawString::new(r.as_bytes()),
         }
     }
 }
@@ -881,9 +973,9 @@ impl<'a> FromRust for BlobOpt<'a> {
     type Result = RawBlob;
     fn from_rust(&self, _arena: &mut Arena) -> Self::Result {
         match self {
-        BlobOpt::Unset => RawBlob::default(),
-        BlobOpt::Ref(r) => RawBlob::new(r),
-        BlobOpt::Owned(r) => RawBlob::new(r.as_slice()),
+            BlobOpt::Unset => RawBlob::default(),
+            BlobOpt::Ref(r) => RawBlob::new(r),
+            BlobOpt::Owned(r) => RawBlob::new(r.as_slice()),
         }
     }
 }
@@ -924,7 +1016,10 @@ impl<'a, T: FromRust> FromRust for ListOpt<'a, T> {
             ListOpt::Owned(v) => v.iter().map(|v| T::from_rust(v, arena)).collect(),
         };
         let count = items.len();
-        RawList { data: arena.push_vec(items), count }
+        RawList {
+            data: arena.push_vec(items),
+            count,
+        }
     }
 
     fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
@@ -932,12 +1027,17 @@ impl<'a, T: FromRust> FromRust for ListOpt<'a, T> {
             ListOpt::Unset => return RawList::default(),
             ListOpt::Ref(v) => v.iter().map(|v| T::from_rust(v, arena)).collect(),
             ListOpt::Mut(v) => v.into_iter().map(|v| T::from_rust_mut(v, arena)).collect(),
-            ListOpt::Owned(v) => v.into_iter().map(|mut v| T::from_rust_mut(&mut v, arena)).collect(),
+            ListOpt::Owned(v) => v
+                .into_iter()
+                .map(|mut v| T::from_rust_mut(&mut v, arena))
+                .collect(),
         };
         let count = items.len();
-        RawList { data: arena.push_vec(items), count }
+        RawList {
+            data: arena.push_vec(items),
+            count,
+        }
     }
-
 }
 
 impl<T: Copy + 'static> FromRust for T {

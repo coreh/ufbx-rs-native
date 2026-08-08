@@ -52,8 +52,8 @@ use crate::prelude::{Blob, Real, String};
 #[derive(Clone, Copy)]
 pub(crate) struct StringPool {
     pub error: *mut Error,
-    pub buf: Buf,  // < Buffer for the actual string data
-    pub map: Map,  // < Map of `ufbxi_string`
+    pub buf: Buf,            // < Buffer for the actual string data
+    pub map: Map,            // < Map of `ufbxi_string`
     pub initial_size: usize, // < Number of initial entries
     pub temp_str: *mut u8,   // < Temporary string buffer of `temp_cap`
     pub temp_cap: usize,     // < Capacity of the temporary buffer
@@ -117,7 +117,11 @@ pub(crate) unsafe fn get_concat_key(parts: *const String, num_parts: usize) -> u
     let mut part = parts;
     let part_end = parts.add(num_parts);
     while part != part_end {
-        let length = if (*part).length != usize::MAX { (*part).length } else { strlen((*part).data) };
+        let length = if (*part).length != usize::MAX {
+            (*part).length
+        } else {
+            strlen((*part).data)
+        };
         let mut i: usize = 0;
         while i < length {
             shift -= 8;
@@ -135,16 +139,28 @@ pub(crate) unsafe fn get_concat_key(parts: *const String, num_parts: usize) -> u
 
 // ufbx.c:4960-4972 `ufbxi_concat_str_cmp`
 #[inline(never)]
-pub(crate) unsafe fn concat_str_cmp(ref_: *const String, parts: *const String, num_parts: usize) -> i32 {
+pub(crate) unsafe fn concat_str_cmp(
+    ref_: *const String,
+    parts: *const String,
+    num_parts: usize,
+) -> i32 {
     let mut ptr_ = (*ref_).data;
     let end = ptr_.add((*ref_).length);
     // C: `ufbxi_for(const ufbx_string, part, parts, num_parts)`
     let mut part = parts;
     let part_end = parts.add(num_parts);
     while part != part_end {
-        let length = if (*part).length != usize::MAX { (*part).length } else { strlen((*part).data) };
+        let length = if (*part).length != usize::MAX {
+            (*part).length
+        } else {
+            strlen((*part).data)
+        };
         let to_cmp = min_sz(to_size(end.offset_from(ptr_)), length);
-        let cmp = if to_cmp > 0 { memcmp(ptr_, (*part).data, to_cmp) } else { 0 };
+        let cmp = if to_cmp > 0 {
+            memcmp(ptr_, (*part).data, to_cmp)
+        } else {
+            0
+        };
         if cmp != 0 {
             return cmp;
         }
@@ -154,7 +170,11 @@ pub(crate) unsafe fn concat_str_cmp(ref_: *const String, parts: *const String, n
         ptr_ = ptr_.add(length);
         part = part.add(1);
     }
-    if ptr_ == end { 0 } else { 1 }
+    if ptr_ == end {
+        0
+    } else {
+        1
+    }
 }
 
 // ufbx.c:4974-4977 `ufbxi_starts_with`
@@ -167,12 +187,20 @@ pub(crate) unsafe fn starts_with(str_: String, prefix: String) -> bool {
 #[inline(always)]
 pub(crate) unsafe fn ends_with(str_: String, suffix: String) -> bool {
     str_.length >= suffix.length
-        && memcmp(str_.data.add(str_.length - suffix.length), suffix.data, suffix.length) == 0
+        && memcmp(
+            str_.data.add(str_.length - suffix.length),
+            suffix.data,
+            suffix.length,
+        ) == 0
 }
 
 // ufbx.c:4984-4993 `ufbxi_remove_prefix_len`
 #[inline(never)]
-pub(crate) unsafe fn remove_prefix_len(str_: *mut String, prefix: *const u8, prefix_len: usize) -> bool {
+pub(crate) unsafe fn remove_prefix_len(
+    str_: *mut String,
+    prefix: *const u8,
+    prefix_len: usize,
+) -> bool {
     let prefix_str = String::new_c(prefix, prefix_len);
     if starts_with(*str_, prefix_str) {
         (*str_).data = (*str_).data.add(prefix_len);
@@ -184,7 +212,11 @@ pub(crate) unsafe fn remove_prefix_len(str_: *mut String, prefix: *const u8, pre
 
 // ufbx.c:4995-5003 `ufbxi_remove_suffix_len`
 #[inline(never)]
-pub(crate) unsafe fn remove_suffix_len(str_: *mut String, suffix: *const u8, suffix_len: usize) -> bool {
+pub(crate) unsafe fn remove_suffix_len(
+    str_: *mut String,
+    suffix: *const u8,
+    suffix_len: usize,
+) -> bool {
     let suffix_str = String::new_c(suffix, suffix_len);
     if ends_with(*str_, suffix_str) {
         (*str_).length -= suffix_len;
@@ -206,7 +238,11 @@ pub(crate) unsafe fn remove_suffix_c(str_: *mut String, suffix: *const u8) -> bo
 }
 
 // ufbx.c:5015-5020 `ufbxi_map_cmp_string`
-pub(crate) unsafe extern "C" fn map_cmp_string(user: *mut c_void, va: *const c_void, vb: *const c_void) -> i32 {
+pub(crate) unsafe extern "C" fn map_cmp_string(
+    user: *mut c_void,
+    va: *const c_void,
+    vb: *const c_void,
+) -> i32 {
     let _ = user; // (void)user
     let a = va as *const String;
     let b = vb as *const String;
@@ -216,7 +252,14 @@ pub(crate) unsafe extern "C" fn map_cmp_string(user: *mut c_void, va: *const c_v
 // ufbx.c:5022-5026 `ufbxi_safe_string`
 #[inline(always)]
 pub(crate) unsafe fn safe_string(data: *const u8, length: usize) -> String {
-    let str_ = String::new_c(if length > 0 { data } else { EMPTY_CHAR.as_ptr() }, length);
+    let str_ = String::new_c(
+        if length > 0 {
+            data
+        } else {
+            EMPTY_CHAR.as_ptr()
+        },
+        length,
+    );
     str_
 }
 
@@ -273,34 +316,64 @@ pub(crate) unsafe fn sanitize_string(
 ) -> Result<(), Fail> {
     // Handle only invalid cases here
     ufbx_assert!(valid_length < length);
-    ufbxi_check_err_msg!((*pool).error,
+    ufbxi_check_err_msg!(
+        (*pool).error,
         (*pool).error_handling != UnicodeErrorHandling::AbortLoading,
         "Invalid UTF-8",
-        "pool->error_handling != UFBX_UNICODE_ERROR_HANDLING_ABORT_LOADING");
-    ufbxi_check_err!((*pool).error,
-        ufbxi_warnf_imp!((*pool).warnings, WarningType::BadUnicode, !0u32, "Bad UTF-8 string").is_ok(),
-        "ufbxi_warnf_imp(pool->warnings, UFBX_WARNING_BAD_UNICODE, ~0u, \"Bad UTF-8 string\")");
+        "pool->error_handling != UFBX_UNICODE_ERROR_HANDLING_ABORT_LOADING"
+    );
+    ufbxi_check_err!(
+        (*pool).error,
+        ufbxi_warnf_imp!(
+            (*pool).warnings,
+            WarningType::BadUnicode,
+            !0u32,
+            "Bad UTF-8 string"
+        )
+        .is_ok(),
+        "ufbxi_warnf_imp(pool->warnings, UFBX_WARNING_BAD_UNICODE, ~0u, \"Bad UTF-8 string\")"
+    );
 
     let mut index = valid_length;
     let mut dst_len = index;
     if push_both {
         // Copy both the full raw string and the initial valid part
-        ufbxi_check_err!((*pool).error, length <= usize::MAX / 2 - 64,
-            "length <= SIZE_MAX / 2 - 64");
-        ufbxi_check_err!((*pool).error,
-            grow_array::<u8>((*pool).map.ator, &mut (*pool).temp_str, &mut (*pool).temp_cap, length * 2 + 64),
-            "ufbxi_grow_array(pool->map.ator, &pool->temp_str, &pool->temp_cap, length * 2 + 64)");
+        ufbxi_check_err!(
+            (*pool).error,
+            length <= usize::MAX / 2 - 64,
+            "length <= SIZE_MAX / 2 - 64"
+        );
+        ufbxi_check_err!(
+            (*pool).error,
+            grow_array::<u8>(
+                (*pool).map.ator,
+                &mut (*pool).temp_str,
+                &mut (*pool).temp_cap,
+                length * 2 + 64
+            ),
+            "ufbxi_grow_array(pool->map.ator, &pool->temp_str, &pool->temp_cap, length * 2 + 64)"
+        );
         ptr::copy_nonoverlapping(str_, (*pool).temp_str, length);
         *(*pool).temp_str.add(length) = b'\0';
         ptr::copy_nonoverlapping(str_, (*pool).temp_str.add(length + 1), index);
         dst_len += length + 1;
     } else {
         // Copy the initial valid part
-        ufbxi_check_err!((*pool).error, length <= usize::MAX - 64,
-            "length <= SIZE_MAX - 64");
-        ufbxi_check_err!((*pool).error,
-            grow_array::<u8>((*pool).map.ator, &mut (*pool).temp_str, &mut (*pool).temp_cap, length + 64),
-            "ufbxi_grow_array(pool->map.ator, &pool->temp_str, &pool->temp_cap, length + 64)");
+        ufbxi_check_err!(
+            (*pool).error,
+            length <= usize::MAX - 64,
+            "length <= SIZE_MAX - 64"
+        );
+        ufbxi_check_err!(
+            (*pool).error,
+            grow_array::<u8>(
+                (*pool).map.ator,
+                &mut (*pool).temp_str,
+                &mut (*pool).temp_cap,
+                length + 64
+            ),
+            "ufbxi_grow_array(pool->map.ator, &pool->temp_str, &pool->temp_cap, length + 64)"
+        );
         ptr::copy_nonoverlapping(str_, (*pool).temp_str, index);
     }
 
@@ -311,9 +384,16 @@ pub(crate) unsafe fn sanitize_string(
 
         // Not optimal but not the worst thing ever
         if (*pool).temp_cap - dst_len < 16 {
-            ufbxi_check_err!((*pool).error,
-                grow_array::<u8>((*pool).map.ator, &mut (*pool).temp_str, &mut (*pool).temp_cap, dst_len + 16),
-                "ufbxi_grow_array(pool->map.ator, &pool->temp_str, &pool->temp_cap, dst_len + 16)");
+            ufbxi_check_err!(
+                (*pool).error,
+                grow_array::<u8>(
+                    (*pool).map.ator,
+                    &mut (*pool).temp_str,
+                    &mut (*pool).temp_cap,
+                    dst_len + 16
+                ),
+                "ufbxi_grow_array(pool->map.ator, &pool->temp_str, &pool->temp_cap, dst_len + 16)"
+            );
             dst = (*pool).temp_str;
         }
 
@@ -338,7 +418,10 @@ pub(crate) unsafe fn sanitize_string(
             let t0 = *str_.add(index + 1);
             let t1 = *str_.add(index + 2);
             let code = (c as u32) << 16 | (t0 as u32) << 8 | (t1 as u32);
-            if (code & 0xc0c0) == 0x8080 && code >= 0xe0a080 && (code < 0xeda080 || code >= 0xee8080) {
+            if (code & 0xc0c0) == 0x8080
+                && code >= 0xe0a080
+                && (code < 0xeda080 || code >= 0xee8080)
+            {
                 *dst.add(dst_len + 0) = c;
                 *dst.add(dst_len + 1) = t0;
                 *dst.add(dst_len + 2) = t1;
@@ -370,16 +453,28 @@ pub(crate) unsafe fn sanitize_string(
     // as strings are limited to 32-bit length in FBX itself.
     // The only problem case is a massive string that is full of unicode errors, ie.
     // >1GB binary blob, but these should never be sanitized.
-    ufbxi_check_err!((*pool).error, length <= u32::MAX as usize, "length <= UINT32_MAX");
+    ufbxi_check_err!(
+        (*pool).error,
+        length <= u32::MAX as usize,
+        "length <= UINT32_MAX"
+    );
     (*sanitized).raw_data = (*pool).temp_str;
     if push_both {
         // Reserve `UINT32_MAX` for invalid UTF-8 without sanitization
         let utf8_length = dst_len - (length + 1);
-        ufbxi_check_err!((*pool).error, utf8_length < u32::MAX as usize, "utf8_length < UINT32_MAX");
+        ufbxi_check_err!(
+            (*pool).error,
+            utf8_length < u32::MAX as usize,
+            "utf8_length < UINT32_MAX"
+        );
         (*sanitized).raw_length = length as u32;
         (*sanitized).utf8_length = utf8_length as u32;
     } else {
-        ufbxi_check_err!((*pool).error, dst_len <= u32::MAX as usize, "dst_len <= UINT32_MAX");
+        ufbxi_check_err!(
+            (*pool).error,
+            dst_len <= u32::MAX as usize,
+            "dst_len <= UINT32_MAX"
+        );
         (*sanitized).raw_length = dst_len as u32;
         (*sanitized).utf8_length = 0;
     }
@@ -399,9 +494,16 @@ pub(crate) unsafe fn push_sanitized_string(
 ) -> Result<(), Fail> {
     ufbxi_regression_assert!(hash == hash_string(str_, length));
 
-    ufbxi_check_err!((*pool).error, length <= u32::MAX as usize, "length <= UINT32_MAX");
-    ufbxi_check_err!((*pool).error, map_grow::<String>(&mut (*pool).map, (*pool).initial_size),
-        "ufbxi_map_grow(&pool->map, ufbx_string, pool->initial_size)");
+    ufbxi_check_err!(
+        (*pool).error,
+        length <= u32::MAX as usize,
+        "length <= UINT32_MAX"
+    );
+    ufbxi_check_err!(
+        (*pool).error,
+        map_grow::<String>(&mut (*pool).map, (*pool).initial_size),
+        "ufbxi_map_grow(&pool->map, ufbx_string, pool->initial_size)"
+    );
 
     let mut total_data: *const u8 = str_;
     let mut total_length: usize = length;
@@ -418,7 +520,8 @@ pub(crate) unsafe fn push_sanitized_string(
             total_data = (*sanitized).raw_data;
             // C-parity: `sanitized->raw_length + sanitized->utf8_length + 1` is
             // computed in uint32_t (wraps) before widening to size_t.
-            total_length = (*sanitized).raw_length
+            total_length = (*sanitized)
+                .raw_length
                 .wrapping_add((*sanitized).utf8_length)
                 .wrapping_add(1) as usize;
             hash = hash_string(str_, length);
@@ -427,11 +530,19 @@ pub(crate) unsafe fn push_sanitized_string(
 
     let ref_ = String::new_c(total_data, total_length);
 
-    let entry: *mut String = map_find::<String>(&mut (*pool).map, hash, &ref_ as *const String as *const c_void);
+    let entry: *mut String = map_find::<String>(
+        &mut (*pool).map,
+        hash,
+        &ref_ as *const String as *const c_void,
+    );
     if !entry.is_null() {
         (*sanitized).raw_data = (*entry).data;
     } else {
-        let entry = map_insert::<String>(&mut (*pool).map, hash, &ref_ as *const String as *const c_void);
+        let entry = map_insert::<String>(
+            &mut (*pool).map,
+            hash,
+            &ref_ as *const String as *const c_void,
+        );
         ufbxi_check_err!((*pool).error, !entry.is_null(), "entry");
         (*entry).length = total_length;
         let dst: *mut u8 = buf::push::<u8>(&mut (*pool).buf, total_length + 1);
@@ -460,9 +571,12 @@ pub(crate) unsafe fn push_string_imp(
         return EMPTY_CHAR.as_ptr();
     }
 
-    ufbxi_check_return_err!((*pool).error,
-        map_grow::<String>(&mut (*pool).map, (*pool).initial_size), ptr::null(),
-        "ufbxi_map_grow(&pool->map, ufbx_string, pool->initial_size)");
+    ufbxi_check_return_err!(
+        (*pool).error,
+        map_grow::<String>(&mut (*pool).map, (*pool).initial_size),
+        ptr::null(),
+        "ufbxi_map_grow(&pool->map, ufbx_string, pool->initial_size)"
+    );
 
     let mut hash: u32;
     if raw {
@@ -475,9 +589,14 @@ pub(crate) unsafe fn push_string_imp(
             if valid_length < length {
                 // C: `ufbxi_sanitized_string sanitized;` (written in full by
                 // `ufbxi_sanitize_string` before any read).
-                let mut sanitized = SanitizedString { raw_data: ptr::null(), raw_length: 0, utf8_length: 0 };
+                let mut sanitized = SanitizedString {
+                    raw_data: ptr::null(),
+                    raw_length: 0,
+                    utf8_length: 0,
+                };
                 // C: `ufbxi_check_return_err(pool->error, ufbxi_sanitize_string(...), NULL);`
-                if sanitize_string(pool, &mut sanitized, str_, length, valid_length, false).is_err() {
+                if sanitize_string(pool, &mut sanitized, str_, length, valid_length, false).is_err()
+                {
                     return ptr::null();
                 }
                 str_ = sanitized.raw_data;
@@ -490,11 +609,19 @@ pub(crate) unsafe fn push_string_imp(
 
     let ref_ = String::new_c(str_, length);
 
-    let entry: *mut String = map_find::<String>(&mut (*pool).map, hash, &ref_ as *const String as *const c_void);
+    let entry: *mut String = map_find::<String>(
+        &mut (*pool).map,
+        hash,
+        &ref_ as *const String as *const c_void,
+    );
     if !entry.is_null() {
         return (*entry).data;
     }
-    let entry = map_insert::<String>(&mut (*pool).map, hash, &ref_ as *const String as *const c_void);
+    let entry = map_insert::<String>(
+        &mut (*pool).map,
+        hash,
+        &ref_ as *const String as *const c_void,
+    );
     ufbxi_check_return_err!((*pool).error, !entry.is_null(), ptr::null(), "entry");
     (*entry).length = length;
     if copy {
@@ -531,7 +658,11 @@ pub(crate) unsafe fn push_string_place(
 ) -> Result<(), Fail> {
     let mut str_ = *p_str;
     let length = *p_length;
-    ufbxi_check_err!((*pool).error, !str_.is_null() || length == 0, "str || length == 0");
+    ufbxi_check_err!(
+        (*pool).error,
+        !str_.is_null() || length == 0,
+        "str || length == 0"
+    );
     str_ = push_string(pool, str_, length, p_length, raw);
     ufbxi_check_err!((*pool).error, !str_.is_null(), "str");
     *p_str = str_;
@@ -540,19 +671,33 @@ pub(crate) unsafe fn push_string_place(
 
 // ufbx.c:5271-5275 `ufbxi_push_string_place_str`
 #[inline(never)]
-pub(crate) unsafe fn push_string_place_str(pool: *mut StringPool, p_str: *mut String, raw: bool) -> Result<(), Fail> {
+pub(crate) unsafe fn push_string_place_str(
+    pool: *mut StringPool,
+    p_str: *mut String,
+    raw: bool,
+) -> Result<(), Fail> {
     ufbxi_check_err!((*pool).error, !p_str.is_null(), "p_str");
     push_string_place(pool, &mut (*p_str).data, &mut (*p_str).length, raw)
 }
 
 // ufbx.c:5277-5286 `ufbxi_push_string_place_blob`
 #[inline(never)]
-pub(crate) unsafe fn push_string_place_blob(pool: *mut StringPool, p_blob: *mut Blob, raw: bool) -> Result<(), Fail> {
+pub(crate) unsafe fn push_string_place_blob(
+    pool: *mut StringPool,
+    p_blob: *mut Blob,
+    raw: bool,
+) -> Result<(), Fail> {
     if (*p_blob).size == 0 {
         (*p_blob).data = ptr::null();
         return Ok(());
     }
-    (*p_blob).data = push_string(pool, (*p_blob).data, (*p_blob).size, &mut (*p_blob).size, raw);
+    (*p_blob).data = push_string(
+        pool,
+        (*p_blob).data,
+        (*p_blob).size,
+        &mut (*p_blob).size,
+        raw,
+    );
     ufbxi_check_err!((*pool).error, !(*p_blob).data.is_null(), "p_blob->data");
     Ok(())
 }
@@ -572,7 +717,8 @@ pub(crate) unsafe fn push_string_place_blob(pool: *mut StringPool, p_blob: *mut 
 pub(crate) static AllSame: [u8; b"AllSame\0".len()] = *b"AllSame\0";
 pub(crate) static Alphas: [u8; b"Alphas\0".len()] = *b"Alphas\0";
 pub(crate) static AmbientColor: [u8; b"AmbientColor\0".len()] = *b"AmbientColor\0";
-pub(crate) static AnimationCurveNode: [u8; b"AnimationCurveNode\0".len()] = *b"AnimationCurveNode\0";
+pub(crate) static AnimationCurveNode: [u8; b"AnimationCurveNode\0".len()] =
+    *b"AnimationCurveNode\0";
 pub(crate) static AnimationCurve: [u8; b"AnimationCurve\0".len()] = *b"AnimationCurve\0";
 pub(crate) static AnimationLayer: [u8; b"AnimationLayer\0".len()] = *b"AnimationLayer\0";
 pub(crate) static AnimationStack: [u8; b"AnimationStack\0".len()] = *b"AnimationStack\0";
@@ -606,7 +752,8 @@ pub(crate) static ByPolygon: [u8; b"ByPolygon\0".len()] = *b"ByPolygon\0";
 pub(crate) static ByVertex: [u8; b"ByVertex\0".len()] = *b"ByVertex\0";
 pub(crate) static ByVertice: [u8; b"ByVertice\0".len()] = *b"ByVertice\0";
 pub(crate) static Cache: [u8; b"Cache\0".len()] = *b"Cache\0";
-pub(crate) static CameraProjectionType: [u8; b"CameraProjectionType\0".len()] = *b"CameraProjectionType\0";
+pub(crate) static CameraProjectionType: [u8; b"CameraProjectionType\0".len()] =
+    *b"CameraProjectionType\0";
 pub(crate) static CameraStereo: [u8; b"CameraStereo\0".len()] = *b"CameraStereo\0";
 pub(crate) static CameraSwitcher: [u8; b"CameraSwitcher\0".len()] = *b"CameraSwitcher\0";
 pub(crate) static Camera: [u8; b"Camera\0".len()] = *b"Camera\0";
@@ -616,7 +763,8 @@ pub(crate) static Channel: [u8; b"Channel\0".len()] = *b"Channel\0";
 pub(crate) static Character: [u8; b"Character\0".len()] = *b"Character\0";
 pub(crate) static Children: [u8; b"Children\0".len()] = *b"Children\0";
 pub(crate) static Cluster: [u8; b"Cluster\0".len()] = *b"Cluster\0";
-pub(crate) static CollectionExclusive: [u8; b"CollectionExclusive\0".len()] = *b"CollectionExclusive\0";
+pub(crate) static CollectionExclusive: [u8; b"CollectionExclusive\0".len()] =
+    *b"CollectionExclusive\0";
 pub(crate) static Collection: [u8; b"Collection\0".len()] = *b"Collection\0";
 pub(crate) static ColorIndex: [u8; b"ColorIndex\0".len()] = *b"ColorIndex\0";
 pub(crate) static Color: [u8; b"Color\0".len()] = *b"Color\0";
@@ -630,7 +778,8 @@ pub(crate) static CoordAxisSign: [u8; b"CoordAxisSign\0".len()] = *b"CoordAxisSi
 pub(crate) static CoordAxis: [u8; b"CoordAxis\0".len()] = *b"CoordAxis\0";
 pub(crate) static Count: [u8; b"Count\0".len()] = *b"Count\0";
 pub(crate) static Creator: [u8; b"Creator\0".len()] = *b"Creator\0";
-pub(crate) static CurrentTextureBlendMode: [u8; b"CurrentTextureBlendMode\0".len()] = *b"CurrentTextureBlendMode\0";
+pub(crate) static CurrentTextureBlendMode: [u8; b"CurrentTextureBlendMode\0".len()] =
+    *b"CurrentTextureBlendMode\0";
 pub(crate) static CurrentTimeMarker: [u8; b"CurrentTimeMarker\0".len()] = *b"CurrentTimeMarker\0";
 pub(crate) static CustomFrameRate: [u8; b"CustomFrameRate\0".len()] = *b"CustomFrameRate\0";
 pub(crate) static DecayType: [u8; b"DecayType\0".len()] = *b"DecayType\0";
@@ -650,7 +799,8 @@ pub(crate) static EdgeIndexArray: [u8; b"EdgeIndexArray\0".len()] = *b"EdgeIndex
 pub(crate) static Edges: [u8; b"Edges\0".len()] = *b"Edges\0";
 pub(crate) static EmissiveColor: [u8; b"EmissiveColor\0".len()] = *b"EmissiveColor\0";
 pub(crate) static Entry: [u8; b"Entry\0".len()] = *b"Entry\0";
-pub(crate) static FBXHeaderExtension: [u8; b"FBXHeaderExtension\0".len()] = *b"FBXHeaderExtension\0";
+pub(crate) static FBXHeaderExtension: [u8; b"FBXHeaderExtension\0".len()] =
+    *b"FBXHeaderExtension\0";
 pub(crate) static FBXHeaderVersion: [u8; b"FBXHeaderVersion\0".len()] = *b"FBXHeaderVersion\0";
 pub(crate) static FBXVersion: [u8; b"FBXVersion\0".len()] = *b"FBXVersion\0";
 pub(crate) static FKEffector: [u8; b"FKEffector\0".len()] = *b"FKEffector\0";
@@ -675,7 +825,8 @@ pub(crate) static FullWeights: [u8; b"FullWeights\0".len()] = *b"FullWeights\0";
 pub(crate) static GateFit: [u8; b"GateFit\0".len()] = *b"GateFit\0";
 pub(crate) static GeometricRotation: [u8; b"GeometricRotation\0".len()] = *b"GeometricRotation\0";
 pub(crate) static GeometricScaling: [u8; b"GeometricScaling\0".len()] = *b"GeometricScaling\0";
-pub(crate) static GeometricTranslation: [u8; b"GeometricTranslation\0".len()] = *b"GeometricTranslation\0";
+pub(crate) static GeometricTranslation: [u8; b"GeometricTranslation\0".len()] =
+    *b"GeometricTranslation\0";
 pub(crate) static GeometryUVInfo: [u8; b"GeometryUVInfo\0".len()] = *b"GeometryUVInfo\0";
 pub(crate) static Geometry: [u8; b"Geometry\0".len()] = *b"Geometry\0";
 pub(crate) static GlobalSettings: [u8; b"GlobalSettings\0".len()] = *b"GlobalSettings\0";
@@ -700,18 +851,27 @@ pub(crate) static Key: [u8; b"Key\0".len()] = *b"Key\0";
 pub(crate) static KnotVectorU: [u8; b"KnotVectorU\0".len()] = *b"KnotVectorU\0";
 pub(crate) static KnotVectorV: [u8; b"KnotVectorV\0".len()] = *b"KnotVectorV\0";
 pub(crate) static KnotVector: [u8; b"KnotVector\0".len()] = *b"KnotVector\0";
-pub(crate) static LayerElementBinormal: [u8; b"LayerElementBinormal\0".len()] = *b"LayerElementBinormal\0";
+pub(crate) static LayerElementBinormal: [u8; b"LayerElementBinormal\0".len()] =
+    *b"LayerElementBinormal\0";
 pub(crate) static LayerElementColor: [u8; b"LayerElementColor\0".len()] = *b"LayerElementColor\0";
-pub(crate) static LayerElementEdgeCrease: [u8; b"LayerElementEdgeCrease\0".len()] = *b"LayerElementEdgeCrease\0";
+pub(crate) static LayerElementEdgeCrease: [u8; b"LayerElementEdgeCrease\0".len()] =
+    *b"LayerElementEdgeCrease\0";
 pub(crate) static LayerElementHole: [u8; b"LayerElementHole\0".len()] = *b"LayerElementHole\0";
-pub(crate) static LayerElementMaterial: [u8; b"LayerElementMaterial\0".len()] = *b"LayerElementMaterial\0";
-pub(crate) static LayerElementNormal: [u8; b"LayerElementNormal\0".len()] = *b"LayerElementNormal\0";
-pub(crate) static LayerElementPolygonGroup: [u8; b"LayerElementPolygonGroup\0".len()] = *b"LayerElementPolygonGroup\0";
-pub(crate) static LayerElementSmoothing: [u8; b"LayerElementSmoothing\0".len()] = *b"LayerElementSmoothing\0";
-pub(crate) static LayerElementTangent: [u8; b"LayerElementTangent\0".len()] = *b"LayerElementTangent\0";
+pub(crate) static LayerElementMaterial: [u8; b"LayerElementMaterial\0".len()] =
+    *b"LayerElementMaterial\0";
+pub(crate) static LayerElementNormal: [u8; b"LayerElementNormal\0".len()] =
+    *b"LayerElementNormal\0";
+pub(crate) static LayerElementPolygonGroup: [u8; b"LayerElementPolygonGroup\0".len()] =
+    *b"LayerElementPolygonGroup\0";
+pub(crate) static LayerElementSmoothing: [u8; b"LayerElementSmoothing\0".len()] =
+    *b"LayerElementSmoothing\0";
+pub(crate) static LayerElementTangent: [u8; b"LayerElementTangent\0".len()] =
+    *b"LayerElementTangent\0";
 pub(crate) static LayerElementUV: [u8; b"LayerElementUV\0".len()] = *b"LayerElementUV\0";
-pub(crate) static LayerElementVertexCrease: [u8; b"LayerElementVertexCrease\0".len()] = *b"LayerElementVertexCrease\0";
-pub(crate) static LayerElementVisibility: [u8; b"LayerElementVisibility\0".len()] = *b"LayerElementVisibility\0";
+pub(crate) static LayerElementVertexCrease: [u8; b"LayerElementVertexCrease\0".len()] =
+    *b"LayerElementVertexCrease\0";
+pub(crate) static LayerElementVisibility: [u8; b"LayerElementVisibility\0".len()] =
+    *b"LayerElementVisibility\0";
 pub(crate) static LayerElement: [u8; b"LayerElement\0".len()] = *b"LayerElement\0";
 pub(crate) static Layer: [u8; b"Layer\0".len()] = *b"Layer\0";
 pub(crate) static LayeredTexture: [u8; b"LayeredTexture\0".len()] = *b"LayeredTexture\0";
@@ -730,9 +890,11 @@ pub(crate) static LocalStart: [u8; b"LocalStart\0".len()] = *b"LocalStart\0";
 pub(crate) static LocalStop: [u8; b"LocalStop\0".len()] = *b"LocalStop\0";
 pub(crate) static LocalTime: [u8; b"LocalTime\0".len()] = *b"LocalTime\0";
 pub(crate) static LodGroup: [u8; b"LodGroup\0".len()] = *b"LodGroup\0";
-pub(crate) static MappingInformationType: [u8; b"MappingInformationType\0".len()] = *b"MappingInformationType\0";
+pub(crate) static MappingInformationType: [u8; b"MappingInformationType\0".len()] =
+    *b"MappingInformationType\0";
 pub(crate) static Marker: [u8; b"Marker\0".len()] = *b"Marker\0";
-pub(crate) static MaterialAssignation: [u8; b"MaterialAssignation\0".len()] = *b"MaterialAssignation\0";
+pub(crate) static MaterialAssignation: [u8; b"MaterialAssignation\0".len()] =
+    *b"MaterialAssignation\0";
 pub(crate) static Material: [u8; b"Material\0".len()] = *b"Material\0";
 pub(crate) static Materials: [u8; b"Materials\0".len()] = *b"Materials\0";
 pub(crate) static Matrix: [u8; b"Matrix\0".len()] = *b"Matrix\0";
@@ -758,9 +920,11 @@ pub(crate) static ObjectMetaData: [u8; b"ObjectMetaData\0".len()] = *b"ObjectMet
 pub(crate) static ObjectType: [u8; b"ObjectType\0".len()] = *b"ObjectType\0";
 pub(crate) static Objects: [u8; b"Objects\0".len()] = *b"Objects\0";
 pub(crate) static Order: [u8; b"Order\0".len()] = *b"Order\0";
-pub(crate) static OriginalUnitScaleFactor: [u8; b"OriginalUnitScaleFactor\0".len()] = *b"OriginalUnitScaleFactor\0";
+pub(crate) static OriginalUnitScaleFactor: [u8; b"OriginalUnitScaleFactor\0".len()] =
+    *b"OriginalUnitScaleFactor\0";
 pub(crate) static OriginalUpAxis: [u8; b"OriginalUpAxis\0".len()] = *b"OriginalUpAxis\0";
-pub(crate) static OriginalUpAxisSign: [u8; b"OriginalUpAxisSign\0".len()] = *b"OriginalUpAxisSign\0";
+pub(crate) static OriginalUpAxisSign: [u8; b"OriginalUpAxisSign\0".len()] =
+    *b"OriginalUpAxisSign\0";
 pub(crate) static OrthoZoom: [u8; b"OrthoZoom\0".len()] = *b"OrthoZoom\0";
 pub(crate) static OtherFlags: [u8; b"OtherFlags\0".len()] = *b"OtherFlags\0";
 pub(crate) static OuterAngle: [u8; b"OuterAngle\0".len()] = *b"OuterAngle\0";
@@ -770,14 +934,17 @@ pub(crate) static PointsIndex: [u8; b"PointsIndex\0".len()] = *b"PointsIndex\0";
 pub(crate) static Points: [u8; b"Points\0".len()] = *b"Points\0";
 pub(crate) static PolygonGroup: [u8; b"PolygonGroup\0".len()] = *b"PolygonGroup\0";
 pub(crate) static PolygonIndexArray: [u8; b"PolygonIndexArray\0".len()] = *b"PolygonIndexArray\0";
-pub(crate) static PolygonVertexIndex: [u8; b"PolygonVertexIndex\0".len()] = *b"PolygonVertexIndex\0";
+pub(crate) static PolygonVertexIndex: [u8; b"PolygonVertexIndex\0".len()] =
+    *b"PolygonVertexIndex\0";
 pub(crate) static PoseNode: [u8; b"PoseNode\0".len()] = *b"PoseNode\0";
 pub(crate) static Pose: [u8; b"Pose\0".len()] = *b"Pose\0";
-pub(crate) static Post_Extrapolation: [u8; b"Post-Extrapolation\0".len()] = *b"Post-Extrapolation\0";
+pub(crate) static Post_Extrapolation: [u8; b"Post-Extrapolation\0".len()] =
+    *b"Post-Extrapolation\0";
 pub(crate) static PostRotation: [u8; b"PostRotation\0".len()] = *b"PostRotation\0";
 pub(crate) static Pre_Extrapolation: [u8; b"Pre-Extrapolation\0".len()] = *b"Pre-Extrapolation\0";
 pub(crate) static PreRotation: [u8; b"PreRotation\0".len()] = *b"PreRotation\0";
-pub(crate) static PreviewDivisionLevels: [u8; b"PreviewDivisionLevels\0".len()] = *b"PreviewDivisionLevels\0";
+pub(crate) static PreviewDivisionLevels: [u8; b"PreviewDivisionLevels\0".len()] =
+    *b"PreviewDivisionLevels\0";
 pub(crate) static Properties60: [u8; b"Properties60\0".len()] = *b"Properties60\0";
 pub(crate) static Properties70: [u8; b"Properties70\0".len()] = *b"Properties70\0";
 pub(crate) static PropertyTemplate: [u8; b"PropertyTemplate\0".len()] = *b"PropertyTemplate\0";
@@ -787,20 +954,24 @@ pub(crate) static ReferenceStop: [u8; b"ReferenceStop\0".len()] = *b"ReferenceSt
 pub(crate) static ReferenceTime: [u8; b"ReferenceTime\0".len()] = *b"ReferenceTime\0";
 pub(crate) static RelativeFileName: [u8; b"RelativeFileName\0".len()] = *b"RelativeFileName\0";
 pub(crate) static RelativeFilename: [u8; b"RelativeFilename\0".len()] = *b"RelativeFilename\0";
-pub(crate) static RenderDivisionLevels: [u8; b"RenderDivisionLevels\0".len()] = *b"RenderDivisionLevels\0";
+pub(crate) static RenderDivisionLevels: [u8; b"RenderDivisionLevels\0".len()] =
+    *b"RenderDivisionLevels\0";
 pub(crate) static Repetition: [u8; b"Repetition\0".len()] = *b"Repetition\0";
 pub(crate) static RightCamera: [u8; b"RightCamera\0".len()] = *b"RightCamera\0";
 pub(crate) static RootNode: [u8; b"RootNode\0".len()] = *b"RootNode\0";
 pub(crate) static Root: [u8; b"Root\0".len()] = *b"Root\0";
-pub(crate) static RotationAccumulationMode: [u8; b"RotationAccumulationMode\0".len()] = *b"RotationAccumulationMode\0";
+pub(crate) static RotationAccumulationMode: [u8; b"RotationAccumulationMode\0".len()] =
+    *b"RotationAccumulationMode\0";
 pub(crate) static RotationActive: [u8; b"RotationActive\0".len()] = *b"RotationActive\0";
 pub(crate) static RotationOffset: [u8; b"RotationOffset\0".len()] = *b"RotationOffset\0";
 pub(crate) static RotationOrder: [u8; b"RotationOrder\0".len()] = *b"RotationOrder\0";
 pub(crate) static RotationPivot: [u8; b"RotationPivot\0".len()] = *b"RotationPivot\0";
-pub(crate) static RotationSpaceForLimitOnly: [u8; b"RotationSpaceForLimitOnly\0".len()] = *b"RotationSpaceForLimitOnly\0";
+pub(crate) static RotationSpaceForLimitOnly: [u8; b"RotationSpaceForLimitOnly\0".len()] =
+    *b"RotationSpaceForLimitOnly\0";
 pub(crate) static Rotation: [u8; b"Rotation\0".len()] = *b"Rotation\0";
 pub(crate) static S: [u8; b"S\0\0\0".len()] = *b"S\0\0\0";
-pub(crate) static ScaleAccumulationMode: [u8; b"ScaleAccumulationMode\0".len()] = *b"ScaleAccumulationMode\0";
+pub(crate) static ScaleAccumulationMode: [u8; b"ScaleAccumulationMode\0".len()] =
+    *b"ScaleAccumulationMode\0";
 pub(crate) static ScalingOffset: [u8; b"ScalingOffset\0".len()] = *b"ScalingOffset\0";
 pub(crate) static ScalingPivot: [u8; b"ScalingPivot\0".len()] = *b"ScalingPivot\0";
 pub(crate) static Scaling: [u8; b"Scaling\0".len()] = *b"Scaling\0";
@@ -830,10 +1001,13 @@ pub(crate) static TangentsW: [u8; b"TangentsW\0".len()] = *b"TangentsW\0";
 pub(crate) static Texture: [u8; b"Texture\0".len()] = *b"Texture\0";
 pub(crate) static Texture_alpha: [u8; b"Texture alpha\0".len()] = *b"Texture alpha\0";
 pub(crate) static TextureId: [u8; b"TextureId\0".len()] = *b"TextureId\0";
-pub(crate) static TextureRotationPivot: [u8; b"TextureRotationPivot\0".len()] = *b"TextureRotationPivot\0";
-pub(crate) static TextureScalingPivot: [u8; b"TextureScalingPivot\0".len()] = *b"TextureScalingPivot\0";
+pub(crate) static TextureRotationPivot: [u8; b"TextureRotationPivot\0".len()] =
+    *b"TextureRotationPivot\0";
+pub(crate) static TextureScalingPivot: [u8; b"TextureScalingPivot\0".len()] =
+    *b"TextureScalingPivot\0";
 pub(crate) static TextureUV: [u8; b"TextureUV\0".len()] = *b"TextureUV\0";
-pub(crate) static TextureUVVerticeIndex: [u8; b"TextureUVVerticeIndex\0".len()] = *b"TextureUVVerticeIndex\0";
+pub(crate) static TextureUVVerticeIndex: [u8; b"TextureUVVerticeIndex\0".len()] =
+    *b"TextureUVVerticeIndex\0";
 pub(crate) static Thumbnail: [u8; b"Thumbnail\0".len()] = *b"Thumbnail\0";
 pub(crate) static TimeMarker: [u8; b"TimeMarker\0".len()] = *b"TimeMarker\0";
 pub(crate) static TimeMode: [u8; b"TimeMode\0".len()] = *b"TimeMode\0";
@@ -854,7 +1028,8 @@ pub(crate) static UnitScaleFactor: [u8; b"UnitScaleFactor\0".len()] = *b"UnitSca
 pub(crate) static UpAxisSign: [u8; b"UpAxisSign\0".len()] = *b"UpAxisSign\0";
 pub(crate) static UpAxis: [u8; b"UpAxis\0".len()] = *b"UpAxis\0";
 pub(crate) static Version5: [u8; b"Version5\0".len()] = *b"Version5\0";
-pub(crate) static VertexCacheDeformer: [u8; b"VertexCacheDeformer\0".len()] = *b"VertexCacheDeformer\0";
+pub(crate) static VertexCacheDeformer: [u8; b"VertexCacheDeformer\0".len()] =
+    *b"VertexCacheDeformer\0";
 pub(crate) static VertexCrease: [u8; b"VertexCrease\0".len()] = *b"VertexCrease\0";
 pub(crate) static VertexCreaseIndex: [u8; b"VertexCreaseIndex\0".len()] = *b"VertexCreaseIndex\0";
 pub(crate) static VertexIndexArray: [u8; b"VertexIndexArray\0".len()] = *b"VertexIndexArray\0";
@@ -1186,7 +1361,11 @@ pub(crate) static STRINGS: StringTable = StringTable([
 
 // ufbx.c:5902 `ufbxi_one_vec3`
 // C: `{ 1.0f, 1.0f, 1.0f }` — float literals widen exactly to `ufbx_real`.
-pub(crate) static ONE_VEC3: Vec3 = Vec3 { x: 1.0, y: 1.0, z: 1.0 };
+pub(crate) static ONE_VEC3: Vec3 = Vec3 {
+    x: 1.0,
+    y: 1.0,
+    z: 1.0,
+};
 
 // ufbx.c:5904 `UFBXI_PI`
 pub(crate) const PI: Real = 3.14159265358979323846;
@@ -1206,21 +1385,33 @@ pub(crate) const MM_TO_INCH: Real = 0.0393700787;
 // ufbx.c:5912-5915 `ufbxi_add3`
 #[inline(always)]
 pub(crate) fn add3(a: Vec3, b: Vec3) -> Vec3 {
-    let v = Vec3 { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
+    let v = Vec3 {
+        x: a.x + b.x,
+        y: a.y + b.y,
+        z: a.z + b.z,
+    };
     v
 }
 
 // ufbx.c:5917-5920 `ufbxi_sub3`
 #[inline(always)]
 pub(crate) fn sub3(a: Vec3, b: Vec3) -> Vec3 {
-    let v = Vec3 { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+    let v = Vec3 {
+        x: a.x - b.x,
+        y: a.y - b.y,
+        z: a.z - b.z,
+    };
     v
 }
 
 // ufbx.c:5922-5925 `ufbxi_mul3`
 #[inline(always)]
 pub(crate) fn mul3(a: Vec3, b: Real) -> Vec3 {
-    let v = Vec3 { x: a.x * b, y: a.y * b, z: a.z * b };
+    let v = Vec3 {
+        x: a.x * b,
+        y: a.y * b,
+        z: a.z * b,
+    };
     v
 }
 
@@ -1229,7 +1420,11 @@ pub(crate) fn mul3(a: Vec3, b: Real) -> Vec3 {
 pub(crate) fn lerp3(a: Vec3, b: Vec3, t: Real) -> Vec3 {
     // C: `ufbx_real u = 1.0f - t;`
     let u: Real = 1.0 - t;
-    let v = Vec3 { x: a.x * u + b.x * t, y: a.y * u + b.y * t, z: a.z * u + b.z * t };
+    let v = Vec3 {
+        x: a.x * u + b.x * t,
+        y: a.y * u + b.y * t,
+        z: a.z * u + b.z * t,
+    };
     v
 }
 
@@ -1272,7 +1467,11 @@ pub(crate) fn normalize3(a: Vec3) -> Vec3 {
         mul3(a, 1.0 / len)
     } else {
         // C: `ufbx_vec3 zero = { (ufbx_real)0 };`
-        let zero = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
+        let zero = Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        };
         zero
     }
 }
@@ -1280,7 +1479,11 @@ pub(crate) fn normalize3(a: Vec3) -> Vec3 {
 // ufbx.c:5962-5965 `ufbxi_neg3`
 #[inline(always)]
 pub(crate) fn neg3(a: Vec3) -> Vec3 {
-    let v = Vec3 { x: -a.x, y: -a.y, z: -a.z };
+    let v = Vec3 {
+        x: -a.x,
+        y: -a.y,
+        z: -a.z,
+    };
     v
 }
 
@@ -1330,12 +1533,22 @@ mod tests {
             ator: MaybeUninit::zeroed().assume_init(),
             pool: MaybeUninit::zeroed().assume_init(),
         });
-        init_ator(&mut fx.err, &mut fx.ator, core::ptr::null(), b"test\0".as_ptr());
+        init_ator(
+            &mut fx.err,
+            &mut fx.ator,
+            core::ptr::null(),
+            b"test\0".as_ptr(),
+        );
         let ator = &mut fx.ator as *mut Allocator;
         fx.pool.error = &mut fx.err;
         fx.pool.buf.ator = ator;
         // C: `ufbxi_map_init(&uc->string_pool.map, &uc->ator_tmp, &ufbxi_map_cmp_string, NULL)`
-        map_init(&mut fx.pool.map, ator, map_cmp_string, core::ptr::null_mut());
+        map_init(
+            &mut fx.pool.map,
+            ator,
+            map_cmp_string,
+            core::ptr::null_mut(),
+        );
         fx.pool.initial_size = 64; // ufbx.c:7192 `string_pool.initial_size = 1024` (smaller for tests)
         fx.pool.error_handling = handling;
         fx.pool.warnings = core::ptr::null_mut();
@@ -1401,7 +1614,11 @@ mod tests {
         unsafe {
             // (input, handling, expected sanitized bytes)
             let cases: &[(&[u8], UnicodeErrorHandling, &[u8])] = &[
-                (b"a\xffb", UnicodeErrorHandling::ReplacementCharacter, b"a\xef\xbf\xbdb"),
+                (
+                    b"a\xffb",
+                    UnicodeErrorHandling::ReplacementCharacter,
+                    b"a\xef\xbf\xbdb",
+                ),
                 (b"a\xffb", UnicodeErrorHandling::Underscore, b"a_b"),
                 (b"a\xffb", UnicodeErrorHandling::QuestionMark, b"a?b"),
                 (b"a\xffb", UnicodeErrorHandling::Remove, b"ab"),
@@ -1409,12 +1626,24 @@ mod tests {
                 // Embedded NUL is a unicode error too (C: `if (c != 0)`).
                 (b"a\x00b", UnicodeErrorHandling::QuestionMark, b"a?b"),
                 // Overlong encoding rejected, valid 2-byte kept.
-                (b"\xc0\xaf\xc2\x80", UnicodeErrorHandling::QuestionMark, b"??\xc2\x80"),
+                (
+                    b"\xc0\xaf\xc2\x80",
+                    UnicodeErrorHandling::QuestionMark,
+                    b"??\xc2\x80",
+                ),
                 // Surrogate range D800-DFFF rejected (ED A0 80 -> one '?' per
                 // byte, resyncing after each), U+FFFF kept.
-                (b"\xed\xa0\x80\xef\xbf\xbf", UnicodeErrorHandling::QuestionMark, b"???\xef\xbf\xbf"),
+                (
+                    b"\xed\xa0\x80\xef\xbf\xbf",
+                    UnicodeErrorHandling::QuestionMark,
+                    b"???\xef\xbf\xbf",
+                ),
                 // 4-byte: U+10FFFF kept, F4 90 80 80 (> U+10FFFF) rejected.
-                (b"\xf4\x8f\xbf\xbf\xf4\x90\x80\x80", UnicodeErrorHandling::QuestionMark, b"\xf4\x8f\xbf\xbf????"),
+                (
+                    b"\xf4\x8f\xbf\xbf\xf4\x90\x80\x80",
+                    UnicodeErrorHandling::QuestionMark,
+                    b"\xf4\x8f\xbf\xbf????",
+                ),
                 // Truncated sequence at end of string.
                 (b"ab\xe2\x82", UnicodeErrorHandling::QuestionMark, b"ab??"),
             ];
@@ -1422,7 +1651,13 @@ mod tests {
                 let mut fx = make_fixture(handling);
                 let (p, len) = push(&mut fx, input);
                 assert!(!p.is_null());
-                assert_eq!(bytes(p, len), expect, "input {:?} handling {:?}", input, handling);
+                assert_eq!(
+                    bytes(p, len),
+                    expect,
+                    "input {:?} handling {:?}",
+                    input,
+                    handling
+                );
                 free_fixture(&mut fx);
             }
         }
@@ -1449,24 +1684,45 @@ mod tests {
             let mut fx = make_fixture(UnicodeErrorHandling::ReplacementCharacter);
 
             // Valid UTF-8: raw_length = length, utf8_length = 0, interned copy.
-            let mut san = SanitizedString { raw_data: core::ptr::null(), raw_length: 0, utf8_length: 0 };
+            let mut san = SanitizedString {
+                raw_data: core::ptr::null(),
+                raw_length: 0,
+                utf8_length: 0,
+            };
             let hash = hash_string(b"Model".as_ptr(), 5);
-            assert_eq!(push_sanitized_string(&mut fx.pool, &mut san, b"Model".as_ptr(), 5, hash, false), Ok(()));
+            assert_eq!(
+                push_sanitized_string(&mut fx.pool, &mut san, b"Model".as_ptr(), 5, hash, false),
+                Ok(())
+            );
             assert_eq!(san.raw_length, 5);
             assert_eq!(san.utf8_length, 0);
             assert_eq!(bytes(san.raw_data, 5), b"Model");
             assert_eq!(*san.raw_data.add(5), 0);
 
             // Same string again: dedup to the same pointer.
-            let mut san2 = SanitizedString { raw_data: core::ptr::null(), raw_length: 0, utf8_length: 0 };
-            assert_eq!(push_sanitized_string(&mut fx.pool, &mut san2, b"Model".as_ptr(), 5, hash, false), Ok(()));
+            let mut san2 = SanitizedString {
+                raw_data: core::ptr::null(),
+                raw_length: 0,
+                utf8_length: 0,
+            };
+            assert_eq!(
+                push_sanitized_string(&mut fx.pool, &mut san2, b"Model".as_ptr(), 5, hash, false),
+                Ok(())
+            );
             assert_eq!(san2.raw_data, san.raw_data);
 
             // Invalid UTF-8 with push_both: `raw\0utf8` packing.
             let inp = b"a\xffb";
             let h = hash_string(inp.as_ptr(), 3);
-            let mut san3 = SanitizedString { raw_data: core::ptr::null(), raw_length: 0, utf8_length: 0 };
-            assert_eq!(push_sanitized_string(&mut fx.pool, &mut san3, inp.as_ptr(), 3, h, false), Ok(()));
+            let mut san3 = SanitizedString {
+                raw_data: core::ptr::null(),
+                raw_length: 0,
+                utf8_length: 0,
+            };
+            assert_eq!(
+                push_sanitized_string(&mut fx.pool, &mut san3, inp.as_ptr(), 3, h, false),
+                Ok(())
+            );
             assert_eq!(san3.raw_length, 3);
             assert_eq!(san3.utf8_length, 5); // "a" + EF BF BD + "b"
             assert_eq!(bytes(san3.raw_data, 3), b"a\xffb");
@@ -1475,8 +1731,15 @@ mod tests {
             assert_eq!(bytes(san3.raw_data.add(4), 5), b"a\xef\xbf\xbdb");
 
             // raw=true: no sanitization even for invalid bytes.
-            let mut san4 = SanitizedString { raw_data: core::ptr::null(), raw_length: 0, utf8_length: 0 };
-            assert_eq!(push_sanitized_string(&mut fx.pool, &mut san4, inp.as_ptr(), 3, h, true), Ok(()));
+            let mut san4 = SanitizedString {
+                raw_data: core::ptr::null(),
+                raw_length: 0,
+                utf8_length: 0,
+            };
+            assert_eq!(
+                push_sanitized_string(&mut fx.pool, &mut san4, inp.as_ptr(), 3, h, true),
+                Ok(())
+            );
             assert_eq!(san4.raw_length, 3);
             assert_eq!(san4.utf8_length, 0);
             assert_eq!(bytes(san4.raw_data, 3), b"a\xffb");
@@ -1491,26 +1754,38 @@ mod tests {
             let mut fx = make_fixture(UnicodeErrorHandling::ReplacementCharacter);
 
             let mut str_ = s(b"Vertices");
-            assert_eq!(push_string_place_str(&mut fx.pool, &mut str_, false), Ok(()));
+            assert_eq!(
+                push_string_place_str(&mut fx.pool, &mut str_, false),
+                Ok(())
+            );
             assert_eq!(str_.length, 8);
             assert_eq!(bytes(str_.data, 8), b"Vertices");
             let interned = str_.data;
             // NULL data with zero length is allowed.
             let mut str2 = String::new_c(core::ptr::null(), 0);
-            assert_eq!(push_string_place_str(&mut fx.pool, &mut str2, false), Ok(()));
+            assert_eq!(
+                push_string_place_str(&mut fx.pool, &mut str2, false),
+                Ok(())
+            );
             assert_eq!(str2.data, EMPTY_CHAR.as_ptr());
 
             // Blob shares the pool with strings (same canonical pointer).
             let mut blob = MaybeUninit::<Blob>::zeroed().assume_init();
             blob.data = b"Vertices".as_ptr();
             blob.size = 8;
-            assert_eq!(push_string_place_blob(&mut fx.pool, &mut blob, true), Ok(()));
+            assert_eq!(
+                push_string_place_blob(&mut fx.pool, &mut blob, true),
+                Ok(())
+            );
             assert_eq!(blob.data, interned);
             // Zero-size blob: data forced to NULL.
             let mut blob2 = MaybeUninit::<Blob>::zeroed().assume_init();
             blob2.data = b"x".as_ptr();
             blob2.size = 0;
-            assert_eq!(push_string_place_blob(&mut fx.pool, &mut blob2, true), Ok(()));
+            assert_eq!(
+                push_string_place_blob(&mut fx.pool, &mut blob2, true),
+                Ok(())
+            );
             assert!(blob2.data.is_null());
 
             free_fixture(&mut fx);
@@ -1645,8 +1920,16 @@ mod tests {
 
     #[test]
     fn test_vec_math() {
-        let a = Vec3 { x: 1.0, y: 2.0, z: 3.0 };
-        let b = Vec3 { x: 4.0, y: 5.0, z: 6.0 };
+        let a = Vec3 {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        };
+        let b = Vec3 {
+            x: 4.0,
+            y: 5.0,
+            z: 6.0,
+        };
         let v = add3(a, b);
         assert_eq!((v.x, v.y, v.z), (5.0, 7.0, 9.0));
         let v = sub3(b, a);
@@ -1656,24 +1939,72 @@ mod tests {
         let v = lerp3(a, b, 0.5);
         assert_eq!((v.x, v.y, v.z), (2.5, 3.5, 4.5));
         assert_eq!(dot3(a, b), 32.0);
-        assert_eq!(length3(Vec3 { x: 3.0, y: 4.0, z: 0.0 }), 5.0);
-        assert_eq!(min3(Vec3 { x: 2.0, y: 1.0, z: 3.0 }), 1.0);
-        let v = cross3(Vec3 { x: 1.0, y: 0.0, z: 0.0 }, Vec3 { x: 0.0, y: 1.0, z: 0.0 });
+        assert_eq!(
+            length3(Vec3 {
+                x: 3.0,
+                y: 4.0,
+                z: 0.0
+            }),
+            5.0
+        );
+        assert_eq!(
+            min3(Vec3 {
+                x: 2.0,
+                y: 1.0,
+                z: 3.0
+            }),
+            1.0
+        );
+        let v = cross3(
+            Vec3 {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Vec3 {
+                x: 0.0,
+                y: 1.0,
+                z: 0.0,
+            },
+        );
         assert_eq!((v.x, v.y, v.z), (0.0, 0.0, 1.0));
-        let v = normalize3(Vec3 { x: 0.0, y: 0.0, z: 2.0 });
+        let v = normalize3(Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 2.0,
+        });
         assert_eq!((v.x, v.y, v.z), (0.0, 0.0, 1.0));
         // Degenerate: below-epsilon length normalizes to zero.
-        let v = normalize3(Vec3 { x: 0.0, y: 0.0, z: 0.0 });
+        let v = normalize3(Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        });
         assert_eq!((v.x, v.y, v.z), (0.0, 0.0, 0.0));
         let v = neg3(a);
         assert_eq!((v.x, v.y, v.z), (-1.0, -2.0, -3.0));
-        assert_eq!(distsq2(Vec2 { x: 1.0, y: 2.0 }, Vec2 { x: 4.0, y: 6.0 }), 25.0);
+        assert_eq!(
+            distsq2(Vec2 { x: 1.0, y: 2.0 }, Vec2 { x: 4.0, y: 6.0 }),
+            25.0
+        );
         unsafe {
-            let v = slow_normalize3(&Vec3 { x: 2.0, y: 0.0, z: 0.0 });
+            let v = slow_normalize3(&Vec3 {
+                x: 2.0,
+                y: 0.0,
+                z: 0.0,
+            });
             assert_eq!((v.x, v.y, v.z), (1.0, 0.0, 0.0));
             let v = slow_normalized_cross3(
-                &Vec3 { x: 2.0, y: 0.0, z: 0.0 },
-                &Vec3 { x: 0.0, y: 2.0, z: 0.0 },
+                &Vec3 {
+                    x: 2.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                &Vec3 {
+                    x: 0.0,
+                    y: 2.0,
+                    z: 0.0,
+                },
             );
             assert_eq!((v.x, v.y, v.z), (0.0, 0.0, 1.0));
         }

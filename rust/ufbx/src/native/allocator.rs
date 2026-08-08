@@ -50,7 +50,11 @@ pub(crate) unsafe fn ufbx_malloc(size: usize) -> *mut c_void {
 
 // ufbx.c:382 `#define ufbx_realloc(ptr, old_size, new_size) realloc((ptr), (new_size))`
 #[inline(always)]
-pub(crate) unsafe fn ufbx_realloc(ptr: *mut c_void, old_size: usize, new_size: usize) -> *mut c_void {
+pub(crate) unsafe fn ufbx_realloc(
+    ptr: *mut c_void,
+    old_size: usize,
+    new_size: usize,
+) -> *mut c_void {
     let _ = old_size; // C macro discards `old_size`
     libc_alloc::realloc(ptr, new_size)
 }
@@ -253,7 +257,13 @@ pub(crate) unsafe fn realloc_size(
         ptr = ufbx_realloc(old_ptr, old_total, total);
     }
 
-    ufbxi_check_return_err_msg!((*ator).error, !ptr.is_null(), core::ptr::null_mut(), "Out of memory", "ptr");
+    ufbxi_check_return_err_msg!(
+        (*ator).error,
+        !ptr.is_null(),
+        core::ptr::null_mut(),
+        "Out of memory",
+        "ptr"
+    );
     ufbx_assert!(is_aligned_mask(ptr, size_align_mask(total)));
 
     (*ator).current_size += total;
@@ -364,8 +374,15 @@ pub(crate) unsafe fn alloc<T>(ator: *mut Allocator, n: usize) -> *mut T {
 
 // ufbx.c:3802 `ufbxi_realloc(ator, type, old_ptr, old_n, n)`
 #[inline(always)]
-pub(crate) unsafe fn realloc<T>(ator: *mut Allocator, old_ptr: *mut T, old_n: usize, n: usize) -> *mut T {
-    ufbxi_maybe_null!(realloc_size(ator, size_of::<T>(), old_ptr as *mut c_void, old_n, n) as *mut T)
+pub(crate) unsafe fn realloc<T>(
+    ator: *mut Allocator,
+    old_ptr: *mut T,
+    old_n: usize,
+    n: usize,
+) -> *mut T {
+    ufbxi_maybe_null!(
+        realloc_size(ator, size_of::<T>(), old_ptr as *mut c_void, old_n, n) as *mut T
+    )
 }
 
 // ufbx.c:3804 `ufbxi_free(ator, type, ptr, n)`
@@ -377,7 +394,12 @@ pub(crate) unsafe fn free<T>(ator: *mut Allocator, ptr: *mut T, n: usize) {
 // ufbx.c:3806 `ufbxi_grow_array(ator, p_ptr, p_cap, n)` — `sizeof(**(p_ptr))`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn grow_array<T>(ator: *mut Allocator, p_ptr: *mut *mut T, p_cap: *mut usize, n: usize) -> bool {
+pub(crate) unsafe fn grow_array<T>(
+    ator: *mut Allocator,
+    p_ptr: *mut *mut T,
+    p_cap: *mut usize,
+    n: usize,
+) -> bool {
     grow_array_size(ator, size_of::<T>(), p_ptr as *mut c_void, p_cap, n)
 }
 
@@ -412,10 +434,26 @@ pub(crate) unsafe fn init_ator(
     // C: `ator->ator = *opts` — struct assignment (memcpy; `RawAllocatorOpts` is `Copy`).
     (*ator).ator = *opts;
     (*ator).error = error;
-    (*ator).max_size = if (*opts).memory_limit != 0 { (*opts).memory_limit } else { usize::MAX };
-    (*ator).max_allocs = if (*opts).allocation_limit != 0 { (*opts).allocation_limit } else { usize::MAX };
-    (*ator).huge_size = if (*opts).huge_threshold != 0 { (*opts).huge_threshold } else { 0x100000 };
-    (*ator).chunk_max = if (*opts).max_chunk_size != 0 { (*opts).max_chunk_size } else { 0x1000000 };
+    (*ator).max_size = if (*opts).memory_limit != 0 {
+        (*opts).memory_limit
+    } else {
+        usize::MAX
+    };
+    (*ator).max_allocs = if (*opts).allocation_limit != 0 {
+        (*opts).allocation_limit
+    } else {
+        usize::MAX
+    };
+    (*ator).huge_size = if (*opts).huge_threshold != 0 {
+        (*opts).huge_threshold
+    } else {
+        0x100000
+    };
+    (*ator).chunk_max = if (*opts).max_chunk_size != 0 {
+        (*opts).max_chunk_size
+    } else {
+        0x1000000
+    };
     (*ator).name = name;
 }
 
@@ -510,7 +548,11 @@ mod tests {
             assert!(q.is_null());
             // The description is recorded here; the type is resolved by the
             // `fix_error_type` strcmp ladder at top-level entry points.
-            crate::native::error::fix_error_type(&mut err, b"Failed to load\0".as_ptr(), core::ptr::null_mut());
+            crate::native::error::fix_error_type(
+                &mut err,
+                b"Failed to load\0".as_ptr(),
+                core::ptr::null_mut(),
+            );
             assert_eq!(err.type_, ErrorType::AllocationLimit);
             // info carries the allocator name via `%s`
             assert_eq!(err.info(), "test");
@@ -531,7 +573,11 @@ mod tests {
             // C check is `total < max_size - current_size`: exactly-at-limit fails.
             let p = alloc_size(&mut ator, 1, 100);
             assert!(p.is_null());
-            crate::native::error::fix_error_type(&mut err, b"Failed to load\0".as_ptr(), core::ptr::null_mut());
+            crate::native::error::fix_error_type(
+                &mut err,
+                b"Failed to load\0".as_ptr(),
+                core::ptr::null_mut(),
+            );
             assert_eq!(err.type_, ErrorType::MemoryLimit);
 
             let p = alloc_size(&mut ator, 1, 99);

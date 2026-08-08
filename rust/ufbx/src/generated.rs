@@ -3,26 +3,30 @@
 // Fixes belong in the GENERATOR (see PORTING.md); hand edits are
 // silently overwritten on the next regeneration and CI diffs this file.
 
-use std::ffi::{c_void};
-use std::{marker, result, ptr, mem, str};
+use crate::prelude::{
+    call_close_memory_cb, call_open_file_cb, call_progress_cb, Allocator, Stream, ThreadPool,
+};
+use crate::prelude::{
+    format_flags, Arena, Blob, BlobOpt, ExternalRef, FromRust, InlineBuf, List, ListOpt,
+    OpenFileContext, RawBlob, RawEnum, RawList, RawString, Real, Ref, RefList, String, StringOpt,
+    ThreadPoolContext, Unsafe, VertexStream,
+};
+use std::ffi::c_void;
 use std::fmt::{self, Debug};
-use std::ops::{Deref, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, FnMut, Index};
-use crate::prelude::{Real, List, Ref, RefList, String, Blob, RawString, RawBlob, RawList, Unsafe, RawEnum, ExternalRef, InlineBuf, VertexStream, Arena, FromRust, StringOpt, BlobOpt, ListOpt, ThreadPoolContext, OpenFileContext, format_flags};
-use crate::prelude::{Allocator, Stream, call_open_file_cb, call_close_memory_cb, call_progress_cb, ThreadPool};
+use std::ops::{
+    BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Deref, FnMut, Index,
+};
+use std::{marker, mem, ptr, result, str};
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Vec2 {
     pub x: Real,
     pub y: Real,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Vec3 {
     pub x: Real,
     pub y: Real,
@@ -30,9 +34,7 @@ pub struct Vec3 {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Vec4 {
     pub x: Real,
     pub y: Real,
@@ -41,9 +43,7 @@ pub struct Vec4 {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Quat {
     pub x: Real,
     pub y: Real,
@@ -64,13 +64,13 @@ pub enum RotationOrder {
 }
 
 impl Default for RotationOrder {
-    fn default() -> Self { Self::Xyz }
+    fn default() -> Self {
+        Self::Xyz
+    }
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Transform {
     pub translation: Vec3,
     pub rotation: Quat,
@@ -78,9 +78,7 @@ pub struct Transform {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Matrix {
     pub m00: Real,
     pub m10: Real,
@@ -117,7 +115,9 @@ pub enum DomValueType {
 }
 
 impl Default for DomValueType {
-    fn default() -> Self { Self::Number }
+    fn default() -> Self {
+        Self::Number
+    }
 }
 
 #[repr(C)]
@@ -158,7 +158,9 @@ pub enum PropType {
 }
 
 impl Default for PropType {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(transparent)]
@@ -220,12 +222,20 @@ const PROPFLAGS_NAMES: [(&'static str, u32); 24] = [
 ];
 
 impl PropFlags {
-    pub fn any(self) -> bool { self.0 != 0 }
-    pub fn has_any(self, bits: Self) -> bool { (self.0 & bits.0) != 0 }
-    pub fn has_all(self, bits: Self) -> bool { (self.0 & bits.0) == bits.0 }
+    pub fn any(self) -> bool {
+        self.0 != 0
+    }
+    pub fn has_any(self, bits: Self) -> bool {
+        (self.0 & bits.0) != 0
+    }
+    pub fn has_all(self, bits: Self) -> bool {
+        (self.0 & bits.0) == bits.0
+    }
 }
 impl Default for PropFlags {
-    fn default() -> Self { Self(0) }
+    fn default() -> Self {
+        Self(0)
+    }
 }
 impl Debug for PropFlags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -234,24 +244,36 @@ impl Debug for PropFlags {
 }
 impl BitAnd for PropFlags {
     type Output = Self;
-    fn bitand(self, rhs: Self) -> Self::Output { Self(self.0 & rhs.0) }
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self(self.0 & rhs.0)
+    }
 }
 impl BitAndAssign for PropFlags {
-    fn bitand_assign(&mut self, rhs: Self) { *self = Self(self.0 & rhs.0) }
+    fn bitand_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 & rhs.0)
+    }
 }
 impl BitOr for PropFlags {
     type Output = Self;
-    fn bitor(self, rhs: Self) -> Self::Output { Self(self.0 | rhs.0) }
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
 }
 impl BitOrAssign for PropFlags {
-    fn bitor_assign(&mut self, rhs: Self) { *self = Self(self.0 | rhs.0) }
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 | rhs.0)
+    }
 }
 impl BitXor for PropFlags {
     type Output = Self;
-    fn bitxor(self, rhs: Self) -> Self::Output { Self(self.0 ^ rhs.0) }
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Self(self.0 ^ rhs.0)
+    }
 }
 impl BitXorAssign for PropFlags {
-    fn bitxor_assign(&mut self, rhs: Self) { *self = Self(self.0 ^ rhs.0) }
+    fn bitxor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 ^ rhs.0)
+    }
 }
 
 #[repr(C)]
@@ -321,7 +343,9 @@ pub enum ElementType {
 }
 
 impl Default for ElementType {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(C)]
@@ -363,7 +387,9 @@ pub enum InheritMode {
 }
 
 impl Default for InheritMode {
-    fn default() -> Self { Self::Normal }
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 #[repr(u32)]
@@ -376,7 +402,9 @@ pub enum MirrorAxis {
 }
 
 impl Default for MirrorAxis {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[repr(C)]
@@ -522,18 +550,14 @@ pub struct ColorSet {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Edge {
     pub a: u32,
     pub b: u32,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Face {
     pub index_begin: u32,
     pub num_indices: u32,
@@ -590,7 +614,9 @@ pub enum SubdivisionDisplayMode {
 }
 
 impl Default for SubdivisionDisplayMode {
-    fn default() -> Self { Self::Disabled }
+    fn default() -> Self {
+        Self::Disabled
+    }
 }
 
 #[repr(u32)]
@@ -605,7 +631,9 @@ pub enum SubdivisionBoundary {
 }
 
 impl Default for SubdivisionBoundary {
-    fn default() -> Self { Self::Default }
+    fn default() -> Self {
+        Self::Default
+    }
 }
 
 #[repr(C)]
@@ -676,7 +704,9 @@ pub enum LightType {
 }
 
 impl Default for LightType {
-    fn default() -> Self { Self::Point }
+    fn default() -> Self {
+        Self::Point
+    }
 }
 
 #[repr(u32)]
@@ -689,7 +719,9 @@ pub enum LightDecay {
 }
 
 impl Default for LightDecay {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[repr(u32)]
@@ -700,7 +732,9 @@ pub enum LightAreaShape {
 }
 
 impl Default for LightAreaShape {
-    fn default() -> Self { Self::Rectangle }
+    fn default() -> Self {
+        Self::Rectangle
+    }
 }
 
 #[repr(C)]
@@ -726,7 +760,9 @@ pub enum ProjectionMode {
 }
 
 impl Default for ProjectionMode {
-    fn default() -> Self { Self::Perspective }
+    fn default() -> Self {
+        Self::Perspective
+    }
 }
 
 #[repr(u32)]
@@ -740,7 +776,9 @@ pub enum AspectMode {
 }
 
 impl Default for AspectMode {
-    fn default() -> Self { Self::WindowSize }
+    fn default() -> Self {
+        Self::WindowSize
+    }
 }
 
 #[repr(u32)]
@@ -753,7 +791,9 @@ pub enum ApertureMode {
 }
 
 impl Default for ApertureMode {
-    fn default() -> Self { Self::HorizontalAndVertical }
+    fn default() -> Self {
+        Self::HorizontalAndVertical
+    }
 }
 
 #[repr(u32)]
@@ -768,7 +808,9 @@ pub enum GateFit {
 }
 
 impl Default for GateFit {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[repr(u32)]
@@ -789,7 +831,9 @@ pub enum ApertureFormat {
 }
 
 impl Default for ApertureFormat {
-    fn default() -> Self { Self::Custom }
+    fn default() -> Self {
+        Self::Custom
+    }
 }
 
 #[repr(u32)]
@@ -805,13 +849,13 @@ pub enum CoordinateAxis {
 }
 
 impl Default for CoordinateAxis {
-    fn default() -> Self { Self::PositiveX }
+    fn default() -> Self {
+        Self::PositiveX
+    }
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct CoordinateAxes {
     pub right: CoordinateAxis,
     pub up: CoordinateAxis,
@@ -881,7 +925,9 @@ pub enum NurbsTopology {
 }
 
 impl Default for NurbsTopology {
-    fn default() -> Self { Self::Open }
+    fn default() -> Self {
+        Self::Open
+    }
 }
 
 #[repr(C)]
@@ -954,7 +1000,9 @@ pub enum MarkerType {
 }
 
 impl Default for MarkerType {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(C)]
@@ -972,13 +1020,13 @@ pub enum LodDisplay {
 }
 
 impl Default for LodDisplay {
-    fn default() -> Self { Self::UseLod }
+    fn default() -> Self {
+        Self::UseLod
+    }
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct LodLevel {
     pub distance: Real,
     pub display: LodDisplay,
@@ -1005,13 +1053,13 @@ pub enum SkinningMethod {
 }
 
 impl Default for SkinningMethod {
-    fn default() -> Self { Self::Linear }
+    fn default() -> Self {
+        Self::Linear
+    }
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct SkinVertex {
     pub weight_begin: u32,
     pub num_weights: u32,
@@ -1019,9 +1067,7 @@ pub struct SkinVertex {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct SkinWeight {
     pub cluster_index: u32,
     pub weight: Real,
@@ -1094,7 +1140,9 @@ pub enum CacheFileFormat {
 }
 
 impl Default for CacheFileFormat {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(u32)]
@@ -1108,7 +1156,9 @@ pub enum CacheDataFormat {
 }
 
 impl Default for CacheDataFormat {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(u32)]
@@ -1120,7 +1170,9 @@ pub enum CacheDataEncoding {
 }
 
 impl Default for CacheDataEncoding {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(u32)]
@@ -1133,7 +1185,9 @@ pub enum CacheInterpretation {
 }
 
 impl Default for CacheInterpretation {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(C)]
@@ -1235,7 +1289,9 @@ pub enum ShaderType {
 }
 
 impl Default for ShaderType {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(u32)]
@@ -1264,7 +1320,9 @@ pub enum MaterialFbxMap {
 }
 
 impl Default for MaterialFbxMap {
-    fn default() -> Self { Self::DiffuseFactor }
+    fn default() -> Self {
+        Self::DiffuseFactor
+    }
 }
 
 #[repr(u32)]
@@ -1329,7 +1387,9 @@ pub enum MaterialPbrMap {
 }
 
 impl Default for MaterialPbrMap {
-    fn default() -> Self { Self::BaseFactor }
+    fn default() -> Self {
+        Self::BaseFactor
+    }
 }
 
 #[repr(u32)]
@@ -1361,7 +1421,9 @@ pub enum MaterialFeature {
 }
 
 impl Default for MaterialFeature {
-    fn default() -> Self { Self::Pbr }
+    fn default() -> Self {
+        Self::Pbr
+    }
 }
 
 #[repr(C)]
@@ -1498,7 +1560,9 @@ pub enum TextureType {
 }
 
 impl Default for TextureType {
-    fn default() -> Self { Self::File }
+    fn default() -> Self {
+        Self::File
+    }
 }
 
 #[repr(u32)]
@@ -1538,7 +1602,9 @@ pub enum BlendMode {
 }
 
 impl Default for BlendMode {
-    fn default() -> Self { Self::Translucent }
+    fn default() -> Self {
+        Self::Translucent
+    }
 }
 
 #[repr(u32)]
@@ -1549,7 +1615,9 @@ pub enum WrapMode {
 }
 
 impl Default for WrapMode {
-    fn default() -> Self { Self::Repeat }
+    fn default() -> Self {
+        Self::Repeat
+    }
 }
 
 #[repr(C)]
@@ -1568,7 +1636,9 @@ pub enum ShaderTextureType {
 }
 
 impl Default for ShaderTextureType {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(C)]
@@ -1679,9 +1749,7 @@ pub struct PropOverride {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct TransformOverride {
     pub node_id: u32,
     pub transform: Transform,
@@ -1750,7 +1818,9 @@ pub enum Interpolation {
 }
 
 impl Default for Interpolation {
-    fn default() -> Self { Self::ConstantPrev }
+    fn default() -> Self {
+        Self::ConstantPrev
+    }
 }
 
 #[repr(u32)]
@@ -1764,7 +1834,9 @@ pub enum ExtrapolationMode {
 }
 
 impl Default for ExtrapolationMode {
-    fn default() -> Self { Self::Constant }
+    fn default() -> Self {
+        Self::Constant
+    }
 }
 
 #[repr(C)]
@@ -1774,18 +1846,14 @@ pub struct Extrapolation {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Tangent {
     pub dx: f32,
     pub dy: f32,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Keyframe {
     pub time: f64,
     pub value: Real,
@@ -1850,7 +1918,9 @@ pub enum ConstraintType {
 }
 
 impl Default for ConstraintType {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(C)]
@@ -1871,7 +1941,9 @@ pub enum ConstraintAimUpType {
 }
 
 impl Default for ConstraintAimUpType {
-    fn default() -> Self { Self::Scene }
+    fn default() -> Self {
+        Self::Scene
+    }
 }
 
 #[repr(u32)]
@@ -1882,7 +1954,9 @@ pub enum ConstraintIkPoleType {
 }
 
 impl Default for ConstraintIkPoleType {
-    fn default() -> Self { Self::Vector }
+    fn default() -> Self {
+        Self::Vector
+    }
 }
 
 #[repr(C)]
@@ -1964,7 +2038,9 @@ pub enum Exporter {
 }
 
 impl Default for Exporter {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(C)]
@@ -1984,7 +2060,9 @@ pub enum FileFormat {
 }
 
 impl Default for FileFormat {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(u32)]
@@ -2008,7 +2086,9 @@ pub enum WarningType {
 }
 
 impl Default for WarningType {
-    fn default() -> Self { Self::MissingExternalFile }
+    fn default() -> Self {
+        Self::MissingExternalFile
+    }
 }
 
 #[repr(C)]
@@ -2028,7 +2108,9 @@ pub enum ThumbnailFormat {
 }
 
 impl Default for ThumbnailFormat {
-    fn default() -> Self { Self::Unknown }
+    fn default() -> Self {
+        Self::Unknown
+    }
 }
 
 #[repr(u32)]
@@ -2040,7 +2122,9 @@ pub enum SpaceConversion {
 }
 
 impl Default for SpaceConversion {
-    fn default() -> Self { Self::TransformRoot }
+    fn default() -> Self {
+        Self::TransformRoot
+    }
 }
 
 #[repr(u32)]
@@ -2053,7 +2137,9 @@ pub enum GeometryTransformHandling {
 }
 
 impl Default for GeometryTransformHandling {
-    fn default() -> Self { Self::Preserve }
+    fn default() -> Self {
+        Self::Preserve
+    }
 }
 
 #[repr(u32)]
@@ -2067,7 +2153,9 @@ pub enum InheritModeHandling {
 }
 
 impl Default for InheritModeHandling {
-    fn default() -> Self { Self::Preserve }
+    fn default() -> Self {
+        Self::Preserve
+    }
 }
 
 #[repr(u32)]
@@ -2079,7 +2167,9 @@ pub enum PivotHandling {
 }
 
 impl Default for PivotHandling {
-    fn default() -> Self { Self::Retain }
+    fn default() -> Self {
+        Self::Retain
+    }
 }
 
 #[repr(C)]
@@ -2165,7 +2255,9 @@ pub enum TimeMode {
 }
 
 impl Default for TimeMode {
-    fn default() -> Self { Self::Default }
+    fn default() -> Self {
+        Self::Default
+    }
 }
 
 #[repr(u32)]
@@ -2177,7 +2269,9 @@ pub enum TimeProtocol {
 }
 
 impl Default for TimeProtocol {
-    fn default() -> Self { Self::Smpte }
+    fn default() -> Self {
+        Self::Smpte
+    }
 }
 
 #[repr(u32)]
@@ -2190,7 +2284,9 @@ pub enum SnapMode {
 }
 
 impl Default for SnapMode {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[repr(C)]
@@ -2265,9 +2361,7 @@ pub struct Scene {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct CurvePoint {
     pub valid: bool,
     pub position: Vec3,
@@ -2275,9 +2369,7 @@ pub struct CurvePoint {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct SurfacePoint {
     pub valid: bool,
     pub position: Vec3,
@@ -2293,17 +2385,23 @@ impl TopoFlags {
     pub const NON_MANIFOLD: TopoFlags = TopoFlags(0x1);
 }
 
-const TOPOFLAGS_NAMES: [(&'static str, u32); 1] = [
-    ("NON_MANIFOLD", 0x1),
-];
+const TOPOFLAGS_NAMES: [(&'static str, u32); 1] = [("NON_MANIFOLD", 0x1)];
 
 impl TopoFlags {
-    pub fn any(self) -> bool { self.0 != 0 }
-    pub fn has_any(self, bits: Self) -> bool { (self.0 & bits.0) != 0 }
-    pub fn has_all(self, bits: Self) -> bool { (self.0 & bits.0) == bits.0 }
+    pub fn any(self) -> bool {
+        self.0 != 0
+    }
+    pub fn has_any(self, bits: Self) -> bool {
+        (self.0 & bits.0) != 0
+    }
+    pub fn has_all(self, bits: Self) -> bool {
+        (self.0 & bits.0) == bits.0
+    }
 }
 impl Default for TopoFlags {
-    fn default() -> Self { Self(0) }
+    fn default() -> Self {
+        Self(0)
+    }
 }
 impl Debug for TopoFlags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2312,30 +2410,40 @@ impl Debug for TopoFlags {
 }
 impl BitAnd for TopoFlags {
     type Output = Self;
-    fn bitand(self, rhs: Self) -> Self::Output { Self(self.0 & rhs.0) }
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self(self.0 & rhs.0)
+    }
 }
 impl BitAndAssign for TopoFlags {
-    fn bitand_assign(&mut self, rhs: Self) { *self = Self(self.0 & rhs.0) }
+    fn bitand_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 & rhs.0)
+    }
 }
 impl BitOr for TopoFlags {
     type Output = Self;
-    fn bitor(self, rhs: Self) -> Self::Output { Self(self.0 | rhs.0) }
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
 }
 impl BitOrAssign for TopoFlags {
-    fn bitor_assign(&mut self, rhs: Self) { *self = Self(self.0 | rhs.0) }
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 | rhs.0)
+    }
 }
 impl BitXor for TopoFlags {
     type Output = Self;
-    fn bitxor(self, rhs: Self) -> Self::Output { Self(self.0 ^ rhs.0) }
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Self(self.0 ^ rhs.0)
+    }
 }
 impl BitXorAssign for TopoFlags {
-    fn bitxor_assign(&mut self, rhs: Self) { *self = Self(self.0 ^ rhs.0) }
+    fn bitxor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 ^ rhs.0)
+    }
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct TopoEdge {
     pub index: u32,
     pub next: u32,
@@ -2356,10 +2464,11 @@ pub struct RawVertexStream {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RawAllocator {
-    pub alloc_fn: Option<unsafe extern "C" fn (*mut c_void, usize) -> *mut c_void>,
-    pub realloc_fn: Option<unsafe extern "C" fn (*mut c_void, *mut c_void, usize, usize) -> *mut c_void>,
-    pub free_fn: Option<unsafe extern "C" fn (*mut c_void, *mut c_void, usize)>,
-    pub free_allocator_fn: Option<unsafe extern "C" fn (*mut c_void)>,
+    pub alloc_fn: Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>,
+    pub realloc_fn:
+        Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize, usize) -> *mut c_void>,
+    pub free_fn: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize)>,
+    pub free_allocator_fn: Option<unsafe extern "C" fn(*mut c_void)>,
     pub user: *mut c_void,
 }
 
@@ -2376,8 +2485,7 @@ impl Default for RawAllocator {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct RawAllocatorOpts {
     pub allocator: RawAllocator,
     pub memory_limit: usize,
@@ -2389,10 +2497,10 @@ pub struct RawAllocatorOpts {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RawStream {
-    pub read_fn: Option<unsafe extern "C" fn (*mut c_void, *mut c_void, usize) -> usize>,
-    pub skip_fn: Option<unsafe extern "C" fn (*mut c_void, usize) -> bool>,
-    pub size_fn: Option<unsafe extern "C" fn (*mut c_void) -> u64>,
-    pub close_fn: Option<unsafe extern "C" fn (*mut c_void)>,
+    pub read_fn: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize>,
+    pub skip_fn: Option<unsafe extern "C" fn(*mut c_void, usize) -> bool>,
+    pub size_fn: Option<unsafe extern "C" fn(*mut c_void) -> u64>,
+    pub close_fn: Option<unsafe extern "C" fn(*mut c_void)>,
     pub user: *mut c_void,
 }
 
@@ -2417,7 +2525,9 @@ pub enum OpenFileType {
 }
 
 impl Default for OpenFileType {
-    fn default() -> Self { Self::MainModel }
+    fn default() -> Self {
+        Self::MainModel
+    }
 }
 
 #[repr(C)]
@@ -2430,7 +2540,15 @@ pub struct OpenFileInfo {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RawOpenFileCb {
-    pub fn_: Option<unsafe extern "C" fn (*mut c_void, *mut RawStream, *const u8, usize, *const OpenFileInfo) -> bool>,
+    pub fn_: Option<
+        unsafe extern "C" fn(
+            *mut c_void,
+            *mut RawStream,
+            *const u8,
+            usize,
+            *const OpenFileInfo,
+        ) -> bool,
+    >,
     pub user: *mut c_void,
 }
 
@@ -2455,7 +2573,7 @@ pub struct RawOpenFileOpts {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RawCloseMemoryCb {
-    pub fn_: Option<unsafe extern "C" fn (*mut c_void, *mut c_void, usize)>,
+    pub fn_: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize)>,
     pub user: *mut c_void,
 }
 
@@ -2516,7 +2634,9 @@ pub enum ErrorType {
 }
 
 impl Default for ErrorType {
-    fn default() -> Self { Self::None }
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[repr(C)]
@@ -2553,13 +2673,15 @@ pub enum ProgressResult {
 }
 
 impl Default for ProgressResult {
-    fn default() -> Self { Self::Continue }
+    fn default() -> Self {
+        Self::Continue
+    }
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RawProgressCb {
-    pub fn_: Option<unsafe extern "C" fn (*mut c_void, *const Progress) -> RawEnum<ProgressResult>>,
+    pub fn_: Option<unsafe extern "C" fn(*mut c_void, *const Progress) -> RawEnum<ProgressResult>>,
     pub user: *mut c_void,
 }
 
@@ -2579,7 +2701,7 @@ pub struct InflateInput {
     pub data_size: usize,
     pub buffer: *mut c_void,
     pub buffer_size: usize,
-    pub read_fn: Option<unsafe extern "C" fn (*mut c_void, *mut c_void, usize) -> usize>,
+    pub read_fn: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize>,
     pub read_user: *mut c_void,
     pub progress_cb: RawProgressCb,
     pub progress_interval_hint: u64,
@@ -2606,7 +2728,9 @@ pub enum IndexErrorHandling {
 }
 
 impl Default for IndexErrorHandling {
-    fn default() -> Self { Self::Clamp }
+    fn default() -> Self {
+        Self::Clamp
+    }
 }
 
 #[repr(u32)]
@@ -2621,7 +2745,9 @@ pub enum UnicodeErrorHandling {
 }
 
 impl Default for UnicodeErrorHandling {
-    fn default() -> Self { Self::ReplacementCharacter }
+    fn default() -> Self {
+        Self::ReplacementCharacter
+    }
 }
 
 #[repr(transparent)]
@@ -2645,12 +2771,20 @@ const BAKEDKEYFLAGS_NAMES: [(&'static str, u32); 5] = [
 ];
 
 impl BakedKeyFlags {
-    pub fn any(self) -> bool { self.0 != 0 }
-    pub fn has_any(self, bits: Self) -> bool { (self.0 & bits.0) != 0 }
-    pub fn has_all(self, bits: Self) -> bool { (self.0 & bits.0) == bits.0 }
+    pub fn any(self) -> bool {
+        self.0 != 0
+    }
+    pub fn has_any(self, bits: Self) -> bool {
+        (self.0 & bits.0) != 0
+    }
+    pub fn has_all(self, bits: Self) -> bool {
+        (self.0 & bits.0) == bits.0
+    }
 }
 impl Default for BakedKeyFlags {
-    fn default() -> Self { Self(0) }
+    fn default() -> Self {
+        Self(0)
+    }
 }
 impl Debug for BakedKeyFlags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2659,24 +2793,36 @@ impl Debug for BakedKeyFlags {
 }
 impl BitAnd for BakedKeyFlags {
     type Output = Self;
-    fn bitand(self, rhs: Self) -> Self::Output { Self(self.0 & rhs.0) }
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self(self.0 & rhs.0)
+    }
 }
 impl BitAndAssign for BakedKeyFlags {
-    fn bitand_assign(&mut self, rhs: Self) { *self = Self(self.0 & rhs.0) }
+    fn bitand_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 & rhs.0)
+    }
 }
 impl BitOr for BakedKeyFlags {
     type Output = Self;
-    fn bitor(self, rhs: Self) -> Self::Output { Self(self.0 | rhs.0) }
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
 }
 impl BitOrAssign for BakedKeyFlags {
-    fn bitor_assign(&mut self, rhs: Self) { *self = Self(self.0 | rhs.0) }
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 | rhs.0)
+    }
 }
 impl BitXor for BakedKeyFlags {
     type Output = Self;
-    fn bitxor(self, rhs: Self) -> Self::Output { Self(self.0 ^ rhs.0) }
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Self(self.0 ^ rhs.0)
+    }
 }
 impl BitXorAssign for BakedKeyFlags {
-    fn bitxor_assign(&mut self, rhs: Self) { *self = Self(self.0 ^ rhs.0) }
+    fn bitxor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 ^ rhs.0)
+    }
 }
 
 #[repr(C)]
@@ -2746,10 +2892,11 @@ pub struct ThreadPoolInfo {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RawThreadPool {
-    pub init_fn: Option<unsafe extern "C" fn (*mut c_void, ThreadPoolContext, *const ThreadPoolInfo) -> bool>,
-    pub run_fn: Option<unsafe extern "C" fn (*mut c_void, ThreadPoolContext, u32, u32, u32)>,
-    pub wait_fn: Option<unsafe extern "C" fn (*mut c_void, ThreadPoolContext, u32, u32)>,
-    pub free_fn: Option<unsafe extern "C" fn (*mut c_void, ThreadPoolContext)>,
+    pub init_fn:
+        Option<unsafe extern "C" fn(*mut c_void, ThreadPoolContext, *const ThreadPoolInfo) -> bool>,
+    pub run_fn: Option<unsafe extern "C" fn(*mut c_void, ThreadPoolContext, u32, u32, u32)>,
+    pub wait_fn: Option<unsafe extern "C" fn(*mut c_void, ThreadPoolContext, u32, u32)>,
+    pub free_fn: Option<unsafe extern "C" fn(*mut c_void, ThreadPoolContext)>,
     pub user: *mut c_void,
 }
 
@@ -2781,17 +2928,23 @@ impl EvaluateFlags {
     pub const NO_EXTRAPOLATION: EvaluateFlags = EvaluateFlags(0x1);
 }
 
-const EVALUATEFLAGS_NAMES: [(&'static str, u32); 1] = [
-    ("NO_EXTRAPOLATION", 0x1),
-];
+const EVALUATEFLAGS_NAMES: [(&'static str, u32); 1] = [("NO_EXTRAPOLATION", 0x1)];
 
 impl EvaluateFlags {
-    pub fn any(self) -> bool { self.0 != 0 }
-    pub fn has_any(self, bits: Self) -> bool { (self.0 & bits.0) != 0 }
-    pub fn has_all(self, bits: Self) -> bool { (self.0 & bits.0) == bits.0 }
+    pub fn any(self) -> bool {
+        self.0 != 0
+    }
+    pub fn has_any(self, bits: Self) -> bool {
+        (self.0 & bits.0) != 0
+    }
+    pub fn has_all(self, bits: Self) -> bool {
+        (self.0 & bits.0) == bits.0
+    }
 }
 impl Default for EvaluateFlags {
-    fn default() -> Self { Self(0) }
+    fn default() -> Self {
+        Self(0)
+    }
 }
 impl Debug for EvaluateFlags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2800,24 +2953,36 @@ impl Debug for EvaluateFlags {
 }
 impl BitAnd for EvaluateFlags {
     type Output = Self;
-    fn bitand(self, rhs: Self) -> Self::Output { Self(self.0 & rhs.0) }
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self(self.0 & rhs.0)
+    }
 }
 impl BitAndAssign for EvaluateFlags {
-    fn bitand_assign(&mut self, rhs: Self) { *self = Self(self.0 & rhs.0) }
+    fn bitand_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 & rhs.0)
+    }
 }
 impl BitOr for EvaluateFlags {
     type Output = Self;
-    fn bitor(self, rhs: Self) -> Self::Output { Self(self.0 | rhs.0) }
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
 }
 impl BitOrAssign for EvaluateFlags {
-    fn bitor_assign(&mut self, rhs: Self) { *self = Self(self.0 | rhs.0) }
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 | rhs.0)
+    }
 }
 impl BitXor for EvaluateFlags {
     type Output = Self;
-    fn bitxor(self, rhs: Self) -> Self::Output { Self(self.0 ^ rhs.0) }
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Self(self.0 ^ rhs.0)
+    }
 }
 impl BitXorAssign for EvaluateFlags {
-    fn bitxor_assign(&mut self, rhs: Self) { *self = Self(self.0 ^ rhs.0) }
+    fn bitxor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 ^ rhs.0)
+    }
 }
 
 #[repr(C)]
@@ -2944,7 +3109,9 @@ pub enum BakeStepHandling {
 }
 
 impl Default for BakeStepHandling {
-    fn default() -> Self { Self::Default }
+    fn default() -> Self {
+        Self::Default
+    }
 }
 
 #[repr(C)]
@@ -3082,12 +3249,20 @@ const TRANSFORMFLAGS_NAMES: [(&'static str, u32); 7] = [
 ];
 
 impl TransformFlags {
-    pub fn any(self) -> bool { self.0 != 0 }
-    pub fn has_any(self, bits: Self) -> bool { (self.0 & bits.0) != 0 }
-    pub fn has_all(self, bits: Self) -> bool { (self.0 & bits.0) == bits.0 }
+    pub fn any(self) -> bool {
+        self.0 != 0
+    }
+    pub fn has_any(self, bits: Self) -> bool {
+        (self.0 & bits.0) != 0
+    }
+    pub fn has_all(self, bits: Self) -> bool {
+        (self.0 & bits.0) == bits.0
+    }
 }
 impl Default for TransformFlags {
-    fn default() -> Self { Self(0) }
+    fn default() -> Self {
+        Self(0)
+    }
 }
 impl Debug for TransformFlags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -3096,29 +3271,41 @@ impl Debug for TransformFlags {
 }
 impl BitAnd for TransformFlags {
     type Output = Self;
-    fn bitand(self, rhs: Self) -> Self::Output { Self(self.0 & rhs.0) }
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self(self.0 & rhs.0)
+    }
 }
 impl BitAndAssign for TransformFlags {
-    fn bitand_assign(&mut self, rhs: Self) { *self = Self(self.0 & rhs.0) }
+    fn bitand_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 & rhs.0)
+    }
 }
 impl BitOr for TransformFlags {
     type Output = Self;
-    fn bitor(self, rhs: Self) -> Self::Output { Self(self.0 | rhs.0) }
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
+    }
 }
 impl BitOrAssign for TransformFlags {
-    fn bitor_assign(&mut self, rhs: Self) { *self = Self(self.0 | rhs.0) }
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 | rhs.0)
+    }
 }
 impl BitXor for TransformFlags {
     type Output = Self;
-    fn bitxor(self, rhs: Self) -> Self::Output { Self(self.0 ^ rhs.0) }
+    fn bitxor(self, rhs: Self) -> Self::Output {
+        Self(self.0 ^ rhs.0)
+    }
 }
 impl BitXorAssign for TransformFlags {
-    fn bitxor_assign(&mut self, rhs: Self) { *self = Self(self.0 ^ rhs.0) }
+    fn bitxor_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 ^ rhs.0)
+    }
 }
 
 #[derive(Default)]
 pub struct AllocatorOpts {
-    pub allocator: Allocator<>,
+    pub allocator: Allocator,
     pub memory_limit: usize,
     pub allocation_limit: usize,
     pub huge_threshold: usize,
@@ -3157,7 +3344,9 @@ pub enum OpenFileCb<'a> {
 }
 
 impl<'a> Default for OpenFileCb<'a> {
-    fn default() -> Self { Self::Unset }
+    fn default() -> Self {
+        Self::Unset
+    }
 }
 
 impl RawOpenFileCb {
@@ -3170,7 +3359,6 @@ impl RawOpenFileCb {
 }
 
 impl OpenFileCb<'_> {
-
     fn from_rust(&self) -> RawOpenFileCb {
         match self {
             OpenFileCb::Unset => Default::default(),
@@ -3190,7 +3378,7 @@ impl OpenFileCb<'_> {
 
 #[derive(Default)]
 pub struct OpenFileOpts {
-    pub allocator: AllocatorOpts<>,
+    pub allocator: AllocatorOpts,
     pub filename_null_terminated: Unsafe<bool>,
 }
 
@@ -3224,7 +3412,9 @@ pub enum CloseMemoryCb<'a> {
 }
 
 impl<'a> Default for CloseMemoryCb<'a> {
-    fn default() -> Self { Self::Unset }
+    fn default() -> Self {
+        Self::Unset
+    }
 }
 
 impl RawCloseMemoryCb {
@@ -3237,7 +3427,6 @@ impl RawCloseMemoryCb {
 }
 
 impl CloseMemoryCb<'_> {
-
     fn from_rust(&self) -> RawCloseMemoryCb {
         match self {
             CloseMemoryCb::Unset => Default::default(),
@@ -3257,7 +3446,7 @@ impl CloseMemoryCb<'_> {
 
 #[derive(Default)]
 pub struct OpenMemoryOpts<'a> {
-    pub allocator: AllocatorOpts<>,
+    pub allocator: AllocatorOpts,
     pub no_copy: Unsafe<bool>,
     pub close_cb: CloseMemoryCb<'a>,
 }
@@ -3294,7 +3483,9 @@ pub enum ProgressCb<'a> {
 }
 
 impl<'a> Default for ProgressCb<'a> {
-    fn default() -> Self { Self::Unset }
+    fn default() -> Self {
+        Self::Unset
+    }
 }
 
 impl RawProgressCb {
@@ -3307,7 +3498,6 @@ impl RawProgressCb {
 }
 
 impl ProgressCb<'_> {
-
     fn from_rust(&self) -> RawProgressCb {
         match self {
             ProgressCb::Unset => Default::default(),
@@ -3327,7 +3517,7 @@ impl ProgressCb<'_> {
 
 #[derive(Default)]
 pub struct ThreadOpts {
-    pub pool: ThreadPool<>,
+    pub pool: ThreadPool,
     pub num_tasks: usize,
     pub memory_limit: usize,
 }
@@ -3354,9 +3544,9 @@ impl FromRust for ThreadOpts {
 
 #[derive(Default)]
 pub struct LoadOpts<'a> {
-    pub temp_allocator: AllocatorOpts<>,
-    pub result_allocator: AllocatorOpts<>,
-    pub thread_opts: ThreadOpts<>,
+    pub temp_allocator: AllocatorOpts,
+    pub result_allocator: AllocatorOpts,
+    pub thread_opts: ThreadOpts,
     pub ignore_geometry: bool,
     pub ignore_animation: bool,
     pub ignore_embedded: bool,
@@ -3554,7 +3744,9 @@ impl<'a> FromRust for LoadOpts<'a> {
             target_unit_meters: self.target_unit_meters,
             target_camera_axes: self.target_camera_axes,
             target_light_axes: self.target_light_axes,
-            geometry_transform_helper_name: self.geometry_transform_helper_name.from_rust_mut(arena),
+            geometry_transform_helper_name: self
+                .geometry_transform_helper_name
+                .from_rust_mut(arena),
             scale_helper_name: self.scale_helper_name.from_rust_mut(arena),
             normalize_normals: self.normalize_normals,
             normalize_tangents: self.normalize_tangents,
@@ -3583,8 +3775,8 @@ impl<'a> FromRust for LoadOpts<'a> {
 
 #[derive(Default)]
 pub struct EvaluateOpts<'a> {
-    pub temp_allocator: AllocatorOpts<>,
-    pub result_allocator: AllocatorOpts<>,
+    pub temp_allocator: AllocatorOpts,
+    pub result_allocator: AllocatorOpts,
     pub evaluate_skinning: bool,
     pub evaluate_caches: bool,
     pub evaluate_flags: u32,
@@ -3664,7 +3856,7 @@ pub struct AnimOpts<'a> {
     pub prop_overrides: ListOpt<'a, PropOverrideDesc<'a>>,
     pub transform_overrides: ListOpt<'a, TransformOverride>,
     pub ignore_connections: bool,
-    pub result_allocator: AllocatorOpts<>,
+    pub result_allocator: AllocatorOpts,
 }
 
 impl<'a> FromRust for AnimOpts<'a> {
@@ -3699,8 +3891,8 @@ impl<'a> FromRust for AnimOpts<'a> {
 
 #[derive(Default)]
 pub struct BakeOpts {
-    pub temp_allocator: AllocatorOpts<>,
-    pub result_allocator: AllocatorOpts<>,
+    pub temp_allocator: AllocatorOpts,
+    pub result_allocator: AllocatorOpts,
     pub trim_start_time: bool,
     pub resample_rate: f64,
     pub minimum_sample_rate: f64,
@@ -3778,8 +3970,8 @@ impl FromRust for BakeOpts {
 
 #[derive(Default)]
 pub struct TessellateCurveOpts {
-    pub temp_allocator: AllocatorOpts<>,
-    pub result_allocator: AllocatorOpts<>,
+    pub temp_allocator: AllocatorOpts,
+    pub result_allocator: AllocatorOpts,
     pub span_subdivision: usize,
 }
 
@@ -3809,8 +4001,8 @@ impl FromRust for TessellateCurveOpts {
 
 #[derive(Default)]
 pub struct TessellateSurfaceOpts {
-    pub temp_allocator: AllocatorOpts<>,
-    pub result_allocator: AllocatorOpts<>,
+    pub temp_allocator: AllocatorOpts,
+    pub result_allocator: AllocatorOpts,
     pub span_subdivision_u: usize,
     pub span_subdivision_v: usize,
     pub skip_mesh_parts: bool,
@@ -3846,8 +4038,8 @@ impl FromRust for TessellateSurfaceOpts {
 
 #[derive(Default)]
 pub struct SubdivideOpts {
-    pub temp_allocator: AllocatorOpts<>,
-    pub result_allocator: AllocatorOpts<>,
+    pub temp_allocator: AllocatorOpts,
+    pub result_allocator: AllocatorOpts,
     pub boundary: SubdivisionBoundary,
     pub uv_boundary: SubdivisionBoundary,
     pub ignore_normals: bool,
@@ -3904,8 +4096,8 @@ impl FromRust for SubdivideOpts {
 
 #[derive(Default)]
 pub struct GeometryCacheOpts<'a> {
-    pub temp_allocator: AllocatorOpts<>,
-    pub result_allocator: AllocatorOpts<>,
+    pub temp_allocator: AllocatorOpts,
+    pub result_allocator: AllocatorOpts,
     pub open_file_cb: OpenFileCb<'a>,
     pub frames_per_second: f64,
     pub mirror_axis: MirrorAxis,
@@ -4000,90 +4192,342 @@ extern "C" {
     pub static ufbx_axes_left_handed_z_up: CoordinateAxes;
     pub static ufbx_source_version: u32;
     pub fn ufbx_is_thread_safe() -> bool;
-    pub fn ufbx_load_memory(data: *const c_void, data_size: usize, opts: *const RawLoadOpts, error: *mut Error) -> *mut Scene;
-    pub fn ufbx_load_file(filename: *const u8, opts: *const RawLoadOpts, error: *mut Error) -> *mut Scene;
-    pub fn ufbx_load_file_len(filename: *const u8, filename_len: usize, opts: *const RawLoadOpts, error: *mut Error) -> *mut Scene;
-    pub fn ufbx_load_stdio(file: *mut c_void, opts: *const RawLoadOpts, error: *mut Error) -> *mut Scene;
-    pub fn ufbx_load_stdio_prefix(file: *mut c_void, prefix: *const c_void, prefix_size: usize, opts: *const RawLoadOpts, error: *mut Error) -> *mut Scene;
-    pub fn ufbx_load_stream(stream: *const RawStream, opts: *const RawLoadOpts, error: *mut Error) -> *mut Scene;
-    pub fn ufbx_load_stream_prefix(stream: *const RawStream, prefix: *const c_void, prefix_size: usize, opts: *const RawLoadOpts, error: *mut Error) -> *mut Scene;
+    pub fn ufbx_load_memory(
+        data: *const c_void,
+        data_size: usize,
+        opts: *const RawLoadOpts,
+        error: *mut Error,
+    ) -> *mut Scene;
+    pub fn ufbx_load_file(
+        filename: *const u8,
+        opts: *const RawLoadOpts,
+        error: *mut Error,
+    ) -> *mut Scene;
+    pub fn ufbx_load_file_len(
+        filename: *const u8,
+        filename_len: usize,
+        opts: *const RawLoadOpts,
+        error: *mut Error,
+    ) -> *mut Scene;
+    pub fn ufbx_load_stdio(
+        file: *mut c_void,
+        opts: *const RawLoadOpts,
+        error: *mut Error,
+    ) -> *mut Scene;
+    pub fn ufbx_load_stdio_prefix(
+        file: *mut c_void,
+        prefix: *const c_void,
+        prefix_size: usize,
+        opts: *const RawLoadOpts,
+        error: *mut Error,
+    ) -> *mut Scene;
+    pub fn ufbx_load_stream(
+        stream: *const RawStream,
+        opts: *const RawLoadOpts,
+        error: *mut Error,
+    ) -> *mut Scene;
+    pub fn ufbx_load_stream_prefix(
+        stream: *const RawStream,
+        prefix: *const c_void,
+        prefix_size: usize,
+        opts: *const RawLoadOpts,
+        error: *mut Error,
+    ) -> *mut Scene;
     pub fn ufbx_free_scene(scene: *mut Scene);
     pub fn ufbx_retain_scene(scene: *mut Scene);
     pub fn ufbx_format_error(dst: *mut u8, dst_size: usize, error: *const Error) -> usize;
     pub fn ufbx_find_prop_len(props: *const Props, name: *const u8, name_len: usize) -> *mut Prop;
     pub fn ufbx_find_prop(props: *const Props, name: *const u8) -> *mut Prop;
-    pub fn ufbx_find_real_len(props: *const Props, name: *const u8, name_len: usize, def: Real) -> Real;
+    pub fn ufbx_find_real_len(
+        props: *const Props,
+        name: *const u8,
+        name_len: usize,
+        def: Real,
+    ) -> Real;
     pub fn ufbx_find_real(props: *const Props, name: *const u8, def: Real) -> Real;
-    pub fn ufbx_find_vec3_len(props: *const Props, name: *const u8, name_len: usize, def: Vec3) -> Vec3;
+    pub fn ufbx_find_vec3_len(
+        props: *const Props,
+        name: *const u8,
+        name_len: usize,
+        def: Vec3,
+    ) -> Vec3;
     pub fn ufbx_find_vec3(props: *const Props, name: *const u8, def: Vec3) -> Vec3;
-    pub fn ufbx_find_int_len(props: *const Props, name: *const u8, name_len: usize, def: i64) -> i64;
+    pub fn ufbx_find_int_len(
+        props: *const Props,
+        name: *const u8,
+        name_len: usize,
+        def: i64,
+    ) -> i64;
     pub fn ufbx_find_int(props: *const Props, name: *const u8, def: i64) -> i64;
-    pub fn ufbx_find_bool_len(props: *const Props, name: *const u8, name_len: usize, def: bool) -> bool;
+    pub fn ufbx_find_bool_len(
+        props: *const Props,
+        name: *const u8,
+        name_len: usize,
+        def: bool,
+    ) -> bool;
     pub fn ufbx_find_bool(props: *const Props, name: *const u8, def: bool) -> bool;
-    pub fn ufbx_find_string_len(props: *const Props, name: *const u8, name_len: usize, def: String) -> String;
+    pub fn ufbx_find_string_len(
+        props: *const Props,
+        name: *const u8,
+        name_len: usize,
+        def: String,
+    ) -> String;
     pub fn ufbx_find_string(props: *const Props, name: *const u8, def: String) -> String;
-    pub fn ufbx_find_blob_len(props: *const Props, name: *const u8, name_len: usize, def: Blob) -> Blob;
+    pub fn ufbx_find_blob_len(
+        props: *const Props,
+        name: *const u8,
+        name_len: usize,
+        def: Blob,
+    ) -> Blob;
     pub fn ufbx_find_blob(props: *const Props, name: *const u8, def: Blob) -> Blob;
-    pub fn ufbx_find_prop_concat(props: *const Props, parts: *const String, num_parts: usize) -> *mut Prop;
-    pub fn ufbx_get_prop_element(element: *const Element, prop: *const Prop, type_: ElementType) -> *mut Element;
-    pub fn ufbx_find_prop_element_len(element: *const Element, name: *const u8, name_len: usize, type_: ElementType) -> *mut Element;
-    pub fn ufbx_find_prop_element(element: *const Element, name: *const u8, type_: ElementType) -> *mut Element;
-    pub fn ufbx_find_element_len(scene: *const Scene, type_: ElementType, name: *const u8, name_len: usize) -> *mut Element;
-    pub fn ufbx_find_element(scene: *const Scene, type_: ElementType, name: *const u8) -> *mut Element;
+    pub fn ufbx_find_prop_concat(
+        props: *const Props,
+        parts: *const String,
+        num_parts: usize,
+    ) -> *mut Prop;
+    pub fn ufbx_get_prop_element(
+        element: *const Element,
+        prop: *const Prop,
+        type_: ElementType,
+    ) -> *mut Element;
+    pub fn ufbx_find_prop_element_len(
+        element: *const Element,
+        name: *const u8,
+        name_len: usize,
+        type_: ElementType,
+    ) -> *mut Element;
+    pub fn ufbx_find_prop_element(
+        element: *const Element,
+        name: *const u8,
+        type_: ElementType,
+    ) -> *mut Element;
+    pub fn ufbx_find_element_len(
+        scene: *const Scene,
+        type_: ElementType,
+        name: *const u8,
+        name_len: usize,
+    ) -> *mut Element;
+    pub fn ufbx_find_element(
+        scene: *const Scene,
+        type_: ElementType,
+        name: *const u8,
+    ) -> *mut Element;
     pub fn ufbx_find_node_len(scene: *const Scene, name: *const u8, name_len: usize) -> *mut Node;
     pub fn ufbx_find_node(scene: *const Scene, name: *const u8) -> *mut Node;
-    pub fn ufbx_find_anim_stack_len(scene: *const Scene, name: *const u8, name_len: usize) -> *mut AnimStack;
+    pub fn ufbx_find_anim_stack_len(
+        scene: *const Scene,
+        name: *const u8,
+        name_len: usize,
+    ) -> *mut AnimStack;
     pub fn ufbx_find_anim_stack(scene: *const Scene, name: *const u8) -> *mut AnimStack;
-    pub fn ufbx_find_material_len(scene: *const Scene, name: *const u8, name_len: usize) -> *mut Material;
+    pub fn ufbx_find_material_len(
+        scene: *const Scene,
+        name: *const u8,
+        name_len: usize,
+    ) -> *mut Material;
     pub fn ufbx_find_material(scene: *const Scene, name: *const u8) -> *mut Material;
-    pub fn ufbx_find_anim_prop_len(layer: *const AnimLayer, element: *const Element, prop: *const u8, prop_len: usize) -> *mut AnimProp;
-    pub fn ufbx_find_anim_prop(layer: *const AnimLayer, element: *const Element, prop: *const u8) -> *mut AnimProp;
-    pub fn ufbx_find_anim_props(layer: *const AnimLayer, element: *const Element) -> List<AnimProp>;
+    pub fn ufbx_find_anim_prop_len(
+        layer: *const AnimLayer,
+        element: *const Element,
+        prop: *const u8,
+        prop_len: usize,
+    ) -> *mut AnimProp;
+    pub fn ufbx_find_anim_prop(
+        layer: *const AnimLayer,
+        element: *const Element,
+        prop: *const u8,
+    ) -> *mut AnimProp;
+    pub fn ufbx_find_anim_props(layer: *const AnimLayer, element: *const Element)
+        -> List<AnimProp>;
     pub fn ufbx_get_compatible_matrix_for_normals(node: *const Node) -> Matrix;
-    pub fn ufbx_inflate(dst: *mut c_void, dst_size: usize, input: *const InflateInput, retain: *mut InflateRetain) -> isize;
-    pub fn ufbx_default_open_file(user: *mut c_void, stream: *mut RawStream, path: *const u8, path_len: usize, info: *const OpenFileInfo) -> bool;
-    pub fn ufbx_open_file(stream: *mut RawStream, path: *const u8, path_len: usize, opts: *const RawOpenFileOpts, error: *mut Error) -> bool;
-    pub fn ufbx_open_file_ctx(stream: *mut RawStream, ctx: OpenFileContext, path: *const u8, path_len: usize, opts: *const RawOpenFileOpts, error: *mut Error) -> bool;
-    pub fn ufbx_open_memory(stream: *mut RawStream, data: *const c_void, data_size: usize, opts: *const RawOpenMemoryOpts, error: *mut Error) -> bool;
-    pub fn ufbx_open_memory_ctx(stream: *mut RawStream, ctx: OpenFileContext, data: *const c_void, data_size: usize, opts: *const RawOpenMemoryOpts, error: *mut Error) -> bool;
+    pub fn ufbx_inflate(
+        dst: *mut c_void,
+        dst_size: usize,
+        input: *const InflateInput,
+        retain: *mut InflateRetain,
+    ) -> isize;
+    pub fn ufbx_default_open_file(
+        user: *mut c_void,
+        stream: *mut RawStream,
+        path: *const u8,
+        path_len: usize,
+        info: *const OpenFileInfo,
+    ) -> bool;
+    pub fn ufbx_open_file(
+        stream: *mut RawStream,
+        path: *const u8,
+        path_len: usize,
+        opts: *const RawOpenFileOpts,
+        error: *mut Error,
+    ) -> bool;
+    pub fn ufbx_open_file_ctx(
+        stream: *mut RawStream,
+        ctx: OpenFileContext,
+        path: *const u8,
+        path_len: usize,
+        opts: *const RawOpenFileOpts,
+        error: *mut Error,
+    ) -> bool;
+    pub fn ufbx_open_memory(
+        stream: *mut RawStream,
+        data: *const c_void,
+        data_size: usize,
+        opts: *const RawOpenMemoryOpts,
+        error: *mut Error,
+    ) -> bool;
+    pub fn ufbx_open_memory_ctx(
+        stream: *mut RawStream,
+        ctx: OpenFileContext,
+        data: *const c_void,
+        data_size: usize,
+        opts: *const RawOpenMemoryOpts,
+        error: *mut Error,
+    ) -> bool;
     pub fn ufbx_evaluate_curve(curve: *const AnimCurve, time: f64, default_value: Real) -> Real;
-    pub fn ufbx_evaluate_curve_flags(curve: *const AnimCurve, time: f64, default_value: Real, flags: u32) -> Real;
+    pub fn ufbx_evaluate_curve_flags(
+        curve: *const AnimCurve,
+        time: f64,
+        default_value: Real,
+        flags: u32,
+    ) -> Real;
     pub fn ufbx_evaluate_anim_value_real(anim_value: *const AnimValue, time: f64) -> Real;
     pub fn ufbx_evaluate_anim_value_vec3(anim_value: *const AnimValue, time: f64) -> Vec3;
-    pub fn ufbx_evaluate_anim_value_real_flags(anim_value: *const AnimValue, time: f64, flags: u32) -> Real;
-    pub fn ufbx_evaluate_anim_value_vec3_flags(anim_value: *const AnimValue, time: f64, flags: u32) -> Vec3;
-    pub fn ufbx_evaluate_prop_len(anim: *const Anim, element: *const Element, name: *const u8, name_len: usize, time: f64) -> Prop;
-    pub fn ufbx_evaluate_prop(anim: *const Anim, element: *const Element, name: *const u8, time: f64) -> Prop;
-    pub fn ufbx_evaluate_prop_flags_len(anim: *const Anim, element: *const Element, name: *const u8, name_len: usize, time: f64, flags: u32) -> Prop;
-    pub fn ufbx_evaluate_prop_flags(anim: *const Anim, element: *const Element, name: *const u8, time: f64, flags: u32) -> Prop;
-    pub fn ufbx_evaluate_props(anim: *const Anim, element: *const Element, time: f64, buffer: *mut Prop, buffer_size: usize) -> Props;
-    pub fn ufbx_evaluate_props_flags(anim: *const Anim, element: *const Element, time: f64, buffer: *mut Prop, buffer_size: usize, flags: u32) -> Props;
+    pub fn ufbx_evaluate_anim_value_real_flags(
+        anim_value: *const AnimValue,
+        time: f64,
+        flags: u32,
+    ) -> Real;
+    pub fn ufbx_evaluate_anim_value_vec3_flags(
+        anim_value: *const AnimValue,
+        time: f64,
+        flags: u32,
+    ) -> Vec3;
+    pub fn ufbx_evaluate_prop_len(
+        anim: *const Anim,
+        element: *const Element,
+        name: *const u8,
+        name_len: usize,
+        time: f64,
+    ) -> Prop;
+    pub fn ufbx_evaluate_prop(
+        anim: *const Anim,
+        element: *const Element,
+        name: *const u8,
+        time: f64,
+    ) -> Prop;
+    pub fn ufbx_evaluate_prop_flags_len(
+        anim: *const Anim,
+        element: *const Element,
+        name: *const u8,
+        name_len: usize,
+        time: f64,
+        flags: u32,
+    ) -> Prop;
+    pub fn ufbx_evaluate_prop_flags(
+        anim: *const Anim,
+        element: *const Element,
+        name: *const u8,
+        time: f64,
+        flags: u32,
+    ) -> Prop;
+    pub fn ufbx_evaluate_props(
+        anim: *const Anim,
+        element: *const Element,
+        time: f64,
+        buffer: *mut Prop,
+        buffer_size: usize,
+    ) -> Props;
+    pub fn ufbx_evaluate_props_flags(
+        anim: *const Anim,
+        element: *const Element,
+        time: f64,
+        buffer: *mut Prop,
+        buffer_size: usize,
+        flags: u32,
+    ) -> Props;
     pub fn ufbx_evaluate_transform(anim: *const Anim, node: *const Node, time: f64) -> Transform;
-    pub fn ufbx_evaluate_transform_flags(anim: *const Anim, node: *const Node, time: f64, flags: u32) -> Transform;
-    pub fn ufbx_evaluate_blend_weight(anim: *const Anim, channel: *const BlendChannel, time: f64) -> Real;
-    pub fn ufbx_evaluate_blend_weight_flags(anim: *const Anim, channel: *const BlendChannel, time: f64, flags: u32) -> Real;
-    pub fn ufbx_evaluate_scene(scene: *const Scene, anim: *const Anim, time: f64, opts: *const RawEvaluateOpts, error: *mut Error) -> *mut Scene;
-    pub fn ufbx_create_anim(scene: *const Scene, opts: *const RawAnimOpts, error: *mut Error) -> *mut Anim;
+    pub fn ufbx_evaluate_transform_flags(
+        anim: *const Anim,
+        node: *const Node,
+        time: f64,
+        flags: u32,
+    ) -> Transform;
+    pub fn ufbx_evaluate_blend_weight(
+        anim: *const Anim,
+        channel: *const BlendChannel,
+        time: f64,
+    ) -> Real;
+    pub fn ufbx_evaluate_blend_weight_flags(
+        anim: *const Anim,
+        channel: *const BlendChannel,
+        time: f64,
+        flags: u32,
+    ) -> Real;
+    pub fn ufbx_evaluate_scene(
+        scene: *const Scene,
+        anim: *const Anim,
+        time: f64,
+        opts: *const RawEvaluateOpts,
+        error: *mut Error,
+    ) -> *mut Scene;
+    pub fn ufbx_create_anim(
+        scene: *const Scene,
+        opts: *const RawAnimOpts,
+        error: *mut Error,
+    ) -> *mut Anim;
     pub fn ufbx_free_anim(anim: *mut Anim);
     pub fn ufbx_retain_anim(anim: *mut Anim);
-    pub fn ufbx_bake_anim(scene: *const Scene, anim: *const Anim, opts: *const RawBakeOpts, error: *mut Error) -> *mut BakedAnim;
+    pub fn ufbx_bake_anim(
+        scene: *const Scene,
+        anim: *const Anim,
+        opts: *const RawBakeOpts,
+        error: *mut Error,
+    ) -> *mut BakedAnim;
     pub fn ufbx_retain_baked_anim(bake: *mut BakedAnim);
     pub fn ufbx_free_baked_anim(bake: *mut BakedAnim);
     pub fn ufbx_find_baked_node_by_typed_id(bake: *mut BakedAnim, typed_id: u32) -> *mut BakedNode;
     pub fn ufbx_find_baked_node(bake: *mut BakedAnim, node: *mut Node) -> *mut BakedNode;
-    pub fn ufbx_find_baked_element_by_element_id(bake: *mut BakedAnim, element_id: u32) -> *mut BakedElement;
-    pub fn ufbx_find_baked_element(bake: *mut BakedAnim, element: *mut Element) -> *mut BakedElement;
+    pub fn ufbx_find_baked_element_by_element_id(
+        bake: *mut BakedAnim,
+        element_id: u32,
+    ) -> *mut BakedElement;
+    pub fn ufbx_find_baked_element(
+        bake: *mut BakedAnim,
+        element: *mut Element,
+    ) -> *mut BakedElement;
     pub fn ufbx_evaluate_baked_vec3(keyframes: List<BakedVec3>, time: f64) -> Vec3;
     pub fn ufbx_evaluate_baked_quat(keyframes: List<BakedQuat>, time: f64) -> Quat;
     pub fn ufbx_get_bone_pose(pose: *const Pose, node: *const Node) -> *mut BonePose;
-    pub fn ufbx_find_prop_texture_len(material: *const Material, name: *const u8, name_len: usize) -> *mut Texture;
+    pub fn ufbx_find_prop_texture_len(
+        material: *const Material,
+        name: *const u8,
+        name_len: usize,
+    ) -> *mut Texture;
     pub fn ufbx_find_prop_texture(material: *const Material, name: *const u8) -> *mut Texture;
-    pub fn ufbx_find_shader_prop_len(shader: *const Shader, name: *const u8, name_len: usize) -> String;
+    pub fn ufbx_find_shader_prop_len(
+        shader: *const Shader,
+        name: *const u8,
+        name_len: usize,
+    ) -> String;
     pub fn ufbx_find_shader_prop(shader: *const Shader, name: *const u8) -> String;
-    pub fn ufbx_find_shader_prop_bindings_len(shader: *const Shader, name: *const u8, name_len: usize) -> List<ShaderPropBinding>;
-    pub fn ufbx_find_shader_prop_bindings(shader: *const Shader, name: *const u8) -> List<ShaderPropBinding>;
-    pub fn ufbx_find_shader_texture_input_len(shader: *const ShaderTexture, name: *const u8, name_len: usize) -> *mut ShaderTextureInput;
-    pub fn ufbx_find_shader_texture_input(shader: *const ShaderTexture, name: *const u8) -> *mut ShaderTextureInput;
+    pub fn ufbx_find_shader_prop_bindings_len(
+        shader: *const Shader,
+        name: *const u8,
+        name_len: usize,
+    ) -> List<ShaderPropBinding>;
+    pub fn ufbx_find_shader_prop_bindings(
+        shader: *const Shader,
+        name: *const u8,
+    ) -> List<ShaderPropBinding>;
+    pub fn ufbx_find_shader_texture_input_len(
+        shader: *const ShaderTexture,
+        name: *const u8,
+        name_len: usize,
+    ) -> *mut ShaderTextureInput;
+    pub fn ufbx_find_shader_texture_input(
+        shader: *const ShaderTexture,
+        name: *const u8,
+    ) -> *mut ShaderTextureInput;
     pub fn ufbx_coordinate_axes_valid(axes: CoordinateAxes) -> bool;
     pub fn ufbx_vec3_normalize(v: Vec3) -> Vec3;
     pub fn ufbx_quat_dot(a: Quat, b: Quat) -> Real;
@@ -4102,56 +4546,217 @@ extern "C" {
     pub fn ufbx_transform_direction(m: *const Matrix, v: Vec3) -> Vec3;
     pub fn ufbx_transform_to_matrix(t: *const Transform) -> Matrix;
     pub fn ufbx_matrix_to_transform(m: *const Matrix) -> Transform;
-    pub fn ufbx_catch_get_skin_vertex_matrix(panic: *mut Panic, skin: *const SkinDeformer, vertex: usize, fallback: *const Matrix) -> Matrix;
+    pub fn ufbx_catch_get_skin_vertex_matrix(
+        panic: *mut Panic,
+        skin: *const SkinDeformer,
+        vertex: usize,
+        fallback: *const Matrix,
+    ) -> Matrix;
     pub fn ufbx_get_blend_shape_offset_index(shape: *const BlendShape, vertex: usize) -> u32;
     pub fn ufbx_get_blend_shape_vertex_offset(shape: *const BlendShape, vertex: usize) -> Vec3;
     pub fn ufbx_get_blend_vertex_offset(blend: *const BlendDeformer, vertex: usize) -> Vec3;
-    pub fn ufbx_add_blend_shape_vertex_offsets(shape: *const BlendShape, vertices: *mut Vec3, num_vertices: usize, weight: Real);
-    pub fn ufbx_add_blend_vertex_offsets(blend: *const BlendDeformer, vertices: *mut Vec3, num_vertices: usize, weight: Real);
-    pub fn ufbx_evaluate_nurbs_basis(basis: *const NurbsBasis, u: Real, weights: *mut Real, num_weights: usize, derivatives: *mut Real, num_derivatives: usize) -> usize;
+    pub fn ufbx_add_blend_shape_vertex_offsets(
+        shape: *const BlendShape,
+        vertices: *mut Vec3,
+        num_vertices: usize,
+        weight: Real,
+    );
+    pub fn ufbx_add_blend_vertex_offsets(
+        blend: *const BlendDeformer,
+        vertices: *mut Vec3,
+        num_vertices: usize,
+        weight: Real,
+    );
+    pub fn ufbx_evaluate_nurbs_basis(
+        basis: *const NurbsBasis,
+        u: Real,
+        weights: *mut Real,
+        num_weights: usize,
+        derivatives: *mut Real,
+        num_derivatives: usize,
+    ) -> usize;
     pub fn ufbx_evaluate_nurbs_curve(curve: *const NurbsCurve, u: Real) -> CurvePoint;
-    pub fn ufbx_evaluate_nurbs_surface(surface: *const NurbsSurface, u: Real, v: Real) -> SurfacePoint;
-    pub fn ufbx_tessellate_nurbs_curve(curve: *const NurbsCurve, opts: *const RawTessellateCurveOpts, error: *mut Error) -> *mut LineCurve;
-    pub fn ufbx_tessellate_nurbs_surface(surface: *const NurbsSurface, opts: *const RawTessellateSurfaceOpts, error: *mut Error) -> *mut Mesh;
+    pub fn ufbx_evaluate_nurbs_surface(
+        surface: *const NurbsSurface,
+        u: Real,
+        v: Real,
+    ) -> SurfacePoint;
+    pub fn ufbx_tessellate_nurbs_curve(
+        curve: *const NurbsCurve,
+        opts: *const RawTessellateCurveOpts,
+        error: *mut Error,
+    ) -> *mut LineCurve;
+    pub fn ufbx_tessellate_nurbs_surface(
+        surface: *const NurbsSurface,
+        opts: *const RawTessellateSurfaceOpts,
+        error: *mut Error,
+    ) -> *mut Mesh;
     pub fn ufbx_free_line_curve(curve: *mut LineCurve);
     pub fn ufbx_retain_line_curve(curve: *mut LineCurve);
     pub fn ufbx_find_face_index(mesh: *mut Mesh, index: usize) -> u32;
-    pub fn ufbx_catch_triangulate_face(panic: *mut Panic, indices: *mut u32, num_indices: usize, mesh: *const Mesh, face: Face) -> u32;
-    pub fn ufbx_triangulate_face(indices: *mut u32, num_indices: usize, mesh: *const Mesh, face: Face) -> u32;
-    pub fn ufbx_catch_compute_topology(panic: *mut Panic, mesh: *const Mesh, topo: *mut TopoEdge, num_topo: usize);
+    pub fn ufbx_catch_triangulate_face(
+        panic: *mut Panic,
+        indices: *mut u32,
+        num_indices: usize,
+        mesh: *const Mesh,
+        face: Face,
+    ) -> u32;
+    pub fn ufbx_triangulate_face(
+        indices: *mut u32,
+        num_indices: usize,
+        mesh: *const Mesh,
+        face: Face,
+    ) -> u32;
+    pub fn ufbx_catch_compute_topology(
+        panic: *mut Panic,
+        mesh: *const Mesh,
+        topo: *mut TopoEdge,
+        num_topo: usize,
+    );
     pub fn ufbx_compute_topology(mesh: *const Mesh, topo: *mut TopoEdge, num_topo: usize);
-    pub fn ufbx_catch_topo_next_vertex_edge(panic: *mut Panic, topo: *const TopoEdge, num_topo: usize, index: u32) -> u32;
+    pub fn ufbx_catch_topo_next_vertex_edge(
+        panic: *mut Panic,
+        topo: *const TopoEdge,
+        num_topo: usize,
+        index: u32,
+    ) -> u32;
     pub fn ufbx_topo_next_vertex_edge(topo: *const TopoEdge, num_topo: usize, index: u32) -> u32;
-    pub fn ufbx_catch_topo_prev_vertex_edge(panic: *mut Panic, topo: *const TopoEdge, num_topo: usize, index: u32) -> u32;
+    pub fn ufbx_catch_topo_prev_vertex_edge(
+        panic: *mut Panic,
+        topo: *const TopoEdge,
+        num_topo: usize,
+        index: u32,
+    ) -> u32;
     pub fn ufbx_topo_prev_vertex_edge(topo: *const TopoEdge, num_topo: usize, index: u32) -> u32;
-    pub fn ufbx_catch_get_weighted_face_normal(panic: *mut Panic, positions: *const VertexVec3, face: Face) -> Vec3;
+    pub fn ufbx_catch_get_weighted_face_normal(
+        panic: *mut Panic,
+        positions: *const VertexVec3,
+        face: Face,
+    ) -> Vec3;
     pub fn ufbx_get_weighted_face_normal(positions: *const VertexVec3, face: Face) -> Vec3;
-    pub fn ufbx_catch_generate_normal_mapping(panic: *mut Panic, mesh: *const Mesh, topo: *const TopoEdge, num_topo: usize, normal_indices: *mut u32, num_normal_indices: usize, assume_smooth: bool) -> usize;
-    pub fn ufbx_generate_normal_mapping(mesh: *const Mesh, topo: *const TopoEdge, num_topo: usize, normal_indices: *mut u32, num_normal_indices: usize, assume_smooth: bool) -> usize;
-    pub fn ufbx_catch_compute_normals(panic: *mut Panic, mesh: *const Mesh, positions: *const VertexVec3, normal_indices: *const u32, num_normal_indices: usize, normals: *mut Vec3, num_normals: usize);
-    pub fn ufbx_compute_normals(mesh: *const Mesh, positions: *const VertexVec3, normal_indices: *const u32, num_normal_indices: usize, normals: *mut Vec3, num_normals: usize);
-    pub fn ufbx_subdivide_mesh(mesh: *const Mesh, level: usize, opts: *const RawSubdivideOpts, error: *mut Error) -> *mut Mesh;
+    pub fn ufbx_catch_generate_normal_mapping(
+        panic: *mut Panic,
+        mesh: *const Mesh,
+        topo: *const TopoEdge,
+        num_topo: usize,
+        normal_indices: *mut u32,
+        num_normal_indices: usize,
+        assume_smooth: bool,
+    ) -> usize;
+    pub fn ufbx_generate_normal_mapping(
+        mesh: *const Mesh,
+        topo: *const TopoEdge,
+        num_topo: usize,
+        normal_indices: *mut u32,
+        num_normal_indices: usize,
+        assume_smooth: bool,
+    ) -> usize;
+    pub fn ufbx_catch_compute_normals(
+        panic: *mut Panic,
+        mesh: *const Mesh,
+        positions: *const VertexVec3,
+        normal_indices: *const u32,
+        num_normal_indices: usize,
+        normals: *mut Vec3,
+        num_normals: usize,
+    );
+    pub fn ufbx_compute_normals(
+        mesh: *const Mesh,
+        positions: *const VertexVec3,
+        normal_indices: *const u32,
+        num_normal_indices: usize,
+        normals: *mut Vec3,
+        num_normals: usize,
+    );
+    pub fn ufbx_subdivide_mesh(
+        mesh: *const Mesh,
+        level: usize,
+        opts: *const RawSubdivideOpts,
+        error: *mut Error,
+    ) -> *mut Mesh;
     pub fn ufbx_free_mesh(mesh: *mut Mesh);
     pub fn ufbx_retain_mesh(mesh: *mut Mesh);
-    pub fn ufbx_load_geometry_cache(filename: *const u8, opts: *const RawGeometryCacheOpts, error: *mut Error) -> *mut GeometryCache;
-    pub fn ufbx_load_geometry_cache_len(filename: *const u8, filename_len: usize, opts: *const RawGeometryCacheOpts, error: *mut Error) -> *mut GeometryCache;
+    pub fn ufbx_load_geometry_cache(
+        filename: *const u8,
+        opts: *const RawGeometryCacheOpts,
+        error: *mut Error,
+    ) -> *mut GeometryCache;
+    pub fn ufbx_load_geometry_cache_len(
+        filename: *const u8,
+        filename_len: usize,
+        opts: *const RawGeometryCacheOpts,
+        error: *mut Error,
+    ) -> *mut GeometryCache;
     pub fn ufbx_free_geometry_cache(cache: *mut GeometryCache);
     pub fn ufbx_retain_geometry_cache(cache: *mut GeometryCache);
-    pub fn ufbx_read_geometry_cache_real(frame: *const CacheFrame, data: *mut Real, num_data: usize, opts: *const RawGeometryCacheDataOpts) -> usize;
-    pub fn ufbx_read_geometry_cache_vec3(frame: *const CacheFrame, data: *mut Vec3, num_data: usize, opts: *const RawGeometryCacheDataOpts) -> usize;
-    pub fn ufbx_sample_geometry_cache_real(channel: *const CacheChannel, time: f64, data: *mut Real, num_data: usize, opts: *const RawGeometryCacheDataOpts) -> usize;
-    pub fn ufbx_sample_geometry_cache_vec3(channel: *const CacheChannel, time: f64, data: *mut Vec3, num_data: usize, opts: *const RawGeometryCacheDataOpts) -> usize;
-    pub fn ufbx_dom_find_len(parent: *const DomNode, name: *const u8, name_len: usize) -> *mut DomNode;
+    pub fn ufbx_read_geometry_cache_real(
+        frame: *const CacheFrame,
+        data: *mut Real,
+        num_data: usize,
+        opts: *const RawGeometryCacheDataOpts,
+    ) -> usize;
+    pub fn ufbx_read_geometry_cache_vec3(
+        frame: *const CacheFrame,
+        data: *mut Vec3,
+        num_data: usize,
+        opts: *const RawGeometryCacheDataOpts,
+    ) -> usize;
+    pub fn ufbx_sample_geometry_cache_real(
+        channel: *const CacheChannel,
+        time: f64,
+        data: *mut Real,
+        num_data: usize,
+        opts: *const RawGeometryCacheDataOpts,
+    ) -> usize;
+    pub fn ufbx_sample_geometry_cache_vec3(
+        channel: *const CacheChannel,
+        time: f64,
+        data: *mut Vec3,
+        num_data: usize,
+        opts: *const RawGeometryCacheDataOpts,
+    ) -> usize;
+    pub fn ufbx_dom_find_len(
+        parent: *const DomNode,
+        name: *const u8,
+        name_len: usize,
+    ) -> *mut DomNode;
     pub fn ufbx_dom_find(parent: *const DomNode, name: *const u8) -> *mut DomNode;
-    pub fn ufbx_generate_indices(streams: *const RawVertexStream, num_streams: usize, indices: *mut u32, num_indices: usize, allocator: *const RawAllocatorOpts, error: *mut Error) -> usize;
+    pub fn ufbx_generate_indices(
+        streams: *const RawVertexStream,
+        num_streams: usize,
+        indices: *mut u32,
+        num_indices: usize,
+        allocator: *const RawAllocatorOpts,
+        error: *mut Error,
+    ) -> usize;
     pub fn ufbx_thread_pool_run_task(ctx: ThreadPoolContext, index: u32);
     pub fn ufbx_thread_pool_set_user_ptr(ctx: ThreadPoolContext, user_ptr: *mut c_void);
     pub fn ufbx_thread_pool_get_user_ptr(ctx: ThreadPoolContext) -> *mut c_void;
-    pub fn ufbx_catch_get_vertex_real(panic: *mut Panic, v: *const VertexReal, index: usize) -> Real;
-    pub fn ufbx_catch_get_vertex_vec2(panic: *mut Panic, v: *const VertexVec2, index: usize) -> Vec2;
-    pub fn ufbx_catch_get_vertex_vec3(panic: *mut Panic, v: *const VertexVec3, index: usize) -> Vec3;
-    pub fn ufbx_catch_get_vertex_vec4(panic: *mut Panic, v: *const VertexVec4, index: usize) -> Vec4;
-    pub fn ufbx_catch_get_vertex_w_vec3(panic: *mut Panic, v: *const VertexVec3, index: usize) -> Real;
+    pub fn ufbx_catch_get_vertex_real(
+        panic: *mut Panic,
+        v: *const VertexReal,
+        index: usize,
+    ) -> Real;
+    pub fn ufbx_catch_get_vertex_vec2(
+        panic: *mut Panic,
+        v: *const VertexVec2,
+        index: usize,
+    ) -> Vec2;
+    pub fn ufbx_catch_get_vertex_vec3(
+        panic: *mut Panic,
+        v: *const VertexVec3,
+        index: usize,
+    ) -> Vec3;
+    pub fn ufbx_catch_get_vertex_vec4(
+        panic: *mut Panic,
+        v: *const VertexVec4,
+        index: usize,
+    ) -> Vec4;
+    pub fn ufbx_catch_get_vertex_w_vec3(
+        panic: *mut Panic,
+        v: *const VertexVec3,
+        index: usize,
+    ) -> Real;
     pub fn ufbx_as_unknown(element: *const Element) -> *mut Unknown;
     pub fn ufbx_as_node(element: *const Element) -> *mut Node;
     pub fn ufbx_as_mesh(element: *const Element) -> *mut Mesh;
@@ -4259,7 +4864,6 @@ impl LineCurveRoot {
         }
     }
 }
-
 
 impl GeometryCacheRoot {
     fn new(cache: *mut GeometryCache) -> GeometryCacheRoot {
@@ -4433,9 +5037,16 @@ pub fn is_thread_safe() -> bool {
 
 pub unsafe fn load_memory_raw(data: &[u8], opts: &RawLoadOpts) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_load_memory(data.as_ptr() as *const c_void, data.len(), opts as *const RawLoadOpts, &mut error) };
+    let result = {
+        ufbx_load_memory(
+            data.as_ptr() as *const c_void,
+            data.len(),
+            opts as *const RawLoadOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(SceneRoot::new(result))
 }
@@ -4449,9 +5060,16 @@ pub fn load_memory(data: &[u8], opts: LoadOpts) -> Result<SceneRoot> {
 
 pub unsafe fn load_file_raw(filename: &str, opts: &RawLoadOpts) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_load_file_len(filename.as_ptr(), filename.len(), opts as *const RawLoadOpts, &mut error) };
+    let result = {
+        ufbx_load_file_len(
+            filename.as_ptr(),
+            filename.len(),
+            opts as *const RawLoadOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(SceneRoot::new(result))
 }
@@ -4467,7 +5085,7 @@ pub unsafe fn load_stdio_raw(file: *mut c_void, opts: &RawLoadOpts) -> Result<Sc
     let mut error: Error = Error::default();
     let result = { ufbx_load_stdio(file as *mut c_void, opts as *const RawLoadOpts, &mut error) };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(SceneRoot::new(result))
 }
@@ -4479,11 +5097,23 @@ pub fn load_stdio(file: *mut c_void, opts: LoadOpts) -> Result<SceneRoot> {
     unsafe { load_stdio_raw(file, &opts_raw) }
 }
 
-pub unsafe fn load_stdio_prefix_raw(file: *mut c_void, prefix: &[u8], opts: &RawLoadOpts) -> Result<SceneRoot> {
+pub unsafe fn load_stdio_prefix_raw(
+    file: *mut c_void,
+    prefix: &[u8],
+    opts: &RawLoadOpts,
+) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_load_stdio_prefix(file as *mut c_void, prefix.as_ptr() as *const c_void, prefix.len(), opts as *const RawLoadOpts, &mut error) };
+    let result = {
+        ufbx_load_stdio_prefix(
+            file as *mut c_void,
+            prefix.as_ptr() as *const c_void,
+            prefix.len(),
+            opts as *const RawLoadOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(SceneRoot::new(result))
 }
@@ -4497,9 +5127,15 @@ pub fn load_stdio_prefix(file: *mut c_void, prefix: &[u8], opts: LoadOpts) -> Re
 
 pub unsafe fn load_stream_raw(stream: &RawStream, opts: &RawLoadOpts) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_load_stream(stream as *const RawStream, opts as *const RawLoadOpts, &mut error) };
+    let result = {
+        ufbx_load_stream(
+            stream as *const RawStream,
+            opts as *const RawLoadOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(SceneRoot::new(result))
 }
@@ -4513,11 +5149,23 @@ pub fn load_stream(stream: Stream, opts: LoadOpts) -> Result<SceneRoot> {
     unsafe { load_stream_raw(&stream_raw, &opts_raw) }
 }
 
-pub unsafe fn load_stream_prefix_raw(stream: &RawStream, prefix: &[u8], opts: &RawLoadOpts) -> Result<SceneRoot> {
+pub unsafe fn load_stream_prefix_raw(
+    stream: &RawStream,
+    prefix: &[u8],
+    opts: &RawLoadOpts,
+) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_load_stream_prefix(stream as *const RawStream, prefix.as_ptr() as *const c_void, prefix.len(), opts as *const RawLoadOpts, &mut error) };
+    let result = {
+        ufbx_load_stream_prefix(
+            stream as *const RawStream,
+            prefix.as_ptr() as *const c_void,
+            prefix.len(),
+            opts as *const RawLoadOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(SceneRoot::new(result))
 }
@@ -4538,7 +5186,11 @@ pub fn format_error(dst: &mut [u8], error: &Error) -> usize {
 
 pub fn find_prop<'a>(props: &'a Props, name: &str) -> Option<&'a Prop> {
     let result = unsafe { ufbx_find_prop_len(props as *const Props, name.as_ptr(), name.len()) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 // TODO: Property find functions
@@ -4552,49 +5204,104 @@ pub fn find_prop<'a>(props: &'a Props, name: &str) -> Option<&'a Prop> {
 // TODO: Property find functions
 
 pub fn find_blob(props: &Props, name: &str, def: Blob) -> Blob {
-    let result = unsafe { ufbx_find_blob_len(props as *const Props, name.as_ptr(), name.len(), def) };
+    let result =
+        unsafe { ufbx_find_blob_len(props as *const Props, name.as_ptr(), name.len(), def) };
     result
 }
 
 // TODO: ufbx_find_prop_concat()
 
-pub fn get_prop_element<'a>(element: &'a Element, prop: &Prop, type_: ElementType) -> Option<&'a Element> {
-    let result = unsafe { ufbx_get_prop_element(element as *const Element, prop as *const Prop, type_) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+pub fn get_prop_element<'a>(
+    element: &'a Element,
+    prop: &Prop,
+    type_: ElementType,
+) -> Option<&'a Element> {
+    let result =
+        unsafe { ufbx_get_prop_element(element as *const Element, prop as *const Prop, type_) };
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
-pub fn find_prop_element<'a>(element: &'a Element, name: &str, type_: ElementType) -> Option<&'a Element> {
-    let result = unsafe { ufbx_find_prop_element_len(element as *const Element, name.as_ptr(), name.len(), type_) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+pub fn find_prop_element<'a>(
+    element: &'a Element,
+    name: &str,
+    type_: ElementType,
+) -> Option<&'a Element> {
+    let result = unsafe {
+        ufbx_find_prop_element_len(element as *const Element, name.as_ptr(), name.len(), type_)
+    };
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Option<&'a Element> {
-    let result = unsafe { ufbx_find_element_len(scene as *const Scene, type_, name.as_ptr(), name.len()) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    let result =
+        unsafe { ufbx_find_element_len(scene as *const Scene, type_, name.as_ptr(), name.len()) };
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
     let result = unsafe { ufbx_find_node_len(scene as *const Scene, name.as_ptr(), name.len()) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn find_anim_stack<'a>(scene: &'a Scene, name: &str) -> Option<&'a AnimStack> {
-    let result = unsafe { ufbx_find_anim_stack_len(scene as *const Scene, name.as_ptr(), name.len()) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    let result =
+        unsafe { ufbx_find_anim_stack_len(scene as *const Scene, name.as_ptr(), name.len()) };
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn find_material<'a>(scene: &'a Scene, name: &str) -> Option<&'a Material> {
-    let result = unsafe { ufbx_find_material_len(scene as *const Scene, name.as_ptr(), name.len()) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    let result =
+        unsafe { ufbx_find_material_len(scene as *const Scene, name.as_ptr(), name.len()) };
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
-pub fn find_anim_prop<'a>(layer: &'a AnimLayer, element: &'a Element, prop: &str) -> Option<&'a AnimProp> {
-    let result = unsafe { ufbx_find_anim_prop_len(layer as *const AnimLayer, element as *const Element, prop.as_ptr(), prop.len()) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+pub fn find_anim_prop<'a>(
+    layer: &'a AnimLayer,
+    element: &'a Element,
+    prop: &str,
+) -> Option<&'a AnimProp> {
+    let result = unsafe {
+        ufbx_find_anim_prop_len(
+            layer as *const AnimLayer,
+            element as *const Element,
+            prop.as_ptr(),
+            prop.len(),
+        )
+    };
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn find_anim_props<'a>(layer: &'a AnimLayer, element: &'a Element) -> &'a [AnimProp] {
-    let result = unsafe { ufbx_find_anim_props(layer as *const AnimLayer, element as *const Element) };
+    let result =
+        unsafe { ufbx_find_anim_props(layer as *const AnimLayer, element as *const Element) };
     unsafe { result.as_static_ref() }
 }
 
@@ -4604,47 +5311,119 @@ pub fn get_compatible_matrix_for_normals(node: &Node) -> Matrix {
 }
 
 pub fn inflate(dst: &mut [u8], input: &InflateInput, retain: &mut InflateRetain) -> isize {
-    let result = unsafe { ufbx_inflate(dst.as_mut_ptr() as *mut c_void, dst.len(), input as *const InflateInput, retain as *mut InflateRetain) };
+    let result = unsafe {
+        ufbx_inflate(
+            dst.as_mut_ptr() as *mut c_void,
+            dst.len(),
+            input as *const InflateInput,
+            retain as *mut InflateRetain,
+        )
+    };
     result
 }
 
-pub unsafe fn default_open_file_raw(user: *mut c_void, stream: &mut RawStream, path: &str, info: &OpenFileInfo) -> bool {
-    let result = { ufbx_default_open_file(user as *mut c_void, stream as *mut RawStream, path.as_ptr(), path.len(), info as *const OpenFileInfo) };
+pub unsafe fn default_open_file_raw(
+    user: *mut c_void,
+    stream: &mut RawStream,
+    path: &str,
+    info: &OpenFileInfo,
+) -> bool {
+    let result = {
+        ufbx_default_open_file(
+            user as *mut c_void,
+            stream as *mut RawStream,
+            path.as_ptr(),
+            path.len(),
+            info as *const OpenFileInfo,
+        )
+    };
     result
 }
 
-pub unsafe fn open_file_raw(stream: &mut RawStream, path: &str, opts: &RawOpenFileOpts) -> Result<bool> {
+pub unsafe fn open_file_raw(
+    stream: &mut RawStream,
+    path: &str,
+    opts: &RawOpenFileOpts,
+) -> Result<bool> {
     let mut error: Error = Error::default();
-    let result = { ufbx_open_file(stream as *mut RawStream, path.as_ptr(), path.len(), opts as *const RawOpenFileOpts, &mut error) };
+    let result = {
+        ufbx_open_file(
+            stream as *mut RawStream,
+            path.as_ptr(),
+            path.len(),
+            opts as *const RawOpenFileOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(result)
 }
 
-pub unsafe fn open_file_ctx_raw(stream: &mut RawStream, ctx: OpenFileContext, path: &str, opts: &RawOpenFileOpts) -> Result<bool> {
+pub unsafe fn open_file_ctx_raw(
+    stream: &mut RawStream,
+    ctx: OpenFileContext,
+    path: &str,
+    opts: &RawOpenFileOpts,
+) -> Result<bool> {
     let mut error: Error = Error::default();
-    let result = { ufbx_open_file_ctx(stream as *mut RawStream, ctx, path.as_ptr(), path.len(), opts as *const RawOpenFileOpts, &mut error) };
+    let result = {
+        ufbx_open_file_ctx(
+            stream as *mut RawStream,
+            ctx,
+            path.as_ptr(),
+            path.len(),
+            opts as *const RawOpenFileOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(result)
 }
 
-pub unsafe fn open_memory_raw(stream: &mut RawStream, data: &[u8], opts: &RawOpenMemoryOpts) -> Result<bool> {
+pub unsafe fn open_memory_raw(
+    stream: &mut RawStream,
+    data: &[u8],
+    opts: &RawOpenMemoryOpts,
+) -> Result<bool> {
     let mut error: Error = Error::default();
-    let result = { ufbx_open_memory(stream as *mut RawStream, data.as_ptr() as *const c_void, data.len(), opts as *const RawOpenMemoryOpts, &mut error) };
+    let result = {
+        ufbx_open_memory(
+            stream as *mut RawStream,
+            data.as_ptr() as *const c_void,
+            data.len(),
+            opts as *const RawOpenMemoryOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(result)
 }
 
-pub unsafe fn open_memory_ctx_raw(stream: &mut RawStream, ctx: OpenFileContext, data: &[u8], opts: &RawOpenMemoryOpts) -> Result<bool> {
+pub unsafe fn open_memory_ctx_raw(
+    stream: &mut RawStream,
+    ctx: OpenFileContext,
+    data: &[u8],
+    opts: &RawOpenMemoryOpts,
+) -> Result<bool> {
     let mut error: Error = Error::default();
-    let result = { ufbx_open_memory_ctx(stream as *mut RawStream, ctx, data.as_ptr() as *const c_void, data.len(), opts as *const RawOpenMemoryOpts, &mut error) };
+    let result = {
+        ufbx_open_memory_ctx(
+            stream as *mut RawStream,
+            ctx,
+            data.as_ptr() as *const c_void,
+            data.len(),
+            opts as *const RawOpenMemoryOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(result)
 }
@@ -4655,7 +5434,8 @@ pub fn evaluate_curve(curve: &AnimCurve, time: f64, default_value: Real) -> Real
 }
 
 pub fn evaluate_curve_flags(curve: &AnimCurve, time: f64, default_value: Real, flags: u32) -> Real {
-    let result = unsafe { ufbx_evaluate_curve_flags(curve as *const AnimCurve, time, default_value, flags) };
+    let result =
+        unsafe { ufbx_evaluate_curve_flags(curve as *const AnimCurve, time, default_value, flags) };
     result
 }
 
@@ -4670,36 +5450,97 @@ pub fn evaluate_anim_value_vec3(anim_value: &AnimValue, time: f64) -> Vec3 {
 }
 
 pub fn evaluate_anim_value_real_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Real {
-    let result = unsafe { ufbx_evaluate_anim_value_real_flags(anim_value as *const AnimValue, time, flags) };
+    let result =
+        unsafe { ufbx_evaluate_anim_value_real_flags(anim_value as *const AnimValue, time, flags) };
     result
 }
 
 pub fn evaluate_anim_value_vec3_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Vec3 {
-    let result = unsafe { ufbx_evaluate_anim_value_vec3_flags(anim_value as *const AnimValue, time, flags) };
+    let result =
+        unsafe { ufbx_evaluate_anim_value_vec3_flags(anim_value as *const AnimValue, time, flags) };
     result
 }
 
-pub fn evaluate_prop<'a, 'b>(anim: &'a Anim, element: &'a Element, name: &'b str, time: f64) -> ExternalRef<'b, Prop>
-    where 'a: 'b
+pub fn evaluate_prop<'a, 'b>(
+    anim: &'a Anim,
+    element: &'a Element,
+    name: &'b str,
+    time: f64,
+) -> ExternalRef<'b, Prop>
+where
+    'a: 'b,
 {
-    let result = unsafe { ufbx_evaluate_prop_len(anim as *const Anim, element as *const Element, name.as_ptr(), name.len(), time) };
+    let result = unsafe {
+        ufbx_evaluate_prop_len(
+            anim as *const Anim,
+            element as *const Element,
+            name.as_ptr(),
+            name.len(),
+            time,
+        )
+    };
     unsafe { ExternalRef::new(result) }
 }
 
-pub fn evaluate_prop_flags(anim: &Anim, element: &Element, name: &str, time: f64, flags: u32) -> Prop {
-    let result = unsafe { ufbx_evaluate_prop_flags_len(anim as *const Anim, element as *const Element, name.as_ptr(), name.len(), time, flags) };
+pub fn evaluate_prop_flags(
+    anim: &Anim,
+    element: &Element,
+    name: &str,
+    time: f64,
+    flags: u32,
+) -> Prop {
+    let result = unsafe {
+        ufbx_evaluate_prop_flags_len(
+            anim as *const Anim,
+            element as *const Element,
+            name.as_ptr(),
+            name.len(),
+            time,
+            flags,
+        )
+    };
     result
 }
 
-pub fn evaluate_props<'a, 'b>(anim: &'a Anim, element: &'a Element, time: f64, buffer: &'b mut [ExternalRef<'b, Prop>]) -> ExternalRef<'b, Props>
-    where 'a: 'b
+pub fn evaluate_props<'a, 'b>(
+    anim: &'a Anim,
+    element: &'a Element,
+    time: f64,
+    buffer: &'b mut [ExternalRef<'b, Prop>],
+) -> ExternalRef<'b, Props>
+where
+    'a: 'b,
 {
-    let result = unsafe { ufbx_evaluate_props(anim as *const Anim, element as *const Element, time, buffer.as_ptr() as *mut Prop, buffer.len()) };
+    let result = unsafe {
+        ufbx_evaluate_props(
+            anim as *const Anim,
+            element as *const Element,
+            time,
+            buffer.as_ptr() as *mut Prop,
+            buffer.len(),
+        )
+    };
     unsafe { ExternalRef::new(result) }
 }
 
-pub fn evaluate_props_flags(anim: &Anim, element: &Element, time: f64, buffer: &mut Prop, buffer_size: usize, flags: u32) -> Props {
-    let result = unsafe { ufbx_evaluate_props_flags(anim as *const Anim, element as *const Element, time, buffer as *mut Prop, buffer_size, flags) };
+pub fn evaluate_props_flags(
+    anim: &Anim,
+    element: &Element,
+    time: f64,
+    buffer: &mut Prop,
+    buffer_size: usize,
+    flags: u32,
+) -> Props {
+    let result = unsafe {
+        ufbx_evaluate_props_flags(
+            anim as *const Anim,
+            element as *const Element,
+            time,
+            buffer as *mut Prop,
+            buffer_size,
+            flags,
+        )
+    };
     result
 }
 
@@ -4709,30 +5550,64 @@ pub fn evaluate_transform(anim: &Anim, node: &Node, time: f64) -> Transform {
 }
 
 pub fn evaluate_transform_flags(anim: &Anim, node: &Node, time: f64, flags: u32) -> Transform {
-    let result = unsafe { ufbx_evaluate_transform_flags(anim as *const Anim, node as *const Node, time, flags) };
+    let result = unsafe {
+        ufbx_evaluate_transform_flags(anim as *const Anim, node as *const Node, time, flags)
+    };
     result
 }
 
 pub fn evaluate_blend_weight(anim: &Anim, channel: &BlendChannel, time: f64) -> Real {
-    let result = unsafe { ufbx_evaluate_blend_weight(anim as *const Anim, channel as *const BlendChannel, time) };
+    let result = unsafe {
+        ufbx_evaluate_blend_weight(anim as *const Anim, channel as *const BlendChannel, time)
+    };
     result
 }
 
-pub fn evaluate_blend_weight_flags(anim: &Anim, channel: &BlendChannel, time: f64, flags: u32) -> Real {
-    let result = unsafe { ufbx_evaluate_blend_weight_flags(anim as *const Anim, channel as *const BlendChannel, time, flags) };
+pub fn evaluate_blend_weight_flags(
+    anim: &Anim,
+    channel: &BlendChannel,
+    time: f64,
+    flags: u32,
+) -> Real {
+    let result = unsafe {
+        ufbx_evaluate_blend_weight_flags(
+            anim as *const Anim,
+            channel as *const BlendChannel,
+            time,
+            flags,
+        )
+    };
     result
 }
 
-pub unsafe fn evaluate_scene_raw(scene: &Scene, anim: &Anim, time: f64, opts: &RawEvaluateOpts) -> Result<SceneRoot> {
+pub unsafe fn evaluate_scene_raw(
+    scene: &Scene,
+    anim: &Anim,
+    time: f64,
+    opts: &RawEvaluateOpts,
+) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_evaluate_scene(scene as *const Scene, anim as *const Anim, time, opts as *const RawEvaluateOpts, &mut error) };
+    let result = {
+        ufbx_evaluate_scene(
+            scene as *const Scene,
+            anim as *const Anim,
+            time,
+            opts as *const RawEvaluateOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(SceneRoot::new(result))
 }
 
-pub fn evaluate_scene(scene: &Scene, anim: &Anim, time: f64, opts: EvaluateOpts) -> Result<SceneRoot> {
+pub fn evaluate_scene(
+    scene: &Scene,
+    anim: &Anim,
+    time: f64,
+    opts: EvaluateOpts,
+) -> Result<SceneRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
     let opts_raw = opts_mut.from_rust_mut(&mut arena);
@@ -4741,9 +5616,15 @@ pub fn evaluate_scene(scene: &Scene, anim: &Anim, time: f64, opts: EvaluateOpts)
 
 pub unsafe fn create_anim_raw(scene: &Scene, opts: &RawAnimOpts) -> Result<AnimRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_create_anim(scene as *const Scene, opts as *const RawAnimOpts, &mut error) };
+    let result = {
+        ufbx_create_anim(
+            scene as *const Scene,
+            opts as *const RawAnimOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(AnimRoot::new(result))
 }
@@ -4755,11 +5636,22 @@ pub fn create_anim(scene: &Scene, opts: AnimOpts) -> Result<AnimRoot> {
     unsafe { create_anim_raw(scene, &opts_raw) }
 }
 
-pub unsafe fn bake_anim_raw(scene: &Scene, anim: &Anim, opts: &RawBakeOpts) -> Result<BakedAnimRoot> {
+pub unsafe fn bake_anim_raw(
+    scene: &Scene,
+    anim: &Anim,
+    opts: &RawBakeOpts,
+) -> Result<BakedAnimRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_bake_anim(scene as *const Scene, anim as *const Anim, opts as *const RawBakeOpts, &mut error) };
+    let result = {
+        ufbx_bake_anim(
+            scene as *const Scene,
+            anim as *const Anim,
+            opts as *const RawBakeOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(BakedAnimRoot::new(result))
 }
@@ -4771,24 +5663,51 @@ pub fn bake_anim(scene: &Scene, anim: &Anim, opts: BakeOpts) -> Result<BakedAnim
     unsafe { bake_anim_raw(scene, anim, &opts_raw) }
 }
 
-pub fn find_baked_node_by_typed_id<'a>(bake: &mut BakedAnim, typed_id: u32) -> Option<&'a BakedNode> {
+pub fn find_baked_node_by_typed_id<'a>(
+    bake: &mut BakedAnim,
+    typed_id: u32,
+) -> Option<&'a BakedNode> {
     let result = unsafe { ufbx_find_baked_node_by_typed_id(bake as *mut BakedAnim, typed_id) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn find_baked_node<'a>(bake: &mut BakedAnim, node: &'a mut Node) -> Option<&'a BakedNode> {
     let result = unsafe { ufbx_find_baked_node(bake as *mut BakedAnim, node as *mut Node) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
-pub fn find_baked_element_by_element_id<'a>(bake: &mut BakedAnim, element_id: u32) -> Option<&'a BakedElement> {
-    let result = unsafe { ufbx_find_baked_element_by_element_id(bake as *mut BakedAnim, element_id) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+pub fn find_baked_element_by_element_id<'a>(
+    bake: &mut BakedAnim,
+    element_id: u32,
+) -> Option<&'a BakedElement> {
+    let result =
+        unsafe { ufbx_find_baked_element_by_element_id(bake as *mut BakedAnim, element_id) };
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
-pub fn find_baked_element<'a>(bake: &mut BakedAnim, element: &'a mut Element) -> Option<&'a BakedElement> {
-    let result = unsafe { ufbx_find_baked_element(bake as *mut BakedAnim, element as *mut Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+pub fn find_baked_element<'a>(
+    bake: &mut BakedAnim,
+    element: &'a mut Element,
+) -> Option<&'a BakedElement> {
+    let result =
+        unsafe { ufbx_find_baked_element(bake as *mut BakedAnim, element as *mut Element) };
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn evaluate_baked_vec3(keyframes: &[BakedVec3], time: f64) -> Vec3 {
@@ -4803,27 +5722,53 @@ pub fn evaluate_baked_quat(keyframes: &[BakedQuat], time: f64) -> Quat {
 
 pub fn get_bone_pose<'a>(pose: &'a Pose, node: &'a Node) -> Option<&'a BonePose> {
     let result = unsafe { ufbx_get_bone_pose(pose as *const Pose, node as *const Node) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn find_prop_texture<'a>(material: &'a Material, name: &str) -> Option<&'a Texture> {
-    let result = unsafe { ufbx_find_prop_texture_len(material as *const Material, name.as_ptr(), name.len()) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    let result = unsafe {
+        ufbx_find_prop_texture_len(material as *const Material, name.as_ptr(), name.len())
+    };
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
-    let result = unsafe { ufbx_find_shader_prop_len(shader as *const Shader, name.as_ptr(), name.len()) };
+    let result =
+        unsafe { ufbx_find_shader_prop_len(shader as *const Shader, name.as_ptr(), name.len()) };
     unsafe { result.as_static_ref() }
 }
 
 pub fn find_shader_prop_bindings<'a>(shader: &'a Shader, name: &str) -> &'a [ShaderPropBinding] {
-    let result = unsafe { ufbx_find_shader_prop_bindings_len(shader as *const Shader, name.as_ptr(), name.len()) };
+    let result = unsafe {
+        ufbx_find_shader_prop_bindings_len(shader as *const Shader, name.as_ptr(), name.len())
+    };
     unsafe { result.as_static_ref() }
 }
 
-pub fn find_shader_texture_input<'a>(shader: &ShaderTexture, name: &str) -> Option<&'a ShaderTextureInput> {
-    let result = unsafe { ufbx_find_shader_texture_input_len(shader as *const ShaderTexture, name.as_ptr(), name.len()) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+pub fn find_shader_texture_input<'a>(
+    shader: &ShaderTexture,
+    name: &str,
+) -> Option<&'a ShaderTextureInput> {
+    let result = unsafe {
+        ufbx_find_shader_texture_input_len(
+            shader as *const ShaderTexture,
+            name.as_ptr(),
+            name.len(),
+        )
+    };
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn coordinate_axes_valid(axes: CoordinateAxes) -> bool {
@@ -4918,7 +5863,14 @@ pub fn matrix_to_transform(m: &Matrix) -> Transform {
 
 pub fn get_skin_vertex_matrix(skin: &SkinDeformer, vertex: usize, fallback: &Matrix) -> Matrix {
     let mut panic: Panic = Default::default();
-    let result = unsafe { ufbx_catch_get_skin_vertex_matrix(&mut panic, skin as *const SkinDeformer, vertex, fallback as *const Matrix) };
+    let result = unsafe {
+        ufbx_catch_get_skin_vertex_matrix(
+            &mut panic,
+            skin as *const SkinDeformer,
+            vertex,
+            fallback as *const Matrix,
+        )
+    };
     if panic.did_panic {
         panic!("ufbx::get_skin_vertex_matrix() {}", panic.message());
     }
@@ -4941,15 +5893,43 @@ pub fn get_blend_vertex_offset(blend: &BlendDeformer, vertex: usize) -> Vec3 {
 }
 
 pub fn add_blend_shape_vertex_offsets(shape: &BlendShape, vertices: &mut [Vec3], weight: Real) {
-    unsafe { ufbx_add_blend_shape_vertex_offsets(shape as *const BlendShape, vertices.as_mut_ptr(), vertices.len(), weight) };
+    unsafe {
+        ufbx_add_blend_shape_vertex_offsets(
+            shape as *const BlendShape,
+            vertices.as_mut_ptr(),
+            vertices.len(),
+            weight,
+        )
+    };
 }
 
 pub fn add_blend_vertex_offsets(blend: &BlendDeformer, vertices: &mut [Vec3], weight: Real) {
-    unsafe { ufbx_add_blend_vertex_offsets(blend as *const BlendDeformer, vertices.as_mut_ptr(), vertices.len(), weight) };
+    unsafe {
+        ufbx_add_blend_vertex_offsets(
+            blend as *const BlendDeformer,
+            vertices.as_mut_ptr(),
+            vertices.len(),
+            weight,
+        )
+    };
 }
 
-pub fn evaluate_nurbs_basis(basis: &NurbsBasis, u: Real, weights: &mut [Real], derivatives: &mut [Real]) -> usize {
-    let result = unsafe { ufbx_evaluate_nurbs_basis(basis as *const NurbsBasis, u, weights.as_mut_ptr(), weights.len(), derivatives.as_mut_ptr(), derivatives.len()) };
+pub fn evaluate_nurbs_basis(
+    basis: &NurbsBasis,
+    u: Real,
+    weights: &mut [Real],
+    derivatives: &mut [Real],
+) -> usize {
+    let result = unsafe {
+        ufbx_evaluate_nurbs_basis(
+            basis as *const NurbsBasis,
+            u,
+            weights.as_mut_ptr(),
+            weights.len(),
+            derivatives.as_mut_ptr(),
+            derivatives.len(),
+        )
+    };
     result
 }
 
@@ -4963,32 +5943,56 @@ pub fn evaluate_nurbs_surface(surface: &NurbsSurface, u: Real, v: Real) -> Surfa
     result
 }
 
-pub unsafe fn tessellate_nurbs_curve_raw(curve: &NurbsCurve, opts: &RawTessellateCurveOpts) -> Result<LineCurveRoot> {
+pub unsafe fn tessellate_nurbs_curve_raw(
+    curve: &NurbsCurve,
+    opts: &RawTessellateCurveOpts,
+) -> Result<LineCurveRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_tessellate_nurbs_curve(curve as *const NurbsCurve, opts as *const RawTessellateCurveOpts, &mut error) };
+    let result = {
+        ufbx_tessellate_nurbs_curve(
+            curve as *const NurbsCurve,
+            opts as *const RawTessellateCurveOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(LineCurveRoot::new(result))
 }
 
-pub fn tessellate_nurbs_curve(curve: &NurbsCurve, opts: TessellateCurveOpts) -> Result<LineCurveRoot> {
+pub fn tessellate_nurbs_curve(
+    curve: &NurbsCurve,
+    opts: TessellateCurveOpts,
+) -> Result<LineCurveRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
     let opts_raw = opts_mut.from_rust_mut(&mut arena);
     unsafe { tessellate_nurbs_curve_raw(curve, &opts_raw) }
 }
 
-pub unsafe fn tessellate_nurbs_surface_raw(surface: &NurbsSurface, opts: &RawTessellateSurfaceOpts) -> Result<MeshRoot> {
+pub unsafe fn tessellate_nurbs_surface_raw(
+    surface: &NurbsSurface,
+    opts: &RawTessellateSurfaceOpts,
+) -> Result<MeshRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_tessellate_nurbs_surface(surface as *const NurbsSurface, opts as *const RawTessellateSurfaceOpts, &mut error) };
+    let result = {
+        ufbx_tessellate_nurbs_surface(
+            surface as *const NurbsSurface,
+            opts as *const RawTessellateSurfaceOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(MeshRoot::new(result))
 }
 
-pub fn tessellate_nurbs_surface(surface: &NurbsSurface, opts: TessellateSurfaceOpts) -> Result<MeshRoot> {
+pub fn tessellate_nurbs_surface(
+    surface: &NurbsSurface,
+    opts: TessellateSurfaceOpts,
+) -> Result<MeshRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
     let opts_raw = opts_mut.from_rust_mut(&mut arena);
@@ -5002,7 +6006,15 @@ pub fn find_face_index(mesh: &mut Mesh, index: usize) -> u32 {
 
 pub fn triangulate_face(indices: &mut [u32], mesh: &Mesh, face: Face) -> u32 {
     let mut panic: Panic = Default::default();
-    let result = unsafe { ufbx_catch_triangulate_face(&mut panic, indices.as_mut_ptr(), indices.len(), mesh as *const Mesh, face) };
+    let result = unsafe {
+        ufbx_catch_triangulate_face(
+            &mut panic,
+            indices.as_mut_ptr(),
+            indices.len(),
+            mesh as *const Mesh,
+            face,
+        )
+    };
     if panic.did_panic {
         panic!("ufbx::triangulate_face() {}", panic.message());
     }
@@ -5011,7 +6023,14 @@ pub fn triangulate_face(indices: &mut [u32], mesh: &Mesh, face: Face) -> u32 {
 
 pub fn compute_topology(mesh: &Mesh, topo: &mut [TopoEdge]) {
     let mut panic: Panic = Default::default();
-    unsafe { ufbx_catch_compute_topology(&mut panic, mesh as *const Mesh, topo.as_mut_ptr(), topo.len()) };
+    unsafe {
+        ufbx_catch_compute_topology(
+            &mut panic,
+            mesh as *const Mesh,
+            topo.as_mut_ptr(),
+            topo.len(),
+        )
+    };
     if panic.did_panic {
         panic!("ufbx::compute_topology() {}", panic.message());
     }
@@ -5019,7 +6038,8 @@ pub fn compute_topology(mesh: &Mesh, topo: &mut [TopoEdge]) {
 
 pub fn topo_next_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
     let mut panic: Panic = Default::default();
-    let result = unsafe { ufbx_catch_topo_next_vertex_edge(&mut panic, topo.as_ptr(), topo.len(), index) };
+    let result =
+        unsafe { ufbx_catch_topo_next_vertex_edge(&mut panic, topo.as_ptr(), topo.len(), index) };
     if panic.did_panic {
         panic!("ufbx::topo_next_vertex_edge() {}", panic.message());
     }
@@ -5028,7 +6048,8 @@ pub fn topo_next_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
 
 pub fn topo_prev_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
     let mut panic: Panic = Default::default();
-    let result = unsafe { ufbx_catch_topo_prev_vertex_edge(&mut panic, topo.as_ptr(), topo.len(), index) };
+    let result =
+        unsafe { ufbx_catch_topo_prev_vertex_edge(&mut panic, topo.as_ptr(), topo.len(), index) };
     if panic.did_panic {
         panic!("ufbx::topo_prev_vertex_edge() {}", panic.message());
     }
@@ -5037,35 +6058,78 @@ pub fn topo_prev_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
 
 pub fn get_weighted_face_normal(positions: &VertexVec3, face: Face) -> Vec3 {
     let mut panic: Panic = Default::default();
-    let result = unsafe { ufbx_catch_get_weighted_face_normal(&mut panic, positions as *const VertexVec3, face) };
+    let result = unsafe {
+        ufbx_catch_get_weighted_face_normal(&mut panic, positions as *const VertexVec3, face)
+    };
     if panic.did_panic {
         panic!("ufbx::get_weighted_face_normal() {}", panic.message());
     }
     result
 }
 
-pub fn generate_normal_mapping(mesh: &Mesh, topo: &[TopoEdge], normal_indices: &mut [u32], assume_smooth: bool) -> usize {
+pub fn generate_normal_mapping(
+    mesh: &Mesh,
+    topo: &[TopoEdge],
+    normal_indices: &mut [u32],
+    assume_smooth: bool,
+) -> usize {
     let mut panic: Panic = Default::default();
-    let result = unsafe { ufbx_catch_generate_normal_mapping(&mut panic, mesh as *const Mesh, topo.as_ptr(), topo.len(), normal_indices.as_mut_ptr(), normal_indices.len(), assume_smooth) };
+    let result = unsafe {
+        ufbx_catch_generate_normal_mapping(
+            &mut panic,
+            mesh as *const Mesh,
+            topo.as_ptr(),
+            topo.len(),
+            normal_indices.as_mut_ptr(),
+            normal_indices.len(),
+            assume_smooth,
+        )
+    };
     if panic.did_panic {
         panic!("ufbx::generate_normal_mapping() {}", panic.message());
     }
     result
 }
 
-pub fn compute_normals(mesh: &Mesh, positions: &VertexVec3, normal_indices: &[u32], normals: &mut [Vec3]) {
+pub fn compute_normals(
+    mesh: &Mesh,
+    positions: &VertexVec3,
+    normal_indices: &[u32],
+    normals: &mut [Vec3],
+) {
     let mut panic: Panic = Default::default();
-    unsafe { ufbx_catch_compute_normals(&mut panic, mesh as *const Mesh, positions as *const VertexVec3, normal_indices.as_ptr(), normal_indices.len(), normals.as_mut_ptr(), normals.len()) };
+    unsafe {
+        ufbx_catch_compute_normals(
+            &mut panic,
+            mesh as *const Mesh,
+            positions as *const VertexVec3,
+            normal_indices.as_ptr(),
+            normal_indices.len(),
+            normals.as_mut_ptr(),
+            normals.len(),
+        )
+    };
     if panic.did_panic {
         panic!("ufbx::compute_normals() {}", panic.message());
     }
 }
 
-pub unsafe fn subdivide_mesh_raw(mesh: &Mesh, level: usize, opts: &RawSubdivideOpts) -> Result<MeshRoot> {
+pub unsafe fn subdivide_mesh_raw(
+    mesh: &Mesh,
+    level: usize,
+    opts: &RawSubdivideOpts,
+) -> Result<MeshRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_subdivide_mesh(mesh as *const Mesh, level, opts as *const RawSubdivideOpts, &mut error) };
+    let result = {
+        ufbx_subdivide_mesh(
+            mesh as *const Mesh,
+            level,
+            opts as *const RawSubdivideOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(MeshRoot::new(result))
 }
@@ -5077,11 +6141,21 @@ pub fn subdivide_mesh(mesh: &Mesh, level: usize, opts: SubdivideOpts) -> Result<
     unsafe { subdivide_mesh_raw(mesh, level, &opts_raw) }
 }
 
-pub unsafe fn load_geometry_cache_raw(filename: &str, opts: &RawGeometryCacheOpts) -> Result<GeometryCacheRoot> {
+pub unsafe fn load_geometry_cache_raw(
+    filename: &str,
+    opts: &RawGeometryCacheOpts,
+) -> Result<GeometryCacheRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_load_geometry_cache_len(filename.as_ptr(), filename.len(), opts as *const RawGeometryCacheOpts, &mut error) };
+    let result = {
+        ufbx_load_geometry_cache_len(
+            filename.as_ptr(),
+            filename.len(),
+            opts as *const RawGeometryCacheOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(GeometryCacheRoot::new(result))
 }
@@ -5093,48 +6167,114 @@ pub fn load_geometry_cache(filename: &str, opts: GeometryCacheOpts) -> Result<Ge
     unsafe { load_geometry_cache_raw(filename, &opts_raw) }
 }
 
-pub unsafe fn read_geometry_cache_real_raw(frame: &CacheFrame, data: &mut [Real], opts: &RawGeometryCacheDataOpts) -> usize {
-    let result = { ufbx_read_geometry_cache_real(frame as *const CacheFrame, data.as_mut_ptr(), data.len(), opts as *const RawGeometryCacheDataOpts) };
+pub unsafe fn read_geometry_cache_real_raw(
+    frame: &CacheFrame,
+    data: &mut [Real],
+    opts: &RawGeometryCacheDataOpts,
+) -> usize {
+    let result = {
+        ufbx_read_geometry_cache_real(
+            frame as *const CacheFrame,
+            data.as_mut_ptr(),
+            data.len(),
+            opts as *const RawGeometryCacheDataOpts,
+        )
+    };
     result
 }
 
-pub fn read_geometry_cache_real(frame: &CacheFrame, data: &mut [Real], opts: GeometryCacheDataOpts) -> usize {
+pub fn read_geometry_cache_real(
+    frame: &CacheFrame,
+    data: &mut [Real],
+    opts: GeometryCacheDataOpts,
+) -> usize {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
     let opts_raw = opts_mut.from_rust_mut(&mut arena);
     unsafe { read_geometry_cache_real_raw(frame, data, &opts_raw) }
 }
 
-pub unsafe fn read_geometry_cache_vec3_raw(frame: &CacheFrame, data: &mut [Vec3], opts: &RawGeometryCacheDataOpts) -> usize {
-    let result = { ufbx_read_geometry_cache_vec3(frame as *const CacheFrame, data.as_mut_ptr(), data.len(), opts as *const RawGeometryCacheDataOpts) };
+pub unsafe fn read_geometry_cache_vec3_raw(
+    frame: &CacheFrame,
+    data: &mut [Vec3],
+    opts: &RawGeometryCacheDataOpts,
+) -> usize {
+    let result = {
+        ufbx_read_geometry_cache_vec3(
+            frame as *const CacheFrame,
+            data.as_mut_ptr(),
+            data.len(),
+            opts as *const RawGeometryCacheDataOpts,
+        )
+    };
     result
 }
 
-pub fn read_geometry_cache_vec3(frame: &CacheFrame, data: &mut [Vec3], opts: GeometryCacheDataOpts) -> usize {
+pub fn read_geometry_cache_vec3(
+    frame: &CacheFrame,
+    data: &mut [Vec3],
+    opts: GeometryCacheDataOpts,
+) -> usize {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
     let opts_raw = opts_mut.from_rust_mut(&mut arena);
     unsafe { read_geometry_cache_vec3_raw(frame, data, &opts_raw) }
 }
 
-pub unsafe fn sample_geometry_cache_real_raw(channel: &CacheChannel, time: f64, data: &mut [Real], opts: &RawGeometryCacheDataOpts) -> usize {
-    let result = { ufbx_sample_geometry_cache_real(channel as *const CacheChannel, time, data.as_mut_ptr(), data.len(), opts as *const RawGeometryCacheDataOpts) };
+pub unsafe fn sample_geometry_cache_real_raw(
+    channel: &CacheChannel,
+    time: f64,
+    data: &mut [Real],
+    opts: &RawGeometryCacheDataOpts,
+) -> usize {
+    let result = {
+        ufbx_sample_geometry_cache_real(
+            channel as *const CacheChannel,
+            time,
+            data.as_mut_ptr(),
+            data.len(),
+            opts as *const RawGeometryCacheDataOpts,
+        )
+    };
     result
 }
 
-pub fn sample_geometry_cache_real(channel: &CacheChannel, time: f64, data: &mut [Real], opts: GeometryCacheDataOpts) -> usize {
+pub fn sample_geometry_cache_real(
+    channel: &CacheChannel,
+    time: f64,
+    data: &mut [Real],
+    opts: GeometryCacheDataOpts,
+) -> usize {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
     let opts_raw = opts_mut.from_rust_mut(&mut arena);
     unsafe { sample_geometry_cache_real_raw(channel, time, data, &opts_raw) }
 }
 
-pub unsafe fn sample_geometry_cache_vec3_raw(channel: &CacheChannel, time: f64, data: &mut [Vec3], opts: &RawGeometryCacheDataOpts) -> usize {
-    let result = { ufbx_sample_geometry_cache_vec3(channel as *const CacheChannel, time, data.as_mut_ptr(), data.len(), opts as *const RawGeometryCacheDataOpts) };
+pub unsafe fn sample_geometry_cache_vec3_raw(
+    channel: &CacheChannel,
+    time: f64,
+    data: &mut [Vec3],
+    opts: &RawGeometryCacheDataOpts,
+) -> usize {
+    let result = {
+        ufbx_sample_geometry_cache_vec3(
+            channel as *const CacheChannel,
+            time,
+            data.as_mut_ptr(),
+            data.len(),
+            opts as *const RawGeometryCacheDataOpts,
+        )
+    };
     result
 }
 
-pub fn sample_geometry_cache_vec3(channel: &CacheChannel, time: f64, data: &mut [Vec3], opts: GeometryCacheDataOpts) -> usize {
+pub fn sample_geometry_cache_vec3(
+    channel: &CacheChannel,
+    time: f64,
+    data: &mut [Vec3],
+    opts: GeometryCacheDataOpts,
+) -> usize {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
     let opts_raw = opts_mut.from_rust_mut(&mut arena);
@@ -5143,19 +6283,40 @@ pub fn sample_geometry_cache_vec3(channel: &CacheChannel, time: f64, data: &mut 
 
 pub fn dom_find<'a>(parent: &DomNode, name: &str) -> Option<&'a DomNode> {
     let result = unsafe { ufbx_dom_find_len(parent as *const DomNode, name.as_ptr(), name.len()) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
-pub unsafe fn generate_indices_raw(streams: &[RawVertexStream], indices: &mut [u32], allocator: &RawAllocatorOpts) -> Result<usize> {
+pub unsafe fn generate_indices_raw(
+    streams: &[RawVertexStream],
+    indices: &mut [u32],
+    allocator: &RawAllocatorOpts,
+) -> Result<usize> {
     let mut error: Error = Error::default();
-    let result = { ufbx_generate_indices(streams.as_ptr(), streams.len(), indices.as_mut_ptr(), indices.len(), allocator as *const RawAllocatorOpts, &mut error) };
+    let result = {
+        ufbx_generate_indices(
+            streams.as_ptr(),
+            streams.len(),
+            indices.as_mut_ptr(),
+            indices.len(),
+            allocator as *const RawAllocatorOpts,
+            &mut error,
+        )
+    };
     if error.type_ != ErrorType::None {
-        return Err(error)
+        return Err(error);
     }
     Ok(result)
 }
 
-pub fn generate_indices(streams: &mut [VertexStream], indices: &mut [u32], allocator: AllocatorOpts) -> Result<usize> {
+pub fn generate_indices(
+    streams: &mut [VertexStream],
+    indices: &mut [u32],
+    allocator: AllocatorOpts,
+) -> Result<usize> {
     let mut arena = Arena::new();
     let streams_raw = streams.from_rust_mut(&mut arena);
     let mut allocator_mut = allocator;
@@ -5164,7 +6325,9 @@ pub fn generate_indices(streams: &mut [VertexStream], indices: &mut [u32], alloc
 }
 
 pub unsafe fn thread_pool_run_task(ctx: ThreadPoolContext, index: u32) {
-    { ufbx_thread_pool_run_task(ctx, index) };
+    {
+        ufbx_thread_pool_run_task(ctx, index)
+    };
 }
 
 pub unsafe fn thread_pool_set_user_ptr(ctx: ThreadPoolContext, user_ptr: *mut c_void) {
@@ -5222,212 +6385,380 @@ pub fn get_vertex_w_vec3(v: &VertexVec3, index: usize) -> Real {
 
 pub fn as_unknown<'a>(element: &'a Element) -> Option<&'a Unknown> {
     let result = unsafe { ufbx_as_unknown(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_node<'a>(element: &'a Element) -> Option<&'a Node> {
     let result = unsafe { ufbx_as_node(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_mesh<'a>(element: &'a Element) -> Option<&'a Mesh> {
     let result = unsafe { ufbx_as_mesh(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_light<'a>(element: &'a Element) -> Option<&'a Light> {
     let result = unsafe { ufbx_as_light(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_camera<'a>(element: &'a Element) -> Option<&'a Camera> {
     let result = unsafe { ufbx_as_camera(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_bone<'a>(element: &'a Element) -> Option<&'a Bone> {
     let result = unsafe { ufbx_as_bone(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_empty<'a>(element: &'a Element) -> Option<&'a Empty> {
     let result = unsafe { ufbx_as_empty(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_line_curve<'a>(element: &'a Element) -> Option<&'a LineCurve> {
     let result = unsafe { ufbx_as_line_curve(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_nurbs_curve<'a>(element: &'a Element) -> Option<&'a NurbsCurve> {
     let result = unsafe { ufbx_as_nurbs_curve(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_nurbs_surface<'a>(element: &'a Element) -> Option<&'a NurbsSurface> {
     let result = unsafe { ufbx_as_nurbs_surface(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_nurbs_trim_surface<'a>(element: &'a Element) -> Option<&'a NurbsTrimSurface> {
     let result = unsafe { ufbx_as_nurbs_trim_surface(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_nurbs_trim_boundary<'a>(element: &'a Element) -> Option<&'a NurbsTrimBoundary> {
     let result = unsafe { ufbx_as_nurbs_trim_boundary(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_procedural_geometry<'a>(element: &'a Element) -> Option<&'a ProceduralGeometry> {
     let result = unsafe { ufbx_as_procedural_geometry(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_stereo_camera<'a>(element: &'a Element) -> Option<&'a StereoCamera> {
     let result = unsafe { ufbx_as_stereo_camera(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_camera_switcher<'a>(element: &'a Element) -> Option<&'a CameraSwitcher> {
     let result = unsafe { ufbx_as_camera_switcher(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_marker<'a>(element: &'a Element) -> Option<&'a Marker> {
     let result = unsafe { ufbx_as_marker(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_lod_group<'a>(element: &'a Element) -> Option<&'a LodGroup> {
     let result = unsafe { ufbx_as_lod_group(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_skin_deformer<'a>(element: &'a Element) -> Option<&'a SkinDeformer> {
     let result = unsafe { ufbx_as_skin_deformer(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_skin_cluster<'a>(element: &'a Element) -> Option<&'a SkinCluster> {
     let result = unsafe { ufbx_as_skin_cluster(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_blend_deformer<'a>(element: &'a Element) -> Option<&'a BlendDeformer> {
     let result = unsafe { ufbx_as_blend_deformer(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_blend_channel<'a>(element: &'a Element) -> Option<&'a BlendChannel> {
     let result = unsafe { ufbx_as_blend_channel(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_blend_shape<'a>(element: &'a Element) -> Option<&'a BlendShape> {
     let result = unsafe { ufbx_as_blend_shape(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_cache_deformer<'a>(element: &'a Element) -> Option<&'a CacheDeformer> {
     let result = unsafe { ufbx_as_cache_deformer(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_cache_file<'a>(element: &'a Element) -> Option<&'a CacheFile> {
     let result = unsafe { ufbx_as_cache_file(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_material<'a>(element: &'a Element) -> Option<&'a Material> {
     let result = unsafe { ufbx_as_material(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_texture<'a>(element: &'a Element) -> Option<&'a Texture> {
     let result = unsafe { ufbx_as_texture(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_video<'a>(element: &'a Element) -> Option<&'a Video> {
     let result = unsafe { ufbx_as_video(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_shader<'a>(element: &'a Element) -> Option<&'a Shader> {
     let result = unsafe { ufbx_as_shader(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_shader_binding<'a>(element: &'a Element) -> Option<&'a ShaderBinding> {
     let result = unsafe { ufbx_as_shader_binding(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_anim_stack<'a>(element: &'a Element) -> Option<&'a AnimStack> {
     let result = unsafe { ufbx_as_anim_stack(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_anim_layer<'a>(element: &'a Element) -> Option<&'a AnimLayer> {
     let result = unsafe { ufbx_as_anim_layer(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_anim_value<'a>(element: &'a Element) -> Option<&'a AnimValue> {
     let result = unsafe { ufbx_as_anim_value(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_anim_curve<'a>(element: &'a Element) -> Option<&'a AnimCurve> {
     let result = unsafe { ufbx_as_anim_curve(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_display_layer<'a>(element: &'a Element) -> Option<&'a DisplayLayer> {
     let result = unsafe { ufbx_as_display_layer(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_selection_set<'a>(element: &'a Element) -> Option<&'a SelectionSet> {
     let result = unsafe { ufbx_as_selection_set(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_selection_node<'a>(element: &'a Element) -> Option<&'a SelectionNode> {
     let result = unsafe { ufbx_as_selection_node(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_character<'a>(element: &'a Element) -> Option<&'a Character> {
     let result = unsafe { ufbx_as_character(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_constraint<'a>(element: &'a Element) -> Option<&'a Constraint> {
     let result = unsafe { ufbx_as_constraint(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_audio_layer<'a>(element: &'a Element) -> Option<&'a AudioLayer> {
     let result = unsafe { ufbx_as_audio_layer(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_audio_clip<'a>(element: &'a Element) -> Option<&'a AudioClip> {
     let result = unsafe { ufbx_as_audio_clip(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_pose<'a>(element: &'a Element) -> Option<&'a Pose> {
     let result = unsafe { ufbx_as_pose(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn as_metadata_object<'a>(element: &'a Element) -> Option<&'a MetadataObject> {
     let result = unsafe { ufbx_as_metadata_object(element as *const Element) };
-    if result.is_null() { None } else { unsafe { Some(&*result) } }
+    if result.is_null() {
+        None
+    } else {
+        unsafe { Some(&*result) }
+    }
 }
 
 pub fn dom_is_array(node: &DomNode) -> bool {
@@ -5469,44 +6800,77 @@ pub fn dom_as_blob_list<'a>(node: &DomNode) -> &'a [Blob] {
     let result = unsafe { ufbx_dom_as_blob_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
 }
-pub fn identity_matrix() -> Matrix { unsafe { ufbx_identity_matrix } }
-pub fn identity_transform() -> Transform { unsafe { ufbx_identity_transform } }
-pub fn zero_vec2() -> Vec2 { unsafe { ufbx_zero_vec2 } }
-pub fn zero_vec3() -> Vec3 { unsafe { ufbx_zero_vec3 } }
-pub fn zero_vec4() -> Vec4 { unsafe { ufbx_zero_vec4 } }
-pub fn identity_quat() -> Quat { unsafe { ufbx_identity_quat } }
-pub fn axes_right_handed_y_up() -> CoordinateAxes { unsafe { ufbx_axes_right_handed_y_up } }
-pub fn axes_right_handed_z_up() -> CoordinateAxes { unsafe { ufbx_axes_right_handed_z_up } }
-pub fn axes_left_handed_y_up() -> CoordinateAxes { unsafe { ufbx_axes_left_handed_y_up } }
-pub fn axes_left_handed_z_up() -> CoordinateAxes { unsafe { ufbx_axes_left_handed_z_up } }
-pub fn source_version() -> u32 { unsafe { ufbx_source_version } }
+pub fn identity_matrix() -> Matrix {
+    unsafe { ufbx_identity_matrix }
+}
+pub fn identity_transform() -> Transform {
+    unsafe { ufbx_identity_transform }
+}
+pub fn zero_vec2() -> Vec2 {
+    unsafe { ufbx_zero_vec2 }
+}
+pub fn zero_vec3() -> Vec3 {
+    unsafe { ufbx_zero_vec3 }
+}
+pub fn zero_vec4() -> Vec4 {
+    unsafe { ufbx_zero_vec4 }
+}
+pub fn identity_quat() -> Quat {
+    unsafe { ufbx_identity_quat }
+}
+pub fn axes_right_handed_y_up() -> CoordinateAxes {
+    unsafe { ufbx_axes_right_handed_y_up }
+}
+pub fn axes_right_handed_z_up() -> CoordinateAxes {
+    unsafe { ufbx_axes_right_handed_z_up }
+}
+pub fn axes_left_handed_y_up() -> CoordinateAxes {
+    unsafe { ufbx_axes_left_handed_y_up }
+}
+pub fn axes_left_handed_z_up() -> CoordinateAxes {
+    unsafe { ufbx_axes_left_handed_z_up }
+}
+pub fn source_version() -> u32 {
+    unsafe { ufbx_source_version }
+}
 
 impl Vec2 {
-    pub fn zero() -> Vec2 { unsafe { ufbx_zero_vec2 } }
+    pub fn zero() -> Vec2 {
+        unsafe { ufbx_zero_vec2 }
+    }
 }
 
 impl Vec3 {
-    pub fn zero() -> Vec3 { unsafe { ufbx_zero_vec3 } }
+    pub fn zero() -> Vec3 {
+        unsafe { ufbx_zero_vec3 }
+    }
 }
 
 impl Vec4 {
-    pub fn zero() -> Vec4 { unsafe { ufbx_zero_vec4 } }
+    pub fn zero() -> Vec4 {
+        unsafe { ufbx_zero_vec4 }
+    }
 }
 
 impl Quat {
-    pub fn identity() -> Quat { unsafe { ufbx_identity_quat } }
+    pub fn identity() -> Quat {
+        unsafe { ufbx_identity_quat }
+    }
 }
 
 impl Transform {
-    pub fn identity() -> Transform { unsafe { ufbx_identity_transform } }
+    pub fn identity() -> Transform {
+        unsafe { ufbx_identity_transform }
+    }
 }
 
 impl Matrix {
-    pub fn identity() -> Matrix { unsafe { ufbx_identity_matrix } }
+    pub fn identity() -> Matrix {
+        unsafe { ufbx_identity_matrix }
+    }
 }
 
 impl DomNode {
-
     pub fn find<'a>(&'a self, name: &str) -> Option<&'a DomNode> {
         dom_find(&self, name)
     }
@@ -5545,7 +6909,6 @@ impl DomNode {
 }
 
 impl Props {
-
     pub fn find_prop<'a>(&'a self, name: &str) -> Option<&'a Prop> {
         find_prop(&self, name)
     }
@@ -5562,7 +6925,6 @@ impl Props {
 }
 
 impl Node {
-
     pub fn get_compatible_matrix_for_normals(&self) -> Matrix {
         get_compatible_matrix_for_normals(&self)
     }
@@ -5573,7 +6935,6 @@ impl Node {
 }
 
 impl Mesh {
-
     pub fn triangulate_face(&self, indices: &mut [u32], face: Face) -> u32 {
         triangulate_face(indices, &self, face)
     }
@@ -5584,21 +6945,27 @@ impl Mesh {
 }
 
 impl CoordinateAxes {
-    pub fn right_handed_y_up() -> CoordinateAxes { unsafe { ufbx_axes_right_handed_y_up } }
-    pub fn right_handed_z_up() -> CoordinateAxes { unsafe { ufbx_axes_right_handed_z_up } }
-    pub fn left_handed_y_up() -> CoordinateAxes { unsafe { ufbx_axes_left_handed_y_up } }
-    pub fn left_handed_z_up() -> CoordinateAxes { unsafe { ufbx_axes_left_handed_z_up } }
+    pub fn right_handed_y_up() -> CoordinateAxes {
+        unsafe { ufbx_axes_right_handed_y_up }
+    }
+    pub fn right_handed_z_up() -> CoordinateAxes {
+        unsafe { ufbx_axes_right_handed_z_up }
+    }
+    pub fn left_handed_y_up() -> CoordinateAxes {
+        unsafe { ufbx_axes_left_handed_y_up }
+    }
+    pub fn left_handed_z_up() -> CoordinateAxes {
+        unsafe { ufbx_axes_left_handed_z_up }
+    }
 }
 
 impl NurbsBasis {
-
     pub fn evaluate(&self, u: Real, weights: &mut [Real], derivatives: &mut [Real]) -> usize {
         evaluate_nurbs_basis(&self, u, weights, derivatives)
     }
 }
 
 impl NurbsCurve {
-
     pub fn evaluate(&self, u: Real) -> CurvePoint {
         evaluate_nurbs_curve(&self, u)
     }
@@ -5609,7 +6976,6 @@ impl NurbsCurve {
 }
 
 impl NurbsSurface {
-
     pub fn evaluate(&self, u: Real, v: Real) -> SurfacePoint {
         evaluate_nurbs_surface(&self, u, v)
     }
@@ -5620,14 +6986,12 @@ impl NurbsSurface {
 }
 
 impl SkinDeformer {
-
     pub fn get_skin_vertex_matrix(&self, vertex: usize, fallback: &Matrix) -> Matrix {
         get_skin_vertex_matrix(&self, vertex, fallback)
     }
 }
 
 impl BlendDeformer {
-
     pub fn get_vertex_offset(&self, vertex: usize) -> Vec3 {
         get_blend_vertex_offset(&self, vertex)
     }
@@ -5638,14 +7002,12 @@ impl BlendDeformer {
 }
 
 impl BlendChannel {
-
     pub fn evaluate_blend_weight(&self, anim: &Anim, time: f64) -> Real {
         evaluate_blend_weight(anim, &self, time)
     }
 }
 
 impl BlendShape {
-
     pub fn get_vertex_offset(&self, vertex: usize) -> Vec3 {
         get_blend_shape_vertex_offset(&self, vertex)
     }
@@ -5656,7 +7018,6 @@ impl BlendShape {
 }
 
 impl CacheFrame {
-
     pub fn read_real(&self, data: &mut [Real], opts: GeometryCacheDataOpts) -> usize {
         read_geometry_cache_real(&self, data, opts)
     }
@@ -5667,7 +7028,6 @@ impl CacheFrame {
 }
 
 impl CacheChannel {
-
     pub fn sample_real(&self, time: f64, data: &mut [Real], opts: GeometryCacheDataOpts) -> usize {
         sample_geometry_cache_real(&self, time, data, opts)
     }
@@ -5678,21 +7038,18 @@ impl CacheChannel {
 }
 
 impl Material {
-
     pub fn find_prop_texture<'a>(&'a self, name: &str) -> Option<&'a Texture> {
         find_prop_texture(&self, name)
     }
 }
 
 impl Shader {
-
     pub fn find_shader_prop<'a>(&'a self, name: &'a str) -> &'a str {
         find_shader_prop(self, name)
     }
 }
 
 impl AnimLayer {
-
     pub fn find_anim_prop<'a>(&'a self, element: &'a Element, prop: &str) -> Option<&'a AnimProp> {
         find_anim_prop(&self, element, prop)
     }
@@ -5703,7 +7060,6 @@ impl AnimLayer {
 }
 
 impl AnimValue {
-
     pub fn evaluate_real(&self, time: f64) -> Real {
         evaluate_anim_value_real(&self, time)
     }
@@ -5714,14 +7070,12 @@ impl AnimValue {
 }
 
 impl AnimCurve {
-
     pub fn evaluate(&self, time: f64, default_value: Real) -> Real {
         evaluate_curve(&self, time, default_value)
     }
 }
 
 impl Scene {
-
     pub fn find_element<'a>(&'a self, type_: ElementType, name: &str) -> Option<&'a Element> {
         find_element(&self, type_, name)
     }
@@ -5788,50 +7142,113 @@ impl Element {
     pub fn as_data(&self) -> ElementData<'_> {
         unsafe {
             match self.type_ {
-                ElementType::Unknown => ElementData::Unknown(&*(self as *const _ as *const Unknown)),
+                ElementType::Unknown => {
+                    ElementData::Unknown(&*(self as *const _ as *const Unknown))
+                }
                 ElementType::Node => ElementData::Node(&*(self as *const _ as *const Node)),
                 ElementType::Mesh => ElementData::Mesh(&*(self as *const _ as *const Mesh)),
                 ElementType::Light => ElementData::Light(&*(self as *const _ as *const Light)),
                 ElementType::Camera => ElementData::Camera(&*(self as *const _ as *const Camera)),
                 ElementType::Bone => ElementData::Bone(&*(self as *const _ as *const Bone)),
                 ElementType::Empty => ElementData::Empty(&*(self as *const _ as *const Empty)),
-                ElementType::LineCurve => ElementData::LineCurve(&*(self as *const _ as *const LineCurve)),
-                ElementType::NurbsCurve => ElementData::NurbsCurve(&*(self as *const _ as *const NurbsCurve)),
-                ElementType::NurbsSurface => ElementData::NurbsSurface(&*(self as *const _ as *const NurbsSurface)),
-                ElementType::NurbsTrimSurface => ElementData::NurbsTrimSurface(&*(self as *const _ as *const NurbsTrimSurface)),
-                ElementType::NurbsTrimBoundary => ElementData::NurbsTrimBoundary(&*(self as *const _ as *const NurbsTrimBoundary)),
-                ElementType::ProceduralGeometry => ElementData::ProceduralGeometry(&*(self as *const _ as *const ProceduralGeometry)),
-                ElementType::StereoCamera => ElementData::StereoCamera(&*(self as *const _ as *const StereoCamera)),
-                ElementType::CameraSwitcher => ElementData::CameraSwitcher(&*(self as *const _ as *const CameraSwitcher)),
+                ElementType::LineCurve => {
+                    ElementData::LineCurve(&*(self as *const _ as *const LineCurve))
+                }
+                ElementType::NurbsCurve => {
+                    ElementData::NurbsCurve(&*(self as *const _ as *const NurbsCurve))
+                }
+                ElementType::NurbsSurface => {
+                    ElementData::NurbsSurface(&*(self as *const _ as *const NurbsSurface))
+                }
+                ElementType::NurbsTrimSurface => {
+                    ElementData::NurbsTrimSurface(&*(self as *const _ as *const NurbsTrimSurface))
+                }
+                ElementType::NurbsTrimBoundary => {
+                    ElementData::NurbsTrimBoundary(&*(self as *const _ as *const NurbsTrimBoundary))
+                }
+                ElementType::ProceduralGeometry => ElementData::ProceduralGeometry(
+                    &*(self as *const _ as *const ProceduralGeometry),
+                ),
+                ElementType::StereoCamera => {
+                    ElementData::StereoCamera(&*(self as *const _ as *const StereoCamera))
+                }
+                ElementType::CameraSwitcher => {
+                    ElementData::CameraSwitcher(&*(self as *const _ as *const CameraSwitcher))
+                }
                 ElementType::Marker => ElementData::Marker(&*(self as *const _ as *const Marker)),
-                ElementType::LodGroup => ElementData::LodGroup(&*(self as *const _ as *const LodGroup)),
-                ElementType::SkinDeformer => ElementData::SkinDeformer(&*(self as *const _ as *const SkinDeformer)),
-                ElementType::SkinCluster => ElementData::SkinCluster(&*(self as *const _ as *const SkinCluster)),
-                ElementType::BlendDeformer => ElementData::BlendDeformer(&*(self as *const _ as *const BlendDeformer)),
-                ElementType::BlendChannel => ElementData::BlendChannel(&*(self as *const _ as *const BlendChannel)),
-                ElementType::BlendShape => ElementData::BlendShape(&*(self as *const _ as *const BlendShape)),
-                ElementType::CacheDeformer => ElementData::CacheDeformer(&*(self as *const _ as *const CacheDeformer)),
-                ElementType::CacheFile => ElementData::CacheFile(&*(self as *const _ as *const CacheFile)),
-                ElementType::Material => ElementData::Material(&*(self as *const _ as *const Material)),
-                ElementType::Texture => ElementData::Texture(&*(self as *const _ as *const Texture)),
+                ElementType::LodGroup => {
+                    ElementData::LodGroup(&*(self as *const _ as *const LodGroup))
+                }
+                ElementType::SkinDeformer => {
+                    ElementData::SkinDeformer(&*(self as *const _ as *const SkinDeformer))
+                }
+                ElementType::SkinCluster => {
+                    ElementData::SkinCluster(&*(self as *const _ as *const SkinCluster))
+                }
+                ElementType::BlendDeformer => {
+                    ElementData::BlendDeformer(&*(self as *const _ as *const BlendDeformer))
+                }
+                ElementType::BlendChannel => {
+                    ElementData::BlendChannel(&*(self as *const _ as *const BlendChannel))
+                }
+                ElementType::BlendShape => {
+                    ElementData::BlendShape(&*(self as *const _ as *const BlendShape))
+                }
+                ElementType::CacheDeformer => {
+                    ElementData::CacheDeformer(&*(self as *const _ as *const CacheDeformer))
+                }
+                ElementType::CacheFile => {
+                    ElementData::CacheFile(&*(self as *const _ as *const CacheFile))
+                }
+                ElementType::Material => {
+                    ElementData::Material(&*(self as *const _ as *const Material))
+                }
+                ElementType::Texture => {
+                    ElementData::Texture(&*(self as *const _ as *const Texture))
+                }
                 ElementType::Video => ElementData::Video(&*(self as *const _ as *const Video)),
                 ElementType::Shader => ElementData::Shader(&*(self as *const _ as *const Shader)),
-                ElementType::ShaderBinding => ElementData::ShaderBinding(&*(self as *const _ as *const ShaderBinding)),
-                ElementType::AnimStack => ElementData::AnimStack(&*(self as *const _ as *const AnimStack)),
-                ElementType::AnimLayer => ElementData::AnimLayer(&*(self as *const _ as *const AnimLayer)),
-                ElementType::AnimValue => ElementData::AnimValue(&*(self as *const _ as *const AnimValue)),
-                ElementType::AnimCurve => ElementData::AnimCurve(&*(self as *const _ as *const AnimCurve)),
-                ElementType::DisplayLayer => ElementData::DisplayLayer(&*(self as *const _ as *const DisplayLayer)),
-                ElementType::SelectionSet => ElementData::SelectionSet(&*(self as *const _ as *const SelectionSet)),
-                ElementType::SelectionNode => ElementData::SelectionNode(&*(self as *const _ as *const SelectionNode)),
-                ElementType::Character => ElementData::Character(&*(self as *const _ as *const Character)),
-                ElementType::Constraint => ElementData::Constraint(&*(self as *const _ as *const Constraint)),
-                ElementType::AudioLayer => ElementData::AudioLayer(&*(self as *const _ as *const AudioLayer)),
-                ElementType::AudioClip => ElementData::AudioClip(&*(self as *const _ as *const AudioClip)),
+                ElementType::ShaderBinding => {
+                    ElementData::ShaderBinding(&*(self as *const _ as *const ShaderBinding))
+                }
+                ElementType::AnimStack => {
+                    ElementData::AnimStack(&*(self as *const _ as *const AnimStack))
+                }
+                ElementType::AnimLayer => {
+                    ElementData::AnimLayer(&*(self as *const _ as *const AnimLayer))
+                }
+                ElementType::AnimValue => {
+                    ElementData::AnimValue(&*(self as *const _ as *const AnimValue))
+                }
+                ElementType::AnimCurve => {
+                    ElementData::AnimCurve(&*(self as *const _ as *const AnimCurve))
+                }
+                ElementType::DisplayLayer => {
+                    ElementData::DisplayLayer(&*(self as *const _ as *const DisplayLayer))
+                }
+                ElementType::SelectionSet => {
+                    ElementData::SelectionSet(&*(self as *const _ as *const SelectionSet))
+                }
+                ElementType::SelectionNode => {
+                    ElementData::SelectionNode(&*(self as *const _ as *const SelectionNode))
+                }
+                ElementType::Character => {
+                    ElementData::Character(&*(self as *const _ as *const Character))
+                }
+                ElementType::Constraint => {
+                    ElementData::Constraint(&*(self as *const _ as *const Constraint))
+                }
+                ElementType::AudioLayer => {
+                    ElementData::AudioLayer(&*(self as *const _ as *const AudioLayer))
+                }
+                ElementType::AudioClip => {
+                    ElementData::AudioClip(&*(self as *const _ as *const AudioClip))
+                }
                 ElementType::Pose => ElementData::Pose(&*(self as *const _ as *const Pose)),
-                ElementType::MetadataObject => ElementData::MetadataObject(&*(self as *const _ as *const MetadataObject)),
+                ElementType::MetadataObject => {
+                    ElementData::MetadataObject(&*(self as *const _ as *const MetadataObject))
+                }
             }
         }
     }
 }
-

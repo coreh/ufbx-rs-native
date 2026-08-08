@@ -13,9 +13,7 @@ use core::mem::size_of;
 use crate::native::allocator::{alloc, free, free_ator, ufbx_free, ufbx_malloc, Allocator};
 use crate::native::buf::{buf_free, push, Buf};
 use crate::native::error::{ufbxi_check_return_err, ufbxi_check_return_err_msg};
-use crate::native::platform::{
-    read_u32, ufbx_assert, ufbxi_maybe_null, ufbxi_regression_assert,
-};
+use crate::native::platform::{read_u32, ufbx_assert, ufbxi_maybe_null, ufbxi_regression_assert};
 
 // ufbx.c:4688-4691 `ufbxi_ptr_id` — key type of the hash-map unit; kept up
 // here (out of C declaration order) because `ufbxi_hash_ptr_id` takes it by
@@ -174,7 +172,12 @@ pub(crate) fn hash_uptr(ptr: usize) -> u32 {
     #[cfg(not(any(target_pointer_width = "64", target_pointer_width = "32")))]
     {
         // C fallback: hash the pointer's bytes.
-        unsafe { hash_string(&ptr as *const usize as *const u8, core::mem::size_of::<usize>()) }
+        unsafe {
+            hash_string(
+                &ptr as *const usize as *const u8,
+                core::mem::size_of::<usize>(),
+            )
+        }
     }
 }
 
@@ -249,7 +252,12 @@ pub(crate) struct Map {
 
 // ufbx.c:4393-4420 `ufbxi_map_init`
 #[inline(never)]
-pub(crate) unsafe fn map_init(map: *mut Map, ator: *mut Allocator, cmp_fn: CmpFn, cmp_user: *mut c_void) {
+pub(crate) unsafe fn map_init(
+    map: *mut Map,
+    ator: *mut Allocator,
+    cmp_fn: CmpFn,
+    cmp_user: *mut c_void,
+) {
     (*map).ator = ator;
     #[cfg(feature = "regression")]
     {
@@ -392,10 +400,15 @@ unsafe fn aa_tree_insert_rec(
 
 // ufbx.c:4483-4498 `ufbxi_aa_tree_find`
 #[inline(never)]
-pub(crate) unsafe fn aa_tree_find(map: *mut Map, value: *const c_void, item_size: usize) -> *mut c_void {
+pub(crate) unsafe fn aa_tree_find(
+    map: *mut Map,
+    value: *const c_void,
+    item_size: usize,
+) -> *mut c_void {
     let mut node = (*map).aa_root;
     while !node.is_null() {
-        let entry = ((*map).items as *mut u8).add((*node).index as usize * item_size) as *mut c_void;
+        let entry =
+            ((*map).items as *mut u8).add((*node).index as usize * item_size) as *mut c_void;
         // C-parity: C calls through the raw `cmp_fn` pointer without a null check.
         let cmp = ((*map).cmp_fn.unwrap_unchecked())((*map).cmp_user, value, entry);
         if cmp < 0 {
@@ -535,7 +548,12 @@ pub(crate) unsafe fn map_grow_size(map: *mut Map, size: usize, min_size: usize) 
 
 // ufbx.c:4590-4617 `ufbxi_map_find_size`
 #[inline(never)]
-pub(crate) unsafe fn map_find_size(map: *mut Map, size: usize, hash: u32, value: *const c_void) -> *mut c_void {
+pub(crate) unsafe fn map_find_size(
+    map: *mut Map,
+    size: usize,
+    hash: u32,
+    value: *const c_void,
+) -> *mut c_void {
     let entries = (*map).entries;
     let mask = (*map).mask;
     let mut scan: u32 = 0;
@@ -571,7 +589,12 @@ pub(crate) unsafe fn map_find_size(map: *mut Map, size: usize, hash: u32, value:
 
 // ufbx.c:4619-4655 `ufbxi_map_insert_size`
 #[inline(never)]
-pub(crate) unsafe fn map_insert_size(map: *mut Map, size: usize, hash: u32, value: *const c_void) -> *mut c_void {
+pub(crate) unsafe fn map_insert_size(
+    map: *mut Map,
+    size: usize,
+    hash: u32,
+    value: *const c_void,
+) -> *mut c_void {
     if !map_grow_size(map, size, 64) {
         return core::ptr::null_mut();
     }
@@ -646,7 +669,11 @@ pub(crate) unsafe fn map_insert<T>(map: *mut Map, hash: u32, value: *const c_voi
 }
 
 // ufbx.c:4661-4668 `ufbxi_map_cmp_uint64`
-pub(crate) unsafe extern "C" fn map_cmp_uint64(user: *mut c_void, va: *const c_void, vb: *const c_void) -> i32 {
+pub(crate) unsafe extern "C" fn map_cmp_uint64(
+    user: *mut c_void,
+    va: *const c_void,
+    vb: *const c_void,
+) -> i32 {
     let _ = user; // (void)user
     let a = *(va as *const u64);
     let b = *(vb as *const u64);
@@ -660,7 +687,11 @@ pub(crate) unsafe extern "C" fn map_cmp_uint64(user: *mut c_void, va: *const c_v
 }
 
 // ufbx.c:4670-4677 `ufbxi_map_cmp_const_char_ptr`
-pub(crate) unsafe extern "C" fn map_cmp_const_char_ptr(user: *mut c_void, va: *const c_void, vb: *const c_void) -> i32 {
+pub(crate) unsafe extern "C" fn map_cmp_const_char_ptr(
+    user: *mut c_void,
+    va: *const c_void,
+    vb: *const c_void,
+) -> i32 {
     let _ = user; // (void)user
     let a = *(va as *const *const u8);
     let b = *(vb as *const *const u8);
@@ -674,7 +705,11 @@ pub(crate) unsafe extern "C" fn map_cmp_const_char_ptr(user: *mut c_void, va: *c
 }
 
 // ufbx.c:4679-4686 `ufbxi_map_cmp_uintptr`
-pub(crate) unsafe extern "C" fn map_cmp_uintptr(user: *mut c_void, va: *const c_void, vb: *const c_void) -> i32 {
+pub(crate) unsafe extern "C" fn map_cmp_uintptr(
+    user: *mut c_void,
+    va: *const c_void,
+    vb: *const c_void,
+) -> i32 {
     let _ = user; // (void)user
     let a = *(va as *const usize);
     let b = *(vb as *const usize);
@@ -691,7 +726,11 @@ pub(crate) unsafe extern "C" fn map_cmp_uintptr(user: *mut c_void, va: *const c_
 // to `ufbxi_hash_ptr_id` — see the note there.)
 
 // ufbx.c:4693-4700 `ufbxi_map_cmp_ptr_id`
-pub(crate) unsafe extern "C" fn map_cmp_ptr_id(user: *mut c_void, va: *const c_void, vb: *const c_void) -> i32 {
+pub(crate) unsafe extern "C" fn map_cmp_ptr_id(
+    user: *mut c_void,
+    va: *const c_void,
+    vb: *const c_void,
+) -> i32 {
     let _ = user; // (void)user
     let a = *(va as *const PtrId);
     let b = *(vb as *const PtrId);
@@ -835,7 +874,12 @@ mod tests {
 
     unsafe fn make_test_ator(err: *mut Error) -> Allocator {
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        init_ator(err, ator.as_mut_ptr(), core::ptr::null(), b"test\0".as_ptr());
+        init_ator(
+            err,
+            ator.as_mut_ptr(),
+            core::ptr::null(),
+            b"test\0".as_ptr(),
+        );
         ator.assume_init()
     }
 
@@ -863,7 +907,9 @@ mod tests {
             }
             // Missing keys stay missing.
             let v = 3u64;
-            assert!(map_find::<u64>(&mut map, hash64(v), &v as *const u64 as *const c_void).is_null());
+            assert!(
+                map_find::<u64>(&mut map, hash64(v), &v as *const u64 as *const c_void).is_null()
+            );
 
             map_free(&mut map);
             assert_eq!(ator.current_size, 0);
@@ -916,7 +962,9 @@ mod tests {
                 assert_eq!(*p, i);
             }
             let missing = n + 1;
-            assert!(map_find::<u64>(&mut map, 0, &missing as *const u64 as *const c_void).is_null());
+            assert!(
+                map_find::<u64>(&mut map, 0, &missing as *const u64 as *const c_void).is_null()
+            );
 
             map_free(&mut map);
             assert_eq!(ator.current_size, 0);
@@ -931,7 +979,9 @@ mod tests {
             let mut ator = make_test_ator(&mut err);
             let mut map = make_map(&mut ator, map_cmp_uint64);
             let v = 42u64;
-            assert!(map_find::<u64>(&mut map, hash64(v), &v as *const u64 as *const c_void).is_null());
+            assert!(
+                map_find::<u64>(&mut map, hash64(v), &v as *const u64 as *const c_void).is_null()
+            );
             map_free(&mut map);
         }
     }

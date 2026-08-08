@@ -58,16 +58,24 @@ pub(crate) const ERROR_INFO_LENGTH: usize = 256;
 // the array sizes must fail to compile, not silently desync (PORTING.md
 // ground rule 0 / "layout-pinned by const assert").
 const _: () = {
-    fn _pin_stack(e: &Error) -> &[ErrorFrame; ERROR_STACK_MAX_DEPTH] { &e.stack }
-    fn _pin_info(e: &Error) -> &crate::prelude::InlineBuf<[u8; ERROR_INFO_LENGTH]> { &e.info_buf }
-    fn _pin_message(p: &Panic) -> &crate::prelude::InlineBuf<[u8; PANIC_MESSAGE_LENGTH]> { &p.message_buf }
+    fn _pin_stack(e: &Error) -> &[ErrorFrame; ERROR_STACK_MAX_DEPTH] {
+        &e.stack
+    }
+    fn _pin_info(e: &Error) -> &crate::prelude::InlineBuf<[u8; ERROR_INFO_LENGTH]> {
+        &e.info_buf
+    }
+    fn _pin_message(p: &Panic) -> &crate::prelude::InlineBuf<[u8; PANIC_MESSAGE_LENGTH]> {
+        &p.message_buf
+    }
 };
 
 // -- libc string shims (C: strlen/strcmp via the string.h shim, ufbx.c:721-731)
 
 pub(crate) unsafe fn strlen(str_: *const u8) -> usize {
     let mut n: usize = 0;
-    while *str_.add(n) != 0 { n += 1; }
+    while *str_.add(n) != 0 {
+        n += 1;
+    }
     n
 }
 
@@ -78,7 +86,9 @@ pub(crate) unsafe fn strcmp(a: *const u8, b: *const u8) -> i32 {
     loop {
         let ca = *a.add(i);
         let cb = *b.add(i);
-        if ca != cb || ca == 0 { return ca as i32 - cb as i32; }
+        if ca != cb || ca == 0 {
+            return ca as i32 - cb as i32;
+        }
         i += 1;
     }
 }
@@ -90,7 +100,25 @@ pub(crate) unsafe fn memcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
     while i < n {
         let ca = *a.add(i);
         let cb = *b.add(i);
-        if ca != cb { return ca as i32 - cb as i32; }
+        if ca != cb {
+            return ca as i32 - cb as i32;
+        }
+        i += 1;
+    }
+    0
+}
+
+// C `strncmp` semantics: compare at most `n` bytes as unsigned chars, stopping
+// at the first NUL; returns the difference at the first mismatch (only the
+// ==0 / !=0 result is consumed in ufbx.c).
+pub(crate) unsafe fn strncmp(a: *const u8, b: *const u8, n: usize) -> i32 {
+    let mut i: usize = 0;
+    while i < n {
+        let ca = *a.add(i);
+        let cb = *b.add(i);
+        if ca != cb || ca == 0 {
+            return ca as i32 - cb as i32;
+        }
         i += 1;
     }
     0
@@ -138,8 +166,17 @@ pub(crate) static EMPTY_CHAR: [u8; 1] = [b'\0'];
 
 // ufbx.c:3368-3373 `ufbxi_vsnprintf`
 #[inline(never)]
-pub(crate) unsafe fn vsnprintf(buf: *mut u8, buf_size: usize, fmt: *const u8, args: &[PrintArg]) -> i32 {
-    let mut buffer = PrintBuffer { dst: buf, length: buf_size, pos: 0 };
+pub(crate) unsafe fn vsnprintf(
+    buf: *mut u8,
+    buf_size: usize,
+    fmt: *const u8,
+    args: &[PrintArg],
+) -> i32 {
+    let mut buffer = PrintBuffer {
+        dst: buf,
+        length: buf_size,
+        pos: 0,
+    };
     vprint(&mut buffer, fmt, args);
     // C-parity: `buf_size - 1` — callers never pass buf_size == 0 (wrapping
     // matches the C unsigned underflow if one ever did).
@@ -150,7 +187,12 @@ pub(crate) unsafe fn vsnprintf(buf: *mut u8, buf_size: usize, fmt: *const u8, ar
 // `va_list` pair collapses into the `args` slice — see `ufbxi_snprintf!`).
 // C: `va_list args; // ufbxi_uninit` (ufbx.c:3377) — collapsed into `args`.
 #[inline(never)]
-pub(crate) unsafe fn snprintf(buf: *mut u8, buf_size: usize, fmt: *const u8, args: &[PrintArg]) -> i32 {
+pub(crate) unsafe fn snprintf(
+    buf: *mut u8,
+    buf_size: usize,
+    fmt: *const u8,
+    args: &[PrintArg],
+) -> i32 {
     let result = vsnprintf(buf, buf_size, fmt, args);
     result
 }
@@ -169,7 +211,9 @@ pub(crate) use ufbxi_snprintf;
 // C: `va_list args; // ufbxi_uninit` (ufbx.c:3388) — collapsed into `args`.
 #[inline(never)]
 pub(crate) unsafe fn panicf_imp(panic: *mut Panic, fmt: *const u8, args: &[PrintArg]) {
-    if !panic.is_null() && (*panic).did_panic { return; }
+    if !panic.is_null() && (*panic).did_panic {
+        return;
+    }
 
     if !panic.is_null() {
         (*panic).did_panic = true;
@@ -205,7 +249,9 @@ pub(crate) use ufbxi_panicf;
 // `#define ufbxi_error_msg(cond, msg) "$" msg "\0" cond`
 // Rust form appends the string-literal NUL terminator C gets implicitly.
 macro_rules! ufbxi_error_msg {
-    ($cond:literal, $msg:literal) => { concat!("$", $msg, "\0", $cond, "\0") };
+    ($cond:literal, $msg:literal) => {
+        concat!("$", $msg, "\0", $cond, "\0")
+    };
 }
 pub(crate) use ufbxi_error_msg;
 
@@ -218,20 +264,33 @@ pub(crate) use ufbxi_error_msg;
 // byte-identical) — e.g. `ator->num_allocs` vs `(*ator).num_allocs`.
 #[cfg(feature = "error-stack")]
 macro_rules! ufbxi_error_msg_cond {
-    ($cond:expr, $msg:literal) => { concat!("$", $msg, "\0", stringify!($cond), "\0") };
-    ($cond:expr, $msg:literal, $c_cond_str:literal) => { concat!("$", $msg, "\0", $c_cond_str, "\0") };
+    ($cond:expr, $msg:literal) => {
+        concat!("$", $msg, "\0", stringify!($cond), "\0")
+    };
+    ($cond:expr, $msg:literal, $c_cond_str:literal) => {
+        concat!("$", $msg, "\0", $c_cond_str, "\0")
+    };
 }
 #[cfg(not(feature = "error-stack"))]
 macro_rules! ufbxi_error_msg_cond {
-    ($cond:expr, $msg:literal) => { concat!("$", $msg, "\0\0") };
-    ($cond:expr, $msg:literal, $c_cond_str:literal) => { concat!("$", $msg, "\0\0") };
+    ($cond:expr, $msg:literal) => {
+        concat!("$", $msg, "\0\0")
+    };
+    ($cond:expr, $msg:literal, $c_cond_str:literal) => {
+        concat!("$", $msg, "\0\0")
+    };
 }
 pub(crate) use ufbxi_error_msg_cond;
 
 // ufbx.c:3411-3444 `ufbxi_fail_imp_err`
 #[allow(unused_mut, unused_variables)]
 #[inline(never)]
-pub(crate) unsafe fn fail_imp_err(err: *mut Error, mut cond: *const u8, func: *const u8, line: u32) -> i32 {
+pub(crate) unsafe fn fail_imp_err(
+    err: *mut Error,
+    mut cond: *const u8,
+    func: *const u8,
+    line: u32,
+) -> i32 {
     if !cond.is_null() && *cond == b'$' {
         if (*err).description.data.is_null() {
             (*err).description.data = cond.add(1);
@@ -296,7 +355,10 @@ pub(crate) unsafe fn utf8_valid_length(str_: *const u8, length: usize) -> usize 
             let t0: u8 = *str_.add(index + 1);
             let t1: u8 = *str_.add(index + 2);
             let code: u32 = (c as u32) << 16 | (t0 as u32) << 8 | t1 as u32;
-            if (code & 0xc0c0) == 0x8080 && code >= 0xe0a080 && (code < 0xeda080 || code >= 0xee8080) {
+            if (code & 0xc0c0) == 0x8080
+                && code >= 0xe0a080
+                && (code < 0xeda080 || code >= 0xee8080)
+            {
                 index += 3;
                 continue;
             }
@@ -327,7 +389,9 @@ pub(crate) unsafe fn clean_string_utf8(str_: *mut u8, length: usize) {
         // scan bound here; a terminating NUL at `str_[length]` (guaranteed by
         // both callers) is what keeps the scan in bounds.
         pos += utf8_valid_length(str_.add(pos) as *const u8, length);
-        if pos == length { break; }
+        if pos == length {
+            break;
+        }
         *str_.add(pos) = b'?';
         pos += 1;
     }
@@ -336,9 +400,13 @@ pub(crate) unsafe fn clean_string_utf8(str_: *mut u8, length: usize) {
 // ufbx.c:3498-3508 `ufbxi_set_err_info`
 #[inline(never)]
 pub(crate) unsafe fn set_err_info(err: *mut Error, data: *const u8, mut length: usize) {
-    if err.is_null() { return; }
+    if err.is_null() {
+        return;
+    }
 
-    if length == usize::MAX { length = strlen(data); }
+    if length == usize::MAX {
+        length = strlen(data);
+    }
     let info = (*err).info_buf.data.as_mut_ptr() as *mut u8;
     let to_copy = min_sz(ERROR_INFO_LENGTH - 1, length);
     core::ptr::copy_nonoverlapping(data, info, to_copy);
@@ -352,7 +420,9 @@ pub(crate) unsafe fn set_err_info(err: *mut Error, data: *const u8, mut length: 
 // C: `va_list args; // ufbxi_uninit` (ufbx.c:3514) — collapsed into `args`.
 #[inline(never)]
 pub(crate) unsafe fn fmt_err_info(err: *mut Error, fmt: *const u8, args: &[PrintArg]) {
-    if err.is_null() { return; }
+    if err.is_null() {
+        return;
+    }
 
     let info = (*err).info_buf.data.as_mut_ptr() as *mut u8;
     (*err).info_length = vsnprintf(info, ERROR_INFO_LENGTH, fmt, args) as usize;
@@ -371,7 +441,9 @@ pub(crate) use ufbxi_fmt_err_info;
 // ufbx.c:3521-3530 `ufbxi_clear_error`
 #[inline(never)]
 pub(crate) unsafe fn clear_error(err: *mut Error) {
-    if err.is_null() { return; }
+    if err.is_null() {
+        return;
+    }
 
     (*err).type_ = ErrorType::None;
     (*err).description.data = EMPTY_CHAR.as_ptr();
@@ -387,21 +459,29 @@ pub(crate) unsafe fn clear_error(err: *mut Error) {
 // Rust: `module_path!()` stands in for `__FUNCTION__` (see module docs).
 #[cfg(feature = "error-stack")]
 macro_rules! ufbxi_function {
-    () => { concat!(module_path!(), "\0").as_ptr() };
+    () => {
+        concat!(module_path!(), "\0").as_ptr()
+    };
 }
 #[cfg(not(feature = "error-stack"))]
 macro_rules! ufbxi_function {
-    () => { core::ptr::null::<u8>() };
+    () => {
+        core::ptr::null::<u8>()
+    };
 }
 pub(crate) use ufbxi_function;
 
 #[cfg(feature = "error-stack")]
 macro_rules! ufbxi_line {
-    () => { line!() };
+    () => {
+        line!()
+    };
 }
 #[cfg(not(feature = "error-stack"))]
 macro_rules! ufbxi_line {
-    () => { 0u32 };
+    () => {
+        0u32
+    };
 }
 pub(crate) use ufbxi_line;
 
@@ -411,13 +491,21 @@ pub(crate) use ufbxi_line;
 // Rust `stringify!` diverges from C's `#cond` bytes (checklist #13).
 #[cfg(feature = "error-stack")]
 macro_rules! ufbxi_cond_str {
-    ($cond:expr) => { concat!(stringify!($cond), "\0") };
-    ($cond:expr, $c_cond_str:literal) => { concat!($c_cond_str, "\0") };
+    ($cond:expr) => {
+        concat!(stringify!($cond), "\0")
+    };
+    ($cond:expr, $c_cond_str:literal) => {
+        concat!($c_cond_str, "\0")
+    };
 }
 #[cfg(not(feature = "error-stack"))]
 macro_rules! ufbxi_cond_str {
-    ($cond:expr) => { "\0" };
-    ($cond:expr, $c_cond_str:literal) => { "\0" };
+    ($cond:expr) => {
+        "\0"
+    };
+    ($cond:expr, $c_cond_str:literal) => {
+        "\0"
+    };
 }
 pub(crate) use ufbxi_cond_str;
 
@@ -427,8 +515,12 @@ pub(crate) use ufbxi_cond_str;
 #[cfg(feature = "error-stack")]
 macro_rules! ufbxi_fail_err_no_msg {
     ($err:expr, $cond_str:expr) => {
-        $crate::native::error::fail_imp_err($err, $cond_str,
-            $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!())
+        $crate::native::error::fail_imp_err(
+            $err,
+            $cond_str,
+            $crate::native::error::ufbxi_function!(),
+            $crate::native::error::ufbxi_line!(),
+        )
     };
 }
 #[cfg(not(feature = "error-stack"))]
@@ -458,16 +550,20 @@ macro_rules! ufbxi_check_err {
     ($err:expr, $cond:expr) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::ufbxi_fail_err_no_msg!($err,
-                $crate::native::error::ufbxi_cond_str!($cond).as_ptr());
+            $crate::native::error::ufbxi_fail_err_no_msg!(
+                $err,
+                $crate::native::error::ufbxi_cond_str!($cond).as_ptr()
+            );
             return Err($crate::native::error::Fail);
         }
     }};
     ($err:expr, $cond:expr, $c_cond_str:literal) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::ufbxi_fail_err_no_msg!($err,
-                $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_ptr());
+            $crate::native::error::ufbxi_fail_err_no_msg!(
+                $err,
+                $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_ptr()
+            );
             return Err($crate::native::error::Fail);
         }
     }};
@@ -480,16 +576,20 @@ macro_rules! ufbxi_check_return_err {
     ($err:expr, $cond:expr, $ret:expr) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::ufbxi_fail_err_no_msg!($err,
-                $crate::native::error::ufbxi_cond_str!($cond).as_ptr());
+            $crate::native::error::ufbxi_fail_err_no_msg!(
+                $err,
+                $crate::native::error::ufbxi_cond_str!($cond).as_ptr()
+            );
             return $ret;
         }
     }};
     ($err:expr, $cond:expr, $ret:expr, $c_cond_str:literal) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::ufbxi_fail_err_no_msg!($err,
-                $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_ptr());
+            $crate::native::error::ufbxi_fail_err_no_msg!(
+                $err,
+                $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_ptr()
+            );
             return $ret;
         }
     }};
@@ -513,18 +613,24 @@ macro_rules! ufbxi_check_err_msg {
     ($err:expr, $cond:expr, $msg:literal) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::fail_imp_err($err,
+            $crate::native::error::fail_imp_err(
+                $err,
                 $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_ptr(),
-                $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!());
+                $crate::native::error::ufbxi_function!(),
+                $crate::native::error::ufbxi_line!(),
+            );
             return Err($crate::native::error::Fail);
         }
     }};
     ($err:expr, $cond:expr, $msg:literal, $c_cond_str:literal) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::fail_imp_err($err,
+            $crate::native::error::fail_imp_err(
+                $err,
                 $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str).as_ptr(),
-                $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!());
+                $crate::native::error::ufbxi_function!(),
+                $crate::native::error::ufbxi_line!(),
+            );
             return Err($crate::native::error::Fail);
         }
     }};
@@ -537,18 +643,24 @@ macro_rules! ufbxi_check_return_err_msg {
     ($err:expr, $cond:expr, $ret:expr, $msg:literal) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::fail_imp_err($err,
+            $crate::native::error::fail_imp_err(
+                $err,
                 $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_ptr(),
-                $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!());
+                $crate::native::error::ufbxi_function!(),
+                $crate::native::error::ufbxi_line!(),
+            );
             return $ret;
         }
     }};
     ($err:expr, $cond:expr, $ret:expr, $msg:literal, $c_cond_str:literal) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::fail_imp_err($err,
+            $crate::native::error::fail_imp_err(
+                $err,
                 $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str).as_ptr(),
-                $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!());
+                $crate::native::error::ufbxi_function!(),
+                $crate::native::error::ufbxi_line!(),
+            );
             return $ret;
         }
     }};
@@ -559,9 +671,12 @@ pub(crate) use ufbxi_check_return_err_msg;
 // literal, NOT a stringified condition (PORTING.md: do not mix these up).
 macro_rules! ufbxi_fail_err_msg {
     ($err:expr, $desc:literal, $msg:literal) => {{
-        $crate::native::error::fail_imp_err($err,
+        $crate::native::error::fail_imp_err(
+            $err,
             $crate::native::error::ufbxi_error_msg!($desc, $msg).as_ptr(),
-            $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!());
+            $crate::native::error::ufbxi_function!(),
+            $crate::native::error::ufbxi_line!(),
+        );
         return Err($crate::native::error::Fail);
     }};
 }
@@ -571,9 +686,12 @@ pub(crate) use ufbxi_fail_err_msg;
 // KEEPS GOING (C: `(void)` result). NOT a return (PORTING.md trap #16).
 macro_rules! ufbxi_report_err_msg {
     ($err:expr, $desc:literal, $msg:literal) => {{
-        let _ = $crate::native::error::fail_imp_err($err,
+        let _ = $crate::native::error::fail_imp_err(
+            $err,
             $crate::native::error::ufbxi_error_msg!($desc, $msg).as_ptr(),
-            $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!());
+            $crate::native::error::ufbxi_function!(),
+            $crate::native::error::ufbxi_line!(),
+        );
     }};
 }
 pub(crate) use ufbxi_report_err_msg;
@@ -590,8 +708,12 @@ pub(crate) use ufbxi_report_err_msg;
 #[cfg(feature = "error-stack")]
 macro_rules! ufbxi_fail_no_msg {
     ($uc:expr, $cond_str:expr) => {
-        $crate::native::parse::fail_imp($uc, $cond_str,
-            $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!())
+        $crate::native::parse::fail_imp(
+            $uc,
+            $cond_str,
+            $crate::native::error::ufbxi_function!(),
+            $crate::native::error::ufbxi_line!(),
+        )
     };
 }
 #[cfg(not(feature = "error-stack"))]
@@ -603,12 +725,25 @@ macro_rules! ufbxi_fail_no_msg {
 pub(crate) use ufbxi_fail_no_msg;
 
 // ufbx.c:6664 `ufbxi_check(cond)`
+// Optional trailing literal: the verbatim C condition text (see `ufbxi_cond_str`).
 macro_rules! ufbxi_check {
     ($uc:expr, $cond:expr) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::ufbxi_fail_no_msg!($uc,
-                $crate::native::error::ufbxi_cond_str!($cond).as_ptr());
+            $crate::native::error::ufbxi_fail_no_msg!(
+                $uc,
+                $crate::native::error::ufbxi_cond_str!($cond).as_ptr()
+            );
+            return Err($crate::native::error::Fail);
+        }
+    }};
+    ($uc:expr, $cond:expr, $c_cond_str:literal) => {{
+        let cond = $cond;
+        if $crate::native::platform::unlikely(!cond) {
+            $crate::native::error::ufbxi_fail_no_msg!(
+                $uc,
+                $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_ptr()
+            );
             return Err($crate::native::error::Fail);
         }
     }};
@@ -616,12 +751,25 @@ macro_rules! ufbxi_check {
 pub(crate) use ufbxi_check;
 
 // ufbx.c:6665 `ufbxi_check_return(cond, ret)`
+// Optional trailing literal: the verbatim C condition text (see `ufbxi_cond_str`).
 macro_rules! ufbxi_check_return {
     ($uc:expr, $cond:expr, $ret:expr) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::ufbxi_fail_no_msg!($uc,
-                $crate::native::error::ufbxi_cond_str!($cond).as_ptr());
+            $crate::native::error::ufbxi_fail_no_msg!(
+                $uc,
+                $crate::native::error::ufbxi_cond_str!($cond).as_ptr()
+            );
+            return $ret;
+        }
+    }};
+    ($uc:expr, $cond:expr, $ret:expr, $c_cond_str:literal) => {{
+        let cond = $cond;
+        if $crate::native::platform::unlikely(!cond) {
+            $crate::native::error::ufbxi_fail_no_msg!(
+                $uc,
+                $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_ptr()
+            );
             return $ret;
         }
     }};
@@ -652,9 +800,24 @@ macro_rules! ufbxi_check_msg {
     ($uc:expr, $cond:expr, $msg:literal) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::parse::fail_imp($uc,
+            $crate::native::parse::fail_imp(
+                $uc,
                 $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_ptr(),
-                $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!());
+                $crate::native::error::ufbxi_function!(),
+                $crate::native::error::ufbxi_line!(),
+            );
+            return Err($crate::native::error::Fail);
+        }
+    }};
+    ($uc:expr, $cond:expr, $msg:literal, $c_cond_str:literal) => {{
+        let cond = $cond;
+        if $crate::native::platform::unlikely(!cond) {
+            $crate::native::parse::fail_imp(
+                $uc,
+                $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str).as_ptr(),
+                $crate::native::error::ufbxi_function!(),
+                $crate::native::error::ufbxi_line!(),
+            );
             return Err($crate::native::error::Fail);
         }
     }};
@@ -666,9 +829,24 @@ macro_rules! ufbxi_check_return_msg {
     ($uc:expr, $cond:expr, $ret:expr, $msg:literal) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::parse::fail_imp($uc,
+            $crate::native::parse::fail_imp(
+                $uc,
                 $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_ptr(),
-                $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!());
+                $crate::native::error::ufbxi_function!(),
+                $crate::native::error::ufbxi_line!(),
+            );
+            return $ret;
+        }
+    }};
+    ($uc:expr, $cond:expr, $ret:expr, $msg:literal, $c_cond_str:literal) => {{
+        let cond = $cond;
+        if $crate::native::platform::unlikely(!cond) {
+            $crate::native::parse::fail_imp(
+                $uc,
+                $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str).as_ptr(),
+                $crate::native::error::ufbxi_function!(),
+                $crate::native::error::ufbxi_line!(),
+            );
             return $ret;
         }
     }};
@@ -680,9 +858,12 @@ pub(crate) use ufbxi_check_return_msg;
 // ufbx.c:18052).
 macro_rules! ufbxi_fail_msg {
     ($uc:expr, $desc:literal, $msg:literal) => {{
-        $crate::native::parse::fail_imp($uc,
+        $crate::native::parse::fail_imp(
+            $uc,
             $crate::native::error::ufbxi_error_msg!($desc, $msg).as_ptr(),
-            $crate::native::error::ufbxi_function!(), $crate::native::error::ufbxi_line!());
+            $crate::native::error::ufbxi_function!(),
+            $crate::native::error::ufbxi_line!(),
+        );
         return Err($crate::native::error::Fail);
     }};
 }
@@ -694,9 +875,15 @@ pub(crate) use ufbxi_fail_msg;
 // evaluate", ...) substituted when none was set. All literals are part of
 // byte-exact error parity (PORTING.md trap #13).
 #[inline(never)]
-pub(crate) unsafe fn fix_error_type(error: *mut Error, default_desc: *const u8, p_error: *mut Error) {
+pub(crate) unsafe fn fix_error_type(
+    error: *mut Error,
+    default_desc: *const u8,
+    p_error: *mut Error,
+) {
     let mut desc = (*error).description.data;
-    if desc.is_null() { desc = default_desc; }
+    if desc.is_null() {
+        desc = default_desc;
+    }
     (*error).type_ = ErrorType::Unknown;
     if strcmp(desc, b"Out of memory\0".as_ptr()) == 0 {
         (*error).type_ = ErrorType::OutOfMemory;
@@ -802,7 +989,9 @@ macro_rules! ufbxi_check_opts_return_no_error {
         let m_opts = $m_opts;
         if !m_opts.is_null() {
             let opts_cleared_to_zero = (*m_opts)._begin_zero | (*m_opts)._end_zero;
-            if opts_cleared_to_zero != 0 { return $m_value; }
+            if opts_cleared_to_zero != 0 {
+                return $m_value;
+            }
         }
     }};
 }
@@ -821,7 +1010,14 @@ mod tests {
     fn test_snprintf_macro() {
         unsafe {
             let mut buf = [0u8; 32];
-            let len = ufbxi_snprintf!(buf.as_mut_ptr(), buf.len(), "Frame%uTick%u.%s", 12u32, 7u32, b"pc2\0".as_ptr() as *const u8);
+            let len = ufbxi_snprintf!(
+                buf.as_mut_ptr(),
+                buf.len(),
+                "Frame%uTick%u.%s",
+                12u32,
+                7u32,
+                b"pc2\0".as_ptr() as *const u8
+            );
             assert_eq!(len, 16);
             assert_eq!(&buf[..len as usize], b"Frame12Tick7.pc2");
             assert_eq!(buf[len as usize], 0);
@@ -832,7 +1028,12 @@ mod tests {
     fn test_snprintf_truncation_length() {
         unsafe {
             let mut buf = [0xAAu8; 8];
-            let len = ufbxi_snprintf!(buf.as_mut_ptr(), buf.len(), "%s", b"0123456789\0".as_ptr() as *const u8);
+            let len = ufbxi_snprintf!(
+                buf.as_mut_ptr(),
+                buf.len(),
+                "%s",
+                b"0123456789\0".as_ptr() as *const u8
+            );
             // pos saturates at length (8); returned min(pos, size - 1) = 7.
             assert_eq!(len, 7);
             assert_eq!(&buf[..8], b"0123456\0");
@@ -842,7 +1043,14 @@ mod tests {
     fn checked_fn(err: *mut Error, ok: bool, hits: &mut u32) -> Result<u32, Fail> {
         unsafe {
             // Evaluation-once: the condition increments `hits` exactly once.
-            ufbxi_check_err_msg!(err, { *hits += 1; ok }, "Out of memory");
+            ufbxi_check_err_msg!(
+                err,
+                {
+                    *hits += 1;
+                    ok
+                },
+                "Out of memory"
+            );
             Ok(42)
         }
     }
@@ -883,7 +1091,11 @@ mod tests {
         unsafe {
             // No description set -> per-entry-point default, type Unknown.
             let mut err = Error::default();
-            fix_error_type(&mut err, b"Failed to evaluate\0".as_ptr(), core::ptr::null_mut());
+            fix_error_type(
+                &mut err,
+                b"Failed to evaluate\0".as_ptr(),
+                core::ptr::null_mut(),
+            );
             assert_eq!(err.type_, ErrorType::Unknown);
             assert_eq!(desc_bytes(&err), b"Failed to evaluate");
 
@@ -891,7 +1103,11 @@ mod tests {
             let mut err = Error::default();
             err.description.data = b"Threaded ASCII parse error\0".as_ptr();
             err.description.length = 26;
-            fix_error_type(&mut err, b"Failed to load\0".as_ptr(), core::ptr::null_mut());
+            fix_error_type(
+                &mut err,
+                b"Failed to load\0".as_ptr(),
+                core::ptr::null_mut(),
+            );
             assert_eq!(err.type_, ErrorType::ThreadedAsciiParse);
         }
     }
@@ -917,7 +1133,9 @@ mod tests {
             // description (only the stack frame, when enabled).
             let mut err = Error::default();
             fn f(err: *mut Error) -> Result<(), Fail> {
-                unsafe { ufbxi_fail_err!(err, "Task failed"); }
+                unsafe {
+                    ufbxi_fail_err!(err, "Task failed");
+                }
             }
             assert_eq!(f(&mut err), Err(Fail));
             assert!(err.description.data.is_null());
@@ -925,8 +1143,12 @@ mod tests {
             unsafe {
                 assert_eq!(err.stack_size, 1);
                 assert_eq!(
-                    core::slice::from_raw_parts(err.stack[0].description.data, err.stack[0].description.length),
-                    b"Task failed");
+                    core::slice::from_raw_parts(
+                        err.stack[0].description.data,
+                        err.stack[0].description.length
+                    ),
+                    b"Task failed"
+                );
             }
 
             // check_return_err returns the given value verbatim.
@@ -991,11 +1213,23 @@ mod tests {
     fn test_panicf() {
         unsafe {
             let mut panic = Panic::default();
-            let fired = ufbxi_panicf!(&mut panic as *mut Panic, 1 < 2, "vertex (%zu) out of bounds (%zu)", 5usize, 3usize);
+            let fired = ufbxi_panicf!(
+                &mut panic as *mut Panic,
+                1 < 2,
+                "vertex (%zu) out of bounds (%zu)",
+                5usize,
+                3usize
+            );
             assert!(!fired);
             assert!(!panic.did_panic);
 
-            let fired = ufbxi_panicf!(&mut panic as *mut Panic, false, "vertex (%zu) out of bounds (%zu)", 5usize, 3usize);
+            let fired = ufbxi_panicf!(
+                &mut panic as *mut Panic,
+                false,
+                "vertex (%zu) out of bounds (%zu)",
+                5usize,
+                3usize
+            );
             assert!(fired);
             assert!(panic.did_panic);
             assert_eq!(panic.message(), "vertex (5) out of bounds (3)");

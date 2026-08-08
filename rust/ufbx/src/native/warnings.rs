@@ -87,7 +87,8 @@ pub(crate) unsafe fn vwarnf_imp(
     // C: `char desc[256];` (uninitialized; `vsnprintf` writes `desc_len`
     // bytes + NUL before any read — the zero-fill is unobservable).
     let mut desc = [0u8; 256];
-    let desc_len: usize = vsnprintf(desc.as_mut_ptr(), core::mem::size_of_val(&desc), fmt, args) as usize;
+    let desc_len: usize =
+        vsnprintf(desc.as_mut_ptr(), core::mem::size_of_val(&desc), fmt, args) as usize;
 
     clean_string_utf8(desc.as_mut_ptr(), desc_len);
 
@@ -163,7 +164,8 @@ pub(crate) unsafe fn pop_warnings(
     p_has_warning: *mut bool,
 ) -> Result<(), Fail> {
     (*warnings).count = (*ws).tmp_stack.num_items;
-    (*warnings).data = buf::push_pop::<Warning>((*ws).result, &mut (*ws).tmp_stack, (*warnings).count);
+    (*warnings).data =
+        buf::push_pop::<Warning>((*ws).result, &mut (*ws).tmp_stack, (*warnings).count);
     ufbxi_check_err!((*ws).error, !(*warnings).data.is_null(), "warnings->data");
     // C: `ufbxi_for_list(ufbx_warning, warning, *warnings)` (ufbx.c:1098)
     let mut warning = (*warnings).data as *mut Warning;
@@ -203,7 +205,12 @@ mod tests {
             ator: MaybeUninit::zeroed().assume_init(),
             result: MaybeUninit::zeroed().assume_init(),
         });
-        init_ator(&mut fx.err, &mut fx.ator, core::ptr::null(), b"test\0".as_ptr());
+        init_ator(
+            &mut fx.err,
+            &mut fx.ator,
+            core::ptr::null(),
+            b"test\0".as_ptr(),
+        );
         let ator = &mut fx.ator as *mut Allocator;
         fx.result = make_buf(ator);
         fx
@@ -258,7 +265,12 @@ mod tests {
     fn test_null_ws_is_ok() {
         unsafe {
             // NOTE: `ws` may be `NULL` — must succeed without touching anything.
-            let r = ufbxi_warnf_imp!(core::ptr::null_mut(), WarningType::IndexClamped, !0u32, "Clamped index");
+            let r = ufbxi_warnf_imp!(
+                core::ptr::null_mut(),
+                WarningType::IndexClamped,
+                !0u32,
+                "Clamped index"
+            );
             assert_eq!(r, Ok(()));
         }
     }
@@ -272,30 +284,63 @@ mod tests {
 
             // Non-deduplicated warning: repeated pushes stay separate.
             assert_eq!(
-                ufbxi_warnf_imp!(ws_ptr, WarningType::UnsupportedVersion, !0u32, "Unsupported FBX version (%u)", 6000u32),
+                ufbxi_warnf_imp!(
+                    ws_ptr,
+                    WarningType::UnsupportedVersion,
+                    !0u32,
+                    "Unsupported FBX version (%u)",
+                    6000u32
+                ),
                 Ok(())
             );
             assert_eq!(
-                ufbxi_warnf_imp!(ws_ptr, WarningType::UnsupportedVersion, !0u32, "Unsupported FBX version (%u)", 6000u32),
+                ufbxi_warnf_imp!(
+                    ws_ptr,
+                    WarningType::UnsupportedVersion,
+                    !0u32,
+                    "Unsupported FBX version (%u)",
+                    6000u32
+                ),
                 Ok(())
             );
 
             // Deduplicated warning (>= FIRST_DEDUPLICATED): same element_id
             // increments count instead of pushing.
-            assert_eq!(ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, !0u32, "Clamped index"), Ok(()));
-            assert_eq!(ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, !0u32, "Clamped index"), Ok(()));
-            assert_eq!(ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, !0u32, "Clamped index"), Ok(()));
+            assert_eq!(
+                ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, !0u32, "Clamped index"),
+                Ok(())
+            );
+            assert_eq!(
+                ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, !0u32, "Clamped index"),
+                Ok(())
+            );
+            assert_eq!(
+                ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, !0u32, "Clamped index"),
+                Ok(())
+            );
 
             // Specific (element-tagged) and non-specific lists are separate:
             // a tagged IndexClamped does not merge with the untagged one.
-            assert_eq!(ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 7u32, "Clamped index"), Ok(()));
-            assert_eq!(ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 7u32, "Clamped index"), Ok(()));
+            assert_eq!(
+                ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 7u32, "Clamped index"),
+                Ok(())
+            );
+            assert_eq!(
+                ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 7u32, "Clamped index"),
+                Ok(())
+            );
             // Different element_id on the same type: new warning.
-            assert_eq!(ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 8u32, "Clamped index"), Ok(()));
+            assert_eq!(
+                ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 8u32, "Clamped index"),
+                Ok(())
+            );
 
             let mut list = core::mem::MaybeUninit::<List<Warning>>::zeroed().assume_init();
             let mut has_warning = [false; WARNING_TYPE_COUNT];
-            assert_eq!(pop_warnings(ws_ptr, &mut list, has_warning.as_mut_ptr()), Ok(()));
+            assert_eq!(
+                pop_warnings(ws_ptr, &mut list, has_warning.as_mut_ptr()),
+                Ok(())
+            );
 
             let warnings = warning_slice(&list);
             assert_eq!(warnings.len(), 5);
@@ -341,14 +386,29 @@ mod tests {
             let mut ws = make_warnings(&mut fx);
             let ws_ptr = &mut ws as *mut Warnings;
 
-            assert_eq!(ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 1u32, "Clamped index"), Ok(()));
-            assert_eq!(ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 1u32, "Clamped index"), Ok(()));
-            assert_eq!(ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 2u32, "Clamped index"), Ok(()));
-            assert_eq!(ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 1u32, "Clamped index"), Ok(()));
+            assert_eq!(
+                ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 1u32, "Clamped index"),
+                Ok(())
+            );
+            assert_eq!(
+                ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 1u32, "Clamped index"),
+                Ok(())
+            );
+            assert_eq!(
+                ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 2u32, "Clamped index"),
+                Ok(())
+            );
+            assert_eq!(
+                ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 1u32, "Clamped index"),
+                Ok(())
+            );
 
             let mut list = core::mem::MaybeUninit::<List<Warning>>::zeroed().assume_init();
             let mut has_warning = [false; WARNING_TYPE_COUNT];
-            assert_eq!(pop_warnings(ws_ptr, &mut list, has_warning.as_mut_ptr()), Ok(()));
+            assert_eq!(
+                pop_warnings(ws_ptr, &mut list, has_warning.as_mut_ptr()),
+                Ok(())
+            );
 
             let warnings = warning_slice(&list);
             assert_eq!(warnings.len(), 3);
@@ -373,13 +433,22 @@ mod tests {
             ws.deferred_element_id_plus_one = 5;
             let ws_ptr = &mut ws as *mut Warnings;
 
-            assert_eq!(ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, !0u32, "Clamped index"), Ok(()));
+            assert_eq!(
+                ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, !0u32, "Clamped index"),
+                Ok(())
+            );
             // An explicit element_id is NOT rewritten.
-            assert_eq!(ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 3u32, "Clamped index"), Ok(()));
+            assert_eq!(
+                ufbxi_warnf_imp!(ws_ptr, WarningType::IndexClamped, 3u32, "Clamped index"),
+                Ok(())
+            );
 
             let mut list = core::mem::MaybeUninit::<List<Warning>>::zeroed().assume_init();
             let mut has_warning = [false; WARNING_TYPE_COUNT];
-            assert_eq!(pop_warnings(ws_ptr, &mut list, has_warning.as_mut_ptr()), Ok(()));
+            assert_eq!(
+                pop_warnings(ws_ptr, &mut list, has_warning.as_mut_ptr()),
+                Ok(())
+            );
 
             let warnings = warning_slice(&list);
             assert_eq!(warnings.len(), 2);
@@ -403,17 +472,32 @@ mod tests {
             let mut long_z = [0u8; 301];
             long_z[..300].copy_from_slice(&long);
             assert_eq!(
-                ufbxi_warnf_imp!(ws_ptr, WarningType::MissingExternalFile, !0u32, "Could not open .mtl file: %s", long_z.as_ptr() as *const u8),
+                ufbxi_warnf_imp!(
+                    ws_ptr,
+                    WarningType::MissingExternalFile,
+                    !0u32,
+                    "Could not open .mtl file: %s",
+                    long_z.as_ptr() as *const u8
+                ),
                 Ok(())
             );
             assert_eq!(
-                ufbxi_warnf_imp!(ws_ptr, WarningType::MissingExternalFile, !0u32, "Bad byte: %s", b"a\xffb\0".as_ptr() as *const u8),
+                ufbxi_warnf_imp!(
+                    ws_ptr,
+                    WarningType::MissingExternalFile,
+                    !0u32,
+                    "Bad byte: %s",
+                    b"a\xffb\0".as_ptr() as *const u8
+                ),
                 Ok(())
             );
 
             let mut list = core::mem::MaybeUninit::<List<Warning>>::zeroed().assume_init();
             let mut has_warning = [false; WARNING_TYPE_COUNT];
-            assert_eq!(pop_warnings(ws_ptr, &mut list, has_warning.as_mut_ptr()), Ok(()));
+            assert_eq!(
+                pop_warnings(ws_ptr, &mut list, has_warning.as_mut_ptr()),
+                Ok(())
+            );
 
             let warnings = warning_slice(&list);
             assert_eq!(warnings.len(), 2);
@@ -437,7 +521,13 @@ mod tests {
             let mut ws = make_warnings(&mut fx);
             let ws_ptr = &mut ws as *mut Warnings;
 
-            let r = ufbxi_warnf_imp!(ws_ptr, WarningType::UnsupportedVersion, !0u32, "Unsupported FBX version (%u)", 6000u32);
+            let r = ufbxi_warnf_imp!(
+                ws_ptr,
+                WarningType::UnsupportedVersion,
+                !0u32,
+                "Unsupported FBX version (%u)",
+                6000u32
+            );
             assert_eq!(r, Err(Fail));
             assert_eq!(
                 core::slice::from_raw_parts(fx.err.description.data, fx.err.description.length),

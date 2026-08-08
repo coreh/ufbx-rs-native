@@ -10,8 +10,8 @@ pub mod native;
 #[cfg(feature = "c-abi")]
 pub mod capi;
 
-pub use prelude::*;
 pub use generated::*;
+pub use prelude::*;
 
 use std::vec::Vec;
 
