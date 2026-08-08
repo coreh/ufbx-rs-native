@@ -342,6 +342,9 @@ pub(crate) const fn pack_version(major: u32, minor: u32, patch: u32) -> u32 {
 // ufbx.h:270 `UFBX_HEADER_VERSION`
 pub(crate) const HEADER_VERSION: u32 = pack_version(0, 23, 0);
 
+// ufbx.h:396 `#define UFBX_NO_INDEX ((uint32_t)~0u)`
+pub(crate) const NO_INDEX: u32 = !0u32;
+
 // ufbx.c:877 `UFBX_SOURCE_VERSION`
 pub(crate) const SOURCE_VERSION: u32 = pack_version(0, 23, 0);
 

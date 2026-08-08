@@ -31,10 +31,11 @@ use core::mem::size_of;
 
 use crate::generated::{
     DomNode, DomValue, DomValueType, ElementType, Error, Exporter, InflateRetain, Matrix,
-    MirrorAxis, Progress, ProgressResult, Props, RawLoadOpts, Scene,
+    MirrorAxis, Progress, ProgressResult, Prop, PropFlags, PropType, Props, RawLoadOpts, Scene,
+    Vec3, Vec4,
 };
 use crate::native::allocator::{grow_array, Allocator};
-use crate::native::buf::{push_copy, push_pop, push_size_zero, push_zero, Buf};
+use crate::native::buf::{buf_clear, pop, push_copy, push_pop, push_size_zero, push_zero, Buf};
 use crate::native::error::{
     strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail, Fail, EMPTY_CHAR,
 };
@@ -2593,6 +2594,264 @@ pub(crate) unsafe fn retain_toplevel_child(uc: *mut Context, child: *mut Node) -
     (*uc).dom_parse_num_children = (*uc).dom_parse_num_children.wrapping_add(1);
 
     Ok(())
+}
+
+// -- General parsing (ufbx.c:10855-11407)
+//
+// PARTIAL: only the two entry points the `// -- Reading the parsed data` unit
+// calls are ported here. `ufbxi_parse_toplevel` (ufbx.c:11252-11329),
+// `ufbxi_parse_legacy_toplevel` (11379-11407) and the rest of the section are
+// still unported — port them here, in C order, when this section's own unit
+// lands.
+
+// ufbx.c:11242-11251 `ufbxi_parse_toplevel_child_imp`
+pub(crate) unsafe fn parse_toplevel_child_imp(
+    uc: *mut Context,
+    state: ParseState,
+    buf: *mut Buf,
+    p_end: *mut bool,
+) -> Result<(), Fail> {
+    if (*uc).from_ascii {
+        crate::native::parse_ascii::ascii_parse_node(uc, 0, state, p_end, buf, true)?;
+    } else {
+        crate::native::parse_binary::binary_parse_node(uc, 0, state, p_end, buf, true)?;
+    }
+
+    Ok(())
+}
+
+// ufbx.c:11332-11377 `ufbxi_parse_toplevel_child`
+#[inline(never)]
+pub(crate) unsafe fn parse_toplevel_child(
+    uc: *mut Context,
+    p_node: *mut *mut Node,
+    tmp_buf: *mut Buf,
+) -> Result<(), Fail> {
+    // Top-level node not found
+    if (*uc).top_node.is_null() {
+        *p_node = core::ptr::null_mut();
+        return Ok(());
+    }
+
+    if (*uc).top_child_index == usize::MAX {
+        // Parse children on demand
+        if tmp_buf.is_null() {
+            buf_clear(&mut (*uc).tmp_parse);
+        }
+        let mut end = false;
+        let state: ParseState = update_parse_state(ParseState::Root, (*(*uc).top_node).name);
+        let buf: *mut Buf = if !tmp_buf.is_null() {
+            tmp_buf
+        } else {
+            &mut (*uc).tmp_parse
+        };
+        parse_toplevel_child_imp(uc, state, buf, &mut end)?;
+        if end {
+            *p_node = core::ptr::null_mut();
+        } else {
+            // Parse to either reused `uc->top_child` or push if retaining to `tmp_buf`.
+            let mut dst: *mut Node = &mut (*uc).top_child;
+            if !tmp_buf.is_null() {
+                dst = push_zero::<Node>(tmp_buf, 1);
+                ufbxi_check!(uc, !dst.is_null(), "dst");
+            }
+
+            pop::<Node>(&mut (*uc).tmp_stack, 1, dst);
+            *p_node = dst;
+
+            if (*uc).opts.retain_dom {
+                retain_toplevel_child(uc, dst)?;
+            }
+        }
+    } else {
+        // Iterate already parsed nodes
+        let child_index = (*uc).top_child_index;
+        if child_index == (*(*uc).top_node).num_children as usize {
+            *p_node = core::ptr::null_mut();
+        } else {
+            (*uc).top_child_index = (*uc).top_child_index.wrapping_add(1);
+            *p_node = (*(*uc).top_node).children.add(child_index);
+        }
+    }
+
+    Ok(())
+}
+
+// -- Setup (ufbx.c:11409-11760)
+//
+// PARTIAL: only the pieces the `// -- Reading the parsed data` unit calls are
+// ported here. The string/map loading (`ufbxi_load_strings` 11411,
+// `ufbxi_load_maps` 11748), the `ufbxi_prop_type_names[]` table (11436-11468)
+// and the rest of the section are still unported — port them here, in C order,
+// when this section's own unit lands.
+
+// ufbx.c:11431-11434 `ufbxi_prop_type_name`
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct PropTypeName {
+    pub name: *const u8,
+    pub type_: PropType,
+}
+
+// ufbx.c:11470-11478 `ufbxi_get_prop_type`
+pub(crate) unsafe fn get_prop_type(uc: *mut Context, name: *const u8) -> PropType {
+    // C takes the address of the parameter itself (`&name`) as the map key.
+    let name: *const u8 = name;
+    let hash = crate::native::hash::hash_ptr!(name);
+    let entry: *mut PropTypeName = map_find(
+        &mut (*uc).prop_type_map,
+        hash,
+        &name as *const *const u8 as *const c_void,
+    );
+    if !entry.is_null() {
+        return (*entry).type_;
+    }
+    PropType::Unknown
+}
+
+// ufbx.c:11480-11509 `ufbxi_find_prop_with_key`
+#[inline(never)]
+pub(crate) unsafe fn find_prop_with_key(
+    props: *const Props,
+    name: *const u8,
+    key: u32,
+) -> *mut Prop {
+    let mut props = props;
+    loop {
+        let prop_data: *mut Prop = (*props).props.data as *mut Prop;
+        let mut begin: usize = 0;
+        let mut end: usize = (*props).props.count;
+        while end - begin >= 16 {
+            let mid: usize = (begin + end) >> 1;
+            let p: *const Prop = prop_data.add(mid);
+            if (*p)._internal_key < key {
+                begin = mid + 1;
+            } else {
+                end = mid;
+            }
+        }
+
+        end = (*props).props.count;
+        while begin < end {
+            let p: *const Prop = prop_data.add(begin);
+            if (*p)._internal_key > key {
+                break;
+            }
+            if (*p).name.data == name && ((*p).flags.raw() & PropFlags::NO_VALUE.raw()) == 0 {
+                return p as *mut Prop;
+            }
+            begin += 1;
+        }
+
+        props = match &(*props).defaults {
+            Some(defaults) => defaults.as_ref() as *const Props,
+            None => core::ptr::null(),
+        };
+        if props.is_null() {
+            break;
+        }
+    }
+
+    core::ptr::null_mut()
+}
+
+// ufbx.c:11516-11518 `#define ufbxi_find_prop(props, name)`
+// C-parity: the key is assembled from `name[0..3]` unconditionally — all call
+// sites pass a `ufbxi_*` string constant of at least 4 characters. This is NOT
+// `ufbxi_get_name_key()`, which handles shorter names.
+#[inline(always)]
+pub(crate) unsafe fn find_prop(props: *const Props, name: *const u8) -> *mut Prop {
+    let key = (*name.add(0) as u32) << 24
+        | (*name.add(1) as u32) << 16
+        | (*name.add(2) as u32) << 8
+        | (*name.add(3) as u32);
+    find_prop_with_key(props, name, key)
+}
+
+// ufbx.c:11530-11539 `ufbxi_find_vec3`
+#[inline(always)]
+pub(crate) unsafe fn find_vec3(
+    props: *const Props,
+    name: *const u8,
+    def_x: Real,
+    def_y: Real,
+    def_z: Real,
+) -> Vec3 {
+    let prop: *mut Prop = find_prop(props, name);
+    if !prop.is_null() {
+        // C-parity: `prop->value_vec3` is the `ufbx_prop` value union's 3-real
+        // view; the generated struct keeps only `value_vec4` (see
+        // `native::read::read_property`).
+        *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
+    } else {
+        let def = Vec3 {
+            x: def_x,
+            y: def_y,
+            z: def_z,
+        };
+        def
+    }
+}
+
+// ufbx.c:11541-11549 `ufbxi_find_int`
+#[inline(always)]
+pub(crate) unsafe fn find_int(props: *const Props, name: *const u8, def: i64) -> i64 {
+    let prop: *mut Prop = find_prop(props, name);
+    if !prop.is_null() {
+        (*prop).value_int
+    } else {
+        def
+    }
+}
+
+// ufbx.c:11574-11577 `ufbxi_is_vec3_zero`
+#[inline(always)]
+pub(crate) fn is_vec3_zero(v: Vec3) -> bool {
+    ((v.x == 0.0) as u8 & (v.y == 0.0) as u8 & (v.z == 0.0) as u8) != 0
+}
+
+// ufbx.c:11584-11587 `ufbxi_is_vec3_one`
+#[inline(always)]
+pub(crate) fn is_vec3_one(v: Vec3) -> bool {
+    ((v.x == 1.0) as u8 & (v.y == 1.0) as u8 & (v.z == 1.0) as u8) != 0
+}
+
+// ufbx.c:11609-11622 `ufbxi_get_name_key`
+#[inline(always)]
+pub(crate) unsafe fn get_name_key(name: *const u8, len: usize) -> u32 {
+    let mut key: u32 = 0;
+    if len >= 4 {
+        key = (*name.add(0) as u32) << 24
+            | (*name.add(1) as u32) << 16
+            | (*name.add(2) as u32) << 8
+            | (*name.add(3) as u32);
+    } else {
+        for i in 0..4usize {
+            key <<= 8;
+            if i < len {
+                key |= *name.add(i) as u32;
+            }
+        }
+    }
+    key
+}
+
+// ufbx.c:11624-11631 `ufbxi_get_name_key_c`
+#[inline(always)]
+pub(crate) unsafe fn get_name_key_c(name: *const u8) -> u32 {
+    if *name.add(0) == b'\0' {
+        return 0;
+    }
+    if *name.add(1) == b'\0' {
+        return (*name.add(0) as u32) << 24;
+    }
+    if *name.add(2) == b'\0' {
+        return (*name.add(0) as u32) << 24 | (*name.add(1) as u32) << 16;
+    }
+    (*name.add(0) as u32) << 24
+        | (*name.add(1) as u32) << 16
+        | (*name.add(2) as u32) << 8
+        | (*name.add(3) as u32)
 }
 
 #[cfg(test)]

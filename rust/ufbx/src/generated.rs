@@ -231,6 +231,14 @@ impl PropFlags {
     pub fn has_all(self, bits: Self) -> bool {
         (self.0 & bits.0) == bits.0
     }
+    #[allow(dead_code)]
+    pub(crate) const fn from_raw(bits: u32) -> Self {
+        Self(bits)
+    }
+    #[allow(dead_code)]
+    pub(crate) const fn raw(self) -> u32 {
+        self.0
+    }
 }
 impl Default for PropFlags {
     fn default() -> Self {
@@ -277,6 +285,7 @@ impl BitXorAssign for PropFlags {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Prop {
     pub name: String,
     pub(crate) _internal_key: u32,
@@ -2397,6 +2406,14 @@ impl TopoFlags {
     pub fn has_all(self, bits: Self) -> bool {
         (self.0 & bits.0) == bits.0
     }
+    #[allow(dead_code)]
+    pub(crate) const fn from_raw(bits: u32) -> Self {
+        Self(bits)
+    }
+    #[allow(dead_code)]
+    pub(crate) const fn raw(self) -> u32 {
+        self.0
+    }
 }
 impl Default for TopoFlags {
     fn default() -> Self {
@@ -2780,6 +2797,14 @@ impl BakedKeyFlags {
     pub fn has_all(self, bits: Self) -> bool {
         (self.0 & bits.0) == bits.0
     }
+    #[allow(dead_code)]
+    pub(crate) const fn from_raw(bits: u32) -> Self {
+        Self(bits)
+    }
+    #[allow(dead_code)]
+    pub(crate) const fn raw(self) -> u32 {
+        self.0
+    }
 }
 impl Default for BakedKeyFlags {
     fn default() -> Self {
@@ -2939,6 +2964,14 @@ impl EvaluateFlags {
     }
     pub fn has_all(self, bits: Self) -> bool {
         (self.0 & bits.0) == bits.0
+    }
+    #[allow(dead_code)]
+    pub(crate) const fn from_raw(bits: u32) -> Self {
+        Self(bits)
+    }
+    #[allow(dead_code)]
+    pub(crate) const fn raw(self) -> u32 {
+        self.0
     }
 }
 impl Default for EvaluateFlags {
@@ -3257,6 +3290,14 @@ impl TransformFlags {
     }
     pub fn has_all(self, bits: Self) -> bool {
         (self.0 & bits.0) == bits.0
+    }
+    #[allow(dead_code)]
+    pub(crate) const fn from_raw(bits: u32) -> Self {
+        Self(bits)
+    }
+    #[allow(dead_code)]
+    pub(crate) const fn raw(self) -> u32 {
+        self.0
     }
 }
 impl Default for TransformFlags {

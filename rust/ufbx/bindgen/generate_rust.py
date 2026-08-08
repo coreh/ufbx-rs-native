@@ -306,6 +306,11 @@ default_derive_types = {
 # trivially copyable (fn pointers / raw pointers / usize).
 copy_derive_types = {
     "ufbx_allocator_opts",
+    # `ufbx_prop` is copied by value all over the reader: the property sort
+    # (`ufbxi_macro_stable_sort(ufbx_prop, ...)`, ufbx.c:11881) and
+    # `ufbxi_deduplicate_properties` (`ps[dst++] = ps[src++]`, ufbx.c:11894)
+    # are plain C struct assignments.
+    "ufbx_prop",
 }
 
 ignore_types = {
@@ -1229,6 +1234,15 @@ def emit_flag(re: RustEnum):
     emit("pub fn any(self) -> bool { self.0 != 0 }")
     emit("pub fn has_any(self, bits: Self) -> bool { (self.0 & bits.0) != 0 }")
     emit("pub fn has_all(self, bits: Self) -> bool { (self.0 & bits.0) == bits.0 }")
+    # NOTE(ufbx-rs-native): crate-internal raw accessors for the native port of
+    # ufbx.c. C accumulates flag sets as plain `uint32_t` and casts once at the
+    # end, including shifted sub-fields no named constant covers (e.g.
+    # `flags |= ((uint32_t)(next - '0') & 0xf) << 4;` ufbx.c:11818, then
+    # `prop->flags = (ufbx_prop_flags)flags;` ufbx.c:11866). The port needs the
+    # same u32 arithmetic; `pub(crate)` keeps the public surface unchanged.
+    # Registered in rust/ufbx/COMPAT.md §1.
+    emit("#[allow(dead_code)] pub(crate) const fn from_raw(bits: u32) -> Self { Self(bits) }")
+    emit("#[allow(dead_code)] pub(crate) const fn raw(self) -> u32 { self.0 }")
     unindent()
     emit("}")
 

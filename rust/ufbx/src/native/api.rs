@@ -21,24 +21,28 @@
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 
-use crate::generated::{Error, OpenFileInfo, RawOpenFileOpts, RawOpenMemoryOpts, RawStream};
+use crate::generated::{
+    Error, OpenFileInfo, Prop, Props, RawOpenFileOpts, RawOpenMemoryOpts, RawStream,
+};
 use crate::native::allocator::{
     align_to_mask, alloc, free_ator, Allocator, CACHE_IMP_MAGIC, REFCOUNT_IMP_MAGIC,
     SCENE_IMP_MAGIC,
 };
 use crate::native::buf::{buf_free, Buf};
 use crate::native::cache::{free_geometry_cache_imp, GeometryCacheImp};
-use crate::native::error::strlen;
+use crate::native::error::{strlen, EMPTY_CHAR};
 use crate::native::io::{
     begin_file_context, end_file_context, memory_close, memory_read, memory_size, memory_skip,
     stdio_open, FileContext, MemoryStream,
 };
-use crate::native::parse::{Refcount, SceneImp};
+use crate::native::parse::{get_name_key, Refcount, SceneImp};
 use crate::native::platform::{
-    atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init, ufbx_assert,
-    ufbxi_ignore,
+    atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
+    macro_lower_bound_eq, ufbx_assert, ufbxi_ignore,
 };
-use crate::prelude::OpenFileContext;
+use crate::native::scene_process::cmp_prop_less_ref;
+use crate::native::string_pool::{safe_string, str_equal};
+use crate::prelude::{Blob, OpenFileContext, String};
 
 // ufbx.c:30243-30247 `ufbxi_free_scene_imp`
 #[inline(never)]
@@ -256,6 +260,87 @@ pub(crate) unsafe fn open_memory_ctx(
     end_file_context(fc, error, true);
 
     true
+}
+
+// PARTIAL: the API-section entry points below are ported out of C order,
+// ahead of their own unit, because the `// -- Reading the parsed data` unit
+// calls `ufbx_find_int` (ufbx.c:11938-11939). The intervening entry points are
+// still unported — insert them in C order when the API unit lands.
+
+// ufbx.c:30339 `ufbx_abi_data_def const ufbx_string ufbx_empty_string = { ufbxi_empty_char, 0 };`
+// `ufbx_string` holds a raw pointer (not auto-`Sync`); the datum is immutable
+// and points at an immutable static, so sharing is sound. Wrapper struct
+// mirrors `native::string_pool::StringTable`.
+#[repr(transparent)]
+pub(crate) struct EmptyString(pub String);
+unsafe impl Sync for EmptyString {}
+pub(crate) static EMPTY_STRING: EmptyString = EmptyString(String::new_c(EMPTY_CHAR.as_ptr(), 0));
+
+// ufbx.c:30340 `ufbx_abi_data_def const ufbx_blob ufbx_empty_blob = { NULL, 0 };`
+// Same `Sync` wrapper rationale as `EMPTY_STRING` above.
+#[repr(transparent)]
+pub(crate) struct EmptyBlob(pub Blob);
+unsafe impl Sync for EmptyBlob {}
+pub(crate) static EMPTY_BLOB: EmptyBlob = EmptyBlob(Blob::new_c(core::ptr::null(), 0));
+
+// ufbx.c:30635-30650 `ufbx_find_prop_len`
+pub(crate) unsafe fn find_prop_len(
+    props: *const Props,
+    name: *const u8,
+    name_len: usize,
+) -> *mut Prop {
+    let key = get_name_key(name, name_len);
+    let name_str = safe_string(name, name_len);
+
+    let mut props = props;
+    while !props.is_null() {
+        let mut index: usize = usize::MAX;
+        macro_lower_bound_eq::<Prop>(
+            4,
+            &mut index,
+            (*props).props.data,
+            0,
+            (*props).props.count,
+            |a| cmp_prop_less_ref(a, name_str, key),
+            |a| (*a)._internal_key == key && str_equal((*a).name, name_str),
+        );
+        if index != usize::MAX {
+            return (*props).props.data.add(index) as *mut Prop;
+        }
+
+        props = match &(*props).defaults {
+            Some(defaults) => defaults.as_ref() as *const Props,
+            None => core::ptr::null(),
+        };
+    }
+
+    core::ptr::null_mut()
+}
+
+// ufbx.c:30672-30680 `ufbx_find_int_len`
+#[inline(never)]
+pub(crate) unsafe fn find_int_len(
+    props: *const Props,
+    name: *const u8,
+    name_len: usize,
+    def: i64,
+) -> i64 {
+    let prop: *mut Prop = find_prop_len(props, name, name_len);
+    if !prop.is_null() {
+        (*prop).value_int
+    } else {
+        def
+    }
+}
+
+// ufbx.c:33142 `ufbx_find_prop`
+pub(crate) unsafe fn find_prop(props: *const Props, name: *const u8) -> *mut Prop {
+    find_prop_len(props, name, strlen(name))
+}
+
+// ufbx.c:33145 `ufbx_find_int`
+pub(crate) unsafe fn find_int(props: *const Props, name: *const u8, def: i64) -> i64 {
+    find_int_len(props, name, strlen(name), def)
 }
 
 #[cfg(test)]

@@ -313,6 +313,10 @@ impl Debug for String {
 }
 
 #[repr(C)]
+// Clone/Copy: C `ufbx_blob` assignment is a memcpy (PORTING.md checklist #15);
+// the native port copies `ufbx_prop` (which embeds one) by value, e.g. the
+// property sort at ufbx.c:11881 and `ufbxi_deduplicate_properties` ufbx.c:11894.
+#[derive(Clone, Copy)]
 pub struct Blob {
     // pub(crate): the native string-pool port interns blob payloads in place
     // (C: `p_blob->data = ufbxi_push_string(...)`); still private outside the
@@ -320,6 +324,19 @@ pub struct Blob {
     pub(crate) data: *const u8,
     pub size: usize,
     _marker: PhantomData<u8>,
+}
+
+impl Blob {
+    // Raw constructor for the native port (C: `ufbx_blob b = { data, size };`).
+    // `_marker` is private to this module, so aggregate construction is only
+    // possible here. `const` so the static `ufbx_empty_blob` datum can use it.
+    pub(crate) const fn new_c(data: *const u8, size: usize) -> Blob {
+        Blob {
+            data,
+            size,
+            _marker: PhantomData,
+        }
+    }
 }
 
 unsafe fn slice_from_ptr<'a, T>(data: *const T, len: usize) -> &'a [T] {
