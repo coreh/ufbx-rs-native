@@ -152,6 +152,7 @@ pub(crate) unsafe fn print_append(
     max_width: usize,
     str: *const u8,
 ) {
+    let buf = &mut *buf;
     let mut width: usize = 0;
     while width < max_width {
         if *str.add(width) == 0 {
@@ -165,15 +166,15 @@ pub(crate) unsafe fn print_append(
         0
     };
     for _i in 0..pad {
-        if (*buf).pos < (*buf).length {
-            *(*buf).dst.add((*buf).pos) = b' ';
-            (*buf).pos += 1;
+        if buf.pos < buf.length {
+            *buf.dst.add(buf.pos) = b' ';
+            buf.pos += 1;
         }
     }
     for i in 0..width {
-        if (*buf).pos < (*buf).length {
-            *(*buf).dst.add((*buf).pos) = *str.add(i);
-            (*buf).pos += 1;
+        if buf.pos < buf.length {
+            *buf.dst.add(buf.pos) = *str.add(i);
+            buf.pos += 1;
         }
     }
 }
@@ -254,20 +255,22 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
                 ufbxi_unreachable!("Bad printf format");
             }
         } else {
-            if (*buf).pos < (*buf).length {
-                *(*buf).dst.add((*buf).pos) = *p;
-                (*buf).pos += 1;
+            let buf = &mut *buf;
+            if buf.pos < buf.length {
+                *buf.dst.add(buf.pos) = *p;
+                buf.pos += 1;
             }
             p = p.add(1);
         }
     }
-    if (*buf).length != 0 && !(*buf).dst.is_null() {
-        let end = if (*buf).pos <= (*buf).length - 1 {
-            (*buf).pos
+    let buf = &mut *buf;
+    if buf.length != 0 && !buf.dst.is_null() {
+        let end = if buf.pos <= buf.length - 1 {
+            buf.pos
         } else {
-            (*buf).length - 1
+            buf.length - 1
         };
-        *(*buf).dst.add(end) = b'\0';
+        *buf.dst.add(end) = b'\0';
     }
 }
 
