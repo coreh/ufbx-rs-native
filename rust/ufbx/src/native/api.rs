@@ -22,7 +22,8 @@ use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 
 use crate::generated::{
-    Error, OpenFileInfo, Prop, Props, RawOpenFileOpts, RawOpenMemoryOpts, RawStream,
+    Error, Matrix, OpenFileInfo, Prop, Props, Quat, RawOpenFileOpts, RawOpenMemoryOpts, RawStream,
+    Transform, Vec3,
 };
 use crate::native::allocator::{
     align_to_mask, alloc, free_ator, Allocator, CACHE_IMP_MAGIC, REFCOUNT_IMP_MAGIC,
@@ -42,7 +43,7 @@ use crate::native::platform::{
 };
 use crate::native::scene_process::cmp_prop_less_ref;
 use crate::native::string_pool::{safe_string, str_equal};
-use crate::prelude::{Blob, OpenFileContext, String};
+use crate::prelude::{Blob, OpenFileContext, Real, String};
 
 // ufbx.c:30243-30247 `ufbxi_free_scene_imp`
 #[inline(never)]
@@ -264,8 +265,10 @@ pub(crate) unsafe fn open_memory_ctx(
 
 // PARTIAL: the API-section entry points below are ported out of C order,
 // ahead of their own unit, because the `// -- Reading the parsed data` unit
-// calls `ufbx_find_int` (ufbx.c:11938-11939). The intervening entry points are
-// still unported — insert them in C order when the API unit lands.
+// calls `ufbx_find_int` (ufbx.c:11938-11939) and the `// -- Pre-7000 "Take"
+// based animation` unit calls `ufbx_transform_to_matrix`
+// (ufbx.c:15824/15831). The intervening entry points are still unported —
+// insert them in C order when the API unit lands.
 
 // ufbx.c:30339 `ufbx_abi_data_def const ufbx_string ufbx_empty_string = { ufbxi_empty_char, 0 };`
 // `ufbx_string` holds a raw pointer (not auto-`Sync`); the datum is immutable
@@ -282,6 +285,43 @@ pub(crate) static EMPTY_STRING: EmptyString = EmptyString(String::new_c(EMPTY_CH
 pub(crate) struct EmptyBlob(pub Blob);
 unsafe impl Sync for EmptyBlob {}
 pub(crate) static EMPTY_BLOB: EmptyBlob = EmptyBlob(Blob::new_c(core::ptr::null(), 0));
+
+// ufbx.c:30341 `ufbx_abi_data_def const ufbx_matrix ufbx_identity_matrix = { 1,0,0, 0,1,0, 0,0,1, 0,0,0 };`
+// Plain `Real` fields, so no `Sync` wrapper is needed (unlike `EMPTY_STRING`).
+pub(crate) static IDENTITY_MATRIX: Matrix = Matrix {
+    m00: 1.0,
+    m10: 0.0,
+    m20: 0.0,
+    m01: 0.0,
+    m11: 1.0,
+    m21: 0.0,
+    m02: 0.0,
+    m12: 0.0,
+    m22: 1.0,
+    m03: 0.0,
+    m13: 0.0,
+    m23: 0.0,
+};
+
+// ufbx.c:30342 `ufbx_abi_data_def const ufbx_transform ufbx_identity_transform = { {0,0,0}, {0,0,0,1}, {1,1,1} };`
+pub(crate) static IDENTITY_TRANSFORM: Transform = Transform {
+    translation: Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    },
+    rotation: Quat {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+        w: 1.0,
+    },
+    scale: Vec3 {
+        x: 1.0,
+        y: 1.0,
+        z: 1.0,
+    },
+};
 
 // ufbx.c:30635-30650 `ufbx_find_prop_len`
 pub(crate) unsafe fn find_prop_len(
@@ -331,6 +371,45 @@ pub(crate) unsafe fn find_int_len(
     } else {
         def
     }
+}
+
+// ufbx.c:31828-31852 `ufbx_transform_to_matrix`
+#[inline(never)]
+pub(crate) unsafe fn transform_to_matrix(t: *const Transform) -> Matrix {
+    ufbx_assert!(!t.is_null());
+    if t.is_null() {
+        return IDENTITY_MATRIX;
+    }
+
+    let q: Quat = (*t).rotation;
+    let sx: Real = 2.0 * (*t).scale.x;
+    let sy: Real = 2.0 * (*t).scale.y;
+    let sz: Real = 2.0 * (*t).scale.z;
+    let xx: Real = q.x * q.x;
+    let xy: Real = q.x * q.y;
+    let xz: Real = q.x * q.z;
+    let xw: Real = q.x * q.w;
+    let yy: Real = q.y * q.y;
+    let yz: Real = q.y * q.z;
+    let yw: Real = q.y * q.w;
+    let zz: Real = q.z * q.z;
+    let zw: Real = q.z * q.w;
+    // C: `ufbx_matrix m;` — every field is written below before the return,
+    // so the zero-fill is inert (upstream carries no `// ufbxi_uninit` marker).
+    let mut m: Matrix = core::mem::zeroed();
+    m.m00 = sx * (-yy - zz + 0.5);
+    m.m10 = sx * (xy + zw);
+    m.m20 = sx * (-yw + xz);
+    m.m01 = sy * (-zw + xy);
+    m.m11 = sy * (-xx - zz + 0.5);
+    m.m21 = sy * (xw + yz);
+    m.m02 = sz * (xz + yw);
+    m.m12 = sz * (-xw + yz);
+    m.m22 = sz * (-xx - yy + 0.5);
+    m.m03 = (*t).translation.x;
+    m.m13 = (*t).translation.y;
+    m.m23 = (*t).translation.z;
+    m
 }
 
 // ufbx.c:33142 `ufbx_find_prop`

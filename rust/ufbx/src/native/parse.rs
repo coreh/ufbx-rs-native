@@ -40,6 +40,7 @@ use crate::native::error::{
     strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail, Fail, EMPTY_CHAR,
 };
 use crate::native::hash::{hash_uptr, map_find, map_insert, Map, PtrId};
+use crate::native::parse_ascii::is_space;
 use crate::native::platform::{
     to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_ignore, ufbxi_unreachable, AtomicCounter,
 };
@@ -2598,11 +2599,297 @@ pub(crate) unsafe fn retain_toplevel_child(uc: *mut Context, child: *mut Node) -
 
 // -- General parsing (ufbx.c:10855-11407)
 //
-// PARTIAL: only the two entry points the `// -- Reading the parsed data` unit
-// calls are ported here. `ufbxi_parse_toplevel` (ufbx.c:11252-11329),
-// `ufbxi_parse_legacy_toplevel` (11379-11407) and the rest of the section are
-// still unported — port them here, in C order, when this section's own unit
-// lands.
+// PARTIAL: only the entry points the `// -- Reading the parsed data` and
+// `// -- .obj file` units call are ported here. `ufbxi_next_line`
+// (ufbx.c:10857-10879), `ufbxi_is_format` (11096-11144),
+// `ufbxi_parse_toplevel` (11252-11329), `ufbxi_parse_legacy_toplevel`
+// (11379-11407) and the rest of the section are still unported — port them
+// here, in C order, when this section's own unit lands.
+
+// Recursion limited by compile time patterns
+// ufbx.c:10882-10914 `ufbxi_match_skip`
+// `ufbxi_recursive_function(const char *, ufbxi_match_skip, (fmt, alternation), 4, ...)`
+// (ufbx.c:10883-10884): under regression a thread-local depth guard wraps the
+// recursive body; otherwise the macro is empty and the wrapper is a plain call.
+#[inline(never)]
+pub(crate) unsafe fn match_skip(fmt: *const u8, alternation: bool) -> *const u8 {
+    #[cfg(feature = "regression")]
+    {
+        std::thread_local! {
+            static UFBXI_RECURSION_DEPTH: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+        }
+        UFBXI_RECURSION_DEPTH.with(|d| {
+            ufbx_assert!(d.get() < 4);
+            d.set(d.get() + 1);
+        });
+        let ret = match_skip_rec(fmt, alternation);
+        UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
+        return ret;
+    }
+    #[cfg(not(feature = "regression"))]
+    match_skip_rec(fmt, alternation)
+}
+
+// ufbx.c:10885-10914 `ufbxi_match_skip` body (the `_rec` half of the
+// `ufbxi_recursive_function` body; see the wrapper above)
+#[inline(never)]
+unsafe fn match_skip_rec(mut fmt: *const u8, alternation: bool) -> *const u8 {
+    loop {
+        // C-parity: `char c = *fmt++;` — C `char` is signed on the oracle
+        // targets (PORTING.md char-value rule).
+        let mut c: i8 = *(fmt as *const i8);
+        fmt = fmt.add(1);
+        match c as u8 {
+            b'(' => {
+                fmt = match_skip(fmt, false).add(1);
+            }
+            b'\\' => {
+                fmt = fmt.add(1);
+            }
+            b'[' => {
+                c = *(fmt as *const i8);
+                while c != b']' as i8 {
+                    c = *(fmt as *const i8);
+                    fmt = fmt.add(1);
+                    if c == b'\\' as i8 {
+                        c = *(fmt as *const i8);
+                        fmt = fmt.add(1);
+                    }
+                }
+                fmt = fmt.add(1);
+            }
+            b'|' => {
+                if alternation {
+                    return fmt.offset(-1);
+                }
+            }
+            b')' | b'\0' => {
+                return fmt.offset(-1);
+            }
+            _ => {}
+        }
+    }
+}
+
+// Recursion limited by compile time patterns
+// ufbx.c:10917-11084 `ufbxi_match_imp`
+// `ufbxi_recursive_function(bool, ufbxi_match_imp, (p_str, end, p_fmt), 4, ...)`
+// (ufbx.c:10918-10919): see `match_skip` above for the guard shape.
+#[inline(never)]
+pub(crate) unsafe fn match_imp(
+    p_str: *mut *const u8,
+    end: *const u8,
+    p_fmt: *mut *const u8,
+) -> bool {
+    #[cfg(feature = "regression")]
+    {
+        std::thread_local! {
+            static UFBXI_RECURSION_DEPTH: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+        }
+        UFBXI_RECURSION_DEPTH.with(|d| {
+            ufbx_assert!(d.get() < 4);
+            d.set(d.get() + 1);
+        });
+        let ret = match_imp_rec(p_str, end, p_fmt);
+        UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
+        return ret;
+    }
+    #[cfg(not(feature = "regression"))]
+    match_imp_rec(p_str, end, p_fmt)
+}
+
+// ufbx.c:10920-11084 `ufbxi_match_imp` body (the `_rec` half of the
+// `ufbxi_recursive_function` body; see the wrapper above)
+#[inline(never)]
+unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *const u8) -> bool {
+    let str_original_begin: *const u8 = *p_str;
+    let mut str_: *const u8 = str_original_begin;
+    let mut fmt_begin: *const u8 = *p_fmt;
+    let mut fmt: *const u8 = fmt_begin;
+    let mut case_insensitive: bool = false;
+
+    let mut count: usize = 0;
+    loop {
+        // C-parity: `char c = *fmt++;` — signed `char` (PORTING.md char-value
+        // rule); every literal compared against it is ASCII.
+        let mut c: i8 = *(fmt as *const i8);
+        fmt = fmt.add(1);
+        if c == 0 {
+            *p_str = str_;
+            *p_fmt = fmt.offset(-1);
+            return true;
+        }
+
+        let str_begin: *const u8 = str_;
+        let mut ref_: i8 = if str_ != end { *(str_ as *const i8) } else { 0 };
+
+        if case_insensitive {
+            if ref_ >= b'A' as i8 && ref_ <= b'Z' as i8 {
+                // C: `ref = (char)((int)(ref - 'A') + 'a');`
+                ref_ = ((ref_ as i32 - b'A' as i32) + b'a' as i32) as i8;
+            }
+        }
+
+        let mut ok: bool = false;
+        match c as u8 {
+            b'\\' => {
+                let mut macro_: *const u8 = core::ptr::null();
+                c = *(fmt as *const i8);
+                fmt = fmt.add(1);
+                match c as u8 {
+                    b'd' => {
+                        macro_ = b"[0-9]\0".as_ptr();
+                    }
+                    b'F' => {
+                        macro_ = b"[\\-+]?[0-9]+(\\.[0-9]+)?([eE][\\-+]?[0-9]+)?\0".as_ptr();
+                    }
+                    b's' => {
+                        if is_space(ref_ as u8) {
+                            ok = true;
+                            str_ = str_.add(1);
+                        }
+                    }
+                    b'S' => {
+                        if !is_space(ref_ as u8) {
+                            ok = true;
+                            str_ = str_.add(1);
+                        }
+                    }
+                    b'c' | b'C' => {
+                        case_insensitive = c == b'c' as i8;
+                        ok = true;
+                    }
+                    _ => {
+                        if ref_ == c {
+                            ok = true;
+                            str_ = str_.add(1);
+                        }
+                    }
+                }
+                if !macro_.is_null() {
+                    ok = match_imp(&mut str_, end, &mut macro_);
+                }
+            }
+
+            b'[' => {
+                while *(fmt.add(0) as *const i8) != b']' as i8 {
+                    if *(fmt.add(0) as *const i8) == b'\\' as i8 {
+                        if ref_ == *(fmt.add(1) as *const i8) {
+                            ok = true;
+                        }
+                        fmt = fmt.add(2);
+                    } else if *(fmt.add(1) as *const i8) == b'-' as i8 {
+                        if ref_ >= *(fmt.add(0) as *const i8) && ref_ <= *(fmt.add(2) as *const i8)
+                        {
+                            ok = true;
+                        }
+                        fmt = fmt.add(3);
+                    } else {
+                        if ref_ == *(fmt.add(0) as *const i8) {
+                            ok = true;
+                        }
+                        fmt = fmt.add(1);
+                    }
+                }
+                fmt = fmt.add(1);
+                if ok {
+                    str_ = str_.add(1);
+                }
+            }
+
+            b'(' => {
+                if match_imp(&mut str_, end, &mut fmt) {
+                    ok = true;
+                }
+            }
+
+            b'|' => {
+                fmt = match_skip(fmt, false);
+                ok = true;
+            }
+
+            b')' => {
+                *p_str = str_;
+                *p_fmt = fmt;
+                return true;
+            }
+
+            b'.' => {
+                if ref_ != 0 {
+                    ok = true;
+                    str_ = str_.add(1);
+                }
+            }
+
+            _ => {
+                if c == ref_ {
+                    str_ = str_.add(1);
+                    ok = true;
+                }
+            }
+        }
+
+        let mut did_fail: bool = false;
+        c = *(fmt as *const i8);
+        match c as u8 {
+            b'*' => {
+                fmt = fmt.add(1);
+                if ok {
+                    fmt = fmt_begin;
+                    count += 1;
+                    continue;
+                }
+            }
+            b'+' => {
+                fmt = fmt.add(1);
+                if ok {
+                    fmt = fmt_begin;
+                    count += 1;
+                    continue;
+                } else if count == 0 {
+                    did_fail = true;
+                }
+            }
+            b'?' => {
+                fmt = fmt.add(1);
+            }
+            _ => {
+                did_fail = !ok;
+            }
+        }
+
+        if did_fail {
+            fmt = match_skip(fmt, true);
+            if *fmt == b'|' {
+                fmt = fmt.add(1);
+                str_ = str_original_begin;
+            } else {
+                *p_fmt = match_skip(fmt, false).add(1);
+                return false;
+            }
+        } else {
+            if !ok {
+                str_ = str_begin;
+            }
+        }
+
+        fmt_begin = fmt;
+        count = 0;
+    }
+}
+
+// ufbx.c:11086-11094 `ufbxi_match`
+#[inline(never)]
+pub(crate) unsafe fn r#match(str_: *const String, fmt: *const u8) -> bool {
+    let mut ptr: *const u8 = (*str_).data;
+    let end: *const u8 = (*str_).data.add((*str_).length);
+    let mut fmt: *const u8 = fmt;
+    if match_imp(&mut ptr, end, &mut fmt) {
+        ptr == end
+    } else {
+        false
+    }
+}
 
 // ufbx.c:11242-11251 `ufbxi_parse_toplevel_child_imp`
 pub(crate) unsafe fn parse_toplevel_child_imp(
