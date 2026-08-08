@@ -132,11 +132,18 @@ pub(crate) unsafe fn bigint_mad(
 // Returns true if a (nonzero) remainder was left in the low limbs of `u`.
 #[inline(never)]
 pub(crate) unsafe fn bigint_div(q: *mut Bigint, u: *mut Bigint, v: *mut Bigint) -> bool {
-    let n = (*v).length as i32;
-    let m = (*u).length as i32 - n;
-    let v_hi: BigintLimb = *(*v).limbs.add(((*v).length - 1) as usize);
-    let un = (*u).limbs;
-    let vn = (*v).limbs;
+    // Local exclusive/shared borrows for the repeated `q->x` / `u->x` / `v->x`
+    // field chases below (`u` and `v` are only ever read in this function;
+    // their limb arrays are mutated/read only through the `un`/`vn` raw
+    // pointers, never through these bindings).
+    let q = &mut *q;
+    let u = &*u;
+    let v = &*v;
+    let n = v.length as i32;
+    let m = u.length as i32 - n;
+    let v_hi: BigintLimb = *v.limbs.add((v.length - 1) as usize);
+    let un = u.limbs;
+    let vn = v.limbs;
     ufbxi_dev_assert!(
         n >= 2
             && m >= 1
@@ -144,7 +151,7 @@ pub(crate) unsafe fn bigint_div(q: *mut Bigint, u: *mut Bigint, v: *mut Bigint) 
             && *un.add((n + m - 1) as usize) >> (BIGINT_LIMB_BITS - 1) == 0
     );
     *un.add((n + m) as usize) = 0;
-    (*q).length = 0;
+    q.length = 0;
     // C: `for (int32_t j = m - 1; j >= 0; j--)`
     let mut j = m - 1;
     while j >= 0 {
@@ -188,10 +195,10 @@ pub(crate) unsafe fn bigint_div(q: *mut Bigint, u: *mut Bigint, v: *mut Bigint) 
             // C: `un[j+n] += carry;`
             *un.add((j + n) as usize) = (*un.add((j + n) as usize)).wrapping_add(carry);
         }
-        *(*q).limbs.add(j as usize) = qhat as BigintLimb;
-        if qhat != 0 && (*q).length == 0 {
-            ufbxi_dev_assert!(j + 1 < (*q).capacity as i32);
-            (*q).length = (j + 1) as u32;
+        *q.limbs.add(j as usize) = qhat as BigintLimb;
+        if qhat != 0 && q.length == 0 {
+            ufbxi_dev_assert!(j + 1 < q.capacity as i32);
+            q.length = (j + 1) as u32;
         }
         j -= 1;
     }
@@ -800,27 +807,29 @@ mod tests {
 
     // test/unit_tests.c:363-384 `ufbxt_bigint_div_word`
     unsafe fn bigint_div_word(b: *mut Bigint, divisor: BigintLimb) -> BigintLimb {
+        // Local exclusive borrow for the repeated `b->x` field chases below.
+        let b = &mut *b;
         let mut new_length: u32 = 0;
         let mut accum: BigintAccum = 0;
         // C: `for (uint32_t i = b->length; i-- > 0; )`
-        let mut i = (*b).length;
+        let mut i = b.length;
         while i > 0 {
             i -= 1;
-            accum = (accum << BIGINT_LIMB_BITS) | *(*b).limbs.add(i as usize) as BigintAccum;
+            accum = (accum << BIGINT_LIMB_BITS) | *b.limbs.add(i as usize) as BigintAccum;
             if accum >= divisor as BigintAccum {
                 let quot: BigintAccum = accum / divisor as BigintAccum;
                 let rem: BigintAccum = accum % divisor as BigintAccum;
 
-                *(*b).limbs.add(i as usize) = quot as BigintLimb;
+                *b.limbs.add(i as usize) = quot as BigintLimb;
                 if quot > 0 && new_length == 0 {
                     new_length = i + 1;
                 }
                 accum = rem;
             } else {
-                *(*b).limbs.add(i as usize) = 0;
+                *b.limbs.add(i as usize) = 0;
             }
         }
-        (*b).length = new_length;
+        b.length = new_length;
         accum as BigintLimb
     }
 
@@ -907,13 +916,18 @@ mod tests {
 
     // test/unit_tests.c:450-455 `ufbxt_bigint_copy`
     unsafe fn bigint_copy(dst: *mut Bigint, src: *const Bigint) {
+        // Local exclusive/shared borrows for the repeated `dst->x` / `src->x`
+        // field chases below (the copied limbs themselves still move through
+        // the raw `limbs` pointers, matching the C `memcpy`).
+        let dst = &mut *dst;
+        let src = &*src;
         core::ptr::copy_nonoverlapping(
-            (*src).limbs as *const BigintLimb,
-            (*dst).limbs,
-            (*src).length as usize,
+            src.limbs as *const BigintLimb,
+            dst.limbs,
+            src.length as usize,
         );
-        (*dst).length = (*src).length;
-        ufbxi_dev_assert!((*dst).capacity > (*src).length);
+        dst.length = src.length;
+        ufbxi_dev_assert!(dst.capacity > src.length);
     }
 
     // test/unit_tests.c:457-473 `test_bigint_basics`
@@ -1064,13 +1078,15 @@ mod tests {
 
     // test/unit_tests.c:580-588 `ufbxt_bigint_shift_right1`
     unsafe fn bigint_shift_right1(b: *mut Bigint) {
-        let length = (*b).length;
-        *(*b).limbs.add(length as usize) = 0;
+        // Local exclusive borrow for the repeated `b->x` field chases below.
+        let b = &mut *b;
+        let length = b.length;
+        *b.limbs.add(length as usize) = 0;
         for i in 0..length {
-            *(*b).limbs.add(i as usize) = (*(*b).limbs.add(i as usize) >> 1)
-                | (*(*b).limbs.add((i + 1) as usize) << (BIGINT_LIMB_BITS - 1));
-            if *(*b).limbs.add(i as usize) != 0 {
-                (*b).length = i + 1;
+            *b.limbs.add(i as usize) = (*b.limbs.add(i as usize) >> 1)
+                | (*b.limbs.add((i + 1) as usize) << (BIGINT_LIMB_BITS - 1));
+            if *b.limbs.add(i as usize) != 0 {
+                b.length = i + 1;
             }
         }
     }
