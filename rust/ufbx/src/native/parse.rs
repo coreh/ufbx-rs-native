@@ -4077,8 +4077,13 @@ mod tests {
 
     #[test]
     fn test_normalize_and_type_size() {
-        // `ufbx_real` is `double` in this build, so 'r' normalizes to 'd'.
-        assert_eq!(normalize_array_type(b'r', b'b'), b'd');
+        // 'r' normalizes to 'f' or 'd' by `sizeof(ufbx_real)` (ufbx.c:7688).
+        let real_type = if size_of::<Real>() == size_of::<f32>() {
+            b'f'
+        } else {
+            b'd'
+        };
+        assert_eq!(normalize_array_type(b'r', b'b'), real_type);
         assert_eq!(normalize_array_type(b'b', b'c'), b'c');
         assert_eq!(normalize_array_type(b'i', b'b'), b'i');
         assert_eq!(array_type_size(b'r'), size_of::<Real>());
@@ -4283,10 +4288,16 @@ mod tests {
         // pooled-pointer comparison in `find_child` is address equality).
         let mut name_b_copy = [0u8; 2];
         name_b_copy[0] = b'A' + 1;
+        // The concrete type 'r' normalizes to: 'f' or 'd' by `sizeof(ufbx_real)`.
+        let real_type = if size_of::<Real>() == size_of::<f32>() {
+            b'f'
+        } else {
+            b'd'
+        };
         let mut array = ValueArray {
             data: core::ptr::null_mut(),
             size: 4,
-            type_: b'd',
+            type_: real_type,
         };
         let mut children: [Node; 2] = unsafe { core::mem::zeroed() };
         children[0].name = name_a.as_ptr();
@@ -4309,10 +4320,10 @@ mod tests {
             );
 
             assert_eq!(
-                get_array(children.as_mut_ptr().add(1), b'd'),
+                get_array(children.as_mut_ptr().add(1), real_type),
                 &mut array as *mut _
             );
-            // 'r' normalizes to 'd' in this build.
+            // 'r' normalizes to the array's concrete type in either Real mode.
             assert_eq!(
                 get_array(children.as_mut_ptr().add(1), b'r'),
                 &mut array as *mut _
@@ -4327,10 +4338,10 @@ mod tests {
             assert!(get_array(children.as_mut_ptr(), b'?').is_null());
 
             assert_eq!(
-                find_array(node, name_b.as_ptr(), b'd'),
+                find_array(node, name_b.as_ptr(), real_type),
                 &mut array as *mut _
             );
-            assert!(find_array(node, name_a.as_ptr(), b'd').is_null());
+            assert!(find_array(node, name_a.as_ptr(), real_type).is_null());
         }
     }
 

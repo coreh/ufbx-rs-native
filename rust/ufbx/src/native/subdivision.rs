@@ -957,8 +957,11 @@ pub(crate) unsafe fn subdivide_layer(
                     total_weight += (*inputs.add(i)).weight;
                     i += 1;
                 }
+                // C subtracts in `ufbx_real`, then `ufbx_fabs` (double-only)
+                // promotes; `0.001f` promotes to double for the compare.
                 ufbx_assert!(
-                    crate::native::platform::math::fabs(total_weight - 1.0) < 0.001f32 as Real
+                    crate::native::platform::math::fabs((total_weight - 1.0) as f64)
+                        < 0.001f32 as f64
                 );
             }
 

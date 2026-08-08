@@ -1435,7 +1435,9 @@ pub(crate) unsafe fn init_synthetic_vec3_prop(
     // C: `dst->value_vec3 = *value;` writes only x/y/z of the value union.
     *(&mut (*dst).value_vec4 as *mut Vec4 as *mut Vec3) = *value;
     (*dst).flags = PropFlags::from_raw(PropFlags::SYNTHETIC.raw() | PropFlags::VALUE_VEC3.raw());
-    (*dst).value_int = f64_to_i64((*dst).value_vec4.x);
+    // C: `ufbxi_f64_to_i64(dst->value_real)` — `ufbx_real` argument promoted to
+    // the `double` parameter.
+    (*dst).value_int = f64_to_i64((*dst).value_vec4.x as f64);
     (*dst).value_str.data = EMPTY_CHAR.as_ptr();
 
     ufbxi_dev_assert!((*dst).name.length >= 4);
@@ -4356,8 +4358,8 @@ pub(crate) unsafe fn solve_auto_tangent(
     // Clamp tangent to zero if near either left or right key
     if flags & KEY_CLAMP != 0 {
         if math::fmin(
-            math::fabs(prev_value - value),
-            math::fabs(next_value - value),
+            math::fabs((prev_value - value) as f64),
+            math::fabs((next_value - value) as f64),
         ) <= (*uc).opts.key_clamp_threshold
         {
             return 0.0f32;
@@ -4365,12 +4367,14 @@ pub(crate) unsafe fn solve_auto_tangent(
     }
 
     // Time-independent: Set the initial slope to be the difference between the two keyframes.
-    let mut slope: f64 = (next_value - prev_value) / (next_time - prev_time);
+    // C: the `ufbx_real` numerator is promoted to `double` by the `double`
+    // denominator; the division itself happens in `double`.
+    let mut slope: f64 = (next_value - prev_value) as f64 / (next_time - prev_time);
 
     // Non-time-independent tangents seem to blend between left/right tangent and the total difference.
     if (flags & KEY_TIME_INDEPENDENT) == 0 {
-        let slope_left: f64 = (value - prev_value) / (time - prev_time);
-        let slope_right: f64 = (next_value - value) / (next_time - time);
+        let slope_left: f64 = (value - prev_value) as f64 / (time - prev_time);
+        let slope_right: f64 = (next_value - value) as f64 / (next_time - time);
         let delta: f64 = (time - prev_time) / (next_time - prev_time);
         slope = slope * 0.5 + (slope_left * (1.0 - delta) + slope_right * delta) * 0.5;
 
@@ -4410,12 +4414,12 @@ pub(crate) unsafe fn solve_auto_tangent(
         let range_left: f64 = weight_left as f64 * (time - prev_time);
         let range_right: f64 = weight_right as f64 * (next_time - time);
         let mut max_left: f64 = if range_left > 0.0 {
-            slope_sign * (value - prev_value) / range_left
+            slope_sign * (value - prev_value) as f64 / range_left
         } else {
             0.0
         };
         let mut max_right: f64 = if range_right > 0.0 {
-            slope_sign * (next_value - value) / range_right
+            slope_sign * (next_value - value) as f64 / range_right
         } else {
             0.0
         };
@@ -4458,12 +4462,12 @@ pub(crate) unsafe fn solve_auto_tangent_left(
         return 0.0f32;
     }
     if flags & KEY_CLAMP != 0 {
-        if math::fabs(prev_value - value) <= (*uc).opts.key_clamp_threshold {
+        if math::fabs((prev_value - value) as f64) <= (*uc).opts.key_clamp_threshold {
             return 0.0f32;
         }
     }
 
-    let mut slope: f64 = (value - prev_value) / (time - prev_time);
+    let mut slope: f64 = (value - prev_value) as f64 / (time - prev_time);
 
     if (flags & KEY_TIME_INDEPENDENT) == 0 {
         let abs_bias_weight: f64 = math::fabs(auto_bias as f64) / 100.0 - 5.0;
@@ -4492,12 +4496,12 @@ pub(crate) unsafe fn solve_auto_tangent_right(
         return 0.0f32;
     }
     if flags & KEY_CLAMP != 0 {
-        if math::fabs(next_value - value) <= (*uc).opts.key_clamp_threshold {
+        if math::fabs((next_value - value) as f64) <= (*uc).opts.key_clamp_threshold {
             return 0.0f32;
         }
     }
 
-    let mut slope: f64 = (next_value - value) / (next_time - time);
+    let mut slope: f64 = (next_value - value) as f64 / (next_time - time);
 
     if (flags & KEY_TIME_INDEPENDENT) == 0 {
         let abs_bias_weight: f64 = math::fabs(auto_bias as f64) / 100.0 - 5.0;
@@ -7666,7 +7670,9 @@ pub(crate) unsafe fn read_legacy_prop(
                     return false;
                 }
                 if value_ix == 0 {
-                    (*prop).value_int = f64_to_i64(*value_real_arr.add(0));
+                    // C: `ufbxi_f64_to_i64(prop->value_real)` — `ufbx_real`
+                    // argument promoted to the `double` parameter.
+                    (*prop).value_int = f64_to_i64(*value_real_arr.add(0) as f64);
                     *value_real_arr.add(1) = 0.0;
                     *value_real_arr.add(2) = 0.0;
                     *value_real_arr.add(3) = 0.0;

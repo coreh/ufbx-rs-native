@@ -1368,19 +1368,25 @@ pub(crate) static ONE_VEC3: Vec3 = Vec3 {
 };
 
 // ufbx.c:5904 `UFBXI_PI`
-pub(crate) const PI: Real = 3.14159265358979323846;
+// C: `((ufbx_real)3.14159265358979323846)` — an unsuffixed (`double`) constant
+// narrowed to `ufbx_real`, so spell the literal `f64` and narrow explicitly.
+pub(crate) const PI: Real = 3.14159265358979323846_f64 as Real;
 // ufbx.c:5905 `UFBXI_DPI`
 pub(crate) const DPI: f64 = 3.14159265358979323846;
 // ufbx.c:5906 `UFBXI_DEG_TO_RAD`
-pub(crate) const DEG_TO_RAD: Real = PI / 180.0;
+// C: `((ufbx_real)(UFBXI_PI / 180.0))` — `UFBXI_PI` is `ufbx_real` but `180.0`
+// is `double`, so the division happens in `double` and narrows on the cast.
+pub(crate) const DEG_TO_RAD: Real = (PI as f64 / 180.0) as Real;
 // ufbx.c:5907 `UFBXI_RAD_TO_DEG`
-pub(crate) const RAD_TO_DEG: Real = 180.0 / PI;
+// C: `((ufbx_real)(180.0 / UFBXI_PI))` — same `double` division, same narrowing.
+pub(crate) const RAD_TO_DEG: Real = (180.0 / PI as f64) as Real;
 // ufbx.c:5908 `UFBXI_DEG_TO_RAD_DOUBLE`
 pub(crate) const DEG_TO_RAD_DOUBLE: f64 = DPI / 180.0;
 // ufbx.c:5909 `UFBXI_RAD_TO_DEG_DOUBLE`
 pub(crate) const RAD_TO_DEG_DOUBLE: f64 = 180.0 / DPI;
 // ufbx.c:5910 `UFBXI_MM_TO_INCH`
-pub(crate) const MM_TO_INCH: Real = 0.0393700787;
+// C: `((ufbx_real)0.0393700787)` — a `double` constant narrowed to `ufbx_real`.
+pub(crate) const MM_TO_INCH: Real = 0.0393700787_f64 as Real;
 
 // ufbx.c:5912-5915 `ufbxi_add3`
 #[inline(always)]
@@ -1437,8 +1443,10 @@ pub(crate) fn dot3(a: Vec3, b: Vec3) -> Real {
 // ufbx.c:5937-5940 `ufbxi_length3`
 #[inline(always)]
 pub(crate) fn length3(v: Vec3) -> Real {
-    // C: `(ufbx_real)ufbx_sqrt(...)` — cast is a no-op for `Real == f64`.
-    math::sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+    // C: `(ufbx_real)ufbx_sqrt(v.x*v.x + v.y*v.y + v.z*v.z)` — the `ufbx_real`
+    // sum promotes to `double` at the `ufbx_sqrt` call and the result narrows
+    // back on the explicit cast.
+    math::sqrt((v.x * v.x + v.y * v.y + v.z * v.z) as f64) as Real
 }
 
 // ufbx.c:5942-5945 `ufbxi_min3`
@@ -1461,8 +1469,10 @@ pub(crate) fn cross3(a: Vec3, b: Vec3) -> Vec3 {
 // ufbx.c:5952-5960 `ufbxi_normalize3`
 #[inline(always)]
 pub(crate) fn normalize3(a: Vec3) -> Vec3 {
-    // C: `(ufbx_real)ufbx_sqrt(...)` — cast is a no-op for `Real == f64`.
-    let len: Real = math::sqrt(dot3(a, a));
+    // C: `ufbx_real len = (ufbx_real)ufbx_sqrt(ufbxi_dot3(a, a));` — the
+    // `ufbx_real` dot product promotes to `double` at the `ufbx_sqrt` call and
+    // the result narrows back on the explicit cast.
+    let len: Real = math::sqrt(dot3(a, a) as f64) as Real;
     if len > math::EPSILON {
         mul3(a, 1.0 / len)
     } else {
@@ -2009,8 +2019,9 @@ mod tests {
             assert_eq!((v.x, v.y, v.z), (0.0, 0.0, 1.0));
         }
         assert_eq!(ONE_VEC3.x, 1.0);
-        assert!((PI - DPI).abs() == 0.0);
-        assert!(DEG_TO_RAD * RAD_TO_DEG - 1.0 < 1e-15);
+        // `UFBXI_PI` is `UFBXI_DPI` narrowed to `ufbx_real`.
+        assert_eq!(PI, DPI as Real);
+        assert!((DEG_TO_RAD * RAD_TO_DEG - 1.0).abs() <= 4.0 * Real::EPSILON);
         assert!(DEG_TO_RAD_DOUBLE * RAD_TO_DEG_DOUBLE - 1.0 < 1e-15);
         assert!(MM_TO_INCH > 0.0393 && MM_TO_INCH < 0.0394);
     }

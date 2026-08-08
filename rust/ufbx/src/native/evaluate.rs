@@ -1385,9 +1385,11 @@ unsafe fn combine_anim_layer_rec(
     if (*layer).additive {
         if (*layer).compose_scale && prop_name == sp::Lcl_Scaling.as_ptr() {
             // C: `result->x *= (ufbx_real)ufbxi_pow_abs(value->x, weight);`
-            (*result).x *= pow_abs((*value).x, weight) as Real;
-            (*result).y *= pow_abs((*value).y, weight) as Real;
-            (*result).z *= pow_abs((*value).z, weight) as Real;
+            // — `ufbxi_pow_abs` takes `double`, so both args promote to double
+            // and the result narrows back to `ufbx_real` before the multiply.
+            (*result).x *= pow_abs((*value).x as f64, weight as f64) as Real;
+            (*result).y *= pow_abs((*value).y as f64, weight as f64) as Real;
+            (*result).z *= pow_abs((*value).z as f64, weight as f64) as Real;
         } else if (*layer).compose_rotation && prop_name == sp::Lcl_Rotation.as_ptr() {
             let a: Quat = euler_to_quat(*result, (*ctx).rotation_order);
             let mut b: Quat = euler_to_quat(*value, (*ctx).rotation_order);
@@ -1404,9 +1406,14 @@ unsafe fn combine_anim_layer_rec(
         let res_weight: Real = 1.0 - weight;
         if (*layer).compose_scale && prop_name == sp::Lcl_Scaling.as_ptr() {
             // C: `result->x = (ufbx_real)(ufbxi_pow_abs(result->x, res_weight) * ufbxi_pow_abs(value->x, weight));`
-            (*result).x = (pow_abs((*result).x, res_weight) * pow_abs((*value).x, weight)) as Real;
-            (*result).y = (pow_abs((*result).y, res_weight) * pow_abs((*value).y, weight)) as Real;
-            (*result).z = (pow_abs((*result).z, res_weight) * pow_abs((*value).z, weight)) as Real;
+            // — `ufbxi_pow_abs` takes `double`; the product stays in double and
+            // narrows to `ufbx_real` only on the assignment.
+            (*result).x = (pow_abs((*result).x as f64, res_weight as f64)
+                * pow_abs((*value).x as f64, weight as f64)) as Real;
+            (*result).y = (pow_abs((*result).y as f64, res_weight as f64)
+                * pow_abs((*value).y as f64, weight as f64)) as Real;
+            (*result).z = (pow_abs((*result).z as f64, res_weight as f64)
+                * pow_abs((*value).z as f64, weight as f64)) as Real;
         } else if (*layer).compose_rotation && prop_name == sp::Lcl_Rotation.as_ptr() {
             let a: Quat = euler_to_quat(*result, (*ctx).rotation_order);
             let b: Quat = euler_to_quat(*value, (*ctx).rotation_order);
@@ -1487,8 +1494,9 @@ pub(crate) unsafe fn evaluate_props(
                     weight = 0.0;
                 }
                 // C: `if (weight > 0.99999f) weight = 1.0f;` — the FLOAT
-                // literal converts to double as (double)(float)0.99999.
-                if weight > 0.99999f32 as f64 {
+                // literal is compared in `ufbx_real`; when that is double the
+                // conversion is (double)(float)0.99999.
+                if weight > 0.99999f32 as Real {
                     weight = 1.0;
                 }
             }
@@ -1562,8 +1570,9 @@ pub(crate) unsafe fn evaluate_props(
             continue;
         }
         // C: `prop->value_int = ufbxi_f64_to_i64(prop->value_real);` — the
-        // value union's first real is `value_vec4.x`.
-        (*prop).value_int = f64_to_i64((*prop).value_vec4.x);
+        // value union's first real is `value_vec4.x`; `ufbxi_f64_to_i64` takes
+        // `double`, so the `ufbx_real` argument promotes.
+        (*prop).value_int = f64_to_i64((*prop).value_vec4.x as f64);
         prop = prop.add(1);
     }
 }

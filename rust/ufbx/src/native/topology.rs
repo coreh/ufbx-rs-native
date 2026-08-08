@@ -557,10 +557,18 @@ pub(crate) unsafe fn ngon_tri_weight(points: *const Vec2) -> Real {
     let a: Real = distsq2(p0, p1);
     let b: Real = distsq2(p1, p2);
     let c: Real = distsq2(p2, p0);
-    let ab: Real = (a + b - c) / math::sqrt(4.0 * a * b) as Real;
-    let bc: Real = (b + c - a) / math::sqrt(4.0 * b * c) as Real;
-    let ca: Real = (c + a - b) / math::sqrt(4.0 * c * a) as Real;
-    math::fmax(math::EPSILON, 2.0 - math::fmax(math::fmax(ab, bc), ca)) as Real
+    // C: `4.0f * a * b` is `ufbx_real` arithmetic (the `float` literal promotes to
+    // `ufbx_real`); only the `ufbx_sqrt()` call widens to `double`, and the result is
+    // cast straight back with `(ufbx_real)`.
+    let ab: Real = (a + b - c) / math::sqrt((4.0 * a * b) as f64) as Real;
+    let bc: Real = (b + c - a) / math::sqrt((4.0 * b * c) as f64) as Real;
+    let ca: Real = (c + a - b) / math::sqrt((4.0 * c * a) as f64) as Real;
+    // C: `ufbx_fmax()` takes `double`, so `ab`/`bc`/`ca` and `UFBX_EPSILON` promote and
+    // `2.0f - ufbx_fmax(...)` computes in `double`; the `(ufbx_real)` cast narrows.
+    math::fmax(
+        math::EPSILON as f64,
+        2.0 - math::fmax(math::fmax(ab as f64, bc as f64), ca as f64),
+    ) as Real
 }
 
 // ufbx.c:28489-28688 `ufbxi_triangulate_ngon`

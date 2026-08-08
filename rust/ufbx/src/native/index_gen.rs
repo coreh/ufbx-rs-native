@@ -291,9 +291,10 @@ pub(crate) unsafe fn generate_indices(
 mod tests {
     use crate::generated::{ErrorType, Vec3};
     use crate::native::api::generate_indices;
+    use crate::prelude::Real;
     use core::mem::MaybeUninit;
 
-    fn vec3(x: f64, y: f64, z: f64) -> Vec3 {
+    fn vec3(x: Real, y: Real, z: Real) -> Vec3 {
         Vec3 { x, y, z }
     }
 

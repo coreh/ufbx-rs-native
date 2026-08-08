@@ -35,14 +35,14 @@ nightly = []
 # Expose the exact ufbx.h C ABI (#[no_mangle] ufbx_* symbols) so the upstream C
 # test suite can link against this crate as a staticlib. Test/validation only.
 c-abi = []
-# Real = f32 (mirrors UFBX_REAL_IS_FLOAT).
-# NOT WIRED UP YET: `prelude.rs` still declares `pub type Real = f64;`
-# unconditionally, so enabling this feature changes nothing and building with it
-# proves nothing about `(ufbx_real)` narrowing. Flipping it on requires a
-# crate-wide pass (`generated.rs`/bindgen, `native::api`'s explicit `f64` locals
-# such as `euler_to_quat`, and `tests/layout.rs`) — until then, source-text
-# parity with the C `(ufbx_real)` casts is maintained by hand: write
-# `x as Real`, never a bare `f64` literal, wherever C writes `(ufbx_real)x`.
+# Real = f32 (mirrors UFBX_REAL_IS_FLOAT): `prelude.rs` selects f32 under this
+# feature, so building with it type-checks every `(ufbx_real)`/`double` boundary
+# — Real/f64 conflation is a compile error, and promotion/narrowing sites must
+# spell C's casts explicitly (`x as f64` where C promotes, `as Real` where C
+# narrows; see PORTING.md Floats). Caveats: `tests/layout.rs` is cfg'd out (the
+# pinned offsets assume Real = f64; float-mode layouts are unverified in-tree)
+# and no C oracle runs against the f32 build yet (`runner_float` links the C
+# sources only).
 real-is-float = []
 
 [lib]
