@@ -1582,7 +1582,9 @@ def emit_global(gl: ir.Global):
 
     gt = fmt_ffi_type(typ, "")
     name = get_global_name(gl)
-    emit(f"pub fn {name}() -> {gt} {{ unsafe {{ {gl.name} }} }}")
+    # NOTE(ufbx-rs-native): the globals are plain Rust statics (capi aliases of
+    # native::api), so the read is safe — no unsafe block (extern statics needed one).
+    emit(f"pub fn {name}() -> {gt} {{ {gl.name} }}")
 
 def emit_struct_impl(rs: RustStruct):
     if not rs.ir: return
@@ -1613,7 +1615,7 @@ def emit_struct_impl(rs: RustStruct):
     for mg, gl, typ in member_globals:
         gt = fmt_ffi_type(typ, "")
         name = mg.member_name
-        emit(f"pub fn {name}() -> {gt} {{ unsafe {{ {gl.name} }} }}")
+        emit(f"pub fn {name}() -> {gt} {{ {gl.name} }}")
 
     for mf, rf in members:
         if mf.func in override_member_functions:
@@ -1735,18 +1737,26 @@ def emit_file():
     emit("pub type Result<T> = result::Result<T, Error>;")
 
     emit()
-    emit(f"#[link(name=\"ufbx\")]")
-    emit("extern \"C\" {")
+    # NOTE(ufbx-rs-native): ufbx-rust declares the ufbx_* surface as an
+    # `extern "C"` block resolved by the linker against the C library. Here the
+    # implementations are the crate's own `capi` module, so the safe wrappers
+    # below bind to them with a plain re-export — direct Rust calls, no FFI.
+    # The C ABI declarations stay verbatim in capi.rs; `c-abi` only controls
+    # whether the symbols are additionally exported with C linkage.
+    emit("#[allow(unused_imports)]")
+    emit("pub(crate) use crate::capi::{")
     indent()
-
     for decl in file.declarations:
         if decl.kind == "function":
-            emit_ffi_function(file.functions[decl.name])
+            if file.functions[decl.name].is_inline:
+                continue
+            emit(f"{decl.name},")
         elif decl.kind == "global":
-            emit_ffi_global(file.globals[decl.name])
-
+            if file.types[file.globals[decl.name].type].kind != "const":
+                continue
+            emit(f"{decl.name},")
     unindent()
-    emit("}")
+    emit("};")
 
     emit_lines(post_ffi)
 

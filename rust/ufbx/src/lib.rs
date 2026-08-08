@@ -7,9 +7,9 @@ pub mod prelude;
 // Native port of ufbx.c, one module per C banner section (declared in ufbx.c
 // order). Crate-internal: the public surface is the ufbx-rust API above it.
 pub(crate) mod native;
-// C ABI shim exposing the exact ufbx.h surface for the upstream C test suite.
-// The #[no_mangle] symbols export via linkage, not visibility.
-#[cfg(feature = "c-abi")]
+// The ufbx.h surface with exact C signatures; the generated safe wrappers
+// call these directly (no FFI). Under `c-abi` the symbols are additionally
+// exported with C linkage for the upstream C test suite.
 pub(crate) mod capi;
 
 pub use generated::*;

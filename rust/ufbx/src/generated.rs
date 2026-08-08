@@ -4221,638 +4221,69 @@ impl<'a> FromRust for GeometryCacheDataOpts<'a> {
 
 pub type Result<T> = result::Result<T, Error>;
 
-// #[link(name="ufbx")] — symbols provided natively by this crate (capi / native port)
-extern "C" {
-    pub static ufbx_empty_string: String;
-    pub static ufbx_empty_blob: Blob;
-    pub static ufbx_identity_matrix: Matrix;
-    pub static ufbx_identity_transform: Transform;
-    pub static ufbx_zero_vec2: Vec2;
-    pub static ufbx_zero_vec3: Vec3;
-    pub static ufbx_zero_vec4: Vec4;
-    pub static ufbx_identity_quat: Quat;
-    pub static ufbx_axes_right_handed_y_up: CoordinateAxes;
-    pub static ufbx_axes_right_handed_z_up: CoordinateAxes;
-    pub static ufbx_axes_left_handed_y_up: CoordinateAxes;
-    pub static ufbx_axes_left_handed_z_up: CoordinateAxes;
-    pub static ufbx_source_version: u32;
-    pub fn ufbx_is_thread_safe() -> bool;
-    pub fn ufbx_load_memory(
-        data: *const c_void,
-        data_size: usize,
-        opts: *const RawLoadOpts,
-        error: *mut Error,
-    ) -> *mut Scene;
-    pub fn ufbx_load_file(
-        filename: *const u8,
-        opts: *const RawLoadOpts,
-        error: *mut Error,
-    ) -> *mut Scene;
-    pub fn ufbx_load_file_len(
-        filename: *const u8,
-        filename_len: usize,
-        opts: *const RawLoadOpts,
-        error: *mut Error,
-    ) -> *mut Scene;
-    pub fn ufbx_load_stdio(
-        file: *mut c_void,
-        opts: *const RawLoadOpts,
-        error: *mut Error,
-    ) -> *mut Scene;
-    pub fn ufbx_load_stdio_prefix(
-        file: *mut c_void,
-        prefix: *const c_void,
-        prefix_size: usize,
-        opts: *const RawLoadOpts,
-        error: *mut Error,
-    ) -> *mut Scene;
-    pub fn ufbx_load_stream(
-        stream: *const RawStream,
-        opts: *const RawLoadOpts,
-        error: *mut Error,
-    ) -> *mut Scene;
-    pub fn ufbx_load_stream_prefix(
-        stream: *const RawStream,
-        prefix: *const c_void,
-        prefix_size: usize,
-        opts: *const RawLoadOpts,
-        error: *mut Error,
-    ) -> *mut Scene;
-    pub fn ufbx_free_scene(scene: *mut Scene);
-    pub fn ufbx_retain_scene(scene: *mut Scene);
-    pub fn ufbx_format_error(dst: *mut u8, dst_size: usize, error: *const Error) -> usize;
-    pub fn ufbx_find_prop_len(props: *const Props, name: *const u8, name_len: usize) -> *mut Prop;
-    pub fn ufbx_find_prop(props: *const Props, name: *const u8) -> *mut Prop;
-    pub fn ufbx_find_real_len(
-        props: *const Props,
-        name: *const u8,
-        name_len: usize,
-        def: Real,
-    ) -> Real;
-    pub fn ufbx_find_real(props: *const Props, name: *const u8, def: Real) -> Real;
-    pub fn ufbx_find_vec3_len(
-        props: *const Props,
-        name: *const u8,
-        name_len: usize,
-        def: Vec3,
-    ) -> Vec3;
-    pub fn ufbx_find_vec3(props: *const Props, name: *const u8, def: Vec3) -> Vec3;
-    pub fn ufbx_find_int_len(
-        props: *const Props,
-        name: *const u8,
-        name_len: usize,
-        def: i64,
-    ) -> i64;
-    pub fn ufbx_find_int(props: *const Props, name: *const u8, def: i64) -> i64;
-    pub fn ufbx_find_bool_len(
-        props: *const Props,
-        name: *const u8,
-        name_len: usize,
-        def: bool,
-    ) -> bool;
-    pub fn ufbx_find_bool(props: *const Props, name: *const u8, def: bool) -> bool;
-    pub fn ufbx_find_string_len(
-        props: *const Props,
-        name: *const u8,
-        name_len: usize,
-        def: String,
-    ) -> String;
-    pub fn ufbx_find_string(props: *const Props, name: *const u8, def: String) -> String;
-    pub fn ufbx_find_blob_len(
-        props: *const Props,
-        name: *const u8,
-        name_len: usize,
-        def: Blob,
-    ) -> Blob;
-    pub fn ufbx_find_blob(props: *const Props, name: *const u8, def: Blob) -> Blob;
-    pub fn ufbx_find_prop_concat(
-        props: *const Props,
-        parts: *const String,
-        num_parts: usize,
-    ) -> *mut Prop;
-    pub fn ufbx_get_prop_element(
-        element: *const Element,
-        prop: *const Prop,
-        type_: ElementType,
-    ) -> *mut Element;
-    pub fn ufbx_find_prop_element_len(
-        element: *const Element,
-        name: *const u8,
-        name_len: usize,
-        type_: ElementType,
-    ) -> *mut Element;
-    pub fn ufbx_find_prop_element(
-        element: *const Element,
-        name: *const u8,
-        type_: ElementType,
-    ) -> *mut Element;
-    pub fn ufbx_find_element_len(
-        scene: *const Scene,
-        type_: ElementType,
-        name: *const u8,
-        name_len: usize,
-    ) -> *mut Element;
-    pub fn ufbx_find_element(
-        scene: *const Scene,
-        type_: ElementType,
-        name: *const u8,
-    ) -> *mut Element;
-    pub fn ufbx_find_node_len(scene: *const Scene, name: *const u8, name_len: usize) -> *mut Node;
-    pub fn ufbx_find_node(scene: *const Scene, name: *const u8) -> *mut Node;
-    pub fn ufbx_find_anim_stack_len(
-        scene: *const Scene,
-        name: *const u8,
-        name_len: usize,
-    ) -> *mut AnimStack;
-    pub fn ufbx_find_anim_stack(scene: *const Scene, name: *const u8) -> *mut AnimStack;
-    pub fn ufbx_find_material_len(
-        scene: *const Scene,
-        name: *const u8,
-        name_len: usize,
-    ) -> *mut Material;
-    pub fn ufbx_find_material(scene: *const Scene, name: *const u8) -> *mut Material;
-    pub fn ufbx_find_anim_prop_len(
-        layer: *const AnimLayer,
-        element: *const Element,
-        prop: *const u8,
-        prop_len: usize,
-    ) -> *mut AnimProp;
-    pub fn ufbx_find_anim_prop(
-        layer: *const AnimLayer,
-        element: *const Element,
-        prop: *const u8,
-    ) -> *mut AnimProp;
-    pub fn ufbx_find_anim_props(layer: *const AnimLayer, element: *const Element)
-        -> List<AnimProp>;
-    pub fn ufbx_get_compatible_matrix_for_normals(node: *const Node) -> Matrix;
-    pub fn ufbx_inflate(
-        dst: *mut c_void,
-        dst_size: usize,
-        input: *const InflateInput,
-        retain: *mut InflateRetain,
-    ) -> isize;
-    pub fn ufbx_default_open_file(
-        user: *mut c_void,
-        stream: *mut RawStream,
-        path: *const u8,
-        path_len: usize,
-        info: *const OpenFileInfo,
-    ) -> bool;
-    pub fn ufbx_open_file(
-        stream: *mut RawStream,
-        path: *const u8,
-        path_len: usize,
-        opts: *const RawOpenFileOpts,
-        error: *mut Error,
-    ) -> bool;
-    pub fn ufbx_open_file_ctx(
-        stream: *mut RawStream,
-        ctx: OpenFileContext,
-        path: *const u8,
-        path_len: usize,
-        opts: *const RawOpenFileOpts,
-        error: *mut Error,
-    ) -> bool;
-    pub fn ufbx_open_memory(
-        stream: *mut RawStream,
-        data: *const c_void,
-        data_size: usize,
-        opts: *const RawOpenMemoryOpts,
-        error: *mut Error,
-    ) -> bool;
-    pub fn ufbx_open_memory_ctx(
-        stream: *mut RawStream,
-        ctx: OpenFileContext,
-        data: *const c_void,
-        data_size: usize,
-        opts: *const RawOpenMemoryOpts,
-        error: *mut Error,
-    ) -> bool;
-    pub fn ufbx_evaluate_curve(curve: *const AnimCurve, time: f64, default_value: Real) -> Real;
-    pub fn ufbx_evaluate_curve_flags(
-        curve: *const AnimCurve,
-        time: f64,
-        default_value: Real,
-        flags: u32,
-    ) -> Real;
-    pub fn ufbx_evaluate_anim_value_real(anim_value: *const AnimValue, time: f64) -> Real;
-    pub fn ufbx_evaluate_anim_value_vec3(anim_value: *const AnimValue, time: f64) -> Vec3;
-    pub fn ufbx_evaluate_anim_value_real_flags(
-        anim_value: *const AnimValue,
-        time: f64,
-        flags: u32,
-    ) -> Real;
-    pub fn ufbx_evaluate_anim_value_vec3_flags(
-        anim_value: *const AnimValue,
-        time: f64,
-        flags: u32,
-    ) -> Vec3;
-    pub fn ufbx_evaluate_prop_len(
-        anim: *const Anim,
-        element: *const Element,
-        name: *const u8,
-        name_len: usize,
-        time: f64,
-    ) -> Prop;
-    pub fn ufbx_evaluate_prop(
-        anim: *const Anim,
-        element: *const Element,
-        name: *const u8,
-        time: f64,
-    ) -> Prop;
-    pub fn ufbx_evaluate_prop_flags_len(
-        anim: *const Anim,
-        element: *const Element,
-        name: *const u8,
-        name_len: usize,
-        time: f64,
-        flags: u32,
-    ) -> Prop;
-    pub fn ufbx_evaluate_prop_flags(
-        anim: *const Anim,
-        element: *const Element,
-        name: *const u8,
-        time: f64,
-        flags: u32,
-    ) -> Prop;
-    pub fn ufbx_evaluate_props(
-        anim: *const Anim,
-        element: *const Element,
-        time: f64,
-        buffer: *mut Prop,
-        buffer_size: usize,
-    ) -> Props;
-    pub fn ufbx_evaluate_props_flags(
-        anim: *const Anim,
-        element: *const Element,
-        time: f64,
-        buffer: *mut Prop,
-        buffer_size: usize,
-        flags: u32,
-    ) -> Props;
-    pub fn ufbx_evaluate_transform(anim: *const Anim, node: *const Node, time: f64) -> Transform;
-    pub fn ufbx_evaluate_transform_flags(
-        anim: *const Anim,
-        node: *const Node,
-        time: f64,
-        flags: u32,
-    ) -> Transform;
-    pub fn ufbx_evaluate_blend_weight(
-        anim: *const Anim,
-        channel: *const BlendChannel,
-        time: f64,
-    ) -> Real;
-    pub fn ufbx_evaluate_blend_weight_flags(
-        anim: *const Anim,
-        channel: *const BlendChannel,
-        time: f64,
-        flags: u32,
-    ) -> Real;
-    pub fn ufbx_evaluate_scene(
-        scene: *const Scene,
-        anim: *const Anim,
-        time: f64,
-        opts: *const RawEvaluateOpts,
-        error: *mut Error,
-    ) -> *mut Scene;
-    pub fn ufbx_create_anim(
-        scene: *const Scene,
-        opts: *const RawAnimOpts,
-        error: *mut Error,
-    ) -> *mut Anim;
-    pub fn ufbx_free_anim(anim: *mut Anim);
-    pub fn ufbx_retain_anim(anim: *mut Anim);
-    pub fn ufbx_bake_anim(
-        scene: *const Scene,
-        anim: *const Anim,
-        opts: *const RawBakeOpts,
-        error: *mut Error,
-    ) -> *mut BakedAnim;
-    pub fn ufbx_retain_baked_anim(bake: *mut BakedAnim);
-    pub fn ufbx_free_baked_anim(bake: *mut BakedAnim);
-    pub fn ufbx_find_baked_node_by_typed_id(bake: *mut BakedAnim, typed_id: u32) -> *mut BakedNode;
-    pub fn ufbx_find_baked_node(bake: *mut BakedAnim, node: *mut Node) -> *mut BakedNode;
-    pub fn ufbx_find_baked_element_by_element_id(
-        bake: *mut BakedAnim,
-        element_id: u32,
-    ) -> *mut BakedElement;
-    pub fn ufbx_find_baked_element(
-        bake: *mut BakedAnim,
-        element: *mut Element,
-    ) -> *mut BakedElement;
-    pub fn ufbx_evaluate_baked_vec3(keyframes: List<BakedVec3>, time: f64) -> Vec3;
-    pub fn ufbx_evaluate_baked_quat(keyframes: List<BakedQuat>, time: f64) -> Quat;
-    pub fn ufbx_get_bone_pose(pose: *const Pose, node: *const Node) -> *mut BonePose;
-    pub fn ufbx_find_prop_texture_len(
-        material: *const Material,
-        name: *const u8,
-        name_len: usize,
-    ) -> *mut Texture;
-    pub fn ufbx_find_prop_texture(material: *const Material, name: *const u8) -> *mut Texture;
-    pub fn ufbx_find_shader_prop_len(
-        shader: *const Shader,
-        name: *const u8,
-        name_len: usize,
-    ) -> String;
-    pub fn ufbx_find_shader_prop(shader: *const Shader, name: *const u8) -> String;
-    pub fn ufbx_find_shader_prop_bindings_len(
-        shader: *const Shader,
-        name: *const u8,
-        name_len: usize,
-    ) -> List<ShaderPropBinding>;
-    pub fn ufbx_find_shader_prop_bindings(
-        shader: *const Shader,
-        name: *const u8,
-    ) -> List<ShaderPropBinding>;
-    pub fn ufbx_find_shader_texture_input_len(
-        shader: *const ShaderTexture,
-        name: *const u8,
-        name_len: usize,
-    ) -> *mut ShaderTextureInput;
-    pub fn ufbx_find_shader_texture_input(
-        shader: *const ShaderTexture,
-        name: *const u8,
-    ) -> *mut ShaderTextureInput;
-    pub fn ufbx_coordinate_axes_valid(axes: CoordinateAxes) -> bool;
-    pub fn ufbx_vec3_normalize(v: Vec3) -> Vec3;
-    pub fn ufbx_quat_dot(a: Quat, b: Quat) -> Real;
-    pub fn ufbx_quat_mul(a: Quat, b: Quat) -> Quat;
-    pub fn ufbx_quat_normalize(q: Quat) -> Quat;
-    pub fn ufbx_quat_fix_antipodal(q: Quat, reference: Quat) -> Quat;
-    pub fn ufbx_quat_slerp(a: Quat, b: Quat, t: Real) -> Quat;
-    pub fn ufbx_quat_rotate_vec3(q: Quat, v: Vec3) -> Vec3;
-    pub fn ufbx_quat_to_euler(q: Quat, order: RotationOrder) -> Vec3;
-    pub fn ufbx_euler_to_quat(v: Vec3, order: RotationOrder) -> Quat;
-    pub fn ufbx_matrix_mul(a: *const Matrix, b: *const Matrix) -> Matrix;
-    pub fn ufbx_matrix_determinant(m: *const Matrix) -> Real;
-    pub fn ufbx_matrix_invert(m: *const Matrix) -> Matrix;
-    pub fn ufbx_matrix_for_normals(m: *const Matrix) -> Matrix;
-    pub fn ufbx_transform_position(m: *const Matrix, v: Vec3) -> Vec3;
-    pub fn ufbx_transform_direction(m: *const Matrix, v: Vec3) -> Vec3;
-    pub fn ufbx_transform_to_matrix(t: *const Transform) -> Matrix;
-    pub fn ufbx_matrix_to_transform(m: *const Matrix) -> Transform;
-    pub fn ufbx_catch_get_skin_vertex_matrix(
-        panic: *mut Panic,
-        skin: *const SkinDeformer,
-        vertex: usize,
-        fallback: *const Matrix,
-    ) -> Matrix;
-    pub fn ufbx_get_blend_shape_offset_index(shape: *const BlendShape, vertex: usize) -> u32;
-    pub fn ufbx_get_blend_shape_vertex_offset(shape: *const BlendShape, vertex: usize) -> Vec3;
-    pub fn ufbx_get_blend_vertex_offset(blend: *const BlendDeformer, vertex: usize) -> Vec3;
-    pub fn ufbx_add_blend_shape_vertex_offsets(
-        shape: *const BlendShape,
-        vertices: *mut Vec3,
-        num_vertices: usize,
-        weight: Real,
-    );
-    pub fn ufbx_add_blend_vertex_offsets(
-        blend: *const BlendDeformer,
-        vertices: *mut Vec3,
-        num_vertices: usize,
-        weight: Real,
-    );
-    pub fn ufbx_evaluate_nurbs_basis(
-        basis: *const NurbsBasis,
-        u: Real,
-        weights: *mut Real,
-        num_weights: usize,
-        derivatives: *mut Real,
-        num_derivatives: usize,
-    ) -> usize;
-    pub fn ufbx_evaluate_nurbs_curve(curve: *const NurbsCurve, u: Real) -> CurvePoint;
-    pub fn ufbx_evaluate_nurbs_surface(
-        surface: *const NurbsSurface,
-        u: Real,
-        v: Real,
-    ) -> SurfacePoint;
-    pub fn ufbx_tessellate_nurbs_curve(
-        curve: *const NurbsCurve,
-        opts: *const RawTessellateCurveOpts,
-        error: *mut Error,
-    ) -> *mut LineCurve;
-    pub fn ufbx_tessellate_nurbs_surface(
-        surface: *const NurbsSurface,
-        opts: *const RawTessellateSurfaceOpts,
-        error: *mut Error,
-    ) -> *mut Mesh;
-    pub fn ufbx_free_line_curve(curve: *mut LineCurve);
-    pub fn ufbx_retain_line_curve(curve: *mut LineCurve);
-    pub fn ufbx_find_face_index(mesh: *mut Mesh, index: usize) -> u32;
-    pub fn ufbx_catch_triangulate_face(
-        panic: *mut Panic,
-        indices: *mut u32,
-        num_indices: usize,
-        mesh: *const Mesh,
-        face: Face,
-    ) -> u32;
-    pub fn ufbx_triangulate_face(
-        indices: *mut u32,
-        num_indices: usize,
-        mesh: *const Mesh,
-        face: Face,
-    ) -> u32;
-    pub fn ufbx_catch_compute_topology(
-        panic: *mut Panic,
-        mesh: *const Mesh,
-        topo: *mut TopoEdge,
-        num_topo: usize,
-    );
-    pub fn ufbx_compute_topology(mesh: *const Mesh, topo: *mut TopoEdge, num_topo: usize);
-    pub fn ufbx_catch_topo_next_vertex_edge(
-        panic: *mut Panic,
-        topo: *const TopoEdge,
-        num_topo: usize,
-        index: u32,
-    ) -> u32;
-    pub fn ufbx_topo_next_vertex_edge(topo: *const TopoEdge, num_topo: usize, index: u32) -> u32;
-    pub fn ufbx_catch_topo_prev_vertex_edge(
-        panic: *mut Panic,
-        topo: *const TopoEdge,
-        num_topo: usize,
-        index: u32,
-    ) -> u32;
-    pub fn ufbx_topo_prev_vertex_edge(topo: *const TopoEdge, num_topo: usize, index: u32) -> u32;
-    pub fn ufbx_catch_get_weighted_face_normal(
-        panic: *mut Panic,
-        positions: *const VertexVec3,
-        face: Face,
-    ) -> Vec3;
-    pub fn ufbx_get_weighted_face_normal(positions: *const VertexVec3, face: Face) -> Vec3;
-    pub fn ufbx_catch_generate_normal_mapping(
-        panic: *mut Panic,
-        mesh: *const Mesh,
-        topo: *const TopoEdge,
-        num_topo: usize,
-        normal_indices: *mut u32,
-        num_normal_indices: usize,
-        assume_smooth: bool,
-    ) -> usize;
-    pub fn ufbx_generate_normal_mapping(
-        mesh: *const Mesh,
-        topo: *const TopoEdge,
-        num_topo: usize,
-        normal_indices: *mut u32,
-        num_normal_indices: usize,
-        assume_smooth: bool,
-    ) -> usize;
-    pub fn ufbx_catch_compute_normals(
-        panic: *mut Panic,
-        mesh: *const Mesh,
-        positions: *const VertexVec3,
-        normal_indices: *const u32,
-        num_normal_indices: usize,
-        normals: *mut Vec3,
-        num_normals: usize,
-    );
-    pub fn ufbx_compute_normals(
-        mesh: *const Mesh,
-        positions: *const VertexVec3,
-        normal_indices: *const u32,
-        num_normal_indices: usize,
-        normals: *mut Vec3,
-        num_normals: usize,
-    );
-    pub fn ufbx_subdivide_mesh(
-        mesh: *const Mesh,
-        level: usize,
-        opts: *const RawSubdivideOpts,
-        error: *mut Error,
-    ) -> *mut Mesh;
-    pub fn ufbx_free_mesh(mesh: *mut Mesh);
-    pub fn ufbx_retain_mesh(mesh: *mut Mesh);
-    pub fn ufbx_load_geometry_cache(
-        filename: *const u8,
-        opts: *const RawGeometryCacheOpts,
-        error: *mut Error,
-    ) -> *mut GeometryCache;
-    pub fn ufbx_load_geometry_cache_len(
-        filename: *const u8,
-        filename_len: usize,
-        opts: *const RawGeometryCacheOpts,
-        error: *mut Error,
-    ) -> *mut GeometryCache;
-    pub fn ufbx_free_geometry_cache(cache: *mut GeometryCache);
-    pub fn ufbx_retain_geometry_cache(cache: *mut GeometryCache);
-    pub fn ufbx_read_geometry_cache_real(
-        frame: *const CacheFrame,
-        data: *mut Real,
-        num_data: usize,
-        opts: *const RawGeometryCacheDataOpts,
-    ) -> usize;
-    pub fn ufbx_read_geometry_cache_vec3(
-        frame: *const CacheFrame,
-        data: *mut Vec3,
-        num_data: usize,
-        opts: *const RawGeometryCacheDataOpts,
-    ) -> usize;
-    pub fn ufbx_sample_geometry_cache_real(
-        channel: *const CacheChannel,
-        time: f64,
-        data: *mut Real,
-        num_data: usize,
-        opts: *const RawGeometryCacheDataOpts,
-    ) -> usize;
-    pub fn ufbx_sample_geometry_cache_vec3(
-        channel: *const CacheChannel,
-        time: f64,
-        data: *mut Vec3,
-        num_data: usize,
-        opts: *const RawGeometryCacheDataOpts,
-    ) -> usize;
-    pub fn ufbx_dom_find_len(
-        parent: *const DomNode,
-        name: *const u8,
-        name_len: usize,
-    ) -> *mut DomNode;
-    pub fn ufbx_dom_find(parent: *const DomNode, name: *const u8) -> *mut DomNode;
-    pub fn ufbx_generate_indices(
-        streams: *const RawVertexStream,
-        num_streams: usize,
-        indices: *mut u32,
-        num_indices: usize,
-        allocator: *const RawAllocatorOpts,
-        error: *mut Error,
-    ) -> usize;
-    pub fn ufbx_thread_pool_run_task(ctx: ThreadPoolContext, index: u32);
-    pub fn ufbx_thread_pool_set_user_ptr(ctx: ThreadPoolContext, user_ptr: *mut c_void);
-    pub fn ufbx_thread_pool_get_user_ptr(ctx: ThreadPoolContext) -> *mut c_void;
-    pub fn ufbx_catch_get_vertex_real(
-        panic: *mut Panic,
-        v: *const VertexReal,
-        index: usize,
-    ) -> Real;
-    pub fn ufbx_catch_get_vertex_vec2(
-        panic: *mut Panic,
-        v: *const VertexVec2,
-        index: usize,
-    ) -> Vec2;
-    pub fn ufbx_catch_get_vertex_vec3(
-        panic: *mut Panic,
-        v: *const VertexVec3,
-        index: usize,
-    ) -> Vec3;
-    pub fn ufbx_catch_get_vertex_vec4(
-        panic: *mut Panic,
-        v: *const VertexVec4,
-        index: usize,
-    ) -> Vec4;
-    pub fn ufbx_catch_get_vertex_w_vec3(
-        panic: *mut Panic,
-        v: *const VertexVec3,
-        index: usize,
-    ) -> Real;
-    pub fn ufbx_as_unknown(element: *const Element) -> *mut Unknown;
-    pub fn ufbx_as_node(element: *const Element) -> *mut Node;
-    pub fn ufbx_as_mesh(element: *const Element) -> *mut Mesh;
-    pub fn ufbx_as_light(element: *const Element) -> *mut Light;
-    pub fn ufbx_as_camera(element: *const Element) -> *mut Camera;
-    pub fn ufbx_as_bone(element: *const Element) -> *mut Bone;
-    pub fn ufbx_as_empty(element: *const Element) -> *mut Empty;
-    pub fn ufbx_as_line_curve(element: *const Element) -> *mut LineCurve;
-    pub fn ufbx_as_nurbs_curve(element: *const Element) -> *mut NurbsCurve;
-    pub fn ufbx_as_nurbs_surface(element: *const Element) -> *mut NurbsSurface;
-    pub fn ufbx_as_nurbs_trim_surface(element: *const Element) -> *mut NurbsTrimSurface;
-    pub fn ufbx_as_nurbs_trim_boundary(element: *const Element) -> *mut NurbsTrimBoundary;
-    pub fn ufbx_as_procedural_geometry(element: *const Element) -> *mut ProceduralGeometry;
-    pub fn ufbx_as_stereo_camera(element: *const Element) -> *mut StereoCamera;
-    pub fn ufbx_as_camera_switcher(element: *const Element) -> *mut CameraSwitcher;
-    pub fn ufbx_as_marker(element: *const Element) -> *mut Marker;
-    pub fn ufbx_as_lod_group(element: *const Element) -> *mut LodGroup;
-    pub fn ufbx_as_skin_deformer(element: *const Element) -> *mut SkinDeformer;
-    pub fn ufbx_as_skin_cluster(element: *const Element) -> *mut SkinCluster;
-    pub fn ufbx_as_blend_deformer(element: *const Element) -> *mut BlendDeformer;
-    pub fn ufbx_as_blend_channel(element: *const Element) -> *mut BlendChannel;
-    pub fn ufbx_as_blend_shape(element: *const Element) -> *mut BlendShape;
-    pub fn ufbx_as_cache_deformer(element: *const Element) -> *mut CacheDeformer;
-    pub fn ufbx_as_cache_file(element: *const Element) -> *mut CacheFile;
-    pub fn ufbx_as_material(element: *const Element) -> *mut Material;
-    pub fn ufbx_as_texture(element: *const Element) -> *mut Texture;
-    pub fn ufbx_as_video(element: *const Element) -> *mut Video;
-    pub fn ufbx_as_shader(element: *const Element) -> *mut Shader;
-    pub fn ufbx_as_shader_binding(element: *const Element) -> *mut ShaderBinding;
-    pub fn ufbx_as_anim_stack(element: *const Element) -> *mut AnimStack;
-    pub fn ufbx_as_anim_layer(element: *const Element) -> *mut AnimLayer;
-    pub fn ufbx_as_anim_value(element: *const Element) -> *mut AnimValue;
-    pub fn ufbx_as_anim_curve(element: *const Element) -> *mut AnimCurve;
-    pub fn ufbx_as_display_layer(element: *const Element) -> *mut DisplayLayer;
-    pub fn ufbx_as_selection_set(element: *const Element) -> *mut SelectionSet;
-    pub fn ufbx_as_selection_node(element: *const Element) -> *mut SelectionNode;
-    pub fn ufbx_as_character(element: *const Element) -> *mut Character;
-    pub fn ufbx_as_constraint(element: *const Element) -> *mut Constraint;
-    pub fn ufbx_as_audio_layer(element: *const Element) -> *mut AudioLayer;
-    pub fn ufbx_as_audio_clip(element: *const Element) -> *mut AudioClip;
-    pub fn ufbx_as_pose(element: *const Element) -> *mut Pose;
-    pub fn ufbx_as_metadata_object(element: *const Element) -> *mut MetadataObject;
-    pub fn ufbx_dom_is_array(node: *const DomNode) -> bool;
-    pub fn ufbx_dom_array_size(node: *const DomNode) -> usize;
-    pub fn ufbx_dom_as_int32_list(node: *const DomNode) -> List<i32>;
-    pub fn ufbx_dom_as_int64_list(node: *const DomNode) -> List<i64>;
-    pub fn ufbx_dom_as_float_list(node: *const DomNode) -> List<f32>;
-    pub fn ufbx_dom_as_double_list(node: *const DomNode) -> List<f64>;
-    pub fn ufbx_dom_as_real_list(node: *const DomNode) -> List<Real>;
-    pub fn ufbx_dom_as_blob_list(node: *const DomNode) -> List<Blob>;
-}
+#[allow(unused_imports)]
+pub(crate) use crate::capi::{
+    ufbx_add_blend_shape_vertex_offsets, ufbx_add_blend_vertex_offsets, ufbx_as_anim_curve,
+    ufbx_as_anim_layer, ufbx_as_anim_stack, ufbx_as_anim_value, ufbx_as_audio_clip,
+    ufbx_as_audio_layer, ufbx_as_blend_channel, ufbx_as_blend_deformer, ufbx_as_blend_shape,
+    ufbx_as_bone, ufbx_as_cache_deformer, ufbx_as_cache_file, ufbx_as_camera,
+    ufbx_as_camera_switcher, ufbx_as_character, ufbx_as_constraint, ufbx_as_display_layer,
+    ufbx_as_empty, ufbx_as_light, ufbx_as_line_curve, ufbx_as_lod_group, ufbx_as_marker,
+    ufbx_as_material, ufbx_as_mesh, ufbx_as_metadata_object, ufbx_as_node, ufbx_as_nurbs_curve,
+    ufbx_as_nurbs_surface, ufbx_as_nurbs_trim_boundary, ufbx_as_nurbs_trim_surface, ufbx_as_pose,
+    ufbx_as_procedural_geometry, ufbx_as_selection_node, ufbx_as_selection_set, ufbx_as_shader,
+    ufbx_as_shader_binding, ufbx_as_skin_cluster, ufbx_as_skin_deformer, ufbx_as_stereo_camera,
+    ufbx_as_texture, ufbx_as_unknown, ufbx_as_video, ufbx_axes_left_handed_y_up,
+    ufbx_axes_left_handed_z_up, ufbx_axes_right_handed_y_up, ufbx_axes_right_handed_z_up,
+    ufbx_bake_anim, ufbx_catch_compute_normals, ufbx_catch_compute_topology,
+    ufbx_catch_generate_normal_mapping, ufbx_catch_get_skin_vertex_matrix,
+    ufbx_catch_get_vertex_real, ufbx_catch_get_vertex_vec2, ufbx_catch_get_vertex_vec3,
+    ufbx_catch_get_vertex_vec4, ufbx_catch_get_vertex_w_vec3, ufbx_catch_get_weighted_face_normal,
+    ufbx_catch_topo_next_vertex_edge, ufbx_catch_topo_prev_vertex_edge,
+    ufbx_catch_triangulate_face, ufbx_compute_normals, ufbx_compute_topology,
+    ufbx_coordinate_axes_valid, ufbx_create_anim, ufbx_default_open_file, ufbx_dom_array_size,
+    ufbx_dom_as_blob_list, ufbx_dom_as_double_list, ufbx_dom_as_float_list, ufbx_dom_as_int32_list,
+    ufbx_dom_as_int64_list, ufbx_dom_as_real_list, ufbx_dom_find, ufbx_dom_find_len,
+    ufbx_dom_is_array, ufbx_empty_blob, ufbx_empty_string, ufbx_euler_to_quat,
+    ufbx_evaluate_anim_value_real, ufbx_evaluate_anim_value_real_flags,
+    ufbx_evaluate_anim_value_vec3, ufbx_evaluate_anim_value_vec3_flags, ufbx_evaluate_baked_quat,
+    ufbx_evaluate_baked_vec3, ufbx_evaluate_blend_weight, ufbx_evaluate_blend_weight_flags,
+    ufbx_evaluate_curve, ufbx_evaluate_curve_flags, ufbx_evaluate_nurbs_basis,
+    ufbx_evaluate_nurbs_curve, ufbx_evaluate_nurbs_surface, ufbx_evaluate_prop,
+    ufbx_evaluate_prop_flags, ufbx_evaluate_prop_flags_len, ufbx_evaluate_prop_len,
+    ufbx_evaluate_props, ufbx_evaluate_props_flags, ufbx_evaluate_scene, ufbx_evaluate_transform,
+    ufbx_evaluate_transform_flags, ufbx_find_anim_prop, ufbx_find_anim_prop_len,
+    ufbx_find_anim_props, ufbx_find_anim_stack, ufbx_find_anim_stack_len, ufbx_find_baked_element,
+    ufbx_find_baked_element_by_element_id, ufbx_find_baked_node, ufbx_find_baked_node_by_typed_id,
+    ufbx_find_blob, ufbx_find_blob_len, ufbx_find_bool, ufbx_find_bool_len, ufbx_find_element,
+    ufbx_find_element_len, ufbx_find_face_index, ufbx_find_int, ufbx_find_int_len,
+    ufbx_find_material, ufbx_find_material_len, ufbx_find_node, ufbx_find_node_len, ufbx_find_prop,
+    ufbx_find_prop_concat, ufbx_find_prop_element, ufbx_find_prop_element_len, ufbx_find_prop_len,
+    ufbx_find_prop_texture, ufbx_find_prop_texture_len, ufbx_find_real, ufbx_find_real_len,
+    ufbx_find_shader_prop, ufbx_find_shader_prop_bindings, ufbx_find_shader_prop_bindings_len,
+    ufbx_find_shader_prop_len, ufbx_find_shader_texture_input, ufbx_find_shader_texture_input_len,
+    ufbx_find_string, ufbx_find_string_len, ufbx_find_vec3, ufbx_find_vec3_len, ufbx_format_error,
+    ufbx_free_anim, ufbx_free_baked_anim, ufbx_free_geometry_cache, ufbx_free_line_curve,
+    ufbx_free_mesh, ufbx_free_scene, ufbx_generate_indices, ufbx_generate_normal_mapping,
+    ufbx_get_blend_shape_offset_index, ufbx_get_blend_shape_vertex_offset,
+    ufbx_get_blend_vertex_offset, ufbx_get_bone_pose, ufbx_get_compatible_matrix_for_normals,
+    ufbx_get_prop_element, ufbx_get_weighted_face_normal, ufbx_identity_matrix, ufbx_identity_quat,
+    ufbx_identity_transform, ufbx_inflate, ufbx_is_thread_safe, ufbx_load_file, ufbx_load_file_len,
+    ufbx_load_geometry_cache, ufbx_load_geometry_cache_len, ufbx_load_memory, ufbx_load_stdio,
+    ufbx_load_stdio_prefix, ufbx_load_stream, ufbx_load_stream_prefix, ufbx_matrix_determinant,
+    ufbx_matrix_for_normals, ufbx_matrix_invert, ufbx_matrix_mul, ufbx_matrix_to_transform,
+    ufbx_open_file, ufbx_open_file_ctx, ufbx_open_memory, ufbx_open_memory_ctx, ufbx_quat_dot,
+    ufbx_quat_fix_antipodal, ufbx_quat_mul, ufbx_quat_normalize, ufbx_quat_rotate_vec3,
+    ufbx_quat_slerp, ufbx_quat_to_euler, ufbx_read_geometry_cache_real,
+    ufbx_read_geometry_cache_vec3, ufbx_retain_anim, ufbx_retain_baked_anim,
+    ufbx_retain_geometry_cache, ufbx_retain_line_curve, ufbx_retain_mesh, ufbx_retain_scene,
+    ufbx_sample_geometry_cache_real, ufbx_sample_geometry_cache_vec3, ufbx_source_version,
+    ufbx_subdivide_mesh, ufbx_tessellate_nurbs_curve, ufbx_tessellate_nurbs_surface,
+    ufbx_thread_pool_get_user_ptr, ufbx_thread_pool_run_task, ufbx_thread_pool_set_user_ptr,
+    ufbx_topo_next_vertex_edge, ufbx_topo_prev_vertex_edge, ufbx_transform_direction,
+    ufbx_transform_position, ufbx_transform_to_matrix, ufbx_triangulate_face, ufbx_vec3_normalize,
+    ufbx_zero_vec2, ufbx_zero_vec3, ufbx_zero_vec4,
+};
 pub struct SceneRoot {
     scene: *mut Scene,
     _marker: marker::PhantomData<Scene>,
@@ -6846,72 +6277,72 @@ pub fn dom_as_blob_list<'a>(node: &DomNode) -> &'a [Blob] {
     unsafe { result.as_static_ref() }
 }
 pub fn identity_matrix() -> Matrix {
-    unsafe { ufbx_identity_matrix }
+    ufbx_identity_matrix
 }
 pub fn identity_transform() -> Transform {
-    unsafe { ufbx_identity_transform }
+    ufbx_identity_transform
 }
 pub fn zero_vec2() -> Vec2 {
-    unsafe { ufbx_zero_vec2 }
+    ufbx_zero_vec2
 }
 pub fn zero_vec3() -> Vec3 {
-    unsafe { ufbx_zero_vec3 }
+    ufbx_zero_vec3
 }
 pub fn zero_vec4() -> Vec4 {
-    unsafe { ufbx_zero_vec4 }
+    ufbx_zero_vec4
 }
 pub fn identity_quat() -> Quat {
-    unsafe { ufbx_identity_quat }
+    ufbx_identity_quat
 }
 pub fn axes_right_handed_y_up() -> CoordinateAxes {
-    unsafe { ufbx_axes_right_handed_y_up }
+    ufbx_axes_right_handed_y_up
 }
 pub fn axes_right_handed_z_up() -> CoordinateAxes {
-    unsafe { ufbx_axes_right_handed_z_up }
+    ufbx_axes_right_handed_z_up
 }
 pub fn axes_left_handed_y_up() -> CoordinateAxes {
-    unsafe { ufbx_axes_left_handed_y_up }
+    ufbx_axes_left_handed_y_up
 }
 pub fn axes_left_handed_z_up() -> CoordinateAxes {
-    unsafe { ufbx_axes_left_handed_z_up }
+    ufbx_axes_left_handed_z_up
 }
 pub fn source_version() -> u32 {
-    unsafe { ufbx_source_version }
+    ufbx_source_version
 }
 
 impl Vec2 {
     pub fn zero() -> Vec2 {
-        unsafe { ufbx_zero_vec2 }
+        ufbx_zero_vec2
     }
 }
 
 impl Vec3 {
     pub fn zero() -> Vec3 {
-        unsafe { ufbx_zero_vec3 }
+        ufbx_zero_vec3
     }
 }
 
 impl Vec4 {
     pub fn zero() -> Vec4 {
-        unsafe { ufbx_zero_vec4 }
+        ufbx_zero_vec4
     }
 }
 
 impl Quat {
     pub fn identity() -> Quat {
-        unsafe { ufbx_identity_quat }
+        ufbx_identity_quat
     }
 }
 
 impl Transform {
     pub fn identity() -> Transform {
-        unsafe { ufbx_identity_transform }
+        ufbx_identity_transform
     }
 }
 
 impl Matrix {
     pub fn identity() -> Matrix {
-        unsafe { ufbx_identity_matrix }
+        ufbx_identity_matrix
     }
 }
 
@@ -6991,16 +6422,16 @@ impl Mesh {
 
 impl CoordinateAxes {
     pub fn right_handed_y_up() -> CoordinateAxes {
-        unsafe { ufbx_axes_right_handed_y_up }
+        ufbx_axes_right_handed_y_up
     }
     pub fn right_handed_z_up() -> CoordinateAxes {
-        unsafe { ufbx_axes_right_handed_z_up }
+        ufbx_axes_right_handed_z_up
     }
     pub fn left_handed_y_up() -> CoordinateAxes {
-        unsafe { ufbx_axes_left_handed_y_up }
+        ufbx_axes_left_handed_y_up
     }
     pub fn left_handed_z_up() -> CoordinateAxes {
-        unsafe { ufbx_axes_left_handed_z_up }
+        ufbx_axes_left_handed_z_up
     }
 }
 
