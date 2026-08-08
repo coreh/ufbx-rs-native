@@ -1417,7 +1417,7 @@ async def main():
             targets = await gather(run_tasks)
 
     if "readme" in tests:
-        log_comment("-- Compiling and running README.md --")
+        log_comment("-- Compiling and running README-C.md --")
 
         prologue = """
             #include <stdio.h>
@@ -1441,7 +1441,7 @@ async def main():
                 print(line.strip(), file=outf)
 
             in_c = False
-            with open("README.md", "rt") as inf:
+            with open("README-C.md", "rt") as inf:
                 for line in inf:
                     if line.strip() == "```c":
                         in_c = True

@@ -48,5 +48,6 @@
 |---|---|---|
 | `misc/run_tests.py` | `--rust-lib` flag + `apply_rust_lib()` + hash_scene EXTERNAL_UFBX wiring | maybe |
 | `test/hash_scene.c` | trailing `#include "../ufbx.c"` wrapped in `#ifndef EXTERNAL_UFBX` (mirrors `check_fbx.c`) | yes |
+| `README.md` → `README-C.md` | upstream readme moved (fork has its own `README.md`); `run_tests.py` readme target follows the move. On sync: verify git routes upstream README edits to `README-C.md` (raise `-X find-renames=70%` if mis-routed) | no |
 
 Everything else added by this fork lives under `rust/`, `PORTING.md`, `UPSTREAM.md`.
