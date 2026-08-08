@@ -8,13 +8,13 @@
 #
 # Requires: rustup nightly toolchain + cargo-public-api.
 # Refresh the expectations after an intentional API change with:
-#   cargo public-api -p ufbx diff 0.11.2 | grep '^[+-]' | sort \
+#   cargo public-api -p ufbx --simplified diff 0.11.2 | grep '^[+-]' | sort \
 #     > rust/tools/api/expected-divergences.txt
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 cd rust
-cargo public-api -p ufbx diff 0.11.2 | grep '^[+-]' | sort > /tmp/api_divergences_actual.txt
+cargo public-api -p ufbx --simplified diff 0.11.2 | grep '^[+-]' | sort > /tmp/api_divergences_actual.txt
 cd ..
 
 if diff -u rust/tools/api/expected-divergences.txt /tmp/api_divergences_actual.txt; then
