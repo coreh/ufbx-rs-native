@@ -1631,11 +1631,11 @@ unsafe fn ascii_parse_node_rec(
                 b'c' => {
                     let v: *mut u8 = push::<u8>(&raw mut (*uc).tmp_stack, 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    // C-parity: C's `(uint8_t)val` on a `double` is UB out of range and
-                    // truncates mod 256 on the x86-64 oracle; Rust `as` saturates. Known,
-                    // accepted divergence (PORTING.md "Integer semantics", float-operand
-                    // cast row) — same class as the `ufbxi_cast_*` appliers in parse_binary.
-                    *v = val as u8;
+                    // C-parity: C's `(uint8_t)val` on a `double` is UB out of range; the
+                    // x86-64 oracle emits convert-to-wide-then-narrow (mod 256). `as i64
+                    // as u8` reproduces it; residual divergence only at |val| >= 2^63/NaN
+                    // (PORTING.md "Integer semantics", float-operand cast row).
+                    *v = val as i64 as u8;
                 }
                 b'i' => {
                     let v: *mut i32 = push::<i32>(&raw mut (*uc).tmp_stack, 1);

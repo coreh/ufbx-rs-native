@@ -55,13 +55,16 @@ use crate::prelude::String;
 // tokens, and a closure cannot be generic over the source type, so each C cast
 // operand becomes one of these `macro_rules!` appliers, passed by ident.
 //
-// C-parity: `(uint8_t)`/`(int32_t)`/`(int64_t)` applied to a float operand is
-// undefined behavior in C when the value is out of range; Rust `as` saturates
-// (the AArch64 behavior). Same known, accepted divergence class as
-// `ufbxi_f64_to_i64` (PORTING.md "Integer semantics").
+// C-parity: `(uint8_t)` applied to a float operand is undefined behavior in C
+// when the value is out of range; clang (the oracle build) emits
+// convert-to-wide-int-then-narrow (`cvttsd2si` + low byte), i.e. modulo-2^8.
+// `as i64 as u8` reproduces that exact sequence — for integer operands the
+// extra widening is a no-op (same modulo narrowing either way). Residual
+// divergence only for |val| >= 2^63 / NaN, the same narrow class as the
+// `ufbxi_f64_to_i64` boundary row (PORTING.md "Integer semantics").
 macro_rules! ufbxi_cast_u8 {
     ($e:expr) => {
-        $e as u8
+        $e as i64 as u8
     };
 }
 macro_rules! ufbxi_cast_i32 {
