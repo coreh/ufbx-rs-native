@@ -1290,7 +1290,7 @@ def emit_flag(re: RustEnum):
     # `flags |= ((uint32_t)(next - '0') & 0xf) << 4;` ufbx.c:11818, then
     # `prop->flags = (ufbx_prop_flags)flags;` ufbx.c:11866). The port needs the
     # same u32 arithmetic; `pub(crate)` keeps the public surface unchanged.
-    # Registered in rust/ufbx/COMPAT.md §1.
+    # Registered in COMPAT.md §1.
     emit("#[allow(dead_code)] pub(crate) const fn from_raw(bits: u32) -> Self { Self(bits) }")
     emit("#[allow(dead_code)] pub(crate) const fn raw(self) -> u32 { self.0 }")
     unindent()
