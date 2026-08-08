@@ -233,9 +233,10 @@ pub(crate) unsafe fn panicf_imp(panic: *mut Panic, fmt: *const u8, args: &[Print
     }
 
     if !panic.is_null() {
-        (*panic).did_panic = true;
-        let message = (*panic).message_buf.data.as_mut_ptr() as *mut u8;
-        (*panic).message_length = vsnprintf(message, PANIC_MESSAGE_LENGTH, fmt, args) as usize;
+        let panic = &mut *panic;
+        panic.did_panic = true;
+        let message = panic.message_buf.data.as_mut_ptr() as *mut u8;
+        panic.message_length = vsnprintf(message, PANIC_MESSAGE_LENGTH, fmt, args) as usize;
     } else {
         let mut message = [0u8; PANIC_MESSAGE_LENGTH];
         vsnprintf(message.as_mut_ptr(), PANIC_MESSAGE_LENGTH, fmt, args);
@@ -308,10 +309,11 @@ pub(crate) unsafe fn fail_imp_err(
     func: *const u8,
     line: u32,
 ) -> i32 {
+    let err = &mut *err;
     if !cond.is_null() && *cond == b'$' {
-        if (*err).description.data.is_null() {
-            (*err).description.data = cond.add(1);
-            (*err).description.length = strlen((*err).description.data);
+        if err.description.data.is_null() {
+            err.description.data = cond.add(1);
+            err.description.length = strlen(err.description.data);
         }
 
         #[cfg(feature = "error-stack")]
@@ -327,10 +329,10 @@ pub(crate) unsafe fn fail_imp_err(
     {
         ufbx_assert!(!cond.is_null());
         ufbx_assert!(!func.is_null());
-        if ((*err).stack_size as usize) < ERROR_STACK_MAX_DEPTH {
+        if (err.stack_size as usize) < ERROR_STACK_MAX_DEPTH {
             // C: `&err->stack[err->stack_size++]` — decomposed.
-            let frame: *mut ErrorFrame = &mut (*err).stack[(*err).stack_size as usize];
-            (*err).stack_size += 1;
+            let frame: *mut ErrorFrame = &mut err.stack[err.stack_size as usize];
+            err.stack_size += 1;
             (*frame).description.data = cond;
             (*frame).description.length = strlen(cond);
             (*frame).function.data = func;
@@ -421,15 +423,16 @@ pub(crate) unsafe fn set_err_info(err: *mut Error, data: *const u8, mut length: 
         return;
     }
 
+    let err = &mut *err;
     if length == usize::MAX {
         length = strlen(data);
     }
-    let info = (*err).info_buf.data.as_mut_ptr() as *mut u8;
+    let info = err.info_buf.data.as_mut_ptr() as *mut u8;
     let to_copy = min_sz(ERROR_INFO_LENGTH - 1, length);
     core::ptr::copy_nonoverlapping(data, info, to_copy);
     *info.add(to_copy) = b'\0';
-    (*err).info_length = to_copy;
-    clean_string_utf8(info, (*err).info_length);
+    err.info_length = to_copy;
+    clean_string_utf8(info, err.info_length);
 }
 
 // ufbx.c:3510-3519 `ufbxi_fmt_err_info` (variadic entry point — see
@@ -441,9 +444,10 @@ pub(crate) unsafe fn fmt_err_info(err: *mut Error, fmt: *const u8, args: &[Print
         return;
     }
 
-    let info = (*err).info_buf.data.as_mut_ptr() as *mut u8;
-    (*err).info_length = vsnprintf(info, ERROR_INFO_LENGTH, fmt, args) as usize;
-    clean_string_utf8(info, (*err).info_length);
+    let err = &mut *err;
+    let info = err.info_buf.data.as_mut_ptr() as *mut u8;
+    err.info_length = vsnprintf(info, ERROR_INFO_LENGTH, fmt, args) as usize;
+    clean_string_utf8(info, err.info_length);
 }
 
 // Call-site wrapper building the `&[PrintArg]` argument pack.
@@ -462,12 +466,13 @@ pub(crate) unsafe fn clear_error(err: *mut Error) {
         return;
     }
 
-    (*err).type_ = ErrorType::None;
-    (*err).description.data = EMPTY_CHAR.as_ptr();
-    (*err).description.length = 0;
-    (*err).stack_size = 0;
-    *((*err).info_buf.data.as_mut_ptr() as *mut u8) = b'\0';
-    (*err).info_length = 0;
+    let err = &mut *err;
+    err.type_ = ErrorType::None;
+    err.description.data = EMPTY_CHAR.as_ptr();
+    err.description.length = 0;
+    err.stack_size = 0;
+    *(err.info_buf.data.as_mut_ptr() as *mut u8) = b'\0';
+    err.info_length = 0;
 }
 
 // ufbx.c:3532-3541
@@ -924,56 +929,57 @@ pub(crate) unsafe fn fix_error_type(
     default_desc: *const u8,
     p_error: *mut Error,
 ) {
-    let mut desc = (*error).description.data;
+    let error = &mut *error;
+    let mut desc = error.description.data;
     if desc.is_null() {
         desc = default_desc;
     }
-    (*error).type_ = ErrorType::Unknown;
+    error.type_ = ErrorType::Unknown;
     if strcmp(desc, b"Out of memory\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::OutOfMemory;
+        error.type_ = ErrorType::OutOfMemory;
     } else if strcmp(desc, b"Memory limit exceeded\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::MemoryLimit;
+        error.type_ = ErrorType::MemoryLimit;
     } else if strcmp(desc, b"Allocation limit exceeded\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::AllocationLimit;
+        error.type_ = ErrorType::AllocationLimit;
     } else if strcmp(desc, b"Truncated file\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::TruncatedFile;
+        error.type_ = ErrorType::TruncatedFile;
     } else if strcmp(desc, b"IO error\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::Io;
+        error.type_ = ErrorType::Io;
     } else if strcmp(desc, b"Cancelled\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::Cancelled;
+        error.type_ = ErrorType::Cancelled;
     } else if strcmp(desc, b"Unrecognized file format\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::UnrecognizedFileFormat;
+        error.type_ = ErrorType::UnrecognizedFileFormat;
     } else if strcmp(desc, b"File not found\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::FileNotFound;
+        error.type_ = ErrorType::FileNotFound;
     } else if strcmp(desc, b"Empty file\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::EmptyFile;
+        error.type_ = ErrorType::EmptyFile;
     } else if strcmp(desc, b"External file not found\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::ExternalFileNotFound;
+        error.type_ = ErrorType::ExternalFileNotFound;
     } else if strcmp(desc, b"Uninitialized options\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::UninitializedOptions;
+        error.type_ = ErrorType::UninitializedOptions;
     } else if strcmp(desc, b"Zero vertex size\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::ZeroVertexSize;
+        error.type_ = ErrorType::ZeroVertexSize;
     } else if strcmp(desc, b"Truncated vertex stream\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::TruncatedVertexStream;
+        error.type_ = ErrorType::TruncatedVertexStream;
     } else if strcmp(desc, b"Invalid UTF-8\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::InvalidUtf8;
+        error.type_ = ErrorType::InvalidUtf8;
     } else if strcmp(desc, b"Feature disabled\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::FeatureDisabled;
+        error.type_ = ErrorType::FeatureDisabled;
     } else if strcmp(desc, b"Bad NURBS geometry\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::BadNurbs;
+        error.type_ = ErrorType::BadNurbs;
     } else if strcmp(desc, b"Bad index\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::BadIndex;
+        error.type_ = ErrorType::BadIndex;
     } else if strcmp(desc, b"Node depth limit exceeded\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::NodeDepthLimit;
+        error.type_ = ErrorType::NodeDepthLimit;
     } else if strcmp(desc, b"Threaded ASCII parse error\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::ThreadedAsciiParse;
+        error.type_ = ErrorType::ThreadedAsciiParse;
     } else if strcmp(desc, b"Unsafe options\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::UnsafeOptions;
+        error.type_ = ErrorType::UnsafeOptions;
     } else if strcmp(desc, b"Duplicate override\0".as_ptr()) == 0 {
-        (*error).type_ = ErrorType::DuplicateOverride;
+        error.type_ = ErrorType::DuplicateOverride;
     }
-    (*error).description.data = desc;
-    (*error).description.length = strlen(desc);
+    error.description.data = desc;
+    error.description.length = strlen(desc);
     if !p_error.is_null() {
         // memcpy(p_error, error, sizeof(ufbx_error));
         core::ptr::copy_nonoverlapping(error as *const Error, p_error, 1);
@@ -988,9 +994,10 @@ pub(crate) unsafe fn fix_error_type(
 pub(crate) unsafe fn uninitialized_options(p_error: *mut Error) -> *mut core::ffi::c_void {
     if !p_error.is_null() {
         core::ptr::write_bytes(p_error as *mut u8, 0, core::mem::size_of::<Error>());
-        (*p_error).type_ = ErrorType::UninitializedOptions;
-        (*p_error).description.data = b"Uninitialized options\0".as_ptr();
-        (*p_error).description.length = strlen(b"Uninitialized options\0".as_ptr());
+        let p_error = &mut *p_error;
+        p_error.type_ = ErrorType::UninitializedOptions;
+        p_error.description.data = b"Uninitialized options\0".as_ptr();
+        p_error.description.length = strlen(b"Uninitialized options\0".as_ptr());
     }
     core::ptr::null_mut()
 }
