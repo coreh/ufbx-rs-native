@@ -3,7 +3,8 @@
 //! `// -- FBX value type information` (ufbx.c:7684-7709),
 //! `// -- Node operations` (ufbx.c:7711-7877) and
 //! `// -- Element extra data allocation` (ufbx.c:7879-7907) and
-//! `// -- Parsing state machine` (ufbx.c:7909-8606) banner sections.
+//! `// -- Parsing state machine` (ufbx.c:7909-8606) and
+//! `// -- DOM retention` (ufbx.c:10696-10854) banner sections.
 //!
 //! This unit owns the internal parse-time type definitions (`ufbxi_node`,
 //! `ufbxi_refcount`, `ufbxi_scene_imp`/`ufbxi_mesh_imp`, `ufbxi_ascii`, the
@@ -29,21 +30,23 @@ use core::ffi::c_void;
 use core::mem::size_of;
 
 use crate::generated::{
-    DomNode, ElementType, Error, Exporter, InflateRetain, Matrix, MirrorAxis, Progress,
-    ProgressResult, Props, RawLoadOpts, Scene,
+    DomNode, DomValue, DomValueType, ElementType, Error, Exporter, InflateRetain, Matrix,
+    MirrorAxis, Progress, ProgressResult, Props, RawLoadOpts, Scene,
 };
 use crate::native::allocator::{grow_array, Allocator};
-use crate::native::buf::{push_size_zero, Buf};
-use crate::native::error::{strcmp, strncmp, ufbxi_check_msg, ufbxi_check_return, Fail};
-use crate::native::hash::{Map, PtrId};
+use crate::native::buf::{push_copy, push_pop, push_size_zero, push_zero, Buf};
+use crate::native::error::{
+    strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail, Fail, EMPTY_CHAR,
+};
+use crate::native::hash::{hash_uptr, map_find, map_insert, Map, PtrId};
 use crate::native::platform::{
-    to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable, AtomicCounter,
+    to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_ignore, ufbxi_unreachable, AtomicCounter,
 };
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{SanitizedString, StringPool};
 use crate::native::thread::{ThreadPool, THREAD_GROUP_COUNT};
 use crate::native::warnings::Warnings;
-use crate::prelude::{Blob, Real, String};
+use crate::prelude::{Blob, Real, Ref, String};
 
 // ufbx.h:744 `UFBX_ENUM_TYPE(ufbx_element_type, UFBX_ELEMENT_TYPE, UFBX_ELEMENT_METADATA_OBJECT);`
 // expanding via ufbx.h:235-236 to `enum { UFBX_ELEMENT_TYPE_COUNT = UFBX_ELEMENT_METADATA_OBJECT + 1 }`.
@@ -56,6 +59,11 @@ pub(crate) const ELEMENT_TYPE_COUNT: usize = ElementType::MetadataObject as usiz
 // override) — owned here as the `ufbxi_node`/`ufbxi_value` unit uses it
 // (ufbx.c:7733) and the parsers index `vals` against it.
 pub(crate) const MAX_NON_ARRAY_VALUES: usize = 8;
+
+// ufbx.c:52 `#define UFBXI_MAX_NODE_DEPTH 32` — owned here alongside
+// `MAX_NON_ARRAY_VALUES`; both binary and ASCII node parsers bound their
+// recursion with it.
+pub(crate) const MAX_NODE_DEPTH: u32 = 32;
 
 // -- Type definitions
 
@@ -2324,6 +2332,269 @@ pub(crate) unsafe fn is_raw_string(
     false
 }
 
+// -- DOM retention
+
+// ufbx.c:10698-10701 `ufbxi_dom_mapping`
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct DomMapping {
+    pub node_ptr: usize,
+    pub dom_node: *mut DomNode,
+}
+
+// ufbx.c:10703-10710 `ufbxi_get_dom_node_imp`
+#[inline(never)]
+#[must_use]
+pub(crate) unsafe fn get_dom_node_imp(uc: *mut Context, node: *mut Node) -> *mut DomNode {
+    if node.is_null() {
+        return core::ptr::null_mut();
+    }
+    let mapping = DomMapping {
+        node_ptr: node as usize,
+        dom_node: core::ptr::null_mut(),
+    };
+    let hash = hash_uptr(mapping.node_ptr);
+    let result: *mut DomMapping = map_find(
+        &mut (*uc).dom_node_map,
+        hash,
+        &mapping as *const DomMapping as *const c_void,
+    );
+    if !result.is_null() {
+        (*result).dom_node
+    } else {
+        core::ptr::null_mut()
+    }
+}
+
+// ufbx.c:10712-10716 `ufbxi_get_dom_node`
+#[inline(always)]
+#[must_use]
+pub(crate) unsafe fn get_dom_node(uc: *mut Context, node: *mut Node) -> *mut DomNode {
+    if !(*uc).opts.retain_dom {
+        return core::ptr::null_mut();
+    }
+    get_dom_node_imp(uc, node)
+}
+
+// Recursion limited by check in ufbxi_[binary/ascii]_parse_node()
+// ufbx.c:10718-10811 `ufbxi_retain_dom_node`
+// `ufbxi_recursive_function(int, ufbxi_retain_dom_node, ..., UFBXI_MAX_NODE_DEPTH + 1, ...)`
+// (ufbx.c:10720-10721): under regression a thread-local depth guard wraps the
+// recursive body; otherwise the macro is empty and the wrapper is a plain call.
+#[inline(never)]
+pub(crate) unsafe fn retain_dom_node(
+    uc: *mut Context,
+    node: *mut Node,
+    p_dom_node: *mut *mut DomNode,
+) -> Result<(), Fail> {
+    #[cfg(feature = "regression")]
+    {
+        std::thread_local! {
+            static UFBXI_RECURSION_DEPTH: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+        }
+        UFBXI_RECURSION_DEPTH.with(|d| {
+            ufbx_assert!(d.get() < MAX_NODE_DEPTH + 1);
+            d.set(d.get() + 1);
+        });
+        let ret = retain_dom_node_rec(uc, node, p_dom_node);
+        UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
+        ret
+    }
+    #[cfg(not(feature = "regression"))]
+    {
+        retain_dom_node_rec(uc, node, p_dom_node)
+    }
+}
+
+#[inline(never)]
+unsafe fn retain_dom_node_rec(
+    uc: *mut Context,
+    node: *mut Node,
+    p_dom_node: *mut *mut DomNode,
+) -> Result<(), Fail> {
+    let dst: *mut DomNode = push_zero(&mut (*uc).result, 1);
+    ufbxi_check!(uc, !dst.is_null(), "dst");
+    ufbxi_check!(
+        uc,
+        !push_copy::<*mut DomNode>(&mut (*uc).tmp_dom_nodes, 1, &dst).is_null(),
+        "((ufbx_dom_node**)ufbxi_push_size_copy((&uc->tmp_dom_nodes), sizeof(ufbx_dom_node*), (1), (&dst)))"
+    );
+
+    if !p_dom_node.is_null() {
+        *p_dom_node = dst;
+    }
+
+    (*dst).name.data = (*node).name;
+    (*dst).name.length = (*node).name_len as usize;
+
+    {
+        let mapping = DomMapping {
+            node_ptr: node as usize,
+            dom_node: core::ptr::null_mut(),
+        };
+        let hash = hash_uptr(mapping.node_ptr);
+        let mut result: *mut DomMapping = map_find(
+            &mut (*uc).dom_node_map,
+            hash,
+            &mapping as *const DomMapping as *const c_void,
+        );
+        if result.is_null() {
+            result = map_insert(
+                &mut (*uc).dom_node_map,
+                hash,
+                &mapping as *const DomMapping as *const c_void,
+            );
+            ufbxi_check!(uc, !result.is_null(), "result");
+        }
+        (*result).node_ptr = node as usize;
+        (*result).dom_node = dst;
+    }
+
+    sp::push_string_place_str(&mut (*uc).string_pool, &mut (*dst).name, false)?;
+
+    if (*node).value_type_mask == ValueType::Array as u16 {
+        let arr = (*node).content.array;
+        let val: *mut DomValue = push_zero(&mut (*uc).result, 1);
+        ufbxi_check!(uc, !val.is_null(), "val");
+
+        (*dst).values.data = val;
+        (*dst).values.count = 1;
+
+        let elem_size = array_type_size((*arr).type_);
+        (*val).value_str.data = EMPTY_CHAR.as_ptr();
+        (*val).value_blob.data = (*arr).data as *const u8;
+        (*val).value_blob.size = (*arr).size.wrapping_mul(elem_size);
+        // C: `val->value_float = (double)(val->value_int = (int64_t)arr->size);`
+        (*val).value_int = (*arr).size as i64;
+        (*val).value_float = (*val).value_int as f64;
+
+        match (*arr).type_ {
+            b'c' => (*val).type_ = DomValueType::Blob,
+            b'b' => (*val).type_ = DomValueType::Blob,
+            b'i' => (*val).type_ = DomValueType::ArrayI32,
+            b'l' => (*val).type_ = DomValueType::ArrayI64,
+            b'f' => (*val).type_ = DomValueType::ArrayF32,
+            b'd' => (*val).type_ = DomValueType::ArrayF64,
+            b's' => (*val).type_ = DomValueType::ArrayBlob,
+            b'C' => (*val).type_ = DomValueType::ArrayBlob,
+            b'-' => (*val).type_ = DomValueType::ArrayIgnored,
+            _ => ufbxi_fail!(uc, "Bad array type"),
+        }
+    } else {
+        let mut ix: usize = 0;
+        while ix < MAX_NON_ARRAY_VALUES {
+            // `as i32` mirrors C's promotion of the `uint16_t` mask to `int`.
+            let mask = ((((*node).value_type_mask as i32) >> (2 * ix)) & 0x3) as u32;
+            if mask == 0 {
+                break;
+            }
+            let val: *mut DomValue = push_zero(&mut (*uc).tmp_stack, 1);
+            ufbxi_check!(uc, !val.is_null(), "val");
+            (*val).value_str.data = EMPTY_CHAR.as_ptr();
+
+            if mask == ValueType::String as u32 {
+                (*val).type_ = DomValueType::String;
+                ufbxi_ignore!(get_val_at(
+                    node,
+                    ix,
+                    b'S',
+                    &mut (*val).value_str as *mut String as *mut c_void
+                ));
+                ufbxi_ignore!(get_val_at(
+                    node,
+                    ix,
+                    b'b',
+                    &mut (*val).value_blob as *mut Blob as *mut c_void
+                ));
+            } else {
+                ufbx_assert!(mask == ValueType::Number as u32);
+                (*val).type_ = DomValueType::Number;
+                // `node->vals[ix]` reads the `vals` arm of the `ufbxi_node`
+                // union (PORTING.md "Unions"); both `i` and `f` of the
+                // `ufbxi_value` overlay are read, as in C.
+                (*val).value_int = (*(*node).content.vals.add(ix)).num.i;
+                (*val).value_float = (*(*node).content.vals.add(ix)).num.f;
+            }
+
+            ix += 1;
+        }
+
+        (*dst).values.count = ix;
+        (*dst).values.data = push_pop::<DomValue>(&mut (*uc).result, &mut (*uc).tmp_stack, ix);
+        ufbxi_check!(uc, !(*dst).values.data.is_null(), "dst->values.data");
+    }
+
+    if (*node).num_children > 0 {
+        // ufbxi_for(ufbxi_node, child, node->children, node->num_children)
+        let mut child = (*node).children;
+        let child_end =
+            crate::native::platform::add_ptr((*node).children, (*node).num_children as usize);
+        while child != child_end {
+            retain_dom_node(uc, child, core::ptr::null_mut())?;
+            child = child.add(1);
+        }
+
+        (*dst).children.count = (*node).num_children as usize;
+        (*dst).children.data = push_pop::<*mut DomNode>(
+            &mut (*uc).result,
+            &mut (*uc).tmp_dom_nodes,
+            (*node).num_children as usize,
+        ) as *const Ref<DomNode>;
+        ufbxi_check!(uc, !(*dst).children.data.is_null(), "dst->children.data");
+    }
+
+    Ok(())
+}
+
+// ufbx.c:10813-10844 `ufbxi_retain_toplevel`
+#[inline(never)]
+pub(crate) unsafe fn retain_toplevel(uc: *mut Context, node: *mut Node) -> Result<(), Fail> {
+    if (*uc).dom_parse_num_children > 0 {
+        let children: *mut *mut DomNode = push_pop(
+            &mut (*uc).result,
+            &mut (*uc).tmp_dom_nodes,
+            (*uc).dom_parse_num_children,
+        );
+        ufbxi_check!(uc, !children.is_null(), "children");
+        (*(*uc).dom_parse_toplevel).children.data = children as *const Ref<DomNode>;
+        (*(*uc).dom_parse_toplevel).children.count = (*uc).dom_parse_num_children;
+        (*uc).dom_parse_num_children = 0;
+    }
+
+    if !node.is_null() {
+        retain_dom_node(uc, node, &mut (*uc).dom_parse_toplevel)?;
+    } else {
+        (*uc).dom_parse_toplevel = core::ptr::null_mut();
+
+        // Called with NULL argument to finish retaining DOM, collect the final nodes to `ufbx_scene`.
+        let num_top_nodes = (*uc).tmp_dom_nodes.num_items;
+        let nodes: *mut *mut DomNode =
+            push_pop(&mut (*uc).result, &mut (*uc).tmp_dom_nodes, num_top_nodes);
+        ufbxi_check!(uc, !nodes.is_null(), "nodes");
+
+        let dom_root: *mut DomNode = push_zero(&mut (*uc).result, 1);
+        ufbxi_check!(uc, !dom_root.is_null(), "dom_root");
+
+        (*dom_root).name.data = EMPTY_CHAR.as_ptr();
+        (*dom_root).children.data = nodes as *const Ref<DomNode>;
+        (*dom_root).children.count = num_top_nodes;
+
+        (*uc).scene.dom_root = Some(Ref::from_ptr(dom_root));
+    }
+
+    Ok(())
+}
+
+// ufbx.c:10846-10853 `ufbxi_retain_toplevel_child`
+#[inline(never)]
+pub(crate) unsafe fn retain_toplevel_child(uc: *mut Context, child: *mut Node) -> Result<(), Fail> {
+    ufbx_assert!(!(*uc).dom_parse_toplevel.is_null());
+    retain_dom_node(uc, child, core::ptr::null_mut())?;
+    (*uc).dom_parse_num_children = (*uc).dom_parse_num_children.wrapping_add(1);
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2715,6 +2986,117 @@ mod tests {
             let desc =
                 core::slice::from_raw_parts(uc.error.description.data, uc.error.description.length);
             assert_eq!(desc, b"Cancelled");
+        }
+    }
+
+    #[test]
+    fn test_retain_dom_node_tree() {
+        use crate::native::allocator::init_ator;
+        use crate::native::buf::buf_free;
+        use crate::native::hash::{map_cmp_uintptr, map_free, map_init};
+        use crate::native::string_pool::{map_cmp_string, string_pool_temp_free};
+
+        let mut uc: std::boxed::Box<Context> =
+            unsafe { std::boxed::Box::new_zeroed().assume_init() };
+        unsafe {
+            init_ator(
+                &mut uc.error,
+                &mut uc.ator_tmp,
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
+            init_ator(
+                &mut uc.error,
+                &mut uc.ator_result,
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
+            let ator_tmp: *mut Allocator = &mut uc.ator_tmp;
+            uc.result.ator = &mut uc.ator_result;
+            uc.tmp_stack.ator = ator_tmp;
+            uc.tmp_dom_nodes.ator = ator_tmp;
+            uc.string_pool.error = &mut uc.error;
+            uc.string_pool.buf.ator = ator_tmp;
+            uc.string_pool.initial_size = 64;
+            map_init(
+                &mut uc.string_pool.map,
+                ator_tmp,
+                map_cmp_string,
+                core::ptr::null_mut(),
+            );
+            map_init(
+                &mut uc.dom_node_map,
+                ator_tmp,
+                map_cmp_uintptr,
+                core::ptr::null_mut(),
+            );
+
+            // Root node with one number value and one array child.
+            let name_root = b"Root\0";
+            let name_leaf = b"Leaf\0";
+            let mut data: [i32; 3] = [1, 2, 3];
+            let mut array = ValueArray {
+                data: data.as_mut_ptr() as *mut c_void,
+                size: 3,
+                type_: b'i',
+            };
+            let mut leaf: Node = core::mem::zeroed();
+            leaf.name = name_leaf.as_ptr();
+            leaf.name_len = 4;
+            leaf.value_type_mask = ValueType::Array as u16;
+            leaf.content.array = &mut array;
+
+            let mut vals: [Value; 1] = [Value {
+                num: ValueNum { f: 2.0, i: 2 },
+            }];
+            let mut root: Node = core::mem::zeroed();
+            root.name = name_root.as_ptr();
+            root.name_len = 4;
+            root.value_type_mask = ValueType::Number as u16;
+            root.content.vals = vals.as_mut_ptr();
+            root.children = &mut leaf;
+            root.num_children = 1;
+
+            let uc_ptr: *mut Context = &mut *uc;
+            let mut dom: *mut DomNode = core::ptr::null_mut();
+            assert_eq!(retain_dom_node(uc_ptr, &mut root, &mut dom), Ok(()));
+            assert!(!dom.is_null());
+
+            // The node name is interned; values and children are materialized.
+            assert_eq!(
+                core::slice::from_raw_parts((*dom).name.data, (*dom).name.length),
+                b"Root"
+            );
+            assert_eq!((*dom).values.count, 1);
+            let val = (*dom).values.data;
+            assert_eq!((*val).type_ as u32, DomValueType::Number as u32);
+            assert_eq!((*val).value_int, 2);
+            assert_eq!((*val).value_float, 2.0);
+            assert_eq!((*dom).children.count, 1);
+
+            let child = *((*dom).children.data as *const *mut DomNode);
+            assert_eq!((*child).values.count, 1);
+            let cval = (*child).values.data;
+            assert_eq!((*cval).type_ as u32, DomValueType::ArrayI32 as u32);
+            assert_eq!((*cval).value_int, 3);
+            assert_eq!((*cval).value_blob.size, 3 * size_of::<i32>());
+
+            // `ufbxi_get_dom_node` is gated on `opts.retain_dom`; the mapping
+            // itself is populated regardless.
+            assert!(get_dom_node(uc_ptr, &mut root).is_null());
+            uc.opts.retain_dom = true;
+            assert_eq!(get_dom_node(uc_ptr, &mut root), dom);
+            assert_eq!(get_dom_node(uc_ptr, &mut leaf), child);
+            assert!(get_dom_node(uc_ptr, core::ptr::null_mut()).is_null());
+
+            buf_free(&mut uc.result);
+            buf_free(&mut uc.tmp_stack);
+            buf_free(&mut uc.tmp_dom_nodes);
+            buf_free(&mut uc.string_pool.buf);
+            string_pool_temp_free(&mut uc.string_pool);
+            map_free(&mut uc.dom_node_map);
+            assert_eq!(uc.ator_tmp.current_size, 0);
+            assert_eq!(uc.ator_result.current_size, 0);
         }
     }
 }

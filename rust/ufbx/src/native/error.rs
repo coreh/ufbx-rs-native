@@ -108,6 +108,19 @@ pub(crate) unsafe fn memcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
     0
 }
 
+// C `memchr` semantics: return a pointer to the first occurrence of `c` in the
+// first `n` bytes of `s`, or NULL if there is none.
+pub(crate) unsafe fn memchr(s: *const u8, c: u8, n: usize) -> *const u8 {
+    let mut i: usize = 0;
+    while i < n {
+        if *s.add(i) == c {
+            return s.add(i);
+        }
+        i += 1;
+    }
+    core::ptr::null()
+}
+
 // C `strncmp` semantics: compare at most `n` bytes as unsigned chars, stopping
 // at the first NUL; returns the difference at the first mismatch (only the
 // ==0 / !=0 result is consumed in ufbx.c).

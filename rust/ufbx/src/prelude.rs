@@ -71,7 +71,10 @@ impl<T> Index<usize> for List<T> {
 
 #[repr(C)]
 pub struct RefList<T> {
-    data: *const Ref<T>,
+    // pub(crate): the native DOM-retention port writes `data` directly from a
+    // `ufbxi_push_pop` result (C: `dst->children.data = ufbxi_push_pop(...)`);
+    // still private outside the crate.
+    pub(crate) data: *const Ref<T>,
     pub count: usize,
     _marker: PhantomData<T>,
 }
@@ -128,6 +131,18 @@ impl<T> Index<usize> for RefList<T> {
 pub struct Ref<T> {
     ptr: NonNull<T>,
     _marker: PhantomData<T>,
+}
+
+impl<T> Ref<T> {
+    // pub(crate): the native port stores raw result-buffer pointers into
+    // `ufbx_*` reference fields (C: `uc->scene.dom_root = dom_root;`); the
+    // pointer is null-checked by the surrounding `ufbxi_check` first.
+    pub(crate) unsafe fn from_ptr(ptr: *mut T) -> Ref<T> {
+        Ref {
+            ptr: NonNull::new_unchecked(ptr),
+            _marker: PhantomData,
+        }
+    }
 }
 
 impl<T> AsRef<T> for Ref<T> {
