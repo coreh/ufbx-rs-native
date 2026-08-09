@@ -3569,7 +3569,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
         core::ptr::copy_nonoverlapping(opts, &mut (*tc.get()).opts, 1);
     }
 
-    (*tc.get()).curve = curve;
+    tc.set_curve(curve);
 
     // C: `int ok = ufbxi_tessellate_nurbs_curve_imp(&tc);`
     let ok: bool = tessellate_nurbs_curve_imp(&tc).is_ok();
