@@ -3569,11 +3569,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
         let imp: *mut LineCurveImp = tc.imp();
         &raw mut (*imp).curve
     } else {
-        fix_error_type(
-            &mut (*tc.get()).error,
-            b"Failed to tessellate\0".as_ptr(),
-            error,
-        );
+        fix_error_type(tc.error_mut(), b"Failed to tessellate\0".as_ptr(), error);
         buf_free(&mut (*tc.get()).result);
         free_ator(&mut (*tc.get()).ator_result);
         core::ptr::null_mut()
@@ -3637,11 +3633,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
         let imp: *mut MeshImp = tc.imp();
         &raw mut (*imp).mesh
     } else {
-        fix_error_type(
-            &mut (*tc.get()).error,
-            b"Failed to tessellate\0".as_ptr(),
-            error,
-        );
+        fix_error_type(tc.error_mut(), b"Failed to tessellate\0".as_ptr(), error);
         buf_free(&mut (*tc.get()).result);
         free_ator(&mut (*tc.get()).ator_result);
         core::ptr::null_mut()

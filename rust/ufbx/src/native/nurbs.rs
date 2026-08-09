@@ -168,6 +168,14 @@ impl TessellateCurveContext {
         self.0.get().cast()
     }
 
+    // `error` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn error_mut(&self) -> *mut Error {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).error }
+    }
+
     // `imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn imp(&self) -> *mut LineCurveImp {
@@ -240,6 +248,14 @@ impl TessellateSurfaceContext {
         self.0.get().cast()
     }
 
+    // `error` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn error_mut(&self) -> *mut Error {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).error }
+    }
+
     // `imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn imp(&self) -> *mut MeshImp {
@@ -285,20 +301,20 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
     let curve: *const NurbsCurve = tc.curve();
     let line: *mut LineCurve = &mut (*tc.get()).line;
     ufbxi_check_err_msg!(
-        &mut (*tc.get()).error,
+        tc.error_mut(),
         (*curve).basis.valid && (*curve).control_points.count > 0,
         "Bad NURBS geometry",
         "curve->basis.valid && curve->control_points.count > 0"
     );
 
     init_ator(
-        &mut (*tc.get()).error,
+        tc.error_mut(),
         &mut (*tc.get()).ator_tmp,
         &(*tc.get()).opts.temp_allocator,
         b"temp\0".as_ptr(),
     );
     init_ator(
-        &mut (*tc.get()).error,
+        tc.error_mut(),
         &mut (*tc.get()).ator_result,
         &(*tc.get()).opts.result_allocator,
         b"result\0".as_ptr(),
@@ -314,7 +330,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
         let over_spans: usize = num_spans.wrapping_mul(2).wrapping_mul(size_of::<Real>());
         let over: usize = over_spans.wrapping_mul(num_sub);
         ufbxi_check_err!(
-            &mut (*tc.get()).error,
+            tc.error_mut(),
             !does_overflow(over, over_spans, num_sub),
             "!ufbxi_does_overflow(over, over_spans, num_sub)"
         );
@@ -329,7 +345,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
     );
     let num_vertices: usize = num_indices.wrapping_sub(if is_open { 0 } else { 1 });
     ufbxi_check_err!(
-        &mut (*tc.get()).error,
+        tc.error_mut(),
         num_indices <= i32::MAX as usize,
         "num_indices <= INT32_MAX"
     );
@@ -338,7 +354,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
     let vertices: *mut Vec3 = push::<Vec3>(&mut (*tc.get()).result, num_vertices);
     let segments: *mut LineSegment = push::<LineSegment>(&mut (*tc.get()).result, 1);
     ufbxi_check_err!(
-        &mut (*tc.get()).error,
+        tc.error_mut(),
         !indices.is_null() && !vertices.is_null() && !segments.is_null(),
         "indices && vertices && segments"
     );
@@ -388,7 +404,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
     line.from_tessellated_nurbs = true;
 
     tc.set_imp(push::<LineCurveImp>(&mut (*tc.get()).result, 1));
-    ufbxi_check_err!(&mut (*tc.get()).error, !tc.imp().is_null(), "tc->imp");
+    ufbxi_check_err!(tc.error_mut(), !tc.imp().is_null(), "tc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&LineCurve` pointer via exposed provenance.
@@ -434,7 +450,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     let surface: *const NurbsSurface = tc.surface();
     let mesh: *mut Mesh = &mut (*tc.get()).mesh;
     ufbxi_check_err_msg!(
-        &mut (*tc.get()).error,
+        tc.error_mut(),
         (*surface).basis_u.valid
             && (*surface).basis_v.valid
             && (*surface).num_control_points_u > 0
@@ -444,13 +460,13 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     );
 
     init_ator(
-        &mut (*tc.get()).error,
+        tc.error_mut(),
         &mut (*tc.get()).ator_tmp,
         &(*tc.get()).opts.temp_allocator,
         b"temp\0".as_ptr(),
     );
     init_ator(
-        &mut (*tc.get()).error,
+        tc.error_mut(),
         &mut (*tc.get()).ator_result,
         &(*tc.get()).opts.result_allocator,
         b"result\0".as_ptr(),
@@ -476,17 +492,17 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
         let over_v: usize = over_spans_v.wrapping_mul(sub_v);
         let over_uv: usize = over_u.wrapping_mul(over_v);
         ufbxi_check_err!(
-            &mut (*tc.get()).error,
+            tc.error_mut(),
             !does_overflow(over_u, over_spans_u, sub_u),
             "!ufbxi_does_overflow(over_u, over_spans_u, sub_u)"
         );
         ufbxi_check_err!(
-            &mut (*tc.get()).error,
+            tc.error_mut(),
             !does_overflow(over_v, over_spans_v, sub_v),
             "!ufbxi_does_overflow(over_v, over_spans_v, sub_v)"
         );
         ufbxi_check_err!(
-            &mut (*tc.get()).error,
+            tc.error_mut(),
             !does_overflow(over_uv, over_u, over_v),
             "!ufbxi_does_overflow(over_uv, over_u, over_v)"
         );
@@ -503,7 +519,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     let num_faces: usize = faces_u.wrapping_mul(faces_v);
     let num_indices: usize = indices_u.wrapping_mul(indices_v);
     ufbxi_check_err!(
-        &mut (*tc.get()).error,
+        tc.error_mut(),
         num_indices <= i32::MAX as usize,
         "num_indices <= INT32_MAX"
     );
@@ -515,7 +531,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     let mut tangents: *mut Vec3 = push::<Vec3>(&mut (*tc.get()).result, num_indices + 1);
     let mut bitangents: *mut Vec3 = push::<Vec3>(&mut (*tc.get()).result, num_indices + 1);
     ufbxi_check_err!(
-        &mut (*tc.get()).error,
+        tc.error_mut(),
         !position_ix.is_null() && !uvs.is_null() && !tangents.is_null() && !bitangents.is_null(),
         "position_ix && uvs && tangents && bitangents"
     );
@@ -642,7 +658,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     let vertex_ix: *mut u32 = push::<u32>(&mut (*tc.get()).result, num_faces.wrapping_mul(4));
     let attrib_ix: *mut u32 = push::<u32>(&mut (*tc.get()).result, num_faces.wrapping_mul(4));
     ufbxi_check_err!(
-        &mut (*tc.get()).error,
+        tc.error_mut(),
         !faces.is_null() && !vertex_ix.is_null() && !attrib_ix.is_null(),
         "faces && vertex_ix && attrib_ix"
     );
@@ -690,7 +706,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     }
 
     ufbxi_check_err!(
-        &mut (*tc.get()).error,
+        tc.error_mut(),
         !positions.is_null() && !normals.is_null(),
         "positions && normals"
     );
@@ -752,13 +768,13 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
         (*mesh).face_material.data =
             push_zero::<u32>(&mut (*tc.get()).result, num_faces) as *const u32;
         ufbxi_check_err!(
-            &mut (*tc.get()).error,
+            tc.error_mut(),
             !(*mesh).face_material.data.is_null(),
             "mesh->face_material.data"
         );
 
         let mat: *mut *mut Material = push_zero::<*mut Material>(&mut (*tc.get()).result, 1);
-        ufbxi_check_err!(&mut (*tc.get()).error, !mat.is_null(), "mat");
+        ufbxi_check_err!(tc.error_mut(), !mat.is_null(), "mat");
 
         *mat = opt_ptr(&(*surface).material);
         (*mesh).materials.data = mat as *const Ref<Material>;
@@ -770,14 +786,14 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
         (*mesh).material_parts.data =
             push_zero::<MeshPart>(&mut (*tc.get()).result, 1) as *const MeshPart;
         ufbxi_check_err!(
-            &mut (*tc.get()).error,
+            tc.error_mut(),
             !(*mesh).material_parts.data.is_null(),
             "mesh->material_parts.data"
         );
     }
 
-    finalize_mesh_material(&mut (*tc.get()).result, &mut (*tc.get()).error, mesh)?;
-    finalize_mesh(&mut (*tc.get()).result, &mut (*tc.get()).error, mesh)?;
+    finalize_mesh_material(&mut (*tc.get()).result, tc.error_mut(), mesh)?;
+    finalize_mesh(&mut (*tc.get()).result, tc.error_mut(), mesh)?;
 
     (*mesh).generated_normals = true;
     compute_normals(
@@ -802,7 +818,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     }
 
     tc.set_imp(push::<MeshImp>(&mut (*tc.get()).result, 1));
-    ufbxi_check_err!(&mut (*tc.get()).error, !tc.imp().is_null(), "tc->imp");
+    ufbxi_check_err!(tc.error_mut(), !tc.imp().is_null(), "tc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&Mesh` pointer via exposed provenance.
