@@ -2049,6 +2049,21 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    // `time` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn time(&self) -> f64 {
+        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
+        unsafe { (*self.get()).time }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_time(&self, time: f64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).time = time;
+        }
+    }
+
     // `anim` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn anim(&self) -> *mut Anim {
@@ -2791,7 +2806,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         let new_props: crate::generated::Props = evaluate_props_flags(
             &anim,
             elem,
-            (*ec.get()).time,
+            ec.time(),
             props,
             num_animated,
             (*ec.get()).opts.evaluate_flags,
@@ -2829,7 +2844,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             ptr::addr_of_mut!((*ec.get()).error),
             ptr::addr_of_mut!((*ec.get()).result),
             ptr::addr_of_mut!((*ec.get()).tmp),
-            (*ec.get()).time,
+            ec.time(),
             (*ec.get()).opts.load_external_files && (*ec.get()).opts.evaluate_caches,
             &mut cache_opts,
         )?;
@@ -2922,7 +2937,7 @@ pub(crate) unsafe fn evaluate_scene(
     } else {
         ref_ptr(&(*scene).anim)
     });
-    (*ec.get()).time = time;
+    ec.set_time(time);
 
     init_ator(
         ptr::addr_of_mut!((*ec.get()).error),
