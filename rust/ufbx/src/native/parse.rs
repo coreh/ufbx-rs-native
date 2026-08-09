@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn material_dirty(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).material_dirty }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_material_dirty(&self, material_dirty: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).material_dirty = material_dirty;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn initialized(&self) -> bool {
         // SAFETY: reading a `bool` we only ever store valid bools into.
         unsafe { (*self.get()).initialized }

@@ -201,7 +201,7 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
     uc.obj().set_face_material(NO_INDEX);
     uc.obj().set_face_group(0);
     uc.obj().set_face_group_dirty(true);
-    (*uc.obj().get()).material_dirty = true;
+    uc.obj().set_material_dirty(true);
 
     connect_oo(uc, (*mesh).fbx_mesh_id, (*mesh).fbx_node_id)?;
     connect_oo(uc, (*mesh).fbx_node_id, 0)?;
@@ -689,7 +689,7 @@ pub(crate) unsafe fn obj_parse_indices(
     }
     let mesh: *mut ObjMesh = (*uc.obj().get()).mesh;
 
-    if (*uc.obj().get()).material_dirty {
+    if uc.obj().material_dirty() {
         if (*uc.obj().get()).usemtl_fbx_id != 0 {
             let entry: *mut FbxIdEntry = find_fbx_id(uc, (*uc.obj().get()).usemtl_fbx_id);
             ufbx_assert!(!entry.is_null());
@@ -948,7 +948,7 @@ pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
-    (*uc.obj().get()).material_dirty = true;
+    uc.obj().set_material_dirty(true);
 
     // Allow empty `usemtl` lines to specify "no material".
     if (*uc.obj().get()).num_tokens < 2 {
