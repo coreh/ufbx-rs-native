@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `latest_progress_bytes` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn latest_progress_bytes(&self) -> u64 {
+        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
+        unsafe { (*self.get()).latest_progress_bytes }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_latest_progress_bytes(&self, latest_progress_bytes: u64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).latest_progress_bytes = latest_progress_bytes;
+        }
+    }
+
     // `progress_bytes_total` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn progress_bytes_total(&self) -> u64 {
@@ -1394,7 +1409,7 @@ pub(crate) unsafe fn report_progress(uc: &Context) -> Result<(), Fail> {
     }
 
     let read_offset: u64 = get_read_offset(uc);
-    (*uc.get()).latest_progress_bytes = read_offset;
+    uc.set_latest_progress_bytes(read_offset);
 
     let mut progress = Progress {
         bytes_read: 0,
