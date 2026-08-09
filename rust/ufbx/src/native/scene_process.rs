@@ -1100,7 +1100,7 @@ pub(crate) unsafe fn sort_name_elements(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<NameElement>()),
@@ -1156,7 +1156,7 @@ pub(crate) unsafe fn sort_node_ptrs(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<*mut Node>()),
@@ -1202,7 +1202,7 @@ pub(crate) unsafe fn sort_tmp_material_textures(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<TmpMaterialTexture>()),
@@ -1263,7 +1263,7 @@ pub(crate) unsafe fn sort_connections(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<Connection>()),
@@ -2512,7 +2512,7 @@ pub(crate) unsafe fn sort_anim_props(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<AnimProp>()),
@@ -2553,7 +2553,7 @@ pub(crate) unsafe fn sort_material_textures(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<MaterialTexture>()),
@@ -2617,7 +2617,7 @@ pub(crate) unsafe fn sort_bone_poses(uc: &Context, pose: *mut Pose) -> Result<()
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             (*pose).bone_poses.count.wrapping_mul(size_of::<BonePose>()),
@@ -2643,7 +2643,7 @@ pub(crate) unsafe fn sort_skin_weights(uc: &Context, skin: *mut SkinDeformer) ->
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             (*skin)
@@ -2691,7 +2691,7 @@ pub(crate) unsafe fn sort_blend_keyframes(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<BlendKeyframe>()),
@@ -4665,7 +4665,7 @@ pub(crate) unsafe fn finalize_shader_texture(
         ufbxi_check!(
             uc,
             grow_array::<u8>(
-                &raw mut (*uc.get()).ator_tmp,
+                uc.ator_tmp(),
                 &mut (*uc.get()).tmp_arr,
                 &mut (*uc.get()).tmp_arr_size,
                 (*shader)
@@ -5007,7 +5007,7 @@ pub(crate) unsafe fn deduplicate_textures(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<OrderedTexture>()),
@@ -5584,7 +5584,7 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
         ufbxi_check!(
             uc,
             grow_array::<u8>(
-                &raw mut (*uc.get()).ator_tmp,
+                uc.ator_tmp(),
                 &mut (*uc.get()).tmp_arr,
                 &mut (*uc.get()).tmp_arr_size,
                 (*mesh).num_indices.wrapping_add(1).wrapping_mul(size_of::<u32>()),
@@ -6038,7 +6038,7 @@ pub(crate) unsafe fn absolute_to_relative_path(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             max_length,
@@ -6161,7 +6161,7 @@ pub(crate) unsafe fn sort_file_contents(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<FileContent>()),

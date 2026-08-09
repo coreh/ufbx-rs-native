@@ -116,7 +116,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
                 ufbxi_check_return!(
                     uc,
                     crate::native::allocator::grow_array::<u8>(
-                        &raw mut (*uc.get()).ator_tmp,
+                        uc.ator_tmp(),
                         &raw mut (*uc.get()).read_buffer,
                         &raw mut (*uc.get()).read_buffer_size,
                         new_size
@@ -363,7 +363,7 @@ pub(crate) unsafe fn ascii_push_token_char(
         ufbxi_check!(
             uc,
             crate::native::allocator::grow_array::<u8>(
-                &raw mut (*uc.get()).ator_tmp,
+                uc.ator_tmp(),
                 &raw mut (*token).str_data,
                 &raw mut (*token).str_cap,
                 len
@@ -392,7 +392,7 @@ pub(crate) unsafe fn ascii_push_token_string(
         ufbxi_check!(
             uc,
             crate::native::allocator::grow_array::<u8>(
-                &raw mut (*uc.get()).ator_tmp,
+                uc.ator_tmp(),
                 &raw mut (*token).str_data,
                 &raw mut (*token).str_cap,
                 len

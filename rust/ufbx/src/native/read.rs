@@ -369,7 +369,7 @@ pub(crate) unsafe fn sort_properties(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<Prop>()),
@@ -2293,7 +2293,7 @@ pub(crate) unsafe fn sort_uv_sets(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count * size_of::<UvSet>(),
@@ -2322,7 +2322,7 @@ pub(crate) unsafe fn sort_color_sets(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count * size_of::<ColorSet>(),
@@ -2373,7 +2373,7 @@ pub(crate) unsafe fn sort_blend_offsets(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count * size_of::<BlendOffset>(),
@@ -5352,7 +5352,7 @@ pub(crate) unsafe fn sort_shader_prop_bindings(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &raw mut (*uc.get()).ator_tmp,
+            uc.ator_tmp(),
             &mut (*uc.get()).tmp_arr,
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<ShaderPropBinding>()),
@@ -6212,7 +6212,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 ufbxi_check!(
                     uc,
                     grow_array::<u8>(
-                        &raw mut (*uc.get()).ator_tmp,
+                        uc.ator_tmp(),
                         &mut (*uc.get()).read_buffer,
                         &mut (*uc.get()).read_buffer_size,
                         size,

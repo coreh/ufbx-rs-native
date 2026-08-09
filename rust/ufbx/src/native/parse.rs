@@ -724,6 +724,15 @@ impl Context {
         // SAFETY: as `version`; a `u32` store cannot violate validity.
         unsafe { (*self.get()).version = version; }
     }
+
+    // Temp-arena allocator. `Allocator` is aliased (copied by raw pointer into
+    // sibling contexts) and mutated by `alloc`, so the honest accessor is a raw
+    // pointer, not a reference — passing it onward is a safe operation.
+    #[inline(always)]
+    pub(crate) fn ator_tmp(&self) -> *mut Allocator {
+        // SAFETY: projecting a field pointer; no deref, no reference formed.
+        unsafe { &raw mut (*self.get()).ator_tmp }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`
@@ -1261,7 +1270,7 @@ pub(crate) unsafe fn push_element_extra_size(uc: &Context, id: u32, size: usize)
         ufbxi_check_return!(
             uc,
             grow_array(
-                &raw mut (*uc.get()).ator_tmp,
+                uc.ator_tmp(),
                 &mut (*uc.get()).element_extra_arr,
                 &mut (*uc.get()).element_extra_cap,
                 id.wrapping_add(1) as usize
@@ -3296,7 +3305,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         ufbxi_check!(
             uc,
             grow_array(
-                &raw mut (*uc.get()).ator_tmp,
+                uc.ator_tmp(),
                 &mut (*uc.get()).top_nodes,
                 &mut (*uc.get()).top_nodes_cap,
                 (*uc.get()).top_nodes_len
