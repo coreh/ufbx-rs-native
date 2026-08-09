@@ -177,6 +177,21 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `ator_tmp` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn ator_tmp(&self) -> *mut Allocator {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut Allocator` are valid.
+        unsafe { (*self.get()).ator_tmp }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_ator_tmp(&self, ator_tmp: *mut Allocator) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).ator_tmp = ator_tmp;
+        }
+    }
+
     // `owned_by_scene` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn owned_by_scene(&self) -> bool {
@@ -505,7 +520,7 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                 ufbxi_check_err!(
                     &mut (*cc.get()).error,
                     grow_array::<u8>(
-                        (*cc.get()).ator_tmp,
+                        cc.ator_tmp(),
                         &mut (*cc.get()).name_buf,
                         &mut (*cc.get()).name_cap,
                         padded_length
@@ -661,7 +676,7 @@ pub(crate) unsafe fn cache_sort_tmp_channels(
     ufbxi_check_err!(
         &mut (*cc.get()).error,
         grow_array::<u8>(
-            (*cc.get()).ator_tmp,
+            cc.ator_tmp(),
             &mut (*cc.get()).tmp_arr,
             &mut (*cc.get()).tmp_arr_size,
             count * size_of::<CacheTmpChannel>()
@@ -828,7 +843,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
 pub(crate) unsafe fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
     // C: `ufbxi_xml_load_opts opts = { 0 };`
     let mut opts: XmlLoadOpts = core::mem::zeroed();
-    opts.ator = (*cc.get()).ator_tmp;
+    opts.ator = cc.ator_tmp();
     opts.read_fn = (*cc.get()).stream.read_fn;
     opts.read_user = (*cc.get()).stream.user;
     opts.prefix = (*cc.get()).pos;
@@ -907,7 +922,7 @@ pub(crate) unsafe fn cache_try_open_file(
         filename.data,
         filename.length,
         original_filename,
-        (*cc.get()).ator_tmp,
+        cc.ator_tmp(),
         OpenFileType::GeometryCache,
     ) {
         return Ok(());
@@ -1082,7 +1097,7 @@ pub(crate) unsafe fn cache_sort_frames(
     ufbxi_check_err!(
         &mut (*cc.get()).error,
         grow_array::<u8>(
-            (*cc.get()).ator_tmp,
+            cc.ator_tmp(),
             &mut (*cc.get()).tmp_arr,
             &mut (*cc.get()).tmp_arr_size,
             count * size_of::<CacheFrame>()
@@ -1225,8 +1240,8 @@ pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail>
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Result<(), Fail> {
-    (*cc.get()).tmp.ator = (*cc.get()).ator_tmp;
-    (*cc.get()).tmp_stack.ator = (*cc.get()).ator_tmp;
+    (*cc.get()).tmp.ator = cc.ator_tmp();
+    (*cc.get()).tmp_stack.ator = cc.ator_tmp();
 
     (*cc.get()).channel_name.data = EMPTY_CHAR.as_ptr();
 
@@ -1318,19 +1333,11 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
 
     buf_free(&mut (*cc.get()).tmp);
     buf_free(&mut (*cc.get()).tmp_stack);
-    free::<u8>(
-        (*cc.get()).ator_tmp,
-        (*cc.get()).name_buf,
-        (*cc.get()).name_cap,
-    );
-    free::<u8>(
-        (*cc.get()).ator_tmp,
-        (*cc.get()).tmp_arr,
-        (*cc.get()).tmp_arr_size,
-    );
+    free::<u8>(cc.ator_tmp(), (*cc.get()).name_buf, (*cc.get()).name_cap);
+    free::<u8>(cc.ator_tmp(), (*cc.get()).tmp_arr, (*cc.get()).tmp_arr_size);
     if !cc.owned_by_scene() {
         string_pool_temp_free(&mut (*cc.get()).string_pool);
-        free_ator((*cc.get()).ator_tmp);
+        free_ator(cc.ator_tmp());
     }
 
     if ok {
@@ -1379,7 +1386,7 @@ pub(crate) unsafe fn load_geometry_cache(
         &opts.result_allocator,
         b"result\0".as_ptr(),
     );
-    (*cc.get()).ator_tmp = &mut ator_tmp;
+    cc.set_ator_tmp(&mut ator_tmp);
 
     (*cc.get()).opts = core::ptr::read(&opts);
 
@@ -1388,7 +1395,7 @@ pub(crate) unsafe fn load_geometry_cache(
     (*cc.get()).string_pool.error = &mut (*cc.get()).error;
     map_init(
         &mut (*cc.get()).string_pool.map,
-        (*cc.get()).ator_tmp,
+        cc.ator_tmp(),
         map_cmp_string,
         core::ptr::null_mut(),
     );
@@ -1520,7 +1527,7 @@ pub(crate) unsafe fn load_external_cache(
     (*cc.get()).frames_per_second = (*uc.get()).scene.settings.frames_per_second;
 
     // Temporarily "borrow" allocators for the geometry cache
-    (*cc.get()).ator_tmp = uc.ator_tmp();
+    cc.set_ator_tmp(uc.ator_tmp());
     (*cc.get()).string_pool = (*uc.get()).string_pool;
     (*cc.get()).result = (*uc.get()).result;
 
