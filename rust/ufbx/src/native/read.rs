@@ -851,7 +851,7 @@ pub(crate) unsafe fn read_definitions(uc: &Context) -> Result<(), Fail> {
                     (*tmpl).sub_type.data = LOD_GROUP.as_ptr();
                 }
 
-                push_string_place_str(&mut (*uc.get()).string_pool, &mut (*tmpl).sub_type, false)?;
+                push_string_place_str(uc.string_pool_mut_ptr(), &mut (*tmpl).sub_type, false)?;
             }
 
             read_properties(uc, props, &mut (*tmpl).props)?;
@@ -1021,8 +1021,8 @@ pub(crate) unsafe fn split_type_and_name(
         (*type_).length = 0;
     }
 
-    push_string_place_str(&mut (*uc.get()).string_pool, type_, false)?;
-    push_string_place_str(&mut (*uc.get()).string_pool, name, false)?;
+    push_string_place_str(uc.string_pool_mut_ptr(), type_, false)?;
+    push_string_place_str(uc.string_pool_mut_ptr(), name, false)?;
 
     Ok(())
 }
@@ -1755,17 +1755,9 @@ pub(crate) unsafe fn read_unknown(
     (*unknown).super_type.length = strlen(node_name);
 
     // `type`, `sub_type` and `node_name` are raw strings so they may need to be sanitized.
-    push_string_place_str(&mut (*uc.get()).string_pool, &mut (*unknown).type_, false)?;
-    push_string_place_str(
-        &mut (*uc.get()).string_pool,
-        &mut (*unknown).sub_type,
-        false,
-    )?;
-    push_string_place_str(
-        &mut (*uc.get()).string_pool,
-        &mut (*unknown).super_type,
-        false,
-    )?;
+    push_string_place_str(uc.string_pool_mut_ptr(), &mut (*unknown).type_, false)?;
+    push_string_place_str(uc.string_pool_mut_ptr(), &mut (*unknown).sub_type, false)?;
+    push_string_place_str(uc.string_pool_mut_ptr(), &mut (*unknown).super_type, false)?;
 
     Ok(())
 }
@@ -3632,7 +3624,7 @@ pub(crate) unsafe fn read_mesh(
             }
 
             if prop_name.length > 0 {
-                push_string_place_str(&mut (*uc.get()).string_pool, &mut prop_name, false)?;
+                push_string_place_str(uc.string_pool_mut_ptr(), &mut prop_name, false)?;
                 // C: `const char *mapping = NULL;`
                 let mut mapping: *const u8 = core::ptr::null();
                 if find_val1(
@@ -5890,7 +5882,7 @@ pub(crate) unsafe fn read_object(uc: &Context, node: *mut Node) -> Result<(), Fa
     if sub_type_str.length > 3 && memcmp(sub_type_str.data, b"Fbx".as_ptr(), 3) == 0 {
         sub_type_str.data = sub_type_str.data.add(3);
         sub_type_str.length -= 3;
-        push_string_place_str(&mut (*uc.get()).string_pool, &mut sub_type_str, false)?;
+        push_string_place_str(uc.string_pool_mut_ptr(), &mut sub_type_str, false)?;
     }
 
     // C: `ufbx_string type_str;` — fully written by `ufbxi_split_type_and_name`.
@@ -6370,10 +6362,10 @@ pub(crate) unsafe fn read_connections(uc: &Context) -> Result<(), Fail> {
             }
 
             if src_prop.length > 0 {
-                push_string_place_str(&mut (*uc.get()).string_pool, &mut src_prop, false)?;
+                push_string_place_str(uc.string_pool_mut_ptr(), &mut src_prop, false)?;
             }
             if dst_prop.length > 0 {
-                push_string_place_str(&mut (*uc.get()).string_pool, &mut dst_prop, false)?;
+                push_string_place_str(uc.string_pool_mut_ptr(), &mut dst_prop, false)?;
             }
 
             src_id = synthetic_id_from_string(uc, src_name);
@@ -6908,7 +6900,7 @@ unsafe fn read_take_prop_channel_rec(
                 ) == 0
             {
                 name.length -= suffix_len;
-                push_string_place_str(&mut (*uc.get()).string_pool, &mut name, false)?;
+                push_string_place_str(uc.string_pool_mut_ptr(), &mut name, false)?;
             }
         }
 
@@ -7366,7 +7358,7 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
             b"Scene\x00\x01Model\0".as_ptr()
         };
         root_name = sp::push_string_imp(
-            &mut (*uc.get()).string_pool,
+            uc.string_pool_mut_ptr(),
             root_name,
             12,
             core::ptr::null_mut(),
@@ -8436,7 +8428,7 @@ pub(crate) unsafe fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
         layer_info.fbx_id = uc.legacy_implicit_anim_layer_id();
         layer_info.name.data = b"(internal)\0".as_ptr();
         layer_info.name.length = strlen(layer_info.name.data);
-        push_string_place_str(&mut (*uc.get()).string_pool, &mut layer_info.name, true)?;
+        push_string_place_str(uc.string_pool_mut_ptr(), &mut layer_info.name, true)?;
         let layer: *mut AnimLayer =
             push_element::<AnimLayer>(uc, &mut layer_info, ElementType::AnimLayer);
         ufbxi_check!(uc, !layer.is_null(), "layer");
@@ -8500,12 +8492,12 @@ pub(crate) unsafe fn init_file_paths(uc: &Context) -> Result<(), Fail> {
     }
 
     push_string_place_str(
-        &mut (*uc.get()).string_pool,
+        uc.string_pool_mut_ptr(),
         &mut (*uc.get()).scene.metadata.filename,
         false,
     )?;
     push_string_place_blob(
-        &mut (*uc.get()).string_pool,
+        uc.string_pool_mut_ptr(),
         &mut (*uc.get()).scene.metadata.raw_filename,
         true,
     )?;
@@ -8526,12 +8518,12 @@ pub(crate) unsafe fn init_file_paths(uc: &Context) -> Result<(), Fail> {
     );
 
     push_string_place_str(
-        &mut (*uc.get()).string_pool,
+        uc.string_pool_mut_ptr(),
         &mut (*uc.get()).scene.metadata.relative_root,
         false,
     )?;
     push_string_place_blob(
-        &mut (*uc.get()).string_pool,
+        uc.string_pool_mut_ptr(),
         &mut (*uc.get()).scene.metadata.raw_relative_root,
         true,
     )?;
@@ -8700,7 +8692,7 @@ pub(crate) unsafe fn resolve_relative_filename(
     // Intern the string and pop the temporary buffer
     let mut dst: String = String::new_c(result, to_size(ptr.offset_from(result)));
     ufbx_assert!(dst.length <= result_cap);
-    push_string_place_str(&mut (*uc.get()).string_pool, &mut dst, raw)?;
+    push_string_place_str(uc.string_pool_mut_ptr(), &mut dst, raw)?;
     pop::<u8>(uc.tmp_stack_mut_ptr(), result_cap, core::ptr::null_mut());
 
     strblob_set(p_dst, dst.data, dst.length, raw);

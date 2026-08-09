@@ -451,7 +451,7 @@ pub(crate) unsafe fn fixup_opts_string(
             };
         }
         if push {
-            push_string_place_str(&mut (*uc.get()).string_pool, str, false)?;
+            push_string_place_str(uc.string_pool_mut_ptr(), str, false)?;
         }
     } else {
         (*str).data = EMPTY_CHAR.as_ptr();
@@ -887,7 +887,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 pub(crate) unsafe fn free_temp(uc: &Context) {
     thread_pool_free(&raw mut (*uc.get()).thread_pool);
 
-    string_pool_temp_free(&mut (*uc.get()).string_pool);
+    string_pool_temp_free(uc.string_pool_mut_ptr());
     buf_free(&mut (*uc.get()).warnings.tmp_stack);
 
     map_free(&mut (*uc.get()).prop_type_map);

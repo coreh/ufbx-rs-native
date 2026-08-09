@@ -423,7 +423,7 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
                 (*d).data = push_copy::<u8>(buf, len, (*d).data);
                 ufbxi_check!(uc, !(*d).data.is_null(), "d->data");
             } else {
-                push_string_place_str(&mut (*uc.get()).string_pool, d, raw)?;
+                push_string_place_str(uc.string_pool_mut_ptr(), d, raw)?;
             }
             d = d.add(1);
         }
@@ -770,7 +770,7 @@ unsafe fn binary_parse_node_rec(
     let mut name: *const u8 = read_bytes(uc, name_len as usize);
     ufbxi_check!(uc, !name.is_null(), "name");
     name = push_string(
-        &mut (*uc.get()).string_pool,
+        uc.string_pool_mut_ptr(),
         name,
         name_len as usize,
         core::ptr::null_mut(),
@@ -1150,7 +1150,7 @@ unsafe fn binary_parse_node_rec(
                             hash_string_check_ascii(str_, length as usize, &mut non_ascii);
                         let raw: bool = !non_ascii || is_raw_string(uc, parent_state, name, i);
                         push_sanitized_string(
-                            &mut (*uc.get()).string_pool,
+                            uc.string_pool_mut_ptr(),
                             &mut (*vals.add(i)).s,
                             str_,
                             length as usize,

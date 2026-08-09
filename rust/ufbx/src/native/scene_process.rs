@@ -4279,7 +4279,7 @@ pub(crate) unsafe fn push_prop_prefix(
         prefix.length += 1;
     }
 
-    sp::push_string_place_str(&mut (*uc.get()).string_pool, &mut prefix, false)?;
+    sp::push_string_place_str(uc.string_pool_mut_ptr(), &mut prefix, false)?;
     *dst = prefix;
 
     if stack_size > 0 {
@@ -4572,11 +4572,7 @@ pub(crate) unsafe fn finalize_shader_texture(
 
             (*shader).shader_name.data = name.data.add(begin);
             (*shader).shader_name.length = name.length - begin;
-            sp::push_string_place_str(
-                &mut (*uc.get()).string_pool,
-                &mut (*shader).shader_name,
-                false,
-            )?;
+            sp::push_string_place_str(uc.string_pool_mut_ptr(), &mut (*shader).shader_name, false)?;
         }
     }
 
@@ -6061,7 +6057,7 @@ pub(crate) unsafe fn absolute_to_relative_path(
     // C-parity: `raw` is hardcoded `true` here, independent of the `raw`
     // parameter that selected the source/destination strblob members.
     let dst: *const u8 = sp::push_string(
-        &mut (*uc.get()).string_pool,
+        uc.string_pool_mut_ptr(),
         tmp,
         tmp_length,
         ptr::null_mut(),

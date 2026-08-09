@@ -1365,7 +1365,7 @@ unsafe fn ascii_parse_node_rec(
     let name_len: usize = (*ua).prev_token.value.name_len;
     ufbxi_check!(uc, name_len <= 0xff, "name_len <= 0xff");
     let name: *const u8 = push_string(
-        &raw mut (*uc.get()).string_pool,
+        uc.string_pool_mut_ptr(),
         (*ua).prev_token.str_data,
         (*ua).prev_token.str_len,
         core::ptr::null_mut(),
@@ -1501,7 +1501,7 @@ unsafe fn ascii_parse_node_rec(
                     } else {
                         (*v).data = (*tok).str_data;
                         (*v).length = (*tok).str_len;
-                        push_string_place_str(&raw mut (*uc.get()).string_pool, v, raw)?;
+                        push_string_place_str(uc.string_pool_mut_ptr(), v, raw)?;
                     }
                 } else {
                     // Ignore strings in non-string arrays, decrement `num_values` as it will be
@@ -1526,7 +1526,7 @@ unsafe fn ascii_parse_node_rec(
                     let raw: bool =
                         !non_ascii || is_raw_string(uc, parent_state, name, num_values as usize);
                     push_sanitized_string(
-                        &raw mut (*uc.get()).string_pool,
+                        uc.string_pool_mut_ptr(),
                         &raw mut (*v).s,
                         str_,
                         length,

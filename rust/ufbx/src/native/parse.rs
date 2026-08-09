@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `string_pool` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn string_pool_mut_ptr(&self) -> *mut StringPool {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).string_pool }
+    }
+
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
@@ -3565,7 +3573,7 @@ unsafe fn retain_dom_node_rec(
         (*result).dom_node = dst;
     }
 
-    sp::push_string_place_str(&mut (*uc.get()).string_pool, &mut (*dst).name, false)?;
+    sp::push_string_place_str(uc.string_pool_mut_ptr(), &mut (*dst).name, false)?;
 
     if (*node).value_type_mask == ValueType::Array as u16 {
         let arr = (*node).content.array;
@@ -4491,7 +4499,7 @@ pub(crate) unsafe fn load_strings(uc: &Context) -> Result<(), Fail> {
         ufbxi_check!(
             uc,
             !sp::push_string_imp(
-                &mut (*uc.get()).string_pool,
+                uc.string_pool_mut_ptr(),
                 str_.data,
                 str_.length,
                 core::ptr::null_mut(),
@@ -5040,7 +5048,7 @@ pub(crate) unsafe fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
     while i < NODE_PROP_NAMES.0.len() {
         let name: *const u8 = NODE_PROP_NAMES.0[i];
         let pooled: *const u8 = sp::push_string_imp(
-            &mut (*uc.get()).string_pool,
+            uc.string_pool_mut_ptr(),
             name,
             crate::native::error::strlen(name),
             core::ptr::null_mut(),
@@ -5093,7 +5101,7 @@ pub(crate) unsafe fn load_maps(uc: &Context) -> Result<(), Fail> {
     // C: `ufbxi_for(const ufbxi_prop_type_name, name, ufbxi_prop_type_names, ...)`
     for name in PROP_TYPE_NAMES.0.iter() {
         let pooled: *const u8 = sp::push_string_imp(
-            &mut (*uc.get()).string_pool,
+            uc.string_pool_mut_ptr(),
             name.name,
             crate::native::error::strlen(name.name),
             core::ptr::null_mut(),

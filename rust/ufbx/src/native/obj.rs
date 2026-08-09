@@ -953,7 +953,7 @@ pub(crate) unsafe fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
 
     let mut name: String = obj_span_token(uc, 1, usize::MAX);
 
-    push_string_place_str(&mut (*uc.get()).string_pool, &mut name, false)?;
+    push_string_place_str(uc.string_pool_mut_ptr(), &mut name, false)?;
 
     let fbx_id: u64 = synthetic_id_from_string(uc, name.data);
     ufbxi_check!(uc, fbx_id != 0, "fbx_id");
@@ -1540,7 +1540,7 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             if num_tokens >= 2 {
                 (*uc.get()).obj.object = obj_span_token(uc, 1, usize::MAX);
                 push_string_place_str(
-                    &mut (*uc.get()).string_pool,
+                    uc.string_pool_mut_ptr(),
                     &mut (*uc.get()).obj.object,
                     false,
                 )?;
@@ -1549,11 +1549,7 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
         } else if key == obj_cmd1(b'g') {
             if num_tokens >= 2 {
                 (*uc.get()).obj.group = obj_span_token(uc, 1, usize::MAX);
-                push_string_place_str(
-                    &mut (*uc.get()).string_pool,
-                    &mut (*uc.get()).obj.group,
-                    false,
-                )?;
+                push_string_place_str(uc.string_pool_mut_ptr(), &mut (*uc.get()).obj.group, false)?;
                 (*uc.get()).obj.group_dirty = true;
             } else {
                 (*uc.get()).obj.group = EMPTY_STRING.0;
@@ -1640,7 +1636,7 @@ pub(crate) unsafe fn obj_parse_prop(
     ufbxi_check!(uc, !prop.is_null(), "prop");
     (*prop).name = name;
 
-    push_string_place_str(&mut (*uc.get()).string_pool, &mut (*prop).name, false)?;
+    push_string_place_str(uc.string_pool_mut_ptr(), &mut (*prop).name, false)?;
 
     let mut flags: u32 = PropFlags::VALUE_STR.raw();
 
@@ -1699,8 +1695,8 @@ pub(crate) unsafe fn obj_parse_prop(
         (*prop).value_blob.data = span.data;
         (*prop).value_blob.size = span.length;
 
-        push_string_place_str(&mut (*uc.get()).string_pool, &mut (*prop).value_str, false)?;
-        push_string_place_blob(&mut (*uc.get()).string_pool, &mut (*prop).value_blob, true)?;
+        push_string_place_str(uc.string_pool_mut_ptr(), &mut (*prop).value_str, false)?;
+        push_string_place_blob(uc.string_pool_mut_ptr(), &mut (*prop).value_blob, true)?;
     } else {
         (*prop).value_str.data = EMPTY_CHAR.as_ptr();
     }
@@ -1765,8 +1761,8 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Resul
     let mut tex_str: String = obj_span_token(uc, start, usize::MAX);
     let mut tex_raw: Blob = Blob::new_c(tex_str.data, tex_str.length);
 
-    push_string_place_str(&mut (*uc.get()).string_pool, &mut tex_str, false)?;
-    push_string_place_blob(&mut (*uc.get()).string_pool, &mut tex_raw, true)?;
+    push_string_place_str(uc.string_pool_mut_ptr(), &mut tex_str, false)?;
+    push_string_place_blob(uc.string_pool_mut_ptr(), &mut tex_raw, true)?;
 
     let mut fbx_id: u64 = 0;
     let texture: *mut Texture = push_synthetic_element::<Texture>(
@@ -1791,7 +1787,7 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Resul
     ufbx_assert!(prop.length >= prefix_len);
     prop.data = prop.data.add(prefix_len);
     prop.length -= prefix_len;
-    push_string_place_str(&mut (*uc.get()).string_pool, &mut prop, false)?;
+    push_string_place_str(uc.string_pool_mut_ptr(), &mut prop, false)?;
 
     if (*uc.get()).obj.usemtl_fbx_id != 0 {
         connect_op(uc, fbx_id, (*uc.get()).obj.usemtl_fbx_id, prop)?;
