@@ -168,6 +168,14 @@ impl TessellateCurveContext {
         self.0.get().cast()
     }
 
+    // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ator_tmp_mut(&self) -> *mut Allocator {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ator_tmp }
+    }
+
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn opts_mut(&self) -> *mut RawTessellateCurveOpts {
@@ -256,6 +264,14 @@ impl TessellateSurfaceContext {
         self.0.get().cast()
     }
 
+    // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ator_tmp_mut(&self) -> *mut Allocator {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ator_tmp }
+    }
+
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn opts_mut(&self) -> *mut RawTessellateSurfaceOpts {
@@ -325,7 +341,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
 
     init_ator(
         tc.error_mut(),
-        &mut (*tc.get()).ator_tmp,
+        tc.ator_tmp_mut(),
         &(*tc.get()).opts.temp_allocator,
         b"temp\0".as_ptr(),
     );
@@ -477,7 +493,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
 
     init_ator(
         tc.error_mut(),
-        &mut (*tc.get()).ator_tmp,
+        tc.ator_tmp_mut(),
         &(*tc.get()).opts.temp_allocator,
         b"temp\0".as_ptr(),
     );
@@ -492,7 +508,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     (*tc.get()).tmp.unordered = true;
 
     (*tc.get()).result.ator = &raw mut (*tc.get()).ator_result;
-    (*tc.get()).tmp.ator = &raw mut (*tc.get()).ator_tmp;
+    (*tc.get()).tmp.ator = tc.ator_tmp_mut();
 
     let open_u: bool = (*surface).basis_u.topology == NurbsTopology::Open;
     let open_v: bool = (*surface).basis_v.topology == NurbsTopology::Open;
