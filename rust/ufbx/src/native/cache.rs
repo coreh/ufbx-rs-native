@@ -177,6 +177,13 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `tmp_arr_size` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn tmp_arr_size(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).tmp_arr_size }
+    }
+
     // `tmp_arr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_arr(&self) -> *mut u8 {
@@ -1373,7 +1380,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
     buf_free(&mut (*cc.get()).tmp);
     buf_free(&mut (*cc.get()).tmp_stack);
     free::<u8>(cc.ator_tmp(), (*cc.get()).name_buf, (*cc.get()).name_cap);
-    free::<u8>(cc.ator_tmp(), cc.tmp_arr(), (*cc.get()).tmp_arr_size);
+    free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size());
     if !cc.owned_by_scene() {
         string_pool_temp_free(&mut (*cc.get()).string_pool);
         free_ator(cc.ator_tmp());
