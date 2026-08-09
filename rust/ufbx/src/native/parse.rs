@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `dom_parse_toplevel` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn dom_parse_toplevel(&self) -> *mut DomNode {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut DomNode` are valid.
+        unsafe { (*self.get()).dom_parse_toplevel }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_dom_parse_toplevel(&self, dom_parse_toplevel: *mut DomNode) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).dom_parse_toplevel = dom_parse_toplevel;
+        }
+    }
+
     // `num_templates` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn num_templates(&self) -> usize {
@@ -3093,15 +3108,15 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
             (*uc.get()).dom_parse_num_children,
         );
         ufbxi_check!(uc, !children.is_null(), "children");
-        (*(*uc.get()).dom_parse_toplevel).children.data = children as *const Ref<DomNode>;
-        (*(*uc.get()).dom_parse_toplevel).children.count = (*uc.get()).dom_parse_num_children;
+        (*uc.dom_parse_toplevel()).children.data = children as *const Ref<DomNode>;
+        (*uc.dom_parse_toplevel()).children.count = (*uc.get()).dom_parse_num_children;
         (*uc.get()).dom_parse_num_children = 0;
     }
 
     if !node.is_null() {
         retain_dom_node(uc, node, &mut (*uc.get()).dom_parse_toplevel)?;
     } else {
-        (*uc.get()).dom_parse_toplevel = core::ptr::null_mut();
+        uc.set_dom_parse_toplevel(core::ptr::null_mut());
 
         // Called with NULL argument to finish retaining DOM, collect the final nodes to `ufbx_scene`.
         let num_top_nodes = (*uc.get()).tmp_dom_nodes.num_items;
@@ -3128,7 +3143,7 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
 // ufbx.c:10846-10853 `ufbxi_retain_toplevel_child`
 #[inline(never)]
 pub(crate) unsafe fn retain_toplevel_child(uc: &Context, child: *mut Node) -> Result<(), Fail> {
-    ufbx_assert!(!(*uc.get()).dom_parse_toplevel.is_null());
+    ufbx_assert!(!uc.dom_parse_toplevel().is_null());
     retain_dom_node(uc, child, core::ptr::null_mut())?;
     (*uc.get()).dom_parse_num_children = (*uc.get()).dom_parse_num_children.wrapping_add(1);
 
