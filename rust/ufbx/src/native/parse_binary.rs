@@ -129,7 +129,7 @@ pub(crate) unsafe fn swap_endian(
             uc,
             grow_array(
                 uc.ator_tmp_mut_ptr(),
-                &mut (*uc.get()).swap_arr,
+                uc.swap_arr_mut_ptr(),
                 &mut (*uc.get()).swap_arr_size,
                 total_size
             ),

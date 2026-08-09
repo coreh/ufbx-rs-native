@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `swap_arr` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn swap_arr_mut_ptr(&self) -> *mut *mut u8 {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).swap_arr }
+    }
+
     // `top_child` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn top_child_mut_ptr(&self) -> *mut Node {
