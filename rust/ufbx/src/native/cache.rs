@@ -177,6 +177,14 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `name_buf` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn name_buf_mut(&self) -> *mut *mut u8 {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).name_buf }
+    }
+
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut(&self) -> *mut Error {
@@ -699,7 +707,7 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                     cc.error_mut(),
                     grow_array::<u8>(
                         cc.ator_tmp(),
-                        &mut (*cc.get()).name_buf,
+                        cc.name_buf_mut(),
                         &mut (*cc.get()).name_cap,
                         padded_length
                     ),
