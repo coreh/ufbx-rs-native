@@ -3484,6 +3484,21 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `time_min` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn time_min(&self) -> f64 {
+        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
+        unsafe { (*self.get()).time_min }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_time_min(&self, time_min: f64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).time_min = time_min;
+        }
+    }
+
     // `time_end` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn time_end(&self) -> f64 {
@@ -4018,8 +4033,8 @@ pub(crate) unsafe fn finalize_bake_times(
     }
 
     if num_times > 0 {
-        if (*times.add(0)).time < (*bc.get()).time_min {
-            (*bc.get()).time_min = (*times.add(0)).time;
+        if (*times.add(0)).time < bc.time_min() {
+            bc.set_time_min((*times.add(0)).time);
         }
         if (*times.add(num_times - 1)).time > (*bc.get()).time_max {
             (*bc.get()).time_max = (*times.add(num_times - 1)).time;
@@ -5293,8 +5308,8 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         ptr::null_mut(),
     );
 
-    if (*bc.get()).time_min < (*bc.get()).time_max {
-        (*bc.get()).bake.key_time_min = (*bc.get()).time_min;
+    if bc.time_min() < (*bc.get()).time_max {
+        (*bc.get()).bake.key_time_min = bc.time_min();
         (*bc.get()).bake.key_time_max = (*bc.get()).time_max;
     }
 
@@ -5369,7 +5384,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
         bc.set_time_begin((*anim).time_begin);
         bc.set_time_end((*anim).time_end);
     }
-    (*bc.get()).time_min = math::INFINITY;
+    bc.set_time_min(math::INFINITY);
     (*bc.get()).time_max = -math::INFINITY;
 
     (*bc.get()).imp = push::<BakedAnimImp>(ptr::addr_of_mut!((*bc.get()).result), 1);
