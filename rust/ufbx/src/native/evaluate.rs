@@ -3072,6 +3072,14 @@ impl CreateAnimContext {
         self.0.get().cast()
     }
 
+    // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ator_result }
+    }
+
     // `anim` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn anim_mut(&self) -> *mut Anim {
@@ -3216,12 +3224,12 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
 
     init_ator(
         ptr::addr_of_mut!((*ac.get()).error),
-        ptr::addr_of_mut!((*ac.get()).ator_result),
+        ac.ator_result_mut(),
         ptr::addr_of!((*ac.get()).opts.result_allocator),
         b"result\0".as_ptr(),
     );
     (*ac.get()).result.unordered = true;
-    (*ac.get()).result.ator = ptr::addr_of_mut!((*ac.get()).ator_result);
+    (*ac.get()).result.ator = ac.ator_result_mut();
 
     (*anim).ignore_connections = (*ac.get()).opts.ignore_connections;
     (*anim).custom = true;

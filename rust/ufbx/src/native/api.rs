@@ -1805,7 +1805,7 @@ pub(crate) unsafe fn create_anim(
             error,
         );
         buf_free(core::ptr::addr_of_mut!((*ac.get()).result));
-        free_ator(core::ptr::addr_of_mut!((*ac.get()).ator_result));
+        free_ator(ac.ator_result_mut());
         core::ptr::null_mut()
     }
 }
