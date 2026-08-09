@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `element_extra_cap` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn element_extra_cap_mut_ptr(&self) -> *mut usize {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).element_extra_cap }
+    }
+
     // `element_extra_arr` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn element_extra_arr_mut_ptr(&self) -> *mut *mut *mut c_void {
@@ -2599,7 +2607,7 @@ pub(crate) unsafe fn push_element_extra_size(uc: &Context, id: u32, size: usize)
             grow_array(
                 uc.ator_tmp_mut_ptr(),
                 uc.element_extra_arr_mut_ptr(),
-                &mut (*uc.get()).element_extra_cap,
+                uc.element_extra_cap_mut_ptr(),
                 id.wrapping_add(1) as usize
             ),
             core::ptr::null_mut(),
