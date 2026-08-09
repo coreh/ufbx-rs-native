@@ -515,6 +515,100 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn tmp_color_valid_mut_ptr(&self) -> *mut crate::native::buf::Buf {
+        unsafe { &raw mut (*self.get()).tmp_color_valid }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_color_valid_view(&self) -> &crate::native::buf::BufView {
+        unsafe { &*(&raw mut (*self.get()).tmp_color_valid as *mut crate::native::buf::BufView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tmp_faces_mut_ptr(&self) -> *mut crate::native::buf::Buf {
+        unsafe { &raw mut (*self.get()).tmp_faces }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_faces_view(&self) -> &crate::native::buf::BufView {
+        unsafe { &*(&raw mut (*self.get()).tmp_faces as *mut crate::native::buf::BufView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tmp_props_mut_ptr(&self) -> *mut crate::native::buf::Buf {
+        unsafe { &raw mut (*self.get()).tmp_props }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_props_view(&self) -> &crate::native::buf::BufView {
+        unsafe { &*(&raw mut (*self.get()).tmp_props as *mut crate::native::buf::BufView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tmp_meshes_mut_ptr(&self) -> *mut crate::native::buf::Buf {
+        unsafe { &raw mut (*self.get()).tmp_meshes }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_meshes_view(&self) -> &crate::native::buf::BufView {
+        unsafe { &*(&raw mut (*self.get()).tmp_meshes as *mut crate::native::buf::BufView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tmp_face_smoothing_mut_ptr(&self) -> *mut crate::native::buf::Buf {
+        unsafe { &raw mut (*self.get()).tmp_face_smoothing }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_face_smoothing_view(&self) -> &crate::native::buf::BufView {
+        unsafe { &*(&raw mut (*self.get()).tmp_face_smoothing as *mut crate::native::buf::BufView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tmp_face_group_mut_ptr(&self) -> *mut crate::native::buf::Buf {
+        unsafe { &raw mut (*self.get()).tmp_face_group }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_face_group_view(&self) -> &crate::native::buf::BufView {
+        unsafe { &*(&raw mut (*self.get()).tmp_face_group as *mut crate::native::buf::BufView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tmp_face_group_infos_mut_ptr(&self) -> *mut crate::native::buf::Buf {
+        unsafe { &raw mut (*self.get()).tmp_face_group_infos }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_face_group_infos_view(&self) -> &crate::native::buf::BufView {
+        unsafe {
+            &*(&raw mut (*self.get()).tmp_face_group_infos as *mut crate::native::buf::BufView)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tmp_face_material_mut_ptr(&self) -> *mut crate::native::buf::Buf {
+        unsafe { &raw mut (*self.get()).tmp_face_material }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_face_material_view(&self) -> &crate::native::buf::BufView {
+        unsafe { &*(&raw mut (*self.get()).tmp_face_material as *mut crate::native::buf::BufView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tokens_mut_ptr(&self) -> *mut *mut String {
+        unsafe { &raw mut (*self.get()).tokens }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tokens_cap_mut_ptr(&self) -> *mut usize {
+        unsafe { &raw mut (*self.get()).tokens_cap }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tmp_materials_mut_ptr(&self) -> *mut *mut *mut crate::generated::Material {
+        unsafe { &raw mut (*self.get()).tmp_materials }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tmp_materials_cap_mut_ptr(&self) -> *mut usize {
+        unsafe { &raw mut (*self.get()).tmp_materials_cap }
+    }
+
+    #[inline(always)]
     pub(crate) fn usemtl_index(&self) -> u32 {
         // SAFETY: reading a scalar; all bit patterns of `u32` are valid.
         unsafe { (*self.get()).usemtl_index }
