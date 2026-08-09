@@ -395,6 +395,14 @@ impl FileContext {
         self.0.get().cast()
     }
 
+    // `error` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn error_mut(&self) -> *mut Error {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).error }
+    }
+
     // `ator` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_mut(&self) -> *mut Allocator {
@@ -430,14 +438,9 @@ pub(crate) unsafe fn begin_file_context(
     if ctx != 0 {
         fc.set_parent_ator(ctx as *mut Allocator);
         (*fc.get()).ator = *fc.parent_ator();
-        (*fc.get()).ator.error = &mut (*fc.get()).error;
+        (*fc.get()).ator.error = fc.error_mut();
     } else {
-        init_ator(
-            &mut (*fc.get()).error,
-            fc.ator_mut(),
-            ator_opts,
-            b"file\0".as_ptr(),
-        );
+        init_ator(fc.error_mut(), fc.ator_mut(), ator_opts, b"file\0".as_ptr());
     }
 }
 
@@ -452,11 +455,7 @@ pub(crate) unsafe fn end_file_context(fc: &FileContext, error: *mut Error, ok: b
     }
     if !error.is_null() {
         if !ok {
-            fix_error_type(
-                &mut (*fc.get()).error,
-                b"Failed to open file\0".as_ptr(),
-                error,
-            );
+            fix_error_type(fc.error_mut(), b"Failed to open file\0".as_ptr(), error);
         } else {
             clear_error(error);
         }
@@ -603,8 +602,8 @@ pub(crate) unsafe fn fopen(
         free::<u16>(fc.ator_mut(), wpath, path_len + 1);
     }
     if file.is_null() {
-        set_err_info(&mut (*fc.get()).error, path, path_len);
-        ufbxi_report_err_msg!(&mut (*fc.get()).error, "file", "File not found");
+        set_err_info(fc.error_mut(), path, path_len);
+        ufbxi_report_err_msg!(fc.error_mut(), "file", "File not found");
     }
     file
 }
@@ -640,8 +639,8 @@ pub(crate) unsafe fn fopen(
         free::<u8>(fc.ator_mut(), copy, path_len + 1);
     }
     if file.is_null() {
-        set_err_info(&mut (*fc.get()).error, path, path_len);
-        ufbxi_report_err_msg!(&mut (*fc.get()).error, "file", "File not found");
+        set_err_info(fc.error_mut(), path, path_len);
+        ufbxi_report_err_msg!(fc.error_mut(), "file", "File not found");
     }
     file
 }
