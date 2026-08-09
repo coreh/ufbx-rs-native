@@ -3484,6 +3484,13 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `tmp_arr_size` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn tmp_arr_size(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).tmp_arr_size }
+    }
+
     // `tmp_arr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_arr(&self) -> *mut u8 {
