@@ -833,6 +833,22 @@ impl Context {
             (*self.get()).data_begin = data_begin;
         }
     }
+
+    // End-of-input flag. Scalar `bool` (only `0`/`1` ever stored): value getter
+    // + setter.
+    #[inline(always)]
+    pub(crate) fn eof(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever write valid bools into.
+        unsafe { (*self.get()).eof }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_eof(&self, eof: bool) {
+        // SAFETY: storing a `bool`; cannot violate validity.
+        unsafe {
+            (*self.get()).eof = eof;
+        }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`
@@ -3183,7 +3199,7 @@ pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
         let mut lookahead: usize = MIN_FILE_FORMAT_LOOKAHEAD;
         while format == FileFormat::Unknown && lookahead <= (*uc.get()).opts.file_format_lookahead {
             if lookahead > uc.data_size() {
-                if (*uc.get()).eof {
+                if uc.eof() {
                     break;
                 }
                 ufbxi_check!(

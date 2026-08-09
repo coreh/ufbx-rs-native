@@ -40,7 +40,7 @@ use crate::prelude::OpenFileContext;
 #[inline(never)]
 pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *const u8 {
     ufbx_assert!(uc.data_size() < size);
-    ufbxi_check_return!(uc, !(*uc.get()).eof, core::ptr::null(), "!uc->eof");
+    ufbxi_check_return!(uc, !uc.eof(), core::ptr::null(), "!uc->eof");
     if require_size {
         ufbxi_check_return_msg!(
             uc,
@@ -57,7 +57,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
             "uc->read_fn"
         );
     } else if uc.read_fn().is_none() {
-        (*uc.get()).eof = true;
+        uc.set_eof(true);
         return uc.data();
     }
 
@@ -115,7 +115,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
         );
         data_size += read_result;
         if read_result == 0 {
-            (*uc.get()).eof = true;
+            uc.set_eof(true);
             break;
         }
     }

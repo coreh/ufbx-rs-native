@@ -350,7 +350,7 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
             core::ptr::null()
         };
         if end.is_null() {
-            if (*uc.get()).eof {
+            if uc.eof() {
                 offset = uc.data_size();
                 (*uc.get()).obj.eof = true;
                 break;
@@ -1883,7 +1883,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     uc.set_data(core::ptr::null());
     uc.set_data_size(0);
     uc.set_yield_size(0);
-    (*uc.get()).eof = false;
+    uc.set_eof(false);
     (*uc.get()).obj.eof = false;
 
     if (*uc.get()).opts.obj_mtl_data.size > 0 {
