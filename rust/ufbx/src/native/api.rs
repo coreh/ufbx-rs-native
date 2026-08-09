@@ -1747,15 +1747,8 @@ pub(crate) unsafe fn evaluate_scene(
 ) -> *mut Scene {
     ufbxi_check_opts_ptr!(Scene, opts, error);
     // C: `ufbxi_eval_context ec = { 0 };`
-    let mut ec = MaybeUninit::<evaluate::EvalContext>::zeroed();
-    evaluate::evaluate_scene(
-        ec.as_mut_ptr(),
-        scene as *mut Scene,
-        anim,
-        time,
-        opts,
-        error,
-    )
+    let ec = evaluate::EvalContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
+    evaluate::evaluate_scene(&ec, scene as *mut Scene, anim, time, opts, error)
 }
 
 #[cfg(not(feature = "scene-eval"))]
