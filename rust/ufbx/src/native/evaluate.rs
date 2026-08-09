@@ -3920,6 +3920,69 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).result as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_bake_props` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_bake_props_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_bake_props as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_bake_stack` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_bake_stack_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_bake_stack as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_elements` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_elements_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_elements as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_nodes` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_nodes_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_nodes as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_prop` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_prop_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_prop as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_props` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_props_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_props as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_times` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_times_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_times as *mut crate::native::buf::BufView) }
+    }
+
     // `opts` — typed VIEW handle (reinterpret-in-place). Leaf accessors live on
     // `BakeOptsView`; no validity asserted until a field is read.
     #[inline(always)]
@@ -4503,7 +4566,7 @@ pub(crate) unsafe fn finalize_bake_times(
         );
     }
 
-    if (*bc.get()).tmp_times.num_items == 0 {
+    if bc.tmp_times_view().num_items() == 0 {
         ufbxi_check_err!(
             bc.error_mut_ptr(),
             bake_push_time(bc, bc.time_begin(), 0),
@@ -4516,7 +4579,7 @@ pub(crate) unsafe fn finalize_bake_times(
         );
     }
 
-    let mut num_times: usize = (*bc.get()).tmp_times.num_items;
+    let mut num_times: usize = bc.tmp_times_view().num_items();
     let times: *mut BakeTime =
         push_pop::<BakeTime>(bc.tmp_prop_mut_ptr(), bc.tmp_times_mut_ptr(), num_times);
     ufbxi_check_err!(bc.error_mut_ptr(), !times.is_null(), "times");
@@ -5549,7 +5612,7 @@ pub(crate) unsafe fn bake_node(
 
     // Baking a node may cause further nodes to be baked, so keep going
     // until all dependencies are baked.
-    while (*bc.get()).tmp_bake_stack.num_items > 0 {
+    while bc.tmp_bake_stack_view().num_items() > 0 {
         let mut child_id: u32 = 0;
         pop::<u32>(bc.tmp_bake_stack_mut_ptr(), 1, ptr::addr_of_mut!(child_id));
         bake_node_imp(bc, child_id, ptr::null_mut(), 0)?;
@@ -5677,7 +5740,7 @@ pub(crate) unsafe fn bake_element(
         begin = end;
     }
 
-    let num_props: usize = (*bc.get()).tmp_props.num_items;
+    let num_props: usize = bc.tmp_props_view().num_items();
     if num_props > 0 {
         let baked_elem: *mut BakedElement = push_zero::<BakedElement>(bc.tmp_elements_mut_ptr(), 1);
         ufbxi_check_err!(bc.error_mut_ptr(), !baked_elem.is_null(), "baked_elem");
@@ -5785,7 +5848,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         p_layer = p_layer.add(1);
     }
 
-    let num_props: usize = (*bc.get()).tmp_bake_props.num_items;
+    let num_props: usize = bc.tmp_bake_props_view().num_items();
     let props: *mut BakeProp =
         push_pop::<BakeProp>(bc.tmp_mut_ptr(), bc.tmp_bake_props_mut_ptr(), num_props);
     ufbxi_check_err!(bc.error_mut_ptr(), !props.is_null(), "props");
@@ -5847,8 +5910,8 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         begin = end;
     }
 
-    let num_nodes: usize = (*bc.get()).tmp_nodes.num_items;
-    let num_elements: usize = (*bc.get()).tmp_elements.num_items;
+    let num_nodes: usize = bc.tmp_nodes_view().num_items();
+    let num_elements: usize = bc.tmp_elements_view().num_items();
 
     (*bc.get()).bake.nodes.count = num_nodes;
     (*bc.get()).bake.nodes.data =
@@ -5935,22 +5998,22 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
         b"result\0".as_ptr(),
     );
 
-    (*bc.get()).result.unordered = true;
-    (*bc.get()).result.ator = bc.ator_result_mut_ptr();
+    bc.result_view().set_unordered(true);
+    bc.result_view().set_ator(bc.ator_result_mut_ptr());
 
-    (*bc.get()).tmp.unordered = true;
-    (*bc.get()).tmp.ator = bc.ator_tmp_mut_ptr();
+    bc.tmp_view().set_unordered(true);
+    bc.tmp_view().set_ator(bc.ator_tmp_mut_ptr());
 
-    (*bc.get()).tmp_prop.ator = bc.ator_tmp_mut_ptr();
-    (*bc.get()).tmp_prop.unordered = true;
-    (*bc.get()).tmp_prop.clearable = true;
+    bc.tmp_prop_view().set_ator(bc.ator_tmp_mut_ptr());
+    bc.tmp_prop_view().set_unordered(true);
+    bc.tmp_prop_view().set_clearable(true);
 
-    (*bc.get()).tmp_times.ator = bc.ator_tmp_mut_ptr();
-    (*bc.get()).tmp_bake_props.ator = bc.ator_tmp_mut_ptr();
-    (*bc.get()).tmp_nodes.ator = bc.ator_tmp_mut_ptr();
-    (*bc.get()).tmp_elements.ator = bc.ator_tmp_mut_ptr();
-    (*bc.get()).tmp_props.ator = bc.ator_tmp_mut_ptr();
-    (*bc.get()).tmp_bake_stack.ator = bc.ator_tmp_mut_ptr();
+    bc.tmp_times_view().set_ator(bc.ator_tmp_mut_ptr());
+    bc.tmp_bake_props_view().set_ator(bc.ator_tmp_mut_ptr());
+    bc.tmp_nodes_view().set_ator(bc.ator_tmp_mut_ptr());
+    bc.tmp_elements_view().set_ator(bc.ator_tmp_mut_ptr());
+    bc.tmp_props_view().set_ator(bc.ator_tmp_mut_ptr());
+    bc.tmp_bake_stack_view().set_ator(bc.ator_tmp_mut_ptr());
 
     bc.set_anim(anim);
     if (*anim).time_begin < (*anim).time_end {
