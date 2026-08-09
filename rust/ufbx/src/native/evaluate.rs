@@ -3026,6 +3026,21 @@ impl CreateAnimContext {
         self.0.get().cast()
     }
 
+    // `imp` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn imp(&self) -> *mut AnimImp {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut AnimImp` are valid.
+        unsafe { (*self.get()).imp }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_imp(&self, imp: *mut AnimImp) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).imp = imp;
+        }
+    }
+
     // `scene` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn scene(&self) -> *const Scene {
@@ -3339,32 +3354,28 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
         );
     }
 
-    (*ac.get()).imp = push::<AnimImp>(&mut (*ac.get()).result, 1);
-    ufbxi_check_err!(
-        &mut (*ac.get()).error,
-        !(*ac.get()).imp.is_null(),
-        "ac->imp"
-    );
+    ac.set_imp(push::<AnimImp>(&mut (*ac.get()).result, 1));
+    ufbxi_check_err!(&mut (*ac.get()).error, !ac.imp().is_null(), "ac->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&Anim` pointer via exposed provenance.
-    ((*ac.get()).imp as *mut u8).expose_provenance();
+    (ac.imp() as *mut u8).expose_provenance();
 
     init_ref(
-        ptr::addr_of_mut!((*(*ac.get()).imp).refcount),
+        ptr::addr_of_mut!((*ac.imp()).refcount),
         ANIM_IMP_MAGIC,
         ptr::addr_of_mut!((*get_imp::<SceneImp>(scene as *mut Scene as *mut c_void)).refcount),
     );
 
-    (*(*ac.get()).imp).magic = ANIM_IMP_MAGIC;
+    (*ac.imp()).magic = ANIM_IMP_MAGIC;
     // C: `ac->imp->anim = ac->anim;` (struct assignment)
     ptr::copy_nonoverlapping(
         ptr::addr_of!((*ac.get()).anim),
-        ptr::addr_of_mut!((*(*ac.get()).imp).anim),
+        ptr::addr_of_mut!((*ac.imp()).anim),
         1,
     );
-    (*(*ac.get()).imp).refcount.ator = (*ac.get()).ator_result;
-    (*(*ac.get()).imp).refcount.buf = (*ac.get()).result;
+    (*ac.imp()).refcount.ator = (*ac.get()).ator_result;
+    (*ac.imp()).refcount.buf = (*ac.get()).result;
 
     Ok(())
 }

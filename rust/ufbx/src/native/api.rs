@@ -1796,7 +1796,7 @@ pub(crate) unsafe fn create_anim(
 
     if ok.is_ok() {
         clear_error(error);
-        let imp: *mut AnimImp = (*ac.get()).imp;
+        let imp: *mut AnimImp = ac.imp();
         core::ptr::addr_of_mut!((*imp).anim)
     } else {
         fix_error_type(
