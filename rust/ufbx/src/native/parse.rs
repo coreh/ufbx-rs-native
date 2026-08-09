@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `tmp_element_offsets` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_element_offsets_mut_ptr(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp_element_offsets }
+    }
+
     // `tmp_connections` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_connections_mut_ptr(&self) -> *mut Buf {

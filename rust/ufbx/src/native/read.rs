@@ -1164,7 +1164,7 @@ pub(crate) unsafe fn push_element_size(
     ufbxi_check_return!(
         uc,
         !push_copy_fast::<usize>(
-            &mut (*uc.get()).tmp_element_offsets,
+            uc.tmp_element_offsets_mut_ptr(),
             1,
             &(*uc.get()).tmp_element_byte_offset
         )
@@ -1252,7 +1252,7 @@ pub(crate) unsafe fn push_synthetic_element_size(
     ufbxi_check_return!(
         uc,
         !push_copy_fast::<usize>(
-            &mut (*uc.get()).tmp_element_offsets,
+            uc.tmp_element_offsets_mut_ptr(),
             1,
             &(*uc.get()).tmp_element_byte_offset
         )

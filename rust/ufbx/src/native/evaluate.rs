@@ -908,7 +908,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     buf_free(uc.tmp_connections_mut_ptr());
     buf_free(uc.tmp_node_ids_mut_ptr());
     buf_free(&mut (*uc.get()).tmp_elements);
-    buf_free(&mut (*uc.get()).tmp_element_offsets);
+    buf_free(uc.tmp_element_offsets_mut_ptr());
     buf_free(&mut (*uc.get()).tmp_element_fbx_ids);
     buf_free(&mut (*uc.get()).tmp_element_ptrs);
     for i in 0..ELEMENT_TYPE_COUNT {

@@ -6508,10 +6508,10 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     let num_element_offsets: usize = (*uc.get()).tmp_element_offsets.num_items;
     let element_offsets: *mut usize = push_pop::<usize>(
         uc.tmp_mut_ptr(),
-        &mut (*uc.get()).tmp_element_offsets,
+        uc.tmp_element_offsets_mut_ptr(),
         num_element_offsets,
     );
-    buf_free(&mut (*uc.get()).tmp_element_offsets);
+    buf_free(uc.tmp_element_offsets_mut_ptr());
     ufbxi_check!(uc, !element_offsets.is_null(), "element_offsets");
     for i in 0..num_elements {
         let element: *mut Element = element_data.add(*element_offsets.add(i)) as *mut Element;
@@ -6533,7 +6533,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     }
 
     (*uc.get()).scene.elements.count = num_elements;
-    buf_free(&mut (*uc.get()).tmp_element_offsets);
+    buf_free(uc.tmp_element_offsets_mut_ptr());
     buf_free(&mut (*uc.get()).tmp_elements);
 
     uc.set_tmp_element_flag(push_zero::<u8>(uc.tmp_mut_ptr(), num_elements));
