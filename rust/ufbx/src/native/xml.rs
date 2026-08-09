@@ -98,6 +98,26 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    // `read_fn` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn read_fn(
+        &self,
+    ) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize> {
+        // SAFETY: reading a scalar field; all bit patterns of `Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize>` are valid.
+        unsafe { (*self.get()).read_fn }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_read_fn(
+        &self,
+        read_fn: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize>,
+    ) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).read_fn = read_fn;
+        }
+    }
+
     // `doc` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn doc(&self) -> *mut XmlDocument {
@@ -159,7 +179,7 @@ static XML_CTYPE: [u8; 256] = {
 // ufbx.c:7312-7321 `ufbxi_xml_refill`
 #[inline(never)]
 pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
-    let mut num: usize = ((*xc.get()).read_fn.unwrap_unchecked())(
+    let mut num: usize = (xc.read_fn().unwrap_unchecked())(
         (*xc.get()).read_user,
         (*xc.get()).data.as_mut_ptr() as *mut c_void,
         size_of_val(&(*xc.get()).data),
@@ -652,7 +672,7 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     // initializer zeroes the whole (4 KiB) context.
     let xc: XmlContext = core::mem::zeroed();
     xc.set_ator((*opts).ator);
-    (*xc.get()).read_fn = (*opts).read_fn;
+    xc.set_read_fn((*opts).read_fn);
     (*xc.get()).read_user = (*opts).read_user;
 
     (*xc.get()).tmp_stack.ator = xc.ator();
