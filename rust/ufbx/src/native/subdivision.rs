@@ -170,6 +170,21 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `total_weights` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn total_weights(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).total_weights }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_total_weights(&self, total_weights: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).total_weights = total_weights;
+        }
+    }
+
     // `tmp_weights` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_weights(&self) -> *mut SubdivisionWeight {
@@ -457,7 +472,7 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
         }
     }
 
-    (*sc.get()).total_weights = (*sc.get()).total_weights.wrapping_add(num_weights);
+    sc.set_total_weights(sc.total_weights().wrapping_add(num_weights));
     let weights: *mut SubdivisionWeight =
         push_copy::<SubdivisionWeight>(&mut (*sc.get()).tmp, num_weights, tmp_weights);
     // C: `ufbxi_check_err(&sc->error, weights);` — this function returns `int`,
@@ -1352,7 +1367,7 @@ pub(crate) unsafe fn subdivide_weights(
     (*input).check_split_data = false;
     (*input).ignore_indices = true;
 
-    (*sc.get()).total_weights = 0;
+    sc.set_total_weights(0);
 
     let mut output_mem = MaybeUninit::<SubdivideLayerOutput>::uninit(); // ufbxi_uninit
     let output: *mut SubdivideLayerOutput = output_mem.as_mut_ptr();
@@ -1364,7 +1379,7 @@ pub(crate) unsafe fn subdivide_weights(
     let dst_ranges: *mut SubdivisionWeightRange =
         push::<SubdivisionWeightRange>(&mut (*sc.get()).result, num_vertices);
     let dst_weights: *mut SubdivisionWeight =
-        push::<SubdivisionWeight>(&mut (*sc.get()).result, (*sc.get()).total_weights);
+        push::<SubdivisionWeight>(&mut (*sc.get()).result, sc.total_weights());
     // C-parity: upstream checks the OUT parameters `ranges && weights`, not the
     // freshly pushed `dst_ranges && dst_weights` (ufbx.c:29573) — ported
     // verbatim.
@@ -1397,7 +1412,7 @@ pub(crate) unsafe fn subdivide_weights(
     (*ranges).data = dst_ranges;
     (*ranges).count = num_vertices;
     (*weights).data = dst_weights;
-    (*weights).count = (*sc.get()).total_weights;
+    (*weights).count = sc.total_weights();
 
     Ok(())
 }
