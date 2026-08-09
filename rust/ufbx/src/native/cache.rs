@@ -177,6 +177,14 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `result` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn result_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).result }
+    }
+
     // `name_cap` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn name_cap_mut(&self) -> *mut usize {
@@ -917,11 +925,8 @@ pub(crate) unsafe fn cache_load_xml_imp(
             tag = tag.add(1);
         }
         (*cc.get()).cache.extra_info.count = num_extra;
-        (*cc.get()).cache.extra_info.data = push_pop::<String>(
-            &mut (*cc.get()).result,
-            &mut (*cc.get()).tmp_stack,
-            num_extra,
-        );
+        (*cc.get()).cache.extra_info.data =
+            push_pop::<String>(cc.result_mut(), &mut (*cc.get()).tmp_stack, num_extra);
         ufbxi_check_err!(
             cc.error_mut(),
             !(*cc.get()).cache.extra_info.data.is_null(),
@@ -1404,11 +1409,8 @@ pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail>
         begin = end;
     }
 
-    (*cc.get()).cache.channels.data = push_pop::<CacheChannel>(
-        &mut (*cc.get()).result,
-        &mut (*cc.get()).tmp_stack,
-        num_channels,
-    );
+    (*cc.get()).cache.channels.data =
+        push_pop::<CacheChannel>(cc.result_mut(), &mut (*cc.get()).tmp_stack, num_channels);
     ufbxi_check_err!(
         cc.error_mut(),
         !(*cc.get()).cache.channels.data.is_null(),
@@ -1453,11 +1455,8 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
 
     let num_frames: usize = (*cc.get()).tmp_stack.num_items;
     (*cc.get()).cache.frames.count = num_frames;
-    (*cc.get()).cache.frames.data = push_pop::<CacheFrame>(
-        &mut (*cc.get()).result,
-        &mut (*cc.get()).tmp_stack,
-        num_frames,
-    );
+    (*cc.get()).cache.frames.data =
+        push_pop::<CacheFrame>(cc.result_mut(), &mut (*cc.get()).tmp_stack, num_frames);
     ufbxi_check_err!(
         cc.error_mut(),
         !(*cc.get()).cache.frames.data.is_null(),
@@ -1472,7 +1471,7 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     cache_setup_channels(cc)?;
 
     // Must be last allocation!
-    cc.set_imp(push(&mut (*cc.get()).result, 1));
+    cc.set_imp(push(cc.result_mut(), 1));
     ufbxi_check_err!(cc.error_mut(), !cc.imp().is_null(), "cc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
