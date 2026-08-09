@@ -1987,7 +1987,7 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
         return;
     }
     if !axis_matrix(
-        &mut (*uc.get()).axis_matrix,
+        uc.axis_matrix_mut_ptr(),
         (*uc.get()).scene.settings.axes,
         dst_axes,
     ) {
@@ -2000,7 +2000,7 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
             (*uc.get()).mirror_axis = mirror_axis;
             (*uc.get()).scene.metadata.mirror_axis = (*uc.get()).mirror_axis;
 
-            mirror_matrix_dst(&mut (*uc.get()).axis_matrix, (*uc.get()).mirror_axis);
+            mirror_matrix_dst(uc.axis_matrix_mut_ptr(), (*uc.get()).mirror_axis);
             ufbxi_dev_assert!(matrix_determinant(&(*uc.get()).axis_matrix) >= 0.0f32 as Real);
 
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
