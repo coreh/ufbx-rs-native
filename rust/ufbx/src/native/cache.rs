@@ -177,6 +177,21 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `frames_per_second` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn frames_per_second(&self) -> f64 {
+        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
+        unsafe { (*self.get()).frames_per_second }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_frames_per_second(&self, frames_per_second: f64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).frames_per_second = frames_per_second;
+        }
+    }
+
     // `tmp_arr_size` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_arr_size(&self) -> usize {
@@ -677,7 +692,7 @@ pub(crate) unsafe fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
 
         let sample_frame: f64 = start_frame + i as f64 * frames_per_sample;
         (*frame).channel = (*cc.get()).channel_name;
-        (*frame).time = sample_frame / (*cc.get()).frames_per_second;
+        (*frame).time = sample_frame / cc.frames_per_second();
         (*frame).filename = (*cc.get()).stream_filename;
         (*frame).data_format = CacheDataFormat::Vec3Float;
         (*frame).data_encoding = CacheDataEncoding::LittleEndian;
@@ -1450,11 +1465,11 @@ pub(crate) unsafe fn load_geometry_cache(
     (*cc.get()).string_pool.initial_size = 64;
     (*cc.get()).result.ator = &raw mut (*cc.get()).ator_result;
 
-    (*cc.get()).frames_per_second = if opts.frames_per_second > 0.0 {
+    cc.set_frames_per_second(if opts.frames_per_second > 0.0 {
         opts.frames_per_second
     } else {
         30.0
-    };
+    });
 
     let cache: *mut GeometryCache = cache_load(&cc, filename);
     if !p_error.is_null() {
@@ -1570,7 +1585,7 @@ pub(crate) unsafe fn load_external_cache(
     cc.set_owned_by_scene(true);
 
     (*cc.get()).open_file_cb = (*uc.get()).opts.open_file_cb;
-    (*cc.get()).frames_per_second = (*uc.get()).scene.settings.frames_per_second;
+    cc.set_frames_per_second((*uc.get()).scene.settings.frames_per_second);
 
     // Temporarily "borrow" allocators for the geometry cache
     cc.set_ator_tmp(uc.ator_tmp());
