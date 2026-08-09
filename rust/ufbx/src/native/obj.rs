@@ -200,7 +200,7 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
 
     (*uc.obj().get()).face_material = NO_INDEX;
     uc.obj().set_face_group(0);
-    (*uc.obj().get()).face_group_dirty = true;
+    uc.obj().set_face_group_dirty(true);
     (*uc.obj().get()).material_dirty = true;
 
     connect_oo(uc, (*mesh).fbx_mesh_id, (*mesh).fbx_node_id)?;
@@ -680,7 +680,7 @@ pub(crate) unsafe fn obj_parse_indices(
             flush_mesh = true;
         }
         (*uc.obj().get()).group_dirty = false;
-        (*uc.obj().get()).face_group_dirty = true;
+        uc.obj().set_face_group_dirty(true);
     }
 
     if (*uc.obj().get()).mesh.is_null() || flush_mesh {
@@ -734,7 +734,7 @@ pub(crate) unsafe fn obj_parse_indices(
         return Ok(());
     }
 
-    if (*uc.obj().get()).face_group_dirty {
+    if uc.obj().face_group_dirty() {
         let mut name: String = EMPTY_STRING.0;
         if (*uc.obj().get()).group.length > 0
             && ((*uc.obj().get()).object.length > 0 || uc.opts_view().obj_merge_groups())
@@ -788,7 +788,7 @@ pub(crate) unsafe fn obj_parse_indices(
             );
         }
 
-        (*uc.obj().get()).face_group_dirty = false;
+        uc.obj().set_face_group_dirty(false);
     }
 
     let num_indices: usize = num_tokens;
