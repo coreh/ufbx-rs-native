@@ -243,7 +243,7 @@ impl CacheContext {
     pub(crate) fn error_view(&self) -> &crate::native::error::ErrorView {
         // SAFETY: repr(transparent) over the `error` field inside this context's outer
         // UnsafeCell; shared interior-mutable view, asserts no validity.
-        unsafe { &*(&raw const (*self.get()).error as *const crate::native::error::ErrorView) }
+        unsafe { &*(&raw mut (*self.get()).error as *mut crate::native::error::ErrorView) }
     }
 
     // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `GeometryCacheOptsView`.
@@ -252,7 +252,7 @@ impl CacheContext {
         // SAFETY: `GeometryCacheOptsView` is repr(transparent) over the `opts` field's layout,
         // which lives in this context's outer UnsafeCell; a shared interior-mutable
         // `&GeometryCacheOptsView` is sound and asserts no validity.
-        unsafe { &*(&raw const (*self.get()).opts as *const GeometryCacheOptsView) }
+        unsafe { &*(&raw mut (*self.get()).opts as *mut GeometryCacheOptsView) }
     }
 
     // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).

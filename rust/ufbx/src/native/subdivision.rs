@@ -292,7 +292,7 @@ impl SubdivideContext {
         // SAFETY: `SubdivideOptsView` is repr(transparent) over the `opts` field's layout,
         // which lives in this context's outer UnsafeCell; a shared interior-mutable
         // `&SubdivideOptsView` is sound and asserts no validity.
-        unsafe { &*(&raw const (*self.get()).opts as *const SubdivideOptsView) }
+        unsafe { &*(&raw mut (*self.get()).opts as *mut SubdivideOptsView) }
     }
 
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).

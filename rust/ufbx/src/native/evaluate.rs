@@ -2112,7 +2112,7 @@ impl EvalContext {
         // SAFETY: `EvaluateOptsView` is repr(transparent) over the `opts` field's layout,
         // which lives in this context's outer UnsafeCell; a shared interior-mutable
         // `&EvaluateOptsView` is sound and asserts no validity.
-        unsafe { &*(&raw const (*self.get()).opts as *const EvaluateOptsView) }
+        unsafe { &*(&raw mut (*self.get()).opts as *mut EvaluateOptsView) }
     }
 
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -3165,7 +3165,7 @@ impl AnimOptsView {
     pub(crate) fn layer_ids_view(&self) -> &crate::prelude::RawListView<u32> {
         // SAFETY: reinterpret the non-Copy `RawList` field in place as a view;
         // interior-mutable, asserts no validity.
-        unsafe { &*(&raw const (*self.get()).layer_ids as *const crate::prelude::RawListView<u32>) }
+        unsafe { &*(&raw mut (*self.get()).layer_ids as *mut crate::prelude::RawListView<u32>) }
     }
 
     #[inline(always)]
@@ -3218,7 +3218,7 @@ impl CreateAnimContext {
     pub(crate) fn opts_view(&self) -> &AnimOptsView {
         // SAFETY: repr(transparent) over the `opts` field inside this context's
         // outer UnsafeCell; shared interior-mutable view, asserts no validity.
-        unsafe { &*(&raw const (*self.get()).opts as *const AnimOptsView) }
+        unsafe { &*(&raw mut (*self.get()).opts as *mut AnimOptsView) }
     }
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -3911,7 +3911,7 @@ impl BakeContext {
         // SAFETY: `BakeOptsView` is repr(transparent) over the `opts` field's layout;
         // the field lives in this context's outer UnsafeCell, so a shared
         // interior-mutable `&BakeOptsView` is sound and asserts no validity.
-        unsafe { &*(&raw const (*self.get()).opts as *const BakeOptsView) }
+        unsafe { &*(&raw mut (*self.get()).opts as *mut BakeOptsView) }
     }
 
     // `tmp_times` — raw-ptr getter (address of field for out-param/mutation sites).

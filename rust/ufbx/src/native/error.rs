@@ -1342,6 +1342,6 @@ impl ErrorView {
     #[inline(always)]
     pub(crate) fn description_view(&self) -> &crate::prelude::StringView {
         // SAFETY: reinterpret the `description: String` field in place as a view.
-        unsafe { &*(&raw const (*self.get()).description as *const crate::prelude::StringView) }
+        unsafe { &*(&raw mut (*self.get()).description as *mut crate::prelude::StringView) }
     }
 }
