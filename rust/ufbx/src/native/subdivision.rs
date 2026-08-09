@@ -170,6 +170,14 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ator_result }
+    }
+
     // `max_vertex_weights` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn max_vertex_weights(&self) -> usize {
@@ -2074,7 +2082,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     );
     init_ator(
         &mut (*sc.get()).error,
-        &mut (*sc.get()).ator_result,
+        sc.ator_result_mut(),
         &(*sc.get()).opts.result_allocator,
         b"result\0".as_ptr(),
     );
@@ -2110,7 +2118,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
         i += 1;
     }
 
-    (*sc.get()).result.ator = &raw mut (*sc.get()).ator_result;
+    (*sc.get()).result.ator = sc.ator_result_mut();
     subdivide_mesh_level(sc)?;
     buf_free(&mut (*sc.get()).tmp);
 
@@ -2273,7 +2281,7 @@ pub(crate) unsafe fn subdivide_mesh(
         );
         buf_free(&mut (*sc.get()).result);
         free_ator(&mut (*sc.get()).ator_tmp);
-        free_ator(&mut (*sc.get()).ator_result);
+        free_ator(sc.ator_result_mut());
         core::ptr::null_mut()
     }
 }
