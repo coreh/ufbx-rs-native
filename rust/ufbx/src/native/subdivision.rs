@@ -170,6 +170,14 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `src_mesh` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn src_mesh_mut(&self) -> *mut Mesh {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).src_mesh }
+    }
+
     // `source` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn source_mut(&self) -> *mut Buf {
@@ -2137,7 +2145,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
         // C: `sc->src_mesh = sc->dst_mesh;` — struct assignment (memcpy).
         core::ptr::copy_nonoverlapping(
             core::ptr::addr_of!((*sc.get()).dst_mesh),
-            core::ptr::addr_of_mut!((*sc.get()).src_mesh),
+            sc.src_mesh_mut(),
             1,
         );
 
@@ -2278,7 +2286,7 @@ pub(crate) unsafe fn subdivide_mesh(
 
     sc.set_src_mesh_ptr(mesh as *mut Mesh);
     // C: `(*sc.get()).src_mesh = *mesh;` — struct assignment (memcpy).
-    core::ptr::copy_nonoverlapping(mesh, core::ptr::addr_of_mut!((*sc.get()).src_mesh), 1);
+    core::ptr::copy_nonoverlapping(mesh, sc.src_mesh_mut(), 1);
 
     let ok: bool = subdivide_mesh_imp(sc, level).is_ok();
 
