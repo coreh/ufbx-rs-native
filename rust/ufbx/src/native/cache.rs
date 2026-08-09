@@ -177,6 +177,14 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `stream` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn stream_mut(&self) -> *mut RawStream {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).stream }
+    }
+
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut(&self) -> *mut Buf {
@@ -1102,11 +1110,11 @@ pub(crate) unsafe fn cache_try_open_file(
     original_filename: *const crate::prelude::Blob,
     p_found: *mut bool,
 ) -> Result<(), Fail> {
-    core::ptr::write_bytes(&mut (*cc.get()).stream as *mut RawStream, 0, 1);
+    core::ptr::write_bytes(cc.stream_mut() as *mut RawStream, 0, 1);
     ufbxi_regression_assert!(strlen(filename.data) == filename.length);
     if !open_file(
         &(*cc.get()).open_file_cb,
-        &mut (*cc.get()).stream,
+        cc.stream_mut(),
         filename.data,
         filename.length,
         original_filename,
