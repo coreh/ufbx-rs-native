@@ -239,6 +239,29 @@ impl<T> Default for RawList<T> {
     }
 }
 
+// Typed interior-mutable VIEW over a `RawList<T>` field, reinterpreted in place
+// (same pattern as the `*OptsView` handles). Leaf getters read the Copy fields;
+// `MaybeUninit` means forming `&RawListView` asserts no validity.
+#[repr(transparent)]
+pub(crate) struct RawListView<T>(core::cell::UnsafeCell<core::mem::MaybeUninit<RawList<T>>>);
+
+impl<T> RawListView<T> {
+    #[inline(always)]
+    fn get(&self) -> *mut RawList<T> {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn count(&self) -> usize {
+        // SAFETY: reading a POD `usize` leaf.
+        unsafe { (*self.get()).count }
+    }
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *const T {
+        // SAFETY: reading a POD pointer leaf.
+        unsafe { (*self.get()).data }
+    }
+}
+
 #[repr(C)]
 #[allow(dead_code)] // Currently not used
 pub struct OptionRef<T> {

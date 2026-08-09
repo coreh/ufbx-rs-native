@@ -3144,10 +3144,81 @@ pub(crate) struct CreateAnimContext(
     pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerCreateAnimContext>>,
 );
 
+// Typed interior-mutable VIEW over `CreateAnimContext.opts` (approach A). Non-Copy
+// list fields recurse into `RawListView`; addr-of fields use `_ptr` getters.
+#[repr(transparent)]
+pub(crate) struct AnimOptsView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawAnimOpts>>);
+
+impl AnimOptsView {
+    #[inline(always)]
+    fn get(&self) -> *mut RawAnimOpts {
+        self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn ignore_connections(&self) -> bool {
+        // SAFETY: reading a POD opts field by value.
+        unsafe { (*self.get()).ignore_connections }
+    }
+
+    #[inline(always)]
+    pub(crate) fn layer_ids_view(&self) -> &crate::prelude::RawListView<u32> {
+        // SAFETY: reinterpret the non-Copy `RawList` field in place as a view;
+        // interior-mutable, asserts no validity.
+        unsafe { &*(&raw const (*self.get()).layer_ids as *const crate::prelude::RawListView<u32>) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn override_layer_weights_view(
+        &self,
+    ) -> &crate::prelude::RawListView<crate::prelude::Real> {
+        // SAFETY: reinterpret the non-Copy `RawList` field in place as a view;
+        // interior-mutable, asserts no validity.
+        unsafe {
+            &*(&raw const (*self.get()).override_layer_weights
+                as *const crate::prelude::RawListView<crate::prelude::Real>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn transform_overrides_view(
+        &self,
+    ) -> &crate::prelude::RawListView<crate::generated::TransformOverride> {
+        // SAFETY: reinterpret the non-Copy `RawList` field in place as a view;
+        // interior-mutable, asserts no validity.
+        unsafe {
+            &*(&raw const (*self.get()).transform_overrides
+                as *const crate::prelude::RawListView<crate::generated::TransformOverride>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn prop_overrides_ptr(
+        &self,
+    ) -> *const crate::prelude::RawList<crate::generated::RawPropOverrideDesc> {
+        // SAFETY: `&raw const` address of a read-only list field.
+        unsafe { &raw const (*self.get()).prop_overrides }
+    }
+
+    #[inline(always)]
+    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        // SAFETY: `&raw const` address of a read-only sub-struct.
+        unsafe { &raw const (*self.get()).result_allocator }
+    }
+}
+
 impl CreateAnimContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerCreateAnimContext {
         self.0.get().cast()
+    }
+
+    // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `AnimOptsView`.
+    #[inline(always)]
+    pub(crate) fn opts_view(&self) -> &AnimOptsView {
+        // SAFETY: repr(transparent) over the `opts` field inside this context's
+        // outer UnsafeCell; shared interior-mutable view, asserts no validity.
+        unsafe { &*(&raw const (*self.get()).opts as *const AnimOptsView) }
     }
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -3327,16 +3398,16 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     init_ator(
         ac.error_mut_ptr(),
         ac.ator_result_mut_ptr(),
-        ptr::addr_of!((*ac.get()).opts.result_allocator),
+        ac.opts_view().result_allocator_ptr(),
         b"result\0".as_ptr(),
     );
     (*ac.get()).result.unordered = true;
     (*ac.get()).result.ator = ac.ator_result_mut_ptr();
 
-    (*anim).ignore_connections = (*ac.get()).opts.ignore_connections;
+    (*anim).ignore_connections = ac.opts_view().ignore_connections();
     (*anim).custom = true;
 
-    let num_layers: usize = (*ac.get()).opts.layer_ids.count;
+    let num_layers: usize = ac.opts_view().layer_ids_view().count();
     (*anim).layers.count = num_layers;
     (*anim).layers.data =
         push_zero::<*mut AnimLayer>(ac.result_mut_ptr(), num_layers) as *const Ref<AnimLayer>;
@@ -3346,17 +3417,17 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
         "anim->layers.data"
     );
 
-    if (*ac.get()).opts.override_layer_weights.count > 0 {
+    if ac.opts_view().override_layer_weights_view().count() > 0 {
         ufbxi_check_err_msg!(
             ac.error_mut_ptr(),
-            (*ac.get()).opts.override_layer_weights.count == num_layers,
+            ac.opts_view().override_layer_weights_view().count() == num_layers,
             "override_layer_weights[] count must match layer_ids[] count",
             "ac->opts.override_layer_weights.count == num_layers"
         );
         (*anim).override_layer_weights.data = push_copy::<Real>(
             ac.result_mut_ptr(),
             num_layers,
-            (*ac.get()).opts.override_layer_weights.data,
+            ac.opts_view().override_layer_weights_view().data(),
         );
         ufbxi_check_err!(
             ac.error_mut_ptr(),
@@ -3367,7 +3438,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     }
 
     for i in 0..num_layers {
-        let index: u32 = *(*ac.get()).opts.layer_ids.data.add(i);
+        let index: u32 = *ac.opts_view().layer_ids_view().data().add(i);
         ufbxi_check_err_msg!(
             ac.error_mut_ptr(),
             (index as usize) < (*scene).anim_layers.count,
@@ -3381,7 +3452,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
 
     // C: `ufbx_const_prop_override_desc_list prop_overrides = ac->opts.prop_overrides;`
     let prop_overrides: crate::prelude::RawList<RawPropOverrideDesc> =
-        ptr::read(ptr::addr_of!((*ac.get()).opts.prop_overrides));
+        ptr::read(ac.opts_view().prop_overrides_ptr());
     if prop_overrides.count > 0 {
         (*anim).prop_overrides.count = prop_overrides.count;
         (*anim).prop_overrides.data =
@@ -3497,12 +3568,12 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
         }
     }
 
-    if (*ac.get()).opts.transform_overrides.count > 0 {
-        (*anim).transform_overrides.count = (*ac.get()).opts.transform_overrides.count;
+    if ac.opts_view().transform_overrides_view().count() > 0 {
+        (*anim).transform_overrides.count = ac.opts_view().transform_overrides_view().count();
         (*anim).transform_overrides.data = push_copy::<TransformOverride>(
             ac.result_mut_ptr(),
             (*anim).transform_overrides.count,
-            (*ac.get()).opts.transform_overrides.data,
+            ac.opts_view().transform_overrides_view().data(),
         );
         ufbxi_check_err!(
             ac.error_mut_ptr(),
