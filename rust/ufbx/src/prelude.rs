@@ -295,6 +295,38 @@ pub struct String {
     _marker: PhantomData<u8>,
 }
 
+// Typed interior-mutable VIEW over a `String` field, reinterpreted in place — for
+// sites that read OR write String subfields (`err.description.data = ...`).
+#[repr(transparent)]
+pub(crate) struct StringView(core::cell::UnsafeCell<core::mem::MaybeUninit<String>>);
+
+impl StringView {
+    #[inline(always)]
+    fn get(&self) -> *mut String {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *const u8 {
+        unsafe { (*self.get()).data }
+    }
+    #[inline(always)]
+    pub(crate) fn length(&self) -> usize {
+        unsafe { (*self.get()).length }
+    }
+    #[inline(always)]
+    pub(crate) fn set_data(&self, data: *const u8) {
+        unsafe {
+            (*self.get()).data = data;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_length(&self, length: usize) {
+        unsafe {
+            (*self.get()).length = length;
+        }
+    }
+}
+
 impl String {
     // Raw constructor for the native port (C: `ufbx_string s = { data, len };`).
     // `_marker` is private to this module, so aggregate construction is only

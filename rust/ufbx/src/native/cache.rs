@@ -238,6 +238,14 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `error` — typed VIEW handle (reinterpret-in-place); accessors on `ErrorView`.
+    #[inline(always)]
+    pub(crate) fn error_view(&self) -> &crate::native::error::ErrorView {
+        // SAFETY: repr(transparent) over the `error` field inside this context's outer
+        // UnsafeCell; shared interior-mutable view, asserts no validity.
+        unsafe { &*(&raw const (*self.get()).error as *const crate::native::error::ErrorView) }
+    }
+
     // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `GeometryCacheOptsView`.
     #[inline(always)]
     pub(crate) fn opts_view(&self) -> &GeometryCacheOptsView {
@@ -1841,7 +1849,7 @@ pub(crate) unsafe fn load_external_cache(
 
     let mut cache: *mut GeometryCache = cache_load(&cc, (*file).filename);
     if cache.is_null() {
-        if (*cc.get()).error.type_ == ErrorType::FileNotFound {
+        if cc.error_view().type_() == ErrorType::FileNotFound {
             core::ptr::write_bytes(cc.error_mut_ptr() as *mut Error, 0, 1);
             cache = cache_load(&cc, (*file).absolute_filename);
         }
@@ -1852,7 +1860,7 @@ pub(crate) unsafe fn load_external_cache(
     (*uc.get()).result = (*cc.get()).result;
 
     if cache.is_null() {
-        if (*cc.get()).error.type_ == ErrorType::FileNotFound {
+        if cc.error_view().type_() == ErrorType::FileNotFound {
             if (*uc.get()).opts.ignore_missing_external_files {
                 ufbxi_check!(
                     uc,
@@ -1867,10 +1875,13 @@ pub(crate) unsafe fn load_external_cache(
                 );
                 return Ok(());
             } else {
-                (*cc.get()).error.type_ = ErrorType::ExternalFileNotFound;
-                (*cc.get()).error.description.data = b"External file not found\0".as_ptr();
-                (*cc.get()).error.description.length =
-                    strlen(b"External file not found\0".as_ptr());
+                cc.error_view().set_type_(ErrorType::ExternalFileNotFound);
+                cc.error_view()
+                    .description_view()
+                    .set_data(b"External file not found\0".as_ptr());
+                cc.error_view()
+                    .description_view()
+                    .set_length(strlen(b"External file not found\0".as_ptr()));
             }
         }
 

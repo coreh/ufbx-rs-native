@@ -1318,3 +1318,30 @@ mod tests {
         }
     }
 }
+
+// Typed interior-mutable VIEW over an `Error` field, reinterpreted in place.
+#[repr(transparent)]
+pub(crate) struct ErrorView(core::cell::UnsafeCell<core::mem::MaybeUninit<Error>>);
+
+impl ErrorView {
+    #[inline(always)]
+    fn get(&self) -> *mut Error {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> crate::generated::ErrorType {
+        // SAFETY: reading the error-type enum — same assertion the direct read makes.
+        unsafe { (*self.get()).type_ }
+    }
+    #[inline(always)]
+    pub(crate) fn set_type_(&self, type_: crate::generated::ErrorType) {
+        unsafe {
+            (*self.get()).type_ = type_;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn description_view(&self) -> &crate::prelude::StringView {
+        // SAFETY: reinterpret the `description: String` field in place as a view.
+        unsafe { &*(&raw const (*self.get()).description as *const crate::prelude::StringView) }
+    }
+}
