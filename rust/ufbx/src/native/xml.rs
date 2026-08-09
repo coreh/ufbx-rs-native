@@ -98,6 +98,14 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    // `result` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn result_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).result }
+    }
+
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut(&self) -> *mut Error {
@@ -386,7 +394,7 @@ pub(crate) unsafe fn xml_skip_until_string(
     xml_push_token_char(xc, b'\0')?;
     if !dst.is_null() {
         (*dst).length = xc.tok_len() - 1;
-        (*dst).data = push_copy::<u8>(&mut (*xc.get()).result, xc.tok_len(), xc.tok());
+        (*dst).data = push_copy::<u8>(xc.result_mut(), xc.tok_len(), xc.tok());
         ufbxi_check_err!(xc.error_mut(), !(*dst).data.is_null(), "dst->data");
     }
 
@@ -484,7 +492,7 @@ pub(crate) unsafe fn xml_read_until(
     xml_push_token_char(xc, b'\0')?;
     if !dst.is_null() {
         (*dst).length = xc.tok_len() - 1;
-        (*dst).data = push_copy::<u8>(&mut (*xc.get()).result, xc.tok_len(), xc.tok());
+        (*dst).data = push_copy::<u8>(xc.result_mut(), xc.tok_len(), xc.tok());
         ufbxi_check_err!(xc.error_mut(), !(*dst).data.is_null(), "dst->data");
     }
 
@@ -562,7 +570,7 @@ unsafe fn xml_parse_tag_rec(
                 (*tag).name.data = EMPTY_CHAR.as_ptr();
 
                 (*tag).text.length = xc.tok_len() - 1;
-                (*tag).text.data = push_copy::<u8>(&mut (*xc.get()).result, xc.tok_len(), xc.tok());
+                (*tag).text.data = push_copy::<u8>(xc.result_mut(), xc.tok_len(), xc.tok());
                 ufbxi_check_err!(
                     xc.error_mut(),
                     !(*tag).text.data.is_null(),
@@ -658,11 +666,7 @@ unsafe fn xml_parse_tag_rec(
     }
 
     (*tag).num_attribs = num_attribs;
-    (*tag).attribs = push_pop(
-        &mut (*xc.get()).result,
-        &mut (*xc.get()).tmp_stack,
-        num_attribs,
-    );
+    (*tag).attribs = push_pop(xc.result_mut(), &mut (*xc.get()).tmp_stack, num_attribs);
     ufbxi_check_err!(xc.error_mut(), !(*tag).attribs.is_null(), "tag->attribs");
 
     if has_children {
@@ -677,7 +681,7 @@ unsafe fn xml_parse_tag_rec(
 
         (*tag).num_children = (*xc.get()).tmp_stack.num_items - children_begin;
         (*tag).children = push_pop(
-            &mut (*xc.get()).result,
+            xc.result_mut(),
             &mut (*xc.get()).tmp_stack,
             (*tag).num_children,
         );
@@ -690,7 +694,7 @@ unsafe fn xml_parse_tag_rec(
 // ufbx.c:7586-7610 `ufbxi_xml_parse_root`
 #[inline(never)]
 pub(crate) unsafe fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
-    let tag: *mut XmlTag = push_zero(&mut (*xc.get()).result, 1);
+    let tag: *mut XmlTag = push_zero(xc.result_mut(), 1);
     ufbxi_check_err!(xc.error_mut(), !tag.is_null(), "tag");
     (*tag).name.data = EMPTY_CHAR.as_ptr();
     (*tag).text.data = EMPTY_CHAR.as_ptr();
@@ -705,13 +709,13 @@ pub(crate) unsafe fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
 
     (*tag).num_children = (*xc.get()).tmp_stack.num_items;
     (*tag).children = push_pop(
-        &mut (*xc.get()).result,
+        xc.result_mut(),
         &mut (*xc.get()).tmp_stack,
         (*tag).num_children,
     );
     ufbxi_check_err!(xc.error_mut(), !(*tag).children.is_null(), "tag->children");
 
-    xc.set_doc(push(&mut (*xc.get()).result, 1));
+    xc.set_doc(push(xc.result_mut(), 1));
     ufbxi_check_err!(xc.error_mut(), !xc.doc().is_null(), "xc->doc");
 
     (*xc.doc()).root = tag;
@@ -760,7 +764,7 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     if ok {
         xc.doc()
     } else {
-        buf_free(&mut (*xc.get()).result);
+        buf_free(xc.result_mut());
         if !error.is_null() {
             core::ptr::write(error, core::ptr::read(&(*xc.get()).error));
         }
