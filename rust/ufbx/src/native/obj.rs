@@ -926,7 +926,7 @@ pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
             i += 8;
         }
 
-        (*uc.obj().get()).has_vertex_color = true;
+        uc.obj().set_has_vertex_color(true);
     }
 
     if !uc.opts_view().disable_quirks() {
@@ -1178,7 +1178,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
     );
     ufbxi_check!(uc, !meshes.is_null(), "meshes");
 
-    if (*uc.obj().get()).has_vertex_color {
+    if uc.obj().has_vertex_color() {
         obj_pad_colors(
             uc,
             uc.obj().vertex_count_at(ObjAttrib::Position as usize).get(),
@@ -1229,7 +1229,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         }
         obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, 0)?;
     }
-    if (*uc.obj().get()).has_vertex_color && non_disjoint[ObjAttrib::Position as usize] {
+    if uc.obj().has_vertex_color() && non_disjoint[ObjAttrib::Position as usize] {
         obj_pop_vertices(
             uc,
             &mut vertices[ObjAttrib::Color as usize],
@@ -1264,7 +1264,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                     obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, min_ix)?;
                 }
             }
-            if (*uc.obj().get()).has_vertex_color && !non_disjoint[ObjAttrib::Position as usize] {
+            if uc.obj().has_vertex_color() && !non_disjoint[ObjAttrib::Position as usize] {
                 let min_ix: u64 = (*mesh).vertex_range[ObjAttrib::Position as usize].min_ix;
                 ufbxi_check!(uc, min_ix < u64::MAX, "min_ix < UINT64_MAX");
                 obj_pop_vertices(
@@ -1375,7 +1375,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 false,
             )?;
 
-            if (*uc.obj().get()).has_vertex_color {
+            if uc.obj().has_vertex_color() {
                 ufbx_assert!(!color_valid.is_null());
                 let mut has_color: bool = false;
                 let mut all_valid: bool = true;
@@ -1496,7 +1496,7 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             if num_tokens >= 7 {
                 let num_vertices: usize =
                     uc.obj().vertex_count_at(ObjAttrib::Position as usize).get();
-                (*uc.obj().get()).has_vertex_color = true;
+                uc.obj().set_has_vertex_color(true);
                 obj_pad_colors(uc, num_vertices.wrapping_sub(1))?;
                 if uc.obj().vertex_count_at(ObjAttrib::Color as usize).get() < num_vertices {
                     ufbx_assert!(

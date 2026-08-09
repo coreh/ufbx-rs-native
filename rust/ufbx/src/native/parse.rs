@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn has_vertex_color(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).has_vertex_color }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_has_vertex_color(&self, has_vertex_color: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).has_vertex_color = has_vertex_color;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn has_face_smoothing(&self) -> bool {
         // SAFETY: reading a `bool` we only ever store valid bools into.
         unsafe { (*self.get()).has_face_smoothing }
