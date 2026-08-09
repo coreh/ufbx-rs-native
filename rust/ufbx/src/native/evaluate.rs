@@ -3484,6 +3484,21 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `time_max` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn time_max(&self) -> f64 {
+        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
+        unsafe { (*self.get()).time_max }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_time_max(&self, time_max: f64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).time_max = time_max;
+        }
+    }
+
     // `time_min` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn time_min(&self) -> f64 {
@@ -4036,8 +4051,8 @@ pub(crate) unsafe fn finalize_bake_times(
         if (*times.add(0)).time < bc.time_min() {
             bc.set_time_min((*times.add(0)).time);
         }
-        if (*times.add(num_times - 1)).time > (*bc.get()).time_max {
-            (*bc.get()).time_max = (*times.add(num_times - 1)).time;
+        if (*times.add(num_times - 1)).time > bc.time_max() {
+            bc.set_time_max((*times.add(num_times - 1)).time);
         }
     }
 
@@ -5308,9 +5323,9 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         ptr::null_mut(),
     );
 
-    if bc.time_min() < (*bc.get()).time_max {
+    if bc.time_min() < bc.time_max() {
         (*bc.get()).bake.key_time_min = bc.time_min();
-        (*bc.get()).bake.key_time_max = (*bc.get()).time_max;
+        (*bc.get()).bake.key_time_max = bc.time_max();
     }
 
     if bc.time_begin() < bc.time_end() {
@@ -5385,7 +5400,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
         bc.set_time_end((*anim).time_end);
     }
     bc.set_time_min(math::INFINITY);
-    (*bc.get()).time_max = -math::INFINITY;
+    bc.set_time_max(-math::INFINITY);
 
     (*bc.get()).imp = push::<BakedAnimImp>(ptr::addr_of_mut!((*bc.get()).result), 1);
     ufbxi_check_err!(
