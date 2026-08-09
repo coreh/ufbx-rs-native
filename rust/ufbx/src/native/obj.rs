@@ -266,7 +266,7 @@ pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
     (*uc.get()).obj.tmp_props.ator = uc.ator_tmp();
 
     // .obj parsing does its own yield logic
-    uc.set_data_size(uc.data_size() + (*uc.get()).yield_size);
+    uc.set_data_size(uc.data_size() + uc.yield_size());
 
     (*uc.get()).obj.object.data = EMPTY_CHAR.as_ptr();
     (*uc.get()).obj.group.data = EMPTY_CHAR.as_ptr();
@@ -1882,7 +1882,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     (*uc.get()).data_begin = core::ptr::null();
     uc.set_data(core::ptr::null());
     uc.set_data_size(0);
-    (*uc.get()).yield_size = 0;
+    uc.set_yield_size(0);
     (*uc.get()).eof = false;
     (*uc.get()).obj.eof = false;
 

@@ -155,15 +155,15 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
 // ufbx.c:6783-6787 `ufbxi_pause_progress`
 #[inline(always)]
 pub(crate) unsafe fn pause_progress(uc: &Context) {
-    uc.set_data_size(uc.data_size() + (*uc.get()).yield_size);
-    (*uc.get()).yield_size = 0;
+    uc.set_data_size(uc.data_size() + uc.yield_size());
+    uc.set_yield_size(0);
 }
 
 // ufbx.c:6789-6799 `ufbxi_resume_progress`
 #[inline(never)]
 pub(crate) unsafe fn resume_progress(uc: &Context) -> Result<(), Fail> {
-    (*uc.get()).yield_size = min_sz(uc.data_size(), (*uc.get()).progress_interval);
-    uc.set_data_size(uc.data_size() - (*uc.get()).yield_size);
+    uc.set_yield_size(min_sz(uc.data_size(), (*uc.get()).progress_interval));
+    uc.set_data_size(uc.data_size() - uc.yield_size());
 
     if get_read_offset(uc).wrapping_sub((*uc.get()).latest_progress_bytes)
         >= (*uc.get()).progress_interval as u64
@@ -182,17 +182,17 @@ pub(crate) unsafe fn resume_progress(uc: &Context) -> Result<(), Fail> {
 #[inline(never)]
 pub(crate) unsafe fn yield_(uc: &Context, size: usize) -> *const u8 {
     let ret: *const u8;
-    uc.set_data_size(uc.data_size() + (*uc.get()).yield_size);
+    uc.set_data_size(uc.data_size() + uc.yield_size());
     if uc.data_size() >= size {
         ret = uc.data();
     } else {
         ret = refill(uc, size, true);
     }
-    (*uc.get()).yield_size = min_sz(
+    uc.set_yield_size(min_sz(
         uc.data_size(),
         max_sz(size, (*uc.get()).progress_interval),
-    );
-    uc.set_data_size(uc.data_size() - (*uc.get()).yield_size);
+    ));
+    uc.set_data_size(uc.data_size() - uc.yield_size());
 
     ufbxi_check_return!(
         uc,
@@ -206,7 +206,7 @@ pub(crate) unsafe fn yield_(uc: &Context, size: usize) -> *const u8 {
 // ufbx.c:6817-6824 `ufbxi_peek_bytes`
 #[inline(always)]
 pub(crate) unsafe fn peek_bytes(uc: &Context, size: usize) -> *const u8 {
-    if (*uc.get()).yield_size >= size {
+    if uc.yield_size() >= size {
         uc.data()
     } else {
         yield_(uc, size)
@@ -218,7 +218,7 @@ pub(crate) unsafe fn peek_bytes(uc: &Context, size: usize) -> *const u8 {
 pub(crate) unsafe fn read_bytes(uc: &Context, size: usize) -> *const u8 {
     // Refill the current buffer if necessary
     let ret: *const u8;
-    if (*uc.get()).yield_size >= size {
+    if uc.yield_size() >= size {
         ret = uc.data();
     } else {
         ret = yield_(uc, size);
@@ -228,7 +228,7 @@ pub(crate) unsafe fn read_bytes(uc: &Context, size: usize) -> *const u8 {
     }
 
     // Advance the read position inside the current buffer
-    (*uc.get()).yield_size -= size;
+    uc.set_yield_size(uc.yield_size() - size);
     uc.set_data(ret.add(size));
     ret
 }
@@ -237,8 +237,8 @@ pub(crate) unsafe fn read_bytes(uc: &Context, size: usize) -> *const u8 {
 #[inline(always)]
 pub(crate) unsafe fn consume_bytes(uc: &Context, size: usize) {
     // Bytes must have been checked first with `ufbxi_peek_bytes()`
-    ufbx_assert!(size <= (*uc.get()).yield_size);
-    (*uc.get()).yield_size -= size;
+    ufbx_assert!(size <= uc.yield_size());
+    uc.set_yield_size(uc.yield_size() - size);
     uc.set_data(uc.data().add(size));
 }
 

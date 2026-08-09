@@ -761,6 +761,19 @@ impl Context {
         // SAFETY: storing a `usize`; cannot violate validity.
         unsafe { (*self.get()).data_size = data_size; }
     }
+
+    // Bytes remaining before the next progress-yield checkpoint. Scalar `usize`.
+    #[inline(always)]
+    pub(crate) fn yield_size(&self) -> usize {
+        // SAFETY: reading a `usize` field; all bit patterns valid.
+        unsafe { (*self.get()).yield_size }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_yield_size(&self, yield_size: usize) {
+        // SAFETY: storing a `usize`; cannot violate validity.
+        unsafe { (*self.get()).yield_size = yield_size; }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`
@@ -3225,10 +3238,10 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
             size_of::<Ascii>(),
         );
         (*uc.get()).ascii.src = uc.data();
-        (*uc.get()).ascii.src_yield = uc.data().add((*uc.get()).yield_size);
+        (*uc.get()).ascii.src_yield = uc.data().add(uc.yield_size());
         (*uc.get()).ascii.src_end = (*uc.get())
             .data
-            .add(uc.data_size() + (*uc.get()).yield_size);
+            .add(uc.data_size() + uc.yield_size());
 
         // Initialize the first token
         crate::native::parse_ascii::ascii_next_token(uc, &raw mut (*uc.get()).ascii.token)?;
