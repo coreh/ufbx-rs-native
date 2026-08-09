@@ -307,7 +307,7 @@ pub(crate) unsafe fn ascii_skip_whitespace(uc: &Context) -> u8 {
                 (*ua).read_first_comment = true;
                 let version: u32 = ascii_parse_version(uc);
                 if version != 0 {
-                    (*uc.get()).version = version;
+                    uc.set_version(version);
                     (*ua).found_version = true;
                     read_magic = true;
                 }
@@ -1553,7 +1553,7 @@ unsafe fn ascii_parse_node_rec(
                     {
                         if val >= 6000 && val <= 10000 {
                             (*ua).found_version = true;
-                            (*uc.get()).version = val as u32;
+                            uc.set_version(val as u32);
                         }
                     }
 

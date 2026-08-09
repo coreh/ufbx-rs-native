@@ -718,11 +718,11 @@ unsafe fn binary_parse_node_rec(
     let num_values64: u64;
     let values_len: u64;
     let name_len: u8;
-    let header_size: usize = if (*uc.get()).version >= 7500 { 25 } else { 13 };
+    let header_size: usize = if uc.version() >= 7500 { 25 } else { 13 };
     let header: *const u8 = read_bytes(uc, header_size);
     let mut header_words: *const u8 = header;
     ufbxi_check!(uc, !header.is_null(), "header");
-    if (*uc.get()).version >= 7500 {
+    if uc.version() >= 7500 {
         if (*uc.get()).file_big_endian {
             header_words = swap_endian(uc, header_words as *const c_void, 3, 8);
             ufbxi_check!(uc, !header_words.is_null(), "header_words");

@@ -1318,7 +1318,7 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
 
     // HACK: Translate property connections from node to attribute if the property name is not included
     // in the known node properties and is not a property of the node.
-    if (*uc.get()).version > 0 && (*uc.get()).version < 7000 {
+    if uc.version() > 0 && uc.version() < 7000 {
         // C: `ufbxi_for(ufbxi_tmp_connection, tmp_conn, tmp_connections, num_connections)`
         let mut tmp_conn: *mut TmpConnection = tmp_connections;
         let tmp_conn_end: *mut TmpConnection = tmp_connections.add(num_connections);
@@ -1444,8 +1444,8 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
 
         // Translate deformers to point to the geometry in 6100, we don't need to worry about
         // blend shapes here as they're always connected synthetically in older files.
-        if (*uc.get()).version > 0
-            && (*uc.get()).version < 7000
+        if uc.version() > 0
+            && uc.version() < 7000
             && (*dst).type_ == ElementType::Node
         {
             if (*src).type_ == ElementType::SkinDeformer
@@ -1640,7 +1640,7 @@ pub(crate) unsafe fn add_connections_to_elements(uc: &Context) -> Result<(), Fai
                             (*value_vec3).z = 1.0;
                         }
                         // Property values are only defined in anim_props on legacy files
-                        if (*uc.get()).version < 6000 {
+                        if uc.version() < 6000 {
                             *(&mut (*anim_def).value_vec4 as *mut Vec4 as *mut Vec3) =
                                 (*anim_value).default_value;
                         }
@@ -1747,7 +1747,7 @@ pub(crate) unsafe fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
         // Pre-6000 files don't have any explicit root connections so they must always
         // be connected to the root..
         if opt_ptr(&(*node).parent).is_null()
-            && !((*uc.get()).opts.allow_nodes_out_of_root && (*uc.get()).version >= 6000)
+            && !((*uc.get()).opts.allow_nodes_out_of_root && uc.version() >= 6000)
         {
             if node != ref_ptr(&(*uc.get()).scene.root_node) {
                 (*node).parent = Some((*uc.get()).scene.root_node);
@@ -6853,7 +6853,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         attrib_type += 1;
     }
 
-    let search_node: bool = (*uc.get()).version < 7000;
+    let search_node: bool = uc.version() < 7000;
 
     // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, uc->scene.skin_clusters)`
     let mut p_cluster: *mut *mut SkinCluster =
@@ -8379,7 +8379,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     (*uc.get()).scene.metadata.ktime_second = (*uc.get()).ktime_sec;
 
     // Maya seems to use scale of 100/3, Blender binary uses exactly 33, ASCII has always value of 1.0
-    if (*uc.get()).version < 6000 {
+    if uc.version() < 6000 {
         (*uc.get()).scene.metadata.bone_prop_size_unit = 1.0f32 as Real;
     } else if (*uc.get()).exporter == Exporter::BlenderBinary {
         (*uc.get()).scene.metadata.bone_prop_size_unit = 33.0f32 as Real;

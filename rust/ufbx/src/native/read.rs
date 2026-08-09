@@ -561,15 +561,15 @@ pub(crate) unsafe fn read_header_extension(uc: &Context) -> Result<(), Fail> {
             ));
         }
 
-        if (*uc.get()).version < 6000 && (*child).name == sp::FBXVersion.as_ptr() {
+        if uc.version() < 6000 && (*child).name == sp::FBXVersion.as_ptr() {
             let mut version: i32 = 0;
             if get_val1(
                 child,
                 b"I\0".as_ptr(),
                 &mut version as *mut i32 as *mut c_void,
             ) {
-                if version > 0 && version < 6000 && (version as u32) > (*uc.get()).version {
-                    (*uc.get()).version = version as u32;
+                if version > 0 && version < 6000 && (version as u32) > uc.version() {
+                    uc.set_version(version as u32);
                 }
             }
         }
@@ -601,7 +601,7 @@ pub(crate) unsafe fn read_header_extension(uc: &Context) -> Result<(), Fail> {
     // FBX 8000 will change the KTime units and the new units are opt-in currently via `TCDefinition`.
     // `TCDefinition` seems be accounted in all versions, as long as `FBXHeaderVersion >= 1004`.
     // The old KTime units are specified as the value `127` and all other values seem to use the new definition.
-    let mut use_v7_ktime = (*uc.get()).version < 8000;
+    let mut use_v7_ktime = uc.version() < 8000;
     if header_version >= 1004 && has_tc_definition {
         use_v7_ktime = tc_definition == 127;
     }
@@ -2574,7 +2574,7 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
                 name,
                 (*shape_props.add(0)).name,
             )?;
-        } else if (*uc.get()).version < 6000 {
+        } else if uc.version() < 6000 {
             connect_pp(
                 uc,
                 (*info).fbx_id,
@@ -3100,7 +3100,7 @@ pub(crate) unsafe fn read_mesh(
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
 
     // In up to version 7100 FBX files blend shapes are contained within the same geometry node
-    if (*uc.get()).version <= 7100 {
+    if uc.version() <= 7100 {
         read_synthetic_blend_shapes(uc, node, info)?;
     }
 
@@ -5285,7 +5285,7 @@ pub(crate) unsafe fn read_pose(
 
         // Bones are linked with FBX names/IDs bypassing the connection system (!?)
         let mut fbx_id: u64 = 0;
-        if (*uc.get()).version < 7000 {
+        if uc.version() < 7000 {
             let mut name: *mut u8 = core::ptr::null_mut();
             if !find_val1(
                 n,
@@ -5877,7 +5877,7 @@ pub(crate) unsafe fn read_object(uc: &Context, node: *mut Node) -> Result<(), Fa
     // FBX version 7000 and up uses 64-bit unique IDs per object,
     // older FBX versions just use name/type pairs, which we can
     // use as IDs since all strings are interned into a string pool.
-    if (*uc.get()).version >= 7000 {
+    if uc.version() >= 7000 {
         if !get_val3(
             node,
             b"Lss\0".as_ptr(),
@@ -5918,7 +5918,7 @@ pub(crate) unsafe fn read_object(uc: &Context, node: *mut Node) -> Result<(), Fa
     info.props.defaults = opt_ref(find_template(uc, name, sub_type));
 
     if name == sp::Model.as_ptr() {
-        if (*uc.get()).version < 7000 {
+        if uc.version() < 7000 {
             read_synthetic_attribute(uc, node, &mut info, type_str, sub_type, name)?;
         }
         read_model(uc, node, &mut info)?;
@@ -6322,7 +6322,7 @@ pub(crate) unsafe fn read_connections(uc: &Context) -> Result<(), Fail> {
         let mut src_prop: String = EMPTY_STRING.0;
         let mut dst_prop: String = EMPTY_STRING.0;
 
-        if (*uc.get()).version < 7000 {
+        if uc.version() < 7000 {
             let mut src_name: *const u8 = core::ptr::null();
             let mut dst_name: *const u8 = core::ptr::null();
             // Pre-7000 versions use Type::Name pairs as identifiers
@@ -6545,9 +6545,9 @@ pub(crate) unsafe fn read_take_anim_channel(
         &mut key_ver as *mut i32 as *mut c_void
     ));
     if key_ver <= 0 {
-        if (*uc.get()).version < 5000 {
+        if uc.version() < 5000 {
             key_ver = 4003;
-        } else if (*uc.get()).version < 6000 {
+        } else if uc.version() < 6000 {
             key_ver = 4004;
         } else {
             key_ver = 4005;
@@ -6911,7 +6911,7 @@ unsafe fn read_take_prop_channel_rec(
         }
     } else {
         // Pre-6000 FBX files store blend shape keys with a " (Shape)" suffix
-        if (*uc.get()).version < 6000 {
+        if uc.version() < 6000 {
             let suffix: *const u8 = b" (Shape)\0".as_ptr();
             let suffix_len: usize = strlen(suffix);
             if name.length > suffix_len
@@ -7129,7 +7129,7 @@ pub(crate) unsafe fn read_take(uc: &Context, node: *mut Node) -> Result<(), Fail
 
     // Hack: For post-7000 files we are only interested in the animation times
     // for fallback in case the information is missing in the stacks.
-    if (*uc.get()).version >= 7000 {
+    if uc.version() >= 7000 {
         let hash: u32 = crate::native::hash::hash_ptr!(name);
         let entry: *mut TmpAnimStack = map_find::<TmpAnimStack>(
             &mut (*uc.get()).anim_stack_map,
@@ -7372,14 +7372,14 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
 
     // Resolve the exporter before continuing
     match_exporter(uc)?;
-    if (*uc.get()).version < 7000 {
+    if uc.version() < 7000 {
         init_node_prop_names(uc)?;
     }
     // Don't allow changing version from this point onwards
     (*uc.get()).ascii.found_version = true;
 
     // Document: Read root ID
-    if (*uc.get()).version >= 7000 {
+    if uc.version() >= 7000 {
         parse_toplevel(uc, sp::Documents.as_ptr())?;
         read_document(uc)?;
     } else {
@@ -8078,7 +8078,7 @@ pub(crate) unsafe fn read_legacy_mesh(
         let num_normals: usize = (*normals).size / 3;
         let per_vertex: bool = num_normals == (*mesh).num_vertices;
         let per_index: bool = num_normals == (*mesh).num_indices;
-        if per_vertex && (!per_index || (*uc.get()).version == 5000) {
+        if per_vertex && (!per_index || uc.version() == 5000) {
             (*mesh).vertex_normal.exists = true;
             (*mesh).vertex_normal.values.count = num_normals;
             (*mesh).vertex_normal.indices.count = (*mesh).num_indices;

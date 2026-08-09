@@ -692,7 +692,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
     if format == FileFormat::Fbx {
         ufbxi_check!(uc, begin_parse(uc).is_ok(), "ufbxi_begin_parse(uc)");
-        if (*uc.get()).version < 6000 {
+        if uc.version() < 6000 {
             ufbxi_check!(
                 uc,
                 read_legacy_root(uc).is_ok(),
@@ -701,14 +701,14 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         } else {
             ufbxi_check!(uc, read_root(uc).is_ok(), "ufbxi_read_root(uc)");
         }
-        if !supports_version((*uc.get()).version) {
+        if !supports_version(uc.version()) {
             ufbxi_check!(
                 uc,
                 ufbxi_warnf!(
                     uc,
                     WarningType::UnsupportedVersion,
                     "Unsupported FBX version (%u)",
-                    (*uc.get()).version
+                    uc.version()
                 )
                 .is_ok(),
                 "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_UNSUPPORTED_VERSION, ~0u, \"Unsupported FBX version (%u)\", uc->version)"
@@ -826,7 +826,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     );
 
     // Copy local data to the scene
-    (*uc.get()).scene.metadata.version = (*uc.get()).version;
+    (*uc.get()).scene.metadata.version = uc.version();
     (*uc.get()).scene.metadata.ascii = (*uc.get()).from_ascii;
     (*uc.get()).scene.metadata.big_endian = (*uc.get()).file_big_endian;
     (*uc.get()).scene.metadata.geometry_ignored = (*uc.get()).opts.ignore_geometry;
@@ -1194,12 +1194,12 @@ pub(crate) unsafe fn load(
         if !p_error.is_null()
             && (*p_error).type_ == ErrorType::Unknown
             && (*uc.get()).scene.metadata.file_format == FileFormat::Fbx
-            && !supports_version((*uc.get()).version)
+            && !supports_version(uc.version())
         {
             (*p_error).description.data = b"Unsupported version\0".as_ptr();
             (*p_error).description.length = strlen(b"Unsupported version\0".as_ptr());
             (*p_error).type_ = ErrorType::UnsupportedVersion;
-            ufbxi_fmt_err_info!(p_error, "%u", (*uc.get()).version);
+            ufbxi_fmt_err_info!(p_error, "%u", uc.version());
         }
         free_result(uc);
         ptr::null_mut()

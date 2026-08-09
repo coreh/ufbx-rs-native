@@ -709,6 +709,21 @@ impl Context {
     pub(crate) unsafe fn from_ptr<'a>(ptr: *mut InnerContext) -> &'a Context {
         &*(ptr as *const Context)
     }
+
+    // FBX file format version (e.g. 7400). Scalar POD field: value getter +
+    // setter, both safe (interior mutability via the `UnsafeCell` seam).
+    #[inline(always)]
+    pub(crate) fn version(&self) -> u32 {
+        // SAFETY: `version` is a plain `u32` (all bit patterns valid); the
+        // context is live for the borrow of `&self`.
+        unsafe { (*self.get()).version }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_version(&self, version: u32) {
+        // SAFETY: as `version`; a `u32` store cannot violate validity.
+        unsafe { (*self.get()).version = version; }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`
@@ -1756,7 +1771,7 @@ pub(crate) unsafe fn is_array_node(
             } else if name == sp::KeyAttrDataFloat.as_ptr() {
                 // The float data in a keyframe attribute array is represented as integers
                 // in versions >= 7200 as some of the elements aren't actually floats (!)
-                (*info).type_ = if (*uc.get()).from_ascii && (*uc.get()).version >= 7200 {
+                (*info).type_ = if (*uc.get()).from_ascii && uc.version() >= 7200 {
                     b'i'
                 } else {
                     b'f'
@@ -1764,7 +1779,7 @@ pub(crate) unsafe fn is_array_node(
                 if (*uc.get()).opts.ignore_animation {
                     (*info).type_ = b'-';
                 }
-                if (*uc.get()).from_ascii && (*uc.get()).version < 7200 {
+                if (*uc.get()).from_ascii && uc.version() < 7200 {
                     (*info).flags |= ARRAY_FLAG_ACCURATE_F32;
                 }
                 return true;
@@ -2287,7 +2302,7 @@ pub(crate) unsafe fn is_raw_string(
         ParseState::Connections | ParseState::Relations => {
             // Pre-7000 needs raw strings for "Name\x00\x01Type" pairs, post-7000 uses it only
             // for properties that are non-raw by default.
-            return (*uc.get()).version < 7000;
+            return uc.version() < 7000;
         }
 
         ParseState::Model => {
@@ -3157,7 +3172,7 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
                 crate::native::parse_binary::swap_endian(uc, version_word as *const c_void, 1, 4);
             ufbxi_check!(uc, !version_word.is_null(), "version_word");
         }
-        (*uc.get()).version = read_u32(version_word);
+        uc.set_version(read_u32(version_word));
 
         // This is quite probably an FBX file..
         (*uc.get()).sure_fbx = true;
@@ -3182,15 +3197,15 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
         crate::native::parse_ascii::ascii_next_token(uc, &raw mut (*uc.get()).ascii.token)?;
 
         // Default to version 7400 if not found in header
-        if (*uc.get()).version > 0 {
+        if uc.version() > 0 {
             (*uc.get()).sure_fbx = true;
         } else {
             if !(*uc.get()).opts.strict {
-                (*uc.get()).version = 7400;
+                uc.set_version(7400);
             }
             ufbxi_check_msg!(
                 uc,
-                (*uc.get()).version > 0,
+                uc.version() > 0,
                 "Not an FBX file",
                 "uc->version > 0"
             );
