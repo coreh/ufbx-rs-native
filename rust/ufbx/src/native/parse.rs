@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn has_face_group(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).has_face_group }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_has_face_group(&self, has_face_group: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).has_face_group = has_face_group;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn group_dirty(&self) -> bool {
         // SAFETY: reading a `bool` we only ever store valid bools into.
         unsafe { (*self.get()).group_dirty }

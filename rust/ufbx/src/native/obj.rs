@@ -780,8 +780,8 @@ pub(crate) unsafe fn obj_parse_indices(
 
         uc.obj().set_face_group((*entry).local_id);
 
-        if !(*uc.obj().get()).has_face_group {
-            (*uc.obj().get()).has_face_group = true;
+        if !uc.obj().has_face_group() {
+            uc.obj().set_has_face_group(true);
             ufbxi_check!(
                 uc,
                 !push_zero::<u32>(&mut (*uc.obj().get()).tmp_face_group, (*uc.obj().get()).tmp_faces.num_items)
@@ -820,7 +820,7 @@ pub(crate) unsafe fn obj_parse_indices(
         *p_face_smooth = uc.obj().face_smoothing();
     }
 
-    if (*uc.obj().get()).has_face_group {
+    if uc.obj().has_face_group() {
         let p_face_group: *mut u32 = push_fast::<u32>(&mut (*uc.obj().get()).tmp_face_group, 1);
         ufbxi_check!(uc, !p_face_group.is_null(), "p_face_group");
         *p_face_group = uc.obj().face_group();
@@ -1320,7 +1320,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 );
             }
 
-            if (*uc.obj().get()).has_face_group {
+            if uc.obj().has_face_group() {
                 if (*mesh).num_groups > 1 {
                     (*fbx_mesh).face_group.count = num_faces;
                     (*fbx_mesh).face_group.data = push_pop::<u32>(
