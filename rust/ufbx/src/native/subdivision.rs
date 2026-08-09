@@ -170,6 +170,21 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `max_vertex_weights` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn max_vertex_weights(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).max_vertex_weights }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_max_vertex_weights(&self, max_vertex_weights: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).max_vertex_weights = max_vertex_weights;
+        }
+    }
+
     // `total_weights` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn total_weights(&self) -> usize {
@@ -454,8 +469,8 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
         core::ptr::null_mut(),
     );
 
-    if (*sc.get()).max_vertex_weights != usize::MAX {
-        num_weights = min_sz((*sc.get()).max_vertex_weights, num_weights);
+    if sc.max_vertex_weights() != usize::MAX {
+        num_weights = min_sz(sc.max_vertex_weights(), num_weights);
 
         // Normalize weights
         let mut prefix_weight: Real = 0.0;
@@ -1307,8 +1322,7 @@ pub(crate) unsafe fn init_skin_weights(
     while i < num_vertices {
         ufbxi_dev_assert!(i < (*skin).vertices.count);
         let vertex: SkinVertex = *(*skin).vertices.data.add(i);
-        let num_weights: usize =
-            min_sz((*sc.get()).max_vertex_weights, vertex.num_weights as usize);
+        let num_weights: usize = min_sz(sc.max_vertex_weights(), vertex.num_weights as usize);
 
         let weights: *mut SubdivisionWeight =
             push::<SubdivisionWeight>(&mut (*sc.get()).tmp, num_weights);
@@ -1732,11 +1746,11 @@ pub(crate) unsafe fn subdivide_mesh_level(
         );
 
         if (*sc.get()).opts.evaluate_source_vertices {
-            (*sc.get()).max_vertex_weights = if (*sc.get()).opts.max_source_vertices != 0 {
+            sc.set_max_vertex_weights(if (*sc.get()).opts.max_source_vertices != 0 {
                 (*sc.get()).opts.max_source_vertices
             } else {
                 usize::MAX
-            };
+            });
 
             let weights: *mut SubdivisionVertexWeights;
             if !mesh_sub.is_null() && (*mesh_sub).source_vertex_ranges.count > 0 {
@@ -1758,11 +1772,11 @@ pub(crate) unsafe fn subdivide_mesh_level(
         }
 
         if !skin.is_null() {
-            (*sc.get()).max_vertex_weights = if (*sc.get()).opts.max_skin_weights != 0 {
+            sc.set_max_vertex_weights(if (*sc.get()).opts.max_skin_weights != 0 {
                 (*sc.get()).opts.max_skin_weights
             } else {
                 usize::MAX
-            };
+            });
 
             let weights: *mut SubdivisionVertexWeights;
             // C-parity: the guard reads `source_vertex_ranges` here too
