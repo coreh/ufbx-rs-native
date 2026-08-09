@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn group_dirty(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).group_dirty }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_group_dirty(&self, group_dirty: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).group_dirty = group_dirty;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn face_smoothing(&self) -> bool {
         // SAFETY: reading a `bool` we only ever store valid bools into.
         unsafe { (*self.get()).face_smoothing }

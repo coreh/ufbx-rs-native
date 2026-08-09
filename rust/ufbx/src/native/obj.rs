@@ -672,14 +672,14 @@ pub(crate) unsafe fn obj_parse_indices(
         (*uc.obj().get()).object_dirty = false;
     }
 
-    if (*uc.obj().get()).group_dirty {
+    if uc.obj().group_dirty() {
         if (((*uc.obj().get()).object.length == 0 || uc.opts_view().obj_merge_objects())
             && !uc.opts_view().obj_merge_groups())
             || uc.opts_view().obj_split_groups()
         {
             flush_mesh = true;
         }
-        (*uc.obj().get()).group_dirty = false;
+        uc.obj().set_group_dirty(false);
         uc.obj().set_face_group_dirty(true);
     }
 
@@ -1560,10 +1560,10 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
                     &mut (*uc.obj().get()).group,
                     false,
                 )?;
-                (*uc.obj().get()).group_dirty = true;
+                uc.obj().set_group_dirty(true);
             } else {
                 (*uc.obj().get()).group = EMPTY_STRING.0;
-                (*uc.obj().get()).group_dirty = true;
+                uc.obj().set_group_dirty(true);
             }
         } else if key == obj_cmd1(b'#') {
             obj_parse_comment(uc)?;
