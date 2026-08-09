@@ -2049,6 +2049,14 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    // `anim` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn anim_mut(&self) -> *mut *mut Anim {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).anim }
+    }
+
     // `scene_imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn scene_imp(&self) -> *mut SceneImp {
@@ -2757,7 +2765,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         p_pose = p_pose.add(1);
     }
 
-    translate_anim(ec, ptr::addr_of_mut!((*ec.get()).anim))?;
+    translate_anim(ec, ec.anim_mut())?;
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_value, p_value, ec->scene.anim_values)`
     let mut p_value: *mut *mut AnimValue =
