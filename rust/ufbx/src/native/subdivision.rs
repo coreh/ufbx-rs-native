@@ -169,6 +169,21 @@ impl SubdivideContext {
     pub(crate) fn get(&self) -> *mut InnerSubdivideContext {
         self.0.get().cast()
     }
+
+    // `imp` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn imp(&self) -> *mut MeshImp {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut MeshImp` are valid.
+        unsafe { (*self.get()).imp }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_imp(&self, imp: *mut MeshImp) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).imp = imp;
+        }
+    }
 }
 
 // ufbx.c:28891-28904 `ufbxi_subdivide_sum_vec2`
@@ -2067,16 +2082,12 @@ pub(crate) unsafe fn subdivide_mesh_imp(
 
     patch_mesh_reals(mesh);
 
-    (*sc.get()).imp = push::<MeshImp>(&mut (*sc.get()).result, 1);
-    ufbxi_check_err!(
-        &mut (*sc.get()).error,
-        !(*sc.get()).imp.is_null(),
-        "sc->imp"
-    );
+    sc.set_imp(push::<MeshImp>(&mut (*sc.get()).result, 1));
+    ufbxi_check_err!(&mut (*sc.get()).error, !sc.imp().is_null(), "sc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&Mesh` pointer via exposed provenance.
-    ((*sc.get()).imp as *mut u8).expose_provenance();
+    (sc.imp() as *mut u8).expose_provenance();
 
     let dst_sub: *mut SubdivisionResult = opt_ptr(&(*sc.get()).dst_mesh.subdivision_result);
     (*dst_sub).result_memory_used = (*sc.get()).ator_result.current_size;
@@ -2084,18 +2095,18 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     (*dst_sub).result_allocs = (*sc.get()).ator_result.num_allocs;
     (*dst_sub).temp_allocs = (*sc.get()).ator_tmp.num_allocs;
 
-    init_ref(&mut (*(*sc.get()).imp).refcount, MESH_IMP_MAGIC, parent);
+    init_ref(&mut (*sc.imp()).refcount, MESH_IMP_MAGIC, parent);
 
-    (*(*sc.get()).imp).magic = MESH_IMP_MAGIC;
+    (*sc.imp()).magic = MESH_IMP_MAGIC;
     // C: `sc->imp->mesh = sc->dst_mesh;` — struct assignment (memcpy).
     core::ptr::copy_nonoverlapping(
         core::ptr::addr_of!((*sc.get()).dst_mesh),
-        core::ptr::addr_of_mut!((*(*sc.get()).imp).mesh),
+        core::ptr::addr_of_mut!((*sc.imp()).mesh),
         1,
     );
-    (*(*sc.get()).imp).refcount.ator = (*sc.get()).ator_result;
-    (*(*sc.get()).imp).refcount.buf = (*sc.get()).result;
-    (*(*sc.get()).imp).mesh.subdivision_evaluated = true;
+    (*sc.imp()).refcount.ator = (*sc.get()).ator_result;
+    (*sc.imp()).refcount.buf = (*sc.get()).result;
+    (*sc.imp()).mesh.subdivision_evaluated = true;
 
     Ok(())
 }
@@ -2138,7 +2149,7 @@ pub(crate) unsafe fn subdivide_mesh(
             clear_error(p_error);
         }
 
-        let imp: *mut MeshImp = (*sc.get()).imp;
+        let imp: *mut MeshImp = sc.imp();
         core::ptr::addr_of_mut!((*imp).mesh)
     } else {
         fix_error_type(
