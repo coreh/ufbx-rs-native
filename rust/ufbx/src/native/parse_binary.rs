@@ -864,7 +864,7 @@ unsafe fn binary_parse_node_rec(
                 && encoding == 1
                 && encoded_size as usize >= MIN_THREADED_DEFLATE_BYTES
                 && !(*uc.get()).file_big_endian
-                && !(*uc.get()).local_big_endian
+                && !uc.local_big_endian()
             {
                 let task: *mut Task =
                     thread_pool_create_task(&raw mut (*uc.get()).thread_pool, deflate_task_fn);
@@ -912,8 +912,7 @@ unsafe fn binary_parse_node_rec(
             // Otherwise we need a temporary buffer to decode the array into before conversion.
             let mut decoded_data: *mut c_void = arr_data as *mut c_void;
             if !deferred
-                && (src_type != dst_type
-                    || (*uc.get()).local_big_endian != (*uc.get()).file_big_endian)
+                && (src_type != dst_type || uc.local_big_endian() != (*uc.get()).file_big_endian)
             {
                 ufbxi_check!(
                     uc,

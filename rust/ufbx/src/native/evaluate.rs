@@ -974,7 +974,7 @@ pub(crate) unsafe fn load(
         // C: `uint8_t buf[2]; uint16_t val = 0xbbaa; memcpy(buf, &val, 2);`
         let val: u16 = 0xbbaa;
         let buf: [u8; 2] = val.to_ne_bytes();
-        (*uc.get()).local_big_endian = buf[0] == 0xbb;
+        uc.set_local_big_endian(buf[0] == 0xbb);
     }
 
     (*uc.get()).double_parse_flags = parse_double_init_flags();

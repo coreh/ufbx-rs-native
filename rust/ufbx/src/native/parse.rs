@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `local_big_endian` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn local_big_endian(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).local_big_endian }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_local_big_endian(&self, local_big_endian: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).local_big_endian = local_big_endian;
+        }
+    }
+
     // `from_ascii` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn from_ascii(&self) -> bool {
