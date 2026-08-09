@@ -710,6 +710,13 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `top_nodes_cap` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn top_nodes_cap(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).top_nodes_cap }
+    }
+
     // `top_nodes_len` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn top_nodes_len(&self) -> usize {
