@@ -170,6 +170,14 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `dst_mesh` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn dst_mesh_mut(&self) -> *mut Mesh {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).dst_mesh }
+    }
+
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_tmp_mut(&self) -> *mut Allocator {
@@ -1516,7 +1524,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     sc: &SubdivideContext,
 ) -> Result<(), crate::native::error::Fail> {
     let mesh: *const Mesh = core::ptr::addr_of!((*sc.get()).src_mesh);
-    let result: *mut Mesh = core::ptr::addr_of_mut!((*sc.get()).dst_mesh);
+    let result: *mut Mesh = sc.dst_mesh_mut();
 
     // C: `*result = *mesh;` — struct assignment (memcpy).
     core::ptr::copy_nonoverlapping(mesh, result, 1);
@@ -2130,7 +2138,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     subdivide_mesh_level(sc)?;
     buf_free(&mut (*sc.get()).tmp);
 
-    let mesh: *mut Mesh = core::ptr::addr_of_mut!((*sc.get()).dst_mesh);
+    let mesh: *mut Mesh = sc.dst_mesh_mut();
 
     // Subdivision always results in a mesh that consists only of quads
     (*mesh).max_face_triangles = 2;
