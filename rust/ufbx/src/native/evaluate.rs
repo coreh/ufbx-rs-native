@@ -3530,6 +3530,14 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ator_result }
+    }
+
     // `scene` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn scene(&self) -> *const Scene {
@@ -5460,13 +5468,13 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     );
     init_ator(
         ptr::addr_of_mut!((*bc.get()).error),
-        ptr::addr_of_mut!((*bc.get()).ator_result),
+        bc.ator_result_mut(),
         ptr::addr_of!((*bc.get()).opts.result_allocator),
         b"result\0".as_ptr(),
     );
 
     (*bc.get()).result.unordered = true;
-    (*bc.get()).result.ator = ptr::addr_of_mut!((*bc.get()).ator_result);
+    (*bc.get()).result.ator = bc.ator_result_mut();
 
     (*bc.get()).tmp.unordered = true;
     (*bc.get()).tmp.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
