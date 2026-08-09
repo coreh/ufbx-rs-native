@@ -177,6 +177,21 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `file_offset` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn file_offset(&self) -> u64 {
+        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
+        unsafe { (*self.get()).file_offset }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_file_offset(&self, file_offset: u64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).file_offset = file_offset;
+        }
+    }
+
     // `name_cap` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn name_cap(&self) -> usize {
@@ -328,7 +343,7 @@ pub(crate) unsafe fn cache_read(
     core::ptr::copy_nonoverlapping((*cc.get()).pos, dst as *mut u8, buffered);
     (*cc.get()).pos = (*cc.get()).pos.add(buffered);
     size -= buffered;
-    (*cc.get()).file_offset = (*cc.get()).file_offset.wrapping_add(buffered as u64);
+    cc.set_file_offset(cc.file_offset().wrapping_add(buffered as u64));
     if size == 0 {
         return Ok(());
     }
@@ -351,7 +366,7 @@ pub(crate) unsafe fn cache_read(
                 "num_read == size"
             );
         }
-        (*cc.get()).file_offset = (*cc.get()).file_offset.wrapping_add(num_read as u64);
+        cc.set_file_offset(cc.file_offset().wrapping_add(num_read as u64));
         size -= num_read;
         dst = (dst as *mut u8).add(num_read) as *mut c_void;
     } else {
@@ -382,7 +397,7 @@ pub(crate) unsafe fn cache_read(
 
         core::ptr::copy_nonoverlapping((*cc.get()).pos, dst as *mut u8, size);
         (*cc.get()).pos = (*cc.get()).pos.add(size);
-        (*cc.get()).file_offset = (*cc.get()).file_offset.wrapping_add(size as u64);
+        cc.set_file_offset(cc.file_offset().wrapping_add(size as u64));
 
         let num_written: usize = min_sz(size, num_read);
         size -= num_written;
@@ -404,7 +419,7 @@ pub(crate) unsafe fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), 
     // `ufbxi_cache_load_pc2` (ufbx.c:24270) passes `total_points * 12 - 1`
     // guarded only by `total_points < UINT64_MAX / 12` (ufbx.c:24262), so a
     // crafted PC2 header reaches this with `size` near `UINT64_MAX`.
-    (*cc.get()).file_offset = (*cc.get()).file_offset.wrapping_add(size);
+    cc.set_file_offset(cc.file_offset().wrapping_add(size));
 
     let buffered: u64 = min64(
         (*cc.get()).pos_end.offset_from((*cc.get()).pos) as u64,
@@ -596,7 +611,7 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
 
         cache_mc_read_u64(cc, size.as_mut_ptr())?;
         let size: u64 = size.assume_init();
-        let begin: u64 = (*cc.get()).file_offset;
+        let begin: u64 = cc.file_offset();
 
         let alignment: usize = if cc.mc_for8() { 8 } else { 4 };
 
@@ -667,7 +682,7 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
             (*frame).filename = (*cc.get()).stream_filename;
             (*frame).data_format = format;
             (*frame).data_encoding = CacheDataEncoding::BigEndian;
-            (*frame).data_offset = (*cc.get()).file_offset;
+            (*frame).data_offset = cc.file_offset();
             (*frame).data_count = count;
             (*frame).data_element_bytes = elem_size;
             (*frame).data_total_bytes = total_size;
@@ -678,10 +693,10 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
             );
             ufbxi_check_err!(
                 &mut (*cc.get()).error,
-                end >= (*cc.get()).file_offset,
+                end >= cc.file_offset(),
                 "end >= cc->file_offset"
             );
-            let left: u64 = end - (*cc.get()).file_offset;
+            let left: u64 = end - cc.file_offset();
             cache_skip(cc, left)?;
         }
     }
@@ -715,7 +730,7 @@ pub(crate) unsafe fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
         "total_points < UINT64_MAX / 12"
     );
 
-    let mut offset: u64 = (*cc.get()).file_offset;
+    let mut offset: u64 = cc.file_offset();
 
     // Skip almost to the end of the data and try to read one byte as there's
     // nothing after the data so we can't detect EOF..
@@ -990,7 +1005,7 @@ pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Res
     (*cc.get()).pos = (*cc.get()).buffer.as_ptr();
     (*cc.get()).pos_end = (*cc.get()).buffer.as_ptr().add(16);
 
-    (*cc.get()).file_offset = 0;
+    cc.set_file_offset(0);
 
     if crate::native::error::memcmp((*cc.get()).buffer.as_ptr(), b"POINTCACHE2".as_ptr(), 11) == 0 {
         cache_load_pc2(cc)?;
