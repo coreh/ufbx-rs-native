@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `p_element_id` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn p_element_id(&self) -> *mut u32 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u32` are valid.
+        unsafe { (*self.get()).p_element_id }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_p_element_id(&self, p_element_id: *mut u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).p_element_id = p_element_id;
+        }
+    }
+
     // `dom_parse_num_children` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn dom_parse_num_children(&self) -> usize {
