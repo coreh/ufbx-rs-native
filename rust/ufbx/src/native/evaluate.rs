@@ -3530,6 +3530,14 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `tmp_elements` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_elements_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp_elements }
+    }
+
     // `tmp_bake_stack` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_bake_stack_mut(&self) -> *mut Buf {
@@ -5242,8 +5250,7 @@ pub(crate) unsafe fn bake_element(
 
     let num_props: usize = (*bc.get()).tmp_props.num_items;
     if num_props > 0 {
-        let baked_elem: *mut BakedElement =
-            push_zero::<BakedElement>(ptr::addr_of_mut!((*bc.get()).tmp_elements), 1);
+        let baked_elem: *mut BakedElement = push_zero::<BakedElement>(bc.tmp_elements_mut(), 1);
         ufbxi_check_err!(bc.error_mut(), !baked_elem.is_null(), "baked_elem");
 
         (*baked_elem).element_id = (*element).element_id;
@@ -5430,11 +5437,8 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     );
 
     (*bc.get()).bake.elements.count = num_elements;
-    (*bc.get()).bake.elements.data = push_pop::<BakedElement>(
-        bc.result_mut(),
-        ptr::addr_of_mut!((*bc.get()).tmp_elements),
-        num_elements,
-    );
+    (*bc.get()).bake.elements.data =
+        push_pop::<BakedElement>(bc.result_mut(), bc.tmp_elements_mut(), num_elements);
     ufbxi_check_err!(
         bc.error_mut(),
         !(*bc.get()).bake.elements.data.is_null(),
