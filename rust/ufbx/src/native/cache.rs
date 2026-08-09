@@ -291,6 +291,27 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).result as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_stack` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_stack_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_stack as *mut crate::native::buf::BufView) }
+    }
+
     // `cache` — typed VIEW handle (reinterpret-in-place); accessors on `GeometryCacheView`.
     #[inline(always)]
     pub(crate) fn cache_view(&self) -> &GeometryCacheView {
@@ -1633,8 +1654,8 @@ pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail>
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Result<(), Fail> {
-    (*cc.get()).tmp.ator = cc.ator_tmp();
-    (*cc.get()).tmp_stack.ator = cc.ator_tmp();
+    cc.tmp_view().set_ator(cc.ator_tmp());
+    cc.tmp_stack_view().set_ator(cc.ator_tmp());
 
     (*cc.get()).channel_name.data = EMPTY_CHAR.as_ptr();
 
@@ -1666,7 +1687,7 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
 
     cache_load_frame_files(cc)?;
 
-    let num_frames: usize = (*cc.get()).tmp_stack.num_items;
+    let num_frames: usize = cc.tmp_stack_view().num_items();
     cc.cache_view().frames_view().set_count(num_frames);
     cc.cache_view()
         .frames_view()
@@ -1791,7 +1812,7 @@ pub(crate) unsafe fn load_geometry_cache(
     (*cc.get()).string_pool.buf.ator = cc.ator_result_mut_ptr();
     (*cc.get()).string_pool.buf.unordered = true;
     (*cc.get()).string_pool.initial_size = 64;
-    (*cc.get()).result.ator = cc.ator_result_mut_ptr();
+    cc.result_view().set_ator(cc.ator_result_mut_ptr());
 
     cc.set_frames_per_second(if opts.frames_per_second > 0.0 {
         opts.frames_per_second
