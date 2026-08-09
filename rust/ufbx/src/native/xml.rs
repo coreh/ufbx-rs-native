@@ -98,6 +98,21 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    // `pos` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn pos(&self) -> *const u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*const u8` are valid.
+        unsafe { (*self.get()).pos }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_pos(&self, pos: *const u8) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).pos = pos;
+        }
+    }
+
     // `tok_len` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tok_len(&self) -> usize {
@@ -236,7 +251,7 @@ pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
         (*xc.get()).data[num] = b'\0';
         num += 1;
     }
-    (*xc.get()).pos = (*xc.get()).data.as_ptr();
+    xc.set_pos((*xc.get()).data.as_ptr());
     // C-parity: `xc->pos_end = xc->data + num;` — a misbehaving `read_fn` can
     // return `SIZE_MAX` here (the `io_error` flag is set but the pointer is
     // still formed), so the offset is applied with wrapping semantics rather
@@ -248,8 +263,8 @@ pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
 #[inline(always)]
 pub(crate) unsafe fn xml_advance(xc: &XmlContext) {
     // C: `if (++xc->pos == xc->pos_end)` — pre-increment decomposed.
-    (*xc.get()).pos = (*xc.get()).pos.add(1);
-    if (*xc.get()).pos == (*xc.get()).pos_end {
+    xc.set_pos(xc.pos().add(1));
+    if xc.pos() == (*xc.get()).pos_end {
         xml_refill(xc);
     }
 }
@@ -279,7 +294,7 @@ pub(crate) unsafe fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), F
 // C returns `int` 1/0; every call site consumes it as a boolean.
 #[inline(never)]
 pub(crate) unsafe fn xml_accept(xc: &XmlContext, ch: u8) -> bool {
-    if *(*xc.get()).pos == ch {
+    if *xc.pos() == ch {
         xml_advance(xc);
         true
     } else {
@@ -290,7 +305,7 @@ pub(crate) unsafe fn xml_accept(xc: &XmlContext, ch: u8) -> bool {
 // ufbx.c:7347-7352 `ufbxi_xml_skip_while`
 #[inline(never)]
 pub(crate) unsafe fn xml_skip_while(xc: &XmlContext, ctypes: u32) {
-    while XML_CTYPE[*(*xc.get()).pos as usize] as u32 & ctypes != 0 {
+    while XML_CTYPE[*xc.pos() as usize] as u32 & ctypes != 0 {
         xml_advance(xc);
     }
 }
@@ -311,7 +326,7 @@ pub(crate) unsafe fn xml_skip_until_string(
     let wrap_mask: usize = buf.len() - 1;
     ufbx_assert!(suffix_len < buf.len());
     loop {
-        let c: u8 = *(*xc.get()).pos;
+        let c: u8 = *xc.pos();
         ufbxi_check_err_msg!(&mut (*xc.get()).error, c != 0, "Truncated file");
         xml_advance(xc);
         if ix >= suffix_len {
@@ -357,13 +372,13 @@ pub(crate) unsafe fn xml_read_until(
 ) -> Result<(), Fail> {
     xc.set_tok_len(0);
     loop {
-        let mut c: u8 = *(*xc.get()).pos;
+        let mut c: u8 = *xc.pos();
 
         if c == b'&' {
             let entity_begin: usize = xc.tok_len();
             loop {
                 xml_advance(xc);
-                c = *(*xc.get()).pos;
+                c = *xc.pos();
                 ufbxi_check_err!(&mut (*xc.get()).error, c != b'\0', "c != '\\0'");
                 if c == b';' {
                     break;
@@ -492,7 +507,7 @@ unsafe fn xml_parse_tag_rec(
     );
 
     if !xml_accept(xc, b'<') {
-        if *(*xc.get()).pos == b'\0' {
+        if *xc.pos() == b'\0' {
             *p_closing = true;
         } else {
             xml_read_until(
@@ -712,7 +727,7 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     (*xc.get()).result.unordered = true;
 
     if (*opts).prefix_length > 0 {
-        (*xc.get()).pos = (*opts).prefix;
+        xc.set_pos((*opts).prefix);
         (*xc.get()).pos_end = (*opts).prefix.add((*opts).prefix_length);
     } else {
         xml_refill(&xc);
