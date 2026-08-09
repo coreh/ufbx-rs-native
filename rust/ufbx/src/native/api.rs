@@ -3862,7 +3862,7 @@ pub(crate) unsafe fn catch_triangulate_face(
             core::mem::MaybeUninit::zeroed(),
         ));
         core::ptr::write(
-            &mut (*nc.get()).positions,
+            nc.positions_mut(),
             core::ptr::read(&(*mesh).vertex_position),
         );
         (*nc.get()).face = face;

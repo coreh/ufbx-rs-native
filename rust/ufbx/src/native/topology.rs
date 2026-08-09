@@ -89,6 +89,14 @@ impl NgonContext {
         self.0.get().cast()
     }
 
+    // `positions` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn positions_mut(&self) -> *mut VertexVec3 {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).positions }
+    }
+
     // `kd_indices` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn kd_indices(&self) -> *mut u32 {
@@ -410,7 +418,7 @@ pub(crate) unsafe extern "C" fn kd_index_less(
     vb: *const c_void,
 ) -> bool {
     let nc: &NgonContext = &*(user as *const NgonContext);
-    let pos: *mut VertexVec3 = core::ptr::addr_of_mut!((*nc.get()).positions);
+    let pos: *mut VertexVec3 = nc.positions_mut();
     let a: u32 = *(va as *const u32);
     let b: u32 = *(vb as *const u32);
     let da: Real = dot3(
