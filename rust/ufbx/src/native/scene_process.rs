@@ -6202,7 +6202,7 @@ pub(crate) unsafe fn fetch_file_content(uc: &Context, p_filename: *mut String, p
     macro_lower_bound_eq(
         8,
         &mut index,
-        (*uc.get()).file_content as *const FileContent,
+        uc.file_content() as *const FileContent,
         0,
         (*uc.get()).num_file_content,
         |a| str_less((*a).absolute_filename, filename),
@@ -6211,7 +6211,7 @@ pub(crate) unsafe fn fetch_file_content(uc: &Context, p_filename: *mut String, p
         |a| (*a).absolute_filename.data == filename.data,
     );
     if index != usize::MAX {
-        *p_data = (*(*uc.get()).file_content.add(index)).content;
+        *p_data = (*uc.file_content().add(index)).content;
     }
 }
 
@@ -6287,13 +6287,13 @@ pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
     }
 
     (*uc.get()).num_file_content = (*uc.get()).tmp_stack.num_items - initial_stack;
-    (*uc.get()).file_content = push_pop::<FileContent>(
+    uc.set_file_content(push_pop::<FileContent>(
         &mut (*uc.get()).tmp,
         &mut (*uc.get()).tmp_stack,
         (*uc.get()).num_file_content,
-    );
-    ufbxi_check!(uc, !(*uc.get()).file_content.is_null(), "uc->file_content");
-    sort_file_contents(uc, (*uc.get()).file_content, (*uc.get()).num_file_content)?;
+    ));
+    ufbxi_check!(uc, !uc.file_content().is_null(), "uc->file_content");
+    sort_file_contents(uc, uc.file_content(), (*uc.get()).num_file_content)?;
 
     // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
     let mut p_video: *mut *mut Video = (*uc.get()).scene.videos.data as *mut *mut Video;

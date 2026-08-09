@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `file_content` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn file_content(&self) -> *mut FileContent {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut FileContent` are valid.
+        unsafe { (*self.get()).file_content }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_file_content(&self, file_content: *mut FileContent) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).file_content = file_content;
+        }
+    }
+
     // `legacy_implicit_anim_layer_id` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn legacy_implicit_anim_layer_id(&self) -> u64 {
