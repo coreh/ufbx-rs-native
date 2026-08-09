@@ -284,6 +284,21 @@ impl DeflateContext {
         self.0.get().cast()
     }
 
+    // `out_begin` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn out_begin(&self) -> *mut u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        unsafe { (*self.get()).out_begin }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_out_begin(&self, out_begin: *mut u8) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).out_begin = out_begin;
+        }
+    }
+
     // `fast_bits` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn fast_bits(&self) -> u32 {
@@ -1294,7 +1309,7 @@ pub(crate) unsafe fn inflate_block_slow(
 
     let mut max_symbols = max_symbols;
     let mut out_ptr = (*dc.get()).out_ptr;
-    let out_begin = (*dc.get()).out_begin;
+    let out_begin = dc.out_begin();
     let out_end = (*dc.get()).out_end;
 
     let fast_bits = trees.fast_bits;
@@ -1447,7 +1462,7 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
     );
 
     let mut out_ptr = (*dc.get()).out_ptr;
-    let out_begin: *mut u8 = (*dc.get()).out_begin;
+    let out_begin: *mut u8 = dc.out_begin();
     let out_end: *mut u8 = (*dc.get()).out_end.sub(INFLATE_FAST_MIN_OUT);
 
     let tree_lit_length: *const HuffTree = trees.lit_length();
@@ -1727,7 +1742,7 @@ pub(crate) unsafe fn inflate(
     // No deterministic port can reproduce C's uninit read.
     let dc: DeflateContext = core::mem::zeroed();
     bit_stream_init(&raw mut (*dc.get()).stream, input);
-    (*dc.get()).out_begin = dst as *mut u8;
+    dc.set_out_begin(dst as *mut u8);
     (*dc.get()).out_ptr = dst as *mut u8;
     (*dc.get()).out_end = (dst as *mut u8).add(dst_size);
     if input.internal_fast_bits != 0 {
@@ -1902,8 +1917,8 @@ pub(crate) unsafe fn inflate(
             ref_ = (ref_ >> 24) | ((ref_ >> 8) & 0xff00) | ((ref_ << 8) & 0xff0000) | (ref_ << 24);
 
             let checksum = adler32(
-                (*dc.get()).out_begin as *const c_void,
-                to_size((*dc.get()).out_ptr.offset_from((*dc.get()).out_begin)),
+                dc.out_begin() as *const c_void,
+                to_size((*dc.get()).out_ptr.offset_from(dc.out_begin())),
             );
             if ref_ != checksum {
                 return -9;
@@ -1911,7 +1926,7 @@ pub(crate) unsafe fn inflate(
         }
     }
 
-    (*dc.get()).out_ptr.offset_from((*dc.get()).out_begin)
+    (*dc.get()).out_ptr.offset_from(dc.out_begin())
 }
 
 // ufbx.c:3278 `#endif // !defined(ufbx_inflate)` — END of the DEFLATE section.
