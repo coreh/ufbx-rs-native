@@ -128,7 +128,7 @@ pub(crate) unsafe fn swap_endian(
         ufbxi_check_return!(
             uc,
             grow_array(
-                &mut (*uc).ator_tmp,
+                &raw mut (*uc).ator_tmp,
                 &mut (*uc).swap_arr,
                 &mut (*uc).swap_arr_size,
                 total_size
@@ -921,7 +921,7 @@ unsafe fn binary_parse_node_rec(
                 ufbxi_check!(
                     uc,
                     grow_array(
-                        &mut (*uc).ator_tmp,
+                        &raw mut (*uc).ator_tmp,
                         &mut (*uc).tmp_arr,
                         &mut (*uc).tmp_arr_size,
                         decoded_data_size

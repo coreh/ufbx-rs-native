@@ -906,35 +906,39 @@ pub(crate) unsafe fn free_temp(uc: *mut Context) {
     buf_free(&mut (*uc).tmp_element_id);
     buf_free(&mut (*uc).tmp_ascii_spans);
 
-    free::<Node>(&mut (*uc).ator_tmp, (*uc).top_nodes, (*uc).top_nodes_cap);
+    free::<Node>(
+        &raw mut (*uc).ator_tmp,
+        (*uc).top_nodes,
+        (*uc).top_nodes_cap,
+    );
     free::<*mut c_void>(
-        &mut (*uc).ator_tmp,
+        &raw mut (*uc).ator_tmp,
         (*uc).element_extra_arr,
         (*uc).element_extra_cap,
     );
 
     free::<u8>(
-        &mut (*uc).ator_tmp,
+        &raw mut (*uc).ator_tmp,
         (*uc).ascii.token.str_data,
         (*uc).ascii.token.str_cap,
     );
     free::<u8>(
-        &mut (*uc).ator_tmp,
+        &raw mut (*uc).ator_tmp,
         (*uc).ascii.prev_token.str_data,
         (*uc).ascii.prev_token.str_cap,
     );
 
     free::<u8>(
-        &mut (*uc).ator_tmp,
+        &raw mut (*uc).ator_tmp,
         (*uc).read_buffer,
         (*uc).read_buffer_size,
     );
-    free::<u8>(&mut (*uc).ator_tmp, (*uc).tmp_arr, (*uc).tmp_arr_size);
-    free::<u8>(&mut (*uc).ator_tmp, (*uc).swap_arr, (*uc).swap_arr_size);
+    free::<u8>(&raw mut (*uc).ator_tmp, (*uc).tmp_arr, (*uc).tmp_arr_size);
+    free::<u8>(&raw mut (*uc).ator_tmp, (*uc).swap_arr, (*uc).swap_arr_size);
 
     obj_free(uc);
 
-    free_ator(&mut (*uc).ator_tmp);
+    free_ator(&raw mut (*uc).ator_tmp);
 }
 
 // ufbx.c:25464-25470 `ufbxi_free_result`
@@ -943,7 +947,7 @@ pub(crate) unsafe fn free_result(uc: *mut Context) {
     buf_free(&mut (*uc).result);
     buf_free(&mut (*uc).string_pool.buf);
 
-    free_ator(&mut (*uc).ator_result);
+    free_ator(&raw mut (*uc).ator_result);
 }
 
 // ufbx.c:25472-25625 `ufbxi_load`
@@ -992,13 +996,13 @@ pub(crate) unsafe fn load(
 
     init_ator(
         &mut (*uc).error,
-        &mut (*uc).ator_tmp,
+        &raw mut (*uc).ator_tmp,
         ptr::addr_of!((*uc).opts.temp_allocator),
         b"temp\0".as_ptr(),
     );
     init_ator(
         &mut (*uc).error,
-        &mut (*uc).ator_result,
+        &raw mut (*uc).ator_result,
         ptr::addr_of!((*uc).opts.result_allocator),
         b"result\0".as_ptr(),
     );

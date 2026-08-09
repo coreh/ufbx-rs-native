@@ -1213,7 +1213,7 @@ pub(crate) unsafe fn push_element_extra_size(
         ufbxi_check_return!(
             uc,
             grow_array(
-                &mut (*uc).ator_tmp,
+                &raw mut (*uc).ator_tmp,
                 &mut (*uc).element_extra_arr,
                 &mut (*uc).element_extra_cap,
                 id.wrapping_add(1) as usize
@@ -3106,7 +3106,7 @@ pub(crate) unsafe fn begin_parse(uc: *mut Context) -> Result<(), Fail> {
         (*uc).ascii.src_end = (*uc).data.add((*uc).data_size + (*uc).yield_size);
 
         // Initialize the first token
-        crate::native::parse_ascii::ascii_next_token(uc, &mut (*uc).ascii.token)?;
+        crate::native::parse_ascii::ascii_next_token(uc, &raw mut (*uc).ascii.token)?;
 
         // Default to version 7400 if not found in header
         if (*uc).version > 0 {
@@ -3203,7 +3203,7 @@ pub(crate) unsafe fn parse_toplevel(uc: *mut Context, name: *const u8) -> Result
         ufbxi_check!(
             uc,
             grow_array(
-                &mut (*uc).ator_tmp,
+                &raw mut (*uc).ator_tmp,
                 &mut (*uc).top_nodes,
                 &mut (*uc).top_nodes_cap,
                 (*uc).top_nodes_len
@@ -4359,7 +4359,7 @@ mod tests {
                 core::ptr::null(),
                 b"test\0".as_ptr(),
             );
-            uc.tmp.ator = &mut uc.ator_tmp;
+            uc.tmp.ator = &raw mut uc.ator_tmp;
 
             let uc_ptr: *mut Context = &mut *uc;
             let a = push_element_extra_size(uc_ptr, 5, 16);
@@ -4434,7 +4434,7 @@ mod tests {
                 b"test\0".as_ptr(),
             );
             let ator_tmp: *mut Allocator = &mut uc.ator_tmp;
-            uc.result.ator = &mut uc.ator_result;
+            uc.result.ator = &raw mut uc.ator_result;
             uc.tmp_stack.ator = ator_tmp;
             uc.tmp_dom_nodes.ator = ator_tmp;
             uc.string_pool.error = &mut uc.error;

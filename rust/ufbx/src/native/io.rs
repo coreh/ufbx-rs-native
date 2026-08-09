@@ -72,7 +72,7 @@ pub(crate) unsafe fn refill(uc: *mut Context, size: usize, require_size: bool) -
         new_size = max_sz(new_size, (*uc).read_buffer_size.wrapping_mul(2));
         size_to_free = (*uc).read_buffer_size;
         data_to_free = (*uc).read_buffer;
-        let new_buffer: *mut u8 = alloc::<u8>(&mut (*uc).ator_tmp, new_size);
+        let new_buffer: *mut u8 = alloc::<u8>(&raw mut (*uc).ator_tmp, new_size);
         ufbxi_check_return!(uc, !new_buffer.is_null(), core::ptr::null(), "new_buffer");
         (*uc).read_buffer = new_buffer;
         (*uc).read_buffer_size = new_size;
@@ -88,7 +88,7 @@ pub(crate) unsafe fn refill(uc: *mut Context, size: usize, require_size: bool) -
     }
 
     if size_to_free != 0 {
-        free::<u8>(&mut (*uc).ator_tmp, data_to_free, size_to_free);
+        free::<u8>(&raw mut (*uc).ator_tmp, data_to_free, size_to_free);
     }
 
     // Fill the rest of the buffer with user data
@@ -821,7 +821,7 @@ mod tests {
     unsafe fn init_tmp_ator(uc: *mut Context) {
         init_ator(
             &mut (*uc).error,
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             core::ptr::null(),
             b"tmp\0".as_ptr(),
         );

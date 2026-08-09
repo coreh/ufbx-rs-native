@@ -1091,7 +1091,7 @@ pub(crate) unsafe fn sort_name_elements(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             &mut (*uc).tmp_arr,
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<NameElement>()),
@@ -1147,7 +1147,7 @@ pub(crate) unsafe fn sort_node_ptrs(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             &mut (*uc).tmp_arr,
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<*mut Node>()),
@@ -1189,7 +1189,7 @@ pub(crate) unsafe fn sort_tmp_material_textures(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             &mut (*uc).tmp_arr,
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<TmpMaterialTexture>()),
@@ -1221,15 +1221,15 @@ pub(crate) unsafe fn cmp_connection_less(
     // C-parity: `(&a->src)[index]` / `(&a->src_prop)[index]` index across the
     // two adjacent element pointers and the two adjacent strings of
     // `ufbx_connection`, which the static assert above pins as unpadded.
-    let a_src: *const Ref<Element> = &(*a).src;
-    let b_src: *const Ref<Element> = &(*b).src;
+    let a_src: *const Ref<Element> = &raw const (*a).src;
+    let b_src: *const Ref<Element> = &raw const (*b).src;
     let a_elem: *mut Element = ref_ptr(a_src.add(index));
     let b_elem: *mut Element = ref_ptr(b_src.add(index));
     if a_elem != b_elem {
         return a_elem < b_elem;
     }
-    let a_prop: *const String = &(*a).src_prop;
-    let b_prop: *const String = &(*b).src_prop;
+    let a_prop: *const String = &raw const (*a).src_prop;
+    let b_prop: *const String = &raw const (*b).src_prop;
     let mut cmp: i32 = strcmp((*a_prop.add(index)).data, (*b_prop.add(index)).data);
     if cmp != 0 {
         return cmp < 0;
@@ -1250,7 +1250,7 @@ pub(crate) unsafe fn sort_connections(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             &mut (*uc).tmp_arr,
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<Connection>()),
@@ -1910,7 +1910,7 @@ pub(crate) unsafe fn get_element_node(element: *mut Element) -> *mut Element {
     } else {
         // C: `return element->instances.count > 0 ? &element->instances.data[0]->element : NULL;`
         if (*element).instances.count > 0 {
-            &mut (*ref_ptr((*element).instances.data)).element as *mut Element
+            &raw mut (*ref_ptr((*element).instances.data)).element
         } else {
             ptr::null_mut()
         }
@@ -2458,7 +2458,7 @@ pub(crate) unsafe fn sort_anim_props(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             &mut (*uc).tmp_arr,
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<AnimProp>()),
@@ -2495,7 +2495,7 @@ pub(crate) unsafe fn sort_material_textures(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             &mut (*uc).tmp_arr,
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<MaterialTexture>()),
@@ -2559,7 +2559,7 @@ pub(crate) unsafe fn sort_bone_poses(uc: *mut Context, pose: *mut Pose) -> Resul
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             &mut (*uc).tmp_arr,
             &mut (*uc).tmp_arr_size,
             (*pose).bone_poses.count.wrapping_mul(size_of::<BonePose>()),
@@ -2588,7 +2588,7 @@ pub(crate) unsafe fn sort_skin_weights(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             &mut (*uc).tmp_arr,
             &mut (*uc).tmp_arr_size,
             (*skin)
@@ -2636,7 +2636,7 @@ pub(crate) unsafe fn sort_blend_keyframes(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             &mut (*uc).tmp_arr,
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<BlendKeyframe>()),
@@ -4606,7 +4606,7 @@ pub(crate) unsafe fn finalize_shader_texture(
         ufbxi_check!(
             uc,
             grow_array::<u8>(
-                &mut (*uc).ator_tmp,
+                &raw mut (*uc).ator_tmp,
                 &mut (*uc).tmp_arr,
                 &mut (*uc).tmp_arr_size,
                 (*shader)
@@ -4950,7 +4950,7 @@ pub(crate) unsafe fn deduplicate_textures(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             &mut (*uc).tmp_arr,
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<OrderedTexture>()),
@@ -5526,7 +5526,7 @@ pub(crate) unsafe fn flip_winding(uc: *mut Context, mesh: *mut Mesh) -> Result<(
         ufbxi_check!(
             uc,
             grow_array::<u8>(
-                &mut (*uc).ator_tmp,
+                &raw mut (*uc).ator_tmp,
                 &mut (*uc).tmp_arr,
                 &mut (*uc).tmp_arr_size,
                 (*mesh).num_indices.wrapping_add(1).wrapping_mul(size_of::<u32>()),
@@ -5976,7 +5976,7 @@ pub(crate) unsafe fn absolute_to_relative_path(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             &mut (*uc).tmp_arr,
             &mut (*uc).tmp_arr_size,
             max_length,
@@ -6099,7 +6099,7 @@ pub(crate) unsafe fn sort_file_contents(
     ufbxi_check!(
         uc,
         grow_array::<u8>(
-            &mut (*uc).ator_tmp,
+            &raw mut (*uc).ator_tmp,
             &mut (*uc).tmp_arr,
             &mut (*uc).tmp_arr_size,
             count.wrapping_mul(size_of::<FileContent>()),

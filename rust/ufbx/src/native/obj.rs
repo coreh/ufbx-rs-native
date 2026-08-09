@@ -250,17 +250,17 @@ pub(crate) unsafe fn obj_init(uc: *mut Context) -> Result<(), Fail> {
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`
     for i in 0..OBJ_NUM_ATTRIBS_EXT {
-        (*uc).obj.tmp_vertices[i].ator = &mut (*uc).ator_tmp;
-        (*uc).obj.tmp_indices[i].ator = &mut (*uc).ator_tmp;
+        (*uc).obj.tmp_vertices[i].ator = &raw mut (*uc).ator_tmp;
+        (*uc).obj.tmp_indices[i].ator = &raw mut (*uc).ator_tmp;
     }
-    (*uc).obj.tmp_color_valid.ator = &mut (*uc).ator_tmp;
-    (*uc).obj.tmp_faces.ator = &mut (*uc).ator_tmp;
-    (*uc).obj.tmp_face_material.ator = &mut (*uc).ator_tmp;
-    (*uc).obj.tmp_face_smoothing.ator = &mut (*uc).ator_tmp;
-    (*uc).obj.tmp_face_group.ator = &mut (*uc).ator_tmp;
-    (*uc).obj.tmp_face_group_infos.ator = &mut (*uc).ator_tmp;
-    (*uc).obj.tmp_meshes.ator = &mut (*uc).ator_tmp;
-    (*uc).obj.tmp_props.ator = &mut (*uc).ator_tmp;
+    (*uc).obj.tmp_color_valid.ator = &raw mut (*uc).ator_tmp;
+    (*uc).obj.tmp_faces.ator = &raw mut (*uc).ator_tmp;
+    (*uc).obj.tmp_face_material.ator = &raw mut (*uc).ator_tmp;
+    (*uc).obj.tmp_face_smoothing.ator = &raw mut (*uc).ator_tmp;
+    (*uc).obj.tmp_face_group.ator = &raw mut (*uc).ator_tmp;
+    (*uc).obj.tmp_face_group_infos.ator = &raw mut (*uc).ator_tmp;
+    (*uc).obj.tmp_meshes.ator = &raw mut (*uc).ator_tmp;
+    (*uc).obj.tmp_props.ator = &raw mut (*uc).ator_tmp;
 
     // .obj parsing does its own yield logic
     (*uc).data_size += (*uc).yield_size;
@@ -270,7 +270,7 @@ pub(crate) unsafe fn obj_init(uc: *mut Context) -> Result<(), Fail> {
 
     map_init(
         &mut (*uc).obj.group_map,
-        &mut (*uc).ator_tmp,
+        &raw mut (*uc).ator_tmp,
         map_cmp_const_char_ptr,
         core::ptr::null_mut(),
     );
@@ -318,9 +318,13 @@ pub(crate) unsafe fn obj_free(uc: *mut Context) {
 
     map_free(&mut (*uc).obj.group_map);
 
-    free::<String>(&mut (*uc).ator_tmp, (*uc).obj.tokens, (*uc).obj.tokens_cap);
+    free::<String>(
+        &raw mut (*uc).ator_tmp,
+        (*uc).obj.tokens,
+        (*uc).obj.tokens_cap,
+    );
     free::<*mut Material>(
-        &mut (*uc).ator_tmp,
+        &raw mut (*uc).ator_tmp,
         (*uc).obj.tmp_materials,
         (*uc).obj.tmp_materials_cap,
     );
@@ -467,7 +471,7 @@ pub(crate) unsafe fn obj_tokenize(uc: *mut Context) -> Result<(), Fail> {
         ufbxi_check!(
             uc,
             grow_array::<String>(
-                &mut (*uc).ator_tmp,
+                &raw mut (*uc).ator_tmp,
                 &mut (*uc).obj.tokens,
                 &mut (*uc).obj.tokens_cap,
                 index + 1
@@ -624,7 +628,7 @@ pub(crate) unsafe fn obj_parse_index(
         index = index.wrapping_sub(1);
     }
 
-    let fast_indices: *mut ObjFastIndices = &mut (*uc).obj.fast_indices[attrib as usize];
+    let fast_indices: *mut ObjFastIndices = &raw mut (*uc).obj.fast_indices[attrib as usize];
     if (*fast_indices).num_left == 0 {
         let num_push: usize = 128;
         let dst: *mut u64 = push::<u64>(&mut (*uc).obj.tmp_indices[attrib as usize], num_push);
@@ -975,7 +979,7 @@ pub(crate) unsafe fn obj_parse_material(uc: *mut Context) -> Result<(), Fail> {
         ufbxi_check!(
             uc,
             grow_array::<*mut Material>(
-                &mut (*uc).ator_tmp,
+                &raw mut (*uc).ator_tmp,
                 &mut (*uc).obj.tmp_materials,
                 &mut (*uc).obj.tmp_materials_cap,
                 id + 1
@@ -1848,7 +1852,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
                 (*uc).opts.obj_mtl_path.data,
                 (*uc).opts.obj_mtl_path.length,
                 core::ptr::null(),
-                &mut (*uc).ator_tmp,
+                &raw mut (*uc).ator_tmp,
                 OpenFileType::ObjMtl,
             );
             stream_path.data = (*uc).opts.obj_mtl_path.data;
@@ -1886,7 +1890,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
                 (*dst).data,
                 (*dst).size,
                 &(*uc).obj.mtllib_relative_path,
-                &mut (*uc).ator_tmp,
+                &raw mut (*uc).ator_tmp,
                 OpenFileType::ObjMtl,
             );
             stream_path = (*uc).obj.mtllib_relative_path;
@@ -1939,7 +1943,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
                     copy,
                     path.length,
                     core::ptr::null(),
-                    &mut (*uc).ator_tmp,
+                    &raw mut (*uc).ator_tmp,
                     OpenFileType::ObjMtl,
                 );
                 if has_stream {

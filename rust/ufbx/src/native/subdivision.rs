@@ -1911,12 +1911,12 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     (*sc).source.unordered = true;
     (*sc).tmp.unordered = true;
 
-    (*sc).source.ator = &mut (*sc).ator_tmp;
-    (*sc).tmp.ator = &mut (*sc).ator_tmp;
+    (*sc).source.ator = &raw mut (*sc).ator_tmp;
+    (*sc).tmp.ator = &raw mut (*sc).ator_tmp;
 
     let mut i: usize = 1;
     while i < level {
-        (*sc).result.ator = &mut (*sc).ator_tmp;
+        (*sc).result.ator = &raw mut (*sc).ator_tmp;
 
         subdivide_mesh_level(sc)?;
 
@@ -1938,7 +1938,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
         i += 1;
     }
 
-    (*sc).result.ator = &mut (*sc).ator_result;
+    (*sc).result.ator = &raw mut (*sc).ator_result;
     subdivide_mesh_level(sc)?;
     buf_free(&mut (*sc).tmp);
 

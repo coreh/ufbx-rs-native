@@ -209,7 +209,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(
     );
 
     (*tc).result.unordered = true;
-    (*tc).result.ator = &mut (*tc).ator_result;
+    (*tc).result.ator = &raw mut (*tc).ator_result;
 
     let num_spans: usize = (*curve).basis.spans.count;
 
@@ -355,8 +355,8 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     (*tc).result.unordered = true;
     (*tc).tmp.unordered = true;
 
-    (*tc).result.ator = &mut (*tc).ator_result;
-    (*tc).tmp.ator = &mut (*tc).ator_tmp;
+    (*tc).result.ator = &raw mut (*tc).ator_result;
+    (*tc).tmp.ator = &raw mut (*tc).ator_tmp;
 
     let open_u: bool = (*surface).basis_u.topology == NurbsTopology::Open;
     let open_v: bool = (*surface).basis_v.topology == NurbsTopology::Open;

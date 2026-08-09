@@ -210,7 +210,7 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         // from the same result buffer!
         let mut ator: Allocator = (*refcount).ator;
         let mut buf: Buf = (*refcount).buf;
-        buf.ator = &mut ator;
+        buf.ator = &raw mut ator;
         buf_free(&mut buf);
         free_ator(&mut ator);
 
@@ -676,7 +676,7 @@ pub(crate) unsafe fn free_scene(scene: *mut Scene) {
     if (*imp).magic != SCENE_IMP_MAGIC {
         return;
     }
-    release_ref(&mut (*imp).refcount);
+    release_ref(&raw mut (*imp).refcount);
 }
 
 // ufbx.c:30588-30596 `ufbx_retain_scene`
@@ -691,7 +691,7 @@ pub(crate) unsafe fn retain_scene(scene: *mut Scene) {
     if (*imp).magic != SCENE_IMP_MAGIC {
         return;
     }
-    retain_ref(&mut (*imp).refcount);
+    retain_ref(&raw mut (*imp).refcount);
 }
 
 // ufbx.c:30598-30633 `ufbx_format_error`
@@ -1831,7 +1831,7 @@ pub(crate) unsafe fn free_anim(anim: *mut Anim) {
     if (*imp).magic != ANIM_IMP_MAGIC {
         return;
     }
-    release_ref(&mut (*imp).refcount);
+    release_ref(&raw mut (*imp).refcount);
 }
 
 // ufbx.c:31231-31240 `ufbx_retain_anim`
@@ -1848,7 +1848,7 @@ pub(crate) unsafe fn retain_anim(anim: *mut Anim) {
     if (*imp).magic != ANIM_IMP_MAGIC {
         return;
     }
-    retain_ref(&mut (*imp).refcount);
+    retain_ref(&raw mut (*imp).refcount);
 }
 
 // ufbx.c:31242-31289 `ufbx_bake_anim`
@@ -1948,7 +1948,7 @@ pub(crate) unsafe fn retain_baked_anim(bake: *mut BakedAnim) {
     if (*imp).magic != BAKED_ANIM_IMP_MAGIC {
         return;
     }
-    retain_ref(&mut (*imp).refcount);
+    retain_ref(&raw mut (*imp).refcount);
 }
 
 // ufbx.c:31301-31309 `ufbx_free_baked_anim`
@@ -1962,7 +1962,7 @@ pub(crate) unsafe fn free_baked_anim(bake: *mut BakedAnim) {
     if (*imp).magic != BAKED_ANIM_IMP_MAGIC {
         return;
     }
-    release_ref(&mut (*imp).refcount);
+    release_ref(&raw mut (*imp).refcount);
 }
 
 // ufbx.c:31312-31318 `ufbx_find_baked_node_by_typed_id`
@@ -3588,7 +3588,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
     if ok {
         clear_error(error);
         let imp: *mut LineCurveImp = (*tc).imp;
-        &mut (*imp).curve
+        &raw mut (*imp).curve
     } else {
         fix_error_type(&mut (*tc).error, b"Failed to tessellate\0".as_ptr(), error);
         buf_free(&mut (*tc).result);
@@ -3652,7 +3652,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     if ok {
         clear_error(error);
         let imp: *mut MeshImp = (*tc).imp;
-        &mut (*imp).mesh
+        &raw mut (*imp).mesh
     } else {
         fix_error_type(&mut (*tc).error, b"Failed to tessellate\0".as_ptr(), error);
         buf_free(&mut (*tc).result);
@@ -3695,7 +3695,7 @@ pub(crate) unsafe fn free_line_curve(line_curve: *mut LineCurve) {
     if (*imp).magic != LINE_CURVE_IMP_MAGIC {
         return;
     }
-    release_ref(&mut (*imp).refcount);
+    release_ref(&raw mut (*imp).refcount);
 }
 
 // ufbx.c:32370-32379 `ufbx_retain_line_curve`
@@ -3712,7 +3712,7 @@ pub(crate) unsafe fn retain_line_curve(line_curve: *mut LineCurve) {
     if (*imp).magic != LINE_CURVE_IMP_MAGIC {
         return;
     }
-    retain_ref(&mut (*imp).refcount);
+    retain_ref(&raw mut (*imp).refcount);
 }
 
 // ufbx.c:32381-32390 `ufbx_find_face_index`
@@ -4279,7 +4279,7 @@ pub(crate) unsafe fn free_mesh(mesh: *mut Mesh) {
     if (*imp).magic != MESH_IMP_MAGIC {
         return;
     }
-    release_ref(&mut (*imp).refcount);
+    release_ref(&raw mut (*imp).refcount);
 }
 
 // ufbx.c:32638-32647 `ufbx_retain_mesh`
@@ -4296,7 +4296,7 @@ pub(crate) unsafe fn retain_mesh(mesh: *mut Mesh) {
     if (*imp).magic != MESH_IMP_MAGIC {
         return;
     }
-    retain_ref(&mut (*imp).refcount);
+    retain_ref(&raw mut (*imp).refcount);
 }
 
 // ufbx.c:32649-32655 `ufbx_load_geometry_cache`
@@ -4343,7 +4343,7 @@ pub(crate) unsafe fn free_geometry_cache(cache: *mut GeometryCache) {
     if (*imp).owned_by_scene {
         return;
     }
-    release_ref(&mut (*imp).refcount);
+    release_ref(&raw mut (*imp).refcount);
 }
 
 // ufbx.c:32677-32686 `ufbx_retain_geometry_cache`
@@ -4360,7 +4360,7 @@ pub(crate) unsafe fn retain_geometry_cache(cache: *mut GeometryCache) {
     if (*imp).owned_by_scene {
         return;
     }
-    retain_ref(&mut (*imp).refcount);
+    retain_ref(&raw mut (*imp).refcount);
 }
 
 // ufbx.c:32688-32694 `ufbxi_geometry_cache_buffer` — the union overlays
@@ -5625,7 +5625,7 @@ mod tests {
         init_ator(error, &mut ator, &opts, b"test\0".as_ptr());
 
         let mut buf = core::mem::MaybeUninit::<Buf>::zeroed().assume_init();
-        buf.ator = &mut ator;
+        buf.ator = &raw mut ator;
 
         let imp = push_size(&mut buf, size_of::<MeshImp>(), 1) as *mut MeshImp;
         assert!(!imp.is_null());
@@ -5655,20 +5655,20 @@ mod tests {
                     .load(core::sync::atomic::Ordering::SeqCst),
                 0
             );
-            retain_ref(&mut (*imp).refcount);
+            retain_ref(&raw mut (*imp).refcount);
 
             let mesh_ptr = core::ptr::addr_of_mut!((*imp).mesh) as *mut c_void;
             let back: *mut MeshImp = get_imp(mesh_ptr);
             assert_eq!(back, imp);
 
-            release_ref(&mut (*imp).refcount);
+            release_ref(&raw mut (*imp).refcount);
             // Still alive: previous value was 1.
             assert_eq!((*imp).refcount.self_magic, REFCOUNT_IMP_MAGIC);
 
             // Final release frees the object (previous value 0). The
             // header-inside-own-buffer free order is exercised for real here;
             // miri/asan-style UAF would fire on a wrong port.
-            release_ref(&mut (*imp).refcount);
+            release_ref(&raw mut (*imp).refcount);
         }
     }
 
@@ -6172,7 +6172,7 @@ mod tests {
             let opts = RawAllocatorOpts::default();
             init_ator(&mut error, &mut ator, &opts, b"test\0".as_ptr());
             let mut buf = core::mem::MaybeUninit::<Buf>::zeroed().assume_init();
-            buf.ator = &mut ator;
+            buf.ator = &raw mut ator;
             let imp = push_size(&mut buf, size_of::<SceneImp>(), 1) as *mut SceneImp;
             assert!(!imp.is_null());
             core::ptr::write_bytes(imp as *mut u8, 0, size_of::<SceneImp>());
@@ -6210,7 +6210,7 @@ mod tests {
         init_ator(error, &mut ator, &opts, b"test\0".as_ptr());
 
         let mut buf = core::mem::MaybeUninit::<Buf>::zeroed().assume_init();
-        buf.ator = &mut ator;
+        buf.ator = &raw mut ator;
 
         let imp = push_size(&mut buf, size_of::<T>(), 1) as *mut T;
         assert!(!imp.is_null());

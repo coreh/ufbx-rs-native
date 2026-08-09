@@ -1217,9 +1217,9 @@ pub(crate) unsafe fn cache_load_imp(cc: *mut CacheContext, filename: String) -> 
     (*(*cc).imp).owned_by_scene = (*cc).owned_by_scene;
     (*(*cc).imp).refcount.ator = (*cc).ator_result;
     (*(*cc).imp).refcount.buf = (*cc).result;
-    (*(*cc).imp).refcount.buf.ator = &mut (*(*cc).imp).refcount.ator;
+    (*(*cc).imp).refcount.buf.ator = &raw mut (*(*cc).imp).refcount.ator;
     (*(*cc).imp).string_buf = (*cc).string_pool.buf;
-    (*(*cc).imp).string_buf.ator = &mut (*(*cc).imp).refcount.ator;
+    (*(*cc).imp).string_buf.ator = &raw mut (*(*cc).imp).refcount.ator;
 
     Ok(())
 }
@@ -1240,7 +1240,7 @@ pub(crate) unsafe fn cache_load(cc: *mut CacheContext, filename: String) -> *mut
     }
 
     if ok {
-        &mut (*(*cc).imp).cache
+        &raw mut (*(*cc).imp).cache
     } else {
         fix_error_type(
             &mut (*cc).error,
@@ -1298,10 +1298,10 @@ pub(crate) unsafe fn load_geometry_cache(
         map_cmp_string,
         core::ptr::null_mut(),
     );
-    cc.string_pool.buf.ator = &mut cc.ator_result;
+    cc.string_pool.buf.ator = &raw mut cc.ator_result;
     cc.string_pool.buf.unordered = true;
     cc.string_pool.initial_size = 64;
-    cc.result.ator = &mut cc.ator_result;
+    cc.result.ator = &raw mut cc.ator_result;
 
     cc.frames_per_second = if opts.frames_per_second > 0.0 {
         opts.frames_per_second
@@ -1426,7 +1426,7 @@ pub(crate) unsafe fn load_external_cache(
     cc.frames_per_second = (*uc).scene.settings.frames_per_second;
 
     // Temporarily "borrow" allocators for the geometry cache
-    cc.ator_tmp = &mut (*uc).ator_tmp;
+    cc.ator_tmp = &raw mut (*uc).ator_tmp;
     cc.string_pool = (*uc).string_pool;
     cc.result = (*uc).result;
 
