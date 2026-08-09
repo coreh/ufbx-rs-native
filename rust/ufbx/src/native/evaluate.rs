@@ -811,7 +811,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         pop_warnings(
-            ptr::addr_of_mut!((*uc.get()).warnings),
+            uc.warnings_mut_ptr(),
             ptr::addr_of_mut!((*uc.get()).scene.metadata.warnings),
             (*uc.get()).scene.metadata.has_warning.as_mut_ptr(),
         )
@@ -1151,7 +1151,7 @@ pub(crate) unsafe fn load(
     (*uc.get()).warnings.error = uc.error_mut_ptr();
     (*uc.get()).warnings.result = uc.result_mut_ptr();
     (*uc.get()).warnings.tmp_stack.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).string_pool.warnings = ptr::addr_of_mut!((*uc.get()).warnings);
+    (*uc.get()).string_pool.warnings = uc.warnings_mut_ptr();
 
     // Set zero size `swap_arr` to a non-NULL buffer so we can tell the difference between empty
     // array and an allocation failure.

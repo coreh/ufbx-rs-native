@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `warnings` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn warnings_mut_ptr(&self) -> *mut Warnings {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).warnings }
+    }
+
     // `read_buffer_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn read_buffer_size_mut_ptr(&self) -> *mut usize {
