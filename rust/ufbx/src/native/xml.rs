@@ -98,6 +98,21 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    // `pos_end` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn pos_end(&self) -> *const u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*const u8` are valid.
+        unsafe { (*self.get()).pos_end }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_pos_end(&self, pos_end: *const u8) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).pos_end = pos_end;
+        }
+    }
+
     // `pos` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn pos(&self) -> *const u8 {
@@ -256,7 +271,7 @@ pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
     // return `SIZE_MAX` here (the `io_error` flag is set but the pointer is
     // still formed), so the offset is applied with wrapping semantics rather
     // than `add`, which would trip the pointer-overflow precondition.
-    (*xc.get()).pos_end = (*xc.get()).data.as_ptr().wrapping_add(num);
+    xc.set_pos_end((*xc.get()).data.as_ptr().wrapping_add(num));
 }
 
 // ufbx.c:7323-7326 `ufbxi_xml_advance`
@@ -264,7 +279,7 @@ pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
 pub(crate) unsafe fn xml_advance(xc: &XmlContext) {
     // C: `if (++xc->pos == xc->pos_end)` — pre-increment decomposed.
     xc.set_pos(xc.pos().add(1));
-    if xc.pos() == (*xc.get()).pos_end {
+    if xc.pos() == xc.pos_end() {
         xml_refill(xc);
     }
 }
@@ -728,7 +743,7 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
 
     if (*opts).prefix_length > 0 {
         xc.set_pos((*opts).prefix);
-        (*xc.get()).pos_end = (*opts).prefix.add((*opts).prefix_length);
+        xc.set_pos_end((*opts).prefix.add((*opts).prefix_length));
     } else {
         xml_refill(&xc);
     }
