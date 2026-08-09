@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `top_child` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn top_child_mut_ptr(&self) -> *mut Node {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).top_child }
+    }
+
     // `top_nodes_cap` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn top_nodes_cap_mut_ptr(&self) -> *mut usize {
@@ -4722,7 +4730,7 @@ pub(crate) unsafe fn parse_toplevel_child(
             *p_node = core::ptr::null_mut();
         } else {
             // Parse to either reused `uc->top_child` or push if retaining to `tmp_buf`.
-            let mut dst: *mut Node = &mut (*uc.get()).top_child;
+            let mut dst: *mut Node = uc.top_child_mut_ptr();
             if !tmp_buf.is_null() {
                 dst = push_zero::<Node>(tmp_buf, 1);
                 ufbxi_check!(uc, !dst.is_null(), "dst");
