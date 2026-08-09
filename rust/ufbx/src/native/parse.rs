@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `close_fn` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn close_fn(&self) -> Option<unsafe extern "C" fn(*mut c_void)> {
+        // SAFETY: reading a scalar field; all bit patterns of `Option<unsafe extern "C" fn(*mut c_void)>` are valid.
+        unsafe { (*self.get()).close_fn }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_close_fn(&self, close_fn: Option<unsafe extern "C" fn(*mut c_void)>) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).close_fn = close_fn;
+        }
+    }
+
     // `tmp_element_flag` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_element_flag(&self) -> *mut u8 {

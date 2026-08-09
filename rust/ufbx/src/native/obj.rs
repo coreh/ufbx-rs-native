@@ -1866,12 +1866,12 @@ pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
 #[must_use]
 pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     // HACK: Reset everything and switch to loading the .mtl file globally
-    if let Some(close_fn) = (*uc.get()).close_fn {
+    if let Some(close_fn) = uc.close_fn() {
         close_fn(uc.read_user());
     }
 
     uc.set_read_fn(None);
-    (*uc.get()).close_fn = None;
+    uc.set_close_fn(None);
     uc.set_read_user(core::ptr::null_mut());
     uc.set_data_begin(core::ptr::null());
     uc.set_data(core::ptr::null());
@@ -2020,16 +2020,16 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     if has_stream {
         // Adopt `stream` to ufbx read callbacks
         uc.set_read_fn(stream.read_fn);
-        (*uc.get()).close_fn = stream.close_fn;
+        uc.set_close_fn(stream.close_fn);
         uc.set_read_user(stream.user);
 
         let ok: Result<(), Fail> = obj_parse_mtl(uc);
 
-        if let Some(close_fn) = (*uc.get()).close_fn {
+        if let Some(close_fn) = uc.close_fn() {
             close_fn(uc.read_user());
         }
         uc.set_read_fn(None);
-        (*uc.get()).close_fn = None;
+        uc.set_close_fn(None);
         uc.set_read_user(core::ptr::null_mut());
 
         ok?;

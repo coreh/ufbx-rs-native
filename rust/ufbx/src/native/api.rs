@@ -657,7 +657,7 @@ pub(crate) unsafe fn load_stream_prefix(
     uc.set_read_fn((*stream).read_fn);
     uc.set_skip_fn((*stream).skip_fn);
     (*uc.get()).size_fn = (*stream).size_fn;
-    (*uc.get()).close_fn = (*stream).close_fn;
+    uc.set_close_fn((*stream).close_fn);
     uc.set_read_user((*stream).user);
 
     let scene: *mut Scene = evaluate::load(uc, opts, error);

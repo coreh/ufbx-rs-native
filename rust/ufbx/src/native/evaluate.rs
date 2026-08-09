@@ -560,7 +560,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         uc.set_read_fn(stream.read_fn);
         uc.set_skip_fn(stream.skip_fn);
         (*uc.get()).size_fn = stream.size_fn;
-        (*uc.get()).close_fn = stream.close_fn;
+        uc.set_close_fn(stream.close_fn);
         uc.set_read_user(stream.user);
     }
 
@@ -1159,8 +1159,8 @@ pub(crate) unsafe fn load(
 
     let ok: bool = load_imp(uc).is_ok();
 
-    if (*uc.get()).close_fn.is_some() {
-        ((*uc.get()).close_fn.unwrap())(uc.read_user());
+    if uc.close_fn().is_some() {
+        (uc.close_fn().unwrap())(uc.read_user());
     }
 
     free_temp(uc);
