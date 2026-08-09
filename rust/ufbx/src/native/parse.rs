@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `exporter_version` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn exporter_version(&self) -> u32 {
+        // SAFETY: reading a scalar field; all bit patterns of `u32` are valid.
+        unsafe { (*self.get()).exporter_version }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_exporter_version(&self, exporter_version: u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).exporter_version = exporter_version;
+        }
+    }
+
     // FBX file format version (e.g. 7400). Scalar POD field: value getter +
     // setter, both safe (interior mutability via the `UnsafeCell` seam).
     #[inline(always)]

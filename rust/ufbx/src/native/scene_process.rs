@@ -7856,7 +7856,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         } else {
             if (*uc.get()).opts.use_blender_pbr_material
                 && (*uc.get()).exporter == Exporter::BlenderBinary
-                && (*uc.get()).exporter_version >= pack_version(4, 12, 0)
+                && uc.exporter_version() >= pack_version(4, 12, 0)
             {
                 (*material).shader_type = ShaderType::BlenderPhong;
             }

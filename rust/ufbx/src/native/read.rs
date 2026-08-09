@@ -703,61 +703,61 @@ pub(crate) unsafe fn match_exporter(uc: &Context) -> Result<(), Fail> {
     let mut version: [u32; 3] = [0; 3];
     if match_version_string(b"blender-- ?.?.?\0".as_ptr(), creator, version.as_mut_ptr()) {
         (*uc.get()).exporter = Exporter::BlenderBinary;
-        (*uc.get()).exporter_version = pack_version(version[0], version[1], version[2]);
+        uc.set_exporter_version(pack_version(version[0], version[1], version[2]));
     } else if match_version_string(b"blender- ?.?\0".as_ptr(), creator, version.as_mut_ptr()) {
         (*uc.get()).exporter = Exporter::BlenderBinary;
-        (*uc.get()).exporter_version = pack_version(version[0], version[1], 0);
+        uc.set_exporter_version(pack_version(version[0], version[1], 0));
     } else if match_version_string(
         b"blender version ?.?\0".as_ptr(),
         creator,
         version.as_mut_ptr(),
     ) {
         (*uc.get()).exporter = Exporter::BlenderAscii;
-        (*uc.get()).exporter_version = pack_version(version[0], version[1], 0);
+        uc.set_exporter_version(pack_version(version[0], version[1], 0));
     } else if match_version_string(
         b"fbx sdk/fbx plugins version ?.?\0".as_ptr(),
         creator,
         version.as_mut_ptr(),
     ) {
         (*uc.get()).exporter = Exporter::FbxSdk;
-        (*uc.get()).exporter_version = pack_version(version[0], version[1], 0);
+        uc.set_exporter_version(pack_version(version[0], version[1], 0));
     } else if match_version_string(
         b"fbx sdk/fbx plugins build ?\0".as_ptr(),
         creator,
         version.as_mut_ptr(),
     ) {
         (*uc.get()).exporter = Exporter::FbxSdk;
-        (*uc.get()).exporter_version = pack_version(
+        uc.set_exporter_version(pack_version(
             version[0] / 10000u32,
             version[0] / 100u32 % 100u32,
             version[0] % 100u32,
-        );
+        ));
     } else if match_version_string(
         b"motionbuilder version ?.?\0".as_ptr(),
         creator,
         version.as_mut_ptr(),
     ) {
         (*uc.get()).exporter = Exporter::MotionBuilder;
-        (*uc.get()).exporter_version = pack_version(version[0], version[1], 0);
+        uc.set_exporter_version(pack_version(version[0], version[1], 0));
     } else if match_version_string(
         b"motionbuilder/mocap/online version ?.?\0".as_ptr(),
         creator,
         version.as_mut_ptr(),
     ) {
         (*uc.get()).exporter = Exporter::MotionBuilder;
-        (*uc.get()).exporter_version = pack_version(version[0], version[1], 0);
+        uc.set_exporter_version(pack_version(version[0], version[1], 0));
     } else if match_version_string(b"ufbx_write\0".as_ptr(), creator, version.as_mut_ptr()) {
         (*uc.get()).exporter = Exporter::UfbxWrite;
-        (*uc.get()).exporter_version = pack_version(0, 0, 1);
+        uc.set_exporter_version(pack_version(0, 0, 1));
     }
 
     (*uc.get()).scene.metadata.exporter = (*uc.get()).exporter;
-    (*uc.get()).scene.metadata.exporter_version = (*uc.get()).exporter_version;
+    (*uc.get()).scene.metadata.exporter_version = uc.exporter_version();
 
     // Un-detect the exporter in `ufbxi_context` to disable special cases
     if (*uc.get()).opts.disable_quirks {
         (*uc.get()).exporter = Exporter::Unknown;
-        (*uc.get()).exporter_version = 0;
+        uc.set_exporter_version(0);
     }
 
     if (*uc.get()).exporter == Exporter::BlenderBinary {
