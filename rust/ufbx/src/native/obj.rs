@@ -1475,8 +1475,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         // HACK(consecutive-faces): Prepare for finalize to re-use a consecutive/zero
         // index buffer for face materials..
         uc.set_max_zero_indices(max_sz(uc.max_zero_indices(), num_faces));
-        (*uc.get()).max_consecutive_indices =
-            max_sz((*uc.get()).max_consecutive_indices, num_faces);
+        uc.set_max_consecutive_indices(max_sz(uc.max_consecutive_indices(), num_faces));
 
         i -= 1;
     }

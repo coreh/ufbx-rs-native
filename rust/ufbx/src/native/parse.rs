@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `max_consecutive_indices` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn max_consecutive_indices(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).max_consecutive_indices }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_max_consecutive_indices(&self, max_consecutive_indices: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).max_consecutive_indices = max_consecutive_indices;
+        }
+    }
+
     // `max_zero_indices` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn max_zero_indices(&self) -> usize {

@@ -2095,8 +2095,10 @@ pub(crate) unsafe fn read_vertex_element(
             // Direct by polygon index: Use shared consecutive array if there's enough
             // elements, otherwise use a unique truncated consecutive index array.
             if num_elems >= (*mesh).num_indices {
-                (*uc.get()).max_consecutive_indices =
-                    max_sz((*uc.get()).max_consecutive_indices, (*mesh).num_indices);
+                uc.set_max_consecutive_indices(max_sz(
+                    uc.max_consecutive_indices(),
+                    (*mesh).num_indices,
+                ));
                 (*attrib).indices.data = SENTINEL_INDEX_CONSECUTIVE.as_ptr();
             } else {
                 let index_data: *mut u32 =
@@ -2708,8 +2710,7 @@ pub(crate) unsafe fn process_indices(
     // HACK(consecutive-faces): Prepare for finalize to re-use a consecutive/zero
     // index buffer for face materials..
     uc.set_max_zero_indices(max_sz(uc.max_zero_indices(), (*mesh).num_faces));
-    (*uc.get()).max_consecutive_indices =
-        max_sz((*uc.get()).max_consecutive_indices, (*mesh).num_faces);
+    uc.set_max_consecutive_indices(max_sz(uc.max_consecutive_indices(), (*mesh).num_faces));
 
     Ok(())
 }
@@ -8080,8 +8081,10 @@ pub(crate) unsafe fn read_legacy_mesh(
             (*mesh).vertex_normal.values.data = (*normals).data as *const Vec3;
             (*mesh).vertex_normal.indices.data = (*mesh).vertex_indices.data;
         } else if per_index {
-            (*uc.get()).max_consecutive_indices =
-                max_sz((*uc.get()).max_consecutive_indices, (*mesh).num_indices);
+            uc.set_max_consecutive_indices(max_sz(
+                uc.max_consecutive_indices(),
+                (*mesh).num_indices,
+            ));
             (*mesh).vertex_normal.exists = true;
             (*mesh).vertex_normal.values.count = num_normals;
             (*mesh).vertex_normal.indices.count = (*mesh).num_indices;
