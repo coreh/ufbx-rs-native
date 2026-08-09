@@ -170,6 +170,21 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `num_topo` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn num_topo(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).num_topo }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_num_topo(&self, num_topo: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).num_topo = num_topo;
+        }
+    }
+
     // `topo` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn topo(&self) -> *mut TopoEdge {
@@ -495,7 +510,7 @@ pub(crate) unsafe fn subdivide_layer(
 
     let mesh: *const Mesh = core::ptr::addr_of!((*sc.get()).src_mesh);
     let topo: *const TopoEdge = sc.topo();
-    let num_topo: usize = (*sc.get()).num_topo;
+    let num_topo: usize = sc.num_topo();
 
     let edge_indices: *mut u32 = push::<u32>(&mut (*sc.get()).result, (*mesh).num_indices);
     ufbxi_check_err!(
@@ -1421,7 +1436,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     ufbxi_check_err!(&mut (*sc.get()).error, !topo.is_null(), "topo");
     compute_topology(mesh, topo, (*mesh).num_indices);
     sc.set_topo(topo);
-    (*sc.get()).num_topo = (*mesh).num_indices;
+    sc.set_num_topo((*mesh).num_indices);
 
     subdivide_attrib(
         sc,
