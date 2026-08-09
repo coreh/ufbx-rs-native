@@ -98,6 +98,14 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    #[inline(always)]
+    pub(crate) fn set_io_error(&self, io_error: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).io_error = io_error;
+        }
+    }
+
     // `pos_end` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn pos_end(&self) -> *const u8 {
@@ -259,7 +267,7 @@ pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
         size_of_val(&(*xc.get()).data),
     );
     if num == usize::MAX || num < size_of_val(&(*xc.get()).data) {
-        (*xc.get()).io_error = true;
+        xc.set_io_error(true);
     }
     if num < size_of_val(&(*xc.get()).data) {
         // C: `xc->data[num++] = '\0';`
