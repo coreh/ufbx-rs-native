@@ -168,6 +168,14 @@ impl TessellateCurveContext {
         self.0.get().cast()
     }
 
+    // `line` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn line_mut(&self) -> *mut LineCurve {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).line }
+    }
+
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut(&self) -> *mut Buf {
@@ -363,7 +371,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
     let num_sub: usize = (*tc.get()).opts.span_subdivision;
 
     let curve: *const NurbsCurve = tc.curve();
-    let line: *mut LineCurve = &mut (*tc.get()).line;
+    let line: *mut LineCurve = tc.line_mut();
     ufbxi_check_err_msg!(
         tc.error_mut(),
         (*curve).basis.valid && (*curve).control_points.count > 0,
