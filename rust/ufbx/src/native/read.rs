@@ -811,7 +811,7 @@ pub(crate) unsafe fn read_definitions(uc: &Context) -> Result<(), Fail> {
         }
 
         let tmpl: *mut Template = push_zero::<Template>(&mut (*uc.get()).tmp_stack, 1);
-        (*uc.get()).num_templates = (*uc.get()).num_templates.wrapping_add(1);
+        uc.set_num_templates(uc.num_templates().wrapping_add(1));
         ufbxi_check!(uc, !tmpl.is_null(), "tmpl");
         ufbxi_check!(
             uc,
@@ -862,7 +862,7 @@ pub(crate) unsafe fn read_definitions(uc: &Context) -> Result<(), Fail> {
     uc.set_templates(push_pop::<Template>(
         &mut (*uc.get()).result,
         &mut (*uc.get()).tmp_stack,
-        (*uc.get()).num_templates,
+        uc.num_templates(),
     ));
     ufbxi_check!(uc, !uc.templates().is_null(), "uc->templates");
 
@@ -879,7 +879,7 @@ pub(crate) unsafe fn find_template(
     // TODO: Binary search
     // C: `ufbxi_for(ufbxi_template, tmpl, uc->templates, uc->num_templates)`
     let mut tmpl = uc.templates();
-    let tmpl_end = add_ptr(tmpl, (*uc.get()).num_templates);
+    let tmpl_end = add_ptr(tmpl, uc.num_templates());
     while tmpl != tmpl_end {
         if (*tmpl).type_ == name {
             // Check that sub_type matches unless the type is Material, Model, AnimationStack, AnimationLayer.

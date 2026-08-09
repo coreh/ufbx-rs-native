@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `num_templates` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn num_templates(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).num_templates }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_num_templates(&self, num_templates: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).num_templates = num_templates;
+        }
+    }
+
     // `templates` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn templates(&self) -> *mut Template {
