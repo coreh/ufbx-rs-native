@@ -6190,7 +6190,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                     uc,
                     grow_array::<u8>(
                         uc.ator_tmp_mut_ptr(),
-                        &mut (*uc.get()).read_buffer,
+                        uc.read_buffer_mut_ptr(),
                         &mut (*uc.get()).read_buffer_size,
                         size,
                     ),
