@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `num_file_content` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn num_file_content(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).num_file_content }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_num_file_content(&self, num_file_content: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).num_file_content = num_file_content;
+        }
+    }
+
     // `file_content` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn file_content(&self) -> *mut FileContent {

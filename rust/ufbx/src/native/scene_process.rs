@@ -6204,7 +6204,7 @@ pub(crate) unsafe fn fetch_file_content(uc: &Context, p_filename: *mut String, p
         &mut index,
         uc.file_content() as *const FileContent,
         0,
-        (*uc.get()).num_file_content,
+        uc.num_file_content(),
         |a| str_less((*a).absolute_filename, filename),
         // C-parity: the equality lambda compares interned string POINTERS, not
         // the bytes.
@@ -6286,14 +6286,14 @@ pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
         p_clip = p_clip.add(1);
     }
 
-    (*uc.get()).num_file_content = (*uc.get()).tmp_stack.num_items - initial_stack;
+    uc.set_num_file_content((*uc.get()).tmp_stack.num_items - initial_stack);
     uc.set_file_content(push_pop::<FileContent>(
         &mut (*uc.get()).tmp,
         &mut (*uc.get()).tmp_stack,
-        (*uc.get()).num_file_content,
+        uc.num_file_content(),
     ));
     ufbxi_check!(uc, !uc.file_content().is_null(), "uc->file_content");
-    sort_file_contents(uc, uc.file_content(), (*uc.get()).num_file_content)?;
+    sort_file_contents(uc, uc.file_content(), uc.num_file_content())?;
 
     // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
     let mut p_video: *mut *mut Video = (*uc.get()).scene.videos.data as *mut *mut Video;
