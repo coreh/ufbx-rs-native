@@ -170,6 +170,14 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `source` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn source_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).source }
+    }
+
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut(&self) -> *mut Buf {
@@ -2133,7 +2141,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
             1,
         );
 
-        buf_free(&mut (*sc.get()).source);
+        buf_free(sc.source_mut());
         buf_free(&mut (*sc.get()).tmp);
         (*sc.get()).source = (*sc.get()).result;
         core::ptr::write_bytes(sc.result_mut() as *mut Buf as *mut u8, 0, size_of::<Buf>());
@@ -2276,7 +2284,7 @@ pub(crate) unsafe fn subdivide_mesh(
 
     free::<SubdivideInput>(sc.ator_tmp_mut(), sc.inputs(), sc.inputs_cap());
     buf_free(&mut (*sc.get()).tmp);
-    buf_free(&mut (*sc.get()).source);
+    buf_free(sc.source_mut());
 
     if ok {
         free_ator(sc.ator_tmp_mut());
