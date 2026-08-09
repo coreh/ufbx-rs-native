@@ -283,6 +283,21 @@ impl DeflateContext {
     pub(crate) fn get(&self) -> *mut InnerDeflateContext {
         self.0.get().cast()
     }
+
+    // `fast_bits` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn fast_bits(&self) -> u32 {
+        // SAFETY: reading a scalar field; all bit patterns of `u32` are valid.
+        unsafe { (*self.get()).fast_bits }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_fast_bits(&self, fast_bits: u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).fast_bits = fast_bits;
+        }
+    }
 }
 
 // ufbx.c:2039-2049 `ufbxi_bit_reverse`
@@ -1066,7 +1081,7 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
         return -28;
     }
 
-    trees.fast_bits = (*dc.get()).fast_bits;
+    trees.fast_bits = dc.fast_bits();
 
     // The header contains the number of Huffman codes in each of the three trees.
     let num_lit_lengths = 257 + (bits & 0x1f) as u32;
@@ -1136,7 +1151,7 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
         num_lit_lengths,
         DEFLATE_LENGTH_LUT.as_ptr(),
         256,
-        (*dc.get()).fast_bits,
+        dc.fast_bits(),
     );
     if err != 0 {
         return if err == -7 { -28 } else { -16 + 1 + err };
@@ -1148,7 +1163,7 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
         num_dists,
         DEFLATE_DIST_LUT.as_ptr(),
         0,
-        (*dc.get()).fast_bits,
+        dc.fast_bits(),
     );
     if err != 0 {
         return if err == -7 { -28 } else { -22 + 1 + err };
@@ -1716,13 +1731,13 @@ pub(crate) unsafe fn inflate(
     (*dc.get()).out_ptr = dst as *mut u8;
     (*dc.get()).out_end = (dst as *mut u8).add(dst_size);
     if input.internal_fast_bits != 0 {
-        (*dc.get()).fast_bits = input.internal_fast_bits as u32;
-        if (*dc.get()).fast_bits < 1 || (*dc.get()).fast_bits == 9 || (*dc.get()).fast_bits > 10 {
+        dc.set_fast_bits(input.internal_fast_bits as u32);
+        if dc.fast_bits() < 1 || dc.fast_bits() == 9 || dc.fast_bits() > 10 {
             return -29;
         }
     } else {
         // TODO: Profile this
-        (*dc.get()).fast_bits = if input.total_size > 2048 { 10 } else { 8 };
+        dc.set_fast_bits(if input.total_size > 2048 { 10 } else { 8 });
     }
 
     let mut bits = (*dc.get()).stream.bits;
