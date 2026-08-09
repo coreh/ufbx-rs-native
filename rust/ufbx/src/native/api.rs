@@ -1880,7 +1880,7 @@ pub(crate) unsafe fn bake_anim(
     buf_free(bc.tmp_mut());
     buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_prop));
     buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_times));
-    buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_bake_props));
+    buf_free(bc.tmp_bake_props_mut());
     buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_nodes));
     buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_elements));
     buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_props));

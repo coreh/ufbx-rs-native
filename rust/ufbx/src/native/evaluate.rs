@@ -3530,6 +3530,14 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `tmp_bake_props` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_bake_props_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp_bake_props }
+    }
+
     // `tmp_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_arr_size_mut(&self) -> *mut usize {
@@ -5315,8 +5323,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         let mut anim_prop: *mut AnimProp = (*layer).anim_props.data as *mut AnimProp;
         let anim_prop_end: *mut AnimProp = add_ptr(anim_prop, (*layer).anim_props.count);
         while anim_prop != anim_prop_end {
-            let prop: *mut BakeProp =
-                push::<BakeProp>(ptr::addr_of_mut!((*bc.get()).tmp_bake_props), 1);
+            let prop: *mut BakeProp = push::<BakeProp>(bc.tmp_bake_props_mut(), 1);
             ufbxi_check_err!(bc.error_mut(), !prop.is_null(), "prop");
 
             let element: *mut Element = ref_ptr(ptr::addr_of!((*anim_prop).element));
@@ -5342,11 +5349,8 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     }
 
     let num_props: usize = (*bc.get()).tmp_bake_props.num_items;
-    let props: *mut BakeProp = push_pop::<BakeProp>(
-        bc.tmp_mut(),
-        ptr::addr_of_mut!((*bc.get()).tmp_bake_props),
-        num_props,
-    );
+    let props: *mut BakeProp =
+        push_pop::<BakeProp>(bc.tmp_mut(), bc.tmp_bake_props_mut(), num_props);
     ufbxi_check_err!(bc.error_mut(), !props.is_null(), "props");
 
     unstable_sort(
