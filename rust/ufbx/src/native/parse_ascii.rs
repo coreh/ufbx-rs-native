@@ -466,7 +466,7 @@ pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: *mut Buf) -> Resul
         (*ua).src = end;
 
         let mut length: usize = to_size(end as isize - begin as isize);
-        let span: *mut AsciiSpan = push::<AsciiSpan>(&raw mut (*uc.get()).tmp_ascii_spans, 1);
+        let span: *mut AsciiSpan = push::<AsciiSpan>(uc.tmp_ascii_spans_mut_ptr(), 1);
         ufbxi_check!(uc, !span.is_null(), "span");
         // Store the trailing '}' for parsing
         if !match_.is_null() {
@@ -1857,7 +1857,7 @@ unsafe fn ascii_parse_node_rec(
             if deferred_size > 0 {
                 let num_spans: usize = (*uc.get()).tmp_ascii_spans.num_items;
                 let spans: *mut AsciiSpan =
-                    push_pop::<AsciiSpan>(tmp_buf, &raw mut (*uc.get()).tmp_ascii_spans, num_spans);
+                    push_pop::<AsciiSpan>(tmp_buf, uc.tmp_ascii_spans_mut_ptr(), num_spans);
                 ufbxi_check!(uc, !spans.is_null(), "spans");
 
                 let mut t = core::mem::MaybeUninit::<AsciiArrayTask>::uninit(); // ufbxi_uninit
