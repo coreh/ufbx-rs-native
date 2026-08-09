@@ -443,7 +443,7 @@ pub(crate) struct FileContent {
 
 // ufbx.c:6413-6467 `ufbxi_obj_context`
 #[repr(C)]
-pub(crate) struct ObjContext {
+pub(crate) struct InnerObjContext {
     // Current line and tokens.
     // NOTE: `line` and `tokens` are not NULL-terminated nor UTF-8!
     // `line` is guaranteed to be terminated by a `\n`
@@ -500,6 +500,19 @@ pub(crate) struct ObjContext {
     pub object_dirty: bool,
     pub group_dirty: bool,
     pub face_group_dirty: bool,
+}
+
+// Safe `&ObjContext` handle over the fields-struct `InnerObjContext`, mirroring the
+// `Context`/`InnerContext` seam. ObjContext is the embedded `Context.obj` sub-context
+// (ufbxi_obj_context); reached via `Context::obj()` (a field, not a threaded param).
+#[repr(transparent)]
+pub(crate) struct ObjContext(core::cell::UnsafeCell<core::mem::MaybeUninit<InnerObjContext>>);
+
+impl ObjContext {
+    #[inline(always)]
+    pub(crate) fn get(&self) -> *mut InnerObjContext {
+        self.0.get().cast()
+    }
 }
 
 // ufbx.c:6469-6650 `ufbxi_context`
@@ -1147,6 +1160,14 @@ impl Context {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerContext {
         self.0.get().cast()
+    }
+
+    // `obj` — the embedded ObjContext sub-context handle (Context.obj field).
+    #[inline(always)]
+    pub(crate) fn obj(&self) -> &ObjContext {
+        // SAFETY: the `obj` field IS an ObjContext (repr(transparent) UnsafeCell wrapper)
+        // inside this context's outer UnsafeCell; a shared interior-mutable ref is sound.
+        unsafe { &*(&raw mut (*self.get()).obj as *mut ObjContext) }
     }
 
     // `opts` — typed VIEW handle (reinterpret-in-place); accessors on LoadOptsView.
