@@ -5223,13 +5223,13 @@ pub(crate) unsafe fn read_anim_stack(
 
     let hash: u32 = crate::native::hash::hash_ptr!((*info).name.data);
     let mut entry: *mut TmpAnimStack = map_find::<TmpAnimStack>(
-        &mut (*uc.get()).anim_stack_map,
+        uc.anim_stack_map_mut_ptr(),
         hash,
         &(*info).name.data as *const *const u8 as *const c_void,
     );
     if entry.is_null() {
         entry = map_insert::<TmpAnimStack>(
-            &mut (*uc.get()).anim_stack_map,
+            uc.anim_stack_map_mut_ptr(),
             hash,
             &(*info).name.data as *const *const u8 as *const c_void,
         );
@@ -7109,7 +7109,7 @@ pub(crate) unsafe fn read_take(uc: &Context, node: *mut Node) -> Result<(), Fail
     if uc.version() >= 7000 {
         let hash: u32 = crate::native::hash::hash_ptr!(name);
         let entry: *mut TmpAnimStack = map_find::<TmpAnimStack>(
-            &mut (*uc.get()).anim_stack_map,
+            uc.anim_stack_map_mut_ptr(),
             hash,
             &name as *const *const u8 as *const c_void,
         );
