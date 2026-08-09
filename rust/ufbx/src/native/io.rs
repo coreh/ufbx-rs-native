@@ -96,7 +96,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     while data_size < data_capacity {
         let to_read: usize = data_capacity - data_size;
         let read_result: usize = (uc.read_fn().unwrap_unchecked())(
-            (*uc.get()).read_user,
+            uc.read_user(),
             (*uc.get()).read_buffer.add(data_size) as *mut c_void,
             to_read,
         );
@@ -258,10 +258,7 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
                 size -= MAX_SKIP_SIZE as u64;
                 ufbxi_check_msg!(
                     uc,
-                    ((*uc.get()).skip_fn.unwrap_unchecked())(
-                        (*uc.get()).read_user,
-                        MAX_SKIP_SIZE - 1
-                    ),
+                    ((*uc.get()).skip_fn.unwrap_unchecked())(uc.read_user(), MAX_SKIP_SIZE - 1),
                     "Truncated file",
                     "uc->skip_fn(uc->read_user, UFBXI_MAX_SKIP_SIZE - 1)"
                 );
@@ -271,7 +268,7 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
                 // report if we hit EOF...
                 let mut single_byte = MaybeUninit::<[u8; 1]>::uninit(); // ufbxi_uninit
                 let num_read: usize = (uc.read_fn().unwrap_unchecked())(
-                    (*uc.get()).read_user,
+                    uc.read_user(),
                     single_byte.as_mut_ptr() as *mut c_void,
                     1,
                 );
@@ -282,7 +279,7 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
             if size > 0 {
                 ufbxi_check_msg!(
                     uc,
-                    ((*uc.get()).skip_fn.unwrap_unchecked())((*uc.get()).read_user, size as usize),
+                    ((*uc.get()).skip_fn.unwrap_unchecked())(uc.read_user(), size as usize),
                     "Truncated file",
                     "uc->skip_fn(uc->read_user, (size_t)size)"
                 );
@@ -347,7 +344,7 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
 
         while size > 0 {
             let read_result: usize =
-                (uc.read_fn().unwrap_unchecked())((*uc.get()).read_user, ptr as *mut c_void, size);
+                (uc.read_fn().unwrap_unchecked())(uc.read_user(), ptr as *mut c_void, size);
             ufbxi_check_msg!(
                 uc,
                 read_result != usize::MAX,

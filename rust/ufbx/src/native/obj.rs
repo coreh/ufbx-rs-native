@@ -1873,12 +1873,12 @@ pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
 pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     // HACK: Reset everything and switch to loading the .mtl file globally
     if let Some(close_fn) = (*uc.get()).close_fn {
-        close_fn((*uc.get()).read_user);
+        close_fn(uc.read_user());
     }
 
     uc.set_read_fn(None);
     (*uc.get()).close_fn = None;
-    (*uc.get()).read_user = core::ptr::null_mut();
+    uc.set_read_user(core::ptr::null_mut());
     (*uc.get()).data_begin = core::ptr::null();
     uc.set_data(core::ptr::null());
     uc.set_data_size(0);
@@ -2027,16 +2027,16 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
         // Adopt `stream` to ufbx read callbacks
         uc.set_read_fn(stream.read_fn);
         (*uc.get()).close_fn = stream.close_fn;
-        (*uc.get()).read_user = stream.user;
+        uc.set_read_user(stream.user);
 
         let ok: Result<(), Fail> = obj_parse_mtl(uc);
 
         if let Some(close_fn) = (*uc.get()).close_fn {
-            close_fn((*uc.get()).read_user);
+            close_fn(uc.read_user());
         }
         uc.set_read_fn(None);
         (*uc.get()).close_fn = None;
-        (*uc.get()).read_user = core::ptr::null_mut();
+        uc.set_read_user(core::ptr::null_mut());
 
         ok?;
     } else if needs_stream && !(*uc.get()).opts.ignore_missing_external_files {

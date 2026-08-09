@@ -803,6 +803,21 @@ impl Context {
             (*self.get()).read_fn = read_fn;
         }
     }
+
+    // User pointer passed to `read_fn`. Scalar `*mut c_void`: value getter + setter.
+    #[inline(always)]
+    pub(crate) fn read_user(&self) -> *mut c_void {
+        // SAFETY: reading a `*mut c_void` field; all bit patterns valid.
+        unsafe { (*self.get()).read_user }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_read_user(&self, read_user: *mut c_void) {
+        // SAFETY: storing a `*mut c_void`; cannot violate validity.
+        unsafe {
+            (*self.get()).read_user = read_user;
+        }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`

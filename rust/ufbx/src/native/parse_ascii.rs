@@ -134,7 +134,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
         // Read user data, return '\0' on EOF
         // TODO: Very unoptimal for non-full-size reads in some cases
         let num_read: usize = (uc.read_fn().unwrap_unchecked())(
-            (*uc.get()).read_user,
+            uc.read_user(),
             dst_buffer as *mut core::ffi::c_void,
             dst_size,
         );

@@ -561,14 +561,14 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         (*uc.get()).skip_fn = stream.skip_fn;
         (*uc.get()).size_fn = stream.size_fn;
         (*uc.get()).close_fn = stream.close_fn;
-        (*uc.get()).read_user = stream.user;
+        uc.set_read_user(stream.user);
     }
 
     if (*uc.get()).opts.progress_cb.fn_.is_some()
         && (*uc.get()).progress_bytes_total == 0
         && (*uc.get()).size_fn.is_some()
     {
-        let total: u64 = ((*uc.get()).size_fn.unwrap())((*uc.get()).read_user);
+        let total: u64 = ((*uc.get()).size_fn.unwrap())(uc.read_user());
         ufbxi_check!(uc, total != u64::MAX, "total != UINT64_MAX");
         (*uc.get()).progress_bytes_total = total;
     }
@@ -1171,7 +1171,7 @@ pub(crate) unsafe fn load(
     let ok: bool = load_imp(uc).is_ok();
 
     if (*uc.get()).close_fn.is_some() {
-        ((*uc.get()).close_fn.unwrap())((*uc.get()).read_user);
+        ((*uc.get()).close_fn.unwrap())(uc.read_user());
     }
 
     free_temp(uc);
