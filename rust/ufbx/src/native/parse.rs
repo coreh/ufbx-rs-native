@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `has_next_child` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn has_next_child(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).has_next_child }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_has_next_child(&self, has_next_child: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).has_next_child = has_next_child;
+        }
+    }
+
     // `top_child_index` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn top_child_index(&self) -> usize {
@@ -3862,7 +3877,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         // If not we need to parse all the children of the node for later
         let mut num_children: u32 = 0;
         let state: ParseState = update_parse_state(ParseState::Root, (*node).name);
-        if (*uc.get()).has_next_child {
+        if uc.has_next_child() {
             loop {
                 parse_toplevel_child_imp(uc, state, &mut (*uc.get()).tmp, &mut end)?;
                 if end {

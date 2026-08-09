@@ -1233,7 +1233,7 @@ unsafe fn binary_parse_node_rec(
         }
     } else {
         let current_offset: u64 = get_read_offset(uc);
-        (*uc.get()).has_next_child = current_offset < end_offset;
+        uc.set_has_next_child(current_offset < end_offset);
     }
 
     Ok(())

@@ -1922,9 +1922,9 @@ unsafe fn ascii_parse_node_rec(
             (*node).num_children = num_children as u32;
         }
 
-        (*uc.get()).has_next_child = true;
+        uc.set_has_next_child(true);
     } else {
-        (*uc.get()).has_next_child = false;
+        uc.set_has_next_child(false);
     }
 
     Ok(())
