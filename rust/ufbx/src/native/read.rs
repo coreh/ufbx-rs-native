@@ -3822,7 +3822,7 @@ pub(crate) unsafe fn read_mesh(
         ufbxi_check!(uc, !extra.is_null(), "extra");
         (*extra).texture_count = num_textures;
         (*extra).texture_arr = push_pop::<TmpMeshTexture>(
-            &mut (*uc.get()).tmp,
+            uc.tmp_mut_ptr(),
             &mut (*uc.get()).tmp_mesh_textures,
             num_textures,
         );
@@ -5313,7 +5313,7 @@ pub(crate) unsafe fn read_pose(
     // HACK: Transport `ufbxi_tmp_bone_pose` array through the `ufbx_bone_pose` pointer
     (*pose).bone_poses.count = num_bones;
     (*pose).bone_poses.data =
-        push_pop::<TmpBonePose>(&mut (*uc.get()).tmp, uc.tmp_stack_mut_ptr(), num_bones)
+        push_pop::<TmpBonePose>(uc.tmp_mut_ptr(), uc.tmp_stack_mut_ptr(), num_bones)
             as *const BonePose;
     ufbxi_check!(
         uc,

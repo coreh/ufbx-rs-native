@@ -1196,7 +1196,7 @@ pub(crate) unsafe fn ascii_read_float_array(
 // port as plain `while`s.
 #[inline(never)]
 pub(crate) unsafe fn setup_base64(uc: &Context) -> Result<(), Fail> {
-    let table: *mut u8 = push::<u8>(&raw mut (*uc.get()).tmp, 256);
+    let table: *mut u8 = push::<u8>(uc.tmp_mut_ptr(), 256);
     ufbxi_check!(uc, !table.is_null(), "table");
     uc.set_base64_table(table);
 
@@ -1401,7 +1401,7 @@ unsafe fn ascii_parse_node_rec(
         if (flags & ARRAY_FLAG_RESULT) != 0 {
             arr_buf = uc.result_mut_ptr();
         } else if (flags & ARRAY_FLAG_TMP_BUF) != 0 {
-            arr_buf = &raw mut (*uc.get()).tmp;
+            arr_buf = uc.tmp_mut_ptr();
         }
 
         let arr: *mut ValueArray = push::<ValueArray>(tmp_buf, 1);

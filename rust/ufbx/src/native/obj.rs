@@ -389,7 +389,7 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     }
 
     if (*uc.get()).obj.eof {
-        let new_data: *mut u8 = push::<u8>(&mut (*uc.get()).tmp, line_len + 1);
+        let new_data: *mut u8 = push::<u8>(uc.tmp_mut_ptr(), line_len + 1);
         ufbxi_check!(uc, !new_data.is_null(), "new_data");
         core::ptr::copy_nonoverlapping((*uc.get()).obj.line.data, new_data, line_len);
         *new_data.add(line_len) = b'\n';
@@ -1169,7 +1169,7 @@ pub(crate) unsafe fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result
 pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
     let num_meshes: usize = (*uc.get()).obj.tmp_meshes.num_items;
     let meshes: *mut ObjMesh = push_pop::<ObjMesh>(
-        &mut (*uc.get()).tmp,
+        uc.tmp_mut_ptr(),
         &mut (*uc.get()).obj.tmp_meshes,
         num_meshes,
     );
@@ -1216,7 +1216,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         }
     }
 
-    let tmp_indices: *mut u64 = push::<u64>(&mut (*uc.get()).tmp, max_indices);
+    let tmp_indices: *mut u64 = push::<u64>(uc.tmp_mut_ptr(), max_indices);
     ufbxi_check!(uc, !tmp_indices.is_null(), "tmp_indices");
 
     // C: `ufbxi_nounroll for (uint32_t attrib = 0; attrib < UFBXI_OBJ_NUM_ATTRIBS; attrib++)`
@@ -1234,7 +1234,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             0,
         )?;
         color_valid = push_pop::<bool>(
-            &mut (*uc.get()).tmp,
+            uc.tmp_mut_ptr(),
             &mut (*uc.get()).obj.tmp_color_valid,
             vertices[ObjAttrib::Color as usize].count / 4,
         );
@@ -1271,7 +1271,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                     min_ix,
                 )?;
                 color_valid = push_pop::<bool>(
-                    &mut (*uc.get()).tmp,
+                    uc.tmp_mut_ptr(),
                     &mut (*uc.get()).obj.tmp_color_valid,
                     vertices[ObjAttrib::Color as usize].count / 4,
                 );
@@ -1564,7 +1564,7 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
                 "uc->obj.num_tokens >= 2"
             );
             let mut lib: String = obj_span_token(uc, 1, usize::MAX);
-            lib.data = push_copy::<u8>(&mut (*uc.get()).tmp, lib.length + 1, lib.data);
+            lib.data = push_copy::<u8>(uc.tmp_mut_ptr(), lib.length + 1, lib.data);
             ufbxi_check!(uc, !lib.data.is_null(), "lib.data");
             (*uc.get()).obj.mtllib_relative_path.data = lib.data;
             (*uc.get()).obj.mtllib_relative_path.size = lib.length;
@@ -1960,8 +1960,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
             let ext: String = String::new_c(path.data.add(path.length - 4), 4);
             if r#match(&ext, b"\\c.obj\0".as_ptr()) {
                 ufbxi_analysis_assert!(path.length < usize::MAX - 1);
-                let copy: *mut u8 =
-                    push_copy::<u8>(&mut (*uc.get()).tmp, path.length + 1, path.data);
+                let copy: *mut u8 = push_copy::<u8>(uc.tmp_mut_ptr(), path.length + 1, path.data);
                 ufbxi_check!(uc, !copy.is_null(), "copy");
                 *copy.add(path.length - 3) = if *copy.add(path.length - 3) == b'O' {
                     b'M'

@@ -563,7 +563,7 @@ pub(crate) unsafe fn push_array_data(
     if flags & ARRAY_FLAG_RESULT as u32 != 0 {
         arr_buf = uc.result_mut_ptr();
     } else if flags & ARRAY_FLAG_TMP_BUF as u32 != 0 {
-        arr_buf = &mut (*uc.get()).tmp;
+        arr_buf = uc.tmp_mut_ptr();
     }
     let mut data: *mut u8 = push_size(arr_buf, elem_size, size) as *mut u8;
     ufbxi_check_return!(uc, !data.is_null(), core::ptr::null_mut(), "data");

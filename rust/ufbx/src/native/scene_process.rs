@@ -1296,7 +1296,7 @@ pub(crate) unsafe fn find_attribute_fbx_id(uc: &Context, node_fbx_id: u64) -> u6
 pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
     let num_connections: usize = (*uc.get()).tmp_connections.num_items;
     let tmp_connections: *mut TmpConnection = push_pop(
-        &mut (*uc.get()).tmp,
+        uc.tmp_mut_ptr(),
         &mut (*uc.get()).tmp_connections,
         num_connections,
     );
@@ -1698,11 +1698,7 @@ pub(crate) unsafe fn add_connections_to_elements(uc: &Context) -> Result<(), Fai
 #[must_use]
 pub(crate) unsafe fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
     let num_nodes: usize = (*uc.get()).tmp_node_ids.num_items;
-    let node_ids: *mut u32 = push_pop(
-        &mut (*uc.get()).tmp,
-        &mut (*uc.get()).tmp_node_ids,
-        num_nodes,
-    );
+    let node_ids: *mut u32 = push_pop(uc.tmp_mut_ptr(), &mut (*uc.get()).tmp_node_ids, num_nodes);
     buf_free(&mut (*uc.get()).tmp_node_ids);
     ufbxi_check!(uc, !node_ids.is_null(), "node_ids");
 
@@ -4863,7 +4859,7 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
         );
         ufbxi_check!(uc, !entry.is_null(), "entry");
 
-        let file: *mut TextureFile = push_zero(&mut (*uc.get()).tmp, 1);
+        let file: *mut TextureFile = push_zero(uc.tmp_mut_ptr(), 1);
         ufbxi_check!(uc, !file.is_null(), "file");
 
         (*file).index = (*uc.get()).texture_file_map.size - 1;
@@ -5055,7 +5051,7 @@ pub(crate) unsafe fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
     );
 
     // Compressed `ufbxi_file_texture_fetch_state`
-    let states: *mut u8 = push_zero(&mut (*uc.get()).tmp, (*uc.get()).scene.textures.count);
+    let states: *mut u8 = push_zero(uc.tmp_mut_ptr(), (*uc.get()).scene.textures.count);
     ufbxi_check!(uc, !states.is_null(), "states");
 
     // C: `while (num_stack_textures-- > 0)` — the post-decrement runs on every
@@ -6263,7 +6259,7 @@ pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
 
     uc.set_num_file_content((*uc.get()).tmp_stack.num_items - initial_stack);
     uc.set_file_content(push_pop::<FileContent>(
-        &mut (*uc.get()).tmp,
+        uc.tmp_mut_ptr(),
         uc.tmp_stack_mut_ptr(),
         uc.num_file_content(),
     ));
@@ -6512,7 +6508,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     // buffer does not overlap the read.
     let num_element_offsets: usize = (*uc.get()).tmp_element_offsets.num_items;
     let element_offsets: *mut usize = push_pop::<usize>(
-        &mut (*uc.get()).tmp,
+        uc.tmp_mut_ptr(),
         &mut (*uc.get()).tmp_element_offsets,
         num_element_offsets,
     );
@@ -6541,7 +6537,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     buf_free(&mut (*uc.get()).tmp_element_offsets);
     buf_free(&mut (*uc.get()).tmp_elements);
 
-    uc.set_tmp_element_flag(push_zero::<u8>(&mut (*uc.get()).tmp, num_elements));
+    uc.set_tmp_element_flag(push_zero::<u8>(uc.tmp_mut_ptr(), num_elements));
     ufbxi_check!(uc, !uc.tmp_element_flag().is_null(), "uc->tmp_element_flag");
 
     (*uc.get()).scene.metadata.original_file_path = find_string(
@@ -6563,7 +6559,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     for type_ in 0..ELEMENT_TYPE_COUNT {
         let num_typed: usize = (*uc.get()).tmp_typed_element_offsets[type_].num_items;
         let typed_offsets: *mut usize = push_pop::<usize>(
-            &mut (*uc.get()).tmp,
+            uc.tmp_mut_ptr(),
             &mut (*uc.get()).tmp_typed_element_offsets[type_],
             num_typed,
         );
@@ -7107,7 +7103,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     // argument; hoisted so the `&mut` borrow does not overlap the read.
     let num_full_weights: usize = (*uc.get()).tmp_full_weights.num_items;
     let mut full_weights: *mut List<Real> = push_pop::<List<Real>>(
-        &mut (*uc.get()).tmp,
+        uc.tmp_mut_ptr(),
         &mut (*uc.get()).tmp_full_weights,
         num_full_weights,
     );
@@ -7959,7 +7955,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             }
 
             let mat_texs: *mut TmpMaterialTexture = push_pop::<TmpMaterialTexture>(
-                &mut (*uc.get()).tmp,
+                uc.tmp_mut_ptr(),
                 uc.tmp_stack_mut_ptr(),
                 num_material_textures + 1,
             );

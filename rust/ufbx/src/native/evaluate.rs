@@ -466,7 +466,7 @@ pub(crate) unsafe fn fixup_opts_string(
 pub(crate) unsafe fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> {
     let num_elements: usize = (*uc.get()).tmp_element_id.num_items;
     let element_ids: *mut u32 = push_pop::<u32>(
-        &mut (*uc.get()).tmp,
+        uc.tmp_mut_ptr(),
         &mut (*uc.get()).tmp_element_id,
         num_elements,
     );
@@ -800,7 +800,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
                 ptr::addr_of_mut!((*uc.get()).scene),
                 ptr::addr_of_mut!((*uc.get()).error),
                 uc.result_mut_ptr(),
-                ptr::addr_of_mut!((*uc.get()).tmp),
+                uc.tmp_mut_ptr(),
                 0.0,
                 (*uc.get()).opts.load_external_files && (*uc.get()).opts.evaluate_caches,
                 &mut cache_opts,
@@ -899,7 +899,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     map_free(&mut (*uc.get()).node_prop_set);
     map_free(&mut (*uc.get()).dom_node_map);
 
-    buf_free(&mut (*uc.get()).tmp);
+    buf_free(uc.tmp_mut_ptr());
     buf_free(&mut (*uc.get()).tmp_parse);
     for i in 0..THREAD_GROUP_COUNT {
         buf_free(&mut (*uc.get()).tmp_thread_parse[i]);

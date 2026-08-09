@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp }
+    }
+
     // `string_pool` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn string_pool_mut_ptr(&self) -> *mut StringPool {
@@ -2325,7 +2333,7 @@ pub(crate) unsafe fn push_element_extra_size(uc: &Context, id: u32, size: usize)
         return *uc.element_extra_arr().add(id as usize);
     }
 
-    let extra: *mut c_void = push_size_zero(&mut (*uc.get()).tmp, size, 1);
+    let extra: *mut c_void = push_size_zero(uc.tmp_mut_ptr(), size, 1);
     ufbxi_check_return!(uc, !extra.is_null(), core::ptr::null_mut(), "extra");
     *uc.element_extra_arr().add(id as usize) = extra;
 
@@ -4288,7 +4296,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
                 0,
                 ParseState::Root,
                 &mut end,
-                &mut (*uc.get()).tmp,
+                uc.tmp_mut_ptr(),
                 false,
             )?;
         } else {
@@ -4297,7 +4305,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
                 0,
                 ParseState::Root,
                 &mut end,
-                &mut (*uc.get()).tmp,
+                uc.tmp_mut_ptr(),
                 false,
             )?;
         }
@@ -4346,7 +4354,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         let state: ParseState = update_parse_state(ParseState::Root, (*node).name);
         if uc.has_next_child() {
             loop {
-                parse_toplevel_child_imp(uc, state, &mut (*uc.get()).tmp, &mut end)?;
+                parse_toplevel_child_imp(uc, state, uc.tmp_mut_ptr(), &mut end)?;
                 if end {
                     break;
                 }
@@ -4356,7 +4364,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
 
         (*node).num_children = num_children;
         (*node).children = push_pop::<Node>(
-            &mut (*uc.get()).tmp,
+            uc.tmp_mut_ptr(),
             uc.tmp_stack_mut_ptr(),
             num_children as usize,
         );
@@ -4443,7 +4451,7 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
             0,
             ParseState::Root,
             &mut end,
-            &mut (*uc.get()).tmp,
+            uc.tmp_mut_ptr(),
             true,
         )?;
     } else {
@@ -4452,7 +4460,7 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
             0,
             ParseState::Root,
             &mut end,
-            &mut (*uc.get()).tmp,
+            uc.tmp_mut_ptr(),
             true,
         )?;
     }
