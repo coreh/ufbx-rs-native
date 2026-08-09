@@ -280,10 +280,78 @@ impl SubdivideOptsView {
     }
 }
 
+// Typed interior-mutable VIEW over `VertexVec3` (non-Copy: has List fields).
+#[repr(transparent)]
+pub(crate) struct VertexVec3View(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::VertexVec3>>,
+);
+
+impl VertexVec3View {
+    #[inline(always)]
+    fn get(&self) -> *mut crate::generated::VertexVec3 {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn values_view(&self) -> &crate::prelude::ListView<crate::generated::Vec3> {
+        unsafe {
+            &*(&raw mut (*self.get()).values
+                as *mut crate::prelude::ListView<crate::generated::Vec3>)
+        }
+    }
+}
+
+// Typed interior-mutable VIEW over a `Mesh` field (public struct; only the sc-accessed
+// leaves are exposed).
+#[repr(transparent)]
+pub(crate) struct MeshView(core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::Mesh>>);
+
+impl MeshView {
+    #[inline(always)]
+    fn get(&self) -> *mut crate::generated::Mesh {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn vertex_indices_view(&self) -> &crate::prelude::ListView<u32> {
+        unsafe { &*(&raw mut (*self.get()).vertex_indices as *mut crate::prelude::ListView<u32>) }
+    }
+    #[inline(always)]
+    pub(crate) fn vertex_position_view(&self) -> &VertexVec3View {
+        unsafe { &*(&raw mut (*self.get()).vertex_position as *mut VertexVec3View) }
+    }
+    #[inline(always)]
+    pub(crate) fn subdivision_boundary(&self) -> crate::generated::SubdivisionBoundary {
+        unsafe { (*self.get()).subdivision_boundary }
+    }
+    #[inline(always)]
+    pub(crate) fn subdivision_uv_boundary(&self) -> crate::generated::SubdivisionBoundary {
+        unsafe { (*self.get()).subdivision_uv_boundary }
+    }
+    #[inline(always)]
+    pub(crate) fn num_vertices(&self) -> usize {
+        unsafe { (*self.get()).num_vertices }
+    }
+    #[inline(always)]
+    pub(crate) fn subdivision_result_ptr(
+        &self,
+    ) -> *const Option<crate::prelude::Ref<crate::generated::SubdivisionResult>> {
+        unsafe { &raw const (*self.get()).subdivision_result }
+    }
+}
+
 impl SubdivideContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerSubdivideContext {
         self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn src_mesh_view(&self) -> &MeshView {
+        unsafe { &*(&raw mut (*self.get()).src_mesh as *mut MeshView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn dst_mesh_view(&self) -> &MeshView {
+        unsafe { &*(&raw mut (*self.get()).dst_mesh as *mut MeshView) }
     }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
@@ -673,7 +741,7 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
             }
 
             let vx: u32 = (*src.weights.add(weight_ix)).index;
-            ufbxi_dev_assert!((vx as usize) < (*sc.get()).src_mesh.num_vertices);
+            ufbxi_dev_assert!((vx as usize) < sc.src_mesh_view().num_vertices());
 
             let prev: Real = *vertex_weights.add(vx as usize);
             *vertex_weights.add(vx as usize) = prev + weight;
@@ -1600,7 +1668,7 @@ pub(crate) unsafe fn subdivide_weights(
     (*input).sum_fn = Some(subdivide_sum_vertex_weights);
     (*input).sum_user = (sc as *const SubdivideContext) as *mut c_void;
     (*input).values = src as *const c_void;
-    (*input).indices = (*sc.get()).src_mesh.vertex_indices.data;
+    (*input).indices = sc.src_mesh_view().vertex_indices_view().data();
     (*input).stride = size_of::<SubdivisionVertexWeights>();
     (*input).boundary = sc.opts_view().boundary();
     (*input).check_split_data = false;
@@ -1613,7 +1681,14 @@ pub(crate) unsafe fn subdivide_weights(
     subdivide_layer(sc, output, input)?;
 
     let num_vertices: usize = (*output).num_values;
-    ufbx_assert!(num_vertices == (*sc.get()).dst_mesh.vertex_position.values.count);
+    ufbx_assert!(
+        num_vertices
+            == sc
+                .dst_mesh_view()
+                .vertex_position_view()
+                .values_view()
+                .count()
+    );
 
     let dst_ranges: *mut SubdivisionWeightRange =
         push::<SubdivisionWeightRange>(sc.result_mut_ptr(), num_vertices);
@@ -2274,12 +2349,12 @@ pub(crate) unsafe fn subdivide_mesh_imp(
 ) -> Result<(), crate::native::error::Fail> {
     if sc.opts_view().boundary() as u32 == SubdivisionBoundary::Default as u32 {
         sc.opts_view()
-            .set_boundary((*sc.get()).src_mesh.subdivision_boundary);
+            .set_boundary(sc.src_mesh_view().subdivision_boundary());
     }
 
     if sc.opts_view().uv_boundary() as u32 == SubdivisionBoundary::Default as u32 {
         sc.opts_view()
-            .set_uv_boundary((*sc.get()).src_mesh.subdivision_uv_boundary);
+            .set_uv_boundary(sc.src_mesh_view().subdivision_uv_boundary());
     }
 
     init_ator(
@@ -2419,7 +2494,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     // (possibly narrowed) public `&Mesh` pointer via exposed provenance.
     (sc.imp() as *mut u8).expose_provenance();
 
-    let dst_sub: *mut SubdivisionResult = opt_ptr(&(*sc.get()).dst_mesh.subdivision_result);
+    let dst_sub: *mut SubdivisionResult = opt_ptr(sc.dst_mesh_view().subdivision_result_ptr());
     (*dst_sub).result_memory_used = (*sc.get()).ator_result.current_size;
     (*dst_sub).temp_memory_used = (*sc.get()).ator_tmp.current_size;
     (*dst_sub).result_allocs = (*sc.get()).ator_result.num_allocs;
