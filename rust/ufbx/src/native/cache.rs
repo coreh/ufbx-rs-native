@@ -177,6 +177,13 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `name_buf` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn name_buf(&self) -> *mut u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        unsafe { (*self.get()).name_buf }
+    }
+
     // `xml_ticks_per_frame` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn xml_ticks_per_frame(&self) -> u32 {
@@ -616,13 +623,8 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                     ),
                     "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->name_buf)), (&cc->name_buf), (&cc->name_cap), (padded_length))"
                 );
-                cache_read(
-                    cc,
-                    (*cc.get()).name_buf as *mut c_void,
-                    padded_length,
-                    false,
-                )?;
-                (*cc.get()).channel_name.data = (*cc.get()).name_buf;
+                cache_read(cc, cc.name_buf() as *mut c_void, padded_length, false)?;
+                (*cc.get()).channel_name.data = cc.name_buf();
                 (*cc.get()).channel_name.length = length;
                 push_string_place_str(
                     &mut (*cc.get()).string_pool,
@@ -1424,7 +1426,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
 
     buf_free(&mut (*cc.get()).tmp);
     buf_free(&mut (*cc.get()).tmp_stack);
-    free::<u8>(cc.ator_tmp(), (*cc.get()).name_buf, (*cc.get()).name_cap);
+    free::<u8>(cc.ator_tmp(), cc.name_buf(), (*cc.get()).name_cap);
     free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size());
     if !cc.owned_by_scene() {
         string_pool_temp_free(&mut (*cc.get()).string_pool);
