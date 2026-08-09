@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `prop_type_map` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn prop_type_map_mut_ptr(&self) -> *mut Map {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).prop_type_map }
+    }
+
     // `tmp_dom_nodes` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_dom_nodes_mut_ptr(&self) -> *mut Buf {
@@ -4798,7 +4806,7 @@ pub(crate) unsafe fn get_prop_type(uc: &Context, name: *const u8) -> PropType {
     let name: *const u8 = name;
     let hash = crate::native::hash::hash_ptr!(name);
     let entry: *mut PropTypeName = map_find(
-        &mut (*uc.get()).prop_type_map,
+        uc.prop_type_map_mut_ptr(),
         hash,
         &name as *const *const u8 as *const c_void,
     );
@@ -5228,7 +5236,7 @@ pub(crate) unsafe fn load_maps(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         crate::native::hash::map_grow::<PropTypeName>(
-            &mut (*uc.get()).prop_type_map,
+            uc.prop_type_map_mut_ptr(),
             PROP_TYPE_NAMES.0.len()
         ),
         "ufbxi_map_grow_size((&uc->prop_type_map), sizeof(ufbxi_prop_type_name), ((sizeof(ufbxi_prop_type_names) / sizeof(*(ufbxi_prop_type_names)))))"
@@ -5246,7 +5254,7 @@ pub(crate) unsafe fn load_maps(uc: &Context) -> Result<(), Fail> {
         ufbxi_check!(uc, !pooled.is_null(), "pooled");
         let hash: u32 = crate::native::hash::hash_ptr!(pooled);
         let entry: *mut PropTypeName = map_insert::<PropTypeName>(
-            &mut (*uc.get()).prop_type_map,
+            uc.prop_type_map_mut_ptr(),
             hash,
             &pooled as *const *const u8 as *const c_void,
         );
