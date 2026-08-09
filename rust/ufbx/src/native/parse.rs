@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `dom_parse_toplevel` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn dom_parse_toplevel_mut_ptr(&self) -> *mut *mut DomNode {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).dom_parse_toplevel }
+    }
+
     // `element_extra_cap` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn element_extra_cap_mut_ptr(&self) -> *mut usize {
@@ -3984,7 +3992,7 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
     }
 
     if !node.is_null() {
-        retain_dom_node(uc, node, &mut (*uc.get()).dom_parse_toplevel)?;
+        retain_dom_node(uc, node, uc.dom_parse_toplevel_mut_ptr())?;
     } else {
         uc.set_dom_parse_toplevel(core::ptr::null_mut());
 
