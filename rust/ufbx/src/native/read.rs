@@ -1202,7 +1202,7 @@ pub(crate) unsafe fn push_element_size(
 
     ufbxi_check_return!(
         uc,
-        !push_copy_fast::<*mut Element>(&mut (*uc.get()).tmp_element_ptrs, 1, &elem).is_null(),
+        !push_copy_fast::<*mut Element>(uc.tmp_element_ptrs_mut_ptr(), 1, &elem).is_null(),
         core::ptr::null_mut(),
         "((ufbx_element**)ufbxi_push_size_copy_fast((&uc->tmp_element_ptrs), sizeof(ufbx_element*), (1), (&elem)))"
     );
@@ -1280,7 +1280,7 @@ pub(crate) unsafe fn push_synthetic_element_size(
 
     ufbxi_check_return!(
         uc,
-        !push_copy_fast::<*mut Element>(&mut (*uc.get()).tmp_element_ptrs, 1, &elem).is_null(),
+        !push_copy_fast::<*mut Element>(uc.tmp_element_ptrs_mut_ptr(), 1, &elem).is_null(),
         core::ptr::null_mut(),
         "((ufbx_element**)ufbxi_push_size_copy_fast((&uc->tmp_element_ptrs), sizeof(ufbx_element*), (1), (&elem)))"
     );

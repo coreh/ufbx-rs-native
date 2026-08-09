@@ -367,7 +367,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
     let num_nodes: usize = (*uc.get()).tmp_node_ids.num_items;
     let elements: *mut *mut Element = push_pop::<*mut Element>(
         uc.tmp_parse_mut_ptr(),
-        &mut (*uc.get()).tmp_element_ptrs,
+        uc.tmp_element_ptrs_mut_ptr(),
         num_elements as usize,
     );
     ufbxi_check!(uc, !elements.is_null(), "elements");
