@@ -818,6 +818,21 @@ impl Context {
             (*self.get()).read_user = read_user;
         }
     }
+
+    // Start of the current read buffer. Scalar `*const u8`: value getter + setter.
+    #[inline(always)]
+    pub(crate) fn data_begin(&self) -> *const u8 {
+        // SAFETY: reading a `*const u8` field; all bit patterns valid.
+        unsafe { (*self.get()).data_begin }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_data_begin(&self, data_begin: *const u8) {
+        // SAFETY: storing a `*const u8`; cannot violate validity.
+        unsafe {
+            (*self.get()).data_begin = data_begin;
+        }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`
@@ -850,7 +865,7 @@ pub(crate) unsafe fn fail_imp_no_stack(uc: &Context) -> i32 {
 pub(crate) unsafe fn get_read_offset(uc: &Context) -> u64 {
     (*uc.get())
         .data_offset
-        .wrapping_add(to_size(uc.data().offset_from((*uc.get()).data_begin)) as u64)
+        .wrapping_add(to_size(uc.data().offset_from(uc.data_begin())) as u64)
 }
 
 // ufbx.c:6683-6702 `ufbxi_report_progress`

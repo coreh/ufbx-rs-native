@@ -1879,7 +1879,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     uc.set_read_fn(None);
     (*uc.get()).close_fn = None;
     uc.set_read_user(core::ptr::null_mut());
-    (*uc.get()).data_begin = core::ptr::null();
+    uc.set_data_begin(core::ptr::null());
     uc.set_data(core::ptr::null());
     uc.set_data_size(0);
     uc.set_yield_size(0);
@@ -1888,7 +1888,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
 
     if (*uc.get()).opts.obj_mtl_data.size > 0 {
         uc.set_data((*uc.get()).opts.obj_mtl_data.data);
-        (*uc.get()).data_begin = uc.data();
+        uc.set_data_begin(uc.data());
         uc.set_data_size((*uc.get()).opts.obj_mtl_data.size);
         obj_parse_mtl(uc)?;
         return Ok(());

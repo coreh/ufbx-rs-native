@@ -670,10 +670,10 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
     (*uc.get()).unit_scale = 1.0;
     if uc.data().is_null() {
-        ufbxi_dev_assert!((*uc.get()).data_begin.is_null());
+        ufbxi_dev_assert!(uc.data_begin().is_null());
         // C: `uc->data_begin = uc->data = ufbxi_zero_size_buffer;`
         uc.set_data(ZERO_SIZE_BUFFER.as_ptr());
-        (*uc.get()).data_begin = uc.data();
+        uc.set_data_begin(uc.data());
     }
 
     (*uc.get()).retain_vertex_w = ((*uc.get()).opts.retain_dom

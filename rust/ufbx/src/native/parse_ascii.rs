@@ -98,7 +98,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
     let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
     (*uc.get()).data_offset = (*uc.get())
         .data_offset
-        .wrapping_add(to_size((*ua).src as isize - (*uc.get()).data_begin as isize) as u64);
+        .wrapping_add(to_size((*ua).src as isize - uc.data_begin() as isize) as u64);
     if uc.read_fn().is_some() {
         let mut dst_buffer: *mut u8 = core::ptr::null_mut();
         let mut dst_size: usize = 0;
@@ -151,7 +151,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
         }
 
         (*ua).src = dst_buffer;
-        (*uc.get()).data_begin = dst_buffer;
+        uc.set_data_begin(dst_buffer);
         uc.set_data(dst_buffer);
         (*ua).src_end = dst_buffer.add(num_read);
         *(*ua).src
@@ -159,7 +159,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
         // If the user didn't specify a `read_fn()` treat anything
         // past the initial data buffer as EOF.
         (*ua).src = ASCII_EMPTY_STRING.as_ptr();
-        (*uc.get()).data_begin = ASCII_EMPTY_STRING.as_ptr();
+        uc.set_data_begin(ASCII_EMPTY_STRING.as_ptr());
         uc.set_data(ASCII_EMPTY_STRING.as_ptr());
         (*ua).src_end = (*ua).src.add(1);
         b'\0'

@@ -144,8 +144,8 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     // as UB in Rust; the address subtraction is spelled out with casts instead.
     (*uc.get()).data_offset = (*uc.get())
         .data_offset
-        .wrapping_add(to_size(uc.data() as isize - (*uc.get()).data_begin as isize) as u64);
-    (*uc.get()).data_begin = (*uc.get()).read_buffer;
+        .wrapping_add(to_size(uc.data() as isize - uc.data_begin() as isize) as u64);
+    uc.set_data_begin((*uc.get()).read_buffer);
     uc.set_data((*uc.get()).read_buffer);
     uc.set_data_size(data_size);
 
@@ -335,9 +335,9 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
         // the subtraction is done on addresses rather than via `offset_from`.
         (*uc.get()).data_offset = (*uc.get())
             .data_offset
-            .wrapping_add(to_size(uc.data() as isize - (*uc.get()).data_begin as isize) as u64);
+            .wrapping_add(to_size(uc.data() as isize - uc.data_begin() as isize) as u64);
 
-        (*uc.get()).data_begin = core::ptr::null();
+        uc.set_data_begin(core::ptr::null());
         uc.set_data(core::ptr::null());
         uc.set_data_size(0);
         ufbxi_check!(uc, uc.read_fn().is_some(), "uc->read_fn");

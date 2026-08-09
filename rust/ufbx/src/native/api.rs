@@ -568,7 +568,7 @@ pub(crate) unsafe fn load_memory(
     core::ptr::write_bytes(uc.get() as *mut u8, 0, size_of::<InnerContext>());
     // C: `uc.data_begin = uc.data = (const char *)data;`
     uc.set_data(data as *const u8);
-    (*uc.get()).data_begin = uc.data();
+    uc.set_data_begin(uc.data());
     uc.set_data_size(size);
     (*uc.get()).progress_bytes_total = size as u64;
     evaluate::load(uc, opts, error)
@@ -652,7 +652,7 @@ pub(crate) unsafe fn load_stream_prefix(
     core::ptr::write_bytes(uc.get() as *mut u8, 0, size_of::<InnerContext>());
     // C: `uc.data_begin = uc.data = (const char *)prefix;`
     uc.set_data(prefix as *const u8);
-    (*uc.get()).data_begin = uc.data();
+    uc.set_data_begin(uc.data());
     uc.set_data_size(prefix_size);
     uc.set_read_fn((*stream).read_fn);
     (*uc.get()).skip_fn = (*stream).skip_fn;

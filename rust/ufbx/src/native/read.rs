@@ -6225,8 +6225,8 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             core::ptr::copy_nonoverlapping((*ua).src, (*uc.get()).read_buffer, size);
             // C: `uc->data = uc->data_begin = ua->src = uc->read_buffer;`
             (*ua).src = (*uc.get()).read_buffer;
-            (*uc.get()).data_begin = (*ua).src;
-            uc.set_data((*uc.get()).data_begin);
+            uc.set_data_begin((*ua).src);
+            uc.set_data(uc.data_begin());
             (*ua).src_end = (*uc.get()).read_buffer.add(size);
             (*ua).src_is_retained = false;
             (*ua).src_buf = core::ptr::null_mut();
