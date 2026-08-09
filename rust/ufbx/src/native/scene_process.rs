@@ -7157,7 +7157,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             let key: *mut BlendKeyframe = ((*channel).keyframes.data as *mut BlendKeyframe).add(i);
             (*key).target_weight = 1.0f32 as Real;
             if i < (*full_weights).count {
-                if !(*uc.get()).blender_full_weights {
+                if !uc.blender_full_weights() {
                     (*key).target_weight = *(*full_weights).data.add(i) / 100.0;
                 } else if (*full_weights).count == (*ref_ptr(&(*key).shape)).num_offsets {
                     if i == 0 {

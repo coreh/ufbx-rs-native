@@ -757,7 +757,7 @@ pub(crate) unsafe fn match_exporter(uc: &Context) -> Result<(), Fail> {
     }
 
     if (*uc.get()).exporter == Exporter::BlenderBinary {
-        (*uc.get()).blender_full_weights = true;
+        uc.set_blender_full_weights(true);
     }
 
     Ok(())

@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `blender_full_weights` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn blender_full_weights(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).blender_full_weights }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_blender_full_weights(&self, blender_full_weights: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).blender_full_weights = blender_full_weights;
+        }
+    }
+
     // `retain_vertex_w` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn retain_vertex_w(&self) -> bool {
@@ -2919,7 +2934,7 @@ pub(crate) unsafe fn is_array_node(
             } else if name == sp::FullWeights.as_ptr() {
                 (*info).type_ = b'r';
                 (*info).flags = ((*info).flags
-                    | (if (*uc.get()).blender_full_weights {
+                    | (if uc.blender_full_weights() {
                         ARRAY_FLAG_RESULT
                     } else {
                         ARRAY_FLAG_TMP_BUF
