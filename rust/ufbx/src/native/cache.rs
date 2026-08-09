@@ -177,6 +177,14 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `channel_name` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn channel_name_mut(&self) -> *mut String {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).channel_name }
+    }
+
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
@@ -697,11 +705,7 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                 cache_read(cc, cc.name_buf() as *mut c_void, padded_length, false)?;
                 (*cc.get()).channel_name.data = cc.name_buf();
                 (*cc.get()).channel_name.length = length;
-                push_string_place_str(
-                    &mut (*cc.get()).string_pool,
-                    &mut (*cc.get()).channel_name,
-                    false,
-                )?;
+                push_string_place_str(&mut (*cc.get()).string_pool, cc.channel_name_mut(), false)?;
             }
             TAG_SIZE => cache_mc_read_u32(cc, &mut count)?,
             TAG_FVCA => format = CacheDataFormat::Vec3Float,
