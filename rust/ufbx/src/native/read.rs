@@ -6162,7 +6162,7 @@ pub(crate) struct ObjectBatch {
 // ufbx.c:15129-15234 `ufbxi_read_objects_threaded`
 #[inline(never)]
 pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
-    (*uc.get()).parse_threaded = true;
+    uc.set_parse_threaded(true);
 
     let mut parsed_to_end = false;
     // C: `ufbxi_object_batch batches[UFBX_THREAD_GROUP_COUNT]; // ufbxi_uninit`
@@ -6296,7 +6296,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
 
     thread_pool_wait_all(&raw mut (*uc.get()).thread_pool)?;
 
-    (*uc.get()).parse_threaded = false;
+    uc.set_parse_threaded(false);
 
     Ok(())
 }

@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `parse_threaded` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn parse_threaded(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).parse_threaded }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_parse_threaded(&self, parse_threaded: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).parse_threaded = parse_threaded;
+        }
+    }
+
     // `load_filename_len` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn load_filename_len(&self) -> usize {

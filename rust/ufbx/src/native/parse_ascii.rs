@@ -1759,7 +1759,7 @@ unsafe fn ascii_parse_node_rec(
                 // Optimized array skipping and threaded parsing
                 if arr_type == b'-' {
                     ascii_skip_until(uc, b'}')?;
-                } else if (*uc.get()).parse_threaded
+                } else if uc.parse_threaded()
                     && !(*uc.get()).opts.force_single_thread_ascii_parsing
                     && !(*ua).parse_as_f32
                     && (arr_type == b'i'

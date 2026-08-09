@@ -860,7 +860,7 @@ unsafe fn binary_parse_node_rec(
             }
 
             // Threading
-            if (*uc.get()).parse_threaded
+            if uc.parse_threaded()
                 && encoding == 1
                 && encoded_size as usize >= MIN_THREADED_DEFLATE_BYTES
                 && !uc.file_big_endian()
