@@ -7427,7 +7427,7 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
 
     // Objects: Actual scene data
     parse_toplevel(uc, sp::Objects.as_ptr())?;
-    if !(*uc.get()).sure_fbx {
+    if !uc.sure_fbx() {
         // If the file is a bit iffy about being a real FBX file reject it if
         // even the objects are not found.
         ufbxi_check_msg!(

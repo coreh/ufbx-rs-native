@@ -1352,7 +1352,7 @@ unsafe fn ascii_parse_node_rec(
 
     // Parse the name eg. "Node:" token and intern the name
     ufbxi_check!(uc, depth < MAX_NODE_DEPTH, "depth < UFBXI_MAX_NODE_DEPTH");
-    if !(*uc.get()).sure_fbx && depth == 0 && (*ua).token.type_ != ASCII_NAME {
+    if !uc.sure_fbx() && depth == 0 && (*ua).token.type_ != ASCII_NAME {
         ufbxi_fail_msg!(uc, "Expected a 'Name:' token", "Not an FBX file");
     }
     ufbxi_check!(

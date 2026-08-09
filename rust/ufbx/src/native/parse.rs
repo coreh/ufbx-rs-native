@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `sure_fbx` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn sure_fbx(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).sure_fbx }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_sure_fbx(&self, sure_fbx: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).sure_fbx = sure_fbx;
+        }
+    }
+
     // `file_big_endian` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn file_big_endian(&self) -> bool {
@@ -3424,7 +3439,7 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
         uc.set_version(read_u32(version_word));
 
         // This is quite probably an FBX file..
-        (*uc.get()).sure_fbx = true;
+        uc.set_sure_fbx(true);
         crate::native::io::consume_bytes(uc, BINARY_HEADER_SIZE);
     } else {
         uc.set_from_ascii(true);
@@ -3445,7 +3460,7 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
 
         // Default to version 7400 if not found in header
         if uc.version() > 0 {
-            (*uc.get()).sure_fbx = true;
+            uc.set_sure_fbx(true);
         } else {
             if !(*uc.get()).opts.strict {
                 uc.set_version(7400);
