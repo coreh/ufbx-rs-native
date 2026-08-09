@@ -665,11 +665,11 @@ pub(crate) unsafe fn obj_parse_indices(
     num_tokens: usize,
 ) -> Result<(), Fail> {
     let mut flush_mesh: bool = false;
-    if (*uc.obj().get()).object_dirty {
+    if uc.obj().object_dirty() {
         if !uc.opts_view().obj_merge_objects() {
             flush_mesh = true;
         }
-        (*uc.obj().get()).object_dirty = false;
+        uc.obj().set_object_dirty(false);
     }
 
     if uc.obj().group_dirty() {
@@ -1550,7 +1550,7 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
                     &mut (*uc.obj().get()).object,
                     false,
                 )?;
-                (*uc.obj().get()).object_dirty = true;
+                uc.obj().set_object_dirty(true);
             }
         } else if key == obj_cmd1(b'g') {
             if num_tokens >= 2 {

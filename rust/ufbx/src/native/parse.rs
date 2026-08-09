@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn object_dirty(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).object_dirty }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_object_dirty(&self, object_dirty: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).object_dirty = object_dirty;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn num_tokens(&self) -> usize {
         // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
         unsafe { (*self.get()).num_tokens }
