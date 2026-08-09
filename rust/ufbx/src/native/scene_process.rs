@@ -7399,7 +7399,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                 }
             }
 
-            if (*uc.get()).retain_mesh_parts {
+            if uc.retain_mesh_parts() {
                 let num_parts: usize = max_sz((*mesh).materials.count, 1);
                 (*mesh).material_parts.data =
                     push_zero::<MeshPart>(&mut (*uc.get()).result, num_parts);

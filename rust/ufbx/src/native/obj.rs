@@ -1434,7 +1434,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
 
         finalize_mesh(&mut (*uc.get()).result, &mut (*uc.get()).error, fbx_mesh)?;
 
-        if (*uc.get()).retain_mesh_parts {
+        if uc.retain_mesh_parts() {
             (*fbx_mesh).face_group_parts.count = (*mesh).num_groups as usize;
             (*fbx_mesh).face_group_parts.data =
                 push_zero::<MeshPart>(&mut (*uc.get()).result, (*mesh).num_groups as usize);

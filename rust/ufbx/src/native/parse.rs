@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `retain_mesh_parts` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn retain_mesh_parts(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).retain_mesh_parts }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_retain_mesh_parts(&self, retain_mesh_parts: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).retain_mesh_parts = retain_mesh_parts;
+        }
+    }
+
     // `sure_fbx` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn sure_fbx(&self) -> bool {

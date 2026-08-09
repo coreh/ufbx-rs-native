@@ -657,8 +657,9 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         (*uc.get()).scene.metadata.may_contain_no_index = true;
     }
 
-    (*uc.get()).retain_mesh_parts =
-        !(*uc.get()).opts.ignore_geometry && !(*uc.get()).opts.skip_mesh_parts;
+    uc.set_retain_mesh_parts(
+        !(*uc.get()).opts.ignore_geometry && !(*uc.get()).opts.skip_mesh_parts,
+    );
     (*uc.get())
         .scene
         .metadata

@@ -3819,7 +3819,7 @@ pub(crate) unsafe fn read_mesh(
             &mut (*uc.get()).error,
             mesh,
             &mut (*uc.get()).max_consecutive_indices,
-            (*uc.get()).retain_mesh_parts,
+            uc.retain_mesh_parts(),
         )?;
     }
 
