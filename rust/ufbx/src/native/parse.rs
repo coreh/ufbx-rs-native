@@ -513,6 +513,73 @@ impl ObjContext {
     pub(crate) fn get(&self) -> *mut InnerObjContext {
         self.0.get().cast()
     }
+
+    #[inline(always)]
+    pub(crate) fn tmp_vertices_at(&self, i: usize) -> &crate::native::buf::BufView {
+        unsafe { &*(&raw mut (*self.get()).tmp_vertices[i] as *mut crate::native::buf::BufView) }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_vertices_mut_ptr(&self, i: usize) -> *mut crate::native::buf::Buf {
+        unsafe { &raw mut (*self.get()).tmp_vertices[i] }
+    }
+
+    #[inline(always)]
+    pub(crate) fn tmp_indices_at(&self, i: usize) -> &crate::native::buf::BufView {
+        unsafe { &*(&raw mut (*self.get()).tmp_indices[i] as *mut crate::native::buf::BufView) }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_indices_mut_ptr(&self, i: usize) -> *mut crate::native::buf::Buf {
+        unsafe { &raw mut (*self.get()).tmp_indices[i] }
+    }
+
+    #[inline(always)]
+    pub(crate) fn vertex_count_at(&self, i: usize) -> &crate::prelude::ScalarView<usize> {
+        unsafe {
+            &*(&raw mut (*self.get()).vertex_count[i] as *mut crate::prelude::ScalarView<usize>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn fast_indices_at(&self, i: usize) -> &ObjFastIndicesView {
+        unsafe { &*(&raw mut (*self.get()).fast_indices[i] as *mut ObjFastIndicesView) }
+    }
+    #[inline(always)]
+    pub(crate) fn fast_indices_mut_ptr(&self, i: usize) -> *mut ObjFastIndices {
+        unsafe { &raw mut (*self.get()).fast_indices[i] }
+    }
+}
+
+// Typed interior-mutable VIEW over `ObjFastIndices` (Copy, but subfields written).
+#[repr(transparent)]
+pub(crate) struct ObjFastIndicesView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<ObjFastIndices>>,
+);
+
+impl ObjFastIndicesView {
+    #[inline(always)]
+    fn get(&self) -> *mut ObjFastIndices {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn indices(&self) -> *mut u64 {
+        unsafe { (*self.get()).indices }
+    }
+    #[inline(always)]
+    pub(crate) fn set_indices(&self, indices: *mut u64) {
+        unsafe {
+            (*self.get()).indices = indices;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn num_left(&self) -> usize {
+        unsafe { (*self.get()).num_left }
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_left(&self, num_left: usize) {
+        unsafe {
+            (*self.get()).num_left = num_left;
+        }
+    }
 }
 
 // ufbx.c:6469-6650 `ufbxi_context`

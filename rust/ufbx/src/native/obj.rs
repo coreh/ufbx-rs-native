@@ -249,8 +249,8 @@ pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`
     for i in 0..OBJ_NUM_ATTRIBS_EXT {
-        (*uc.obj().get()).tmp_vertices[i].ator = uc.ator_tmp_mut_ptr();
-        (*uc.obj().get()).tmp_indices[i].ator = uc.ator_tmp_mut_ptr();
+        uc.obj().tmp_vertices_at(i).set_ator(uc.ator_tmp_mut_ptr());
+        uc.obj().tmp_indices_at(i).set_ator(uc.ator_tmp_mut_ptr());
     }
     (*uc.obj().get()).tmp_color_valid.ator = uc.ator_tmp_mut_ptr();
     (*uc.obj().get()).tmp_faces.ator = uc.ator_tmp_mut_ptr();
@@ -303,8 +303,8 @@ pub(crate) unsafe fn obj_free(uc: &Context) {
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`
     for i in 0..OBJ_NUM_ATTRIBS_EXT {
-        buf_free(&mut (*uc.obj().get()).tmp_vertices[i]);
-        buf_free(&mut (*uc.obj().get()).tmp_indices[i]);
+        buf_free(uc.obj().tmp_vertices_mut_ptr(i));
+        buf_free(uc.obj().tmp_indices_mut_ptr(i));
     }
     buf_free(&mut (*uc.obj().get()).tmp_color_valid);
     buf_free(&mut (*uc.obj().get()).tmp_faces);
@@ -532,9 +532,11 @@ pub(crate) unsafe fn obj_parse_vertex(
         return Ok(());
     }
 
-    let dst: *mut Buf = &mut (*uc.obj().get()).tmp_vertices[attrib as usize];
+    let dst: *mut Buf = uc.obj().tmp_vertices_mut_ptr(attrib as usize);
     let num_values: usize = OBJ_ATTRIB_STRIDE[attrib as usize] as usize;
-    (*uc.obj().get()).vertex_count[attrib as usize] += 1;
+    uc.obj()
+        .vertex_count_at(attrib as usize)
+        .set(uc.obj().vertex_count_at(attrib as usize).get() + 1);
 
     let mut read_values: usize = num_values;
     if attrib == ObjAttrib::Color {
@@ -612,7 +614,7 @@ pub(crate) unsafe fn obj_parse_index(
     }
 
     if negative {
-        let count: usize = (*uc.obj().get()).vertex_count[attrib as usize];
+        let count: usize = uc.obj().vertex_count_at(attrib as usize).get();
         index = if index <= count as u64 {
             count as u64 - index
         } else {
@@ -623,17 +625,15 @@ pub(crate) unsafe fn obj_parse_index(
         index = index.wrapping_sub(1);
     }
 
-    let fast_indices: *mut ObjFastIndices =
-        &raw mut (*uc.obj().get()).fast_indices[attrib as usize];
+    let fast_indices: *mut ObjFastIndices = uc.obj().fast_indices_mut_ptr(attrib as usize);
     if (*fast_indices).num_left == 0 {
         let num_push: usize = 128;
-        let dst: *mut u64 = push::<u64>(
-            &mut (*uc.obj().get()).tmp_indices[attrib as usize],
-            num_push,
-        );
+        let dst: *mut u64 = push::<u64>(uc.obj().tmp_indices_mut_ptr(attrib as usize), num_push);
         ufbxi_check!(uc, !dst.is_null(), "dst");
-        (*uc.obj().get()).fast_indices[attrib as usize].indices = dst;
-        (*uc.obj().get()).fast_indices[attrib as usize].num_left = num_push;
+        uc.obj().fast_indices_at(attrib as usize).set_indices(dst);
+        uc.obj()
+            .fast_indices_at(attrib as usize)
+            .set_num_left(num_push);
     }
 
     // C: `*fast_indices->indices++ = index;`
@@ -881,7 +881,7 @@ pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
     if (*uc.obj().get()).num_tokens >= 3
         && str_equal(*(*uc.obj().get()).tokens.add(1), str_c(b"MRGB\0".as_ptr()))
     {
-        let num_color: usize = (*uc.obj().get()).vertex_count[ObjAttrib::Color as usize];
+        let num_color: usize = uc.obj().vertex_count_at(ObjAttrib::Color as usize).get();
 
         // Pop standard vertex colors and replace them with MRGB colors
         if num_color > (*uc.obj().get()).mrgb_vertex_count {
@@ -892,21 +892,21 @@ pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
                 core::ptr::null_mut(),
             );
             pop::<Real>(
-                &mut (*uc.obj().get()).tmp_vertices[ObjAttrib::Color as usize],
+                uc.obj().tmp_vertices_mut_ptr(ObjAttrib::Color as usize),
                 num_pop * 4,
                 core::ptr::null_mut(),
             );
-            (*uc.obj().get()).vertex_count[ObjAttrib::Color as usize] -= num_pop;
+            uc.obj()
+                .vertex_count_at(ObjAttrib::Color as usize)
+                .set(uc.obj().vertex_count_at(ObjAttrib::Color as usize).get() - num_pop);
         }
 
         let mrgb: String = *(*uc.obj().get()).tokens.add(2);
         // C: `for (size_t i = 0; i + 8 <= mrgb.length; i += 8)`
         let mut i: usize = 0;
         while i + 8 <= mrgb.length {
-            let p_rgba: *mut Real = push::<Real>(
-                &mut (*uc.obj().get()).tmp_vertices[ObjAttrib::Color as usize],
-                4,
-            );
+            let p_rgba: *mut Real =
+                push::<Real>(uc.obj().tmp_vertices_mut_ptr(ObjAttrib::Color as usize), 4);
             let p_valid: *mut bool = push::<bool>(&mut (*uc.obj().get()).tmp_color_valid, 1);
             ufbxi_check!(
                 uc,
@@ -1033,12 +1033,12 @@ pub(crate) unsafe fn obj_pop_vertices(
     let stride: usize = OBJ_ATTRIB_STRIDE[attrib as usize] as usize;
     ufbxi_check!(
         uc,
-        min_index < ((*uc.obj().get()).tmp_vertices[attrib as usize].num_items / stride) as u64,
+        min_index < (uc.obj().tmp_vertices_at(attrib as usize).num_items() / stride) as u64,
         "min_index < uc->obj.tmp_vertices[attrib].num_items / stride"
     );
 
     let count: usize =
-        (*uc.obj().get()).tmp_vertices[attrib as usize].num_items - (min_index as usize) * stride;
+        uc.obj().tmp_vertices_at(attrib as usize).num_items() - (min_index as usize) * stride;
     let mut data: *mut Real = push::<Real>(uc.result_mut_ptr(), count + 4);
     ufbxi_check!(uc, !data.is_null(), "data");
 
@@ -1048,11 +1048,7 @@ pub(crate) unsafe fn obj_pop_vertices(
     *data.add(3) = 0.0f32 as Real;
     data = data.add(4);
 
-    pop::<Real>(
-        &mut (*uc.obj().get()).tmp_vertices[attrib as usize],
-        count,
-        data,
-    );
+    pop::<Real>(uc.obj().tmp_vertices_mut_ptr(attrib as usize), count, data);
 
     (*dst).data = data;
     (*dst).count = count;
@@ -1090,7 +1086,7 @@ pub(crate) unsafe fn obj_setup_attrib(
 
         // Pop indices without copying if the attribute is not used
         pop::<u64>(
-            &mut (*uc.obj().get()).tmp_indices[attrib as usize],
+            uc.obj().tmp_indices_mut_ptr(attrib as usize),
             num_indices,
             core::ptr::null_mut(),
         );
@@ -1100,7 +1096,7 @@ pub(crate) unsafe fn obj_setup_attrib(
     let min_index: u64 = if non_disjoint { 0 } else { mesh_min_ix };
 
     pop::<u64>(
-        &mut (*uc.obj().get()).tmp_indices[attrib as usize],
+        uc.obj().tmp_indices_mut_ptr(attrib as usize),
         num_indices,
         tmp_indices,
     );
@@ -1142,13 +1138,13 @@ pub(crate) unsafe fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result
         return Ok(());
     }
 
-    let num_colors: usize = (*uc.obj().get()).vertex_count[ObjAttrib::Color as usize];
+    let num_colors: usize = uc.obj().vertex_count_at(ObjAttrib::Color as usize).get();
     if num_vertices > num_colors {
         let num_pad: usize = num_vertices - num_colors;
         ufbxi_check!(
             uc,
             !push_zero::<Real>(
-                &mut (*uc.obj().get()).tmp_vertices[ObjAttrib::Color as usize],
+                uc.obj().tmp_vertices_mut_ptr(ObjAttrib::Color as usize),
                 num_pad * 4
             )
             .is_null(),
@@ -1159,7 +1155,9 @@ pub(crate) unsafe fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result
             !push_zero::<bool>(&mut (*uc.obj().get()).tmp_color_valid, num_pad).is_null(),
             "((bool*)ufbxi_push_size_zero((&uc->obj.tmp_color_valid), sizeof(bool), (num_pad)))"
         );
-        (*uc.obj().get()).vertex_count[ObjAttrib::Color as usize] += num_pad;
+        uc.obj()
+            .vertex_count_at(ObjAttrib::Color as usize)
+            .set(uc.obj().vertex_count_at(ObjAttrib::Color as usize).get() + num_pad);
     }
 
     Ok(())
@@ -1181,15 +1179,15 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
     if (*uc.obj().get()).has_vertex_color {
         obj_pad_colors(
             uc,
-            (*uc.obj().get()).vertex_count[ObjAttrib::Position as usize],
+            uc.obj().vertex_count_at(ObjAttrib::Position as usize).get(),
         )?;
     }
 
     // Pop unused fast indices
     for i in 0..OBJ_NUM_ATTRIBS {
         pop::<u64>(
-            &mut (*uc.obj().get()).tmp_indices[i],
-            (*uc.obj().get()).fast_indices[i].num_left,
+            uc.obj().tmp_indices_mut_ptr(i),
+            uc.obj().fast_indices_at(i).num_left(),
             core::ptr::null_mut(),
         );
     }
@@ -1495,12 +1493,12 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             obj_parse_vertex(uc, ObjAttrib::Position, 1)?;
             if num_tokens >= 7 {
                 let num_vertices: usize =
-                    (*uc.obj().get()).vertex_count[ObjAttrib::Position as usize];
+                    uc.obj().vertex_count_at(ObjAttrib::Position as usize).get();
                 (*uc.obj().get()).has_vertex_color = true;
                 obj_pad_colors(uc, num_vertices.wrapping_sub(1))?;
-                if (*uc.obj().get()).vertex_count[ObjAttrib::Color as usize] < num_vertices {
+                if uc.obj().vertex_count_at(ObjAttrib::Color as usize).get() < num_vertices {
                     ufbx_assert!(
-                        (*uc.obj().get()).vertex_count[ObjAttrib::Color as usize]
+                        uc.obj().vertex_count_at(ObjAttrib::Color as usize).get()
                             == num_vertices - 1
                     );
                     obj_parse_vertex(uc, ObjAttrib::Color, 4)?;

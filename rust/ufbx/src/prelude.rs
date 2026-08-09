@@ -182,6 +182,10 @@ pub struct RawString {
     pub length: usize,
 }
 
+// `ScalarView<T>` = std `Cell<T>`, aliased for naming uniformity with the other
+// `*View` element handles (used by `_at(i)` scalar-array accessors).
+pub(crate) type ScalarView<T> = core::cell::Cell<T>;
+
 // Typed interior-mutable VIEW over `RawString` (non-Copy; subfields read+written).
 #[repr(transparent)]
 pub(crate) struct RawStringView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawString>>);
