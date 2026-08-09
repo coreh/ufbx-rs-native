@@ -284,6 +284,21 @@ impl DeflateContext {
         self.0.get().cast()
     }
 
+    // `out_end` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn out_end(&self) -> *mut u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        unsafe { (*self.get()).out_end }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_out_end(&self, out_end: *mut u8) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).out_end = out_end;
+        }
+    }
+
     // `out_ptr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn out_ptr(&self) -> *mut u8 {
@@ -1325,7 +1340,7 @@ pub(crate) unsafe fn inflate_block_slow(
     let mut max_symbols = max_symbols;
     let mut out_ptr = dc.out_ptr();
     let out_begin = dc.out_begin();
-    let out_end = (*dc.get()).out_end;
+    let out_end = dc.out_end();
 
     let fast_bits = trees.fast_bits;
     let fast_mask = (1u32 << fast_bits) - 1;
@@ -1472,13 +1487,11 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
             .offset_from((*dc.get()).stream.chunk_ptr)
             >= INFLATE_FAST_MIN_IN as isize
     );
-    ufbxi_dev_assert!(
-        (*dc.get()).out_end.offset_from(dc.out_ptr()) >= INFLATE_FAST_MIN_OUT as isize
-    );
+    ufbxi_dev_assert!(dc.out_end().offset_from(dc.out_ptr()) >= INFLATE_FAST_MIN_OUT as isize);
 
     let mut out_ptr = dc.out_ptr();
     let out_begin: *mut u8 = dc.out_begin();
-    let out_end: *mut u8 = (*dc.get()).out_end.sub(INFLATE_FAST_MIN_OUT);
+    let out_end: *mut u8 = dc.out_end().sub(INFLATE_FAST_MIN_OUT);
 
     let tree_lit_length: *const HuffTree = trees.lit_length();
     let tree_dist: *const HuffTree = trees.dist();
@@ -1759,7 +1772,7 @@ pub(crate) unsafe fn inflate(
     bit_stream_init(&raw mut (*dc.get()).stream, input);
     dc.set_out_begin(dst as *mut u8);
     dc.set_out_ptr(dst as *mut u8);
-    (*dc.get()).out_end = (dst as *mut u8).add(dst_size);
+    dc.set_out_end((dst as *mut u8).add(dst_size));
     if input.internal_fast_bits != 0 {
         dc.set_fast_bits(input.internal_fast_bits as u32);
         if dc.fast_bits() < 1 || dc.fast_bits() == 9 || dc.fast_bits() > 10 {
@@ -1823,7 +1836,7 @@ pub(crate) unsafe fn inflate(
             if (len ^ nlen) != 0xffff {
                 return -4;
             }
-            if (*dc.get()).out_end.offset_from(dc.out_ptr()) < len as isize {
+            if dc.out_end().offset_from(dc.out_ptr()) < len as isize {
                 return -6;
             }
             bits >>= 32;
@@ -1871,8 +1884,7 @@ pub(crate) unsafe fn inflate(
 
             loop {
                 let fast_viable = (*trees).fast_bits == HUFF_FAST_BITS
-                    && (*dc.get()).out_end.offset_from(dc.out_ptr())
-                        >= INFLATE_FAST_MIN_OUT as isize;
+                    && dc.out_end().offset_from(dc.out_ptr()) >= INFLATE_FAST_MIN_OUT as isize;
 
                 // `ufbxi_inflate_block_fast()` needs a bit more upfront setup, see asserts on top of the function
                 if fast_viable
