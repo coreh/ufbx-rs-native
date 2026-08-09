@@ -375,7 +375,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
     let num_connections: usize = (*uc.get()).tmp_connections.num_items;
     let tmp_connections: *mut TmpConnection = push_peek::<TmpConnection>(
         uc.tmp_parse_mut_ptr(),
-        &mut (*uc.get()).tmp_connections,
+        uc.tmp_connections_mut_ptr(),
         num_connections,
     );
     ufbxi_check!(uc, !tmp_connections.is_null(), "tmp_connections");
@@ -1296,10 +1296,10 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
     let num_connections: usize = (*uc.get()).tmp_connections.num_items;
     let tmp_connections: *mut TmpConnection = push_pop(
         uc.tmp_mut_ptr(),
-        &mut (*uc.get()).tmp_connections,
+        uc.tmp_connections_mut_ptr(),
         num_connections,
     );
-    buf_free(&mut (*uc.get()).tmp_connections);
+    buf_free(uc.tmp_connections_mut_ptr());
     ufbxi_check!(uc, !tmp_connections.is_null(), "tmp_connections");
 
     // NOTE: We truncate this array in case not all connections are resolved
@@ -1487,7 +1487,7 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
     )?;
 
     // We don't need the temporary connections at this point anymore
-    buf_free(&mut (*uc.get()).tmp_connections);
+    buf_free(uc.tmp_connections_mut_ptr());
 
     Ok(())
 }

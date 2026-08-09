@@ -1337,7 +1337,7 @@ pub(crate) unsafe fn push_synthetic_element<T>(
 // ufbx.c:12419-12427 `ufbxi_connect_oo`
 #[inline(never)]
 pub(crate) unsafe fn connect_oo(uc: &Context, src: u64, dst: u64) -> Result<(), Fail> {
-    let conn: *mut TmpConnection = push::<TmpConnection>(&mut (*uc.get()).tmp_connections, 1);
+    let conn: *mut TmpConnection = push::<TmpConnection>(uc.tmp_connections_mut_ptr(), 1);
     ufbxi_check!(uc, !conn.is_null(), "conn");
     (*conn).src = src;
     (*conn).dst = dst;
@@ -1355,7 +1355,7 @@ pub(crate) unsafe fn connect_op(
     dst: u64,
     prop: String,
 ) -> Result<(), Fail> {
-    let conn: *mut TmpConnection = push::<TmpConnection>(&mut (*uc.get()).tmp_connections, 1);
+    let conn: *mut TmpConnection = push::<TmpConnection>(uc.tmp_connections_mut_ptr(), 1);
     ufbxi_check!(uc, !conn.is_null(), "conn");
     (*conn).src = src;
     (*conn).dst = dst;
@@ -1373,7 +1373,7 @@ pub(crate) unsafe fn connect_pp(
     src_prop: String,
     dst_prop: String,
 ) -> Result<(), Fail> {
-    let conn: *mut TmpConnection = push::<TmpConnection>(&mut (*uc.get()).tmp_connections, 1);
+    let conn: *mut TmpConnection = push::<TmpConnection>(uc.tmp_connections_mut_ptr(), 1);
     ufbxi_check!(uc, !conn.is_null(), "conn");
     (*conn).src = src;
     (*conn).dst = dst;
@@ -6435,7 +6435,7 @@ pub(crate) unsafe fn read_connections(uc: &Context) -> Result<(), Fail> {
             validate_fbx_id(uc, &mut dst_id)?;
         }
 
-        let conn: *mut TmpConnection = push::<TmpConnection>(&mut (*uc.get()).tmp_connections, 1);
+        let conn: *mut TmpConnection = push::<TmpConnection>(uc.tmp_connections_mut_ptr(), 1);
         ufbxi_check!(uc, !conn.is_null(), "conn");
         (*conn).src = src_id;
         (*conn).dst = dst_id;
