@@ -177,6 +177,21 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `xml_ticks_per_frame` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn xml_ticks_per_frame(&self) -> u32 {
+        // SAFETY: reading a scalar field; all bit patterns of `u32` are valid.
+        unsafe { (*self.get()).xml_ticks_per_frame }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_xml_ticks_per_frame(&self, xml_ticks_per_frame: u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).xml_ticks_per_frame = xml_ticks_per_frame;
+        }
+    }
+
     // `mc_for8` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn mc_for8(&self) -> bool {
@@ -776,7 +791,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
     cc: &CacheContext,
     doc: *mut XmlDocument,
 ) -> Result<(), Fail> {
-    (*cc.get()).xml_ticks_per_frame = 250;
+    cc.set_xml_ticks_per_frame(250);
     (*cc.get()).xml_filename = (*cc.get()).stream_filename;
 
     let tag_root: *mut XmlTag = xml_find_child((*doc).root, b"Autodesk_Cache_File\0".as_ptr());
@@ -847,7 +862,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
                 let value: u32 =
                     crate::native::float_parse::parse_uint32_radix((*fps).value.data, 10);
                 if value > 0 {
-                    (*cc.get()).xml_ticks_per_frame = value;
+                    cc.set_xml_ticks_per_frame(value);
                 }
             }
         }
@@ -1076,7 +1091,7 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
                 let sample_rate: u32 = if (*chan).sample_rate != 0 {
                     (*chan).sample_rate
                 } else {
-                    (*cc.get()).xml_ticks_per_frame
+                    cc.xml_ticks_per_frame()
                 };
                 if (*chan).current_time < lowest_time {
                     let delta: u32 = (lowest_time - (*chan).current_time - 1) / sample_rate;
@@ -1101,8 +1116,8 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
             }
 
             // Try to load a file at the specified frame/tick
-            let frame: u32 = time / (*cc.get()).xml_ticks_per_frame;
-            let tick: u32 = time % (*cc.get()).xml_ticks_per_frame;
+            let frame: u32 = time / cc.xml_ticks_per_frame();
+            let tick: u32 = time % cc.xml_ticks_per_frame();
             if tick == 0 {
                 (*filename).length = prefix_len
                     + ufbxi_snprintf!(suffix_data, suffix_len, "Frame%u.%s", frame, extension)
