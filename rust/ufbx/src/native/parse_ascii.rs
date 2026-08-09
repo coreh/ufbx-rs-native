@@ -120,7 +120,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
                     crate::native::allocator::grow_array::<u8>(
                         uc.ator_tmp_mut_ptr(),
                         uc.read_buffer_mut_ptr(),
-                        &raw mut (*uc.get()).read_buffer_size,
+                        uc.read_buffer_size_mut_ptr(),
                         new_size
                     ),
                     b'\0',

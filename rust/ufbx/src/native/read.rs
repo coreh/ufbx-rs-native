@@ -6191,7 +6191,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                     grow_array::<u8>(
                         uc.ator_tmp_mut_ptr(),
                         uc.read_buffer_mut_ptr(),
-                        &mut (*uc.get()).read_buffer_size,
+                        uc.read_buffer_size_mut_ptr(),
                         size,
                     ),
                     // C-parity: verbatim post-expansion `#cond` text (see the C11
