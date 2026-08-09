@@ -177,6 +177,21 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `num_channels` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn num_channels(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).num_channels }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_num_channels(&self, num_channels: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).num_channels = num_channels;
+        }
+    }
+
     // `channels` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn channels(&self) -> *mut CacheTmpChannel {
@@ -817,8 +832,8 @@ pub(crate) unsafe fn cache_load_xml_imp(
                 }
 
                 // C: `&cc->channels[cc->num_channels++]`
-                let channel: *mut CacheTmpChannel = cc.channels().add((*cc.get()).num_channels);
-                (*cc.get()).num_channels += 1;
+                let channel: *mut CacheTmpChannel = cc.channels().add(cc.num_channels());
+                cc.set_num_channels(cc.num_channels() + 1);
                 (*channel).name = (*name).value;
                 (*channel).interpretation = (*interpretation).value;
                 push_string_place_str(&mut (*cc.get()).string_pool, &mut (*channel).name, false)?;
@@ -850,7 +865,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
         }
     }
 
-    cache_sort_tmp_channels(cc, cc.channels(), (*cc.get()).num_channels)?;
+    cache_sort_tmp_channels(cc, cc.channels(), cc.num_channels())?;
     Ok(())
 }
 
@@ -1008,7 +1023,7 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
             let mut time: u32 = u32::MAX;
             // C: `ufbxi_for(ufbxi_cache_tmp_channel, chan, cc->channels, cc->num_channels)`
             let mut chan: *mut CacheTmpChannel = cc.channels();
-            let chan_end: *mut CacheTmpChannel = add_ptr(chan, (*cc.get()).num_channels);
+            let chan_end: *mut CacheTmpChannel = add_ptr(chan, cc.num_channels());
             while chan != chan_end {
                 if !(*chan).try_load || (*chan).consecutive_fails > 10 {
                     chan = chan.add(1);
@@ -1065,7 +1080,7 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
             // Update channel status
             // C: `ufbxi_for(ufbxi_cache_tmp_channel, chan, cc->channels, cc->num_channels)`
             let mut chan: *mut CacheTmpChannel = cc.channels();
-            let chan_end: *mut CacheTmpChannel = add_ptr(chan, (*cc.get()).num_channels);
+            let chan_end: *mut CacheTmpChannel = add_ptr(chan, cc.num_channels());
             while chan != chan_end {
                 if (*chan).current_time == time {
                     (*chan).consecutive_fails = if found {
@@ -1168,7 +1183,7 @@ static CACHE_INTERPRETATION_NAMES: [CacheInterpretationName; 3] = [
 #[inline(never)]
 pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
     let mut tmp_chan: *mut CacheTmpChannel = cc.channels();
-    let tmp_end: *mut CacheTmpChannel = add_ptr(tmp_chan, (*cc.get()).num_channels);
+    let tmp_end: *mut CacheTmpChannel = add_ptr(tmp_chan, cc.num_channels());
 
     let mut begin: usize = 0;
     let mut num_channels: usize = 0;
