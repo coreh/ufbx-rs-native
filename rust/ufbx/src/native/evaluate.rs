@@ -3530,6 +3530,14 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `tmp_prop` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_prop_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp_prop }
+    }
+
     // `tmp_nodes` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_nodes_mut(&self) -> *mut Buf {
@@ -4094,7 +4102,7 @@ pub(crate) unsafe fn finalize_bake_times(
 
     let mut num_times: usize = (*bc.get()).tmp_times.num_items;
     let times: *mut BakeTime = push_pop::<BakeTime>(
-        ptr::addr_of_mut!((*bc.get()).tmp_prop),
+        bc.tmp_prop_mut(),
         ptr::addr_of_mut!((*bc.get()).tmp_times),
         num_times,
     );
@@ -4888,15 +4896,15 @@ pub(crate) unsafe fn bake_node_imp(
     let mut keys_s: List<BakedVec3> = MaybeUninit::zeroed().assume_init();
 
     keys_t.count = times_t.count;
-    keys_t.data = push::<BakedVec3>(ptr::addr_of_mut!((*bc.get()).tmp_prop), keys_t.count);
+    keys_t.data = push::<BakedVec3>(bc.tmp_prop_mut(), keys_t.count);
     ufbxi_check_err!(bc.error_mut(), !keys_t.data.is_null(), "keys_t.data");
 
     keys_r.count = times_r.count;
-    keys_r.data = push::<BakedQuat>(ptr::addr_of_mut!((*bc.get()).tmp_prop), keys_r.count);
+    keys_r.data = push::<BakedQuat>(bc.tmp_prop_mut(), keys_r.count);
     ufbxi_check_err!(bc.error_mut(), !keys_r.data.is_null(), "keys_r.data");
 
     keys_s.count = times_s.count;
-    keys_s.data = push::<BakedVec3>(ptr::addr_of_mut!((*bc.get()).tmp_prop), keys_s.count);
+    keys_s.data = push::<BakedVec3>(bc.tmp_prop_mut(), keys_s.count);
     ufbxi_check_err!(bc.error_mut(), !keys_s.data.is_null(), "keys_s.data");
 
     let keys_t_data: *mut BakedVec3 = keys_t.data as *mut BakedVec3;
@@ -5036,7 +5044,7 @@ pub(crate) unsafe fn bake_node_imp(
         .baked_nodes
         .add((*node).element.typed_id as usize) = baked_node;
 
-    buf_clear(ptr::addr_of_mut!((*bc.get()).tmp_prop));
+    buf_clear(bc.tmp_prop_mut());
 
     // If this node is a scale helper, make sure to bake its siblings and
     // potentially their scale helpers if they are not a part of the animation.
@@ -5164,7 +5172,7 @@ pub(crate) unsafe fn bake_anim_prop(
     // C: `ufbx_baked_vec3_list keys;`
     let mut keys: List<BakedVec3> = MaybeUninit::zeroed().assume_init();
     keys.count = times.count;
-    keys.data = push::<BakedVec3>(ptr::addr_of_mut!((*bc.get()).tmp_prop), keys.count);
+    keys.data = push::<BakedVec3>(bc.tmp_prop_mut(), keys.count);
     ufbxi_check_err!(bc.error_mut(), !keys.data.is_null(), "keys.data");
     let keys_data: *mut BakedVec3 = keys.data as *mut BakedVec3;
 
@@ -5208,7 +5216,7 @@ pub(crate) unsafe fn bake_anim_prop(
         keys,
     )?;
 
-    buf_clear(ptr::addr_of_mut!((*bc.get()).tmp_prop));
+    buf_clear(bc.tmp_prop_mut());
 
     Ok(())
 }
@@ -5413,7 +5421,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
                 "bc->layer_weight_times.data"
             );
 
-            buf_clear(ptr::addr_of_mut!((*bc.get()).tmp_prop));
+            buf_clear(bc.tmp_prop_mut());
         }
     }
 
