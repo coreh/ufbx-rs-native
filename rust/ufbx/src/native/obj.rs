@@ -253,17 +253,17 @@ pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`
     for i in 0..OBJ_NUM_ATTRIBS_EXT {
-        (*uc.get()).obj.tmp_vertices[i].ator = uc.ator_tmp();
-        (*uc.get()).obj.tmp_indices[i].ator = uc.ator_tmp();
+        (*uc.get()).obj.tmp_vertices[i].ator = uc.ator_tmp_mut();
+        (*uc.get()).obj.tmp_indices[i].ator = uc.ator_tmp_mut();
     }
-    (*uc.get()).obj.tmp_color_valid.ator = uc.ator_tmp();
-    (*uc.get()).obj.tmp_faces.ator = uc.ator_tmp();
-    (*uc.get()).obj.tmp_face_material.ator = uc.ator_tmp();
-    (*uc.get()).obj.tmp_face_smoothing.ator = uc.ator_tmp();
-    (*uc.get()).obj.tmp_face_group.ator = uc.ator_tmp();
-    (*uc.get()).obj.tmp_face_group_infos.ator = uc.ator_tmp();
-    (*uc.get()).obj.tmp_meshes.ator = uc.ator_tmp();
-    (*uc.get()).obj.tmp_props.ator = uc.ator_tmp();
+    (*uc.get()).obj.tmp_color_valid.ator = uc.ator_tmp_mut();
+    (*uc.get()).obj.tmp_faces.ator = uc.ator_tmp_mut();
+    (*uc.get()).obj.tmp_face_material.ator = uc.ator_tmp_mut();
+    (*uc.get()).obj.tmp_face_smoothing.ator = uc.ator_tmp_mut();
+    (*uc.get()).obj.tmp_face_group.ator = uc.ator_tmp_mut();
+    (*uc.get()).obj.tmp_face_group_infos.ator = uc.ator_tmp_mut();
+    (*uc.get()).obj.tmp_meshes.ator = uc.ator_tmp_mut();
+    (*uc.get()).obj.tmp_props.ator = uc.ator_tmp_mut();
 
     // .obj parsing does its own yield logic
     uc.set_data_size(uc.data_size() + uc.yield_size());
@@ -273,7 +273,7 @@ pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
 
     map_init(
         &mut (*uc.get()).obj.group_map,
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         map_cmp_const_char_ptr,
         core::ptr::null_mut(),
     );
@@ -322,12 +322,12 @@ pub(crate) unsafe fn obj_free(uc: &Context) {
     map_free(&mut (*uc.get()).obj.group_map);
 
     free::<String>(
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         (*uc.get()).obj.tokens,
         (*uc.get()).obj.tokens_cap,
     );
     free::<*mut Material>(
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         (*uc.get()).obj.tmp_materials,
         (*uc.get()).obj.tmp_materials_cap,
     );
@@ -470,7 +470,7 @@ pub(crate) unsafe fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
         ufbxi_check!(
             uc,
             grow_array::<String>(
-                uc.ator_tmp(),
+                uc.ator_tmp_mut(),
                 &mut (*uc.get()).obj.tokens,
                 &mut (*uc.get()).obj.tokens_cap,
                 index + 1
@@ -984,7 +984,7 @@ pub(crate) unsafe fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
         ufbxi_check!(
             uc,
             grow_array::<*mut Material>(
-                uc.ator_tmp(),
+                uc.ator_tmp_mut(),
                 &mut (*uc.get()).obj.tmp_materials,
                 &mut (*uc.get()).obj.tmp_materials_cap,
                 id + 1
@@ -1903,7 +1903,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                 (*uc.get()).opts.obj_mtl_path.data,
                 (*uc.get()).opts.obj_mtl_path.length,
                 core::ptr::null(),
-                uc.ator_tmp(),
+                uc.ator_tmp_mut(),
                 OpenFileType::ObjMtl,
             );
             stream_path.data = (*uc.get()).opts.obj_mtl_path.data;
@@ -1943,7 +1943,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                 (*dst).data,
                 (*dst).size,
                 &(*uc.get()).obj.mtllib_relative_path,
-                uc.ator_tmp(),
+                uc.ator_tmp_mut(),
                 OpenFileType::ObjMtl,
             );
             stream_path = (*uc.get()).obj.mtllib_relative_path;
@@ -1997,7 +1997,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                     copy,
                     path.length,
                     core::ptr::null(),
-                    uc.ator_tmp(),
+                    uc.ator_tmp_mut(),
                     OpenFileType::ObjMtl,
                 );
                 if has_stream {

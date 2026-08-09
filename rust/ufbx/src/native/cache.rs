@@ -1743,7 +1743,7 @@ pub(crate) unsafe fn load_external_cache(
     cc.set_frames_per_second((*uc.get()).scene.settings.frames_per_second);
 
     // Temporarily "borrow" allocators for the geometry cache
-    cc.set_ator_tmp(uc.ator_tmp());
+    cc.set_ator_tmp(uc.ator_tmp_mut());
     (*cc.get()).string_pool = (*uc.get()).string_pool;
     (*cc.get()).result = (*uc.get()).result;
 

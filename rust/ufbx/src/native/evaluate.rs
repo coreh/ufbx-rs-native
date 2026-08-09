@@ -534,7 +534,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         let open_with_default = (*uc.get()).opts.open_main_file_with_default
             || (*uc.get()).opts.open_file_cb.fn_ == Some(default_fn);
         if open_with_default {
-            let ctx: OpenFileContext = uc.ator_tmp() as OpenFileContext;
+            let ctx: OpenFileContext = uc.ator_tmp_mut() as OpenFileContext;
             ok = open_file_ctx(&mut stream, ctx, filename, filename_len, &opts, &mut error);
         } else {
             ok = open_file(
@@ -543,7 +543,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
                 uc.load_filename(),
                 filename_len,
                 ptr::null(),
-                uc.ator_tmp(),
+                uc.ator_tmp_mut(),
                 OpenFileType::MainModel,
             );
         }
@@ -629,7 +629,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         thread_pool_init(
             ptr::addr_of_mut!((*uc.get()).thread_pool),
             ptr::addr_of_mut!((*uc.get()).error),
-            uc.ator_tmp(),
+            uc.ator_tmp_mut(),
             ptr::addr_of!((*uc.get()).opts.thread_opts),
         )
         .is_ok(),
@@ -864,9 +864,9 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     (*imp).string_buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
 
     (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
-    (*imp).scene.metadata.temp_memory_used = (*uc.ator_tmp()).current_size;
+    (*imp).scene.metadata.temp_memory_used = (*uc.ator_tmp_mut()).current_size;
     (*imp).scene.metadata.result_allocs = (*imp).refcount.ator.num_allocs;
-    (*imp).scene.metadata.temp_allocs = (*uc.ator_tmp()).num_allocs;
+    (*imp).scene.metadata.temp_allocs = (*uc.ator_tmp_mut()).num_allocs;
 
     // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, imp->scene.elements)`
     let mut p_elem: *mut *mut Element = (*imp).scene.elements.data as *mut *mut Element;
@@ -920,31 +920,31 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     buf_free(&mut (*uc.get()).tmp_element_id);
     buf_free(&mut (*uc.get()).tmp_ascii_spans);
 
-    free::<Node>(uc.ator_tmp(), uc.top_nodes(), uc.top_nodes_cap());
+    free::<Node>(uc.ator_tmp_mut(), uc.top_nodes(), uc.top_nodes_cap());
     free::<*mut c_void>(
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         uc.element_extra_arr(),
         uc.element_extra_cap(),
     );
 
     free::<u8>(
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         (*uc.get()).ascii.token.str_data,
         (*uc.get()).ascii.token.str_cap,
     );
     free::<u8>(
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         (*uc.get()).ascii.prev_token.str_data,
         (*uc.get()).ascii.prev_token.str_cap,
     );
 
-    free::<u8>(uc.ator_tmp(), uc.read_buffer(), uc.read_buffer_size());
-    free::<u8>(uc.ator_tmp(), uc.tmp_arr(), (*uc.get()).tmp_arr_size);
-    free::<u8>(uc.ator_tmp(), uc.swap_arr(), uc.swap_arr_size());
+    free::<u8>(uc.ator_tmp_mut(), uc.read_buffer(), uc.read_buffer_size());
+    free::<u8>(uc.ator_tmp_mut(), uc.tmp_arr(), (*uc.get()).tmp_arr_size);
+    free::<u8>(uc.ator_tmp_mut(), uc.swap_arr(), uc.swap_arr_size());
 
     obj_free(uc);
 
-    free_ator(uc.ator_tmp());
+    free_ator(uc.ator_tmp_mut());
 }
 
 // ufbx.c:25464-25470 `ufbxi_free_result`
@@ -1002,7 +1002,7 @@ pub(crate) unsafe fn load(
 
     init_ator(
         &mut (*uc.get()).error,
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         ptr::addr_of!((*uc.get()).opts.temp_allocator),
         b"temp\0".as_ptr(),
     );
@@ -1054,7 +1054,7 @@ pub(crate) unsafe fn load(
     (*uc.get()).string_pool.error = ptr::addr_of_mut!((*uc.get()).error);
     map_init(
         &mut (*uc.get()).string_pool.map,
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         map_cmp_string,
         ptr::null_mut(),
     );
@@ -1065,73 +1065,73 @@ pub(crate) unsafe fn load(
 
     map_init(
         &mut (*uc.get()).prop_type_map,
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         map_cmp_const_char_ptr,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).fbx_id_map,
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         map_cmp_uint64,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).ptr_fbx_id_map,
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         map_cmp_ptr_id,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).texture_file_map,
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         map_cmp_const_char_ptr,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).anim_stack_map,
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         map_cmp_const_char_ptr,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).fbx_attr_map,
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         map_cmp_uint64,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).node_prop_set,
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         map_cmp_const_char_ptr,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).dom_node_map,
-        uc.ator_tmp(),
+        uc.ator_tmp_mut(),
         map_cmp_uintptr,
         ptr::null_mut(),
     );
 
-    (*uc.get()).tmp.ator = uc.ator_tmp();
-    (*uc.get()).tmp_parse.ator = uc.ator_tmp();
-    (*uc.get()).tmp_stack.ator = uc.ator_tmp();
-    (*uc.get()).tmp_connections.ator = uc.ator_tmp();
-    (*uc.get()).tmp_node_ids.ator = uc.ator_tmp();
-    (*uc.get()).tmp_elements.ator = uc.ator_tmp();
-    (*uc.get()).tmp_element_offsets.ator = uc.ator_tmp();
-    (*uc.get()).tmp_element_fbx_ids.ator = uc.ator_tmp();
-    (*uc.get()).tmp_element_ptrs.ator = uc.ator_tmp();
+    (*uc.get()).tmp.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_parse.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_stack.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_connections.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_node_ids.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_elements.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_element_offsets.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_element_fbx_ids.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_element_ptrs.ator = uc.ator_tmp_mut();
     for i in 0..ELEMENT_TYPE_COUNT {
-        (*uc.get()).tmp_typed_element_offsets[i].ator = uc.ator_tmp();
+        (*uc.get()).tmp_typed_element_offsets[i].ator = uc.ator_tmp_mut();
     }
-    (*uc.get()).tmp_mesh_textures.ator = uc.ator_tmp();
-    (*uc.get()).tmp_full_weights.ator = uc.ator_tmp();
-    (*uc.get()).tmp_dom_nodes.ator = uc.ator_tmp();
-    (*uc.get()).tmp_element_id.ator = uc.ator_tmp();
-    (*uc.get()).tmp_ascii_spans.ator = uc.ator_tmp();
+    (*uc.get()).tmp_mesh_textures.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_full_weights.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_dom_nodes.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_element_id.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_ascii_spans.ator = uc.ator_tmp_mut();
 
     for i in 0..THREAD_GROUP_COUNT {
-        (*uc.get()).tmp_thread_parse[i].ator = uc.ator_tmp();
+        (*uc.get()).tmp_thread_parse[i].ator = uc.ator_tmp_mut();
         (*uc.get()).tmp_thread_parse[i].unordered = true;
         (*uc.get()).tmp_thread_parse[i].clearable = true;
     }
@@ -1145,7 +1145,7 @@ pub(crate) unsafe fn load(
 
     (*uc.get()).warnings.error = ptr::addr_of_mut!((*uc.get()).error);
     (*uc.get()).warnings.result = ptr::addr_of_mut!((*uc.get()).result);
-    (*uc.get()).warnings.tmp_stack.ator = uc.ator_tmp();
+    (*uc.get()).warnings.tmp_stack.ator = uc.ator_tmp_mut();
     (*uc.get()).string_pool.warnings = ptr::addr_of_mut!((*uc.get()).warnings);
 
     // Set zero size `swap_arr` to a non-NULL buffer so we can tell the difference between empty
