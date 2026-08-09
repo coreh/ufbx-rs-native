@@ -3484,6 +3484,51 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `scene` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn scene(&self) -> *const Scene {
+        // SAFETY: reading a scalar field; all bit patterns of `*const Scene` are valid.
+        unsafe { (*self.get()).scene }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_scene(&self, scene: *const Scene) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).scene = scene;
+        }
+    }
+
+    // `anim` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn anim(&self) -> *const Anim {
+        // SAFETY: reading a scalar field; all bit patterns of `*const Anim` are valid.
+        unsafe { (*self.get()).anim }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_anim(&self, anim: *const Anim) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).anim = anim;
+        }
+    }
+
+    // `imp` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn imp(&self) -> *mut BakedAnimImp {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut BakedAnimImp` are valid.
+        unsafe { (*self.get()).imp }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_imp(&self, imp: *mut BakedAnimImp) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).imp = imp;
+        }
+    }
+
     // `time_max` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn time_max(&self) -> f64 {
@@ -4171,7 +4216,7 @@ pub(crate) unsafe fn bake_postprocess_vec3(
 
     // Offset times
     if bc.ktime_offset() != 0.0 {
-        let scale: f64 = (*(*bc.get()).scene).metadata.ktime_second as f64;
+        let scale: f64 = (*bc.scene()).metadata.ktime_second as f64;
         let offset: f64 = bc.ktime_offset();
         for i in 0..src.count {
             (*data.add(i)).time = math::rint((*data.add(i)).time * scale + offset) / scale;
@@ -4294,7 +4339,7 @@ pub(crate) unsafe fn bake_postprocess_quat(
 
     // Offset times
     if bc.ktime_offset() != 0.0 {
-        let scale: f64 = (*(*bc.get()).scene).metadata.ktime_second as f64;
+        let scale: f64 = (*bc.scene()).metadata.ktime_second as f64;
         let offset: f64 = bc.ktime_offset();
         for i in 0..src.count {
             (*data.add(i)).time = math::rint((*data.add(i)).time * scale + offset) / scale;
@@ -4492,7 +4537,7 @@ pub(crate) unsafe fn bake_node_imp(
     ufbx_assert!(!bc.baked_nodes().is_null() && !bc.nodes_to_bake().is_null());
 
     let node: *mut UfbxNode =
-        *((*(*bc.get()).scene).elements.data as *const *mut UfbxNode).add(element_id as usize);
+        *((*bc.scene()).elements.data as *const *mut UfbxNode).add(element_id as usize);
     ufbxi_dev_assert!((*node).element.type_ as u32 == ElementType::Node as u32);
 
     let mut complex_translation: bool = false;
@@ -4791,8 +4836,7 @@ pub(crate) unsafe fn bake_node_imp(
         }
 
         let eval_time: f64 = bake_time_sample_time(bake_time);
-        let mut transform: Transform =
-            evaluate_transform_flags((*bc.get()).anim, node, eval_time, flags);
+        let mut transform: Transform = evaluate_transform_flags(bc.anim(), node, eval_time, flags);
 
         if (flags & TransformFlags::INCLUDE_TRANSLATION.raw()) != 0 {
             if !scale_helper_t.is_null() {
@@ -5014,7 +5058,7 @@ pub(crate) unsafe fn bake_anim_prop(
         let bake_time: BakeTime = *times.data.add(i);
         let eval_time: f64 = bake_time_sample_time(bake_time);
         let prop: Prop = evaluate_prop_flags_len(
-            (*bc.get()).anim,
+            bc.anim(),
             element,
             name.data,
             name.length,
@@ -5066,7 +5110,7 @@ pub(crate) unsafe fn bake_element(
     count: usize,
 ) -> Result<(), Fail> {
     let element: *mut Element =
-        *((*(*bc.get()).scene).elements.data as *const *mut Element).add(element_id as usize);
+        *((*bc.scene()).elements.data as *const *mut Element).add(element_id as usize);
     if (*element).type_ as u32 == ElementType::Node as u32 && !(*bc.get()).opts.skip_node_transforms
     {
         bake_node(bc, element_id, props, count)?;
@@ -5153,8 +5197,8 @@ pub(crate) unsafe extern "C" fn baked_element_less(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
-    let anim: *const Anim = (*bc.get()).anim;
-    let scene: *const Scene = (*bc.get()).scene;
+    let anim: *const Anim = bc.anim();
+    let scene: *const Scene = bc.scene();
 
     if !(*bc.get()).opts.skip_node_transforms {
         bc.set_baked_nodes(push_zero::<*mut BakedNode>(
@@ -5359,9 +5403,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     }
 
     if (*bc.get()).opts.trim_start_time && (*anim).time_begin > 0.0 {
-        bc.set_ktime_offset(
-            -(*anim).time_begin * (*(*bc.get()).scene).metadata.ktime_second as f64,
-        );
+        bc.set_ktime_offset(-(*anim).time_begin * (*bc.scene()).metadata.ktime_second as f64);
     }
 
     init_ator(
@@ -5394,7 +5436,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     (*bc.get()).tmp_props.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
     (*bc.get()).tmp_bake_stack.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
 
-    (*bc.get()).anim = anim;
+    bc.set_anim(anim);
     if (*anim).time_begin < (*anim).time_end {
         bc.set_time_begin((*anim).time_begin);
         bc.set_time_end((*anim).time_end);
@@ -5402,21 +5444,20 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     bc.set_time_min(math::INFINITY);
     bc.set_time_max(-math::INFINITY);
 
-    (*bc.get()).imp = push::<BakedAnimImp>(ptr::addr_of_mut!((*bc.get()).result), 1);
-    ufbxi_check_err!(
-        &mut (*bc.get()).error,
-        !(*bc.get()).imp.is_null(),
-        "bc->imp"
-    );
+    bc.set_imp(push::<BakedAnimImp>(
+        ptr::addr_of_mut!((*bc.get()).result),
+        1,
+    ));
+    ufbxi_check_err!(&mut (*bc.get()).error, !bc.imp().is_null(), "bc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&BakedAnim` pointer via exposed provenance.
-    ((*bc.get()).imp as *mut u8).expose_provenance();
+    (bc.imp() as *mut u8).expose_provenance();
 
     bake_anim(bc)?;
 
     init_ref(
-        ptr::addr_of_mut!((*(*bc.get()).imp).refcount),
+        ptr::addr_of_mut!((*bc.imp()).refcount),
         BAKED_ANIM_IMP_MAGIC,
         ptr::null_mut(),
     );
@@ -5426,15 +5467,15 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     (*bc.get()).bake.metadata.result_allocs = (*bc.get()).ator_result.num_allocs;
     (*bc.get()).bake.metadata.temp_allocs = (*bc.get()).ator_tmp.num_allocs;
 
-    (*(*bc.get()).imp).magic = BAKED_ANIM_IMP_MAGIC;
+    (*bc.imp()).magic = BAKED_ANIM_IMP_MAGIC;
     // C: `bc->imp->bake = bc->bake;` (struct assignment)
     ptr::copy_nonoverlapping(
         ptr::addr_of!((*bc.get()).bake),
-        ptr::addr_of_mut!((*(*bc.get()).imp).bake),
+        ptr::addr_of_mut!((*bc.imp()).bake),
         1,
     );
-    (*(*bc.get()).imp).refcount.ator = (*bc.get()).ator_result;
-    (*(*bc.get()).imp).refcount.buf = (*bc.get()).result;
+    (*bc.imp()).refcount.ator = (*bc.get()).ator_result;
+    (*bc.imp()).refcount.buf = (*bc.get()).result;
 
     Ok(())
 }

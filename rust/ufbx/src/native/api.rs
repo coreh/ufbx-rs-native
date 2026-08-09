@@ -1872,7 +1872,7 @@ pub(crate) unsafe fn bake_anim(
         core::ptr::copy_nonoverlapping(opts, core::ptr::addr_of_mut!((*bc.get()).opts), 1);
     }
 
-    (*bc.get()).scene = scene;
+    bc.set_scene(scene);
 
     // C: `int ok = ufbxi_bake_anim_imp(&bc, anim);`
     let ok = evaluate::bake_anim_imp(&bc, anim);
@@ -1895,7 +1895,7 @@ pub(crate) unsafe fn bake_anim(
 
     if ok.is_ok() {
         clear_error(error);
-        let imp: *mut BakedAnimImp = (*bc.get()).imp;
+        let imp: *mut BakedAnimImp = bc.imp();
         core::ptr::addr_of_mut!((*imp).bake)
     } else {
         fix_error_type(
