@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `dom_parse_num_children` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn dom_parse_num_children(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).dom_parse_num_children }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_dom_parse_num_children(&self, dom_parse_num_children: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).dom_parse_num_children = dom_parse_num_children;
+        }
+    }
+
     // `dom_parse_toplevel` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn dom_parse_toplevel(&self) -> *mut DomNode {
@@ -3101,16 +3116,16 @@ unsafe fn retain_dom_node_rec(
 // ufbx.c:10813-10844 `ufbxi_retain_toplevel`
 #[inline(never)]
 pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<(), Fail> {
-    if (*uc.get()).dom_parse_num_children > 0 {
+    if uc.dom_parse_num_children() > 0 {
         let children: *mut *mut DomNode = push_pop(
             &mut (*uc.get()).result,
             &mut (*uc.get()).tmp_dom_nodes,
-            (*uc.get()).dom_parse_num_children,
+            uc.dom_parse_num_children(),
         );
         ufbxi_check!(uc, !children.is_null(), "children");
         (*uc.dom_parse_toplevel()).children.data = children as *const Ref<DomNode>;
-        (*uc.dom_parse_toplevel()).children.count = (*uc.get()).dom_parse_num_children;
-        (*uc.get()).dom_parse_num_children = 0;
+        (*uc.dom_parse_toplevel()).children.count = uc.dom_parse_num_children();
+        uc.set_dom_parse_num_children(0);
     }
 
     if !node.is_null() {
@@ -3145,7 +3160,7 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
 pub(crate) unsafe fn retain_toplevel_child(uc: &Context, child: *mut Node) -> Result<(), Fail> {
     ufbx_assert!(!uc.dom_parse_toplevel().is_null());
     retain_dom_node(uc, child, core::ptr::null_mut())?;
-    (*uc.get()).dom_parse_num_children = (*uc.get()).dom_parse_num_children.wrapping_add(1);
+    uc.set_dom_parse_num_children(uc.dom_parse_num_children().wrapping_add(1));
 
     Ok(())
 }
