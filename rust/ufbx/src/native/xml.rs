@@ -98,6 +98,14 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    // `tok` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tok_mut(&self) -> *mut *mut u8 {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tok }
+    }
+
     // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_stack_mut(&self) -> *mut Buf {
@@ -324,7 +332,7 @@ pub(crate) unsafe fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), F
             xc.error_mut(),
             grow_array::<u8>(
                 xc.ator(),
-                &mut (*xc.get()).tok,
+                xc.tok_mut(),
                 &mut (*xc.get()).tok_cap,
                 xc.tok_len() + 1
             ),
