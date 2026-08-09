@@ -288,6 +288,14 @@ impl TessellateSurfaceContext {
         self.0.get().cast()
     }
 
+    // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp }
+    }
+
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut(&self) -> *mut Buf {
@@ -596,7 +604,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
         "num_indices <= INT32_MAX"
     );
 
-    let position_ix: *mut u32 = push::<u32>(&mut (*tc.get()).tmp, num_indices);
+    let position_ix: *mut u32 = push::<u32>(tc.tmp_mut(), num_indices);
     let mut positions: *mut Vec3 = push::<Vec3>(tc.result_mut(), num_indices + 1);
     let mut normals: *mut Vec3 = push::<Vec3>(tc.result_mut(), num_indices + 1);
     let mut uvs: *mut Vec2 = push::<Vec2>(tc.result_mut(), num_indices + 1);
