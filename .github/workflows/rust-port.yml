@@ -69,9 +69,11 @@ jobs:
         run: rust/tools/mathfuzz/ci.sh
 
   # Miri over whole small-file loads (memory-based; load_file needs libc).
-  # Aliasing model disabled: guards OOB/UAF/uninit/alignment/leaks, which pass
-  # today. The stricter Stacked Borrows run has 4 known aliasing-model
-  # findings tracked for Phase 4 — promote once they are fixed.
+  # Enforces both aliasing models — Stacked Borrows and Tree Borrows — on top of
+  # the memory-error checks (OOB/UAF/uninit/alignment/leaks). `-Zmiri-disable-isolation`
+  # is required for the `std::fs` reads in the corpus. Container-of into the
+  # `*_imp` headers uses exposed provenance (`with_exposed_provenance` in
+  # `ufbxi_get_imp`), so `-Zmiri-strict-provenance` is intentionally NOT set.
   miri:
     name: Miri memory checks
     runs-on: ubuntu-24.04
@@ -81,9 +83,12 @@ jobs:
         run: |
           rustup toolchain install nightly --profile minimal
           rustup +nightly component add miri
-      - name: Run loads under Miri
+      - name: Run loads under Miri (Stacked Borrows)
         working-directory: rust
-        run: MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-disable-stacked-borrows" cargo +nightly miri test --test miri
+        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --test miri
+      - name: Run loads under Miri (Tree Borrows)
+        working-directory: rust
+        run: MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-tree-borrows" cargo +nightly miri test --test miri
 
   # Public API must equal published ufbx-rust 0.11.2 modulo the divergences
   # documented in COMPAT.md (expectations file: rust/tools/api/).
