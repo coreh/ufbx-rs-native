@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `retain_vertex_w` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn retain_vertex_w(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).retain_vertex_w }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_retain_vertex_w(&self, retain_vertex_w: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).retain_vertex_w = retain_vertex_w;
+        }
+    }
+
     // `has_scale_helper_nodes` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn has_scale_helper_nodes(&self) -> bool {
@@ -2608,11 +2623,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::NormalsW.as_ptr() {
-                (*info).type_ = if (*uc.get()).retain_vertex_w {
-                    b'r'
-                } else {
-                    b'-'
-                };
+                (*info).type_ = if uc.retain_vertex_w() { b'r' } else { b'-' };
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
@@ -2636,11 +2647,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::BinormalsW.as_ptr() {
-                (*info).type_ = if (*uc.get()).retain_vertex_w {
-                    b'r'
-                } else {
-                    b'-'
-                };
+                (*info).type_ = if uc.retain_vertex_w() { b'r' } else { b'-' };
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
@@ -2664,11 +2671,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::TangentsW.as_ptr() {
-                (*info).type_ = if (*uc.get()).retain_vertex_w {
-                    b'r'
-                } else {
-                    b'-'
-                };
+                (*info).type_ = if uc.retain_vertex_w() { b'r' } else { b'-' };
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }

@@ -677,9 +677,10 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         uc.set_data_begin(uc.data());
     }
 
-    (*uc.get()).retain_vertex_w = ((*uc.get()).opts.retain_dom
-        || (*uc.get()).opts.retain_vertex_attrib_w)
-        && !(*uc.get()).opts.ignore_geometry;
+    uc.set_retain_vertex_w(
+        ((*uc.get()).opts.retain_dom || (*uc.get()).opts.retain_vertex_attrib_w)
+            && !(*uc.get()).opts.ignore_geometry,
+    );
 
     ufbxi_check!(uc, load_strings(uc).is_ok(), "ufbxi_load_strings(uc)");
     ufbxi_check!(uc, load_maps(uc).is_ok(), "ufbxi_load_maps(uc)");
