@@ -366,7 +366,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
     let num_elements: u32 = uc.num_elements();
     let num_nodes: usize = (*uc.get()).tmp_node_ids.num_items;
     let elements: *mut *mut Element = push_pop::<*mut Element>(
-        &mut (*uc.get()).tmp_parse,
+        uc.tmp_parse_mut_ptr(),
         &mut (*uc.get()).tmp_element_ptrs,
         num_elements as usize,
     );
@@ -374,56 +374,55 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
 
     let num_connections: usize = (*uc.get()).tmp_connections.num_items;
     let tmp_connections: *mut TmpConnection = push_peek::<TmpConnection>(
-        &mut (*uc.get()).tmp_parse,
+        uc.tmp_parse_mut_ptr(),
         &mut (*uc.get()).tmp_connections,
         num_connections,
     );
     ufbxi_check!(uc, !tmp_connections.is_null(), "tmp_connections");
 
     let pre_connections: *mut PreConnection =
-        push::<PreConnection>(&mut (*uc.get()).tmp_parse, num_connections);
+        push::<PreConnection>(uc.tmp_parse_mut_ptr(), num_connections);
     ufbxi_check!(uc, !pre_connections.is_null(), "pre_connections");
 
-    let instance_counts: *mut u32 =
-        push_zero::<u32>(&mut (*uc.get()).tmp_parse, num_elements as usize);
+    let instance_counts: *mut u32 = push_zero::<u32>(uc.tmp_parse_mut_ptr(), num_elements as usize);
     ufbxi_check!(uc, !instance_counts.is_null(), "instance_counts");
 
     let modify_not_supported: *mut bool =
-        push_zero::<bool>(&mut (*uc.get()).tmp_parse, num_elements as usize);
+        push_zero::<bool>(uc.tmp_parse_mut_ptr(), num_elements as usize);
     ufbxi_check!(uc, !modify_not_supported.is_null(), "modify_not_supported");
 
     let node_attrib_type: *mut ElementType =
-        push_zero::<ElementType>(&mut (*uc.get()).tmp_parse, num_nodes);
+        push_zero::<ElementType>(uc.tmp_parse_mut_ptr(), num_nodes);
     ufbxi_check!(uc, !node_attrib_type.is_null(), "node_attrib_type");
 
-    let has_unscaled_children: *mut bool = push_zero::<bool>(&mut (*uc.get()).tmp_parse, num_nodes);
+    let has_unscaled_children: *mut bool = push_zero::<bool>(uc.tmp_parse_mut_ptr(), num_nodes);
     ufbxi_check!(
         uc,
         !has_unscaled_children.is_null(),
         "has_unscaled_children"
     );
 
-    let has_scale_animation: *mut bool = push_zero::<bool>(&mut (*uc.get()).tmp_parse, num_nodes);
+    let has_scale_animation: *mut bool = push_zero::<bool>(uc.tmp_parse_mut_ptr(), num_nodes);
     ufbxi_check!(uc, !has_scale_animation.is_null(), "has_scale_animation");
     // C-parity: `has_scale_animation` is allocated and checked but never read
     // upstream; the allocation is observable so it stays.
 
-    let pre_nodes: *mut PreNode = push_zero::<PreNode>(&mut (*uc.get()).tmp_parse, num_nodes);
+    let pre_nodes: *mut PreNode = push_zero::<PreNode>(uc.tmp_parse_mut_ptr(), num_nodes);
     ufbxi_check!(uc, !pre_nodes.is_null(), "pre_nodes");
 
     let num_meshes: usize =
         (*uc.get()).tmp_typed_element_offsets[ElementType::Mesh as usize].num_items;
-    let pre_meshes: *mut PreMesh = push_zero::<PreMesh>(&mut (*uc.get()).tmp_parse, num_meshes);
+    let pre_meshes: *mut PreMesh = push_zero::<PreMesh>(uc.tmp_parse_mut_ptr(), num_meshes);
     ufbxi_check!(uc, !pre_meshes.is_null(), "pre_meshes");
 
     let num_anim_values: usize =
         (*uc.get()).tmp_typed_element_offsets[ElementType::AnimValue as usize].num_items;
     let pre_anim_values: *mut PreAnimValue =
-        push_zero::<PreAnimValue>(&mut (*uc.get()).tmp_parse, num_anim_values);
+        push_zero::<PreAnimValue>(uc.tmp_parse_mut_ptr(), num_anim_values);
     ufbxi_check!(uc, !pre_anim_values.is_null(), "pre_anim_values");
 
     let fbx_ids: *mut u64 = push_pop::<u64>(
-        &mut (*uc.get()).tmp_parse,
+        uc.tmp_parse_mut_ptr(),
         &mut (*uc.get()).tmp_element_fbx_ids,
         num_elements as usize,
     );
@@ -5077,7 +5076,7 @@ pub(crate) unsafe fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
             *states.add((*texture).element.typed_id as usize) = FILE_TEXTURE_FETCH_FINISHED as u8;
 
             // HACK: Reuse `tmp_parse` for storing intermediate information as we can clear it.
-            buf_clear(&mut (*uc.get()).tmp_parse);
+            buf_clear(uc.tmp_parse_mut_ptr());
 
             // Now all non-cyclical dependents should be processed.
             let mut num_deps: usize = 0;
@@ -5130,7 +5129,7 @@ pub(crate) unsafe fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
             let mut deps: MaybeUninit<*mut OrderedTexture> = MaybeUninit::uninit();
             deduplicate_textures(
                 uc,
-                &mut (*uc.get()).tmp_parse,
+                uc.tmp_parse_mut_ptr(),
                 deps.as_mut_ptr(),
                 &mut num_deps,
                 num_deps,
@@ -5174,7 +5173,7 @@ pub(crate) unsafe fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 let mut files: MaybeUninit<*mut OrderedTexture> = MaybeUninit::uninit();
                 deduplicate_textures(
                     uc,
-                    &mut (*uc.get()).tmp_parse,
+                    uc.tmp_parse_mut_ptr(),
                     files.as_mut_ptr(),
                     &mut num_files,
                     num_files,

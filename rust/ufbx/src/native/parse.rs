@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `tmp_parse` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_parse_mut_ptr(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp_parse }
+    }
+
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
@@ -4323,7 +4331,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             }
 
             // Not needed anymore
-            buf_free(&mut (*uc.get()).tmp_parse);
+            buf_free(uc.tmp_parse_mut_ptr());
 
             return Ok(());
         }
@@ -4400,14 +4408,14 @@ pub(crate) unsafe fn parse_toplevel_child(
     if uc.top_child_index() == usize::MAX {
         // Parse children on demand
         if tmp_buf.is_null() {
-            buf_clear(&mut (*uc.get()).tmp_parse);
+            buf_clear(uc.tmp_parse_mut_ptr());
         }
         let mut end = false;
         let state: ParseState = update_parse_state(ParseState::Root, (*uc.top_node()).name);
         let buf: *mut Buf = if !tmp_buf.is_null() {
             tmp_buf
         } else {
-            &mut (*uc.get()).tmp_parse
+            uc.tmp_parse_mut_ptr()
         };
         parse_toplevel_child_imp(uc, state, buf, &mut end)?;
         if end {

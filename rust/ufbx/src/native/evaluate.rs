@@ -741,7 +741,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     );
 
     // We can free `tmp_parse` already here as all parsing is done by now.
-    buf_free(&mut (*uc.get()).tmp_parse);
+    buf_free(uc.tmp_parse_mut_ptr());
 
     ufbxi_check!(uc, finalize_scene(uc).is_ok(), "ufbxi_finalize_scene(uc)");
 
@@ -900,7 +900,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     map_free(&mut (*uc.get()).dom_node_map);
 
     buf_free(uc.tmp_mut_ptr());
-    buf_free(&mut (*uc.get()).tmp_parse);
+    buf_free(uc.tmp_parse_mut_ptr());
     for i in 0..THREAD_GROUP_COUNT {
         buf_free(&mut (*uc.get()).tmp_thread_parse[i]);
     }

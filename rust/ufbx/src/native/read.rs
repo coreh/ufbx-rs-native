@@ -6160,7 +6160,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             let mut p_node = (*batch).nodes;
             let p_node_end = add_ptr(p_node, (*batch).num_nodes);
             while p_node != p_node_end {
-                buf_clear(&mut (*uc.get()).tmp_parse);
+                buf_clear(uc.tmp_parse_mut_ptr());
 
                 // Push a deferred element ID for tagging warnings
                 uc.set_p_element_id(push::<u32>(&mut (*uc.get()).tmp_element_id, 1));
