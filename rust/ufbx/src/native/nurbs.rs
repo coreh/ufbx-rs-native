@@ -224,6 +224,21 @@ impl TessellateSurfaceContext {
     pub(crate) fn get(&self) -> *mut InnerTessellateSurfaceContext {
         self.0.get().cast()
     }
+
+    // `surface` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn surface(&self) -> *const NurbsSurface {
+        // SAFETY: reading a scalar field; all bit patterns of `*const NurbsSurface` are valid.
+        unsafe { (*self.get()).surface }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_surface(&self, surface: *const NurbsSurface) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).surface = surface;
+        }
+    }
 }
 
 // ufbx.c:27840-27931 `ufbxi_tessellate_nurbs_curve_imp`
@@ -390,7 +405,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     let sub_u: usize = (*tc.get()).opts.span_subdivision_u;
     let sub_v: usize = (*tc.get()).opts.span_subdivision_v;
 
-    let surface: *const NurbsSurface = (*tc.get()).surface;
+    let surface: *const NurbsSurface = tc.surface();
     let mesh: *mut Mesh = &mut (*tc.get()).mesh;
     ufbxi_check_err_msg!(
         &mut (*tc.get()).error,

@@ -3635,7 +3635,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
         core::ptr::copy_nonoverlapping(opts, &mut (*tc.get()).opts, 1);
     }
 
-    (*tc.get()).surface = surface;
+    tc.set_surface(surface);
 
     // C: `int ok = ufbxi_tessellate_nurbs_surface_imp(&tc);`
     let ok: bool = tessellate_nurbs_surface_imp(&tc).is_ok();
