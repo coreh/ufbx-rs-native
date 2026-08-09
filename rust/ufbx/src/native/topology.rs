@@ -88,6 +88,21 @@ impl NgonContext {
     pub(crate) fn get(&self) -> *mut InnerNgonContext {
         self.0.get().cast()
     }
+
+    // `kd_indices` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn kd_indices(&self) -> *mut u32 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u32` are valid.
+        unsafe { (*self.get()).kd_indices }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_kd_indices(&self, kd_indices: *mut u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).kd_indices = kd_indices;
+        }
+    }
 }
 
 // ufbx.c:28267-28272 `ufbxi_kd_triangle`
@@ -202,7 +217,7 @@ unsafe fn kd_check_slow_rec(
 
     // C: `ufbx_vertex_vec3 pos = nc->positions;` — a struct memcpy.
     let pos: VertexVec3 = core::ptr::read(core::ptr::addr_of!((*nc.get()).positions));
-    let kd_indices: *mut u32 = (*nc.get()).kd_indices;
+    let kd_indices: *mut u32 = nc.kd_indices();
 
     while count > 0 {
         let num_left: u32 = count / 2;
@@ -514,7 +529,7 @@ unsafe fn kd_build_rec(
         (*kd).index_plus_one = index.wrapping_add(1);
 
         if depth.wrapping_add(1) == KD_FAST_DEPTH as u32 {
-            (*kd).slow_left = indices.offset_from((*nc.get()).kd_indices) as u32;
+            (*kd).slow_left = indices.offset_from(nc.kd_indices()) as u32;
             (*kd).slow_right = (*kd).slow_left.wrapping_add(num_left);
             (*kd).slow_end = (*kd).slow_right.wrapping_add(num_right);
         } else {
@@ -626,7 +641,7 @@ pub(crate) unsafe fn triangulate_ngon(
     (*nc.get()).axes[2] = normal;
 
     let kd_indices: *mut u32 = indices;
-    (*nc.get()).kd_indices = kd_indices;
+    nc.set_kd_indices(kd_indices);
 
     let kd_tmp: *mut u32 = indices.add(face.num_indices as usize);
 
