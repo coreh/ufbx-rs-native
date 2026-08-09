@@ -177,6 +177,14 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `string_pool` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn string_pool_mut(&self) -> *mut StringPool {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).string_pool }
+    }
+
     // `stream_filename` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn stream_filename_mut(&self) -> *mut String {
@@ -748,7 +756,7 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                 cache_read(cc, cc.name_buf() as *mut c_void, padded_length, false)?;
                 (*cc.get()).channel_name.data = cc.name_buf();
                 (*cc.get()).channel_name.length = length;
-                push_string_place_str(&mut (*cc.get()).string_pool, cc.channel_name_mut(), false)?;
+                push_string_place_str(cc.string_pool_mut(), cc.channel_name_mut(), false)?;
             }
             TAG_SIZE => cache_mc_read_u32(cc, &mut count)?,
             TAG_FVCA => format = CacheDataFormat::Vec3Float,
@@ -936,7 +944,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
             let extra: *mut String = push(&mut (*cc.get()).tmp_stack, 1);
             ufbxi_check_err!(cc.error_mut(), !extra.is_null(), "extra");
             *extra = (*(*tag).children.add(0)).text;
-            push_string_place_str(&mut (*cc.get()).string_pool, extra, false)?;
+            push_string_place_str(cc.string_pool_mut(), extra, false)?;
             num_extra += 1;
             tag = tag.add(1);
         }
@@ -1008,12 +1016,8 @@ pub(crate) unsafe fn cache_load_xml_imp(
                 cc.set_num_channels(cc.num_channels() + 1);
                 (*channel).name = (*name).value;
                 (*channel).interpretation = (*interpretation).value;
-                push_string_place_str(&mut (*cc.get()).string_pool, &mut (*channel).name, false)?;
-                push_string_place_str(
-                    &mut (*cc.get()).string_pool,
-                    &mut (*channel).interpretation,
-                    false,
-                )?;
+                push_string_place_str(cc.string_pool_mut(), &mut (*channel).name, false)?;
+                push_string_place_str(cc.string_pool_mut(), &mut (*channel).interpretation, false)?;
 
                 let sampling_rate = xml_find_attrib(tag, b"SamplingRate\0".as_ptr());
                 let start_time = xml_find_attrib(tag, b"StartTime\0".as_ptr());
@@ -1067,11 +1071,7 @@ pub(crate) unsafe fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
 #[inline(never)]
 pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Result<(), Fail> {
     (*cc.get()).stream_filename = filename;
-    push_string_place_str(
-        &mut (*cc.get()).string_pool,
-        cc.stream_filename_mut(),
-        false,
-    )?;
+    push_string_place_str(cc.string_pool_mut(), cc.stream_filename_mut(), false)?;
 
     // Assume all files have at least 16 bytes of header
     let magic_len: usize = ((*cc.get()).stream.read_fn.unwrap_unchecked())(
@@ -1523,7 +1523,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
     free::<u8>(cc.ator_tmp(), cc.name_buf(), cc.name_cap());
     free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size());
     if !cc.owned_by_scene() {
-        string_pool_temp_free(&mut (*cc.get()).string_pool);
+        string_pool_temp_free(cc.string_pool_mut());
         free_ator(cc.ator_tmp());
     }
 
