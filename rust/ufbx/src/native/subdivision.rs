@@ -170,6 +170,14 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `inputs_cap` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn inputs_cap_mut(&self) -> *mut usize {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).inputs_cap }
+    }
+
     // `inputs` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn inputs_mut(&self) -> *mut *mut SubdivideInput {
@@ -666,7 +674,7 @@ pub(crate) unsafe fn subdivide_layer(
         grow_array::<SubdivideInput>(
             sc.ator_tmp_mut(),
             sc.inputs_mut(),
-            &mut (*sc.get()).inputs_cap,
+            sc.inputs_cap_mut(),
             min_inputs,
         ),
         "ufbxi_grow_array_size((&sc->ator_tmp), sizeof(**(&sc->inputs)), (&sc->inputs), (&sc->inputs_cap), (min_inputs))"
@@ -1001,7 +1009,7 @@ pub(crate) unsafe fn subdivide_layer(
                             grow_array::<SubdivideInput>(
                                 sc.ator_tmp_mut(),
                                 sc.inputs_mut(),
-                                &mut (*sc.get()).inputs_cap,
+                                sc.inputs_cap_mut(),
                                 num_inputs.wrapping_add(1),
                             ),
                             "ufbxi_grow_array_size((&sc->ator_tmp), sizeof(**(&sc->inputs)), (&sc->inputs), (&sc->inputs_cap), (num_inputs + 1))"
@@ -1036,7 +1044,7 @@ pub(crate) unsafe fn subdivide_layer(
                             grow_array::<SubdivideInput>(
                                 sc.ator_tmp_mut(),
                                 sc.inputs_mut(),
-                                &mut (*sc.get()).inputs_cap,
+                                sc.inputs_cap_mut(),
                                 num_inputs.wrapping_add(2),
                             ),
                             "ufbxi_grow_array_size((&sc->ator_tmp), sizeof(**(&sc->inputs)), (&sc->inputs), (&sc->inputs_cap), (num_inputs + 2))"
