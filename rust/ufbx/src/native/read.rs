@@ -3636,7 +3636,7 @@ pub(crate) unsafe fn read_mesh(
                     let arr: *mut ValueArray = find_array(n, sp::TextureId.as_ptr(), b'i');
 
                     let tex: *mut TmpMeshTexture =
-                        push_zero::<TmpMeshTexture>(&mut (*uc.get()).tmp_mesh_textures, 1);
+                        push_zero::<TmpMeshTexture>(uc.tmp_mesh_textures_mut_ptr(), 1);
                     ufbxi_check!(uc, !tex.is_null(), "tex");
                     if !arr.is_null() {
                         (*tex).face_texture = (*arr).data as *mut u32;
@@ -3823,7 +3823,7 @@ pub(crate) unsafe fn read_mesh(
         (*extra).texture_count = num_textures;
         (*extra).texture_arr = push_pop::<TmpMeshTexture>(
             uc.tmp_mut_ptr(),
-            &mut (*uc.get()).tmp_mesh_textures,
+            uc.tmp_mesh_textures_mut_ptr(),
             num_textures,
         );
         ufbxi_check!(uc, !(*extra).texture_arr.is_null(), "extra->texture_arr");
