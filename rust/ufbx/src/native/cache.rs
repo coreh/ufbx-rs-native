@@ -176,6 +176,21 @@ impl CacheContext {
     pub(crate) fn get(&self) -> *mut InnerCacheContext {
         self.0.get().cast()
     }
+
+    // `owned_by_scene` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn owned_by_scene(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).owned_by_scene }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_owned_by_scene(&self, owned_by_scene: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).owned_by_scene = owned_by_scene;
+        }
+    }
 }
 
 // ufbx.c:24036-24078 `ufbxi_cache_read`
@@ -1285,7 +1300,7 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
         core::ptr::read(&(*cc.get()).cache),
     );
     (*(*cc.get()).imp).magic = CACHE_IMP_MAGIC;
-    (*(*cc.get()).imp).owned_by_scene = (*cc.get()).owned_by_scene;
+    (*(*cc.get()).imp).owned_by_scene = cc.owned_by_scene();
     (*(*cc.get()).imp).refcount.ator = (*cc.get()).ator_result;
     (*(*cc.get()).imp).refcount.buf = (*cc.get()).result;
     (*(*cc.get()).imp).refcount.buf.ator = &raw mut (*(*cc.get()).imp).refcount.ator;
@@ -1313,7 +1328,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
         (*cc.get()).tmp_arr,
         (*cc.get()).tmp_arr_size,
     );
-    if !(*cc.get()).owned_by_scene {
+    if !cc.owned_by_scene() {
         string_pool_temp_free(&mut (*cc.get()).string_pool);
         free_ator((*cc.get()).ator_tmp);
     }
@@ -1326,7 +1341,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
             b"Failed to load geometry cache\0".as_ptr(),
             core::ptr::null_mut(),
         );
-        if !(*cc.get()).owned_by_scene {
+        if !cc.owned_by_scene() {
             buf_free(&mut (*cc.get()).string_pool.buf);
             free_ator(&mut (*cc.get()).ator_result);
         }
@@ -1499,7 +1514,7 @@ pub(crate) unsafe fn load_external_cache(
 ) -> Result<(), Fail> {
     // C: `ufbxi_cache_context cc = { UFBX_ERROR_NONE };`
     let cc: CacheContext = core::mem::zeroed();
-    (*cc.get()).owned_by_scene = true;
+    cc.set_owned_by_scene(true);
 
     (*cc.get()).open_file_cb = (*uc.get()).opts.open_file_cb;
     (*cc.get()).frames_per_second = (*uc.get()).scene.settings.frames_per_second;
