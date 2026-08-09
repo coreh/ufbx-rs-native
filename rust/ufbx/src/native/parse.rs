@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn usemtl_index(&self) -> u32 {
+        // SAFETY: reading a scalar; all bit patterns of `u32` are valid.
+        unsafe { (*self.get()).usemtl_index }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_usemtl_index(&self, usemtl_index: u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).usemtl_index = usemtl_index;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn usemtl_fbx_id(&self) -> u64 {
         // SAFETY: reading a scalar; all bit patterns of `u64` are valid.
         unsafe { (*self.get()).usemtl_fbx_id }

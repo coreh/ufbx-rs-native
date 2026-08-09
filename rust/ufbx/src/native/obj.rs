@@ -699,8 +699,9 @@ pub(crate) unsafe fn obj_parse_indices(
                 connect_oo(uc, uc.obj().usemtl_fbx_id(), (*mesh).fbx_node_id)?;
 
                 // C: `uint32_t index = ++uc->obj.usemtl_index;`
-                (*uc.obj().get()).usemtl_index = (*uc.obj().get()).usemtl_index.wrapping_add(1);
-                let index: u32 = (*uc.obj().get()).usemtl_index;
+                uc.obj()
+                    .set_usemtl_index(uc.obj().usemtl_index().wrapping_add(1));
+                let index: u32 = uc.obj().usemtl_index();
                 ufbxi_check!(uc, index < u32::MAX, "index < UINT32_MAX");
                 (*entry).user_id = index;
 
