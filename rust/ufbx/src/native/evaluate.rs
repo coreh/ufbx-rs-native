@@ -2040,10 +2040,79 @@ pub(crate) struct EvalContext(
     pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerEvalContext>>,
 );
 
+// Typed interior-mutable VIEW over the `opts` field, reinterpreted in place
+// (approach A). Generated ABI-fixed `RawEvaluateOpts` plays the `Inner` role;
+// `MaybeUninit` makes forming `&EvaluateOptsView` assert no validity — each leaf getter
+// asserts only the field it reads.
+#[repr(transparent)]
+pub(crate) struct EvaluateOptsView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawEvaluateOpts>>);
+
+impl EvaluateOptsView {
+    #[inline(always)]
+    fn get(&self) -> *mut RawEvaluateOpts {
+        self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn evaluate_caches(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.evaluate_caches` read already makes.
+        unsafe { (*self.get()).evaluate_caches }
+    }
+
+    #[inline(always)]
+    pub(crate) fn evaluate_flags(&self) -> u32 {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.evaluate_flags` read already makes.
+        unsafe { (*self.get()).evaluate_flags }
+    }
+
+    #[inline(always)]
+    pub(crate) fn evaluate_skinning(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.evaluate_skinning` read already makes.
+        unsafe { (*self.get()).evaluate_skinning }
+    }
+
+    #[inline(always)]
+    pub(crate) fn load_external_files(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.load_external_files` read already makes.
+        unsafe { (*self.get()).load_external_files }
+    }
+
+    #[inline(always)]
+    pub(crate) fn open_file_cb_ptr(&self) -> *const crate::generated::RawOpenFileCb {
+        // SAFETY: `&raw const` address of a read-only sub-struct.
+        unsafe { &raw const (*self.get()).open_file_cb }
+    }
+
+    #[inline(always)]
+    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        // SAFETY: `&raw const` address of a read-only sub-struct.
+        unsafe { &raw const (*self.get()).result_allocator }
+    }
+
+    #[inline(always)]
+    pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        // SAFETY: `&raw const` address of a read-only sub-struct.
+        unsafe { &raw const (*self.get()).temp_allocator }
+    }
+}
+
 impl EvalContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerEvalContext {
         self.0.get().cast()
+    }
+
+    // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `EvaluateOptsView`.
+    #[inline(always)]
+    pub(crate) fn opts_view(&self) -> &EvaluateOptsView {
+        // SAFETY: `EvaluateOptsView` is repr(transparent) over the `opts` field's layout,
+        // which lives in this context's outer UnsafeCell; a shared interior-mutable
+        // `&EvaluateOptsView` is sound and asserts no validity.
+        unsafe { &*(&raw const (*self.get()).opts as *const EvaluateOptsView) }
     }
 
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -2883,7 +2952,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             ec.time(),
             props,
             num_animated,
-            (*ec.get()).opts.evaluate_flags,
+            ec.opts_view().evaluate_flags(),
         );
         ptr::write(ptr::addr_of_mut!((*elem).props), new_props);
         // C: `elem->props.defaults = &ec->src_scene.elements.data[elem->element_id]->props;`
@@ -2904,12 +2973,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     );
 
     // Evaluate skinning if requested
-    if (*ec.get()).opts.evaluate_skinning {
+    if ec.opts_view().evaluate_skinning() {
         // C: `ufbx_geometry_cache_data_opts cache_opts = { 0 };`
         let mut cache_opts: RawGeometryCacheDataOpts = MaybeUninit::zeroed().assume_init();
         // C: `cache_opts.open_file_cb = ec->opts.open_file_cb;` (struct assignment)
         ptr::copy_nonoverlapping(
-            ptr::addr_of!((*ec.get()).opts.open_file_cb),
+            ec.opts_view().open_file_cb_ptr(),
             ptr::addr_of_mut!(cache_opts.open_file_cb),
             1,
         );
@@ -2919,7 +2988,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             ec.result_mut_ptr(),
             ec.tmp_mut_ptr(),
             ec.time(),
-            (*ec.get()).opts.load_external_files && (*ec.get()).opts.evaluate_caches,
+            ec.opts_view().load_external_files() && ec.opts_view().evaluate_caches(),
             &mut cache_opts,
         )?;
     }
@@ -3012,13 +3081,13 @@ pub(crate) unsafe fn evaluate_scene(
     init_ator(
         ec.error_mut_ptr(),
         ec.ator_tmp_mut_ptr(),
-        ptr::addr_of!((*ec.get()).opts.temp_allocator),
+        ec.opts_view().temp_allocator_ptr(),
         b"temp\0".as_ptr(),
     );
     init_ator(
         ec.error_mut_ptr(),
         ec.ator_result_mut_ptr(),
-        ptr::addr_of!((*ec.get()).opts.result_allocator),
+        ec.opts_view().result_allocator_ptr(),
         b"result\0".as_ptr(),
     );
 
