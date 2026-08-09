@@ -6077,9 +6077,9 @@ pub(crate) unsafe fn resolve_filenames(
 ) -> Result<(), Fail> {
     if strblob_length(relative_filename, raw) == 0 {
         let original_file_path: *const Strblob = if raw {
-            &(*uc.get()).scene.metadata.raw_original_file_path as *const Blob as *const Strblob
+            &raw const (*uc.get()).scene.metadata.raw_original_file_path as *const Strblob
         } else {
-            &(*uc.get()).scene.metadata.original_file_path as *const String as *const Strblob
+            &raw const (*uc.get()).scene.metadata.original_file_path as *const Strblob
         };
 
         absolute_to_relative_path(

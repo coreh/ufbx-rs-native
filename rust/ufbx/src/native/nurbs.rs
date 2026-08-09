@@ -514,11 +514,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
 
     (*tc.imp()).magic = LINE_CURVE_IMP_MAGIC;
     // C: `tc->imp->curve = tc->line` — struct assignment (memcpy).
-    core::ptr::copy_nonoverlapping(
-        &(*tc.get()).line as *const LineCurve,
-        &mut (*tc.imp()).curve,
-        1,
-    );
+    core::ptr::copy_nonoverlapping(&raw const (*tc.get()).line, &mut (*tc.imp()).curve, 1);
     (*tc.imp()).refcount.ator = (*tc.get()).ator_result;
     (*tc.imp()).refcount.buf = (*tc.get()).result;
 
@@ -927,7 +923,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
 
     (*tc.imp()).magic = MESH_IMP_MAGIC;
     // C: `tc->imp->mesh = tc->mesh` — struct assignment (memcpy).
-    core::ptr::copy_nonoverlapping(&(*tc.get()).mesh as *const Mesh, &mut (*tc.imp()).mesh, 1);
+    core::ptr::copy_nonoverlapping(&raw const (*tc.get()).mesh, &mut (*tc.imp()).mesh, 1);
     (*tc.imp()).refcount.ator = (*tc.get()).ator_result;
     (*tc.imp()).refcount.buf = (*tc.get()).result;
     (*tc.imp()).mesh.subdivision_evaluated = true;

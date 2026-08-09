@@ -553,7 +553,7 @@ pub(crate) unsafe fn read_header_extension(uc: &Context) -> Result<(), Fail> {
             ufbxi_ignore!(get_val1(
                 child,
                 b"S\0".as_ptr(),
-                &mut (*uc.get()).scene.metadata.creator as *mut String as *mut c_void,
+                &raw mut (*uc.get()).scene.metadata.creator as *mut c_void,
             ));
         }
 

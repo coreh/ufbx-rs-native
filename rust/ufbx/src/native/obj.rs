@@ -1921,7 +1921,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
             resolve_relative_filename(
                 uc,
                 dst as *mut Strblob,
-                &(*uc.get()).obj.mtllib_relative_path as *const Blob as *const Strblob,
+                &raw const (*uc.get()).obj.mtllib_relative_path as *const Strblob,
                 true,
             )?;
             has_stream = open_file(
