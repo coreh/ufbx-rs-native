@@ -7222,8 +7222,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
     {
         // Generate and patch procedural index buffers
-        let zero_indices: *mut u32 =
-            push::<u32>(&mut (*uc.get()).result, (*uc.get()).max_zero_indices);
+        let zero_indices: *mut u32 = push::<u32>(&mut (*uc.get()).result, uc.max_zero_indices());
         let consecutive_indices: *mut u32 =
             push::<u32>(&mut (*uc.get()).result, (*uc.get()).max_consecutive_indices);
         ufbxi_check!(
@@ -7232,7 +7231,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             "zero_indices && consecutive_indices"
         );
 
-        ptr::write_bytes(zero_indices, 0, (*uc.get()).max_zero_indices);
+        ptr::write_bytes(zero_indices, 0, uc.max_zero_indices());
         for i in 0..(*uc.get()).max_consecutive_indices {
             *consecutive_indices.add(i) = i as u32;
         }

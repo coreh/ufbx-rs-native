@@ -2082,8 +2082,7 @@ pub(crate) unsafe fn read_vertex_element(
             // Indexed by all same: ??? This could be possibly used for making
             // holes with invalid indices, but that seems really fringe.
             // Just use the shared zero index buffer for this.
-            (*uc.get()).max_zero_indices =
-                max_sz((*uc.get()).max_zero_indices, (*mesh).num_indices);
+            uc.set_max_zero_indices(max_sz(uc.max_zero_indices(), (*mesh).num_indices));
             (*attrib).indices.data = SENTINEL_INDEX_ZERO.as_ptr();
             (*attrib).unique_per_vertex = true;
         } else {
@@ -2153,8 +2152,7 @@ pub(crate) unsafe fn read_vertex_element(
             )?;
         } else if mapping == sp::AllSame.as_ptr() {
             // Direct by all same: This cannot fail as the index list is just zero.
-            (*uc.get()).max_zero_indices =
-                max_sz((*uc.get()).max_zero_indices, (*mesh).num_indices);
+            uc.set_max_zero_indices(max_sz(uc.max_zero_indices(), (*mesh).num_indices));
             (*attrib).indices.data = SENTINEL_INDEX_ZERO.as_ptr();
             (*attrib).unique_per_vertex = true;
         } else {
@@ -2709,7 +2707,7 @@ pub(crate) unsafe fn process_indices(
 
     // HACK(consecutive-faces): Prepare for finalize to re-use a consecutive/zero
     // index buffer for face materials..
-    (*uc.get()).max_zero_indices = max_sz((*uc.get()).max_zero_indices, (*mesh).num_faces);
+    uc.set_max_zero_indices(max_sz(uc.max_zero_indices(), (*mesh).num_faces));
     (*uc.get()).max_consecutive_indices =
         max_sz((*uc.get()).max_consecutive_indices, (*mesh).num_faces);
 
@@ -3672,7 +3670,7 @@ pub(crate) unsafe fn read_mesh(
 
     // Always use a default zero material, this will be removed if no materials are found
     if (*mesh).face_material.count == 0 {
-        (*uc.get()).max_zero_indices = max_sz((*uc.get()).max_zero_indices, (*mesh).num_faces);
+        uc.set_max_zero_indices(max_sz(uc.max_zero_indices(), (*mesh).num_faces));
         (*mesh).face_material.data = SENTINEL_INDEX_ZERO.as_ptr();
         (*mesh).face_material.count = (*mesh).num_faces;
     }
