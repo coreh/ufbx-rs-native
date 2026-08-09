@@ -110,7 +110,7 @@ pub(crate) enum CacheXmlFormat {
 // ufbx.c:23984-24034 `ufbxi_cache_context`
 #[cfg(feature = "geometry-cache")]
 #[repr(C)]
-pub(crate) struct CacheContext {
+pub(crate) struct InnerCacheContext {
     pub error: Error,
     pub filename: String,
     pub owned_by_scene: bool,
@@ -163,72 +163,93 @@ pub(crate) struct CacheContext {
     pub buffer: [u8; 128],
 }
 
+// Safe `&CacheContext` handle over the fields-struct `InnerCacheContext`, mirroring
+// the `Context`/`InnerContext` seam in `parse.rs`. `MaybeUninit` because
+// `InnerCacheContext` embeds the public `GeometryCache` (enum-bearing, so a plain
+// `&InnerCacheContext` could not be formed soundly); `UnsafeCell` gives the
+// interior mutability every `&CacheContext` call site relies on.
+#[repr(transparent)]
+pub(crate) struct CacheContext(core::cell::UnsafeCell<core::mem::MaybeUninit<InnerCacheContext>>);
+
+impl CacheContext {
+    #[inline(always)]
+    pub(crate) fn get(&self) -> *mut InnerCacheContext {
+        self.0.get().cast()
+    }
+}
+
 // ufbx.c:24036-24078 `ufbxi_cache_read`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_read(
-    cc: *mut CacheContext,
+    cc: &CacheContext,
     dst: *mut c_void,
     mut size: usize,
     allow_eof: bool,
 ) -> Result<(), Fail> {
     let mut dst: *mut c_void = dst;
-    let buffered: usize = min_sz(to_size((*cc).pos_end.offset_from((*cc).pos)), size);
-    core::ptr::copy_nonoverlapping((*cc).pos, dst as *mut u8, buffered);
-    (*cc).pos = (*cc).pos.add(buffered);
+    let buffered: usize = min_sz(
+        to_size((*cc.get()).pos_end.offset_from((*cc.get()).pos)),
+        size,
+    );
+    core::ptr::copy_nonoverlapping((*cc.get()).pos, dst as *mut u8, buffered);
+    (*cc.get()).pos = (*cc.get()).pos.add(buffered);
     size -= buffered;
-    (*cc).file_offset = (*cc).file_offset.wrapping_add(buffered as u64);
+    (*cc.get()).file_offset = (*cc.get()).file_offset.wrapping_add(buffered as u64);
     if size == 0 {
         return Ok(());
     }
     dst = (dst as *mut u8).add(buffered) as *mut c_void;
 
-    if size >= size_of_val(&(*cc).buffer) {
+    if size >= size_of_val(&(*cc.get()).buffer) {
         let num_read: usize =
-            ((*cc).stream.read_fn.unwrap_unchecked())((*cc).stream.user, dst, size);
+            ((*cc.get()).stream.read_fn.unwrap_unchecked())((*cc.get()).stream.user, dst, size);
         ufbxi_check_err_msg!(
-            &mut (*cc).error,
+            &mut (*cc.get()).error,
             num_read <= size,
             "IO error",
             "num_read <= size"
         );
         if !allow_eof {
             ufbxi_check_err_msg!(
-                &mut (*cc).error,
+                &mut (*cc.get()).error,
                 num_read == size,
                 "Truncated file",
                 "num_read == size"
             );
         }
-        (*cc).file_offset = (*cc).file_offset.wrapping_add(num_read as u64);
+        (*cc.get()).file_offset = (*cc.get()).file_offset.wrapping_add(num_read as u64);
         size -= num_read;
         dst = (dst as *mut u8).add(num_read) as *mut c_void;
     } else {
-        let num_read: usize = ((*cc).stream.read_fn.unwrap_unchecked())(
-            (*cc).stream.user,
-            (*cc).buffer.as_mut_ptr() as *mut c_void,
-            size_of_val(&(*cc).buffer),
+        let num_read: usize = ((*cc.get()).stream.read_fn.unwrap_unchecked())(
+            (*cc.get()).stream.user,
+            (*cc.get()).buffer.as_mut_ptr() as *mut c_void,
+            size_of_val(&(*cc.get()).buffer),
         );
         ufbxi_check_err_msg!(
-            &mut (*cc).error,
-            num_read <= size_of_val(&(*cc).buffer),
+            &mut (*cc.get()).error,
+            num_read <= size_of_val(&(*cc.get()).buffer),
             "IO error",
             "num_read <= sizeof(cc->buffer)"
         );
         if !allow_eof {
             ufbxi_check_err_msg!(
-                &mut (*cc).error,
+                &mut (*cc.get()).error,
                 num_read >= size,
                 "Truncated file",
                 "num_read >= size"
             );
         }
-        (*cc).pos = (*cc).buffer.as_ptr();
-        (*cc).pos_end = (*cc).buffer.as_ptr().add(size_of_val(&(*cc).buffer));
+        (*cc.get()).pos = (*cc.get()).buffer.as_ptr();
+        (*cc.get()).pos_end = (*cc.get())
+            .buffer
+            .as_ptr()
+            .add(size_of_val(&(*cc.get()).buffer));
 
-        core::ptr::copy_nonoverlapping((*cc).pos, dst as *mut u8, size);
-        (*cc).pos = (*cc).pos.add(size);
-        (*cc).file_offset = (*cc).file_offset.wrapping_add(size as u64);
+        core::ptr::copy_nonoverlapping((*cc.get()).pos, dst as *mut u8, size);
+        (*cc.get()).pos = (*cc.get()).pos.add(size);
+        (*cc.get()).file_offset = (*cc.get()).file_offset.wrapping_add(size as u64);
 
         let num_written: usize = min_sz(size, num_read);
         size -= num_written;
@@ -245,23 +266,29 @@ pub(crate) unsafe fn cache_read(
 // ufbx.c:24080-24116 `ufbxi_cache_skip`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_skip(cc: *mut CacheContext, mut size: u64) -> Result<(), Fail> {
+pub(crate) unsafe fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), Fail> {
     // C-parity: `cc->file_offset += size;` is uint64_t addition, which wraps.
     // `ufbxi_cache_load_pc2` (ufbx.c:24270) passes `total_points * 12 - 1`
     // guarded only by `total_points < UINT64_MAX / 12` (ufbx.c:24262), so a
     // crafted PC2 header reaches this with `size` near `UINT64_MAX`.
-    (*cc).file_offset = (*cc).file_offset.wrapping_add(size);
+    (*cc.get()).file_offset = (*cc.get()).file_offset.wrapping_add(size);
 
-    let buffered: u64 = min64((*cc).pos_end.offset_from((*cc).pos) as u64, size);
-    (*cc).pos = (*cc).pos.add(buffered as usize);
+    let buffered: u64 = min64(
+        (*cc.get()).pos_end.offset_from((*cc.get()).pos) as u64,
+        size,
+    );
+    (*cc.get()).pos = (*cc.get()).pos.add(buffered as usize);
     size -= buffered;
 
-    if (*cc).stream.skip_fn.is_some() {
+    if (*cc.get()).stream.skip_fn.is_some() {
         while size >= MAX_SKIP_SIZE as u64 {
             size -= MAX_SKIP_SIZE as u64;
             ufbxi_check_err_msg!(
-                &mut (*cc).error,
-                ((*cc).stream.skip_fn.unwrap_unchecked())((*cc).stream.user, MAX_SKIP_SIZE - 1),
+                &mut (*cc.get()).error,
+                ((*cc.get()).stream.skip_fn.unwrap_unchecked())(
+                    (*cc.get()).stream.user,
+                    MAX_SKIP_SIZE - 1
+                ),
                 "Truncated file",
                 "cc->stream.skip_fn(cc->stream.user, UFBXI_MAX_SKIP_SIZE - 1)"
             );
@@ -270,14 +297,19 @@ pub(crate) unsafe fn cache_skip(cc: *mut CacheContext, mut size: u64) -> Result<
             // and causes us to seek indefinitely forwards as `fseek()` does not
             // report if we hit EOF...
             let mut single_byte = MaybeUninit::<[u8; 1]>::uninit(); // ufbxi_uninit
-            let num_read: usize = ((*cc).stream.read_fn.unwrap_unchecked())(
-                (*cc).stream.user,
+            let num_read: usize = ((*cc.get()).stream.read_fn.unwrap_unchecked())(
+                (*cc.get()).stream.user,
                 single_byte.as_mut_ptr() as *mut c_void,
                 1,
             );
-            ufbxi_check_err_msg!(&mut (*cc).error, num_read <= 1, "IO error", "num_read <= 1");
             ufbxi_check_err_msg!(
-                &mut (*cc).error,
+                &mut (*cc.get()).error,
+                num_read <= 1,
+                "IO error",
+                "num_read <= 1"
+            );
+            ufbxi_check_err_msg!(
+                &mut (*cc.get()).error,
                 num_read == 1,
                 "Truncated file",
                 "num_read == 1"
@@ -286,8 +318,11 @@ pub(crate) unsafe fn cache_skip(cc: *mut CacheContext, mut size: u64) -> Result<
 
         if size > 0 {
             ufbxi_check_err_msg!(
-                &mut (*cc).error,
-                ((*cc).stream.skip_fn.unwrap_unchecked())((*cc).stream.user, size as usize),
+                &mut (*cc.get()).error,
+                ((*cc.get()).stream.skip_fn.unwrap_unchecked())(
+                    (*cc.get()).stream.user,
+                    size as usize
+                ),
                 "Truncated file",
                 "cc->stream.skip_fn(cc->stream.user, (size_t)size)"
             );
@@ -298,9 +333,9 @@ pub(crate) unsafe fn cache_skip(cc: *mut CacheContext, mut size: u64) -> Result<
             let to_skip: usize = min64(size, size_of::<[u8; 2048]>() as u64) as usize;
             size -= to_skip as u64;
             ufbxi_check_err_msg!(
-                &mut (*cc).error,
-                ((*cc).stream.read_fn.unwrap_unchecked())(
-                    (*cc).stream.user,
+                &mut (*cc.get()).error,
+                ((*cc.get()).stream.read_fn.unwrap_unchecked())(
+                    (*cc.get()).stream.user,
                     skip_buf.as_mut_ptr() as *mut c_void,
                     to_skip
                 ) != 0,
@@ -323,7 +358,7 @@ pub(crate) const fn cache_mc_tag(a: u8, b: u8, c: u8, d: u8) -> u32 {
 // ufbx.c:24120-24129 `ufbxi_cache_mc_read_tag`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_mc_read_tag(cc: *mut CacheContext, p_tag: *mut u32) -> Result<(), Fail> {
+pub(crate) unsafe fn cache_mc_read_tag(cc: &CacheContext, p_tag: *mut u32) -> Result<(), Fail> {
     let mut buf = MaybeUninit::<[u8; 4]>::uninit(); // ufbxi_uninit
     let buf: *mut u8 = buf.as_mut_ptr() as *mut u8;
     cache_read(cc, buf as *mut c_void, 4, true)?;
@@ -332,7 +367,7 @@ pub(crate) unsafe fn cache_mc_read_tag(cc: *mut CacheContext, p_tag: *mut u32) -
         | (*buf.add(2) as u32) << 8u32
         | (*buf.add(3) as u32);
     if *p_tag == cache_mc_tag(b'F', b'O', b'R', b'8') {
-        (*cc).mc_for8 = true;
+        (*cc.get()).mc_for8 = true;
     }
     Ok(())
 }
@@ -340,10 +375,7 @@ pub(crate) unsafe fn cache_mc_read_tag(cc: *mut CacheContext, p_tag: *mut u32) -
 // ufbx.c:24131-24140 `ufbxi_cache_mc_read_u32`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_mc_read_u32(
-    cc: *mut CacheContext,
-    p_value: *mut u32,
-) -> Result<(), Fail> {
+pub(crate) unsafe fn cache_mc_read_u32(cc: &CacheContext, p_value: *mut u32) -> Result<(), Fail> {
     let mut buf = MaybeUninit::<[u8; 4]>::uninit(); // ufbxi_uninit
     let buf: *mut u8 = buf.as_mut_ptr() as *mut u8;
     cache_read(cc, buf as *mut c_void, 4, false)?;
@@ -351,7 +383,7 @@ pub(crate) unsafe fn cache_mc_read_u32(
         | (*buf.add(1) as u32) << 16
         | (*buf.add(2) as u32) << 8u32
         | (*buf.add(3) as u32);
-    if (*cc).mc_for8 {
+    if (*cc.get()).mc_for8 {
         cache_read(cc, buf as *mut c_void, 4, false)?;
     }
     Ok(())
@@ -360,11 +392,8 @@ pub(crate) unsafe fn cache_mc_read_u32(
 // ufbx.c:24142-24156 `ufbxi_cache_mc_read_u64`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_mc_read_u64(
-    cc: *mut CacheContext,
-    p_value: *mut u64,
-) -> Result<(), Fail> {
-    if !(*cc).mc_for8 {
+pub(crate) unsafe fn cache_mc_read_u64(cc: &CacheContext, p_value: *mut u64) -> Result<(), Fail> {
+    if !(*cc.get()).mc_for8 {
         let mut v32 = MaybeUninit::<u32>::uninit(); // ufbxi_uninit
         cache_mc_read_u32(cc, v32.as_mut_ptr())?;
         *p_value = v32.assume_init() as u64;
@@ -392,7 +421,7 @@ static CACHE_DATA_FORMAT_SIZE: [u8; 5] = [0, 4, 12, 8, 24];
 // ufbx.c:24162-24243 `ufbxi_cache_load_mc`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_mc(cc: *mut CacheContext) -> Result<(), Fail> {
+pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
     const TAG_CACH: u32 = cache_mc_tag(b'C', b'A', b'C', b'H');
     const TAG_MYCH: u32 = cache_mc_tag(b'M', b'Y', b'C', b'H');
     const TAG_FOR4: u32 = cache_mc_tag(b'F', b'O', b'R', b'4');
@@ -428,20 +457,20 @@ pub(crate) unsafe fn cache_load_mc(cc: *mut CacheContext) -> Result<(), Fail> {
         if tag == TAG_CACH || tag == TAG_MYCH {
             continue;
         }
-        if (*cc).mc_for8 {
+        if (*cc.get()).mc_for8 {
             cache_read(cc, skip_buf.as_mut_ptr() as *mut c_void, 4, false)?;
         }
 
         cache_mc_read_u64(cc, size.as_mut_ptr())?;
         let size: u64 = size.assume_init();
-        let begin: u64 = (*cc).file_offset;
+        let begin: u64 = (*cc.get()).file_offset;
 
-        let alignment: usize = if (*cc).mc_for8 { 8 } else { 4 };
+        let alignment: usize = if (*cc.get()).mc_for8 { 8 } else { 4 };
 
         let mut format: CacheDataFormat = CacheDataFormat::Unknown;
         match tag {
-            TAG_FOR4 => (*cc).mc_for8 = false,
-            TAG_FOR8 => (*cc).mc_for8 = true,
+            TAG_FOR4 => (*cc.get()).mc_for8 = false,
+            TAG_FOR8 => (*cc.get()).mc_for8 = true,
             TAG_VRSN => cache_mc_read_u32(cc, &mut version)?,
             TAG_STIM => {
                 cache_mc_read_u32(cc, &mut time_start)?;
@@ -451,7 +480,7 @@ pub(crate) unsafe fn cache_load_mc(cc: *mut CacheContext) -> Result<(), Fail> {
             TAG_TIME => cache_mc_read_u32(cc, &mut time)?,
             TAG_CHNM => {
                 ufbxi_check_err!(
-                    &mut (*cc).error,
+                    &mut (*cc.get()).error,
                     size > 0 && size < usize::MAX as u64,
                     "size > 0 && size < SIZE_MAX"
                 );
@@ -459,19 +488,28 @@ pub(crate) unsafe fn cache_load_mc(cc: *mut CacheContext) -> Result<(), Fail> {
                 let padded_length: usize =
                     (size as usize).wrapping_add(alignment).wrapping_sub(1) & !(alignment - 1);
                 ufbxi_check_err!(
-                    &mut (*cc).error,
+                    &mut (*cc.get()).error,
                     grow_array::<u8>(
-                        (*cc).ator_tmp,
-                        &mut (*cc).name_buf,
-                        &mut (*cc).name_cap,
+                        (*cc.get()).ator_tmp,
+                        &mut (*cc.get()).name_buf,
+                        &mut (*cc.get()).name_cap,
                         padded_length
                     ),
                     "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->name_buf)), (&cc->name_buf), (&cc->name_cap), (padded_length))"
                 );
-                cache_read(cc, (*cc).name_buf as *mut c_void, padded_length, false)?;
-                (*cc).channel_name.data = (*cc).name_buf;
-                (*cc).channel_name.length = length;
-                push_string_place_str(&mut (*cc).string_pool, &mut (*cc).channel_name, false)?;
+                cache_read(
+                    cc,
+                    (*cc.get()).name_buf as *mut c_void,
+                    padded_length,
+                    false,
+                )?;
+                (*cc.get()).channel_name.data = (*cc.get()).name_buf;
+                (*cc.get()).channel_name.length = length;
+                push_string_place_str(
+                    &mut (*cc.get()).string_pool,
+                    &mut (*cc.get()).channel_name,
+                    false,
+                )?;
             }
             TAG_SIZE => cache_mc_read_u32(cc, &mut count)?,
             TAG_FVCA => format = CacheDataFormat::Vec3Float,
@@ -479,29 +517,29 @@ pub(crate) unsafe fn cache_load_mc(cc: *mut CacheContext) -> Result<(), Fail> {
             TAG_FBCA => format = CacheDataFormat::RealFloat,
             TAG_DBCA => format = CacheDataFormat::RealDouble,
             TAG_DBLA => format = CacheDataFormat::RealDouble,
-            _ => ufbxi_fail_err!(&mut (*cc).error, "Unknown tag"),
+            _ => ufbxi_fail_err!(&mut (*cc.get()).error, "Unknown tag"),
         }
 
         if format != CacheDataFormat::Unknown {
-            let frame: *mut CacheFrame = push_zero(&mut (*cc).tmp_stack, 1);
-            ufbxi_check_err!(&mut (*cc).error, !frame.is_null(), "frame");
+            let frame: *mut CacheFrame = push_zero(&mut (*cc.get()).tmp_stack, 1);
+            ufbxi_check_err!(&mut (*cc.get()).error, !frame.is_null(), "frame");
 
             let elem_size: u32 = CACHE_DATA_FORMAT_SIZE[format as u32 as usize] as u32;
             let total_size: u64 = elem_size as u64 * count as u64;
             // C: `size >= elem_size * count` — `uint32_t * uint32_t` wraps mod
             // 2^32 BEFORE the comparison widens it to `uint64_t`.
             ufbxi_check_err!(
-                &mut (*cc).error,
+                &mut (*cc.get()).error,
                 size >= elem_size.wrapping_mul(count) as u64,
                 "size >= elem_size * count"
             );
 
-            (*frame).channel = (*cc).channel_name;
+            (*frame).channel = (*cc.get()).channel_name;
             (*frame).time = time as f64 * (1.0 / 6000.0);
-            (*frame).filename = (*cc).stream_filename;
+            (*frame).filename = (*cc.get()).stream_filename;
             (*frame).data_format = format;
             (*frame).data_encoding = CacheDataEncoding::BigEndian;
-            (*frame).data_offset = (*cc).file_offset;
+            (*frame).data_offset = (*cc.get()).file_offset;
             (*frame).data_count = count;
             (*frame).data_element_bytes = elem_size;
             (*frame).data_total_bytes = total_size;
@@ -511,11 +549,11 @@ pub(crate) unsafe fn cache_load_mc(cc: *mut CacheContext) -> Result<(), Fail> {
                 size.wrapping_add(alignment as u64).wrapping_sub(1) & !((alignment - 1) as u64),
             );
             ufbxi_check_err!(
-                &mut (*cc).error,
-                end >= (*cc).file_offset,
+                &mut (*cc.get()).error,
+                end >= (*cc.get()).file_offset,
                 "end >= cc->file_offset"
             );
-            let left: u64 = end - (*cc).file_offset;
+            let left: u64 = end - (*cc.get()).file_offset;
             cache_skip(cc, left)?;
         }
     }
@@ -526,7 +564,7 @@ pub(crate) unsafe fn cache_load_mc(cc: *mut CacheContext) -> Result<(), Fail> {
 // ufbx.c:24245-24292 `ufbxi_cache_load_pc2`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_pc2(cc: *mut CacheContext) -> Result<(), Fail> {
+pub(crate) unsafe fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
     let mut header = MaybeUninit::<[u8; 32]>::uninit(); // ufbxi_uninit
     let header: *mut u8 = header.as_mut_ptr() as *mut u8;
     cache_read(cc, header as *mut c_void, size_of::<[u8; 32]>(), false)?;
@@ -539,17 +577,17 @@ pub(crate) unsafe fn cache_load_pc2(cc: *mut CacheContext) -> Result<(), Fail> {
 
     let _ = version;
 
-    let frames: *mut CacheFrame = push_zero(&mut (*cc).tmp_stack, num_samples as usize);
-    ufbxi_check_err!(&mut (*cc).error, !frames.is_null(), "frames");
+    let frames: *mut CacheFrame = push_zero(&mut (*cc.get()).tmp_stack, num_samples as usize);
+    ufbxi_check_err!(&mut (*cc.get()).error, !frames.is_null(), "frames");
 
     let total_points: u64 = num_points as u64 * num_samples as u64;
     ufbxi_check_err!(
-        &mut (*cc).error,
+        &mut (*cc.get()).error,
         total_points < u64::MAX / 12,
         "total_points < UINT64_MAX / 12"
     );
 
-    let mut offset: u64 = (*cc).file_offset;
+    let mut offset: u64 = (*cc.get()).file_offset;
 
     // Skip almost to the end of the data and try to read one byte as there's
     // nothing after the data so we can't detect EOF..
@@ -564,9 +602,9 @@ pub(crate) unsafe fn cache_load_pc2(cc: *mut CacheContext) -> Result<(), Fail> {
         let frame: *mut CacheFrame = frames.add(i as usize);
 
         let sample_frame: f64 = start_frame + i as f64 * frames_per_sample;
-        (*frame).channel = (*cc).channel_name;
-        (*frame).time = sample_frame / (*cc).frames_per_second;
-        (*frame).filename = (*cc).stream_filename;
+        (*frame).channel = (*cc.get()).channel_name;
+        (*frame).time = sample_frame / (*cc.get()).frames_per_second;
+        (*frame).filename = (*cc.get()).stream_filename;
         (*frame).data_format = CacheDataFormat::Vec3Float;
         (*frame).data_encoding = CacheDataEncoding::LittleEndian;
         (*frame).data_offset = offset;
@@ -601,16 +639,16 @@ pub(crate) unsafe extern "C" fn tmp_channel_less(
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_sort_tmp_channels(
-    cc: *mut CacheContext,
+    cc: &CacheContext,
     channels: *mut CacheTmpChannel,
     count: usize,
 ) -> Result<(), Fail> {
     ufbxi_check_err!(
-        &mut (*cc).error,
+        &mut (*cc.get()).error,
         grow_array::<u8>(
-            (*cc).ator_tmp,
-            &mut (*cc).tmp_arr,
-            &mut (*cc).tmp_arr_size,
+            (*cc.get()).ator_tmp,
+            &mut (*cc.get()).tmp_arr,
+            &mut (*cc.get()).tmp_arr_size,
             count * size_of::<CacheTmpChannel>()
         ),
         "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->tmp_arr)), (&cc->tmp_arr), (&cc->tmp_arr_size), (count * sizeof(ufbxi_cache_tmp_channel)))"
@@ -619,7 +657,7 @@ pub(crate) unsafe fn cache_sort_tmp_channels(
         size_of::<CacheTmpChannel>(),
         16,
         channels as *mut c_void,
-        (*cc).tmp_arr as *mut c_void,
+        (*cc.get()).tmp_arr as *mut c_void,
         count,
         tmp_channel_less,
         core::ptr::null_mut(),
@@ -631,11 +669,11 @@ pub(crate) unsafe fn cache_sort_tmp_channels(
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_load_xml_imp(
-    cc: *mut CacheContext,
+    cc: &CacheContext,
     doc: *mut XmlDocument,
 ) -> Result<(), Fail> {
-    (*cc).xml_ticks_per_frame = 250;
-    (*cc).xml_filename = (*cc).stream_filename;
+    (*cc.get()).xml_ticks_per_frame = 250;
+    (*cc.get()).xml_filename = (*cc.get()).stream_filename;
 
     let tag_root: *mut XmlTag = xml_find_child((*doc).root, b"Autodesk_Cache_File\0".as_ptr());
     if !tag_root.is_null() {
@@ -656,19 +694,22 @@ pub(crate) unsafe fn cache_load_xml_imp(
                 tag = tag.add(1);
                 continue;
             }
-            let extra: *mut String = push(&mut (*cc).tmp_stack, 1);
-            ufbxi_check_err!(&mut (*cc).error, !extra.is_null(), "extra");
+            let extra: *mut String = push(&mut (*cc.get()).tmp_stack, 1);
+            ufbxi_check_err!(&mut (*cc.get()).error, !extra.is_null(), "extra");
             *extra = (*(*tag).children.add(0)).text;
-            push_string_place_str(&mut (*cc).string_pool, extra, false)?;
+            push_string_place_str(&mut (*cc.get()).string_pool, extra, false)?;
             num_extra += 1;
             tag = tag.add(1);
         }
-        (*cc).cache.extra_info.count = num_extra;
-        (*cc).cache.extra_info.data =
-            push_pop::<String>(&mut (*cc).result, &mut (*cc).tmp_stack, num_extra);
+        (*cc.get()).cache.extra_info.count = num_extra;
+        (*cc.get()).cache.extra_info.data = push_pop::<String>(
+            &mut (*cc.get()).result,
+            &mut (*cc.get()).tmp_stack,
+            num_extra,
+        );
         ufbxi_check_err!(
-            &mut (*cc).error,
-            !(*cc).cache.extra_info.data.is_null(),
+            &mut (*cc.get()).error,
+            !(*cc.get()).cache.extra_info.data.is_null(),
             "cc->cache.extra_info.data"
         );
 
@@ -679,19 +720,19 @@ pub(crate) unsafe fn cache_load_xml_imp(
                 if crate::native::error::strcmp((*type_).value.data, b"OneFilePerFrame\0".as_ptr())
                     == 0
                 {
-                    (*cc).xml_type = CacheXmlType::FilePerFrame;
+                    (*cc.get()).xml_type = CacheXmlType::FilePerFrame;
                 } else if crate::native::error::strcmp((*type_).value.data, b"OneFile\0".as_ptr())
                     == 0
                 {
-                    (*cc).xml_type = CacheXmlType::SingleFile;
+                    (*cc.get()).xml_type = CacheXmlType::SingleFile;
                 }
             }
             if !format.is_null() {
                 if crate::native::error::strcmp((*format).value.data, b"mcc\0".as_ptr()) == 0 {
-                    (*cc).xml_format = CacheXmlFormat::Mcc;
+                    (*cc.get()).xml_format = CacheXmlFormat::Mcc;
                 } else if crate::native::error::strcmp((*format).value.data, b"mcx\0".as_ptr()) == 0
                 {
-                    (*cc).xml_format = CacheXmlFormat::Mcx;
+                    (*cc.get()).xml_format = CacheXmlFormat::Mcx;
                 }
             }
         }
@@ -702,14 +743,18 @@ pub(crate) unsafe fn cache_load_xml_imp(
                 let value: u32 =
                     crate::native::float_parse::parse_uint32_radix((*fps).value.data, 10);
                 if value > 0 {
-                    (*cc).xml_ticks_per_frame = value;
+                    (*cc.get()).xml_ticks_per_frame = value;
                 }
             }
         }
 
         if !tag_channels.is_null() {
-            (*cc).channels = push_zero(&mut (*cc).tmp, (*tag_channels).num_children);
-            ufbxi_check_err!(&mut (*cc).error, !(*cc).channels.is_null(), "cc->channels");
+            (*cc.get()).channels = push_zero(&mut (*cc.get()).tmp, (*tag_channels).num_children);
+            ufbxi_check_err!(
+                &mut (*cc.get()).error,
+                !(*cc.get()).channels.is_null(),
+                "cc->channels"
+            );
 
             // C: `ufbxi_for(ufbxi_xml_tag, tag, tag_channels->children, tag_channels->num_children)`
             let mut tag: *mut XmlTag = (*tag_channels).children;
@@ -724,13 +769,14 @@ pub(crate) unsafe fn cache_load_xml_imp(
                 }
 
                 // C: `&cc->channels[cc->num_channels++]`
-                let channel: *mut CacheTmpChannel = (*cc).channels.add((*cc).num_channels);
-                (*cc).num_channels += 1;
+                let channel: *mut CacheTmpChannel =
+                    (*cc.get()).channels.add((*cc.get()).num_channels);
+                (*cc.get()).num_channels += 1;
                 (*channel).name = (*name).value;
                 (*channel).interpretation = (*interpretation).value;
-                push_string_place_str(&mut (*cc).string_pool, &mut (*channel).name, false)?;
+                push_string_place_str(&mut (*cc.get()).string_pool, &mut (*channel).name, false)?;
                 push_string_place_str(
-                    &mut (*cc).string_pool,
+                    &mut (*cc.get()).string_pool,
                     &mut (*channel).interpretation,
                     false,
                 )?;
@@ -757,27 +803,27 @@ pub(crate) unsafe fn cache_load_xml_imp(
         }
     }
 
-    cache_sort_tmp_channels(cc, (*cc).channels, (*cc).num_channels)?;
+    cache_sort_tmp_channels(cc, (*cc.get()).channels, (*cc.get()).num_channels)?;
     Ok(())
 }
 
 // ufbx.c:24396-24412 `ufbxi_cache_load_xml`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_xml(cc: *mut CacheContext) -> Result<(), Fail> {
+pub(crate) unsafe fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
     // C: `ufbxi_xml_load_opts opts = { 0 };`
     let mut opts: XmlLoadOpts = core::mem::zeroed();
-    opts.ator = (*cc).ator_tmp;
-    opts.read_fn = (*cc).stream.read_fn;
-    opts.read_user = (*cc).stream.user;
-    opts.prefix = (*cc).pos;
-    opts.prefix_length = to_size((*cc).pos_end.offset_from((*cc).pos));
-    let doc: *mut XmlDocument = load_xml(&mut opts, &mut (*cc).error);
-    ufbxi_check_err!(&mut (*cc).error, !doc.is_null(), "doc");
+    opts.ator = (*cc.get()).ator_tmp;
+    opts.read_fn = (*cc.get()).stream.read_fn;
+    opts.read_user = (*cc.get()).stream.user;
+    opts.prefix = (*cc.get()).pos;
+    opts.prefix_length = to_size((*cc.get()).pos_end.offset_from((*cc.get()).pos));
+    let doc: *mut XmlDocument = load_xml(&mut opts, &mut (*cc.get()).error);
+    ufbxi_check_err!(&mut (*cc.get()).error, !doc.is_null(), "doc");
 
     let xml_ok = cache_load_xml_imp(cc, doc);
     free_xml(doc);
-    ufbxi_check_err!(&mut (*cc).error, xml_ok.is_ok(), "xml_ok");
+    ufbxi_check_err!(&mut (*cc.get()).error, xml_ok.is_ok(), "xml_ok");
 
     Ok(())
 }
@@ -785,37 +831,41 @@ pub(crate) unsafe fn cache_load_xml(cc: *mut CacheContext) -> Result<(), Fail> {
 // ufbx.c:24414-24437 `ufbxi_cache_load_file`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_file(cc: *mut CacheContext, filename: String) -> Result<(), Fail> {
-    (*cc).stream_filename = filename;
-    push_string_place_str(&mut (*cc).string_pool, &mut (*cc).stream_filename, false)?;
+pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Result<(), Fail> {
+    (*cc.get()).stream_filename = filename;
+    push_string_place_str(
+        &mut (*cc.get()).string_pool,
+        &mut (*cc.get()).stream_filename,
+        false,
+    )?;
 
     // Assume all files have at least 16 bytes of header
-    let magic_len: usize = ((*cc).stream.read_fn.unwrap_unchecked())(
-        (*cc).stream.user,
-        (*cc).buffer.as_mut_ptr() as *mut c_void,
+    let magic_len: usize = ((*cc.get()).stream.read_fn.unwrap_unchecked())(
+        (*cc.get()).stream.user,
+        (*cc.get()).buffer.as_mut_ptr() as *mut c_void,
         16,
     );
     ufbxi_check_err_msg!(
-        &mut (*cc).error,
+        &mut (*cc.get()).error,
         magic_len <= 16,
         "IO error",
         "magic_len <= 16"
     );
     ufbxi_check_err_msg!(
-        &mut (*cc).error,
+        &mut (*cc.get()).error,
         magic_len == 16,
         "Truncated file",
         "magic_len == 16"
     );
-    (*cc).pos = (*cc).buffer.as_ptr();
-    (*cc).pos_end = (*cc).buffer.as_ptr().add(16);
+    (*cc.get()).pos = (*cc.get()).buffer.as_ptr();
+    (*cc.get()).pos_end = (*cc.get()).buffer.as_ptr().add(16);
 
-    (*cc).file_offset = 0;
+    (*cc.get()).file_offset = 0;
 
-    if crate::native::error::memcmp((*cc).buffer.as_ptr(), b"POINTCACHE2".as_ptr(), 11) == 0 {
+    if crate::native::error::memcmp((*cc.get()).buffer.as_ptr(), b"POINTCACHE2".as_ptr(), 11) == 0 {
         cache_load_pc2(cc)?;
-    } else if crate::native::error::memcmp((*cc).buffer.as_ptr(), b"FOR4".as_ptr(), 4) == 0
-        || crate::native::error::memcmp((*cc).buffer.as_ptr(), b"FOR8".as_ptr(), 4) == 0
+    } else if crate::native::error::memcmp((*cc.get()).buffer.as_ptr(), b"FOR4".as_ptr(), 4) == 0
+        || crate::native::error::memcmp((*cc.get()).buffer.as_ptr(), b"FOR8".as_ptr(), 4) == 0
     {
         cache_load_mc(cc)?;
     } else {
@@ -829,20 +879,20 @@ pub(crate) unsafe fn cache_load_file(cc: *mut CacheContext, filename: String) ->
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_try_open_file(
-    cc: *mut CacheContext,
+    cc: &CacheContext,
     filename: String,
     original_filename: *const crate::prelude::Blob,
     p_found: *mut bool,
 ) -> Result<(), Fail> {
-    core::ptr::write_bytes(&mut (*cc).stream as *mut RawStream, 0, 1);
+    core::ptr::write_bytes(&mut (*cc.get()).stream as *mut RawStream, 0, 1);
     ufbxi_regression_assert!(strlen(filename.data) == filename.length);
     if !open_file(
-        &(*cc).open_file_cb,
-        &mut (*cc).stream,
+        &(*cc.get()).open_file_cb,
+        &mut (*cc.get()).stream,
         filename.data,
         filename.length,
         original_filename,
-        (*cc).ator_tmp,
+        (*cc.get()).ator_tmp,
         OpenFileType::GeometryCache,
     ) {
         return Ok(());
@@ -851,8 +901,8 @@ pub(crate) unsafe fn cache_try_open_file(
     let ok = cache_load_file(cc, filename);
     *p_found = true;
 
-    if let Some(close_fn) = (*cc).stream.close_fn {
-        close_fn((*cc).stream.user);
+    if let Some(close_fn) = (*cc.get()).stream.close_fn {
+        close_fn((*cc.get()).stream.user);
     }
 
     ok
@@ -861,34 +911,34 @@ pub(crate) unsafe fn cache_try_open_file(
 // ufbx.c:24457-24540 `ufbxi_cache_load_frame_files`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_frame_files(cc: *mut CacheContext) -> Result<(), Fail> {
-    if (*cc).xml_filename.length == 0 {
+pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
+    if (*cc.get()).xml_filename.length == 0 {
         return Ok(());
     }
 
     let extension: *const u8;
-    match (*cc).xml_format {
+    match (*cc.get()).xml_format {
         CacheXmlFormat::Mcc => extension = b"mc\0".as_ptr(),
         CacheXmlFormat::Mcx => extension = b"mcx\0".as_ptr(),
         _ => return Ok(()),
     }
 
     // Ensure worst case space for `path/filenameFrame123Tick456.mcx`
-    let name_buf_len: usize = (*cc).xml_filename.length + 64;
-    let name_buf: *mut u8 = push(&mut (*cc).tmp, name_buf_len);
-    ufbxi_check_err!(&mut (*cc).error, !name_buf.is_null(), "name_buf");
+    let name_buf_len: usize = (*cc.get()).xml_filename.length + 64;
+    let name_buf: *mut u8 = push(&mut (*cc.get()).tmp, name_buf_len);
+    ufbxi_check_err!(&mut (*cc.get()).error, !name_buf.is_null(), "name_buf");
 
     // Find the prefix before `.xml`
-    let mut prefix_len: usize = (*cc).xml_filename.length;
+    let mut prefix_len: usize = (*cc.get()).xml_filename.length;
     let mut i: usize = prefix_len;
     while i > 0 {
-        if *(*cc).xml_filename.data.add(i - 1) == b'.' {
+        if *(*cc.get()).xml_filename.data.add(i - 1) == b'.' {
             prefix_len = i - 1;
             break;
         }
         i -= 1;
     }
-    core::ptr::copy_nonoverlapping((*cc).xml_filename.data, name_buf, prefix_len);
+    core::ptr::copy_nonoverlapping((*cc.get()).xml_filename.data, name_buf, prefix_len);
 
     let suffix_data: *mut u8 = name_buf.add(prefix_len);
     let suffix_len: usize = name_buf_len - prefix_len;
@@ -899,19 +949,19 @@ pub(crate) unsafe fn cache_load_frame_files(cc: *mut CacheContext) -> Result<(),
     let filename: *mut String = filename.as_mut_ptr();
     (*filename).data = name_buf;
 
-    if (*cc).xml_type == CacheXmlType::SingleFile {
+    if (*cc.get()).xml_type == CacheXmlType::SingleFile {
         (*filename).length =
             prefix_len + ufbxi_snprintf!(suffix_data, suffix_len, ".%s", extension) as usize;
         let mut found: bool = false;
         cache_try_open_file(cc, *filename, core::ptr::null(), &mut found)?;
-    } else if (*cc).xml_type == CacheXmlType::FilePerFrame {
+    } else if (*cc.get()).xml_type == CacheXmlType::FilePerFrame {
         let mut lowest_time: u32 = 0;
         loop {
             // Find the first `time >= lowest_time` value that has data in some channel
             let mut time: u32 = u32::MAX;
             // C: `ufbxi_for(ufbxi_cache_tmp_channel, chan, cc->channels, cc->num_channels)`
-            let mut chan: *mut CacheTmpChannel = (*cc).channels;
-            let chan_end: *mut CacheTmpChannel = add_ptr(chan, (*cc).num_channels);
+            let mut chan: *mut CacheTmpChannel = (*cc.get()).channels;
+            let chan_end: *mut CacheTmpChannel = add_ptr(chan, (*cc.get()).num_channels);
             while chan != chan_end {
                 if !(*chan).try_load || (*chan).consecutive_fails > 10 {
                     chan = chan.add(1);
@@ -920,7 +970,7 @@ pub(crate) unsafe fn cache_load_frame_files(cc: *mut CacheContext) -> Result<(),
                 let sample_rate: u32 = if (*chan).sample_rate != 0 {
                     (*chan).sample_rate
                 } else {
-                    (*cc).xml_ticks_per_frame
+                    (*cc.get()).xml_ticks_per_frame
                 };
                 if (*chan).current_time < lowest_time {
                     let delta: u32 = (lowest_time - (*chan).current_time - 1) / sample_rate;
@@ -945,8 +995,8 @@ pub(crate) unsafe fn cache_load_frame_files(cc: *mut CacheContext) -> Result<(),
             }
 
             // Try to load a file at the specified frame/tick
-            let frame: u32 = time / (*cc).xml_ticks_per_frame;
-            let tick: u32 = time % (*cc).xml_ticks_per_frame;
+            let frame: u32 = time / (*cc.get()).xml_ticks_per_frame;
+            let tick: u32 = time % (*cc.get()).xml_ticks_per_frame;
             if tick == 0 {
                 (*filename).length = prefix_len
                     + ufbxi_snprintf!(suffix_data, suffix_len, "Frame%u.%s", frame, extension)
@@ -967,8 +1017,8 @@ pub(crate) unsafe fn cache_load_frame_files(cc: *mut CacheContext) -> Result<(),
 
             // Update channel status
             // C: `ufbxi_for(ufbxi_cache_tmp_channel, chan, cc->channels, cc->num_channels)`
-            let mut chan: *mut CacheTmpChannel = (*cc).channels;
-            let chan_end: *mut CacheTmpChannel = add_ptr(chan, (*cc).num_channels);
+            let mut chan: *mut CacheTmpChannel = (*cc.get()).channels;
+            let chan_end: *mut CacheTmpChannel = add_ptr(chan, (*cc.get()).num_channels);
             while chan != chan_end {
                 if (*chan).current_time == time {
                     (*chan).consecutive_fails = if found {
@@ -1010,16 +1060,16 @@ pub(crate) unsafe extern "C" fn cmp_cache_frame_less(
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_sort_frames(
-    cc: *mut CacheContext,
+    cc: &CacheContext,
     frames: *mut CacheFrame,
     count: usize,
 ) -> Result<(), Fail> {
     ufbxi_check_err!(
-        &mut (*cc).error,
+        &mut (*cc.get()).error,
         grow_array::<u8>(
-            (*cc).ator_tmp,
-            &mut (*cc).tmp_arr,
-            &mut (*cc).tmp_arr_size,
+            (*cc.get()).ator_tmp,
+            &mut (*cc.get()).tmp_arr,
+            &mut (*cc.get()).tmp_arr_size,
             count * size_of::<CacheFrame>()
         ),
         "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->tmp_arr)), (&cc->tmp_arr), (&cc->tmp_arr_size), (count * sizeof(ufbx_cache_frame)))"
@@ -1028,7 +1078,7 @@ pub(crate) unsafe fn cache_sort_frames(
         size_of::<CacheFrame>(),
         16,
         frames as *mut c_void,
-        (*cc).tmp_arr as *mut c_void,
+        (*cc.get()).tmp_arr as *mut c_void,
         count,
         cmp_cache_frame_less,
         core::ptr::null_mut(),
@@ -1069,17 +1119,17 @@ static CACHE_INTERPRETATION_NAMES: [CacheInterpretationName; 3] = [
 // ufbx.c:24572-24634 `ufbxi_cache_setup_channels`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_setup_channels(cc: *mut CacheContext) -> Result<(), Fail> {
-    let mut tmp_chan: *mut CacheTmpChannel = (*cc).channels;
-    let tmp_end: *mut CacheTmpChannel = add_ptr(tmp_chan, (*cc).num_channels);
+pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
+    let mut tmp_chan: *mut CacheTmpChannel = (*cc.get()).channels;
+    let tmp_end: *mut CacheTmpChannel = add_ptr(tmp_chan, (*cc.get()).num_channels);
 
     let mut begin: usize = 0;
     let mut num_channels: usize = 0;
-    while begin < (*cc).cache.frames.count {
-        let frame: *mut CacheFrame = ((*cc).cache.frames.data as *mut CacheFrame).add(begin);
+    while begin < (*cc.get()).cache.frames.count {
+        let frame: *mut CacheFrame = ((*cc.get()).cache.frames.data as *mut CacheFrame).add(begin);
         let mut end: usize = begin + 1;
-        while end < (*cc).cache.frames.count
-            && (*((*cc).cache.frames.data as *mut CacheFrame).add(end))
+        while end < (*cc.get()).cache.frames.count
+            && (*((*cc.get()).cache.frames.data as *mut CacheFrame).add(end))
                 .channel
                 .data
                 == (*frame).channel.data
@@ -1087,8 +1137,8 @@ pub(crate) unsafe fn cache_setup_channels(cc: *mut CacheContext) -> Result<(), F
             end += 1;
         }
 
-        let chan: *mut CacheChannel = push_zero(&mut (*cc).tmp_stack, 1);
-        ufbxi_check_err!(&mut (*cc).error, !chan.is_null(), "chan");
+        let chan: *mut CacheChannel = push_zero(&mut (*cc.get()).tmp_stack, 1);
+        ufbxi_check_err!(&mut (*cc.get()).error, !chan.is_null(), "chan");
 
         (*chan).name = (*frame).channel;
         (*chan).interpretation_name = EMPTY_STRING.0;
@@ -1121,9 +1171,9 @@ pub(crate) unsafe fn cache_setup_channels(cc: *mut CacheContext) -> Result<(), F
         let mut mirror_axis: MirrorAxis = MirrorAxis::None;
         let mut scale_factor: Real = 1.0f32 as Real;
         if (*chan).interpretation != CacheInterpretation::Unknown {
-            mirror_axis = (*cc).opts.mirror_axis;
-            if (*cc).opts.use_scale_factor {
-                scale_factor = (*cc).opts.scale_factor;
+            mirror_axis = (*cc.get()).opts.mirror_axis;
+            if (*cc.get()).opts.use_scale_factor {
+                scale_factor = (*cc.get()).opts.scale_factor;
             }
         }
         (*chan).mirror_axis = mirror_axis;
@@ -1141,14 +1191,17 @@ pub(crate) unsafe fn cache_setup_channels(cc: *mut CacheContext) -> Result<(), F
         begin = end;
     }
 
-    (*cc).cache.channels.data =
-        push_pop::<CacheChannel>(&mut (*cc).result, &mut (*cc).tmp_stack, num_channels);
+    (*cc.get()).cache.channels.data = push_pop::<CacheChannel>(
+        &mut (*cc.get()).result,
+        &mut (*cc.get()).tmp_stack,
+        num_channels,
+    );
     ufbxi_check_err!(
-        &mut (*cc).error,
-        !(*cc).cache.channels.data.is_null(),
+        &mut (*cc.get()).error,
+        !(*cc.get()).cache.channels.data.is_null(),
         "cc->cache.channels.data"
     );
-    (*cc).cache.channels.count = num_channels;
+    (*cc.get()).cache.channels.count = num_channels;
 
     Ok(())
 }
@@ -1156,19 +1209,23 @@ pub(crate) unsafe fn cache_setup_channels(cc: *mut CacheContext) -> Result<(), F
 // ufbx.c:24637-24691 `ufbxi_cache_load_imp`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_imp(cc: *mut CacheContext, filename: String) -> Result<(), Fail> {
-    (*cc).tmp.ator = (*cc).ator_tmp;
-    (*cc).tmp_stack.ator = (*cc).ator_tmp;
+pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Result<(), Fail> {
+    (*cc.get()).tmp.ator = (*cc.get()).ator_tmp;
+    (*cc.get()).tmp_stack.ator = (*cc.get()).ator_tmp;
 
-    (*cc).channel_name.data = EMPTY_CHAR.as_ptr();
+    (*cc.get()).channel_name.data = EMPTY_CHAR.as_ptr();
 
-    if (*cc).open_file_cb.fn_.is_none() {
-        (*cc).open_file_cb.fn_ = Some(crate::native::api::default_open_file);
+    if (*cc.get()).open_file_cb.fn_.is_none() {
+        (*cc.get()).open_file_cb.fn_ = Some(crate::native::api::default_open_file);
     }
 
     // Make sure the filename we pass to `open_file_fn()` is NULL-terminated
-    let filename_data: *mut u8 = push(&mut (*cc).tmp, filename.length + 1);
-    ufbxi_check_err!(&mut (*cc).error, !filename_data.is_null(), "filename_data");
+    let filename_data: *mut u8 = push(&mut (*cc.get()).tmp, filename.length + 1);
+    ufbxi_check_err!(
+        &mut (*cc.get()).error,
+        !filename_data.is_null(),
+        "filename_data"
+    );
     core::ptr::copy_nonoverlapping(filename.data, filename_data, filename.length);
     *filename_data.add(filename.length) = b'\0';
     let filename_copy: String = String::new_c(filename_data, filename.length);
@@ -1177,53 +1234,63 @@ pub(crate) unsafe fn cache_load_imp(cc: *mut CacheContext, filename: String) -> 
     let mut found: bool = false;
     cache_try_open_file(cc, filename_copy, core::ptr::null(), &mut found)?;
     if !found {
-        set_err_info(&mut (*cc).error, filename.data, filename.length);
-        ufbxi_fail_err_msg!(&mut (*cc).error, "open_file_fn()", "File not found");
+        set_err_info(&mut (*cc.get()).error, filename.data, filename.length);
+        ufbxi_fail_err_msg!(&mut (*cc.get()).error, "open_file_fn()", "File not found");
     }
 
-    (*cc).cache.root_filename = (*cc).stream_filename;
+    (*cc.get()).cache.root_filename = (*cc.get()).stream_filename;
 
     cache_load_frame_files(cc)?;
 
-    let num_frames: usize = (*cc).tmp_stack.num_items;
-    (*cc).cache.frames.count = num_frames;
-    (*cc).cache.frames.data =
-        push_pop::<CacheFrame>(&mut (*cc).result, &mut (*cc).tmp_stack, num_frames);
+    let num_frames: usize = (*cc.get()).tmp_stack.num_items;
+    (*cc.get()).cache.frames.count = num_frames;
+    (*cc.get()).cache.frames.data = push_pop::<CacheFrame>(
+        &mut (*cc.get()).result,
+        &mut (*cc.get()).tmp_stack,
+        num_frames,
+    );
     ufbxi_check_err!(
-        &mut (*cc).error,
-        !(*cc).cache.frames.data.is_null(),
+        &mut (*cc.get()).error,
+        !(*cc.get()).cache.frames.data.is_null(),
         "cc->cache.frames.data"
     );
 
     cache_sort_frames(
         cc,
-        (*cc).cache.frames.data as *mut CacheFrame,
-        (*cc).cache.frames.count,
+        (*cc.get()).cache.frames.data as *mut CacheFrame,
+        (*cc.get()).cache.frames.count,
     )?;
     cache_setup_channels(cc)?;
 
     // Must be last allocation!
-    (*cc).imp = push(&mut (*cc).result, 1);
-    ufbxi_check_err!(&mut (*cc).error, !(*cc).imp.is_null(), "cc->imp");
+    (*cc.get()).imp = push(&mut (*cc.get()).result, 1);
+    ufbxi_check_err!(
+        &mut (*cc.get()).error,
+        !(*cc.get()).imp.is_null(),
+        "cc->imp"
+    );
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&GeometryCache` pointer via exposed provenance.
-    ((*cc).imp as *mut u8).expose_provenance();
+    ((*cc.get()).imp as *mut u8).expose_provenance();
 
     init_ref(
-        &mut (*(*cc).imp).refcount,
+        &mut (*(*cc.get()).imp).refcount,
         CACHE_IMP_MAGIC,
         core::ptr::null_mut(),
     );
 
-    core::ptr::write(&mut (*(*cc).imp).cache, core::ptr::read(&(*cc).cache));
-    (*(*cc).imp).magic = CACHE_IMP_MAGIC;
-    (*(*cc).imp).owned_by_scene = (*cc).owned_by_scene;
-    (*(*cc).imp).refcount.ator = (*cc).ator_result;
-    (*(*cc).imp).refcount.buf = (*cc).result;
-    (*(*cc).imp).refcount.buf.ator = &raw mut (*(*cc).imp).refcount.ator;
-    (*(*cc).imp).string_buf = (*cc).string_pool.buf;
-    (*(*cc).imp).string_buf.ator = &raw mut (*(*cc).imp).refcount.ator;
+    core::ptr::write(
+        &mut (*(*cc.get()).imp).cache,
+        core::ptr::read(&(*cc.get()).cache),
+    );
+    (*(*cc.get()).imp).magic = CACHE_IMP_MAGIC;
+    (*(*cc.get()).imp).owned_by_scene = (*cc.get()).owned_by_scene;
+    (*(*cc.get()).imp).refcount.ator = (*cc.get()).ator_result;
+    (*(*cc.get()).imp).refcount.buf = (*cc.get()).result;
+    (*(*cc.get()).imp).refcount.buf.ator = &raw mut (*(*cc.get()).imp).refcount.ator;
+    (*(*cc.get()).imp).string_buf = (*cc.get()).string_pool.buf;
+    (*(*cc.get()).imp).string_buf.ator = &raw mut (*(*cc.get()).imp).refcount.ator;
 
     Ok(())
 }
@@ -1231,29 +1298,37 @@ pub(crate) unsafe fn cache_load_imp(cc: *mut CacheContext, filename: String) -> 
 // ufbx.c:24693-24716 `ufbxi_cache_load`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load(cc: *mut CacheContext, filename: String) -> *mut GeometryCache {
+pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut GeometryCache {
     let ok = cache_load_imp(cc, filename).is_ok();
 
-    buf_free(&mut (*cc).tmp);
-    buf_free(&mut (*cc).tmp_stack);
-    free::<u8>((*cc).ator_tmp, (*cc).name_buf, (*cc).name_cap);
-    free::<u8>((*cc).ator_tmp, (*cc).tmp_arr, (*cc).tmp_arr_size);
-    if !(*cc).owned_by_scene {
-        string_pool_temp_free(&mut (*cc).string_pool);
-        free_ator((*cc).ator_tmp);
+    buf_free(&mut (*cc.get()).tmp);
+    buf_free(&mut (*cc.get()).tmp_stack);
+    free::<u8>(
+        (*cc.get()).ator_tmp,
+        (*cc.get()).name_buf,
+        (*cc.get()).name_cap,
+    );
+    free::<u8>(
+        (*cc.get()).ator_tmp,
+        (*cc.get()).tmp_arr,
+        (*cc.get()).tmp_arr_size,
+    );
+    if !(*cc.get()).owned_by_scene {
+        string_pool_temp_free(&mut (*cc.get()).string_pool);
+        free_ator((*cc.get()).ator_tmp);
     }
 
     if ok {
-        &raw mut (*(*cc).imp).cache
+        &raw mut (*(*cc.get()).imp).cache
     } else {
         fix_error_type(
-            &mut (*cc).error,
+            &mut (*cc.get()).error,
             b"Failed to load geometry cache\0".as_ptr(),
             core::ptr::null_mut(),
         );
-        if !(*cc).owned_by_scene {
-            buf_free(&mut (*cc).string_pool.buf);
-            free_ator(&mut (*cc).ator_result);
+        if !(*cc.get()).owned_by_scene {
+            buf_free(&mut (*cc.get()).string_pool.buf);
+            free_ator(&mut (*cc.get()).ator_result);
         }
         core::ptr::null_mut()
     }
@@ -1275,50 +1350,50 @@ pub(crate) unsafe fn load_geometry_cache(
     };
 
     // C: `ufbxi_cache_context cc = { UFBX_ERROR_NONE };` / `ufbxi_allocator ator_tmp = { 0 };`
-    let mut cc: CacheContext = core::mem::zeroed();
+    let cc: CacheContext = core::mem::zeroed();
     let mut ator_tmp: Allocator = core::mem::zeroed();
     init_ator(
-        &mut cc.error,
+        &mut (*cc.get()).error,
         &mut ator_tmp,
         &opts.temp_allocator,
         b"temp\0".as_ptr(),
     );
     init_ator(
-        &mut cc.error,
-        &mut cc.ator_result,
+        &mut (*cc.get()).error,
+        &mut (*cc.get()).ator_result,
         &opts.result_allocator,
         b"result\0".as_ptr(),
     );
-    cc.ator_tmp = &mut ator_tmp;
+    (*cc.get()).ator_tmp = &mut ator_tmp;
 
-    cc.opts = core::ptr::read(&opts);
+    (*cc.get()).opts = core::ptr::read(&opts);
 
-    cc.open_file_cb = opts.open_file_cb;
+    (*cc.get()).open_file_cb = opts.open_file_cb;
 
-    cc.string_pool.error = &mut cc.error;
+    (*cc.get()).string_pool.error = &mut (*cc.get()).error;
     map_init(
-        &mut cc.string_pool.map,
-        cc.ator_tmp,
+        &mut (*cc.get()).string_pool.map,
+        (*cc.get()).ator_tmp,
         map_cmp_string,
         core::ptr::null_mut(),
     );
-    cc.string_pool.buf.ator = &raw mut cc.ator_result;
-    cc.string_pool.buf.unordered = true;
-    cc.string_pool.initial_size = 64;
-    cc.result.ator = &raw mut cc.ator_result;
+    (*cc.get()).string_pool.buf.ator = &raw mut (*cc.get()).ator_result;
+    (*cc.get()).string_pool.buf.unordered = true;
+    (*cc.get()).string_pool.initial_size = 64;
+    (*cc.get()).result.ator = &raw mut (*cc.get()).ator_result;
 
-    cc.frames_per_second = if opts.frames_per_second > 0.0 {
+    (*cc.get()).frames_per_second = if opts.frames_per_second > 0.0 {
         opts.frames_per_second
     } else {
         30.0
     };
 
-    let cache: *mut GeometryCache = cache_load(&mut cc, filename);
+    let cache: *mut GeometryCache = cache_load(&cc, filename);
     if !p_error.is_null() {
         if !cache.is_null() {
             clear_error(p_error);
         } else {
-            core::ptr::write(p_error, core::ptr::read(&cc.error));
+            core::ptr::write(p_error, core::ptr::read(&(*cc.get()).error));
         }
     }
     cache
@@ -1423,35 +1498,35 @@ pub(crate) unsafe fn load_external_cache(
     file: *mut ExternalFile,
 ) -> Result<(), Fail> {
     // C: `ufbxi_cache_context cc = { UFBX_ERROR_NONE };`
-    let mut cc: CacheContext = core::mem::zeroed();
-    cc.owned_by_scene = true;
+    let cc: CacheContext = core::mem::zeroed();
+    (*cc.get()).owned_by_scene = true;
 
-    cc.open_file_cb = (*uc.get()).opts.open_file_cb;
-    cc.frames_per_second = (*uc.get()).scene.settings.frames_per_second;
+    (*cc.get()).open_file_cb = (*uc.get()).opts.open_file_cb;
+    (*cc.get()).frames_per_second = (*uc.get()).scene.settings.frames_per_second;
 
     // Temporarily "borrow" allocators for the geometry cache
-    cc.ator_tmp = uc.ator_tmp();
-    cc.string_pool = (*uc.get()).string_pool;
-    cc.result = (*uc.get()).result;
+    (*cc.get()).ator_tmp = uc.ator_tmp();
+    (*cc.get()).string_pool = (*uc.get()).string_pool;
+    (*cc.get()).result = (*uc.get()).result;
 
-    cc.opts.mirror_axis = (*uc.get()).mirror_axis;
-    cc.opts.use_scale_factor = true;
-    cc.opts.scale_factor = (*uc.get()).scene.metadata.geometry_scale;
+    (*cc.get()).opts.mirror_axis = (*uc.get()).mirror_axis;
+    (*cc.get()).opts.use_scale_factor = true;
+    (*cc.get()).opts.scale_factor = (*uc.get()).scene.metadata.geometry_scale;
 
-    let mut cache: *mut GeometryCache = cache_load(&mut cc, (*file).filename);
+    let mut cache: *mut GeometryCache = cache_load(&cc, (*file).filename);
     if cache.is_null() {
-        if cc.error.type_ == ErrorType::FileNotFound {
-            core::ptr::write_bytes(&mut cc.error as *mut Error, 0, 1);
-            cache = cache_load(&mut cc, (*file).absolute_filename);
+        if (*cc.get()).error.type_ == ErrorType::FileNotFound {
+            core::ptr::write_bytes(&mut (*cc.get()).error as *mut Error, 0, 1);
+            cache = cache_load(&cc, (*file).absolute_filename);
         }
     }
 
     // Return the "borrowed" allocators
-    (*uc.get()).string_pool = cc.string_pool;
-    (*uc.get()).result = cc.result;
+    (*uc.get()).string_pool = (*cc.get()).string_pool;
+    (*uc.get()).result = (*cc.get()).result;
 
     if cache.is_null() {
-        if cc.error.type_ == ErrorType::FileNotFound {
+        if (*cc.get()).error.type_ == ErrorType::FileNotFound {
             if (*uc.get()).opts.ignore_missing_external_files {
                 ufbxi_check!(
                     uc,
@@ -1466,13 +1541,14 @@ pub(crate) unsafe fn load_external_cache(
                 );
                 return Ok(());
             } else {
-                cc.error.type_ = ErrorType::ExternalFileNotFound;
-                cc.error.description.data = b"External file not found\0".as_ptr();
-                cc.error.description.length = strlen(b"External file not found\0".as_ptr());
+                (*cc.get()).error.type_ = ErrorType::ExternalFileNotFound;
+                (*cc.get()).error.description.data = b"External file not found\0".as_ptr();
+                (*cc.get()).error.description.length =
+                    strlen(b"External file not found\0".as_ptr());
             }
         }
 
-        core::ptr::write(&mut (*uc.get()).error, core::ptr::read(&cc.error));
+        core::ptr::write(&mut (*uc.get()).error, core::ptr::read(&(*cc.get()).error));
         return Err(Fail);
     }
 
