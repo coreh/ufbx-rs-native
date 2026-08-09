@@ -757,8 +757,8 @@ unsafe fn binary_parse_node_rec(
     }
 
     // Update estimated end offset if possible
-    if end_offset > (*uc.get()).progress_bytes_total {
-        (*uc.get()).progress_bytes_total = end_offset;
+    if end_offset > uc.progress_bytes_total() {
+        uc.set_progress_bytes_total(end_offset);
     }
 
     // Push the parsed node into the `tmp_stack` buffer, the nodes will be popped by
@@ -855,8 +855,8 @@ unsafe fn binary_parse_node_rec(
                 "UINT64_MAX - encoded_size > arr_begin"
             );
             let arr_end: u64 = arr_begin.wrapping_add(encoded_size as u64);
-            if arr_end > (*uc.get()).progress_bytes_total {
-                (*uc.get()).progress_bytes_total = arr_end;
+            if arr_end > uc.progress_bytes_total() {
+                uc.set_progress_bytes_total(arr_end);
             }
 
             // Threading
@@ -972,8 +972,7 @@ unsafe fn binary_parse_node_rec(
                 if (*uc.get()).opts.progress_cb.fn_.is_some() {
                     (*input).progress_cb = (*uc.get()).opts.progress_cb;
                     (*input).progress_size_before = arr_begin;
-                    (*input).progress_size_after =
-                        (*uc.get()).progress_bytes_total.wrapping_sub(arr_end);
+                    (*input).progress_size_after = uc.progress_bytes_total().wrapping_sub(arr_end);
                     (*input).progress_interval_hint = uc.progress_interval() as u64;
                 } else {
                     (*input).progress_cb.fn_ = None;

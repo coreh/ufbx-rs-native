@@ -565,12 +565,12 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     }
 
     if (*uc.get()).opts.progress_cb.fn_.is_some()
-        && (*uc.get()).progress_bytes_total == 0
+        && uc.progress_bytes_total() == 0
         && (*uc.get()).size_fn.is_some()
     {
         let total: u64 = ((*uc.get()).size_fn.unwrap())(uc.read_user());
         ufbxi_check!(uc, total != u64::MAX, "total != UINT64_MAX");
-        (*uc.get()).progress_bytes_total = total;
+        uc.set_progress_bytes_total(total);
     }
 
     ufbxi_check!(
@@ -985,7 +985,7 @@ pub(crate) unsafe fn load(
     }
 
     if (*uc.get()).opts.file_size_estimate != 0 {
-        (*uc.get()).progress_bytes_total = (*uc.get()).opts.file_size_estimate;
+        uc.set_progress_bytes_total((*uc.get()).opts.file_size_estimate);
     }
 
     if (*uc.get()).opts.ignore_all_content {

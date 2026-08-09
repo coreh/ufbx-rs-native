@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `progress_bytes_total` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn progress_bytes_total(&self) -> u64 {
+        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
+        unsafe { (*self.get()).progress_bytes_total }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_progress_bytes_total(&self, progress_bytes_total: u64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).progress_bytes_total = progress_bytes_total;
+        }
+    }
+
     // `progress_timer` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn progress_timer(&self) -> isize {
@@ -1386,7 +1401,7 @@ pub(crate) unsafe fn report_progress(uc: &Context) -> Result<(), Fail> {
         bytes_total: 0,
     };
     progress.bytes_read = read_offset;
-    progress.bytes_total = (*uc.get()).progress_bytes_total;
+    progress.bytes_total = uc.progress_bytes_total();
     if progress.bytes_total < progress.bytes_read {
         progress.bytes_total = progress.bytes_read;
     }

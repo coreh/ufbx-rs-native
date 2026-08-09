@@ -570,7 +570,7 @@ pub(crate) unsafe fn load_memory(
     uc.set_data(data as *const u8);
     uc.set_data_begin(uc.data());
     uc.set_data_size(size);
-    (*uc.get()).progress_bytes_total = size as u64;
+    uc.set_progress_bytes_total(size as u64);
     evaluate::load(uc, opts, error)
 }
 
