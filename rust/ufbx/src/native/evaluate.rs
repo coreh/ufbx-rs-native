@@ -2049,6 +2049,21 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    // `anim` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn anim(&self) -> *mut Anim {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut Anim` are valid.
+        unsafe { (*self.get()).anim }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_anim(&self, anim: *mut Anim) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).anim = anim;
+        }
+    }
+
     // `src_imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn src_imp(&self) -> *mut SceneImp {
@@ -2739,7 +2754,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     }
 
     // C: `ufbx_anim anim = *ec->anim;` — local working copy (memcpy).
-    let mut anim: Anim = ptr::read((*ec.get()).anim);
+    let mut anim: Anim = ptr::read(ec.anim());
     let mut over: *const PropOverride = anim.prop_overrides.data;
     let over_end: *const PropOverride =
         add_ptr(over as *mut PropOverride, anim.prop_overrides.count);
@@ -2902,11 +2917,11 @@ pub(crate) unsafe fn evaluate_scene(
         ptr::addr_of_mut!((*ec.get()).src_scene),
         1,
     );
-    (*ec.get()).anim = if !anim.is_null() {
+    ec.set_anim(if !anim.is_null() {
         anim as *mut Anim
     } else {
         ref_ptr(&(*scene).anim)
-    };
+    });
     (*ec.get()).time = time;
 
     init_ator(
