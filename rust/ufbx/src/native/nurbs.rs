@@ -155,6 +155,82 @@ pub(crate) struct InnerTessellateCurveContext {
 // it embeds the public `LineCurve` (enum-bearing) in `line`; `UnsafeCell` gives the
 // interior mutability every `&TessellateCurveContext` site needs. Field is
 // `pub(crate)` — the sole construction site lives in `native::api`.
+// Typed interior-mutable VIEW over the tessellate opts (approach A).
+#[repr(transparent)]
+pub(crate) struct TessellateCurveOptsView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::RawTessellateCurveOpts>>,
+);
+
+impl TessellateCurveOptsView {
+    #[inline(always)]
+    fn get(&self) -> *mut crate::generated::RawTessellateCurveOpts {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn span_subdivision(&self) -> usize {
+        unsafe { (*self.get()).span_subdivision }
+    }
+    #[inline(always)]
+    pub(crate) fn set_span_subdivision(&self, span_subdivision: usize) {
+        unsafe {
+            (*self.get()).span_subdivision = span_subdivision;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        unsafe { &raw const (*self.get()).temp_allocator }
+    }
+    #[inline(always)]
+    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        unsafe { &raw const (*self.get()).result_allocator }
+    }
+}
+
+// Typed interior-mutable VIEW over the tessellate opts (approach A).
+#[repr(transparent)]
+pub(crate) struct TessellateSurfaceOptsView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::RawTessellateSurfaceOpts>>,
+);
+
+impl TessellateSurfaceOptsView {
+    #[inline(always)]
+    fn get(&self) -> *mut crate::generated::RawTessellateSurfaceOpts {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn span_subdivision_u(&self) -> usize {
+        unsafe { (*self.get()).span_subdivision_u }
+    }
+    #[inline(always)]
+    pub(crate) fn set_span_subdivision_u(&self, span_subdivision_u: usize) {
+        unsafe {
+            (*self.get()).span_subdivision_u = span_subdivision_u;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn span_subdivision_v(&self) -> usize {
+        unsafe { (*self.get()).span_subdivision_v }
+    }
+    #[inline(always)]
+    pub(crate) fn set_span_subdivision_v(&self, span_subdivision_v: usize) {
+        unsafe {
+            (*self.get()).span_subdivision_v = span_subdivision_v;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn skip_mesh_parts(&self) -> bool {
+        unsafe { (*self.get()).skip_mesh_parts }
+    }
+    #[inline(always)]
+    pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        unsafe { &raw const (*self.get()).temp_allocator }
+    }
+    #[inline(always)]
+    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        unsafe { &raw const (*self.get()).result_allocator }
+    }
+}
+
 #[cfg(feature = "tessellation")]
 #[repr(transparent)]
 pub(crate) struct TessellateCurveContext(
@@ -166,6 +242,11 @@ impl TessellateCurveContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerTessellateCurveContext {
         self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn opts_view(&self) -> &TessellateCurveOptsView {
+        unsafe { &*(&raw mut (*self.get()).opts as *mut TessellateCurveOptsView) }
     }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
@@ -295,6 +376,11 @@ impl TessellateSurfaceContext {
         self.0.get().cast()
     }
 
+    #[inline(always)]
+    pub(crate) fn opts_view(&self) -> &TessellateSurfaceOptsView {
+        unsafe { &*(&raw mut (*self.get()).opts as *mut TessellateSurfaceOptsView) }
+    }
+
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
     #[inline(always)]
     pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
@@ -410,10 +496,10 @@ impl TessellateSurfaceContext {
 #[must_use]
 pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> Result<(), Fail> {
     // C: `tc->opts.span_subdivision <= 0` — `span_subdivision` is `size_t`.
-    if (*tc.get()).opts.span_subdivision == 0 {
-        (*tc.get()).opts.span_subdivision = 4;
+    if tc.opts_view().span_subdivision() == 0 {
+        tc.opts_view().set_span_subdivision(4);
     }
-    let num_sub: usize = (*tc.get()).opts.span_subdivision;
+    let num_sub: usize = tc.opts_view().span_subdivision();
 
     let curve: *const NurbsCurve = tc.curve();
     let line: *mut LineCurve = tc.line_mut_ptr();
@@ -427,13 +513,13 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
     init_ator(
         tc.error_mut_ptr(),
         tc.ator_tmp_mut_ptr(),
-        &(*tc.get()).opts.temp_allocator,
+        tc.opts_view().temp_allocator_ptr(),
         b"temp\0".as_ptr(),
     );
     init_ator(
         tc.error_mut_ptr(),
         tc.ator_result_mut_ptr(),
-        &(*tc.get()).opts.result_allocator,
+        tc.opts_view().result_allocator_ptr(),
         b"result\0".as_ptr(),
     );
 
@@ -550,15 +636,15 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     tc: &TessellateSurfaceContext,
 ) -> Result<(), Fail> {
     // C: `tc->opts.span_subdivision_u <= 0` — `span_subdivision_u/v` are `size_t`.
-    if (*tc.get()).opts.span_subdivision_u == 0 {
-        (*tc.get()).opts.span_subdivision_u = 4;
+    if tc.opts_view().span_subdivision_u() == 0 {
+        tc.opts_view().set_span_subdivision_u(4);
     }
-    if (*tc.get()).opts.span_subdivision_v == 0 {
-        (*tc.get()).opts.span_subdivision_v = 4;
+    if tc.opts_view().span_subdivision_v() == 0 {
+        tc.opts_view().set_span_subdivision_v(4);
     }
 
-    let sub_u: usize = (*tc.get()).opts.span_subdivision_u;
-    let sub_v: usize = (*tc.get()).opts.span_subdivision_v;
+    let sub_u: usize = tc.opts_view().span_subdivision_u();
+    let sub_v: usize = tc.opts_view().span_subdivision_v();
 
     let surface: *const NurbsSurface = tc.surface();
     let mesh: *mut Mesh = tc.mesh_mut_ptr();
@@ -575,13 +661,13 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     init_ator(
         tc.error_mut_ptr(),
         tc.ator_tmp_mut_ptr(),
-        &(*tc.get()).opts.temp_allocator,
+        tc.opts_view().temp_allocator_ptr(),
         b"temp\0".as_ptr(),
     );
     init_ator(
         tc.error_mut_ptr(),
         tc.ator_result_mut_ptr(),
-        &(*tc.get()).opts.result_allocator,
+        tc.opts_view().result_allocator_ptr(),
         b"result\0".as_ptr(),
     );
 
@@ -893,7 +979,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
         (*mesh).materials.count = 1;
     }
 
-    if !(*tc.get()).opts.skip_mesh_parts {
+    if !tc.opts_view().skip_mesh_parts() {
         (*mesh).material_parts.count = 1;
         (*mesh).material_parts.data =
             push_zero::<MeshPart>(tc.result_mut_ptr(), 1) as *const MeshPart;
