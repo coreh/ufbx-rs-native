@@ -281,35 +281,39 @@ pub(crate) fn bit_reverse(mask: u32, num_bits: u32) -> u32 {
 // ufbx.c:2051-2086 `ufbxi_bit_chunk_refill`
 #[inline(never)]
 pub(crate) unsafe fn bit_chunk_refill(s: *mut BitStream, ptr: *const u8) -> *const u8 {
-    // Sole raw pointer to `*s` in this function (rule 4): local exclusive
-    // borrow for the whole body in place of repeated `(*s).field` derefs.
-    // `ptr` does not alias `s`'s fields (it is a plain byte position, not a
-    // borrow of the `BitStream`).
-    let s = &mut *s;
+    // `s.buffer` may point into `s.local_buffer` (see `bit_stream_init`), i.e.
+    // the `BitStream` holds a raw pointer aliasing one of its own fields. A
+    // `&mut *s` reborrow here would retag the whole struct — including
+    // `local_buffer`'s range — and invalidate that interior pointer, so this
+    // function keeps `s` raw and derefs fields as `(*s).field`, matching the
+    // C `s->field` access. `ptr` is a plain byte position, not a borrow of `*s`.
 
     // Copy any left-over data to the beginning of `buffer`
-    let mut left = to_size(s.chunk_real_end.offset_from(ptr));
+    let mut left = to_size((*s).chunk_real_end.offset_from(ptr));
     ufbxi_dev_assert!(left < 64);
     if left > 0 {
         // C: memmove(s->buffer, ptr, left)
-        core::ptr::copy(ptr, s.buffer, left);
+        core::ptr::copy(ptr, (*s).buffer, left);
     }
 
-    s.num_read_before_chunk += to_size(ptr.offset_from(s.chunk_begin));
+    (*s).num_read_before_chunk += to_size(ptr.offset_from((*s).chunk_begin));
 
     // Read more user data if the user supplied a `read_fn()`, otherwise
     // we assume the initial data chunk is the whole input buffer.
-    if s.read_fn.is_some() && !s.cancelled {
-        let to_read = min_sz(s.input_left, s.buffer_size - left);
+    if (*s).read_fn.is_some() && !(*s).cancelled {
+        let to_read = min_sz((*s).input_left, (*s).buffer_size - left);
         if to_read > 0 {
-            let mut num_read =
-                (s.read_fn.unwrap())(s.read_user, s.buffer.add(left) as *mut c_void, to_read);
+            let mut num_read = ((*s).read_fn.unwrap())(
+                (*s).read_user,
+                (*s).buffer.add(left) as *mut c_void,
+                to_read,
+            );
             // TODO: IO error, should unify with (currently broken) cancel logic
             if num_read > to_read {
                 num_read = 0;
             }
-            ufbxi_dev_assert!(s.input_left >= num_read);
-            s.input_left -= num_read;
+            ufbxi_dev_assert!((*s).input_left >= num_read);
+            (*s).input_left -= num_read;
             left += num_read;
         }
     }
@@ -317,25 +321,26 @@ pub(crate) unsafe fn bit_chunk_refill(s: *mut BitStream, ptr: *const u8) -> *con
     // Pad the rest with zeros
     if left < 64 {
         // C: memset(s->buffer + left, 0, 64 - left)
-        core::ptr::write_bytes(s.buffer.add(left), 0, 64 - left);
+        core::ptr::write_bytes((*s).buffer.add(left), 0, 64 - left);
         left = 64;
     }
 
-    s.chunk_begin = s.buffer;
-    s.chunk_ptr = s.buffer;
-    s.chunk_end = s.buffer.add(left - 8);
-    s.chunk_real_end = s.buffer.add(left);
-    s.buffer
+    (*s).chunk_begin = (*s).buffer;
+    (*s).chunk_ptr = (*s).buffer;
+    (*s).chunk_end = (*s).buffer.add(left - 8);
+    (*s).chunk_real_end = (*s).buffer.add(left);
+    (*s).buffer
 }
 
 // ufbx.c:2088-2139 `ufbxi_bit_stream_init`
 #[inline(never)]
 pub(crate) unsafe fn bit_stream_init(s: *mut BitStream, input: *const InflateInput) {
-    // Sole raw pointers to `*s`/`*input` in this function (rule 4): local
-    // borrows for the whole body in place of repeated `(*s).field` /
-    // `(*input).field` derefs. `input` is unconditionally dereferenced
-    // throughout the original C, so it is never NULL here.
-    let s = &mut *s;
+    // `s.buffer` may point into `s.local_buffer` (set below), i.e. the
+    // `BitStream` holds a raw pointer aliasing one of its own fields, so `s`
+    // stays raw and is derefed as `(*s).field` to avoid a whole-struct retag
+    // invalidating that interior pointer. `input` has no such aliasing and is
+    // unconditionally dereferenced in the original C (never NULL), so a local
+    // shared borrow is kept for it.
     let input = &*input;
 
     let mut data_size = input.data_size;
@@ -343,114 +348,116 @@ pub(crate) unsafe fn bit_stream_init(s: *mut BitStream, input: *const InflateInp
         data_size = input.total_size;
     }
 
-    s.read_fn = input.read_fn;
-    s.read_user = input.read_user;
+    (*s).read_fn = input.read_fn;
+    (*s).read_user = input.read_user;
     // C: struct assignment `s->progress_cb = input->progress_cb` (memcpy);
     // `RawProgressCb` has no `Copy` derive in generated.rs — field-wise copy.
-    s.progress_cb = RawProgressCb {
+    (*s).progress_cb = RawProgressCb {
         fn_: input.progress_cb.fn_,
         user: input.progress_cb.user,
     };
-    s.chunk_begin = input.data as *const u8;
-    s.chunk_ptr = input.data as *const u8;
-    s.chunk_end = add_ptr(input.data as *mut u8, max_sz(8, data_size) - 8) as *const u8;
-    s.chunk_real_end = add_ptr(input.data as *mut u8, data_size) as *const u8;
-    s.input_left = input.total_size - data_size;
+    (*s).chunk_begin = input.data as *const u8;
+    (*s).chunk_ptr = input.data as *const u8;
+    (*s).chunk_end = add_ptr(input.data as *mut u8, max_sz(8, data_size) - 8) as *const u8;
+    (*s).chunk_real_end = add_ptr(input.data as *mut u8, data_size) as *const u8;
+    (*s).input_left = input.total_size - data_size;
 
     // Use the user buffer if it's large enough, otherwise `local_buffer`
     if input.buffer_size > size_of::<[u8; 256]>() {
-        s.buffer = input.buffer as *mut u8;
-        s.buffer_size = input.buffer_size;
+        (*s).buffer = input.buffer as *mut u8;
+        (*s).buffer_size = input.buffer_size;
     } else {
-        s.buffer = s.local_buffer.as_mut_ptr();
-        s.buffer_size = size_of::<[u8; 256]>();
+        (*s).buffer = (*s).local_buffer.as_mut_ptr();
+        (*s).buffer_size = size_of::<[u8; 256]>();
     }
-    s.num_read_before_chunk = 0;
-    s.progress_bias = input.progress_size_before;
+    (*s).num_read_before_chunk = 0;
+    (*s).progress_bias = input.progress_size_before;
     // C: `input->total_size + input->progress_size_before + input->progress_size_after`
     // in uint64_t (wraps on overflow of user-supplied sizes).
-    s.progress_total = (input.total_size as u64)
+    (*s).progress_total = (input.total_size as u64)
         .wrapping_add(input.progress_size_before)
         .wrapping_add(input.progress_size_after);
-    if s.progress_cb.fn_.is_none() || input.progress_interval_hint >= usize::MAX as u64 {
-        s.progress_interval = usize::MAX;
+    if (*s).progress_cb.fn_.is_none() || input.progress_interval_hint >= usize::MAX as u64 {
+        (*s).progress_interval = usize::MAX;
     } else if input.progress_interval_hint > 0 {
-        s.progress_interval = input.progress_interval_hint as usize;
+        (*s).progress_interval = input.progress_interval_hint as usize;
     } else {
-        s.progress_interval = 0x4000;
+        (*s).progress_interval = 0x4000;
     }
-    s.cancelled = false;
+    (*s).cancelled = false;
 
     // Clear the initial bit buffer
-    s.bits = 0;
-    s.left = 0;
+    (*s).bits = 0;
+    (*s).left = 0;
 
     // If the initial data buffer is not large enough to be read directly
     // from refill the chunk once.
     if data_size < 64 {
-        bit_chunk_refill(s, s.chunk_begin);
+        bit_chunk_refill(s, (*s).chunk_begin);
     }
 
     // C-parity: `s->progress_interval + 8` wraps in size_t when
     // progress_interval == SIZE_MAX (progress_cb set + hint >= SIZE_MAX,
     // ufbx.c:2115-2116); the pointer `+` likewise wraps in practice.
-    if s.progress_cb.fn_.is_some()
-        && to_size(s.chunk_end.offset_from(s.chunk_ptr)) > s.progress_interval.wrapping_add(8)
+    if (*s).progress_cb.fn_.is_some()
+        && to_size((*s).chunk_end.offset_from((*s).chunk_ptr))
+            > (*s).progress_interval.wrapping_add(8)
     {
-        s.chunk_yield = s.chunk_ptr.wrapping_add(s.progress_interval);
+        (*s).chunk_yield = (*s).chunk_ptr.wrapping_add((*s).progress_interval);
     } else {
-        s.chunk_yield = s.chunk_end;
+        (*s).chunk_yield = (*s).chunk_end;
     }
 }
 
 // ufbx.c:2141-2174 `ufbxi_bit_yield`
 #[inline(never)]
 pub(crate) unsafe fn bit_yield(s: *mut BitStream, ptr: *const u8) -> *const u8 {
-    // Sole raw pointer to `*s` in this function (rule 4): local exclusive
-    // borrow for the whole body in place of repeated `(*s).field` derefs.
-    let s = &mut *s;
+    // `s.buffer` may point into `s.local_buffer` (see `bit_stream_init`), i.e.
+    // the `BitStream` holds a raw pointer aliasing one of its own fields, so `s`
+    // stays raw and is derefed as `(*s).field` to avoid a whole-struct retag
+    // invalidating that interior pointer.
 
     let mut ptr = ptr;
-    if ptr > s.chunk_end {
+    if ptr > (*s).chunk_end {
         ptr = bit_chunk_refill(s, ptr);
     }
 
-    if s.progress_cb.fn_.is_some() {
-        let num_read = s.num_read_before_chunk + to_size(ptr.offset_from(s.chunk_begin));
+    if (*s).progress_cb.fn_.is_some() {
+        let num_read = (*s).num_read_before_chunk + to_size(ptr.offset_from((*s).chunk_begin));
 
         // C: `ufbx_progress progress = { s->progress_bias + num_read, s->progress_total };`
         let progress = Progress {
-            bytes_read: s.progress_bias.wrapping_add(num_read as u64),
-            bytes_total: s.progress_total,
+            bytes_read: (*s).progress_bias.wrapping_add(num_read as u64),
+            bytes_total: (*s).progress_total,
         };
         // C: `(uint32_t)s->progress_cb.fn(...)` — the raw fn type returns
         // RawEnum<ProgressResult> so a contract-violating callback is not UB.
-        let result = (s.progress_cb.fn_.unwrap())(s.progress_cb.user, &progress).as_raw();
+        let result = ((*s).progress_cb.fn_.unwrap())((*s).progress_cb.user, &progress).as_raw();
         ufbx_assert!(
             result == ProgressResult::Continue as u32 || result == ProgressResult::Cancel as u32
         );
         if result == ProgressResult::Cancel as u32 {
-            s.cancelled = true;
-            ptr = s.local_buffer.as_ptr();
-            s.buffer = s.local_buffer.as_mut_ptr();
-            s.buffer_size = size_of::<[u8; 256]>();
-            s.chunk_begin = ptr;
-            s.chunk_ptr = ptr;
-            s.chunk_end = ptr.add(size_of::<[u8; 256]>() - 8);
-            s.chunk_real_end = ptr.add(size_of::<[u8; 256]>());
+            (*s).cancelled = true;
+            ptr = (*s).local_buffer.as_ptr();
+            (*s).buffer = (*s).local_buffer.as_mut_ptr();
+            (*s).buffer_size = size_of::<[u8; 256]>();
+            (*s).chunk_begin = ptr;
+            (*s).chunk_ptr = ptr;
+            (*s).chunk_end = ptr.add(size_of::<[u8; 256]>() - 8);
+            (*s).chunk_real_end = ptr.add(size_of::<[u8; 256]>());
             // C: memset(s->local_buffer, 0, sizeof(s->local_buffer))
-            core::ptr::write_bytes(s.local_buffer.as_mut_ptr(), 0, size_of::<[u8; 256]>());
+            core::ptr::write_bytes((*s).local_buffer.as_mut_ptr(), 0, size_of::<[u8; 256]>());
         }
     }
 
     // C-parity: wrapping `+ 8` / pointer add for progress_interval == SIZE_MAX
     // (see `bit_stream_init`).
-    if s.progress_cb.fn_.is_some()
-        && to_size(s.chunk_end.offset_from(ptr)) > s.progress_interval.wrapping_add(8)
+    if (*s).progress_cb.fn_.is_some()
+        && to_size((*s).chunk_end.offset_from(ptr)) > (*s).progress_interval.wrapping_add(8)
     {
-        s.chunk_yield = ptr.wrapping_add(s.progress_interval);
+        (*s).chunk_yield = ptr.wrapping_add((*s).progress_interval);
     } else {
-        s.chunk_yield = s.chunk_end;
+        (*s).chunk_yield = (*s).chunk_end;
     }
 
     ptr
@@ -464,16 +471,17 @@ pub(crate) unsafe fn bit_refill(
     p_data: &mut *const u8,
     s: *mut BitStream,
 ) {
-    // Sole raw pointer to `*s` in this function (rule 4): local exclusive
-    // borrow in place of repeated `(*s).field` derefs.
-    let s = &mut *s;
+    // `s.buffer` may point into `s.local_buffer` (see `bit_stream_init`), i.e.
+    // the `BitStream` holds a raw pointer aliasing one of its own fields, so `s`
+    // stays raw and is derefed as `(*s).field` to avoid a whole-struct retag
+    // invalidating that interior pointer.
 
-    if *p_data > s.chunk_yield {
+    if *p_data > (*s).chunk_yield {
         *p_data = bit_yield(s, *p_data);
-        if s.cancelled {
+        if (*s).cancelled {
             // Force an end-of-block symbol when cancelled so we don't need an
             // extra branch in the chunk decoding loop.
-            *p_bits = s.cancel_bits;
+            *p_bits = (*s).cancel_bits;
         }
     }
 
@@ -500,22 +508,23 @@ pub(crate) use macro_bit_refill_fast;
 // ufbx.c:2204-2248 `ufbxi_bit_copy_bytes`
 #[inline(never)]
 pub(crate) unsafe fn bit_copy_bytes(dst: *mut c_void, s: *mut BitStream, len: usize) -> i32 {
-    // Sole raw pointer to `*s` in this function (rule 4): local exclusive
-    // borrow for the whole body in place of repeated `(*s).field` derefs.
-    let s = &mut *s;
+    // `s.buffer` may point into `s.local_buffer` (see `bit_stream_init`), i.e.
+    // the `BitStream` holds a raw pointer aliasing one of its own fields, so `s`
+    // stays raw and is derefed as `(*s).field` to avoid a whole-struct retag
+    // invalidating that interior pointer.
 
-    ufbx_assert!(s.left % 8 == 0);
+    ufbx_assert!((*s).left % 8 == 0);
     let mut len = len;
     let mut ptr = dst as *mut u8;
 
     // Copy the buffered bits first
-    while len > 0 && s.left > 0 {
+    while len > 0 && (*s).left > 0 {
         // C: `*ptr++ = (char)(uint8_t)s->bits;`
-        *ptr = s.bits as u8;
+        *ptr = (*s).bits as u8;
         ptr = ptr.add(1);
         len -= 1;
-        s.bits >>= 8;
-        s.left -= 8;
+        (*s).bits >>= 8;
+        (*s).left -= 8;
     }
 
     // Copied fully from buffer
@@ -525,33 +534,33 @@ pub(crate) unsafe fn bit_copy_bytes(dst: *mut c_void, s: *mut BitStream, len: us
 
     // We need to clear the top bits as there may be data
     // read ahead past `s->left` in some cases
-    s.bits = 0;
+    (*s).bits = 0;
 
     // Copy the current chunk
-    let chunk_left = to_size(s.chunk_real_end.offset_from(s.chunk_ptr));
+    let chunk_left = to_size((*s).chunk_real_end.offset_from((*s).chunk_ptr));
     if chunk_left >= len {
         // C: memcpy(ptr, s->chunk_ptr, len)
-        core::ptr::copy_nonoverlapping(s.chunk_ptr, ptr, len);
-        s.chunk_ptr = s.chunk_ptr.add(len);
+        core::ptr::copy_nonoverlapping((*s).chunk_ptr, ptr, len);
+        (*s).chunk_ptr = (*s).chunk_ptr.add(len);
         return 1;
     } else {
-        core::ptr::copy_nonoverlapping(s.chunk_ptr, ptr, chunk_left);
-        s.chunk_ptr = s.chunk_ptr.add(chunk_left);
+        core::ptr::copy_nonoverlapping((*s).chunk_ptr, ptr, chunk_left);
+        (*s).chunk_ptr = (*s).chunk_ptr.add(chunk_left);
         ptr = ptr.add(chunk_left);
         len -= chunk_left;
     }
 
     // Read extra bytes from user
-    if len > s.input_left {
+    if len > (*s).input_left {
         return 0;
     }
     let mut num_read = 0usize;
-    if s.read_fn.is_some() {
-        num_read = (s.read_fn.unwrap())(s.read_user, ptr as *mut c_void, len);
+    if (*s).read_fn.is_some() {
+        num_read = ((*s).read_fn.unwrap())((*s).read_user, ptr as *mut c_void, len);
         // C-parity: no clamp on `num_read` here (unlike ufbxi_bit_chunk_refill,
         // ufbx.c:2068); a misbehaving read_fn wraps `input_left` in size_t and
         // the function returns 0 below.
-        s.input_left = s.input_left.wrapping_sub(num_read);
+        (*s).input_left = (*s).input_left.wrapping_sub(num_read);
     }
     (num_read == len) as i32
 }
@@ -937,19 +946,19 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
     code_lengths: *mut u8,
     num_symbols: u32,
 ) -> isize {
-    // Sole raw pointer to `*dc` in this function (rule 4): local exclusive
-    // borrow for the whole body in place of repeated `(*dc).field` derefs.
-    let dc = &mut *dc;
+    // `dc.stream` holds a self-referential `buffer`→`local_buffer` pointer (see
+    // `bit_stream_init`), so `dc` stays raw and is derefed as `(*dc).field` to
+    // avoid a whole-struct retag invalidating that interior pointer.
 
-    let mut bits = dc.stream.bits;
-    let mut left = dc.stream.left;
-    let mut data = dc.stream.chunk_ptr;
+    let mut bits = (*dc).stream.bits;
+    let mut left = (*dc).stream.left;
+    let mut data = (*dc).stream.chunk_ptr;
 
     let mut symbol_index = 0u32;
     let mut prev = 0u8;
     while symbol_index < num_symbols {
-        bit_refill(&mut bits, &mut left, &mut data, &mut dc.stream);
-        if dc.stream.cancelled {
+        bit_refill(&mut bits, &mut left, &mut data, &raw mut (*dc).stream);
+        if (*dc).stream.cancelled {
             return -28;
         }
 
@@ -1014,9 +1023,9 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
         }
     }
 
-    dc.stream.bits = bits;
-    dc.stream.left = left;
-    dc.stream.chunk_ptr = data;
+    (*dc).stream.bits = bits;
+    (*dc).stream.left = left;
+    (*dc).stream.chunk_ptr = data;
 
     0
 }
@@ -1024,21 +1033,21 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
 // ufbx.c:2603-2662 `ufbxi_init_dynamic_huff`
 #[inline(never)]
 pub(crate) unsafe fn init_dynamic_huff(dc: *mut DeflateContext, trees: *mut Trees) -> isize {
-    // Sole raw pointers to `*dc`/`*trees` in this function (rule 4): local
-    // exclusive borrows for the whole body in place of repeated
-    // `(*dc).field` / `(*trees).field` derefs.
-    let dc = &mut *dc;
+    // `dc.stream` holds a self-referential `buffer`→`local_buffer` pointer (see
+    // `bit_stream_init`), so `dc` stays raw and is derefed as `(*dc).field` to
+    // avoid a whole-struct retag invalidating that interior pointer. `trees` is
+    // not self-referential, so a local exclusive borrow is kept for it.
     let trees = &mut *trees;
 
-    let mut bits = dc.stream.bits;
-    let mut left = dc.stream.left;
-    let mut data = dc.stream.chunk_ptr;
-    bit_refill(&mut bits, &mut left, &mut data, &mut dc.stream);
-    if dc.stream.cancelled {
+    let mut bits = (*dc).stream.bits;
+    let mut left = (*dc).stream.left;
+    let mut data = (*dc).stream.chunk_ptr;
+    bit_refill(&mut bits, &mut left, &mut data, &raw mut (*dc).stream);
+    if (*dc).stream.cancelled {
         return -28;
     }
 
-    trees.fast_bits = dc.fast_bits;
+    trees.fast_bits = (*dc).fast_bits;
 
     // The header contains the number of Huffman codes in each of the three trees.
     let num_lit_lengths = 257 + (bits & 0x1f) as u32;
@@ -1058,8 +1067,8 @@ pub(crate) unsafe fn init_dynamic_huff(dc: *mut DeflateContext, trees: *mut Tree
 
     for len_i in 0..num_code_lengths as usize {
         if len_i == 14 {
-            bit_refill(&mut bits, &mut left, &mut data, &mut dc.stream);
-            if dc.stream.cancelled {
+            bit_refill(&mut bits, &mut left, &mut data, &raw mut (*dc).stream);
+            if (*dc).stream.cancelled {
                 return -28;
             }
         }
@@ -1068,9 +1077,9 @@ pub(crate) unsafe fn init_dynamic_huff(dc: *mut DeflateContext, trees: *mut Tree
         left -= 3;
     }
 
-    dc.stream.bits = bits;
-    dc.stream.left = left;
-    dc.stream.chunk_ptr = data;
+    (*dc).stream.bits = bits;
+    (*dc).stream.left = left;
+    (*dc).stream.chunk_ptr = data;
 
     // C: `ufbxi_huff_tree huff_code_length; // ufbxi_uninit` — zero-init,
     // `ufbxi_huff_build` writes everything that is later read.
@@ -1108,7 +1117,7 @@ pub(crate) unsafe fn init_dynamic_huff(dc: *mut DeflateContext, trees: *mut Tree
         num_lit_lengths,
         DEFLATE_LENGTH_LUT.as_ptr(),
         256,
-        dc.fast_bits,
+        (*dc).fast_bits,
     );
     if err != 0 {
         return if err == -7 { -28 } else { -16 + 1 + err };
@@ -1120,7 +1129,7 @@ pub(crate) unsafe fn init_dynamic_huff(dc: *mut DeflateContext, trees: *mut Tree
         num_dists,
         DEFLATE_DIST_LUT.as_ptr(),
         0,
-        dc.fast_bits,
+        (*dc).fast_bits,
     );
     if err != 0 {
         return if err == -7 { -28 } else { -22 + 1 + err };
@@ -1243,24 +1252,23 @@ pub(crate) unsafe fn inflate_block_slow(
     trees: *mut Trees,
     max_symbols: usize,
 ) -> i32 {
-    // Sole raw pointer to `*dc` in this function (rule 4): local exclusive
-    // borrow for the whole body in place of repeated `(*dc).field` derefs.
-    // `trees` is only ever read here (never written), so a shared borrow
-    // suffices.
-    let dc = &mut *dc;
+    // `dc.stream` holds a self-referential `buffer`→`local_buffer` pointer (see
+    // `bit_stream_init`), so `dc` stays raw and is derefed as `(*dc).field` to
+    // avoid a whole-struct retag invalidating that interior pointer. `trees` is
+    // not self-referential and only ever read here, so a shared borrow suffices.
     let trees = &*trees;
 
     let mut max_symbols = max_symbols;
-    let mut out_ptr = dc.out_ptr;
-    let out_begin = dc.out_begin;
-    let out_end = dc.out_end;
+    let mut out_ptr = (*dc).out_ptr;
+    let out_begin = (*dc).out_begin;
+    let out_end = (*dc).out_end;
 
     let fast_bits = trees.fast_bits;
     let fast_mask = (1u32 << fast_bits) - 1;
 
-    let mut bits = dc.stream.bits;
-    let mut left = dc.stream.left;
-    let mut data = dc.stream.chunk_ptr;
+    let mut bits = (*dc).stream.bits;
+    let mut left = (*dc).stream.left;
+    let mut data = (*dc).stream.chunk_ptr;
 
     loop {
         // C: `if (max_symbols-- == 0) break;` (size_t; wraps past zero)
@@ -1270,7 +1278,7 @@ pub(crate) unsafe fn inflate_block_slow(
             break;
         }
 
-        bit_refill(&mut bits, &mut left, &mut data, &mut dc.stream);
+        bit_refill(&mut bits, &mut left, &mut data, &raw mut (*dc).stream);
         let sym_bits = bits;
 
         let sym0: HuffSym = huff_decode_bits(trees.lit_length(), bits, fast_bits, fast_mask);
@@ -1287,10 +1295,10 @@ pub(crate) unsafe fn inflate_block_slow(
                 return -13;
             }
 
-            dc.out_ptr = out_ptr;
-            dc.stream.bits = bits;
-            dc.stream.left = left;
-            dc.stream.chunk_ptr = data;
+            (*dc).out_ptr = out_ptr;
+            (*dc).stream.bits = bits;
+            (*dc).stream.left = left;
+            (*dc).stream.chunk_ptr = data;
             return 0;
         } else if (sym0 as u32 & HUFF_SYM_MATCH) == 0 {
             if out_ptr == out_end {
@@ -1365,10 +1373,10 @@ pub(crate) unsafe fn inflate_block_slow(
         }
     }
 
-    dc.out_ptr = out_ptr;
-    dc.stream.bits = bits;
-    dc.stream.left = left;
-    dc.stream.chunk_ptr = data;
+    (*dc).out_ptr = out_ptr;
+    (*dc).stream.bits = bits;
+    (*dc).stream.left = left;
+    (*dc).stream.chunk_ptr = data;
     1
 }
 
@@ -1383,32 +1391,33 @@ const _: () = assert!(HUFF_FAST_BITS + HUFF_MAX_LONG_BITS >= 15); // Largest cod
 #[inline(never)]
 #[allow(unused_assignments)] // trailing `refill_bits` write of the C macro
 pub(crate) unsafe fn inflate_block_fast(dc: *mut DeflateContext, trees: *mut Trees) -> i32 {
-    // Sole raw pointers to `*dc`/`*trees` in this function (rule 4): local
-    // borrows in place of repeated `(*dc).field` / `(*trees).field` derefs.
-    // `trees` is only ever read here (never written), so a shared borrow
-    // suffices; `tree_lit_length`/`tree_dist` stay raw pointers as-is since
-    // the refill/decode macro below dereferences them directly.
-    let dc = &mut *dc;
+    // `dc.stream` holds a self-referential `buffer`→`local_buffer` pointer (see
+    // `bit_stream_init`), so `dc` stays raw and is derefed as `(*dc).field` to
+    // avoid a whole-struct retag invalidating that interior pointer. `trees` is
+    // not self-referential and only ever read here, so a shared borrow suffices;
+    // `tree_lit_length`/`tree_dist` stay raw pointers as-is since the
+    // refill/decode macro below dereferences them directly.
     let trees = &*trees;
 
-    ufbxi_dev_assert!(!dc.stream.cancelled);
+    ufbxi_dev_assert!(!(*dc).stream.cancelled);
     ufbxi_dev_assert!(trees.fast_bits == HUFF_FAST_BITS);
     ufbxi_dev_assert!(
-        dc.stream.chunk_yield.offset_from(dc.stream.chunk_ptr) >= INFLATE_FAST_MIN_IN as isize
+        (*dc).stream.chunk_yield.offset_from((*dc).stream.chunk_ptr)
+            >= INFLATE_FAST_MIN_IN as isize
     );
-    ufbxi_dev_assert!(dc.out_end.offset_from(dc.out_ptr) >= INFLATE_FAST_MIN_OUT as isize);
+    ufbxi_dev_assert!((*dc).out_end.offset_from((*dc).out_ptr) >= INFLATE_FAST_MIN_OUT as isize);
 
-    let mut out_ptr = dc.out_ptr;
-    let out_begin: *mut u8 = dc.out_begin;
-    let out_end: *mut u8 = dc.out_end.sub(INFLATE_FAST_MIN_OUT);
+    let mut out_ptr = (*dc).out_ptr;
+    let out_begin: *mut u8 = (*dc).out_begin;
+    let out_end: *mut u8 = (*dc).out_end.sub(INFLATE_FAST_MIN_OUT);
 
     let tree_lit_length: *const HuffTree = trees.lit_length();
     let tree_dist: *const HuffTree = trees.dist();
 
-    let mut bits = dc.stream.bits;
-    let mut left = dc.stream.left;
-    let mut data = dc.stream.chunk_ptr;
-    let data_end: *const u8 = dc.stream.chunk_yield.sub(INFLATE_FAST_MIN_IN);
+    let mut bits = (*dc).stream.bits;
+    let mut left = (*dc).stream.left;
+    let mut data = (*dc).stream.chunk_ptr;
+    let data_end: *const u8 = (*dc).stream.chunk_yield.sub(INFLATE_FAST_MIN_IN);
 
     let mut sym01_bits: u64;
     let mut sym0: HuffSym;
@@ -1511,10 +1520,10 @@ pub(crate) unsafe fn inflate_block_fast(dc: *mut DeflateContext, trees: *mut Tre
                 if huff_sym_value(sym0) != 0 {
                     return -13;
                 }
-                dc.out_ptr = out_ptr;
-                dc.stream.bits = bits;
-                dc.stream.left = left;
-                dc.stream.chunk_ptr = data;
+                (*dc).out_ptr = out_ptr;
+                (*dc).stream.bits = bits;
+                (*dc).stream.left = left;
+                (*dc).stream.chunk_ptr = data;
                 return 0;
             }
 
@@ -1602,10 +1611,10 @@ pub(crate) unsafe fn inflate_block_fast(dc: *mut DeflateContext, trees: *mut Tre
         break;
     }
 
-    dc.out_ptr = out_ptr;
-    dc.stream.bits = bits;
-    dc.stream.left = left;
-    dc.stream.chunk_ptr = data;
+    (*dc).out_ptr = out_ptr;
+    (*dc).stream.bits = bits;
+    (*dc).stream.left = left;
+    (*dc).stream.chunk_ptr = data;
     1
 }
 
@@ -1678,7 +1687,7 @@ pub(crate) unsafe fn inflate(
     // return code deterministic here, which may differ from a given C build.
     // No deterministic port can reproduce C's uninit read.
     let mut dc: DeflateContext = core::mem::zeroed();
-    bit_stream_init(&mut dc.stream, input);
+    bit_stream_init(&raw mut dc.stream, input);
     dc.out_begin = dst as *mut u8;
     dc.out_ptr = dst as *mut u8;
     dc.out_end = (dst as *mut u8).add(dst_size);
@@ -1696,7 +1705,7 @@ pub(crate) unsafe fn inflate(
     let mut left = dc.stream.left;
     let mut data = dc.stream.chunk_ptr;
 
-    bit_refill(&mut bits, &mut left, &mut data, &mut dc.stream);
+    bit_refill(&mut bits, &mut left, &mut data, &raw mut dc.stream);
     if dc.stream.cancelled {
         return -28;
     }
@@ -1723,7 +1732,7 @@ pub(crate) unsafe fn inflate(
     }
 
     loop {
-        bit_refill(&mut bits, &mut left, &mut data, &mut dc.stream);
+        bit_refill(&mut bits, &mut left, &mut data, &raw mut dc.stream);
         if dc.stream.cancelled {
             return -28;
         }
@@ -1756,7 +1765,7 @@ pub(crate) unsafe fn inflate(
             dc.stream.chunk_ptr = data;
 
             // Copy `len` bytes of literal data
-            if bit_copy_bytes(dc.out_ptr as *mut c_void, &mut dc.stream, len) == 0 {
+            if bit_copy_bytes(dc.out_ptr as *mut c_void, &raw mut dc.stream, len) == 0 {
                 return -5;
             }
 
@@ -1779,7 +1788,7 @@ pub(crate) unsafe fn inflate(
                 trees = &mut (*ret_imp).static_trees;
             } else {
                 // Dynamic Huffman
-                err = init_dynamic_huff(&mut dc, &mut tree_data);
+                err = init_dynamic_huff(&raw mut dc, &mut tree_data);
                 if err != 0 {
                     return err;
                 }
@@ -1795,10 +1804,10 @@ pub(crate) unsafe fn inflate(
                     && dc.stream.chunk_yield.offset_from(dc.stream.chunk_ptr)
                         >= INFLATE_FAST_MIN_IN as isize
                 {
-                    err = inflate_block_fast(&mut dc, trees) as isize;
+                    err = inflate_block_fast(&raw mut dc, trees) as isize;
                 } else {
                     err = inflate_block_slow(
-                        &mut dc,
+                        &raw mut dc,
                         trees,
                         if fast_viable { 32 } else { usize::MAX },
                     ) as isize;
@@ -1838,7 +1847,7 @@ pub(crate) unsafe fn inflate(
         let align_bits = left & 0x7;
         bits >>= align_bits;
         left -= align_bits;
-        bit_refill(&mut bits, &mut left, &mut data, &mut dc.stream);
+        bit_refill(&mut bits, &mut left, &mut data, &raw mut dc.stream);
         if dc.stream.cancelled {
             return -28;
         }
