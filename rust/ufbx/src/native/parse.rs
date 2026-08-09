@@ -710,6 +710,13 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `tmp_arr` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn tmp_arr(&self) -> *mut u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        unsafe { (*self.get()).tmp_arr }
+    }
+
     // `max_consecutive_indices` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn max_consecutive_indices(&self) -> usize {

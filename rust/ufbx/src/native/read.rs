@@ -376,13 +376,9 @@ pub(crate) unsafe fn sort_properties(
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_prop)))"
     );
-    macro_stable_sort::<Prop>(
-        32,
-        props,
-        (*uc.get()).tmp_arr as *mut Prop,
-        count,
-        |a, b| prop_less(a as *mut Prop, b as *mut Prop),
-    );
+    macro_stable_sort::<Prop>(32, props, uc.tmp_arr() as *mut Prop, count, |a, b| {
+        prop_less(a as *mut Prop, b as *mut Prop)
+    });
     Ok(())
 }
 
@@ -2304,7 +2300,7 @@ pub(crate) unsafe fn sort_uv_sets(
         size_of::<UvSet>(),
         32,
         sets as *mut c_void,
-        (*uc.get()).tmp_arr as *mut c_void,
+        uc.tmp_arr() as *mut c_void,
         count,
         uv_set_less,
         core::ptr::null_mut(),
@@ -2333,7 +2329,7 @@ pub(crate) unsafe fn sort_color_sets(
         size_of::<ColorSet>(),
         32,
         sets as *mut c_void,
-        (*uc.get()).tmp_arr as *mut c_void,
+        uc.tmp_arr() as *mut c_void,
         count,
         color_set_less,
         core::ptr::null_mut(),
@@ -2384,7 +2380,7 @@ pub(crate) unsafe fn sort_blend_offsets(
         size_of::<BlendOffset>(),
         16,
         offsets as *mut c_void,
-        (*uc.get()).tmp_arr as *mut c_void,
+        uc.tmp_arr() as *mut c_void,
         count,
         blend_offset_less,
         core::ptr::null_mut(),
@@ -5364,7 +5360,7 @@ pub(crate) unsafe fn sort_shader_prop_bindings(
     macro_stable_sort::<ShaderPropBinding>(
         32,
         bindings,
-        (*uc.get()).tmp_arr as *mut ShaderPropBinding,
+        uc.tmp_arr() as *mut ShaderPropBinding,
         count,
         |a, b| sp::str_less((*a).shader_prop, (*b).shader_prop),
     );

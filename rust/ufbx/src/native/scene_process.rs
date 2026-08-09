@@ -1110,7 +1110,7 @@ pub(crate) unsafe fn sort_name_elements(
     macro_stable_sort::<NameElement>(
         32,
         name_elems,
-        (*uc.get()).tmp_arr as *mut NameElement,
+        uc.tmp_arr() as *mut NameElement,
         count,
         |a, b| cmp_name_element_less(a, b),
     );
@@ -1163,13 +1163,9 @@ pub(crate) unsafe fn sort_node_ptrs(
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_node*)))"
     );
-    macro_stable_sort::<*mut Node>(
-        32,
-        nodes,
-        (*uc.get()).tmp_arr as *mut *mut Node,
-        count,
-        |a, b| cmp_node_less(*a, *b),
-    );
+    macro_stable_sort::<*mut Node>(32, nodes, uc.tmp_arr() as *mut *mut Node, count, |a, b| {
+        cmp_node_less(*a, *b)
+    });
     Ok(())
 }
 
@@ -1212,7 +1208,7 @@ pub(crate) unsafe fn sort_tmp_material_textures(
     macro_stable_sort::<TmpMaterialTexture>(
         32,
         mat_texs,
-        (*uc.get()).tmp_arr as *mut TmpMaterialTexture,
+        uc.tmp_arr() as *mut TmpMaterialTexture,
         count,
         |a, b| cmp_tmp_material_texture_less(a, b),
     );
@@ -1273,7 +1269,7 @@ pub(crate) unsafe fn sort_connections(
     macro_stable_sort::<Connection>(
         32,
         connections,
-        (*uc.get()).tmp_arr as *mut Connection,
+        uc.tmp_arr() as *mut Connection,
         count,
         |a, b| cmp_connection_less(a as *mut Connection, b as *mut Connection, index),
     );
@@ -2516,13 +2512,9 @@ pub(crate) unsafe fn sort_anim_props(
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_anim_prop)))"
     );
-    macro_stable_sort::<AnimProp>(
-        32,
-        aprops,
-        (*uc.get()).tmp_arr as *mut AnimProp,
-        count,
-        |a, b| cmp_anim_prop_less(a, b),
-    );
+    macro_stable_sort::<AnimProp>(32, aprops, uc.tmp_arr() as *mut AnimProp, count, |a, b| {
+        cmp_anim_prop_less(a, b)
+    });
     Ok(())
 }
 
@@ -2561,7 +2553,7 @@ pub(crate) unsafe fn sort_material_textures(
         size_of::<MaterialTexture>(),
         32,
         textures as *mut c_void,
-        (*uc.get()).tmp_arr as *mut c_void,
+        uc.tmp_arr() as *mut c_void,
         count,
         material_texture_less,
         ptr::null_mut(),
@@ -2625,7 +2617,7 @@ pub(crate) unsafe fn sort_bone_poses(uc: &Context, pose: *mut Pose) -> Result<()
         size_of::<BonePose>(),
         16,
         (*pose).bone_poses.data as *mut c_void,
-        (*uc.get()).tmp_arr as *mut c_void,
+        uc.tmp_arr() as *mut c_void,
         count,
         bone_pose_less,
         ptr::null_mut(),
@@ -2655,7 +2647,7 @@ pub(crate) unsafe fn sort_skin_weights(uc: &Context, skin: *mut SkinDeformer) ->
         macro_stable_sort::<SkinWeight>(
             32,
             ((*skin).weights.data as *mut SkinWeight).add(v.weight_begin as usize),
-            (*uc.get()).tmp_arr as *mut SkinWeight,
+            uc.tmp_arr() as *mut SkinWeight,
             v.num_weights as usize,
             |a, b| (*a).weight > (*b).weight,
         );
@@ -2699,7 +2691,7 @@ pub(crate) unsafe fn sort_blend_keyframes(
         size_of::<BlendKeyframe>(),
         32,
         keyframes as *mut c_void,
-        (*uc.get()).tmp_arr as *mut c_void,
+        uc.tmp_arr() as *mut c_void,
         count,
         blend_keyframe_less,
         ptr::null_mut(),
@@ -4673,7 +4665,7 @@ pub(crate) unsafe fn finalize_shader_texture(
             ),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), ((shader->inputs.count + 1) * sizeof(ufbx_shader_texture_input)))"
         );
-        (*shader).inputs.data = (*uc.get()).tmp_arr as *const ShaderTextureInput;
+        (*shader).inputs.data = uc.tmp_arr() as *const ShaderTextureInput;
 
         // Add a new property
         // C: `ufbx_shader_texture_input *input = &shader->inputs.data[shader->inputs.count++];`
@@ -5016,7 +5008,7 @@ pub(crate) unsafe fn deduplicate_textures(
         size_of::<OrderedTexture>(),
         16,
         textures as *mut c_void,
-        (*uc.get()).tmp_arr as *mut c_void,
+        uc.tmp_arr() as *mut c_void,
         count,
         ordered_texture_less_texture,
         ptr::null_mut(),
@@ -5040,7 +5032,7 @@ pub(crate) unsafe fn deduplicate_textures(
         size_of::<OrderedTexture>(),
         16,
         textures as *mut c_void,
-        (*uc.get()).tmp_arr as *mut c_void,
+        uc.tmp_arr() as *mut c_void,
         new_count,
         ordered_texture_less_order,
         ptr::null_mut(),
@@ -5588,7 +5580,7 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
             ),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), ((mesh->num_indices + 1) * sizeof(uint32_t)))"
         );
-        let index_mapping: *mut u32 = ((*uc.get()).tmp_arr as *mut u32).add(1);
+        let index_mapping: *mut u32 = (uc.tmp_arr() as *mut u32).add(1);
         *index_mapping.offset(-1) = NO_INDEX;
         // C: `ufbxi_for_list(ufbx_face, face, mesh->faces)`
         let mut face: *mut Face = (*mesh).faces.data as *mut Face;
@@ -6042,7 +6034,7 @@ pub(crate) unsafe fn absolute_to_relative_path(
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (max_length))"
     );
-    let tmp: *mut u8 = (*uc.get()).tmp_arr;
+    let tmp: *mut u8 = uc.tmp_arr();
     let mut tmp_length: usize = 0;
 
     let mut rel_begin: usize = 0;
@@ -6169,7 +6161,7 @@ pub(crate) unsafe fn sort_file_contents(
         size_of::<FileContent>(),
         32,
         content as *mut c_void,
-        (*uc.get()).tmp_arr as *mut c_void,
+        uc.tmp_arr() as *mut c_void,
         count,
         file_content_less,
         ptr::null_mut(),

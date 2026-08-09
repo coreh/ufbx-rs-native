@@ -923,7 +923,7 @@ unsafe fn binary_parse_node_rec(
                     ),
                     "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (decoded_data_size))"
                 );
-                decoded_data = (*uc.get()).tmp_arr as *mut c_void;
+                decoded_data = uc.tmp_arr() as *mut c_void;
             }
 
             if deferred {
