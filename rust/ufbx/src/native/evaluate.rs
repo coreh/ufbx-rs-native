@@ -3484,6 +3484,13 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `tmp_arr` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn tmp_arr(&self) -> *mut u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        unsafe { (*self.get()).tmp_arr }
+    }
+
     // `nodes_to_bake` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn nodes_to_bake(&self) -> *mut bool {
@@ -3776,13 +3783,9 @@ pub(crate) unsafe fn sort_bake_times(
         ),
         "ufbxi_grow_array_size((&bc->ator_tmp), sizeof(**(&bc->tmp_arr)), (&bc->tmp_arr), (&bc->tmp_arr_size), (count * sizeof(ufbxi_bake_time)))"
     );
-    macro_stable_sort::<BakeTime>(
-        32,
-        times,
-        (*bc.get()).tmp_arr as *mut BakeTime,
-        count,
-        |a, b| cmp_bake_time(*a, *b) < 0,
-    );
+    macro_stable_sort::<BakeTime>(32, times, bc.tmp_arr() as *mut BakeTime, count, |a, b| {
+        cmp_bake_time(*a, *b) < 0
+    });
     Ok(())
 }
 
