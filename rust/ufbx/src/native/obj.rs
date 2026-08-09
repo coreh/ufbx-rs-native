@@ -334,7 +334,7 @@ pub(crate) unsafe fn obj_free(uc: &Context) {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
-    ufbxi_dev_assert!(!(*uc.obj().get()).eof);
+    ufbxi_dev_assert!(!uc.obj().eof());
 
     let mut offset: usize = 0;
 
@@ -348,7 +348,7 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
         if end.is_null() {
             if uc.eof() {
                 offset = uc.data_size();
-                (*uc.obj().get()).eof = true;
+                uc.obj().set_eof(true);
                 break;
             } else {
                 let new_cap: usize = max_sz(1, uc.data_size().wrapping_mul(2));
@@ -390,7 +390,7 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
             .set_read_progress(uc.obj().read_progress() % uc.progress_interval());
     }
 
-    if (*uc.obj().get()).eof {
+    if uc.obj().eof() {
         let new_data: *mut u8 = push::<u8>(uc.tmp_mut_ptr(), line_len + 1);
         ufbxi_check!(uc, !new_data.is_null(), "new_data");
         core::ptr::copy_nonoverlapping((*uc.obj().get()).line.data, new_data, line_len);
@@ -1484,7 +1484,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
-    while !(*uc.obj().get()).eof {
+    while !uc.obj().eof() {
         obj_tokenize_line(uc)?;
         let num_tokens: usize = uc.obj().num_tokens();
         if num_tokens == 0 {
@@ -1811,7 +1811,7 @@ pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
     uc.obj().set_mesh(core::ptr::null_mut());
     (*uc.obj().get()).usemtl_fbx_id = 0;
 
-    while !(*uc.obj().get()).eof {
+    while !uc.obj().eof() {
         obj_tokenize_line(uc)?;
         let num_tokens: usize = uc.obj().num_tokens();
         if num_tokens == 0 {
@@ -1868,7 +1868,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     uc.set_data_size(0);
     uc.set_yield_size(0);
     uc.set_eof(false);
-    (*uc.obj().get()).eof = false;
+    uc.obj().set_eof(false);
 
     if uc.opts_view().obj_mtl_data_view().size() > 0 {
         uc.set_data(uc.opts_view().obj_mtl_data_view().data());

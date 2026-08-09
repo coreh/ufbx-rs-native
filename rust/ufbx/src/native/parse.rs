@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn eof(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).eof }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_eof(&self, eof: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).eof = eof;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn read_progress(&self) -> usize {
         // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
         unsafe { (*self.get()).read_progress }
