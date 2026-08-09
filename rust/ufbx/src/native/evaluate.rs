@@ -3072,6 +3072,14 @@ impl CreateAnimContext {
         self.0.get().cast()
     }
 
+    // `anim` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn anim_mut(&self) -> *mut Anim {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).anim }
+    }
+
     // `imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn imp(&self) -> *mut AnimImp {
@@ -3204,7 +3212,7 @@ pub(crate) unsafe extern "C" fn transform_override_less(
 #[must_use]
 pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
     let scene: *const Scene = ac.scene();
-    let anim: *mut Anim = ptr::addr_of_mut!((*ac.get()).anim);
+    let anim: *mut Anim = ac.anim_mut();
 
     init_ator(
         ptr::addr_of_mut!((*ac.get()).error),
