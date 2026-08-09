@@ -66,16 +66,16 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
 
     // Grow the read buffer if necessary, data is copied over below with the
     // usual path so the free is deferred (`size_to_free`, `data_to_free`)
-    if size > (*uc.get()).read_buffer_size {
+    if size > uc.read_buffer_size() {
         let mut new_size = max_sz(size, (*uc.get()).opts.read_buffer_size);
         // C-parity: `uc->read_buffer_size * 2` is a size_t multiply that wraps.
-        new_size = max_sz(new_size, (*uc.get()).read_buffer_size.wrapping_mul(2));
-        size_to_free = (*uc.get()).read_buffer_size;
+        new_size = max_sz(new_size, uc.read_buffer_size().wrapping_mul(2));
+        size_to_free = uc.read_buffer_size();
         data_to_free = uc.read_buffer();
         let new_buffer: *mut u8 = alloc::<u8>(uc.ator_tmp(), new_size);
         ufbxi_check_return!(uc, !new_buffer.is_null(), core::ptr::null(), "new_buffer");
         uc.set_read_buffer(new_buffer);
-        (*uc.get()).read_buffer_size = new_size;
+        uc.set_read_buffer_size(new_size);
     }
 
     // Copy the remains of the previous buffer to the beginning of the new one
@@ -92,7 +92,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     }
 
     // Fill the rest of the buffer with user data
-    let data_capacity: usize = (*uc.get()).read_buffer_size;
+    let data_capacity: usize = uc.read_buffer_size();
     while data_size < data_capacity {
         let to_read: usize = data_capacity - data_size;
         let read_result: usize = (uc.read_fn().unwrap_unchecked())(
@@ -291,7 +291,7 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
     } else {
         // Read and discard bytes in reasonable chunks
         let skip_size: u64 = max64(
-            (*uc.get()).read_buffer_size as u64,
+            uc.read_buffer_size() as u64,
             (*uc.get()).opts.read_buffer_size as u64,
         );
         while size > 0 {

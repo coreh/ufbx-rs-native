@@ -111,7 +111,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
             (*ua).src_buf = (*ua).retain_buf;
         } else {
             // Grow the read buffer if necessary
-            if (*uc.get()).read_buffer_size < (*uc.get()).opts.read_buffer_size {
+            if uc.read_buffer_size() < (*uc.get()).opts.read_buffer_size {
                 let new_size: usize = (*uc.get()).opts.read_buffer_size;
                 ufbxi_check_return!(
                     uc,
@@ -126,7 +126,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
                 );
             }
             dst_buffer = uc.read_buffer();
-            dst_size = (*uc.get()).read_buffer_size;
+            dst_size = uc.read_buffer_size();
             (*ua).src_is_retained = false;
             (*ua).src_buf = core::ptr::null_mut();
         }

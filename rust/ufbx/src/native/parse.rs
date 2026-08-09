@@ -897,6 +897,22 @@ impl Context {
             (*self.get()).read_buffer = read_buffer;
         }
     }
+
+    // Capacity of `read_buffer` in bytes. Scalar `usize`: value getter + setter.
+    // The paired `&mut uc.read_buffer_size` out-param site in `refill` stays raw.
+    #[inline(always)]
+    pub(crate) fn read_buffer_size(&self) -> usize {
+        // SAFETY: reading a `usize` field; all bit patterns valid.
+        unsafe { (*self.get()).read_buffer_size }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_read_buffer_size(&self, read_buffer_size: usize) {
+        // SAFETY: storing a `usize`; cannot violate validity.
+        unsafe {
+            (*self.get()).read_buffer_size = read_buffer_size;
+        }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`

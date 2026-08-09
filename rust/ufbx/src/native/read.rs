@@ -6208,7 +6208,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
         if (*uc.get()).ascii.src_buf == tmp_buf {
             let ua: *mut Ascii = &mut (*uc.get()).ascii;
             let size: usize = to_size((*ua).src_end.offset_from((*ua).src));
-            if (*uc.get()).read_buffer_size < size {
+            if uc.read_buffer_size() < size {
                 ufbxi_check!(
                     uc,
                     grow_array::<u8>(

@@ -995,7 +995,7 @@ unsafe fn binary_parse_node_rec(
                 // as `ufbx_inflate()` overwrites parts of it with zeroes.
                 if encoded_size as usize > (*input).data_size {
                     (*input).buffer = uc.read_buffer() as *mut c_void;
-                    (*input).buffer_size = (*uc.get()).read_buffer_size;
+                    (*input).buffer_size = uc.read_buffer_size();
                     (*input).read_fn = uc.read_fn();
                     (*input).read_user = uc.read_user();
                     (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(
