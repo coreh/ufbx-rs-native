@@ -248,7 +248,7 @@ pub(crate) unsafe fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
-    (*uc.get()).from_ascii = true;
+    uc.set_from_ascii(true);
     (*uc.get()).obj.initialized = true;
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`

@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `from_ascii` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn from_ascii(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).from_ascii }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_from_ascii(&self, from_ascii: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).from_ascii = from_ascii;
+        }
+    }
+
     // `exporter_version` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn exporter_version(&self) -> u32 {
@@ -1975,7 +1990,7 @@ pub(crate) unsafe fn is_array_node(
             } else if name == sp::KeyAttrDataFloat.as_ptr() {
                 // The float data in a keyframe attribute array is represented as integers
                 // in versions >= 7200 as some of the elements aren't actually floats (!)
-                (*info).type_ = if (*uc.get()).from_ascii && uc.version() >= 7200 {
+                (*info).type_ = if uc.from_ascii() && uc.version() >= 7200 {
                     b'i'
                 } else {
                     b'f'
@@ -1983,7 +1998,7 @@ pub(crate) unsafe fn is_array_node(
                 if (*uc.get()).opts.ignore_animation {
                     (*info).type_ = b'-';
                 }
-                if (*uc.get()).from_ascii && uc.version() < 7200 {
+                if uc.from_ascii() && uc.version() < 7200 {
                     (*info).flags |= ARRAY_FLAG_ACCURATE_F32;
                 }
                 return true;
@@ -3382,7 +3397,7 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
         (*uc.get()).sure_fbx = true;
         crate::native::io::consume_bytes(uc, BINARY_HEADER_SIZE);
     } else {
-        (*uc.get()).from_ascii = true;
+        uc.set_from_ascii(true);
 
         // Use the current read buffer as the initial parse buffer
         // C: `memset(&uc->ascii, 0, sizeof(uc->ascii));`
@@ -3419,7 +3434,7 @@ pub(crate) unsafe fn parse_toplevel_child_imp(
     buf: *mut Buf,
     p_end: *mut bool,
 ) -> Result<(), Fail> {
-    if (*uc.get()).from_ascii {
+    if uc.from_ascii() {
         crate::native::parse_ascii::ascii_parse_node(uc, 0, state, p_end, buf, true)?;
     } else {
         crate::native::parse_binary::binary_parse_node(uc, 0, state, p_end, buf, true)?;
@@ -3454,7 +3469,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
     loop {
         // Parse the next top-level node
         let mut end: bool = false;
-        if (*uc.get()).from_ascii {
+        if uc.from_ascii() {
             crate::native::parse_ascii::ascii_parse_node(
                 uc,
                 0,
@@ -3609,7 +3624,7 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
     ufbx_assert!((*uc.get()).top_nodes_len == 0);
 
     let mut end: bool = false;
-    if (*uc.get()).from_ascii {
+    if uc.from_ascii() {
         crate::native::parse_ascii::ascii_parse_node(
             uc,
             0,

@@ -169,7 +169,7 @@ pub(crate) unsafe fn read_embedded_blob(
         let num_parts = (*content_arr).size;
         let parts: *mut String = (*content_arr).data as *mut String;
 
-        if num_parts == 1 && !(*uc.get()).from_ascii {
+        if num_parts == 1 && !uc.from_ascii() {
             content = *parts;
         } else {
             let mut total_size: usize = 0;
@@ -992,7 +992,7 @@ pub(crate) unsafe fn split_type_and_name(
 ) -> Result<(), Fail> {
     // Name and type are packed in a single property as Type::Name (in ASCII)
     // or Name\x00\x01Type (in binary)
-    let sep: *const u8 = if (*uc.get()).from_ascii {
+    let sep: *const u8 = if uc.from_ascii() {
         b"::\0".as_ptr()
     } else {
         b"\x00\x01\0".as_ptr()
@@ -1008,7 +1008,7 @@ pub(crate) unsafe fn split_type_and_name(
 
     // ???: ASCII and binary store type and name in different order
     if type_end <= type_and_name.length {
-        if (*uc.get()).from_ascii {
+        if uc.from_ascii() {
             (*name).data = type_and_name.data.add(type_end);
             (*name).length = type_and_name.length - type_end;
             (*type_).data = type_and_name.data;
@@ -7385,7 +7385,7 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
     } else {
         // Pre-7000: Root node has a specific type-name pair "Model::Scene"
         // (or reversed in binary). Use the interned name as ID as usual.
-        let mut root_name: *const u8 = if (*uc.get()).from_ascii {
+        let mut root_name: *const u8 = if uc.from_ascii() {
             b"Model::Scene\0".as_ptr()
         } else {
             b"Scene\x00\x01Model\0".as_ptr()
