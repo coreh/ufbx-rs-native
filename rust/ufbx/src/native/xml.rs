@@ -98,6 +98,13 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    // `tok_cap` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn tok_cap(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).tok_cap }
+    }
+
     // `tok` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tok(&self) -> *mut u8 {
@@ -235,7 +242,7 @@ pub(crate) unsafe fn xml_advance(xc: &XmlContext) {
 // ufbx.c:7328-7335 `ufbxi_xml_push_token_char`
 #[inline(never)]
 pub(crate) unsafe fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), Fail> {
-    if (*xc.get()).tok_len == (*xc.get()).tok_cap || IS_REGRESSION {
+    if (*xc.get()).tok_len == xc.tok_cap() || IS_REGRESSION {
         ufbxi_check_err!(
             &mut (*xc.get()).error,
             grow_array::<u8>(
@@ -700,7 +707,7 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     let ok = xml_parse_root(&xc).is_ok();
 
     buf_free(&mut (*xc.get()).tmp_stack);
-    free::<u8>(xc.ator(), xc.tok(), (*xc.get()).tok_cap);
+    free::<u8>(xc.ator(), xc.tok(), xc.tok_cap());
 
     if ok {
         xc.doc()
