@@ -2108,6 +2108,20 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).result as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp as *mut crate::native::buf::BufView) }
+    }
+
     // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `EvaluateOptsView`.
     #[inline(always)]
     pub(crate) fn opts_view(&self) -> &EvaluateOptsView {
@@ -3042,7 +3056,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     }
 
     ec.set_scene_imp(imp);
-    (*ec.get()).result.ator = ec.ator_result_mut_ptr();
+    ec.result_view().set_ator(ec.ator_result_mut_ptr());
 
     Ok(())
 }
@@ -3093,11 +3107,11 @@ pub(crate) unsafe fn evaluate_scene(
         b"result\0".as_ptr(),
     );
 
-    (*ec.get()).result.ator = ec.ator_result_mut_ptr();
-    (*ec.get()).tmp.ator = ec.ator_tmp_mut_ptr();
+    ec.result_view().set_ator(ec.ator_result_mut_ptr());
+    ec.tmp_view().set_ator(ec.ator_tmp_mut_ptr());
 
-    (*ec.get()).result.unordered = true;
-    (*ec.get()).tmp.unordered = true;
+    ec.result_view().set_unordered(true);
+    ec.tmp_view().set_unordered(true);
 
     if evaluate_imp(ec).is_ok() {
         buf_free(ec.tmp_mut_ptr());
