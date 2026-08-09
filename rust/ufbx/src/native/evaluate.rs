@@ -2049,6 +2049,14 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    #[inline(always)]
+    pub(crate) fn set_dst_element(&self, dst_element: *mut u8) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).dst_element = dst_element;
+        }
+    }
+
     // `src_element` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn src_element(&self) -> *mut u8 {
@@ -2163,7 +2171,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ec->src_element = (char*)ec->src_scene.elements.data[0];`
     ec.set_src_element(*((*ec.get()).src_scene.elements.data as *mut *mut u8).add(0));
-    (*ec.get()).dst_element = element_data;
+    ec.set_dst_element(element_data);
 
     // C indexes `ec->scene.elements_by_type[i]`, the `ufbx_element_list` array
     // view of the `ufbx_scene` per-type list union (ufbx.h); the generated
