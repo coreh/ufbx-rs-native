@@ -177,6 +177,14 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `name_cap` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn name_cap_mut(&self) -> *mut usize {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).name_cap }
+    }
+
     // `name_buf` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn name_buf_mut(&self) -> *mut *mut u8 {
@@ -708,7 +716,7 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                     grow_array::<u8>(
                         cc.ator_tmp(),
                         cc.name_buf_mut(),
-                        &mut (*cc.get()).name_cap,
+                        cc.name_cap_mut(),
                         padded_length
                     ),
                     "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->name_buf)), (&cc->name_buf), (&cc->name_cap), (padded_length))"
