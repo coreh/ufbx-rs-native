@@ -177,6 +177,14 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ator_result }
+    }
+
     // `imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn imp(&self) -> *mut GeometryCacheImp {
@@ -1499,7 +1507,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
         );
         if !cc.owned_by_scene() {
             buf_free(&mut (*cc.get()).string_pool.buf);
-            free_ator(&mut (*cc.get()).ator_result);
+            free_ator(cc.ator_result_mut());
         }
         core::ptr::null_mut()
     }
@@ -1531,7 +1539,7 @@ pub(crate) unsafe fn load_geometry_cache(
     );
     init_ator(
         &mut (*cc.get()).error,
-        &mut (*cc.get()).ator_result,
+        cc.ator_result_mut(),
         &opts.result_allocator,
         b"result\0".as_ptr(),
     );
@@ -1548,10 +1556,10 @@ pub(crate) unsafe fn load_geometry_cache(
         map_cmp_string,
         core::ptr::null_mut(),
     );
-    (*cc.get()).string_pool.buf.ator = &raw mut (*cc.get()).ator_result;
+    (*cc.get()).string_pool.buf.ator = cc.ator_result_mut();
     (*cc.get()).string_pool.buf.unordered = true;
     (*cc.get()).string_pool.initial_size = 64;
-    (*cc.get()).result.ator = &raw mut (*cc.get()).ator_result;
+    (*cc.get()).result.ator = cc.ator_result_mut();
 
     cc.set_frames_per_second(if opts.frames_per_second > 0.0 {
         opts.frames_per_second
