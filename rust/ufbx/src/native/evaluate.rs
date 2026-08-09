@@ -669,11 +669,11 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     (*uc.get()).scene.metadata.creator.data = EMPTY_CHAR.as_ptr();
 
     (*uc.get()).unit_scale = 1.0;
-    if (*uc.get()).data.is_null() {
+    if uc.data().is_null() {
         ufbxi_dev_assert!((*uc.get()).data_begin.is_null());
         // C: `uc->data_begin = uc->data = ufbxi_zero_size_buffer;`
-        (*uc.get()).data = ZERO_SIZE_BUFFER.as_ptr();
-        (*uc.get()).data_begin = (*uc.get()).data;
+        uc.set_data(ZERO_SIZE_BUFFER.as_ptr());
+        (*uc.get()).data_begin = uc.data();
     }
 
     (*uc.get()).retain_vertex_w = ((*uc.get()).opts.retain_dom

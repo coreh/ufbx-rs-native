@@ -6226,7 +6226,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             // C: `uc->data = uc->data_begin = ua->src = uc->read_buffer;`
             (*ua).src = (*uc.get()).read_buffer;
             (*uc.get()).data_begin = (*ua).src;
-            (*uc.get()).data = (*uc.get()).data_begin;
+            uc.set_data((*uc.get()).data_begin);
             (*ua).src_end = (*uc.get()).read_buffer.add(size);
             (*ua).src_is_retained = false;
             (*ua).src_buf = core::ptr::null_mut();
@@ -6235,7 +6235,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             } else {
                 (*ua).src_yield = (*ua).src.add((*uc.get()).progress_interval);
             }
-            (*uc.get()).data = (*ua).src;
+            uc.set_data((*ua).src);
         }
 
         buf_clear(tmp_buf);

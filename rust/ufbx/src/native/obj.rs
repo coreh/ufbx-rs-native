@@ -343,7 +343,7 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     let mut offset: usize = 0;
 
     loop {
-        let begin: *const u8 = add_ptr((*uc.get()).data as *mut u8, offset) as *const u8;
+        let begin: *const u8 = add_ptr(uc.data() as *mut u8, offset) as *const u8;
         let end: *const u8 = if !begin.is_null() {
             memchr(begin, b'\n', (*uc.get()).data_size - offset)
         } else {
@@ -381,9 +381,9 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
 
     let line_len: usize = offset;
 
-    (*uc.get()).obj.line.data = (*uc.get()).data;
+    (*uc.get()).obj.line.data = uc.data();
     (*uc.get()).obj.line.length = line_len;
-    (*uc.get()).data = (*uc.get()).data.add(line_len);
+    uc.set_data(uc.data().add(line_len));
     (*uc.get()).data_size -= line_len;
 
     (*uc.get()).obj.read_progress += line_len;
@@ -1880,15 +1880,15 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     (*uc.get()).close_fn = None;
     (*uc.get()).read_user = core::ptr::null_mut();
     (*uc.get()).data_begin = core::ptr::null();
-    (*uc.get()).data = core::ptr::null();
+    uc.set_data(core::ptr::null());
     (*uc.get()).data_size = 0;
     (*uc.get()).yield_size = 0;
     (*uc.get()).eof = false;
     (*uc.get()).obj.eof = false;
 
     if (*uc.get()).opts.obj_mtl_data.size > 0 {
-        (*uc.get()).data = (*uc.get()).opts.obj_mtl_data.data;
-        (*uc.get()).data_begin = (*uc.get()).data;
+        uc.set_data((*uc.get()).opts.obj_mtl_data.data);
+        (*uc.get()).data_begin = uc.data();
         (*uc.get()).data_size = (*uc.get()).opts.obj_mtl_data.size;
         obj_parse_mtl(uc)?;
         return Ok(());

@@ -885,7 +885,7 @@ unsafe fn binary_parse_node_rec(
 
                     if (*uc.get()).read_fn.is_none() {
                         // From memory, no need to copy
-                        (*t).encoded_data = (*uc.get()).data as *const c_void;
+                        (*t).encoded_data = uc.data() as *const c_void;
                     } else {
                         let encoded_data: *mut c_void =
                             push::<u8>(tmp_buf, encoded_size as usize) as *mut c_void;
@@ -954,7 +954,7 @@ unsafe fn binary_parse_node_rec(
                             (*uc.get()).data_size.wrapping_sub((*uc.get()).yield_size);
                     }
 
-                    decoded_data = (*uc.get()).data as *mut c_void;
+                    decoded_data = uc.data() as *mut c_void;
                     consume_bytes(uc, encoded_size as usize);
                 } else {
                     read_to(uc, decoded_data, encoded_size as usize)?;
@@ -968,7 +968,7 @@ unsafe fn binary_parse_node_rec(
                 let mut input = core::mem::MaybeUninit::<InflateInput>::uninit();
                 let input: *mut InflateInput = input.as_mut_ptr();
                 (*input).total_size = encoded_size as usize;
-                (*input).data = (*uc.get()).data as *const c_void;
+                (*input).data = uc.data() as *const c_void;
                 (*input).data_size = (*uc.get()).data_size;
                 (*input).no_header = false;
                 (*input).no_checksum = false;
@@ -1004,14 +1004,14 @@ unsafe fn binary_parse_node_rec(
                     (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(
                         (encoded_size as usize).wrapping_sub((*input).data_size) as u64,
                     );
-                    (*uc.get()).data = (*uc.get()).data.add((*input).data_size);
+                    uc.set_data(uc.data().add((*input).data_size));
                     (*uc.get()).data_size = 0;
                 } else {
                     (*input).buffer = core::ptr::null_mut();
                     (*input).buffer_size = 0;
                     (*input).read_fn = None;
                     (*input).read_user = core::ptr::null_mut();
-                    (*uc.get()).data = (*uc.get()).data.add(encoded_size as usize);
+                    uc.set_data(uc.data().add(encoded_size as usize));
                     (*uc.get()).data_size =
                         (*uc.get()).data_size.wrapping_sub(encoded_size as usize);
                     resume_progress(uc)?;

@@ -733,6 +733,21 @@ impl Context {
         // SAFETY: projecting a field pointer; no deref, no reference formed.
         unsafe { &raw mut (*self.get()).ator_tmp }
     }
+
+    // Input read cursor. Scalar raw pointer: value getter + setter. Copying a
+    // `*const u8` out is safe; any later deref/`.add` stays the caller's
+    // (unchanged) unsafe obligation.
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *const u8 {
+        // SAFETY: reading a `*const u8` field; all bit patterns valid.
+        unsafe { (*self.get()).data }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_data(&self, data: *const u8) {
+        // SAFETY: storing a `*const u8`; cannot violate validity.
+        unsafe { (*self.get()).data = data; }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`
@@ -765,7 +780,7 @@ pub(crate) unsafe fn fail_imp_no_stack(uc: &Context) -> i32 {
 pub(crate) unsafe fn get_read_offset(uc: &Context) -> u64 {
     (*uc.get())
         .data_offset
-        .wrapping_add(to_size((*uc.get()).data.offset_from((*uc.get()).data_begin)) as u64)
+        .wrapping_add(to_size(uc.data().offset_from((*uc.get()).data_begin)) as u64)
 }
 
 // ufbx.c:6683-6702 `ufbxi_report_progress`
@@ -3100,7 +3115,7 @@ pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
             let mut fmt: u32 = FileFormat::Fbx as u32;
             while fmt < FILE_FORMAT_COUNT {
                 if is_format(
-                    (*uc.get()).data,
+                    uc.data(),
                     data_size,
                     core::mem::transmute::<u32, FileFormat>(fmt),
                 ) {
@@ -3196,8 +3211,8 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
             0,
             size_of::<Ascii>(),
         );
-        (*uc.get()).ascii.src = (*uc.get()).data;
-        (*uc.get()).ascii.src_yield = (*uc.get()).data.add((*uc.get()).yield_size);
+        (*uc.get()).ascii.src = uc.data();
+        (*uc.get()).ascii.src_yield = uc.data().add((*uc.get()).yield_size);
         (*uc.get()).ascii.src_end = (*uc.get())
             .data
             .add((*uc.get()).data_size + (*uc.get()).yield_size);

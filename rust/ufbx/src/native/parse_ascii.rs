@@ -152,7 +152,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
 
         (*ua).src = dst_buffer;
         (*uc.get()).data_begin = dst_buffer;
-        (*uc.get()).data = dst_buffer;
+        uc.set_data(dst_buffer);
         (*ua).src_end = dst_buffer.add(num_read);
         *(*ua).src
     } else {
@@ -160,7 +160,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
         // past the initial data buffer as EOF.
         (*ua).src = ASCII_EMPTY_STRING.as_ptr();
         (*uc.get()).data_begin = ASCII_EMPTY_STRING.as_ptr();
-        (*uc.get()).data = ASCII_EMPTY_STRING.as_ptr();
+        uc.set_data(ASCII_EMPTY_STRING.as_ptr());
         (*ua).src_end = (*ua).src.add(1);
         b'\0'
     }
@@ -185,7 +185,7 @@ pub(crate) unsafe fn ascii_yield(uc: &Context) -> u8 {
     }
 
     // TODO: Unify these properly
-    (*uc.get()).data = (*ua).src;
+    uc.set_data((*ua).src);
     ufbxi_check_return!(
         uc,
         report_progress(uc).is_ok(),

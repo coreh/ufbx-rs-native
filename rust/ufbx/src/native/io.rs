@@ -58,7 +58,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
         );
     } else if (*uc.get()).read_fn.is_none() {
         (*uc.get()).eof = true;
-        return (*uc.get()).data;
+        return uc.data();
     }
 
     let mut data_to_free: *mut u8 = core::ptr::null_mut();
@@ -81,10 +81,10 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     // Copy the remains of the previous buffer to the beginning of the new one
     let mut data_size: usize = (*uc.get()).data_size;
     if data_size > 0 {
-        ufbx_assert!(!(*uc.get()).read_buffer.is_null() && !(*uc.get()).data.is_null());
+        ufbx_assert!(!(*uc.get()).read_buffer.is_null() && !uc.data().is_null());
         // C: `memmove(uc->read_buffer, uc->data, data_size)` — the ranges may
         // overlap when the buffer did not grow.
-        core::ptr::copy((*uc.get()).data, (*uc.get()).read_buffer, data_size);
+        core::ptr::copy(uc.data(), (*uc.get()).read_buffer, data_size);
     }
 
     if size_to_free != 0 {
@@ -144,9 +144,9 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     // as UB in Rust; the address subtraction is spelled out with casts instead.
     (*uc.get()).data_offset = (*uc.get())
         .data_offset
-        .wrapping_add(to_size((*uc.get()).data as isize - (*uc.get()).data_begin as isize) as u64);
+        .wrapping_add(to_size(uc.data() as isize - (*uc.get()).data_begin as isize) as u64);
     (*uc.get()).data_begin = (*uc.get()).read_buffer;
-    (*uc.get()).data = (*uc.get()).read_buffer;
+    uc.set_data((*uc.get()).read_buffer);
     (*uc.get()).data_size = data_size;
 
     (*uc.get()).read_buffer
@@ -184,7 +184,7 @@ pub(crate) unsafe fn yield_(uc: &Context, size: usize) -> *const u8 {
     let ret: *const u8;
     (*uc.get()).data_size += (*uc.get()).yield_size;
     if (*uc.get()).data_size >= size {
-        ret = (*uc.get()).data;
+        ret = uc.data();
     } else {
         ret = refill(uc, size, true);
     }
@@ -207,7 +207,7 @@ pub(crate) unsafe fn yield_(uc: &Context, size: usize) -> *const u8 {
 #[inline(always)]
 pub(crate) unsafe fn peek_bytes(uc: &Context, size: usize) -> *const u8 {
     if (*uc.get()).yield_size >= size {
-        (*uc.get()).data
+        uc.data()
     } else {
         yield_(uc, size)
     }
@@ -219,7 +219,7 @@ pub(crate) unsafe fn read_bytes(uc: &Context, size: usize) -> *const u8 {
     // Refill the current buffer if necessary
     let ret: *const u8;
     if (*uc.get()).yield_size >= size {
-        ret = (*uc.get()).data;
+        ret = uc.data();
     } else {
         ret = yield_(uc, size);
         if ret.is_null() {
@@ -229,7 +229,7 @@ pub(crate) unsafe fn read_bytes(uc: &Context, size: usize) -> *const u8 {
 
     // Advance the read position inside the current buffer
     (*uc.get()).yield_size -= size;
-    (*uc.get()).data = ret.add(size);
+    uc.set_data(ret.add(size));
     ret
 }
 
@@ -239,7 +239,7 @@ pub(crate) unsafe fn consume_bytes(uc: &Context, size: usize) {
     // Bytes must have been checked first with `ufbxi_peek_bytes()`
     ufbx_assert!(size <= (*uc.get()).yield_size);
     (*uc.get()).yield_size -= size;
-    (*uc.get()).data = (*uc.get()).data.add(size);
+    uc.set_data(uc.data().add(size));
 }
 
 // ufbx.c:6851-6896 `ufbxi_skip_bytes`
@@ -250,7 +250,7 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
 
         if size > (*uc.get()).data_size as u64 {
             size -= (*uc.get()).data_size as u64;
-            (*uc.get()).data = (*uc.get()).data.add((*uc.get()).data_size);
+            uc.set_data(uc.data().add((*uc.get()).data_size));
             (*uc.get()).data_size = 0;
 
             (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(size);
@@ -288,7 +288,7 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
                 );
             }
         } else {
-            (*uc.get()).data = (*uc.get()).data.add(size as usize);
+            uc.set_data(uc.data().add(size as usize));
             (*uc.get()).data_size -= size as usize;
         }
 
@@ -325,8 +325,8 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
     let len: usize = min_sz((*uc.get()).data_size, size);
     // C-parity: `memcpy(ptr, uc->data, len)` — `uc->data` may be NULL when
     // `len == 0` (memory input fully consumed), as in C.
-    core::ptr::copy_nonoverlapping((*uc.get()).data, ptr, len);
-    (*uc.get()).data = (*uc.get()).data.add(len);
+    core::ptr::copy_nonoverlapping(uc.data(), ptr, len);
+    uc.set_data(uc.data().add(len));
     (*uc.get()).data_size -= len;
     ptr = ptr.add(len);
     size -= len;
@@ -337,11 +337,11 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
         // NULL after a previous `ufbxi_read_to` streamed past the buffer, so
         // the subtraction is done on addresses rather than via `offset_from`.
         (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(to_size(
-            (*uc.get()).data as isize - (*uc.get()).data_begin as isize,
+            uc.data() as isize - (*uc.get()).data_begin as isize,
         ) as u64);
 
         (*uc.get()).data_begin = core::ptr::null();
-        (*uc.get()).data = core::ptr::null();
+        uc.set_data(core::ptr::null());
         (*uc.get()).data_size = 0;
         ufbxi_check!(uc, (*uc.get()).read_fn.is_some(), "uc->read_fn");
 
