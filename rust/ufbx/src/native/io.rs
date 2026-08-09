@@ -336,9 +336,9 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
         // C-parity: `uc->data - uc->data_begin` — see `ufbxi_refill`; both are
         // NULL after a previous `ufbxi_read_to` streamed past the buffer, so
         // the subtraction is done on addresses rather than via `offset_from`.
-        (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(to_size(
-            uc.data() as isize - (*uc.get()).data_begin as isize,
-        ) as u64);
+        (*uc.get()).data_offset = (*uc.get())
+            .data_offset
+            .wrapping_add(to_size(uc.data() as isize - (*uc.get()).data_begin as isize) as u64);
 
         (*uc.get()).data_begin = core::ptr::null();
         uc.set_data(core::ptr::null());

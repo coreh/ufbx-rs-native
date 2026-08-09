@@ -1444,10 +1444,7 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
 
         // Translate deformers to point to the geometry in 6100, we don't need to worry about
         // blend shapes here as they're always connected synthetically in older files.
-        if uc.version() > 0
-            && uc.version() < 7000
-            && (*dst).type_ == ElementType::Node
-        {
+        if uc.version() > 0 && uc.version() < 7000 && (*dst).type_ == ElementType::Node {
             if (*src).type_ == ElementType::SkinDeformer
                 || (*src).type_ == ElementType::CacheDeformer
             {

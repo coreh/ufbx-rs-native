@@ -941,8 +941,7 @@ unsafe fn binary_parse_node_rec(
                 // If the array is contained in the current read buffer and we need to convert
                 // the data anyway we can use the read buffer as the decoded array source, otherwise
                 // do a plain byte copy to the array/conversion buffer.
-                if uc.yield_size().wrapping_add(uc.data_size())
-                    >= encoded_size as usize
+                if uc.yield_size().wrapping_add(uc.data_size()) >= encoded_size as usize
                     && decoded_data != arr_data as *mut c_void
                 {
                     // Yield right after this if we crossed the yield threshold

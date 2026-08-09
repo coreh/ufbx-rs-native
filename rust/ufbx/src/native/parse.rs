@@ -722,7 +722,9 @@ impl Context {
     #[inline(always)]
     pub(crate) fn set_version(&self, version: u32) {
         // SAFETY: as `version`; a `u32` store cannot violate validity.
-        unsafe { (*self.get()).version = version; }
+        unsafe {
+            (*self.get()).version = version;
+        }
     }
 
     // Temp-arena allocator. `Allocator` is aliased (copied by raw pointer into
@@ -746,7 +748,9 @@ impl Context {
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *const u8) {
         // SAFETY: storing a `*const u8`; cannot violate validity.
-        unsafe { (*self.get()).data = data; }
+        unsafe {
+            (*self.get()).data = data;
+        }
     }
 
     // Remaining bytes at the read cursor. Scalar `usize`: value getter + setter.
@@ -759,7 +763,9 @@ impl Context {
     #[inline(always)]
     pub(crate) fn set_data_size(&self, data_size: usize) {
         // SAFETY: storing a `usize`; cannot violate validity.
-        unsafe { (*self.get()).data_size = data_size; }
+        unsafe {
+            (*self.get()).data_size = data_size;
+        }
     }
 
     // Bytes remaining before the next progress-yield checkpoint. Scalar `usize`.
@@ -772,7 +778,9 @@ impl Context {
     #[inline(always)]
     pub(crate) fn set_yield_size(&self, yield_size: usize) {
         // SAFETY: storing a `usize`; cannot violate validity.
-        unsafe { (*self.get()).yield_size = yield_size; }
+        unsafe {
+            (*self.get()).yield_size = yield_size;
+        }
     }
 }
 
@@ -3239,9 +3247,7 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
         );
         (*uc.get()).ascii.src = uc.data();
         (*uc.get()).ascii.src_yield = uc.data().add(uc.yield_size());
-        (*uc.get()).ascii.src_end = (*uc.get())
-            .data
-            .add(uc.data_size() + uc.yield_size());
+        (*uc.get()).ascii.src_end = (*uc.get()).data.add(uc.data_size() + uc.yield_size());
 
         // Initialize the first token
         crate::native::parse_ascii::ascii_next_token(uc, &raw mut (*uc.get()).ascii.token)?;
@@ -3253,12 +3259,7 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
             if !(*uc.get()).opts.strict {
                 uc.set_version(7400);
             }
-            ufbxi_check_msg!(
-                uc,
-                uc.version() > 0,
-                "Not an FBX file",
-                "uc->version > 0"
-            );
+            ufbxi_check_msg!(uc, uc.version() > 0, "Not an FBX file", "uc->version > 0");
         }
     }
 
