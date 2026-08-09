@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `ktime_sec` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn ktime_sec(&self) -> i64 {
+        // SAFETY: reading a scalar field; all bit patterns of `i64` are valid.
+        unsafe { (*self.get()).ktime_sec }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_ktime_sec(&self, ktime_sec: i64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).ktime_sec = ktime_sec;
+        }
+    }
+
     // `num_file_content` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn num_file_content(&self) -> usize {

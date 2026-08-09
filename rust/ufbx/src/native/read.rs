@@ -602,8 +602,8 @@ pub(crate) unsafe fn read_header_extension(uc: &Context) -> Result<(), Fail> {
         use_v7_ktime = tc_definition == 127;
     }
 
-    (*uc.get()).ktime_sec = if use_v7_ktime { 46186158000 } else { 141120000 };
-    (*uc.get()).ktime_sec_double = (*uc.get()).ktime_sec as f64;
+    uc.set_ktime_sec(if use_v7_ktime { 46186158000 } else { 141120000 });
+    (*uc.get()).ktime_sec_double = uc.ktime_sec() as f64;
 
     Ok(())
 }
@@ -8423,8 +8423,8 @@ pub(crate) unsafe fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
     }
 
     // NOTE: `ufbxi_read_header_extension()` is optional so use default KTime definition
-    (*uc.get()).ktime_sec = 46186158000;
-    (*uc.get()).ktime_sec_double = (*uc.get()).ktime_sec as f64;
+    uc.set_ktime_sec(46186158000);
+    (*uc.get()).ktime_sec_double = uc.ktime_sec() as f64;
 
     loop {
         parse_legacy_toplevel(uc)?;

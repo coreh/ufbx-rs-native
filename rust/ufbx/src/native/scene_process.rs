@@ -8360,7 +8360,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         )?;
     }
 
-    (*uc.get()).scene.metadata.ktime_second = (*uc.get()).ktime_sec;
+    (*uc.get()).scene.metadata.ktime_second = uc.ktime_sec();
 
     // Maya seems to use scale of 100/3, Blender binary uses exactly 33, ASCII has always value of 1.0
     if uc.version() < 6000 {
