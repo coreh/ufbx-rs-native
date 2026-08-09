@@ -728,7 +728,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
     // Fake DOM root if necessary
     if (*uc.get()).opts.retain_dom && (*uc.get()).scene.dom_root.is_none() {
-        let dom_root: *mut DomNode = push_zero::<DomNode>(&mut (*uc.get()).result, 1);
+        let dom_root: *mut DomNode = push_zero::<DomNode>(uc.result_mut_ptr(), 1);
         ufbxi_check!(uc, !dom_root.is_null(), "dom_root");
         (*dom_root).name.data = EMPTY_CHAR.as_ptr();
         (*uc.get()).scene.dom_root = Some(Ref::from_ptr(dom_root));
@@ -777,7 +777,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         // C: `uc->scene.anim = ufbxi_push_zero(&uc->result, ufbx_anim, 1);`
         // (NOT `ufbxi_check`ed in C — a failed allocation leaves it NULL).
         *(ptr::addr_of_mut!((*uc.get()).scene.anim) as *mut *mut Anim) =
-            push_zero::<Anim>(&mut (*uc.get()).result, 1);
+            push_zero::<Anim>(uc.result_mut_ptr(), 1);
     }
 
     if (*uc.get()).opts.load_external_files {
@@ -799,7 +799,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             evaluate_skinning(
                 ptr::addr_of_mut!((*uc.get()).scene),
                 ptr::addr_of_mut!((*uc.get()).error),
-                ptr::addr_of_mut!((*uc.get()).result),
+                uc.result_mut_ptr(),
                 ptr::addr_of_mut!((*uc.get()).tmp),
                 0.0,
                 (*uc.get()).opts.load_external_files && (*uc.get()).opts.evaluate_caches,
@@ -837,7 +837,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
     // Retain the scene, this must be the final allocation as we copy
     // `ator_result` to `ufbx_scene_imp`.
-    let imp: *mut SceneImp = push::<SceneImp>(&mut (*uc.get()).result, 1);
+    let imp: *mut SceneImp = push::<SceneImp>(uc.result_mut_ptr(), 1);
     ufbxi_check!(uc, !imp.is_null(), "imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
@@ -958,7 +958,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
 // ufbx.c:25464-25470 `ufbxi_free_result`
 #[inline(never)]
 pub(crate) unsafe fn free_result(uc: &Context) {
-    buf_free(&mut (*uc.get()).result);
+    buf_free(uc.result_mut_ptr());
     buf_free(&mut (*uc.get()).string_pool.buf);
 
     free_ator(&raw mut (*uc.get()).ator_result);
@@ -1152,7 +1152,7 @@ pub(crate) unsafe fn load(
     (*uc.get()).result.unordered = true;
 
     (*uc.get()).warnings.error = ptr::addr_of_mut!((*uc.get()).error);
-    (*uc.get()).warnings.result = ptr::addr_of_mut!((*uc.get()).result);
+    (*uc.get()).warnings.result = uc.result_mut_ptr();
     (*uc.get()).warnings.tmp_stack.ator = uc.ator_tmp_mut_ptr();
     (*uc.get()).string_pool.warnings = ptr::addr_of_mut!((*uc.get()).warnings);
 

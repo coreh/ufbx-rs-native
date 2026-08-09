@@ -1399,7 +1399,7 @@ unsafe fn ascii_parse_node_rec(
         arr_type = normalize_array_type((*arr_info).type_, b'b');
         arr_buf = tmp_buf;
         if (flags & ARRAY_FLAG_RESULT) != 0 {
-            arr_buf = &raw mut (*uc.get()).result;
+            arr_buf = uc.result_mut_ptr();
         } else if (flags & ARRAY_FLAG_TMP_BUF) != 0 {
             arr_buf = &raw mut (*uc.get()).tmp;
         }
@@ -1489,7 +1489,7 @@ unsafe fn ascii_parse_node_rec(
                     ufbxi_check!(uc, !v.is_null(), "v");
                     if arr_type == b'C' {
                         let buf: *mut Buf = if (*uc.get()).opts.retain_dom {
-                            &raw mut (*uc.get()).result
+                            uc.result_mut_ptr()
                         } else {
                             tmp_buf
                         };

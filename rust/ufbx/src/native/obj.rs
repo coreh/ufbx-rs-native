@@ -108,11 +108,7 @@ pub(crate) unsafe fn obj_pop_props(
     // C: `ufbx_prop_list props; // ufbxi_uninit`
     let mut props: List<Prop> = core::mem::zeroed(); // ufbxi_uninit
     props.count = count;
-    props.data = push_pop::<Prop>(
-        &mut (*uc.get()).result,
-        &mut (*uc.get()).obj.tmp_props,
-        count,
-    );
+    props.data = push_pop::<Prop>(uc.result_mut_ptr(), &mut (*uc.get()).obj.tmp_props, count);
     ufbxi_check!(uc, !props.data.is_null(), "props.data");
 
     // C: `ufbxi_for_list(ufbx_prop, prop, props)`
@@ -231,7 +227,7 @@ pub(crate) unsafe fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
 
     let num_groups: usize = (*uc.get()).obj.tmp_face_group_infos.num_items;
     let groups: *mut FaceGroup = push_pop::<FaceGroup>(
-        &mut (*uc.get()).result,
+        uc.result_mut_ptr(),
         &mut (*uc.get()).obj.tmp_face_group_infos,
         num_groups,
     );
@@ -1040,7 +1036,7 @@ pub(crate) unsafe fn obj_pop_vertices(
 
     let count: usize =
         (*uc.get()).obj.tmp_vertices[attrib as usize].num_items - (min_index as usize) * stride;
-    let mut data: *mut Real = push::<Real>(&mut (*uc.get()).result, count + 4);
+    let mut data: *mut Real = push::<Real>(uc.result_mut_ptr(), count + 4);
     ufbxi_check!(uc, !data.is_null(), "data");
 
     *data.add(0) = 0.0f32 as Real;
@@ -1106,7 +1102,7 @@ pub(crate) unsafe fn obj_setup_attrib(
         tmp_indices,
     );
 
-    let dst_indices: *mut u32 = push::<u32>(&mut (*uc.get()).result, num_indices);
+    let dst_indices: *mut u32 = push::<u32>(uc.result_mut_ptr(), num_indices);
     ufbxi_check!(uc, !dst_indices.is_null(), "dst_indices");
 
     (*dst).exists = true;
@@ -1286,12 +1282,12 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             (*fbx_mesh).face_material.count = num_faces;
 
             (*fbx_mesh).faces.data = push_pop::<Face>(
-                &mut (*uc.get()).result,
+                uc.result_mut_ptr(),
                 &mut (*uc.get()).obj.tmp_faces,
                 num_faces,
             );
             (*fbx_mesh).face_material.data = push_pop::<u32>(
-                &mut (*uc.get()).result,
+                uc.result_mut_ptr(),
                 &mut (*uc.get()).obj.tmp_face_material,
                 num_faces,
             );
@@ -1310,7 +1306,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             if (*uc.get()).obj.has_face_smoothing {
                 (*fbx_mesh).face_smoothing.count = num_faces;
                 (*fbx_mesh).face_smoothing.data = push_pop::<bool>(
-                    &mut (*uc.get()).result,
+                    uc.result_mut_ptr(),
                     &mut (*uc.get()).obj.tmp_face_smoothing,
                     num_faces,
                 );
@@ -1325,7 +1321,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 if (*mesh).num_groups > 1 {
                     (*fbx_mesh).face_group.count = num_faces;
                     (*fbx_mesh).face_group.data = push_pop::<u32>(
-                        &mut (*uc.get()).result,
+                        uc.result_mut_ptr(),
                         &mut (*uc.get()).obj.tmp_face_group,
                         num_faces,
                     );
@@ -1412,7 +1408,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                         let mut indices: *mut u32 =
                             (*fbx_mesh).vertex_color.indices.data as *mut u32;
                         indices =
-                            push_copy::<u32>(&mut (*uc.get()).result, (*mesh).num_indices, indices);
+                            push_copy::<u32>(uc.result_mut_ptr(), (*mesh).num_indices, indices);
                         ufbxi_check!(uc, !indices.is_null(), "indices");
 
                         let num_values: usize = (*fbx_mesh).vertex_color.values.count;
@@ -1432,12 +1428,12 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             }
         }
 
-        finalize_mesh(&mut (*uc.get()).result, &mut (*uc.get()).error, fbx_mesh)?;
+        finalize_mesh(uc.result_mut_ptr(), &mut (*uc.get()).error, fbx_mesh)?;
 
         if uc.retain_mesh_parts() {
             (*fbx_mesh).face_group_parts.count = (*mesh).num_groups as usize;
             (*fbx_mesh).face_group_parts.data =
-                push_zero::<MeshPart>(&mut (*uc.get()).result, (*mesh).num_groups as usize);
+                push_zero::<MeshPart>(uc.result_mut_ptr(), (*mesh).num_groups as usize);
             ufbxi_check!(
                 uc,
                 !(*fbx_mesh).face_group_parts.data.is_null(),
@@ -1446,12 +1442,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         }
 
         if (*mesh).num_groups > 1 {
-            update_face_groups(
-                &mut (*uc.get()).result,
-                &mut (*uc.get()).error,
-                fbx_mesh,
-                false,
-            )?;
+            update_face_groups(uc.result_mut_ptr(), &mut (*uc.get()).error, fbx_mesh, false)?;
         } else if (*mesh).num_groups == 1 {
             (*fbx_mesh).face_group.data = SENTINEL_INDEX_ZERO.as_ptr();
             (*fbx_mesh).face_group.count = num_faces;

@@ -180,7 +180,7 @@ pub(crate) unsafe fn read_embedded_blob(
                 total_size = total_size.wrapping_add((*part).length);
                 part = part.add(1);
             }
-            let dst_begin: *mut u8 = push::<u8>(&mut (*uc.get()).result, total_size);
+            let dst_begin: *mut u8 = push::<u8>(uc.result_mut_ptr(), total_size);
             ufbxi_check!(uc, !dst_begin.is_null(), "dst");
             content = String::new_c(dst_begin, total_size);
             let mut dst = dst_begin;
@@ -428,7 +428,7 @@ pub(crate) unsafe fn read_properties(
         version = 60;
     }
 
-    (*props).props.data = push_zero::<Prop>(&mut (*uc.get()).result, (*node).num_children as usize);
+    (*props).props.data = push_zero::<Prop>(uc.result_mut_ptr(), (*node).num_children as usize);
     (*props).props.count = (*node).num_children as usize;
     ufbxi_check!(uc, !(*props).props.data.is_null(), "props->props.data");
 
@@ -860,7 +860,7 @@ pub(crate) unsafe fn read_definitions(uc: &Context) -> Result<(), Fail> {
 
     // TODO: Preserve only the `props` part of the templates
     uc.set_templates(push_pop::<Template>(
-        &mut (*uc.get()).result,
+        uc.result_mut_ptr(),
         uc.tmp_stack_mut_ptr(),
         uc.num_templates(),
     ));
@@ -1528,7 +1528,7 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
         // copy; `Option<Ref<T>>` is niche-packed to a bare pointer.
         (*geo_node).element.dom_node = core::ptr::read(&(*node).element.dom_node);
 
-        let props: *mut Prop = push_zero::<Prop>(&mut (*uc.get()).result, 3);
+        let props: *mut Prop = push_zero::<Prop>(uc.result_mut_ptr(), 3);
         ufbxi_check!(uc, !props.is_null(), "props");
         init_synthetic_vec3_prop(
             props.add(0),
@@ -1654,7 +1654,7 @@ pub(crate) unsafe fn setup_scale_helper(
     (*extra).scale_helper_id = (*scale_node).element.element_id;
 
     let max_props: usize = SCALE_HELPER_PROPS.len();
-    let helper_props: *mut Prop = push::<Prop>(&mut (*uc.get()).result, max_props);
+    let helper_props: *mut Prop = push::<Prop>(uc.result_mut_ptr(), max_props);
     ufbxi_check!(uc, !helper_props.is_null(), "helper_props");
 
     let mut num_props: usize = 0;
@@ -1871,7 +1871,7 @@ pub(crate) unsafe fn check_indices(
     // If the indices are truncated extend them with `UFBX_NO_INDEX`, the following normalization pass
     // will handle them the same way as other out-of-bounds indices.
     if num_indices < num_indexers {
-        let new_indices: *mut u32 = push::<u32>(&mut (*uc.get()).result, num_indexers);
+        let new_indices: *mut u32 = push::<u32>(uc.result_mut_ptr(), num_indexers);
         ufbxi_check!(uc, !new_indices.is_null(), "new_indices");
 
         core::ptr::copy_nonoverlapping(indices, new_indices, num_indices);
@@ -1891,7 +1891,7 @@ pub(crate) unsafe fn check_indices(
             // If the indices refer to an external buffer we need to
             // allocate a separate buffer for them
             if !owns_indices {
-                indices = push_copy::<u32>(&mut (*uc.get()).result, num_indices, indices);
+                indices = push_copy::<u32>(uc.result_mut_ptr(), num_indices, indices);
                 ufbxi_check!(uc, !indices.is_null(), "indices");
                 owns_indices = true;
             }
@@ -2032,8 +2032,7 @@ pub(crate) unsafe fn read_vertex_element(
             )?;
         } else if mapping == sp::ByVertex.as_ptr() || mapping == sp::ByVertice.as_ptr() {
             // Indexed by vertex: Follow through the position index mapping to get the final indices.
-            let new_index_data: *mut u32 =
-                push::<u32>(&mut (*uc.get()).result, (*mesh).num_indices);
+            let new_index_data: *mut u32 = push::<u32>(uc.result_mut_ptr(), (*mesh).num_indices);
             ufbxi_check!(uc, !new_index_data.is_null(), "new_index_data");
 
             let vert_ix: *mut u32 = (*mesh).vertex_indices.data as *mut u32;
@@ -2058,8 +2057,7 @@ pub(crate) unsafe fn read_vertex_element(
             (*attrib).unique_per_vertex = true;
         } else if mapping == sp::ByPolygon.as_ptr() {
             // Indexed by polygon: Generate new indices based on polygons
-            let new_index_data: *mut u32 =
-                push::<u32>(&mut (*uc.get()).result, (*mesh).num_indices);
+            let new_index_data: *mut u32 = push::<u32>(uc.result_mut_ptr(), (*mesh).num_indices);
             ufbxi_check!(uc, !new_index_data.is_null(), "new_index_data");
 
             let num_faces: usize = (*mesh).num_faces;
@@ -2101,8 +2099,7 @@ pub(crate) unsafe fn read_vertex_element(
                 ));
                 (*attrib).indices.data = SENTINEL_INDEX_CONSECUTIVE.as_ptr();
             } else {
-                let index_data: *mut u32 =
-                    push::<u32>(&mut (*uc.get()).result, (*mesh).num_indices);
+                let index_data: *mut u32 = push::<u32>(uc.result_mut_ptr(), (*mesh).num_indices);
                 ufbxi_check!(uc, !index_data.is_null(), "index_data");
                 for i in 0..(*mesh).num_indices {
                     *index_data.add(i) = i as u32;
@@ -2131,8 +2128,7 @@ pub(crate) unsafe fn read_vertex_element(
             (*attrib).unique_per_vertex = true;
         } else if mapping == sp::ByPolygon.as_ptr() {
             // Direct by polygon: Generate new indices based on polygons
-            let new_index_data: *mut u32 =
-                push::<u32>(&mut (*uc.get()).result, (*mesh).num_indices);
+            let new_index_data: *mut u32 = push::<u32>(uc.result_mut_ptr(), (*mesh).num_indices);
             ufbxi_check!(uc, !new_index_data.is_null(), "new_index_data");
 
             let num_faces: u32 = (*mesh).num_faces as u32;
@@ -2230,7 +2226,7 @@ pub(crate) unsafe fn read_truncated_array(
         );
 
         let elem_size: usize = array_type_size(fmt);
-        let new_data: *mut c_void = push_size(&mut (*uc.get()).result, elem_size, size);
+        let new_data: *mut c_void = push_size(uc.result_mut_ptr(), elem_size, size);
         ufbxi_check!(uc, !new_data.is_null(), "new_data");
         core::ptr::copy_nonoverlapping(
             data as *const u8,
@@ -2545,7 +2541,7 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
         );
 
         let num_shape_props: usize = 1;
-        let shape_props: *mut Prop = push_zero::<Prop>(&mut (*uc.get()).result, num_shape_props);
+        let shape_props: *mut Prop = push_zero::<Prop>(uc.result_mut_ptr(), num_shape_props);
         ufbxi_check!(uc, !shape_props.is_null(), "shape_props");
         (*shape_props.add(0)).name.data = sp::DeformPercent.as_ptr();
         (*shape_props.add(0)).name.length = sp::DeformPercent.len() - 1;
@@ -2619,7 +2615,7 @@ pub(crate) unsafe fn process_indices(
             num_total_faces.wrapping_add(if (*p_ix as i32) < 0 { 1usize } else { 0usize });
         p_ix = p_ix.add(1);
     }
-    (*mesh).faces.data = push::<Face>(&mut (*uc.get()).result, num_total_faces);
+    (*mesh).faces.data = push::<Face>(uc.result_mut_ptr(), num_total_faces);
     ufbxi_check!(uc, !(*mesh).faces.data.is_null(), "mesh->faces.data");
 
     let mut num_triangles: usize = 0;
@@ -2668,7 +2664,7 @@ pub(crate) unsafe fn process_indices(
     (*mesh).num_line_faces = num_bad_faces[2];
 
     (*mesh).vertex_first_index.count = (*mesh).num_vertices;
-    (*mesh).vertex_first_index.data = push::<u32>(&mut (*uc.get()).result, (*mesh).num_vertices);
+    (*mesh).vertex_first_index.data = push::<u32>(uc.result_mut_ptr(), (*mesh).num_vertices);
     ufbxi_check!(
         uc,
         !(*mesh).vertex_first_index.data.is_null(),
@@ -3143,7 +3139,7 @@ pub(crate) unsafe fn read_mesh(
 
     // Duplicate `index_data` for modification if we retain DOM
     if (*uc.get()).opts.retain_dom {
-        index_data = push_copy::<u32>(&mut (*uc.get()).result, (*mesh).num_indices, index_data);
+        index_data = push_copy::<u32>(uc.result_mut_ptr(), (*mesh).num_indices, index_data);
         ufbxi_check!(uc, !index_data.is_null(), "index_data");
     }
 
@@ -3172,7 +3168,7 @@ pub(crate) unsafe fn read_mesh(
     // Read edges before un-negating the indices
     if !edge_indices.is_null() {
         let num_edges: usize = (*edge_indices).size;
-        let edges: *mut Edge = push::<Edge>(&mut (*uc.get()).result, num_edges);
+        let edges: *mut Edge = push::<Edge>(uc.result_mut_ptr(), num_edges);
         ufbxi_check!(uc, !edges.is_null(), "edges");
 
         let mut dst_ix: usize = 0;
@@ -3247,8 +3243,8 @@ pub(crate) unsafe fn read_mesh(
     ufbxi_check!(uc, !bitangents.is_null(), "bitangents");
     ufbxi_check!(uc, !tangents.is_null(), "tangents");
 
-    (*mesh).uv_sets.data = push_zero::<UvSet>(&mut (*uc.get()).result, num_uv);
-    (*mesh).color_sets.data = push_zero::<ColorSet>(&mut (*uc.get()).result, num_color);
+    (*mesh).uv_sets.data = push_zero::<UvSet>(uc.result_mut_ptr(), num_uv);
+    (*mesh).color_sets.data = push_zero::<ColorSet>(uc.result_mut_ptr(), num_color);
     ufbxi_check!(uc, !(*mesh).uv_sets.data.is_null(), "mesh->uv_sets.data");
     ufbxi_check!(
         uc,
@@ -3535,7 +3531,7 @@ pub(crate) unsafe fn read_mesh(
                     (*mesh).face_material.data = SENTINEL_INDEX_ZERO.as_ptr();
                 } else {
                     (*mesh).face_material.data =
-                        push::<u32>(&mut (*uc.get()).result, (*mesh).num_faces);
+                        push::<u32>(uc.result_mut_ptr(), (*mesh).num_faces);
                     ufbxi_check!(
                         uc,
                         !(*mesh).face_material.data.is_null(),
@@ -3809,7 +3805,7 @@ pub(crate) unsafe fn read_mesh(
 
     if (*mesh).face_group.count > 0 && (*mesh).face_groups.count == 0 {
         assign_face_groups(
-            &mut (*uc.get()).result,
+            uc.result_mut_ptr(),
             &mut (*uc.get()).error,
             mesh,
             &mut (*uc.get()).max_consecutive_indices,
@@ -4095,7 +4091,7 @@ pub(crate) unsafe fn read_line(
 
             let mut prev_end: usize = 0;
             (*line).segments.data =
-                push::<LineSegment>(&mut (*uc.get()).result, num_segments) as *const LineSegment;
+                push::<LineSegment>(uc.result_mut_ptr(), num_segments) as *const LineSegment;
             ufbxi_check!(uc, !(*line).segments.data.is_null(), "line->segments.data");
             for i in 0..(*line).point_indices.count {
                 let mut ix: u32 = *(*line).point_indices.data.add(i);
@@ -4317,7 +4313,7 @@ pub(crate) unsafe fn read_blend_channel(
     let deform_percent: *mut Node = find_child(node, sp::DeformPercent.as_ptr());
     if (*channel).element.props.props.count == 0 && !deform_percent.is_null() {
         let num_shape_props: usize = 1;
-        let shape_props: *mut Prop = push_zero::<Prop>(&mut (*uc.get()).result, num_shape_props);
+        let shape_props: *mut Prop = push_zero::<Prop>(uc.result_mut_ptr(), num_shape_props);
         ufbxi_check!(uc, !shape_props.is_null(), "shape_props");
         (*shape_props.add(0)).name.data = sp::DeformPercent.as_ptr();
         (*shape_props.add(0)).name.length = sp::DeformPercent.len() - 1;
@@ -4695,7 +4691,7 @@ pub(crate) unsafe fn read_animation_curve(
     );
 
     let num_keys: usize = (*times).size;
-    let keys: *mut Keyframe = push::<Keyframe>(&mut (*uc.get()).result, num_keys);
+    let keys: *mut Keyframe = push::<Keyframe>(uc.result_mut_ptr(), num_keys);
     ufbxi_check!(uc, !keys.is_null(), "keys");
 
     (*curve).keyframes.data = keys;
@@ -5426,7 +5422,7 @@ pub(crate) unsafe fn read_binding_table(
 
     (*bindings).prop_bindings.count = num_entries;
     (*bindings).prop_bindings.data =
-        push_pop::<ShaderPropBinding>(&mut (*uc.get()).result, uc.tmp_stack_mut_ptr(), num_entries);
+        push_pop::<ShaderPropBinding>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_entries);
     ufbxi_check!(
         uc,
         !(*bindings).prop_bindings.data.is_null(),
@@ -5711,7 +5707,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
     }
     attrib_info.props.props.count = end - dst;
     attrib_info.props.props.data = push_pop::<Prop>(
-        &mut (*uc.get()).result,
+        uc.result_mut_ptr(),
         uc.tmp_stack_mut_ptr(),
         attrib_info.props.props.count,
     );
@@ -6554,7 +6550,7 @@ pub(crate) unsafe fn read_take_anim_channel(
         ),
         "ufbxi_find_val1(node, ufbxi_KeyCount, \"Z\", &num_keys)"
     );
-    (*curve).keyframes.data = push::<Keyframe>(&mut (*uc.get()).result, num_keys);
+    (*curve).keyframes.data = push::<Keyframe>(uc.result_mut_ptr(), num_keys);
     (*curve).keyframes.count = num_keys;
     ufbxi_check!(
         uc,
@@ -7130,11 +7126,8 @@ pub(crate) unsafe fn read_take(uc: &Context, node: *mut Node) -> Result<(), Fail
             let stack: *mut AnimStack = (*entry).stack;
             if (*stack).element.props.props.count == 0 {
                 (*stack).element.props.props.count = num_props as usize;
-                (*stack).element.props.props.data = push_copy::<Prop>(
-                    &mut (*uc.get()).result,
-                    num_props as usize,
-                    tmp_props.as_ptr(),
-                );
+                (*stack).element.props.props.data =
+                    push_copy::<Prop>(uc.result_mut_ptr(), num_props as usize, tmp_props.as_ptr());
                 ufbxi_check!(
                     uc,
                     !(*stack).element.props.props.data.is_null(),
@@ -7160,11 +7153,8 @@ pub(crate) unsafe fn read_take(uc: &Context, node: *mut Node) -> Result<(), Fail
     ufbxi_check!(uc, !stack.is_null(), "stack");
 
     (*stack).element.props.props.count = num_props as usize;
-    (*stack).element.props.props.data = push_copy::<Prop>(
-        &mut (*uc.get()).result,
-        num_props as usize,
-        tmp_props.as_ptr(),
-    );
+    (*stack).element.props.props.data =
+        push_copy::<Prop>(uc.result_mut_ptr(), num_props as usize, tmp_props.as_ptr());
     ufbxi_check!(
         uc,
         !(*stack).element.props.props.data.is_null(),
@@ -7279,7 +7269,7 @@ pub(crate) unsafe fn read_legacy_settings(uc: &Context, node: *mut Node) -> Resu
         let num_existing: usize = (*props).props.count;
 
         let new_count: usize = num_props as usize + num_existing;
-        let new_props: *mut Prop = push::<Prop>(&mut (*uc.get()).result, new_count);
+        let new_props: *mut Prop = push::<Prop>(uc.result_mut_ptr(), new_count);
         ufbxi_check!(uc, !new_props.is_null(), "new_props");
 
         core::ptr::copy_nonoverlapping(tmp_props.as_ptr(), new_props, num_props as usize);
@@ -7825,7 +7815,7 @@ pub(crate) unsafe fn read_legacy_material(
     (*material).shading_model_name = EMPTY_STRING.0;
     (*material).element.props.props.count = num_props;
     (*material).element.props.props.data =
-        push_copy::<Prop>(&mut (*uc.get()).result, num_props, tmp_props.as_ptr());
+        push_copy::<Prop>(uc.result_mut_ptr(), num_props, tmp_props.as_ptr());
     ufbxi_check!(
         uc,
         !(*material).element.props.props.data.is_null(),
@@ -7910,7 +7900,7 @@ pub(crate) unsafe fn read_legacy_light(
 
     (*light).element.props.props.count = num_props;
     (*light).element.props.props.data =
-        push_copy::<Prop>(&mut (*uc.get()).result, num_props, tmp_props.as_ptr());
+        push_copy::<Prop>(uc.result_mut_ptr(), num_props, tmp_props.as_ptr());
     ufbxi_check!(
         uc,
         !(*light).element.props.props.data.is_null(),
@@ -7941,7 +7931,7 @@ pub(crate) unsafe fn read_legacy_camera(
 
     (*camera).element.props.props.count = num_props;
     (*camera).element.props.props.data =
-        push_copy::<Prop>(&mut (*uc.get()).result, num_props, tmp_props.as_ptr());
+        push_copy::<Prop>(uc.result_mut_ptr(), num_props, tmp_props.as_ptr());
     ufbxi_check!(
         uc,
         !(*camera).element.props.props.data.is_null(),
@@ -7977,7 +7967,7 @@ pub(crate) unsafe fn read_legacy_limb_node(
 
     (*bone).element.props.props.count = num_props;
     (*bone).element.props.props.data =
-        push_copy::<Prop>(&mut (*uc.get()).result, num_props, tmp_props.as_ptr());
+        push_copy::<Prop>(uc.result_mut_ptr(), num_props, tmp_props.as_ptr());
     ufbxi_check!(
         uc,
         !(*bone).element.props.props.data.is_null(),
@@ -8028,7 +8018,7 @@ pub(crate) unsafe fn read_legacy_mesh(
 
     // Duplicate `index_data` for modification if we retain DOM
     if (*uc.get()).opts.retain_dom {
-        index_data = push_copy::<u32>(&mut (*uc.get()).result, (*indices).size, index_data);
+        index_data = push_copy::<u32>(uc.result_mut_ptr(), (*indices).size, index_data);
         ufbxi_check!(uc, !index_data.is_null(), "index_data");
     }
 
@@ -8087,7 +8077,7 @@ pub(crate) unsafe fn read_legacy_mesh(
     // Optional UV values are stored pretty much like a modern vertex element
     let uv_info: *mut Node = find_child(node, sp::GeometryUVInfo.as_ptr());
     if !uv_info.is_null() {
-        let set: *mut UvSet = push_zero::<UvSet>(&mut (*uc.get()).result, 1);
+        let set: *mut UvSet = push_zero::<UvSet>(uc.result_mut_ptr(), 1);
         ufbxi_check!(uc, !set.is_null(), "set");
         (*set).index = 0;
         (*set).name.data = EMPTY_CHAR.as_ptr();
@@ -8145,8 +8135,7 @@ pub(crate) unsafe fn read_legacy_mesh(
             if material == 0 {
                 (*mesh).face_material.data = SENTINEL_INDEX_ZERO.as_ptr();
             } else {
-                (*mesh).face_material.data =
-                    push::<u32>(&mut (*uc.get()).result, (*mesh).num_faces);
+                (*mesh).face_material.data = push::<u32>(uc.result_mut_ptr(), (*mesh).num_faces);
                 ufbxi_check!(
                     uc,
                     !(*mesh).face_material.data.is_null(),

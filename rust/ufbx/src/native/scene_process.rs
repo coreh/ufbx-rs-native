@@ -763,7 +763,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                         child_offset = neg3(rotation_pivot);
                         geometric_translation = add3(geometric_translation, child_offset);
 
-                        new_props = push_zero::<Prop>(&mut (*uc.get()).result, num_props + 3);
+                        new_props = push_zero::<Prop>(uc.result_mut_ptr(), num_props + 3);
                         ufbxi_check!(uc, !new_props.is_null(), "new_props");
                         ptr::copy_nonoverlapping(
                             (*node).element.props.props.data,
@@ -834,7 +834,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                         let new_scaling_offset: Vec3 = sub3(scaled_offset, new_scaling_pivot);
                         child_offset = sub3(unscaled_offset, scaling_pivot);
 
-                        new_props = push_zero::<Prop>(&mut (*uc.get()).result, num_props + 4);
+                        new_props = push_zero::<Prop>(uc.result_mut_ptr(), num_props + 4);
                         ufbxi_check!(uc, !new_props.is_null(), "new_props");
                         ptr::copy_nonoverlapping(
                             (*node).element.props.props.data,
@@ -1305,7 +1305,7 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
 
     // NOTE: We truncate this array in case not all connections are resolved
     (*uc.get()).scene.connections_src.data =
-        push::<Connection>(&mut (*uc.get()).result, num_connections);
+        push::<Connection>(uc.result_mut_ptr(), num_connections);
     ufbxi_check!(
         uc,
         !(*uc.get()).scene.connections_src.data.is_null(),
@@ -1464,7 +1464,7 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
 
     (*uc.get()).scene.connections_dst.count = (*uc.get()).scene.connections_src.count;
     (*uc.get()).scene.connections_dst.data = push_copy::<Connection>(
-        &mut (*uc.get()).result,
+        uc.result_mut_ptr(),
         (*uc.get()).scene.connections_src.count,
         (*uc.get()).scene.connections_src.data,
     );
@@ -1673,11 +1673,8 @@ pub(crate) unsafe fn add_connections_to_elements(uc: &Context) -> Result<(), Fai
                     .is_null(),
                     "((ufbx_prop*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_prop), (((size_t)(prop_end - copy_start))), (copy_start)))"
                 );
-                (*elem).props.props.data = push_pop::<Prop>(
-                    &mut (*uc.get()).result,
-                    uc.tmp_stack_mut_ptr(),
-                    num_new_props,
-                );
+                (*elem).props.props.data =
+                    push_pop::<Prop>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_new_props);
                 ufbxi_check!(
                     uc,
                     !(*elem).props.props.data.is_null(),
@@ -1996,11 +1993,9 @@ pub(crate) unsafe fn fetch_dst_elements(
     }
 
     let list: *mut RefList<Element> = p_dst_list as *mut RefList<Element>;
-    (*list).data = push_pop::<*mut Element>(
-        &mut (*uc.get()).result,
-        uc.tmp_stack_mut_ptr(),
-        num_elements,
-    ) as *const Ref<Element>;
+    (*list).data =
+        push_pop::<*mut Element>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_elements)
+            as *const Ref<Element>;
     (*list).count = num_elements;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -2076,11 +2071,9 @@ pub(crate) unsafe fn fetch_src_elements(
     }
 
     let list: *mut RefList<Element> = p_dst_list as *mut RefList<Element>;
-    (*list).data = push_pop::<*mut Element>(
-        &mut (*uc.get()).result,
-        uc.tmp_stack_mut_ptr(),
-        num_elements,
-    ) as *const Ref<Element>;
+    (*list).data =
+        push_pop::<*mut Element>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_elements)
+            as *const Ref<Element>;
     (*list).count = num_elements;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -2207,11 +2200,8 @@ pub(crate) unsafe fn fetch_textures(
         }
     }
 
-    (*list).data = push_pop::<MaterialTexture>(
-        &mut (*uc.get()).result,
-        uc.tmp_stack_mut_ptr(),
-        num_textures,
-    );
+    (*list).data =
+        push_pop::<MaterialTexture>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_textures);
     (*list).count = num_textures;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -2260,11 +2250,9 @@ pub(crate) unsafe fn fetch_mesh_materials(
         }
     }
 
-    (*list).data = push_pop::<*mut Material>(
-        &mut (*uc.get()).result,
-        uc.tmp_stack_mut_ptr(),
-        num_materials,
-    ) as *const Ref<Material>;
+    (*list).data =
+        push_pop::<*mut Material>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_materials)
+            as *const Ref<Material>;
     (*list).count = num_materials;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -2319,11 +2307,9 @@ pub(crate) unsafe fn fetch_deformers(
         }
     }
 
-    (*list).data = push_pop::<*mut Element>(
-        &mut (*uc.get()).result,
-        uc.tmp_stack_mut_ptr(),
-        num_deformers,
-    ) as *const Ref<Element>;
+    (*list).data =
+        push_pop::<*mut Element>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_deformers)
+            as *const Ref<Element>;
     (*list).count = num_deformers;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -2363,11 +2349,8 @@ pub(crate) unsafe fn fetch_blend_keyframes(
         conn = conn.add(1);
     }
 
-    (*list).data = push_pop::<BlendKeyframe>(
-        &mut (*uc.get()).result,
-        uc.tmp_stack_mut_ptr(),
-        num_keyframes,
-    );
+    (*list).data =
+        push_pop::<BlendKeyframe>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_keyframes);
     (*list).count = num_keyframes;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -2419,7 +2402,7 @@ pub(crate) unsafe fn fetch_texture_layers(
     }
 
     (*list).data =
-        push_pop::<TextureLayer>(&mut (*uc.get()).result, uc.tmp_stack_mut_ptr(), num_layers);
+        push_pop::<TextureLayer>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_layers);
     (*list).count = num_layers;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -4093,7 +4076,7 @@ pub(crate) unsafe fn finalize_nurbs_basis(
             (*basis).t_max = *knots.data.add(knots.count - degree - 1);
 
             let max_spans: usize = knots.count - 2 * degree;
-            let spans: *mut Real = push(&mut (*uc.get()).result, max_spans);
+            let spans: *mut Real = push(uc.result_mut_ptr(), max_spans);
             ufbxi_check!(uc, !spans.is_null(), "spans");
 
             let mut prev: Real = -math::INFINITY as Real;
@@ -4151,7 +4134,7 @@ pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod: *mut LodGroup) -> Res
         i += 1;
     }
 
-    let levels: *mut LodLevel = push_zero(&mut (*uc.get()).result, num_levels);
+    let levels: *mut LodLevel = push_zero(uc.result_mut_ptr(), num_levels);
     ufbxi_check!(uc, !levels.is_null(), "levels");
 
     (*lod).relative_distances = api_find_bool(
@@ -4228,7 +4211,7 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(
     let topo: *mut TopoEdge = push::<TopoEdge>(uc.tmp_stack_mut_ptr(), num_indices);
     ufbxi_check!(uc, !topo.is_null(), "topo");
 
-    let normal_indices: *mut u32 = push::<u32>(&mut (*uc.get()).result, num_indices);
+    let normal_indices: *mut u32 = push::<u32>(uc.result_mut_ptr(), num_indices);
     ufbxi_check!(uc, !normal_indices.is_null(), "normal_indices");
 
     compute_topology(mesh, topo, num_indices);
@@ -4239,7 +4222,7 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(
         (*mesh).vertex_normal.unique_per_vertex = true;
     }
 
-    let mut normal_data: *mut Vec3 = push::<Vec3>(&mut (*uc.get()).result, num_normals + 1);
+    let mut normal_data: *mut Vec3 = push::<Vec3>(uc.result_mut_ptr(), num_normals + 1);
     ufbxi_check!(uc, !normal_data.is_null(), "normal_data");
 
     // C: `normal_data[0] = ufbx_zero_vec3; normal_data++;`
@@ -4544,7 +4527,7 @@ pub(crate) unsafe fn finalize_shader_texture(
         return Ok(());
     }
 
-    let shader: *mut ShaderTexture = push_zero(&mut (*uc.get()).result, 1);
+    let shader: *mut ShaderTexture = push_zero(uc.result_mut_ptr(), 1);
     ufbxi_check!(uc, !shader.is_null(), "shader");
 
     (*shader).type_ = core::mem::transmute::<u32, ShaderTextureType>(type_);
@@ -4683,7 +4666,7 @@ pub(crate) unsafe fn finalize_shader_texture(
 
     // Retain the shader inputs
     (*shader).inputs.data = push_copy::<ShaderTextureInput>(
-        &mut (*uc.get()).result,
+        uc.result_mut_ptr(),
         (*shader).inputs.count,
         (*shader).inputs.data,
     );
@@ -4928,7 +4911,7 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
 #[must_use]
 pub(crate) unsafe fn pop_texture_files(uc: &Context) -> Result<(), Fail> {
     let num_files: u32 = (*uc.get()).texture_file_map.size;
-    let files: *mut TextureFile = push(&mut (*uc.get()).result, num_files as usize);
+    let files: *mut TextureFile = push(uc.result_mut_ptr(), num_files as usize);
     ufbxi_check!(uc, !files.is_null(), "files");
 
     (*uc.get()).scene.texture_files.data = files;
@@ -5208,7 +5191,7 @@ pub(crate) unsafe fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
 
                 (*texture).file_textures.count = num_files;
                 (*texture).file_textures.data =
-                    push::<*mut Texture>(&mut (*uc.get()).result, num_files) as *const Ref<Texture>;
+                    push::<*mut Texture>(uc.result_mut_ptr(), num_files) as *const Ref<Texture>;
                 ufbxi_check!(
                     uc,
                     !(*texture).file_textures.data.is_null(),
@@ -5225,7 +5208,7 @@ pub(crate) unsafe fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 // Simple case: Just point to self
                 (*texture).file_textures.count = 1;
                 (*texture).file_textures.data =
-                    push::<*mut Texture>(&mut (*uc.get()).result, 1) as *const Ref<Texture>;
+                    push::<*mut Texture>(uc.result_mut_ptr(), 1) as *const Ref<Texture>;
                 ufbxi_check!(
                     uc,
                     !(*texture).file_textures.data.is_null(),
@@ -5431,8 +5414,7 @@ pub(crate) unsafe fn flip_attrib_winding(
             (*indices).data = uc.tmp_mesh_consecutive_indices();
             return Ok(());
         }
-        (*indices).data =
-            push_copy::<u32>(&mut (*uc.get()).result, (*indices).count, (*indices).data);
+        (*indices).data = push_copy::<u32>(uc.result_mut_ptr(), (*indices).count, (*indices).data);
         ufbxi_check!(uc, !(*indices).data.is_null(), "indices->data");
         uc.set_tmp_mesh_consecutive_indices((*indices).data as *mut u32);
     }
@@ -6493,7 +6475,7 @@ pub(crate) unsafe fn push_anim(
     layers: *mut *mut AnimLayer,
     num_layers: usize,
 ) -> Result<(), Fail> {
-    let anim: *mut Anim = push_zero::<Anim>(&mut (*uc.get()).result, 1);
+    let anim: *mut Anim = push_zero::<Anim>(uc.result_mut_ptr(), 1);
     ufbxi_check!(uc, !anim.is_null(), "anim");
 
     (*anim).layers.data = layers as *const Ref<AnimLayer>;
@@ -6514,7 +6496,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
     (*uc.get()).scene.elements.count = num_elements;
     (*uc.get()).scene.elements.data =
-        push::<*mut Element>(&mut (*uc.get()).result, num_elements) as *const Ref<Element>;
+        push::<*mut Element>(uc.result_mut_ptr(), num_elements) as *const Ref<Element>;
     ufbxi_check!(
         uc,
         !(*uc.get()).scene.elements.data.is_null(),
@@ -6523,7 +6505,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
     (*uc.get()).scene.metadata.element_buffer_size = uc.tmp_element_byte_offset();
     let element_data: *mut u8 = push_pop::<u64>(
-        &mut (*uc.get()).result,
+        uc.result_mut_ptr(),
         &mut (*uc.get()).tmp_elements,
         uc.tmp_element_byte_offset() / 8,
     ) as *mut u8;
@@ -6600,7 +6582,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             (ptr::addr_of_mut!((*uc.get()).scene.unknowns) as *mut RefList<Element>).add(type_);
         (*typed_elems).count = num_typed;
         (*typed_elems).data =
-            push::<*mut Element>(&mut (*uc.get()).result, num_typed) as *const Ref<Element>;
+            push::<*mut Element>(uc.result_mut_ptr(), num_typed) as *const Ref<Element>;
         ufbxi_check!(uc, !(*typed_elems).data.is_null(), "typed_elems->data");
 
         for i in 0..num_typed {
@@ -6614,7 +6596,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     // Create named elements
     (*uc.get()).scene.elements_by_name.count = num_elements;
     (*uc.get()).scene.elements_by_name.data =
-        push::<NameElement>(&mut (*uc.get()).result, num_elements);
+        push::<NameElement>(uc.result_mut_ptr(), num_elements);
     ufbxi_check!(
         uc,
         !(*uc.get()).scene.elements_by_name.data.is_null(),
@@ -6726,7 +6708,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
         if (*node).all_attribs.count > 1 {
             (*node).all_attribs.data = push_pop::<*mut Element>(
-                &mut (*uc.get()).result,
+                uc.result_mut_ptr(),
                 uc.tmp_stack_mut_ptr(),
                 (*node).all_attribs.count,
             ) as *const Ref<Element>;
@@ -6761,7 +6743,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         // HACK: Transport `ufbxi_tmp_bone_pose` array through the `ufbx_bone_pose` pointer
         let num_bones: usize = (*pose).bone_poses.count;
         let tmp_poses: *mut TmpBonePose = (*pose).bone_poses.data as *mut TmpBonePose;
-        (*pose).bone_poses.data = push::<BonePose>(&mut (*uc.get()).result, num_bones);
+        (*pose).bone_poses.data = push::<BonePose>(uc.result_mut_ptr(), num_bones);
         ufbxi_check!(
             uc,
             !(*pose).bone_poses.data.is_null(),
@@ -6930,11 +6912,11 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
         if !(*uc.get()).opts.skip_skin_vertices {
             (*skin).vertices.count = num_vertices;
-            (*skin).vertices.data = push_zero::<SkinVertex>(&mut (*uc.get()).result, num_vertices);
+            (*skin).vertices.data = push_zero::<SkinVertex>(uc.result_mut_ptr(), num_vertices);
             ufbxi_check!(uc, !(*skin).vertices.data.is_null(), "skin->vertices.data");
 
             (*skin).weights.count = total_weights;
-            (*skin).weights.data = push_zero::<SkinWeight>(&mut (*uc.get()).result, total_weights);
+            (*skin).weights.data = push_zero::<SkinWeight>(uc.result_mut_ptr(), total_weights);
             ufbxi_check!(uc, !(*skin).weights.data.is_null(), "skin->weights.data");
 
             let retain_all: bool = !(*uc.get()).opts.clean_skin_weights;
@@ -7161,7 +7143,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                         // Duplicate `index_data` for modification if we retain DOM
                         if (*uc.get()).opts.retain_dom {
                             (*full_weights).data = push_copy::<Real>(
-                                &mut (*uc.get()).result,
+                                uc.result_mut_ptr(),
                                 (*full_weights).count,
                                 (*full_weights).data,
                             );
@@ -7207,9 +7189,9 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
     {
         // Generate and patch procedural index buffers
-        let zero_indices: *mut u32 = push::<u32>(&mut (*uc.get()).result, uc.max_zero_indices());
+        let zero_indices: *mut u32 = push::<u32>(uc.result_mut_ptr(), uc.max_zero_indices());
         let consecutive_indices: *mut u32 =
-            push::<u32>(&mut (*uc.get()).result, uc.max_consecutive_indices());
+            push::<u32>(uc.result_mut_ptr(), uc.max_consecutive_indices());
         ufbxi_check!(
             uc,
             !zero_indices.is_null() && !consecutive_indices.is_null(),
@@ -7365,7 +7347,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                         && !(*mesh_materials.add(0)).is_null()
                     {
                         let materials: *mut *mut Material =
-                            push::<*mut Material>(&mut (*uc.get()).result, (*mesh).materials.count);
+                            push::<*mut Material>(uc.result_mut_ptr(), (*mesh).materials.count);
                         ufbxi_check!(uc, !materials.is_null(), "materials");
                         // C: `ufbxi_nounroll for (...)` — the no-unroll pragma
                         // is optimizer-only and has no Rust analogue.
@@ -7385,8 +7367,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
             if uc.retain_mesh_parts() {
                 let num_parts: usize = max_sz((*mesh).materials.count, 1);
-                (*mesh).material_parts.data =
-                    push_zero::<MeshPart>(&mut (*uc.get()).result, num_parts);
+                (*mesh).material_parts.data = push_zero::<MeshPart>(uc.result_mut_ptr(), num_parts);
                 ufbxi_check!(
                     uc,
                     !(*mesh).material_parts.data.is_null(),
@@ -7419,7 +7400,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                     (*mesh).face_material.count = 0;
                 }
             } else if (*mesh).materials.count > 0 {
-                finalize_mesh_material(&mut (*uc.get()).result, &mut (*uc.get()).error, mesh)?;
+                finalize_mesh_material(uc.result_mut_ptr(), &mut (*uc.get()).error, mesh)?;
             }
 
             // Fetch deformers
@@ -7676,7 +7657,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         }
 
         (*layer).anim_props.data = push_pop::<AnimProp>(
-            &mut (*uc.get()).result,
+            uc.result_mut_ptr(),
             uc.tmp_stack_mut_ptr(),
             num_anim_props + 1,
         );
@@ -8001,7 +7982,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                             .add(prev_material as usize);
                         if !mat.is_null() && (*mat).textures.count == 0 {
                             let texs: *mut MaterialTexture = push_pop::<MaterialTexture>(
-                                &mut (*uc.get()).result,
+                                uc.result_mut_ptr(),
                                 uc.tmp_stack_mut_ptr(),
                                 num_textures_in_material,
                             );
@@ -8304,11 +8285,8 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
         let num_targets: usize = (*uc.get()).tmp_stack.num_items - tmp_base;
         (*constraint).targets.count = num_targets;
-        (*constraint).targets.data = push_pop::<ConstraintTarget>(
-            &mut (*uc.get()).result,
-            uc.tmp_stack_mut_ptr(),
-            num_targets,
-        );
+        (*constraint).targets.data =
+            push_pop::<ConstraintTarget>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_targets);
         ufbxi_check!(
             uc,
             !(*constraint).targets.data.is_null(),

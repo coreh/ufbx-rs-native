@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `result` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).result }
+    }
+
     // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_stack_mut_ptr(&self) -> *mut Buf {
@@ -3519,7 +3527,7 @@ unsafe fn retain_dom_node_rec(
     node: *mut Node,
     p_dom_node: *mut *mut DomNode,
 ) -> Result<(), Fail> {
-    let dst: *mut DomNode = push_zero(&mut (*uc.get()).result, 1);
+    let dst: *mut DomNode = push_zero(uc.result_mut_ptr(), 1);
     ufbxi_check!(uc, !dst.is_null(), "dst");
     ufbxi_check!(
         uc,
@@ -3561,7 +3569,7 @@ unsafe fn retain_dom_node_rec(
 
     if (*node).value_type_mask == ValueType::Array as u16 {
         let arr = (*node).content.array;
-        let val: *mut DomValue = push_zero(&mut (*uc.get()).result, 1);
+        let val: *mut DomValue = push_zero(uc.result_mut_ptr(), 1);
         ufbxi_check!(uc, !val.is_null(), "val");
 
         (*dst).values.data = val;
@@ -3627,8 +3635,7 @@ unsafe fn retain_dom_node_rec(
         }
 
         (*dst).values.count = ix;
-        (*dst).values.data =
-            push_pop::<DomValue>(&mut (*uc.get()).result, uc.tmp_stack_mut_ptr(), ix);
+        (*dst).values.data = push_pop::<DomValue>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), ix);
         ufbxi_check!(uc, !(*dst).values.data.is_null(), "dst->values.data");
     }
 
@@ -3644,7 +3651,7 @@ unsafe fn retain_dom_node_rec(
 
         (*dst).children.count = (*node).num_children as usize;
         (*dst).children.data = push_pop::<*mut DomNode>(
-            &mut (*uc.get()).result,
+            uc.result_mut_ptr(),
             &mut (*uc.get()).tmp_dom_nodes,
             (*node).num_children as usize,
         ) as *const Ref<DomNode>;
@@ -3659,7 +3666,7 @@ unsafe fn retain_dom_node_rec(
 pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<(), Fail> {
     if uc.dom_parse_num_children() > 0 {
         let children: *mut *mut DomNode = push_pop(
-            &mut (*uc.get()).result,
+            uc.result_mut_ptr(),
             &mut (*uc.get()).tmp_dom_nodes,
             uc.dom_parse_num_children(),
         );
@@ -3677,13 +3684,13 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
         // Called with NULL argument to finish retaining DOM, collect the final nodes to `ufbx_scene`.
         let num_top_nodes = (*uc.get()).tmp_dom_nodes.num_items;
         let nodes: *mut *mut DomNode = push_pop(
-            &mut (*uc.get()).result,
+            uc.result_mut_ptr(),
             &mut (*uc.get()).tmp_dom_nodes,
             num_top_nodes,
         );
         ufbxi_check!(uc, !nodes.is_null(), "nodes");
 
-        let dom_root: *mut DomNode = push_zero(&mut (*uc.get()).result, 1);
+        let dom_root: *mut DomNode = push_zero(uc.result_mut_ptr(), 1);
         ufbxi_check!(uc, !dom_root.is_null(), "dom_root");
 
         (*dom_root).name.data = EMPTY_CHAR.as_ptr();

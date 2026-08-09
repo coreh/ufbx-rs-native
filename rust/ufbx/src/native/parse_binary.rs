@@ -416,7 +416,7 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
             ufbxi_check!(uc, !(*d).data.is_null(), "d->data");
             if dst_type == b'C' {
                 let buf: *mut Buf = if size == 1 || (*uc.get()).opts.retain_dom {
-                    &mut (*uc.get()).result
+                    uc.result_mut_ptr()
                 } else {
                     tmp_buf
                 };
@@ -561,7 +561,7 @@ pub(crate) unsafe fn push_array_data(
     // if it's already in the right format
     let mut arr_buf: *mut Buf = tmp_buf;
     if flags & ARRAY_FLAG_RESULT as u32 != 0 {
-        arr_buf = &mut (*uc.get()).result;
+        arr_buf = uc.result_mut_ptr();
     } else if flags & ARRAY_FLAG_TMP_BUF as u32 != 0 {
         arr_buf = &mut (*uc.get()).tmp;
     }
