@@ -3072,6 +3072,14 @@ impl CreateAnimContext {
         self.0.get().cast()
     }
 
+    // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn opts_mut(&self) -> *mut RawAnimOpts {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).opts }
+    }
+
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut(&self) -> *mut Error {

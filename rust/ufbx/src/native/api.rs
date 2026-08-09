@@ -1786,7 +1786,7 @@ pub(crate) unsafe fn create_anim(
         evaluate::CreateAnimContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
         // C: `(*ac.get()).opts = *opts;` (struct assignment)
-        core::ptr::copy_nonoverlapping(opts, core::ptr::addr_of_mut!((*ac.get()).opts), 1);
+        core::ptr::copy_nonoverlapping(opts, ac.opts_mut(), 1);
     }
 
     ac.set_scene(scene);
