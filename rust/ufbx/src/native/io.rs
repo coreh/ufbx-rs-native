@@ -71,20 +71,20 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
         // C-parity: `uc->read_buffer_size * 2` is a size_t multiply that wraps.
         new_size = max_sz(new_size, (*uc.get()).read_buffer_size.wrapping_mul(2));
         size_to_free = (*uc.get()).read_buffer_size;
-        data_to_free = (*uc.get()).read_buffer;
+        data_to_free = uc.read_buffer();
         let new_buffer: *mut u8 = alloc::<u8>(uc.ator_tmp(), new_size);
         ufbxi_check_return!(uc, !new_buffer.is_null(), core::ptr::null(), "new_buffer");
-        (*uc.get()).read_buffer = new_buffer;
+        uc.set_read_buffer(new_buffer);
         (*uc.get()).read_buffer_size = new_size;
     }
 
     // Copy the remains of the previous buffer to the beginning of the new one
     let mut data_size: usize = uc.data_size();
     if data_size > 0 {
-        ufbx_assert!(!(*uc.get()).read_buffer.is_null() && !uc.data().is_null());
+        ufbx_assert!(!uc.read_buffer().is_null() && !uc.data().is_null());
         // C: `memmove(uc->read_buffer, uc->data, data_size)` — the ranges may
         // overlap when the buffer did not grow.
-        core::ptr::copy(uc.data(), (*uc.get()).read_buffer, data_size);
+        core::ptr::copy(uc.data(), uc.read_buffer(), data_size);
     }
 
     if size_to_free != 0 {
@@ -97,7 +97,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
         let to_read: usize = data_capacity - data_size;
         let read_result: usize = (uc.read_fn().unwrap_unchecked())(
             uc.read_user(),
-            (*uc.get()).read_buffer.add(data_size) as *mut c_void,
+            uc.read_buffer().add(data_size) as *mut c_void,
             to_read,
         );
         ufbxi_check_return_msg!(
@@ -145,11 +145,11 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     (*uc.get()).data_offset = (*uc.get())
         .data_offset
         .wrapping_add(to_size(uc.data() as isize - uc.data_begin() as isize) as u64);
-    uc.set_data_begin((*uc.get()).read_buffer);
-    uc.set_data((*uc.get()).read_buffer);
+    uc.set_data_begin(uc.read_buffer());
+    uc.set_data(uc.read_buffer());
     uc.set_data_size(data_size);
 
-    (*uc.get()).read_buffer
+    uc.read_buffer()
 }
 
 // ufbx.c:6783-6787 `ufbxi_pause_progress`

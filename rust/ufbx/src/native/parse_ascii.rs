@@ -125,7 +125,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
                     "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->read_buffer)), (&uc->read_buffer), (&uc->read_buffer_size), (new_size))"
                 );
             }
-            dst_buffer = (*uc.get()).read_buffer;
+            dst_buffer = uc.read_buffer();
             dst_size = (*uc.get()).read_buffer_size;
             (*ua).src_is_retained = false;
             (*ua).src_buf = core::ptr::null_mut();

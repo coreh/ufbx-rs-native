@@ -6222,12 +6222,12 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                     "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->read_buffer)), (&uc->read_buffer), (&uc->read_buffer_size), (size))"
                 );
             }
-            core::ptr::copy_nonoverlapping((*ua).src, (*uc.get()).read_buffer, size);
+            core::ptr::copy_nonoverlapping((*ua).src, uc.read_buffer(), size);
             // C: `uc->data = uc->data_begin = ua->src = uc->read_buffer;`
-            (*ua).src = (*uc.get()).read_buffer;
+            (*ua).src = uc.read_buffer();
             uc.set_data_begin((*ua).src);
             uc.set_data(uc.data_begin());
-            (*ua).src_end = (*uc.get()).read_buffer.add(size);
+            (*ua).src_end = uc.read_buffer().add(size);
             (*ua).src_is_retained = false;
             (*ua).src_buf = core::ptr::null_mut();
             if to_size((*ua).src_end.offset_from((*ua).src)) < uc.progress_interval() {

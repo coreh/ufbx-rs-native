@@ -994,7 +994,7 @@ unsafe fn binary_parse_node_rec(
                 // NOTE: We _cannot_ share `read_buffer` if we plan to read later from it
                 // as `ufbx_inflate()` overwrites parts of it with zeroes.
                 if encoded_size as usize > (*input).data_size {
-                    (*input).buffer = (*uc.get()).read_buffer as *mut c_void;
+                    (*input).buffer = uc.read_buffer() as *mut c_void;
                     (*input).buffer_size = (*uc.get()).read_buffer_size;
                     (*input).read_fn = uc.read_fn();
                     (*input).read_user = uc.read_user();

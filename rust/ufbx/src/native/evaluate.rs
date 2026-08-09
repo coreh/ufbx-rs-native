@@ -942,7 +942,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
 
     free::<u8>(
         uc.ator_tmp(),
-        (*uc.get()).read_buffer,
+        uc.read_buffer(),
         (*uc.get()).read_buffer_size,
     );
     free::<u8>(uc.ator_tmp(), (*uc.get()).tmp_arr, (*uc.get()).tmp_arr_size);

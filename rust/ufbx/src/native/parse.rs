@@ -880,6 +880,23 @@ impl Context {
             (*self.get()).top_node = top_node;
         }
     }
+
+    // Backing read buffer. Scalar `*mut u8`: value getter + setter. The paired
+    // `&mut uc.read_buffer` out-param sites in `refill` stay raw (a value getter
+    // cannot express writing back through the field).
+    #[inline(always)]
+    pub(crate) fn read_buffer(&self) -> *mut u8 {
+        // SAFETY: reading a `*mut u8` field; all bit patterns valid.
+        unsafe { (*self.get()).read_buffer }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_read_buffer(&self, read_buffer: *mut u8) {
+        // SAFETY: storing a `*mut u8`; cannot violate validity.
+        unsafe {
+            (*self.get()).read_buffer = read_buffer;
+        }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`
