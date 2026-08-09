@@ -3072,6 +3072,14 @@ impl CreateAnimContext {
         self.0.get().cast()
     }
 
+    // `error` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn error_mut(&self) -> *mut Error {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).error }
+    }
+
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
@@ -3157,7 +3165,7 @@ pub(crate) unsafe fn push_anim_string(
     let length: usize = (*str_).length;
     if length > 0 {
         let copy: *mut u8 = push::<u8>(&mut (*ac.get()).result, length + 1);
-        ufbxi_check_err!(&mut (*ac.get()).error, !copy.is_null(), "copy");
+        ufbxi_check_err!(ac.error_mut(), !copy.is_null(), "copy");
         // C: `memcpy(copy, str->data, length);`
         ptr::copy_nonoverlapping((*str_).data, copy, length);
         // C: `copy[str->length] = '\0';`
@@ -3223,7 +3231,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     let anim: *mut Anim = ac.anim_mut();
 
     init_ator(
-        ptr::addr_of_mut!((*ac.get()).error),
+        ac.error_mut(),
         ac.ator_result_mut(),
         ptr::addr_of!((*ac.get()).opts.result_allocator),
         b"result\0".as_ptr(),
@@ -3239,14 +3247,14 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     (*anim).layers.data =
         push_zero::<*mut AnimLayer>(&mut (*ac.get()).result, num_layers) as *const Ref<AnimLayer>;
     ufbxi_check_err!(
-        &mut (*ac.get()).error,
+        ac.error_mut(),
         !(*anim).layers.data.is_null(),
         "anim->layers.data"
     );
 
     if (*ac.get()).opts.override_layer_weights.count > 0 {
         ufbxi_check_err_msg!(
-            &mut (*ac.get()).error,
+            ac.error_mut(),
             (*ac.get()).opts.override_layer_weights.count == num_layers,
             "override_layer_weights[] count must match layer_ids[] count",
             "ac->opts.override_layer_weights.count == num_layers"
@@ -3257,7 +3265,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
             (*ac.get()).opts.override_layer_weights.data,
         );
         ufbxi_check_err!(
-            &mut (*ac.get()).error,
+            ac.error_mut(),
             !(*anim).override_layer_weights.data.is_null(),
             "anim->override_layer_weights.data"
         );
@@ -3267,7 +3275,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     for i in 0..num_layers {
         let index: u32 = *(*ac.get()).opts.layer_ids.data.add(i);
         ufbxi_check_err_msg!(
-            &mut (*ac.get()).error,
+            ac.error_mut(),
             (index as usize) < (*scene).anim_layers.count,
             "layer_ids out of bounds",
             "index < scene->anim_layers.count"
@@ -3285,7 +3293,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
         (*anim).prop_overrides.data =
             push_zero::<PropOverride>(&mut (*ac.get()).result, prop_overrides.count);
         ufbxi_check_err!(
-            &mut (*ac.get()).error,
+            ac.error_mut(),
             !(*anim).prop_overrides.data.is_null(),
             "anim->prop_overrides.data"
         );
@@ -3309,12 +3317,12 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
 
             // C: `ufbxi_check_err(&ac->error, ufbxi_check_string(&ac->error, &dst->prop_name, &src->prop_name));`
             check_string(
-                ptr::addr_of_mut!((*ac.get()).error),
+                ac.error_mut(),
                 ptr::addr_of_mut!((*dst).prop_name),
                 ptr::addr_of!((*src).prop_name) as *const String,
             )?;
             check_string(
-                ptr::addr_of_mut!((*ac.get()).error),
+                ac.error_mut(),
                 ptr::addr_of_mut!((*dst).value_str),
                 ptr::addr_of!((*src).value_str) as *const String,
             )?;
@@ -3381,16 +3389,12 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
                 && (*prev).prop_name.data == (*next).prop_name.data
             {
                 ufbxi_fmt_err_info!(
-                    &mut (*ac.get()).error,
+                    ac.error_mut(),
                     "element %u prop \"%s\"",
                     (*prev).element_id,
                     (*prev).prop_name.data
                 );
-                ufbxi_fail_err_msg!(
-                    &mut (*ac.get()).error,
-                    "Duplicate override",
-                    "Duplicate override"
-                );
+                ufbxi_fail_err_msg!(ac.error_mut(), "Duplicate override", "Duplicate override");
             }
         }
     }
@@ -3403,7 +3407,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
             (*ac.get()).opts.transform_overrides.data,
         );
         ufbxi_check_err!(
-            &mut (*ac.get()).error,
+            ac.error_mut(),
             !(*anim).transform_overrides.data.is_null(),
             "anim->transform_overrides.data"
         );
@@ -3417,7 +3421,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     }
 
     ac.set_imp(push::<AnimImp>(&mut (*ac.get()).result, 1));
-    ufbxi_check_err!(&mut (*ac.get()).error, !ac.imp().is_null(), "ac->imp");
+    ufbxi_check_err!(ac.error_mut(), !ac.imp().is_null(), "ac->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&Anim` pointer via exposed provenance.

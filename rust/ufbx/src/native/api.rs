@@ -1799,11 +1799,7 @@ pub(crate) unsafe fn create_anim(
         let imp: *mut AnimImp = ac.imp();
         core::ptr::addr_of_mut!((*imp).anim)
     } else {
-        fix_error_type(
-            core::ptr::addr_of_mut!((*ac.get()).error),
-            b"Failed to create anim\0".as_ptr(),
-            error,
-        );
+        fix_error_type(ac.error_mut(), b"Failed to create anim\0".as_ptr(), error);
         buf_free(core::ptr::addr_of_mut!((*ac.get()).result));
         free_ator(ac.ator_result_mut());
         core::ptr::null_mut()
