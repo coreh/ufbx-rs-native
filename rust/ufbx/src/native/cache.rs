@@ -177,6 +177,21 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `pos` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn pos(&self) -> *const u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*const u8` are valid.
+        unsafe { (*self.get()).pos }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_pos(&self, pos: *const u8) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).pos = pos;
+        }
+    }
+
     // `file_offset` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn file_offset(&self) -> u64 {
@@ -336,12 +351,9 @@ pub(crate) unsafe fn cache_read(
     allow_eof: bool,
 ) -> Result<(), Fail> {
     let mut dst: *mut c_void = dst;
-    let buffered: usize = min_sz(
-        to_size((*cc.get()).pos_end.offset_from((*cc.get()).pos)),
-        size,
-    );
-    core::ptr::copy_nonoverlapping((*cc.get()).pos, dst as *mut u8, buffered);
-    (*cc.get()).pos = (*cc.get()).pos.add(buffered);
+    let buffered: usize = min_sz(to_size((*cc.get()).pos_end.offset_from(cc.pos())), size);
+    core::ptr::copy_nonoverlapping(cc.pos(), dst as *mut u8, buffered);
+    cc.set_pos(cc.pos().add(buffered));
     size -= buffered;
     cc.set_file_offset(cc.file_offset().wrapping_add(buffered as u64));
     if size == 0 {
@@ -389,14 +401,14 @@ pub(crate) unsafe fn cache_read(
                 "num_read >= size"
             );
         }
-        (*cc.get()).pos = (*cc.get()).buffer.as_ptr();
+        cc.set_pos((*cc.get()).buffer.as_ptr());
         (*cc.get()).pos_end = (*cc.get())
             .buffer
             .as_ptr()
             .add(size_of_val(&(*cc.get()).buffer));
 
-        core::ptr::copy_nonoverlapping((*cc.get()).pos, dst as *mut u8, size);
-        (*cc.get()).pos = (*cc.get()).pos.add(size);
+        core::ptr::copy_nonoverlapping(cc.pos(), dst as *mut u8, size);
+        cc.set_pos(cc.pos().add(size));
         cc.set_file_offset(cc.file_offset().wrapping_add(size as u64));
 
         let num_written: usize = min_sz(size, num_read);
@@ -421,11 +433,8 @@ pub(crate) unsafe fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), 
     // crafted PC2 header reaches this with `size` near `UINT64_MAX`.
     cc.set_file_offset(cc.file_offset().wrapping_add(size));
 
-    let buffered: u64 = min64(
-        (*cc.get()).pos_end.offset_from((*cc.get()).pos) as u64,
-        size,
-    );
-    (*cc.get()).pos = (*cc.get()).pos.add(buffered as usize);
+    let buffered: u64 = min64((*cc.get()).pos_end.offset_from(cc.pos()) as u64, size);
+    cc.set_pos(cc.pos().add(buffered as usize));
     size -= buffered;
 
     if (*cc.get()).stream.skip_fn.is_some() {
@@ -961,8 +970,8 @@ pub(crate) unsafe fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
     opts.ator = cc.ator_tmp();
     opts.read_fn = (*cc.get()).stream.read_fn;
     opts.read_user = (*cc.get()).stream.user;
-    opts.prefix = (*cc.get()).pos;
-    opts.prefix_length = to_size((*cc.get()).pos_end.offset_from((*cc.get()).pos));
+    opts.prefix = cc.pos();
+    opts.prefix_length = to_size((*cc.get()).pos_end.offset_from(cc.pos()));
     let doc: *mut XmlDocument = load_xml(&mut opts, &mut (*cc.get()).error);
     ufbxi_check_err!(&mut (*cc.get()).error, !doc.is_null(), "doc");
 
@@ -1002,7 +1011,7 @@ pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Res
         "Truncated file",
         "magic_len == 16"
     );
-    (*cc.get()).pos = (*cc.get()).buffer.as_ptr();
+    cc.set_pos((*cc.get()).buffer.as_ptr());
     (*cc.get()).pos_end = (*cc.get()).buffer.as_ptr().add(16);
 
     cc.set_file_offset(0);
