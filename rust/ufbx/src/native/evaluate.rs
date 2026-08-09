@@ -3484,6 +3484,21 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `nodes_to_bake` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn nodes_to_bake(&self) -> *mut bool {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut bool` are valid.
+        unsafe { (*self.get()).nodes_to_bake }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_nodes_to_bake(&self, nodes_to_bake: *mut bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).nodes_to_bake = nodes_to_bake;
+        }
+    }
+
     // `baked_nodes` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn baked_nodes(&self) -> *mut *mut BakedNode {
@@ -4389,7 +4404,7 @@ pub(crate) unsafe fn bake_node_imp(
     props: *mut BakeProp,
     count: usize,
 ) -> Result<(), Fail> {
-    ufbx_assert!(!bc.baked_nodes().is_null() && !(*bc.get()).nodes_to_bake.is_null());
+    ufbx_assert!(!bc.baked_nodes().is_null() && !bc.nodes_to_bake().is_null());
 
     let node: *mut UfbxNode =
         *((*(*bc.get()).scene).elements.data as *const *mut UfbxNode).add(element_id as usize);
@@ -5066,11 +5081,13 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
             !bc.baked_nodes().is_null(),
             "bc->baked_nodes"
         );
-        (*bc.get()).nodes_to_bake =
-            push_zero::<bool>(ptr::addr_of_mut!((*bc.get()).result), (*scene).nodes.count);
+        bc.set_nodes_to_bake(push_zero::<bool>(
+            ptr::addr_of_mut!((*bc.get()).result),
+            (*scene).nodes.count,
+        ));
         ufbxi_check_err!(
             &mut (*bc.get()).error,
-            !(*bc.get()).nodes_to_bake.is_null(),
+            !bc.nodes_to_bake().is_null(),
             "bc->nodes_to_bake"
         );
     }
@@ -5093,8 +5110,8 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
 
             // Sort nodes by `typed_id` to make sure we process them in order.
             if (*element).type_ as u32 == ElementType::Node as u32 {
-                if !(*bc.get()).nodes_to_bake.is_null() {
-                    *(*bc.get()).nodes_to_bake.add((*element).typed_id as usize) = true;
+                if !bc.nodes_to_bake().is_null() {
+                    *bc.nodes_to_bake().add((*element).typed_id as usize) = true;
                 }
                 (*prop).sort_id = (*element).typed_id;
             } else {
