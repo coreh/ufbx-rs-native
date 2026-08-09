@@ -168,6 +168,21 @@ impl TessellateCurveContext {
         self.0.get().cast()
     }
 
+    // `imp` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn imp(&self) -> *mut LineCurveImp {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut LineCurveImp` are valid.
+        unsafe { (*self.get()).imp }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_imp(&self, imp: *mut LineCurveImp) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).imp = imp;
+        }
+    }
+
     // `curve` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn curve(&self) -> *const NurbsCurve {
@@ -223,6 +238,21 @@ impl TessellateSurfaceContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerTessellateSurfaceContext {
         self.0.get().cast()
+    }
+
+    // `imp` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn imp(&self) -> *mut MeshImp {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut MeshImp` are valid.
+        unsafe { (*self.get()).imp }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_imp(&self, imp: *mut MeshImp) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).imp = imp;
+        }
     }
 
     // `surface` — scalar value accessor.
@@ -357,32 +387,28 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
 
     line.from_tessellated_nurbs = true;
 
-    (*tc.get()).imp = push::<LineCurveImp>(&mut (*tc.get()).result, 1);
-    ufbxi_check_err!(
-        &mut (*tc.get()).error,
-        !(*tc.get()).imp.is_null(),
-        "tc->imp"
-    );
+    tc.set_imp(push::<LineCurveImp>(&mut (*tc.get()).result, 1));
+    ufbxi_check_err!(&mut (*tc.get()).error, !tc.imp().is_null(), "tc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&LineCurve` pointer via exposed provenance.
-    ((*tc.get()).imp as *mut u8).expose_provenance();
+    (tc.imp() as *mut u8).expose_provenance();
 
     init_ref(
-        &mut (*(*tc.get()).imp).refcount,
+        &mut (*tc.imp()).refcount,
         LINE_CURVE_IMP_MAGIC,
         &mut (*get_imp::<SceneImp>(ref_ptr(&(*curve).element.scene) as *mut c_void)).refcount,
     );
 
-    (*(*tc.get()).imp).magic = LINE_CURVE_IMP_MAGIC;
+    (*tc.imp()).magic = LINE_CURVE_IMP_MAGIC;
     // C: `tc->imp->curve = tc->line` — struct assignment (memcpy).
     core::ptr::copy_nonoverlapping(
         &(*tc.get()).line as *const LineCurve,
-        &mut (*(*tc.get()).imp).curve,
+        &mut (*tc.imp()).curve,
         1,
     );
-    (*(*tc.get()).imp).refcount.ator = (*tc.get()).ator_result;
-    (*(*tc.get()).imp).refcount.buf = (*tc.get()).result;
+    (*tc.imp()).refcount.ator = (*tc.get()).ator_result;
+    (*tc.imp()).refcount.buf = (*tc.get()).result;
 
     Ok(())
 }
@@ -775,33 +801,25 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
         }
     }
 
-    (*tc.get()).imp = push::<MeshImp>(&mut (*tc.get()).result, 1);
-    ufbxi_check_err!(
-        &mut (*tc.get()).error,
-        !(*tc.get()).imp.is_null(),
-        "tc->imp"
-    );
+    tc.set_imp(push::<MeshImp>(&mut (*tc.get()).result, 1));
+    ufbxi_check_err!(&mut (*tc.get()).error, !tc.imp().is_null(), "tc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&Mesh` pointer via exposed provenance.
-    ((*tc.get()).imp as *mut u8).expose_provenance();
+    (tc.imp() as *mut u8).expose_provenance();
 
     init_ref(
-        &mut (*(*tc.get()).imp).refcount,
+        &mut (*tc.imp()).refcount,
         MESH_IMP_MAGIC,
         &mut (*get_imp::<SceneImp>(ref_ptr(&(*surface).element.scene) as *mut c_void)).refcount,
     );
 
-    (*(*tc.get()).imp).magic = MESH_IMP_MAGIC;
+    (*tc.imp()).magic = MESH_IMP_MAGIC;
     // C: `tc->imp->mesh = tc->mesh` — struct assignment (memcpy).
-    core::ptr::copy_nonoverlapping(
-        &(*tc.get()).mesh as *const Mesh,
-        &mut (*(*tc.get()).imp).mesh,
-        1,
-    );
-    (*(*tc.get()).imp).refcount.ator = (*tc.get()).ator_result;
-    (*(*tc.get()).imp).refcount.buf = (*tc.get()).result;
-    (*(*tc.get()).imp).mesh.subdivision_evaluated = true;
+    core::ptr::copy_nonoverlapping(&(*tc.get()).mesh as *const Mesh, &mut (*tc.imp()).mesh, 1);
+    (*tc.imp()).refcount.ator = (*tc.get()).ator_result;
+    (*tc.imp()).refcount.buf = (*tc.get()).result;
+    (*tc.imp()).mesh.subdivision_evaluated = true;
 
     Ok(())
 }

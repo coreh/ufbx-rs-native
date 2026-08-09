@@ -3578,7 +3578,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
 
     if ok {
         clear_error(error);
-        let imp: *mut LineCurveImp = (*tc.get()).imp;
+        let imp: *mut LineCurveImp = tc.imp();
         &raw mut (*imp).curve
     } else {
         fix_error_type(
@@ -3646,7 +3646,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
 
     if ok {
         clear_error(error);
-        let imp: *mut MeshImp = (*tc.get()).imp;
+        let imp: *mut MeshImp = tc.imp();
         &raw mut (*imp).mesh
     } else {
         fix_error_type(
