@@ -324,7 +324,7 @@ pub(crate) unsafe fn obj_free(uc: &Context) {
     );
     free::<*mut Material>(
         uc.ator_tmp_mut_ptr(),
-        (*uc.obj().get()).tmp_materials,
+        uc.obj().tmp_materials(),
         (*uc.obj().get()).tmp_materials_cap,
     );
 }
@@ -994,7 +994,7 @@ pub(crate) unsafe fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
             ),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->obj.tmp_materials)), (&uc->obj.tmp_materials), (&uc->obj.tmp_materials_cap), (id + 1))"
         );
-        *(*uc.obj().get()).tmp_materials.add(id) = material;
+        *uc.obj().tmp_materials().add(id) = material;
     }
 
     Ok(())

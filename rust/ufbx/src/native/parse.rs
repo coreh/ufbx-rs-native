@@ -515,6 +515,12 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn tmp_materials(&self) -> *mut *mut crate::generated::Material {
+        // SAFETY: reading a scalar; all bit patterns of `*mut *mut crate::generated::Material` are valid.
+        unsafe { (*self.get()).tmp_materials }
+    }
+
+    #[inline(always)]
     pub(crate) fn eof(&self) -> bool {
         // SAFETY: reading a `bool` we only ever store valid bools into.
         unsafe { (*self.get()).eof }
