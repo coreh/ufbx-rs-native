@@ -170,6 +170,13 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `inputs_cap` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn inputs_cap(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).inputs_cap }
+    }
+
     // `inputs` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn inputs(&self) -> *mut SubdivideInput {
@@ -2185,11 +2192,7 @@ pub(crate) unsafe fn subdivide_mesh(
 
     let ok: bool = subdivide_mesh_imp(sc, level).is_ok();
 
-    free::<SubdivideInput>(
-        &mut (*sc.get()).ator_tmp,
-        sc.inputs(),
-        (*sc.get()).inputs_cap,
-    );
+    free::<SubdivideInput>(&mut (*sc.get()).ator_tmp, sc.inputs(), sc.inputs_cap());
     buf_free(&mut (*sc.get()).tmp);
     buf_free(&mut (*sc.get()).source);
 
