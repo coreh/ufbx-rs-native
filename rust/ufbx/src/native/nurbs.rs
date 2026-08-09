@@ -294,6 +294,10 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(
     (*tc).imp = push::<LineCurveImp>(&mut (*tc).result, 1);
     ufbxi_check_err!(&mut (*tc).error, !(*tc).imp.is_null(), "tc->imp");
 
+    // Expose the wide allocation so `get_imp` can recover this header from a
+    // (possibly narrowed) public `&LineCurve` pointer via exposed provenance.
+    ((*tc).imp as *mut u8).expose_provenance();
+
     init_ref(
         &mut (*(*tc).imp).refcount,
         LINE_CURVE_IMP_MAGIC,
@@ -698,6 +702,10 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
 
     (*tc).imp = push::<MeshImp>(&mut (*tc).result, 1);
     ufbxi_check_err!(&mut (*tc).error, !(*tc).imp.is_null(), "tc->imp");
+
+    // Expose the wide allocation so `get_imp` can recover this header from a
+    // (possibly narrowed) public `&Mesh` pointer via exposed provenance.
+    ((*tc).imp as *mut u8).expose_provenance();
 
     init_ref(
         &mut (*(*tc).imp).refcount,

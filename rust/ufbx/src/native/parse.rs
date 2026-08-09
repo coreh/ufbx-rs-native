@@ -173,9 +173,17 @@ pub(crate) struct Refcount {
 // The refcount header lives immediately before the public struct inside the
 // same allocation — recover the `*_imp` pointer by subtracting the header
 // size (layout pinned by the const asserts on the `*_imp` structs below).
+//
+// The input `ptr` is a public API pointer (e.g. `&Scene`-derived) whose
+// provenance may be narrowed to the sub-object, which would make reaching the
+// refcount header (outside it) UB. Reconstitute a wildcard pointer from the
+// bare address via exposed provenance: every `*_imp` allocation site exposes
+// its wide (allocation-covering) pointer once at creation, so the header falls
+// within an exposed allocation and the recovered pointer can legally reach it.
 #[inline(always)]
 pub(crate) unsafe fn get_imp<T>(ptr: *mut c_void) -> *mut T {
-    (ptr as *mut u8).sub(size_of::<Refcount>()) as *mut T
+    let addr = (ptr as *mut u8).addr();
+    core::ptr::with_exposed_provenance_mut::<u8>(addr - size_of::<Refcount>()) as *mut T
 }
 
 // ufbx.c:6234-6240 `ufbxi_scene_imp`

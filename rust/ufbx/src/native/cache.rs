@@ -1206,6 +1206,10 @@ pub(crate) unsafe fn cache_load_imp(cc: *mut CacheContext, filename: String) -> 
     (*cc).imp = push(&mut (*cc).result, 1);
     ufbxi_check_err!(&mut (*cc).error, !(*cc).imp.is_null(), "cc->imp");
 
+    // Expose the wide allocation so `get_imp` can recover this header from a
+    // (possibly narrowed) public `&GeometryCache` pointer via exposed provenance.
+    ((*cc).imp as *mut u8).expose_provenance();
+
     init_ref(
         &mut (*(*cc).imp).refcount,
         CACHE_IMP_MAGIC,

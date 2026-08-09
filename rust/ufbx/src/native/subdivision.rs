@@ -2027,6 +2027,10 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     (*sc).imp = push::<MeshImp>(&mut (*sc).result, 1);
     ufbxi_check_err!(&mut (*sc).error, !(*sc).imp.is_null(), "sc->imp");
 
+    // Expose the wide allocation so `get_imp` can recover this header from a
+    // (possibly narrowed) public `&Mesh` pointer via exposed provenance.
+    ((*sc).imp as *mut u8).expose_provenance();
+
     let dst_sub: *mut SubdivisionResult = opt_ptr(&(*sc).dst_mesh.subdivision_result);
     (*dst_sub).result_memory_used = (*sc).ator_result.current_size;
     (*dst_sub).temp_memory_used = (*sc).ator_tmp.current_size;

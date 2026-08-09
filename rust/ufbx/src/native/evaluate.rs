@@ -830,6 +830,10 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
     let imp: *mut SceneImp = push::<SceneImp>(&mut (*uc).result, 1);
     ufbxi_check!(uc, !imp.is_null(), "imp");
 
+    // Expose the wide allocation so `get_imp` can recover this header from a
+    // (possibly narrowed) public `&Scene` pointer via exposed provenance.
+    (imp as *mut u8).expose_provenance();
+
     init_ref(&mut (*imp).refcount, SCENE_IMP_MAGIC, ptr::null_mut());
 
     (*imp).magic = SCENE_IMP_MAGIC;
@@ -2738,6 +2742,10 @@ pub(crate) unsafe fn evaluate_imp(ec: *mut EvalContext) -> Result<(), Fail> {
     let imp: *mut SceneImp = push_zero::<SceneImp>(&mut (*ec).result, 1);
     ufbxi_check_err!(&mut (*ec).error, !imp.is_null(), "imp");
 
+    // Expose the wide allocation so `get_imp` can recover this header from a
+    // (possibly narrowed) public `&Scene` pointer via exposed provenance.
+    (imp as *mut u8).expose_provenance();
+
     ufbx_assert!((*(*ec).src_imp).magic == SCENE_IMP_MAGIC);
     init_ref(
         ptr::addr_of_mut!((*imp).refcount),
@@ -3165,6 +3173,10 @@ pub(crate) unsafe fn create_anim_imp(ac: *mut CreateAnimContext) -> Result<(), F
 
     (*ac).imp = push::<AnimImp>(&mut (*ac).result, 1);
     ufbxi_check_err!(&mut (*ac).error, !(*ac).imp.is_null(), "ac->imp");
+
+    // Expose the wide allocation so `get_imp` can recover this header from a
+    // (possibly narrowed) public `&Anim` pointer via exposed provenance.
+    ((*ac).imp as *mut u8).expose_provenance();
 
     init_ref(
         ptr::addr_of_mut!((*(*ac).imp).refcount),
@@ -5031,6 +5043,10 @@ pub(crate) unsafe fn bake_anim_imp(bc: *mut BakeContext, anim: *const Anim) -> R
 
     (*bc).imp = push::<BakedAnimImp>(ptr::addr_of_mut!((*bc).result), 1);
     ufbxi_check_err!(&mut (*bc).error, !(*bc).imp.is_null(), "bc->imp");
+
+    // Expose the wide allocation so `get_imp` can recover this header from a
+    // (possibly narrowed) public `&BakedAnim` pointer via exposed provenance.
+    ((*bc).imp as *mut u8).expose_provenance();
 
     bake_anim(bc)?;
 

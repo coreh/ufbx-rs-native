@@ -5630,6 +5630,9 @@ mod tests {
         let imp = push_size(&mut buf, size_of::<MeshImp>(), 1) as *mut MeshImp;
         assert!(!imp.is_null());
         core::ptr::write_bytes(imp as *mut u8, 0, size_of::<MeshImp>());
+        // Expose the wide allocation so `get_imp` can recover this header via
+        // exposed provenance from a (possibly narrowed) public pointer.
+        (imp as *mut u8).expose_provenance();
         init_ref(&mut (*imp).refcount, MESH_IMP_MAGIC, parent);
         (*imp).magic = MESH_IMP_MAGIC;
 
@@ -6176,6 +6179,9 @@ mod tests {
             let imp = push_size(&mut buf, size_of::<SceneImp>(), 1) as *mut SceneImp;
             assert!(!imp.is_null());
             core::ptr::write_bytes(imp as *mut u8, 0, size_of::<SceneImp>());
+            // Expose the wide allocation so `get_imp` can recover this header via
+            // exposed provenance from a (possibly narrowed) public pointer.
+            (imp as *mut u8).expose_provenance();
             init_ref(&mut (*imp).refcount, SCENE_IMP_MAGIC, core::ptr::null_mut());
             (*imp).magic = SCENE_IMP_MAGIC;
             (*imp).refcount.ator = ator;
