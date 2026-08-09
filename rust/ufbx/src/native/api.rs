@@ -532,10 +532,10 @@ pub(crate) unsafe fn open_memory_ctx(
     }
 
     // Transplant the allocator in the result blob
-    if !(*fc.get()).parent_ator.is_null() {
-        (*mem).parent_ator = (*fc.get()).parent_ator;
+    if !fc.parent_ator().is_null() {
+        (*mem).parent_ator = fc.parent_ator();
     } else {
-        (*fc.get()).parent_ator = &mut (*mem).local_ator;
+        fc.set_parent_ator(&mut (*mem).local_ator);
     }
 
     (*stream).read_fn = Some(memory_read);

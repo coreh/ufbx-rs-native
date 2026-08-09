@@ -394,6 +394,21 @@ impl FileContext {
     pub(crate) fn get(&self) -> *mut InnerFileContext {
         self.0.get().cast()
     }
+
+    // `parent_ator` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn parent_ator(&self) -> *mut Allocator {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut Allocator` are valid.
+        unsafe { (*self.get()).parent_ator }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_parent_ator(&self, parent_ator: *mut Allocator) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).parent_ator = parent_ator;
+        }
+    }
 }
 
 // ufbx.c:6962-6972 `ufbxi_begin_file_context`
@@ -405,8 +420,8 @@ pub(crate) unsafe fn begin_file_context(
 ) {
     core::ptr::write_bytes(fc.get() as *mut u8, 0, size_of::<InnerFileContext>());
     if ctx != 0 {
-        (*fc.get()).parent_ator = ctx as *mut Allocator;
-        (*fc.get()).ator = *(*fc.get()).parent_ator;
+        fc.set_parent_ator(ctx as *mut Allocator);
+        (*fc.get()).ator = *fc.parent_ator();
         (*fc.get()).ator.error = &mut (*fc.get()).error;
     } else {
         init_ator(
@@ -421,9 +436,9 @@ pub(crate) unsafe fn begin_file_context(
 // ufbx.c:6974-6989 `ufbxi_end_file_context`
 #[inline(never)]
 pub(crate) unsafe fn end_file_context(fc: &FileContext, error: *mut Error, ok: bool) {
-    if !(*fc.get()).parent_ator.is_null() {
-        (*fc.get()).ator.error = (*(*fc.get()).parent_ator).error;
-        *(*fc.get()).parent_ator = (*fc.get()).ator;
+    if !fc.parent_ator().is_null() {
+        (*fc.get()).ator.error = (*fc.parent_ator()).error;
+        *fc.parent_ator() = (*fc.get()).ator;
     } else {
         free_ator(&mut (*fc.get()).ator);
     }
