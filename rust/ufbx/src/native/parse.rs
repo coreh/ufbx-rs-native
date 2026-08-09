@@ -710,6 +710,13 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `deferred_failure` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn deferred_failure(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).deferred_failure }
+    }
+
     // `unit_scale` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn unit_scale(&self) -> Real {

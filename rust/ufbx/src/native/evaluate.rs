@@ -492,7 +492,7 @@ pub(crate) unsafe fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> 
 #[must_use]
 pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // Check for deferred failure
-    if (*uc.get()).deferred_failure {
+    if uc.deferred_failure() {
         return Err(Fail);
     }
     if (*uc.get()).deferred_load {
