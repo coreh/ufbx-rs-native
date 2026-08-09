@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `tmp_element_byte_offset` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn tmp_element_byte_offset(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).tmp_element_byte_offset }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_tmp_element_byte_offset(&self, tmp_element_byte_offset: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).tmp_element_byte_offset = tmp_element_byte_offset;
+        }
+    }
+
     // `tmp_arr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_arr(&self) -> *mut u8 {

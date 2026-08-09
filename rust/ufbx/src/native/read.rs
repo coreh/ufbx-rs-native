@@ -1178,9 +1178,11 @@ pub(crate) unsafe fn push_element_size(
         core::ptr::null_mut(),
         "((uint64_t*)ufbxi_push_size_copy_fast((&uc->tmp_element_fbx_ids), sizeof(uint64_t), (1), (&info->fbx_id)))"
     );
-    (*uc.get()).tmp_element_byte_offset = (*uc.get())
-        .tmp_element_byte_offset
-        .wrapping_add(aligned_size);
+    uc.set_tmp_element_byte_offset(
+        (*uc.get())
+            .tmp_element_byte_offset
+            .wrapping_add(aligned_size),
+    );
 
     let elem: *mut Element =
         push_zero::<u64>(&mut (*uc.get()).tmp_elements, aligned_size / 8) as *mut Element;
@@ -1258,9 +1260,11 @@ pub(crate) unsafe fn push_synthetic_element_size(
         core::ptr::null_mut(),
         "((size_t*)ufbxi_push_size_copy_fast((&uc->tmp_element_offsets), sizeof(size_t), (1), (&uc->tmp_element_byte_offset)))"
     );
-    (*uc.get()).tmp_element_byte_offset = (*uc.get())
-        .tmp_element_byte_offset
-        .wrapping_add(aligned_size);
+    uc.set_tmp_element_byte_offset(
+        (*uc.get())
+            .tmp_element_byte_offset
+            .wrapping_add(aligned_size),
+    );
 
     let elem: *mut Element =
         push_zero::<u64>(&mut (*uc.get()).tmp_elements, aligned_size / 8) as *mut Element;

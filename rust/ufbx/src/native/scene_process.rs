@@ -6524,11 +6524,11 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         "uc->scene.elements.data"
     );
 
-    (*uc.get()).scene.metadata.element_buffer_size = (*uc.get()).tmp_element_byte_offset;
+    (*uc.get()).scene.metadata.element_buffer_size = uc.tmp_element_byte_offset();
     let element_data: *mut u8 = push_pop::<u64>(
         &mut (*uc.get()).result,
         &mut (*uc.get()).tmp_elements,
-        (*uc.get()).tmp_element_byte_offset / 8,
+        uc.tmp_element_byte_offset() / 8,
     ) as *mut u8;
     ufbxi_check!(uc, !element_data.is_null(), "element_data");
 
