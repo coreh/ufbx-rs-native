@@ -655,7 +655,7 @@ pub(crate) unsafe fn load_stream_prefix(
     uc.set_data_begin(uc.data());
     uc.set_data_size(prefix_size);
     uc.set_read_fn((*stream).read_fn);
-    (*uc.get()).skip_fn = (*stream).skip_fn;
+    uc.set_skip_fn((*stream).skip_fn);
     (*uc.get()).size_fn = (*stream).size_fn;
     (*uc.get()).close_fn = (*stream).close_fn;
     uc.set_read_user((*stream).user);

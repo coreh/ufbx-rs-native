@@ -710,6 +710,24 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `skip_fn` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn skip_fn(&self) -> Option<unsafe extern "C" fn(*mut c_void, usize) -> bool> {
+        // SAFETY: reading a scalar field; all bit patterns of `Option<unsafe extern "C" fn(*mut c_void, usize) -> bool>` are valid.
+        unsafe { (*self.get()).skip_fn }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_skip_fn(
+        &self,
+        skip_fn: Option<unsafe extern "C" fn(*mut c_void, usize) -> bool>,
+    ) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).skip_fn = skip_fn;
+        }
+    }
+
     // `data_offset` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn data_offset(&self) -> u64 {

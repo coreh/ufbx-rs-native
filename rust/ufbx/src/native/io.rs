@@ -244,7 +244,7 @@ pub(crate) unsafe fn consume_bytes(uc: &Context, size: usize) {
 // ufbx.c:6851-6896 `ufbxi_skip_bytes`
 #[inline(never)]
 pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
-    if (*uc.get()).skip_fn.is_some() {
+    if uc.skip_fn().is_some() {
         pause_progress(uc);
 
         if size > uc.data_size() as u64 {
@@ -257,7 +257,7 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
                 size -= MAX_SKIP_SIZE as u64;
                 ufbxi_check_msg!(
                     uc,
-                    ((*uc.get()).skip_fn.unwrap_unchecked())(uc.read_user(), MAX_SKIP_SIZE - 1),
+                    (uc.skip_fn().unwrap_unchecked())(uc.read_user(), MAX_SKIP_SIZE - 1),
                     "Truncated file",
                     "uc->skip_fn(uc->read_user, UFBXI_MAX_SKIP_SIZE - 1)"
                 );
@@ -278,7 +278,7 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
             if size > 0 {
                 ufbxi_check_msg!(
                     uc,
-                    ((*uc.get()).skip_fn.unwrap_unchecked())(uc.read_user(), size as usize),
+                    (uc.skip_fn().unwrap_unchecked())(uc.read_user(), size as usize),
                     "Truncated file",
                     "uc->skip_fn(uc->read_user, (size_t)size)"
                 );
