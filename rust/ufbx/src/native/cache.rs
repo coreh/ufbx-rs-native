@@ -177,6 +177,14 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `tmp_arr` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_arr_mut(&self) -> *mut *mut u8 {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp_arr }
+    }
+
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mut(&self) -> *mut Buf {
@@ -902,7 +910,7 @@ pub(crate) unsafe fn cache_sort_tmp_channels(
         cc.error_mut(),
         grow_array::<u8>(
             cc.ator_tmp(),
-            &mut (*cc.get()).tmp_arr,
+            cc.tmp_arr_mut(),
             &mut (*cc.get()).tmp_arr_size,
             count * size_of::<CacheTmpChannel>()
         ),
@@ -1307,7 +1315,7 @@ pub(crate) unsafe fn cache_sort_frames(
         cc.error_mut(),
         grow_array::<u8>(
             cc.ator_tmp(),
-            &mut (*cc.get()).tmp_arr,
+            cc.tmp_arr_mut(),
             &mut (*cc.get()).tmp_arr_size,
             count * size_of::<CacheFrame>()
         ),
