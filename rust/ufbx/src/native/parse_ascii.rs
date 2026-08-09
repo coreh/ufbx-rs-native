@@ -95,7 +95,7 @@ static ASCII_EMPTY_STRING: [u8; 1] = [0];
 #[allow(unused_assignments)]
 #[inline(never)]
 pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
     uc.set_data_offset(
         (*uc.get())
             .data_offset
@@ -171,7 +171,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
 // ufbx.c:9457-9478 `ufbxi_ascii_yield`
 #[inline(never)]
 pub(crate) unsafe fn ascii_yield(uc: &Context) -> u8 {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
 
     let ret: u8;
     if (*ua).src == (*ua).src_end {
@@ -200,7 +200,7 @@ pub(crate) unsafe fn ascii_yield(uc: &Context) -> u8 {
 // ufbx.c:9480-9485 `ufbxi_ascii_peek`
 #[inline(always)]
 pub(crate) unsafe fn ascii_peek(uc: &Context) -> u8 {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
     if (*ua).src == (*ua).src_yield {
         return ascii_yield(uc);
     }
@@ -210,7 +210,7 @@ pub(crate) unsafe fn ascii_peek(uc: &Context) -> u8 {
 // ufbx.c:9487-9495 `ufbxi_ascii_next`
 #[inline(always)]
 pub(crate) unsafe fn ascii_next(uc: &Context) -> u8 {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
     if (*ua).src == (*ua).src_yield {
         return ascii_yield(uc);
     }
@@ -291,7 +291,7 @@ pub(crate) fn is_space(c: u8) -> bool {
 // ufbx.c:9549-9610 `ufbxi_ascii_skip_whitespace`
 #[inline(never)]
 pub(crate) unsafe fn ascii_skip_whitespace(uc: &Context) -> u8 {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
 
     // Ignore whitespace
     let mut c: u8 = ascii_peek(uc);
@@ -412,7 +412,7 @@ pub(crate) unsafe fn ascii_push_token_string(
 // ufbx.c:9639-9658 `ufbxi_ascii_skip_until`
 #[inline(never)]
 pub(crate) unsafe fn ascii_skip_until(uc: &Context, dst: u8) -> Result<(), Fail> {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
 
     loop {
         let buffered: usize = to_size((*ua).src_yield as isize - (*ua).src as isize);
@@ -443,7 +443,7 @@ pub(crate) struct AsciiSpan {
 // ufbx.c:9666-9708 `ufbxi_ascii_store_array`
 #[inline(never)]
 pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: *mut Buf) -> Result<(), Fail> {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
 
     (*ua).retain_buf = tmp_buf;
 
@@ -500,7 +500,7 @@ pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: *mut Buf) -> Resul
 #[must_use]
 #[inline(never)]
 pub(crate) unsafe fn ascii_try_ignore_string(uc: &Context, token: *mut AsciiToken) -> bool {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
 
     let c: u8 = ascii_skip_whitespace(uc);
     (*token).str_len = 0;
@@ -534,7 +534,7 @@ pub(crate) unsafe fn ascii_try_ignore_string(uc: &Context, token: *mut AsciiToke
 // ufbx.c:9738-9896 `ufbxi_ascii_next_token`
 #[inline(never)]
 pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> Result<(), Fail> {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
 
     // Replace `prev_token` with `token` but swap the buffers so `token` uses
     // the now-unused string buffer of the old `prev_token`.
@@ -741,7 +741,7 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
 // C `ufbxi_nodiscard` -> `#[must_use]`.
 #[must_use]
 pub(crate) unsafe fn ascii_accept(uc: &Context, type_: u8) -> bool {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
 
     if (*ua).token.type_ == type_ {
         ufbxi_check_return!(
@@ -763,7 +763,7 @@ pub(crate) unsafe fn ascii_read_int_array(
     type_: u8,
     p_num_read: *mut usize,
 ) -> Result<(), Fail> {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
     if (*ua).parse_as_f32 {
         return Ok(());
     }
@@ -1118,7 +1118,7 @@ pub(crate) unsafe fn ascii_read_float_array(
     type_: u8,
     p_num_read: *mut usize,
 ) -> Result<(), Fail> {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
     if (*ua).parse_as_f32 {
         return Ok(());
     }
@@ -1338,7 +1338,7 @@ unsafe fn ascii_parse_node_rec(
     tmp_buf: *mut Buf,
     recursive: bool,
 ) -> Result<(), Fail> {
-    let ua: *mut Ascii = &raw mut (*uc.get()).ascii;
+    let ua: *mut Ascii = uc.ascii_mut_ptr();
 
     if (*ua).token.type_ == b'}' {
         ascii_next_token(uc, &raw mut (*ua).token)?;

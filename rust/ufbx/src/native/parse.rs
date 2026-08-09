@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `ascii` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ascii_mut_ptr(&self) -> *mut Ascii {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ascii }
+    }
+
     // `tmp_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_arr_size_mut_ptr(&self) -> *mut usize {
@@ -4249,11 +4257,7 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
 
         // Use the current read buffer as the initial parse buffer
         // C: `memset(&uc->ascii, 0, sizeof(uc->ascii));`
-        core::ptr::write_bytes(
-            core::ptr::addr_of_mut!((*uc.get()).ascii) as *mut u8,
-            0,
-            size_of::<Ascii>(),
-        );
+        core::ptr::write_bytes(uc.ascii_mut_ptr() as *mut u8, 0, size_of::<Ascii>());
         (*uc.get()).ascii.src = uc.data();
         (*uc.get()).ascii.src_yield = uc.data().add(uc.yield_size());
         (*uc.get()).ascii.src_end = (*uc.get()).data.add(uc.data_size() + uc.yield_size());
