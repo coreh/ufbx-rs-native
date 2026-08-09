@@ -199,7 +199,7 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
     );
 
     (*uc.obj().get()).face_material = NO_INDEX;
-    (*uc.obj().get()).face_group = 0;
+    uc.obj().set_face_group(0);
     (*uc.obj().get()).face_group_dirty = true;
     (*uc.obj().get()).material_dirty = true;
 
@@ -776,7 +776,7 @@ pub(crate) unsafe fn obj_parse_indices(
             (*group).name = name;
         }
 
-        (*uc.obj().get()).face_group = (*entry).local_id;
+        uc.obj().set_face_group((*entry).local_id);
 
         if !(*uc.obj().get()).has_face_group {
             (*uc.obj().get()).has_face_group = true;
@@ -821,7 +821,7 @@ pub(crate) unsafe fn obj_parse_indices(
     if (*uc.obj().get()).has_face_group {
         let p_face_group: *mut u32 = push_fast::<u32>(&mut (*uc.obj().get()).tmp_face_group, 1);
         ufbxi_check!(uc, !p_face_group.is_null(), "p_face_group");
-        *p_face_group = (*uc.obj().get()).face_group;
+        *p_face_group = uc.obj().face_group();
     }
 
     for ix in 0..num_indices {

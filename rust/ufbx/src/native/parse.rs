@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn face_group(&self) -> u32 {
+        // SAFETY: reading a scalar; all bit patterns of `u32` are valid.
+        unsafe { (*self.get()).face_group }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_face_group(&self, face_group: u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).face_group = face_group;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn tmp_vertices_at(&self, i: usize) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).tmp_vertices[i] as *mut crate::native::buf::BufView) }
     }
