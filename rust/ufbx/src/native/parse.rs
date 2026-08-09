@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `deferred_load` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn deferred_load(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).deferred_load }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_deferred_load(&self, deferred_load: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).deferred_load = deferred_load;
+        }
+    }
+
     // `deferred_failure` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn deferred_failure(&self) -> bool {

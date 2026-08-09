@@ -594,7 +594,7 @@ pub(crate) unsafe fn load_file_len(
     let uc_storage = Context(core::cell::UnsafeCell::new(MaybeUninit::uninit())); // ufbxi_uninit
     let uc: &Context = &uc_storage;
     core::ptr::write_bytes(uc.get() as *mut u8, 0, size_of::<InnerContext>());
-    (*uc.get()).deferred_load = true;
+    uc.set_deferred_load(true);
     (*uc.get()).load_filename = filename;
     (*uc.get()).load_filename_len = filename_len;
     evaluate::load(uc, opts, error)

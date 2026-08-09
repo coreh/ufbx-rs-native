@@ -495,7 +495,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     if uc.deferred_failure() {
         return Err(Fail);
     }
-    if (*uc.get()).deferred_load {
+    if uc.deferred_load() {
         // C: `ufbx_stream stream = { 0 };` / `ufbx_open_file_opts opts = { 0 };`
         let mut stream: RawStream = MaybeUninit::zeroed().assume_init();
         let mut opts: RawOpenFileOpts = MaybeUninit::zeroed().assume_init();
