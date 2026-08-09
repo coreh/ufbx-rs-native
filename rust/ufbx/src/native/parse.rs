@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `texture_file_map` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn texture_file_map_mut_ptr(&self) -> *mut Map {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).texture_file_map }
+    }
+
     // `tmp_element_fbx_ids` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_element_fbx_ids_mut_ptr(&self) -> *mut Buf {

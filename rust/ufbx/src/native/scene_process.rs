@@ -4846,13 +4846,13 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
     }
     let hash: u32 = hash_ptr!(key);
     let mut entry: *mut TextureFileEntry = map_find(
-        &mut (*uc.get()).texture_file_map,
+        uc.texture_file_map_mut_ptr(),
         hash,
         &key as *const *const u8 as *const c_void,
     );
     if entry.is_null() {
         entry = map_insert(
-            &mut (*uc.get()).texture_file_map,
+            uc.texture_file_map_mut_ptr(),
             hash,
             &key as *const *const u8 as *const c_void,
         );
