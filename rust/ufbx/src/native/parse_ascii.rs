@@ -1198,7 +1198,7 @@ pub(crate) unsafe fn ascii_read_float_array(
 pub(crate) unsafe fn setup_base64(uc: &Context) -> Result<(), Fail> {
     let table: *mut u8 = push::<u8>(&raw mut (*uc.get()).tmp, 256);
     ufbxi_check!(uc, !table.is_null(), "table");
-    (*uc.get()).base64_table = table;
+    uc.set_base64_table(table);
 
     core::ptr::write_bytes(table, 0x80, 256);
     let mut c: u8 = b'A';
@@ -1232,11 +1232,11 @@ pub(crate) unsafe fn decode_base64(
     src_length: usize,
     p_failed: *mut bool,
 ) -> Result<(), Fail> {
-    if (*uc.get()).base64_table.is_null() {
+    if uc.base64_table().is_null() {
         setup_base64(uc)?;
     }
 
-    let table: *mut u8 = (*uc.get()).base64_table;
+    let table: *mut u8 = uc.base64_table();
     let mut error_mask: u32 = 0;
     let mut pad_error: u32 = 0;
 

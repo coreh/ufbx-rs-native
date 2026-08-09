@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `base64_table` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn base64_table(&self) -> *mut u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        unsafe { (*self.get()).base64_table }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_base64_table(&self, base64_table: *mut u8) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).base64_table = base64_table;
+        }
+    }
+
     // `parse_threaded` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn parse_threaded(&self) -> bool {
