@@ -170,6 +170,13 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `inputs` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn inputs(&self) -> *mut SubdivideInput {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut SubdivideInput` are valid.
+        unsafe { (*self.get()).inputs }
+    }
+
     // `num_topo` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn num_topo(&self) -> usize {
@@ -565,7 +572,7 @@ pub(crate) unsafe fn subdivide_layer(
         ),
         "ufbxi_grow_array_size((&sc->ator_tmp), sizeof(**(&sc->inputs)), (&sc->inputs), (&sc->inputs_cap), (min_inputs))"
     );
-    let mut inputs: *mut SubdivideInput = (*sc.get()).inputs;
+    let mut inputs: *mut SubdivideInput = sc.inputs();
 
     // Assume initially unique per vertex, remove if not the case
     (*output).unique_per_vertex = true;
@@ -935,7 +942,7 @@ pub(crate) unsafe fn subdivide_layer(
                             ),
                             "ufbxi_grow_array_size((&sc->ator_tmp), sizeof(**(&sc->inputs)), (&sc->inputs), (&sc->inputs_cap), (num_inputs + 2))"
                         );
-                        inputs = (*sc.get()).inputs;
+                        inputs = sc.inputs();
 
                         let e0: *const u8 = ((*input).values as *const u8).add(
                             (*(*input)
@@ -2180,7 +2187,7 @@ pub(crate) unsafe fn subdivide_mesh(
 
     free::<SubdivideInput>(
         &mut (*sc.get()).ator_tmp,
-        (*sc.get()).inputs,
+        sc.inputs(),
         (*sc.get()).inputs_cap,
     );
     buf_free(&mut (*sc.get()).tmp);
