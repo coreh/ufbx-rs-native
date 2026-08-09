@@ -917,7 +917,7 @@ unsafe fn binary_parse_node_rec(
                     uc,
                     grow_array(
                         uc.ator_tmp_mut_ptr(),
-                        &mut (*uc.get()).tmp_arr,
+                        uc.tmp_arr_mut_ptr(),
                         &mut (*uc.get()).tmp_arr_size,
                         decoded_data_size
                     ),

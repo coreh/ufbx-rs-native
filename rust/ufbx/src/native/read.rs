@@ -370,7 +370,7 @@ pub(crate) unsafe fn sort_properties(
         uc,
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
-            &mut (*uc.get()).tmp_arr,
+            uc.tmp_arr_mut_ptr(),
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<Prop>()),
         ),
@@ -2282,7 +2282,7 @@ pub(crate) unsafe fn sort_uv_sets(
         uc,
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
-            &mut (*uc.get()).tmp_arr,
+            uc.tmp_arr_mut_ptr(),
             &mut (*uc.get()).tmp_arr_size,
             count * size_of::<UvSet>(),
         ),
@@ -2311,7 +2311,7 @@ pub(crate) unsafe fn sort_color_sets(
         uc,
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
-            &mut (*uc.get()).tmp_arr,
+            uc.tmp_arr_mut_ptr(),
             &mut (*uc.get()).tmp_arr_size,
             count * size_of::<ColorSet>(),
         ),
@@ -2362,7 +2362,7 @@ pub(crate) unsafe fn sort_blend_offsets(
         uc,
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
-            &mut (*uc.get()).tmp_arr,
+            uc.tmp_arr_mut_ptr(),
             &mut (*uc.get()).tmp_arr_size,
             count * size_of::<BlendOffset>(),
         ),
@@ -5335,7 +5335,7 @@ pub(crate) unsafe fn sort_shader_prop_bindings(
         uc,
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
-            &mut (*uc.get()).tmp_arr,
+            uc.tmp_arr_mut_ptr(),
             &mut (*uc.get()).tmp_arr_size,
             count.wrapping_mul(size_of::<ShaderPropBinding>()),
         ),
