@@ -7394,15 +7394,15 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
             true,
         );
         ufbxi_check!(uc, !root_name.is_null(), "root_name");
-        (*uc.get()).root_id = synthetic_id_from_string(uc, root_name);
-        ufbxi_check!(uc, (*uc.get()).root_id != 0, "uc->root_id");
+        uc.set_root_id(synthetic_id_from_string(uc, root_name));
+        ufbxi_check!(uc, uc.root_id() != 0, "uc->root_id");
     }
 
     // Add a nameless root node with the root ID
     {
         // C: `ufbxi_element_info root_info = { uc->root_id };`
         let mut root_info: ElementInfo = core::mem::zeroed();
-        root_info.fbx_id = (*uc.get()).root_id;
+        root_info.fbx_id = uc.root_id();
         root_info.name = EMPTY_STRING.0;
         let root: *mut UfbxNode = push_element::<UfbxNode>(uc, &mut root_info, ElementType::Node);
         ufbxi_check!(uc, !root.is_null(), "root");

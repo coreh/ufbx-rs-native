@@ -282,7 +282,7 @@ pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
     {
         // C: `ufbxi_element_info root_info = { uc->root_id };`
         let mut root_info: ElementInfo = core::mem::zeroed();
-        root_info.fbx_id = (*uc.get()).root_id;
+        root_info.fbx_id = uc.root_id();
         root_info.name = EMPTY_STRING.0;
         let root: *mut UfbxNode = push_element::<UfbxNode>(uc, &mut root_info, ElementType::Node);
         ufbxi_check!(uc, !root.is_null(), "root");

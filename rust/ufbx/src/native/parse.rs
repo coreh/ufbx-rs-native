@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `root_id` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn root_id(&self) -> u64 {
+        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
+        unsafe { (*self.get()).root_id }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_root_id(&self, root_id: u64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).root_id = root_id;
+        }
+    }
+
     // `tmp_mesh_consecutive_indices` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_mesh_consecutive_indices(&self) -> *mut u32 {
