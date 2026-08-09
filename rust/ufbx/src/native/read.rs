@@ -371,7 +371,7 @@ pub(crate) unsafe fn sort_properties(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count.wrapping_mul(size_of::<Prop>()),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_prop)))"
@@ -2283,7 +2283,7 @@ pub(crate) unsafe fn sort_uv_sets(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count * size_of::<UvSet>(),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_uv_set)))"
@@ -2312,7 +2312,7 @@ pub(crate) unsafe fn sort_color_sets(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count * size_of::<ColorSet>(),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_color_set)))"
@@ -2363,7 +2363,7 @@ pub(crate) unsafe fn sort_blend_offsets(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count * size_of::<BlendOffset>(),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_blend_offset)))"
@@ -5336,7 +5336,7 @@ pub(crate) unsafe fn sort_shader_prop_bindings(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count.wrapping_mul(size_of::<ShaderPropBinding>()),
         ),
         // C-parity: `ufbxi_check`'s `cond` is not preceded by `#`/`##` in its own

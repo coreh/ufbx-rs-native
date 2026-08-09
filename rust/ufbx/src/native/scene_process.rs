@@ -1101,7 +1101,7 @@ pub(crate) unsafe fn sort_name_elements(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count.wrapping_mul(size_of::<NameElement>()),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_name_element)))"
@@ -1157,7 +1157,7 @@ pub(crate) unsafe fn sort_node_ptrs(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count.wrapping_mul(size_of::<*mut Node>()),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_node*)))"
@@ -1199,7 +1199,7 @@ pub(crate) unsafe fn sort_tmp_material_textures(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count.wrapping_mul(size_of::<TmpMaterialTexture>()),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_tmp_material_texture)))"
@@ -1260,7 +1260,7 @@ pub(crate) unsafe fn sort_connections(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count.wrapping_mul(size_of::<Connection>()),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_connection)))"
@@ -2482,7 +2482,7 @@ pub(crate) unsafe fn sort_anim_props(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count.wrapping_mul(size_of::<AnimProp>()),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_anim_prop)))"
@@ -2519,7 +2519,7 @@ pub(crate) unsafe fn sort_material_textures(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count.wrapping_mul(size_of::<MaterialTexture>()),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_material_texture)))"
@@ -2583,7 +2583,7 @@ pub(crate) unsafe fn sort_bone_poses(uc: &Context, pose: *mut Pose) -> Result<()
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             (*pose).bone_poses.count.wrapping_mul(size_of::<BonePose>()),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (pose->bone_poses.count * sizeof(ufbx_bone_pose)))"
@@ -2609,7 +2609,7 @@ pub(crate) unsafe fn sort_skin_weights(uc: &Context, skin: *mut SkinDeformer) ->
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             (*skin)
                 .max_weights_per_vertex
                 .wrapping_mul(size_of::<SkinWeight>()),
@@ -2657,7 +2657,7 @@ pub(crate) unsafe fn sort_blend_keyframes(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count.wrapping_mul(size_of::<BlendKeyframe>()),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_blend_keyframe)))"
@@ -4627,7 +4627,7 @@ pub(crate) unsafe fn finalize_shader_texture(
             grow_array::<u8>(
                 uc.ator_tmp_mut_ptr(),
                 uc.tmp_arr_mut_ptr(),
-                &mut (*uc.get()).tmp_arr_size,
+                uc.tmp_arr_size_mut_ptr(),
                 (*shader)
                     .inputs
                     .count
@@ -4969,7 +4969,7 @@ pub(crate) unsafe fn deduplicate_textures(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count.wrapping_mul(size_of::<OrderedTexture>()),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_ordered_texture)))"
@@ -5545,7 +5545,7 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
             grow_array::<u8>(
                 uc.ator_tmp_mut_ptr(),
                 uc.tmp_arr_mut_ptr(),
-                &mut (*uc.get()).tmp_arr_size,
+                uc.tmp_arr_size_mut_ptr(),
                 (*mesh).num_indices.wrapping_add(1).wrapping_mul(size_of::<u32>()),
             ),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), ((mesh->num_indices + 1) * sizeof(uint32_t)))"
@@ -5999,7 +5999,7 @@ pub(crate) unsafe fn absolute_to_relative_path(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             max_length,
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (max_length))"
@@ -6122,7 +6122,7 @@ pub(crate) unsafe fn sort_file_contents(
         grow_array::<u8>(
             uc.ator_tmp_mut_ptr(),
             uc.tmp_arr_mut_ptr(),
-            &mut (*uc.get()).tmp_arr_size,
+            uc.tmp_arr_size_mut_ptr(),
             count.wrapping_mul(size_of::<FileContent>()),
         ),
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_file_content)))"
