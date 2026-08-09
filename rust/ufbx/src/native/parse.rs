@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `dom_node_map` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn dom_node_map_mut_ptr(&self) -> *mut Map {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).dom_node_map }
+    }
+
     // `anim_stack_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn anim_stack_map_mut_ptr(&self) -> *mut Map {
@@ -3601,7 +3609,7 @@ pub(crate) unsafe fn get_dom_node_imp(uc: &Context, node: *mut Node) -> *mut Dom
     };
     let hash = hash_uptr(mapping.node_ptr);
     let result: *mut DomMapping = map_find(
-        &mut (*uc.get()).dom_node_map,
+        uc.dom_node_map_mut_ptr(),
         hash,
         &mapping as *const DomMapping as *const c_void,
     );
@@ -3680,13 +3688,13 @@ unsafe fn retain_dom_node_rec(
         };
         let hash = hash_uptr(mapping.node_ptr);
         let mut result: *mut DomMapping = map_find(
-            &mut (*uc.get()).dom_node_map,
+            uc.dom_node_map_mut_ptr(),
             hash,
             &mapping as *const DomMapping as *const c_void,
         );
         if result.is_null() {
             result = map_insert(
-                &mut (*uc.get()).dom_node_map,
+                uc.dom_node_map_mut_ptr(),
                 hash,
                 &mapping as *const DomMapping as *const c_void,
             );

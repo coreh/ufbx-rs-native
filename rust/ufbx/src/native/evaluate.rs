@@ -897,7 +897,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     map_free(uc.anim_stack_map_mut_ptr());
     map_free(uc.fbx_attr_map_mut_ptr());
     map_free(&mut (*uc.get()).node_prop_set);
-    map_free(&mut (*uc.get()).dom_node_map);
+    map_free(uc.dom_node_map_mut_ptr());
 
     buf_free(uc.tmp_mut_ptr());
     buf_free(uc.tmp_parse_mut_ptr());
@@ -1114,7 +1114,7 @@ pub(crate) unsafe fn load(
         ptr::null_mut(),
     );
     map_init(
-        &mut (*uc.get()).dom_node_map,
+        uc.dom_node_map_mut_ptr(),
         uc.ator_tmp_mut_ptr(),
         map_cmp_uintptr,
         ptr::null_mut(),
