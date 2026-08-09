@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `size_fn` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn size_fn(&self) -> Option<unsafe extern "C" fn(*mut c_void) -> u64> {
+        // SAFETY: reading a scalar field; all bit patterns of `Option<unsafe extern "C" fn(*mut c_void) -> u64>` are valid.
+        unsafe { (*self.get()).size_fn }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_size_fn(&self, size_fn: Option<unsafe extern "C" fn(*mut c_void) -> u64>) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).size_fn = size_fn;
+        }
+    }
+
     // `close_fn` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn close_fn(&self) -> Option<unsafe extern "C" fn(*mut c_void)> {

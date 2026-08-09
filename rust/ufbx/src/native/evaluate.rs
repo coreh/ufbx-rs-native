@@ -559,16 +559,16 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         }
         uc.set_read_fn(stream.read_fn);
         uc.set_skip_fn(stream.skip_fn);
-        (*uc.get()).size_fn = stream.size_fn;
+        uc.set_size_fn(stream.size_fn);
         uc.set_close_fn(stream.close_fn);
         uc.set_read_user(stream.user);
     }
 
     if (*uc.get()).opts.progress_cb.fn_.is_some()
         && uc.progress_bytes_total() == 0
-        && (*uc.get()).size_fn.is_some()
+        && uc.size_fn().is_some()
     {
-        let total: u64 = ((*uc.get()).size_fn.unwrap())(uc.read_user());
+        let total: u64 = (uc.size_fn().unwrap())(uc.read_user());
         ufbxi_check!(uc, total != u64::MAX, "total != UINT64_MAX");
         uc.set_progress_bytes_total(total);
     }
