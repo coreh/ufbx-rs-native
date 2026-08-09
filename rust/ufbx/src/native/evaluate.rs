@@ -437,7 +437,7 @@ pub(crate) unsafe fn evaluate_skinning(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn fixup_opts_string(
-    uc: *mut Context,
+    uc: &Context,
     str: *mut String,
     push: bool,
 ) -> Result<(), Fail> {
@@ -451,7 +451,7 @@ pub(crate) unsafe fn fixup_opts_string(
             };
         }
         if push {
-            push_string_place_str(&mut (*uc).string_pool, str, false)?;
+            push_string_place_str(&mut (*uc.get()).string_pool, str, false)?;
         }
     } else {
         (*str).data = EMPTY_CHAR.as_ptr();
@@ -463,15 +463,18 @@ pub(crate) unsafe fn fixup_opts_string(
 // ufbx.c:25187-25202 `ufbxi_resolve_warning_elements`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn resolve_warning_elements(uc: *mut Context) -> Result<(), Fail> {
-    let num_elements: usize = (*uc).tmp_element_id.num_items;
-    let element_ids: *mut u32 =
-        push_pop::<u32>(&mut (*uc).tmp, &mut (*uc).tmp_element_id, num_elements);
+pub(crate) unsafe fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> {
+    let num_elements: usize = (*uc.get()).tmp_element_id.num_items;
+    let element_ids: *mut u32 = push_pop::<u32>(
+        &mut (*uc.get()).tmp,
+        &mut (*uc.get()).tmp_element_id,
+        num_elements,
+    );
     ufbxi_check!(uc, !element_ids.is_null(), "element_ids");
 
     // C: `ufbxi_for_list(ufbx_warning, warning, uc->scene.metadata.warnings)`
-    let mut warning: *mut Warning = (*uc).scene.metadata.warnings.data as *mut Warning;
-    let warning_end: *mut Warning = add_ptr(warning, (*uc).scene.metadata.warnings.count);
+    let mut warning: *mut Warning = (*uc.get()).scene.metadata.warnings.data as *mut Warning;
+    let warning_end: *mut Warning = add_ptr(warning, (*uc.get()).scene.metadata.warnings.count);
     while warning != warning_end {
         let element_id: u32 = (*warning).element_id;
         // Decode `element_id`, see HACK(warning-element) in `ufbxi_vwarnf_imp()` for the encoding.
@@ -487,25 +490,25 @@ pub(crate) unsafe fn resolve_warning_elements(uc: *mut Context) -> Result<(), Fa
 // ufbx.c:25204-25410 `ufbxi_load_imp`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
+pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // Check for deferred failure
-    if (*uc).deferred_failure {
+    if (*uc.get()).deferred_failure {
         return Err(Fail);
     }
-    if (*uc).deferred_load {
+    if (*uc.get()).deferred_load {
         // C: `ufbx_stream stream = { 0 };` / `ufbx_open_file_opts opts = { 0 };`
         let mut stream: RawStream = MaybeUninit::zeroed().assume_init();
         let mut opts: RawOpenFileOpts = MaybeUninit::zeroed().assume_init();
-        let filename: *const u8 = (*uc).load_filename;
-        let mut filename_len: usize = (*uc).load_filename_len;
+        let filename: *const u8 = (*uc.get()).load_filename;
+        let mut filename_len: usize = (*uc.get()).load_filename_len;
         let ok: bool;
         if filename_len == usize::MAX {
             opts.filename_null_terminated = true;
             filename_len = strlen(filename);
         }
-        if (*uc).opts.filename.length == 0 || (*uc).opts.filename.data.is_null() {
-            (*uc).opts.filename.data = filename;
-            (*uc).opts.filename.length = filename_len;
+        if (*uc.get()).opts.filename.length == 0 || (*uc.get()).opts.filename.data.is_null() {
+            (*uc.get()).opts.filename.data = filename;
+            (*uc.get()).opts.filename.length = filename_len;
         }
         // C: `ufbx_error error; error.type = UFBX_ERROR_NONE;` — C initializes
         // only `type`; the struct is only copied below after the open-file
@@ -528,19 +531,19 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
             *const OpenFileInfo,
         ) -> bool = default_open_file;
         #[allow(unpredictable_function_pointer_comparisons)]
-        let open_with_default = (*uc).opts.open_main_file_with_default
-            || (*uc).opts.open_file_cb.fn_ == Some(default_fn);
+        let open_with_default = (*uc.get()).opts.open_main_file_with_default
+            || (*uc.get()).opts.open_file_cb.fn_ == Some(default_fn);
         if open_with_default {
-            let ctx: OpenFileContext = ptr::addr_of_mut!((*uc).ator_tmp) as OpenFileContext;
+            let ctx: OpenFileContext = ptr::addr_of_mut!((*uc.get()).ator_tmp) as OpenFileContext;
             ok = open_file_ctx(&mut stream, ctx, filename, filename_len, &opts, &mut error);
         } else {
             ok = open_file(
-                ptr::addr_of!((*uc).opts.open_file_cb),
+                ptr::addr_of!((*uc.get()).opts.open_file_cb),
                 &mut stream,
-                (*uc).load_filename,
+                (*uc.get()).load_filename,
                 filename_len,
                 ptr::null(),
-                ptr::addr_of_mut!((*uc).ator_tmp),
+                ptr::addr_of_mut!((*uc.get()).ator_tmp),
                 OpenFileType::MainModel,
             );
         }
@@ -548,31 +551,31 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
             if error.type_ != ErrorType::None {
                 // cppcheck-suppress uninitStructMember
                 // C: `uc->error = error;` (struct copy)
-                ptr::copy_nonoverlapping(&error, ptr::addr_of_mut!((*uc).error), 1);
+                ptr::copy_nonoverlapping(&error, ptr::addr_of_mut!((*uc.get()).error), 1);
             } else {
-                set_err_info(&mut (*uc).error, filename, filename_len);
+                set_err_info(&mut (*uc.get()).error, filename, filename_len);
             }
             ufbxi_fail_msg!(uc, "open_file_fn()", "File not found");
         }
-        (*uc).read_fn = stream.read_fn;
-        (*uc).skip_fn = stream.skip_fn;
-        (*uc).size_fn = stream.size_fn;
-        (*uc).close_fn = stream.close_fn;
-        (*uc).read_user = stream.user;
+        (*uc.get()).read_fn = stream.read_fn;
+        (*uc.get()).skip_fn = stream.skip_fn;
+        (*uc.get()).size_fn = stream.size_fn;
+        (*uc.get()).close_fn = stream.close_fn;
+        (*uc.get()).read_user = stream.user;
     }
 
-    if (*uc).opts.progress_cb.fn_.is_some()
-        && (*uc).progress_bytes_total == 0
-        && (*uc).size_fn.is_some()
+    if (*uc.get()).opts.progress_cb.fn_.is_some()
+        && (*uc.get()).progress_bytes_total == 0
+        && (*uc.get()).size_fn.is_some()
     {
-        let total: u64 = ((*uc).size_fn.unwrap())((*uc).read_user);
+        let total: u64 = ((*uc.get()).size_fn.unwrap())((*uc.get()).read_user);
         ufbxi_check!(uc, total != u64::MAX, "total != UINT64_MAX");
-        (*uc).progress_bytes_total = total;
+        (*uc.get()).progress_bytes_total = total;
     }
 
     ufbxi_check!(
         uc,
-        (*uc).opts.path_separator >= 0x20 && (*uc).opts.path_separator <= 0x7e,
+        (*uc.get()).opts.path_separator >= 0x20 && (*uc.get()).opts.path_separator <= 0x7e,
         "uc->opts.path_separator >= 0x20 && uc->opts.path_separator <= 0x7e"
     );
 
@@ -584,7 +587,7 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
         uc,
         fixup_opts_string(
             uc,
-            ptr::addr_of_mut!((*uc).opts.filename) as *mut String,
+            ptr::addr_of_mut!((*uc.get()).opts.filename) as *mut String,
             false
         )
         .is_ok(),
@@ -594,7 +597,7 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
         uc,
         fixup_opts_string(
             uc,
-            ptr::addr_of_mut!((*uc).opts.obj_mtl_path) as *mut String,
+            ptr::addr_of_mut!((*uc.get()).opts.obj_mtl_path) as *mut String,
             true
         )
         .is_ok(),
@@ -604,7 +607,7 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
         uc,
         fixup_opts_string(
             uc,
-            ptr::addr_of_mut!((*uc).opts.geometry_transform_helper_name) as *mut String,
+            ptr::addr_of_mut!((*uc.get()).opts.geometry_transform_helper_name) as *mut String,
             true,
         )
         .is_ok(),
@@ -614,7 +617,7 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
         uc,
         fixup_opts_string(
             uc,
-            ptr::addr_of_mut!((*uc).opts.scale_helper_name) as *mut String,
+            ptr::addr_of_mut!((*uc.get()).opts.scale_helper_name) as *mut String,
             true
         )
         .is_ok(),
@@ -624,53 +627,58 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         thread_pool_init(
-            ptr::addr_of_mut!((*uc).thread_pool),
-            ptr::addr_of_mut!((*uc).error),
-            ptr::addr_of_mut!((*uc).ator_tmp),
-            ptr::addr_of!((*uc).opts.thread_opts),
+            ptr::addr_of_mut!((*uc.get()).thread_pool),
+            ptr::addr_of_mut!((*uc.get()).error),
+            ptr::addr_of_mut!((*uc.get()).ator_tmp),
+            ptr::addr_of!((*uc.get()).opts.thread_opts),
         )
         .is_ok(),
         "ufbxi_thread_pool_init(&uc->thread_pool, &uc->error, &uc->ator_tmp, &uc->opts.thread_opts)"
     );
 
-    if !(*uc).opts.allow_unsafe {
+    if !(*uc.get()).opts.allow_unsafe {
         ufbxi_check_msg!(
             uc,
-            (*uc).opts.index_error_handling != IndexErrorHandling::UnsafeIgnore,
+            (*uc.get()).opts.index_error_handling != IndexErrorHandling::UnsafeIgnore,
             "Unsafe options",
             "uc->opts.index_error_handling != UFBX_INDEX_ERROR_HANDLING_UNSAFE_IGNORE"
         );
         ufbxi_check_msg!(
             uc,
-            (*uc).opts.unicode_error_handling != UnicodeErrorHandling::UnsafeIgnore,
+            (*uc.get()).opts.unicode_error_handling != UnicodeErrorHandling::UnsafeIgnore,
             "Unsafe options",
             "uc->opts.unicode_error_handling != UFBX_UNICODE_ERROR_HANDLING_UNSAFE_IGNORE"
         );
     } else {
-        (*uc).scene.metadata.is_unsafe = true;
+        (*uc.get()).scene.metadata.is_unsafe = true;
     }
 
-    if (*uc).opts.index_error_handling == IndexErrorHandling::NoIndex {
-        (*uc).scene.metadata.may_contain_no_index = true;
+    if (*uc.get()).opts.index_error_handling == IndexErrorHandling::NoIndex {
+        (*uc.get()).scene.metadata.may_contain_no_index = true;
     }
 
-    (*uc).retain_mesh_parts = !(*uc).opts.ignore_geometry && !(*uc).opts.skip_mesh_parts;
-    (*uc).scene.metadata.may_contain_missing_vertex_position =
-        (*uc).opts.allow_missing_vertex_position;
-    (*uc).scene.metadata.may_contain_broken_elements = (*uc).opts.connect_broken_elements;
+    (*uc.get()).retain_mesh_parts =
+        !(*uc.get()).opts.ignore_geometry && !(*uc.get()).opts.skip_mesh_parts;
+    (*uc.get())
+        .scene
+        .metadata
+        .may_contain_missing_vertex_position = (*uc.get()).opts.allow_missing_vertex_position;
+    (*uc.get()).scene.metadata.may_contain_broken_elements =
+        (*uc.get()).opts.connect_broken_elements;
 
-    (*uc).scene.metadata.creator.data = EMPTY_CHAR.as_ptr();
+    (*uc.get()).scene.metadata.creator.data = EMPTY_CHAR.as_ptr();
 
-    (*uc).unit_scale = 1.0;
-    if (*uc).data.is_null() {
-        ufbxi_dev_assert!((*uc).data_begin.is_null());
+    (*uc.get()).unit_scale = 1.0;
+    if (*uc.get()).data.is_null() {
+        ufbxi_dev_assert!((*uc.get()).data_begin.is_null());
         // C: `uc->data_begin = uc->data = ufbxi_zero_size_buffer;`
-        (*uc).data = ZERO_SIZE_BUFFER.as_ptr();
-        (*uc).data_begin = (*uc).data;
+        (*uc.get()).data = ZERO_SIZE_BUFFER.as_ptr();
+        (*uc.get()).data_begin = (*uc.get()).data;
     }
 
-    (*uc).retain_vertex_w =
-        ((*uc).opts.retain_dom || (*uc).opts.retain_vertex_attrib_w) && !(*uc).opts.ignore_geometry;
+    (*uc.get()).retain_vertex_w = ((*uc.get()).opts.retain_dom
+        || (*uc.get()).opts.retain_vertex_attrib_w)
+        && !(*uc.get()).opts.ignore_geometry;
 
     ufbxi_check!(uc, load_strings(uc).is_ok(), "ufbxi_load_strings(uc)");
     ufbxi_check!(uc, load_maps(uc).is_ok(), "ufbxi_load_maps(uc)");
@@ -680,11 +688,11 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
         "ufbxi_determine_format(uc)"
     );
 
-    let format: FileFormat = (*uc).scene.metadata.file_format;
+    let format: FileFormat = (*uc.get()).scene.metadata.file_format;
 
     if format == FileFormat::Fbx {
         ufbxi_check!(uc, begin_parse(uc).is_ok(), "ufbxi_begin_parse(uc)");
-        if (*uc).version < 6000 {
+        if (*uc.get()).version < 6000 {
             ufbxi_check!(
                 uc,
                 read_legacy_root(uc).is_ok(),
@@ -693,35 +701,35 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
         } else {
             ufbxi_check!(uc, read_root(uc).is_ok(), "ufbxi_read_root(uc)");
         }
-        if !supports_version((*uc).version) {
+        if !supports_version((*uc.get()).version) {
             ufbxi_check!(
                 uc,
                 ufbxi_warnf!(
                     uc,
                     WarningType::UnsupportedVersion,
                     "Unsupported FBX version (%u)",
-                    (*uc).version
+                    (*uc.get()).version
                 )
                 .is_ok(),
                 "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_UNSUPPORTED_VERSION, ~0u, \"Unsupported FBX version (%u)\", uc->version)"
             );
         }
-        update_scene_metadata(ptr::addr_of_mut!((*uc).scene.metadata));
+        update_scene_metadata(ptr::addr_of_mut!((*uc.get()).scene.metadata));
         ufbxi_check!(uc, init_file_paths(uc).is_ok(), "ufbxi_init_file_paths(uc)");
     } else if format == FileFormat::Obj {
         ufbxi_check!(uc, obj_load(uc).is_ok(), "ufbxi_obj_load(uc)");
-        update_scene_metadata(ptr::addr_of_mut!((*uc).scene.metadata));
+        update_scene_metadata(ptr::addr_of_mut!((*uc.get()).scene.metadata));
     } else if format == FileFormat::Mtl {
         ufbxi_check!(uc, mtl_load(uc).is_ok(), "ufbxi_mtl_load(uc)");
-        update_scene_metadata(ptr::addr_of_mut!((*uc).scene.metadata));
+        update_scene_metadata(ptr::addr_of_mut!((*uc.get()).scene.metadata));
     }
 
     // Fake DOM root if necessary
-    if (*uc).opts.retain_dom && (*uc).scene.dom_root.is_none() {
-        let dom_root: *mut DomNode = push_zero::<DomNode>(&mut (*uc).result, 1);
+    if (*uc.get()).opts.retain_dom && (*uc.get()).scene.dom_root.is_none() {
+        let dom_root: *mut DomNode = push_zero::<DomNode>(&mut (*uc.get()).result, 1);
         ufbxi_check!(uc, !dom_root.is_null(), "dom_root");
         (*dom_root).name.data = EMPTY_CHAR.as_ptr();
-        (*uc).scene.dom_root = Some(Ref::from_ptr(dom_root));
+        (*uc.get()).scene.dom_root = Some(Ref::from_ptr(dom_root));
     }
 
     ufbxi_check!(
@@ -731,46 +739,46 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
     );
 
     // We can free `tmp_parse` already here as all parsing is done by now.
-    buf_free(&mut (*uc).tmp_parse);
+    buf_free(&mut (*uc.get()).tmp_parse);
 
     ufbxi_check!(uc, finalize_scene(uc).is_ok(), "ufbxi_finalize_scene(uc)");
 
-    update_scene_settings(ptr::addr_of_mut!((*uc).scene.settings));
-    if (*uc).scene.metadata.file_format == FileFormat::Obj {
+    update_scene_settings(ptr::addr_of_mut!((*uc.get()).scene.settings));
+    if (*uc.get()).scene.metadata.file_format == FileFormat::Obj {
         update_scene_settings_obj(uc);
     }
 
     // Axis conversion
-    if coordinate_axes_valid((*uc).opts.target_axes) {
-        transform_to_axes(uc, (*uc).opts.target_axes);
+    if coordinate_axes_valid((*uc.get()).opts.target_axes) {
+        transform_to_axes(uc, (*uc.get()).opts.target_axes);
     }
 
     // Unit conversion
-    if (*uc).opts.target_unit_meters > 0.0 {
+    if (*uc.get()).opts.target_unit_meters > 0.0 {
         ufbxi_check!(
             uc,
-            scale_units(uc, (*uc).opts.target_unit_meters).is_ok(),
+            scale_units(uc, (*uc.get()).opts.target_unit_meters).is_ok(),
             "ufbxi_scale_units(uc, uc->opts.target_unit_meters)"
         );
     }
 
     // TODO: This could be done in evaluate as well with refactoring
-    update_adjust_transforms(uc, ptr::addr_of_mut!((*uc).scene));
+    update_adjust_transforms(uc, ptr::addr_of_mut!((*uc.get()).scene));
 
     ufbxi_check!(uc, modify_geometry(uc).is_ok(), "ufbxi_modify_geometry(uc)");
     postprocess_scene(uc);
 
-    update_scene(ptr::addr_of_mut!((*uc).scene), true, ptr::null(), 0);
+    update_scene(ptr::addr_of_mut!((*uc.get()).scene), true, ptr::null(), 0);
 
     // Force a non-NULL anim pointer
-    if ref_ptr(ptr::addr_of!((*uc).scene.anim)).is_null() {
+    if ref_ptr(ptr::addr_of!((*uc.get()).scene.anim)).is_null() {
         // C: `uc->scene.anim = ufbxi_push_zero(&uc->result, ufbx_anim, 1);`
         // (NOT `ufbxi_check`ed in C — a failed allocation leaves it NULL).
-        *(ptr::addr_of_mut!((*uc).scene.anim) as *mut *mut Anim) =
-            push_zero::<Anim>(&mut (*uc).result, 1);
+        *(ptr::addr_of_mut!((*uc.get()).scene.anim) as *mut *mut Anim) =
+            push_zero::<Anim>(&mut (*uc.get()).result, 1);
     }
 
-    if (*uc).opts.load_external_files {
+    if (*uc.get()).opts.load_external_files {
         ufbxi_check!(
             uc,
             load_external_files(uc).is_ok(),
@@ -779,20 +787,20 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
     }
 
     // Evaluate skinning if requested
-    if (*uc).opts.evaluate_skinning {
+    if (*uc.get()).opts.evaluate_skinning {
         // C: `ufbx_geometry_cache_data_opts cache_opts = { 0 };`
         let mut cache_opts: RawGeometryCacheDataOpts = MaybeUninit::zeroed().assume_init();
         cache_opts.open_file_cb =
-            ptr::read(ptr::addr_of!((*uc).opts.open_file_cb) as *const RawOpenFileCb);
+            ptr::read(ptr::addr_of!((*uc.get()).opts.open_file_cb) as *const RawOpenFileCb);
         ufbxi_check!(
             uc,
             evaluate_skinning(
-                ptr::addr_of_mut!((*uc).scene),
-                ptr::addr_of_mut!((*uc).error),
-                ptr::addr_of_mut!((*uc).result),
-                ptr::addr_of_mut!((*uc).tmp),
+                ptr::addr_of_mut!((*uc.get()).scene),
+                ptr::addr_of_mut!((*uc.get()).error),
+                ptr::addr_of_mut!((*uc.get()).result),
+                ptr::addr_of_mut!((*uc.get()).tmp),
                 0.0,
-                (*uc).opts.load_external_files && (*uc).opts.evaluate_caches,
+                (*uc.get()).opts.load_external_files && (*uc.get()).opts.evaluate_caches,
                 &mut cache_opts,
             )
             .is_ok(),
@@ -804,9 +812,9 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         pop_warnings(
-            ptr::addr_of_mut!((*uc).warnings),
-            ptr::addr_of_mut!((*uc).scene.metadata.warnings),
-            (*uc).scene.metadata.has_warning.as_mut_ptr(),
+            ptr::addr_of_mut!((*uc.get()).warnings),
+            ptr::addr_of_mut!((*uc.get()).scene.metadata.warnings),
+            (*uc.get()).scene.metadata.has_warning.as_mut_ptr(),
         )
         .is_ok(),
         "ufbxi_pop_warnings(&uc->warnings, &uc->scene.metadata.warnings, uc->scene.metadata.has_warning)"
@@ -818,16 +826,16 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
     );
 
     // Copy local data to the scene
-    (*uc).scene.metadata.version = (*uc).version;
-    (*uc).scene.metadata.ascii = (*uc).from_ascii;
-    (*uc).scene.metadata.big_endian = (*uc).file_big_endian;
-    (*uc).scene.metadata.geometry_ignored = (*uc).opts.ignore_geometry;
-    (*uc).scene.metadata.animation_ignored = (*uc).opts.ignore_animation;
-    (*uc).scene.metadata.embedded_ignored = (*uc).opts.ignore_embedded;
+    (*uc.get()).scene.metadata.version = (*uc.get()).version;
+    (*uc.get()).scene.metadata.ascii = (*uc.get()).from_ascii;
+    (*uc.get()).scene.metadata.big_endian = (*uc.get()).file_big_endian;
+    (*uc.get()).scene.metadata.geometry_ignored = (*uc.get()).opts.ignore_geometry;
+    (*uc.get()).scene.metadata.animation_ignored = (*uc.get()).opts.ignore_animation;
+    (*uc.get()).scene.metadata.embedded_ignored = (*uc.get()).opts.ignore_embedded;
 
     // Retain the scene, this must be the final allocation as we copy
     // `ator_result` to `ufbx_scene_imp`.
-    let imp: *mut SceneImp = push::<SceneImp>(&mut (*uc).result, 1);
+    let imp: *mut SceneImp = push::<SceneImp>(&mut (*uc.get()).result, 1);
     ufbxi_check!(uc, !imp.is_null(), "imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
@@ -839,24 +847,24 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
     (*imp).magic = SCENE_IMP_MAGIC;
     // C: `imp->scene = uc->scene;` (struct copy)
     ptr::copy_nonoverlapping(
-        ptr::addr_of!((*uc).scene),
+        ptr::addr_of!((*uc.get()).scene),
         ptr::addr_of_mut!((*imp).scene),
         1,
     );
-    (*imp).refcount.ator = (*uc).ator_result;
+    (*imp).refcount.ator = (*uc.get()).ator_result;
     (*imp).refcount.ator.error = ptr::null_mut();
 
     // Copy retained buffers and translate the allocator struct to the one
     // contained within `ufbxi_scene_imp`
-    (*imp).refcount.buf = (*uc).result;
+    (*imp).refcount.buf = (*uc.get()).result;
     (*imp).refcount.buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
-    (*imp).string_buf = (*uc).string_pool.buf;
+    (*imp).string_buf = (*uc.get()).string_pool.buf;
     (*imp).string_buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
 
     (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
-    (*imp).scene.metadata.temp_memory_used = (*uc).ator_tmp.current_size;
+    (*imp).scene.metadata.temp_memory_used = (*uc.get()).ator_tmp.current_size;
     (*imp).scene.metadata.result_allocs = (*imp).refcount.ator.num_allocs;
-    (*imp).scene.metadata.temp_allocs = (*uc).ator_tmp.num_allocs;
+    (*imp).scene.metadata.temp_allocs = (*uc.get()).ator_tmp.num_allocs;
 
     // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, imp->scene.elements)`
     let mut p_elem: *mut *mut Element = (*imp).scene.elements.data as *mut *mut Element;
@@ -867,97 +875,105 @@ pub(crate) unsafe fn load_imp(uc: *mut Context) -> Result<(), Fail> {
         p_elem = p_elem.add(1);
     }
 
-    (*uc).scene_imp = imp;
+    (*uc.get()).scene_imp = imp;
 
     Ok(())
 }
 
 // ufbx.c:25412-25462 `ufbxi_free_temp`
 #[inline(never)]
-pub(crate) unsafe fn free_temp(uc: *mut Context) {
-    thread_pool_free(&raw mut (*uc).thread_pool);
+pub(crate) unsafe fn free_temp(uc: &Context) {
+    thread_pool_free(&raw mut (*uc.get()).thread_pool);
 
-    string_pool_temp_free(&mut (*uc).string_pool);
-    buf_free(&mut (*uc).warnings.tmp_stack);
+    string_pool_temp_free(&mut (*uc.get()).string_pool);
+    buf_free(&mut (*uc.get()).warnings.tmp_stack);
 
-    map_free(&mut (*uc).prop_type_map);
-    map_free(&mut (*uc).fbx_id_map);
-    map_free(&mut (*uc).ptr_fbx_id_map);
-    map_free(&mut (*uc).texture_file_map);
-    map_free(&mut (*uc).anim_stack_map);
-    map_free(&mut (*uc).fbx_attr_map);
-    map_free(&mut (*uc).node_prop_set);
-    map_free(&mut (*uc).dom_node_map);
+    map_free(&mut (*uc.get()).prop_type_map);
+    map_free(&mut (*uc.get()).fbx_id_map);
+    map_free(&mut (*uc.get()).ptr_fbx_id_map);
+    map_free(&mut (*uc.get()).texture_file_map);
+    map_free(&mut (*uc.get()).anim_stack_map);
+    map_free(&mut (*uc.get()).fbx_attr_map);
+    map_free(&mut (*uc.get()).node_prop_set);
+    map_free(&mut (*uc.get()).dom_node_map);
 
-    buf_free(&mut (*uc).tmp);
-    buf_free(&mut (*uc).tmp_parse);
+    buf_free(&mut (*uc.get()).tmp);
+    buf_free(&mut (*uc.get()).tmp_parse);
     for i in 0..THREAD_GROUP_COUNT {
-        buf_free(&mut (*uc).tmp_thread_parse[i]);
+        buf_free(&mut (*uc.get()).tmp_thread_parse[i]);
     }
-    buf_free(&mut (*uc).tmp_stack);
-    buf_free(&mut (*uc).tmp_connections);
-    buf_free(&mut (*uc).tmp_node_ids);
-    buf_free(&mut (*uc).tmp_elements);
-    buf_free(&mut (*uc).tmp_element_offsets);
-    buf_free(&mut (*uc).tmp_element_fbx_ids);
-    buf_free(&mut (*uc).tmp_element_ptrs);
+    buf_free(&mut (*uc.get()).tmp_stack);
+    buf_free(&mut (*uc.get()).tmp_connections);
+    buf_free(&mut (*uc.get()).tmp_node_ids);
+    buf_free(&mut (*uc.get()).tmp_elements);
+    buf_free(&mut (*uc.get()).tmp_element_offsets);
+    buf_free(&mut (*uc.get()).tmp_element_fbx_ids);
+    buf_free(&mut (*uc.get()).tmp_element_ptrs);
     for i in 0..ELEMENT_TYPE_COUNT {
-        buf_free(&mut (*uc).tmp_typed_element_offsets[i]);
+        buf_free(&mut (*uc.get()).tmp_typed_element_offsets[i]);
     }
-    buf_free(&mut (*uc).tmp_mesh_textures);
-    buf_free(&mut (*uc).tmp_full_weights);
-    buf_free(&mut (*uc).tmp_dom_nodes);
-    buf_free(&mut (*uc).tmp_element_id);
-    buf_free(&mut (*uc).tmp_ascii_spans);
+    buf_free(&mut (*uc.get()).tmp_mesh_textures);
+    buf_free(&mut (*uc.get()).tmp_full_weights);
+    buf_free(&mut (*uc.get()).tmp_dom_nodes);
+    buf_free(&mut (*uc.get()).tmp_element_id);
+    buf_free(&mut (*uc.get()).tmp_ascii_spans);
 
     free::<Node>(
-        &raw mut (*uc).ator_tmp,
-        (*uc).top_nodes,
-        (*uc).top_nodes_cap,
+        &raw mut (*uc.get()).ator_tmp,
+        (*uc.get()).top_nodes,
+        (*uc.get()).top_nodes_cap,
     );
     free::<*mut c_void>(
-        &raw mut (*uc).ator_tmp,
-        (*uc).element_extra_arr,
-        (*uc).element_extra_cap,
+        &raw mut (*uc.get()).ator_tmp,
+        (*uc.get()).element_extra_arr,
+        (*uc.get()).element_extra_cap,
     );
 
     free::<u8>(
-        &raw mut (*uc).ator_tmp,
-        (*uc).ascii.token.str_data,
-        (*uc).ascii.token.str_cap,
+        &raw mut (*uc.get()).ator_tmp,
+        (*uc.get()).ascii.token.str_data,
+        (*uc.get()).ascii.token.str_cap,
     );
     free::<u8>(
-        &raw mut (*uc).ator_tmp,
-        (*uc).ascii.prev_token.str_data,
-        (*uc).ascii.prev_token.str_cap,
+        &raw mut (*uc.get()).ator_tmp,
+        (*uc.get()).ascii.prev_token.str_data,
+        (*uc.get()).ascii.prev_token.str_cap,
     );
 
     free::<u8>(
-        &raw mut (*uc).ator_tmp,
-        (*uc).read_buffer,
-        (*uc).read_buffer_size,
+        &raw mut (*uc.get()).ator_tmp,
+        (*uc.get()).read_buffer,
+        (*uc.get()).read_buffer_size,
     );
-    free::<u8>(&raw mut (*uc).ator_tmp, (*uc).tmp_arr, (*uc).tmp_arr_size);
-    free::<u8>(&raw mut (*uc).ator_tmp, (*uc).swap_arr, (*uc).swap_arr_size);
+    free::<u8>(
+        &raw mut (*uc.get()).ator_tmp,
+        (*uc.get()).tmp_arr,
+        (*uc.get()).tmp_arr_size,
+    );
+    free::<u8>(
+        &raw mut (*uc.get()).ator_tmp,
+        (*uc.get()).swap_arr,
+        (*uc.get()).swap_arr_size,
+    );
 
     obj_free(uc);
 
-    free_ator(&raw mut (*uc).ator_tmp);
+    free_ator(&raw mut (*uc.get()).ator_tmp);
 }
 
 // ufbx.c:25464-25470 `ufbxi_free_result`
 #[inline(never)]
-pub(crate) unsafe fn free_result(uc: *mut Context) {
-    buf_free(&mut (*uc).result);
-    buf_free(&mut (*uc).string_pool.buf);
+pub(crate) unsafe fn free_result(uc: &Context) {
+    buf_free(&mut (*uc.get()).result);
+    buf_free(&mut (*uc.get()).string_pool.buf);
 
-    free_ator(&raw mut (*uc).ator_result);
+    free_ator(&raw mut (*uc.get()).ator_result);
 }
 
 // ufbx.c:25472-25625 `ufbxi_load`
 #[inline(never)]
 pub(crate) unsafe fn load(
-    uc: *mut Context,
+    uc: &Context,
     user_opts: *const RawLoadOpts,
     p_error: *mut Error,
 ) -> *mut Scene {
@@ -966,31 +982,31 @@ pub(crate) unsafe fn load(
         // C: `uint8_t buf[2]; uint16_t val = 0xbbaa; memcpy(buf, &val, 2);`
         let val: u16 = 0xbbaa;
         let buf: [u8; 2] = val.to_ne_bytes();
-        (*uc).local_big_endian = buf[0] == 0xbb;
+        (*uc.get()).local_big_endian = buf[0] == 0xbb;
     }
 
-    (*uc).double_parse_flags = parse_double_init_flags();
+    (*uc.get()).double_parse_flags = parse_double_init_flags();
 
     if !user_opts.is_null() {
         // C: `uc->opts = *user_opts;` (struct copy)
-        ptr::copy_nonoverlapping(user_opts, ptr::addr_of_mut!((*uc).opts), 1);
+        ptr::copy_nonoverlapping(user_opts, ptr::addr_of_mut!((*uc.get()).opts), 1);
     } else {
         // C: `memset(&uc->opts, 0, sizeof(uc->opts));`
         ptr::write_bytes(
-            ptr::addr_of_mut!((*uc).opts) as *mut u8,
+            ptr::addr_of_mut!((*uc.get()).opts) as *mut u8,
             0,
             size_of::<RawLoadOpts>(),
         );
     }
 
-    if (*uc).opts.file_size_estimate != 0 {
-        (*uc).progress_bytes_total = (*uc).opts.file_size_estimate;
+    if (*uc.get()).opts.file_size_estimate != 0 {
+        (*uc.get()).progress_bytes_total = (*uc.get()).opts.file_size_estimate;
     }
 
-    if (*uc).opts.ignore_all_content {
-        (*uc).opts.ignore_geometry = true;
-        (*uc).opts.ignore_animation = true;
-        (*uc).opts.ignore_embedded = true;
+    if (*uc.get()).opts.ignore_all_content {
+        (*uc.get()).opts.ignore_geometry = true;
+        (*uc.get()).opts.ignore_animation = true;
+        (*uc.get()).opts.ignore_embedded = true;
     }
 
     // C: `ufbx_inflate_retain inflate_retain; inflate_retain.initialized = false;`
@@ -999,167 +1015,167 @@ pub(crate) unsafe fn load(
     ptr::addr_of_mut!((*inflate_retain.as_mut_ptr()).initialized).write(false);
 
     init_ator(
-        &mut (*uc).error,
-        &raw mut (*uc).ator_tmp,
-        ptr::addr_of!((*uc).opts.temp_allocator),
+        &mut (*uc.get()).error,
+        &raw mut (*uc.get()).ator_tmp,
+        ptr::addr_of!((*uc.get()).opts.temp_allocator),
         b"temp\0".as_ptr(),
     );
     init_ator(
-        &mut (*uc).error,
-        &raw mut (*uc).ator_result,
-        ptr::addr_of!((*uc).opts.result_allocator),
+        &mut (*uc.get()).error,
+        &raw mut (*uc.get()).ator_result,
+        ptr::addr_of!((*uc.get()).opts.result_allocator),
         b"result\0".as_ptr(),
     );
 
-    if (*uc).opts.read_buffer_size == 0 {
-        (*uc).opts.read_buffer_size = 0x4000;
+    if (*uc.get()).opts.read_buffer_size == 0 {
+        (*uc.get()).opts.read_buffer_size = 0x4000;
     }
-    if (*uc).opts.read_buffer_size <= 32 {
-        (*uc).opts.read_buffer_size = 32;
-    }
-
-    if (*uc).opts.file_format_lookahead == 0 {
-        (*uc).opts.file_format_lookahead = 0x4000;
-    } else if (*uc).opts.file_format_lookahead < MIN_FILE_FORMAT_LOOKAHEAD {
-        (*uc).opts.file_format_lookahead = MIN_FILE_FORMAT_LOOKAHEAD;
+    if (*uc.get()).opts.read_buffer_size <= 32 {
+        (*uc.get()).opts.read_buffer_size = 32;
     }
 
-    if (*uc).opts.path_separator == 0 {
-        (*uc).opts.path_separator = PATH_SEPARATOR;
+    if (*uc.get()).opts.file_format_lookahead == 0 {
+        (*uc.get()).opts.file_format_lookahead = 0x4000;
+    } else if (*uc.get()).opts.file_format_lookahead < MIN_FILE_FORMAT_LOOKAHEAD {
+        (*uc.get()).opts.file_format_lookahead = MIN_FILE_FORMAT_LOOKAHEAD;
     }
 
-    if (*uc).opts.progress_cb.fn_.is_none()
-        || (*uc).opts.progress_interval_hint >= usize::MAX as u64
+    if (*uc.get()).opts.path_separator == 0 {
+        (*uc.get()).opts.path_separator = PATH_SEPARATOR;
+    }
+
+    if (*uc.get()).opts.progress_cb.fn_.is_none()
+        || (*uc.get()).opts.progress_interval_hint >= usize::MAX as u64
     {
-        (*uc).progress_interval = usize::MAX;
-    } else if (*uc).opts.progress_interval_hint > 0 {
-        (*uc).progress_interval = (*uc).opts.progress_interval_hint as usize;
+        (*uc.get()).progress_interval = usize::MAX;
+    } else if (*uc.get()).opts.progress_interval_hint > 0 {
+        (*uc.get()).progress_interval = (*uc.get()).opts.progress_interval_hint as usize;
     } else {
-        (*uc).progress_interval = 0x4000;
+        (*uc.get()).progress_interval = 0x4000;
     }
 
-    if (*uc).opts.open_file_cb.fn_.is_none() {
+    if (*uc.get()).opts.open_file_cb.fn_.is_none() {
         // C: `uc->opts.open_file_cb.fn = &ufbx_default_open_file;`
-        (*uc).opts.open_file_cb.fn_ = Some(default_open_file);
+        (*uc.get()).opts.open_file_cb.fn_ = Some(default_open_file);
     }
 
-    if (*uc).opts.thread_opts.memory_limit == 0 {
-        (*uc).opts.thread_opts.memory_limit = 32 * 1024 * 1024;
+    if (*uc.get()).opts.thread_opts.memory_limit == 0 {
+        (*uc.get()).opts.thread_opts.memory_limit = 32 * 1024 * 1024;
     }
 
-    (*uc).synthetic_id_counter = SYNTHETIC_ID_START;
+    (*uc.get()).synthetic_id_counter = SYNTHETIC_ID_START;
 
-    (*uc).string_pool.error = ptr::addr_of_mut!((*uc).error);
+    (*uc.get()).string_pool.error = ptr::addr_of_mut!((*uc.get()).error);
     map_init(
-        &mut (*uc).string_pool.map,
-        ptr::addr_of_mut!((*uc).ator_tmp),
+        &mut (*uc.get()).string_pool.map,
+        ptr::addr_of_mut!((*uc.get()).ator_tmp),
         map_cmp_string,
         ptr::null_mut(),
     );
-    (*uc).string_pool.buf.ator = ptr::addr_of_mut!((*uc).ator_result);
-    (*uc).string_pool.buf.unordered = true;
-    (*uc).string_pool.initial_size = 1024;
-    (*uc).string_pool.error_handling = (*uc).opts.unicode_error_handling;
+    (*uc.get()).string_pool.buf.ator = ptr::addr_of_mut!((*uc.get()).ator_result);
+    (*uc.get()).string_pool.buf.unordered = true;
+    (*uc.get()).string_pool.initial_size = 1024;
+    (*uc.get()).string_pool.error_handling = (*uc.get()).opts.unicode_error_handling;
 
     map_init(
-        &mut (*uc).prop_type_map,
-        ptr::addr_of_mut!((*uc).ator_tmp),
+        &mut (*uc.get()).prop_type_map,
+        ptr::addr_of_mut!((*uc.get()).ator_tmp),
         map_cmp_const_char_ptr,
         ptr::null_mut(),
     );
     map_init(
-        &mut (*uc).fbx_id_map,
-        ptr::addr_of_mut!((*uc).ator_tmp),
+        &mut (*uc.get()).fbx_id_map,
+        ptr::addr_of_mut!((*uc.get()).ator_tmp),
         map_cmp_uint64,
         ptr::null_mut(),
     );
     map_init(
-        &mut (*uc).ptr_fbx_id_map,
-        ptr::addr_of_mut!((*uc).ator_tmp),
+        &mut (*uc.get()).ptr_fbx_id_map,
+        ptr::addr_of_mut!((*uc.get()).ator_tmp),
         map_cmp_ptr_id,
         ptr::null_mut(),
     );
     map_init(
-        &mut (*uc).texture_file_map,
-        ptr::addr_of_mut!((*uc).ator_tmp),
+        &mut (*uc.get()).texture_file_map,
+        ptr::addr_of_mut!((*uc.get()).ator_tmp),
         map_cmp_const_char_ptr,
         ptr::null_mut(),
     );
     map_init(
-        &mut (*uc).anim_stack_map,
-        ptr::addr_of_mut!((*uc).ator_tmp),
+        &mut (*uc.get()).anim_stack_map,
+        ptr::addr_of_mut!((*uc.get()).ator_tmp),
         map_cmp_const_char_ptr,
         ptr::null_mut(),
     );
     map_init(
-        &mut (*uc).fbx_attr_map,
-        ptr::addr_of_mut!((*uc).ator_tmp),
+        &mut (*uc.get()).fbx_attr_map,
+        ptr::addr_of_mut!((*uc.get()).ator_tmp),
         map_cmp_uint64,
         ptr::null_mut(),
     );
     map_init(
-        &mut (*uc).node_prop_set,
-        ptr::addr_of_mut!((*uc).ator_tmp),
+        &mut (*uc.get()).node_prop_set,
+        ptr::addr_of_mut!((*uc.get()).ator_tmp),
         map_cmp_const_char_ptr,
         ptr::null_mut(),
     );
     map_init(
-        &mut (*uc).dom_node_map,
-        ptr::addr_of_mut!((*uc).ator_tmp),
+        &mut (*uc.get()).dom_node_map,
+        ptr::addr_of_mut!((*uc.get()).ator_tmp),
         map_cmp_uintptr,
         ptr::null_mut(),
     );
 
-    (*uc).tmp.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).tmp_parse.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).tmp_stack.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).tmp_connections.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).tmp_node_ids.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).tmp_elements.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).tmp_element_offsets.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).tmp_element_fbx_ids.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).tmp_element_ptrs.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc.get()).tmp.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).tmp_parse.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).tmp_stack.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).tmp_connections.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).tmp_node_ids.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).tmp_elements.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).tmp_element_offsets.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).tmp_element_fbx_ids.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).tmp_element_ptrs.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
     for i in 0..ELEMENT_TYPE_COUNT {
-        (*uc).tmp_typed_element_offsets[i].ator = ptr::addr_of_mut!((*uc).ator_tmp);
+        (*uc.get()).tmp_typed_element_offsets[i].ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
     }
-    (*uc).tmp_mesh_textures.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).tmp_full_weights.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).tmp_dom_nodes.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).tmp_element_id.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).tmp_ascii_spans.ator = ptr::addr_of_mut!((*uc).ator_tmp);
+    (*uc.get()).tmp_mesh_textures.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).tmp_full_weights.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).tmp_dom_nodes.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).tmp_element_id.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).tmp_ascii_spans.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
 
     for i in 0..THREAD_GROUP_COUNT {
-        (*uc).tmp_thread_parse[i].ator = ptr::addr_of_mut!((*uc).ator_tmp);
-        (*uc).tmp_thread_parse[i].unordered = true;
-        (*uc).tmp_thread_parse[i].clearable = true;
+        (*uc.get()).tmp_thread_parse[i].ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+        (*uc.get()).tmp_thread_parse[i].unordered = true;
+        (*uc.get()).tmp_thread_parse[i].clearable = true;
     }
 
-    (*uc).result.ator = ptr::addr_of_mut!((*uc).ator_result);
+    (*uc.get()).result.ator = ptr::addr_of_mut!((*uc.get()).ator_result);
 
-    (*uc).tmp.unordered = true;
-    (*uc).tmp_parse.unordered = true;
-    (*uc).tmp_parse.clearable = true;
-    (*uc).result.unordered = true;
+    (*uc.get()).tmp.unordered = true;
+    (*uc.get()).tmp_parse.unordered = true;
+    (*uc.get()).tmp_parse.clearable = true;
+    (*uc.get()).result.unordered = true;
 
-    (*uc).warnings.error = ptr::addr_of_mut!((*uc).error);
-    (*uc).warnings.result = ptr::addr_of_mut!((*uc).result);
-    (*uc).warnings.tmp_stack.ator = ptr::addr_of_mut!((*uc).ator_tmp);
-    (*uc).string_pool.warnings = ptr::addr_of_mut!((*uc).warnings);
+    (*uc.get()).warnings.error = ptr::addr_of_mut!((*uc.get()).error);
+    (*uc.get()).warnings.result = ptr::addr_of_mut!((*uc.get()).result);
+    (*uc.get()).warnings.tmp_stack.ator = ptr::addr_of_mut!((*uc.get()).ator_tmp);
+    (*uc.get()).string_pool.warnings = ptr::addr_of_mut!((*uc.get()).warnings);
 
     // Set zero size `swap_arr` to a non-NULL buffer so we can tell the difference between empty
     // array and an allocation failure.
     // C: `uc->swap_arr = (char*)ufbxi_zero_size_buffer;` — the const cast is
     // C-parity: the buffer is replaced by `ufbxi_grow_array` before any write.
-    (*uc).swap_arr = ZERO_SIZE_BUFFER.as_ptr() as *mut u8;
+    (*uc.get()).swap_arr = ZERO_SIZE_BUFFER.as_ptr() as *mut u8;
 
     // NOTE: Though `inflate_retain` leaks out of the scope we don't use it outside this function.
     // cppcheck-suppress autoVariables
-    (*uc).inflate_retain = inflate_retain.as_mut_ptr();
+    (*uc.get()).inflate_retain = inflate_retain.as_mut_ptr();
 
     let ok: bool = load_imp(uc).is_ok();
 
-    if (*uc).close_fn.is_some() {
-        ((*uc).close_fn.unwrap())((*uc).read_user);
+    if (*uc.get()).close_fn.is_some() {
+        ((*uc.get()).close_fn.unwrap())((*uc.get()).read_user);
     }
 
     free_temp(uc);
@@ -1168,18 +1184,22 @@ pub(crate) unsafe fn load(
         if !p_error.is_null() {
             clear_error(p_error);
         }
-        ptr::addr_of_mut!((*(*uc).scene_imp).scene)
+        ptr::addr_of_mut!((*(*uc.get()).scene_imp).scene)
     } else {
-        fix_error_type(&mut (*uc).error, b"Failed to load\0".as_ptr(), p_error);
+        fix_error_type(
+            &mut (*uc.get()).error,
+            b"Failed to load\0".as_ptr(),
+            p_error,
+        );
         if !p_error.is_null()
             && (*p_error).type_ == ErrorType::Unknown
-            && (*uc).scene.metadata.file_format == FileFormat::Fbx
-            && !supports_version((*uc).version)
+            && (*uc.get()).scene.metadata.file_format == FileFormat::Fbx
+            && !supports_version((*uc.get()).version)
         {
             (*p_error).description.data = b"Unsupported version\0".as_ptr();
             (*p_error).description.length = strlen(b"Unsupported version\0".as_ptr());
             (*p_error).type_ = ErrorType::UnsupportedVersion;
-            ufbxi_fmt_err_info!(p_error, "%u", (*uc).version);
+            ufbxi_fmt_err_info!(p_error, "%u", (*uc.get()).version);
         }
         free_result(uc);
         ptr::null_mut()

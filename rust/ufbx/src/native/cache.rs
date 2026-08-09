@@ -35,7 +35,7 @@ use crate::native::error::{
     ufbxi_report_err_msg, ufbxi_snprintf, Fail, EMPTY_CHAR,
 };
 use crate::native::hash::map_init;
-use crate::native::parse::{is_transform_identity, r#match, Context, Refcount};
+use crate::native::parse::{is_transform_identity, r#match, Context, InnerContext, Refcount};
 use crate::native::platform::{
     add_ptr, macro_lower_bound_eq, min32, min64, min_sz, read_f32, read_u32, stable_sort, to_size,
     ufbx_assert, ufbxi_dev_assert, ufbxi_regression_assert, unstable_sort, MAX_SKIP_SIZE,
@@ -1419,24 +1419,24 @@ pub(crate) unsafe extern "C" fn less_external_file(
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn load_external_cache(
-    uc: *mut Context,
+    uc: &Context,
     file: *mut ExternalFile,
 ) -> Result<(), Fail> {
     // C: `ufbxi_cache_context cc = { UFBX_ERROR_NONE };`
     let mut cc: CacheContext = core::mem::zeroed();
     cc.owned_by_scene = true;
 
-    cc.open_file_cb = (*uc).opts.open_file_cb;
-    cc.frames_per_second = (*uc).scene.settings.frames_per_second;
+    cc.open_file_cb = (*uc.get()).opts.open_file_cb;
+    cc.frames_per_second = (*uc.get()).scene.settings.frames_per_second;
 
     // Temporarily "borrow" allocators for the geometry cache
-    cc.ator_tmp = &raw mut (*uc).ator_tmp;
-    cc.string_pool = (*uc).string_pool;
-    cc.result = (*uc).result;
+    cc.ator_tmp = &raw mut (*uc.get()).ator_tmp;
+    cc.string_pool = (*uc.get()).string_pool;
+    cc.result = (*uc.get()).result;
 
-    cc.opts.mirror_axis = (*uc).mirror_axis;
+    cc.opts.mirror_axis = (*uc.get()).mirror_axis;
     cc.opts.use_scale_factor = true;
-    cc.opts.scale_factor = (*uc).scene.metadata.geometry_scale;
+    cc.opts.scale_factor = (*uc.get()).scene.metadata.geometry_scale;
 
     let mut cache: *mut GeometryCache = cache_load(&mut cc, (*file).filename);
     if cache.is_null() {
@@ -1447,12 +1447,12 @@ pub(crate) unsafe fn load_external_cache(
     }
 
     // Return the "borrowed" allocators
-    (*uc).string_pool = cc.string_pool;
-    (*uc).result = cc.result;
+    (*uc.get()).string_pool = cc.string_pool;
+    (*uc.get()).result = cc.result;
 
     if cache.is_null() {
         if cc.error.type_ == ErrorType::FileNotFound {
-            if (*uc).opts.ignore_missing_external_files {
+            if (*uc.get()).opts.ignore_missing_external_files {
                 ufbxi_check!(
                     uc,
                     ufbxi_warnf!(
@@ -1472,7 +1472,7 @@ pub(crate) unsafe fn load_external_cache(
             }
         }
 
-        core::ptr::write(&mut (*uc).error, core::ptr::read(&cc.error));
+        core::ptr::write(&mut (*uc.get()).error, core::ptr::read(&cc.error));
         return Err(Fail);
     }
 
@@ -1484,16 +1484,16 @@ pub(crate) unsafe fn load_external_cache(
 #[cfg(not(feature = "geometry-cache"))]
 #[inline(never)]
 pub(crate) unsafe fn load_external_cache(
-    uc: *mut Context,
+    uc: &Context,
     file: *mut ExternalFile,
 ) -> Result<(), Fail> {
     // C: `file` is unreferenced in the `#else` arm.
     let _ = file;
-    if (*uc).opts.ignore_missing_external_files {
+    if (*uc.get()).opts.ignore_missing_external_files {
         return Ok(());
     }
 
-    ufbxi_fmt_err_info!(&mut (*uc).error, "UFBX_ENABLE_GEOMETRY_CACHE");
+    ufbxi_fmt_err_info!(&mut (*uc.get()).error, "UFBX_ENABLE_GEOMETRY_CACHE");
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_GEOMETRY_CACHE", "Feature disabled");
 }
 
@@ -1530,17 +1530,18 @@ pub(crate) unsafe fn find_external_file(
 
 // ufbx.c:24878-24944 `ufbxi_load_external_files`
 #[inline(never)]
-pub(crate) unsafe fn load_external_files(uc: *mut Context) -> Result<(), Fail> {
+pub(crate) unsafe fn load_external_files(uc: &Context) -> Result<(), Fail> {
     let mut num_files: usize = 0;
 
     // Gather external files to deduplicate them
     // C: `ufbxi_for_ptr_list(ufbx_cache_file, p_cache, uc->scene.cache_files)`
-    let mut p_cache: *mut *mut CacheFile = (*uc).scene.cache_files.data as *mut *mut CacheFile;
-    let p_cache_end: *mut *mut CacheFile = add_ptr(p_cache, (*uc).scene.cache_files.count);
+    let mut p_cache: *mut *mut CacheFile =
+        (*uc.get()).scene.cache_files.data as *mut *mut CacheFile;
+    let p_cache_end: *mut *mut CacheFile = add_ptr(p_cache, (*uc.get()).scene.cache_files.count);
     while p_cache != p_cache_end {
         let cache: *mut CacheFile = *p_cache;
         if (*cache).filename.length > 0 {
-            let file: *mut ExternalFile = push_zero(&mut (*uc).tmp_stack, 1);
+            let file: *mut ExternalFile = push_zero(&mut (*uc.get()).tmp_stack, 1);
             ufbxi_check!(uc, !file.is_null(), "file");
             // C: `file->index = num_files++;`
             (*file).index = num_files;
@@ -1553,7 +1554,8 @@ pub(crate) unsafe fn load_external_files(uc: *mut Context) -> Result<(), Fail> {
     }
 
     // Sort and load the external files
-    let files: *mut ExternalFile = push_pop(&mut (*uc).tmp, &mut (*uc).tmp_stack, num_files);
+    let files: *mut ExternalFile =
+        push_pop(&mut (*uc.get()).tmp, &mut (*uc.get()).tmp_stack, num_files);
     ufbxi_check!(uc, !files.is_null(), "files");
     unstable_sort(
         files as *mut c_void,
@@ -1583,8 +1585,9 @@ pub(crate) unsafe fn load_external_files(uc: *mut Context) -> Result<(), Fail> {
 
     // Patch the loaded files
     // C: `ufbxi_for_ptr_list(ufbx_cache_file, p_cache, uc->scene.cache_files)`
-    let mut p_cache: *mut *mut CacheFile = (*uc).scene.cache_files.data as *mut *mut CacheFile;
-    let p_cache_end: *mut *mut CacheFile = add_ptr(p_cache, (*uc).scene.cache_files.count);
+    let mut p_cache: *mut *mut CacheFile =
+        (*uc.get()).scene.cache_files.data as *mut *mut CacheFile;
+    let p_cache_end: *mut *mut CacheFile = add_ptr(p_cache, (*uc.get()).scene.cache_files.count);
     while p_cache != p_cache_end {
         let cache: *mut CacheFile = *p_cache;
         let file: *mut ExternalFile = find_external_file(
@@ -1602,9 +1605,9 @@ pub(crate) unsafe fn load_external_files(uc: *mut Context) -> Result<(), Fail> {
     // Patch the geometry deformers
     // C: `ufbxi_for_ptr_list(ufbx_cache_deformer, p_deformer, uc->scene.cache_deformers)`
     let mut p_deformer: *mut *mut CacheDeformer =
-        (*uc).scene.cache_deformers.data as *mut *mut CacheDeformer;
+        (*uc.get()).scene.cache_deformers.data as *mut *mut CacheDeformer;
     let p_deformer_end: *mut *mut CacheDeformer =
-        add_ptr(p_deformer, (*uc).scene.cache_deformers.count);
+        add_ptr(p_deformer, (*uc.get()).scene.cache_deformers.count);
     while p_deformer != p_deformer_end {
         let deformer: *mut CacheDeformer = *p_deformer;
         let file: *mut CacheFile = opt_ptr(&(*deformer).file);
@@ -1649,26 +1652,30 @@ pub(crate) unsafe fn load_external_files(uc: *mut Context) -> Result<(), Fail> {
 
 // ufbx.c:24946-24981 `ufbxi_transform_to_axes`
 #[inline(never)]
-pub(crate) unsafe fn transform_to_axes(uc: *mut Context, dst_axes: CoordinateAxes) {
-    if !coordinate_axes_valid((*uc).scene.settings.axes) {
+pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
+    if !coordinate_axes_valid((*uc.get()).scene.settings.axes) {
         return;
     }
-    if !axis_matrix(&mut (*uc).axis_matrix, (*uc).scene.settings.axes, dst_axes) {
+    if !axis_matrix(
+        &mut (*uc.get()).axis_matrix,
+        (*uc.get()).scene.settings.axes,
+        dst_axes,
+    ) {
         return;
     }
 
-    if matrix_determinant(&(*uc).axis_matrix) < 0.0f32 as Real {
-        if (*uc).opts.handedness_conversion_axis != MirrorAxis::None {
-            let mirror_axis: MirrorAxis = (*uc).opts.handedness_conversion_axis;
-            (*uc).mirror_axis = mirror_axis;
-            (*uc).scene.metadata.mirror_axis = (*uc).mirror_axis;
+    if matrix_determinant(&(*uc.get()).axis_matrix) < 0.0f32 as Real {
+        if (*uc.get()).opts.handedness_conversion_axis != MirrorAxis::None {
+            let mirror_axis: MirrorAxis = (*uc.get()).opts.handedness_conversion_axis;
+            (*uc.get()).mirror_axis = mirror_axis;
+            (*uc.get()).scene.metadata.mirror_axis = (*uc.get()).mirror_axis;
 
-            mirror_matrix_dst(&mut (*uc).axis_matrix, (*uc).mirror_axis);
-            ufbxi_dev_assert!(matrix_determinant(&(*uc).axis_matrix) >= 0.0f32 as Real);
+            mirror_matrix_dst(&mut (*uc.get()).axis_matrix, (*uc.get()).mirror_axis);
+            ufbxi_dev_assert!(matrix_determinant(&(*uc.get()).axis_matrix) >= 0.0f32 as Real);
 
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
-            let mut p_node: *mut *mut Node = (*uc).scene.nodes.data as *mut *mut Node;
-            let p_node_end: *mut *mut Node = add_ptr(p_node, (*uc).scene.nodes.count);
+            let mut p_node: *mut *mut Node = (*uc.get()).scene.nodes.data as *mut *mut Node;
+            let p_node_end: *mut *mut Node = add_ptr(p_node, (*uc.get()).scene.nodes.count);
             while p_node != p_node_end {
                 let node: *mut Node = *p_node;
                 if !(*node).is_root {
@@ -1679,15 +1686,15 @@ pub(crate) unsafe fn transform_to_axes(uc: *mut Context, dst_axes: CoordinateAxe
         }
     }
 
-    if (*uc).opts.space_conversion == SpaceConversion::TransformRoot {
-        let mut axis_mat: Matrix = (*uc).axis_matrix;
-        let root_node: *mut Node = ref_ptr(&(*uc).scene.root_node);
+    if (*uc.get()).opts.space_conversion == SpaceConversion::TransformRoot {
+        let mut axis_mat: Matrix = (*uc.get()).axis_matrix;
+        let root_node: *mut Node = ref_ptr(&(*uc.get()).scene.root_node);
         if !is_transform_identity(&(*root_node).local_transform) {
             let root_mat: Matrix = transform_to_matrix(&(*root_node).local_transform);
             axis_mat = matrix_mul(&root_mat, &axis_mat);
         }
 
-        mirror_matrix(&mut axis_mat, (*uc).mirror_axis);
+        mirror_matrix(&mut axis_mat, (*uc.get()).mirror_axis);
 
         (*root_node).local_transform = matrix_to_transform(&axis_mat);
         (*root_node).node_to_parent = axis_mat;
@@ -1696,22 +1703,22 @@ pub(crate) unsafe fn transform_to_axes(uc: *mut Context, dst_axes: CoordinateAxe
 
 // ufbx.c:24983-25010 `ufbxi_scale_units`
 #[inline(never)]
-pub(crate) unsafe fn scale_units(uc: *mut Context, mut target_meters: Real) -> Result<(), Fail> {
-    if (*uc).scene.settings.unit_meters <= 0.0f32 as Real {
+pub(crate) unsafe fn scale_units(uc: &Context, mut target_meters: Real) -> Result<(), Fail> {
+    if (*uc.get()).scene.settings.unit_meters <= 0.0f32 as Real {
         return Ok(());
     }
     target_meters = round_if_near(POW10_TARGETS.as_ptr(), POW10_TARGETS.len(), target_meters);
 
-    let mut ratio: Real = (*uc).scene.settings.unit_meters / target_meters;
+    let mut ratio: Real = (*uc.get()).scene.settings.unit_meters / target_meters;
     ratio = round_if_near(POW10_TARGETS.as_ptr(), POW10_TARGETS.len(), ratio);
     if ratio == 1.0f32 as Real {
         return Ok(());
     }
 
-    (*uc).unit_scale = ratio;
+    (*uc.get()).unit_scale = ratio;
 
-    if (*uc).opts.space_conversion == SpaceConversion::TransformRoot {
-        let root_node: *mut Node = ref_ptr(&(*uc).scene.root_node);
+    if (*uc.get()).opts.space_conversion == SpaceConversion::TransformRoot {
+        let root_node: *mut Node = ref_ptr(&(*uc.get()).scene.root_node);
         (*root_node).local_transform.scale.x *= ratio;
         (*root_node).local_transform.scale.y *= ratio;
         (*root_node).local_transform.scale.z *= ratio;

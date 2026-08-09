@@ -507,7 +507,7 @@ pub(crate) struct ObjContext {
 // are inlined by the bindings generator — the `Option<unsafe extern "C" fn>`
 // signatures below match the generated `Stream` callback fields byte-for-byte.
 #[repr(C)]
-pub(crate) struct Context {
+pub(crate) struct InnerContext {
     pub error: Error,
     pub version: u32,
     pub exporter: Exporter,
@@ -684,18 +684,40 @@ pub(crate) struct Context {
     pub base64_table: *mut u8,
 }
 
+// Shared handle to the parser context threaded through the load/read pipeline.
+// `UnsafeCell` grants interior mutability through a shared `&Context`
+// (many pointers alias the context and its embedded buffers at once);
+// `MaybeUninit` drops the value-validity requirement, so `&Context` is
+// sound even while `InnerContext` holds C/file-sourced bytes that are not always
+// valid Rust values (partially-built `scene`/`root`/`legacy_node`, enums copied
+// verbatim from options). `.get()` yields the raw `*mut InnerContext` the C-style
+// body code dereferences; `#[repr(transparent)]` keeps the layout identical to
+// `InnerContext`.
+#[repr(transparent)]
+pub(crate) struct Context(pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerContext>>);
+
+impl Context {
+    #[inline(always)]
+    pub(crate) fn get(&self) -> *mut InnerContext {
+        self.0.get().cast()
+    }
+
+    // Reborrow a raw `*mut InnerContext` as `&Context` (layout-identical via
+    // `repr(transparent)`). For the nullable-context (`maybe_uc`) call paths.
+    // SAFETY: `ptr` must be non-null and point to a live context allocation.
+    #[inline(always)]
+    pub(crate) unsafe fn from_ptr<'a>(ptr: *mut InnerContext) -> &'a Context {
+        &*(ptr as *const Context)
+    }
+}
+
 // ufbx.c:6652-6655 `ufbxi_fail_imp`
 // Expansion target of the `_msg` forms of the uc-context check macros
 // (`native::error::ufbxi_check_msg!` etc.) in BOTH stack modes, and of the
 // no-msg forms under `error-stack`.
 #[inline(never)]
-pub(crate) unsafe fn fail_imp(
-    uc: *mut Context,
-    cond: *const u8,
-    func: *const u8,
-    line: u32,
-) -> i32 {
-    crate::native::error::fail_imp_err(&mut (*uc).error, cond, func, line)
+pub(crate) unsafe fn fail_imp(uc: &Context, cond: *const u8, func: *const u8, line: u32) -> i32 {
+    crate::native::error::fail_imp_err(&mut (*uc.get()).error, cond, func, line)
 }
 
 // ufbx.c:6657-6662 (`#else` branch of `UFBXI_FEATURE_ERROR_STACK`)
@@ -703,49 +725,56 @@ pub(crate) unsafe fn fail_imp(
 // macros when the error stack is disabled.
 #[cfg(not(feature = "error-stack"))]
 #[inline(never)]
-pub(crate) unsafe fn fail_imp_no_stack(uc: *mut Context) -> i32 {
-    crate::native::error::fail_imp_err(&mut (*uc).error, core::ptr::null(), core::ptr::null(), 0)
+pub(crate) unsafe fn fail_imp_no_stack(uc: &Context) -> i32 {
+    crate::native::error::fail_imp_err(
+        &mut (*uc.get()).error,
+        core::ptr::null(),
+        core::ptr::null(),
+        0,
+    )
 }
 
 // -- Progress
 
 // ufbx.c:6678-6681 `ufbxi_get_read_offset`
 #[inline(always)]
-pub(crate) unsafe fn get_read_offset(uc: *mut Context) -> u64 {
-    (*uc)
+pub(crate) unsafe fn get_read_offset(uc: &Context) -> u64 {
+    (*uc.get())
         .data_offset
-        .wrapping_add(to_size((*uc).data.offset_from((*uc).data_begin)) as u64)
+        .wrapping_add(to_size((*uc.get()).data.offset_from((*uc.get()).data_begin)) as u64)
 }
 
 // ufbx.c:6683-6702 `ufbxi_report_progress`
 // C: `ufbxi_nodiscard static ufbxi_noinline int` — `return 1` becomes
 // `Ok(())`, the `ufbxi_check_msg` failure path returns `Err(Fail)`.
 #[inline(never)]
-pub(crate) unsafe fn report_progress(uc: *mut Context) -> Result<(), Fail> {
-    if (*uc).opts.progress_cb.fn_.is_none() {
+pub(crate) unsafe fn report_progress(uc: &Context) -> Result<(), Fail> {
+    if (*uc.get()).opts.progress_cb.fn_.is_none() {
         return Ok(());
     }
 
     let read_offset: u64 = get_read_offset(uc);
-    (*uc).latest_progress_bytes = read_offset;
+    (*uc.get()).latest_progress_bytes = read_offset;
 
     let mut progress = Progress {
         bytes_read: 0,
         bytes_total: 0,
     };
     progress.bytes_read = read_offset;
-    progress.bytes_total = (*uc).progress_bytes_total;
+    progress.bytes_total = (*uc.get()).progress_bytes_total;
     if progress.bytes_total < progress.bytes_read {
         progress.bytes_total = progress.bytes_read;
     }
 
-    (*uc).progress_timer = 1024;
+    (*uc.get()).progress_timer = 1024;
     // C: `(uint32_t)uc->opts.progress_cb.fn(uc->opts.progress_cb.user, &progress)`
     // — the callback is `extern "C"`; the generated signature returns the enum
     // as a raw u32 (`RawEnum<ProgressResult>`).
-    let result: u32 =
-        ((*uc).opts.progress_cb.fn_.unwrap_unchecked())((*uc).opts.progress_cb.user, &progress)
-            .as_raw();
+    let result: u32 = ((*uc.get()).opts.progress_cb.fn_.unwrap_unchecked())(
+        (*uc.get()).opts.progress_cb.user,
+        &progress,
+    )
+    .as_raw();
     ufbx_assert!(
         result == ProgressResult::Continue as u32 || result == ProgressResult::Cancel as u32
     );
@@ -765,15 +794,15 @@ pub(crate) unsafe fn report_progress(uc: *mut Context) -> Result<(), Fail> {
 // `ufbxi_unused` marker, which maps to this item-level attribute.
 #[allow(dead_code)]
 #[inline(always)]
-pub(crate) unsafe fn progress(uc: *mut Context, work_units: usize) -> Result<(), Fail> {
-    if (*uc).opts.progress_cb.fn_.is_none() {
+pub(crate) unsafe fn progress(uc: &Context, work_units: usize) -> Result<(), Fail> {
+    if (*uc.get()).opts.progress_cb.fn_.is_none() {
         return Ok(());
     }
     // C: `uc->progress_timer - (ptrdiff_t)work_units` — signed arithmetic on
     // values that stay tiny in practice; wrapping matches the release-build
     // C behavior if it ever did overflow.
-    let left: isize = (*uc).progress_timer.wrapping_sub(work_units as isize);
-    (*uc).progress_timer = left;
+    let left: isize = (*uc.get()).progress_timer.wrapping_sub(work_units as isize);
+    (*uc.get()).progress_timer = left;
     if left > 0 {
         return Ok(());
     }
@@ -1210,48 +1239,44 @@ pub(crate) unsafe fn find_child_strcmp(node: *mut Node, name: *const u8) -> *mut
 // ufbx.c:7881-7896 `ufbxi_push_element_extra_size`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn push_element_extra_size(
-    uc: *mut Context,
-    id: u32,
-    size: usize,
-) -> *mut c_void {
-    if (*uc).element_extra_cap <= id as usize {
-        let old_cap: usize = (*uc).element_extra_cap;
+pub(crate) unsafe fn push_element_extra_size(uc: &Context, id: u32, size: usize) -> *mut c_void {
+    if (*uc.get()).element_extra_cap <= id as usize {
+        let old_cap: usize = (*uc.get()).element_extra_cap;
         // C: `id + 1` is `uint32_t` arithmetic before the `size_t` conversion.
         ufbxi_check_return!(
             uc,
             grow_array(
-                &raw mut (*uc).ator_tmp,
-                &mut (*uc).element_extra_arr,
-                &mut (*uc).element_extra_cap,
+                &raw mut (*uc.get()).ator_tmp,
+                &mut (*uc.get()).element_extra_arr,
+                &mut (*uc.get()).element_extra_cap,
                 id.wrapping_add(1) as usize
             ),
             core::ptr::null_mut(),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->element_extra_arr)), (&uc->element_extra_arr), (&uc->element_extra_cap), (id + 1))"
         );
         core::ptr::write_bytes(
-            (*uc).element_extra_arr.add(old_cap) as *mut u8,
+            (*uc.get()).element_extra_arr.add(old_cap) as *mut u8,
             0,
-            ((*uc).element_extra_cap - old_cap) * size_of::<*mut c_void>(),
+            ((*uc.get()).element_extra_cap - old_cap) * size_of::<*mut c_void>(),
         );
     }
 
-    if !(*(*uc).element_extra_arr.add(id as usize)).is_null() {
-        return *(*uc).element_extra_arr.add(id as usize);
+    if !(*(*uc.get()).element_extra_arr.add(id as usize)).is_null() {
+        return *(*uc.get()).element_extra_arr.add(id as usize);
     }
 
-    let extra: *mut c_void = push_size_zero(&mut (*uc).tmp, size, 1);
+    let extra: *mut c_void = push_size_zero(&mut (*uc.get()).tmp, size, 1);
     ufbxi_check_return!(uc, !extra.is_null(), core::ptr::null_mut(), "extra");
-    *(*uc).element_extra_arr.add(id as usize) = extra;
+    *(*uc.get()).element_extra_arr.add(id as usize) = extra;
 
     extra
 }
 
 // ufbx.c:7898-7905 `ufbxi_get_element_extra`
 #[inline(never)]
-pub(crate) unsafe fn get_element_extra(uc: *mut Context, id: u32) -> *mut c_void {
-    if (id as usize) < (*uc).element_extra_cap {
-        *(*uc).element_extra_arr.add(id as usize)
+pub(crate) unsafe fn get_element_extra(uc: &Context, id: u32) -> *mut c_void {
+    if (id as usize) < (*uc.get()).element_extra_cap {
+        *(*uc.get()).element_extra_arr.add(id as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -1260,7 +1285,7 @@ pub(crate) unsafe fn get_element_extra(uc: *mut Context, id: u32) -> *mut c_void
 // ufbx.c:7907 `#define ufbxi_push_element_extra(uc, id, type) (type*)ufbxi_push_element_extra_size((uc), (id), sizeof(type))`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn push_element_extra<T>(uc: *mut Context, id: u32) -> *mut T {
+pub(crate) unsafe fn push_element_extra<T>(uc: &Context, id: u32) -> *mut T {
     push_element_extra_size(uc, id, size_of::<T>()) as *mut T
 }
 
@@ -1563,7 +1588,7 @@ pub(crate) unsafe fn update_parse_state(parent: ParseState, name: *const u8) -> 
 // `info->flags |= ...` forms accumulate onto it — the split is load-bearing and
 // ports verbatim.
 pub(crate) unsafe fn is_array_node(
-    uc: *mut Context,
+    uc: &Context,
     parent: ParseState,
     name: *const u8,
     info: *mut ArrayInfo,
@@ -1571,7 +1596,7 @@ pub(crate) unsafe fn is_array_node(
     (*info).flags = 0;
 
     // Retain all arrays if user wants the DOM representation
-    if (*uc).opts.retain_dom {
+    if (*uc.get()).opts.retain_dom {
         (*info).flags |= ARRAY_FLAG_RESULT;
     }
 
@@ -1586,7 +1611,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::Geometry | ParseState::Model => {
             if name == sp::Vertices.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1594,7 +1619,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::PolygonVertexIndex.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -1602,14 +1627,14 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Edges.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
                 };
                 return true;
             } else if name == sp::Indexes.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -1617,7 +1642,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Points.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1625,7 +1650,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::KnotVector.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1633,7 +1658,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::KnotVectorU.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1641,7 +1666,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::KnotVectorV.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1649,7 +1674,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::PointsIndex.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -1657,7 +1682,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Normals.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1669,7 +1694,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LegacyModel => {
             if name == sp::Vertices.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1677,7 +1702,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::Normals.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1685,7 +1710,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::Materials.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -1693,7 +1718,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::PolygonVertexIndex.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -1708,21 +1733,21 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::AnimationCurve => {
             if name == sp::KeyTime.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_animation {
+                (*info).type_ = if (*uc.get()).opts.ignore_animation {
                     b'-'
                 } else {
                     b'l'
                 };
                 return true;
             } else if name == sp::KeyValueFloat.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_animation {
+                (*info).type_ = if (*uc.get()).opts.ignore_animation {
                     b'-'
                 } else {
                     b'r'
                 };
                 return true;
             } else if name == sp::KeyAttrFlags.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_animation {
+                (*info).type_ = if (*uc.get()).opts.ignore_animation {
                     b'-'
                 } else {
                     b'i'
@@ -1731,20 +1756,20 @@ pub(crate) unsafe fn is_array_node(
             } else if name == sp::KeyAttrDataFloat.as_ptr() {
                 // The float data in a keyframe attribute array is represented as integers
                 // in versions >= 7200 as some of the elements aren't actually floats (!)
-                (*info).type_ = if (*uc).from_ascii && (*uc).version >= 7200 {
+                (*info).type_ = if (*uc.get()).from_ascii && (*uc.get()).version >= 7200 {
                     b'i'
                 } else {
                     b'f'
                 };
-                if (*uc).opts.ignore_animation {
+                if (*uc.get()).opts.ignore_animation {
                     (*info).type_ = b'-';
                 }
-                if (*uc).from_ascii && (*uc).version < 7200 {
+                if (*uc.get()).from_ascii && (*uc.get()).version < 7200 {
                     (*info).flags |= ARRAY_FLAG_ACCURATE_F32;
                 }
                 return true;
             } else if name == sp::KeyAttrRefCount.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_animation {
+                (*info).type_ = if (*uc.get()).opts.ignore_animation {
                     b'-'
                 } else {
                     b'i'
@@ -1758,14 +1783,18 @@ pub(crate) unsafe fn is_array_node(
                 || strcmp(name, b"ModelUVScaling\0".as_ptr()) == 0
                 || strcmp(name, b"Cropping\0".as_ptr()) == 0
             {
-                (*info).type_ = if (*uc).opts.retain_dom { b'r' } else { b'-' };
+                (*info).type_ = if (*uc.get()).opts.retain_dom {
+                    b'r'
+                } else {
+                    b'-'
+                };
                 return true;
             }
         }
 
         ParseState::Video => {
             if name == sp::Content.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_embedded {
+                (*info).type_ = if (*uc.get()).opts.ignore_embedded {
                     b'-'
                 } else {
                     b'C'
@@ -1804,7 +1833,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementNormal => {
             if name == sp::Normals.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1812,7 +1841,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::NormalsIndex.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -1820,7 +1849,11 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::NormalsW.as_ptr() {
-                (*info).type_ = if (*uc).retain_vertex_w { b'r' } else { b'-' };
+                (*info).type_ = if (*uc.get()).retain_vertex_w {
+                    b'r'
+                } else {
+                    b'-'
+                };
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
@@ -1828,7 +1861,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementBinormal => {
             if name == sp::Binormals.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1836,7 +1869,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::BinormalsIndex.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -1844,7 +1877,11 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::BinormalsW.as_ptr() {
-                (*info).type_ = if (*uc).retain_vertex_w { b'r' } else { b'-' };
+                (*info).type_ = if (*uc.get()).retain_vertex_w {
+                    b'r'
+                } else {
+                    b'-'
+                };
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
@@ -1852,7 +1889,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementTangent => {
             if name == sp::Tangents.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1860,7 +1897,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::TangentsIndex.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -1868,7 +1905,11 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::TangentsW.as_ptr() {
-                (*info).type_ = if (*uc).retain_vertex_w { b'r' } else { b'-' };
+                (*info).type_ = if (*uc.get()).retain_vertex_w {
+                    b'r'
+                } else {
+                    b'-'
+                };
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
@@ -1876,7 +1917,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementUv => {
             if name == sp::UV.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1884,7 +1925,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::UVIndex.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -1896,7 +1937,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementColor => {
             if name == sp::Colors.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1904,7 +1945,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::ColorIndex.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -1916,7 +1957,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementVertexCrease => {
             if name == sp::VertexCrease.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1924,7 +1965,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::VertexCreaseIndex.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -1936,7 +1977,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementEdgeCrease => {
             if name == sp::EdgeCrease.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -1948,7 +1989,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementSmoothing => {
             if name == sp::Smoothing.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'b'
@@ -1960,7 +2001,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementVisibility => {
             if name == sp::Visibility.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'b'
@@ -1972,7 +2013,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementPolygonGroup => {
             if name == sp::PolygonGroup.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -1984,7 +2025,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementHole => {
             if name == sp::Hole.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'b'
@@ -1996,7 +2037,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementMaterial => {
             if name == sp::Materials.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -2008,7 +2049,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementOther => {
             if name == sp::TextureId.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -2016,17 +2057,25 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags |= ARRAY_FLAG_TMP_BUF;
                 return true;
             } else if name == sp::UV.as_ptr() {
-                (*info).type_ = if (*uc).opts.retain_dom { b'r' } else { b'-' };
+                (*info).type_ = if (*uc.get()).opts.retain_dom {
+                    b'r'
+                } else {
+                    b'-'
+                };
                 return true;
             } else if name == sp::UVIndex.as_ptr() {
-                (*info).type_ = if (*uc).opts.retain_dom { b'i' } else { b'-' };
+                (*info).type_ = if (*uc.get()).opts.retain_dom {
+                    b'i'
+                } else {
+                    b'-'
+                };
                 return true;
             }
         }
 
         ParseState::GeometryUvInfo => {
             if name == sp::TextureUV.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -2034,7 +2083,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::TextureUVVerticeIndex.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -2046,7 +2095,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::Shape => {
             if name == sp::Indexes.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -2055,7 +2104,7 @@ pub(crate) unsafe fn is_array_node(
                 return true;
             }
             if name == sp::Vertices.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -2064,7 +2113,7 @@ pub(crate) unsafe fn is_array_node(
                 return true;
             }
             if name == sp::Normals.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -2082,7 +2131,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).type_ = b'r';
                 return true;
             } else if name == sp::Indexes.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -2090,7 +2139,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Weights.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -2098,7 +2147,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::BlendWeights.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -2108,21 +2157,29 @@ pub(crate) unsafe fn is_array_node(
             } else if name == sp::FullWeights.as_ptr() {
                 (*info).type_ = b'r';
                 (*info).flags = ((*info).flags
-                    | (if (*uc).blender_full_weights {
+                    | (if (*uc.get()).blender_full_weights {
                         ARRAY_FLAG_RESULT
                     } else {
                         ARRAY_FLAG_TMP_BUF
                     })) as u8;
                 return true;
             } else if strcmp(name, b"TransformAssociateModel\0".as_ptr()) == 0 {
-                (*info).type_ = if (*uc).opts.retain_dom { b'r' } else { b'-' };
+                (*info).type_ = if (*uc.get()).opts.retain_dom {
+                    b'r'
+                } else {
+                    b'-'
+                };
                 return true;
             }
         }
 
         ParseState::AssociateModel => {
             if name == sp::Transform.as_ptr() {
-                (*info).type_ = if (*uc).opts.retain_dom { b'r' } else { b'-' };
+                (*info).type_ = if (*uc.get()).opts.retain_dom {
+                    b'r'
+                } else {
+                    b'-'
+                };
                 return true;
             }
         }
@@ -2135,7 +2192,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).type_ = b'r';
                 return true;
             } else if name == sp::Indexes.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'i'
@@ -2143,7 +2200,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Weights.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_geometry {
+                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
                     b'-'
                 } else {
                     b'r'
@@ -2162,7 +2219,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::Channel => {
             if name == sp::Key.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_animation {
+                (*info).type_ = if (*uc.get()).opts.ignore_animation {
                     b'-'
                 } else {
                     b'd'
@@ -2173,7 +2230,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::Audio => {
             if name == sp::Content.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_embedded {
+                (*info).type_ = if (*uc.get()).opts.ignore_embedded {
                     b'-'
                 } else {
                     b'C'
@@ -2184,7 +2241,7 @@ pub(crate) unsafe fn is_array_node(
 
         _ => {
             if name == sp::BinaryData.as_ptr() {
-                (*info).type_ = if (*uc).opts.ignore_embedded {
+                (*info).type_ = if (*uc.get()).opts.ignore_embedded {
                     b'-'
                 } else {
                     b'C'
@@ -2200,7 +2257,7 @@ pub(crate) unsafe fn is_array_node(
 // ufbx.c:8508-8606 `ufbxi_is_raw_string`
 #[inline(never)]
 pub(crate) unsafe fn is_raw_string(
-    uc: *mut Context,
+    uc: &Context,
     parent: ParseState,
     name: *const u8,
     index: usize,
@@ -2230,7 +2287,7 @@ pub(crate) unsafe fn is_raw_string(
         ParseState::Connections | ParseState::Relations => {
             // Pre-7000 needs raw strings for "Name\x00\x01Type" pairs, post-7000 uses it only
             // for properties that are non-raw by default.
-            return (*uc).version < 7000;
+            return (*uc.get()).version < 7000;
         }
 
         ParseState::Model => {
@@ -2363,7 +2420,7 @@ pub(crate) struct DomMapping {
 // ufbx.c:10703-10710 `ufbxi_get_dom_node_imp`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn get_dom_node_imp(uc: *mut Context, node: *mut Node) -> *mut DomNode {
+pub(crate) unsafe fn get_dom_node_imp(uc: &Context, node: *mut Node) -> *mut DomNode {
     if node.is_null() {
         return core::ptr::null_mut();
     }
@@ -2373,7 +2430,7 @@ pub(crate) unsafe fn get_dom_node_imp(uc: *mut Context, node: *mut Node) -> *mut
     };
     let hash = hash_uptr(mapping.node_ptr);
     let result: *mut DomMapping = map_find(
-        &mut (*uc).dom_node_map,
+        &mut (*uc.get()).dom_node_map,
         hash,
         &mapping as *const DomMapping as *const c_void,
     );
@@ -2387,8 +2444,8 @@ pub(crate) unsafe fn get_dom_node_imp(uc: *mut Context, node: *mut Node) -> *mut
 // ufbx.c:10712-10716 `ufbxi_get_dom_node`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn get_dom_node(uc: *mut Context, node: *mut Node) -> *mut DomNode {
-    if !(*uc).opts.retain_dom {
+pub(crate) unsafe fn get_dom_node(uc: &Context, node: *mut Node) -> *mut DomNode {
+    if !(*uc.get()).opts.retain_dom {
         return core::ptr::null_mut();
     }
     get_dom_node_imp(uc, node)
@@ -2401,7 +2458,7 @@ pub(crate) unsafe fn get_dom_node(uc: *mut Context, node: *mut Node) -> *mut Dom
 // recursive body; otherwise the macro is empty and the wrapper is a plain call.
 #[inline(never)]
 pub(crate) unsafe fn retain_dom_node(
-    uc: *mut Context,
+    uc: &Context,
     node: *mut Node,
     p_dom_node: *mut *mut DomNode,
 ) -> Result<(), Fail> {
@@ -2426,15 +2483,15 @@ pub(crate) unsafe fn retain_dom_node(
 
 #[inline(never)]
 unsafe fn retain_dom_node_rec(
-    uc: *mut Context,
+    uc: &Context,
     node: *mut Node,
     p_dom_node: *mut *mut DomNode,
 ) -> Result<(), Fail> {
-    let dst: *mut DomNode = push_zero(&mut (*uc).result, 1);
+    let dst: *mut DomNode = push_zero(&mut (*uc.get()).result, 1);
     ufbxi_check!(uc, !dst.is_null(), "dst");
     ufbxi_check!(
         uc,
-        !push_copy::<*mut DomNode>(&mut (*uc).tmp_dom_nodes, 1, &dst).is_null(),
+        !push_copy::<*mut DomNode>(&mut (*uc.get()).tmp_dom_nodes, 1, &dst).is_null(),
         "((ufbx_dom_node**)ufbxi_push_size_copy((&uc->tmp_dom_nodes), sizeof(ufbx_dom_node*), (1), (&dst)))"
     );
 
@@ -2452,13 +2509,13 @@ unsafe fn retain_dom_node_rec(
         };
         let hash = hash_uptr(mapping.node_ptr);
         let mut result: *mut DomMapping = map_find(
-            &mut (*uc).dom_node_map,
+            &mut (*uc.get()).dom_node_map,
             hash,
             &mapping as *const DomMapping as *const c_void,
         );
         if result.is_null() {
             result = map_insert(
-                &mut (*uc).dom_node_map,
+                &mut (*uc.get()).dom_node_map,
                 hash,
                 &mapping as *const DomMapping as *const c_void,
             );
@@ -2468,11 +2525,11 @@ unsafe fn retain_dom_node_rec(
         (*result).dom_node = dst;
     }
 
-    sp::push_string_place_str(&mut (*uc).string_pool, &mut (*dst).name, false)?;
+    sp::push_string_place_str(&mut (*uc.get()).string_pool, &mut (*dst).name, false)?;
 
     if (*node).value_type_mask == ValueType::Array as u16 {
         let arr = (*node).content.array;
-        let val: *mut DomValue = push_zero(&mut (*uc).result, 1);
+        let val: *mut DomValue = push_zero(&mut (*uc.get()).result, 1);
         ufbxi_check!(uc, !val.is_null(), "val");
 
         (*dst).values.data = val;
@@ -2506,7 +2563,7 @@ unsafe fn retain_dom_node_rec(
             if mask == 0 {
                 break;
             }
-            let val: *mut DomValue = push_zero(&mut (*uc).tmp_stack, 1);
+            let val: *mut DomValue = push_zero(&mut (*uc.get()).tmp_stack, 1);
             ufbxi_check!(uc, !val.is_null(), "val");
             (*val).value_str.data = EMPTY_CHAR.as_ptr();
 
@@ -2538,7 +2595,8 @@ unsafe fn retain_dom_node_rec(
         }
 
         (*dst).values.count = ix;
-        (*dst).values.data = push_pop::<DomValue>(&mut (*uc).result, &mut (*uc).tmp_stack, ix);
+        (*dst).values.data =
+            push_pop::<DomValue>(&mut (*uc.get()).result, &mut (*uc.get()).tmp_stack, ix);
         ufbxi_check!(uc, !(*dst).values.data.is_null(), "dst->values.data");
     }
 
@@ -2554,8 +2612,8 @@ unsafe fn retain_dom_node_rec(
 
         (*dst).children.count = (*node).num_children as usize;
         (*dst).children.data = push_pop::<*mut DomNode>(
-            &mut (*uc).result,
-            &mut (*uc).tmp_dom_nodes,
+            &mut (*uc.get()).result,
+            &mut (*uc.get()).tmp_dom_nodes,
             (*node).num_children as usize,
         ) as *const Ref<DomNode>;
         ufbxi_check!(uc, !(*dst).children.data.is_null(), "dst->children.data");
@@ -2566,38 +2624,41 @@ unsafe fn retain_dom_node_rec(
 
 // ufbx.c:10813-10844 `ufbxi_retain_toplevel`
 #[inline(never)]
-pub(crate) unsafe fn retain_toplevel(uc: *mut Context, node: *mut Node) -> Result<(), Fail> {
-    if (*uc).dom_parse_num_children > 0 {
+pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<(), Fail> {
+    if (*uc.get()).dom_parse_num_children > 0 {
         let children: *mut *mut DomNode = push_pop(
-            &mut (*uc).result,
-            &mut (*uc).tmp_dom_nodes,
-            (*uc).dom_parse_num_children,
+            &mut (*uc.get()).result,
+            &mut (*uc.get()).tmp_dom_nodes,
+            (*uc.get()).dom_parse_num_children,
         );
         ufbxi_check!(uc, !children.is_null(), "children");
-        (*(*uc).dom_parse_toplevel).children.data = children as *const Ref<DomNode>;
-        (*(*uc).dom_parse_toplevel).children.count = (*uc).dom_parse_num_children;
-        (*uc).dom_parse_num_children = 0;
+        (*(*uc.get()).dom_parse_toplevel).children.data = children as *const Ref<DomNode>;
+        (*(*uc.get()).dom_parse_toplevel).children.count = (*uc.get()).dom_parse_num_children;
+        (*uc.get()).dom_parse_num_children = 0;
     }
 
     if !node.is_null() {
-        retain_dom_node(uc, node, &mut (*uc).dom_parse_toplevel)?;
+        retain_dom_node(uc, node, &mut (*uc.get()).dom_parse_toplevel)?;
     } else {
-        (*uc).dom_parse_toplevel = core::ptr::null_mut();
+        (*uc.get()).dom_parse_toplevel = core::ptr::null_mut();
 
         // Called with NULL argument to finish retaining DOM, collect the final nodes to `ufbx_scene`.
-        let num_top_nodes = (*uc).tmp_dom_nodes.num_items;
-        let nodes: *mut *mut DomNode =
-            push_pop(&mut (*uc).result, &mut (*uc).tmp_dom_nodes, num_top_nodes);
+        let num_top_nodes = (*uc.get()).tmp_dom_nodes.num_items;
+        let nodes: *mut *mut DomNode = push_pop(
+            &mut (*uc.get()).result,
+            &mut (*uc.get()).tmp_dom_nodes,
+            num_top_nodes,
+        );
         ufbxi_check!(uc, !nodes.is_null(), "nodes");
 
-        let dom_root: *mut DomNode = push_zero(&mut (*uc).result, 1);
+        let dom_root: *mut DomNode = push_zero(&mut (*uc.get()).result, 1);
         ufbxi_check!(uc, !dom_root.is_null(), "dom_root");
 
         (*dom_root).name.data = EMPTY_CHAR.as_ptr();
         (*dom_root).children.data = nodes as *const Ref<DomNode>;
         (*dom_root).children.count = num_top_nodes;
 
-        (*uc).scene.dom_root = Some(Ref::from_ptr(dom_root));
+        (*uc.get()).scene.dom_root = Some(Ref::from_ptr(dom_root));
     }
 
     Ok(())
@@ -2605,10 +2666,10 @@ pub(crate) unsafe fn retain_toplevel(uc: *mut Context, node: *mut Node) -> Resul
 
 // ufbx.c:10846-10853 `ufbxi_retain_toplevel_child`
 #[inline(never)]
-pub(crate) unsafe fn retain_toplevel_child(uc: *mut Context, child: *mut Node) -> Result<(), Fail> {
-    ufbx_assert!(!(*uc).dom_parse_toplevel.is_null());
+pub(crate) unsafe fn retain_toplevel_child(uc: &Context, child: *mut Node) -> Result<(), Fail> {
+    ufbx_assert!(!(*uc.get()).dom_parse_toplevel.is_null());
     retain_dom_node(uc, child, core::ptr::null_mut())?;
-    (*uc).dom_parse_num_children = (*uc).dom_parse_num_children.wrapping_add(1);
+    (*uc.get()).dom_parse_num_children = (*uc.get()).dom_parse_num_children.wrapping_add(1);
 
     Ok(())
 }
@@ -2989,16 +3050,16 @@ pub(crate) const MIN_FILE_FORMAT_LOOKAHEAD: usize = 32;
 // ufbx.c:11130-11191 `ufbxi_determine_format`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn determine_format(uc: *mut Context) -> Result<(), Fail> {
-    let mut format: FileFormat = (*uc).opts.file_format;
+pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
+    let mut format: FileFormat = (*uc.get()).opts.file_format;
 
-    if format == FileFormat::Unknown && !(*uc).opts.no_format_from_content {
+    if format == FileFormat::Unknown && !(*uc.get()).opts.no_format_from_content {
         crate::native::io::pause_progress(uc);
 
         let mut lookahead: usize = MIN_FILE_FORMAT_LOOKAHEAD;
-        while format == FileFormat::Unknown && lookahead <= (*uc).opts.file_format_lookahead {
-            if lookahead > (*uc).data_size {
-                if (*uc).eof {
+        while format == FileFormat::Unknown && lookahead <= (*uc.get()).opts.file_format_lookahead {
+            if lookahead > (*uc.get()).data_size {
+                if (*uc.get()).eof {
                     break;
                 }
                 ufbxi_check!(
@@ -3008,14 +3069,14 @@ pub(crate) unsafe fn determine_format(uc: *mut Context) -> Result<(), Fail> {
                 );
             }
 
-            let data_size: usize = min_sz(lookahead, (*uc).data_size);
+            let data_size: usize = min_sz(lookahead, (*uc.get()).data_size);
             ufbxi_check_msg!(uc, data_size > 0, "Empty file");
 
             // C: `for (uint32_t fmt = UFBX_FILE_FORMAT_FBX; fmt < UFBX_FILE_FORMAT_COUNT; fmt++)`
             let mut fmt: u32 = FileFormat::Fbx as u32;
             while fmt < FILE_FORMAT_COUNT {
                 if is_format(
-                    (*uc).data,
+                    (*uc.get()).data,
                     data_size,
                     core::mem::transmute::<u32, FileFormat>(fmt),
                 ) {
@@ -3025,10 +3086,10 @@ pub(crate) unsafe fn determine_format(uc: *mut Context) -> Result<(), Fail> {
                 fmt += 1;
             }
 
-            if lookahead >= (*uc).opts.file_format_lookahead {
+            if lookahead >= (*uc.get()).opts.file_format_lookahead {
                 break;
             } else if lookahead < usize::MAX / 2 {
-                lookahead = min_sz(lookahead * 2, (*uc).opts.file_format_lookahead);
+                lookahead = min_sz(lookahead * 2, (*uc.get()).opts.file_format_lookahead);
             } else {
                 lookahead = usize::MAX;
             }
@@ -3037,11 +3098,13 @@ pub(crate) unsafe fn determine_format(uc: *mut Context) -> Result<(), Fail> {
         crate::native::io::resume_progress(uc)?;
     }
 
-    if format == FileFormat::Unknown && !(*uc).opts.no_format_from_extension {
-        if (*uc).opts.filename.length > 0 {
+    if format == FileFormat::Unknown && !(*uc.get()).opts.no_format_from_extension {
+        if (*uc.get()).opts.filename.length > 0 {
             // C: `ufbx_string extension = uc->opts.filename;`
-            let mut extension: String =
-                String::new_c((*uc).opts.filename.data, (*uc).opts.filename.length);
+            let mut extension: String = String::new_c(
+                (*uc.get()).opts.filename.data,
+                (*uc.get()).opts.filename.length,
+            );
             let mut i: usize = extension.length;
             while i > 0 {
                 if *extension.data.add(i - 1) == b'.' {
@@ -3068,7 +3131,7 @@ pub(crate) unsafe fn determine_format(uc: *mut Context) -> Result<(), Fail> {
         "Unrecognized file format",
         "format != UFBX_FILE_FORMAT_UNKNOWN"
     );
-    (*uc).scene.metadata.file_format = format;
+    (*uc.get()).scene.metadata.file_format = format;
 
     Ok(())
 }
@@ -3076,7 +3139,7 @@ pub(crate) unsafe fn determine_format(uc: *mut Context) -> Result<(), Fail> {
 // ufbx.c:11193-11240 `ufbxi_begin_parse`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn begin_parse(uc: *mut Context) -> Result<(), Fail> {
+pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
     let header: *const u8 = crate::native::io::peek_bytes(uc, BINARY_HEADER_SIZE);
     ufbxi_check!(uc, !header.is_null(), "header");
 
@@ -3085,45 +3148,52 @@ pub(crate) unsafe fn begin_parse(uc: *mut Context) -> Result<(), Fail> {
     if memcmp(header, BINARY_MAGIC.as_ptr(), BINARY_MAGIC_SIZE) == 0 {
         // The byte after the magic indicates endianness
         let endian: u8 = *header.add(BINARY_MAGIC_SIZE + 0);
-        (*uc).file_big_endian = endian != 0;
+        (*uc.get()).file_big_endian = endian != 0;
 
         // Read the version directly from the header
         let mut version_word: *const u8 = header.add(BINARY_MAGIC_SIZE + 1);
-        if (*uc).file_big_endian {
+        if (*uc.get()).file_big_endian {
             version_word =
                 crate::native::parse_binary::swap_endian(uc, version_word as *const c_void, 1, 4);
             ufbxi_check!(uc, !version_word.is_null(), "version_word");
         }
-        (*uc).version = read_u32(version_word);
+        (*uc.get()).version = read_u32(version_word);
 
         // This is quite probably an FBX file..
-        (*uc).sure_fbx = true;
+        (*uc.get()).sure_fbx = true;
         crate::native::io::consume_bytes(uc, BINARY_HEADER_SIZE);
     } else {
-        (*uc).from_ascii = true;
+        (*uc.get()).from_ascii = true;
 
         // Use the current read buffer as the initial parse buffer
         // C: `memset(&uc->ascii, 0, sizeof(uc->ascii));`
         core::ptr::write_bytes(
-            core::ptr::addr_of_mut!((*uc).ascii) as *mut u8,
+            core::ptr::addr_of_mut!((*uc.get()).ascii) as *mut u8,
             0,
             size_of::<Ascii>(),
         );
-        (*uc).ascii.src = (*uc).data;
-        (*uc).ascii.src_yield = (*uc).data.add((*uc).yield_size);
-        (*uc).ascii.src_end = (*uc).data.add((*uc).data_size + (*uc).yield_size);
+        (*uc.get()).ascii.src = (*uc.get()).data;
+        (*uc.get()).ascii.src_yield = (*uc.get()).data.add((*uc.get()).yield_size);
+        (*uc.get()).ascii.src_end = (*uc.get())
+            .data
+            .add((*uc.get()).data_size + (*uc.get()).yield_size);
 
         // Initialize the first token
-        crate::native::parse_ascii::ascii_next_token(uc, &raw mut (*uc).ascii.token)?;
+        crate::native::parse_ascii::ascii_next_token(uc, &raw mut (*uc.get()).ascii.token)?;
 
         // Default to version 7400 if not found in header
-        if (*uc).version > 0 {
-            (*uc).sure_fbx = true;
+        if (*uc.get()).version > 0 {
+            (*uc.get()).sure_fbx = true;
         } else {
-            if !(*uc).opts.strict {
-                (*uc).version = 7400;
+            if !(*uc.get()).opts.strict {
+                (*uc.get()).version = 7400;
             }
-            ufbxi_check_msg!(uc, (*uc).version > 0, "Not an FBX file", "uc->version > 0");
+            ufbxi_check_msg!(
+                uc,
+                (*uc.get()).version > 0,
+                "Not an FBX file",
+                "uc->version > 0"
+            );
         }
     }
 
@@ -3132,12 +3202,12 @@ pub(crate) unsafe fn begin_parse(uc: *mut Context) -> Result<(), Fail> {
 
 // ufbx.c:11242-11251 `ufbxi_parse_toplevel_child_imp`
 pub(crate) unsafe fn parse_toplevel_child_imp(
-    uc: *mut Context,
+    uc: &Context,
     state: ParseState,
     buf: *mut Buf,
     p_end: *mut bool,
 ) -> Result<(), Fail> {
-    if (*uc).from_ascii {
+    if (*uc.get()).from_ascii {
         crate::native::parse_ascii::ascii_parse_node(uc, 0, state, p_end, buf, true)?;
     } else {
         crate::native::parse_binary::binary_parse_node(uc, 0, state, p_end, buf, true)?;
@@ -3149,36 +3219,36 @@ pub(crate) unsafe fn parse_toplevel_child_imp(
 // ufbx.c:11253-11330 `ufbxi_parse_toplevel`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn parse_toplevel(uc: *mut Context, name: *const u8) -> Result<(), Fail> {
+pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(), Fail> {
     // C: `ufbxi_for(ufbxi_node, node, uc->top_nodes, uc->top_nodes_len)`
-    let mut node: *mut Node = (*uc).top_nodes;
-    let node_end: *mut Node = add_ptr(node, (*uc).top_nodes_len);
+    let mut node: *mut Node = (*uc.get()).top_nodes;
+    let node_end: *mut Node = add_ptr(node, (*uc.get()).top_nodes_len);
     while node != node_end {
         if (*node).name == name {
-            (*uc).top_node = node;
-            (*uc).top_child_index = 0;
+            (*uc.get()).top_node = node;
+            (*uc.get()).top_child_index = 0;
             return Ok(());
         }
         node = node.add(1);
     }
 
     // Reached end and not found in cache
-    if (*uc).parsed_to_end {
-        (*uc).top_node = core::ptr::null_mut();
-        (*uc).top_child_index = 0;
+    if (*uc.get()).parsed_to_end {
+        (*uc.get()).top_node = core::ptr::null_mut();
+        (*uc.get()).top_child_index = 0;
         return Ok(());
     }
 
     loop {
         // Parse the next top-level node
         let mut end: bool = false;
-        if (*uc).from_ascii {
+        if (*uc.get()).from_ascii {
             crate::native::parse_ascii::ascii_parse_node(
                 uc,
                 0,
                 ParseState::Root,
                 &mut end,
-                &mut (*uc).tmp,
+                &mut (*uc.get()).tmp,
                 false,
             )?;
         } else {
@@ -3187,56 +3257,56 @@ pub(crate) unsafe fn parse_toplevel(uc: *mut Context, name: *const u8) -> Result
                 0,
                 ParseState::Root,
                 &mut end,
-                &mut (*uc).tmp,
+                &mut (*uc.get()).tmp,
                 false,
             )?;
         }
 
         // Top-level node not found
         if end {
-            (*uc).top_node = core::ptr::null_mut();
-            (*uc).top_child_index = 0;
-            (*uc).parsed_to_end = true;
-            if (*uc).opts.retain_dom {
+            (*uc.get()).top_node = core::ptr::null_mut();
+            (*uc.get()).top_child_index = 0;
+            (*uc.get()).parsed_to_end = true;
+            if (*uc.get()).opts.retain_dom {
                 retain_toplevel(uc, core::ptr::null_mut())?;
             }
 
             // Not needed anymore
-            buf_free(&mut (*uc).tmp_parse);
+            buf_free(&mut (*uc.get()).tmp_parse);
 
             return Ok(());
         }
 
-        (*uc).top_nodes_len += 1;
+        (*uc.get()).top_nodes_len += 1;
         ufbxi_check!(
             uc,
             grow_array(
-                &raw mut (*uc).ator_tmp,
-                &mut (*uc).top_nodes,
-                &mut (*uc).top_nodes_cap,
-                (*uc).top_nodes_len
+                &raw mut (*uc.get()).ator_tmp,
+                &mut (*uc.get()).top_nodes,
+                &mut (*uc.get()).top_nodes_cap,
+                (*uc.get()).top_nodes_len
             ),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->top_nodes)), (&uc->top_nodes), (&uc->top_nodes_cap), (uc->top_nodes_len))"
         );
-        let node: *mut Node = (*uc).top_nodes.add((*uc).top_nodes_len - 1);
-        pop::<Node>(&mut (*uc).tmp_stack, 1, node);
-        if (*uc).opts.retain_dom {
+        let node: *mut Node = (*uc.get()).top_nodes.add((*uc.get()).top_nodes_len - 1);
+        pop::<Node>(&mut (*uc.get()).tmp_stack, 1, node);
+        if (*uc.get()).opts.retain_dom {
             retain_toplevel(uc, node)?;
         }
 
         // Return if we parsed the right one
         if (*node).name == name {
-            (*uc).top_node = node;
-            (*uc).top_child_index = usize::MAX;
+            (*uc.get()).top_node = node;
+            (*uc.get()).top_child_index = usize::MAX;
             return Ok(());
         }
 
         // If not we need to parse all the children of the node for later
         let mut num_children: u32 = 0;
         let state: ParseState = update_parse_state(ParseState::Root, (*node).name);
-        if (*uc).has_next_child {
+        if (*uc.get()).has_next_child {
             loop {
-                parse_toplevel_child_imp(uc, state, &mut (*uc).tmp, &mut end)?;
+                parse_toplevel_child_imp(uc, state, &mut (*uc.get()).tmp, &mut end)?;
                 if end {
                     break;
                 }
@@ -3245,11 +3315,14 @@ pub(crate) unsafe fn parse_toplevel(uc: *mut Context, name: *const u8) -> Result
         }
 
         (*node).num_children = num_children;
-        (*node).children =
-            push_pop::<Node>(&mut (*uc).tmp, &mut (*uc).tmp_stack, num_children as usize);
+        (*node).children = push_pop::<Node>(
+            &mut (*uc.get()).tmp,
+            &mut (*uc.get()).tmp_stack,
+            num_children as usize,
+        );
         ufbxi_check!(uc, !(*node).children.is_null(), "node->children");
 
-        if (*uc).opts.retain_dom {
+        if (*uc.get()).opts.retain_dom {
             // C: `for (size_t i = 0; i < num_children; i++)`
             let mut i: usize = 0;
             while i < num_children as usize {
@@ -3263,54 +3336,54 @@ pub(crate) unsafe fn parse_toplevel(uc: *mut Context, name: *const u8) -> Result
 // ufbx.c:11332-11377 `ufbxi_parse_toplevel_child`
 #[inline(never)]
 pub(crate) unsafe fn parse_toplevel_child(
-    uc: *mut Context,
+    uc: &Context,
     p_node: *mut *mut Node,
     tmp_buf: *mut Buf,
 ) -> Result<(), Fail> {
     // Top-level node not found
-    if (*uc).top_node.is_null() {
+    if (*uc.get()).top_node.is_null() {
         *p_node = core::ptr::null_mut();
         return Ok(());
     }
 
-    if (*uc).top_child_index == usize::MAX {
+    if (*uc.get()).top_child_index == usize::MAX {
         // Parse children on demand
         if tmp_buf.is_null() {
-            buf_clear(&mut (*uc).tmp_parse);
+            buf_clear(&mut (*uc.get()).tmp_parse);
         }
         let mut end = false;
-        let state: ParseState = update_parse_state(ParseState::Root, (*(*uc).top_node).name);
+        let state: ParseState = update_parse_state(ParseState::Root, (*(*uc.get()).top_node).name);
         let buf: *mut Buf = if !tmp_buf.is_null() {
             tmp_buf
         } else {
-            &mut (*uc).tmp_parse
+            &mut (*uc.get()).tmp_parse
         };
         parse_toplevel_child_imp(uc, state, buf, &mut end)?;
         if end {
             *p_node = core::ptr::null_mut();
         } else {
             // Parse to either reused `uc->top_child` or push if retaining to `tmp_buf`.
-            let mut dst: *mut Node = &mut (*uc).top_child;
+            let mut dst: *mut Node = &mut (*uc.get()).top_child;
             if !tmp_buf.is_null() {
                 dst = push_zero::<Node>(tmp_buf, 1);
                 ufbxi_check!(uc, !dst.is_null(), "dst");
             }
 
-            pop::<Node>(&mut (*uc).tmp_stack, 1, dst);
+            pop::<Node>(&mut (*uc.get()).tmp_stack, 1, dst);
             *p_node = dst;
 
-            if (*uc).opts.retain_dom {
+            if (*uc.get()).opts.retain_dom {
                 retain_toplevel_child(uc, dst)?;
             }
         }
     } else {
         // Iterate already parsed nodes
-        let child_index = (*uc).top_child_index;
-        if child_index == (*(*uc).top_node).num_children as usize {
+        let child_index = (*uc.get()).top_child_index;
+        if child_index == (*(*uc.get()).top_node).num_children as usize {
             *p_node = core::ptr::null_mut();
         } else {
-            (*uc).top_child_index = (*uc).top_child_index.wrapping_add(1);
-            *p_node = (*(*uc).top_node).children.add(child_index);
+            (*uc.get()).top_child_index = (*uc.get()).top_child_index.wrapping_add(1);
+            *p_node = (*(*uc.get()).top_node).children.add(child_index);
         }
     }
 
@@ -3320,17 +3393,17 @@ pub(crate) unsafe fn parse_toplevel_child(
 // ufbx.c:11379-11407 `ufbxi_parse_legacy_toplevel`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn parse_legacy_toplevel(uc: *mut Context) -> Result<(), Fail> {
-    ufbx_assert!((*uc).top_nodes_len == 0);
+pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
+    ufbx_assert!((*uc.get()).top_nodes_len == 0);
 
     let mut end: bool = false;
-    if (*uc).from_ascii {
+    if (*uc.get()).from_ascii {
         crate::native::parse_ascii::ascii_parse_node(
             uc,
             0,
             ParseState::Root,
             &mut end,
-            &mut (*uc).tmp,
+            &mut (*uc.get()).tmp,
             true,
         )?;
     } else {
@@ -3339,25 +3412,25 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: *mut Context) -> Result<(), Fail>
             0,
             ParseState::Root,
             &mut end,
-            &mut (*uc).tmp,
+            &mut (*uc.get()).tmp,
             true,
         )?;
     }
 
     // Top-level node not found
     if end {
-        (*uc).top_node = core::ptr::null_mut();
-        (*uc).top_child_index = 0;
-        (*uc).parsed_to_end = true;
+        (*uc.get()).top_node = core::ptr::null_mut();
+        (*uc.get()).top_child_index = 0;
+        (*uc.get()).parsed_to_end = true;
         return Ok(());
     }
 
-    pop::<Node>(&mut (*uc).tmp_stack, 1, &mut (*uc).legacy_node);
-    (*uc).top_child_index = 0;
-    (*uc).top_node = &mut (*uc).legacy_node;
+    pop::<Node>(&mut (*uc.get()).tmp_stack, 1, &mut (*uc.get()).legacy_node);
+    (*uc.get()).top_child_index = 0;
+    (*uc.get()).top_node = &mut (*uc.get()).legacy_node;
 
-    if (*uc).opts.retain_dom {
-        retain_toplevel(uc, &mut (*uc).legacy_node)?;
+    if (*uc.get()).opts.retain_dom {
+        retain_toplevel(uc, &mut (*uc.get()).legacy_node)?;
     }
 
     Ok(())
@@ -3368,7 +3441,7 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: *mut Context) -> Result<(), Fail>
 // ufbx.c:11411-11429 `ufbxi_load_strings`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn load_strings(uc: *mut Context) -> Result<(), Fail> {
+pub(crate) unsafe fn load_strings(uc: &Context) -> Result<(), Fail> {
     // C: `#if defined(UFBX_REGRESSION) ufbx_string reg_prev = ufbx_empty_string; #endif`
     #[cfg(feature = "regression")]
     let mut reg_prev: String = crate::native::api::EMPTY_STRING.0;
@@ -3386,7 +3459,7 @@ pub(crate) unsafe fn load_strings(uc: *mut Context) -> Result<(), Fail> {
         ufbxi_check!(
             uc,
             !sp::push_string_imp(
-                &mut (*uc).string_pool,
+                &mut (*uc.get()).string_pool,
                 str_.data,
                 str_.length,
                 core::ptr::null_mut(),
@@ -3545,12 +3618,12 @@ pub(crate) static PROP_TYPE_NAMES: PropTypeNameTable = PropTypeNameTable([
 ]);
 
 // ufbx.c:11470-11478 `ufbxi_get_prop_type`
-pub(crate) unsafe fn get_prop_type(uc: *mut Context, name: *const u8) -> PropType {
+pub(crate) unsafe fn get_prop_type(uc: &Context, name: *const u8) -> PropType {
     // C takes the address of the parameter itself (`&name`) as the map key.
     let name: *const u8 = name;
     let hash = crate::native::hash::hash_ptr!(name);
     let entry: *mut PropTypeName = map_find(
-        &mut (*uc).prop_type_map,
+        &mut (*uc.get()).prop_type_map,
         hash,
         &name as *const *const u8 as *const c_void,
     );
@@ -3921,11 +3994,11 @@ pub(crate) static NODE_PROP_NAMES: NodePropNameTable = NodePropNameTable([
 // ufbx.c:11720-11734 `ufbxi_init_node_prop_names`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn init_node_prop_names(uc: *mut Context) -> Result<(), Fail> {
+pub(crate) unsafe fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         crate::native::hash::map_grow::<*const u8>(
-            &mut (*uc).node_prop_set,
+            &mut (*uc.get()).node_prop_set,
             NODE_PROP_NAMES.0.len()
         ),
         "ufbxi_map_grow_size((&uc->node_prop_set), sizeof(const char*), ((sizeof(ufbxi_node_prop_names) / sizeof(*(ufbxi_node_prop_names)))))"
@@ -3935,7 +4008,7 @@ pub(crate) unsafe fn init_node_prop_names(uc: *mut Context) -> Result<(), Fail> 
     while i < NODE_PROP_NAMES.0.len() {
         let name: *const u8 = NODE_PROP_NAMES.0[i];
         let pooled: *const u8 = sp::push_string_imp(
-            &mut (*uc).string_pool,
+            &mut (*uc.get()).string_pool,
             name,
             crate::native::error::strlen(name),
             core::ptr::null_mut(),
@@ -3945,7 +4018,7 @@ pub(crate) unsafe fn init_node_prop_names(uc: *mut Context) -> Result<(), Fail> 
         ufbxi_check!(uc, !pooled.is_null(), "pooled");
         let hash: u32 = crate::native::hash::hash_ptr!(pooled);
         let entry: *mut *const u8 = map_insert::<*const u8>(
-            &mut (*uc).node_prop_set,
+            &mut (*uc.get()).node_prop_set,
             hash,
             &pooled as *const *const u8 as *const c_void,
         );
@@ -3958,15 +4031,15 @@ pub(crate) unsafe fn init_node_prop_names(uc: *mut Context) -> Result<(), Fail> 
 }
 
 // ufbx.c:11736-11744 `ufbxi_is_node_property_name`
-pub(crate) unsafe fn is_node_property_name(uc: *mut Context, name: *const u8) -> bool {
+pub(crate) unsafe fn is_node_property_name(uc: &Context, name: *const u8) -> bool {
     // You need to call `ufbxi_init_node_prop_names()` before calling this
-    ufbx_assert!((*uc).node_prop_set.size > 0);
+    ufbx_assert!((*uc.get()).node_prop_set.size > 0);
 
     // C takes the address of the parameter itself (`&name`) as the map key.
     let name: *const u8 = name;
     let hash = crate::native::hash::hash_ptr!(name);
     let entry: *mut *const u8 = map_find(
-        &mut (*uc).node_prop_set,
+        &mut (*uc.get()).node_prop_set,
         hash,
         &name as *const *const u8 as *const c_void,
     );
@@ -3976,11 +4049,11 @@ pub(crate) unsafe fn is_node_property_name(uc: *mut Context, name: *const u8) ->
 // ufbx.c:11746-11760 `ufbxi_load_maps`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn load_maps(uc: *mut Context) -> Result<(), Fail> {
+pub(crate) unsafe fn load_maps(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         crate::native::hash::map_grow::<PropTypeName>(
-            &mut (*uc).prop_type_map,
+            &mut (*uc.get()).prop_type_map,
             PROP_TYPE_NAMES.0.len()
         ),
         "ufbxi_map_grow_size((&uc->prop_type_map), sizeof(ufbxi_prop_type_name), ((sizeof(ufbxi_prop_type_names) / sizeof(*(ufbxi_prop_type_names)))))"
@@ -3988,7 +4061,7 @@ pub(crate) unsafe fn load_maps(uc: *mut Context) -> Result<(), Fail> {
     // C: `ufbxi_for(const ufbxi_prop_type_name, name, ufbxi_prop_type_names, ...)`
     for name in PROP_TYPE_NAMES.0.iter() {
         let pooled: *const u8 = sp::push_string_imp(
-            &mut (*uc).string_pool,
+            &mut (*uc.get()).string_pool,
             name.name,
             crate::native::error::strlen(name.name),
             core::ptr::null_mut(),
@@ -3998,7 +4071,7 @@ pub(crate) unsafe fn load_maps(uc: *mut Context) -> Result<(), Fail> {
         ufbxi_check!(uc, !pooled.is_null(), "pooled");
         let hash: u32 = crate::native::hash::hash_ptr!(pooled);
         let entry: *mut PropTypeName = map_insert::<PropTypeName>(
-            &mut (*uc).prop_type_map,
+            &mut (*uc.get()).prop_type_map,
             hash,
             &pooled as *const *const u8 as *const c_void,
         );
@@ -4060,7 +4133,7 @@ mod tests {
 
         // A zeroed context is what C builds via `memset` before setup; only
         // the fields `ufbxi_progress` touches need real values.
-        let mut uc: std::boxed::Box<Context> =
+        let mut uc: std::boxed::Box<InnerContext> =
             unsafe { std::boxed::Box::new_zeroed().assume_init() };
         let mut calls: u32 = 0;
         uc.opts.progress_cb.fn_ = Some(cb);
@@ -4072,10 +4145,10 @@ mod tests {
 
         unsafe {
             // Under the timer threshold: no callback.
-            assert!(progress(&mut *uc, 4).is_ok());
+            assert!(progress(Context::from_ptr(&raw mut *uc), 4).is_ok());
             assert_eq!(calls, 0);
             // Exhausting the timer invokes the callback and resets it to 1024.
-            assert!(progress(&mut *uc, 2000).is_ok());
+            assert!(progress(Context::from_ptr(&raw mut *uc), 2000).is_ok());
             assert_eq!(calls, 1);
             assert_eq!(uc.progress_timer, 1024);
         }
@@ -4358,7 +4431,7 @@ mod tests {
         use crate::native::allocator::init_ator;
         use crate::native::buf::buf_free;
 
-        let mut uc: std::boxed::Box<Context> =
+        let mut uc: std::boxed::Box<InnerContext> =
             unsafe { std::boxed::Box::new_zeroed().assume_init() };
         unsafe {
             init_ator(
@@ -4369,7 +4442,7 @@ mod tests {
             );
             uc.tmp.ator = &raw mut uc.ator_tmp;
 
-            let uc_ptr: *mut Context = &mut *uc;
+            let uc_ptr: &Context = Context::from_ptr(&raw mut *uc);
             let a = push_element_extra_size(uc_ptr, 5, 16);
             assert!(!a.is_null());
             // The gap below `id` is zero-filled, so the untouched slots stay NULL.
@@ -4404,7 +4477,7 @@ mod tests {
             crate::prelude::RawEnum::from_raw(ProgressResult::Cancel as u32)
         }
 
-        let mut uc: std::boxed::Box<Context> =
+        let mut uc: std::boxed::Box<InnerContext> =
             unsafe { std::boxed::Box::new_zeroed().assume_init() };
         uc.opts.progress_cb.fn_ = Some(cancel_cb);
         let data = [0u8; 1];
@@ -4412,7 +4485,7 @@ mod tests {
         uc.data = data.as_ptr();
 
         unsafe {
-            assert_eq!(report_progress(&mut *uc), Err(Fail));
+            assert_eq!(report_progress(Context::from_ptr(&raw mut *uc)), Err(Fail));
             let desc =
                 core::slice::from_raw_parts(uc.error.description.data, uc.error.description.length);
             assert_eq!(desc, b"Cancelled");
@@ -4426,7 +4499,7 @@ mod tests {
         use crate::native::hash::{map_cmp_uintptr, map_free, map_init};
         use crate::native::string_pool::{map_cmp_string, string_pool_temp_free};
 
-        let mut uc: std::boxed::Box<Context> =
+        let mut uc: std::boxed::Box<InnerContext> =
             unsafe { std::boxed::Box::new_zeroed().assume_init() };
         unsafe {
             init_ator(
@@ -4487,7 +4560,7 @@ mod tests {
             root.children = &mut leaf;
             root.num_children = 1;
 
-            let uc_ptr: *mut Context = &mut *uc;
+            let uc_ptr: &Context = Context::from_ptr(&raw mut *uc);
             let mut dom: *mut DomNode = core::ptr::null_mut();
             assert_eq!(retain_dom_node(uc_ptr, &mut root, &mut dom), Ok(()));
             assert!(!dom.is_null());

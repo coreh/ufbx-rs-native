@@ -127,8 +127,8 @@ use crate::native::nurbs::{
     TessellateSurfaceContext,
 };
 use crate::native::parse::{
-    find_enum, find_real as ufbxi_find_real, get_imp, get_name_key, Context, MeshImp, Refcount,
-    SceneImp, ELEMENT_TYPE_COUNT,
+    find_enum, find_real as ufbxi_find_real, get_imp, get_name_key, Context, InnerContext, MeshImp,
+    Refcount, SceneImp, ELEMENT_TYPE_COUNT,
 };
 use crate::native::platform::{
     add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
@@ -563,14 +563,14 @@ pub(crate) unsafe fn load_memory(
 ) -> *mut Scene {
     ufbxi_check_opts_ptr!(Scene, opts, error);
     // C: `ufbxi_context uc; // ufbxi_uninit` + `memset(&uc, 0, sizeof(ufbxi_context));`
-    let mut uc = MaybeUninit::<Context>::uninit(); // ufbxi_uninit
-    core::ptr::write_bytes(uc.as_mut_ptr() as *mut u8, 0, size_of::<Context>());
-    let uc: *mut Context = uc.as_mut_ptr();
+    let uc_storage = Context(core::cell::UnsafeCell::new(MaybeUninit::uninit())); // ufbxi_uninit
+    let uc: &Context = &uc_storage;
+    core::ptr::write_bytes(uc.get() as *mut u8, 0, size_of::<InnerContext>());
     // C: `uc.data_begin = uc.data = (const char *)data;`
-    (*uc).data = data as *const u8;
-    (*uc).data_begin = (*uc).data;
-    (*uc).data_size = size;
-    (*uc).progress_bytes_total = size as u64;
+    (*uc.get()).data = data as *const u8;
+    (*uc.get()).data_begin = (*uc.get()).data;
+    (*uc.get()).data_size = size;
+    (*uc.get()).progress_bytes_total = size as u64;
     evaluate::load(uc, opts, error)
 }
 
@@ -591,12 +591,12 @@ pub(crate) unsafe fn load_file_len(
     error: *mut Error,
 ) -> *mut Scene {
     ufbxi_check_opts_ptr!(Scene, opts, error);
-    let mut uc = MaybeUninit::<Context>::uninit(); // ufbxi_uninit
-    core::ptr::write_bytes(uc.as_mut_ptr() as *mut u8, 0, size_of::<Context>());
-    let uc: *mut Context = uc.as_mut_ptr();
-    (*uc).deferred_load = true;
-    (*uc).load_filename = filename;
-    (*uc).load_filename_len = filename_len;
+    let uc_storage = Context(core::cell::UnsafeCell::new(MaybeUninit::uninit())); // ufbxi_uninit
+    let uc: &Context = &uc_storage;
+    core::ptr::write_bytes(uc.get() as *mut u8, 0, size_of::<InnerContext>());
+    (*uc.get()).deferred_load = true;
+    (*uc.get()).load_filename = filename;
+    (*uc.get()).load_filename_len = filename_len;
     evaluate::load(uc, opts, error)
 }
 
@@ -647,18 +647,18 @@ pub(crate) unsafe fn load_stream_prefix(
     error: *mut Error,
 ) -> *mut Scene {
     ufbxi_check_opts_ptr!(Scene, opts, error);
-    let mut uc = MaybeUninit::<Context>::uninit(); // ufbxi_uninit
-    core::ptr::write_bytes(uc.as_mut_ptr() as *mut u8, 0, size_of::<Context>());
-    let uc: *mut Context = uc.as_mut_ptr();
+    let uc_storage = Context(core::cell::UnsafeCell::new(MaybeUninit::uninit())); // ufbxi_uninit
+    let uc: &Context = &uc_storage;
+    core::ptr::write_bytes(uc.get() as *mut u8, 0, size_of::<InnerContext>());
     // C: `uc.data_begin = uc.data = (const char *)prefix;`
-    (*uc).data = prefix as *const u8;
-    (*uc).data_begin = (*uc).data;
-    (*uc).data_size = prefix_size;
-    (*uc).read_fn = (*stream).read_fn;
-    (*uc).skip_fn = (*stream).skip_fn;
-    (*uc).size_fn = (*stream).size_fn;
-    (*uc).close_fn = (*stream).close_fn;
-    (*uc).read_user = (*stream).user;
+    (*uc.get()).data = prefix as *const u8;
+    (*uc.get()).data_begin = (*uc.get()).data;
+    (*uc.get()).data_size = prefix_size;
+    (*uc.get()).read_fn = (*stream).read_fn;
+    (*uc.get()).skip_fn = (*stream).skip_fn;
+    (*uc.get()).size_fn = (*stream).size_fn;
+    (*uc.get()).close_fn = (*stream).close_fn;
+    (*uc.get()).read_user = (*stream).user;
 
     let scene: *mut Scene = evaluate::load(uc, opts, error);
     scene
@@ -5610,7 +5610,7 @@ mod tests {
     use crate::generated::RawAllocatorOpts;
     use crate::native::allocator::{init_ator, MESH_IMP_MAGIC};
     use crate::native::buf::push_size;
-    use crate::native::parse::{get_imp, MeshImp};
+    use crate::native::parse::{get_imp, Context, MeshImp};
     use crate::prelude::Ref;
     use core::ffi::c_void;
     use core::mem::size_of;

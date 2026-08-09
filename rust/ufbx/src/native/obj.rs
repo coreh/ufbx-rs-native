@@ -56,11 +56,10 @@ use crate::native::hash::{
 };
 #[cfg(feature = "obj")]
 use crate::native::io::refill;
-use crate::native::parse::Context;
 #[cfg(feature = "obj")]
 use crate::native::parse::{
-    get_name_key, r#match, report_progress, ElementInfo, FbxIdEntry, ObjAttrib, ObjFastIndices,
-    ObjGroupEntry, ObjIndexRange, ObjMesh, OBJ_NUM_ATTRIBS, OBJ_NUM_ATTRIBS_EXT,
+    get_name_key, r#match, report_progress, Context, ElementInfo, FbxIdEntry, ObjAttrib,
+    ObjFastIndices, ObjGroupEntry, ObjIndexRange, ObjMesh, OBJ_NUM_ATTRIBS, OBJ_NUM_ATTRIBS_EXT,
 };
 #[cfg(feature = "obj")]
 use crate::native::parse_ascii::is_space;
@@ -102,14 +101,18 @@ const _: () = assert!(OBJ_ATTRIB_STRIDE.len() == OBJ_NUM_ATTRIBS_EXT);
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_pop_props(
-    uc: *mut Context,
+    uc: &Context,
     dst: *mut List<Prop>,
     count: usize,
 ) -> Result<(), Fail> {
     // C: `ufbx_prop_list props; // ufbxi_uninit`
     let mut props: List<Prop> = core::mem::zeroed(); // ufbxi_uninit
     props.count = count;
-    props.data = push_pop::<Prop>(&mut (*uc).result, &mut (*uc).obj.tmp_props, count);
+    props.data = push_pop::<Prop>(
+        &mut (*uc.get()).result,
+        &mut (*uc.get()).obj.tmp_props,
+        count,
+    );
     ufbxi_check!(uc, !props.data.is_null(), "props.data");
 
     // C: `ufbxi_for_list(ufbx_prop, prop, props)`
@@ -146,10 +149,10 @@ pub(crate) unsafe fn obj_pop_props(
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_push_mesh(uc: *mut Context) -> Result<(), Fail> {
-    let mesh: *mut ObjMesh = push_zero::<ObjMesh>(&mut (*uc).obj.tmp_meshes, 1);
+pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
+    let mesh: *mut ObjMesh = push_zero::<ObjMesh>(&mut (*uc.get()).obj.tmp_meshes, 1);
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
-    (*uc).obj.mesh = mesh;
+    (*uc.get()).obj.mesh = mesh;
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS; i++)`
     for i in 0..OBJ_NUM_ATTRIBS {
@@ -158,12 +161,12 @@ pub(crate) unsafe fn obj_push_mesh(uc: *mut Context) -> Result<(), Fail> {
 
     // C: `const char *name = "";`
     let mut name: *const u8 = b"\0".as_ptr();
-    if (*uc).opts.obj_split_groups && (*uc).obj.group.length > 0 {
-        name = (*uc).obj.group.data;
-    } else if !(*uc).opts.obj_merge_objects && (*uc).obj.object.length > 0 {
-        name = (*uc).obj.object.data;
-    } else if !(*uc).opts.obj_merge_groups && (*uc).obj.group.length > 0 {
-        name = (*uc).obj.group.data;
+    if (*uc.get()).opts.obj_split_groups && (*uc.get()).obj.group.length > 0 {
+        name = (*uc.get()).obj.group.data;
+    } else if !(*uc.get()).opts.obj_merge_objects && (*uc.get()).obj.object.length > 0 {
+        name = (*uc.get()).obj.object.data;
+    } else if !(*uc.get()).opts.obj_merge_groups && (*uc.get()).obj.group.length > 0 {
+        name = (*uc.get()).obj.group.data;
     }
 
     (*mesh).fbx_node = push_synthetic_element::<UfbxNode>(
@@ -191,7 +194,7 @@ pub(crate) unsafe fn obj_push_mesh(uc: *mut Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         !push_copy::<u32>(
-            &mut (*uc).tmp_node_ids,
+            &mut (*uc.get()).tmp_node_ids,
             1,
             &(*(*mesh).fbx_node).element.element_id
         )
@@ -199,10 +202,10 @@ pub(crate) unsafe fn obj_push_mesh(uc: *mut Context) -> Result<(), Fail> {
         "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&mesh->fbx_node->element_id)))"
     );
 
-    (*uc).obj.face_material = NO_INDEX;
-    (*uc).obj.face_group = 0;
-    (*uc).obj.face_group_dirty = true;
-    (*uc).obj.material_dirty = true;
+    (*uc.get()).obj.face_material = NO_INDEX;
+    (*uc.get()).obj.face_group = 0;
+    (*uc.get()).obj.face_group_dirty = true;
+    (*uc.get()).obj.material_dirty = true;
 
     connect_oo(uc, (*mesh).fbx_mesh_id, (*mesh).fbx_node_id)?;
     connect_oo(uc, (*mesh).fbx_node_id, 0)?;
@@ -214,28 +217,28 @@ pub(crate) unsafe fn obj_push_mesh(uc: *mut Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_flush_mesh(uc: *mut Context) -> Result<(), Fail> {
-    if (*uc).obj.mesh.is_null() {
+pub(crate) unsafe fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
+    if (*uc.get()).obj.mesh.is_null() {
         return Ok(());
     }
 
-    let num_props: usize = (*uc).obj.tmp_props.num_items;
+    let num_props: usize = (*uc.get()).obj.tmp_props.num_items;
     obj_pop_props(
         uc,
-        &mut (*(*(*uc).obj.mesh).fbx_mesh).element.props.props,
+        &mut (*(*(*uc.get()).obj.mesh).fbx_mesh).element.props.props,
         num_props,
     )?;
 
-    let num_groups: usize = (*uc).obj.tmp_face_group_infos.num_items;
+    let num_groups: usize = (*uc.get()).obj.tmp_face_group_infos.num_items;
     let groups: *mut FaceGroup = push_pop::<FaceGroup>(
-        &mut (*uc).result,
-        &mut (*uc).obj.tmp_face_group_infos,
+        &mut (*uc.get()).result,
+        &mut (*uc.get()).obj.tmp_face_group_infos,
         num_groups,
     );
     ufbxi_check!(uc, !groups.is_null(), "groups");
 
-    (*(*(*uc).obj.mesh).fbx_mesh).face_groups.data = groups;
-    (*(*(*uc).obj.mesh).fbx_mesh).face_groups.count = num_groups;
+    (*(*(*uc.get()).obj.mesh).fbx_mesh).face_groups.data = groups;
+    (*(*(*uc.get()).obj.mesh).fbx_mesh).face_groups.count = num_groups;
 
     Ok(())
 }
@@ -244,33 +247,33 @@ pub(crate) unsafe fn obj_flush_mesh(uc: *mut Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_init(uc: *mut Context) -> Result<(), Fail> {
-    (*uc).from_ascii = true;
-    (*uc).obj.initialized = true;
+pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
+    (*uc.get()).from_ascii = true;
+    (*uc.get()).obj.initialized = true;
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`
     for i in 0..OBJ_NUM_ATTRIBS_EXT {
-        (*uc).obj.tmp_vertices[i].ator = &raw mut (*uc).ator_tmp;
-        (*uc).obj.tmp_indices[i].ator = &raw mut (*uc).ator_tmp;
+        (*uc.get()).obj.tmp_vertices[i].ator = &raw mut (*uc.get()).ator_tmp;
+        (*uc.get()).obj.tmp_indices[i].ator = &raw mut (*uc.get()).ator_tmp;
     }
-    (*uc).obj.tmp_color_valid.ator = &raw mut (*uc).ator_tmp;
-    (*uc).obj.tmp_faces.ator = &raw mut (*uc).ator_tmp;
-    (*uc).obj.tmp_face_material.ator = &raw mut (*uc).ator_tmp;
-    (*uc).obj.tmp_face_smoothing.ator = &raw mut (*uc).ator_tmp;
-    (*uc).obj.tmp_face_group.ator = &raw mut (*uc).ator_tmp;
-    (*uc).obj.tmp_face_group_infos.ator = &raw mut (*uc).ator_tmp;
-    (*uc).obj.tmp_meshes.ator = &raw mut (*uc).ator_tmp;
-    (*uc).obj.tmp_props.ator = &raw mut (*uc).ator_tmp;
+    (*uc.get()).obj.tmp_color_valid.ator = &raw mut (*uc.get()).ator_tmp;
+    (*uc.get()).obj.tmp_faces.ator = &raw mut (*uc.get()).ator_tmp;
+    (*uc.get()).obj.tmp_face_material.ator = &raw mut (*uc.get()).ator_tmp;
+    (*uc.get()).obj.tmp_face_smoothing.ator = &raw mut (*uc.get()).ator_tmp;
+    (*uc.get()).obj.tmp_face_group.ator = &raw mut (*uc.get()).ator_tmp;
+    (*uc.get()).obj.tmp_face_group_infos.ator = &raw mut (*uc.get()).ator_tmp;
+    (*uc.get()).obj.tmp_meshes.ator = &raw mut (*uc.get()).ator_tmp;
+    (*uc.get()).obj.tmp_props.ator = &raw mut (*uc.get()).ator_tmp;
 
     // .obj parsing does its own yield logic
-    (*uc).data_size += (*uc).yield_size;
+    (*uc.get()).data_size += (*uc.get()).yield_size;
 
-    (*uc).obj.object.data = EMPTY_CHAR.as_ptr();
-    (*uc).obj.group.data = EMPTY_CHAR.as_ptr();
+    (*uc.get()).obj.object.data = EMPTY_CHAR.as_ptr();
+    (*uc.get()).obj.group.data = EMPTY_CHAR.as_ptr();
 
     map_init(
-        &mut (*uc).obj.group_map,
-        &raw mut (*uc).ator_tmp,
+        &mut (*uc.get()).obj.group_map,
+        &raw mut (*uc.get()).ator_tmp,
         map_cmp_const_char_ptr,
         core::ptr::null_mut(),
     );
@@ -279,14 +282,14 @@ pub(crate) unsafe fn obj_init(uc: *mut Context) -> Result<(), Fail> {
     {
         // C: `ufbxi_element_info root_info = { uc->root_id };`
         let mut root_info: ElementInfo = core::mem::zeroed();
-        root_info.fbx_id = (*uc).root_id;
+        root_info.fbx_id = (*uc.get()).root_id;
         root_info.name = EMPTY_STRING.0;
         let root: *mut UfbxNode = push_element::<UfbxNode>(uc, &mut root_info, ElementType::Node);
         ufbxi_check!(uc, !root.is_null(), "root");
         setup_root_node(uc, root);
         ufbxi_check!(
             uc,
-            !push_copy::<u32>(&mut (*uc).tmp_node_ids, 1, &(*root).element.element_id).is_null(),
+            !push_copy::<u32>(&mut (*uc.get()).tmp_node_ids, 1, &(*root).element.element_id).is_null(),
             "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&root->element.element_id)))"
         );
     }
@@ -297,36 +300,36 @@ pub(crate) unsafe fn obj_init(uc: *mut Context) -> Result<(), Fail> {
 // ufbx.c:16902-16923 `ufbxi_obj_free`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_free(uc: *mut Context) {
-    if !(*uc).obj.initialized {
+pub(crate) unsafe fn obj_free(uc: &Context) {
+    if !(*uc.get()).obj.initialized {
         return;
     }
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`
     for i in 0..OBJ_NUM_ATTRIBS_EXT {
-        buf_free(&mut (*uc).obj.tmp_vertices[i]);
-        buf_free(&mut (*uc).obj.tmp_indices[i]);
+        buf_free(&mut (*uc.get()).obj.tmp_vertices[i]);
+        buf_free(&mut (*uc.get()).obj.tmp_indices[i]);
     }
-    buf_free(&mut (*uc).obj.tmp_color_valid);
-    buf_free(&mut (*uc).obj.tmp_faces);
-    buf_free(&mut (*uc).obj.tmp_face_material);
-    buf_free(&mut (*uc).obj.tmp_face_smoothing);
-    buf_free(&mut (*uc).obj.tmp_face_group);
-    buf_free(&mut (*uc).obj.tmp_face_group_infos);
-    buf_free(&mut (*uc).obj.tmp_meshes);
-    buf_free(&mut (*uc).obj.tmp_props);
+    buf_free(&mut (*uc.get()).obj.tmp_color_valid);
+    buf_free(&mut (*uc.get()).obj.tmp_faces);
+    buf_free(&mut (*uc.get()).obj.tmp_face_material);
+    buf_free(&mut (*uc.get()).obj.tmp_face_smoothing);
+    buf_free(&mut (*uc.get()).obj.tmp_face_group);
+    buf_free(&mut (*uc.get()).obj.tmp_face_group_infos);
+    buf_free(&mut (*uc.get()).obj.tmp_meshes);
+    buf_free(&mut (*uc.get()).obj.tmp_props);
 
-    map_free(&mut (*uc).obj.group_map);
+    map_free(&mut (*uc.get()).obj.group_map);
 
     free::<String>(
-        &raw mut (*uc).ator_tmp,
-        (*uc).obj.tokens,
-        (*uc).obj.tokens_cap,
+        &raw mut (*uc.get()).ator_tmp,
+        (*uc.get()).obj.tokens,
+        (*uc.get()).obj.tokens_cap,
     );
     free::<*mut Material>(
-        &raw mut (*uc).ator_tmp,
-        (*uc).obj.tmp_materials,
-        (*uc).obj.tmp_materials_cap,
+        &raw mut (*uc.get()).ator_tmp,
+        (*uc.get()).obj.tmp_materials,
+        (*uc.get()).obj.tmp_materials_cap,
     );
 }
 
@@ -334,25 +337,25 @@ pub(crate) unsafe fn obj_free(uc: *mut Context) {
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_read_line(uc: *mut Context) -> Result<(), Fail> {
-    ufbxi_dev_assert!(!(*uc).obj.eof);
+pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
+    ufbxi_dev_assert!(!(*uc.get()).obj.eof);
 
     let mut offset: usize = 0;
 
     loop {
-        let begin: *const u8 = add_ptr((*uc).data as *mut u8, offset) as *const u8;
+        let begin: *const u8 = add_ptr((*uc.get()).data as *mut u8, offset) as *const u8;
         let end: *const u8 = if !begin.is_null() {
-            memchr(begin, b'\n', (*uc).data_size - offset)
+            memchr(begin, b'\n', (*uc.get()).data_size - offset)
         } else {
             core::ptr::null()
         };
         if end.is_null() {
-            if (*uc).eof {
-                offset = (*uc).data_size;
-                (*uc).obj.eof = true;
+            if (*uc.get()).eof {
+                offset = (*uc.get()).data_size;
+                (*uc.get()).obj.eof = true;
                 break;
             } else {
-                let new_cap: usize = max_sz(1, (*uc).data_size.wrapping_mul(2));
+                let new_cap: usize = max_sz(1, (*uc.get()).data_size.wrapping_mul(2));
                 ufbxi_check!(
                     uc,
                     !refill(uc, new_cap, false).is_null(),
@@ -378,24 +381,24 @@ pub(crate) unsafe fn obj_read_line(uc: *mut Context) -> Result<(), Fail> {
 
     let line_len: usize = offset;
 
-    (*uc).obj.line.data = (*uc).data;
-    (*uc).obj.line.length = line_len;
-    (*uc).data = (*uc).data.add(line_len);
-    (*uc).data_size -= line_len;
+    (*uc.get()).obj.line.data = (*uc.get()).data;
+    (*uc.get()).obj.line.length = line_len;
+    (*uc.get()).data = (*uc.get()).data.add(line_len);
+    (*uc.get()).data_size -= line_len;
 
-    (*uc).obj.read_progress += line_len;
-    if (*uc).obj.read_progress >= (*uc).progress_interval {
+    (*uc.get()).obj.read_progress += line_len;
+    if (*uc.get()).obj.read_progress >= (*uc.get()).progress_interval {
         report_progress(uc)?;
-        (*uc).obj.read_progress %= (*uc).progress_interval;
+        (*uc.get()).obj.read_progress %= (*uc.get()).progress_interval;
     }
 
-    if (*uc).obj.eof {
-        let new_data: *mut u8 = push::<u8>(&mut (*uc).tmp, line_len + 1);
+    if (*uc.get()).obj.eof {
+        let new_data: *mut u8 = push::<u8>(&mut (*uc.get()).tmp, line_len + 1);
         ufbxi_check!(uc, !new_data.is_null(), "new_data");
-        core::ptr::copy_nonoverlapping((*uc).obj.line.data, new_data, line_len);
+        core::ptr::copy_nonoverlapping((*uc.get()).obj.line.data, new_data, line_len);
         *new_data.add(line_len) = b'\n';
-        (*uc).obj.line.data = new_data;
-        (*uc).obj.line.length += 1;
+        (*uc.get()).obj.line.data = new_data;
+        (*uc.get()).obj.line.length += 1;
     }
 
     Ok(())
@@ -404,17 +407,13 @@ pub(crate) unsafe fn obj_read_line(uc: *mut Context) -> Result<(), Fail> {
 // ufbx.c:16983-16997 `ufbxi_obj_span_token`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_span_token(
-    uc: *mut Context,
-    start_token: usize,
-    end_token: usize,
-) -> String {
-    ufbx_assert!(start_token < (*uc).obj.num_tokens);
-    let end_token = min_sz(end_token, (*uc).obj.num_tokens - 1);
+pub(crate) unsafe fn obj_span_token(uc: &Context, start_token: usize, end_token: usize) -> String {
+    ufbx_assert!(start_token < (*uc.get()).obj.num_tokens);
+    let end_token = min_sz(end_token, (*uc.get()).obj.num_tokens - 1);
 
     ufbx_assert!(start_token <= end_token);
-    let start: String = *(*uc).obj.tokens.add(start_token);
-    let end: String = *(*uc).obj.tokens.add(end_token);
+    let start: String = *(*uc.get()).obj.tokens.add(start_token);
+    let end: String = *(*uc.get()).obj.tokens.add(end_token);
     let num_between: usize = to_size(end.data as isize - start.data as isize);
 
     let mut result: String = core::mem::zeroed();
@@ -427,10 +426,10 @@ pub(crate) unsafe fn obj_span_token(
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_tokenize(uc: *mut Context) -> Result<(), Fail> {
-    let mut ptr: *const u8 = (*uc).obj.line.data;
-    let end: *const u8 = ptr.add((*uc).obj.line.length);
-    (*uc).obj.num_tokens = 0;
+pub(crate) unsafe fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
+    let mut ptr: *const u8 = (*uc.get()).obj.line.data;
+    let end: *const u8 = ptr.add((*uc.get()).obj.line.length);
+    (*uc.get()).obj.num_tokens = 0;
 
     loop {
         let mut c: u8;
@@ -462,24 +461,24 @@ pub(crate) unsafe fn obj_tokenize(uc: *mut Context) -> Result<(), Fail> {
         if c == b'\n' {
             break;
         }
-        if c == b'#' && (*uc).obj.num_tokens > 0 {
+        if c == b'#' && (*uc.get()).obj.num_tokens > 0 {
             break;
         }
 
-        let index: usize = (*uc).obj.num_tokens;
-        (*uc).obj.num_tokens += 1;
+        let index: usize = (*uc.get()).obj.num_tokens;
+        (*uc.get()).obj.num_tokens += 1;
         ufbxi_check!(
             uc,
             grow_array::<String>(
-                &raw mut (*uc).ator_tmp,
-                &mut (*uc).obj.tokens,
-                &mut (*uc).obj.tokens_cap,
+                &raw mut (*uc.get()).ator_tmp,
+                &mut (*uc.get()).obj.tokens,
+                &mut (*uc.get()).obj.tokens_cap,
                 index + 1
             ),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->obj.tokens)), (&uc->obj.tokens), (&uc->obj.tokens_cap), (index + 1))"
         );
 
-        let tok: *mut String = (*uc).obj.tokens.add(index);
+        let tok: *mut String = (*uc.get()).obj.tokens.add(index);
         (*tok).data = ptr;
 
         // Treat comment start as a single token
@@ -519,7 +518,7 @@ pub(crate) unsafe fn obj_tokenize(uc: *mut Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_tokenize_line(uc: *mut Context) -> Result<(), Fail> {
+pub(crate) unsafe fn obj_tokenize_line(uc: &Context) -> Result<(), Fail> {
     obj_read_line(uc)?;
     obj_tokenize(uc)?;
     Ok(())
@@ -529,35 +528,35 @@ pub(crate) unsafe fn obj_tokenize_line(uc: *mut Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 pub(crate) unsafe fn obj_parse_vertex(
-    uc: *mut Context,
+    uc: &Context,
     attrib: ObjAttrib,
     offset: usize,
 ) -> Result<(), Fail> {
-    if (*uc).opts.ignore_geometry {
+    if (*uc.get()).opts.ignore_geometry {
         return Ok(());
     }
 
-    let dst: *mut Buf = &mut (*uc).obj.tmp_vertices[attrib as usize];
+    let dst: *mut Buf = &mut (*uc.get()).obj.tmp_vertices[attrib as usize];
     let num_values: usize = OBJ_ATTRIB_STRIDE[attrib as usize] as usize;
-    (*uc).obj.vertex_count[attrib as usize] += 1;
+    (*uc.get()).obj.vertex_count[attrib as usize] += 1;
 
     let mut read_values: usize = num_values;
     if attrib == ObjAttrib::Color {
-        if offset + read_values > (*uc).obj.num_tokens {
+        if offset + read_values > (*uc.get()).obj.num_tokens {
             read_values = 3;
         }
     }
     ufbxi_check!(
         uc,
-        offset + read_values <= (*uc).obj.num_tokens,
+        offset + read_values <= (*uc.get()).obj.num_tokens,
         "offset + read_values <= uc->obj.num_tokens"
     );
 
-    let parse_flags: u32 = (*uc).double_parse_flags;
+    let parse_flags: u32 = (*uc.get()).double_parse_flags;
     let vals: *mut Real = push_fast::<Real>(dst, num_values);
     ufbxi_check!(uc, !vals.is_null(), "vals");
     for i in 0..read_values {
-        let str_: String = *(*uc).obj.tokens.add(offset + i);
+        let str_: String = *(*uc.get()).obj.tokens.add(offset + i);
         // C: `char *end; // ufbxi_uninit`
         let mut end: *const u8 = core::ptr::null(); // ufbxi_uninit
         let val: f64 = parse_double(str_.data, str_.length, &mut end, parse_flags);
@@ -584,7 +583,7 @@ pub(crate) unsafe fn obj_parse_vertex(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_parse_index(
-    uc: *mut Context,
+    uc: &Context,
     s: *mut String,
     attrib: u32,
 ) -> Result<(), Fail> {
@@ -617,7 +616,7 @@ pub(crate) unsafe fn obj_parse_index(
     }
 
     if negative {
-        let count: usize = (*uc).obj.vertex_count[attrib as usize];
+        let count: usize = (*uc.get()).obj.vertex_count[attrib as usize];
         index = if index <= count as u64 {
             count as u64 - index
         } else {
@@ -628,13 +627,14 @@ pub(crate) unsafe fn obj_parse_index(
         index = index.wrapping_sub(1);
     }
 
-    let fast_indices: *mut ObjFastIndices = &raw mut (*uc).obj.fast_indices[attrib as usize];
+    let fast_indices: *mut ObjFastIndices = &raw mut (*uc.get()).obj.fast_indices[attrib as usize];
     if (*fast_indices).num_left == 0 {
         let num_push: usize = 128;
-        let dst: *mut u64 = push::<u64>(&mut (*uc).obj.tmp_indices[attrib as usize], num_push);
+        let dst: *mut u64 =
+            push::<u64>(&mut (*uc.get()).obj.tmp_indices[attrib as usize], num_push);
         ufbxi_check!(uc, !dst.is_null(), "dst");
-        (*uc).obj.fast_indices[attrib as usize].indices = dst;
-        (*uc).obj.fast_indices[attrib as usize].num_left = num_push;
+        (*uc.get()).obj.fast_indices[attrib as usize].indices = dst;
+        (*uc.get()).obj.fast_indices[attrib as usize].num_left = num_push;
     }
 
     // C: `*fast_indices->indices++ = index;`
@@ -642,7 +642,7 @@ pub(crate) unsafe fn obj_parse_index(
     (*fast_indices).indices = (*fast_indices).indices.add(1);
     (*fast_indices).num_left -= 1;
 
-    let mesh: *mut ObjMesh = (*uc).obj.mesh;
+    let mesh: *mut ObjMesh = (*uc.get()).obj.mesh;
 
     if index != u64::MAX {
         let range: *mut ObjIndexRange = &mut (*mesh).vertex_range[attrib as usize];
@@ -661,67 +661,67 @@ pub(crate) unsafe fn obj_parse_index(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_parse_indices(
-    uc: *mut Context,
+    uc: &Context,
     token_begin: usize,
     num_tokens: usize,
 ) -> Result<(), Fail> {
     let mut flush_mesh: bool = false;
-    if (*uc).obj.object_dirty {
-        if !(*uc).opts.obj_merge_objects {
+    if (*uc.get()).obj.object_dirty {
+        if !(*uc.get()).opts.obj_merge_objects {
             flush_mesh = true;
         }
-        (*uc).obj.object_dirty = false;
+        (*uc.get()).obj.object_dirty = false;
     }
 
-    if (*uc).obj.group_dirty {
-        if (((*uc).obj.object.length == 0 || (*uc).opts.obj_merge_objects)
-            && !(*uc).opts.obj_merge_groups)
-            || (*uc).opts.obj_split_groups
+    if (*uc.get()).obj.group_dirty {
+        if (((*uc.get()).obj.object.length == 0 || (*uc.get()).opts.obj_merge_objects)
+            && !(*uc.get()).opts.obj_merge_groups)
+            || (*uc.get()).opts.obj_split_groups
         {
             flush_mesh = true;
         }
-        (*uc).obj.group_dirty = false;
-        (*uc).obj.face_group_dirty = true;
+        (*uc.get()).obj.group_dirty = false;
+        (*uc.get()).obj.face_group_dirty = true;
     }
 
-    if (*uc).obj.mesh.is_null() || flush_mesh {
+    if (*uc.get()).obj.mesh.is_null() || flush_mesh {
         obj_flush_mesh(uc)?;
         obj_push_mesh(uc)?;
     }
-    let mesh: *mut ObjMesh = (*uc).obj.mesh;
+    let mesh: *mut ObjMesh = (*uc.get()).obj.mesh;
 
-    if (*uc).obj.material_dirty {
-        if (*uc).obj.usemtl_fbx_id != 0 {
-            let entry: *mut FbxIdEntry = find_fbx_id(uc, (*uc).obj.usemtl_fbx_id);
+    if (*uc.get()).obj.material_dirty {
+        if (*uc.get()).obj.usemtl_fbx_id != 0 {
+            let entry: *mut FbxIdEntry = find_fbx_id(uc, (*uc.get()).obj.usemtl_fbx_id);
             ufbx_assert!(!entry.is_null());
             if (*mesh).usemtl_base == 0 || (*entry).user_id < (*mesh).usemtl_base {
-                connect_oo(uc, (*uc).obj.usemtl_fbx_id, (*mesh).fbx_node_id)?;
+                connect_oo(uc, (*uc.get()).obj.usemtl_fbx_id, (*mesh).fbx_node_id)?;
 
                 // C: `uint32_t index = ++uc->obj.usemtl_index;`
-                (*uc).obj.usemtl_index = (*uc).obj.usemtl_index.wrapping_add(1);
-                let index: u32 = (*uc).obj.usemtl_index;
+                (*uc.get()).obj.usemtl_index = (*uc.get()).obj.usemtl_index.wrapping_add(1);
+                let index: u32 = (*uc.get()).obj.usemtl_index;
                 ufbxi_check!(uc, index < u32::MAX, "index < UINT32_MAX");
                 (*entry).user_id = index;
 
                 if (*mesh).usemtl_base == 0 {
                     (*mesh).usemtl_base = index;
                 }
-                (*uc).obj.face_material = index.wrapping_sub((*mesh).usemtl_base);
+                (*uc.get()).obj.face_material = index.wrapping_sub((*mesh).usemtl_base);
             }
             // C-parity: the assignment above is immediately overwritten here;
             // both are in the C source and both are kept.
-            (*uc).obj.face_material = (*entry).user_id.wrapping_sub((*mesh).usemtl_base);
+            (*uc.get()).obj.face_material = (*entry).user_id.wrapping_sub((*mesh).usemtl_base);
         } else {
-            (*uc).obj.face_material = NO_INDEX;
+            (*uc.get()).obj.face_material = NO_INDEX;
         }
     }
 
     // EARLY RETURN: Rest of the function should only be related to geometry!
-    if (*uc).opts.ignore_geometry {
+    if (*uc.get()).opts.ignore_geometry {
         return Ok(());
     }
 
-    if num_tokens == 0 && !(*uc).opts.allow_empty_faces {
+    if num_tokens == 0 && !(*uc.get()).opts.allow_empty_faces {
         ufbxi_check!(
             uc,
             ufbxi_warnf!(
@@ -735,24 +735,24 @@ pub(crate) unsafe fn obj_parse_indices(
         return Ok(());
     }
 
-    if (*uc).obj.face_group_dirty {
+    if (*uc.get()).obj.face_group_dirty {
         let mut name: String = EMPTY_STRING.0;
-        if (*uc).obj.group.length > 0
-            && ((*uc).obj.object.length > 0 || (*uc).opts.obj_merge_groups)
-            && !(*uc).opts.obj_split_groups
+        if (*uc.get()).obj.group.length > 0
+            && ((*uc.get()).obj.object.length > 0 || (*uc.get()).opts.obj_merge_groups)
+            && !(*uc.get()).opts.obj_split_groups
         {
-            name = (*uc).obj.group;
+            name = (*uc.get()).obj.group;
         }
 
         let hash: u32 = hash_ptr!(name.data);
         let mut entry: *mut ObjGroupEntry = map_find(
-            &mut (*uc).obj.group_map,
+            &mut (*uc.get()).obj.group_map,
             hash,
             &name.data as *const *const u8 as *const c_void,
         );
         if entry.is_null() {
             entry = map_insert(
-                &mut (*uc).obj.group_map,
+                &mut (*uc.get()).obj.group_map,
                 hash,
                 &name.data as *const *const u8 as *const c_void,
             );
@@ -771,25 +771,25 @@ pub(crate) unsafe fn obj_parse_indices(
             (*entry).local_id = id;
 
             let group: *mut FaceGroup =
-                push_zero::<FaceGroup>(&mut (*uc).obj.tmp_face_group_infos, 1);
+                push_zero::<FaceGroup>(&mut (*uc.get()).obj.tmp_face_group_infos, 1);
             ufbxi_check!(uc, !group.is_null(), "group");
             (*group).id = 0;
             (*group).name = name;
         }
 
-        (*uc).obj.face_group = (*entry).local_id;
+        (*uc.get()).obj.face_group = (*entry).local_id;
 
-        if !(*uc).obj.has_face_group {
-            (*uc).obj.has_face_group = true;
+        if !(*uc.get()).obj.has_face_group {
+            (*uc.get()).obj.has_face_group = true;
             ufbxi_check!(
                 uc,
-                !push_zero::<u32>(&mut (*uc).obj.tmp_face_group, (*uc).obj.tmp_faces.num_items)
+                !push_zero::<u32>(&mut (*uc.get()).obj.tmp_face_group, (*uc.get()).obj.tmp_faces.num_items)
                     .is_null(),
                 "((uint32_t*)ufbxi_push_size_zero((&uc->obj.tmp_face_group), sizeof(uint32_t), (uc->obj.tmp_faces.num_items)))"
             );
         }
 
-        (*uc).obj.face_group_dirty = false;
+        (*uc.get()).obj.face_group_dirty = false;
     }
 
     let num_indices: usize = num_tokens;
@@ -799,7 +799,7 @@ pub(crate) unsafe fn obj_parse_indices(
         "UINT32_MAX - mesh->num_indices >= num_indices"
     );
 
-    let face: *mut Face = push_fast::<Face>(&mut (*uc).obj.tmp_faces, 1);
+    let face: *mut Face = push_fast::<Face>(&mut (*uc.get()).obj.tmp_faces, 1);
     ufbxi_check!(uc, !face.is_null(), "face");
 
     (*face).index_begin = (*mesh).num_indices as u32;
@@ -808,24 +808,25 @@ pub(crate) unsafe fn obj_parse_indices(
     (*mesh).num_faces += 1;
     (*mesh).num_indices += num_indices;
 
-    let p_face_mat: *mut u32 = push_fast::<u32>(&mut (*uc).obj.tmp_face_material, 1);
+    let p_face_mat: *mut u32 = push_fast::<u32>(&mut (*uc.get()).obj.tmp_face_material, 1);
     ufbxi_check!(uc, !p_face_mat.is_null(), "p_face_mat");
-    *p_face_mat = (*uc).obj.face_material;
+    *p_face_mat = (*uc.get()).obj.face_material;
 
-    if (*uc).obj.has_face_smoothing {
-        let p_face_smooth: *mut bool = push_fast::<bool>(&mut (*uc).obj.tmp_face_smoothing, 1);
+    if (*uc.get()).obj.has_face_smoothing {
+        let p_face_smooth: *mut bool =
+            push_fast::<bool>(&mut (*uc.get()).obj.tmp_face_smoothing, 1);
         ufbxi_check!(uc, !p_face_smooth.is_null(), "p_face_smooth");
-        *p_face_smooth = (*uc).obj.face_smoothing;
+        *p_face_smooth = (*uc.get()).obj.face_smoothing;
     }
 
-    if (*uc).obj.has_face_group {
-        let p_face_group: *mut u32 = push_fast::<u32>(&mut (*uc).obj.tmp_face_group, 1);
+    if (*uc.get()).obj.has_face_group {
+        let p_face_group: *mut u32 = push_fast::<u32>(&mut (*uc.get()).obj.tmp_face_group, 1);
         ufbxi_check!(uc, !p_face_group.is_null(), "p_face_group");
-        *p_face_group = (*uc).obj.face_group;
+        *p_face_group = (*uc.get()).obj.face_group;
     }
 
     for ix in 0..num_indices {
-        let mut tok: String = *(*uc).obj.tokens.add(token_begin + ix);
+        let mut tok: String = *(*uc.get()).obj.tokens.add(token_begin + ix);
         for attrib in 0..OBJ_NUM_ATTRIBS as u32 {
             obj_parse_index(uc, &mut tok, attrib)?;
         }
@@ -838,10 +839,10 @@ pub(crate) unsafe fn obj_parse_indices(
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_parse_multi_indices(uc: *mut Context, window: usize) -> Result<(), Fail> {
+pub(crate) unsafe fn obj_parse_multi_indices(uc: &Context, window: usize) -> Result<(), Fail> {
     // C: `for (size_t begin = 1; begin + window <= uc->obj.num_tokens; begin++)`
     let mut begin: usize = 1;
-    while begin + window <= (*uc).obj.num_tokens {
+    while begin + window <= (*uc.get()).obj.num_tokens {
         obj_parse_indices(uc, begin, window)?;
         begin += 1;
     }
@@ -877,33 +878,37 @@ pub(crate) unsafe fn parse_hex(digits: *const u8, length: usize) -> u32 {
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_parse_comment(uc: *mut Context) -> Result<(), Fail> {
-    if (*uc).obj.num_tokens >= 3 && str_equal(*(*uc).obj.tokens.add(1), str_c(b"MRGB\0".as_ptr())) {
-        let num_color: usize = (*uc).obj.vertex_count[ObjAttrib::Color as usize];
+pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
+    if (*uc.get()).obj.num_tokens >= 3
+        && str_equal(*(*uc.get()).obj.tokens.add(1), str_c(b"MRGB\0".as_ptr()))
+    {
+        let num_color: usize = (*uc.get()).obj.vertex_count[ObjAttrib::Color as usize];
 
         // Pop standard vertex colors and replace them with MRGB colors
-        if num_color > (*uc).obj.mrgb_vertex_count {
-            let num_pop: usize = num_color - (*uc).obj.mrgb_vertex_count;
+        if num_color > (*uc.get()).obj.mrgb_vertex_count {
+            let num_pop: usize = num_color - (*uc.get()).obj.mrgb_vertex_count;
             pop::<bool>(
-                &mut (*uc).obj.tmp_color_valid,
+                &mut (*uc.get()).obj.tmp_color_valid,
                 num_pop,
                 core::ptr::null_mut(),
             );
             pop::<Real>(
-                &mut (*uc).obj.tmp_vertices[ObjAttrib::Color as usize],
+                &mut (*uc.get()).obj.tmp_vertices[ObjAttrib::Color as usize],
                 num_pop * 4,
                 core::ptr::null_mut(),
             );
-            (*uc).obj.vertex_count[ObjAttrib::Color as usize] -= num_pop;
+            (*uc.get()).obj.vertex_count[ObjAttrib::Color as usize] -= num_pop;
         }
 
-        let mrgb: String = *(*uc).obj.tokens.add(2);
+        let mrgb: String = *(*uc.get()).obj.tokens.add(2);
         // C: `for (size_t i = 0; i + 8 <= mrgb.length; i += 8)`
         let mut i: usize = 0;
         while i + 8 <= mrgb.length {
-            let p_rgba: *mut Real =
-                push::<Real>(&mut (*uc).obj.tmp_vertices[ObjAttrib::Color as usize], 4);
-            let p_valid: *mut bool = push::<bool>(&mut (*uc).obj.tmp_color_valid, 1);
+            let p_rgba: *mut Real = push::<Real>(
+                &mut (*uc.get()).obj.tmp_vertices[ObjAttrib::Color as usize],
+                4,
+            );
+            let p_valid: *mut bool = push::<bool>(&mut (*uc.get()).obj.tmp_color_valid, 1);
             ufbxi_check!(
                 uc,
                 !p_rgba.is_null() && !p_valid.is_null(),
@@ -920,16 +925,16 @@ pub(crate) unsafe fn obj_parse_comment(uc: *mut Context) -> Result<(), Fail> {
             i += 8;
         }
 
-        (*uc).obj.has_vertex_color = true;
+        (*uc.get()).obj.has_vertex_color = true;
     }
 
-    if !(*uc).opts.disable_quirks {
+    if !(*uc.get()).opts.disable_quirks {
         if r#match(
-            &(*uc).obj.line,
+            &(*uc.get()).obj.line,
             b"\\s*#\\s*File exported by ZBrush.*\0".as_ptr(),
         ) {
-            if (*uc).obj.mesh.is_null() {
-                (*uc).opts.obj_merge_groups = true;
+            if (*uc.get()).obj.mesh.is_null() {
+                (*uc.get()).opts.obj_merge_groups = true;
             }
         }
     }
@@ -941,25 +946,25 @@ pub(crate) unsafe fn obj_parse_comment(uc: *mut Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_parse_material(uc: *mut Context) -> Result<(), Fail> {
-    (*uc).obj.material_dirty = true;
+pub(crate) unsafe fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
+    (*uc.get()).obj.material_dirty = true;
 
     // Allow empty `usemtl` lines to specify "no material".
-    if (*uc).obj.num_tokens < 2 {
-        (*uc).obj.usemtl_fbx_id = 0;
+    if (*uc.get()).obj.num_tokens < 2 {
+        (*uc.get()).obj.usemtl_fbx_id = 0;
         return Ok(());
     }
 
     let mut name: String = obj_span_token(uc, 1, usize::MAX);
 
-    push_string_place_str(&mut (*uc).string_pool, &mut name, false)?;
+    push_string_place_str(&mut (*uc.get()).string_pool, &mut name, false)?;
 
     let fbx_id: u64 = synthetic_id_from_string(uc, name.data);
     ufbxi_check!(uc, fbx_id != 0, "fbx_id");
 
     let entry: *mut FbxIdEntry = find_fbx_id(uc, fbx_id);
 
-    (*uc).obj.usemtl_fbx_id = fbx_id;
+    (*uc.get()).obj.usemtl_fbx_id = fbx_id;
 
     if entry.is_null() {
         // C: `ufbxi_element_info info = { 0 };`
@@ -979,14 +984,14 @@ pub(crate) unsafe fn obj_parse_material(uc: *mut Context) -> Result<(), Fail> {
         ufbxi_check!(
             uc,
             grow_array::<*mut Material>(
-                &raw mut (*uc).ator_tmp,
-                &mut (*uc).obj.tmp_materials,
-                &mut (*uc).obj.tmp_materials_cap,
+                &raw mut (*uc.get()).ator_tmp,
+                &mut (*uc.get()).obj.tmp_materials,
+                &mut (*uc.get()).obj.tmp_materials_cap,
                 id + 1
             ),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->obj.tmp_materials)), (&uc->obj.tmp_materials), (&uc->obj.tmp_materials_cap), (id + 1))"
         );
-        *(*uc).obj.tmp_materials.add(id) = material;
+        *(*uc.get()).obj.tmp_materials.add(id) = material;
     }
 
     Ok(())
@@ -1021,7 +1026,7 @@ pub(crate) const fn obj_cmd3(a: u8, b: u8, c: u8) -> u32 {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_pop_vertices(
-    uc: *mut Context,
+    uc: &Context,
     dst: *mut List<Real>,
     attrib: u32,
     min_index: u64,
@@ -1029,13 +1034,13 @@ pub(crate) unsafe fn obj_pop_vertices(
     let stride: usize = OBJ_ATTRIB_STRIDE[attrib as usize] as usize;
     ufbxi_check!(
         uc,
-        min_index < ((*uc).obj.tmp_vertices[attrib as usize].num_items / stride) as u64,
+        min_index < ((*uc.get()).obj.tmp_vertices[attrib as usize].num_items / stride) as u64,
         "min_index < uc->obj.tmp_vertices[attrib].num_items / stride"
     );
 
     let count: usize =
-        (*uc).obj.tmp_vertices[attrib as usize].num_items - (min_index as usize) * stride;
-    let mut data: *mut Real = push::<Real>(&mut (*uc).result, count + 4);
+        (*uc.get()).obj.tmp_vertices[attrib as usize].num_items - (min_index as usize) * stride;
+    let mut data: *mut Real = push::<Real>(&mut (*uc.get()).result, count + 4);
     ufbxi_check!(uc, !data.is_null(), "data");
 
     *data.add(0) = 0.0f32 as Real;
@@ -1044,7 +1049,11 @@ pub(crate) unsafe fn obj_pop_vertices(
     *data.add(3) = 0.0f32 as Real;
     data = data.add(4);
 
-    pop::<Real>(&mut (*uc).obj.tmp_vertices[attrib as usize], count, data);
+    pop::<Real>(
+        &mut (*uc.get()).obj.tmp_vertices[attrib as usize],
+        count,
+        data,
+    );
 
     (*dst).data = data;
     (*dst).count = count;
@@ -1056,7 +1065,7 @@ pub(crate) unsafe fn obj_pop_vertices(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_setup_attrib(
-    uc: *mut Context,
+    uc: &Context,
     mesh: *mut ObjMesh,
     tmp_indices: *mut u64,
     dst: *mut VertexAttrib,
@@ -1082,7 +1091,7 @@ pub(crate) unsafe fn obj_setup_attrib(
 
         // Pop indices without copying if the attribute is not used
         pop::<u64>(
-            &mut (*uc).obj.tmp_indices[attrib as usize],
+            &mut (*uc.get()).obj.tmp_indices[attrib as usize],
             num_indices,
             core::ptr::null_mut(),
         );
@@ -1092,12 +1101,12 @@ pub(crate) unsafe fn obj_setup_attrib(
     let min_index: u64 = if non_disjoint { 0 } else { mesh_min_ix };
 
     pop::<u64>(
-        &mut (*uc).obj.tmp_indices[attrib as usize],
+        &mut (*uc.get()).obj.tmp_indices[attrib as usize],
         num_indices,
         tmp_indices,
     );
 
-    let dst_indices: *mut u32 = push::<u32>(&mut (*uc).result, num_indices);
+    let dst_indices: *mut u32 = push::<u32>(&mut (*uc.get()).result, num_indices);
     ufbxi_check!(uc, !dst_indices.is_null(), "dst_indices");
 
     (*dst).exists = true;
@@ -1129,18 +1138,18 @@ pub(crate) unsafe fn obj_setup_attrib(
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_pad_colors(uc: *mut Context, num_vertices: usize) -> Result<(), Fail> {
-    if (*uc).opts.ignore_geometry {
+pub(crate) unsafe fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result<(), Fail> {
+    if (*uc.get()).opts.ignore_geometry {
         return Ok(());
     }
 
-    let num_colors: usize = (*uc).obj.vertex_count[ObjAttrib::Color as usize];
+    let num_colors: usize = (*uc.get()).obj.vertex_count[ObjAttrib::Color as usize];
     if num_vertices > num_colors {
         let num_pad: usize = num_vertices - num_colors;
         ufbxi_check!(
             uc,
             !push_zero::<Real>(
-                &mut (*uc).obj.tmp_vertices[ObjAttrib::Color as usize],
+                &mut (*uc.get()).obj.tmp_vertices[ObjAttrib::Color as usize],
                 num_pad * 4
             )
             .is_null(),
@@ -1148,10 +1157,10 @@ pub(crate) unsafe fn obj_pad_colors(uc: *mut Context, num_vertices: usize) -> Re
         );
         ufbxi_check!(
             uc,
-            !push_zero::<bool>(&mut (*uc).obj.tmp_color_valid, num_pad).is_null(),
+            !push_zero::<bool>(&mut (*uc.get()).obj.tmp_color_valid, num_pad).is_null(),
             "((bool*)ufbxi_push_size_zero((&uc->obj.tmp_color_valid), sizeof(bool), (num_pad)))"
         );
-        (*uc).obj.vertex_count[ObjAttrib::Color as usize] += num_pad;
+        (*uc.get()).obj.vertex_count[ObjAttrib::Color as usize] += num_pad;
     }
 
     Ok(())
@@ -1161,21 +1170,27 @@ pub(crate) unsafe fn obj_pad_colors(uc: *mut Context, num_vertices: usize) -> Re
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
-    let num_meshes: usize = (*uc).obj.tmp_meshes.num_items;
-    let meshes: *mut ObjMesh =
-        push_pop::<ObjMesh>(&mut (*uc).tmp, &mut (*uc).obj.tmp_meshes, num_meshes);
+pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
+    let num_meshes: usize = (*uc.get()).obj.tmp_meshes.num_items;
+    let meshes: *mut ObjMesh = push_pop::<ObjMesh>(
+        &mut (*uc.get()).tmp,
+        &mut (*uc.get()).obj.tmp_meshes,
+        num_meshes,
+    );
     ufbxi_check!(uc, !meshes.is_null(), "meshes");
 
-    if (*uc).obj.has_vertex_color {
-        obj_pad_colors(uc, (*uc).obj.vertex_count[ObjAttrib::Position as usize])?;
+    if (*uc.get()).obj.has_vertex_color {
+        obj_pad_colors(
+            uc,
+            (*uc.get()).obj.vertex_count[ObjAttrib::Position as usize],
+        )?;
     }
 
     // Pop unused fast indices
     for i in 0..OBJ_NUM_ATTRIBS {
         pop::<u64>(
-            &mut (*uc).obj.tmp_indices[i],
-            (*uc).obj.fast_indices[i].num_left,
+            &mut (*uc.get()).obj.tmp_indices[i],
+            (*uc.get()).obj.fast_indices[i].num_left,
             core::ptr::null_mut(),
         );
     }
@@ -1205,7 +1220,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
         }
     }
 
-    let tmp_indices: *mut u64 = push::<u64>(&mut (*uc).tmp, max_indices);
+    let tmp_indices: *mut u64 = push::<u64>(&mut (*uc.get()).tmp, max_indices);
     ufbxi_check!(uc, !tmp_indices.is_null(), "tmp_indices");
 
     // C: `ufbxi_nounroll for (uint32_t attrib = 0; attrib < UFBXI_OBJ_NUM_ATTRIBS; attrib++)`
@@ -1215,7 +1230,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
         }
         obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, 0)?;
     }
-    if (*uc).obj.has_vertex_color && non_disjoint[ObjAttrib::Position as usize] {
+    if (*uc.get()).obj.has_vertex_color && non_disjoint[ObjAttrib::Position as usize] {
         obj_pop_vertices(
             uc,
             &mut vertices[ObjAttrib::Color as usize],
@@ -1223,8 +1238,8 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
             0,
         )?;
         color_valid = push_pop::<bool>(
-            &mut (*uc).tmp,
-            &mut (*uc).obj.tmp_color_valid,
+            &mut (*uc.get()).tmp,
+            &mut (*uc.get()).obj.tmp_color_valid,
             vertices[ObjAttrib::Color as usize].count / 4,
         );
         ufbxi_check!(uc, !color_valid.is_null(), "color_valid");
@@ -1239,7 +1254,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
 
         let num_faces: usize = (*mesh).num_faces;
 
-        if !(*uc).opts.ignore_geometry {
+        if !(*uc.get()).opts.ignore_geometry {
             // C: `ufbxi_nounroll for (uint32_t attrib = 0; attrib < UFBXI_OBJ_NUM_ATTRIBS; attrib++)`
             for attrib in 0..OBJ_NUM_ATTRIBS {
                 if non_disjoint[attrib] {
@@ -1250,7 +1265,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
                     obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, min_ix)?;
                 }
             }
-            if (*uc).obj.has_vertex_color && !non_disjoint[ObjAttrib::Position as usize] {
+            if (*uc.get()).obj.has_vertex_color && !non_disjoint[ObjAttrib::Position as usize] {
                 let min_ix: u64 = (*mesh).vertex_range[ObjAttrib::Position as usize].min_ix;
                 ufbxi_check!(uc, min_ix < u64::MAX, "min_ix < UINT64_MAX");
                 obj_pop_vertices(
@@ -1260,8 +1275,8 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
                     min_ix,
                 )?;
                 color_valid = push_pop::<bool>(
-                    &mut (*uc).tmp,
-                    &mut (*uc).obj.tmp_color_valid,
+                    &mut (*uc.get()).tmp,
+                    &mut (*uc.get()).obj.tmp_color_valid,
                     vertices[ObjAttrib::Color as usize].count / 4,
                 );
                 ufbxi_check!(uc, !color_valid.is_null(), "color_valid");
@@ -1270,11 +1285,14 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
             (*fbx_mesh).faces.count = num_faces;
             (*fbx_mesh).face_material.count = num_faces;
 
-            (*fbx_mesh).faces.data =
-                push_pop::<Face>(&mut (*uc).result, &mut (*uc).obj.tmp_faces, num_faces);
+            (*fbx_mesh).faces.data = push_pop::<Face>(
+                &mut (*uc.get()).result,
+                &mut (*uc.get()).obj.tmp_faces,
+                num_faces,
+            );
             (*fbx_mesh).face_material.data = push_pop::<u32>(
-                &mut (*uc).result,
-                &mut (*uc).obj.tmp_face_material,
+                &mut (*uc.get()).result,
+                &mut (*uc.get()).obj.tmp_face_material,
                 num_faces,
             );
 
@@ -1289,11 +1307,11 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
                 "fbx_mesh->face_material.data"
             );
 
-            if (*uc).obj.has_face_smoothing {
+            if (*uc.get()).obj.has_face_smoothing {
                 (*fbx_mesh).face_smoothing.count = num_faces;
                 (*fbx_mesh).face_smoothing.data = push_pop::<bool>(
-                    &mut (*uc).result,
-                    &mut (*uc).obj.tmp_face_smoothing,
+                    &mut (*uc.get()).result,
+                    &mut (*uc.get()).obj.tmp_face_smoothing,
                     num_faces,
                 );
                 ufbxi_check!(
@@ -1303,12 +1321,12 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
                 );
             }
 
-            if (*uc).obj.has_face_group {
+            if (*uc.get()).obj.has_face_group {
                 if (*mesh).num_groups > 1 {
                     (*fbx_mesh).face_group.count = num_faces;
                     (*fbx_mesh).face_group.data = push_pop::<u32>(
-                        &mut (*uc).result,
-                        &mut (*uc).obj.tmp_face_group,
+                        &mut (*uc.get()).result,
+                        &mut (*uc.get()).obj.tmp_face_group,
                         num_faces,
                     );
                     ufbxi_check!(
@@ -1318,7 +1336,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
                     );
                 } else {
                     pop::<u32>(
-                        &mut (*uc).obj.tmp_face_group,
+                        &mut (*uc.get()).obj.tmp_face_group,
                         num_faces,
                         core::ptr::null_mut(),
                     );
@@ -1358,7 +1376,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
                 false,
             )?;
 
-            if (*uc).obj.has_vertex_color {
+            if (*uc.get()).obj.has_vertex_color {
                 ufbx_assert!(!color_valid.is_null());
                 let mut has_color: bool = false;
                 let mut all_valid: bool = true;
@@ -1393,7 +1411,8 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
                     if !all_valid {
                         let mut indices: *mut u32 =
                             (*fbx_mesh).vertex_color.indices.data as *mut u32;
-                        indices = push_copy::<u32>(&mut (*uc).result, (*mesh).num_indices, indices);
+                        indices =
+                            push_copy::<u32>(&mut (*uc.get()).result, (*mesh).num_indices, indices);
                         ufbxi_check!(uc, !indices.is_null(), "indices");
 
                         let num_values: usize = (*fbx_mesh).vertex_color.values.count;
@@ -1413,12 +1432,12 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
             }
         }
 
-        finalize_mesh(&mut (*uc).result, &mut (*uc).error, fbx_mesh)?;
+        finalize_mesh(&mut (*uc.get()).result, &mut (*uc.get()).error, fbx_mesh)?;
 
-        if (*uc).retain_mesh_parts {
+        if (*uc.get()).retain_mesh_parts {
             (*fbx_mesh).face_group_parts.count = (*mesh).num_groups as usize;
             (*fbx_mesh).face_group_parts.data =
-                push_zero::<MeshPart>(&mut (*uc).result, (*mesh).num_groups as usize);
+                push_zero::<MeshPart>(&mut (*uc.get()).result, (*mesh).num_groups as usize);
             ufbxi_check!(
                 uc,
                 !(*fbx_mesh).face_group_parts.data.is_null(),
@@ -1427,7 +1446,12 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
         }
 
         if (*mesh).num_groups > 1 {
-            update_face_groups(&mut (*uc).result, &mut (*uc).error, fbx_mesh, false)?;
+            update_face_groups(
+                &mut (*uc.get()).result,
+                &mut (*uc.get()).error,
+                fbx_mesh,
+                false,
+            )?;
         } else if (*mesh).num_groups == 1 {
             (*fbx_mesh).face_group.data = SENTINEL_INDEX_ZERO.as_ptr();
             (*fbx_mesh).face_group.count = num_faces;
@@ -1450,8 +1474,9 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
 
         // HACK(consecutive-faces): Prepare for finalize to re-use a consecutive/zero
         // index buffer for face materials..
-        (*uc).max_zero_indices = max_sz((*uc).max_zero_indices, num_faces);
-        (*uc).max_consecutive_indices = max_sz((*uc).max_consecutive_indices, num_faces);
+        (*uc.get()).max_zero_indices = max_sz((*uc.get()).max_zero_indices, num_faces);
+        (*uc.get()).max_consecutive_indices =
+            max_sz((*uc.get()).max_consecutive_indices, num_faces);
 
         i -= 1;
     }
@@ -1463,28 +1488,29 @@ pub(crate) unsafe fn obj_pop_meshes(uc: *mut Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_parse_file(uc: *mut Context) -> Result<(), Fail> {
-    while !(*uc).obj.eof {
+pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
+    while !(*uc.get()).obj.eof {
         obj_tokenize_line(uc)?;
-        let num_tokens: usize = (*uc).obj.num_tokens;
+        let num_tokens: usize = (*uc.get()).obj.num_tokens;
         if num_tokens == 0 {
             continue;
         }
 
-        let cmd: String = *(*uc).obj.tokens.add(0);
+        let cmd: String = *(*uc.get()).obj.tokens.add(0);
         let key: u32 = get_name_key(cmd.data, cmd.length);
         if key == obj_cmd1(b'v') {
             obj_parse_vertex(uc, ObjAttrib::Position, 1)?;
             if num_tokens >= 7 {
-                let num_vertices: usize = (*uc).obj.vertex_count[ObjAttrib::Position as usize];
-                (*uc).obj.has_vertex_color = true;
+                let num_vertices: usize =
+                    (*uc.get()).obj.vertex_count[ObjAttrib::Position as usize];
+                (*uc.get()).obj.has_vertex_color = true;
                 obj_pad_colors(uc, num_vertices.wrapping_sub(1))?;
-                if (*uc).obj.vertex_count[ObjAttrib::Color as usize] < num_vertices {
+                if (*uc.get()).obj.vertex_count[ObjAttrib::Color as usize] < num_vertices {
                     ufbx_assert!(
-                        (*uc).obj.vertex_count[ObjAttrib::Color as usize] == num_vertices - 1
+                        (*uc.get()).obj.vertex_count[ObjAttrib::Color as usize] == num_vertices - 1
                     );
                     obj_parse_vertex(uc, ObjAttrib::Color, 4)?;
-                    let valid: *mut bool = push::<bool>(&mut (*uc).obj.tmp_color_valid, 1);
+                    let valid: *mut bool = push::<bool>(&mut (*uc.get()).obj.tmp_color_valid, 1);
                     ufbxi_check!(uc, !valid.is_null(), "valid");
                     *valid = true;
                 }
@@ -1494,25 +1520,26 @@ pub(crate) unsafe fn obj_parse_file(uc: *mut Context) -> Result<(), Fail> {
         } else if key == obj_cmd2(b'v', b'n') {
             obj_parse_vertex(uc, ObjAttrib::Normal, 1)?;
         } else if key == obj_cmd1(b'f') {
-            obj_parse_indices(uc, 1, (*uc).obj.num_tokens - 1)?;
+            obj_parse_indices(uc, 1, (*uc.get()).obj.num_tokens - 1)?;
         } else if key == obj_cmd1(b'p') {
             obj_parse_multi_indices(uc, 1)?;
         } else if key == obj_cmd1(b'l') {
             obj_parse_multi_indices(uc, 2)?;
         } else if key == obj_cmd1(b's') {
             if num_tokens >= 2 {
-                (*uc).obj.has_face_smoothing = true;
-                (*uc).obj.face_smoothing =
-                    !str_equal(*(*uc).obj.tokens.add(1), str_c(b"off\0".as_ptr()));
+                (*uc.get()).obj.has_face_smoothing = true;
+                (*uc.get()).obj.face_smoothing =
+                    !str_equal(*(*uc.get()).obj.tokens.add(1), str_c(b"off\0".as_ptr()));
 
                 // Fill in previously missed face smoothing data
-                if (*uc).obj.tmp_face_smoothing.num_items == 0 && (*uc).obj.tmp_faces.num_items > 0
+                if (*uc.get()).obj.tmp_face_smoothing.num_items == 0
+                    && (*uc.get()).obj.tmp_faces.num_items > 0
                 {
                     ufbxi_check!(
                         uc,
                         !push_zero::<bool>(
-                            &mut (*uc).obj.tmp_face_smoothing,
-                            (*uc).obj.tmp_faces.num_items
+                            &mut (*uc.get()).obj.tmp_face_smoothing,
+                            (*uc.get()).obj.tmp_faces.num_items
                         )
                         .is_null(),
                         "((bool*)ufbxi_push_size_zero((&uc->obj.tmp_face_smoothing), sizeof(bool), (uc->obj.tmp_faces.num_items)))"
@@ -1521,31 +1548,43 @@ pub(crate) unsafe fn obj_parse_file(uc: *mut Context) -> Result<(), Fail> {
             }
         } else if key == obj_cmd1(b'o') {
             if num_tokens >= 2 {
-                (*uc).obj.object = obj_span_token(uc, 1, usize::MAX);
-                push_string_place_str(&mut (*uc).string_pool, &mut (*uc).obj.object, false)?;
-                (*uc).obj.object_dirty = true;
+                (*uc.get()).obj.object = obj_span_token(uc, 1, usize::MAX);
+                push_string_place_str(
+                    &mut (*uc.get()).string_pool,
+                    &mut (*uc.get()).obj.object,
+                    false,
+                )?;
+                (*uc.get()).obj.object_dirty = true;
             }
         } else if key == obj_cmd1(b'g') {
             if num_tokens >= 2 {
-                (*uc).obj.group = obj_span_token(uc, 1, usize::MAX);
-                push_string_place_str(&mut (*uc).string_pool, &mut (*uc).obj.group, false)?;
-                (*uc).obj.group_dirty = true;
+                (*uc.get()).obj.group = obj_span_token(uc, 1, usize::MAX);
+                push_string_place_str(
+                    &mut (*uc.get()).string_pool,
+                    &mut (*uc.get()).obj.group,
+                    false,
+                )?;
+                (*uc.get()).obj.group_dirty = true;
             } else {
-                (*uc).obj.group = EMPTY_STRING.0;
-                (*uc).obj.group_dirty = true;
+                (*uc.get()).obj.group = EMPTY_STRING.0;
+                (*uc.get()).obj.group_dirty = true;
             }
         } else if key == obj_cmd1(b'#') {
             obj_parse_comment(uc)?;
         } else if str_equal(cmd, str_c(b"mtllib\0".as_ptr())) {
-            ufbxi_check!(uc, (*uc).obj.num_tokens >= 2, "uc->obj.num_tokens >= 2");
+            ufbxi_check!(
+                uc,
+                (*uc.get()).obj.num_tokens >= 2,
+                "uc->obj.num_tokens >= 2"
+            );
             let mut lib: String = obj_span_token(uc, 1, usize::MAX);
-            lib.data = push_copy::<u8>(&mut (*uc).tmp, lib.length + 1, lib.data);
+            lib.data = push_copy::<u8>(&mut (*uc.get()).tmp, lib.length + 1, lib.data);
             ufbxi_check!(uc, !lib.data.is_null(), "lib.data");
-            (*uc).obj.mtllib_relative_path.data = lib.data;
-            (*uc).obj.mtllib_relative_path.size = lib.length;
+            (*uc.get()).obj.mtllib_relative_path.data = lib.data;
+            (*uc.get()).obj.mtllib_relative_path.size = lib.length;
         } else if str_equal(cmd, str_c(b"usemtl\0".as_ptr())) {
             obj_parse_material(uc)?;
-        } else if !(*uc).opts.disable_quirks && key == 0 {
+        } else if !(*uc.get()).opts.disable_quirks && key == 0 {
             // ZBrush exporter seems to end the files with '\0', sometimes..
         } else {
             ufbxi_check!(
@@ -1571,16 +1610,19 @@ pub(crate) unsafe fn obj_parse_file(uc: *mut Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_flush_material(uc: *mut Context) -> Result<(), Fail> {
-    if (*uc).obj.usemtl_fbx_id == 0 {
+pub(crate) unsafe fn obj_flush_material(uc: &Context) -> Result<(), Fail> {
+    if (*uc.get()).obj.usemtl_fbx_id == 0 {
         return Ok(());
     }
 
-    let entry: *mut FbxIdEntry = find_fbx_id(uc, (*uc).obj.usemtl_fbx_id);
+    let entry: *mut FbxIdEntry = find_fbx_id(uc, (*uc.get()).obj.usemtl_fbx_id);
     ufbx_assert!(!entry.is_null());
-    let material: *mut Material = *(*uc).obj.tmp_materials.add((*entry).element_id as usize);
+    let material: *mut Material = *(*uc.get())
+        .obj
+        .tmp_materials
+        .add((*entry).element_id as usize);
 
-    let num_props: usize = (*uc).obj.tmp_props.num_items;
+    let num_props: usize = (*uc.get()).obj.tmp_props.num_items;
     obj_pop_props(uc, &mut (*material).element.props.props, num_props)?;
 
     Ok(())
@@ -1591,24 +1633,24 @@ pub(crate) unsafe fn obj_flush_material(uc: *mut Context) -> Result<(), Fail> {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_parse_prop(
-    uc: *mut Context,
+    uc: &Context,
     name: String,
     start: usize,
     include_rest: bool,
     p_next: *mut usize,
 ) -> Result<(), Fail> {
-    if start >= (*uc).obj.num_tokens {
+    if start >= (*uc.get()).obj.num_tokens {
         if !p_next.is_null() {
             *p_next = start;
         }
         return Ok(());
     }
 
-    let prop: *mut Prop = push_zero::<Prop>(&mut (*uc).obj.tmp_props, 1);
+    let prop: *mut Prop = push_zero::<Prop>(&mut (*uc.get()).obj.tmp_props, 1);
     ufbxi_check!(uc, !prop.is_null(), "prop");
     (*prop).name = name;
 
-    push_string_place_str(&mut (*uc).string_pool, &mut (*prop).name, false)?;
+    push_string_place_str(&mut (*uc.get()).string_pool, &mut (*prop).name, false)?;
 
     let mut flags: u32 = PropFlags::VALUE_STR.raw();
 
@@ -1619,14 +1661,19 @@ pub(crate) unsafe fn obj_parse_prop(
 
     let mut num_reals: usize = 0;
     while num_reals < 4 {
-        if start + num_reals >= (*uc).obj.num_tokens {
+        if start + num_reals >= (*uc.get()).obj.num_tokens {
             break;
         }
-        let tok: String = *(*uc).obj.tokens.add(start + num_reals);
+        let tok: String = *(*uc.get()).obj.tokens.add(start + num_reals);
 
         // C: `char *end; // ufbxi_uninit`
         let mut end: *const u8 = core::ptr::null(); // ufbxi_uninit
-        let val: f64 = parse_double(tok.data, tok.length, &mut end, (*uc).double_parse_flags);
+        let val: f64 = parse_double(
+            tok.data,
+            tok.length,
+            &mut end,
+            (*uc.get()).double_parse_flags,
+        );
         if end != tok.data.add(tok.length) {
             break;
         }
@@ -1642,9 +1689,9 @@ pub(crate) unsafe fn obj_parse_prop(
 
     let mut num_args: usize = 0;
     if !include_rest {
-        while start + num_args < (*uc).obj.num_tokens - 1 {
+        while start + num_args < (*uc.get()).obj.num_tokens - 1 {
             if r#match(
-                (*uc).obj.tokens.add(start + num_args),
+                (*uc.get()).obj.tokens.add(start + num_args),
                 b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr(),
             ) {
                 break;
@@ -1667,8 +1714,8 @@ pub(crate) unsafe fn obj_parse_prop(
         (*prop).value_blob.data = span.data;
         (*prop).value_blob.size = span.length;
 
-        push_string_place_str(&mut (*uc).string_pool, &mut (*prop).value_str, false)?;
-        push_string_place_blob(&mut (*uc).string_pool, &mut (*prop).value_blob, true)?;
+        push_string_place_str(&mut (*uc.get()).string_pool, &mut (*prop).value_str, false)?;
+        push_string_place_blob(&mut (*uc.get()).string_pool, &mut (*prop).value_blob, true)?;
     } else {
         (*prop).value_str.data = EMPTY_CHAR.as_ptr();
     }
@@ -1702,8 +1749,8 @@ pub(crate) unsafe fn obj_parse_prop(
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_parse_mtl_map(uc: *mut Context, prefix_len: usize) -> Result<(), Fail> {
-    if (*uc).obj.num_tokens < 2 {
+pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), Fail> {
+    if (*uc.get()).obj.num_tokens < 2 {
         return Ok(());
     }
 
@@ -1718,8 +1765,8 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: *mut Context, prefix_len: usize) -> R
 
     let mut start: usize = 1;
     // C: `for (; start + 1 < uc->obj.num_tokens; )`
-    while start + 1 < (*uc).obj.num_tokens {
-        let mut tok: String = *(*uc).obj.tokens.add(start);
+    while start + 1 < (*uc.get()).obj.num_tokens {
+        let mut tok: String = *(*uc.get()).obj.tokens.add(start);
         if r#match(&tok, b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr()) {
             tok.data = tok.data.add(1);
             tok.length -= 1;
@@ -1733,8 +1780,8 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: *mut Context, prefix_len: usize) -> R
     let mut tex_str: String = obj_span_token(uc, start, usize::MAX);
     let mut tex_raw: Blob = Blob::new_c(tex_str.data, tex_str.length);
 
-    push_string_place_str(&mut (*uc).string_pool, &mut tex_str, false)?;
-    push_string_place_blob(&mut (*uc).string_pool, &mut tex_raw, true)?;
+    push_string_place_str(&mut (*uc.get()).string_pool, &mut tex_str, false)?;
+    push_string_place_blob(&mut (*uc.get()).string_pool, &mut tex_raw, true)?;
 
     let mut fbx_id: u64 = 0;
     let texture: *mut Texture = push_synthetic_element::<Texture>(
@@ -1755,14 +1802,14 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: *mut Context, prefix_len: usize) -> R
 
     obj_pop_props(uc, &mut (*texture).element.props.props, num_props)?;
 
-    let mut prop: String = *(*uc).obj.tokens.add(0);
+    let mut prop: String = *(*uc.get()).obj.tokens.add(0);
     ufbx_assert!(prop.length >= prefix_len);
     prop.data = prop.data.add(prefix_len);
     prop.length -= prefix_len;
-    push_string_place_str(&mut (*uc).string_pool, &mut prop, false)?;
+    push_string_place_str(&mut (*uc.get()).string_pool, &mut prop, false)?;
 
-    if (*uc).obj.usemtl_fbx_id != 0 {
-        connect_op(uc, fbx_id, (*uc).obj.usemtl_fbx_id, prop)?;
+    if (*uc.get()).obj.usemtl_fbx_id != 0 {
+        connect_op(uc, fbx_id, (*uc.get()).obj.usemtl_fbx_id, prop)?;
     }
 
     Ok(())
@@ -1772,21 +1819,25 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: *mut Context, prefix_len: usize) -> R
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_parse_mtl(uc: *mut Context) -> Result<(), Fail> {
-    (*uc).obj.mesh = core::ptr::null_mut();
-    (*uc).obj.usemtl_fbx_id = 0;
+pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
+    (*uc.get()).obj.mesh = core::ptr::null_mut();
+    (*uc.get()).obj.usemtl_fbx_id = 0;
 
-    while !(*uc).obj.eof {
+    while !(*uc.get()).obj.eof {
         obj_tokenize_line(uc)?;
-        let num_tokens: usize = (*uc).obj.num_tokens;
+        let num_tokens: usize = (*uc.get()).obj.num_tokens;
         if num_tokens == 0 {
             continue;
         }
 
-        let cmd: String = *(*uc).obj.tokens.add(0);
+        let cmd: String = *(*uc.get()).obj.tokens.add(0);
         if str_equal(cmd, str_c(b"newmtl\0".as_ptr())) {
             // HACK: Reuse mesh material parsing, but don't allow for empty material name
-            ufbxi_check!(uc, (*uc).obj.num_tokens >= 2, "uc->obj.num_tokens >= 2");
+            ufbxi_check!(
+                uc,
+                (*uc.get()).obj.num_tokens >= 2,
+                "uc->obj.num_tokens >= 2"
+            );
             obj_flush_material(uc)?;
             obj_parse_material(uc)?;
         } else if cmd.length > 4 && memcmp(cmd.data, b"map_".as_ptr(), 4) == 0 {
@@ -1800,7 +1851,13 @@ pub(crate) unsafe fn obj_parse_mtl(uc: *mut Context) -> Result<(), Fail> {
         } else if cmd.length == 1 && *cmd.data.add(0) == b'#' {
             // Implement .mtl magic comment handling here if necessary
         } else {
-            obj_parse_prop(uc, *(*uc).obj.tokens.add(0), 1, true, core::ptr::null_mut())?;
+            obj_parse_prop(
+                uc,
+                *(*uc.get()).obj.tokens.add(0),
+                1,
+                true,
+                core::ptr::null_mut(),
+            )?;
         }
     }
 
@@ -1813,26 +1870,26 @@ pub(crate) unsafe fn obj_parse_mtl(uc: *mut Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
+pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     // HACK: Reset everything and switch to loading the .mtl file globally
-    if let Some(close_fn) = (*uc).close_fn {
-        close_fn((*uc).read_user);
+    if let Some(close_fn) = (*uc.get()).close_fn {
+        close_fn((*uc.get()).read_user);
     }
 
-    (*uc).read_fn = None;
-    (*uc).close_fn = None;
-    (*uc).read_user = core::ptr::null_mut();
-    (*uc).data_begin = core::ptr::null();
-    (*uc).data = core::ptr::null();
-    (*uc).data_size = 0;
-    (*uc).yield_size = 0;
-    (*uc).eof = false;
-    (*uc).obj.eof = false;
+    (*uc.get()).read_fn = None;
+    (*uc.get()).close_fn = None;
+    (*uc.get()).read_user = core::ptr::null_mut();
+    (*uc.get()).data_begin = core::ptr::null();
+    (*uc.get()).data = core::ptr::null();
+    (*uc.get()).data_size = 0;
+    (*uc.get()).yield_size = 0;
+    (*uc.get()).eof = false;
+    (*uc.get()).obj.eof = false;
 
-    if (*uc).opts.obj_mtl_data.size > 0 {
-        (*uc).data = (*uc).opts.obj_mtl_data.data;
-        (*uc).data_begin = (*uc).data;
-        (*uc).data_size = (*uc).opts.obj_mtl_data.size;
+    if (*uc.get()).opts.obj_mtl_data.size > 0 {
+        (*uc.get()).data = (*uc.get()).opts.obj_mtl_data.data;
+        (*uc.get()).data_begin = (*uc.get()).data;
+        (*uc.get()).data_size = (*uc.get()).opts.obj_mtl_data.size;
         obj_parse_mtl(uc)?;
         return Ok(());
     }
@@ -1844,19 +1901,19 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
     // C: `ufbx_blob stream_path = { 0 };`
     let mut stream_path: Blob = core::mem::zeroed();
 
-    if (*uc).opts.open_file_cb.fn_.is_some() {
-        if (*uc).opts.obj_mtl_path.length > 0 {
+    if (*uc.get()).opts.open_file_cb.fn_.is_some() {
+        if (*uc.get()).opts.obj_mtl_path.length > 0 {
             has_stream = open_file(
-                &(*uc).opts.open_file_cb,
+                &(*uc.get()).opts.open_file_cb,
                 &mut stream,
-                (*uc).opts.obj_mtl_path.data,
-                (*uc).opts.obj_mtl_path.length,
+                (*uc.get()).opts.obj_mtl_path.data,
+                (*uc.get()).opts.obj_mtl_path.length,
                 core::ptr::null(),
-                &raw mut (*uc).ator_tmp,
+                &raw mut (*uc.get()).ator_tmp,
                 OpenFileType::ObjMtl,
             );
-            stream_path.data = (*uc).opts.obj_mtl_path.data;
-            stream_path.size = (*uc).opts.obj_mtl_path.length;
+            stream_path.data = (*uc.get()).opts.obj_mtl_path.data;
+            stream_path.size = (*uc.get()).opts.obj_mtl_path.length;
             needs_stream = true;
             if !has_stream {
                 ufbxi_check!(
@@ -1865,7 +1922,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
                         uc,
                         WarningType::MissingExternalFile,
                         "Could not open .mtl file: %s",
-                        (*uc).opts.obj_mtl_path.data
+                        (*uc.get()).opts.obj_mtl_path.data
                     )
                     .is_ok(),
                     "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_EXTERNAL_FILE, ~0u, \"Could not open .mtl file: %s\", uc->opts.obj_mtl_path.data)"
@@ -1873,7 +1930,9 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
             }
         }
 
-        if !has_stream && (*uc).opts.load_external_files && (*uc).obj.mtllib_relative_path.size > 0
+        if !has_stream
+            && (*uc.get()).opts.load_external_files
+            && (*uc.get()).obj.mtllib_relative_path.size > 0
         {
             // C: `ufbx_blob dst; // ufbxi_uninit`
             let mut dst = MaybeUninit::<Blob>::uninit(); // ufbxi_uninit
@@ -1881,19 +1940,19 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
             resolve_relative_filename(
                 uc,
                 dst as *mut Strblob,
-                &(*uc).obj.mtllib_relative_path as *const Blob as *const Strblob,
+                &(*uc.get()).obj.mtllib_relative_path as *const Blob as *const Strblob,
                 true,
             )?;
             has_stream = open_file(
-                &(*uc).opts.open_file_cb,
+                &(*uc.get()).opts.open_file_cb,
                 &mut stream,
                 (*dst).data,
                 (*dst).size,
-                &(*uc).obj.mtllib_relative_path,
-                &raw mut (*uc).ator_tmp,
+                &(*uc.get()).obj.mtllib_relative_path,
+                &raw mut (*uc.get()).ator_tmp,
                 OpenFileType::ObjMtl,
             );
-            stream_path = (*uc).obj.mtllib_relative_path;
+            stream_path = (*uc.get()).obj.mtllib_relative_path;
             needs_stream = true;
             if !has_stream {
                 ufbxi_check!(
@@ -1910,17 +1969,18 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
             }
         }
 
-        let path: String = (*uc).scene.metadata.filename;
+        let path: String = (*uc.get()).scene.metadata.filename;
         if !has_stream
-            && (*uc).opts.load_external_files
-            && (*uc).opts.obj_search_mtl_by_filename
+            && (*uc.get()).opts.load_external_files
+            && (*uc.get()).opts.obj_search_mtl_by_filename
             && path.length > 4
         {
             // C: `ufbx_string ext = { path.data + path.length - 4, 4 };`
             let ext: String = String::new_c(path.data.add(path.length - 4), 4);
             if r#match(&ext, b"\\c.obj\0".as_ptr()) {
                 ufbxi_analysis_assert!(path.length < usize::MAX - 1);
-                let copy: *mut u8 = push_copy::<u8>(&mut (*uc).tmp, path.length + 1, path.data);
+                let copy: *mut u8 =
+                    push_copy::<u8>(&mut (*uc.get()).tmp, path.length + 1, path.data);
                 ufbxi_check!(uc, !copy.is_null(), "copy");
                 *copy.add(path.length - 3) = if *copy.add(path.length - 3) == b'O' {
                     b'M'
@@ -1938,12 +1998,12 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
                     b'l'
                 };
                 has_stream = open_file(
-                    &(*uc).opts.open_file_cb,
+                    &(*uc.get()).opts.open_file_cb,
                     &mut stream,
                     copy,
                     path.length,
                     core::ptr::null(),
-                    &raw mut (*uc).ator_tmp,
+                    &raw mut (*uc.get()).ator_tmp,
                     OpenFileType::ObjMtl,
                 );
                 if has_stream {
@@ -1965,22 +2025,22 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
 
     if has_stream {
         // Adopt `stream` to ufbx read callbacks
-        (*uc).read_fn = stream.read_fn;
-        (*uc).close_fn = stream.close_fn;
-        (*uc).read_user = stream.user;
+        (*uc.get()).read_fn = stream.read_fn;
+        (*uc.get()).close_fn = stream.close_fn;
+        (*uc.get()).read_user = stream.user;
 
         let ok: Result<(), Fail> = obj_parse_mtl(uc);
 
-        if let Some(close_fn) = (*uc).close_fn {
-            close_fn((*uc).read_user);
+        if let Some(close_fn) = (*uc.get()).close_fn {
+            close_fn((*uc.get()).read_user);
         }
-        (*uc).read_fn = None;
-        (*uc).close_fn = None;
-        (*uc).read_user = core::ptr::null_mut();
+        (*uc.get()).read_fn = None;
+        (*uc.get()).close_fn = None;
+        (*uc.get()).read_user = core::ptr::null_mut();
 
         ok?;
-    } else if needs_stream && !(*uc).opts.ignore_missing_external_files {
-        set_err_info(&mut (*uc).error, stream_path.data, stream_path.size);
+    } else if needs_stream && !(*uc.get()).opts.ignore_missing_external_files {
+        set_err_info(&mut (*uc.get()).error, stream_path.data, stream_path.size);
         ufbxi_fail_msg!(uc, "ufbxi_obj_load_mtl()", "External file not found");
     }
 
@@ -1991,7 +2051,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: *mut Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn obj_load(uc: *mut Context) -> Result<(), Fail> {
+pub(crate) unsafe fn obj_load(uc: &Context) -> Result<(), Fail> {
     obj_init(uc)?;
     obj_parse_file(uc)?;
     init_file_paths(uc)?;
@@ -2004,7 +2064,7 @@ pub(crate) unsafe fn obj_load(uc: *mut Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn mtl_load(uc: *mut Context) -> Result<(), Fail> {
+pub(crate) unsafe fn mtl_load(uc: &Context) -> Result<(), Fail> {
     obj_init(uc)?;
     init_file_paths(uc)?;
     obj_parse_mtl(uc)?;
@@ -2021,8 +2081,8 @@ pub(crate) unsafe fn mtl_load(uc: *mut Context) -> Result<(), Fail> {
 #[cfg(not(feature = "obj"))]
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn obj_load(uc: *mut Context) -> Result<(), Fail> {
-    ufbxi_fmt_err_info!(&mut (*uc).error, "UFBX_ENABLE_FORMAT_OBJ");
+pub(crate) unsafe fn obj_load(uc: &Context) -> Result<(), Fail> {
+    ufbxi_fmt_err_info!(&mut (*uc.get()).error, "UFBX_ENABLE_FORMAT_OBJ");
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_FORMAT_OBJ", "Feature disabled");
 }
 
@@ -2030,14 +2090,14 @@ pub(crate) unsafe fn obj_load(uc: *mut Context) -> Result<(), Fail> {
 #[cfg(not(feature = "obj"))]
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn mtl_load(uc: *mut Context) -> Result<(), Fail> {
-    ufbxi_fmt_err_info!(&mut (*uc).error, "UFBX_ENABLE_FORMAT_OBJ");
+pub(crate) unsafe fn mtl_load(uc: &Context) -> Result<(), Fail> {
+    ufbxi_fmt_err_info!(&mut (*uc.get()).error, "UFBX_ENABLE_FORMAT_OBJ");
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_FORMAT_OBJ", "Feature disabled");
 }
 
 // ufbx.c:18061-18063 `ufbxi_obj_free` (`#else` branch — feature disabled)
 #[cfg(not(feature = "obj"))]
 #[inline(always)]
-pub(crate) unsafe fn obj_free(uc: *mut Context) {
+pub(crate) unsafe fn obj_free(uc: &Context) {
     let _ = uc;
 }

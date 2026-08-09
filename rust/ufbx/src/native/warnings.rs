@@ -140,7 +140,7 @@ pub(crate) use ufbxi_warnf_imp;
 macro_rules! ufbxi_warnf {
     ($uc:expr, $type:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
         $crate::native::warnings::ufbxi_warnf_imp!(
-            &mut (*$uc).warnings as *mut $crate::native::warnings::Warnings,
+            &mut (*$uc.get()).warnings as *mut $crate::native::warnings::Warnings,
             $type, !0u32, $fmt $(, $arg)*)
     };
 }
@@ -150,7 +150,7 @@ pub(crate) use ufbxi_warnf;
 macro_rules! ufbxi_warnf_tag {
     ($uc:expr, $type:expr, $element_id:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
         $crate::native::warnings::ufbxi_warnf_imp!(
-            &mut (*$uc).warnings as *mut $crate::native::warnings::Warnings,
+            &mut (*$uc.get()).warnings as *mut $crate::native::warnings::Warnings,
             $type, $element_id, $fmt $(, $arg)*)
     };
 }

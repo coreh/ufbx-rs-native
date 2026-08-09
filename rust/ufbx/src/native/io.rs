@@ -38,27 +38,27 @@ use crate::prelude::OpenFileContext;
 // ufbx.c:6716-6781 `ufbxi_refill`
 // C: `static ufbxi_noinline const char *` — returns NULL on failure.
 #[inline(never)]
-pub(crate) unsafe fn refill(uc: *mut Context, size: usize, require_size: bool) -> *const u8 {
-    ufbx_assert!((*uc).data_size < size);
-    ufbxi_check_return!(uc, !(*uc).eof, core::ptr::null(), "!uc->eof");
+pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *const u8 {
+    ufbx_assert!((*uc.get()).data_size < size);
+    ufbxi_check_return!(uc, !(*uc.get()).eof, core::ptr::null(), "!uc->eof");
     if require_size {
         ufbxi_check_return_msg!(
             uc,
-            (*uc).read_fn.is_some() || (*uc).data_size > 0,
+            (*uc.get()).read_fn.is_some() || (*uc.get()).data_size > 0,
             core::ptr::null(),
             "Empty file",
             "uc->read_fn || uc->data_size > 0"
         );
         ufbxi_check_return_msg!(
             uc,
-            (*uc).read_fn.is_some(),
+            (*uc.get()).read_fn.is_some(),
             core::ptr::null(),
             "Truncated file",
             "uc->read_fn"
         );
-    } else if (*uc).read_fn.is_none() {
-        (*uc).eof = true;
-        return (*uc).data;
+    } else if (*uc.get()).read_fn.is_none() {
+        (*uc.get()).eof = true;
+        return (*uc.get()).data;
     }
 
     let mut data_to_free: *mut u8 = core::ptr::null_mut();
@@ -66,38 +66,38 @@ pub(crate) unsafe fn refill(uc: *mut Context, size: usize, require_size: bool) -
 
     // Grow the read buffer if necessary, data is copied over below with the
     // usual path so the free is deferred (`size_to_free`, `data_to_free`)
-    if size > (*uc).read_buffer_size {
-        let mut new_size = max_sz(size, (*uc).opts.read_buffer_size);
+    if size > (*uc.get()).read_buffer_size {
+        let mut new_size = max_sz(size, (*uc.get()).opts.read_buffer_size);
         // C-parity: `uc->read_buffer_size * 2` is a size_t multiply that wraps.
-        new_size = max_sz(new_size, (*uc).read_buffer_size.wrapping_mul(2));
-        size_to_free = (*uc).read_buffer_size;
-        data_to_free = (*uc).read_buffer;
-        let new_buffer: *mut u8 = alloc::<u8>(&raw mut (*uc).ator_tmp, new_size);
+        new_size = max_sz(new_size, (*uc.get()).read_buffer_size.wrapping_mul(2));
+        size_to_free = (*uc.get()).read_buffer_size;
+        data_to_free = (*uc.get()).read_buffer;
+        let new_buffer: *mut u8 = alloc::<u8>(&raw mut (*uc.get()).ator_tmp, new_size);
         ufbxi_check_return!(uc, !new_buffer.is_null(), core::ptr::null(), "new_buffer");
-        (*uc).read_buffer = new_buffer;
-        (*uc).read_buffer_size = new_size;
+        (*uc.get()).read_buffer = new_buffer;
+        (*uc.get()).read_buffer_size = new_size;
     }
 
     // Copy the remains of the previous buffer to the beginning of the new one
-    let mut data_size: usize = (*uc).data_size;
+    let mut data_size: usize = (*uc.get()).data_size;
     if data_size > 0 {
-        ufbx_assert!(!(*uc).read_buffer.is_null() && !(*uc).data.is_null());
+        ufbx_assert!(!(*uc.get()).read_buffer.is_null() && !(*uc.get()).data.is_null());
         // C: `memmove(uc->read_buffer, uc->data, data_size)` — the ranges may
         // overlap when the buffer did not grow.
-        core::ptr::copy((*uc).data, (*uc).read_buffer, data_size);
+        core::ptr::copy((*uc.get()).data, (*uc.get()).read_buffer, data_size);
     }
 
     if size_to_free != 0 {
-        free::<u8>(&raw mut (*uc).ator_tmp, data_to_free, size_to_free);
+        free::<u8>(&raw mut (*uc.get()).ator_tmp, data_to_free, size_to_free);
     }
 
     // Fill the rest of the buffer with user data
-    let data_capacity: usize = (*uc).read_buffer_size;
+    let data_capacity: usize = (*uc.get()).read_buffer_size;
     while data_size < data_capacity {
         let to_read: usize = data_capacity - data_size;
-        let read_result: usize = ((*uc).read_fn.unwrap_unchecked())(
-            (*uc).read_user,
-            (*uc).read_buffer.add(data_size) as *mut c_void,
+        let read_result: usize = ((*uc.get()).read_fn.unwrap_unchecked())(
+            (*uc.get()).read_user,
+            (*uc.get()).read_buffer.add(data_size) as *mut c_void,
             to_read,
         );
         ufbxi_check_return_msg!(
@@ -115,13 +115,13 @@ pub(crate) unsafe fn refill(uc: *mut Context, size: usize, require_size: bool) -
         );
         data_size += read_result;
         if read_result == 0 {
-            (*uc).eof = true;
+            (*uc.get()).eof = true;
             break;
         }
     }
 
     if require_size {
-        if (*uc).data_offset == 0 {
+        if (*uc.get()).data_offset == 0 {
             ufbxi_check_return_msg!(
                 uc,
                 data_size > 0,
@@ -142,31 +142,31 @@ pub(crate) unsafe fn refill(uc: *mut Context, size: usize, require_size: bool) -
     // C-parity: `uc->data - uc->data_begin` — both may legitimately be NULL
     // (`ufbxi_read_to` leaves them so), which `<*const u8>::offset_from` treats
     // as UB in Rust; the address subtraction is spelled out with casts instead.
-    (*uc).data_offset = (*uc)
+    (*uc.get()).data_offset = (*uc.get())
         .data_offset
-        .wrapping_add(to_size((*uc).data as isize - (*uc).data_begin as isize) as u64);
-    (*uc).data_begin = (*uc).read_buffer;
-    (*uc).data = (*uc).read_buffer;
-    (*uc).data_size = data_size;
+        .wrapping_add(to_size((*uc.get()).data as isize - (*uc.get()).data_begin as isize) as u64);
+    (*uc.get()).data_begin = (*uc.get()).read_buffer;
+    (*uc.get()).data = (*uc.get()).read_buffer;
+    (*uc.get()).data_size = data_size;
 
-    (*uc).read_buffer
+    (*uc.get()).read_buffer
 }
 
 // ufbx.c:6783-6787 `ufbxi_pause_progress`
 #[inline(always)]
-pub(crate) unsafe fn pause_progress(uc: *mut Context) {
-    (*uc).data_size += (*uc).yield_size;
-    (*uc).yield_size = 0;
+pub(crate) unsafe fn pause_progress(uc: &Context) {
+    (*uc.get()).data_size += (*uc.get()).yield_size;
+    (*uc.get()).yield_size = 0;
 }
 
 // ufbx.c:6789-6799 `ufbxi_resume_progress`
 #[inline(never)]
-pub(crate) unsafe fn resume_progress(uc: *mut Context) -> Result<(), Fail> {
-    (*uc).yield_size = min_sz((*uc).data_size, (*uc).progress_interval);
-    (*uc).data_size -= (*uc).yield_size;
+pub(crate) unsafe fn resume_progress(uc: &Context) -> Result<(), Fail> {
+    (*uc.get()).yield_size = min_sz((*uc.get()).data_size, (*uc.get()).progress_interval);
+    (*uc.get()).data_size -= (*uc.get()).yield_size;
 
-    if get_read_offset(uc).wrapping_sub((*uc).latest_progress_bytes)
-        >= (*uc).progress_interval as u64
+    if get_read_offset(uc).wrapping_sub((*uc.get()).latest_progress_bytes)
+        >= (*uc.get()).progress_interval as u64
     {
         // C: `ufbxi_check(ufbxi_report_progress(uc));` — the caller-side check
         // pushes its own error-stack frame on top of the callee's (a bare `?`
@@ -180,16 +180,19 @@ pub(crate) unsafe fn resume_progress(uc: *mut Context) -> Result<(), Fail> {
 // ufbx.c:6801-6815 `ufbxi_yield`
 // (`yield` is a reserved word in Rust — trailing underscore, cf. `type_`.)
 #[inline(never)]
-pub(crate) unsafe fn yield_(uc: *mut Context, size: usize) -> *const u8 {
+pub(crate) unsafe fn yield_(uc: &Context, size: usize) -> *const u8 {
     let ret: *const u8;
-    (*uc).data_size += (*uc).yield_size;
-    if (*uc).data_size >= size {
-        ret = (*uc).data;
+    (*uc.get()).data_size += (*uc.get()).yield_size;
+    if (*uc.get()).data_size >= size {
+        ret = (*uc.get()).data;
     } else {
         ret = refill(uc, size, true);
     }
-    (*uc).yield_size = min_sz((*uc).data_size, max_sz(size, (*uc).progress_interval));
-    (*uc).data_size -= (*uc).yield_size;
+    (*uc.get()).yield_size = min_sz(
+        (*uc.get()).data_size,
+        max_sz(size, (*uc.get()).progress_interval),
+    );
+    (*uc.get()).data_size -= (*uc.get()).yield_size;
 
     ufbxi_check_return!(
         uc,
@@ -202,9 +205,9 @@ pub(crate) unsafe fn yield_(uc: *mut Context, size: usize) -> *const u8 {
 
 // ufbx.c:6817-6824 `ufbxi_peek_bytes`
 #[inline(always)]
-pub(crate) unsafe fn peek_bytes(uc: *mut Context, size: usize) -> *const u8 {
-    if (*uc).yield_size >= size {
-        (*uc).data
+pub(crate) unsafe fn peek_bytes(uc: &Context, size: usize) -> *const u8 {
+    if (*uc.get()).yield_size >= size {
+        (*uc.get()).data
     } else {
         yield_(uc, size)
     }
@@ -212,11 +215,11 @@ pub(crate) unsafe fn peek_bytes(uc: *mut Context, size: usize) -> *const u8 {
 
 // ufbx.c:6826-6841 `ufbxi_read_bytes`
 #[inline(always)]
-pub(crate) unsafe fn read_bytes(uc: *mut Context, size: usize) -> *const u8 {
+pub(crate) unsafe fn read_bytes(uc: &Context, size: usize) -> *const u8 {
     // Refill the current buffer if necessary
     let ret: *const u8;
-    if (*uc).yield_size >= size {
-        ret = (*uc).data;
+    if (*uc.get()).yield_size >= size {
+        ret = (*uc.get()).data;
     } else {
         ret = yield_(uc, size);
         if ret.is_null() {
@@ -225,37 +228,40 @@ pub(crate) unsafe fn read_bytes(uc: *mut Context, size: usize) -> *const u8 {
     }
 
     // Advance the read position inside the current buffer
-    (*uc).yield_size -= size;
-    (*uc).data = ret.add(size);
+    (*uc.get()).yield_size -= size;
+    (*uc.get()).data = ret.add(size);
     ret
 }
 
 // ufbx.c:6843-6849 `ufbxi_consume_bytes`
 #[inline(always)]
-pub(crate) unsafe fn consume_bytes(uc: *mut Context, size: usize) {
+pub(crate) unsafe fn consume_bytes(uc: &Context, size: usize) {
     // Bytes must have been checked first with `ufbxi_peek_bytes()`
-    ufbx_assert!(size <= (*uc).yield_size);
-    (*uc).yield_size -= size;
-    (*uc).data = (*uc).data.add(size);
+    ufbx_assert!(size <= (*uc.get()).yield_size);
+    (*uc.get()).yield_size -= size;
+    (*uc.get()).data = (*uc.get()).data.add(size);
 }
 
 // ufbx.c:6851-6896 `ufbxi_skip_bytes`
 #[inline(never)]
-pub(crate) unsafe fn skip_bytes(uc: *mut Context, mut size: u64) -> Result<(), Fail> {
-    if (*uc).skip_fn.is_some() {
+pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
+    if (*uc.get()).skip_fn.is_some() {
         pause_progress(uc);
 
-        if size > (*uc).data_size as u64 {
-            size -= (*uc).data_size as u64;
-            (*uc).data = (*uc).data.add((*uc).data_size);
-            (*uc).data_size = 0;
+        if size > (*uc.get()).data_size as u64 {
+            size -= (*uc.get()).data_size as u64;
+            (*uc.get()).data = (*uc.get()).data.add((*uc.get()).data_size);
+            (*uc.get()).data_size = 0;
 
-            (*uc).data_offset = (*uc).data_offset.wrapping_add(size);
+            (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(size);
             while size >= MAX_SKIP_SIZE as u64 {
                 size -= MAX_SKIP_SIZE as u64;
                 ufbxi_check_msg!(
                     uc,
-                    ((*uc).skip_fn.unwrap_unchecked())((*uc).read_user, MAX_SKIP_SIZE - 1),
+                    ((*uc.get()).skip_fn.unwrap_unchecked())(
+                        (*uc.get()).read_user,
+                        MAX_SKIP_SIZE - 1
+                    ),
                     "Truncated file",
                     "uc->skip_fn(uc->read_user, UFBXI_MAX_SKIP_SIZE - 1)"
                 );
@@ -264,8 +270,8 @@ pub(crate) unsafe fn skip_bytes(uc: *mut Context, mut size: u64) -> Result<(), F
                 // and causes us to seek indefinitely forwards as `fseek()` does not
                 // report if we hit EOF...
                 let mut single_byte = MaybeUninit::<[u8; 1]>::uninit(); // ufbxi_uninit
-                let num_read: usize = ((*uc).read_fn.unwrap_unchecked())(
-                    (*uc).read_user,
+                let num_read: usize = ((*uc.get()).read_fn.unwrap_unchecked())(
+                    (*uc.get()).read_user,
                     single_byte.as_mut_ptr() as *mut c_void,
                     1,
                 );
@@ -276,14 +282,14 @@ pub(crate) unsafe fn skip_bytes(uc: *mut Context, mut size: u64) -> Result<(), F
             if size > 0 {
                 ufbxi_check_msg!(
                     uc,
-                    ((*uc).skip_fn.unwrap_unchecked())((*uc).read_user, size as usize),
+                    ((*uc.get()).skip_fn.unwrap_unchecked())((*uc.get()).read_user, size as usize),
                     "Truncated file",
                     "uc->skip_fn(uc->read_user, (size_t)size)"
                 );
             }
         } else {
-            (*uc).data = (*uc).data.add(size as usize);
-            (*uc).data_size -= size as usize;
+            (*uc.get()).data = (*uc.get()).data.add(size as usize);
+            (*uc.get()).data_size -= size as usize;
         }
 
         // C: `ufbxi_check(ufbxi_resume_progress(uc));` — caller-side frame.
@@ -291,8 +297,8 @@ pub(crate) unsafe fn skip_bytes(uc: *mut Context, mut size: u64) -> Result<(), F
     } else {
         // Read and discard bytes in reasonable chunks
         let skip_size: u64 = max64(
-            (*uc).read_buffer_size as u64,
-            (*uc).opts.read_buffer_size as u64,
+            (*uc.get()).read_buffer_size as u64,
+            (*uc.get()).opts.read_buffer_size as u64,
         );
         while size > 0 {
             let to_skip: u64 = min64(size, skip_size);
@@ -310,22 +316,18 @@ pub(crate) unsafe fn skip_bytes(uc: *mut Context, mut size: u64) -> Result<(), F
 
 // ufbx.c:6898-6931 `ufbxi_read_to`
 #[inline(never)]
-pub(crate) unsafe fn read_to(
-    uc: *mut Context,
-    dst: *mut c_void,
-    mut size: usize,
-) -> Result<(), Fail> {
+pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) -> Result<(), Fail> {
     let mut ptr = dst as *mut u8;
 
     pause_progress(uc);
 
     // Copy data from the current buffer first
-    let len: usize = min_sz((*uc).data_size, size);
+    let len: usize = min_sz((*uc.get()).data_size, size);
     // C-parity: `memcpy(ptr, uc->data, len)` — `uc->data` may be NULL when
     // `len == 0` (memory input fully consumed), as in C.
-    core::ptr::copy_nonoverlapping((*uc).data, ptr, len);
-    (*uc).data = (*uc).data.add(len);
-    (*uc).data_size -= len;
+    core::ptr::copy_nonoverlapping((*uc.get()).data, ptr, len);
+    (*uc.get()).data = (*uc.get()).data.add(len);
+    (*uc.get()).data_size -= len;
     ptr = ptr.add(len);
     size -= len;
 
@@ -334,18 +336,21 @@ pub(crate) unsafe fn read_to(
         // C-parity: `uc->data - uc->data_begin` — see `ufbxi_refill`; both are
         // NULL after a previous `ufbxi_read_to` streamed past the buffer, so
         // the subtraction is done on addresses rather than via `offset_from`.
-        (*uc).data_offset = (*uc)
-            .data_offset
-            .wrapping_add(to_size((*uc).data as isize - (*uc).data_begin as isize) as u64);
+        (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(to_size(
+            (*uc.get()).data as isize - (*uc.get()).data_begin as isize,
+        ) as u64);
 
-        (*uc).data_begin = core::ptr::null();
-        (*uc).data = core::ptr::null();
-        (*uc).data_size = 0;
-        ufbxi_check!(uc, (*uc).read_fn.is_some(), "uc->read_fn");
+        (*uc.get()).data_begin = core::ptr::null();
+        (*uc.get()).data = core::ptr::null();
+        (*uc.get()).data_size = 0;
+        ufbxi_check!(uc, (*uc.get()).read_fn.is_some(), "uc->read_fn");
 
         while size > 0 {
-            let read_result: usize =
-                ((*uc).read_fn.unwrap_unchecked())((*uc).read_user, ptr as *mut c_void, size);
+            let read_result: usize = ((*uc.get()).read_fn.unwrap_unchecked())(
+                (*uc.get()).read_user,
+                ptr as *mut c_void,
+                size,
+            );
             ufbxi_check_msg!(
                 uc,
                 read_result != usize::MAX,
@@ -358,7 +363,7 @@ pub(crate) unsafe fn read_to(
             // C wraps the size_t subtraction and keeps going.
             ptr = ptr.wrapping_add(read_result);
             size = size.wrapping_sub(read_result);
-            (*uc).data_offset = (*uc).data_offset.wrapping_add(read_result as u64);
+            (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(read_result as u64);
         }
     }
 
@@ -814,14 +819,14 @@ mod tests {
 
     // A zeroed context is what C builds via `memset` before setup; only the
     // IO fields need real values (precedent: `native::parse` tests).
-    fn zeroed_context() -> std::boxed::Box<Context> {
+    fn zeroed_context() -> std::boxed::Box<InnerContext> {
         unsafe { std::boxed::Box::new_zeroed().assume_init() }
     }
 
-    unsafe fn init_tmp_ator(uc: *mut Context) {
+    unsafe fn init_tmp_ator(uc: &Context) {
         init_ator(
-            &mut (*uc).error,
-            &raw mut (*uc).ator_tmp,
+            &mut (*uc.get()).error,
+            &raw mut (*uc.get()).ator_tmp,
             core::ptr::null(),
             b"tmp\0".as_ptr(),
         );
@@ -863,7 +868,7 @@ mod tests {
         };
         let mut uc = zeroed_context();
         unsafe {
-            init_tmp_ator(&mut *uc);
+            init_tmp_ator(Context::from_ptr(&raw mut *uc));
             uc.read_fn = Some(slice_read);
             uc.read_user = &mut reader as *mut SliceReader as *mut c_void;
             uc.opts = MaybeUninit::<RawLoadOpts>::zeroed().assume_init();
@@ -872,21 +877,21 @@ mod tests {
 
             // `ufbxi_read_bytes` refills through `ufbxi_yield` and returns the
             // first 8 bytes.
-            let p = read_bytes(&mut *uc, 8);
+            let p = read_bytes(Context::from_ptr(&raw mut *uc), 8);
             assert!(!p.is_null());
             assert_eq!(core::slice::from_raw_parts(p, 8), &DATA[..8]);
 
             // Skipping without `skip_fn` reads-and-discards in chunks.
-            assert!(skip_bytes(&mut *uc, 40).is_ok());
-            let p = read_bytes(&mut *uc, 8);
+            assert!(skip_bytes(Context::from_ptr(&raw mut *uc), 40).is_ok());
+            let p = read_bytes(Context::from_ptr(&raw mut *uc), 8);
             assert!(!p.is_null());
             assert_eq!(core::slice::from_raw_parts(p, 8), &DATA[48..56]);
 
             // Read offset accounting covers everything consumed so far.
-            assert_eq!(get_read_offset(&mut *uc), 56);
+            assert_eq!(get_read_offset(Context::from_ptr(&raw mut *uc)), 56);
 
             // Reading past EOF fails with "Truncated file".
-            let p = read_bytes(&mut *uc, 64);
+            let p = read_bytes(Context::from_ptr(&raw mut *uc), 64);
             assert!(p.is_null());
             let desc =
                 core::slice::from_raw_parts(uc.error.description.data, uc.error.description.length);
@@ -915,7 +920,7 @@ mod tests {
         };
         let mut uc = zeroed_context();
         unsafe {
-            init_tmp_ator(&mut *uc);
+            init_tmp_ator(Context::from_ptr(&raw mut *uc));
             uc.read_fn = Some(slice_read);
             uc.read_user = &mut reader as *mut SliceReader as *mut c_void;
             uc.opts = MaybeUninit::<RawLoadOpts>::zeroed().assume_init();
@@ -924,10 +929,15 @@ mod tests {
 
             // Buffer the first 8 bytes, then `read_to` a 24-byte destination:
             // part from the buffer, the rest straight from the reader.
-            let p = peek_bytes(&mut *uc, 8);
+            let p = peek_bytes(Context::from_ptr(&raw mut *uc), 8);
             assert!(!p.is_null());
             let mut dst = [0u8; 24];
-            assert!(read_to(&mut *uc, dst.as_mut_ptr() as *mut c_void, 24).is_ok());
+            assert!(read_to(
+                Context::from_ptr(&raw mut *uc),
+                dst.as_mut_ptr() as *mut c_void,
+                24
+            )
+            .is_ok());
             assert_eq!(&dst[..], &DATA[..24]);
             assert_eq!(uc.data_offset, 24);
 

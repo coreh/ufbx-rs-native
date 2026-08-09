@@ -39,8 +39,8 @@ use crate::native::io::{
 };
 use crate::native::parse::{
     array_type_size, get_read_offset, is_array_node, is_raw_string, normalize_array_type,
-    update_parse_state, ArrayInfo, Context, Node, ParseState, Value, ValueArray, ValueType,
-    ARRAY_FLAG_PAD_BEGIN, ARRAY_FLAG_RESULT, ARRAY_FLAG_TMP_BUF, MAX_NODE_DEPTH,
+    update_parse_state, ArrayInfo, Context, InnerContext, Node, ParseState, Value, ValueArray,
+    ValueType, ARRAY_FLAG_PAD_BEGIN, ARRAY_FLAG_RESULT, ARRAY_FLAG_TMP_BUF, MAX_NODE_DEPTH,
     MAX_NON_ARRAY_VALUES,
 };
 use crate::native::platform::{
@@ -111,7 +111,7 @@ macro_rules! ufbxi_cast_f64_to_i64 {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn swap_endian(
-    uc: *mut Context,
+    uc: &Context,
     src: *const c_void,
     count: usize,
     elem_size: usize,
@@ -124,20 +124,20 @@ pub(crate) unsafe fn swap_endian(
         core::ptr::null_mut(),
         "!ufbxi_does_overflow(total_size, count, elem_size)"
     );
-    if (*uc).swap_arr_size < total_size {
+    if (*uc.get()).swap_arr_size < total_size {
         ufbxi_check_return!(
             uc,
             grow_array(
-                &raw mut (*uc).ator_tmp,
-                &mut (*uc).swap_arr,
-                &mut (*uc).swap_arr_size,
+                &raw mut (*uc.get()).ator_tmp,
+                &mut (*uc.get()).swap_arr,
+                &mut (*uc.get()).swap_arr_size,
                 total_size
             ),
             core::ptr::null_mut(),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->swap_arr)), (&uc->swap_arr), (&uc->swap_arr_size), (total_size))"
         );
     }
-    let dst: *mut u8 = (*uc).swap_arr;
+    let dst: *mut u8 = (*uc.get()).swap_arr;
     let mut d: *mut u8 = dst;
 
     let mut s: *const u8 = src as *const u8;
@@ -190,7 +190,7 @@ pub(crate) unsafe fn swap_endian(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn swap_endian_array(
-    uc: *mut Context,
+    uc: &Context,
     src: *const c_void,
     count: usize,
     type_: u8,
@@ -206,11 +206,7 @@ pub(crate) unsafe fn swap_endian_array(
 // ufbx.c:8658-8670 `ufbxi_swap_endian_value`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn swap_endian_value(
-    uc: *mut Context,
-    src: *const c_void,
-    type_: u8,
-) -> *const u8 {
+pub(crate) unsafe fn swap_endian_value(uc: &Context, src: *const c_void, type_: u8) -> *const u8 {
     match type_ {
         b'Y' => swap_endian(uc, src, 1, 2),
         b'I' | b'F' => swap_endian(uc, src, 1, 4),
@@ -229,7 +225,7 @@ pub(crate) unsafe fn swap_endian_value(
 // `Err(Fail)` carries no payload, so that maps directly.
 #[inline(never)]
 pub(crate) unsafe fn binary_convert_array(
-    maybe_uc: *mut Context,
+    maybe_uc: *mut InnerContext,
     src_type: u8,
     dst_type: u8,
     mut src: *const c_void,
@@ -242,7 +238,7 @@ pub(crate) unsafe fn binary_convert_array(
         ufbx_assert!(
             !maybe_uc.is_null() && (*maybe_uc).file_big_endian != (*maybe_uc).local_big_endian
         );
-        src = swap_endian_array(maybe_uc, src, size, src_type) as *const c_void;
+        src = swap_endian_array(Context::from_ptr(maybe_uc), src, size, src_type) as *const c_void;
         ufbxi_check_err!(&mut (*maybe_uc).error, !src.is_null(), "src");
         core::ptr::copy_nonoverlapping(
             src as *const u8,
@@ -253,7 +249,7 @@ pub(crate) unsafe fn binary_convert_array(
     }
 
     if !maybe_uc.is_null() && (*maybe_uc).file_big_endian {
-        src = swap_endian_array(maybe_uc, src, size, src_type) as *const c_void;
+        src = swap_endian_array(Context::from_ptr(maybe_uc), src, size, src_type) as *const c_void;
         ufbxi_check_err!(&mut (*maybe_uc).error, !src.is_null(), "src");
     }
 
@@ -381,7 +377,7 @@ pub(crate) unsafe fn binary_convert_array(
 // ufbx.c:8767-8873 `ufbxi_binary_parse_multivalue_array`
 #[inline(never)]
 pub(crate) unsafe fn binary_parse_multivalue_array(
-    uc: *mut Context,
+    uc: &Context,
     dst_type: u8,
     dst: *mut c_void,
     size: usize,
@@ -393,7 +389,7 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
     let mut val: *const u8;
     let mut val_size: usize;
 
-    let file_big_endian: bool = (*uc).file_big_endian;
+    let file_big_endian: bool = (*uc.get()).file_big_endian;
 
     // String array special case
     if dst_type == b's' || dst_type == b'S' || dst_type == b'C' {
@@ -419,15 +415,15 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
             (*d).length = len;
             ufbxi_check!(uc, !(*d).data.is_null(), "d->data");
             if dst_type == b'C' {
-                let buf: *mut Buf = if size == 1 || (*uc).opts.retain_dom {
-                    &mut (*uc).result
+                let buf: *mut Buf = if size == 1 || (*uc.get()).opts.retain_dom {
+                    &mut (*uc.get()).result
                 } else {
                     tmp_buf
                 };
                 (*d).data = push_copy::<u8>(buf, len, (*d).data);
                 ufbxi_check!(uc, !(*d).data.is_null(), "d->data");
             } else {
-                push_string_place_str(&mut (*uc).string_pool, d, raw)?;
+                push_string_place_str(&mut (*uc.get()).string_pool, d, raw)?;
             }
             d = d.add(1);
         }
@@ -549,7 +545,7 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn push_array_data(
-    uc: *mut Context,
+    uc: &Context,
     info: *const ArrayInfo,
     mut size: usize,
     tmp_buf: *mut Buf,
@@ -565,9 +561,9 @@ pub(crate) unsafe fn push_array_data(
     // if it's already in the right format
     let mut arr_buf: *mut Buf = tmp_buf;
     if flags & ARRAY_FLAG_RESULT as u32 != 0 {
-        arr_buf = &mut (*uc).result;
+        arr_buf = &mut (*uc.get()).result;
     } else if flags & ARRAY_FLAG_TMP_BUF as u32 != 0 {
-        arr_buf = &mut (*uc).tmp;
+        arr_buf = &mut (*uc.get()).tmp;
     }
     let mut data: *mut u8 = push_size(arr_buf, elem_size, size) as *mut u8;
     ufbxi_check_return!(uc, !data.is_null(), core::ptr::null_mut(), "data");
@@ -677,7 +673,7 @@ pub(crate) unsafe extern "C" fn deflate_task_fn(task: *mut Task) -> bool {
 // otherwise the macro is empty and the wrapper is a plain call.
 #[inline(never)]
 pub(crate) unsafe fn binary_parse_node(
-    uc: *mut Context,
+    uc: &Context,
     depth: u32,
     parent_state: ParseState,
     p_end: *mut bool,
@@ -705,7 +701,7 @@ pub(crate) unsafe fn binary_parse_node(
 
 #[inline(never)]
 unsafe fn binary_parse_node_rec(
-    uc: *mut Context,
+    uc: &Context,
     depth: u32,
     parent_state: ParseState,
     p_end: *mut bool,
@@ -722,12 +718,12 @@ unsafe fn binary_parse_node_rec(
     let num_values64: u64;
     let values_len: u64;
     let name_len: u8;
-    let header_size: usize = if (*uc).version >= 7500 { 25 } else { 13 };
+    let header_size: usize = if (*uc.get()).version >= 7500 { 25 } else { 13 };
     let header: *const u8 = read_bytes(uc, header_size);
     let mut header_words: *const u8 = header;
     ufbxi_check!(uc, !header.is_null(), "header");
-    if (*uc).version >= 7500 {
-        if (*uc).file_big_endian {
+    if (*uc.get()).version >= 7500 {
+        if (*uc.get()).file_big_endian {
             header_words = swap_endian(uc, header_words as *const c_void, 3, 8);
             ufbxi_check!(uc, !header_words.is_null(), "header_words");
         }
@@ -736,7 +732,7 @@ unsafe fn binary_parse_node_rec(
         values_len = read_u64(header_words.add(16));
         name_len = read_u8(header.add(24));
     } else {
-        if (*uc).file_big_endian {
+        if (*uc.get()).file_big_endian {
             header_words = swap_endian(uc, header_words as *const c_void, 3, 4);
             ufbxi_check!(uc, !header_words.is_null(), "header_words");
         }
@@ -761,20 +757,20 @@ unsafe fn binary_parse_node_rec(
     }
 
     // Update estimated end offset if possible
-    if end_offset > (*uc).progress_bytes_total {
-        (*uc).progress_bytes_total = end_offset;
+    if end_offset > (*uc.get()).progress_bytes_total {
+        (*uc.get()).progress_bytes_total = end_offset;
     }
 
     // Push the parsed node into the `tmp_stack` buffer, the nodes will be popped by
     // calling code after its done parsing all of it's children.
-    let node: *mut Node = push_zero::<Node>(&mut (*uc).tmp_stack, 1);
+    let node: *mut Node = push_zero::<Node>(&mut (*uc.get()).tmp_stack, 1);
     ufbxi_check!(uc, !node.is_null(), "node");
 
     // Parse and intern the name to the string pool.
     let mut name: *const u8 = read_bytes(uc, name_len as usize);
     ufbxi_check!(uc, !name.is_null(), "name");
     name = push_string(
-        &mut (*uc).string_pool,
+        &mut (*uc.get()).string_pool,
         name,
         name_len as usize,
         core::ptr::null_mut(),
@@ -827,7 +823,7 @@ unsafe fn binary_parse_node_rec(
 
         if c == b'c' || c == b'b' || c == b'i' || c == b'l' || c == b'f' || c == b'd' {
             let mut arr_words: *const u8 = data.add(1);
-            if (*uc).file_big_endian {
+            if (*uc.get()).file_big_endian {
                 arr_words = swap_endian(uc, arr_words as *const c_void, 3, 4);
                 ufbxi_check!(uc, !arr_words.is_null(), "arr_words");
             }
@@ -859,24 +855,24 @@ unsafe fn binary_parse_node_rec(
                 "UINT64_MAX - encoded_size > arr_begin"
             );
             let arr_end: u64 = arr_begin.wrapping_add(encoded_size as u64);
-            if arr_end > (*uc).progress_bytes_total {
-                (*uc).progress_bytes_total = arr_end;
+            if arr_end > (*uc.get()).progress_bytes_total {
+                (*uc.get()).progress_bytes_total = arr_end;
             }
 
             // Threading
-            if (*uc).parse_threaded
+            if (*uc.get()).parse_threaded
                 && encoding == 1
                 && encoded_size as usize >= MIN_THREADED_DEFLATE_BYTES
-                && !(*uc).file_big_endian
-                && !(*uc).local_big_endian
+                && !(*uc.get()).file_big_endian
+                && !(*uc.get()).local_big_endian
             {
                 let task: *mut Task =
-                    thread_pool_create_task(&raw mut (*uc).thread_pool, deflate_task_fn);
+                    thread_pool_create_task(&raw mut (*uc.get()).thread_pool, deflate_task_fn);
                 if !task.is_null() {
                     let t: *mut DeflateTask = push_zero::<DeflateTask>(tmp_buf, 1);
                     ufbxi_check!(uc, !t.is_null(), "t");
 
-                    inflate_init_retain((*uc).inflate_retain);
+                    inflate_init_retain((*uc.get()).inflate_retain);
 
                     (*t).src_elem_size = src_elem_size;
                     (*t).encoded_size = encoded_size as usize;
@@ -885,11 +881,11 @@ unsafe fn binary_parse_node_rec(
                     (*t).dst_type = dst_type;
                     (*t).arr_type = (*arr).type_;
                     (*t).dst_data = arr_data as *mut c_void;
-                    (*t).inflate_retain = (*uc).inflate_retain;
+                    (*t).inflate_retain = (*uc.get()).inflate_retain;
 
-                    if (*uc).read_fn.is_none() {
+                    if (*uc.get()).read_fn.is_none() {
                         // From memory, no need to copy
-                        (*t).encoded_data = (*uc).data as *const c_void;
+                        (*t).encoded_data = (*uc.get()).data as *const c_void;
                     } else {
                         let encoded_data: *mut c_void =
                             push::<u8>(tmp_buf, encoded_size as usize) as *mut c_void;
@@ -906,7 +902,7 @@ unsafe fn binary_parse_node_rec(
                     }
 
                     (*task).data = t as *mut c_void;
-                    thread_pool_run_task(&raw mut (*uc).thread_pool, task);
+                    thread_pool_run_task(&raw mut (*uc.get()).thread_pool, task);
                     deferred = true;
                 }
             }
@@ -916,19 +912,20 @@ unsafe fn binary_parse_node_rec(
             // Otherwise we need a temporary buffer to decode the array into before conversion.
             let mut decoded_data: *mut c_void = arr_data as *mut c_void;
             if !deferred
-                && (src_type != dst_type || (*uc).local_big_endian != (*uc).file_big_endian)
+                && (src_type != dst_type
+                    || (*uc.get()).local_big_endian != (*uc.get()).file_big_endian)
             {
                 ufbxi_check!(
                     uc,
                     grow_array(
-                        &raw mut (*uc).ator_tmp,
-                        &mut (*uc).tmp_arr,
-                        &mut (*uc).tmp_arr_size,
+                        &raw mut (*uc.get()).ator_tmp,
+                        &mut (*uc.get()).tmp_arr,
+                        &mut (*uc.get()).tmp_arr_size,
                         decoded_data_size
                     ),
                     "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (decoded_data_size))"
                 );
-                decoded_data = (*uc).tmp_arr as *mut c_void;
+                decoded_data = (*uc.get()).tmp_arr as *mut c_void;
             }
 
             if deferred {
@@ -944,17 +941,20 @@ unsafe fn binary_parse_node_rec(
                 // If the array is contained in the current read buffer and we need to convert
                 // the data anyway we can use the read buffer as the decoded array source, otherwise
                 // do a plain byte copy to the array/conversion buffer.
-                if (*uc).yield_size.wrapping_add((*uc).data_size) >= encoded_size as usize
+                if (*uc.get()).yield_size.wrapping_add((*uc.get()).data_size)
+                    >= encoded_size as usize
                     && decoded_data != arr_data as *mut c_void
                 {
                     // Yield right after this if we crossed the yield threshold
-                    if encoded_size as usize > (*uc).yield_size {
-                        (*uc).data_size = (*uc).data_size.wrapping_add((*uc).yield_size);
-                        (*uc).yield_size = encoded_size as usize;
-                        (*uc).data_size = (*uc).data_size.wrapping_sub((*uc).yield_size);
+                    if encoded_size as usize > (*uc.get()).yield_size {
+                        (*uc.get()).data_size =
+                            (*uc.get()).data_size.wrapping_add((*uc.get()).yield_size);
+                        (*uc.get()).yield_size = encoded_size as usize;
+                        (*uc.get()).data_size =
+                            (*uc.get()).data_size.wrapping_sub((*uc.get()).yield_size);
                     }
 
-                    decoded_data = (*uc).data as *mut c_void;
+                    decoded_data = (*uc.get()).data as *mut c_void;
                     consume_bytes(uc, encoded_size as usize);
                 } else {
                     read_to(uc, decoded_data, encoded_size as usize)?;
@@ -968,17 +968,18 @@ unsafe fn binary_parse_node_rec(
                 let mut input = core::mem::MaybeUninit::<InflateInput>::uninit();
                 let input: *mut InflateInput = input.as_mut_ptr();
                 (*input).total_size = encoded_size as usize;
-                (*input).data = (*uc).data as *const c_void;
-                (*input).data_size = (*uc).data_size;
+                (*input).data = (*uc.get()).data as *const c_void;
+                (*input).data_size = (*uc.get()).data_size;
                 (*input).no_header = false;
                 (*input).no_checksum = false;
                 (*input).internal_fast_bits = 0;
 
-                if (*uc).opts.progress_cb.fn_.is_some() {
-                    (*input).progress_cb = (*uc).opts.progress_cb;
+                if (*uc.get()).opts.progress_cb.fn_.is_some() {
+                    (*input).progress_cb = (*uc.get()).opts.progress_cb;
                     (*input).progress_size_before = arr_begin;
-                    (*input).progress_size_after = (*uc).progress_bytes_total.wrapping_sub(arr_end);
-                    (*input).progress_interval_hint = (*uc).progress_interval as u64;
+                    (*input).progress_size_after =
+                        (*uc.get()).progress_bytes_total.wrapping_sub(arr_end);
+                    (*input).progress_interval_hint = (*uc.get()).progress_interval as u64;
                 } else {
                     (*input).progress_cb.fn_ = None;
                     (*input).progress_cb.user = core::ptr::null_mut();
@@ -996,27 +997,32 @@ unsafe fn binary_parse_node_rec(
                 // NOTE: We _cannot_ share `read_buffer` if we plan to read later from it
                 // as `ufbx_inflate()` overwrites parts of it with zeroes.
                 if encoded_size as usize > (*input).data_size {
-                    (*input).buffer = (*uc).read_buffer as *mut c_void;
-                    (*input).buffer_size = (*uc).read_buffer_size;
-                    (*input).read_fn = (*uc).read_fn;
-                    (*input).read_user = (*uc).read_user;
-                    (*uc).data_offset = (*uc).data_offset.wrapping_add(
+                    (*input).buffer = (*uc.get()).read_buffer as *mut c_void;
+                    (*input).buffer_size = (*uc.get()).read_buffer_size;
+                    (*input).read_fn = (*uc.get()).read_fn;
+                    (*input).read_user = (*uc.get()).read_user;
+                    (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(
                         (encoded_size as usize).wrapping_sub((*input).data_size) as u64,
                     );
-                    (*uc).data = (*uc).data.add((*input).data_size);
-                    (*uc).data_size = 0;
+                    (*uc.get()).data = (*uc.get()).data.add((*input).data_size);
+                    (*uc.get()).data_size = 0;
                 } else {
                     (*input).buffer = core::ptr::null_mut();
                     (*input).buffer_size = 0;
                     (*input).read_fn = None;
                     (*input).read_user = core::ptr::null_mut();
-                    (*uc).data = (*uc).data.add(encoded_size as usize);
-                    (*uc).data_size = (*uc).data_size.wrapping_sub(encoded_size as usize);
+                    (*uc.get()).data = (*uc.get()).data.add(encoded_size as usize);
+                    (*uc.get()).data_size =
+                        (*uc.get()).data_size.wrapping_sub(encoded_size as usize);
                     resume_progress(uc)?;
                 }
 
-                let res: isize =
-                    inflate(decoded_data, decoded_data_size, input, (*uc).inflate_retain);
+                let res: isize = inflate(
+                    decoded_data,
+                    decoded_data_size,
+                    input,
+                    (*uc.get()).inflate_retain,
+                );
                 ufbxi_check_msg!(uc, res != -28, "Cancelled");
                 ufbxi_check_msg!(
                     uc,
@@ -1031,7 +1037,7 @@ unsafe fn binary_parse_node_rec(
             // Convert the decoded array if necessary.
             if !deferred && decoded_data != arr_data as *mut c_void {
                 binary_convert_array(
-                    uc,
+                    uc.get(),
                     src_type,
                     dst_type,
                     decoded_data,
@@ -1085,7 +1091,7 @@ unsafe fn binary_parse_node_rec(
             let mut value: *const u8 = data.add(1);
 
             let type_: u8 = *data.add(0);
-            if (*uc).file_big_endian {
+            if (*uc.get()).file_big_endian {
                 value = swap_endian_value(uc, value as *const c_void, type_);
                 ufbxi_check!(uc, !value.is_null(), "value");
             }
@@ -1155,7 +1161,7 @@ unsafe fn binary_parse_node_rec(
                             hash_string_check_ascii(str_, length as usize, &mut non_ascii);
                         let raw: bool = !non_ascii || is_raw_string(uc, parent_state, name, i);
                         push_sanitized_string(
-                            &mut (*uc).string_pool,
+                            &mut (*uc.get()).string_pool,
                             &mut (*vals.add(i)).s,
                             str_,
                             length as usize,
@@ -1228,12 +1234,12 @@ unsafe fn binary_parse_node_rec(
         (*node).num_children = num_children;
         if num_children > 0 {
             (*node).children =
-                push_pop::<Node>(tmp_buf, &mut (*uc).tmp_stack, num_children as usize);
+                push_pop::<Node>(tmp_buf, &mut (*uc.get()).tmp_stack, num_children as usize);
             ufbxi_check!(uc, !(*node).children.is_null(), "node->children");
         }
     } else {
         let current_offset: u64 = get_read_offset(uc);
-        (*uc).has_next_child = current_offset < end_offset;
+        (*uc.get()).has_next_child = current_offset < end_offset;
     }
 
     Ok(())
