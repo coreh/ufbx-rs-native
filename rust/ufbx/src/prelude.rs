@@ -272,6 +272,37 @@ impl RawBlobView {
     }
 }
 
+// Typed interior-mutable VIEW over the public `Blob` (Copy; subfields read+written).
+#[repr(transparent)]
+pub(crate) struct BlobView(core::cell::UnsafeCell<core::mem::MaybeUninit<Blob>>);
+
+impl BlobView {
+    #[inline(always)]
+    fn get(&self) -> *mut Blob {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *const u8 {
+        unsafe { (*self.get()).data }
+    }
+    #[inline(always)]
+    pub(crate) fn set_data(&self, data: *const u8) {
+        unsafe {
+            (*self.get()).data = data;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn size(&self) -> usize {
+        unsafe { (*self.get()).size }
+    }
+    #[inline(always)]
+    pub(crate) fn set_size(&self, size: usize) {
+        unsafe {
+            (*self.get()).size = size;
+        }
+    }
+}
+
 // Typed interior-mutable VIEW over `crate::generated::RawThreadOpts` (non-Copy; subfields read+written).
 #[repr(transparent)]
 pub(crate) struct RawThreadOptsView(

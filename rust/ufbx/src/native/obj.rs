@@ -157,12 +157,12 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
 
     // C: `const char *name = "";`
     let mut name: *const u8 = b"\0".as_ptr();
-    if uc.opts_view().obj_split_groups() && (*uc.obj().get()).group.length > 0 {
-        name = (*uc.obj().get()).group.data;
-    } else if !uc.opts_view().obj_merge_objects() && (*uc.obj().get()).object.length > 0 {
-        name = (*uc.obj().get()).object.data;
-    } else if !uc.opts_view().obj_merge_groups() && (*uc.obj().get()).group.length > 0 {
-        name = (*uc.obj().get()).group.data;
+    if uc.opts_view().obj_split_groups() && uc.obj().group_view().length() > 0 {
+        name = uc.obj().group_view().data();
+    } else if !uc.opts_view().obj_merge_objects() && uc.obj().object_view().length() > 0 {
+        name = uc.obj().object_view().data();
+    } else if !uc.opts_view().obj_merge_groups() && uc.obj().group_view().length() > 0 {
+        name = uc.obj().group_view().data();
     }
 
     (*mesh).fbx_node = push_synthetic_element::<UfbxNode>(
@@ -274,11 +274,11 @@ pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
     // .obj parsing does its own yield logic
     uc.set_data_size(uc.data_size() + uc.yield_size());
 
-    (*uc.obj().get()).object.data = EMPTY_CHAR.as_ptr();
-    (*uc.obj().get()).group.data = EMPTY_CHAR.as_ptr();
+    uc.obj().object_view().set_data(EMPTY_CHAR.as_ptr());
+    uc.obj().group_view().set_data(EMPTY_CHAR.as_ptr());
 
     map_init(
-        &mut (*uc.obj().get()).group_map,
+        uc.obj().group_map_mut_ptr(),
         uc.ator_tmp_mut_ptr(),
         map_cmp_const_char_ptr,
         core::ptr::null_mut(),
@@ -325,7 +325,7 @@ pub(crate) unsafe fn obj_free(uc: &Context) {
     buf_free(uc.obj().tmp_meshes_mut_ptr());
     buf_free(uc.obj().tmp_props_mut_ptr());
 
-    map_free(&mut (*uc.obj().get()).group_map);
+    map_free(uc.obj().group_map_mut_ptr());
 
     free::<String>(
         uc.ator_tmp_mut_ptr(),
@@ -387,8 +387,8 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
 
     let line_len: usize = offset;
 
-    (*uc.obj().get()).line.data = uc.data();
-    (*uc.obj().get()).line.length = line_len;
+    uc.obj().line_view().set_data(uc.data());
+    uc.obj().line_view().set_length(line_len);
     uc.set_data(uc.data().add(line_len));
     uc.set_data_size(uc.data_size() - line_len);
 
@@ -403,10 +403,12 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     if uc.obj().eof() {
         let new_data: *mut u8 = push::<u8>(uc.tmp_mut_ptr(), line_len + 1);
         ufbxi_check!(uc, !new_data.is_null(), "new_data");
-        core::ptr::copy_nonoverlapping((*uc.obj().get()).line.data, new_data, line_len);
+        core::ptr::copy_nonoverlapping(uc.obj().line_view().data(), new_data, line_len);
         *new_data.add(line_len) = b'\n';
-        (*uc.obj().get()).line.data = new_data;
-        (*uc.obj().get()).line.length += 1;
+        uc.obj().line_view().set_data(new_data);
+        uc.obj()
+            .line_view()
+            .set_length(uc.obj().line_view().length() + 1);
     }
 
     Ok(())
@@ -435,8 +437,8 @@ pub(crate) unsafe fn obj_span_token(uc: &Context, start_token: usize, end_token:
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
-    let mut ptr: *const u8 = (*uc.obj().get()).line.data;
-    let end: *const u8 = ptr.add((*uc.obj().get()).line.length);
+    let mut ptr: *const u8 = uc.obj().line_view().data();
+    let end: *const u8 = ptr.add(uc.obj().line_view().length());
     uc.obj().set_num_tokens(0);
 
     loop {
@@ -685,7 +687,7 @@ pub(crate) unsafe fn obj_parse_indices(
     }
 
     if uc.obj().group_dirty() {
-        if (((*uc.obj().get()).object.length == 0 || uc.opts_view().obj_merge_objects())
+        if ((uc.obj().object_view().length() == 0 || uc.opts_view().obj_merge_objects())
             && !uc.opts_view().obj_merge_groups())
             || uc.opts_view().obj_split_groups()
         {
@@ -751,22 +753,22 @@ pub(crate) unsafe fn obj_parse_indices(
 
     if uc.obj().face_group_dirty() {
         let mut name: String = EMPTY_STRING.0;
-        if (*uc.obj().get()).group.length > 0
-            && ((*uc.obj().get()).object.length > 0 || uc.opts_view().obj_merge_groups())
+        if uc.obj().group_view().length() > 0
+            && (uc.obj().object_view().length() > 0 || uc.opts_view().obj_merge_groups())
             && !uc.opts_view().obj_split_groups()
         {
-            name = (*uc.obj().get()).group;
+            name = uc.obj().group();
         }
 
         let hash: u32 = hash_ptr!(name.data);
         let mut entry: *mut ObjGroupEntry = map_find(
-            &mut (*uc.obj().get()).group_map,
+            uc.obj().group_map_mut_ptr(),
             hash,
             &name.data as *const *const u8 as *const c_void,
         );
         if entry.is_null() {
             entry = map_insert(
-                &mut (*uc.obj().get()).group_map,
+                uc.obj().group_map_mut_ptr(),
                 hash,
                 &name.data as *const *const u8 as *const c_void,
             );
@@ -942,7 +944,7 @@ pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
 
     if !uc.opts_view().disable_quirks() {
         if r#match(
-            &(*uc.obj().get()).line,
+            uc.obj().line_mut_ptr(),
             b"\\s*#\\s*File exported by ZBrush.*\0".as_ptr(),
         ) {
             if uc.obj().mesh().is_null() {
@@ -1549,25 +1551,17 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             }
         } else if key == obj_cmd1(b'o') {
             if num_tokens >= 2 {
-                (*uc.obj().get()).object = obj_span_token(uc, 1, usize::MAX);
-                push_string_place_str(
-                    uc.string_pool_mut_ptr(),
-                    &mut (*uc.obj().get()).object,
-                    false,
-                )?;
+                uc.obj().set_object(obj_span_token(uc, 1, usize::MAX));
+                push_string_place_str(uc.string_pool_mut_ptr(), uc.obj().object_mut_ptr(), false)?;
                 uc.obj().set_object_dirty(true);
             }
         } else if key == obj_cmd1(b'g') {
             if num_tokens >= 2 {
-                (*uc.obj().get()).group = obj_span_token(uc, 1, usize::MAX);
-                push_string_place_str(
-                    uc.string_pool_mut_ptr(),
-                    &mut (*uc.obj().get()).group,
-                    false,
-                )?;
+                uc.obj().set_group(obj_span_token(uc, 1, usize::MAX));
+                push_string_place_str(uc.string_pool_mut_ptr(), uc.obj().group_mut_ptr(), false)?;
                 uc.obj().set_group_dirty(true);
             } else {
-                (*uc.obj().get()).group = EMPTY_STRING.0;
+                uc.obj().set_group(EMPTY_STRING.0);
                 uc.obj().set_group_dirty(true);
             }
         } else if key == obj_cmd1(b'#') {
@@ -1577,8 +1571,8 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             let mut lib: String = obj_span_token(uc, 1, usize::MAX);
             lib.data = push_copy::<u8>(uc.tmp_mut_ptr(), lib.length + 1, lib.data);
             ufbxi_check!(uc, !lib.data.is_null(), "lib.data");
-            (*uc.obj().get()).mtllib_relative_path.data = lib.data;
-            (*uc.obj().get()).mtllib_relative_path.size = lib.length;
+            uc.obj().mtllib_relative_path_view().set_data(lib.data);
+            uc.obj().mtllib_relative_path_view().set_size(lib.length);
         } else if str_equal(cmd, str_c(b"usemtl\0".as_ptr())) {
             obj_parse_material(uc)?;
         } else if !uc.opts_view().disable_quirks() && key == 0 {
@@ -1919,7 +1913,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
 
         if !has_stream
             && uc.opts_view().load_external_files()
-            && (*uc.obj().get()).mtllib_relative_path.size > 0
+            && uc.obj().mtllib_relative_path_view().size() > 0
         {
             // C: `ufbx_blob dst; // ufbxi_uninit`
             let mut dst = MaybeUninit::<Blob>::uninit(); // ufbxi_uninit
@@ -1927,7 +1921,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
             resolve_relative_filename(
                 uc,
                 dst as *mut Strblob,
-                &raw const (*uc.obj().get()).mtllib_relative_path as *const Strblob,
+                uc.obj().mtllib_relative_path_mut_ptr() as *const Strblob,
                 true,
             )?;
             has_stream = open_file(
@@ -1935,11 +1929,11 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                 &mut stream,
                 (*dst).data,
                 (*dst).size,
-                &(*uc.obj().get()).mtllib_relative_path,
+                uc.obj().mtllib_relative_path_mut_ptr(),
                 uc.ator_tmp_mut_ptr(),
                 OpenFileType::ObjMtl,
             );
-            stream_path = (*uc.obj().get()).mtllib_relative_path;
+            stream_path = uc.obj().mtllib_relative_path();
             needs_stream = true;
             if !has_stream {
                 ufbxi_check!(

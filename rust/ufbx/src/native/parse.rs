@@ -515,6 +515,95 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn group(&self) -> String {
+        // SAFETY: Copy String/Blob value read.
+        unsafe { (*self.get()).group }
+    }
+    #[inline(always)]
+    pub(crate) fn set_group(&self, group: String) {
+        unsafe {
+            (*self.get()).group = group;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn group_mut_ptr(&self) -> *mut String {
+        unsafe { &raw mut (*self.get()).group }
+    }
+
+    #[inline(always)]
+    pub(crate) fn object(&self) -> String {
+        // SAFETY: Copy String/Blob value read.
+        unsafe { (*self.get()).object }
+    }
+    #[inline(always)]
+    pub(crate) fn set_object(&self, object: String) {
+        unsafe {
+            (*self.get()).object = object;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn object_mut_ptr(&self) -> *mut String {
+        unsafe { &raw mut (*self.get()).object }
+    }
+
+    #[inline(always)]
+    pub(crate) fn line(&self) -> String {
+        // SAFETY: Copy String/Blob value read.
+        unsafe { (*self.get()).line }
+    }
+    #[inline(always)]
+    pub(crate) fn set_line(&self, line: String) {
+        unsafe {
+            (*self.get()).line = line;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn line_mut_ptr(&self) -> *mut String {
+        unsafe { &raw mut (*self.get()).line }
+    }
+
+    #[inline(always)]
+    pub(crate) fn mtllib_relative_path(&self) -> crate::prelude::Blob {
+        // SAFETY: Copy String/Blob value read.
+        unsafe { (*self.get()).mtllib_relative_path }
+    }
+    #[inline(always)]
+    pub(crate) fn set_mtllib_relative_path(&self, mtllib_relative_path: crate::prelude::Blob) {
+        unsafe {
+            (*self.get()).mtllib_relative_path = mtllib_relative_path;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn mtllib_relative_path_mut_ptr(&self) -> *mut crate::prelude::Blob {
+        unsafe { &raw mut (*self.get()).mtllib_relative_path }
+    }
+
+    #[inline(always)]
+    pub(crate) fn group_view(&self) -> &crate::prelude::StringView {
+        unsafe { &*(&raw mut (*self.get()).group as *mut crate::prelude::StringView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn object_view(&self) -> &crate::prelude::StringView {
+        unsafe { &*(&raw mut (*self.get()).object as *mut crate::prelude::StringView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn line_view(&self) -> &crate::prelude::StringView {
+        unsafe { &*(&raw mut (*self.get()).line as *mut crate::prelude::StringView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn mtllib_relative_path_view(&self) -> &crate::prelude::BlobView {
+        unsafe { &*(&raw mut (*self.get()).mtllib_relative_path as *mut crate::prelude::BlobView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn group_map_mut_ptr(&self) -> *mut Map {
+        unsafe { &raw mut (*self.get()).group_map }
+    }
+
+    #[inline(always)]
     pub(crate) fn tmp_color_valid_mut_ptr(&self) -> *mut crate::native::buf::Buf {
         unsafe { &raw mut (*self.get()).tmp_color_valid }
     }
