@@ -883,7 +883,7 @@ unsafe fn binary_parse_node_rec(
                     (*t).dst_data = arr_data as *mut c_void;
                     (*t).inflate_retain = (*uc.get()).inflate_retain;
 
-                    if (*uc.get()).read_fn.is_none() {
+                    if uc.read_fn().is_none() {
                         // From memory, no need to copy
                         (*t).encoded_data = uc.data() as *const c_void;
                     } else {
@@ -996,7 +996,7 @@ unsafe fn binary_parse_node_rec(
                 if encoded_size as usize > (*input).data_size {
                     (*input).buffer = (*uc.get()).read_buffer as *mut c_void;
                     (*input).buffer_size = (*uc.get()).read_buffer_size;
-                    (*input).read_fn = (*uc.get()).read_fn;
+                    (*input).read_fn = uc.read_fn();
                     (*input).read_user = (*uc.get()).read_user;
                     (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(
                         (encoded_size as usize).wrapping_sub((*input).data_size) as u64,

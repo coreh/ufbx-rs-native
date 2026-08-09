@@ -44,19 +44,19 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     if require_size {
         ufbxi_check_return_msg!(
             uc,
-            (*uc.get()).read_fn.is_some() || uc.data_size() > 0,
+            uc.read_fn().is_some() || uc.data_size() > 0,
             core::ptr::null(),
             "Empty file",
             "uc->read_fn || uc->data_size > 0"
         );
         ufbxi_check_return_msg!(
             uc,
-            (*uc.get()).read_fn.is_some(),
+            uc.read_fn().is_some(),
             core::ptr::null(),
             "Truncated file",
             "uc->read_fn"
         );
-    } else if (*uc.get()).read_fn.is_none() {
+    } else if uc.read_fn().is_none() {
         (*uc.get()).eof = true;
         return uc.data();
     }
@@ -95,7 +95,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     let data_capacity: usize = (*uc.get()).read_buffer_size;
     while data_size < data_capacity {
         let to_read: usize = data_capacity - data_size;
-        let read_result: usize = ((*uc.get()).read_fn.unwrap_unchecked())(
+        let read_result: usize = (uc.read_fn().unwrap_unchecked())(
             (*uc.get()).read_user,
             (*uc.get()).read_buffer.add(data_size) as *mut c_void,
             to_read,
@@ -270,7 +270,7 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
                 // and causes us to seek indefinitely forwards as `fseek()` does not
                 // report if we hit EOF...
                 let mut single_byte = MaybeUninit::<[u8; 1]>::uninit(); // ufbxi_uninit
-                let num_read: usize = ((*uc.get()).read_fn.unwrap_unchecked())(
+                let num_read: usize = (uc.read_fn().unwrap_unchecked())(
                     (*uc.get()).read_user,
                     single_byte.as_mut_ptr() as *mut c_void,
                     1,
@@ -343,14 +343,11 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
         (*uc.get()).data_begin = core::ptr::null();
         uc.set_data(core::ptr::null());
         uc.set_data_size(0);
-        ufbxi_check!(uc, (*uc.get()).read_fn.is_some(), "uc->read_fn");
+        ufbxi_check!(uc, uc.read_fn().is_some(), "uc->read_fn");
 
         while size > 0 {
-            let read_result: usize = ((*uc.get()).read_fn.unwrap_unchecked())(
-                (*uc.get()).read_user,
-                ptr as *mut c_void,
-                size,
-            );
+            let read_result: usize =
+                (uc.read_fn().unwrap_unchecked())((*uc.get()).read_user, ptr as *mut c_void, size);
             ufbxi_check_msg!(
                 uc,
                 read_result != usize::MAX,

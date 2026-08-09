@@ -1876,7 +1876,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
         close_fn((*uc.get()).read_user);
     }
 
-    (*uc.get()).read_fn = None;
+    uc.set_read_fn(None);
     (*uc.get()).close_fn = None;
     (*uc.get()).read_user = core::ptr::null_mut();
     (*uc.get()).data_begin = core::ptr::null();
@@ -2025,7 +2025,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
 
     if has_stream {
         // Adopt `stream` to ufbx read callbacks
-        (*uc.get()).read_fn = stream.read_fn;
+        uc.set_read_fn(stream.read_fn);
         (*uc.get()).close_fn = stream.close_fn;
         (*uc.get()).read_user = stream.user;
 
@@ -2034,7 +2034,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
         if let Some(close_fn) = (*uc.get()).close_fn {
             close_fn((*uc.get()).read_user);
         }
-        (*uc.get()).read_fn = None;
+        uc.set_read_fn(None);
         (*uc.get()).close_fn = None;
         (*uc.get()).read_user = core::ptr::null_mut();
 

@@ -557,7 +557,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             }
             ufbxi_fail_msg!(uc, "open_file_fn()", "File not found");
         }
-        (*uc.get()).read_fn = stream.read_fn;
+        uc.set_read_fn(stream.read_fn);
         (*uc.get()).skip_fn = stream.skip_fn;
         (*uc.get()).size_fn = stream.size_fn;
         (*uc.get()).close_fn = stream.close_fn;

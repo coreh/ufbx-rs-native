@@ -99,7 +99,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
     (*uc.get()).data_offset = (*uc.get())
         .data_offset
         .wrapping_add(to_size((*ua).src as isize - (*uc.get()).data_begin as isize) as u64);
-    if (*uc.get()).read_fn.is_some() {
+    if uc.read_fn().is_some() {
         let mut dst_buffer: *mut u8 = core::ptr::null_mut();
         let mut dst_size: usize = 0;
 
@@ -133,7 +133,7 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
 
         // Read user data, return '\0' on EOF
         // TODO: Very unoptimal for non-full-size reads in some cases
-        let num_read: usize = ((*uc.get()).read_fn.unwrap_unchecked())(
+        let num_read: usize = (uc.read_fn().unwrap_unchecked())(
             (*uc.get()).read_user,
             dst_buffer as *mut core::ffi::c_void,
             dst_size,
@@ -471,7 +471,7 @@ pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: *mut Buf) -> Resul
             length += 1;
         }
         (*span).length = length;
-        if (*ua).src_is_retained || (*uc.get()).read_fn.is_none() {
+        if (*ua).src_is_retained || uc.read_fn().is_none() {
             (*span).source = begin;
         } else {
             (*span).source = push_copy::<u8>(tmp_buf, length, begin);

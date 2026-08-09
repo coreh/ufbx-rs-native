@@ -782,6 +782,27 @@ impl Context {
             (*self.get()).yield_size = yield_size;
         }
     }
+
+    // Stream read callback. Scalar `Option<fn>` (a nullable fn pointer): value
+    // getter + setter. Copies the option out; invoking it stays unsafe.
+    #[inline(always)]
+    pub(crate) fn read_fn(
+        &self,
+    ) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize> {
+        // SAFETY: reading an `Option<fn>` field; all bit patterns valid.
+        unsafe { (*self.get()).read_fn }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_read_fn(
+        &self,
+        read_fn: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize>,
+    ) {
+        // SAFETY: storing an `Option<fn>`; cannot violate validity.
+        unsafe {
+            (*self.get()).read_fn = read_fn;
+        }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`
