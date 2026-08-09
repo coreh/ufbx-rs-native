@@ -389,7 +389,7 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
     let mut val: *const u8;
     let mut val_size: usize;
 
-    let file_big_endian: bool = (*uc.get()).file_big_endian;
+    let file_big_endian: bool = uc.file_big_endian();
 
     // String array special case
     if dst_type == b's' || dst_type == b'S' || dst_type == b'C' {
@@ -723,7 +723,7 @@ unsafe fn binary_parse_node_rec(
     let mut header_words: *const u8 = header;
     ufbxi_check!(uc, !header.is_null(), "header");
     if uc.version() >= 7500 {
-        if (*uc.get()).file_big_endian {
+        if uc.file_big_endian() {
             header_words = swap_endian(uc, header_words as *const c_void, 3, 8);
             ufbxi_check!(uc, !header_words.is_null(), "header_words");
         }
@@ -732,7 +732,7 @@ unsafe fn binary_parse_node_rec(
         values_len = read_u64(header_words.add(16));
         name_len = read_u8(header.add(24));
     } else {
-        if (*uc.get()).file_big_endian {
+        if uc.file_big_endian() {
             header_words = swap_endian(uc, header_words as *const c_void, 3, 4);
             ufbxi_check!(uc, !header_words.is_null(), "header_words");
         }
@@ -823,7 +823,7 @@ unsafe fn binary_parse_node_rec(
 
         if c == b'c' || c == b'b' || c == b'i' || c == b'l' || c == b'f' || c == b'd' {
             let mut arr_words: *const u8 = data.add(1);
-            if (*uc.get()).file_big_endian {
+            if uc.file_big_endian() {
                 arr_words = swap_endian(uc, arr_words as *const c_void, 3, 4);
                 ufbxi_check!(uc, !arr_words.is_null(), "arr_words");
             }
@@ -863,7 +863,7 @@ unsafe fn binary_parse_node_rec(
             if (*uc.get()).parse_threaded
                 && encoding == 1
                 && encoded_size as usize >= MIN_THREADED_DEFLATE_BYTES
-                && !(*uc.get()).file_big_endian
+                && !uc.file_big_endian()
                 && !uc.local_big_endian()
             {
                 let task: *mut Task =
@@ -911,8 +911,7 @@ unsafe fn binary_parse_node_rec(
             // with the FBX format we can read the decoded data directly into the array buffer.
             // Otherwise we need a temporary buffer to decode the array into before conversion.
             let mut decoded_data: *mut c_void = arr_data as *mut c_void;
-            if !deferred
-                && (src_type != dst_type || uc.local_big_endian() != (*uc.get()).file_big_endian)
+            if !deferred && (src_type != dst_type || uc.local_big_endian() != uc.file_big_endian())
             {
                 ufbxi_check!(
                     uc,
@@ -1086,7 +1085,7 @@ unsafe fn binary_parse_node_rec(
             let mut value: *const u8 = data.add(1);
 
             let type_: u8 = *data.add(0);
-            if (*uc.get()).file_big_endian {
+            if uc.file_big_endian() {
                 value = swap_endian_value(uc, value as *const c_void, type_);
                 ufbxi_check!(uc, !value.is_null(), "value");
             }

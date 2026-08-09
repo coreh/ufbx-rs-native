@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `file_big_endian` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn file_big_endian(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).file_big_endian }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_file_big_endian(&self, file_big_endian: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).file_big_endian = file_big_endian;
+        }
+    }
+
     // `local_big_endian` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn local_big_endian(&self) -> bool {
@@ -3397,11 +3412,11 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
     if memcmp(header, BINARY_MAGIC.as_ptr(), BINARY_MAGIC_SIZE) == 0 {
         // The byte after the magic indicates endianness
         let endian: u8 = *header.add(BINARY_MAGIC_SIZE + 0);
-        (*uc.get()).file_big_endian = endian != 0;
+        uc.set_file_big_endian(endian != 0);
 
         // Read the version directly from the header
         let mut version_word: *const u8 = header.add(BINARY_MAGIC_SIZE + 1);
-        if (*uc.get()).file_big_endian {
+        if uc.file_big_endian() {
             version_word =
                 crate::native::parse_binary::swap_endian(uc, version_word as *const c_void, 1, 4);
             ufbxi_check!(uc, !version_word.is_null(), "version_word");

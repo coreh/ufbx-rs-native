@@ -828,7 +828,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // Copy local data to the scene
     (*uc.get()).scene.metadata.version = uc.version();
     (*uc.get()).scene.metadata.ascii = uc.from_ascii();
-    (*uc.get()).scene.metadata.big_endian = (*uc.get()).file_big_endian;
+    (*uc.get()).scene.metadata.big_endian = uc.file_big_endian();
     (*uc.get()).scene.metadata.geometry_ignored = (*uc.get()).opts.ignore_geometry;
     (*uc.get()).scene.metadata.animation_ignored = (*uc.get()).opts.ignore_animation;
     (*uc.get()).scene.metadata.embedded_ignored = (*uc.get()).opts.ignore_embedded;
