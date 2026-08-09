@@ -1782,30 +1782,30 @@ pub(crate) unsafe fn create_anim(
     ufbx_assert!(!scene.is_null());
 
     // C: `ufbxi_create_anim_context ac = { UFBX_ERROR_NONE };`
-    let mut ac = MaybeUninit::<evaluate::CreateAnimContext>::zeroed();
-    let ac: *mut evaluate::CreateAnimContext = ac.as_mut_ptr();
+    let ac =
+        evaluate::CreateAnimContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
-        // C: `ac.opts = *opts;` (struct assignment)
-        core::ptr::copy_nonoverlapping(opts, core::ptr::addr_of_mut!((*ac).opts), 1);
+        // C: `(*ac.get()).opts = *opts;` (struct assignment)
+        core::ptr::copy_nonoverlapping(opts, core::ptr::addr_of_mut!((*ac.get()).opts), 1);
     }
 
-    (*ac).scene = scene;
+    (*ac.get()).scene = scene;
 
     // C: `int ok = ufbxi_create_anim_imp(&ac);`
-    let ok = evaluate::create_anim_imp(ac);
+    let ok = evaluate::create_anim_imp(&ac);
 
     if ok.is_ok() {
         clear_error(error);
-        let imp: *mut AnimImp = (*ac).imp;
+        let imp: *mut AnimImp = (*ac.get()).imp;
         core::ptr::addr_of_mut!((*imp).anim)
     } else {
         fix_error_type(
-            core::ptr::addr_of_mut!((*ac).error),
+            core::ptr::addr_of_mut!((*ac.get()).error),
             b"Failed to create anim\0".as_ptr(),
             error,
         );
-        buf_free(core::ptr::addr_of_mut!((*ac).result));
-        free_ator(core::ptr::addr_of_mut!((*ac).ator_result));
+        buf_free(core::ptr::addr_of_mut!((*ac.get()).result));
+        free_ator(core::ptr::addr_of_mut!((*ac.get()).ator_result));
         core::ptr::null_mut()
     }
 }
