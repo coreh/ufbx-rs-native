@@ -286,6 +286,27 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).result as *mut crate::native::buf::BufView) }
+    }
+
+    // `source` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn source_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).source as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp as *mut crate::native::buf::BufView) }
+    }
+
     // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `SubdivideOptsView`.
     #[inline(always)]
     pub(crate) fn opts_view(&self) -> &SubdivideOptsView {
@@ -2274,16 +2295,16 @@ pub(crate) unsafe fn subdivide_mesh_imp(
         b"result\0".as_ptr(),
     );
 
-    (*sc.get()).result.unordered = true;
-    (*sc.get()).source.unordered = true;
-    (*sc.get()).tmp.unordered = true;
+    sc.result_view().set_unordered(true);
+    sc.source_view().set_unordered(true);
+    sc.tmp_view().set_unordered(true);
 
-    (*sc.get()).source.ator = sc.ator_tmp_mut_ptr();
-    (*sc.get()).tmp.ator = sc.ator_tmp_mut_ptr();
+    sc.source_view().set_ator(sc.ator_tmp_mut_ptr());
+    sc.tmp_view().set_ator(sc.ator_tmp_mut_ptr());
 
     let mut i: usize = 1;
     while i < level {
-        (*sc.get()).result.ator = sc.ator_tmp_mut_ptr();
+        sc.result_view().set_ator(sc.ator_tmp_mut_ptr());
 
         subdivide_mesh_level(sc)?;
 
@@ -2305,7 +2326,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
         i += 1;
     }
 
-    (*sc.get()).result.ator = sc.ator_result_mut_ptr();
+    sc.result_view().set_ator(sc.ator_result_mut_ptr());
     subdivide_mesh_level(sc)?;
     buf_free(sc.tmp_mut_ptr());
 
