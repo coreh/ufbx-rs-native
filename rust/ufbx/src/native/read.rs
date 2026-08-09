@@ -1147,8 +1147,8 @@ pub(crate) unsafe fn push_element_size(
     let typed_id: u32 = (*uc.get()).tmp_typed_element_offsets[type_ as usize].num_items as u32;
     // C: `uint32_t element_id = uc->num_elements++;` — post-increment yields
     // the OLD value.
-    let element_id: u32 = (*uc.get()).num_elements;
-    (*uc.get()).num_elements = (*uc.get()).num_elements.wrapping_add(1);
+    let element_id: u32 = uc.num_elements();
+    uc.set_num_elements(uc.num_elements().wrapping_add(1));
 
     ufbxi_check_return!(
         uc,
@@ -1235,8 +1235,8 @@ pub(crate) unsafe fn push_synthetic_element_size(
     let aligned_size: usize = size.wrapping_add(7) & (!0x7u32 as usize);
 
     let typed_id: u32 = (*uc.get()).tmp_typed_element_offsets[type_ as usize].num_items as u32;
-    let element_id: u32 = (*uc.get()).num_elements;
-    (*uc.get()).num_elements = (*uc.get()).num_elements.wrapping_add(1);
+    let element_id: u32 = uc.num_elements();
+    uc.set_num_elements(uc.num_elements().wrapping_add(1));
 
     ufbxi_check_return!(
         uc,

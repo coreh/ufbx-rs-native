@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `num_elements` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn num_elements(&self) -> u32 {
+        // SAFETY: reading a scalar field; all bit patterns of `u32` are valid.
+        unsafe { (*self.get()).num_elements }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_num_elements(&self, num_elements: u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).num_elements = num_elements;
+        }
+    }
+
     // `root_id` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn root_id(&self) -> u64 {

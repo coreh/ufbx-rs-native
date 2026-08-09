@@ -363,7 +363,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
         return Ok(());
     }
 
-    let num_elements: u32 = (*uc.get()).num_elements;
+    let num_elements: u32 = uc.num_elements();
     let num_nodes: usize = (*uc.get()).tmp_node_ids.num_items;
     let elements: *mut *mut Element = push_pop::<*mut Element>(
         &mut (*uc.get()).tmp_parse,
@@ -6513,7 +6513,7 @@ pub(crate) unsafe fn push_anim(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
-    let num_elements: usize = (*uc.get()).num_elements as usize;
+    let num_elements: usize = uc.num_elements() as usize;
 
     (*uc.get()).scene.elements.count = num_elements;
     (*uc.get()).scene.elements.data =
