@@ -2049,6 +2049,14 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ator_tmp_mut(&self) -> *mut Allocator {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ator_tmp }
+    }
+
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
@@ -2972,7 +2980,7 @@ pub(crate) unsafe fn evaluate_scene(
 
     init_ator(
         ptr::addr_of_mut!((*ec.get()).error),
-        ptr::addr_of_mut!((*ec.get()).ator_tmp),
+        ec.ator_tmp_mut(),
         ptr::addr_of!((*ec.get()).opts.temp_allocator),
         b"temp\0".as_ptr(),
     );
@@ -2984,14 +2992,14 @@ pub(crate) unsafe fn evaluate_scene(
     );
 
     (*ec.get()).result.ator = ec.ator_result_mut();
-    (*ec.get()).tmp.ator = ptr::addr_of_mut!((*ec.get()).ator_tmp);
+    (*ec.get()).tmp.ator = ec.ator_tmp_mut();
 
     (*ec.get()).result.unordered = true;
     (*ec.get()).tmp.unordered = true;
 
     if evaluate_imp(ec).is_ok() {
         buf_free(ptr::addr_of_mut!((*ec.get()).tmp));
-        free_ator(ptr::addr_of_mut!((*ec.get()).ator_tmp));
+        free_ator(ec.ator_tmp_mut());
         if !p_error.is_null() {
             clear_error(p_error);
         }
@@ -3004,7 +3012,7 @@ pub(crate) unsafe fn evaluate_scene(
         );
         buf_free(ptr::addr_of_mut!((*ec.get()).tmp));
         buf_free(ptr::addr_of_mut!((*ec.get()).result));
-        free_ator(ptr::addr_of_mut!((*ec.get()).ator_tmp));
+        free_ator(ec.ator_tmp_mut());
         free_ator(ec.ator_result_mut());
         ptr::null_mut()
     }
