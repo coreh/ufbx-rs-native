@@ -10137,9 +10137,9 @@ pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
     if !matrix_all_zero(&(*uc.get()).axis_matrix) {
         root_transform = matrix_to_transform(&(*uc.get()).axis_matrix);
     }
-    root_transform.scale.x *= (*uc.get()).unit_scale;
-    root_transform.scale.y *= (*uc.get()).unit_scale;
-    root_transform.scale.z *= (*uc.get()).unit_scale;
+    root_transform.scale.x *= uc.unit_scale();
+    root_transform.scale.y *= uc.unit_scale();
+    root_transform.scale.z *= uc.unit_scale();
 
     let conversion: SpaceConversion = (*uc.get()).opts.space_conversion;
 

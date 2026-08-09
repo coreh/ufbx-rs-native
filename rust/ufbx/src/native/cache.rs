@@ -1715,7 +1715,7 @@ pub(crate) unsafe fn scale_units(uc: &Context, mut target_meters: Real) -> Resul
         return Ok(());
     }
 
-    (*uc.get()).unit_scale = ratio;
+    uc.set_unit_scale(ratio);
 
     if (*uc.get()).opts.space_conversion == SpaceConversion::TransformRoot {
         let root_node: *mut Node = ref_ptr(&(*uc.get()).scene.root_node);

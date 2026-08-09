@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `unit_scale` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn unit_scale(&self) -> Real {
+        // SAFETY: reading a scalar field; all bit patterns of `Real` are valid.
+        unsafe { (*self.get()).unit_scale }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_unit_scale(&self, unit_scale: Real) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).unit_scale = unit_scale;
+        }
+    }
+
     // `ktime_sec_double` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn ktime_sec_double(&self) -> f64 {
