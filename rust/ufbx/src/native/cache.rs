@@ -177,6 +177,14 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp }
+    }
+
     // `string_pool` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn string_pool_mut(&self) -> *mut StringPool {
@@ -993,10 +1001,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
         }
 
         if !tag_channels.is_null() {
-            cc.set_channels(push_zero(
-                &mut (*cc.get()).tmp,
-                (*tag_channels).num_children,
-            ));
+            cc.set_channels(push_zero(cc.tmp_mut(), (*tag_channels).num_children));
             ufbxi_check_err!(cc.error_mut(), !cc.channels().is_null(), "cc->channels");
 
             // C: `ufbxi_for(ufbxi_xml_tag, tag, tag_channels->children, tag_channels->num_children)`
@@ -1159,7 +1164,7 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
 
     // Ensure worst case space for `path/filenameFrame123Tick456.mcx`
     let name_buf_len: usize = (*cc.get()).xml_filename.length + 64;
-    let name_buf: *mut u8 = push(&mut (*cc.get()).tmp, name_buf_len);
+    let name_buf: *mut u8 = push(cc.tmp_mut(), name_buf_len);
     ufbxi_check_err!(cc.error_mut(), !name_buf.is_null(), "name_buf");
 
     // Find the prefix before `.xml`
@@ -1451,7 +1456,7 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     }
 
     // Make sure the filename we pass to `open_file_fn()` is NULL-terminated
-    let filename_data: *mut u8 = push(&mut (*cc.get()).tmp, filename.length + 1);
+    let filename_data: *mut u8 = push(cc.tmp_mut(), filename.length + 1);
     ufbxi_check_err!(cc.error_mut(), !filename_data.is_null(), "filename_data");
     core::ptr::copy_nonoverlapping(filename.data, filename_data, filename.length);
     *filename_data.add(filename.length) = b'\0';
@@ -1518,7 +1523,7 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
 pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut GeometryCache {
     let ok = cache_load_imp(cc, filename).is_ok();
 
-    buf_free(&mut (*cc.get()).tmp);
+    buf_free(cc.tmp_mut());
     buf_free(&mut (*cc.get()).tmp_stack);
     free::<u8>(cc.ator_tmp(), cc.name_buf(), cc.name_cap());
     free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size());
