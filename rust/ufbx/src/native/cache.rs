@@ -177,6 +177,21 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `mc_for8` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn mc_for8(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).mc_for8 }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_mc_for8(&self, mc_for8: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).mc_for8 = mc_for8;
+        }
+    }
+
     // `frames_per_second` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn frames_per_second(&self) -> f64 {
@@ -456,7 +471,7 @@ pub(crate) unsafe fn cache_mc_read_tag(cc: &CacheContext, p_tag: *mut u32) -> Re
         | (*buf.add(2) as u32) << 8u32
         | (*buf.add(3) as u32);
     if *p_tag == cache_mc_tag(b'F', b'O', b'R', b'8') {
-        (*cc.get()).mc_for8 = true;
+        cc.set_mc_for8(true);
     }
     Ok(())
 }
@@ -472,7 +487,7 @@ pub(crate) unsafe fn cache_mc_read_u32(cc: &CacheContext, p_value: *mut u32) -> 
         | (*buf.add(1) as u32) << 16
         | (*buf.add(2) as u32) << 8u32
         | (*buf.add(3) as u32);
-    if (*cc.get()).mc_for8 {
+    if cc.mc_for8() {
         cache_read(cc, buf as *mut c_void, 4, false)?;
     }
     Ok(())
@@ -482,7 +497,7 @@ pub(crate) unsafe fn cache_mc_read_u32(cc: &CacheContext, p_value: *mut u32) -> 
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_mc_read_u64(cc: &CacheContext, p_value: *mut u64) -> Result<(), Fail> {
-    if !(*cc.get()).mc_for8 {
+    if !cc.mc_for8() {
         let mut v32 = MaybeUninit::<u32>::uninit(); // ufbxi_uninit
         cache_mc_read_u32(cc, v32.as_mut_ptr())?;
         *p_value = v32.assume_init() as u64;
@@ -546,7 +561,7 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
         if tag == TAG_CACH || tag == TAG_MYCH {
             continue;
         }
-        if (*cc.get()).mc_for8 {
+        if cc.mc_for8() {
             cache_read(cc, skip_buf.as_mut_ptr() as *mut c_void, 4, false)?;
         }
 
@@ -554,12 +569,12 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
         let size: u64 = size.assume_init();
         let begin: u64 = (*cc.get()).file_offset;
 
-        let alignment: usize = if (*cc.get()).mc_for8 { 8 } else { 4 };
+        let alignment: usize = if cc.mc_for8() { 8 } else { 4 };
 
         let mut format: CacheDataFormat = CacheDataFormat::Unknown;
         match tag {
-            TAG_FOR4 => (*cc.get()).mc_for8 = false,
-            TAG_FOR8 => (*cc.get()).mc_for8 = true,
+            TAG_FOR4 => cc.set_mc_for8(false),
+            TAG_FOR8 => cc.set_mc_for8(true),
             TAG_VRSN => cache_mc_read_u32(cc, &mut version)?,
             TAG_STIM => {
                 cache_mc_read_u32(cc, &mut time_start)?;
