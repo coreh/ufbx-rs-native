@@ -1647,7 +1647,7 @@ pub(crate) unsafe fn setup_scale_helper(
     (*scale_node).is_scale_helper = true;
 
     connect_oo(uc, scale_fbx_id, node_fbx_id)?;
-    (*uc.get()).has_scale_helper_nodes = true;
+    uc.set_has_scale_helper_nodes(true);
 
     let extra: *mut NodeExtra = push_element_extra(uc, (*node).element.element_id);
     ufbxi_check!(uc, !extra.is_null(), "extra");

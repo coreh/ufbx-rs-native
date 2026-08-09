@@ -1407,7 +1407,7 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
         }
 
         // Remap connections to scale helpers if necessary, see `ufbxi_setup_scale_helper()` for how these are setup.
-        if (*uc.get()).has_scale_helper_nodes {
+        if uc.has_scale_helper_nodes() {
             if (*dst).type_ == ElementType::Node {
                 let dst_node: *mut Node = dst as *mut Node;
                 let scale_helper: *mut Node = opt_ptr(&(*dst_node).scale_helper);
