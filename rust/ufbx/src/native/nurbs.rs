@@ -168,6 +168,14 @@ impl TessellateCurveContext {
         self.0.get().cast()
     }
 
+    // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ator_result }
+    }
+
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_tmp_mut(&self) -> *mut Allocator {
@@ -264,6 +272,14 @@ impl TessellateSurfaceContext {
         self.0.get().cast()
     }
 
+    // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ator_result }
+    }
+
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_tmp_mut(&self) -> *mut Allocator {
@@ -347,13 +363,13 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
     );
     init_ator(
         tc.error_mut(),
-        &mut (*tc.get()).ator_result,
+        tc.ator_result_mut(),
         &(*tc.get()).opts.result_allocator,
         b"result\0".as_ptr(),
     );
 
     (*tc.get()).result.unordered = true;
-    (*tc.get()).result.ator = &raw mut (*tc.get()).ator_result;
+    (*tc.get()).result.ator = tc.ator_result_mut();
 
     let num_spans: usize = (*curve).basis.spans.count;
 
@@ -499,7 +515,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     );
     init_ator(
         tc.error_mut(),
-        &mut (*tc.get()).ator_result,
+        tc.ator_result_mut(),
         &(*tc.get()).opts.result_allocator,
         b"result\0".as_ptr(),
     );
@@ -507,7 +523,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     (*tc.get()).result.unordered = true;
     (*tc.get()).tmp.unordered = true;
 
-    (*tc.get()).result.ator = &raw mut (*tc.get()).ator_result;
+    (*tc.get()).result.ator = tc.ator_result_mut();
     (*tc.get()).tmp.ator = tc.ator_tmp_mut();
 
     let open_u: bool = (*surface).basis_u.topology == NurbsTopology::Open;
