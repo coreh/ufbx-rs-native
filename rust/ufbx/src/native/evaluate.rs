@@ -1156,7 +1156,7 @@ pub(crate) unsafe fn load(
 
     // NOTE: Though `inflate_retain` leaks out of the scope we don't use it outside this function.
     // cppcheck-suppress autoVariables
-    (*uc.get()).inflate_retain = inflate_retain.as_mut_ptr();
+    uc.set_inflate_retain(inflate_retain.as_mut_ptr());
 
     let ok: bool = load_imp(uc).is_ok();
 

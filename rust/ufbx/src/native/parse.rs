@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `inflate_retain` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn inflate_retain(&self) -> *mut InflateRetain {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut InflateRetain` are valid.
+        unsafe { (*self.get()).inflate_retain }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_inflate_retain(&self, inflate_retain: *mut InflateRetain) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).inflate_retain = inflate_retain;
+        }
+    }
+
     // `scene_imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn scene_imp(&self) -> *mut SceneImp {

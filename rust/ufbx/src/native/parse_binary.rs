@@ -872,7 +872,7 @@ unsafe fn binary_parse_node_rec(
                     let t: *mut DeflateTask = push_zero::<DeflateTask>(tmp_buf, 1);
                     ufbxi_check!(uc, !t.is_null(), "t");
 
-                    inflate_init_retain((*uc.get()).inflate_retain);
+                    inflate_init_retain(uc.inflate_retain());
 
                     (*t).src_elem_size = src_elem_size;
                     (*t).encoded_size = encoded_size as usize;
@@ -881,7 +881,7 @@ unsafe fn binary_parse_node_rec(
                     (*t).dst_type = dst_type;
                     (*t).arr_type = (*arr).type_;
                     (*t).dst_data = arr_data as *mut c_void;
-                    (*t).inflate_retain = (*uc.get()).inflate_retain;
+                    (*t).inflate_retain = uc.inflate_retain();
 
                     if uc.read_fn().is_none() {
                         // From memory, no need to copy
@@ -1010,12 +1010,8 @@ unsafe fn binary_parse_node_rec(
                     resume_progress(uc)?;
                 }
 
-                let res: isize = inflate(
-                    decoded_data,
-                    decoded_data_size,
-                    input,
-                    (*uc.get()).inflate_retain,
-                );
+                let res: isize =
+                    inflate(decoded_data, decoded_data_size, input, uc.inflate_retain());
                 ufbxi_check_msg!(uc, res != -28, "Cancelled");
                 ufbxi_check_msg!(
                     uc,
