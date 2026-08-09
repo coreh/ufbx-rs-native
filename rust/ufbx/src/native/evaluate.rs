@@ -3484,6 +3484,21 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `time_begin` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn time_begin(&self) -> f64 {
+        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
+        unsafe { (*self.get()).time_begin }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_time_begin(&self, time_begin: f64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).time_begin = time_begin;
+        }
+    }
+
     // `ktime_offset` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn ktime_offset(&self) -> f64 {
@@ -3835,7 +3850,7 @@ pub(crate) unsafe fn finalize_bake_times(
     if (*bc.get()).tmp_times.num_items == 0 {
         ufbxi_check_err!(
             &mut (*bc.get()).error,
-            bake_push_time(bc, (*bc.get()).time_begin, 0),
+            bake_push_time(bc, bc.time_begin(), 0),
             "ufbxi_bake_push_time(bc, bc->time_begin, 0)"
         );
         ufbxi_check_err!(
@@ -5268,10 +5283,10 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         (*bc.get()).bake.key_time_max = (*bc.get()).time_max;
     }
 
-    if (*bc.get()).time_begin < (*bc.get()).time_end {
-        (*bc.get()).bake.playback_time_begin = (*bc.get()).time_begin;
+    if bc.time_begin() < (*bc.get()).time_end {
+        (*bc.get()).bake.playback_time_begin = bc.time_begin();
         (*bc.get()).bake.playback_time_end = (*bc.get()).time_end;
-        (*bc.get()).bake.playback_duration = (*bc.get()).time_end - (*bc.get()).time_begin;
+        (*bc.get()).bake.playback_duration = (*bc.get()).time_end - bc.time_begin();
     }
 
     Ok(())
@@ -5336,7 +5351,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
 
     (*bc.get()).anim = anim;
     if (*anim).time_begin < (*anim).time_end {
-        (*bc.get()).time_begin = (*anim).time_begin;
+        bc.set_time_begin((*anim).time_begin);
         (*bc.get()).time_end = (*anim).time_end;
     }
     (*bc.get()).time_min = math::INFINITY;
