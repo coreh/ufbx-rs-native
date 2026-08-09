@@ -958,7 +958,7 @@ pub(crate) unsafe fn free_result(uc: &Context) {
     buf_free(uc.result_mut_ptr());
     buf_free(&mut (*uc.get()).string_pool.buf);
 
-    free_ator(&raw mut (*uc.get()).ator_result);
+    free_ator(uc.ator_result_mut_ptr());
 }
 
 // ufbx.c:25472-25625 `ufbxi_load`
@@ -1013,7 +1013,7 @@ pub(crate) unsafe fn load(
     );
     init_ator(
         uc.error_mut_ptr(),
-        &raw mut (*uc.get()).ator_result,
+        uc.ator_result_mut_ptr(),
         ptr::addr_of!((*uc.get()).opts.result_allocator),
         b"result\0".as_ptr(),
     );
@@ -1063,7 +1063,7 @@ pub(crate) unsafe fn load(
         map_cmp_string,
         ptr::null_mut(),
     );
-    (*uc.get()).string_pool.buf.ator = ptr::addr_of_mut!((*uc.get()).ator_result);
+    (*uc.get()).string_pool.buf.ator = uc.ator_result_mut_ptr();
     (*uc.get()).string_pool.buf.unordered = true;
     (*uc.get()).string_pool.initial_size = 1024;
     (*uc.get()).string_pool.error_handling = (*uc.get()).opts.unicode_error_handling;
@@ -1141,7 +1141,7 @@ pub(crate) unsafe fn load(
         (*uc.get()).tmp_thread_parse[i].clearable = true;
     }
 
-    (*uc.get()).result.ator = ptr::addr_of_mut!((*uc.get()).ator_result);
+    (*uc.get()).result.ator = uc.ator_result_mut_ptr();
 
     (*uc.get()).tmp.unordered = true;
     (*uc.get()).tmp_parse.unordered = true;
