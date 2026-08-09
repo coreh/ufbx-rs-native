@@ -6230,10 +6230,10 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             (*ua).src_end = (*uc.get()).read_buffer.add(size);
             (*ua).src_is_retained = false;
             (*ua).src_buf = core::ptr::null_mut();
-            if to_size((*ua).src_end.offset_from((*ua).src)) < (*uc.get()).progress_interval {
+            if to_size((*ua).src_end.offset_from((*ua).src)) < uc.progress_interval() {
                 (*ua).src_yield = (*ua).src_end;
             } else {
-                (*ua).src_yield = (*ua).src.add((*uc.get()).progress_interval);
+                (*ua).src_yield = (*ua).src.add(uc.progress_interval());
             }
             uc.set_data((*ua).src);
         }

@@ -162,11 +162,11 @@ pub(crate) unsafe fn pause_progress(uc: &Context) {
 // ufbx.c:6789-6799 `ufbxi_resume_progress`
 #[inline(never)]
 pub(crate) unsafe fn resume_progress(uc: &Context) -> Result<(), Fail> {
-    uc.set_yield_size(min_sz(uc.data_size(), (*uc.get()).progress_interval));
+    uc.set_yield_size(min_sz(uc.data_size(), uc.progress_interval()));
     uc.set_data_size(uc.data_size() - uc.yield_size());
 
     if get_read_offset(uc).wrapping_sub((*uc.get()).latest_progress_bytes)
-        >= (*uc.get()).progress_interval as u64
+        >= uc.progress_interval() as u64
     {
         // C: `ufbxi_check(ufbxi_report_progress(uc));` — the caller-side check
         // pushes its own error-stack frame on top of the callee's (a bare `?`
@@ -188,10 +188,7 @@ pub(crate) unsafe fn yield_(uc: &Context, size: usize) -> *const u8 {
     } else {
         ret = refill(uc, size, true);
     }
-    uc.set_yield_size(min_sz(
-        uc.data_size(),
-        max_sz(size, (*uc.get()).progress_interval),
-    ));
+    uc.set_yield_size(min_sz(uc.data_size(), max_sz(size, uc.progress_interval())));
     uc.set_data_size(uc.data_size() - uc.yield_size());
 
     ufbxi_check_return!(

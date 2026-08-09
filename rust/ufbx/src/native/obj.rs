@@ -387,9 +387,9 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     uc.set_data_size(uc.data_size() - line_len);
 
     (*uc.get()).obj.read_progress += line_len;
-    if (*uc.get()).obj.read_progress >= (*uc.get()).progress_interval {
+    if (*uc.get()).obj.read_progress >= uc.progress_interval() {
         report_progress(uc)?;
-        (*uc.get()).obj.read_progress %= (*uc.get()).progress_interval;
+        (*uc.get()).obj.read_progress %= uc.progress_interval();
     }
 
     if (*uc.get()).obj.eof {

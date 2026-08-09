@@ -1043,11 +1043,11 @@ pub(crate) unsafe fn load(
     if (*uc.get()).opts.progress_cb.fn_.is_none()
         || (*uc.get()).opts.progress_interval_hint >= usize::MAX as u64
     {
-        (*uc.get()).progress_interval = usize::MAX;
+        uc.set_progress_interval(usize::MAX);
     } else if (*uc.get()).opts.progress_interval_hint > 0 {
-        (*uc.get()).progress_interval = (*uc.get()).opts.progress_interval_hint as usize;
+        uc.set_progress_interval((*uc.get()).opts.progress_interval_hint as usize);
     } else {
-        (*uc.get()).progress_interval = 0x4000;
+        uc.set_progress_interval(0x4000);
     }
 
     if (*uc.get()).opts.open_file_cb.fn_.is_none() {

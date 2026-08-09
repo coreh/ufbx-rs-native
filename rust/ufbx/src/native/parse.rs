@@ -849,6 +849,21 @@ impl Context {
             (*self.get()).eof = eof;
         }
     }
+
+    // Progress-callback byte interval. Scalar `usize`: value getter + setter.
+    #[inline(always)]
+    pub(crate) fn progress_interval(&self) -> usize {
+        // SAFETY: reading a `usize` field; all bit patterns valid.
+        unsafe { (*self.get()).progress_interval }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_progress_interval(&self, progress_interval: usize) {
+        // SAFETY: storing a `usize`; cannot violate validity.
+        unsafe {
+            (*self.get()).progress_interval = progress_interval;
+        }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`

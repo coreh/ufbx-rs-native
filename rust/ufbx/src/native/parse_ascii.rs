@@ -178,10 +178,10 @@ pub(crate) unsafe fn ascii_yield(uc: &Context) -> u8 {
         ret = *(*ua).src;
     }
 
-    if to_size((*ua).src_end as isize - (*ua).src as isize) < (*uc.get()).progress_interval {
+    if to_size((*ua).src_end as isize - (*ua).src as isize) < uc.progress_interval() {
         (*ua).src_yield = (*ua).src_end;
     } else {
-        (*ua).src_yield = (*ua).src.add((*uc.get()).progress_interval);
+        (*ua).src_yield = (*ua).src.add(uc.progress_interval());
     }
 
     // TODO: Unify these properly

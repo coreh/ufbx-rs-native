@@ -976,7 +976,7 @@ unsafe fn binary_parse_node_rec(
                     (*input).progress_size_before = arr_begin;
                     (*input).progress_size_after =
                         (*uc.get()).progress_bytes_total.wrapping_sub(arr_end);
-                    (*input).progress_interval_hint = (*uc.get()).progress_interval as u64;
+                    (*input).progress_interval_hint = uc.progress_interval() as u64;
                 } else {
                     (*input).progress_cb.fn_ = None;
                     (*input).progress_cb.user = core::ptr::null_mut();
