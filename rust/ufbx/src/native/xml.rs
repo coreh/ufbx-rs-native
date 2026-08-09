@@ -98,6 +98,21 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    // `tok_len` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn tok_len(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).tok_len }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_tok_len(&self, tok_len: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).tok_len = tok_len;
+        }
+    }
+
     // `tok_cap` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tok_cap(&self) -> usize {
@@ -242,21 +257,21 @@ pub(crate) unsafe fn xml_advance(xc: &XmlContext) {
 // ufbx.c:7328-7335 `ufbxi_xml_push_token_char`
 #[inline(never)]
 pub(crate) unsafe fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), Fail> {
-    if (*xc.get()).tok_len == xc.tok_cap() || IS_REGRESSION {
+    if xc.tok_len() == xc.tok_cap() || IS_REGRESSION {
         ufbxi_check_err!(
             &mut (*xc.get()).error,
             grow_array::<u8>(
                 xc.ator(),
                 &mut (*xc.get()).tok,
                 &mut (*xc.get()).tok_cap,
-                (*xc.get()).tok_len + 1
+                xc.tok_len() + 1
             ),
             "ufbxi_grow_array_size((xc->ator), sizeof(**(&xc->tok)), (&xc->tok), (&xc->tok_cap), (xc->tok_len + 1))"
         );
     }
     // C: `xc->tok[xc->tok_len++] = c;`
-    *xc.tok().add((*xc.get()).tok_len) = c;
-    (*xc.get()).tok_len += 1;
+    *xc.tok().add(xc.tok_len()) = c;
+    xc.set_tok_len(xc.tok_len() + 1);
     Ok(())
 }
 
@@ -288,7 +303,7 @@ pub(crate) unsafe fn xml_skip_until_string(
     dst: *mut String,
     suffix: *const u8,
 ) -> Result<(), Fail> {
-    (*xc.get()).tok_len = 0;
+    xc.set_tok_len(0);
     let mut match_len: usize = 0;
     let mut ix: usize = 0;
     let suffix_len: usize = crate::native::error::strlen(suffix);
@@ -324,8 +339,8 @@ pub(crate) unsafe fn xml_skip_until_string(
 
     xml_push_token_char(xc, b'\0')?;
     if !dst.is_null() {
-        (*dst).length = (*xc.get()).tok_len - 1;
-        (*dst).data = push_copy::<u8>(&mut (*xc.get()).result, (*xc.get()).tok_len, xc.tok());
+        (*dst).length = xc.tok_len() - 1;
+        (*dst).data = push_copy::<u8>(&mut (*xc.get()).result, xc.tok_len(), xc.tok());
         ufbxi_check_err!(&mut (*xc.get()).error, !(*dst).data.is_null(), "dst->data");
     }
 
@@ -340,12 +355,12 @@ pub(crate) unsafe fn xml_read_until(
     dst: *mut String,
     ctypes: u32,
 ) -> Result<(), Fail> {
-    (*xc.get()).tok_len = 0;
+    xc.set_tok_len(0);
     loop {
         let mut c: u8 = *(*xc.get()).pos;
 
         if c == b'&' {
-            let entity_begin: usize = (*xc.get()).tok_len;
+            let entity_begin: usize = xc.tok_len();
             loop {
                 xml_advance(xc);
                 c = *(*xc.get()).pos;
@@ -359,7 +374,7 @@ pub(crate) unsafe fn xml_read_until(
             xml_push_token_char(xc, b'\0')?;
 
             let entity: *mut u8 = xc.tok().add(entity_begin);
-            (*xc.get()).tok_len = entity_begin;
+            xc.set_tok_len(entity_begin);
 
             if *entity.add(0) == b'#' {
                 // C: `unsigned long code` — 64-bit on the oracle targets; the
@@ -422,8 +437,8 @@ pub(crate) unsafe fn xml_read_until(
 
     xml_push_token_char(xc, b'\0')?;
     if !dst.is_null() {
-        (*dst).length = (*xc.get()).tok_len - 1;
-        (*dst).data = push_copy::<u8>(&mut (*xc.get()).result, (*xc.get()).tok_len, xc.tok());
+        (*dst).length = xc.tok_len() - 1;
+        (*dst).data = push_copy::<u8>(&mut (*xc.get()).result, xc.tok_len(), xc.tok());
         ufbxi_check_err!(&mut (*xc.get()).error, !(*dst).data.is_null(), "dst->data");
     }
 
@@ -487,7 +502,7 @@ unsafe fn xml_parse_tag_rec(
             )?;
             let mut has_text: bool = false;
             let mut i: usize = 0;
-            while i < (*xc.get()).tok_len {
+            while i < xc.tok_len() {
                 if (XML_CTYPE[*xc.tok().add(i) as usize] as u32 & XML_CTYPE_WHITESPACE) == 0 {
                     has_text = true;
                     break;
@@ -500,9 +515,8 @@ unsafe fn xml_parse_tag_rec(
                 ufbxi_check_err!(&mut (*xc.get()).error, !tag.is_null(), "tag");
                 (*tag).name.data = EMPTY_CHAR.as_ptr();
 
-                (*tag).text.length = (*xc.get()).tok_len - 1;
-                (*tag).text.data =
-                    push_copy::<u8>(&mut (*xc.get()).result, (*xc.get()).tok_len, xc.tok());
+                (*tag).text.length = xc.tok_len() - 1;
+                (*tag).text.data = push_copy::<u8>(&mut (*xc.get()).result, xc.tok_len(), xc.tok());
                 ufbxi_check_err!(
                     &mut (*xc.get()).error,
                     !(*tag).text.data.is_null(),
