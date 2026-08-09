@@ -499,7 +499,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         // C: `ufbx_stream stream = { 0 };` / `ufbx_open_file_opts opts = { 0 };`
         let mut stream: RawStream = MaybeUninit::zeroed().assume_init();
         let mut opts: RawOpenFileOpts = MaybeUninit::zeroed().assume_init();
-        let filename: *const u8 = (*uc.get()).load_filename;
+        let filename: *const u8 = uc.load_filename();
         let mut filename_len: usize = (*uc.get()).load_filename_len;
         let ok: bool;
         if filename_len == usize::MAX {
@@ -540,7 +540,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             ok = open_file(
                 ptr::addr_of!((*uc.get()).opts.open_file_cb),
                 &mut stream,
-                (*uc.get()).load_filename,
+                uc.load_filename(),
                 filename_len,
                 ptr::null(),
                 uc.ator_tmp(),

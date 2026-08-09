@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `load_filename` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn load_filename(&self) -> *const u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*const u8` are valid.
+        unsafe { (*self.get()).load_filename }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_load_filename(&self, load_filename: *const u8) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).load_filename = load_filename;
+        }
+    }
+
     // `deferred_load` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn deferred_load(&self) -> bool {
