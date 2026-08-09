@@ -170,6 +170,14 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn opts_mut(&self) -> *mut RawSubdivideOpts {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).opts }
+    }
+
     // `inputs_cap` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn inputs_cap_mut(&self) -> *mut usize {
@@ -2257,7 +2265,7 @@ pub(crate) unsafe fn subdivide_mesh(
     let sc = &sc;
     if !user_opts.is_null() {
         // C: `(*sc.get()).opts = *user_opts;` — struct assignment (memcpy).
-        core::ptr::copy_nonoverlapping(user_opts, core::ptr::addr_of_mut!((*sc.get()).opts), 1);
+        core::ptr::copy_nonoverlapping(user_opts, sc.opts_mut(), 1);
     }
 
     sc.set_src_mesh_ptr(mesh as *mut Mesh);
