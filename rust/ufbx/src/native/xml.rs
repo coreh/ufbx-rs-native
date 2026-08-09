@@ -98,6 +98,21 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    // `doc` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn doc(&self) -> *mut XmlDocument {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut XmlDocument` are valid.
+        unsafe { (*self.get()).doc }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_doc(&self, doc: *mut XmlDocument) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).doc = doc;
+        }
+    }
+
     // `ator` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn ator(&self) -> *mut Allocator {
@@ -611,15 +626,11 @@ pub(crate) unsafe fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
         "tag->children"
     );
 
-    (*xc.get()).doc = push(&mut (*xc.get()).result, 1);
-    ufbxi_check_err!(
-        &mut (*xc.get()).error,
-        !(*xc.get()).doc.is_null(),
-        "xc->doc"
-    );
+    xc.set_doc(push(&mut (*xc.get()).result, 1));
+    ufbxi_check_err!(&mut (*xc.get()).error, !xc.doc().is_null(), "xc->doc");
 
-    (*(*xc.get()).doc).root = tag;
-    (*(*xc.get()).doc).buf = (*xc.get()).result;
+    (*xc.doc()).root = tag;
+    (*xc.doc()).buf = (*xc.get()).result;
 
     Ok(())
 }
@@ -662,7 +673,7 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     free::<u8>(xc.ator(), (*xc.get()).tok, (*xc.get()).tok_cap);
 
     if ok {
-        (*xc.get()).doc
+        xc.doc()
     } else {
         buf_free(&mut (*xc.get()).result);
         if !error.is_null() {
