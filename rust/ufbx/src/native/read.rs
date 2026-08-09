@@ -7259,12 +7259,8 @@ pub(crate) unsafe fn read_legacy_settings(uc: &Context, node: *mut Node) -> Resu
             ) {
                 // C: `char *end;` — written by `ufbxi_parse_double()`.
                 let mut end: *const u8 = core::ptr::null();
-                let val: f64 = parse_double(
-                    str_.data,
-                    str_.length,
-                    &mut end,
-                    (*uc.get()).double_parse_flags,
-                );
+                let val: f64 =
+                    parse_double(str_.data, str_.length, &mut end, uc.double_parse_flags());
                 if end == str_.data.add(str_.length) {
                     fps = val;
                 }

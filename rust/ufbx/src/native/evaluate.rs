@@ -978,7 +978,7 @@ pub(crate) unsafe fn load(
         uc.set_local_big_endian(buf[0] == 0xbb);
     }
 
-    (*uc.get()).double_parse_flags = parse_double_init_flags();
+    uc.set_double_parse_flags(parse_double_init_flags());
 
     if !user_opts.is_null() {
         // C: `uc->opts = *user_opts;` (struct copy)

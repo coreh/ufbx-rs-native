@@ -552,7 +552,7 @@ pub(crate) unsafe fn obj_parse_vertex(
         "offset + read_values <= uc->obj.num_tokens"
     );
 
-    let parse_flags: u32 = (*uc.get()).double_parse_flags;
+    let parse_flags: u32 = uc.double_parse_flags();
     let vals: *mut Real = push_fast::<Real>(dst, num_values);
     ufbxi_check!(uc, !vals.is_null(), "vals");
     for i in 0..read_values {
@@ -1668,12 +1668,7 @@ pub(crate) unsafe fn obj_parse_prop(
 
         // C: `char *end; // ufbxi_uninit`
         let mut end: *const u8 = core::ptr::null(); // ufbxi_uninit
-        let val: f64 = parse_double(
-            tok.data,
-            tok.length,
-            &mut end,
-            (*uc.get()).double_parse_flags,
-        );
+        let val: f64 = parse_double(tok.data, tok.length, &mut end, uc.double_parse_flags());
         if end != tok.data.add(tok.length) {
             break;
         }

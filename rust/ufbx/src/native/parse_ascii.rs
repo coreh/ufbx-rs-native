@@ -610,7 +610,7 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
                 "end == token->str_data + token->str_len - 1"
             );
         } else if (*token).type_ == ASCII_FLOAT {
-            let mut flags: u32 = (*uc.get()).double_parse_flags;
+            let mut flags: u32 = uc.double_parse_flags();
             if (*ua).parse_as_f32 {
                 flags = PARSE_DOUBLE_AS_BINARY32;
             }
@@ -1138,7 +1138,7 @@ pub(crate) unsafe fn ascii_read_float_array(
     let mut src: *const u8 = (*ua).src;
     let end: *const u8 = (*ua).src_yield;
 
-    let parse_flags: u32 = (*uc.get()).double_parse_flags;
+    let parse_flags: u32 = uc.double_parse_flags();
 
     let initial_items: usize = (*uc.get()).tmp_stack.num_items;
     let mut src_scan: *const u8 = src;

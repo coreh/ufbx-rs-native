@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `double_parse_flags` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn double_parse_flags(&self) -> u32 {
+        // SAFETY: reading a scalar field; all bit patterns of `u32` are valid.
+        unsafe { (*self.get()).double_parse_flags }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_double_parse_flags(&self, double_parse_flags: u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).double_parse_flags = double_parse_flags;
+        }
+    }
+
     // `read_legacy_settings` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn read_legacy_settings(&self) -> bool {
