@@ -168,6 +168,13 @@ impl TessellateCurveContext {
         self.0.get().cast()
     }
 
+    // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).result as *mut crate::native::buf::BufView) }
+    }
+
     // `line` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn line_mut_ptr(&self) -> *mut LineCurve {
@@ -286,6 +293,20 @@ impl TessellateSurfaceContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerTessellateSurfaceContext {
         self.0.get().cast()
+    }
+
+    // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).result as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp as *mut crate::native::buf::BufView) }
     }
 
     // `mesh` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -416,8 +437,8 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
         b"result\0".as_ptr(),
     );
 
-    (*tc.get()).result.unordered = true;
-    (*tc.get()).result.ator = tc.ator_result_mut_ptr();
+    tc.result_view().set_unordered(true);
+    tc.result_view().set_ator(tc.ator_result_mut_ptr());
 
     let num_spans: usize = (*curve).basis.spans.count;
 
@@ -564,11 +585,11 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
         b"result\0".as_ptr(),
     );
 
-    (*tc.get()).result.unordered = true;
-    (*tc.get()).tmp.unordered = true;
+    tc.result_view().set_unordered(true);
+    tc.tmp_view().set_unordered(true);
 
-    (*tc.get()).result.ator = tc.ator_result_mut_ptr();
-    (*tc.get()).tmp.ator = tc.ator_tmp_mut_ptr();
+    tc.result_view().set_ator(tc.ator_result_mut_ptr());
+    tc.tmp_view().set_ator(tc.ator_tmp_mut_ptr());
 
     let open_u: bool = (*surface).basis_u.topology == NurbsTopology::Open;
     let open_v: bool = (*surface).basis_v.topology == NurbsTopology::Open;
