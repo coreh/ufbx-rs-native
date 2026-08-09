@@ -3229,6 +3229,13 @@ impl CreateAnimContext {
         self.0.get().cast()
     }
 
+    // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).result as *mut crate::native::buf::BufView) }
+    }
+
     // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `AnimOptsView`.
     #[inline(always)]
     pub(crate) fn opts_view(&self) -> &AnimOptsView {
@@ -3417,8 +3424,8 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
         ac.opts_view().result_allocator_ptr(),
         b"result\0".as_ptr(),
     );
-    (*ac.get()).result.unordered = true;
-    (*ac.get()).result.ator = ac.ator_result_mut_ptr();
+    ac.result_view().set_unordered(true);
+    ac.result_view().set_ator(ac.ator_result_mut_ptr());
 
     (*anim).ignore_connections = ac.opts_view().ignore_connections();
     (*anim).custom = true;
