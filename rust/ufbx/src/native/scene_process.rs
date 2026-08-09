@@ -7103,10 +7103,10 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     let num_full_weights: usize = (*uc.get()).tmp_full_weights.num_items;
     let mut full_weights: *mut List<Real> = push_pop::<List<Real>>(
         uc.tmp_mut_ptr(),
-        &mut (*uc.get()).tmp_full_weights,
+        uc.tmp_full_weights_mut_ptr(),
         num_full_weights,
     );
-    buf_free(&mut (*uc.get()).tmp_full_weights);
+    buf_free(uc.tmp_full_weights_mut_ptr());
     ufbxi_check!(uc, !full_weights.is_null(), "full_weights");
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_channel, p_channel, uc->scene.blend_channels)`

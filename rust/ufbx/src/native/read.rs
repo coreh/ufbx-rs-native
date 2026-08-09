@@ -2528,7 +2528,7 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
         let weight_list: List<Real> = core::mem::zeroed();
         ufbxi_check!(
             uc,
-            !push_copy::<List<Real>>(&mut (*uc.get()).tmp_full_weights, 1, &weight_list).is_null(),
+            !push_copy::<List<Real>>(uc.tmp_full_weights_mut_ptr(), 1, &weight_list).is_null(),
             "((ufbx_real_list*)ufbxi_push_size_copy((&uc->tmp_full_weights), sizeof(ufbx_real_list), (1), (&weight_list)))"
         );
 
@@ -4294,7 +4294,7 @@ pub(crate) unsafe fn read_blend_channel(
     }
     ufbxi_check!(
         uc,
-        !push_copy::<List<Real>>(&mut (*uc.get()).tmp_full_weights, 1, &list).is_null(),
+        !push_copy::<List<Real>>(uc.tmp_full_weights_mut_ptr(), 1, &list).is_null(),
         // C-parity: verbatim post-expansion `#cond` text (see the C11 6.10.3.1
         // note in `sort_shader_prop_bindings`).
         "((ufbx_real_list*)ufbxi_push_size_copy((&uc->tmp_full_weights), sizeof(ufbx_real_list), (1), (&list)))"
