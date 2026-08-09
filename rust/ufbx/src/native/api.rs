@@ -550,7 +550,7 @@ pub(crate) unsafe fn open_memory_ctx(
 }
 
 // ufbx.c:30497-30500 `ufbx_is_thread_safe`
-pub(crate) unsafe fn is_thread_safe() -> bool {
+pub(crate) fn is_thread_safe() -> bool {
     THREAD_SAFE != 0
 }
 
@@ -2303,7 +2303,7 @@ pub(crate) unsafe fn find_shader_texture_input_len(
 // enum is `#[repr(u32)]`, so the comparisons go through `as u32`. The
 // `< UFBX_COORDINATE_AXIS_POSITIVE_X` (i.e. `< 0`) halves are dead for an
 // unsigned repr but are kept verbatim — they are the C source text.
-pub(crate) unsafe fn coordinate_axes_valid(axes: CoordinateAxes) -> bool {
+pub(crate) fn coordinate_axes_valid(axes: CoordinateAxes) -> bool {
     if (axes.right as u32) < CoordinateAxis::PositiveX as u32
         || axes.right as u32 > CoordinateAxis::NegativeZ as u32
     {
@@ -2335,19 +2335,19 @@ pub(crate) unsafe fn quat_mul(a: Quat, b: Quat) -> Quat {
 }
 
 // ufbx.c:31497-31500 `ufbx_vec3_normalize`
-pub(crate) unsafe fn vec3_normalize(v: Vec3) -> Vec3 {
+pub(crate) fn vec3_normalize(v: Vec3) -> Vec3 {
     normalize3(v)
 }
 
 // ufbx.c:31502-31505 `ufbx_quat_dot`
 #[inline(never)]
-pub(crate) unsafe fn quat_dot(a: Quat, b: Quat) -> Real {
+pub(crate) fn quat_dot(a: Quat, b: Quat) -> Real {
     a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
 }
 
 // ufbx.c:31507-31517 `ufbx_quat_normalize`
 #[inline(never)]
-pub(crate) unsafe fn quat_normalize(mut q: Quat) -> Quat {
+pub(crate) fn quat_normalize(mut q: Quat) -> Quat {
     let mut norm: Real = quat_dot(q, q);
     if norm == 0.0 {
         return IDENTITY_QUAT;
@@ -2364,7 +2364,7 @@ pub(crate) unsafe fn quat_normalize(mut q: Quat) -> Quat {
 
 // ufbx.c:31519-31525 `ufbx_quat_fix_antipodal`
 #[inline(never)]
-pub(crate) unsafe fn quat_fix_antipodal(mut q: Quat, reference: Quat) -> Quat {
+pub(crate) fn quat_fix_antipodal(mut q: Quat, reference: Quat) -> Quat {
     if quat_dot(q, reference) < 0.0 {
         q.x = -q.x;
         q.y = -q.y;
@@ -2501,7 +2501,7 @@ pub(crate) unsafe fn euler_to_quat(v: Vec3, order: RotationOrder) -> Quat {
 
 // ufbx.c:31622-31721 `ufbx_quat_to_euler`
 #[inline(never)]
-pub(crate) unsafe fn quat_to_euler(q: Quat, order: RotationOrder) -> Vec3 {
+pub(crate) fn quat_to_euler(q: Quat, order: RotationOrder) -> Vec3 {
     // TODO: Derive these rigorously
     // C: `#if defined(UFBX_REAL_IS_FLOAT) const double eps = 0.9999999;
     //     #else const double eps = 0.999999999; #endif`
