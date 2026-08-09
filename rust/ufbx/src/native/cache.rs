@@ -1824,7 +1824,7 @@ pub(crate) unsafe fn load_external_cache(
         return Ok(());
     }
 
-    ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_GEOMETRY_CACHE");
+    ufbxi_fmt_err_info!(uc.error_ptr(), "UFBX_ENABLE_GEOMETRY_CACHE");
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_GEOMETRY_CACHE", "Feature disabled");
 }
 

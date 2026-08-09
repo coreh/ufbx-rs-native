@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `error` — const raw-ptr getter (read-only sites); see `error_mut_ptr` for mutation.
+    #[inline(always)]
+    pub(crate) fn error_ptr(&self) -> *const Error {
+        // SAFETY: `&raw const` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw const (*self.get()).error }
+    }
+
     // `swap_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn swap_arr_size_mut_ptr(&self) -> *mut usize {
