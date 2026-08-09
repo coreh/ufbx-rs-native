@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `tmp_mesh_consecutive_indices` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn tmp_mesh_consecutive_indices(&self) -> *mut u32 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u32` are valid.
+        unsafe { (*self.get()).tmp_mesh_consecutive_indices }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_tmp_mesh_consecutive_indices(&self, tmp_mesh_consecutive_indices: *mut u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).tmp_mesh_consecutive_indices = tmp_mesh_consecutive_indices;
+        }
+    }
+
     // `inflate_retain` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn inflate_retain(&self) -> *mut InflateRetain {

@@ -5430,14 +5430,14 @@ pub(crate) unsafe fn flip_attrib_winding(
         return Ok(());
     } else if (*indices).data == uc.consecutive_indices() {
         // Need to duplicate consecutive indices, but we can cache the per mesh.
-        if !(*uc.get()).tmp_mesh_consecutive_indices.is_null() {
-            (*indices).data = (*uc.get()).tmp_mesh_consecutive_indices;
+        if !uc.tmp_mesh_consecutive_indices().is_null() {
+            (*indices).data = uc.tmp_mesh_consecutive_indices();
             return Ok(());
         }
         (*indices).data =
             push_copy::<u32>(&mut (*uc.get()).result, (*indices).count, (*indices).data);
         ufbxi_check!(uc, !(*indices).data.is_null(), "indices->data");
-        (*uc.get()).tmp_mesh_consecutive_indices = (*indices).data as *mut u32;
+        uc.set_tmp_mesh_consecutive_indices((*indices).data as *mut u32);
     }
 
     let data: *mut u32 = (*indices).data as *mut u32;
@@ -5473,7 +5473,7 @@ pub(crate) unsafe fn flip_attrib_winding(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), Fail> {
-    (*uc.get()).tmp_mesh_consecutive_indices = ptr::null_mut();
+    uc.set_tmp_mesh_consecutive_indices(ptr::null_mut());
     flip_attrib_winding(
         uc,
         mesh,
