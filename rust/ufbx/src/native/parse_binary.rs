@@ -867,7 +867,7 @@ unsafe fn binary_parse_node_rec(
                 && !uc.local_big_endian()
             {
                 let task: *mut Task =
-                    thread_pool_create_task(&raw mut (*uc.get()).thread_pool, deflate_task_fn);
+                    thread_pool_create_task(uc.thread_pool_mut_ptr(), deflate_task_fn);
                 if !task.is_null() {
                     let t: *mut DeflateTask = push_zero::<DeflateTask>(tmp_buf, 1);
                     ufbxi_check!(uc, !t.is_null(), "t");
@@ -902,7 +902,7 @@ unsafe fn binary_parse_node_rec(
                     }
 
                     (*task).data = t as *mut c_void;
-                    thread_pool_run_task(&raw mut (*uc.get()).thread_pool, task);
+                    thread_pool_run_task(uc.thread_pool_mut_ptr(), task);
                     deferred = true;
                 }
             }

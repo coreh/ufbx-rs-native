@@ -6153,7 +6153,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
     while empty_count < THREAD_GROUP_COUNT {
         let batch: *mut ObjectBatch = &mut batches[batch_index];
 
-        thread_pool_wait_group(&raw mut (*uc.get()).thread_pool)?;
+        thread_pool_wait_group(uc.thread_pool_mut_ptr())?;
 
         if (*batch).num_nodes > 0 {
             // C: `ufbxi_for_ptr(ufbxi_node, p_node, batch->nodes, batch->num_nodes)`
@@ -6223,7 +6223,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             let mut max_tasks: u32 = (*uc.get()).thread_pool.num_tasks / THREAD_GROUP_COUNT as u32;
             max_tasks = min32(
                 max_tasks,
-                thread_pool_available_tasks(&raw mut (*uc.get()).thread_pool),
+                thread_pool_available_tasks(uc.thread_pool_mut_ptr()),
             );
             let max_memory: usize = (*uc.get()).opts.thread_opts.memory_limit / THREAD_GROUP_COUNT;
 
@@ -6263,7 +6263,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
         // Not safe to refer to this buffer anymore
         (*uc.get()).ascii.src_is_retained = false;
 
-        thread_pool_flush_group(&raw mut (*uc.get()).thread_pool);
+        thread_pool_flush_group(uc.thread_pool_mut_ptr());
 
         if (*batch).num_nodes == 0 {
             empty_count += 1;
@@ -6272,7 +6272,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
         batch_index = (batch_index + 1) % THREAD_GROUP_COUNT;
     }
 
-    thread_pool_wait_all(&raw mut (*uc.get()).thread_pool)?;
+    thread_pool_wait_all(uc.thread_pool_mut_ptr())?;
 
     uc.set_parse_threaded(false);
 

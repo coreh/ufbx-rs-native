@@ -1873,11 +1873,11 @@ unsafe fn ascii_parse_node_rec(
 
                 // TODO: Split these further
                 let task: *mut Task =
-                    thread_pool_create_task(&raw mut (*uc.get()).thread_pool, ascii_array_task_fn);
+                    thread_pool_create_task(uc.thread_pool_mut_ptr(), ascii_array_task_fn);
                 if !task.is_null() {
                     (*task).data = push_copy::<AsciiArrayTask>(tmp_buf, 1, t) as *mut c_void;
                     ufbxi_check!(uc, !(*task).data.is_null(), "task->data");
-                    thread_pool_run_task(&raw mut (*uc.get()).thread_pool, task);
+                    thread_pool_run_task(uc.thread_pool_mut_ptr(), task);
                 } else {
                     ufbxi_check_msg!(
                         uc,

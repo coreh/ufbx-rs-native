@@ -627,7 +627,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         thread_pool_init(
-            ptr::addr_of_mut!((*uc.get()).thread_pool),
+            uc.thread_pool_mut_ptr(),
             uc.error_mut_ptr(),
             uc.ator_tmp_mut_ptr(),
             ptr::addr_of!((*uc.get()).opts.thread_opts),
@@ -885,7 +885,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:25412-25462 `ufbxi_free_temp`
 #[inline(never)]
 pub(crate) unsafe fn free_temp(uc: &Context) {
-    thread_pool_free(&raw mut (*uc.get()).thread_pool);
+    thread_pool_free(uc.thread_pool_mut_ptr());
 
     string_pool_temp_free(uc.string_pool_mut_ptr());
     buf_free(&mut (*uc.get()).warnings.tmp_stack);
