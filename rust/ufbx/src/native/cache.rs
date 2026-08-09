@@ -171,10 +171,80 @@ pub(crate) struct InnerCacheContext {
 #[repr(transparent)]
 pub(crate) struct CacheContext(core::cell::UnsafeCell<core::mem::MaybeUninit<InnerCacheContext>>);
 
+// Typed interior-mutable VIEW over the `opts` field, reinterpreted in place
+// (approach A). Generated ABI-fixed `RawGeometryCacheOpts` plays the `Inner` role;
+// `MaybeUninit` makes forming `&GeometryCacheOptsView` assert no validity — each leaf getter
+// asserts only the field it reads.
+#[repr(transparent)]
+pub(crate) struct GeometryCacheOptsView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<RawGeometryCacheOpts>>,
+);
+
+impl GeometryCacheOptsView {
+    #[inline(always)]
+    fn get(&self) -> *mut RawGeometryCacheOpts {
+        self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn mirror_axis(&self) -> crate::generated::MirrorAxis {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.mirror_axis` read already makes.
+        unsafe { (*self.get()).mirror_axis }
+    }
+
+    #[inline(always)]
+    pub(crate) fn scale_factor(&self) -> Real {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.scale_factor` read already makes.
+        unsafe { (*self.get()).scale_factor }
+    }
+
+    #[inline(always)]
+    pub(crate) fn use_scale_factor(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.use_scale_factor` read already makes.
+        unsafe { (*self.get()).use_scale_factor }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_mirror_axis(&self, mirror_axis: crate::generated::MirrorAxis) {
+        // SAFETY: interior-mutable write of a POD opts field.
+        unsafe {
+            (*self.get()).mirror_axis = mirror_axis;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_scale_factor(&self, scale_factor: Real) {
+        // SAFETY: interior-mutable write of a POD opts field.
+        unsafe {
+            (*self.get()).scale_factor = scale_factor;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_use_scale_factor(&self, use_scale_factor: bool) {
+        // SAFETY: interior-mutable write of a POD opts field.
+        unsafe {
+            (*self.get()).use_scale_factor = use_scale_factor;
+        }
+    }
+}
+
 impl CacheContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerCacheContext {
         self.0.get().cast()
+    }
+
+    // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `GeometryCacheOptsView`.
+    #[inline(always)]
+    pub(crate) fn opts_view(&self) -> &GeometryCacheOptsView {
+        // SAFETY: `GeometryCacheOptsView` is repr(transparent) over the `opts` field's layout,
+        // which lives in this context's outer UnsafeCell; a shared interior-mutable
+        // `&GeometryCacheOptsView` is sound and asserts no validity.
+        unsafe { &*(&raw const (*self.get()).opts as *const GeometryCacheOptsView) }
     }
 
     // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -1447,9 +1517,9 @@ pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail>
         let mut mirror_axis: MirrorAxis = MirrorAxis::None;
         let mut scale_factor: Real = 1.0f32 as Real;
         if (*chan).interpretation != CacheInterpretation::Unknown {
-            mirror_axis = (*cc.get()).opts.mirror_axis;
-            if (*cc.get()).opts.use_scale_factor {
-                scale_factor = (*cc.get()).opts.scale_factor;
+            mirror_axis = cc.opts_view().mirror_axis();
+            if cc.opts_view().use_scale_factor() {
+                scale_factor = cc.opts_view().scale_factor();
             }
         }
         (*chan).mirror_axis = mirror_axis;
@@ -1764,9 +1834,10 @@ pub(crate) unsafe fn load_external_cache(
     (*cc.get()).string_pool = (*uc.get()).string_pool;
     (*cc.get()).result = (*uc.get()).result;
 
-    (*cc.get()).opts.mirror_axis = (*uc.get()).mirror_axis;
-    (*cc.get()).opts.use_scale_factor = true;
-    (*cc.get()).opts.scale_factor = (*uc.get()).scene.metadata.geometry_scale;
+    cc.opts_view().set_mirror_axis((*uc.get()).mirror_axis);
+    cc.opts_view().set_use_scale_factor(true);
+    cc.opts_view()
+        .set_scale_factor((*uc.get()).scene.metadata.geometry_scale);
 
     let mut cache: *mut GeometryCache = cache_load(&cc, (*file).filename);
     if cache.is_null() {
