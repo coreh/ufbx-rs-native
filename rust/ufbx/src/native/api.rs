@@ -1895,7 +1895,7 @@ pub(crate) unsafe fn bake_anim(
         core::ptr::addr_of_mut!((*imp).bake)
     } else {
         fix_error_type(bc.error_mut(), b"Failed to bake anim\0".as_ptr(), error);
-        buf_free(core::ptr::addr_of_mut!((*bc.get()).result));
+        buf_free(bc.result_mut());
         free_ator(bc.ator_result_mut());
         core::ptr::null_mut()
     }
