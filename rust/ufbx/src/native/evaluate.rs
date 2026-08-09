@@ -3484,6 +3484,21 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `ktime_offset` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn ktime_offset(&self) -> f64 {
+        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
+        unsafe { (*self.get()).ktime_offset }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_ktime_offset(&self, ktime_offset: f64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).ktime_offset = ktime_offset;
+        }
+    }
+
     // `tmp_arr_size` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_arr_size(&self) -> usize {
@@ -4095,9 +4110,9 @@ pub(crate) unsafe fn bake_postprocess_vec3(
     let data: *mut BakedVec3 = src.data as *mut BakedVec3;
 
     // Offset times
-    if (*bc.get()).ktime_offset != 0.0 {
+    if bc.ktime_offset() != 0.0 {
         let scale: f64 = (*(*bc.get()).scene).metadata.ktime_second as f64;
-        let offset: f64 = (*bc.get()).ktime_offset;
+        let offset: f64 = bc.ktime_offset();
         for i in 0..src.count {
             (*data.add(i)).time = math::rint((*data.add(i)).time * scale + offset) / scale;
         }
@@ -4218,9 +4233,9 @@ pub(crate) unsafe fn bake_postprocess_quat(
     let data: *mut BakedQuat = src.data as *mut BakedQuat;
 
     // Offset times
-    if (*bc.get()).ktime_offset != 0.0 {
+    if bc.ktime_offset() != 0.0 {
         let scale: f64 = (*(*bc.get()).scene).metadata.ktime_second as f64;
-        let offset: f64 = (*bc.get()).ktime_offset;
+        let offset: f64 = bc.ktime_offset();
         for i in 0..src.count {
             (*data.add(i)).time = math::rint((*data.add(i)).time * scale + offset) / scale;
         }
@@ -5284,8 +5299,9 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     }
 
     if (*bc.get()).opts.trim_start_time && (*anim).time_begin > 0.0 {
-        (*bc.get()).ktime_offset =
-            -(*anim).time_begin * (*(*bc.get()).scene).metadata.ktime_second as f64;
+        bc.set_ktime_offset(
+            -(*anim).time_begin * (*(*bc.get()).scene).metadata.ktime_second as f64,
+        );
     }
 
     init_ator(
