@@ -782,7 +782,7 @@ pub(crate) unsafe fn read_document(uc: &Context) -> Result<(), Fail> {
                 child,
                 sp::RootNode.as_ptr(),
                 b"L\0".as_ptr(),
-                &mut (*uc.get()).root_id as *mut u64 as *mut c_void,
+                uc.root_id_mut_ptr() as *mut u64 as *mut c_void,
             ) {
                 found_root_id = true;
             }
@@ -8377,7 +8377,7 @@ pub(crate) unsafe fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
     {
         let root: *mut UfbxNode = push_synthetic_element::<UfbxNode>(
             uc,
-            &mut (*uc.get()).root_id,
+            uc.root_id_mut_ptr(),
             core::ptr::null_mut(),
             EMPTY_CHAR.as_ptr(),
             ElementType::Node,

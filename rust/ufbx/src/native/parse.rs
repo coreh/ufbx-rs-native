@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `root_id` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn root_id_mut_ptr(&self) -> *mut u64 {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).root_id }
+    }
+
     // `axis_matrix` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn axis_matrix_mut_ptr(&self) -> *mut Matrix {
