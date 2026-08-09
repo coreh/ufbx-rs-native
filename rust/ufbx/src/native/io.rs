@@ -372,29 +372,46 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
 
 // ufbx.c:6955-6960 `ufbxi_file_context`
 #[repr(C)]
-pub(crate) struct FileContext {
+pub(crate) struct InnerFileContext {
     pub error: Error,
 
     pub parent_ator: *mut Allocator,
     pub ator: Allocator,
 }
 
+// Safe `&FileContext` handle over the fields-struct `InnerFileContext`, mirroring
+// the `Context`/`InnerContext` seam in `parse.rs`. `MaybeUninit` keeps it uniform
+// with the other context wrappers (and the whole context is born uninitialized —
+// `ufbxi_uninit`); `UnsafeCell` gives the interior mutability every
+// `&FileContext` site needs.
+#[repr(transparent)]
+pub(crate) struct FileContext(
+    pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerFileContext>>,
+);
+
+impl FileContext {
+    #[inline(always)]
+    pub(crate) fn get(&self) -> *mut InnerFileContext {
+        self.0.get().cast()
+    }
+}
+
 // ufbx.c:6962-6972 `ufbxi_begin_file_context`
 #[inline(never)]
 pub(crate) unsafe fn begin_file_context(
-    fc: *mut FileContext,
+    fc: &FileContext,
     ctx: OpenFileContext,
     ator_opts: *const RawAllocatorOpts,
 ) {
-    core::ptr::write_bytes(fc as *mut u8, 0, size_of::<FileContext>());
+    core::ptr::write_bytes(fc.get() as *mut u8, 0, size_of::<InnerFileContext>());
     if ctx != 0 {
-        (*fc).parent_ator = ctx as *mut Allocator;
-        (*fc).ator = *(*fc).parent_ator;
-        (*fc).ator.error = &mut (*fc).error;
+        (*fc.get()).parent_ator = ctx as *mut Allocator;
+        (*fc.get()).ator = *(*fc.get()).parent_ator;
+        (*fc.get()).ator.error = &mut (*fc.get()).error;
     } else {
         init_ator(
-            &mut (*fc).error,
-            &mut (*fc).ator,
+            &mut (*fc.get()).error,
+            &mut (*fc.get()).ator,
             ator_opts,
             b"file\0".as_ptr(),
         );
@@ -403,16 +420,20 @@ pub(crate) unsafe fn begin_file_context(
 
 // ufbx.c:6974-6989 `ufbxi_end_file_context`
 #[inline(never)]
-pub(crate) unsafe fn end_file_context(fc: *mut FileContext, error: *mut Error, ok: bool) {
-    if !(*fc).parent_ator.is_null() {
-        (*fc).ator.error = (*(*fc).parent_ator).error;
-        *(*fc).parent_ator = (*fc).ator;
+pub(crate) unsafe fn end_file_context(fc: &FileContext, error: *mut Error, ok: bool) {
+    if !(*fc.get()).parent_ator.is_null() {
+        (*fc.get()).ator.error = (*(*fc.get()).parent_ator).error;
+        *(*fc.get()).parent_ator = (*fc.get()).ator;
     } else {
-        free_ator(&mut (*fc).ator);
+        free_ator(&mut (*fc.get()).ator);
     }
     if !error.is_null() {
         if !ok {
-            fix_error_type(&mut (*fc).error, b"Failed to open file\0".as_ptr(), error);
+            fix_error_type(
+                &mut (*fc.get()).error,
+                b"Failed to open file\0".as_ptr(),
+                error,
+            );
         } else {
             clear_error(error);
         }
@@ -478,7 +499,7 @@ const SEEK_END: i32 = 2;
 #[cfg(windows)]
 #[inline(never)]
 pub(crate) unsafe fn fopen(
-    fc: *mut FileContext,
+    fc: &FileContext,
     path: *const u8,
     path_len: usize,
     null_terminated: bool,
@@ -490,7 +511,7 @@ pub(crate) unsafe fn fopen(
     if path_len < 256 - 1 {
         wpath = wpath_buf.as_mut_ptr() as *mut u16;
     } else {
-        wpath = alloc::<u16>(&mut (*fc).ator, path_len + 1);
+        wpath = alloc::<u16>(&mut (*fc.get()).ator, path_len + 1);
         if wpath.is_null() {
             return core::ptr::null_mut();
         }
@@ -556,11 +577,11 @@ pub(crate) unsafe fn fopen(
     // the compiler-version fork collapses to the plain `_wfopen` call.
     file = libc_stdio::_wfopen(wpath, [0x72u16, 0x62u16, 0u16].as_ptr()); // L"rb"
     if wpath != wpath_buf.as_mut_ptr() as *mut u16 {
-        free::<u16>(&mut (*fc).ator, wpath, path_len + 1);
+        free::<u16>(&mut (*fc.get()).ator, wpath, path_len + 1);
     }
     if file.is_null() {
-        set_err_info(&mut (*fc).error, path, path_len);
-        ufbxi_report_err_msg!(&mut (*fc).error, "file", "File not found");
+        set_err_info(&mut (*fc.get()).error, path, path_len);
+        ufbxi_report_err_msg!(&mut (*fc.get()).error, "file", "File not found");
     }
     file
 }
@@ -569,7 +590,7 @@ pub(crate) unsafe fn fopen(
 #[cfg(not(windows))]
 #[inline(never)]
 pub(crate) unsafe fn fopen(
-    fc: *mut FileContext,
+    fc: &FileContext,
     path: *const u8,
     path_len: usize,
     null_terminated: bool,
@@ -583,7 +604,7 @@ pub(crate) unsafe fn fopen(
         if path_len < 256 - 1 {
             copy = copy_buf.as_mut_ptr() as *mut u8;
         } else {
-            copy = alloc::<u8>(&mut (*fc).ator, path_len + 1);
+            copy = alloc::<u8>(&mut (*fc.get()).ator, path_len + 1);
             if copy.is_null() {
                 return core::ptr::null_mut();
             }
@@ -593,11 +614,11 @@ pub(crate) unsafe fn fopen(
     }
     file = libc_stdio::fopen(copy, b"rb\0".as_ptr());
     if !null_terminated && copy != copy_buf.as_mut_ptr() as *mut u8 {
-        free::<u8>(&mut (*fc).ator, copy, path_len + 1);
+        free::<u8>(&mut (*fc.get()).ator, copy, path_len + 1);
     }
     if file.is_null() {
-        set_err_info(&mut (*fc).error, path, path_len);
-        ufbxi_report_err_msg!(&mut (*fc).error, "file", "File not found");
+        set_err_info(&mut (*fc.get()).error, path, path_len);
+        ufbxi_report_err_msg!(&mut (*fc.get()).error, "file", "File not found");
     }
     file
 }
@@ -698,7 +719,7 @@ pub(crate) unsafe fn stdio_init(stream: *mut RawStream, file: *mut c_void, close
 // ufbx.c:7141-7147 `ufbxi_stdio_open`
 #[inline(never)]
 pub(crate) unsafe fn stdio_open(
-    fc: *mut FileContext,
+    fc: &FileContext,
     stream: *mut RawStream,
     path: *const u8,
     path_len: usize,

@@ -444,16 +444,16 @@ pub(crate) unsafe fn open_file_ctx(
     error: *mut Error,
 ) -> bool {
     let ok: bool;
-    let mut fc = MaybeUninit::<FileContext>::uninit(); // ufbxi_uninit
-    let fc: *mut FileContext = fc.as_mut_ptr();
-    begin_file_context(fc, ctx, core::ptr::null());
+    // C: `ufbxi_file_context fc; // ufbxi_uninit`
+    let fc = FileContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()));
+    begin_file_context(&fc, ctx, core::ptr::null());
     if path_len == usize::MAX {
         path_len = strlen(path);
     }
     // C: `#if !defined(UFBX_NO_STDIO)` — always taken (no matching feature);
     // the disabled branch reports `"UFBX_NO_STDIO", "Feature disabled"`.
     ok = stdio_open(
-        fc,
+        &fc,
         stream,
         path,
         path_len,
@@ -463,7 +463,7 @@ pub(crate) unsafe fn open_file_ctx(
             false
         },
     );
-    end_file_context(fc, error, ok);
+    end_file_context(&fc, error, ok);
     ok
 }
 
@@ -499,18 +499,18 @@ pub(crate) unsafe fn open_memory_ctx(
     }
     ufbx_assert!((*opts)._begin_zero == 0 && (*opts)._end_zero == 0);
 
-    let mut fc = MaybeUninit::<FileContext>::uninit(); // ufbxi_uninit
-    let fc: *mut FileContext = fc.as_mut_ptr();
-    begin_file_context(fc, ctx, &(*opts).allocator);
+    // C: `ufbxi_file_context fc; // ufbxi_uninit`
+    let fc = FileContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()));
+    begin_file_context(&fc, ctx, &(*opts).allocator);
 
     let copy_size: usize = if (*opts).no_copy { 0 } else { data_size };
 
     // Align the allocation size to 8 bytes to make sure the header is aligned.
     let self_size: usize = align_to_mask(size_of::<MemoryStream>().wrapping_add(copy_size), 7);
 
-    let memory: *mut u8 = alloc::<u8>(&mut (*fc).ator, self_size);
+    let memory: *mut u8 = alloc::<u8>(&mut (*fc.get()).ator, self_size);
     if memory.is_null() {
-        end_file_context(fc, error, false);
+        end_file_context(&fc, error, false);
         return false;
     }
 
@@ -532,10 +532,10 @@ pub(crate) unsafe fn open_memory_ctx(
     }
 
     // Transplant the allocator in the result blob
-    if !(*fc).parent_ator.is_null() {
-        (*mem).parent_ator = (*fc).parent_ator;
+    if !(*fc.get()).parent_ator.is_null() {
+        (*mem).parent_ator = (*fc.get()).parent_ator;
     } else {
-        (*fc).parent_ator = &mut (*mem).local_ator;
+        (*fc.get()).parent_ator = &mut (*mem).local_ator;
     }
 
     (*stream).read_fn = Some(memory_read);
@@ -544,7 +544,7 @@ pub(crate) unsafe fn open_memory_ctx(
     (*stream).close_fn = Some(memory_close);
     (*stream).user = mem as *mut c_void;
 
-    end_file_context(fc, error, true);
+    end_file_context(&fc, error, true);
 
     true
 }
