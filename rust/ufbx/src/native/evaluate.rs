@@ -3483,6 +3483,21 @@ impl BakeContext {
     pub(crate) fn get(&self) -> *mut InnerBakeContext {
         self.0.get().cast()
     }
+
+    // `baked_nodes` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn baked_nodes(&self) -> *mut *mut BakedNode {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut *mut BakedNode` are valid.
+        unsafe { (*self.get()).baked_nodes }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_baked_nodes(&self, baked_nodes: *mut *mut BakedNode) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).baked_nodes = baked_nodes;
+        }
+    }
 }
 
 // ufbx.c:26725-26730 `ufbxi_bake_prop`
@@ -4374,7 +4389,7 @@ pub(crate) unsafe fn bake_node_imp(
     props: *mut BakeProp,
     count: usize,
 ) -> Result<(), Fail> {
-    ufbx_assert!(!(*bc.get()).baked_nodes.is_null() && !(*bc.get()).nodes_to_bake.is_null());
+    ufbx_assert!(!bc.baked_nodes().is_null() && !(*bc.get()).nodes_to_bake.is_null());
 
     let node: *mut UfbxNode =
         *((*(*bc.get()).scene).elements.data as *const *mut UfbxNode).add(element_id as usize);
@@ -5042,13 +5057,13 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     let scene: *const Scene = (*bc.get()).scene;
 
     if !(*bc.get()).opts.skip_node_transforms {
-        (*bc.get()).baked_nodes = push_zero::<*mut BakedNode>(
+        bc.set_baked_nodes(push_zero::<*mut BakedNode>(
             ptr::addr_of_mut!((*bc.get()).result),
             (*scene).nodes.count,
-        );
+        ));
         ufbxi_check_err!(
             &mut (*bc.get()).error,
-            !(*bc.get()).baked_nodes.is_null(),
+            !bc.baked_nodes().is_null(),
             "bc->baked_nodes"
         );
         (*bc.get()).nodes_to_bake =
