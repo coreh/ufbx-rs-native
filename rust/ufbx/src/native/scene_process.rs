@@ -6497,7 +6497,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     (*uc.get()).scene.metadata.element_buffer_size = uc.tmp_element_byte_offset();
     let element_data: *mut u8 = push_pop::<u64>(
         uc.result_mut_ptr(),
-        &mut (*uc.get()).tmp_elements,
+        uc.tmp_elements_mut_ptr(),
         uc.tmp_element_byte_offset() / 8,
     ) as *mut u8;
     ufbxi_check!(uc, !element_data.is_null(), "element_data");
@@ -6534,7 +6534,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
     (*uc.get()).scene.elements.count = num_elements;
     buf_free(uc.tmp_element_offsets_mut_ptr());
-    buf_free(&mut (*uc.get()).tmp_elements);
+    buf_free(uc.tmp_elements_mut_ptr());
 
     uc.set_tmp_element_flag(push_zero::<u8>(uc.tmp_mut_ptr(), num_elements));
     ufbxi_check!(uc, !uc.tmp_element_flag().is_null(), "uc->tmp_element_flag");

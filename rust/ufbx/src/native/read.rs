@@ -1185,7 +1185,7 @@ pub(crate) unsafe fn push_element_size(
     );
 
     let elem: *mut Element =
-        push_zero::<u64>(&mut (*uc.get()).tmp_elements, aligned_size / 8) as *mut Element;
+        push_zero::<u64>(uc.tmp_elements_mut_ptr(), aligned_size / 8) as *mut Element;
     ufbxi_check_return!(uc, !elem.is_null(), core::ptr::null_mut(), "elem");
     (*elem).type_ = type_;
     (*elem).element_id = element_id;
@@ -1267,7 +1267,7 @@ pub(crate) unsafe fn push_synthetic_element_size(
     );
 
     let elem: *mut Element =
-        push_zero::<u64>(&mut (*uc.get()).tmp_elements, aligned_size / 8) as *mut Element;
+        push_zero::<u64>(uc.tmp_elements_mut_ptr(), aligned_size / 8) as *mut Element;
     ufbxi_check_return!(uc, !elem.is_null(), core::ptr::null_mut(), "elem");
     (*elem).type_ = type_;
     (*elem).element_id = element_id;
