@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `templates` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn templates(&self) -> *mut Template {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut Template` are valid.
+        unsafe { (*self.get()).templates }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_templates(&self, templates: *mut Template) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).templates = templates;
+        }
+    }
+
     // `tmp_element_byte_offset` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_element_byte_offset(&self) -> usize {

@@ -859,12 +859,12 @@ pub(crate) unsafe fn read_definitions(uc: &Context) -> Result<(), Fail> {
     }
 
     // TODO: Preserve only the `props` part of the templates
-    (*uc.get()).templates = push_pop::<Template>(
+    uc.set_templates(push_pop::<Template>(
         &mut (*uc.get()).result,
         &mut (*uc.get()).tmp_stack,
         (*uc.get()).num_templates,
-    );
-    ufbxi_check!(uc, !(*uc.get()).templates.is_null(), "uc->templates");
+    ));
+    ufbxi_check!(uc, !uc.templates().is_null(), "uc->templates");
 
     Ok(())
 }
@@ -878,7 +878,7 @@ pub(crate) unsafe fn find_template(
 ) -> *mut Props {
     // TODO: Binary search
     // C: `ufbxi_for(ufbxi_template, tmpl, uc->templates, uc->num_templates)`
-    let mut tmpl = (*uc.get()).templates;
+    let mut tmpl = uc.templates();
     let tmpl_end = add_ptr(tmpl, (*uc.get()).num_templates);
     while tmpl != tmpl_end {
         if (*tmpl).type_ == name {
