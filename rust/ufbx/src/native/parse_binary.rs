@@ -996,9 +996,9 @@ unsafe fn binary_parse_node_rec(
                     (*input).buffer_size = uc.read_buffer_size();
                     (*input).read_fn = uc.read_fn();
                     (*input).read_user = uc.read_user();
-                    (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(
+                    uc.set_data_offset(uc.data_offset().wrapping_add(
                         (encoded_size as usize).wrapping_sub((*input).data_size) as u64,
-                    );
+                    ));
                     uc.set_data(uc.data().add((*input).data_size));
                     uc.set_data_size(0);
                 } else {

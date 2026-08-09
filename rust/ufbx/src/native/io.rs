@@ -121,7 +121,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     }
 
     if require_size {
-        if (*uc.get()).data_offset == 0 {
+        if uc.data_offset() == 0 {
             ufbxi_check_return_msg!(
                 uc,
                 data_size > 0,
@@ -142,9 +142,11 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     // C-parity: `uc->data - uc->data_begin` — both may legitimately be NULL
     // (`ufbxi_read_to` leaves them so), which `<*const u8>::offset_from` treats
     // as UB in Rust; the address subtraction is spelled out with casts instead.
-    (*uc.get()).data_offset = (*uc.get())
-        .data_offset
-        .wrapping_add(to_size(uc.data() as isize - uc.data_begin() as isize) as u64);
+    uc.set_data_offset(
+        (*uc.get())
+            .data_offset
+            .wrapping_add(to_size(uc.data() as isize - uc.data_begin() as isize) as u64),
+    );
     uc.set_data_begin(uc.read_buffer());
     uc.set_data(uc.read_buffer());
     uc.set_data_size(data_size);
@@ -250,7 +252,7 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
             uc.set_data(uc.data().add(uc.data_size()));
             uc.set_data_size(0);
 
-            (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(size);
+            uc.set_data_offset(uc.data_offset().wrapping_add(size));
             while size >= MAX_SKIP_SIZE as u64 {
                 size -= MAX_SKIP_SIZE as u64;
                 ufbxi_check_msg!(
@@ -330,9 +332,11 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
         // C-parity: `uc->data - uc->data_begin` — see `ufbxi_refill`; both are
         // NULL after a previous `ufbxi_read_to` streamed past the buffer, so
         // the subtraction is done on addresses rather than via `offset_from`.
-        (*uc.get()).data_offset = (*uc.get())
-            .data_offset
-            .wrapping_add(to_size(uc.data() as isize - uc.data_begin() as isize) as u64);
+        uc.set_data_offset(
+            (*uc.get())
+                .data_offset
+                .wrapping_add(to_size(uc.data() as isize - uc.data_begin() as isize) as u64),
+        );
 
         uc.set_data_begin(core::ptr::null());
         uc.set_data(core::ptr::null());
@@ -354,7 +358,7 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
             // C wraps the size_t subtraction and keeps going.
             ptr = ptr.wrapping_add(read_result);
             size = size.wrapping_sub(read_result);
-            (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(read_result as u64);
+            uc.set_data_offset(uc.data_offset().wrapping_add(read_result as u64));
         }
     }
 

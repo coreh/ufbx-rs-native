@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `data_offset` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn data_offset(&self) -> u64 {
+        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
+        unsafe { (*self.get()).data_offset }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_data_offset(&self, data_offset: u64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).data_offset = data_offset;
+        }
+    }
+
     // `double_parse_flags` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn double_parse_flags(&self) -> u32 {
