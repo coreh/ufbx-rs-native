@@ -2049,6 +2049,14 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    // `scene` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn scene_mut(&self) -> *mut Scene {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).scene }
+    }
+
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut(&self) -> *mut Buf {
@@ -2251,11 +2259,7 @@ pub(crate) unsafe fn translate_anim(ec: &EvalContext, p_anim: *mut *mut Anim) ->
 #[must_use]
 pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // C: `ec->scene = ec->src_scene;` — struct assignment (memcpy).
-    ptr::copy_nonoverlapping(
-        ptr::addr_of!((*ec.get()).src_scene),
-        ptr::addr_of_mut!((*ec.get()).scene),
-        1,
-    );
+    ptr::copy_nonoverlapping(ptr::addr_of!((*ec.get()).src_scene), ec.scene_mut(), 1);
     let num_elements: usize = (*ec.get()).scene.elements.count;
 
     // C: `char *element_data = (char*)ufbxi_push(&ec->result, uint64_t, ec->scene.metadata.element_buffer_size/8);`
@@ -2876,7 +2880,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // Update all derived values
     update_scene(
-        ptr::addr_of_mut!((*ec.get()).scene),
+        ec.scene_mut(),
         false,
         anim.transform_overrides.data,
         anim.transform_overrides.count,
@@ -2893,7 +2897,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             1,
         );
         evaluate_skinning(
-            ptr::addr_of_mut!((*ec.get()).scene),
+            ec.scene_mut(),
             ec.error_mut(),
             ec.result_mut(),
             ptr::addr_of_mut!((*ec.get()).tmp),
