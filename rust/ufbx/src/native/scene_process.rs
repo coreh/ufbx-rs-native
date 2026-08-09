@@ -1279,7 +1279,7 @@ pub(crate) unsafe fn sort_connections(
 pub(crate) unsafe fn find_attribute_fbx_id(uc: &Context, node_fbx_id: u64) -> u64 {
     let hash: u32 = hash64(node_fbx_id);
     let entry: *mut FbxAttrEntry = map_find(
-        &mut (*uc.get()).fbx_attr_map,
+        uc.fbx_attr_map_mut_ptr(),
         hash,
         &node_fbx_id as *const u64 as *const c_void,
     );

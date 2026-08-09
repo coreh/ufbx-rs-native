@@ -1084,7 +1084,7 @@ pub(crate) unsafe fn insert_fbx_attr(
 ) -> Result<(), Fail> {
     let hash = hash64(fbx_id);
     let mut entry: *mut FbxAttrEntry = map_find(
-        &mut (*uc.get()).fbx_attr_map,
+        uc.fbx_attr_map_mut_ptr(),
         hash,
         &fbx_id as *const u64 as *const c_void,
     );
@@ -1092,7 +1092,7 @@ pub(crate) unsafe fn insert_fbx_attr(
 
     if entry.is_null() {
         entry = map_insert(
-            &mut (*uc.get()).fbx_attr_map,
+            uc.fbx_attr_map_mut_ptr(),
             hash,
             &fbx_id as *const u64 as *const c_void,
         );

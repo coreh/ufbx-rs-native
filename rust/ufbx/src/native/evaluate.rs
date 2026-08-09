@@ -895,7 +895,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     map_free(&mut (*uc.get()).ptr_fbx_id_map);
     map_free(&mut (*uc.get()).texture_file_map);
     map_free(&mut (*uc.get()).anim_stack_map);
-    map_free(&mut (*uc.get()).fbx_attr_map);
+    map_free(uc.fbx_attr_map_mut_ptr());
     map_free(&mut (*uc.get()).node_prop_set);
     map_free(&mut (*uc.get()).dom_node_map);
 
@@ -1102,7 +1102,7 @@ pub(crate) unsafe fn load(
         ptr::null_mut(),
     );
     map_init(
-        &mut (*uc.get()).fbx_attr_map,
+        uc.fbx_attr_map_mut_ptr(),
         uc.ator_tmp_mut_ptr(),
         map_cmp_uint64,
         ptr::null_mut(),
