@@ -288,6 +288,14 @@ impl TessellateSurfaceContext {
         self.0.get().cast()
     }
 
+    // `position_map` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn position_map_mut(&self) -> *mut Map {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).position_map }
+    }
+
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mut(&self) -> *mut Buf {

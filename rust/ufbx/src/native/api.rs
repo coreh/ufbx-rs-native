@@ -3625,7 +3625,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     let ok: bool = tessellate_nurbs_surface_imp(&tc).is_ok();
 
     buf_free(tc.tmp_mut());
-    map_free(&mut (*tc.get()).position_map);
+    map_free(tc.position_map_mut());
     free_ator(tc.ator_tmp_mut());
 
     if ok {
