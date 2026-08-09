@@ -3859,10 +3859,14 @@ pub(crate) unsafe fn catch_triangulate_face(
         2
     } else {
         // C: `ufbxi_ngon_context nc = { 0 };`
-        let mut nc: crate::native::topology::NgonContext =
-            core::mem::MaybeUninit::zeroed().assume_init();
-        core::ptr::write(&mut nc.positions, core::ptr::read(&(*mesh).vertex_position));
-        nc.face = face;
+        let nc = crate::native::topology::NgonContext(core::cell::UnsafeCell::new(
+            core::mem::MaybeUninit::zeroed(),
+        ));
+        core::ptr::write(
+            &mut (*nc.get()).positions,
+            core::ptr::read(&(*mesh).vertex_position),
+        );
+        (*nc.get()).face = face;
 
         let num_indices_u32: u32 = if num_indices < u32::MAX as usize {
             num_indices as u32
@@ -3873,7 +3877,7 @@ pub(crate) unsafe fn catch_triangulate_face(
         let mut local_indices: [u32; 12] = core::mem::zeroed(); // ufbxi_uninit
         if num_indices_u32 < 12 {
             let num_tris: u32 =
-                crate::native::topology::triangulate_ngon(&mut nc, local_indices.as_mut_ptr(), 12);
+                crate::native::topology::triangulate_ngon(&nc, local_indices.as_mut_ptr(), 12);
             core::ptr::copy_nonoverlapping(
                 local_indices.as_ptr(),
                 indices,
@@ -3881,7 +3885,7 @@ pub(crate) unsafe fn catch_triangulate_face(
             );
             num_tris
         } else {
-            crate::native::topology::triangulate_ngon(&mut nc, indices, num_indices_u32)
+            crate::native::topology::triangulate_ngon(&nc, indices, num_indices_u32)
         }
     }
 }

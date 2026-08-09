@@ -58,7 +58,7 @@ pub(crate) const KD_NODES_LEN: usize = 1usize << (KD_FAST_DEPTH + 1);
 // ufbx.c:28255-28265 `ufbxi_ngon_context`
 #[cfg(feature = "triangulation")]
 #[repr(C)]
-pub(crate) struct NgonContext {
+pub(crate) struct InnerNgonContext {
     pub(crate) face: Face,
     pub(crate) positions: VertexVec3,
     pub(crate) axes: [Vec3; 3],
@@ -68,6 +68,26 @@ pub(crate) struct NgonContext {
     // Temporary
     pub(crate) cur_axis_dir: Vec3,
     pub(crate) cur_face: Face,
+}
+
+// Safe `&NgonContext` handle over the fields-struct `InnerNgonContext`, mirroring
+// the `Context`/`InnerContext` seam in `parse.rs`. `MaybeUninit` keeps it uniform
+// with the other context wrappers; `UnsafeCell` gives the interior mutability every
+// `&NgonContext` site needs. The type-erased KD-query callback pointer round-trips
+// through the wrapper address. Field is `pub(crate)` — the sole construction site
+// lives in `native::api`.
+#[cfg(feature = "triangulation")]
+#[repr(transparent)]
+pub(crate) struct NgonContext(
+    pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerNgonContext>>,
+);
+
+#[cfg(feature = "triangulation")]
+impl NgonContext {
+    #[inline(always)]
+    pub(crate) fn get(&self) -> *mut InnerNgonContext {
+        self.0.get().cast()
+    }
 }
 
 // ufbx.c:28267-28272 `ufbxi_kd_triangle`
@@ -85,19 +105,19 @@ pub(crate) struct KdTriangle {
 // C: `ufbxi_noinline static`.
 #[cfg(feature = "triangulation")]
 #[inline(never)]
-pub(crate) unsafe fn ngon_project(nc: *mut NgonContext, index: u32) -> Vec2 {
-    let point: Vec3 = *(*nc).positions.values.data.add(
-        *(*nc)
+pub(crate) unsafe fn ngon_project(nc: &NgonContext, index: u32) -> Vec2 {
+    let point: Vec3 = *(*nc.get()).positions.values.data.add(
+        *(*nc.get())
             .positions
             .indices
             .data
-            .add((*nc).face.index_begin.wrapping_add(index) as usize) as usize,
+            .add((*nc.get()).face.index_begin.wrapping_add(index) as usize) as usize,
     );
 
     // C: `ufbx_vec2 p;` — both fields are assigned below.
     let mut p: Vec2 = core::mem::zeroed();
-    p.x = dot3((*nc).axes[0], point);
-    p.y = dot3((*nc).axes[1], point);
+    p.x = dot3((*nc.get()).axes[0], point);
+    p.y = dot3((*nc.get()).axes[1], point);
     p
 }
 
@@ -112,11 +132,7 @@ pub(crate) fn orient2d(a: Vec2, b: Vec2, c: Vec2) -> Real {
 // ufbx.c:28289-28301 `ufbxi_kd_check_point`
 #[cfg(feature = "triangulation")]
 #[inline(never)]
-pub(crate) unsafe fn kd_check_point(
-    nc: *mut NgonContext,
-    tri: *const KdTriangle,
-    index: u32,
-) -> bool {
+pub(crate) unsafe fn kd_check_point(nc: &NgonContext, tri: *const KdTriangle, index: u32) -> bool {
     if index == (*tri).indices[0] || index == (*tri).indices[1] || index == (*tri).indices[2] {
         return false;
     }
@@ -145,7 +161,7 @@ pub(crate) unsafe fn kd_check_point(
 #[cfg(feature = "triangulation")]
 #[inline(never)]
 pub(crate) unsafe fn kd_check_slow(
-    nc: *mut NgonContext,
+    nc: &NgonContext,
     tri: *const KdTriangle,
     begin: u32,
     count: u32,
@@ -174,7 +190,7 @@ pub(crate) unsafe fn kd_check_slow(
 // non-regression C builds; recursive calls go through the guarded wrapper).
 #[cfg(feature = "triangulation")]
 unsafe fn kd_check_slow_rec(
-    nc: *mut NgonContext,
+    nc: &NgonContext,
     tri: *const KdTriangle,
     begin: u32,
     count: u32,
@@ -185,8 +201,8 @@ unsafe fn kd_check_slow_rec(
     let mut axis = axis;
 
     // C: `ufbx_vertex_vec3 pos = nc->positions;` — a struct memcpy.
-    let pos: VertexVec3 = core::ptr::read(core::ptr::addr_of!((*nc).positions));
-    let kd_indices: *mut u32 = (*nc).kd_indices;
+    let pos: VertexVec3 = core::ptr::read(core::ptr::addr_of!((*nc.get()).positions));
+    let kd_indices: *mut u32 = (*nc.get()).kd_indices;
 
     while count > 0 {
         let num_left: u32 = count / 2;
@@ -197,9 +213,10 @@ unsafe fn kd_check_slow_rec(
         let point: Vec3 = *pos.values.data.add(
             *pos.indices
                 .data
-                .add((*nc).face.index_begin.wrapping_add(index) as usize) as usize,
+                .add((*nc.get()).face.index_begin.wrapping_add(index) as usize)
+                as usize,
         );
-        let split: Real = dot3(point, (*nc).axes[axis as usize]);
+        let split: Real = dot3(point, (*nc.get()).axes[axis as usize]);
         let hit_left: bool = (*tri).min_t[axis as usize] <= split;
         let hit_right: bool = (*tri).max_t[axis as usize] >= split;
 
@@ -233,7 +250,7 @@ unsafe fn kd_check_slow_rec(
 #[cfg(feature = "triangulation")]
 #[inline(never)]
 pub(crate) unsafe fn kd_check_fast(
-    nc: *mut NgonContext,
+    nc: &NgonContext,
     tri: *const KdTriangle,
     kd_index: u32,
     axis: u32,
@@ -261,7 +278,7 @@ pub(crate) unsafe fn kd_check_fast(
 // The recursive body (see `kd_check_slow_rec`).
 #[cfg(feature = "triangulation")]
 unsafe fn kd_check_fast_rec(
-    nc: *mut NgonContext,
+    nc: &NgonContext,
     tri: *const KdTriangle,
     kd_index: u32,
     axis: u32,
@@ -272,7 +289,7 @@ unsafe fn kd_check_fast_rec(
     let mut depth = depth;
 
     loop {
-        let node: KdNode = (*nc).kd_nodes[kd_index as usize];
+        let node: KdNode = (*nc.get()).kd_nodes[kd_index as usize];
         if node.index_plus_one == 0 {
             return false;
         }
@@ -342,11 +359,7 @@ unsafe fn kd_check_fast_rec(
 // ufbx.c:28392-28406 `ufbxi_kd_check`
 #[cfg(feature = "triangulation")]
 #[inline(never)]
-pub(crate) unsafe fn kd_check(
-    nc: *mut NgonContext,
-    points: *const Vec2,
-    indices: *const u32,
-) -> bool {
+pub(crate) unsafe fn kd_check(nc: &NgonContext, points: *const Vec2, indices: *const u32) -> bool {
     let mut tri: KdTriangle = core::mem::zeroed(); // ufbxi_uninit
     tri.points[0] = *points.add(0);
     tri.points[1] = *points.add(1);
@@ -381,26 +394,28 @@ pub(crate) unsafe extern "C" fn kd_index_less(
     va: *const c_void,
     vb: *const c_void,
 ) -> bool {
-    let nc: *mut NgonContext = user as *mut NgonContext;
-    let pos: *mut VertexVec3 = core::ptr::addr_of_mut!((*nc).positions);
+    let nc: &NgonContext = &*(user as *const NgonContext);
+    let pos: *mut VertexVec3 = core::ptr::addr_of_mut!((*nc.get()).positions);
     let a: u32 = *(va as *const u32);
     let b: u32 = *(vb as *const u32);
     let da: Real = dot3(
-        (*nc).cur_axis_dir,
+        (*nc.get()).cur_axis_dir,
         *(*pos).values.data.add(
             *(*pos)
                 .indices
                 .data
-                .add((*nc).cur_face.index_begin.wrapping_add(a) as usize) as usize,
+                .add((*nc.get()).cur_face.index_begin.wrapping_add(a) as usize)
+                as usize,
         ),
     );
     let db: Real = dot3(
-        (*nc).cur_axis_dir,
+        (*nc.get()).cur_axis_dir,
         *(*pos).values.data.add(
             *(*pos)
                 .indices
                 .data
-                .add((*nc).cur_face.index_begin.wrapping_add(b) as usize) as usize,
+                .add((*nc.get()).cur_face.index_begin.wrapping_add(b) as usize)
+                as usize,
         ),
     );
     da < db
@@ -413,7 +428,7 @@ pub(crate) unsafe extern "C" fn kd_index_less(
 #[cfg(feature = "triangulation")]
 #[inline(never)]
 pub(crate) unsafe fn kd_build(
-    nc: *mut NgonContext,
+    nc: &NgonContext,
     indices: *mut u32,
     tmp: *mut u32,
     num: u32,
@@ -442,7 +457,7 @@ pub(crate) unsafe fn kd_build(
 // The recursive body (see `kd_check_slow_rec`).
 #[cfg(feature = "triangulation")]
 unsafe fn kd_build_rec(
-    nc: *mut NgonContext,
+    nc: &NgonContext,
     indices: *mut u32,
     tmp: *mut u32,
     num: u32,
@@ -455,12 +470,12 @@ unsafe fn kd_build_rec(
     }
 
     // C: `ufbx_vertex_vec3 pos = nc->positions;` — a struct memcpy.
-    let pos: VertexVec3 = core::ptr::read(core::ptr::addr_of!((*nc).positions));
-    let axis_dir: Vec3 = (*nc).axes[axis as usize];
-    let face: Face = (*nc).face;
+    let pos: VertexVec3 = core::ptr::read(core::ptr::addr_of!((*nc.get()).positions));
+    let axis_dir: Vec3 = (*nc.get()).axes[axis as usize];
+    let face: Face = (*nc.get()).face;
 
-    (*nc).cur_axis_dir = axis_dir;
-    (*nc).cur_face = face;
+    (*nc.get()).cur_axis_dir = axis_dir;
+    (*nc.get()).cur_face = face;
 
     // Sort the remaining indices based on the axis
     stable_sort(
@@ -470,7 +485,7 @@ unsafe fn kd_build_rec(
         tmp as *mut c_void,
         num as usize,
         kd_index_less,
-        nc as *mut c_void,
+        (nc as *const NgonContext) as *mut c_void,
     );
 
     let num_left: u32 = num / 2;
@@ -486,7 +501,7 @@ unsafe fn kd_build_rec(
         };
 
         let index: u32 = *indices.add(num_left as usize);
-        let kd: *mut KdNode = core::ptr::addr_of_mut!((*nc).kd_nodes[fast_index as usize]);
+        let kd: *mut KdNode = core::ptr::addr_of_mut!((*nc.get()).kd_nodes[fast_index as usize]);
 
         (*kd).split = dot3(
             axis_dir,
@@ -499,7 +514,7 @@ unsafe fn kd_build_rec(
         (*kd).index_plus_one = index.wrapping_add(1);
 
         if depth.wrapping_add(1) == KD_FAST_DEPTH as u32 {
-            (*kd).slow_left = indices.offset_from((*nc).kd_indices) as u32;
+            (*kd).slow_left = indices.offset_from((*nc.get()).kd_indices) as u32;
             (*kd).slow_right = (*kd).slow_left.wrapping_add(num_left);
             (*kd).slow_end = (*kd).slow_right.wrapping_add(num_right);
         } else {
@@ -575,16 +590,18 @@ pub(crate) unsafe fn ngon_tri_weight(points: *const Vec2) -> Real {
 #[cfg(feature = "triangulation")]
 #[inline(never)]
 pub(crate) unsafe fn triangulate_ngon(
-    nc: *mut NgonContext,
+    nc: &NgonContext,
     indices: *mut u32,
     num_indices: u32,
 ) -> u32 {
-    let face: Face = (*nc).face;
+    let face: Face = (*nc.get()).face;
     ufbx_assert!(face.num_indices > 4);
 
     // Form an orthonormal basis to project the polygon into a 2D plane
-    let mut normal: Vec3 =
-        crate::native::api::get_weighted_face_normal(core::ptr::addr_of!((*nc).positions), face);
+    let mut normal: Vec3 = crate::native::api::get_weighted_face_normal(
+        core::ptr::addr_of!((*nc.get()).positions),
+        face,
+    );
     let len: Real = length3(normal);
     if len > math::EPSILON {
         normal = mul3(normal, 1.0 / len);
@@ -604,12 +621,12 @@ pub(crate) unsafe fn triangulate_ngon(
         axis.y = 1.0;
         axis.z = 0.0;
     }
-    (*nc).axes[0] = slow_normalized_cross3(&axis, &normal);
-    (*nc).axes[1] = slow_normalized_cross3(&normal, core::ptr::addr_of!((*nc).axes[0]));
-    (*nc).axes[2] = normal;
+    (*nc.get()).axes[0] = slow_normalized_cross3(&axis, &normal);
+    (*nc.get()).axes[1] = slow_normalized_cross3(&normal, core::ptr::addr_of!((*nc.get()).axes[0]));
+    (*nc.get()).axes[2] = normal;
 
     let kd_indices: *mut u32 = indices;
-    (*nc).kd_indices = kd_indices;
+    (*nc.get()).kd_indices = kd_indices;
 
     let kd_tmp: *mut u32 = indices.add(face.num_indices as usize);
 
