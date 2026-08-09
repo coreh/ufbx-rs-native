@@ -98,6 +98,20 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).result as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_stack` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_stack_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_stack as *mut crate::native::buf::BufView) }
+    }
+
     // `tok_cap` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tok_cap_mut_ptr(&self) -> *mut usize {
@@ -698,7 +712,7 @@ unsafe fn xml_parse_tag_rec(
     );
 
     if has_children {
-        let children_begin: usize = (*xc.get()).tmp_stack.num_items;
+        let children_begin: usize = xc.tmp_stack_view().num_items();
         loop {
             let mut closing: bool = false;
             xml_parse_tag(xc, depth + 1, &mut closing, (*tag).name.data)?;
@@ -707,7 +721,7 @@ unsafe fn xml_parse_tag_rec(
             }
         }
 
-        (*tag).num_children = (*xc.get()).tmp_stack.num_items - children_begin;
+        (*tag).num_children = xc.tmp_stack_view().num_items() - children_begin;
         (*tag).children = push_pop(
             xc.result_mut_ptr(),
             xc.tmp_stack_mut_ptr(),
@@ -739,7 +753,7 @@ pub(crate) unsafe fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
         }
     }
 
-    (*tag).num_children = (*xc.get()).tmp_stack.num_items;
+    (*tag).num_children = xc.tmp_stack_view().num_items();
     (*tag).children = push_pop(
         xc.result_mut_ptr(),
         xc.tmp_stack_mut_ptr(),
@@ -780,10 +794,10 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     xc.set_read_fn((*opts).read_fn);
     xc.set_read_user((*opts).read_user);
 
-    (*xc.get()).tmp_stack.ator = xc.ator();
-    (*xc.get()).result.ator = xc.ator();
+    xc.tmp_stack_view().set_ator(xc.ator());
+    xc.result_view().set_ator(xc.ator());
 
-    (*xc.get()).result.unordered = true;
+    xc.result_view().set_unordered(true);
 
     if (*opts).prefix_length > 0 {
         xc.set_pos((*opts).prefix);
