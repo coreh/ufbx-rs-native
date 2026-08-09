@@ -170,6 +170,21 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `tmp_weights` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn tmp_weights(&self) -> *mut SubdivisionWeight {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut SubdivisionWeight` are valid.
+        unsafe { (*self.get()).tmp_weights }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_tmp_weights(&self, tmp_weights: *mut SubdivisionWeight) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).tmp_weights = tmp_weights;
+        }
+    }
+
     // `tmp_vertex_weights` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_vertex_weights(&self) -> *mut Real {
@@ -373,7 +388,7 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
     let sc: &SubdivideContext = &*(user as *const SubdivideContext);
 
     let vertex_weights: *mut Real = sc.tmp_vertex_weights();
-    let tmp_weights: *mut SubdivisionWeight = (*sc.get()).tmp_weights;
+    let tmp_weights: *mut SubdivisionWeight = sc.tmp_weights();
     let mut num_weights: usize = 0;
 
     // C: `ufbxi_nounroll for (size_t input_ix = 0; input_ix != num_inputs; input_ix++)`
@@ -1694,10 +1709,10 @@ pub(crate) unsafe fn subdivide_mesh_level(
             &mut (*sc.get()).tmp,
             (*mesh).num_vertices,
         ));
-        (*sc.get()).tmp_weights = push::<SubdivisionWeight>(&mut (*sc.get()).tmp, max_weights);
+        sc.set_tmp_weights(push::<SubdivisionWeight>(&mut (*sc.get()).tmp, max_weights));
         ufbxi_check_err!(
             &mut (*sc.get()).error,
-            !sc.tmp_vertex_weights().is_null() && !(*sc.get()).tmp_weights.is_null(),
+            !sc.tmp_vertex_weights().is_null() && !sc.tmp_weights().is_null(),
             "sc->tmp_vertex_weights && sc->tmp_weights"
         );
 
