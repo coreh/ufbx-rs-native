@@ -170,6 +170,14 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `inputs` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn inputs_mut(&self) -> *mut *mut SubdivideInput {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).inputs }
+    }
+
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut(&self) -> *mut Error {
@@ -657,7 +665,7 @@ pub(crate) unsafe fn subdivide_layer(
         sc.error_mut(),
         grow_array::<SubdivideInput>(
             sc.ator_tmp_mut(),
-            &mut (*sc.get()).inputs,
+            sc.inputs_mut(),
             &mut (*sc.get()).inputs_cap,
             min_inputs,
         ),
@@ -992,7 +1000,7 @@ pub(crate) unsafe fn subdivide_layer(
                             sc.error_mut(),
                             grow_array::<SubdivideInput>(
                                 sc.ator_tmp_mut(),
-                                &mut (*sc.get()).inputs,
+                                sc.inputs_mut(),
                                 &mut (*sc.get()).inputs_cap,
                                 num_inputs.wrapping_add(1),
                             ),
@@ -1027,7 +1035,7 @@ pub(crate) unsafe fn subdivide_layer(
                             sc.error_mut(),
                             grow_array::<SubdivideInput>(
                                 sc.ator_tmp_mut(),
-                                &mut (*sc.get()).inputs,
+                                sc.inputs_mut(),
                                 &mut (*sc.get()).inputs_cap,
                                 num_inputs.wrapping_add(2),
                             ),
