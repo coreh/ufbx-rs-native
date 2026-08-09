@@ -3562,6 +3562,191 @@ pub(crate) struct InnerBakeContext {
     pub imp: *mut BakedAnimImp,
 }
 
+// Typed interior-mutable VIEW over the `opts` field of `BakeContext`, reinterpreted in
+// place (approach A). The generated ABI-fixed `RawBakeOpts` plays the `Inner` role;
+// `MaybeUninit` makes forming `&BakeOptsView` assert no validity — each leaf getter
+// asserts only the field it reads.
+#[repr(transparent)]
+pub(crate) struct BakeOptsView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawBakeOpts>>);
+
+impl BakeOptsView {
+    #[inline(always)]
+    fn get(&self) -> *mut RawBakeOpts {
+        self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn trim_start_time(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.trim_start_time` read already makes.
+        unsafe { (*self.get()).trim_start_time }
+    }
+
+    #[inline(always)]
+    pub(crate) fn resample_rate(&self) -> f64 {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.resample_rate` read already makes.
+        unsafe { (*self.get()).resample_rate }
+    }
+
+    #[inline(always)]
+    pub(crate) fn minimum_sample_rate(&self) -> f64 {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.minimum_sample_rate` read already makes.
+        unsafe { (*self.get()).minimum_sample_rate }
+    }
+
+    #[inline(always)]
+    pub(crate) fn maximum_sample_rate(&self) -> f64 {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.maximum_sample_rate` read already makes.
+        unsafe { (*self.get()).maximum_sample_rate }
+    }
+
+    #[inline(always)]
+    pub(crate) fn bake_transform_props(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.bake_transform_props` read already makes.
+        unsafe { (*self.get()).bake_transform_props }
+    }
+
+    #[inline(always)]
+    pub(crate) fn skip_node_transforms(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.skip_node_transforms` read already makes.
+        unsafe { (*self.get()).skip_node_transforms }
+    }
+
+    #[inline(always)]
+    pub(crate) fn no_resample_rotation(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.no_resample_rotation` read already makes.
+        unsafe { (*self.get()).no_resample_rotation }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ignore_layer_weight_animation(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.ignore_layer_weight_animation` read already makes.
+        unsafe { (*self.get()).ignore_layer_weight_animation }
+    }
+
+    #[inline(always)]
+    pub(crate) fn max_keyframe_segments(&self) -> usize {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.max_keyframe_segments` read already makes.
+        unsafe { (*self.get()).max_keyframe_segments }
+    }
+
+    #[inline(always)]
+    pub(crate) fn step_handling(&self) -> BakeStepHandling {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.step_handling` read already makes.
+        unsafe { (*self.get()).step_handling }
+    }
+
+    #[inline(always)]
+    pub(crate) fn step_custom_duration(&self) -> f64 {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.step_custom_duration` read already makes.
+        unsafe { (*self.get()).step_custom_duration }
+    }
+
+    #[inline(always)]
+    pub(crate) fn step_custom_epsilon(&self) -> f64 {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.step_custom_epsilon` read already makes.
+        unsafe { (*self.get()).step_custom_epsilon }
+    }
+
+    #[inline(always)]
+    pub(crate) fn evaluate_flags(&self) -> u32 {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.evaluate_flags` read already makes.
+        unsafe { (*self.get()).evaluate_flags }
+    }
+
+    #[inline(always)]
+    pub(crate) fn key_reduction_enabled(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.key_reduction_enabled` read already makes.
+        unsafe { (*self.get()).key_reduction_enabled }
+    }
+
+    #[inline(always)]
+    pub(crate) fn key_reduction_rotation(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.key_reduction_rotation` read already makes.
+        unsafe { (*self.get()).key_reduction_rotation }
+    }
+
+    #[inline(always)]
+    pub(crate) fn key_reduction_threshold(&self) -> f64 {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.key_reduction_threshold` read already makes.
+        unsafe { (*self.get()).key_reduction_threshold }
+    }
+
+    #[inline(always)]
+    pub(crate) fn key_reduction_passes(&self) -> usize {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.key_reduction_passes` read already makes.
+        unsafe { (*self.get()).key_reduction_passes }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_resample_rate(&self, resample_rate: f64) {
+        // SAFETY: interior-mutable write of a POD opts field; cannot violate validity.
+        unsafe {
+            (*self.get()).resample_rate = resample_rate;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_minimum_sample_rate(&self, minimum_sample_rate: f64) {
+        // SAFETY: interior-mutable write of a POD opts field; cannot violate validity.
+        unsafe {
+            (*self.get()).minimum_sample_rate = minimum_sample_rate;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_max_keyframe_segments(&self, max_keyframe_segments: usize) {
+        // SAFETY: interior-mutable write of a POD opts field; cannot violate validity.
+        unsafe {
+            (*self.get()).max_keyframe_segments = max_keyframe_segments;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_key_reduction_threshold(&self, key_reduction_threshold: f64) {
+        // SAFETY: interior-mutable write of a POD opts field; cannot violate validity.
+        unsafe {
+            (*self.get()).key_reduction_threshold = key_reduction_threshold;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_key_reduction_passes(&self, key_reduction_passes: usize) {
+        // SAFETY: interior-mutable write of a POD opts field; cannot violate validity.
+        unsafe {
+            (*self.get()).key_reduction_passes = key_reduction_passes;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        // SAFETY: `&raw const` address of a read-only sub-struct; no reference formed.
+        unsafe { &raw const (*self.get()).temp_allocator }
+    }
+
+    #[inline(always)]
+    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        // SAFETY: `&raw const` address of a read-only sub-struct; no reference formed.
+        unsafe { &raw const (*self.get()).result_allocator }
+    }
+}
+
 // Safe `&BakeContext` handle over the fields-struct `InnerBakeContext`, mirroring
 // the `Context`/`InnerContext` seam in `parse.rs`. `MaybeUninit` because it embeds
 // the public `BakedAnim` (enum-bearing) in `bake`, so a plain `&InnerBakeContext`
@@ -3577,6 +3762,16 @@ impl BakeContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerBakeContext {
         self.0.get().cast()
+    }
+
+    // `opts` — typed VIEW handle (reinterpret-in-place). Leaf accessors live on
+    // `BakeOptsView`; no validity asserted until a field is read.
+    #[inline(always)]
+    pub(crate) fn opts_view(&self) -> &BakeOptsView {
+        // SAFETY: `BakeOptsView` is repr(transparent) over the `opts` field's layout;
+        // the field lives in this context's outer UnsafeCell, so a shared
+        // interior-mutable `&BakeOptsView` is sound and asserts no validity.
+        unsafe { &*(&raw const (*self.get()).opts as *const BakeOptsView) }
     }
 
     // `tmp_times` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -3954,9 +4149,9 @@ pub(crate) unsafe fn bake_times(
     resample_linear: bool,
     key_flag: u32,
 ) -> Result<(), Fail> {
-    let sample_rate: f64 = (*bc.get()).opts.resample_rate;
-    let min_duration: f64 = if (*bc.get()).opts.minimum_sample_rate > 0.0 {
-        1.0 / (*bc.get()).opts.minimum_sample_rate
+    let sample_rate: f64 = bc.opts_view().resample_rate();
+    let min_duration: f64 = if bc.opts_view().minimum_sample_rate() > 0.0 {
+        1.0 / bc.opts_view().minimum_sample_rate()
     } else {
         0.0
     };
@@ -4012,7 +4207,7 @@ pub(crate) unsafe fn bake_times(
 
                 let mut factor: f64 = 1.0;
                 while duration * sample_rate / factor
-                    >= (*bc.get()).opts.max_keyframe_segments as f64
+                    >= bc.opts_view().max_keyframe_segments() as f64
                 {
                     factor *= 2.0;
                 }
@@ -4020,7 +4215,7 @@ pub(crate) unsafe fn bake_times(
                 let padding: f64 = 0.5 / sample_rate;
                 let start: f64 = math::ceil((a_time + padding) * sample_rate / factor) * factor;
                 let stop: f64 = b_time - padding;
-                for i in 0..(*bc.get()).opts.max_keyframe_segments {
+                for i in 0..bc.opts_view().max_keyframe_segments() {
                     let time: f64 = (start + i as f64 * factor) / sample_rate;
                     if time >= stop {
                         break;
@@ -4205,7 +4400,7 @@ pub(crate) unsafe fn finalize_bake_times(
 
     // Cull too close resampled keys, these may arise during merging multiple times
     if num_times > 0 {
-        let min_dist: f64 = 0.25 / (*bc.get()).opts.resample_rate;
+        let min_dist: f64 = 0.25 / bc.opts_view().resample_rate();
         let keep_flags: u32 = BakedKeyFlags::STEP_LEFT.raw()
             | BakedKeyFlags::STEP_RIGHT.raw()
             | BakedKeyFlags::STEP_KEY.raw()
@@ -4237,11 +4432,11 @@ pub(crate) unsafe fn finalize_bake_times(
     }
 
     // Enforce maximum sample rate
-    if (*bc.get()).opts.maximum_sample_rate > 0.0 {
-        let epsilon: f64 = 0.0078125 / (*bc.get()).opts.maximum_sample_rate;
-        let sample_rate: f64 = (*bc.get()).opts.maximum_sample_rate;
-        let max_interval: f64 = 1.0 / (*bc.get()).opts.maximum_sample_rate;
-        let min_interval: f64 = 1.0 / (*bc.get()).opts.maximum_sample_rate - epsilon;
+    if bc.opts_view().maximum_sample_rate() > 0.0 {
+        let epsilon: f64 = 0.0078125 / bc.opts_view().maximum_sample_rate();
+        let sample_rate: f64 = bc.opts_view().maximum_sample_rate();
+        let max_interval: f64 = 1.0 / bc.opts_view().maximum_sample_rate();
+        let min_interval: f64 = 1.0 / bc.opts_view().maximum_sample_rate() - epsilon;
         let mut dst: usize = 0;
         let mut src: usize = 0;
 
@@ -4371,12 +4566,12 @@ pub(crate) unsafe fn postprocess_step(
     // `api::bake_anim` — the generated-type/read-idiom question is tree-wide
     // (same shape as `subdivision::subdivide_mesh_imp`'s `opts.boundary`) and
     // belongs to the generator, per PORTING.md ground rule 0.
-    let step_handling: u32 = (*bc.get()).opts.step_handling as u32;
+    let step_handling: u32 = bc.opts_view().step_handling() as u32;
     if step_handling == BakeStepHandling::Default as u32 {
         // C: `break;`
     } else if step_handling == BakeStepHandling::CustomDuration as u32 {
-        step = (*bc.get()).opts.step_custom_duration;
-        epsilon = 1.0 + (*bc.get()).opts.step_custom_epsilon;
+        step = bc.opts_view().step_custom_duration();
+        epsilon = 1.0 + bc.opts_view().step_custom_epsilon();
     } else if step_handling == BakeStepHandling::IdenticalTime as u32 {
         return true;
     } else if step_handling == BakeStepHandling::AdjacentDouble as u32 {
@@ -4470,10 +4665,10 @@ pub(crate) unsafe fn bake_postprocess_vec3(
         src.count = dst;
     }
 
-    if (*bc.get()).opts.key_reduction_enabled {
+    if bc.opts_view().key_reduction_enabled() {
         let threshold: f64 =
-            (*bc.get()).opts.key_reduction_threshold * (*bc.get()).opts.key_reduction_threshold;
-        for _pass in 0..(*bc.get()).opts.key_reduction_passes {
+            bc.opts_view().key_reduction_threshold() * bc.opts_view().key_reduction_threshold();
+        for _pass in 0..bc.opts_view().key_reduction_passes() {
             let mut dst: usize = 1;
             let mut i: usize = 1;
             while i < src.count {
@@ -4592,10 +4787,10 @@ pub(crate) unsafe fn bake_postprocess_quat(
         (*data.add(i)).value = quat_fix_antipodal((*data.add(i)).value, (*data.add(i - 1)).value);
     }
 
-    if (*bc.get()).opts.key_reduction_enabled {
+    if bc.opts_view().key_reduction_enabled() {
         let threshold: f64 =
-            (*bc.get()).opts.key_reduction_threshold * (*bc.get()).opts.key_reduction_threshold;
-        for _pass in 0..(*bc.get()).opts.key_reduction_passes {
+            bc.opts_view().key_reduction_threshold() * bc.opts_view().key_reduction_threshold();
+        for _pass in 0..bc.opts_view().key_reduction_passes() {
             let mut dst: usize = 1;
             let mut i: usize = 1;
             while i < src.count {
@@ -4606,7 +4801,7 @@ pub(crate) unsafe fn bake_postprocess_quat(
                     let delta: f64 = (cur.time - prev.time) / (next.time - prev.time);
                     let mut error: f64 = 0.0;
 
-                    if (*bc.get()).opts.key_reduction_rotation {
+                    if bc.opts_view().key_reduction_rotation() {
                         let tmp: Quat = quat_slerp(prev.value, next.value, delta as Real);
                         error += (tmp.x as f64 - cur.value.x as f64)
                             * (tmp.x as f64 - cur.value.x as f64);
@@ -4866,7 +5061,7 @@ pub(crate) unsafe fn bake_node_imp(
                 COMPLEX_ROTATION_SOURCES.0.len(),
                 (*prop).prop_name,
             ) {
-                let resample_linear: bool = !(*bc.get()).opts.no_resample_rotation
+                let resample_linear: bool = !bc.opts_view().no_resample_rotation()
                     || (*prop).prop_name != sp::Lcl_Rotation.as_ptr();
                 let key_flag: u32 = if (*prop).prop_name == sp::Lcl_Rotation.as_ptr() {
                     BakedKeyFlags::KEYFRAME.raw()
@@ -4885,7 +5080,7 @@ pub(crate) unsafe fn bake_node_imp(
                 bake_times(
                     bc,
                     (*prop).anim_value,
-                    !(*bc.get()).opts.no_resample_rotation,
+                    !bc.opts_view().no_resample_rotation(),
                     BakedKeyFlags::KEYFRAME.raw(),
                 )?;
             }
@@ -5022,7 +5217,7 @@ pub(crate) unsafe fn bake_node_imp(
         flags |= TransformFlags::IGNORE_SCALE_HELPER.raw()
             | TransformFlags::IGNORE_COMPONENTWISE_SCALE.raw()
             | TransformFlags::EXPLICIT_INCLUDES.raw();
-        if ((*bc.get()).opts.evaluate_flags & EvaluateFlags::NO_EXTRAPOLATION.raw()) != 0 {
+        if (bc.opts_view().evaluate_flags() & EvaluateFlags::NO_EXTRAPOLATION.raw()) != 0 {
             flags |= TransformFlags::NO_EXTRAPOLATION.raw();
         }
 
@@ -5249,7 +5444,7 @@ pub(crate) unsafe fn bake_anim_prop(
             name.data,
             name.length,
             eval_time,
-            (*bc.get()).opts.evaluate_flags,
+            bc.opts_view().evaluate_flags(),
         );
         (*keys_data.add(i)).time = bake_time.time;
         // C: `prop.value_vec3` — the value union's 3-real view over `value_vec4`.
@@ -5296,7 +5491,7 @@ pub(crate) unsafe fn bake_element(
 ) -> Result<(), Fail> {
     let element: *mut Element =
         *((*bc.scene()).elements.data as *const *mut Element).add(element_id as usize);
-    if (*element).type_ as u32 == ElementType::Node as u32 && !(*bc.get()).opts.skip_node_transforms
+    if (*element).type_ as u32 == ElementType::Node as u32 && !bc.opts_view().skip_node_transforms()
     {
         bake_node(bc, element_id, props, count)?;
     }
@@ -5311,7 +5506,7 @@ pub(crate) unsafe fn bake_element(
 
         // Don't bake transform related props for nodes unless specifically requested
         if (*element).type_ as u32 == ElementType::Node as u32
-            && !(*bc.get()).opts.bake_transform_props
+            && !bc.opts_view().bake_transform_props()
             && in_list(
                 TRANSFORM_PROPS.0.as_ptr(),
                 TRANSFORM_PROPS.0.len(),
@@ -5381,7 +5576,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     let anim: *const Anim = bc.anim();
     let scene: *const Scene = bc.scene();
 
-    if !(*bc.get()).opts.skip_node_transforms {
+    if !bc.opts_view().skip_node_transforms() {
         bc.set_baked_nodes(push_zero::<*mut BakedNode>(
             bc.result_mut_ptr(),
             (*scene).nodes.count,
@@ -5448,7 +5643,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     );
 
     // Pre-bake layer weight times
-    if !(*bc.get()).opts.ignore_layer_weight_animation {
+    if !bc.opts_view().ignore_layer_weight_animation() {
         let mut has_weight_times: bool = false;
         // C: `ufbxi_for(ufbxi_bake_prop, prop, props, num_props)`
         let mut prop: *mut BakeProp = props;
@@ -5551,36 +5746,36 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Result<(), Fail> {
-    if (*bc.get()).opts.resample_rate <= 0.0 {
-        (*bc.get()).opts.resample_rate = 30.0;
+    if bc.opts_view().resample_rate() <= 0.0 {
+        bc.opts_view().set_resample_rate(30.0);
     }
-    if (*bc.get()).opts.minimum_sample_rate <= 0.0 {
-        (*bc.get()).opts.minimum_sample_rate = 19.5;
+    if bc.opts_view().minimum_sample_rate() <= 0.0 {
+        bc.opts_view().set_minimum_sample_rate(19.5);
     }
-    if (*bc.get()).opts.max_keyframe_segments == 0 {
-        (*bc.get()).opts.max_keyframe_segments = 32;
+    if bc.opts_view().max_keyframe_segments() == 0 {
+        bc.opts_view().set_max_keyframe_segments(32);
     }
-    if (*bc.get()).opts.key_reduction_threshold == 0.0 {
-        (*bc.get()).opts.key_reduction_threshold = 0.000001;
+    if bc.opts_view().key_reduction_threshold() == 0.0 {
+        bc.opts_view().set_key_reduction_threshold(0.000001);
     }
-    if (*bc.get()).opts.key_reduction_passes == 0 {
-        (*bc.get()).opts.key_reduction_passes = 4;
+    if bc.opts_view().key_reduction_passes() == 0 {
+        bc.opts_view().set_key_reduction_passes(4);
     }
 
-    if (*bc.get()).opts.trim_start_time && (*anim).time_begin > 0.0 {
+    if bc.opts_view().trim_start_time() && (*anim).time_begin > 0.0 {
         bc.set_ktime_offset(-(*anim).time_begin * (*bc.scene()).metadata.ktime_second as f64);
     }
 
     init_ator(
         bc.error_mut_ptr(),
         bc.ator_tmp_mut_ptr(),
-        ptr::addr_of!((*bc.get()).opts.temp_allocator),
+        bc.opts_view().temp_allocator_ptr(),
         b"temp\0".as_ptr(),
     );
     init_ator(
         bc.error_mut_ptr(),
         bc.ator_result_mut_ptr(),
-        ptr::addr_of!((*bc.get()).opts.result_allocator),
+        bc.opts_view().result_allocator_ptr(),
         b"result\0".as_ptr(),
     );
 
