@@ -3530,6 +3530,14 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `tmp_times` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_times_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp_times }
+    }
+
     // `tmp_props` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_props_mut(&self) -> *mut Buf {
@@ -3878,7 +3886,7 @@ pub(crate) fn cmp_bake_time(a: BakeTime, b: BakeTime) -> i32 {
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn bake_push_time(bc: &BakeContext, time: f64, flags: u32) -> bool {
-    let p_key: *mut BakeTime = push_fast::<BakeTime>(ptr::addr_of_mut!((*bc.get()).tmp_times), 1);
+    let p_key: *mut BakeTime = push_fast::<BakeTime>(bc.tmp_times_mut(), 1);
     if p_key.is_null() {
         return false;
     }
@@ -4086,7 +4094,7 @@ pub(crate) unsafe fn finalize_bake_times(
         ufbxi_check_err!(
             bc.error_mut(),
             !push_copy::<BakeTime>(
-                ptr::addr_of_mut!((*bc.get()).tmp_times),
+                bc.tmp_times_mut(),
                 (*bc.get()).layer_weight_times.count,
                 (*bc.get()).layer_weight_times.data,
             )
@@ -4109,11 +4117,8 @@ pub(crate) unsafe fn finalize_bake_times(
     }
 
     let mut num_times: usize = (*bc.get()).tmp_times.num_items;
-    let times: *mut BakeTime = push_pop::<BakeTime>(
-        bc.tmp_prop_mut(),
-        ptr::addr_of_mut!((*bc.get()).tmp_times),
-        num_times,
-    );
+    let times: *mut BakeTime =
+        push_pop::<BakeTime>(bc.tmp_prop_mut(), bc.tmp_times_mut(), num_times);
     ufbxi_check_err!(bc.error_mut(), !times.is_null(), "times");
 
     sort_bake_times(bc, times, num_times)?;
@@ -4650,8 +4655,7 @@ pub(crate) unsafe fn push_resampled_times(
     // C: `ufbx_baked_vec3_list keys = *p_keys;`
     let keys: List<BakedVec3> = ptr::read(p_keys);
 
-    let times: *mut BakeTime =
-        push::<BakeTime>(ptr::addr_of_mut!((*bc.get()).tmp_times), keys.count);
+    let times: *mut BakeTime = push::<BakeTime>(bc.tmp_times_mut(), keys.count);
     ufbxi_check_err!(bc.error_mut(), !times.is_null(), "times");
     for i in 0..keys.count {
         let flags: BakedKeyFlags = (*keys.data.add(i)).flags;
