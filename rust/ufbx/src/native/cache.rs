@@ -1933,7 +1933,7 @@ pub(crate) unsafe fn load_external_cache(
     let cc: CacheContext = core::mem::zeroed();
     cc.set_owned_by_scene(true);
 
-    (*cc.get()).open_file_cb = (*uc.get()).opts.open_file_cb;
+    (*cc.get()).open_file_cb = uc.opts_view().open_file_cb();
     cc.set_frames_per_second((*uc.get()).scene.settings.frames_per_second);
 
     // Temporarily "borrow" allocators for the geometry cache
@@ -1960,7 +1960,7 @@ pub(crate) unsafe fn load_external_cache(
 
     if cache.is_null() {
         if cc.error_view().type_() == ErrorType::FileNotFound {
-            if (*uc.get()).opts.ignore_missing_external_files {
+            if uc.opts_view().ignore_missing_external_files() {
                 ufbxi_check!(
                     uc,
                     ufbxi_warnf!(
@@ -2001,7 +2001,7 @@ pub(crate) unsafe fn load_external_cache(
 ) -> Result<(), Fail> {
     // C: `file` is unreferenced in the `#else` arm.
     let _ = file;
-    if (*uc.get()).opts.ignore_missing_external_files {
+    if uc.opts_view().ignore_missing_external_files() {
         return Ok(());
     }
 
@@ -2176,8 +2176,8 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
     }
 
     if matrix_determinant(&(*uc.get()).axis_matrix) < 0.0f32 as Real {
-        if (*uc.get()).opts.handedness_conversion_axis != MirrorAxis::None {
-            let mirror_axis: MirrorAxis = (*uc.get()).opts.handedness_conversion_axis;
+        if uc.opts_view().handedness_conversion_axis() != MirrorAxis::None {
+            let mirror_axis: MirrorAxis = uc.opts_view().handedness_conversion_axis();
             (*uc.get()).mirror_axis = mirror_axis;
             (*uc.get()).scene.metadata.mirror_axis = (*uc.get()).mirror_axis;
 
@@ -2197,7 +2197,7 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
         }
     }
 
-    if (*uc.get()).opts.space_conversion == SpaceConversion::TransformRoot {
+    if uc.opts_view().space_conversion() == SpaceConversion::TransformRoot {
         let mut axis_mat: Matrix = (*uc.get()).axis_matrix;
         let root_node: *mut Node = ref_ptr(&(*uc.get()).scene.root_node);
         if !is_transform_identity(&(*root_node).local_transform) {
@@ -2228,7 +2228,7 @@ pub(crate) unsafe fn scale_units(uc: &Context, mut target_meters: Real) -> Resul
 
     uc.set_unit_scale(ratio);
 
-    if (*uc.get()).opts.space_conversion == SpaceConversion::TransformRoot {
+    if uc.opts_view().space_conversion() == SpaceConversion::TransformRoot {
         let root_node: *mut Node = ref_ptr(&(*uc.get()).scene.root_node);
         (*root_node).local_transform.scale.x *= ratio;
         (*root_node).local_transform.scale.y *= ratio;

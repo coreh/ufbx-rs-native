@@ -106,15 +106,15 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
         let mut dst_size: usize = 0;
 
         if !(*ua).retain_buf.is_null() {
-            dst_size = (*uc.get()).opts.read_buffer_size;
+            dst_size = uc.opts_view().read_buffer_size();
             dst_buffer = push::<u8>((*ua).retain_buf, dst_size);
             ufbxi_check_return!(uc, !dst_buffer.is_null(), b'\0', "dst_buffer");
             (*ua).src_is_retained = true;
             (*ua).src_buf = (*ua).retain_buf;
         } else {
             // Grow the read buffer if necessary
-            if uc.read_buffer_size() < (*uc.get()).opts.read_buffer_size {
-                let new_size: usize = (*uc.get()).opts.read_buffer_size;
+            if uc.read_buffer_size() < uc.opts_view().read_buffer_size() {
+                let new_size: usize = uc.opts_view().read_buffer_size();
                 ufbxi_check_return!(
                     uc,
                     crate::native::allocator::grow_array::<u8>(
@@ -1488,7 +1488,7 @@ unsafe fn ascii_parse_node_rec(
                     let v: *mut String = push::<String>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     if arr_type == b'C' {
-                        let buf: *mut Buf = if (*uc.get()).opts.retain_dom {
+                        let buf: *mut Buf = if uc.opts_view().retain_dom() {
                             uc.result_mut_ptr()
                         } else {
                             tmp_buf
@@ -1760,7 +1760,7 @@ unsafe fn ascii_parse_node_rec(
                 if arr_type == b'-' {
                     ascii_skip_until(uc, b'}')?;
                 } else if uc.parse_threaded()
-                    && !(*uc.get()).opts.force_single_thread_ascii_parsing
+                    && !uc.opts_view().force_single_thread_ascii_parsing()
                     && !(*ua).parse_as_f32
                     && (arr_type == b'i'
                         || arr_type == b'l'

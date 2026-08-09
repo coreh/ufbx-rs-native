@@ -751,7 +751,7 @@ pub(crate) unsafe fn match_exporter(uc: &Context) -> Result<(), Fail> {
     (*uc.get()).scene.metadata.exporter_version = uc.exporter_version();
 
     // Un-detect the exporter in `ufbxi_context` to disable special cases
-    if (*uc.get()).opts.disable_quirks {
+    if uc.opts_view().disable_quirks() {
         (*uc.get()).exporter = Exporter::Unknown;
         uc.set_exporter_version(0);
     }
@@ -1514,7 +1514,7 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
             uc,
             &mut geo_fbx_id,
             core::ptr::null_mut(),
-            (*uc.get()).opts.geometry_transform_helper_name.data,
+            uc.opts_view().geometry_transform_helper_name_view().data(),
             ElementType::Node,
         );
         ufbxi_check!(uc, !geo_node.is_null(), "geo_node");
@@ -1626,7 +1626,7 @@ pub(crate) unsafe fn setup_scale_helper(
         uc,
         &mut scale_fbx_id,
         core::ptr::null_mut(),
-        (*uc.get()).opts.scale_helper_name.data,
+        uc.opts_view().scale_helper_name_view().data(),
         ElementType::Node,
     );
     ufbxi_check!(uc, !scale_node.is_null(), "scale_node");
@@ -1711,9 +1711,9 @@ pub(crate) unsafe fn read_model(
         _ => {}
     }
 
-    if (*uc.get()).opts.inherit_mode_handling == InheritModeHandling::Preserve {
+    if uc.opts_view().inherit_mode_handling() == InheritModeHandling::Preserve {
         (*elem_node).inherit_mode = (*elem_node).original_inherit_mode;
-    } else if (*uc.get()).opts.inherit_mode_handling == InheritModeHandling::Ignore {
+    } else if uc.opts_view().inherit_mode_handling() == InheritModeHandling::Ignore {
         (*elem_node).original_inherit_mode = InheritMode::Normal;
         (*elem_node).inherit_mode = InheritMode::Normal;
     }
@@ -1794,7 +1794,7 @@ pub(crate) unsafe fn fix_index(
     index: u32,
     one_past_max_val: usize,
 ) -> Result<(), Fail> {
-    match (*uc.get()).opts.index_error_handling {
+    match uc.opts_view().index_error_handling() {
         IndexErrorHandling::Clamp => {
             ufbxi_check!(uc, one_past_max_val > 0);
             ufbxi_check!(
@@ -1943,7 +1943,7 @@ pub(crate) unsafe fn read_vertex_element(
     let data: *mut ValueArray = find_array(node, data_name, data_type);
     let indices: *mut ValueArray = find_array(node, index_name, b'i');
 
-    if !(*uc.get()).opts.strict {
+    if !uc.opts_view().strict() {
         if data.is_null() {
             return Ok(());
         }
@@ -2152,7 +2152,7 @@ pub(crate) unsafe fn read_vertex_element(
         }
     }
 
-    if (*uc.get()).opts.retain_vertex_attrib_w && !w_name.is_null() {
+    if uc.opts_view().retain_vertex_attrib_w() && !w_name.is_null() {
         let w_data: *mut ValueArray = find_array(node, w_name, b'r');
         if !w_data.is_null() {
             if (*w_data).size == num_elems {
@@ -2397,7 +2397,7 @@ pub(crate) unsafe fn read_shape(
     let shape: *mut BlendShape = push_element::<BlendShape>(uc, info, ElementType::BlendShape);
     ufbxi_check!(uc, !shape.is_null(), "shape");
 
-    if (*uc.get()).opts.ignore_geometry {
+    if uc.opts_view().ignore_geometry() {
         return Ok(());
     }
 
@@ -3096,7 +3096,7 @@ pub(crate) unsafe fn read_mesh(
         return Ok(());
     }
 
-    if (*uc.get()).opts.ignore_geometry {
+    if uc.opts_view().ignore_geometry() {
         return Ok(());
     }
 
@@ -3130,7 +3130,7 @@ pub(crate) unsafe fn read_mesh(
     };
 
     // Duplicate `index_data` for modification if we retain DOM
-    if (*uc.get()).opts.retain_dom {
+    if uc.opts_view().retain_dom() {
         index_data = push_copy::<u32>(uc.result_mut_ptr(), (*mesh).num_indices, index_data);
         ufbxi_check!(uc, !index_data.is_null(), "index_data");
     }
@@ -3150,7 +3150,7 @@ pub(crate) unsafe fn read_mesh(
     // Check/make sure that the last index is negated (last of polygon)
     if (*mesh).num_indices > 0 {
         if *index_data.add((*mesh).num_indices - 1) as i32 >= 0 {
-            if (*uc.get()).opts.strict {
+            if uc.opts_view().strict() {
                 ufbxi_fail!(uc, "Non-negated last index");
             }
             *index_data.add((*mesh).num_indices - 1) = !*index_data.add((*mesh).num_indices - 1);
@@ -3171,7 +3171,7 @@ pub(crate) unsafe fn read_mesh(
         for i in 0..num_edges {
             let mut index_ix: u32 = *edge_data.add(i);
             if index_ix as usize >= (*mesh).num_indices {
-                if (*uc.get()).opts.strict {
+                if uc.opts_view().strict() {
                     ufbxi_fail!(uc, "Edge index out of bounds");
                 }
                 continue;
@@ -3659,7 +3659,7 @@ pub(crate) unsafe fn read_mesh(
         (*mesh).face_material.count = (*mesh).num_faces;
     }
 
-    if (*uc.get()).opts.strict {
+    if uc.opts_view().strict() {
         ufbxi_check!(
             uc,
             (*mesh).uv_sets.count == num_uv,
@@ -3927,7 +3927,7 @@ pub(crate) unsafe fn read_nurbs_curve(
     (*nurbs).basis.topology = read_nurbs_topology(form);
     (*nurbs).basis.is_2d = dimension == 2;
 
-    if !(*uc.get()).opts.ignore_geometry {
+    if !uc.opts_view().ignore_geometry() {
         let points: *mut ValueArray = find_array(node, sp::Points.as_ptr(), b'r');
         let knot: *mut ValueArray = find_array(node, sp::KnotVector.as_ptr(), b'r');
         ufbxi_check!(uc, !points.is_null(), "points");
@@ -4017,7 +4017,7 @@ pub(crate) unsafe fn read_nurbs_surface(
     (*nurbs).span_subdivision_u = if step_u > 0 { step_u as u32 } else { 4u32 };
     (*nurbs).span_subdivision_v = if step_v > 0 { step_v as u32 } else { 4u32 };
 
-    if !(*uc.get()).opts.ignore_geometry {
+    if !uc.opts_view().ignore_geometry() {
         let points: *mut ValueArray = find_array(node, sp::Points.as_ptr(), b'r');
         let knot_u: *mut ValueArray = find_array(node, sp::KnotVectorU.as_ptr(), b'r');
         let knot_v: *mut ValueArray = find_array(node, sp::KnotVectorV.as_ptr(), b'r');
@@ -4052,7 +4052,7 @@ pub(crate) unsafe fn read_line(
     let line: *mut LineCurve = push_element::<LineCurve>(uc, info, ElementType::LineCurve);
     ufbxi_check!(uc, !line.is_null(), "line");
 
-    if !(*uc.get()).opts.ignore_geometry {
+    if !uc.opts_view().ignore_geometry() {
         let points: *mut ValueArray = find_array(node, sp::Points.as_ptr(), b'r');
         let points_index: *mut ValueArray = find_array(node, sp::PointsIndex.as_ptr(), b'i');
         ufbxi_check!(uc, !points.is_null(), "points");
@@ -4374,7 +4374,7 @@ pub(crate) unsafe fn solve_auto_tangent(
         if math::fmin(
             math::fabs((prev_value - value) as f64),
             math::fabs((next_value - value) as f64),
-        ) <= (*uc.get()).opts.key_clamp_threshold
+        ) <= uc.opts_view().key_clamp_threshold()
         {
             return 0.0f32;
         }
@@ -4476,7 +4476,7 @@ pub(crate) unsafe fn solve_auto_tangent_left(
         return 0.0f32;
     }
     if flags & KEY_CLAMP != 0 {
-        if math::fabs((prev_value - value) as f64) <= (*uc.get()).opts.key_clamp_threshold {
+        if math::fabs((prev_value - value) as f64) <= uc.opts_view().key_clamp_threshold() {
             return 0.0f32;
         }
     }
@@ -4510,7 +4510,7 @@ pub(crate) unsafe fn solve_auto_tangent_right(
         return 0.0f32;
     }
     if flags & KEY_CLAMP != 0 {
-        if math::fabs((next_value - value) as f64) <= (*uc.get()).opts.key_clamp_threshold {
+        if math::fabs((next_value - value) as f64) <= uc.opts_view().key_clamp_threshold() {
             return 0.0f32;
         }
     }
@@ -4623,7 +4623,7 @@ pub(crate) unsafe fn read_animation_curve(
         sp::Post_Extrapolation.as_ptr(),
     );
 
-    if (*uc.get()).opts.ignore_animation {
+    if uc.opts_view().ignore_animation() {
         return Ok(());
     }
 
@@ -6225,7 +6225,8 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 max_tasks,
                 thread_pool_available_tasks(uc.thread_pool_mut_ptr()),
             );
-            let max_memory: usize = (*uc.get()).opts.thread_opts.memory_limit / THREAD_GROUP_COUNT;
+            let max_memory: usize =
+                uc.opts_view().thread_opts_view().memory_limit() / THREAD_GROUP_COUNT;
 
             loop {
                 let mut node: *mut Node = core::ptr::null_mut();
@@ -6510,7 +6511,7 @@ pub(crate) unsafe fn read_take_anim_channel(
         sp::Post_Extrapolation.as_ptr(),
     );
 
-    if (*uc.get()).opts.ignore_animation {
+    if uc.opts_view().ignore_animation() {
         return Ok(());
     }
 
@@ -7301,9 +7302,9 @@ pub(crate) unsafe fn unscaled_transform_to_matrix(t: *const Transform) -> Matrix
 // ufbx.c:15827-15837 `ufbxi_setup_root_node`
 #[inline(never)]
 pub(crate) unsafe fn setup_root_node(uc: &Context, root: *mut UfbxNode) {
-    if (*uc.get()).opts.use_root_transform {
-        (*root).local_transform = (*uc.get()).opts.root_transform;
-        (*root).node_to_parent = transform_to_matrix(&(*uc.get()).opts.root_transform);
+    if uc.opts_view().use_root_transform() {
+        (*root).local_transform = uc.opts_view().root_transform();
+        (*root).node_to_parent = transform_to_matrix(uc.opts_view().root_transform_ptr());
     } else {
         (*root).local_transform = IDENTITY_TRANSFORM;
         (*root).node_to_parent = IDENTITY_MATRIX;
@@ -7434,7 +7435,7 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
     }
 
     // Force parsing all the nodes by parsing a toplevel that cannot be found
-    if (*uc.get()).opts.retain_dom {
+    if uc.opts_view().retain_dom() {
         parse_toplevel(uc, core::ptr::null())?;
     }
 
@@ -7990,7 +7991,7 @@ pub(crate) unsafe fn read_legacy_mesh(
 
     patch_mesh_reals(mesh);
 
-    if (*uc.get()).opts.ignore_geometry {
+    if uc.opts_view().ignore_geometry() {
         return Ok(());
     }
 
@@ -8009,7 +8010,7 @@ pub(crate) unsafe fn read_legacy_mesh(
     let mut index_data: *mut u32 = (*indices).data as *mut u32;
 
     // Duplicate `index_data` for modification if we retain DOM
-    if (*uc.get()).opts.retain_dom {
+    if uc.opts_view().retain_dom() {
         index_data = push_copy::<u32>(uc.result_mut_ptr(), (*indices).size, index_data);
         ufbxi_check!(uc, !index_data.is_null(), "index_data");
     }
@@ -8029,7 +8030,7 @@ pub(crate) unsafe fn read_legacy_mesh(
     // Check/make sure that the last index is negated (last of polygon)
     if (*mesh).num_indices > 0 {
         if *index_data.add((*mesh).num_indices - 1) as i32 >= 0 {
-            if (*uc.get()).opts.strict {
+            if uc.opts_view().strict() {
                 ufbxi_fail!(uc, "Non-negated last index");
             }
             *index_data.add((*mesh).num_indices - 1) = !*index_data.add((*mesh).num_indices - 1);
@@ -8417,7 +8418,7 @@ pub(crate) unsafe fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
         }
     }
 
-    if (*uc.get()).opts.retain_dom {
+    if uc.opts_view().retain_dom() {
         retain_toplevel(uc, core::ptr::null_mut())?;
     }
 
@@ -8458,7 +8459,7 @@ pub(crate) unsafe fn trim_delimiters(uc: &Context, data: *const u8, length: usiz
         // against ASCII separators, so the signedness of C `char` is not
         // observable here (PORTING.md "char (value…)").
         let c: u8 = *data.add(length - 1);
-        let is_separator: bool = c == b'/' || c == (*uc.get()).opts.path_separator;
+        let is_separator: bool = c == b'/' || c == uc.opts_view().path_separator();
         if is_separator {
             length -= 1;
             break;
@@ -8471,24 +8472,24 @@ pub(crate) unsafe fn trim_delimiters(uc: &Context, data: *const u8, length: usiz
 // ufbx.c:16500-16529 `ufbxi_init_file_paths`
 #[inline(never)]
 pub(crate) unsafe fn init_file_paths(uc: &Context) -> Result<(), Fail> {
-    if (*uc.get()).opts.filename.length > 0 {
+    if uc.opts_view().filename_view().length() > 0 {
         (*uc.get()).scene.metadata.filename = String::new_c(
-            (*uc.get()).opts.filename.data,
-            (*uc.get()).opts.filename.length,
+            uc.opts_view().filename_view().data(),
+            uc.opts_view().filename_view().length(),
         );
-    } else if (*uc.get()).opts.raw_filename.size > 0 {
-        (*uc.get()).scene.metadata.filename.data = (*uc.get()).opts.raw_filename.data;
-        (*uc.get()).scene.metadata.filename.length = (*uc.get()).opts.raw_filename.size;
+    } else if uc.opts_view().raw_filename_view().size() > 0 {
+        (*uc.get()).scene.metadata.filename.data = uc.opts_view().raw_filename_view().data();
+        (*uc.get()).scene.metadata.filename.length = uc.opts_view().raw_filename_view().size();
     }
 
-    if (*uc.get()).opts.raw_filename.size > 0 {
+    if uc.opts_view().raw_filename_view().size() > 0 {
         (*uc.get()).scene.metadata.raw_filename = Blob::new_c(
-            (*uc.get()).opts.raw_filename.data,
-            (*uc.get()).opts.raw_filename.size,
+            uc.opts_view().raw_filename_view().data(),
+            uc.opts_view().raw_filename_view().size(),
         );
-    } else if (*uc.get()).opts.filename.length > 0 {
-        (*uc.get()).scene.metadata.raw_filename.data = (*uc.get()).opts.filename.data;
-        (*uc.get()).scene.metadata.raw_filename.size = (*uc.get()).opts.filename.length;
+    } else if uc.opts_view().filename_view().length() > 0 {
+        (*uc.get()).scene.metadata.raw_filename.data = uc.opts_view().filename_view().data();
+        (*uc.get()).scene.metadata.raw_filename.size = uc.opts_view().filename_view().length();
     }
 
     push_string_place_str(
@@ -8675,14 +8676,14 @@ pub(crate) unsafe fn resolve_relative_filename(
     // Copy prefix and suffix converting separators in the process
     if prefix_length > 0 {
         core::ptr::copy_nonoverlapping(prefix_data, ptr, prefix_length);
-        *ptr.add(prefix_length) = (*uc.get()).opts.path_separator;
+        *ptr.add(prefix_length) = uc.opts_view().path_separator();
         ptr = ptr.add(prefix_length + 1);
     }
     let mut i: usize = 0;
     while i < src_length {
         let mut c: u8 = *src.add(i);
         if c == b'/' || c == b'\\' {
-            c = (*uc.get()).opts.path_separator;
+            c = uc.opts_view().path_separator();
         }
         *ptr = c;
         ptr = ptr.add(1);

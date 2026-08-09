@@ -415,7 +415,7 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
             (*d).length = len;
             ufbxi_check!(uc, !(*d).data.is_null(), "d->data");
             if dst_type == b'C' {
-                let buf: *mut Buf = if size == 1 || (*uc.get()).opts.retain_dom {
+                let buf: *mut Buf = if size == 1 || uc.opts_view().retain_dom() {
                     uc.result_mut_ptr()
                 } else {
                     tmp_buf
@@ -969,8 +969,8 @@ unsafe fn binary_parse_node_rec(
                 (*input).no_checksum = false;
                 (*input).internal_fast_bits = 0;
 
-                if (*uc.get()).opts.progress_cb.fn_.is_some() {
-                    (*input).progress_cb = (*uc.get()).opts.progress_cb;
+                if uc.opts_view().progress_cb().fn_.is_some() {
+                    (*input).progress_cb = uc.opts_view().progress_cb();
                     (*input).progress_size_before = arr_begin;
                     (*input).progress_size_after = uc.progress_bytes_total().wrapping_sub(arr_end);
                     (*input).progress_interval_hint = uc.progress_interval() as u64;

@@ -182,6 +182,37 @@ pub struct RawString {
     pub length: usize,
 }
 
+// Typed interior-mutable VIEW over `RawString` (non-Copy; subfields read+written).
+#[repr(transparent)]
+pub(crate) struct RawStringView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawString>>);
+
+impl RawStringView {
+    #[inline(always)]
+    fn get(&self) -> *mut RawString {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *const u8 {
+        unsafe { (*self.get()).data }
+    }
+    #[inline(always)]
+    pub(crate) fn set_data(&self, data: *const u8) {
+        unsafe {
+            (*self.get()).data = data;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn length(&self) -> usize {
+        unsafe { (*self.get()).length }
+    }
+    #[inline(always)]
+    pub(crate) fn set_length(&self, length: usize) {
+        unsafe {
+            (*self.get()).length = length;
+        }
+    }
+}
+
 impl RawString {
     fn new(s: &[u8]) -> Self {
         RawString {
@@ -204,6 +235,105 @@ impl Default for RawString {
 pub struct RawBlob {
     pub data: *const u8,
     pub size: usize,
+}
+
+// Typed interior-mutable VIEW over `RawBlob` (non-Copy; subfields read+written).
+#[repr(transparent)]
+pub(crate) struct RawBlobView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawBlob>>);
+
+impl RawBlobView {
+    #[inline(always)]
+    fn get(&self) -> *mut RawBlob {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *const u8 {
+        unsafe { (*self.get()).data }
+    }
+    #[inline(always)]
+    pub(crate) fn set_data(&self, data: *const u8) {
+        unsafe {
+            (*self.get()).data = data;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn size(&self) -> usize {
+        unsafe { (*self.get()).size }
+    }
+    #[inline(always)]
+    pub(crate) fn set_size(&self, size: usize) {
+        unsafe {
+            (*self.get()).size = size;
+        }
+    }
+}
+
+// Typed interior-mutable VIEW over `crate::generated::RawThreadOpts` (non-Copy; subfields read+written).
+#[repr(transparent)]
+pub(crate) struct RawThreadOptsView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::RawThreadOpts>>,
+);
+
+impl RawThreadOptsView {
+    #[inline(always)]
+    fn get(&self) -> *mut crate::generated::RawThreadOpts {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn memory_limit(&self) -> usize {
+        unsafe { (*self.get()).memory_limit }
+    }
+    #[inline(always)]
+    pub(crate) fn set_memory_limit(&self, memory_limit: usize) {
+        unsafe {
+            (*self.get()).memory_limit = memory_limit;
+        }
+    }
+}
+
+// Typed interior-mutable VIEW over `RawOpenFileCb` — Copy, but `.fn_` is WRITTEN
+// (default cb install), so it needs a view not a value getter.
+#[repr(transparent)]
+pub(crate) struct RawOpenFileCbView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::RawOpenFileCb>>,
+);
+
+impl RawOpenFileCbView {
+    #[inline(always)]
+    fn get(&self) -> *mut crate::generated::RawOpenFileCb {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn fn_(
+        &self,
+    ) -> Option<
+        unsafe extern "C" fn(
+            *mut core::ffi::c_void,
+            *mut crate::generated::RawStream,
+            *const u8,
+            usize,
+            *const crate::generated::OpenFileInfo,
+        ) -> bool,
+    > {
+        unsafe { (*self.get()).fn_ }
+    }
+    #[inline(always)]
+    pub(crate) fn set_fn_(
+        &self,
+        fn_: Option<
+            unsafe extern "C" fn(
+                *mut core::ffi::c_void,
+                *mut crate::generated::RawStream,
+                *const u8,
+                usize,
+                *const crate::generated::OpenFileInfo,
+            ) -> bool,
+        >,
+    ) {
+        unsafe {
+            (*self.get()).fn_ = fn_;
+        }
+    }
 }
 
 impl RawBlob {

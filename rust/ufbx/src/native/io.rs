@@ -67,7 +67,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     // Grow the read buffer if necessary, data is copied over below with the
     // usual path so the free is deferred (`size_to_free`, `data_to_free`)
     if size > uc.read_buffer_size() {
-        let mut new_size = max_sz(size, (*uc.get()).opts.read_buffer_size);
+        let mut new_size = max_sz(size, uc.opts_view().read_buffer_size());
         // C-parity: `uc->read_buffer_size * 2` is a size_t multiply that wraps.
         new_size = max_sz(new_size, uc.read_buffer_size().wrapping_mul(2));
         size_to_free = uc.read_buffer_size();
@@ -293,7 +293,7 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
         // Read and discard bytes in reasonable chunks
         let skip_size: u64 = max64(
             uc.read_buffer_size() as u64,
-            (*uc.get()).opts.read_buffer_size as u64,
+            uc.opts_view().read_buffer_size() as u64,
         );
         while size > 0 {
             let to_skip: u64 = min64(size, skip_size);

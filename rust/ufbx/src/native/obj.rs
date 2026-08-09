@@ -157,11 +157,11 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
 
     // C: `const char *name = "";`
     let mut name: *const u8 = b"\0".as_ptr();
-    if (*uc.get()).opts.obj_split_groups && (*uc.get()).obj.group.length > 0 {
+    if uc.opts_view().obj_split_groups() && (*uc.get()).obj.group.length > 0 {
         name = (*uc.get()).obj.group.data;
-    } else if !(*uc.get()).opts.obj_merge_objects && (*uc.get()).obj.object.length > 0 {
+    } else if !uc.opts_view().obj_merge_objects() && (*uc.get()).obj.object.length > 0 {
         name = (*uc.get()).obj.object.data;
-    } else if !(*uc.get()).opts.obj_merge_groups && (*uc.get()).obj.group.length > 0 {
+    } else if !uc.opts_view().obj_merge_groups() && (*uc.get()).obj.group.length > 0 {
         name = (*uc.get()).obj.group.data;
     }
 
@@ -528,7 +528,7 @@ pub(crate) unsafe fn obj_parse_vertex(
     attrib: ObjAttrib,
     offset: usize,
 ) -> Result<(), Fail> {
-    if (*uc.get()).opts.ignore_geometry {
+    if uc.opts_view().ignore_geometry() {
         return Ok(());
     }
 
@@ -663,16 +663,16 @@ pub(crate) unsafe fn obj_parse_indices(
 ) -> Result<(), Fail> {
     let mut flush_mesh: bool = false;
     if (*uc.get()).obj.object_dirty {
-        if !(*uc.get()).opts.obj_merge_objects {
+        if !uc.opts_view().obj_merge_objects() {
             flush_mesh = true;
         }
         (*uc.get()).obj.object_dirty = false;
     }
 
     if (*uc.get()).obj.group_dirty {
-        if (((*uc.get()).obj.object.length == 0 || (*uc.get()).opts.obj_merge_objects)
-            && !(*uc.get()).opts.obj_merge_groups)
-            || (*uc.get()).opts.obj_split_groups
+        if (((*uc.get()).obj.object.length == 0 || uc.opts_view().obj_merge_objects())
+            && !uc.opts_view().obj_merge_groups())
+            || uc.opts_view().obj_split_groups()
         {
             flush_mesh = true;
         }
@@ -713,11 +713,11 @@ pub(crate) unsafe fn obj_parse_indices(
     }
 
     // EARLY RETURN: Rest of the function should only be related to geometry!
-    if (*uc.get()).opts.ignore_geometry {
+    if uc.opts_view().ignore_geometry() {
         return Ok(());
     }
 
-    if num_tokens == 0 && !(*uc.get()).opts.allow_empty_faces {
+    if num_tokens == 0 && !uc.opts_view().allow_empty_faces() {
         ufbxi_check!(
             uc,
             ufbxi_warnf!(
@@ -734,8 +734,8 @@ pub(crate) unsafe fn obj_parse_indices(
     if (*uc.get()).obj.face_group_dirty {
         let mut name: String = EMPTY_STRING.0;
         if (*uc.get()).obj.group.length > 0
-            && ((*uc.get()).obj.object.length > 0 || (*uc.get()).opts.obj_merge_groups)
-            && !(*uc.get()).opts.obj_split_groups
+            && ((*uc.get()).obj.object.length > 0 || uc.opts_view().obj_merge_groups())
+            && !uc.opts_view().obj_split_groups()
         {
             name = (*uc.get()).obj.group;
         }
@@ -924,13 +924,13 @@ pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
         (*uc.get()).obj.has_vertex_color = true;
     }
 
-    if !(*uc.get()).opts.disable_quirks {
+    if !uc.opts_view().disable_quirks() {
         if r#match(
             &(*uc.get()).obj.line,
             b"\\s*#\\s*File exported by ZBrush.*\0".as_ptr(),
         ) {
             if (*uc.get()).obj.mesh.is_null() {
-                (*uc.get()).opts.obj_merge_groups = true;
+                uc.opts_view().set_obj_merge_groups(true);
             }
         }
     }
@@ -1135,7 +1135,7 @@ pub(crate) unsafe fn obj_setup_attrib(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result<(), Fail> {
-    if (*uc.get()).opts.ignore_geometry {
+    if uc.opts_view().ignore_geometry() {
         return Ok(());
     }
 
@@ -1250,7 +1250,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
 
         let num_faces: usize = (*mesh).num_faces;
 
-        if !(*uc.get()).opts.ignore_geometry {
+        if !uc.opts_view().ignore_geometry() {
             // C: `ufbxi_nounroll for (uint32_t attrib = 0; attrib < UFBXI_OBJ_NUM_ATTRIBS; attrib++)`
             for attrib in 0..OBJ_NUM_ATTRIBS {
                 if non_disjoint[attrib] {
@@ -1570,7 +1570,7 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             (*uc.get()).obj.mtllib_relative_path.size = lib.length;
         } else if str_equal(cmd, str_c(b"usemtl\0".as_ptr())) {
             obj_parse_material(uc)?;
-        } else if !(*uc.get()).opts.disable_quirks && key == 0 {
+        } else if !uc.opts_view().disable_quirks() && key == 0 {
             // ZBrush exporter seems to end the files with '\0', sometimes..
         } else {
             ufbxi_check!(
@@ -1867,10 +1867,10 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     uc.set_eof(false);
     (*uc.get()).obj.eof = false;
 
-    if (*uc.get()).opts.obj_mtl_data.size > 0 {
-        uc.set_data((*uc.get()).opts.obj_mtl_data.data);
+    if uc.opts_view().obj_mtl_data_view().size() > 0 {
+        uc.set_data(uc.opts_view().obj_mtl_data_view().data());
         uc.set_data_begin(uc.data());
-        uc.set_data_size((*uc.get()).opts.obj_mtl_data.size);
+        uc.set_data_size(uc.opts_view().obj_mtl_data_view().size());
         obj_parse_mtl(uc)?;
         return Ok(());
     }
@@ -1882,19 +1882,19 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     // C: `ufbx_blob stream_path = { 0 };`
     let mut stream_path: Blob = core::mem::zeroed();
 
-    if (*uc.get()).opts.open_file_cb.fn_.is_some() {
-        if (*uc.get()).opts.obj_mtl_path.length > 0 {
+    if uc.opts_view().open_file_cb_view().fn_().is_some() {
+        if uc.opts_view().obj_mtl_path_view().length() > 0 {
             has_stream = open_file(
-                &(*uc.get()).opts.open_file_cb,
+                uc.opts_view().open_file_cb_ptr(),
                 &mut stream,
-                (*uc.get()).opts.obj_mtl_path.data,
-                (*uc.get()).opts.obj_mtl_path.length,
+                uc.opts_view().obj_mtl_path_view().data(),
+                uc.opts_view().obj_mtl_path_view().length(),
                 core::ptr::null(),
                 uc.ator_tmp_mut_ptr(),
                 OpenFileType::ObjMtl,
             );
-            stream_path.data = (*uc.get()).opts.obj_mtl_path.data;
-            stream_path.size = (*uc.get()).opts.obj_mtl_path.length;
+            stream_path.data = uc.opts_view().obj_mtl_path_view().data();
+            stream_path.size = uc.opts_view().obj_mtl_path_view().length();
             needs_stream = true;
             if !has_stream {
                 ufbxi_check!(
@@ -1903,7 +1903,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                         uc,
                         WarningType::MissingExternalFile,
                         "Could not open .mtl file: %s",
-                        (*uc.get()).opts.obj_mtl_path.data
+                        uc.opts_view().obj_mtl_path_view().data()
                     )
                     .is_ok(),
                     "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_EXTERNAL_FILE, ~0u, \"Could not open .mtl file: %s\", uc->opts.obj_mtl_path.data)"
@@ -1912,7 +1912,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
         }
 
         if !has_stream
-            && (*uc.get()).opts.load_external_files
+            && uc.opts_view().load_external_files()
             && (*uc.get()).obj.mtllib_relative_path.size > 0
         {
             // C: `ufbx_blob dst; // ufbxi_uninit`
@@ -1925,7 +1925,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                 true,
             )?;
             has_stream = open_file(
-                &(*uc.get()).opts.open_file_cb,
+                uc.opts_view().open_file_cb_ptr(),
                 &mut stream,
                 (*dst).data,
                 (*dst).size,
@@ -1952,8 +1952,8 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
 
         let path: String = (*uc.get()).scene.metadata.filename;
         if !has_stream
-            && (*uc.get()).opts.load_external_files
-            && (*uc.get()).opts.obj_search_mtl_by_filename
+            && uc.opts_view().load_external_files()
+            && uc.opts_view().obj_search_mtl_by_filename()
             && path.length > 4
         {
             // C: `ufbx_string ext = { path.data + path.length - 4, 4 };`
@@ -1978,7 +1978,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                     b'l'
                 };
                 has_stream = open_file(
-                    &(*uc.get()).opts.open_file_cb,
+                    uc.opts_view().open_file_cb_ptr(),
                     &mut stream,
                     copy,
                     path.length,
@@ -2019,7 +2019,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
         uc.set_read_user(core::ptr::null_mut());
 
         ok?;
-    } else if needs_stream && !(*uc.get()).opts.ignore_missing_external_files {
+    } else if needs_stream && !uc.opts_view().ignore_missing_external_files() {
         set_err_info(uc.error_mut_ptr(), stream_path.data, stream_path.size);
         ufbxi_fail_msg!(uc, "ufbxi_obj_load_mtl()", "External file not found");
     }

@@ -503,9 +503,11 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             opts.filename_null_terminated = true;
             filename_len = strlen(filename);
         }
-        if (*uc.get()).opts.filename.length == 0 || (*uc.get()).opts.filename.data.is_null() {
-            (*uc.get()).opts.filename.data = filename;
-            (*uc.get()).opts.filename.length = filename_len;
+        if uc.opts_view().filename_view().length() == 0
+            || uc.opts_view().filename_view().data().is_null()
+        {
+            uc.opts_view().filename_view().set_data(filename);
+            uc.opts_view().filename_view().set_length(filename_len);
         }
         // C: `ufbx_error error; error.type = UFBX_ERROR_NONE;` — C initializes
         // only `type`; the struct is only copied below after the open-file
@@ -528,14 +530,14 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             *const OpenFileInfo,
         ) -> bool = default_open_file;
         #[allow(unpredictable_function_pointer_comparisons)]
-        let open_with_default = (*uc.get()).opts.open_main_file_with_default
-            || (*uc.get()).opts.open_file_cb.fn_ == Some(default_fn);
+        let open_with_default = uc.opts_view().open_main_file_with_default()
+            || uc.opts_view().open_file_cb_view().fn_() == Some(default_fn);
         if open_with_default {
             let ctx: OpenFileContext = uc.ator_tmp_mut_ptr() as OpenFileContext;
             ok = open_file_ctx(&mut stream, ctx, filename, filename_len, &opts, &mut error);
         } else {
             ok = open_file(
-                ptr::addr_of!((*uc.get()).opts.open_file_cb),
+                uc.opts_view().open_file_cb_ptr(),
                 &mut stream,
                 uc.load_filename(),
                 filename_len,
@@ -561,7 +563,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         uc.set_read_user(stream.user);
     }
 
-    if (*uc.get()).opts.progress_cb.fn_.is_some()
+    if uc.opts_view().progress_cb().fn_.is_some()
         && uc.progress_bytes_total() == 0
         && uc.size_fn().is_some()
     {
@@ -572,7 +574,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
     ufbxi_check!(
         uc,
-        (*uc.get()).opts.path_separator >= 0x20 && (*uc.get()).opts.path_separator <= 0x7e,
+        uc.opts_view().path_separator() >= 0x20 && uc.opts_view().path_separator() <= 0x7e,
         "uc->opts.path_separator >= 0x20 && uc->opts.path_separator <= 0x7e"
     );
 
@@ -582,19 +584,14 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // (checklist #13; test `error_format_long` asserts `stack_size >= 2`).
     ufbxi_check!(
         uc,
-        fixup_opts_string(
-            uc,
-            ptr::addr_of_mut!((*uc.get()).opts.filename) as *mut String,
-            false
-        )
-        .is_ok(),
+        fixup_opts_string(uc, uc.opts_view().filename_mut_ptr() as *mut String, false).is_ok(),
         "ufbxi_fixup_opts_string(uc, &uc->opts.filename, false)"
     );
     ufbxi_check!(
         uc,
         fixup_opts_string(
             uc,
-            ptr::addr_of_mut!((*uc.get()).opts.obj_mtl_path) as *mut String,
+            uc.opts_view().obj_mtl_path_mut_ptr() as *mut String,
             true
         )
         .is_ok(),
@@ -604,7 +601,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         uc,
         fixup_opts_string(
             uc,
-            ptr::addr_of_mut!((*uc.get()).opts.geometry_transform_helper_name) as *mut String,
+            uc.opts_view().geometry_transform_helper_name_mut_ptr() as *mut String,
             true,
         )
         .is_ok(),
@@ -614,7 +611,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         uc,
         fixup_opts_string(
             uc,
-            ptr::addr_of_mut!((*uc.get()).opts.scale_helper_name) as *mut String,
+            uc.opts_view().scale_helper_name_mut_ptr() as *mut String,
             true
         )
         .is_ok(),
@@ -627,22 +624,22 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             uc.thread_pool_mut_ptr(),
             uc.error_mut_ptr(),
             uc.ator_tmp_mut_ptr(),
-            ptr::addr_of!((*uc.get()).opts.thread_opts),
+            uc.opts_view().thread_opts_ptr(),
         )
         .is_ok(),
         "ufbxi_thread_pool_init(&uc->thread_pool, &uc->error, &uc->ator_tmp, &uc->opts.thread_opts)"
     );
 
-    if !(*uc.get()).opts.allow_unsafe {
+    if !uc.opts_view().allow_unsafe() {
         ufbxi_check_msg!(
             uc,
-            (*uc.get()).opts.index_error_handling != IndexErrorHandling::UnsafeIgnore,
+            uc.opts_view().index_error_handling() != IndexErrorHandling::UnsafeIgnore,
             "Unsafe options",
             "uc->opts.index_error_handling != UFBX_INDEX_ERROR_HANDLING_UNSAFE_IGNORE"
         );
         ufbxi_check_msg!(
             uc,
-            (*uc.get()).opts.unicode_error_handling != UnicodeErrorHandling::UnsafeIgnore,
+            uc.opts_view().unicode_error_handling() != UnicodeErrorHandling::UnsafeIgnore,
             "Unsafe options",
             "uc->opts.unicode_error_handling != UFBX_UNICODE_ERROR_HANDLING_UNSAFE_IGNORE"
         );
@@ -650,19 +647,19 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         (*uc.get()).scene.metadata.is_unsafe = true;
     }
 
-    if (*uc.get()).opts.index_error_handling == IndexErrorHandling::NoIndex {
+    if uc.opts_view().index_error_handling() == IndexErrorHandling::NoIndex {
         (*uc.get()).scene.metadata.may_contain_no_index = true;
     }
 
     uc.set_retain_mesh_parts(
-        !(*uc.get()).opts.ignore_geometry && !(*uc.get()).opts.skip_mesh_parts,
+        !uc.opts_view().ignore_geometry() && !uc.opts_view().skip_mesh_parts(),
     );
     (*uc.get())
         .scene
         .metadata
-        .may_contain_missing_vertex_position = (*uc.get()).opts.allow_missing_vertex_position;
+        .may_contain_missing_vertex_position = uc.opts_view().allow_missing_vertex_position();
     (*uc.get()).scene.metadata.may_contain_broken_elements =
-        (*uc.get()).opts.connect_broken_elements;
+        uc.opts_view().connect_broken_elements();
 
     (*uc.get()).scene.metadata.creator.data = EMPTY_CHAR.as_ptr();
 
@@ -675,8 +672,8 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     }
 
     uc.set_retain_vertex_w(
-        ((*uc.get()).opts.retain_dom || (*uc.get()).opts.retain_vertex_attrib_w)
-            && !(*uc.get()).opts.ignore_geometry,
+        (uc.opts_view().retain_dom() || uc.opts_view().retain_vertex_attrib_w())
+            && !uc.opts_view().ignore_geometry(),
     );
 
     ufbxi_check!(uc, load_strings(uc).is_ok(), "ufbxi_load_strings(uc)");
@@ -724,7 +721,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     }
 
     // Fake DOM root if necessary
-    if (*uc.get()).opts.retain_dom && (*uc.get()).scene.dom_root.is_none() {
+    if uc.opts_view().retain_dom() && (*uc.get()).scene.dom_root.is_none() {
         let dom_root: *mut DomNode = push_zero::<DomNode>(uc.result_mut_ptr(), 1);
         ufbxi_check!(uc, !dom_root.is_null(), "dom_root");
         (*dom_root).name.data = EMPTY_CHAR.as_ptr();
@@ -748,15 +745,15 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     }
 
     // Axis conversion
-    if coordinate_axes_valid((*uc.get()).opts.target_axes) {
-        transform_to_axes(uc, (*uc.get()).opts.target_axes);
+    if coordinate_axes_valid(uc.opts_view().target_axes()) {
+        transform_to_axes(uc, uc.opts_view().target_axes());
     }
 
     // Unit conversion
-    if (*uc.get()).opts.target_unit_meters > 0.0 {
+    if uc.opts_view().target_unit_meters() > 0.0 {
         ufbxi_check!(
             uc,
-            scale_units(uc, (*uc.get()).opts.target_unit_meters).is_ok(),
+            scale_units(uc, uc.opts_view().target_unit_meters()).is_ok(),
             "ufbxi_scale_units(uc, uc->opts.target_unit_meters)"
         );
     }
@@ -777,7 +774,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             push_zero::<Anim>(uc.result_mut_ptr(), 1);
     }
 
-    if (*uc.get()).opts.load_external_files {
+    if uc.opts_view().load_external_files() {
         ufbxi_check!(
             uc,
             load_external_files(uc).is_ok(),
@@ -786,11 +783,11 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     }
 
     // Evaluate skinning if requested
-    if (*uc.get()).opts.evaluate_skinning {
+    if uc.opts_view().evaluate_skinning() {
         // C: `ufbx_geometry_cache_data_opts cache_opts = { 0 };`
         let mut cache_opts: RawGeometryCacheDataOpts = MaybeUninit::zeroed().assume_init();
         cache_opts.open_file_cb =
-            ptr::read(ptr::addr_of!((*uc.get()).opts.open_file_cb) as *const RawOpenFileCb);
+            ptr::read(uc.opts_view().open_file_cb_ptr() as *const RawOpenFileCb);
         ufbxi_check!(
             uc,
             evaluate_skinning(
@@ -799,7 +796,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
                 uc.result_mut_ptr(),
                 uc.tmp_mut_ptr(),
                 0.0,
-                (*uc.get()).opts.load_external_files && (*uc.get()).opts.evaluate_caches,
+                uc.opts_view().load_external_files() && uc.opts_view().evaluate_caches(),
                 &mut cache_opts,
             )
             .is_ok(),
@@ -828,9 +825,9 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     (*uc.get()).scene.metadata.version = uc.version();
     (*uc.get()).scene.metadata.ascii = uc.from_ascii();
     (*uc.get()).scene.metadata.big_endian = uc.file_big_endian();
-    (*uc.get()).scene.metadata.geometry_ignored = (*uc.get()).opts.ignore_geometry;
-    (*uc.get()).scene.metadata.animation_ignored = (*uc.get()).opts.ignore_animation;
-    (*uc.get()).scene.metadata.embedded_ignored = (*uc.get()).opts.ignore_embedded;
+    (*uc.get()).scene.metadata.geometry_ignored = uc.opts_view().ignore_geometry();
+    (*uc.get()).scene.metadata.animation_ignored = uc.opts_view().ignore_animation();
+    (*uc.get()).scene.metadata.embedded_ignored = uc.opts_view().ignore_embedded();
 
     // Retain the scene, this must be the final allocation as we copy
     // `ator_result` to `ufbx_scene_imp`.
@@ -986,14 +983,14 @@ pub(crate) unsafe fn load(
         ptr::write_bytes(uc.opts_mut_ptr() as *mut u8, 0, size_of::<RawLoadOpts>());
     }
 
-    if (*uc.get()).opts.file_size_estimate != 0 {
-        uc.set_progress_bytes_total((*uc.get()).opts.file_size_estimate);
+    if uc.opts_view().file_size_estimate() != 0 {
+        uc.set_progress_bytes_total(uc.opts_view().file_size_estimate());
     }
 
-    if (*uc.get()).opts.ignore_all_content {
-        (*uc.get()).opts.ignore_geometry = true;
-        (*uc.get()).opts.ignore_animation = true;
-        (*uc.get()).opts.ignore_embedded = true;
+    if uc.opts_view().ignore_all_content() {
+        uc.opts_view().set_ignore_geometry(true);
+        uc.opts_view().set_ignore_animation(true);
+        uc.opts_view().set_ignore_embedded(true);
     }
 
     // C: `ufbx_inflate_retain inflate_retain; inflate_retain.initialized = false;`
@@ -1004,50 +1001,55 @@ pub(crate) unsafe fn load(
     init_ator(
         uc.error_mut_ptr(),
         uc.ator_tmp_mut_ptr(),
-        ptr::addr_of!((*uc.get()).opts.temp_allocator),
+        uc.opts_view().temp_allocator_ptr(),
         b"temp\0".as_ptr(),
     );
     init_ator(
         uc.error_mut_ptr(),
         uc.ator_result_mut_ptr(),
-        ptr::addr_of!((*uc.get()).opts.result_allocator),
+        uc.opts_view().result_allocator_ptr(),
         b"result\0".as_ptr(),
     );
 
-    if (*uc.get()).opts.read_buffer_size == 0 {
-        (*uc.get()).opts.read_buffer_size = 0x4000;
+    if uc.opts_view().read_buffer_size() == 0 {
+        uc.opts_view().set_read_buffer_size(0x4000);
     }
-    if (*uc.get()).opts.read_buffer_size <= 32 {
-        (*uc.get()).opts.read_buffer_size = 32;
-    }
-
-    if (*uc.get()).opts.file_format_lookahead == 0 {
-        (*uc.get()).opts.file_format_lookahead = 0x4000;
-    } else if (*uc.get()).opts.file_format_lookahead < MIN_FILE_FORMAT_LOOKAHEAD {
-        (*uc.get()).opts.file_format_lookahead = MIN_FILE_FORMAT_LOOKAHEAD;
+    if uc.opts_view().read_buffer_size() <= 32 {
+        uc.opts_view().set_read_buffer_size(32);
     }
 
-    if (*uc.get()).opts.path_separator == 0 {
-        (*uc.get()).opts.path_separator = PATH_SEPARATOR;
+    if uc.opts_view().file_format_lookahead() == 0 {
+        uc.opts_view().set_file_format_lookahead(0x4000);
+    } else if uc.opts_view().file_format_lookahead() < MIN_FILE_FORMAT_LOOKAHEAD {
+        uc.opts_view()
+            .set_file_format_lookahead(MIN_FILE_FORMAT_LOOKAHEAD);
     }
 
-    if (*uc.get()).opts.progress_cb.fn_.is_none()
-        || (*uc.get()).opts.progress_interval_hint >= usize::MAX as u64
+    if uc.opts_view().path_separator() == 0 {
+        uc.opts_view().set_path_separator(PATH_SEPARATOR);
+    }
+
+    if uc.opts_view().progress_cb().fn_.is_none()
+        || uc.opts_view().progress_interval_hint() >= usize::MAX as u64
     {
         uc.set_progress_interval(usize::MAX);
-    } else if (*uc.get()).opts.progress_interval_hint > 0 {
-        uc.set_progress_interval((*uc.get()).opts.progress_interval_hint as usize);
+    } else if uc.opts_view().progress_interval_hint() > 0 {
+        uc.set_progress_interval(uc.opts_view().progress_interval_hint() as usize);
     } else {
         uc.set_progress_interval(0x4000);
     }
 
-    if (*uc.get()).opts.open_file_cb.fn_.is_none() {
+    if uc.opts_view().open_file_cb_view().fn_().is_none() {
         // C: `uc->opts.open_file_cb.fn = &ufbx_default_open_file;`
-        (*uc.get()).opts.open_file_cb.fn_ = Some(default_open_file);
+        uc.opts_view()
+            .open_file_cb_view()
+            .set_fn_(Some(default_open_file));
     }
 
-    if (*uc.get()).opts.thread_opts.memory_limit == 0 {
-        (*uc.get()).opts.thread_opts.memory_limit = 32 * 1024 * 1024;
+    if uc.opts_view().thread_opts_view().memory_limit() == 0 {
+        uc.opts_view()
+            .thread_opts_view()
+            .set_memory_limit(32 * 1024 * 1024);
     }
 
     uc.set_synthetic_id_counter(SYNTHETIC_ID_START);
@@ -1062,7 +1064,7 @@ pub(crate) unsafe fn load(
     (*uc.get()).string_pool.buf.ator = uc.ator_result_mut_ptr();
     (*uc.get()).string_pool.buf.unordered = true;
     (*uc.get()).string_pool.initial_size = 1024;
-    (*uc.get()).string_pool.error_handling = (*uc.get()).opts.unicode_error_handling;
+    (*uc.get()).string_pool.error_handling = uc.opts_view().unicode_error_handling();
 
     map_init(
         uc.prop_type_map_mut_ptr(),

@@ -338,19 +338,19 @@ pub(crate) fn pivot_div(offset: Real, initial_scale: Real) -> Real {
 #[cfg_attr(feature = "regression", allow(unused_assignments))]
 pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
     let mut required: bool = false;
-    if (*uc.get()).opts.geometry_transform_handling == GeometryTransformHandling::HelperNodes
-        || (*uc.get()).opts.geometry_transform_handling == GeometryTransformHandling::ModifyGeometry
+    if uc.opts_view().geometry_transform_handling() == GeometryTransformHandling::HelperNodes
+        || uc.opts_view().geometry_transform_handling() == GeometryTransformHandling::ModifyGeometry
     {
         required = true;
     }
-    if (*uc.get()).opts.inherit_mode_handling == InheritModeHandling::HelperNodes
-        || (*uc.get()).opts.inherit_mode_handling == InheritModeHandling::Compensate
-        || (*uc.get()).opts.inherit_mode_handling == InheritModeHandling::CompensateNoFallback
+    if uc.opts_view().inherit_mode_handling() == InheritModeHandling::HelperNodes
+        || uc.opts_view().inherit_mode_handling() == InheritModeHandling::Compensate
+        || uc.opts_view().inherit_mode_handling() == InheritModeHandling::CompensateNoFallback
     {
         required = true;
     }
-    if (*uc.get()).opts.pivot_handling == PivotHandling::AdjustToPivot
-        || (*uc.get()).opts.pivot_handling == PivotHandling::AdjustToRotationPivot
+    if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot
+        || uc.opts_view().pivot_handling() == PivotHandling::AdjustToRotationPivot
     {
         required = true;
     }
@@ -544,7 +544,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                         (*pre_dst).first_child = (*src_node).element.typed_id;
                     }
 
-                    if (*uc.get()).opts.inherit_mode_handling != InheritModeHandling::Preserve {
+                    if uc.opts_view().inherit_mode_handling() != InheritModeHandling::Preserve {
                         if !(*dst_node).is_root
                             && (*src_node).original_inherit_mode != InheritMode::Normal
                         {
@@ -660,8 +660,8 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
         }
     }
 
-    if (*uc.get()).opts.pivot_handling == PivotHandling::AdjustToPivot
-        || (*uc.get()).opts.pivot_handling == PivotHandling::AdjustToRotationPivot
+    if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot
+        || uc.opts_view().pivot_handling() == PivotHandling::AdjustToRotationPivot
     {
         for i in 0..num_nodes {
             let pre_node: *mut PreNode = pre_nodes.add(i);
@@ -690,9 +690,9 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
             );
 
             let mut should_modify_pivot: bool = false;
-            if (*uc.get()).opts.pivot_handling == PivotHandling::AdjustToPivot {
+            if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot {
                 should_modify_pivot = !is_vec3_zero(rotation_pivot);
-            } else if (*uc.get()).opts.pivot_handling == PivotHandling::AdjustToRotationPivot {
+            } else if uc.opts_view().pivot_handling() == PivotHandling::AdjustToRotationPivot {
                 should_modify_pivot = pivot_nonzero(rotation_pivot)
                     || pivot_nonzero(scaling_pivot)
                     || pivot_nonzero(scaling_offset);
@@ -701,11 +701,11 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
             if should_modify_pivot {
                 let mut skip_geometry_transform: bool = false;
                 let mut can_modify_geometry_transform: bool = true;
-                if (*uc.get()).opts.pivot_handling == PivotHandling::AdjustToRotationPivot {
+                if uc.opts_view().pivot_handling() == PivotHandling::AdjustToRotationPivot {
                     if *node_attrib_type.add((*node).element.typed_id as usize)
                         == ElementType::Empty
                     {
-                        if !(*uc.get()).opts.pivot_handling_retain_empties {
+                        if !uc.opts_view().pivot_handling_retain_empties() {
                             skip_geometry_transform = true;
                         } else {
                             can_modify_geometry_transform = false;
@@ -713,7 +713,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                     }
                 }
 
-                if (*uc.get()).opts.geometry_transform_handling
+                if uc.opts_view().geometry_transform_handling()
                     == GeometryTransformHandling::ModifyGeometryNoFallback
                 {
                     if *instance_counts.add((*node).element.element_id as usize) > 1
@@ -728,7 +728,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                 }
 
                 let mut can_modify_pivot: bool = true;
-                if (*uc.get()).opts.pivot_handling == PivotHandling::AdjustToPivot {
+                if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot {
                     // C: `err += (ufbx_real)ufbx_fabs(a - b)` — real subtraction,
                     // double `fabs`, narrowed back to real before accumulating.
                     let mut err: Real = 0.0;
@@ -757,7 +757,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                     let mut new_props: *mut Prop = ptr::null_mut();
                     let num_props: usize = (*node).element.props.props.count;
                     let mut new_prop_count: usize = num_props;
-                    if (*uc.get()).opts.pivot_handling == PivotHandling::AdjustToPivot {
+                    if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot {
                         ufbx_assert!(!skip_geometry_transform); // not supporeted in legacy mode
                         child_offset = neg3(rotation_pivot);
                         geometric_translation = add3(geometric_translation, child_offset);
@@ -791,7 +791,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                             PropType::Vector,
                         );
                         new_prop_count += 1;
-                    } else if (*uc.get()).opts.pivot_handling
+                    } else if uc.opts_view().pivot_handling()
                         == PivotHandling::AdjustToRotationPivot
                     {
                         // We can eliminate the post-rotation translation and move it to the geometry/children as follows.
@@ -910,11 +910,11 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
         if (*element).type_ == ElementType::Node {
             let node: *mut Node = element as *mut Node;
             let mut requires_helper_node: bool = false;
-            if (*uc.get()).opts.geometry_transform_handling
+            if uc.opts_view().geometry_transform_handling()
                 == GeometryTransformHandling::HelperNodes
             {
                 requires_helper_node = true;
-            } else if (*uc.get()).opts.geometry_transform_handling
+            } else if uc.opts_view().geometry_transform_handling()
                 == GeometryTransformHandling::ModifyGeometry
             {
                 // Setup a geometry transform helper for nodes that have instanced attributes
@@ -937,7 +937,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
             {
                 let pre_node: *mut PreNode = pre_nodes.add((*node).element.typed_id as usize);
                 let r#ref: Real =
-                    if (*uc.get()).opts.inherit_mode_handling == InheritModeHandling::Compensate {
+                    if uc.opts_view().inherit_mode_handling() == InheritModeHandling::Compensate {
                         (*pre_node).constant_scale.x
                     } else {
                         1.0
@@ -951,7 +951,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                 if (dx + dy + dz >= scale_epsilon
                     || !(*pre_node).has_constant_scale
                     || math::fabs(scale.x as f64) as Real <= compensate_epsilon)
-                    && (*uc.get()).opts.inherit_mode_handling
+                    && uc.opts_view().inherit_mode_handling()
                         != InheritModeHandling::CompensateNoFallback
                 {
                     setup_scale_helper(uc, node, fbx_id)?;
@@ -999,8 +999,8 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                             ix = (*pre_child).next_child;
                         }
                     }
-                } else if (*uc.get()).opts.inherit_mode_handling == InheritModeHandling::Compensate
-                    || (*uc.get()).opts.inherit_mode_handling
+                } else if uc.opts_view().inherit_mode_handling() == InheritModeHandling::Compensate
+                    || uc.opts_view().inherit_mode_handling()
                         == InheritModeHandling::CompensateNoFallback
                 {
                     // C: `(ufbx_real)ufbx_fabs(scale.x - 1.0f)` — real
@@ -1363,7 +1363,7 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
             continue;
         }
 
-        if !(*uc.get()).opts.disable_quirks {
+        if !uc.opts_view().disable_quirks() {
             // Some exporters connect arbitrary non-nodes to root breaking further code, ignore those connections here!
             if (*dst).type_ == ElementType::Node
                 && (*src).type_ != ElementType::Node
@@ -1732,7 +1732,7 @@ pub(crate) unsafe fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
         // Pre-6000 files don't have any explicit root connections so they must always
         // be connected to the root..
         if opt_ptr(&(*node).parent).is_null()
-            && !((*uc.get()).opts.allow_nodes_out_of_root && uc.version() >= 6000)
+            && !(uc.opts_view().allow_nodes_out_of_root() && uc.version() >= 6000)
         {
             if node != ref_ptr(&(*uc.get()).scene.root_node) {
                 (*node).parent = Some((*uc.get()).scene.root_node);
@@ -1779,10 +1779,10 @@ pub(crate) unsafe fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
             p = opt_ptr(&(*p).parent);
         }
 
-        if (*uc.get()).opts.node_depth_limit > 0 {
+        if uc.opts_view().node_depth_limit() > 0 {
             ufbxi_check_msg!(
                 uc,
-                depth <= (*uc.get()).opts.node_depth_limit,
+                depth <= uc.opts_view().node_depth_limit(),
                 "Node depth limit exceeded",
                 "depth <= uc->opts.node_depth_limit"
             );
@@ -4667,7 +4667,7 @@ pub(crate) unsafe fn finalize_shader_texture(
     (*texture).type_ = TextureType::Shader;
     (*uc.get()).scene.metadata.num_shader_textures += 1;
 
-    if !(*uc.get()).opts.disable_quirks {
+    if !uc.opts_view().disable_quirks() {
         // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(ufbxi_file_shaders); i++)`
         for i in 0..FILE_SHADERS.len() {
             let fs: *const FileShader = &FILE_SHADERS[i];
@@ -5595,11 +5595,11 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
 #[must_use]
 pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
     let mut do_mirror: bool = false;
-    let do_winding: bool = (*uc.get()).opts.reverse_winding;
+    let do_winding: bool = uc.opts_view().reverse_winding();
     let mut do_scale: bool = false;
     let mut do_geometry_transforms: bool = false;
-    if (*uc.get()).opts.geometry_transform_handling == GeometryTransformHandling::ModifyGeometry
-        || (*uc.get()).opts.geometry_transform_handling
+    if uc.opts_view().geometry_transform_handling() == GeometryTransformHandling::ModifyGeometry
+        || uc.opts_view().geometry_transform_handling()
             == GeometryTransformHandling::ModifyGeometryNoFallback
     {
         // Prefetch geometry transforms for processing, they will later be overwritten in `ufbxi_update_node()`.
@@ -5708,7 +5708,7 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
                 );
                 set = set.add(1);
             }
-            if !(*uc.get()).opts.handedness_conversion_retain_winding {
+            if !uc.opts_view().handedness_conversion_retain_winding() {
                 do_flip_winding = !do_flip_winding;
             }
         }
@@ -5866,7 +5866,7 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
         p_surface = p_surface.add(1);
     }
 
-    if (*uc.get()).opts.geometry_transform_handling != GeometryTransformHandling::Preserve {
+    if uc.opts_view().geometry_transform_handling() != GeometryTransformHandling::Preserve {
         // Reset all geometry transforms if we're not preserving them
         let mut defaults: *mut Props = ptr::null_mut();
         // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
@@ -5911,16 +5911,16 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:21334-21356 `ufbxi_postprocess_scene`
 #[inline(never)]
 pub(crate) unsafe fn postprocess_scene(uc: &Context) {
-    if (*uc.get()).opts.normalize_normals || (*uc.get()).opts.normalize_tangents {
+    if uc.opts_view().normalize_normals() || uc.opts_view().normalize_tangents() {
         // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
         let mut p_mesh: *mut *mut Mesh = (*uc.get()).scene.meshes.data as *mut *mut Mesh;
         let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, (*uc.get()).scene.meshes.count);
         while p_mesh != p_mesh_end {
             let mesh: *mut Mesh = *p_mesh;
-            if (*uc.get()).opts.normalize_normals {
+            if uc.opts_view().normalize_normals() {
                 normalize_vec3_list(ptr::addr_of!((*mesh).vertex_normal.values));
             }
-            if (*uc.get()).opts.normalize_tangents {
+            if uc.opts_view().normalize_tangents() {
                 // C-parity: the loop body normalizes the MESH-level tangent and
                 // bitangent lists (not `set->...`), so it repeats the same work
                 // once per UV set. Ported verbatim.
@@ -6302,7 +6302,7 @@ pub(crate) unsafe fn validate_indices(
     indices: *mut List<u32>,
     max_index: usize,
 ) -> Result<(), Fail> {
-    if max_index == 0 && (*uc.get()).opts.index_error_handling == IndexErrorHandling::Clamp {
+    if max_index == 0 && uc.opts_view().index_error_handling() == IndexErrorHandling::Clamp {
         (*indices).data = ptr::null_mut();
         (*indices).count = 0;
         return Ok(());
@@ -6630,8 +6630,8 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
             // Force top-level nodes to have `UFBX_INHERIT_MODE_NORMAL` to make unit scaling work.
             if (*parent).is_root
-                && (*uc.get()).opts.space_conversion == SpaceConversion::TransformRoot
-                && (*uc.get()).opts.inherit_mode_handling == InheritModeHandling::Preserve
+                && uc.opts_view().space_conversion() == SpaceConversion::TransformRoot
+                && uc.opts_view().inherit_mode_handling() == InheritModeHandling::Preserve
             {
                 (*node).original_inherit_mode = InheritMode::Normal;
                 (*node).inherit_mode = InheritMode::Normal;
@@ -6844,7 +6844,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         )?;
 
         // Remove clusters without a valid `bone`
-        if !(*uc.get()).opts.connect_broken_elements {
+        if !uc.opts_view().connect_broken_elements() {
             let clusters: *mut *mut SkinCluster = (*skin).clusters.data as *mut *mut SkinCluster;
             let mut num_broken: usize = 0;
             for i in 0..(*skin).clusters.count {
@@ -6901,7 +6901,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             }
         }
 
-        if !(*uc.get()).opts.skip_skin_vertices {
+        if !uc.opts_view().skip_skin_vertices() {
             (*skin).vertices.count = num_vertices;
             (*skin).vertices.data = push_zero::<SkinVertex>(uc.result_mut_ptr(), num_vertices);
             ufbxi_check!(uc, !(*skin).vertices.data.is_null(), "skin->vertices.data");
@@ -6910,7 +6910,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             (*skin).weights.data = push_zero::<SkinWeight>(uc.result_mut_ptr(), total_weights);
             ufbxi_check!(uc, !(*skin).weights.data.is_null(), "skin->weights.data");
 
-            let retain_all: bool = !(*uc.get()).opts.clean_skin_weights;
+            let retain_all: bool = !uc.opts_view().clean_skin_weights();
 
             let skin_vertices: *mut SkinVertex = (*skin).vertices.data as *mut SkinVertex;
             let skin_weights: *mut SkinWeight = (*skin).weights.data as *mut SkinWeight;
@@ -7132,7 +7132,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                 } else if (*full_weights).count == (*ref_ptr(&(*key).shape)).num_offsets {
                     if i == 0 {
                         // Duplicate `index_data` for modification if we retain DOM
-                        if (*uc.get()).opts.retain_dom {
+                        if uc.opts_view().retain_dom() {
                             (*full_weights).data = push_copy::<Real>(
                                 uc.result_mut_ptr(),
                                 (*full_weights).count,
@@ -7268,7 +7268,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             }
 
             // Generate normals if necessary
-            if !(*mesh).vertex_normal.exists && (*uc.get()).opts.generate_missing_normals {
+            if !(*mesh).vertex_normal.exists && uc.opts_view().generate_missing_normals() {
                 generate_normals(uc, mesh)?;
             }
 
@@ -7430,7 +7430,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             )?;
 
             // Vertex position must always exist if not explicitly allowed to be missing
-            if !(*mesh).vertex_position.exists && !(*uc.get()).opts.allow_missing_vertex_position {
+            if !(*mesh).vertex_position.exists && !uc.opts_view().allow_missing_vertex_position() {
                 ufbxi_check!(uc, (*mesh).num_indices == 0, "mesh->num_indices == 0");
                 (*mesh).vertex_position.exists = true;
                 (*mesh).vertex_position.unique_per_vertex = true;
@@ -7810,7 +7810,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         if !material_shader.is_null() {
             (*material).shader_type = (*material_shader).type_;
         } else {
-            if (*uc.get()).opts.use_blender_pbr_material
+            if uc.opts_view().use_blender_pbr_material()
                 && (*uc.get()).exporter == Exporter::BlenderBinary
                 && uc.exporter_version() >= pack_version(4, 12, 0)
             {
@@ -10106,7 +10106,7 @@ pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
     root_transform.scale.y *= uc.unit_scale();
     root_transform.scale.z *= uc.unit_scale();
 
-    let conversion: SpaceConversion = (*uc.get()).opts.space_conversion;
+    let conversion: SpaceConversion = uc.opts_view().space_conversion();
 
     let mut light_post_rotation: Quat = IDENTITY_QUAT;
     let mut camera_post_rotation: Quat = IDENTITY_QUAT;
@@ -10118,7 +10118,7 @@ pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
     let mut has_light_transform: bool = false;
     let mut has_camera_transform: bool = false;
 
-    if coordinate_axes_valid((*uc.get()).opts.target_light_axes) {
+    if coordinate_axes_valid(uc.opts_view().target_light_axes()) {
         let mut mat_storage = MaybeUninit::<Matrix>::uninit(); // ufbxi_uninit
         let mat: *mut Matrix = mat_storage.as_mut_ptr();
         let light_axes: CoordinateAxes = CoordinateAxes {
@@ -10126,7 +10126,7 @@ pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
             up: CoordinateAxis::NegativeZ,
             front: CoordinateAxis::PositiveY,
         };
-        if axis_matrix(mat, (*uc.get()).opts.target_light_axes, light_axes) {
+        if axis_matrix(mat, uc.opts_view().target_light_axes(), light_axes) {
             light_post_rotation = matrix_to_transform(mat).rotation;
 
             let inv: Matrix = matrix_invert(mat);
@@ -10135,7 +10135,7 @@ pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
         }
     }
 
-    if coordinate_axes_valid((*uc.get()).opts.target_camera_axes) {
+    if coordinate_axes_valid(uc.opts_view().target_camera_axes()) {
         let mut mat_storage = MaybeUninit::<Matrix>::uninit(); // ufbxi_uninit
         let mat: *mut Matrix = mat_storage.as_mut_ptr();
         let camera_axes: CoordinateAxes = CoordinateAxes {
@@ -10143,7 +10143,7 @@ pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
             up: CoordinateAxis::PositiveY,
             front: CoordinateAxis::NegativeX,
         };
-        if axis_matrix(mat, (*uc.get()).opts.target_camera_axes, camera_axes) {
+        if axis_matrix(mat, uc.opts_view().target_camera_axes(), camera_axes) {
             camera_post_rotation = matrix_to_transform(mat).rotation;
             has_camera_transform = true;
         }
@@ -10161,10 +10161,10 @@ pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
     }
 
     (*scene).metadata.space_conversion = conversion;
-    (*scene).metadata.geometry_transform_handling = (*uc.get()).opts.geometry_transform_handling;
-    (*scene).metadata.inherit_mode_handling = (*uc.get()).opts.inherit_mode_handling;
-    (*scene).metadata.pivot_handling = (*uc.get()).opts.pivot_handling;
-    (*scene).metadata.handedness_conversion_axis = (*uc.get()).opts.handedness_conversion_axis;
+    (*scene).metadata.geometry_transform_handling = uc.opts_view().geometry_transform_handling();
+    (*scene).metadata.inherit_mode_handling = uc.opts_view().inherit_mode_handling();
+    (*scene).metadata.pivot_handling = uc.opts_view().pivot_handling();
+    (*scene).metadata.handedness_conversion_axis = uc.opts_view().handedness_conversion_axis();
 
     let root_scale: Real = min3(root_transform.scale);
     if conversion == SpaceConversion::ModifyGeometry {
@@ -10251,7 +10251,7 @@ pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
             }
             if has_camera_transform && !opt_ptr(&(*node).camera).is_null() {
                 (*node).adjust_post_rotation = camera_post_rotation;
-                (*opt_ptr(&(*node).camera)).projection_axes = (*uc.get()).opts.target_camera_axes;
+                (*opt_ptr(&(*node).camera)).projection_axes = uc.opts_view().target_camera_axes();
                 (*node).has_adjust_transform = true;
             }
         }
@@ -10561,10 +10561,10 @@ pub(crate) unsafe fn update_scene_settings(settings: *mut SceneSettings) {
 pub(crate) unsafe fn update_scene_settings_obj(uc: &Context) {
     let settings: *mut SceneSettings = &mut (*uc.get()).scene.settings;
     // C: `settings->original_unit_meters = settings->unit_meters = uc->opts.obj_unit_meters;`
-    (*settings).unit_meters = (*uc.get()).opts.obj_unit_meters;
+    (*settings).unit_meters = uc.opts_view().obj_unit_meters();
     (*settings).original_unit_meters = (*settings).unit_meters;
-    if coordinate_axes_valid((*uc.get()).opts.obj_axes) {
-        (*settings).axes = (*uc.get()).opts.obj_axes;
+    if coordinate_axes_valid(uc.opts_view().obj_axes()) {
+        (*settings).axes = uc.opts_view().obj_axes();
     } else {
         (*settings).axes.right = CoordinateAxis::Unknown;
         (*settings).axes.up = CoordinateAxis::Unknown;

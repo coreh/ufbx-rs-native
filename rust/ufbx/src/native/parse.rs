@@ -696,10 +696,465 @@ pub(crate) struct InnerContext {
 #[repr(transparent)]
 pub(crate) struct Context(pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerContext>>);
 
+// Typed interior-mutable VIEW over `Context.opts` (RawLoadOpts). Non-Copy nested
+// substructs (RawString/RawBlob/RawThreadOpts) recurse into their *View; Copy ones
+// (open_file_cb/progress_cb) use value getters; addr-of fields use _ptr.
+#[repr(transparent)]
+pub(crate) struct LoadOptsView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawLoadOpts>>);
+
+impl LoadOptsView {
+    #[inline(always)]
+    fn get(&self) -> *mut RawLoadOpts {
+        self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn root_transform(&self) -> crate::generated::Transform {
+        unsafe { (*self.get()).root_transform }
+    }
+
+    #[inline(always)]
+    pub(crate) fn open_file_cb_view(&self) -> &crate::prelude::RawOpenFileCbView {
+        unsafe { &*(&raw mut (*self.get()).open_file_cb as *mut crate::prelude::RawOpenFileCbView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn filename_mut_ptr(&self) -> *mut crate::prelude::RawString {
+        unsafe { &raw mut (*self.get()).filename }
+    }
+
+    #[inline(always)]
+    pub(crate) fn obj_mtl_path_mut_ptr(&self) -> *mut crate::prelude::RawString {
+        unsafe { &raw mut (*self.get()).obj_mtl_path }
+    }
+
+    #[inline(always)]
+    pub(crate) fn geometry_transform_helper_name_mut_ptr(&self) -> *mut crate::prelude::RawString {
+        unsafe { &raw mut (*self.get()).geometry_transform_helper_name }
+    }
+
+    #[inline(always)]
+    pub(crate) fn scale_helper_name_mut_ptr(&self) -> *mut crate::prelude::RawString {
+        unsafe { &raw mut (*self.get()).scale_helper_name }
+    }
+
+    #[inline(always)]
+    pub(crate) fn allow_empty_faces(&self) -> bool {
+        unsafe { (*self.get()).allow_empty_faces }
+    }
+
+    #[inline(always)]
+    pub(crate) fn allow_missing_vertex_position(&self) -> bool {
+        unsafe { (*self.get()).allow_missing_vertex_position }
+    }
+
+    #[inline(always)]
+    pub(crate) fn allow_nodes_out_of_root(&self) -> bool {
+        unsafe { (*self.get()).allow_nodes_out_of_root }
+    }
+
+    #[inline(always)]
+    pub(crate) fn allow_unsafe(&self) -> bool {
+        unsafe { (*self.get()).allow_unsafe }
+    }
+
+    #[inline(always)]
+    pub(crate) fn clean_skin_weights(&self) -> bool {
+        unsafe { (*self.get()).clean_skin_weights }
+    }
+
+    #[inline(always)]
+    pub(crate) fn connect_broken_elements(&self) -> bool {
+        unsafe { (*self.get()).connect_broken_elements }
+    }
+
+    #[inline(always)]
+    pub(crate) fn disable_quirks(&self) -> bool {
+        unsafe { (*self.get()).disable_quirks }
+    }
+
+    #[inline(always)]
+    pub(crate) fn evaluate_caches(&self) -> bool {
+        unsafe { (*self.get()).evaluate_caches }
+    }
+
+    #[inline(always)]
+    pub(crate) fn evaluate_skinning(&self) -> bool {
+        unsafe { (*self.get()).evaluate_skinning }
+    }
+
+    #[inline(always)]
+    pub(crate) fn file_format(&self) -> crate::generated::FileFormat {
+        unsafe { (*self.get()).file_format }
+    }
+
+    #[inline(always)]
+    pub(crate) fn file_format_lookahead(&self) -> usize {
+        unsafe { (*self.get()).file_format_lookahead }
+    }
+    #[inline(always)]
+    pub(crate) fn set_file_format_lookahead(&self, file_format_lookahead: usize) {
+        unsafe {
+            (*self.get()).file_format_lookahead = file_format_lookahead;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn file_size_estimate(&self) -> u64 {
+        unsafe { (*self.get()).file_size_estimate }
+    }
+
+    #[inline(always)]
+    pub(crate) fn filename_view(&self) -> &crate::prelude::RawStringView {
+        unsafe { &*(&raw mut (*self.get()).filename as *mut crate::prelude::RawStringView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn force_single_thread_ascii_parsing(&self) -> bool {
+        unsafe { (*self.get()).force_single_thread_ascii_parsing }
+    }
+
+    #[inline(always)]
+    pub(crate) fn generate_missing_normals(&self) -> bool {
+        unsafe { (*self.get()).generate_missing_normals }
+    }
+
+    #[inline(always)]
+    pub(crate) fn geometry_transform_handling(
+        &self,
+    ) -> crate::generated::GeometryTransformHandling {
+        unsafe { (*self.get()).geometry_transform_handling }
+    }
+
+    #[inline(always)]
+    pub(crate) fn geometry_transform_helper_name_view(&self) -> &crate::prelude::RawStringView {
+        unsafe {
+            &*(&raw mut (*self.get()).geometry_transform_helper_name
+                as *mut crate::prelude::RawStringView)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn handedness_conversion_axis(&self) -> crate::generated::MirrorAxis {
+        unsafe { (*self.get()).handedness_conversion_axis }
+    }
+
+    #[inline(always)]
+    pub(crate) fn handedness_conversion_retain_winding(&self) -> bool {
+        unsafe { (*self.get()).handedness_conversion_retain_winding }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ignore_all_content(&self) -> bool {
+        unsafe { (*self.get()).ignore_all_content }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ignore_animation(&self) -> bool {
+        unsafe { (*self.get()).ignore_animation }
+    }
+    #[inline(always)]
+    pub(crate) fn set_ignore_animation(&self, ignore_animation: bool) {
+        unsafe {
+            (*self.get()).ignore_animation = ignore_animation;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ignore_embedded(&self) -> bool {
+        unsafe { (*self.get()).ignore_embedded }
+    }
+    #[inline(always)]
+    pub(crate) fn set_ignore_embedded(&self, ignore_embedded: bool) {
+        unsafe {
+            (*self.get()).ignore_embedded = ignore_embedded;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ignore_geometry(&self) -> bool {
+        unsafe { (*self.get()).ignore_geometry }
+    }
+    #[inline(always)]
+    pub(crate) fn set_ignore_geometry(&self, ignore_geometry: bool) {
+        unsafe {
+            (*self.get()).ignore_geometry = ignore_geometry;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ignore_missing_external_files(&self) -> bool {
+        unsafe { (*self.get()).ignore_missing_external_files }
+    }
+
+    #[inline(always)]
+    pub(crate) fn index_error_handling(&self) -> crate::generated::IndexErrorHandling {
+        unsafe { (*self.get()).index_error_handling }
+    }
+
+    #[inline(always)]
+    pub(crate) fn inherit_mode_handling(&self) -> crate::generated::InheritModeHandling {
+        unsafe { (*self.get()).inherit_mode_handling }
+    }
+
+    #[inline(always)]
+    pub(crate) fn key_clamp_threshold(&self) -> f64 {
+        unsafe { (*self.get()).key_clamp_threshold }
+    }
+
+    #[inline(always)]
+    pub(crate) fn load_external_files(&self) -> bool {
+        unsafe { (*self.get()).load_external_files }
+    }
+
+    #[inline(always)]
+    pub(crate) fn no_format_from_content(&self) -> bool {
+        unsafe { (*self.get()).no_format_from_content }
+    }
+
+    #[inline(always)]
+    pub(crate) fn no_format_from_extension(&self) -> bool {
+        unsafe { (*self.get()).no_format_from_extension }
+    }
+
+    #[inline(always)]
+    pub(crate) fn node_depth_limit(&self) -> u32 {
+        unsafe { (*self.get()).node_depth_limit }
+    }
+
+    #[inline(always)]
+    pub(crate) fn normalize_normals(&self) -> bool {
+        unsafe { (*self.get()).normalize_normals }
+    }
+
+    #[inline(always)]
+    pub(crate) fn normalize_tangents(&self) -> bool {
+        unsafe { (*self.get()).normalize_tangents }
+    }
+
+    #[inline(always)]
+    pub(crate) fn obj_axes(&self) -> crate::generated::CoordinateAxes {
+        unsafe { (*self.get()).obj_axes }
+    }
+
+    #[inline(always)]
+    pub(crate) fn obj_merge_groups(&self) -> bool {
+        unsafe { (*self.get()).obj_merge_groups }
+    }
+    #[inline(always)]
+    pub(crate) fn set_obj_merge_groups(&self, obj_merge_groups: bool) {
+        unsafe {
+            (*self.get()).obj_merge_groups = obj_merge_groups;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn obj_merge_objects(&self) -> bool {
+        unsafe { (*self.get()).obj_merge_objects }
+    }
+
+    #[inline(always)]
+    pub(crate) fn obj_mtl_data_view(&self) -> &crate::prelude::RawBlobView {
+        unsafe { &*(&raw mut (*self.get()).obj_mtl_data as *mut crate::prelude::RawBlobView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn obj_mtl_path_view(&self) -> &crate::prelude::RawStringView {
+        unsafe { &*(&raw mut (*self.get()).obj_mtl_path as *mut crate::prelude::RawStringView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn obj_search_mtl_by_filename(&self) -> bool {
+        unsafe { (*self.get()).obj_search_mtl_by_filename }
+    }
+
+    #[inline(always)]
+    pub(crate) fn obj_split_groups(&self) -> bool {
+        unsafe { (*self.get()).obj_split_groups }
+    }
+
+    #[inline(always)]
+    pub(crate) fn obj_unit_meters(&self) -> crate::prelude::Real {
+        unsafe { (*self.get()).obj_unit_meters }
+    }
+
+    #[inline(always)]
+    pub(crate) fn open_file_cb_ptr(&self) -> *const crate::generated::RawOpenFileCb {
+        unsafe { &raw const (*self.get()).open_file_cb }
+    }
+
+    #[inline(always)]
+    pub(crate) fn open_file_cb(&self) -> crate::generated::RawOpenFileCb {
+        unsafe { (*self.get()).open_file_cb }
+    }
+
+    #[inline(always)]
+    pub(crate) fn open_main_file_with_default(&self) -> bool {
+        unsafe { (*self.get()).open_main_file_with_default }
+    }
+
+    #[inline(always)]
+    pub(crate) fn path_separator(&self) -> u8 {
+        unsafe { (*self.get()).path_separator }
+    }
+    #[inline(always)]
+    pub(crate) fn set_path_separator(&self, path_separator: u8) {
+        unsafe {
+            (*self.get()).path_separator = path_separator;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn pivot_handling(&self) -> crate::generated::PivotHandling {
+        unsafe { (*self.get()).pivot_handling }
+    }
+
+    #[inline(always)]
+    pub(crate) fn pivot_handling_retain_empties(&self) -> bool {
+        unsafe { (*self.get()).pivot_handling_retain_empties }
+    }
+
+    #[inline(always)]
+    pub(crate) fn progress_cb(&self) -> crate::generated::RawProgressCb {
+        unsafe { (*self.get()).progress_cb }
+    }
+
+    #[inline(always)]
+    pub(crate) fn progress_interval_hint(&self) -> u64 {
+        unsafe { (*self.get()).progress_interval_hint }
+    }
+
+    #[inline(always)]
+    pub(crate) fn raw_filename_view(&self) -> &crate::prelude::RawBlobView {
+        unsafe { &*(&raw mut (*self.get()).raw_filename as *mut crate::prelude::RawBlobView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn read_buffer_size(&self) -> usize {
+        unsafe { (*self.get()).read_buffer_size }
+    }
+    #[inline(always)]
+    pub(crate) fn set_read_buffer_size(&self, read_buffer_size: usize) {
+        unsafe {
+            (*self.get()).read_buffer_size = read_buffer_size;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        unsafe { &raw const (*self.get()).result_allocator }
+    }
+
+    #[inline(always)]
+    pub(crate) fn retain_dom(&self) -> bool {
+        unsafe { (*self.get()).retain_dom }
+    }
+
+    #[inline(always)]
+    pub(crate) fn retain_vertex_attrib_w(&self) -> bool {
+        unsafe { (*self.get()).retain_vertex_attrib_w }
+    }
+
+    #[inline(always)]
+    pub(crate) fn reverse_winding(&self) -> bool {
+        unsafe { (*self.get()).reverse_winding }
+    }
+
+    #[inline(always)]
+    pub(crate) fn root_transform_ptr(&self) -> *const crate::generated::Transform {
+        unsafe { &raw const (*self.get()).root_transform }
+    }
+
+    #[inline(always)]
+    pub(crate) fn scale_helper_name_view(&self) -> &crate::prelude::RawStringView {
+        unsafe {
+            &*(&raw mut (*self.get()).scale_helper_name as *mut crate::prelude::RawStringView)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn skip_mesh_parts(&self) -> bool {
+        unsafe { (*self.get()).skip_mesh_parts }
+    }
+
+    #[inline(always)]
+    pub(crate) fn skip_skin_vertices(&self) -> bool {
+        unsafe { (*self.get()).skip_skin_vertices }
+    }
+
+    #[inline(always)]
+    pub(crate) fn space_conversion(&self) -> crate::generated::SpaceConversion {
+        unsafe { (*self.get()).space_conversion }
+    }
+
+    #[inline(always)]
+    pub(crate) fn strict(&self) -> bool {
+        unsafe { (*self.get()).strict }
+    }
+
+    #[inline(always)]
+    pub(crate) fn target_axes(&self) -> crate::generated::CoordinateAxes {
+        unsafe { (*self.get()).target_axes }
+    }
+
+    #[inline(always)]
+    pub(crate) fn target_camera_axes(&self) -> crate::generated::CoordinateAxes {
+        unsafe { (*self.get()).target_camera_axes }
+    }
+
+    #[inline(always)]
+    pub(crate) fn target_light_axes(&self) -> crate::generated::CoordinateAxes {
+        unsafe { (*self.get()).target_light_axes }
+    }
+
+    #[inline(always)]
+    pub(crate) fn target_unit_meters(&self) -> crate::prelude::Real {
+        unsafe { (*self.get()).target_unit_meters }
+    }
+
+    #[inline(always)]
+    pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
+        unsafe { &raw const (*self.get()).temp_allocator }
+    }
+
+    #[inline(always)]
+    pub(crate) fn thread_opts_view(&self) -> &crate::prelude::RawThreadOptsView {
+        unsafe { &*(&raw mut (*self.get()).thread_opts as *mut crate::prelude::RawThreadOptsView) }
+    }
+
+    #[inline(always)]
+    pub(crate) fn thread_opts_ptr(&self) -> *const crate::generated::RawThreadOpts {
+        unsafe { &raw const (*self.get()).thread_opts }
+    }
+
+    #[inline(always)]
+    pub(crate) fn unicode_error_handling(&self) -> crate::generated::UnicodeErrorHandling {
+        unsafe { (*self.get()).unicode_error_handling }
+    }
+
+    #[inline(always)]
+    pub(crate) fn use_blender_pbr_material(&self) -> bool {
+        unsafe { (*self.get()).use_blender_pbr_material }
+    }
+
+    #[inline(always)]
+    pub(crate) fn use_root_transform(&self) -> bool {
+        unsafe { (*self.get()).use_root_transform }
+    }
+}
+
 impl Context {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerContext {
         self.0.get().cast()
+    }
+
+    // `opts` — typed VIEW handle (reinterpret-in-place); accessors on LoadOptsView.
+    #[inline(always)]
+    pub(crate) fn opts_view(&self) -> &LoadOptsView {
+        // SAFETY: repr(transparent) over the `opts` field inside the outer UnsafeCell;
+        // shared interior-mutable view, asserts no validity.
+        unsafe { &*(&raw mut (*self.get()).opts as *mut LoadOptsView) }
     }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
@@ -2273,7 +2728,7 @@ pub(crate) unsafe fn get_read_offset(uc: &Context) -> u64 {
 // `Ok(())`, the `ufbxi_check_msg` failure path returns `Err(Fail)`.
 #[inline(never)]
 pub(crate) unsafe fn report_progress(uc: &Context) -> Result<(), Fail> {
-    if (*uc.get()).opts.progress_cb.fn_.is_none() {
+    if uc.opts_view().progress_cb().fn_.is_none() {
         return Ok(());
     }
 
@@ -2294,8 +2749,8 @@ pub(crate) unsafe fn report_progress(uc: &Context) -> Result<(), Fail> {
     // C: `(uint32_t)uc->opts.progress_cb.fn(uc->opts.progress_cb.user, &progress)`
     // — the callback is `extern "C"`; the generated signature returns the enum
     // as a raw u32 (`RawEnum<ProgressResult>`).
-    let result: u32 = ((*uc.get()).opts.progress_cb.fn_.unwrap_unchecked())(
-        (*uc.get()).opts.progress_cb.user,
+    let result: u32 = (uc.opts_view().progress_cb().fn_.unwrap_unchecked())(
+        uc.opts_view().progress_cb().user,
         &progress,
     )
     .as_raw();
@@ -2319,7 +2774,7 @@ pub(crate) unsafe fn report_progress(uc: &Context) -> Result<(), Fail> {
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) unsafe fn progress(uc: &Context, work_units: usize) -> Result<(), Fail> {
-    if (*uc.get()).opts.progress_cb.fn_.is_none() {
+    if uc.opts_view().progress_cb().fn_.is_none() {
         return Ok(());
     }
     // C: `uc->progress_timer - (ptrdiff_t)work_units` — signed arithmetic on
@@ -3120,7 +3575,7 @@ pub(crate) unsafe fn is_array_node(
     (*info).flags = 0;
 
     // Retain all arrays if user wants the DOM representation
-    if (*uc.get()).opts.retain_dom {
+    if uc.opts_view().retain_dom() {
         (*info).flags |= ARRAY_FLAG_RESULT;
     }
 
@@ -3135,7 +3590,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::Geometry | ParseState::Model => {
             if name == sp::Vertices.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3143,7 +3598,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::PolygonVertexIndex.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3151,14 +3606,14 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Edges.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
                 return true;
             } else if name == sp::Indexes.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3166,7 +3621,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Points.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3174,7 +3629,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::KnotVector.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3182,7 +3637,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::KnotVectorU.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3190,7 +3645,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::KnotVectorV.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3198,7 +3653,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::PointsIndex.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3206,7 +3661,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Normals.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3218,7 +3673,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LegacyModel => {
             if name == sp::Vertices.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3226,7 +3681,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::Normals.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3234,7 +3689,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::Materials.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3242,7 +3697,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::PolygonVertexIndex.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3257,21 +3712,21 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::AnimationCurve => {
             if name == sp::KeyTime.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_animation {
+                (*info).type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'l'
                 };
                 return true;
             } else if name == sp::KeyValueFloat.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_animation {
+                (*info).type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'r'
                 };
                 return true;
             } else if name == sp::KeyAttrFlags.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_animation {
+                (*info).type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'i'
@@ -3285,7 +3740,7 @@ pub(crate) unsafe fn is_array_node(
                 } else {
                     b'f'
                 };
-                if (*uc.get()).opts.ignore_animation {
+                if uc.opts_view().ignore_animation() {
                     (*info).type_ = b'-';
                 }
                 if uc.from_ascii() && uc.version() < 7200 {
@@ -3293,7 +3748,7 @@ pub(crate) unsafe fn is_array_node(
                 }
                 return true;
             } else if name == sp::KeyAttrRefCount.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_animation {
+                (*info).type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'i'
@@ -3307,7 +3762,7 @@ pub(crate) unsafe fn is_array_node(
                 || strcmp(name, b"ModelUVScaling\0".as_ptr()) == 0
                 || strcmp(name, b"Cropping\0".as_ptr()) == 0
             {
-                (*info).type_ = if (*uc.get()).opts.retain_dom {
+                (*info).type_ = if uc.opts_view().retain_dom() {
                     b'r'
                 } else {
                     b'-'
@@ -3318,7 +3773,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::Video => {
             if name == sp::Content.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_embedded {
+                (*info).type_ = if uc.opts_view().ignore_embedded() {
                     b'-'
                 } else {
                     b'C'
@@ -3357,7 +3812,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementNormal => {
             if name == sp::Normals.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3365,7 +3820,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::NormalsIndex.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3381,7 +3836,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementBinormal => {
             if name == sp::Binormals.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3389,7 +3844,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::BinormalsIndex.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3405,7 +3860,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementTangent => {
             if name == sp::Tangents.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3413,7 +3868,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::TangentsIndex.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3429,7 +3884,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementUv => {
             if name == sp::UV.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3437,7 +3892,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::UVIndex.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3449,7 +3904,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementColor => {
             if name == sp::Colors.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3457,7 +3912,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::ColorIndex.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3469,7 +3924,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementVertexCrease => {
             if name == sp::VertexCrease.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3477,7 +3932,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::VertexCreaseIndex.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3489,7 +3944,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementEdgeCrease => {
             if name == sp::EdgeCrease.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3501,7 +3956,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementSmoothing => {
             if name == sp::Smoothing.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'b'
@@ -3513,7 +3968,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementVisibility => {
             if name == sp::Visibility.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'b'
@@ -3525,7 +3980,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementPolygonGroup => {
             if name == sp::PolygonGroup.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3537,7 +3992,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementHole => {
             if name == sp::Hole.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'b'
@@ -3549,7 +4004,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementMaterial => {
             if name == sp::Materials.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3561,7 +4016,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayerElementOther => {
             if name == sp::TextureId.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3569,14 +4024,14 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags |= ARRAY_FLAG_TMP_BUF;
                 return true;
             } else if name == sp::UV.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.retain_dom {
+                (*info).type_ = if uc.opts_view().retain_dom() {
                     b'r'
                 } else {
                     b'-'
                 };
                 return true;
             } else if name == sp::UVIndex.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.retain_dom {
+                (*info).type_ = if uc.opts_view().retain_dom() {
                     b'i'
                 } else {
                     b'-'
@@ -3587,7 +4042,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::GeometryUvInfo => {
             if name == sp::TextureUV.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3595,7 +4050,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::TextureUVVerticeIndex.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3607,7 +4062,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::Shape => {
             if name == sp::Indexes.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3616,7 +4071,7 @@ pub(crate) unsafe fn is_array_node(
                 return true;
             }
             if name == sp::Vertices.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3625,7 +4080,7 @@ pub(crate) unsafe fn is_array_node(
                 return true;
             }
             if name == sp::Normals.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3643,7 +4098,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).type_ = b'r';
                 return true;
             } else if name == sp::Indexes.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3651,7 +4106,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Weights.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3659,7 +4114,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::BlendWeights.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3676,7 +4131,7 @@ pub(crate) unsafe fn is_array_node(
                     })) as u8;
                 return true;
             } else if strcmp(name, b"TransformAssociateModel\0".as_ptr()) == 0 {
-                (*info).type_ = if (*uc.get()).opts.retain_dom {
+                (*info).type_ = if uc.opts_view().retain_dom() {
                     b'r'
                 } else {
                     b'-'
@@ -3687,7 +4142,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::AssociateModel => {
             if name == sp::Transform.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.retain_dom {
+                (*info).type_ = if uc.opts_view().retain_dom() {
                     b'r'
                 } else {
                     b'-'
@@ -3704,7 +4159,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).type_ = b'r';
                 return true;
             } else if name == sp::Indexes.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
@@ -3712,7 +4167,7 @@ pub(crate) unsafe fn is_array_node(
                 (*info).flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Weights.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_geometry {
+                (*info).type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
@@ -3731,7 +4186,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::Channel => {
             if name == sp::Key.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_animation {
+                (*info).type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'd'
@@ -3742,7 +4197,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::Audio => {
             if name == sp::Content.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_embedded {
+                (*info).type_ = if uc.opts_view().ignore_embedded() {
                     b'-'
                 } else {
                     b'C'
@@ -3753,7 +4208,7 @@ pub(crate) unsafe fn is_array_node(
 
         _ => {
             if name == sp::BinaryData.as_ptr() {
-                (*info).type_ = if (*uc.get()).opts.ignore_embedded {
+                (*info).type_ = if uc.opts_view().ignore_embedded() {
                     b'-'
                 } else {
                     b'C'
@@ -3957,7 +4412,7 @@ pub(crate) unsafe fn get_dom_node_imp(uc: &Context, node: *mut Node) -> *mut Dom
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn get_dom_node(uc: &Context, node: *mut Node) -> *mut DomNode {
-    if !(*uc.get()).opts.retain_dom {
+    if !uc.opts_view().retain_dom() {
         return core::ptr::null_mut();
     }
     get_dom_node_imp(uc, node)
@@ -4562,13 +5017,13 @@ pub(crate) const MIN_FILE_FORMAT_LOOKAHEAD: usize = 32;
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
-    let mut format: FileFormat = (*uc.get()).opts.file_format;
+    let mut format: FileFormat = uc.opts_view().file_format();
 
-    if format == FileFormat::Unknown && !(*uc.get()).opts.no_format_from_content {
+    if format == FileFormat::Unknown && !uc.opts_view().no_format_from_content() {
         crate::native::io::pause_progress(uc);
 
         let mut lookahead: usize = MIN_FILE_FORMAT_LOOKAHEAD;
-        while format == FileFormat::Unknown && lookahead <= (*uc.get()).opts.file_format_lookahead {
+        while format == FileFormat::Unknown && lookahead <= uc.opts_view().file_format_lookahead() {
             if lookahead > uc.data_size() {
                 if uc.eof() {
                     break;
@@ -4597,10 +5052,10 @@ pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
                 fmt += 1;
             }
 
-            if lookahead >= (*uc.get()).opts.file_format_lookahead {
+            if lookahead >= uc.opts_view().file_format_lookahead() {
                 break;
             } else if lookahead < usize::MAX / 2 {
-                lookahead = min_sz(lookahead * 2, (*uc.get()).opts.file_format_lookahead);
+                lookahead = min_sz(lookahead * 2, uc.opts_view().file_format_lookahead());
             } else {
                 lookahead = usize::MAX;
             }
@@ -4609,12 +5064,12 @@ pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
         crate::native::io::resume_progress(uc)?;
     }
 
-    if format == FileFormat::Unknown && !(*uc.get()).opts.no_format_from_extension {
-        if (*uc.get()).opts.filename.length > 0 {
+    if format == FileFormat::Unknown && !uc.opts_view().no_format_from_extension() {
+        if uc.opts_view().filename_view().length() > 0 {
             // C: `ufbx_string extension = uc->opts.filename;`
             let mut extension: String = String::new_c(
-                (*uc.get()).opts.filename.data,
-                (*uc.get()).opts.filename.length,
+                uc.opts_view().filename_view().data(),
+                uc.opts_view().filename_view().length(),
             );
             let mut i: usize = extension.length;
             while i > 0 {
@@ -4690,7 +5145,7 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
         if uc.version() > 0 {
             uc.set_sure_fbx(true);
         } else {
-            if !(*uc.get()).opts.strict {
+            if !uc.opts_view().strict() {
                 uc.set_version(7400);
             }
             ufbxi_check_msg!(uc, uc.version() > 0, "Not an FBX file", "uc->version > 0");
@@ -4767,7 +5222,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             uc.set_top_node(core::ptr::null_mut());
             uc.set_top_child_index(0);
             uc.set_parsed_to_end(true);
-            if (*uc.get()).opts.retain_dom {
+            if uc.opts_view().retain_dom() {
                 retain_toplevel(uc, core::ptr::null_mut())?;
             }
 
@@ -4790,7 +5245,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         );
         let node: *mut Node = uc.top_nodes().add(uc.top_nodes_len() - 1);
         pop::<Node>(uc.tmp_stack_mut_ptr(), 1, node);
-        if (*uc.get()).opts.retain_dom {
+        if uc.opts_view().retain_dom() {
             retain_toplevel(uc, node)?;
         }
 
@@ -4822,7 +5277,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         );
         ufbxi_check!(uc, !(*node).children.is_null(), "node->children");
 
-        if (*uc.get()).opts.retain_dom {
+        if uc.opts_view().retain_dom() {
             // C: `for (size_t i = 0; i < num_children; i++)`
             let mut i: usize = 0;
             while i < num_children as usize {
@@ -4872,7 +5327,7 @@ pub(crate) unsafe fn parse_toplevel_child(
             pop::<Node>(uc.tmp_stack_mut_ptr(), 1, dst);
             *p_node = dst;
 
-            if (*uc.get()).opts.retain_dom {
+            if uc.opts_view().retain_dom() {
                 retain_toplevel_child(uc, dst)?;
             }
         }
@@ -4929,7 +5384,7 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
     uc.set_top_child_index(0);
     uc.set_top_node(uc.legacy_node_mut_ptr());
 
-    if (*uc.get()).opts.retain_dom {
+    if uc.opts_view().retain_dom() {
         retain_toplevel(uc, uc.legacy_node_mut_ptr())?;
     }
 
