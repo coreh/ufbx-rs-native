@@ -286,7 +286,7 @@ impl DeflateContext {
 
     // `stream` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn stream_mut(&self) -> *mut BitStream {
+    pub(crate) fn stream_mut_ptr(&self) -> *mut BitStream {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).stream }
@@ -1044,7 +1044,7 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
     let mut symbol_index = 0u32;
     let mut prev = 0u8;
     while symbol_index < num_symbols {
-        bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut());
+        bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
         if (*dc.get()).stream.cancelled {
             return -28;
         }
@@ -1129,7 +1129,7 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
     let mut bits = (*dc.get()).stream.bits;
     let mut left = (*dc.get()).stream.left;
     let mut data = (*dc.get()).stream.chunk_ptr;
-    bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut());
+    bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
     if (*dc.get()).stream.cancelled {
         return -28;
     }
@@ -1154,7 +1154,7 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
 
     for len_i in 0..num_code_lengths as usize {
         if len_i == 14 {
-            bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut());
+            bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
             if (*dc.get()).stream.cancelled {
                 return -28;
             }
@@ -1365,7 +1365,7 @@ pub(crate) unsafe fn inflate_block_slow(
             break;
         }
 
-        bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut());
+        bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
         let sym_bits = bits;
 
         let sym0: HuffSym = huff_decode_bits(trees.lit_length(), bits, fast_bits, fast_mask);
@@ -1777,7 +1777,7 @@ pub(crate) unsafe fn inflate(
     // return code deterministic here, which may differ from a given C build.
     // No deterministic port can reproduce C's uninit read.
     let dc: DeflateContext = core::mem::zeroed();
-    bit_stream_init(dc.stream_mut(), input);
+    bit_stream_init(dc.stream_mut_ptr(), input);
     dc.set_out_begin(dst as *mut u8);
     dc.set_out_ptr(dst as *mut u8);
     dc.set_out_end((dst as *mut u8).add(dst_size));
@@ -1795,7 +1795,7 @@ pub(crate) unsafe fn inflate(
     let mut left = (*dc.get()).stream.left;
     let mut data = (*dc.get()).stream.chunk_ptr;
 
-    bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut());
+    bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
     if (*dc.get()).stream.cancelled {
         return -28;
     }
@@ -1822,7 +1822,7 @@ pub(crate) unsafe fn inflate(
     }
 
     loop {
-        bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut());
+        bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
         if (*dc.get()).stream.cancelled {
             return -28;
         }
@@ -1855,7 +1855,7 @@ pub(crate) unsafe fn inflate(
             (*dc.get()).stream.chunk_ptr = data;
 
             // Copy `len` bytes of literal data
-            if bit_copy_bytes(dc.out_ptr() as *mut c_void, dc.stream_mut(), len) == 0 {
+            if bit_copy_bytes(dc.out_ptr() as *mut c_void, dc.stream_mut_ptr(), len) == 0 {
                 return -5;
             }
 
@@ -1937,7 +1937,7 @@ pub(crate) unsafe fn inflate(
         let align_bits = left & 0x7;
         bits >>= align_bits;
         left -= align_bits;
-        bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut());
+        bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
         if (*dc.get()).stream.cancelled {
             return -28;
         }

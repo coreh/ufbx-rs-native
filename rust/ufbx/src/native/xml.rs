@@ -100,7 +100,7 @@ impl XmlContext {
 
     // `tok_cap` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tok_cap_mut(&self) -> *mut usize {
+    pub(crate) fn tok_cap_mut_ptr(&self) -> *mut usize {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tok_cap }
@@ -108,7 +108,7 @@ impl XmlContext {
 
     // `tok` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tok_mut(&self) -> *mut *mut u8 {
+    pub(crate) fn tok_mut_ptr(&self) -> *mut *mut u8 {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tok }
@@ -116,7 +116,7 @@ impl XmlContext {
 
     // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tmp_stack_mut(&self) -> *mut Buf {
+    pub(crate) fn tmp_stack_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp_stack }
@@ -124,7 +124,7 @@ impl XmlContext {
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn result_mut(&self) -> *mut Buf {
+    pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).result }
@@ -132,7 +132,7 @@ impl XmlContext {
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn error_mut(&self) -> *mut Error {
+    pub(crate) fn error_mut_ptr(&self) -> *mut Error {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).error }
@@ -337,11 +337,11 @@ pub(crate) unsafe fn xml_advance(xc: &XmlContext) {
 pub(crate) unsafe fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), Fail> {
     if xc.tok_len() == xc.tok_cap() || IS_REGRESSION {
         ufbxi_check_err!(
-            xc.error_mut(),
+            xc.error_mut_ptr(),
             grow_array::<u8>(
                 xc.ator(),
-                xc.tok_mut(),
-                xc.tok_cap_mut(),
+                xc.tok_mut_ptr(),
+                xc.tok_cap_mut_ptr(),
                 xc.tok_len() + 1
             ),
             "ufbxi_grow_array_size((xc->ator), sizeof(**(&xc->tok)), (&xc->tok), (&xc->tok_cap), (xc->tok_len + 1))"
@@ -390,7 +390,7 @@ pub(crate) unsafe fn xml_skip_until_string(
     ufbx_assert!(suffix_len < buf.len());
     loop {
         let c: u8 = *xc.pos();
-        ufbxi_check_err_msg!(xc.error_mut(), c != 0, "Truncated file");
+        ufbxi_check_err_msg!(xc.error_mut_ptr(), c != 0, "Truncated file");
         xml_advance(xc);
         if ix >= suffix_len {
             xml_push_token_char(xc, buf[(ix - suffix_len) & wrap_mask])?;
@@ -418,8 +418,8 @@ pub(crate) unsafe fn xml_skip_until_string(
     xml_push_token_char(xc, b'\0')?;
     if !dst.is_null() {
         (*dst).length = xc.tok_len() - 1;
-        (*dst).data = push_copy::<u8>(xc.result_mut(), xc.tok_len(), xc.tok());
-        ufbxi_check_err!(xc.error_mut(), !(*dst).data.is_null(), "dst->data");
+        (*dst).data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok());
+        ufbxi_check_err!(xc.error_mut_ptr(), !(*dst).data.is_null(), "dst->data");
     }
 
     Ok(())
@@ -442,7 +442,7 @@ pub(crate) unsafe fn xml_read_until(
             loop {
                 xml_advance(xc);
                 c = *xc.pos();
-                ufbxi_check_err!(xc.error_mut(), c != b'\0', "c != '\\0'");
+                ufbxi_check_err!(xc.error_mut_ptr(), c != b'\0', "c != '\\0'");
                 if c == b';' {
                     break;
                 }
@@ -507,7 +507,7 @@ pub(crate) unsafe fn xml_read_until(
             if (XML_CTYPE[c as usize] as u32 & ctypes) != 0 {
                 break;
             }
-            ufbxi_check_err_msg!(xc.error_mut(), c != 0, "Truncated file");
+            ufbxi_check_err_msg!(xc.error_mut_ptr(), c != 0, "Truncated file");
             xml_push_token_char(xc, c)?;
             xml_advance(xc);
         }
@@ -516,8 +516,8 @@ pub(crate) unsafe fn xml_read_until(
     xml_push_token_char(xc, b'\0')?;
     if !dst.is_null() {
         (*dst).length = xc.tok_len() - 1;
-        (*dst).data = push_copy::<u8>(xc.result_mut(), xc.tok_len(), xc.tok());
-        ufbxi_check_err!(xc.error_mut(), !(*dst).data.is_null(), "dst->data");
+        (*dst).data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok());
+        ufbxi_check_err!(xc.error_mut_ptr(), !(*dst).data.is_null(), "dst->data");
     }
 
     Ok(())
@@ -564,7 +564,7 @@ unsafe fn xml_parse_tag_rec(
     opening: *const u8,
 ) -> Result<(), Fail> {
     ufbxi_check_err!(
-        xc.error_mut(),
+        xc.error_mut_ptr(),
         depth < MAX_XML_DEPTH,
         "depth < UFBXI_MAX_XML_DEPTH"
     );
@@ -589,14 +589,14 @@ unsafe fn xml_parse_tag_rec(
             }
 
             if has_text {
-                let tag: *mut XmlTag = push_zero(xc.tmp_stack_mut(), 1);
-                ufbxi_check_err!(xc.error_mut(), !tag.is_null(), "tag");
+                let tag: *mut XmlTag = push_zero(xc.tmp_stack_mut_ptr(), 1);
+                ufbxi_check_err!(xc.error_mut_ptr(), !tag.is_null(), "tag");
                 (*tag).name.data = EMPTY_CHAR.as_ptr();
 
                 (*tag).text.length = xc.tok_len() - 1;
-                (*tag).text.data = push_copy::<u8>(xc.result_mut(), xc.tok_len(), xc.tok());
+                (*tag).text.data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok());
                 ufbxi_check_err!(
-                    xc.error_mut(),
+                    xc.error_mut_ptr(),
                     !(*tag).text.data.is_null(),
                     "tag->text.data"
                 );
@@ -608,7 +608,7 @@ unsafe fn xml_parse_tag_rec(
     if xml_accept(xc, b'/') {
         xml_read_until(xc, core::ptr::null_mut(), XML_CTYPE_NAME_END)?;
         ufbxi_check_err!(
-            xc.error_mut(),
+            xc.error_mut_ptr(),
             !opening.is_null() && strcmp(xc.tok(), opening) == 0,
             "opening && !strcmp(xc->tok, opening)"
         );
@@ -629,8 +629,8 @@ unsafe fn xml_parse_tag_rec(
                 ch = ch.add(1);
             }
 
-            let tag: *mut XmlTag = push_zero(xc.tmp_stack_mut(), 1);
-            ufbxi_check_err!(xc.error_mut(), !tag.is_null(), "tag");
+            let tag: *mut XmlTag = push_zero(xc.tmp_stack_mut_ptr(), 1);
+            ufbxi_check_err!(xc.error_mut_ptr(), !tag.is_null(), "tag");
             xml_skip_until_string(xc, &mut (*tag).text, b"]]>\0".as_ptr())?;
             (*tag).name.data = EMPTY_CHAR.as_ptr();
         } else if xml_accept(xc, b'-') {
@@ -648,8 +648,8 @@ unsafe fn xml_parse_tag_rec(
         return Ok(());
     }
 
-    let tag: *mut XmlTag = push_zero(xc.tmp_stack_mut(), 1);
-    ufbxi_check_err!(xc.error_mut(), !tag.is_null(), "tag");
+    let tag: *mut XmlTag = push_zero(xc.tmp_stack_mut_ptr(), 1);
+    ufbxi_check_err!(xc.error_mut_ptr(), !tag.is_null(), "tag");
     xml_read_until(xc, &mut (*tag).name, XML_CTYPE_NAME_END)?;
     (*tag).text.data = EMPTY_CHAR.as_ptr();
 
@@ -667,8 +667,8 @@ unsafe fn xml_parse_tag_rec(
             has_children = true;
             break;
         } else {
-            let attrib: *mut XmlAttrib = push_zero(xc.tmp_stack_mut(), 1);
-            ufbxi_check_err!(xc.error_mut(), !attrib.is_null(), "attrib");
+            let attrib: *mut XmlAttrib = push_zero(xc.tmp_stack_mut_ptr(), 1);
+            ufbxi_check_err!(xc.error_mut_ptr(), !attrib.is_null(), "attrib");
             xml_read_until(xc, &mut (*attrib).name, XML_CTYPE_NAME_END)?;
             xml_skip_while(xc, XML_CTYPE_WHITESPACE);
             if !xml_accept(xc, b'=') {
@@ -681,7 +681,7 @@ unsafe fn xml_parse_tag_rec(
             } else if xml_accept(xc, b'\'') {
                 quote_ctype = XML_CTYPE_SINGLE_QUOTE;
             } else {
-                ufbxi_fail_err!(xc.error_mut(), "Bad attrib value");
+                ufbxi_fail_err!(xc.error_mut_ptr(), "Bad attrib value");
             }
             xml_read_until(xc, &mut (*attrib).value, quote_ctype)?;
             xml_advance(xc);
@@ -690,8 +690,12 @@ unsafe fn xml_parse_tag_rec(
     }
 
     (*tag).num_attribs = num_attribs;
-    (*tag).attribs = push_pop(xc.result_mut(), xc.tmp_stack_mut(), num_attribs);
-    ufbxi_check_err!(xc.error_mut(), !(*tag).attribs.is_null(), "tag->attribs");
+    (*tag).attribs = push_pop(xc.result_mut_ptr(), xc.tmp_stack_mut_ptr(), num_attribs);
+    ufbxi_check_err!(
+        xc.error_mut_ptr(),
+        !(*tag).attribs.is_null(),
+        "tag->attribs"
+    );
 
     if has_children {
         let children_begin: usize = (*xc.get()).tmp_stack.num_items;
@@ -704,8 +708,16 @@ unsafe fn xml_parse_tag_rec(
         }
 
         (*tag).num_children = (*xc.get()).tmp_stack.num_items - children_begin;
-        (*tag).children = push_pop(xc.result_mut(), xc.tmp_stack_mut(), (*tag).num_children);
-        ufbxi_check_err!(xc.error_mut(), !(*tag).children.is_null(), "tag->children");
+        (*tag).children = push_pop(
+            xc.result_mut_ptr(),
+            xc.tmp_stack_mut_ptr(),
+            (*tag).num_children,
+        );
+        ufbxi_check_err!(
+            xc.error_mut_ptr(),
+            !(*tag).children.is_null(),
+            "tag->children"
+        );
     }
 
     Ok(())
@@ -714,8 +726,8 @@ unsafe fn xml_parse_tag_rec(
 // ufbx.c:7586-7610 `ufbxi_xml_parse_root`
 #[inline(never)]
 pub(crate) unsafe fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
-    let tag: *mut XmlTag = push_zero(xc.result_mut(), 1);
-    ufbxi_check_err!(xc.error_mut(), !tag.is_null(), "tag");
+    let tag: *mut XmlTag = push_zero(xc.result_mut_ptr(), 1);
+    ufbxi_check_err!(xc.error_mut_ptr(), !tag.is_null(), "tag");
     (*tag).name.data = EMPTY_CHAR.as_ptr();
     (*tag).text.data = EMPTY_CHAR.as_ptr();
 
@@ -728,11 +740,19 @@ pub(crate) unsafe fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
     }
 
     (*tag).num_children = (*xc.get()).tmp_stack.num_items;
-    (*tag).children = push_pop(xc.result_mut(), xc.tmp_stack_mut(), (*tag).num_children);
-    ufbxi_check_err!(xc.error_mut(), !(*tag).children.is_null(), "tag->children");
+    (*tag).children = push_pop(
+        xc.result_mut_ptr(),
+        xc.tmp_stack_mut_ptr(),
+        (*tag).num_children,
+    );
+    ufbxi_check_err!(
+        xc.error_mut_ptr(),
+        !(*tag).children.is_null(),
+        "tag->children"
+    );
 
-    xc.set_doc(push(xc.result_mut(), 1));
-    ufbxi_check_err!(xc.error_mut(), !xc.doc().is_null(), "xc->doc");
+    xc.set_doc(push(xc.result_mut_ptr(), 1));
+    ufbxi_check_err!(xc.error_mut_ptr(), !xc.doc().is_null(), "xc->doc");
 
     (*xc.doc()).root = tag;
     (*xc.doc()).buf = (*xc.get()).result;
@@ -774,13 +794,13 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
 
     let ok = xml_parse_root(&xc).is_ok();
 
-    buf_free(xc.tmp_stack_mut());
+    buf_free(xc.tmp_stack_mut_ptr());
     free::<u8>(xc.ator(), xc.tok(), xc.tok_cap());
 
     if ok {
         xc.doc()
     } else {
-        buf_free(xc.result_mut());
+        buf_free(xc.result_mut_ptr());
         if !error.is_null() {
             core::ptr::write(error, core::ptr::read(&(*xc.get()).error));
         }

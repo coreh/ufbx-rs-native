@@ -1563,7 +1563,7 @@ impl Context {
     // sibling contexts) and mutated by `alloc`, so the honest accessor is a raw
     // pointer, not a reference — passing it onward is a safe operation.
     #[inline(always)]
-    pub(crate) fn ator_tmp_mut(&self) -> *mut Allocator {
+    pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
         // SAFETY: projecting a field pointer; no deref, no reference formed.
         unsafe { &raw mut (*self.get()).ator_tmp }
     }
@@ -2282,7 +2282,7 @@ pub(crate) unsafe fn push_element_extra_size(uc: &Context, id: u32, size: usize)
         ufbxi_check_return!(
             uc,
             grow_array(
-                uc.ator_tmp_mut(),
+                uc.ator_tmp_mut_ptr(),
                 &mut (*uc.get()).element_extra_arr,
                 &mut (*uc.get()).element_extra_cap,
                 id.wrapping_add(1) as usize
@@ -4298,7 +4298,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         ufbxi_check!(
             uc,
             grow_array(
-                uc.ator_tmp_mut(),
+                uc.ator_tmp_mut_ptr(),
                 &mut (*uc.get()).top_nodes,
                 &mut (*uc.get()).top_nodes_cap,
                 uc.top_nodes_len()

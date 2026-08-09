@@ -508,7 +508,7 @@ pub(crate) unsafe fn open_memory_ctx(
     // Align the allocation size to 8 bytes to make sure the header is aligned.
     let self_size: usize = align_to_mask(size_of::<MemoryStream>().wrapping_add(copy_size), 7);
 
-    let memory: *mut u8 = alloc::<u8>(fc.ator_mut(), self_size);
+    let memory: *mut u8 = alloc::<u8>(fc.ator_mut_ptr(), self_size);
     if memory.is_null() {
         end_file_context(&fc, error, false);
         return false;
@@ -1786,7 +1786,7 @@ pub(crate) unsafe fn create_anim(
         evaluate::CreateAnimContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
         // C: `(*ac.get()).opts = *opts;` (struct assignment)
-        core::ptr::copy_nonoverlapping(opts, ac.opts_mut(), 1);
+        core::ptr::copy_nonoverlapping(opts, ac.opts_mut_ptr(), 1);
     }
 
     ac.set_scene(scene);
@@ -1799,9 +1799,13 @@ pub(crate) unsafe fn create_anim(
         let imp: *mut AnimImp = ac.imp();
         core::ptr::addr_of_mut!((*imp).anim)
     } else {
-        fix_error_type(ac.error_mut(), b"Failed to create anim\0".as_ptr(), error);
-        buf_free(ac.result_mut());
-        free_ator(ac.ator_result_mut());
+        fix_error_type(
+            ac.error_mut_ptr(),
+            b"Failed to create anim\0".as_ptr(),
+            error,
+        );
+        buf_free(ac.result_mut_ptr());
+        free_ator(ac.ator_result_mut_ptr());
         core::ptr::null_mut()
     }
 }
@@ -1865,7 +1869,7 @@ pub(crate) unsafe fn bake_anim(
     let bc = evaluate::BakeContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
         // C: `(*bc.get()).opts = *opts;` (struct assignment)
-        core::ptr::copy_nonoverlapping(opts, bc.opts_mut(), 1);
+        core::ptr::copy_nonoverlapping(opts, bc.opts_mut_ptr(), 1);
     }
 
     bc.set_scene(scene);
@@ -1873,26 +1877,26 @@ pub(crate) unsafe fn bake_anim(
     // C: `int ok = ufbxi_bake_anim_imp(&bc, anim);`
     let ok = evaluate::bake_anim_imp(&bc, anim);
 
-    buf_free(bc.tmp_mut());
-    buf_free(bc.tmp_prop_mut());
-    buf_free(bc.tmp_times_mut());
-    buf_free(bc.tmp_bake_props_mut());
-    buf_free(bc.tmp_nodes_mut());
-    buf_free(bc.tmp_elements_mut());
-    buf_free(bc.tmp_props_mut());
-    buf_free(bc.tmp_bake_stack_mut());
+    buf_free(bc.tmp_mut_ptr());
+    buf_free(bc.tmp_prop_mut_ptr());
+    buf_free(bc.tmp_times_mut_ptr());
+    buf_free(bc.tmp_bake_props_mut_ptr());
+    buf_free(bc.tmp_nodes_mut_ptr());
+    buf_free(bc.tmp_elements_mut_ptr());
+    buf_free(bc.tmp_props_mut_ptr());
+    buf_free(bc.tmp_bake_stack_mut_ptr());
     // C: `ufbxi_free(&(*bc.get()).ator_tmp, char, bc.tmp_arr(), bc.tmp_arr_size());`
-    free::<u8>(bc.ator_tmp_mut(), bc.tmp_arr(), bc.tmp_arr_size());
-    free_ator(bc.ator_tmp_mut());
+    free::<u8>(bc.ator_tmp_mut_ptr(), bc.tmp_arr(), bc.tmp_arr_size());
+    free_ator(bc.ator_tmp_mut_ptr());
 
     if ok.is_ok() {
         clear_error(error);
         let imp: *mut BakedAnimImp = bc.imp();
         core::ptr::addr_of_mut!((*imp).bake)
     } else {
-        fix_error_type(bc.error_mut(), b"Failed to bake anim\0".as_ptr(), error);
-        buf_free(bc.result_mut());
-        free_ator(bc.ator_result_mut());
+        fix_error_type(bc.error_mut_ptr(), b"Failed to bake anim\0".as_ptr(), error);
+        buf_free(bc.result_mut_ptr());
+        free_ator(bc.ator_result_mut_ptr());
         core::ptr::null_mut()
     }
 }
@@ -3554,7 +3558,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
     let tc = TessellateCurveContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
         // C: `(*tc.get()).opts = *opts` — struct assignment (memcpy).
-        core::ptr::copy_nonoverlapping(opts, tc.opts_mut(), 1);
+        core::ptr::copy_nonoverlapping(opts, tc.opts_mut_ptr(), 1);
     }
 
     tc.set_curve(curve);
@@ -3562,16 +3566,20 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
     // C: `int ok = ufbxi_tessellate_nurbs_curve_imp(&tc);`
     let ok: bool = tessellate_nurbs_curve_imp(&tc).is_ok();
 
-    free_ator(tc.ator_tmp_mut());
+    free_ator(tc.ator_tmp_mut_ptr());
 
     if ok {
         clear_error(error);
         let imp: *mut LineCurveImp = tc.imp();
         &raw mut (*imp).curve
     } else {
-        fix_error_type(tc.error_mut(), b"Failed to tessellate\0".as_ptr(), error);
-        buf_free(tc.result_mut());
-        free_ator(tc.ator_result_mut());
+        fix_error_type(
+            tc.error_mut_ptr(),
+            b"Failed to tessellate\0".as_ptr(),
+            error,
+        );
+        buf_free(tc.result_mut_ptr());
+        free_ator(tc.ator_result_mut_ptr());
         core::ptr::null_mut()
     }
 }
@@ -3616,7 +3624,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
         TessellateSurfaceContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
         // C: `(*tc.get()).opts = *opts` — struct assignment (memcpy).
-        core::ptr::copy_nonoverlapping(opts, tc.opts_mut(), 1);
+        core::ptr::copy_nonoverlapping(opts, tc.opts_mut_ptr(), 1);
     }
 
     tc.set_surface(surface);
@@ -3624,18 +3632,22 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     // C: `int ok = ufbxi_tessellate_nurbs_surface_imp(&tc);`
     let ok: bool = tessellate_nurbs_surface_imp(&tc).is_ok();
 
-    buf_free(tc.tmp_mut());
-    map_free(tc.position_map_mut());
-    free_ator(tc.ator_tmp_mut());
+    buf_free(tc.tmp_mut_ptr());
+    map_free(tc.position_map_mut_ptr());
+    free_ator(tc.ator_tmp_mut_ptr());
 
     if ok {
         clear_error(error);
         let imp: *mut MeshImp = tc.imp();
         &raw mut (*imp).mesh
     } else {
-        fix_error_type(tc.error_mut(), b"Failed to tessellate\0".as_ptr(), error);
-        buf_free(tc.result_mut());
-        free_ator(tc.ator_result_mut());
+        fix_error_type(
+            tc.error_mut_ptr(),
+            b"Failed to tessellate\0".as_ptr(),
+            error,
+        );
+        buf_free(tc.result_mut_ptr());
+        free_ator(tc.ator_result_mut_ptr());
         core::ptr::null_mut()
     }
 }
@@ -3842,7 +3854,7 @@ pub(crate) unsafe fn catch_triangulate_face(
             core::mem::MaybeUninit::zeroed(),
         ));
         core::ptr::write(
-            nc.positions_mut(),
+            nc.positions_mut_ptr(),
             core::ptr::read(&(*mesh).vertex_position),
         );
         (*nc.get()).face = face;

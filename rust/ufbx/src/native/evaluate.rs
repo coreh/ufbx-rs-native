@@ -534,7 +534,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         let open_with_default = (*uc.get()).opts.open_main_file_with_default
             || (*uc.get()).opts.open_file_cb.fn_ == Some(default_fn);
         if open_with_default {
-            let ctx: OpenFileContext = uc.ator_tmp_mut() as OpenFileContext;
+            let ctx: OpenFileContext = uc.ator_tmp_mut_ptr() as OpenFileContext;
             ok = open_file_ctx(&mut stream, ctx, filename, filename_len, &opts, &mut error);
         } else {
             ok = open_file(
@@ -543,7 +543,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
                 uc.load_filename(),
                 filename_len,
                 ptr::null(),
-                uc.ator_tmp_mut(),
+                uc.ator_tmp_mut_ptr(),
                 OpenFileType::MainModel,
             );
         }
@@ -629,7 +629,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         thread_pool_init(
             ptr::addr_of_mut!((*uc.get()).thread_pool),
             ptr::addr_of_mut!((*uc.get()).error),
-            uc.ator_tmp_mut(),
+            uc.ator_tmp_mut_ptr(),
             ptr::addr_of!((*uc.get()).opts.thread_opts),
         )
         .is_ok(),
@@ -864,9 +864,9 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     (*imp).string_buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
 
     (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
-    (*imp).scene.metadata.temp_memory_used = (*uc.ator_tmp_mut()).current_size;
+    (*imp).scene.metadata.temp_memory_used = (*uc.ator_tmp_mut_ptr()).current_size;
     (*imp).scene.metadata.result_allocs = (*imp).refcount.ator.num_allocs;
-    (*imp).scene.metadata.temp_allocs = (*uc.ator_tmp_mut()).num_allocs;
+    (*imp).scene.metadata.temp_allocs = (*uc.ator_tmp_mut_ptr()).num_allocs;
 
     // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, imp->scene.elements)`
     let mut p_elem: *mut *mut Element = (*imp).scene.elements.data as *mut *mut Element;
@@ -920,31 +920,39 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     buf_free(&mut (*uc.get()).tmp_element_id);
     buf_free(&mut (*uc.get()).tmp_ascii_spans);
 
-    free::<Node>(uc.ator_tmp_mut(), uc.top_nodes(), uc.top_nodes_cap());
+    free::<Node>(uc.ator_tmp_mut_ptr(), uc.top_nodes(), uc.top_nodes_cap());
     free::<*mut c_void>(
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         uc.element_extra_arr(),
         uc.element_extra_cap(),
     );
 
     free::<u8>(
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         (*uc.get()).ascii.token.str_data,
         (*uc.get()).ascii.token.str_cap,
     );
     free::<u8>(
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         (*uc.get()).ascii.prev_token.str_data,
         (*uc.get()).ascii.prev_token.str_cap,
     );
 
-    free::<u8>(uc.ator_tmp_mut(), uc.read_buffer(), uc.read_buffer_size());
-    free::<u8>(uc.ator_tmp_mut(), uc.tmp_arr(), (*uc.get()).tmp_arr_size);
-    free::<u8>(uc.ator_tmp_mut(), uc.swap_arr(), uc.swap_arr_size());
+    free::<u8>(
+        uc.ator_tmp_mut_ptr(),
+        uc.read_buffer(),
+        uc.read_buffer_size(),
+    );
+    free::<u8>(
+        uc.ator_tmp_mut_ptr(),
+        uc.tmp_arr(),
+        (*uc.get()).tmp_arr_size,
+    );
+    free::<u8>(uc.ator_tmp_mut_ptr(), uc.swap_arr(), uc.swap_arr_size());
 
     obj_free(uc);
 
-    free_ator(uc.ator_tmp_mut());
+    free_ator(uc.ator_tmp_mut_ptr());
 }
 
 // ufbx.c:25464-25470 `ufbxi_free_result`
@@ -1002,7 +1010,7 @@ pub(crate) unsafe fn load(
 
     init_ator(
         &mut (*uc.get()).error,
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         ptr::addr_of!((*uc.get()).opts.temp_allocator),
         b"temp\0".as_ptr(),
     );
@@ -1054,7 +1062,7 @@ pub(crate) unsafe fn load(
     (*uc.get()).string_pool.error = ptr::addr_of_mut!((*uc.get()).error);
     map_init(
         &mut (*uc.get()).string_pool.map,
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         map_cmp_string,
         ptr::null_mut(),
     );
@@ -1065,73 +1073,73 @@ pub(crate) unsafe fn load(
 
     map_init(
         &mut (*uc.get()).prop_type_map,
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         map_cmp_const_char_ptr,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).fbx_id_map,
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         map_cmp_uint64,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).ptr_fbx_id_map,
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         map_cmp_ptr_id,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).texture_file_map,
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         map_cmp_const_char_ptr,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).anim_stack_map,
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         map_cmp_const_char_ptr,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).fbx_attr_map,
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         map_cmp_uint64,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).node_prop_set,
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         map_cmp_const_char_ptr,
         ptr::null_mut(),
     );
     map_init(
         &mut (*uc.get()).dom_node_map,
-        uc.ator_tmp_mut(),
+        uc.ator_tmp_mut_ptr(),
         map_cmp_uintptr,
         ptr::null_mut(),
     );
 
-    (*uc.get()).tmp.ator = uc.ator_tmp_mut();
-    (*uc.get()).tmp_parse.ator = uc.ator_tmp_mut();
-    (*uc.get()).tmp_stack.ator = uc.ator_tmp_mut();
-    (*uc.get()).tmp_connections.ator = uc.ator_tmp_mut();
-    (*uc.get()).tmp_node_ids.ator = uc.ator_tmp_mut();
-    (*uc.get()).tmp_elements.ator = uc.ator_tmp_mut();
-    (*uc.get()).tmp_element_offsets.ator = uc.ator_tmp_mut();
-    (*uc.get()).tmp_element_fbx_ids.ator = uc.ator_tmp_mut();
-    (*uc.get()).tmp_element_ptrs.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp.ator = uc.ator_tmp_mut_ptr();
+    (*uc.get()).tmp_parse.ator = uc.ator_tmp_mut_ptr();
+    (*uc.get()).tmp_stack.ator = uc.ator_tmp_mut_ptr();
+    (*uc.get()).tmp_connections.ator = uc.ator_tmp_mut_ptr();
+    (*uc.get()).tmp_node_ids.ator = uc.ator_tmp_mut_ptr();
+    (*uc.get()).tmp_elements.ator = uc.ator_tmp_mut_ptr();
+    (*uc.get()).tmp_element_offsets.ator = uc.ator_tmp_mut_ptr();
+    (*uc.get()).tmp_element_fbx_ids.ator = uc.ator_tmp_mut_ptr();
+    (*uc.get()).tmp_element_ptrs.ator = uc.ator_tmp_mut_ptr();
     for i in 0..ELEMENT_TYPE_COUNT {
-        (*uc.get()).tmp_typed_element_offsets[i].ator = uc.ator_tmp_mut();
+        (*uc.get()).tmp_typed_element_offsets[i].ator = uc.ator_tmp_mut_ptr();
     }
-    (*uc.get()).tmp_mesh_textures.ator = uc.ator_tmp_mut();
-    (*uc.get()).tmp_full_weights.ator = uc.ator_tmp_mut();
-    (*uc.get()).tmp_dom_nodes.ator = uc.ator_tmp_mut();
-    (*uc.get()).tmp_element_id.ator = uc.ator_tmp_mut();
-    (*uc.get()).tmp_ascii_spans.ator = uc.ator_tmp_mut();
+    (*uc.get()).tmp_mesh_textures.ator = uc.ator_tmp_mut_ptr();
+    (*uc.get()).tmp_full_weights.ator = uc.ator_tmp_mut_ptr();
+    (*uc.get()).tmp_dom_nodes.ator = uc.ator_tmp_mut_ptr();
+    (*uc.get()).tmp_element_id.ator = uc.ator_tmp_mut_ptr();
+    (*uc.get()).tmp_ascii_spans.ator = uc.ator_tmp_mut_ptr();
 
     for i in 0..THREAD_GROUP_COUNT {
-        (*uc.get()).tmp_thread_parse[i].ator = uc.ator_tmp_mut();
+        (*uc.get()).tmp_thread_parse[i].ator = uc.ator_tmp_mut_ptr();
         (*uc.get()).tmp_thread_parse[i].unordered = true;
         (*uc.get()).tmp_thread_parse[i].clearable = true;
     }
@@ -1145,7 +1153,7 @@ pub(crate) unsafe fn load(
 
     (*uc.get()).warnings.error = ptr::addr_of_mut!((*uc.get()).error);
     (*uc.get()).warnings.result = ptr::addr_of_mut!((*uc.get()).result);
-    (*uc.get()).warnings.tmp_stack.ator = uc.ator_tmp_mut();
+    (*uc.get()).warnings.tmp_stack.ator = uc.ator_tmp_mut_ptr();
     (*uc.get()).string_pool.warnings = ptr::addr_of_mut!((*uc.get()).warnings);
 
     // Set zero size `swap_arr` to a non-NULL buffer so we can tell the difference between empty
@@ -2051,7 +2059,7 @@ impl EvalContext {
 
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tmp_mut(&self) -> *mut Buf {
+    pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp }
@@ -2059,7 +2067,7 @@ impl EvalContext {
 
     // `src_scene` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn src_scene_mut(&self) -> *mut Scene {
+    pub(crate) fn src_scene_mut_ptr(&self) -> *mut Scene {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).src_scene }
@@ -2067,7 +2075,7 @@ impl EvalContext {
 
     // `scene` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn scene_mut(&self) -> *mut Scene {
+    pub(crate) fn scene_mut_ptr(&self) -> *mut Scene {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).scene }
@@ -2075,7 +2083,7 @@ impl EvalContext {
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn result_mut(&self) -> *mut Buf {
+    pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).result }
@@ -2083,7 +2091,7 @@ impl EvalContext {
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn opts_mut(&self) -> *mut RawEvaluateOpts {
+    pub(crate) fn opts_mut_ptr(&self) -> *mut RawEvaluateOpts {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).opts }
@@ -2091,7 +2099,7 @@ impl EvalContext {
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn error_mut(&self) -> *mut Error {
+    pub(crate) fn error_mut_ptr(&self) -> *mut Error {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).error }
@@ -2099,7 +2107,7 @@ impl EvalContext {
 
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn ator_tmp_mut(&self) -> *mut Allocator {
+    pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).ator_tmp }
@@ -2107,7 +2115,7 @@ impl EvalContext {
 
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
+    pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).ator_result }
@@ -2115,7 +2123,7 @@ impl EvalContext {
 
     // `anim` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn anim_mut(&self) -> *mut *mut Anim {
+    pub(crate) fn anim_mut_ptr(&self) -> *mut *mut Anim {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).anim }
@@ -2233,8 +2241,8 @@ pub(crate) unsafe fn translate_element_list(
         p_list as *mut crate::prelude::RefList<Element>;
     let count: usize = (*list).count;
     let src: *mut *mut Element = (*list).data as *mut *mut Element;
-    let dst: *mut *mut Element = push::<*mut Element>(ec.result_mut(), count);
-    ufbxi_check_err!(ec.error_mut(), !dst.is_null(), "dst");
+    let dst: *mut *mut Element = push::<*mut Element>(ec.result_mut_ptr(), count);
+    ufbxi_check_err!(ec.error_mut_ptr(), !dst.is_null(), "dst");
     (*list).data = dst as *const Ref<Element>;
     for i in 0..count {
         *dst.add(i) = translate_element(ec, *src.add(i) as *mut c_void);
@@ -2262,8 +2270,8 @@ pub(crate) unsafe fn translate_maps(ec: &EvalContext, maps: *mut MaterialMap, co
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn translate_anim(ec: &EvalContext, p_anim: *mut *mut Anim) -> Result<(), Fail> {
-    let anim: *mut Anim = push_copy::<Anim>(ec.result_mut(), 1, *p_anim);
-    ufbxi_check_err!(ec.error_mut(), !anim.is_null(), "anim");
+    let anim: *mut Anim = push_copy::<Anim>(ec.result_mut_ptr(), 1, *p_anim);
+    ufbxi_check_err!(ec.error_mut_ptr(), !anim.is_null(), "anim");
     translate_element_list(ec, ptr::addr_of_mut!((*anim).layers) as *mut c_void)?;
     *p_anim = anim;
     Ok(())
@@ -2275,20 +2283,20 @@ pub(crate) unsafe fn translate_anim(ec: &EvalContext, p_anim: *mut *mut Anim) ->
 #[must_use]
 pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // C: `ec->scene = ec->src_scene;` — struct assignment (memcpy).
-    ptr::copy_nonoverlapping(ptr::addr_of!((*ec.get()).src_scene), ec.scene_mut(), 1);
+    ptr::copy_nonoverlapping(ptr::addr_of!((*ec.get()).src_scene), ec.scene_mut_ptr(), 1);
     let num_elements: usize = (*ec.get()).scene.elements.count;
 
     // C: `char *element_data = (char*)ufbxi_push(&ec->result, uint64_t, ec->scene.metadata.element_buffer_size/8);`
     let element_data: *mut u8 = push::<u64>(
-        ec.result_mut(),
+        ec.result_mut_ptr(),
         (*ec.get()).scene.metadata.element_buffer_size / 8,
     ) as *mut u8;
-    ufbxi_check_err!(ec.error_mut(), !element_data.is_null(), "element_data");
+    ufbxi_check_err!(ec.error_mut_ptr(), !element_data.is_null(), "element_data");
 
     (*ec.get()).scene.elements.data =
-        push::<*mut Element>(ec.result_mut(), num_elements) as *const Ref<Element>;
+        push::<*mut Element>(ec.result_mut_ptr(), num_elements) as *const Ref<Element>;
     ufbxi_check_err!(
-        ec.error_mut(),
+        ec.error_mut_ptr(),
         !(*ec.get()).scene.elements.data.is_null(),
         "ec->scene.elements.data"
     );
@@ -2304,25 +2312,27 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     let by_type: *mut crate::prelude::RefList<Element> =
         ptr::addr_of_mut!((*ec.get()).scene.unknowns) as *mut crate::prelude::RefList<Element>;
     for i in 0..ELEMENT_TYPE_COUNT {
-        (*by_type.add(i)).data =
-            push::<*mut Element>(ec.result_mut(), (*by_type.add(i)).count) as *const Ref<Element>;
+        (*by_type.add(i)).data = push::<*mut Element>(ec.result_mut_ptr(), (*by_type.add(i)).count)
+            as *const Ref<Element>;
         ufbxi_check_err!(
-            ec.error_mut(),
+            ec.error_mut_ptr(),
             !(*by_type.add(i)).data.is_null(),
             "ec->scene.elements_by_type[i].data"
         );
     }
 
     let num_connections: usize = (*ec.get()).scene.connections_dst.count;
-    (*ec.get()).scene.connections_src.data = push::<Connection>(ec.result_mut(), num_connections);
-    (*ec.get()).scene.connections_dst.data = push::<Connection>(ec.result_mut(), num_connections);
+    (*ec.get()).scene.connections_src.data =
+        push::<Connection>(ec.result_mut_ptr(), num_connections);
+    (*ec.get()).scene.connections_dst.data =
+        push::<Connection>(ec.result_mut_ptr(), num_connections);
     ufbxi_check_err!(
-        ec.error_mut(),
+        ec.error_mut_ptr(),
         !(*ec.get()).scene.connections_src.data.is_null(),
         "ec->scene.connections_src.data"
     );
     ufbxi_check_err!(
-        ec.error_mut(),
+        ec.error_mut_ptr(),
         !(*ec.get()).scene.connections_dst.data.is_null(),
         "ec->scene.connections_dst.data"
     );
@@ -2344,9 +2354,10 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             translate_element(ec, ref_ptr(&(*dst).dst) as *mut c_void);
     }
 
-    (*ec.get()).scene.elements_by_name.data = push::<NameElement>(ec.result_mut(), num_elements);
+    (*ec.get()).scene.elements_by_name.data =
+        push::<NameElement>(ec.result_mut_ptr(), num_elements);
     ufbxi_check_err!(
-        ec.error_mut(),
+        ec.error_mut_ptr(),
         !(*ec.get()).scene.elements_by_name.data.is_null(),
         "ec->scene.elements_by_name.data"
     );
@@ -2535,8 +2546,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         let chan: *mut BlendChannel = *p_chan;
 
         let keys: *mut BlendKeyframe =
-            push::<BlendKeyframe>(ec.result_mut(), (*chan).keyframes.count);
-        ufbxi_check_err!(ec.error_mut(), !keys.is_null(), "keys");
+            push::<BlendKeyframe>(ec.result_mut_ptr(), (*chan).keyframes.count);
+        ufbxi_check_err!(ec.error_mut_ptr(), !keys.is_null(), "keys");
         for i in 0..(*chan).keyframes.count {
             // C: `keys[i] = chan->keyframes.data[i];` (struct assignment)
             ptr::copy_nonoverlapping((*chan).keyframes.data.add(i), keys.add(i), 1);
@@ -2591,8 +2602,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         );
 
         let textures: *mut MaterialTexture =
-            push::<MaterialTexture>(ec.result_mut(), (*material).textures.count);
-        ufbxi_check_err!(ec.error_mut(), !textures.is_null(), "textures");
+            push::<MaterialTexture>(ec.result_mut_ptr(), (*material).textures.count);
+        ufbxi_check_err!(ec.error_mut_ptr(), !textures.is_null(), "textures");
         for i in 0..(*material).textures.count {
             // C: `textures[i] = material->textures.data[i];` (struct assignment)
             ptr::copy_nonoverlapping((*material).textures.data.add(i), textures.add(i), 1);
@@ -2614,8 +2625,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                 as *mut Video;
 
         let layers: *mut TextureLayer =
-            push::<TextureLayer>(ec.result_mut(), (*texture).layers.count);
-        ufbxi_check_err!(ec.error_mut(), !layers.is_null(), "layers");
+            push::<TextureLayer>(ec.result_mut_ptr(), (*texture).layers.count);
+        ufbxi_check_err!(ec.error_mut_ptr(), !layers.is_null(), "layers");
         for i in 0..(*texture).layers.count {
             // C: `layers[i] = texture->layers.data[i];` (struct assignment)
             ptr::copy_nonoverlapping((*texture).layers.data.add(i), layers.add(i), 1);
@@ -2633,16 +2644,16 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // C: `if (texture->shader) { ... }`
         if !opt_ptr(ptr::addr_of!((*texture).shader)).is_null() {
             let mut shader: *mut ShaderTexture = opt_ptr(ptr::addr_of!((*texture).shader));
-            shader = push_copy::<ShaderTexture>(ec.result_mut(), 1, shader);
-            ufbxi_check_err!(ec.error_mut(), !shader.is_null(), "shader");
+            shader = push_copy::<ShaderTexture>(ec.result_mut_ptr(), 1, shader);
+            ufbxi_check_err!(ec.error_mut_ptr(), !shader.is_null(), "shader");
             *(ptr::addr_of_mut!((*texture).shader) as *mut *mut ShaderTexture) = shader;
 
             let inputs: *mut ShaderTextureInput = push_copy::<ShaderTextureInput>(
-                ec.result_mut(),
+                ec.result_mut_ptr(),
                 (*shader).inputs.count,
                 (*shader).inputs.data,
             );
-            ufbxi_check_err!(ec.error_mut(), !inputs.is_null(), "inputs");
+            ufbxi_check_err!(ec.error_mut_ptr(), !inputs.is_null(), "inputs");
             (*shader).inputs.data = inputs;
         }
         p_texture = p_texture.add(1);
@@ -2729,8 +2740,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             as *mut UfbxNode;
 
         let targets: *mut ConstraintTarget =
-            push::<ConstraintTarget>(ec.result_mut(), (*constraint).targets.count);
-        ufbxi_check_err!(ec.error_mut(), !targets.is_null(), "targets");
+            push::<ConstraintTarget>(ec.result_mut_ptr(), (*constraint).targets.count);
+        ufbxi_check_err!(ec.error_mut_ptr(), !targets.is_null(), "targets");
         for i in 0..(*constraint).targets.count {
             // C: `targets[i] = constraint->targets.data[i];` (struct assignment)
             ptr::copy_nonoverlapping((*constraint).targets.data.add(i), targets.add(i), 1);
@@ -2775,8 +2786,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         let layer: *mut AnimLayer = *p_anim_layer;
 
         translate_element_list(ec, ptr::addr_of_mut!((*layer).anim_values) as *mut c_void)?;
-        let props: *mut AnimProp = push::<AnimProp>(ec.result_mut(), (*layer).anim_props.count + 1);
-        ufbxi_check_err!(ec.error_mut(), !props.is_null(), "props");
+        let props: *mut AnimProp =
+            push::<AnimProp>(ec.result_mut_ptr(), (*layer).anim_props.count + 1);
+        ufbxi_check_err!(ec.error_mut_ptr(), !props.is_null(), "props");
         for i in 0..(*layer).anim_props.count {
             // C: `props[i] = layer->anim_props.data[i];` (struct assignment)
             ptr::copy_nonoverlapping((*layer).anim_props.data.add(i), props.add(i), 1);
@@ -2802,8 +2814,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_pose != p_pose_end {
         let pose: *mut Pose = *p_pose;
 
-        let bones: *mut BonePose = push::<BonePose>(ec.result_mut(), (*pose).bone_poses.count);
-        ufbxi_check_err!(ec.error_mut(), !bones.is_null(), "bones");
+        let bones: *mut BonePose = push::<BonePose>(ec.result_mut_ptr(), (*pose).bone_poses.count);
+        ufbxi_check_err!(ec.error_mut_ptr(), !bones.is_null(), "bones");
         for i in 0..(*pose).bone_poses.count {
             // C: `bones[i] = pose->bone_poses.data[i];` (struct assignment)
             ptr::copy_nonoverlapping((*pose).bone_poses.data.add(i), bones.add(i), 1);
@@ -2815,7 +2827,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         p_pose = p_pose.add(1);
     }
 
-    translate_anim(ec, ec.anim_mut())?;
+    translate_anim(ec, ec.anim_mut_ptr())?;
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_value, p_value, ec->scene.anim_values)`
     let mut p_value: *mut *mut AnimValue =
@@ -2872,8 +2884,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         anim.prop_overrides.data = over.sub(num_override);
         anim.prop_overrides.count = num_override;
 
-        let props: *mut Prop = push::<Prop>(ec.result_mut(), num_animated);
-        ufbxi_check_err!(ec.error_mut(), !props.is_null(), "props");
+        let props: *mut Prop = push::<Prop>(ec.result_mut_ptr(), num_animated);
+        ufbxi_check_err!(ec.error_mut_ptr(), !props.is_null(), "props");
 
         // C: `elem->props = ufbx_evaluate_props_flags(...)` — struct assignment.
         let new_props: crate::generated::Props = evaluate_props_flags(
@@ -2896,7 +2908,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // Update all derived values
     update_scene(
-        ec.scene_mut(),
+        ec.scene_mut_ptr(),
         false,
         anim.transform_overrides.data,
         anim.transform_overrides.count,
@@ -2913,10 +2925,10 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             1,
         );
         evaluate_skinning(
-            ec.scene_mut(),
-            ec.error_mut(),
-            ec.result_mut(),
-            ec.tmp_mut(),
+            ec.scene_mut_ptr(),
+            ec.error_mut_ptr(),
+            ec.result_mut_ptr(),
+            ec.tmp_mut_ptr(),
             ec.time(),
             (*ec.get()).opts.load_external_files && (*ec.get()).opts.evaluate_caches,
             &mut cache_opts,
@@ -2925,8 +2937,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // Retain the scene, this must be the final allocation as we copy
     // `ator_result` to `ufbx_scene_imp`
-    let imp: *mut SceneImp = push_zero::<SceneImp>(ec.result_mut(), 1);
-    ufbxi_check_err!(ec.error_mut(), !imp.is_null(), "imp");
+    let imp: *mut SceneImp = push_zero::<SceneImp>(ec.result_mut_ptr(), 1);
+    ufbxi_check_err!(ec.error_mut_ptr(), !imp.is_null(), "imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&Scene` pointer via exposed provenance.
@@ -2970,7 +2982,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     }
 
     ec.set_scene_imp(imp);
-    (*ec.get()).result.ator = ec.ator_result_mut();
+    (*ec.get()).result.ator = ec.ator_result_mut_ptr();
 
     Ok(())
 }
@@ -2988,15 +3000,19 @@ pub(crate) unsafe fn evaluate_scene(
 ) -> *mut Scene {
     if !user_opts.is_null() {
         // C: `ec->opts = *user_opts;` (struct assignment)
-        ptr::copy_nonoverlapping(user_opts, ec.opts_mut(), 1);
+        ptr::copy_nonoverlapping(user_opts, ec.opts_mut_ptr(), 1);
     } else {
         // C: `memset(&ec->opts, 0, sizeof(ec->opts));`
-        ptr::write_bytes(ec.opts_mut() as *mut u8, 0, size_of::<RawEvaluateOpts>());
+        ptr::write_bytes(
+            ec.opts_mut_ptr() as *mut u8,
+            0,
+            size_of::<RawEvaluateOpts>(),
+        );
     }
 
     ec.set_src_imp(get_imp::<SceneImp>(scene as *mut c_void));
     // C: `ec->src_scene = *scene;` (struct assignment)
-    ptr::copy_nonoverlapping(scene as *const Scene, ec.src_scene_mut(), 1);
+    ptr::copy_nonoverlapping(scene as *const Scene, ec.src_scene_mut_ptr(), 1);
     ec.set_anim(if !anim.is_null() {
         anim as *mut Anim
     } else {
@@ -3005,37 +3021,41 @@ pub(crate) unsafe fn evaluate_scene(
     ec.set_time(time);
 
     init_ator(
-        ec.error_mut(),
-        ec.ator_tmp_mut(),
+        ec.error_mut_ptr(),
+        ec.ator_tmp_mut_ptr(),
         ptr::addr_of!((*ec.get()).opts.temp_allocator),
         b"temp\0".as_ptr(),
     );
     init_ator(
-        ec.error_mut(),
-        ec.ator_result_mut(),
+        ec.error_mut_ptr(),
+        ec.ator_result_mut_ptr(),
         ptr::addr_of!((*ec.get()).opts.result_allocator),
         b"result\0".as_ptr(),
     );
 
-    (*ec.get()).result.ator = ec.ator_result_mut();
-    (*ec.get()).tmp.ator = ec.ator_tmp_mut();
+    (*ec.get()).result.ator = ec.ator_result_mut_ptr();
+    (*ec.get()).tmp.ator = ec.ator_tmp_mut_ptr();
 
     (*ec.get()).result.unordered = true;
     (*ec.get()).tmp.unordered = true;
 
     if evaluate_imp(ec).is_ok() {
-        buf_free(ec.tmp_mut());
-        free_ator(ec.ator_tmp_mut());
+        buf_free(ec.tmp_mut_ptr());
+        free_ator(ec.ator_tmp_mut_ptr());
         if !p_error.is_null() {
             clear_error(p_error);
         }
         ptr::addr_of_mut!((*ec.scene_imp()).scene)
     } else {
-        fix_error_type(ec.error_mut(), b"Failed to evaluate\0".as_ptr(), p_error);
-        buf_free(ec.tmp_mut());
-        buf_free(ec.result_mut());
-        free_ator(ec.ator_tmp_mut());
-        free_ator(ec.ator_result_mut());
+        fix_error_type(
+            ec.error_mut_ptr(),
+            b"Failed to evaluate\0".as_ptr(),
+            p_error,
+        );
+        buf_free(ec.tmp_mut_ptr());
+        buf_free(ec.result_mut_ptr());
+        free_ator(ec.ator_tmp_mut_ptr());
+        free_ator(ec.ator_result_mut_ptr());
         ptr::null_mut()
     }
 }
@@ -3074,7 +3094,7 @@ impl CreateAnimContext {
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn result_mut(&self) -> *mut Buf {
+    pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).result }
@@ -3082,7 +3102,7 @@ impl CreateAnimContext {
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn opts_mut(&self) -> *mut RawAnimOpts {
+    pub(crate) fn opts_mut_ptr(&self) -> *mut RawAnimOpts {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).opts }
@@ -3090,7 +3110,7 @@ impl CreateAnimContext {
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn error_mut(&self) -> *mut Error {
+    pub(crate) fn error_mut_ptr(&self) -> *mut Error {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).error }
@@ -3098,7 +3118,7 @@ impl CreateAnimContext {
 
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
+    pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).ator_result }
@@ -3106,7 +3126,7 @@ impl CreateAnimContext {
 
     // `anim` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn anim_mut(&self) -> *mut Anim {
+    pub(crate) fn anim_mut_ptr(&self) -> *mut Anim {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).anim }
@@ -3180,8 +3200,8 @@ pub(crate) unsafe fn push_anim_string(
 ) -> Result<(), Fail> {
     let length: usize = (*str_).length;
     if length > 0 {
-        let copy: *mut u8 = push::<u8>(ac.result_mut(), length + 1);
-        ufbxi_check_err!(ac.error_mut(), !copy.is_null(), "copy");
+        let copy: *mut u8 = push::<u8>(ac.result_mut_ptr(), length + 1);
+        ufbxi_check_err!(ac.error_mut_ptr(), !copy.is_null(), "copy");
         // C: `memcpy(copy, str->data, length);`
         ptr::copy_nonoverlapping((*str_).data, copy, length);
         // C: `copy[str->length] = '\0';`
@@ -3244,16 +3264,16 @@ pub(crate) unsafe extern "C" fn transform_override_less(
 #[must_use]
 pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
     let scene: *const Scene = ac.scene();
-    let anim: *mut Anim = ac.anim_mut();
+    let anim: *mut Anim = ac.anim_mut_ptr();
 
     init_ator(
-        ac.error_mut(),
-        ac.ator_result_mut(),
+        ac.error_mut_ptr(),
+        ac.ator_result_mut_ptr(),
         ptr::addr_of!((*ac.get()).opts.result_allocator),
         b"result\0".as_ptr(),
     );
     (*ac.get()).result.unordered = true;
-    (*ac.get()).result.ator = ac.ator_result_mut();
+    (*ac.get()).result.ator = ac.ator_result_mut_ptr();
 
     (*anim).ignore_connections = (*ac.get()).opts.ignore_connections;
     (*anim).custom = true;
@@ -3261,27 +3281,27 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     let num_layers: usize = (*ac.get()).opts.layer_ids.count;
     (*anim).layers.count = num_layers;
     (*anim).layers.data =
-        push_zero::<*mut AnimLayer>(ac.result_mut(), num_layers) as *const Ref<AnimLayer>;
+        push_zero::<*mut AnimLayer>(ac.result_mut_ptr(), num_layers) as *const Ref<AnimLayer>;
     ufbxi_check_err!(
-        ac.error_mut(),
+        ac.error_mut_ptr(),
         !(*anim).layers.data.is_null(),
         "anim->layers.data"
     );
 
     if (*ac.get()).opts.override_layer_weights.count > 0 {
         ufbxi_check_err_msg!(
-            ac.error_mut(),
+            ac.error_mut_ptr(),
             (*ac.get()).opts.override_layer_weights.count == num_layers,
             "override_layer_weights[] count must match layer_ids[] count",
             "ac->opts.override_layer_weights.count == num_layers"
         );
         (*anim).override_layer_weights.data = push_copy::<Real>(
-            ac.result_mut(),
+            ac.result_mut_ptr(),
             num_layers,
             (*ac.get()).opts.override_layer_weights.data,
         );
         ufbxi_check_err!(
-            ac.error_mut(),
+            ac.error_mut_ptr(),
             !(*anim).override_layer_weights.data.is_null(),
             "anim->override_layer_weights.data"
         );
@@ -3291,7 +3311,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     for i in 0..num_layers {
         let index: u32 = *(*ac.get()).opts.layer_ids.data.add(i);
         ufbxi_check_err_msg!(
-            ac.error_mut(),
+            ac.error_mut_ptr(),
             (index as usize) < (*scene).anim_layers.count,
             "layer_ids out of bounds",
             "index < scene->anim_layers.count"
@@ -3307,9 +3327,9 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     if prop_overrides.count > 0 {
         (*anim).prop_overrides.count = prop_overrides.count;
         (*anim).prop_overrides.data =
-            push_zero::<PropOverride>(ac.result_mut(), prop_overrides.count);
+            push_zero::<PropOverride>(ac.result_mut_ptr(), prop_overrides.count);
         ufbxi_check_err!(
-            ac.error_mut(),
+            ac.error_mut_ptr(),
             !(*anim).prop_overrides.data.is_null(),
             "anim->prop_overrides.data"
         );
@@ -3333,12 +3353,12 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
 
             // C: `ufbxi_check_err(&ac->error, ufbxi_check_string(&ac->error, &dst->prop_name, &src->prop_name));`
             check_string(
-                ac.error_mut(),
+                ac.error_mut_ptr(),
                 ptr::addr_of_mut!((*dst).prop_name),
                 ptr::addr_of!((*src).prop_name) as *const String,
             )?;
             check_string(
-                ac.error_mut(),
+                ac.error_mut_ptr(),
                 ptr::addr_of_mut!((*dst).value_str),
                 ptr::addr_of!((*src).value_str) as *const String,
             )?;
@@ -3405,12 +3425,16 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
                 && (*prev).prop_name.data == (*next).prop_name.data
             {
                 ufbxi_fmt_err_info!(
-                    ac.error_mut(),
+                    ac.error_mut_ptr(),
                     "element %u prop \"%s\"",
                     (*prev).element_id,
                     (*prev).prop_name.data
                 );
-                ufbxi_fail_err_msg!(ac.error_mut(), "Duplicate override", "Duplicate override");
+                ufbxi_fail_err_msg!(
+                    ac.error_mut_ptr(),
+                    "Duplicate override",
+                    "Duplicate override"
+                );
             }
         }
     }
@@ -3418,12 +3442,12 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     if (*ac.get()).opts.transform_overrides.count > 0 {
         (*anim).transform_overrides.count = (*ac.get()).opts.transform_overrides.count;
         (*anim).transform_overrides.data = push_copy::<TransformOverride>(
-            ac.result_mut(),
+            ac.result_mut_ptr(),
             (*anim).transform_overrides.count,
             (*ac.get()).opts.transform_overrides.data,
         );
         ufbxi_check_err!(
-            ac.error_mut(),
+            ac.error_mut_ptr(),
             !(*anim).transform_overrides.data.is_null(),
             "anim->transform_overrides.data"
         );
@@ -3436,8 +3460,8 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
         );
     }
 
-    ac.set_imp(push::<AnimImp>(ac.result_mut(), 1));
-    ufbxi_check_err!(ac.error_mut(), !ac.imp().is_null(), "ac->imp");
+    ac.set_imp(push::<AnimImp>(ac.result_mut_ptr(), 1));
+    ufbxi_check_err!(ac.error_mut_ptr(), !ac.imp().is_null(), "ac->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&Anim` pointer via exposed provenance.
@@ -3568,7 +3592,7 @@ impl BakeContext {
 
     // `tmp_times` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tmp_times_mut(&self) -> *mut Buf {
+    pub(crate) fn tmp_times_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp_times }
@@ -3576,7 +3600,7 @@ impl BakeContext {
 
     // `tmp_props` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tmp_props_mut(&self) -> *mut Buf {
+    pub(crate) fn tmp_props_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp_props }
@@ -3584,7 +3608,7 @@ impl BakeContext {
 
     // `tmp_prop` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tmp_prop_mut(&self) -> *mut Buf {
+    pub(crate) fn tmp_prop_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp_prop }
@@ -3592,7 +3616,7 @@ impl BakeContext {
 
     // `tmp_nodes` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tmp_nodes_mut(&self) -> *mut Buf {
+    pub(crate) fn tmp_nodes_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp_nodes }
@@ -3600,7 +3624,7 @@ impl BakeContext {
 
     // `tmp_elements` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tmp_elements_mut(&self) -> *mut Buf {
+    pub(crate) fn tmp_elements_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp_elements }
@@ -3608,7 +3632,7 @@ impl BakeContext {
 
     // `tmp_bake_stack` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tmp_bake_stack_mut(&self) -> *mut Buf {
+    pub(crate) fn tmp_bake_stack_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp_bake_stack }
@@ -3616,7 +3640,7 @@ impl BakeContext {
 
     // `tmp_bake_props` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tmp_bake_props_mut(&self) -> *mut Buf {
+    pub(crate) fn tmp_bake_props_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp_bake_props }
@@ -3624,7 +3648,7 @@ impl BakeContext {
 
     // `tmp_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tmp_arr_size_mut(&self) -> *mut usize {
+    pub(crate) fn tmp_arr_size_mut_ptr(&self) -> *mut usize {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp_arr_size }
@@ -3632,7 +3656,7 @@ impl BakeContext {
 
     // `tmp_arr` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tmp_arr_mut(&self) -> *mut *mut u8 {
+    pub(crate) fn tmp_arr_mut_ptr(&self) -> *mut *mut u8 {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp_arr }
@@ -3640,7 +3664,7 @@ impl BakeContext {
 
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn tmp_mut(&self) -> *mut Buf {
+    pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp }
@@ -3648,7 +3672,7 @@ impl BakeContext {
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn result_mut(&self) -> *mut Buf {
+    pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).result }
@@ -3656,7 +3680,7 @@ impl BakeContext {
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn opts_mut(&self) -> *mut RawBakeOpts {
+    pub(crate) fn opts_mut_ptr(&self) -> *mut RawBakeOpts {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).opts }
@@ -3664,7 +3688,7 @@ impl BakeContext {
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn error_mut(&self) -> *mut Error {
+    pub(crate) fn error_mut_ptr(&self) -> *mut Error {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).error }
@@ -3672,7 +3696,7 @@ impl BakeContext {
 
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn ator_tmp_mut(&self) -> *mut Allocator {
+    pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).ator_tmp }
@@ -3680,7 +3704,7 @@ impl BakeContext {
 
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
-    pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
+    pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).ator_result }
@@ -3922,7 +3946,7 @@ pub(crate) fn cmp_bake_time(a: BakeTime, b: BakeTime) -> i32 {
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn bake_push_time(bc: &BakeContext, time: f64, flags: u32) -> bool {
-    let p_key: *mut BakeTime = push_fast::<BakeTime>(bc.tmp_times_mut(), 1);
+    let p_key: *mut BakeTime = push_fast::<BakeTime>(bc.tmp_times_mut_ptr(), 1);
     if p_key.is_null() {
         return false;
     }
@@ -3962,7 +3986,7 @@ pub(crate) unsafe fn bake_times(
             let a: Keyframe = *keys.add(key_ix);
             let a_time: f64 = a.time;
             ufbxi_check_err!(
-                bc.error_mut(),
+                bc.error_mut_ptr(),
                 bake_push_time(bc, a_time, key_flag),
                 "ufbxi_bake_push_time(bc, a_time, key_flag)"
             );
@@ -3979,13 +4003,13 @@ pub(crate) unsafe fn bake_times(
 
             if a.interpolation as u32 == Interpolation::ConstantPrev as u32 {
                 ufbxi_check_err!(
-                    bc.error_mut(),
+                    bc.error_mut_ptr(),
                     bake_push_time(bc, b_time, BakedKeyFlags::STEP_LEFT.raw()),
                     "ufbxi_bake_push_time(bc, b_time, UFBX_BAKED_KEY_STEP_LEFT)"
                 );
             } else if a.interpolation as u32 == Interpolation::ConstantNext as u32 {
                 ufbxi_check_err!(
-                    bc.error_mut(),
+                    bc.error_mut_ptr(),
                     bake_push_time(bc, a_time, BakedKeyFlags::STEP_RIGHT.raw()),
                     "ufbxi_bake_push_time(bc, a_time, UFBX_BAKED_KEY_STEP_RIGHT)"
                 );
@@ -4013,7 +4037,7 @@ pub(crate) unsafe fn bake_times(
                         break;
                     }
                     ufbxi_check_err!(
-                        bc.error_mut(),
+                        bc.error_mut_ptr(),
                         bake_push_time(bc, time, 0),
                         "ufbxi_bake_push_time(bc, time, 0)"
                     );
@@ -4103,11 +4127,11 @@ pub(crate) unsafe fn sort_bake_times(
     // bytes (PORTING.md "Sorting & searching": this paired grow is the
     // allocation-parity invariant).
     ufbxi_check_err!(
-        bc.error_mut(),
+        bc.error_mut_ptr(),
         grow_array::<u8>(
-            bc.ator_tmp_mut(),
-            bc.tmp_arr_mut(),
-            bc.tmp_arr_size_mut(),
+            bc.ator_tmp_mut_ptr(),
+            bc.tmp_arr_mut_ptr(),
+            bc.tmp_arr_size_mut_ptr(),
             count.wrapping_mul(size_of::<BakeTime>()),
         ),
         "ufbxi_grow_array_size((&bc->ator_tmp), sizeof(**(&bc->tmp_arr)), (&bc->tmp_arr), (&bc->tmp_arr_size), (count * sizeof(ufbxi_bake_time)))"
@@ -4128,9 +4152,9 @@ pub(crate) unsafe fn finalize_bake_times(
 ) -> Result<(), Fail> {
     if (*bc.get()).layer_weight_times.count > 0 {
         ufbxi_check_err!(
-            bc.error_mut(),
+            bc.error_mut_ptr(),
             !push_copy::<BakeTime>(
-                bc.tmp_times_mut(),
+                bc.tmp_times_mut_ptr(),
                 (*bc.get()).layer_weight_times.count,
                 (*bc.get()).layer_weight_times.data,
             )
@@ -4141,12 +4165,12 @@ pub(crate) unsafe fn finalize_bake_times(
 
     if (*bc.get()).tmp_times.num_items == 0 {
         ufbxi_check_err!(
-            bc.error_mut(),
+            bc.error_mut_ptr(),
             bake_push_time(bc, bc.time_begin(), 0),
             "ufbxi_bake_push_time(bc, bc->time_begin, 0)"
         );
         ufbxi_check_err!(
-            bc.error_mut(),
+            bc.error_mut_ptr(),
             bake_push_time(bc, bc.time_end(), 0),
             "ufbxi_bake_push_time(bc, bc->time_end, 0)"
         );
@@ -4154,8 +4178,8 @@ pub(crate) unsafe fn finalize_bake_times(
 
     let mut num_times: usize = (*bc.get()).tmp_times.num_items;
     let times: *mut BakeTime =
-        push_pop::<BakeTime>(bc.tmp_prop_mut(), bc.tmp_times_mut(), num_times);
-    ufbxi_check_err!(bc.error_mut(), !times.is_null(), "times");
+        push_pop::<BakeTime>(bc.tmp_prop_mut_ptr(), bc.tmp_times_mut_ptr(), num_times);
+    ufbxi_check_err!(bc.error_mut_ptr(), !times.is_null(), "times");
 
     sort_bake_times(bc, times, num_times)?;
 
@@ -4510,8 +4534,8 @@ pub(crate) unsafe fn bake_postprocess_vec3(
     *p_constant = constant;
 
     (*p_dst).count = src.count;
-    (*p_dst).data = push_copy::<BakedVec3>(bc.result_mut(), src.count, data);
-    ufbxi_check_err!(bc.error_mut(), !(*p_dst).data.is_null(), "p_dst->data");
+    (*p_dst).data = push_copy::<BakedVec3>(bc.result_mut_ptr(), src.count, data);
+    ufbxi_check_err!(bc.error_mut_ptr(), !(*p_dst).data.is_null(), "p_dst->data");
 
     Ok(())
 }
@@ -4656,8 +4680,8 @@ pub(crate) unsafe fn bake_postprocess_quat(
     *p_constant = constant;
 
     (*p_dst).count = src.count;
-    (*p_dst).data = push_copy::<BakedQuat>(bc.result_mut(), src.count, data);
-    ufbxi_check_err!(bc.error_mut(), !(*p_dst).data.is_null(), "p_dst->data");
+    (*p_dst).data = push_copy::<BakedQuat>(bc.result_mut_ptr(), src.count, data);
+    ufbxi_check_err!(bc.error_mut_ptr(), !(*p_dst).data.is_null(), "p_dst->data");
 
     Ok(())
 }
@@ -4691,8 +4715,8 @@ pub(crate) unsafe fn push_resampled_times(
     // C: `ufbx_baked_vec3_list keys = *p_keys;`
     let keys: List<BakedVec3> = ptr::read(p_keys);
 
-    let times: *mut BakeTime = push::<BakeTime>(bc.tmp_times_mut(), keys.count);
-    ufbxi_check_err!(bc.error_mut(), !times.is_null(), "times");
+    let times: *mut BakeTime = push::<BakeTime>(bc.tmp_times_mut_ptr(), keys.count);
+    ufbxi_check_err!(bc.error_mut_ptr(), !times.is_null(), "times");
     for i in 0..keys.count {
         let flags: BakedKeyFlags = (*keys.data.add(i)).flags;
         let mut time: f64 = (*keys.data.add(i)).time;
@@ -4944,16 +4968,16 @@ pub(crate) unsafe fn bake_node_imp(
     let mut keys_s: List<BakedVec3> = MaybeUninit::zeroed().assume_init();
 
     keys_t.count = times_t.count;
-    keys_t.data = push::<BakedVec3>(bc.tmp_prop_mut(), keys_t.count);
-    ufbxi_check_err!(bc.error_mut(), !keys_t.data.is_null(), "keys_t.data");
+    keys_t.data = push::<BakedVec3>(bc.tmp_prop_mut_ptr(), keys_t.count);
+    ufbxi_check_err!(bc.error_mut_ptr(), !keys_t.data.is_null(), "keys_t.data");
 
     keys_r.count = times_r.count;
-    keys_r.data = push::<BakedQuat>(bc.tmp_prop_mut(), keys_r.count);
-    ufbxi_check_err!(bc.error_mut(), !keys_r.data.is_null(), "keys_r.data");
+    keys_r.data = push::<BakedQuat>(bc.tmp_prop_mut_ptr(), keys_r.count);
+    ufbxi_check_err!(bc.error_mut_ptr(), !keys_r.data.is_null(), "keys_r.data");
 
     keys_s.count = times_s.count;
-    keys_s.data = push::<BakedVec3>(bc.tmp_prop_mut(), keys_s.count);
-    ufbxi_check_err!(bc.error_mut(), !keys_s.data.is_null(), "keys_s.data");
+    keys_s.data = push::<BakedVec3>(bc.tmp_prop_mut_ptr(), keys_s.count);
+    ufbxi_check_err!(bc.error_mut_ptr(), !keys_s.data.is_null(), "keys_s.data");
 
     let keys_t_data: *mut BakedVec3 = keys_t.data as *mut BakedVec3;
     let keys_r_data: *mut BakedQuat = keys_r.data as *mut BakedQuat;
@@ -5064,8 +5088,8 @@ pub(crate) unsafe fn bake_node_imp(
         }
     }
 
-    let baked_node: *mut BakedNode = push_zero::<BakedNode>(bc.tmp_nodes_mut(), 1);
-    ufbxi_check_err!(bc.error_mut(), !baked_node.is_null(), "baked_node");
+    let baked_node: *mut BakedNode = push_zero::<BakedNode>(bc.tmp_nodes_mut_ptr(), 1);
+    ufbxi_check_err!(bc.error_mut_ptr(), !baked_node.is_null(), "baked_node");
 
     (*baked_node).element_id = (*node).element.element_id;
     (*baked_node).typed_id = (*node).element.typed_id;
@@ -5092,7 +5116,7 @@ pub(crate) unsafe fn bake_node_imp(
         .baked_nodes
         .add((*node).element.typed_id as usize) = baked_node;
 
-    buf_clear(bc.tmp_prop_mut());
+    buf_clear(bc.tmp_prop_mut_ptr());
 
     // If this node is a scale helper, make sure to bake its siblings and
     // potentially their scale helpers if they are not a part of the animation.
@@ -5115,9 +5139,9 @@ pub(crate) unsafe fn bake_node_imp(
                     .nodes_to_bake
                     .add((*child).element.typed_id as usize) = true;
                 ufbxi_check_err!(
-                    bc.error_mut(),
+                    bc.error_mut_ptr(),
                     !push_copy::<u32>(
-                        bc.tmp_bake_stack_mut(),
+                        bc.tmp_bake_stack_mut_ptr(),
                         1,
                         ptr::addr_of!((*child).element.element_id),
                     )
@@ -5153,9 +5177,9 @@ pub(crate) unsafe fn bake_node_imp(
                         .nodes_to_bake
                         .add((*child_scale_helper).element.typed_id as usize) = true;
                     ufbxi_check_err!(
-                        bc.error_mut(),
+                        bc.error_mut_ptr(),
                         !push_copy::<u32>(
-                            bc.tmp_bake_stack_mut(),
+                            bc.tmp_bake_stack_mut_ptr(),
                             1,
                             ptr::addr_of!((*child_scale_helper).element.element_id),
                         )
@@ -5187,7 +5211,7 @@ pub(crate) unsafe fn bake_node(
     // until all dependencies are baked.
     while (*bc.get()).tmp_bake_stack.num_items > 0 {
         let mut child_id: u32 = 0;
-        pop::<u32>(bc.tmp_bake_stack_mut(), 1, ptr::addr_of_mut!(child_id));
+        pop::<u32>(bc.tmp_bake_stack_mut_ptr(), 1, ptr::addr_of_mut!(child_id));
         bake_node_imp(bc, child_id, ptr::null_mut(), 0)?;
     }
 
@@ -5220,8 +5244,8 @@ pub(crate) unsafe fn bake_anim_prop(
     // C: `ufbx_baked_vec3_list keys;`
     let mut keys: List<BakedVec3> = MaybeUninit::zeroed().assume_init();
     keys.count = times.count;
-    keys.data = push::<BakedVec3>(bc.tmp_prop_mut(), keys.count);
-    ufbxi_check_err!(bc.error_mut(), !keys.data.is_null(), "keys.data");
+    keys.data = push::<BakedVec3>(bc.tmp_prop_mut_ptr(), keys.count);
+    ufbxi_check_err!(bc.error_mut_ptr(), !keys.data.is_null(), "keys.data");
     let keys_data: *mut BakedVec3 = keys.data as *mut BakedVec3;
 
     // C: `ufbx_string name; name.data = prop_name; name.length = strlen(prop_name);`
@@ -5244,14 +5268,17 @@ pub(crate) unsafe fn bake_anim_prop(
         (*keys_data.add(i)).flags = BakedKeyFlags::from_raw(bake_time.flags);
     }
 
-    let baked_prop: *mut BakedProp = push_zero::<BakedProp>(bc.tmp_props_mut(), 1);
-    ufbxi_check_err!(bc.error_mut(), !baked_prop.is_null(), "baked_prop");
+    let baked_prop: *mut BakedProp = push_zero::<BakedProp>(bc.tmp_props_mut_ptr(), 1);
+    ufbxi_check_err!(bc.error_mut_ptr(), !baked_prop.is_null(), "baked_prop");
 
     (*baked_prop).name.length = strlen(prop_name);
-    (*baked_prop).name.data =
-        push_copy::<u8>(bc.result_mut(), (*baked_prop).name.length + 1, prop_name);
+    (*baked_prop).name.data = push_copy::<u8>(
+        bc.result_mut_ptr(),
+        (*baked_prop).name.length + 1,
+        prop_name,
+    );
     ufbxi_check_err!(
-        bc.error_mut(),
+        bc.error_mut_ptr(),
         !(*baked_prop).name.data.is_null(),
         "baked_prop->name.data"
     );
@@ -5263,7 +5290,7 @@ pub(crate) unsafe fn bake_anim_prop(
         keys,
     )?;
 
-    buf_clear(bc.tmp_prop_mut());
+    buf_clear(bc.tmp_prop_mut_ptr());
 
     Ok(())
 }
@@ -5312,15 +5339,15 @@ pub(crate) unsafe fn bake_element(
 
     let num_props: usize = (*bc.get()).tmp_props.num_items;
     if num_props > 0 {
-        let baked_elem: *mut BakedElement = push_zero::<BakedElement>(bc.tmp_elements_mut(), 1);
-        ufbxi_check_err!(bc.error_mut(), !baked_elem.is_null(), "baked_elem");
+        let baked_elem: *mut BakedElement = push_zero::<BakedElement>(bc.tmp_elements_mut_ptr(), 1);
+        ufbxi_check_err!(bc.error_mut_ptr(), !baked_elem.is_null(), "baked_elem");
 
         (*baked_elem).element_id = (*element).element_id;
         (*baked_elem).props.count = num_props;
         (*baked_elem).props.data =
-            push_pop::<BakedProp>(bc.result_mut(), bc.tmp_props_mut(), num_props);
+            push_pop::<BakedProp>(bc.result_mut_ptr(), bc.tmp_props_mut_ptr(), num_props);
         ufbxi_check_err!(
-            bc.error_mut(),
+            bc.error_mut_ptr(),
             !(*baked_elem).props.data.is_null(),
             "baked_elem->props.data"
         );
@@ -5367,17 +5394,17 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
 
     if !(*bc.get()).opts.skip_node_transforms {
         bc.set_baked_nodes(push_zero::<*mut BakedNode>(
-            bc.result_mut(),
+            bc.result_mut_ptr(),
             (*scene).nodes.count,
         ));
         ufbxi_check_err!(
-            bc.error_mut(),
+            bc.error_mut_ptr(),
             !bc.baked_nodes().is_null(),
             "bc->baked_nodes"
         );
-        bc.set_nodes_to_bake(push_zero::<bool>(bc.result_mut(), (*scene).nodes.count));
+        bc.set_nodes_to_bake(push_zero::<bool>(bc.result_mut_ptr(), (*scene).nodes.count));
         ufbxi_check_err!(
-            bc.error_mut(),
+            bc.error_mut_ptr(),
             !bc.nodes_to_bake().is_null(),
             "bc->nodes_to_bake"
         );
@@ -5393,8 +5420,8 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         let mut anim_prop: *mut AnimProp = (*layer).anim_props.data as *mut AnimProp;
         let anim_prop_end: *mut AnimProp = add_ptr(anim_prop, (*layer).anim_props.count);
         while anim_prop != anim_prop_end {
-            let prop: *mut BakeProp = push::<BakeProp>(bc.tmp_bake_props_mut(), 1);
-            ufbxi_check_err!(bc.error_mut(), !prop.is_null(), "prop");
+            let prop: *mut BakeProp = push::<BakeProp>(bc.tmp_bake_props_mut_ptr(), 1);
+            ufbxi_check_err!(bc.error_mut_ptr(), !prop.is_null(), "prop");
 
             let element: *mut Element = ref_ptr(ptr::addr_of!((*anim_prop).element));
 
@@ -5420,8 +5447,8 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
 
     let num_props: usize = (*bc.get()).tmp_bake_props.num_items;
     let props: *mut BakeProp =
-        push_pop::<BakeProp>(bc.tmp_mut(), bc.tmp_bake_props_mut(), num_props);
-    ufbxi_check_err!(bc.error_mut(), !props.is_null(), "props");
+        push_pop::<BakeProp>(bc.tmp_mut_ptr(), bc.tmp_bake_props_mut_ptr(), num_props);
+    ufbxi_check_err!(bc.error_mut_ptr(), !props.is_null(), "props");
 
     unstable_sort(
         props as *mut c_void,
@@ -5458,14 +5485,14 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
 
             (*bc.get()).layer_weight_times.count = weight_times.count;
             (*bc.get()).layer_weight_times.data =
-                push_copy::<BakeTime>(bc.tmp_mut(), weight_times.count, weight_times.data);
+                push_copy::<BakeTime>(bc.tmp_mut_ptr(), weight_times.count, weight_times.data);
             ufbxi_check_err!(
-                bc.error_mut(),
+                bc.error_mut_ptr(),
                 !(*bc.get()).layer_weight_times.data.is_null(),
                 "bc->layer_weight_times.data"
             );
 
-            buf_clear(bc.tmp_prop_mut());
+            buf_clear(bc.tmp_prop_mut_ptr());
         }
     }
 
@@ -5485,18 +5512,18 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
 
     (*bc.get()).bake.nodes.count = num_nodes;
     (*bc.get()).bake.nodes.data =
-        push_pop::<BakedNode>(bc.result_mut(), bc.tmp_nodes_mut(), num_nodes);
+        push_pop::<BakedNode>(bc.result_mut_ptr(), bc.tmp_nodes_mut_ptr(), num_nodes);
     ufbxi_check_err!(
-        bc.error_mut(),
+        bc.error_mut_ptr(),
         !(*bc.get()).bake.nodes.data.is_null(),
         "bc->bake.nodes.data"
     );
 
     (*bc.get()).bake.elements.count = num_elements;
     (*bc.get()).bake.elements.data =
-        push_pop::<BakedElement>(bc.result_mut(), bc.tmp_elements_mut(), num_elements);
+        push_pop::<BakedElement>(bc.result_mut_ptr(), bc.tmp_elements_mut_ptr(), num_elements);
     ufbxi_check_err!(
-        bc.error_mut(),
+        bc.error_mut_ptr(),
         !(*bc.get()).bake.elements.data.is_null(),
         "bc->bake.elements.data"
     );
@@ -5556,34 +5583,34 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     }
 
     init_ator(
-        bc.error_mut(),
-        bc.ator_tmp_mut(),
+        bc.error_mut_ptr(),
+        bc.ator_tmp_mut_ptr(),
         ptr::addr_of!((*bc.get()).opts.temp_allocator),
         b"temp\0".as_ptr(),
     );
     init_ator(
-        bc.error_mut(),
-        bc.ator_result_mut(),
+        bc.error_mut_ptr(),
+        bc.ator_result_mut_ptr(),
         ptr::addr_of!((*bc.get()).opts.result_allocator),
         b"result\0".as_ptr(),
     );
 
     (*bc.get()).result.unordered = true;
-    (*bc.get()).result.ator = bc.ator_result_mut();
+    (*bc.get()).result.ator = bc.ator_result_mut_ptr();
 
     (*bc.get()).tmp.unordered = true;
-    (*bc.get()).tmp.ator = bc.ator_tmp_mut();
+    (*bc.get()).tmp.ator = bc.ator_tmp_mut_ptr();
 
-    (*bc.get()).tmp_prop.ator = bc.ator_tmp_mut();
+    (*bc.get()).tmp_prop.ator = bc.ator_tmp_mut_ptr();
     (*bc.get()).tmp_prop.unordered = true;
     (*bc.get()).tmp_prop.clearable = true;
 
-    (*bc.get()).tmp_times.ator = bc.ator_tmp_mut();
-    (*bc.get()).tmp_bake_props.ator = bc.ator_tmp_mut();
-    (*bc.get()).tmp_nodes.ator = bc.ator_tmp_mut();
-    (*bc.get()).tmp_elements.ator = bc.ator_tmp_mut();
-    (*bc.get()).tmp_props.ator = bc.ator_tmp_mut();
-    (*bc.get()).tmp_bake_stack.ator = bc.ator_tmp_mut();
+    (*bc.get()).tmp_times.ator = bc.ator_tmp_mut_ptr();
+    (*bc.get()).tmp_bake_props.ator = bc.ator_tmp_mut_ptr();
+    (*bc.get()).tmp_nodes.ator = bc.ator_tmp_mut_ptr();
+    (*bc.get()).tmp_elements.ator = bc.ator_tmp_mut_ptr();
+    (*bc.get()).tmp_props.ator = bc.ator_tmp_mut_ptr();
+    (*bc.get()).tmp_bake_stack.ator = bc.ator_tmp_mut_ptr();
 
     bc.set_anim(anim);
     if (*anim).time_begin < (*anim).time_end {
@@ -5593,8 +5620,8 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     bc.set_time_min(math::INFINITY);
     bc.set_time_max(-math::INFINITY);
 
-    bc.set_imp(push::<BakedAnimImp>(bc.result_mut(), 1));
-    ufbxi_check_err!(bc.error_mut(), !bc.imp().is_null(), "bc->imp");
+    bc.set_imp(push::<BakedAnimImp>(bc.result_mut_ptr(), 1));
+    ufbxi_check_err!(bc.error_mut_ptr(), !bc.imp().is_null(), "bc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&BakedAnim` pointer via exposed provenance.
