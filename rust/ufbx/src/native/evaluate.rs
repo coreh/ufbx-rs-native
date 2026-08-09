@@ -3530,6 +3530,14 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `error` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn error_mut(&self) -> *mut Error {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).error }
+    }
+
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_tmp_mut(&self) -> *mut Allocator {
@@ -3822,7 +3830,7 @@ pub(crate) unsafe fn bake_times(
             let a: Keyframe = *keys.add(key_ix);
             let a_time: f64 = a.time;
             ufbxi_check_err!(
-                &mut (*bc.get()).error,
+                bc.error_mut(),
                 bake_push_time(bc, a_time, key_flag),
                 "ufbxi_bake_push_time(bc, a_time, key_flag)"
             );
@@ -3839,13 +3847,13 @@ pub(crate) unsafe fn bake_times(
 
             if a.interpolation as u32 == Interpolation::ConstantPrev as u32 {
                 ufbxi_check_err!(
-                    &mut (*bc.get()).error,
+                    bc.error_mut(),
                     bake_push_time(bc, b_time, BakedKeyFlags::STEP_LEFT.raw()),
                     "ufbxi_bake_push_time(bc, b_time, UFBX_BAKED_KEY_STEP_LEFT)"
                 );
             } else if a.interpolation as u32 == Interpolation::ConstantNext as u32 {
                 ufbxi_check_err!(
-                    &mut (*bc.get()).error,
+                    bc.error_mut(),
                     bake_push_time(bc, a_time, BakedKeyFlags::STEP_RIGHT.raw()),
                     "ufbxi_bake_push_time(bc, a_time, UFBX_BAKED_KEY_STEP_RIGHT)"
                 );
@@ -3873,7 +3881,7 @@ pub(crate) unsafe fn bake_times(
                         break;
                     }
                     ufbxi_check_err!(
-                        &mut (*bc.get()).error,
+                        bc.error_mut(),
                         bake_push_time(bc, time, 0),
                         "ufbxi_bake_push_time(bc, time, 0)"
                     );
@@ -3963,7 +3971,7 @@ pub(crate) unsafe fn sort_bake_times(
     // bytes (PORTING.md "Sorting & searching": this paired grow is the
     // allocation-parity invariant).
     ufbxi_check_err!(
-        &mut (*bc.get()).error,
+        bc.error_mut(),
         grow_array::<u8>(
             bc.ator_tmp_mut(),
             ptr::addr_of_mut!((*bc.get()).tmp_arr),
@@ -3988,7 +3996,7 @@ pub(crate) unsafe fn finalize_bake_times(
 ) -> Result<(), Fail> {
     if (*bc.get()).layer_weight_times.count > 0 {
         ufbxi_check_err!(
-            &mut (*bc.get()).error,
+            bc.error_mut(),
             !push_copy::<BakeTime>(
                 ptr::addr_of_mut!((*bc.get()).tmp_times),
                 (*bc.get()).layer_weight_times.count,
@@ -4001,12 +4009,12 @@ pub(crate) unsafe fn finalize_bake_times(
 
     if (*bc.get()).tmp_times.num_items == 0 {
         ufbxi_check_err!(
-            &mut (*bc.get()).error,
+            bc.error_mut(),
             bake_push_time(bc, bc.time_begin(), 0),
             "ufbxi_bake_push_time(bc, bc->time_begin, 0)"
         );
         ufbxi_check_err!(
-            &mut (*bc.get()).error,
+            bc.error_mut(),
             bake_push_time(bc, bc.time_end(), 0),
             "ufbxi_bake_push_time(bc, bc->time_end, 0)"
         );
@@ -4018,7 +4026,7 @@ pub(crate) unsafe fn finalize_bake_times(
         ptr::addr_of_mut!((*bc.get()).tmp_times),
         num_times,
     );
-    ufbxi_check_err!(&mut (*bc.get()).error, !times.is_null(), "times");
+    ufbxi_check_err!(bc.error_mut(), !times.is_null(), "times");
 
     sort_bake_times(bc, times, num_times)?;
 
@@ -4374,11 +4382,7 @@ pub(crate) unsafe fn bake_postprocess_vec3(
 
     (*p_dst).count = src.count;
     (*p_dst).data = push_copy::<BakedVec3>(ptr::addr_of_mut!((*bc.get()).result), src.count, data);
-    ufbxi_check_err!(
-        &mut (*bc.get()).error,
-        !(*p_dst).data.is_null(),
-        "p_dst->data"
-    );
+    ufbxi_check_err!(bc.error_mut(), !(*p_dst).data.is_null(), "p_dst->data");
 
     Ok(())
 }
@@ -4524,11 +4528,7 @@ pub(crate) unsafe fn bake_postprocess_quat(
 
     (*p_dst).count = src.count;
     (*p_dst).data = push_copy::<BakedQuat>(ptr::addr_of_mut!((*bc.get()).result), src.count, data);
-    ufbxi_check_err!(
-        &mut (*bc.get()).error,
-        !(*p_dst).data.is_null(),
-        "p_dst->data"
-    );
+    ufbxi_check_err!(bc.error_mut(), !(*p_dst).data.is_null(), "p_dst->data");
 
     Ok(())
 }
@@ -4564,7 +4564,7 @@ pub(crate) unsafe fn push_resampled_times(
 
     let times: *mut BakeTime =
         push::<BakeTime>(ptr::addr_of_mut!((*bc.get()).tmp_times), keys.count);
-    ufbxi_check_err!(&mut (*bc.get()).error, !times.is_null(), "times");
+    ufbxi_check_err!(bc.error_mut(), !times.is_null(), "times");
     for i in 0..keys.count {
         let flags: BakedKeyFlags = (*keys.data.add(i)).flags;
         let mut time: f64 = (*keys.data.add(i)).time;
@@ -4817,27 +4817,15 @@ pub(crate) unsafe fn bake_node_imp(
 
     keys_t.count = times_t.count;
     keys_t.data = push::<BakedVec3>(ptr::addr_of_mut!((*bc.get()).tmp_prop), keys_t.count);
-    ufbxi_check_err!(
-        &mut (*bc.get()).error,
-        !keys_t.data.is_null(),
-        "keys_t.data"
-    );
+    ufbxi_check_err!(bc.error_mut(), !keys_t.data.is_null(), "keys_t.data");
 
     keys_r.count = times_r.count;
     keys_r.data = push::<BakedQuat>(ptr::addr_of_mut!((*bc.get()).tmp_prop), keys_r.count);
-    ufbxi_check_err!(
-        &mut (*bc.get()).error,
-        !keys_r.data.is_null(),
-        "keys_r.data"
-    );
+    ufbxi_check_err!(bc.error_mut(), !keys_r.data.is_null(), "keys_r.data");
 
     keys_s.count = times_s.count;
     keys_s.data = push::<BakedVec3>(ptr::addr_of_mut!((*bc.get()).tmp_prop), keys_s.count);
-    ufbxi_check_err!(
-        &mut (*bc.get()).error,
-        !keys_s.data.is_null(),
-        "keys_s.data"
-    );
+    ufbxi_check_err!(bc.error_mut(), !keys_s.data.is_null(), "keys_s.data");
 
     let keys_t_data: *mut BakedVec3 = keys_t.data as *mut BakedVec3;
     let keys_r_data: *mut BakedQuat = keys_r.data as *mut BakedQuat;
@@ -4950,7 +4938,7 @@ pub(crate) unsafe fn bake_node_imp(
 
     let baked_node: *mut BakedNode =
         push_zero::<BakedNode>(ptr::addr_of_mut!((*bc.get()).tmp_nodes), 1);
-    ufbxi_check_err!(&mut (*bc.get()).error, !baked_node.is_null(), "baked_node");
+    ufbxi_check_err!(bc.error_mut(), !baked_node.is_null(), "baked_node");
 
     (*baked_node).element_id = (*node).element.element_id;
     (*baked_node).typed_id = (*node).element.typed_id;
@@ -5000,7 +4988,7 @@ pub(crate) unsafe fn bake_node_imp(
                     .nodes_to_bake
                     .add((*child).element.typed_id as usize) = true;
                 ufbxi_check_err!(
-                    &mut (*bc.get()).error,
+                    bc.error_mut(),
                     !push_copy::<u32>(
                         ptr::addr_of_mut!((*bc.get()).tmp_bake_stack),
                         1,
@@ -5038,7 +5026,7 @@ pub(crate) unsafe fn bake_node_imp(
                         .nodes_to_bake
                         .add((*child_scale_helper).element.typed_id as usize) = true;
                     ufbxi_check_err!(
-                        &mut (*bc.get()).error,
+                        bc.error_mut(),
                         !push_copy::<u32>(
                             ptr::addr_of_mut!((*bc.get()).tmp_bake_stack),
                             1,
@@ -5110,7 +5098,7 @@ pub(crate) unsafe fn bake_anim_prop(
     let mut keys: List<BakedVec3> = MaybeUninit::zeroed().assume_init();
     keys.count = times.count;
     keys.data = push::<BakedVec3>(ptr::addr_of_mut!((*bc.get()).tmp_prop), keys.count);
-    ufbxi_check_err!(&mut (*bc.get()).error, !keys.data.is_null(), "keys.data");
+    ufbxi_check_err!(bc.error_mut(), !keys.data.is_null(), "keys.data");
     let keys_data: *mut BakedVec3 = keys.data as *mut BakedVec3;
 
     // C: `ufbx_string name; name.data = prop_name; name.length = strlen(prop_name);`
@@ -5135,7 +5123,7 @@ pub(crate) unsafe fn bake_anim_prop(
 
     let baked_prop: *mut BakedProp =
         push_zero::<BakedProp>(ptr::addr_of_mut!((*bc.get()).tmp_props), 1);
-    ufbxi_check_err!(&mut (*bc.get()).error, !baked_prop.is_null(), "baked_prop");
+    ufbxi_check_err!(bc.error_mut(), !baked_prop.is_null(), "baked_prop");
 
     (*baked_prop).name.length = strlen(prop_name);
     (*baked_prop).name.data = push_copy::<u8>(
@@ -5144,7 +5132,7 @@ pub(crate) unsafe fn bake_anim_prop(
         prop_name,
     );
     ufbxi_check_err!(
-        &mut (*bc.get()).error,
+        bc.error_mut(),
         !(*baked_prop).name.data.is_null(),
         "baked_prop->name.data"
     );
@@ -5207,7 +5195,7 @@ pub(crate) unsafe fn bake_element(
     if num_props > 0 {
         let baked_elem: *mut BakedElement =
             push_zero::<BakedElement>(ptr::addr_of_mut!((*bc.get()).tmp_elements), 1);
-        ufbxi_check_err!(&mut (*bc.get()).error, !baked_elem.is_null(), "baked_elem");
+        ufbxi_check_err!(bc.error_mut(), !baked_elem.is_null(), "baked_elem");
 
         (*baked_elem).element_id = (*element).element_id;
         (*baked_elem).props.count = num_props;
@@ -5217,7 +5205,7 @@ pub(crate) unsafe fn bake_element(
             num_props,
         );
         ufbxi_check_err!(
-            &mut (*bc.get()).error,
+            bc.error_mut(),
             !(*baked_elem).props.data.is_null(),
             "baked_elem->props.data"
         );
@@ -5268,7 +5256,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
             (*scene).nodes.count,
         ));
         ufbxi_check_err!(
-            &mut (*bc.get()).error,
+            bc.error_mut(),
             !bc.baked_nodes().is_null(),
             "bc->baked_nodes"
         );
@@ -5277,7 +5265,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
             (*scene).nodes.count,
         ));
         ufbxi_check_err!(
-            &mut (*bc.get()).error,
+            bc.error_mut(),
             !bc.nodes_to_bake().is_null(),
             "bc->nodes_to_bake"
         );
@@ -5295,7 +5283,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         while anim_prop != anim_prop_end {
             let prop: *mut BakeProp =
                 push::<BakeProp>(ptr::addr_of_mut!((*bc.get()).tmp_bake_props), 1);
-            ufbxi_check_err!(&mut (*bc.get()).error, !prop.is_null(), "prop");
+            ufbxi_check_err!(bc.error_mut(), !prop.is_null(), "prop");
 
             let element: *mut Element = ref_ptr(ptr::addr_of!((*anim_prop).element));
 
@@ -5325,7 +5313,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         ptr::addr_of_mut!((*bc.get()).tmp_bake_props),
         num_props,
     );
-    ufbxi_check_err!(&mut (*bc.get()).error, !props.is_null(), "props");
+    ufbxi_check_err!(bc.error_mut(), !props.is_null(), "props");
 
     unstable_sort(
         props as *mut c_void,
@@ -5367,7 +5355,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
                 weight_times.data,
             );
             ufbxi_check_err!(
-                &mut (*bc.get()).error,
+                bc.error_mut(),
                 !(*bc.get()).layer_weight_times.data.is_null(),
                 "bc->layer_weight_times.data"
             );
@@ -5397,7 +5385,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         num_nodes,
     );
     ufbxi_check_err!(
-        &mut (*bc.get()).error,
+        bc.error_mut(),
         !(*bc.get()).bake.nodes.data.is_null(),
         "bc->bake.nodes.data"
     );
@@ -5409,7 +5397,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         num_elements,
     );
     ufbxi_check_err!(
-        &mut (*bc.get()).error,
+        bc.error_mut(),
         !(*bc.get()).bake.elements.data.is_null(),
         "bc->bake.elements.data"
     );
@@ -5469,13 +5457,13 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     }
 
     init_ator(
-        ptr::addr_of_mut!((*bc.get()).error),
+        bc.error_mut(),
         bc.ator_tmp_mut(),
         ptr::addr_of!((*bc.get()).opts.temp_allocator),
         b"temp\0".as_ptr(),
     );
     init_ator(
-        ptr::addr_of_mut!((*bc.get()).error),
+        bc.error_mut(),
         bc.ator_result_mut(),
         ptr::addr_of!((*bc.get()).opts.result_allocator),
         b"result\0".as_ptr(),
@@ -5510,7 +5498,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
         ptr::addr_of_mut!((*bc.get()).result),
         1,
     ));
-    ufbxi_check_err!(&mut (*bc.get()).error, !bc.imp().is_null(), "bc->imp");
+    ufbxi_check_err!(bc.error_mut(), !bc.imp().is_null(), "bc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&BakedAnim` pointer via exposed provenance.
