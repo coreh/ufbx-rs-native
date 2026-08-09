@@ -813,7 +813,7 @@ pub(crate) unsafe fn obj_parse_indices(
     ufbxi_check!(uc, !p_face_mat.is_null(), "p_face_mat");
     *p_face_mat = uc.obj().face_material();
 
-    if (*uc.obj().get()).has_face_smoothing {
+    if uc.obj().has_face_smoothing() {
         let p_face_smooth: *mut bool =
             push_fast::<bool>(&mut (*uc.obj().get()).tmp_face_smoothing, 1);
         ufbxi_check!(uc, !p_face_smooth.is_null(), "p_face_smooth");
@@ -1306,7 +1306,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 "fbx_mesh->face_material.data"
             );
 
-            if (*uc.obj().get()).has_face_smoothing {
+            if uc.obj().has_face_smoothing() {
                 (*fbx_mesh).face_smoothing.count = num_faces;
                 (*fbx_mesh).face_smoothing.data = push_pop::<bool>(
                     uc.result_mut_ptr(),
@@ -1521,7 +1521,7 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             obj_parse_multi_indices(uc, 2)?;
         } else if key == obj_cmd1(b's') {
             if num_tokens >= 2 {
-                (*uc.obj().get()).has_face_smoothing = true;
+                uc.obj().set_has_face_smoothing(true);
                 uc.obj().set_face_smoothing(!str_equal(
                     *(*uc.obj().get()).tokens.add(1),
                     str_c(b"off\0".as_ptr()),

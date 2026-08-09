@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn has_face_smoothing(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).has_face_smoothing }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_has_face_smoothing(&self, has_face_smoothing: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).has_face_smoothing = has_face_smoothing;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn has_face_group(&self) -> bool {
         // SAFETY: reading a `bool` we only ever store valid bools into.
         unsafe { (*self.get()).has_face_group }
