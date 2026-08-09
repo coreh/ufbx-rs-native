@@ -515,6 +515,12 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn mrgb_vertex_count(&self) -> usize {
+        // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).mrgb_vertex_count }
+    }
+
+    #[inline(always)]
     pub(crate) fn mesh(&self) -> *mut ObjMesh {
         // SAFETY: reading a scalar; all bit patterns of `*mut ObjMesh` are valid.
         unsafe { (*self.get()).mesh }

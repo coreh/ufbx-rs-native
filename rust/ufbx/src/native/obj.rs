@@ -886,8 +886,8 @@ pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
         let num_color: usize = uc.obj().vertex_count_at(ObjAttrib::Color as usize).get();
 
         // Pop standard vertex colors and replace them with MRGB colors
-        if num_color > (*uc.obj().get()).mrgb_vertex_count {
-            let num_pop: usize = num_color - (*uc.obj().get()).mrgb_vertex_count;
+        if num_color > uc.obj().mrgb_vertex_count() {
+            let num_pop: usize = num_color - uc.obj().mrgb_vertex_count();
             pop::<bool>(
                 &mut (*uc.obj().get()).tmp_color_valid,
                 num_pop,
