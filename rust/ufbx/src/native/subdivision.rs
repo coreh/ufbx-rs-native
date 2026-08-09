@@ -170,6 +170,21 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `tmp_vertex_weights` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn tmp_vertex_weights(&self) -> *mut Real {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut Real` are valid.
+        unsafe { (*self.get()).tmp_vertex_weights }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_tmp_vertex_weights(&self, tmp_vertex_weights: *mut Real) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).tmp_vertex_weights = tmp_vertex_weights;
+        }
+    }
+
     // `inputs_cap` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn inputs_cap(&self) -> usize {
@@ -357,7 +372,7 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
 ) -> i32 {
     let sc: &SubdivideContext = &*(user as *const SubdivideContext);
 
-    let vertex_weights: *mut Real = (*sc.get()).tmp_vertex_weights;
+    let vertex_weights: *mut Real = sc.tmp_vertex_weights();
     let tmp_weights: *mut SubdivisionWeight = (*sc.get()).tmp_weights;
     let mut num_weights: usize = 0;
 
@@ -1675,12 +1690,14 @@ pub(crate) unsafe fn subdivide_mesh_level(
             max_weights = max_sz(max_weights, (*skin).clusters.count);
         }
 
-        (*sc.get()).tmp_vertex_weights =
-            push_zero::<Real>(&mut (*sc.get()).tmp, (*mesh).num_vertices);
+        sc.set_tmp_vertex_weights(push_zero::<Real>(
+            &mut (*sc.get()).tmp,
+            (*mesh).num_vertices,
+        ));
         (*sc.get()).tmp_weights = push::<SubdivisionWeight>(&mut (*sc.get()).tmp, max_weights);
         ufbxi_check_err!(
             &mut (*sc.get()).error,
-            !(*sc.get()).tmp_vertex_weights.is_null() && !(*sc.get()).tmp_weights.is_null(),
+            !sc.tmp_vertex_weights().is_null() && !(*sc.get()).tmp_weights.is_null(),
             "sc->tmp_vertex_weights && sc->tmp_weights"
         );
 
