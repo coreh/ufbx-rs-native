@@ -148,7 +148,7 @@ pub(crate) unsafe fn obj_pop_props(
 pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
     let mesh: *mut ObjMesh = push_zero::<ObjMesh>(&mut (*uc.obj().get()).tmp_meshes, 1);
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
-    (*uc.obj().get()).mesh = mesh;
+    uc.obj().set_mesh(mesh);
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS; i++)`
     for i in 0..OBJ_NUM_ATTRIBS {
@@ -214,14 +214,14 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
-    if (*uc.obj().get()).mesh.is_null() {
+    if uc.obj().mesh().is_null() {
         return Ok(());
     }
 
     let num_props: usize = (*uc.obj().get()).tmp_props.num_items;
     obj_pop_props(
         uc,
-        &mut (*(*(*uc.obj().get()).mesh).fbx_mesh).element.props.props,
+        &mut (*(*uc.obj().mesh()).fbx_mesh).element.props.props,
         num_props,
     )?;
 
@@ -233,8 +233,8 @@ pub(crate) unsafe fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
     );
     ufbxi_check!(uc, !groups.is_null(), "groups");
 
-    (*(*(*uc.obj().get()).mesh).fbx_mesh).face_groups.data = groups;
-    (*(*(*uc.obj().get()).mesh).fbx_mesh).face_groups.count = num_groups;
+    (*(*uc.obj().mesh()).fbx_mesh).face_groups.data = groups;
+    (*(*uc.obj().mesh()).fbx_mesh).face_groups.count = num_groups;
 
     Ok(())
 }
@@ -641,7 +641,7 @@ pub(crate) unsafe fn obj_parse_index(
     (*fast_indices).indices = (*fast_indices).indices.add(1);
     (*fast_indices).num_left -= 1;
 
-    let mesh: *mut ObjMesh = (*uc.obj().get()).mesh;
+    let mesh: *mut ObjMesh = uc.obj().mesh();
 
     if index != u64::MAX {
         let range: *mut ObjIndexRange = &mut (*mesh).vertex_range[attrib as usize];
@@ -683,11 +683,11 @@ pub(crate) unsafe fn obj_parse_indices(
         uc.obj().set_face_group_dirty(true);
     }
 
-    if (*uc.obj().get()).mesh.is_null() || flush_mesh {
+    if uc.obj().mesh().is_null() || flush_mesh {
         obj_flush_mesh(uc)?;
         obj_push_mesh(uc)?;
     }
-    let mesh: *mut ObjMesh = (*uc.obj().get()).mesh;
+    let mesh: *mut ObjMesh = uc.obj().mesh();
 
     if uc.obj().material_dirty() {
         if (*uc.obj().get()).usemtl_fbx_id != 0 {
@@ -934,7 +934,7 @@ pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
             &(*uc.obj().get()).line,
             b"\\s*#\\s*File exported by ZBrush.*\0".as_ptr(),
         ) {
-            if (*uc.obj().get()).mesh.is_null() {
+            if uc.obj().mesh().is_null() {
                 uc.opts_view().set_obj_merge_groups(true);
             }
         }
@@ -1810,7 +1810,7 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Resul
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
-    (*uc.obj().get()).mesh = core::ptr::null_mut();
+    uc.obj().set_mesh(core::ptr::null_mut());
     (*uc.obj().get()).usemtl_fbx_id = 0;
 
     while !(*uc.obj().get()).eof {

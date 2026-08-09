@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn mesh(&self) -> *mut ObjMesh {
+        // SAFETY: reading a scalar; all bit patterns of `*mut ObjMesh` are valid.
+        unsafe { (*self.get()).mesh }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_mesh(&self, mesh: *mut ObjMesh) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).mesh = mesh;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn material_dirty(&self) -> bool {
         // SAFETY: reading a `bool` we only ever store valid bools into.
         unsafe { (*self.get()).material_dirty }
