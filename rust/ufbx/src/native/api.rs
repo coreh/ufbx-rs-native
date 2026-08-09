@@ -1886,12 +1886,8 @@ pub(crate) unsafe fn bake_anim(
     buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_props));
     buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_bake_stack));
     // C: `ufbxi_free(&(*bc.get()).ator_tmp, char, bc.tmp_arr(), bc.tmp_arr_size());`
-    free::<u8>(
-        core::ptr::addr_of_mut!((*bc.get()).ator_tmp),
-        bc.tmp_arr(),
-        bc.tmp_arr_size(),
-    );
-    free_ator(core::ptr::addr_of_mut!((*bc.get()).ator_tmp));
+    free::<u8>(bc.ator_tmp_mut(), bc.tmp_arr(), bc.tmp_arr_size());
+    free_ator(bc.ator_tmp_mut());
 
     if ok.is_ok() {
         clear_error(error);

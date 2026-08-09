@@ -3530,6 +3530,14 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ator_tmp_mut(&self) -> *mut Allocator {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ator_tmp }
+    }
+
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
@@ -3957,7 +3965,7 @@ pub(crate) unsafe fn sort_bake_times(
     ufbxi_check_err!(
         &mut (*bc.get()).error,
         grow_array::<u8>(
-            ptr::addr_of_mut!((*bc.get()).ator_tmp),
+            bc.ator_tmp_mut(),
             ptr::addr_of_mut!((*bc.get()).tmp_arr),
             ptr::addr_of_mut!((*bc.get()).tmp_arr_size),
             count.wrapping_mul(size_of::<BakeTime>()),
@@ -5462,7 +5470,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
 
     init_ator(
         ptr::addr_of_mut!((*bc.get()).error),
-        ptr::addr_of_mut!((*bc.get()).ator_tmp),
+        bc.ator_tmp_mut(),
         ptr::addr_of!((*bc.get()).opts.temp_allocator),
         b"temp\0".as_ptr(),
     );
@@ -5477,18 +5485,18 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     (*bc.get()).result.ator = bc.ator_result_mut();
 
     (*bc.get()).tmp.unordered = true;
-    (*bc.get()).tmp.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
+    (*bc.get()).tmp.ator = bc.ator_tmp_mut();
 
-    (*bc.get()).tmp_prop.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
+    (*bc.get()).tmp_prop.ator = bc.ator_tmp_mut();
     (*bc.get()).tmp_prop.unordered = true;
     (*bc.get()).tmp_prop.clearable = true;
 
-    (*bc.get()).tmp_times.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
-    (*bc.get()).tmp_bake_props.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
-    (*bc.get()).tmp_nodes.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
-    (*bc.get()).tmp_elements.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
-    (*bc.get()).tmp_props.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
-    (*bc.get()).tmp_bake_stack.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
+    (*bc.get()).tmp_times.ator = bc.ator_tmp_mut();
+    (*bc.get()).tmp_bake_props.ator = bc.ator_tmp_mut();
+    (*bc.get()).tmp_nodes.ator = bc.ator_tmp_mut();
+    (*bc.get()).tmp_elements.ator = bc.ator_tmp_mut();
+    (*bc.get()).tmp_props.ator = bc.ator_tmp_mut();
+    (*bc.get()).tmp_bake_stack.ator = bc.ator_tmp_mut();
 
     bc.set_anim(anim);
     if (*anim).time_begin < (*anim).time_end {
