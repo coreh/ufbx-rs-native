@@ -177,6 +177,14 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_stack_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp_stack }
+    }
+
     // `tmp_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_arr_size_mut(&self) -> *mut usize {
@@ -792,7 +800,7 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
         }
 
         if format != CacheDataFormat::Unknown {
-            let frame: *mut CacheFrame = push_zero(&mut (*cc.get()).tmp_stack, 1);
+            let frame: *mut CacheFrame = push_zero(cc.tmp_stack_mut(), 1);
             ufbxi_check_err!(cc.error_mut(), !frame.is_null(), "frame");
 
             let elem_size: u32 = CACHE_DATA_FORMAT_SIZE[format as u32 as usize] as u32;
@@ -848,7 +856,7 @@ pub(crate) unsafe fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
 
     let _ = version;
 
-    let frames: *mut CacheFrame = push_zero(&mut (*cc.get()).tmp_stack, num_samples as usize);
+    let frames: *mut CacheFrame = push_zero(cc.tmp_stack_mut(), num_samples as usize);
     ufbxi_check_err!(cc.error_mut(), !frames.is_null(), "frames");
 
     let total_points: u64 = num_points as u64 * num_samples as u64;
@@ -965,7 +973,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
                 tag = tag.add(1);
                 continue;
             }
-            let extra: *mut String = push(&mut (*cc.get()).tmp_stack, 1);
+            let extra: *mut String = push(cc.tmp_stack_mut(), 1);
             ufbxi_check_err!(cc.error_mut(), !extra.is_null(), "extra");
             *extra = (*(*tag).children.add(0)).text;
             push_string_place_str(cc.string_pool_mut(), extra, false)?;
@@ -974,7 +982,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
         }
         (*cc.get()).cache.extra_info.count = num_extra;
         (*cc.get()).cache.extra_info.data =
-            push_pop::<String>(cc.result_mut(), &mut (*cc.get()).tmp_stack, num_extra);
+            push_pop::<String>(cc.result_mut(), cc.tmp_stack_mut(), num_extra);
         ufbxi_check_err!(
             cc.error_mut(),
             !(*cc.get()).cache.extra_info.data.is_null(),
@@ -1392,7 +1400,7 @@ pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail>
             end += 1;
         }
 
-        let chan: *mut CacheChannel = push_zero(&mut (*cc.get()).tmp_stack, 1);
+        let chan: *mut CacheChannel = push_zero(cc.tmp_stack_mut(), 1);
         ufbxi_check_err!(cc.error_mut(), !chan.is_null(), "chan");
 
         (*chan).name = (*frame).channel;
@@ -1447,7 +1455,7 @@ pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail>
     }
 
     (*cc.get()).cache.channels.data =
-        push_pop::<CacheChannel>(cc.result_mut(), &mut (*cc.get()).tmp_stack, num_channels);
+        push_pop::<CacheChannel>(cc.result_mut(), cc.tmp_stack_mut(), num_channels);
     ufbxi_check_err!(
         cc.error_mut(),
         !(*cc.get()).cache.channels.data.is_null(),
@@ -1493,7 +1501,7 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     let num_frames: usize = (*cc.get()).tmp_stack.num_items;
     (*cc.get()).cache.frames.count = num_frames;
     (*cc.get()).cache.frames.data =
-        push_pop::<CacheFrame>(cc.result_mut(), &mut (*cc.get()).tmp_stack, num_frames);
+        push_pop::<CacheFrame>(cc.result_mut(), cc.tmp_stack_mut(), num_frames);
     ufbxi_check_err!(
         cc.error_mut(),
         !(*cc.get()).cache.frames.data.is_null(),
@@ -1540,7 +1548,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
     let ok = cache_load_imp(cc, filename).is_ok();
 
     buf_free(cc.tmp_mut());
-    buf_free(&mut (*cc.get()).tmp_stack);
+    buf_free(cc.tmp_stack_mut());
     free::<u8>(cc.ator_tmp(), cc.name_buf(), cc.name_cap());
     free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size());
     if !cc.owned_by_scene() {
