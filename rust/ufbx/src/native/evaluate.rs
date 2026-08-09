@@ -980,14 +980,10 @@ pub(crate) unsafe fn load(
 
     if !user_opts.is_null() {
         // C: `uc->opts = *user_opts;` (struct copy)
-        ptr::copy_nonoverlapping(user_opts, ptr::addr_of_mut!((*uc.get()).opts), 1);
+        ptr::copy_nonoverlapping(user_opts, uc.opts_mut_ptr(), 1);
     } else {
         // C: `memset(&uc->opts, 0, sizeof(uc->opts));`
-        ptr::write_bytes(
-            ptr::addr_of_mut!((*uc.get()).opts) as *mut u8,
-            0,
-            size_of::<RawLoadOpts>(),
-        );
+        ptr::write_bytes(uc.opts_mut_ptr() as *mut u8, 0, size_of::<RawLoadOpts>());
     }
 
     if (*uc.get()).opts.file_size_estimate != 0 {
