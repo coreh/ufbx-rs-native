@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn usemtl_fbx_id(&self) -> u64 {
+        // SAFETY: reading a scalar; all bit patterns of `u64` are valid.
+        unsafe { (*self.get()).usemtl_fbx_id }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_usemtl_fbx_id(&self, usemtl_fbx_id: u64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).usemtl_fbx_id = usemtl_fbx_id;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn tokens_cap(&self) -> usize {
         // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
         unsafe { (*self.get()).tokens_cap }

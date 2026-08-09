@@ -692,11 +692,11 @@ pub(crate) unsafe fn obj_parse_indices(
     let mesh: *mut ObjMesh = uc.obj().mesh();
 
     if uc.obj().material_dirty() {
-        if (*uc.obj().get()).usemtl_fbx_id != 0 {
-            let entry: *mut FbxIdEntry = find_fbx_id(uc, (*uc.obj().get()).usemtl_fbx_id);
+        if uc.obj().usemtl_fbx_id() != 0 {
+            let entry: *mut FbxIdEntry = find_fbx_id(uc, uc.obj().usemtl_fbx_id());
             ufbx_assert!(!entry.is_null());
             if (*mesh).usemtl_base == 0 || (*entry).user_id < (*mesh).usemtl_base {
-                connect_oo(uc, (*uc.obj().get()).usemtl_fbx_id, (*mesh).fbx_node_id)?;
+                connect_oo(uc, uc.obj().usemtl_fbx_id(), (*mesh).fbx_node_id)?;
 
                 // C: `uint32_t index = ++uc->obj.usemtl_index;`
                 (*uc.obj().get()).usemtl_index = (*uc.obj().get()).usemtl_index.wrapping_add(1);
@@ -953,7 +953,7 @@ pub(crate) unsafe fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
 
     // Allow empty `usemtl` lines to specify "no material".
     if uc.obj().num_tokens() < 2 {
-        (*uc.obj().get()).usemtl_fbx_id = 0;
+        uc.obj().set_usemtl_fbx_id(0);
         return Ok(());
     }
 
@@ -966,7 +966,7 @@ pub(crate) unsafe fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
 
     let entry: *mut FbxIdEntry = find_fbx_id(uc, fbx_id);
 
-    (*uc.obj().get()).usemtl_fbx_id = fbx_id;
+    uc.obj().set_usemtl_fbx_id(fbx_id);
 
     if entry.is_null() {
         // C: `ufbxi_element_info info = { 0 };`
@@ -1604,11 +1604,11 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_flush_material(uc: &Context) -> Result<(), Fail> {
-    if (*uc.obj().get()).usemtl_fbx_id == 0 {
+    if uc.obj().usemtl_fbx_id() == 0 {
         return Ok(());
     }
 
-    let entry: *mut FbxIdEntry = find_fbx_id(uc, (*uc.obj().get()).usemtl_fbx_id);
+    let entry: *mut FbxIdEntry = find_fbx_id(uc, uc.obj().usemtl_fbx_id());
     ufbx_assert!(!entry.is_null());
     let material: *mut Material = *(*uc.obj().get())
         .tmp_materials
@@ -1795,8 +1795,8 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Resul
     prop.length -= prefix_len;
     push_string_place_str(uc.string_pool_mut_ptr(), &mut prop, false)?;
 
-    if (*uc.obj().get()).usemtl_fbx_id != 0 {
-        connect_op(uc, fbx_id, (*uc.obj().get()).usemtl_fbx_id, prop)?;
+    if uc.obj().usemtl_fbx_id() != 0 {
+        connect_op(uc, fbx_id, uc.obj().usemtl_fbx_id(), prop)?;
     }
 
     Ok(())
@@ -1808,7 +1808,7 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Resul
 #[must_use]
 pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
     uc.obj().set_mesh(core::ptr::null_mut());
-    (*uc.obj().get()).usemtl_fbx_id = 0;
+    uc.obj().set_usemtl_fbx_id(0);
 
     while !uc.obj().eof() {
         obj_tokenize_line(uc)?;
