@@ -164,10 +164,135 @@ pub(crate) struct SubdivideContext(
     core::cell::UnsafeCell<core::mem::MaybeUninit<InnerSubdivideContext>>,
 );
 
+// Typed interior-mutable VIEW over the `opts` field, reinterpreted in place
+// (approach A). Generated ABI-fixed `RawSubdivideOpts` plays the `Inner` role;
+// `MaybeUninit` makes forming `&SubdivideOptsView` assert no validity — each leaf getter
+// asserts only the field it reads.
+#[repr(transparent)]
+pub(crate) struct SubdivideOptsView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<RawSubdivideOpts>>,
+);
+
+impl SubdivideOptsView {
+    #[inline(always)]
+    fn get(&self) -> *mut RawSubdivideOpts {
+        self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn boundary(&self) -> crate::generated::SubdivisionBoundary {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.boundary` read already makes.
+        unsafe { (*self.get()).boundary }
+    }
+
+    #[inline(always)]
+    pub(crate) fn evaluate_skin_weights(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.evaluate_skin_weights` read already makes.
+        unsafe { (*self.get()).evaluate_skin_weights }
+    }
+
+    #[inline(always)]
+    pub(crate) fn evaluate_source_vertices(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.evaluate_source_vertices` read already makes.
+        unsafe { (*self.get()).evaluate_source_vertices }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ignore_normals(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.ignore_normals` read already makes.
+        unsafe { (*self.get()).ignore_normals }
+    }
+
+    #[inline(always)]
+    pub(crate) fn interpolate_normals(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.interpolate_normals` read already makes.
+        unsafe { (*self.get()).interpolate_normals }
+    }
+
+    #[inline(always)]
+    pub(crate) fn interpolate_tangents(&self) -> bool {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.interpolate_tangents` read already makes.
+        unsafe { (*self.get()).interpolate_tangents }
+    }
+
+    #[inline(always)]
+    pub(crate) fn max_skin_weights(&self) -> usize {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.max_skin_weights` read already makes.
+        unsafe { (*self.get()).max_skin_weights }
+    }
+
+    #[inline(always)]
+    pub(crate) fn max_source_vertices(&self) -> usize {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.max_source_vertices` read already makes.
+        unsafe { (*self.get()).max_source_vertices }
+    }
+
+    #[inline(always)]
+    pub(crate) fn result_allocator(&self) -> crate::generated::RawAllocatorOpts {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.result_allocator` read already makes.
+        unsafe { (*self.get()).result_allocator }
+    }
+
+    #[inline(always)]
+    pub(crate) fn skin_deformer_index(&self) -> usize {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.skin_deformer_index` read already makes.
+        unsafe { (*self.get()).skin_deformer_index }
+    }
+
+    #[inline(always)]
+    pub(crate) fn temp_allocator(&self) -> crate::generated::RawAllocatorOpts {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.temp_allocator` read already makes.
+        unsafe { (*self.get()).temp_allocator }
+    }
+
+    #[inline(always)]
+    pub(crate) fn uv_boundary(&self) -> crate::generated::SubdivisionBoundary {
+        // SAFETY: reading a POD/enum opts field by value — same assertion the
+        // direct `.opts.uv_boundary` read already makes.
+        unsafe { (*self.get()).uv_boundary }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_boundary(&self, boundary: crate::generated::SubdivisionBoundary) {
+        // SAFETY: interior-mutable write of a POD opts field.
+        unsafe {
+            (*self.get()).boundary = boundary;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_uv_boundary(&self, uv_boundary: crate::generated::SubdivisionBoundary) {
+        // SAFETY: interior-mutable write of a POD opts field.
+        unsafe {
+            (*self.get()).uv_boundary = uv_boundary;
+        }
+    }
+}
+
 impl SubdivideContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerSubdivideContext {
         self.0.get().cast()
+    }
+
+    // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `SubdivideOptsView`.
+    #[inline(always)]
+    pub(crate) fn opts_view(&self) -> &SubdivideOptsView {
+        // SAFETY: `SubdivideOptsView` is repr(transparent) over the `opts` field's layout,
+        // which lives in this context's outer UnsafeCell; a shared interior-mutable
+        // `&SubdivideOptsView` is sound and asserts no validity.
+        unsafe { &*(&raw const (*self.get()).opts as *const SubdivideOptsView) }
     }
 
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -1456,7 +1581,7 @@ pub(crate) unsafe fn subdivide_weights(
     (*input).values = src as *const c_void;
     (*input).indices = (*sc.get()).src_mesh.vertex_indices.data;
     (*input).stride = size_of::<SubdivisionVertexWeights>();
-    (*input).boundary = (*sc.get()).opts.boundary;
+    (*input).boundary = sc.opts_view().boundary();
     (*input).check_split_data = false;
     (*input).ignore_indices = true;
 
@@ -1593,7 +1718,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     subdivide_attrib(
         sc,
         (&mut (*result).vertex_position) as *mut VertexVec3 as *mut VertexAttrib,
-        (*sc.get()).opts.boundary,
+        sc.opts_view().boundary(),
         false,
     )?;
 
@@ -1648,20 +1773,20 @@ pub(crate) unsafe fn subdivide_mesh_level(
             subdivide_attrib(
                 sc,
                 (&mut (*set).vertex_uv) as *mut crate::generated::VertexVec2 as *mut VertexAttrib,
-                (*sc.get()).opts.uv_boundary,
+                sc.opts_view().uv_boundary(),
                 true,
             )?;
-            if (*sc.get()).opts.interpolate_tangents {
+            if sc.opts_view().interpolate_tangents() {
                 subdivide_attrib(
                     sc,
                     (&mut (*set).vertex_tangent) as *mut VertexVec3 as *mut VertexAttrib,
-                    (*sc.get()).opts.uv_boundary,
+                    sc.opts_view().uv_boundary(),
                     true,
                 )?;
                 subdivide_attrib(
                     sc,
                     (&mut (*set).vertex_bitangent) as *mut VertexVec3 as *mut VertexAttrib,
-                    (*sc.get()).opts.uv_boundary,
+                    sc.opts_view().uv_boundary(),
                     true,
                 )?;
             } else {
@@ -1689,7 +1814,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 sc,
                 (&mut (*set).vertex_color) as *mut crate::generated::VertexVec4
                     as *mut VertexAttrib,
-                (*sc.get()).opts.uv_boundary,
+                sc.opts_view().uv_boundary(),
                 true,
             )?;
             set = set.add(1);
@@ -1722,11 +1847,11 @@ pub(crate) unsafe fn subdivide_mesh_level(
         );
     }
 
-    if (*sc.get()).opts.interpolate_normals && !(*sc.get()).opts.ignore_normals {
+    if sc.opts_view().interpolate_normals() && !sc.opts_view().ignore_normals() {
         subdivide_attrib(
             sc,
             (&mut (*result).vertex_normal) as *mut VertexVec3 as *mut VertexAttrib,
-            (*sc.get()).opts.boundary,
+            sc.opts_view().boundary(),
             true,
         )?;
         // C: `ufbxi_for_list(ufbx_vec3, normal, result->vertex_normal.values)`
@@ -1748,7 +1873,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
             subdivide_attrib(
                 sc,
                 (&mut (*result).skinned_normal) as *mut VertexVec3 as *mut VertexAttrib,
-                (*sc.get()).opts.boundary,
+                sc.opts_view().boundary(),
                 true,
             )?;
             // C: `ufbxi_for_list(ufbx_vec3, normal, result->skinned_normal.values)`
@@ -1775,7 +1900,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         subdivide_attrib(
             sc,
             (&mut (*result).skinned_position) as *mut VertexVec3 as *mut VertexAttrib,
-            (*sc.get()).opts.boundary,
+            sc.opts_view().boundary(),
             false,
         )?;
     }
@@ -1784,28 +1909,28 @@ pub(crate) unsafe fn subdivide_mesh_level(
     ufbxi_check_err!(sc.error_mut_ptr(), !result_sub.is_null(), "result_sub");
     (*result).subdivision_result = opt_ref(result_sub);
 
-    if (*sc.get()).opts.evaluate_source_vertices || (*sc.get()).opts.evaluate_skin_weights {
+    if sc.opts_view().evaluate_source_vertices() || sc.opts_view().evaluate_skin_weights() {
         let mesh_sub: *mut SubdivisionResult = opt_ptr(&(*mesh).subdivision_result);
 
         let mut skin: *mut SkinDeformer = core::ptr::null_mut();
-        if (*sc.get()).opts.evaluate_skin_weights {
+        if sc.opts_view().evaluate_skin_weights() {
             if (*mesh).skin_deformers.count > 0 {
                 ufbxi_check_err!(
                     sc.error_mut_ptr(),
-                    (*sc.get()).opts.skin_deformer_index < (*mesh).skin_deformers.count,
+                    sc.opts_view().skin_deformer_index() < (*mesh).skin_deformers.count,
                     "sc->opts.skin_deformer_index < mesh->skin_deformers.count"
                 );
                 skin = ref_ptr(
                     (*mesh)
                         .skin_deformers
                         .data
-                        .add((*sc.get()).opts.skin_deformer_index),
+                        .add(sc.opts_view().skin_deformer_index()),
                 );
             }
         }
 
         let mut max_weights: usize = 0;
-        if (*sc.get()).opts.evaluate_source_vertices {
+        if sc.opts_view().evaluate_source_vertices() {
             max_weights = max_sz(max_weights, (*mesh).num_vertices);
         }
         if !skin.is_null() {
@@ -1820,9 +1945,9 @@ pub(crate) unsafe fn subdivide_mesh_level(
             "sc->tmp_vertex_weights && sc->tmp_weights"
         );
 
-        if (*sc.get()).opts.evaluate_source_vertices {
-            sc.set_max_vertex_weights(if (*sc.get()).opts.max_source_vertices != 0 {
-                (*sc.get()).opts.max_source_vertices
+        if sc.opts_view().evaluate_source_vertices() {
+            sc.set_max_vertex_weights(if sc.opts_view().max_source_vertices() != 0 {
+                sc.opts_view().max_source_vertices()
             } else {
                 usize::MAX
             });
@@ -1847,8 +1972,8 @@ pub(crate) unsafe fn subdivide_mesh_level(
         }
 
         if !skin.is_null() {
-            sc.set_max_vertex_weights(if (*sc.get()).opts.max_skin_weights != 0 {
-                (*sc.get()).opts.max_skin_weights
+            sc.set_max_vertex_weights(if sc.opts_view().max_skin_weights() != 0 {
+                sc.opts_view().max_skin_weights()
             } else {
                 usize::MAX
             });
@@ -2126,24 +2251,26 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     sc: &SubdivideContext,
     level: usize,
 ) -> Result<(), crate::native::error::Fail> {
-    if (*sc.get()).opts.boundary as u32 == SubdivisionBoundary::Default as u32 {
-        (*sc.get()).opts.boundary = (*sc.get()).src_mesh.subdivision_boundary;
+    if sc.opts_view().boundary() as u32 == SubdivisionBoundary::Default as u32 {
+        sc.opts_view()
+            .set_boundary((*sc.get()).src_mesh.subdivision_boundary);
     }
 
-    if (*sc.get()).opts.uv_boundary as u32 == SubdivisionBoundary::Default as u32 {
-        (*sc.get()).opts.uv_boundary = (*sc.get()).src_mesh.subdivision_uv_boundary;
+    if sc.opts_view().uv_boundary() as u32 == SubdivisionBoundary::Default as u32 {
+        sc.opts_view()
+            .set_uv_boundary((*sc.get()).src_mesh.subdivision_uv_boundary);
     }
 
     init_ator(
         sc.error_mut_ptr(),
         sc.ator_tmp_mut_ptr(),
-        &(*sc.get()).opts.temp_allocator,
+        &sc.opts_view().temp_allocator(),
         b"temp\0".as_ptr(),
     );
     init_ator(
         sc.error_mut_ptr(),
         sc.ator_result_mut_ptr(),
-        &(*sc.get()).opts.result_allocator,
+        &sc.opts_view().result_allocator(),
         b"result\0".as_ptr(),
     );
 
@@ -2190,7 +2317,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     (*mesh).num_point_faces = 0;
     (*mesh).num_line_faces = 0;
 
-    if !(*sc.get()).opts.interpolate_normals {
+    if !sc.opts_view().interpolate_normals() {
         core::ptr::write_bytes(
             &mut (*mesh).vertex_normal as *mut _ as *mut u8,
             0,
@@ -2203,7 +2330,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
         );
     }
 
-    if !(*sc.get()).opts.interpolate_normals && !(*sc.get()).opts.ignore_normals {
+    if !sc.opts_view().interpolate_normals() && !sc.opts_view().ignore_normals() {
         let topo: *mut TopoEdge = push::<TopoEdge>(sc.tmp_mut_ptr(), (*mesh).num_indices);
         ufbxi_check_err!(sc.error_mut_ptr(), !topo.is_null(), "topo");
         compute_topology(mesh, topo, (*mesh).num_indices);
