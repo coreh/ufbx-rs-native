@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `top_nodes_len` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn top_nodes_len(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).top_nodes_len }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_top_nodes_len(&self, top_nodes_len: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).top_nodes_len = top_nodes_len;
+        }
+    }
+
     // `top_nodes` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn top_nodes(&self) -> *mut Node {
@@ -3728,7 +3743,7 @@ pub(crate) unsafe fn parse_toplevel_child_imp(
 pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(), Fail> {
     // C: `ufbxi_for(ufbxi_node, node, uc->top_nodes, uc->top_nodes_len)`
     let mut node: *mut Node = uc.top_nodes();
-    let node_end: *mut Node = add_ptr(node, (*uc.get()).top_nodes_len);
+    let node_end: *mut Node = add_ptr(node, uc.top_nodes_len());
     while node != node_end {
         if (*node).name == name {
             uc.set_top_node(node);
@@ -3783,18 +3798,18 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             return Ok(());
         }
 
-        (*uc.get()).top_nodes_len += 1;
+        uc.set_top_nodes_len(uc.top_nodes_len() + 1);
         ufbxi_check!(
             uc,
             grow_array(
                 uc.ator_tmp(),
                 &mut (*uc.get()).top_nodes,
                 &mut (*uc.get()).top_nodes_cap,
-                (*uc.get()).top_nodes_len
+                uc.top_nodes_len()
             ),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->top_nodes)), (&uc->top_nodes), (&uc->top_nodes_cap), (uc->top_nodes_len))"
         );
-        let node: *mut Node = uc.top_nodes().add((*uc.get()).top_nodes_len - 1);
+        let node: *mut Node = uc.top_nodes().add(uc.top_nodes_len() - 1);
         pop::<Node>(&mut (*uc.get()).tmp_stack, 1, node);
         if (*uc.get()).opts.retain_dom {
             retain_toplevel(uc, node)?;
@@ -3900,7 +3915,7 @@ pub(crate) unsafe fn parse_toplevel_child(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
-    ufbx_assert!((*uc.get()).top_nodes_len == 0);
+    ufbx_assert!(uc.top_nodes_len() == 0);
 
     let mut end: bool = false;
     if uc.from_ascii() {
