@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `parsed_to_end` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn parsed_to_end(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).parsed_to_end }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_parsed_to_end(&self, parsed_to_end: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).parsed_to_end = parsed_to_end;
+        }
+    }
+
     // `top_nodes_cap` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn top_nodes_cap(&self) -> usize {
@@ -3761,7 +3776,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
     }
 
     // Reached end and not found in cache
-    if (*uc.get()).parsed_to_end {
+    if uc.parsed_to_end() {
         uc.set_top_node(core::ptr::null_mut());
         (*uc.get()).top_child_index = 0;
         return Ok(());
@@ -3794,7 +3809,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         if end {
             uc.set_top_node(core::ptr::null_mut());
             (*uc.get()).top_child_index = 0;
-            (*uc.get()).parsed_to_end = true;
+            uc.set_parsed_to_end(true);
             if (*uc.get()).opts.retain_dom {
                 retain_toplevel(uc, core::ptr::null_mut())?;
             }
@@ -3949,7 +3964,7 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
     if end {
         uc.set_top_node(core::ptr::null_mut());
         (*uc.get()).top_child_index = 0;
-        (*uc.get()).parsed_to_end = true;
+        uc.set_parsed_to_end(true);
         return Ok(());
     }
 
