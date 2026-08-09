@@ -98,6 +98,14 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    // `tok_cap` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tok_cap_mut(&self) -> *mut usize {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tok_cap }
+    }
+
     // `tok` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tok_mut(&self) -> *mut *mut u8 {
@@ -333,7 +341,7 @@ pub(crate) unsafe fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), F
             grow_array::<u8>(
                 xc.ator(),
                 xc.tok_mut(),
-                &mut (*xc.get()).tok_cap,
+                xc.tok_cap_mut(),
                 xc.tok_len() + 1
             ),
             "ufbxi_grow_array_size((xc->ator), sizeof(**(&xc->tok)), (&xc->tok), (&xc->tok_cap), (xc->tok_len + 1))"
