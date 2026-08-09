@@ -2049,6 +2049,14 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp }
+    }
+
     // `src_scene` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn src_scene_mut(&self) -> *mut Scene {
@@ -2908,7 +2916,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             ec.scene_mut(),
             ec.error_mut(),
             ec.result_mut(),
-            ptr::addr_of_mut!((*ec.get()).tmp),
+            ec.tmp_mut(),
             ec.time(),
             (*ec.get()).opts.load_external_files && (*ec.get()).opts.evaluate_caches,
             &mut cache_opts,
@@ -3016,7 +3024,7 @@ pub(crate) unsafe fn evaluate_scene(
     (*ec.get()).tmp.unordered = true;
 
     if evaluate_imp(ec).is_ok() {
-        buf_free(ptr::addr_of_mut!((*ec.get()).tmp));
+        buf_free(ec.tmp_mut());
         free_ator(ec.ator_tmp_mut());
         if !p_error.is_null() {
             clear_error(p_error);
@@ -3024,7 +3032,7 @@ pub(crate) unsafe fn evaluate_scene(
         ptr::addr_of_mut!((*ec.scene_imp()).scene)
     } else {
         fix_error_type(ec.error_mut(), b"Failed to evaluate\0".as_ptr(), p_error);
-        buf_free(ptr::addr_of_mut!((*ec.get()).tmp));
+        buf_free(ec.tmp_mut());
         buf_free(ec.result_mut());
         free_ator(ec.ator_tmp_mut());
         free_ator(ec.ator_result_mut());
