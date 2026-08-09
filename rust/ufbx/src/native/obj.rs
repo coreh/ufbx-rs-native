@@ -817,7 +817,7 @@ pub(crate) unsafe fn obj_parse_indices(
         let p_face_smooth: *mut bool =
             push_fast::<bool>(&mut (*uc.obj().get()).tmp_face_smoothing, 1);
         ufbxi_check!(uc, !p_face_smooth.is_null(), "p_face_smooth");
-        *p_face_smooth = (*uc.obj().get()).face_smoothing;
+        *p_face_smooth = uc.obj().face_smoothing();
     }
 
     if (*uc.obj().get()).has_face_group {
@@ -1522,8 +1522,10 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
         } else if key == obj_cmd1(b's') {
             if num_tokens >= 2 {
                 (*uc.obj().get()).has_face_smoothing = true;
-                (*uc.obj().get()).face_smoothing =
-                    !str_equal(*(*uc.obj().get()).tokens.add(1), str_c(b"off\0".as_ptr()));
+                uc.obj().set_face_smoothing(!str_equal(
+                    *(*uc.obj().get()).tokens.add(1),
+                    str_c(b"off\0".as_ptr()),
+                ));
 
                 // Fill in previously missed face smoothing data
                 if (*uc.obj().get()).tmp_face_smoothing.num_items == 0
