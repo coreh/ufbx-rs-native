@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `top_nodes` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn top_nodes_mut_ptr(&self) -> *mut *mut Node {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).top_nodes }
+    }
+
     // `dom_parse_toplevel` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn dom_parse_toplevel_mut_ptr(&self) -> *mut *mut DomNode {
@@ -4625,7 +4633,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             uc,
             grow_array(
                 uc.ator_tmp_mut_ptr(),
-                &mut (*uc.get()).top_nodes,
+                uc.top_nodes_mut_ptr(),
                 &mut (*uc.get()).top_nodes_cap,
                 uc.top_nodes_len()
             ),
