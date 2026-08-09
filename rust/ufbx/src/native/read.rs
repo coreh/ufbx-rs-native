@@ -1032,14 +1032,14 @@ pub(crate) unsafe fn split_type_and_name(
 pub(crate) unsafe fn insert_fbx_id(uc: &Context, fbx_id: u64, element_id: u32) -> Result<(), Fail> {
     let hash = hash64(fbx_id);
     let mut entry: *mut FbxIdEntry = map_find(
-        &mut (*uc.get()).fbx_id_map,
+        uc.fbx_id_map_mut_ptr(),
         hash,
         &fbx_id as *const u64 as *const c_void,
     );
 
     if entry.is_null() {
         entry = map_insert(
-            &mut (*uc.get()).fbx_id_map,
+            uc.fbx_id_map_mut_ptr(),
             hash,
             &fbx_id as *const u64 as *const c_void,
         );
@@ -1063,7 +1063,7 @@ pub(crate) unsafe fn insert_fbx_id(uc: &Context, fbx_id: u64, element_id: u32) -
 pub(crate) unsafe fn find_fbx_id(uc: &Context, fbx_id: u64) -> *mut FbxIdEntry {
     let hash = hash64(fbx_id);
     map_find(
-        &mut (*uc.get()).fbx_id_map,
+        uc.fbx_id_map_mut_ptr(),
         hash,
         &fbx_id as *const u64 as *const c_void,
     )

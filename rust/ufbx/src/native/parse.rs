@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `fbx_id_map` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn fbx_id_map_mut_ptr(&self) -> *mut Map {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).fbx_id_map }
+    }
+
     // `scene` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn scene_mut_ptr(&self) -> *mut Scene {
