@@ -2049,6 +2049,14 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn opts_mut(&self) -> *mut RawEvaluateOpts {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).opts }
+    }
+
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut(&self) -> *mut Error {
@@ -2958,14 +2966,10 @@ pub(crate) unsafe fn evaluate_scene(
 ) -> *mut Scene {
     if !user_opts.is_null() {
         // C: `ec->opts = *user_opts;` (struct assignment)
-        ptr::copy_nonoverlapping(user_opts, ptr::addr_of_mut!((*ec.get()).opts), 1);
+        ptr::copy_nonoverlapping(user_opts, ec.opts_mut(), 1);
     } else {
         // C: `memset(&ec->opts, 0, sizeof(ec->opts));`
-        ptr::write_bytes(
-            ptr::addr_of_mut!((*ec.get()).opts) as *mut u8,
-            0,
-            size_of::<RawEvaluateOpts>(),
-        );
+        ptr::write_bytes(ec.opts_mut() as *mut u8, 0, size_of::<RawEvaluateOpts>());
     }
 
     ec.set_src_imp(get_imp::<SceneImp>(scene as *mut c_void));
