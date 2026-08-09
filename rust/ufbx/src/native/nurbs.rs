@@ -288,6 +288,14 @@ impl TessellateSurfaceContext {
         self.0.get().cast()
     }
 
+    // `mesh` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn mesh_mut(&self) -> *mut Mesh {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).mesh }
+    }
+
     // `position_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn position_map_mut(&self) -> *mut Map {
@@ -536,7 +544,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     let sub_v: usize = (*tc.get()).opts.span_subdivision_v;
 
     let surface: *const NurbsSurface = tc.surface();
-    let mesh: *mut Mesh = &mut (*tc.get()).mesh;
+    let mesh: *mut Mesh = tc.mesh_mut();
     ufbxi_check_err_msg!(
         tc.error_mut(),
         (*surface).basis_u.valid
