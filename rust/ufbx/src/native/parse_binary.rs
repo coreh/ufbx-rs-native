@@ -137,7 +137,7 @@ pub(crate) unsafe fn swap_endian(
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->swap_arr)), (&uc->swap_arr), (&uc->swap_arr_size), (total_size))"
         );
     }
-    let dst: *mut u8 = (*uc.get()).swap_arr;
+    let dst: *mut u8 = uc.swap_arr();
     let mut d: *mut u8 = dst;
 
     let mut s: *const u8 = src as *const u8;

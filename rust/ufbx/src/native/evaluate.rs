@@ -943,11 +943,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
 
     free::<u8>(uc.ator_tmp(), uc.read_buffer(), uc.read_buffer_size());
     free::<u8>(uc.ator_tmp(), (*uc.get()).tmp_arr, (*uc.get()).tmp_arr_size);
-    free::<u8>(
-        uc.ator_tmp(),
-        (*uc.get()).swap_arr,
-        (*uc.get()).swap_arr_size,
-    );
+    free::<u8>(uc.ator_tmp(), uc.swap_arr(), (*uc.get()).swap_arr_size);
 
     obj_free(uc);
 
@@ -1159,7 +1155,7 @@ pub(crate) unsafe fn load(
     // array and an allocation failure.
     // C: `uc->swap_arr = (char*)ufbxi_zero_size_buffer;` — the const cast is
     // C-parity: the buffer is replaced by `ufbxi_grow_array` before any write.
-    (*uc.get()).swap_arr = ZERO_SIZE_BUFFER.as_ptr() as *mut u8;
+    uc.set_swap_arr(ZERO_SIZE_BUFFER.as_ptr() as *mut u8);
 
     // NOTE: Though `inflate_retain` leaks out of the scope we don't use it outside this function.
     // cppcheck-suppress autoVariables

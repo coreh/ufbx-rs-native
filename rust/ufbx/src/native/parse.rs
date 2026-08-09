@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `swap_arr` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn swap_arr(&self) -> *mut u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        unsafe { (*self.get()).swap_arr }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_swap_arr(&self, swap_arr: *mut u8) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).swap_arr = swap_arr;
+        }
+    }
+
     // `skip_fn` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn skip_fn(&self) -> Option<unsafe extern "C" fn(*mut c_void, usize) -> bool> {
