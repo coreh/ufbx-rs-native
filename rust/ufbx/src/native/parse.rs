@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `legacy_implicit_anim_layer_id` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn legacy_implicit_anim_layer_id(&self) -> u64 {
+        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
+        unsafe { (*self.get()).legacy_implicit_anim_layer_id }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_legacy_implicit_anim_layer_id(&self, legacy_implicit_anim_layer_id: u64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).legacy_implicit_anim_layer_id = legacy_implicit_anim_layer_id;
+        }
+    }
+
     // `num_elements` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn num_elements(&self) -> u32 {

@@ -8376,15 +8376,15 @@ pub(crate) unsafe fn read_legacy_model(uc: &Context, node: *mut Node) -> Result<
                 b"S\0".as_ptr(),
                 &mut channel_name as *mut String as *mut c_void,
             ) {
-                if (*uc.get()).legacy_implicit_anim_layer_id == 0 {
+                if uc.legacy_implicit_anim_layer_id() == 0 {
                     // Defer creation so we won't be the first animation stack..
-                    (*uc.get()).legacy_implicit_anim_layer_id = push_synthetic_id(uc);
+                    uc.set_legacy_implicit_anim_layer_id(push_synthetic_id(uc));
                 }
                 read_take_prop_channel(
                     uc,
                     child,
                     info.fbx_id,
-                    (*uc.get()).legacy_implicit_anim_layer_id,
+                    uc.legacy_implicit_anim_layer_id(),
                     channel_name,
                 )?;
             }
@@ -8451,10 +8451,10 @@ pub(crate) unsafe fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
     }
 
     // Create the implicit animation stack if necessary
-    if (*uc.get()).legacy_implicit_anim_layer_id != 0 {
+    if uc.legacy_implicit_anim_layer_id() != 0 {
         // C: `ufbxi_element_info layer_info = { 0 };`
         let mut layer_info: ElementInfo = core::mem::zeroed();
-        layer_info.fbx_id = (*uc.get()).legacy_implicit_anim_layer_id;
+        layer_info.fbx_id = uc.legacy_implicit_anim_layer_id();
         layer_info.name.data = b"(internal)\0".as_ptr();
         layer_info.name.length = strlen(layer_info.name.data);
         push_string_place_str(&mut (*uc.get()).string_pool, &mut layer_info.name, true)?;
