@@ -6110,7 +6110,7 @@ pub(crate) unsafe fn read_objects(uc: &Context) -> Result<(), Fail> {
         ufbxi_check!(uc, !uc.p_element_id().is_null(), "uc->p_element_id");
         *uc.p_element_id() = NO_INDEX;
         (*uc.get()).warnings.deferred_element_id_plus_one =
-            (*uc.get()).tmp_element_id.num_items as u32;
+            uc.tmp_element_id_view().num_items() as u32;
 
         // C: `ufbxi_node *node;` — written by `ufbxi_parse_toplevel_child`.
         let mut node: *mut Node = core::ptr::null_mut();
@@ -6167,7 +6167,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 ufbxi_check!(uc, !uc.p_element_id().is_null(), "uc->p_element_id");
                 *uc.p_element_id() = NO_INDEX;
                 (*uc.get()).warnings.deferred_element_id_plus_one =
-                    (*uc.get()).tmp_element_id.num_items as u32;
+                    uc.tmp_element_id_view().num_items() as u32;
 
                 read_object(uc, *p_node)?;
 

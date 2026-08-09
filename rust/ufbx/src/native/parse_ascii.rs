@@ -767,7 +767,7 @@ pub(crate) unsafe fn ascii_read_int_array(
     if (*ua).parse_as_f32 {
         return Ok(());
     }
-    let initial_items: usize = (*uc.get()).tmp_stack.num_items;
+    let initial_items: usize = uc.tmp_stack_view().num_items();
 
     let mut val: i64;
     if (*ua).token.type_ == ASCII_INT {
@@ -824,7 +824,7 @@ pub(crate) unsafe fn ascii_read_int_array(
         ascii_next_token(uc, &raw mut (*ua).token)?;
     }
 
-    *p_num_read = (*uc.get()).tmp_stack.num_items - initial_items;
+    *p_num_read = uc.tmp_stack_view().num_items() - initial_items;
     Ok(())
 }
 
@@ -1142,7 +1142,7 @@ pub(crate) unsafe fn ascii_read_float_array(
 
     let parse_flags: u32 = uc.double_parse_flags();
 
-    let initial_items: usize = (*uc.get()).tmp_stack.num_items;
+    let initial_items: usize = uc.tmp_stack_view().num_items();
     let mut src_scan: *const u8 = src;
     loop {
         // Skip '\s*,\s*' between array elements. If we don't find a comma after an element
@@ -1187,7 +1187,7 @@ pub(crate) unsafe fn ascii_read_float_array(
         ascii_next_token(uc, &raw mut (*ua).token)?;
     }
 
-    *p_num_read = (*uc.get()).tmp_stack.num_items - initial_items;
+    *p_num_read = uc.tmp_stack_view().num_items() - initial_items;
     Ok(())
 }
 
@@ -1855,7 +1855,7 @@ unsafe fn ascii_parse_node_rec(
 
             // Deferred parsing
             if deferred_size > 0 {
-                let num_spans: usize = (*uc.get()).tmp_ascii_spans.num_items;
+                let num_spans: usize = uc.tmp_ascii_spans_view().num_items();
                 let spans: *mut AsciiSpan =
                     push_pop::<AsciiSpan>(tmp_buf, uc.tmp_ascii_spans_mut_ptr(), num_spans);
                 ufbxi_check!(uc, !spans.is_null(), "spans");

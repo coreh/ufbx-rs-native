@@ -702,6 +702,115 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).result as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_ascii_spans` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_ascii_spans_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_ascii_spans as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_connections` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_connections_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_connections as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_dom_nodes` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_dom_nodes_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_dom_nodes as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_element_fbx_ids` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_element_fbx_ids_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).tmp_element_fbx_ids as *mut crate::native::buf::BufView)
+        }
+    }
+
+    // `tmp_element_id` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_element_id_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_element_id as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_element_offsets` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_element_offsets_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).tmp_element_offsets as *mut crate::native::buf::BufView)
+        }
+    }
+
+    // `tmp_element_ptrs` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_element_ptrs_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_element_ptrs as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_elements` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_elements_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_elements as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_full_weights` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_full_weights_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_full_weights as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_mesh_textures` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_mesh_textures_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_mesh_textures as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_node_ids` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_node_ids_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_node_ids as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_parse` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_parse_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_parse as *mut crate::native::buf::BufView) }
+    }
+
+    // `tmp_stack` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn tmp_stack_view(&self) -> &crate::native::buf::BufView {
+        // SAFETY: reinterpret the Buf field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).tmp_stack as *mut crate::native::buf::BufView) }
+    }
+
     // `error` — const raw-ptr getter (read-only sites); see `error_mut_ptr` for mutation.
     #[inline(always)]
     pub(crate) fn error_ptr(&self) -> *const Error {
@@ -4045,7 +4154,7 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
         uc.set_dom_parse_toplevel(core::ptr::null_mut());
 
         // Called with NULL argument to finish retaining DOM, collect the final nodes to `ufbx_scene`.
-        let num_top_nodes = (*uc.get()).tmp_dom_nodes.num_items;
+        let num_top_nodes = uc.tmp_dom_nodes_view().num_items();
         let nodes: *mut *mut DomNode = push_pop(
             uc.result_mut_ptr(),
             uc.tmp_dom_nodes_mut_ptr(),

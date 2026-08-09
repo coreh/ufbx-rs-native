@@ -364,7 +364,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
     }
 
     let num_elements: u32 = uc.num_elements();
-    let num_nodes: usize = (*uc.get()).tmp_node_ids.num_items;
+    let num_nodes: usize = uc.tmp_node_ids_view().num_items();
     let elements: *mut *mut Element = push_pop::<*mut Element>(
         uc.tmp_parse_mut_ptr(),
         uc.tmp_element_ptrs_mut_ptr(),
@@ -372,7 +372,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
     );
     ufbxi_check!(uc, !elements.is_null(), "elements");
 
-    let num_connections: usize = (*uc.get()).tmp_connections.num_items;
+    let num_connections: usize = uc.tmp_connections_view().num_items();
     let tmp_connections: *mut TmpConnection = push_peek::<TmpConnection>(
         uc.tmp_parse_mut_ptr(),
         uc.tmp_connections_mut_ptr(),
@@ -1293,7 +1293,7 @@ pub(crate) unsafe fn find_attribute_fbx_id(uc: &Context, node_fbx_id: u64) -> u6
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
-    let num_connections: usize = (*uc.get()).tmp_connections.num_items;
+    let num_connections: usize = uc.tmp_connections_view().num_items();
     let tmp_connections: *mut TmpConnection = push_pop(
         uc.tmp_mut_ptr(),
         uc.tmp_connections_mut_ptr(),
@@ -1696,7 +1696,7 @@ pub(crate) unsafe fn add_connections_to_elements(uc: &Context) -> Result<(), Fai
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
-    let num_nodes: usize = (*uc.get()).tmp_node_ids.num_items;
+    let num_nodes: usize = uc.tmp_node_ids_view().num_items();
     let node_ids: *mut u32 = push_pop(uc.tmp_mut_ptr(), uc.tmp_node_ids_mut_ptr(), num_nodes);
     buf_free(uc.tmp_node_ids_mut_ptr());
     ufbxi_check!(uc, !node_ids.is_null(), "node_ids");
@@ -6189,7 +6189,7 @@ pub(crate) unsafe fn fetch_file_content(uc: &Context, p_filename: *mut String, p
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
-    let initial_stack: usize = (*uc.get()).tmp_stack.num_items;
+    let initial_stack: usize = uc.tmp_stack_view().num_items();
 
     // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
     let mut p_video: *mut *mut Video = (*uc.get()).scene.videos.data as *mut *mut Video;
@@ -6256,7 +6256,7 @@ pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
         p_clip = p_clip.add(1);
     }
 
-    uc.set_num_file_content((*uc.get()).tmp_stack.num_items - initial_stack);
+    uc.set_num_file_content(uc.tmp_stack_view().num_items() - initial_stack);
     uc.set_file_content(push_pop::<FileContent>(
         uc.tmp_mut_ptr(),
         uc.tmp_stack_mut_ptr(),
@@ -6505,7 +6505,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     // C reads `uc->tmp_element_offsets.num_items` as the `ufbxi_push_pop()`
     // count argument; hoisted to a local so the `&mut` borrow of the same
     // buffer does not overlap the read.
-    let num_element_offsets: usize = (*uc.get()).tmp_element_offsets.num_items;
+    let num_element_offsets: usize = uc.tmp_element_offsets_view().num_items();
     let element_offsets: *mut usize = push_pop::<usize>(
         uc.tmp_mut_ptr(),
         uc.tmp_element_offsets_mut_ptr(),
@@ -7097,10 +7097,10 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         p_cache = p_cache.add(1);
     }
 
-    ufbx_assert!((*uc.get()).tmp_full_weights.num_items == (*uc.get()).scene.blend_channels.count);
+    ufbx_assert!(uc.tmp_full_weights_view().num_items() == (*uc.get()).scene.blend_channels.count);
     // C reads `uc->tmp_full_weights.num_items` as the `ufbxi_push_pop()` count
     // argument; hoisted so the `&mut` borrow does not overlap the read.
-    let num_full_weights: usize = (*uc.get()).tmp_full_weights.num_items;
+    let num_full_weights: usize = uc.tmp_full_weights_view().num_items();
     let mut full_weights: *mut List<Real> = push_pop::<List<Real>>(
         uc.tmp_mut_ptr(),
         uc.tmp_full_weights_mut_ptr(),
@@ -8241,7 +8241,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     while p_constraint != p_constraint_end {
         let constraint: *mut Constraint = *p_constraint;
 
-        let tmp_base: usize = (*uc.get()).tmp_stack.num_items;
+        let tmp_base: usize = uc.tmp_stack_view().num_items();
 
         // Find property connections in _both_ src and dst connections as they are inconsistent
         // in pre-7000 files. For example "Constrained Object" is a "PO" connection in 6100.
@@ -8274,7 +8274,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             )?;
         }
 
-        let num_targets: usize = (*uc.get()).tmp_stack.num_items - tmp_base;
+        let num_targets: usize = uc.tmp_stack_view().num_items() - tmp_base;
         (*constraint).targets.count = num_targets;
         (*constraint).targets.data =
             push_pop::<ConstraintTarget>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_targets);

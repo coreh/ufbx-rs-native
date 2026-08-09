@@ -464,7 +464,7 @@ pub(crate) unsafe fn fixup_opts_string(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> {
-    let num_elements: usize = (*uc.get()).tmp_element_id.num_items;
+    let num_elements: usize = uc.tmp_element_id_view().num_items();
     let element_ids: *mut u32 =
         push_pop::<u32>(uc.tmp_mut_ptr(), uc.tmp_element_id_mut_ptr(), num_elements);
     ufbxi_check!(uc, !element_ids.is_null(), "element_ids");
@@ -1113,23 +1113,25 @@ pub(crate) unsafe fn load(
         ptr::null_mut(),
     );
 
-    (*uc.get()).tmp.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).tmp_parse.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).tmp_stack.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).tmp_connections.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).tmp_node_ids.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).tmp_elements.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).tmp_element_offsets.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).tmp_element_fbx_ids.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).tmp_element_ptrs.ator = uc.ator_tmp_mut_ptr();
+    uc.tmp_view().set_ator(uc.ator_tmp_mut_ptr());
+    uc.tmp_parse_view().set_ator(uc.ator_tmp_mut_ptr());
+    uc.tmp_stack_view().set_ator(uc.ator_tmp_mut_ptr());
+    uc.tmp_connections_view().set_ator(uc.ator_tmp_mut_ptr());
+    uc.tmp_node_ids_view().set_ator(uc.ator_tmp_mut_ptr());
+    uc.tmp_elements_view().set_ator(uc.ator_tmp_mut_ptr());
+    uc.tmp_element_offsets_view()
+        .set_ator(uc.ator_tmp_mut_ptr());
+    uc.tmp_element_fbx_ids_view()
+        .set_ator(uc.ator_tmp_mut_ptr());
+    uc.tmp_element_ptrs_view().set_ator(uc.ator_tmp_mut_ptr());
     for i in 0..ELEMENT_TYPE_COUNT {
         (*uc.get()).tmp_typed_element_offsets[i].ator = uc.ator_tmp_mut_ptr();
     }
-    (*uc.get()).tmp_mesh_textures.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).tmp_full_weights.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).tmp_dom_nodes.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).tmp_element_id.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).tmp_ascii_spans.ator = uc.ator_tmp_mut_ptr();
+    uc.tmp_mesh_textures_view().set_ator(uc.ator_tmp_mut_ptr());
+    uc.tmp_full_weights_view().set_ator(uc.ator_tmp_mut_ptr());
+    uc.tmp_dom_nodes_view().set_ator(uc.ator_tmp_mut_ptr());
+    uc.tmp_element_id_view().set_ator(uc.ator_tmp_mut_ptr());
+    uc.tmp_ascii_spans_view().set_ator(uc.ator_tmp_mut_ptr());
 
     for i in 0..THREAD_GROUP_COUNT {
         (*uc.get()).tmp_thread_parse[i].ator = uc.ator_tmp_mut_ptr();
@@ -1137,12 +1139,12 @@ pub(crate) unsafe fn load(
         (*uc.get()).tmp_thread_parse[i].clearable = true;
     }
 
-    (*uc.get()).result.ator = uc.ator_result_mut_ptr();
+    uc.result_view().set_ator(uc.ator_result_mut_ptr());
 
-    (*uc.get()).tmp.unordered = true;
-    (*uc.get()).tmp_parse.unordered = true;
-    (*uc.get()).tmp_parse.clearable = true;
-    (*uc.get()).result.unordered = true;
+    uc.tmp_view().set_unordered(true);
+    uc.tmp_parse_view().set_unordered(true);
+    uc.tmp_parse_view().set_clearable(true);
+    uc.result_view().set_unordered(true);
 
     (*uc.get()).warnings.error = uc.error_mut_ptr();
     (*uc.get()).warnings.result = uc.result_mut_ptr();

@@ -103,6 +103,59 @@ pub(crate) struct Buf {
     pub clearable: bool, // < Supports clearing the whole buffer even if `unordered`
 }
 
+// Typed interior-mutable VIEW over a `Buf` field, reinterpreted in place. `Buf` is
+// large + Copy, and its subfields are written, so a value getter is wrong (would
+// copy 88 bytes and drop write-backs). Getters + setters for the accessed subfields.
+#[repr(transparent)]
+pub(crate) struct BufView(core::cell::UnsafeCell<core::mem::MaybeUninit<Buf>>);
+
+impl BufView {
+    #[inline(always)]
+    fn get(&self) -> *mut Buf {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn ator(&self) -> *mut Allocator {
+        unsafe { (*self.get()).ator }
+    }
+    #[inline(always)]
+    pub(crate) fn set_ator(&self, ator: *mut Allocator) {
+        unsafe {
+            (*self.get()).ator = ator;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn num_items(&self) -> usize {
+        unsafe { (*self.get()).num_items }
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_items(&self, num_items: usize) {
+        unsafe {
+            (*self.get()).num_items = num_items;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn unordered(&self) -> bool {
+        unsafe { (*self.get()).unordered }
+    }
+    #[inline(always)]
+    pub(crate) fn set_unordered(&self, unordered: bool) {
+        unsafe {
+            (*self.get()).unordered = unordered;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn clearable(&self) -> bool {
+        unsafe { (*self.get()).clearable }
+    }
+    #[inline(always)]
+    pub(crate) fn set_clearable(&self, clearable: bool) {
+        unsafe {
+            (*self.get()).clearable = clearable;
+        }
+    }
+}
+
 // ufbx.c:3872-3876 `ufbxi_buf_state`
 // C-parity: `ufbxi_buf_state` has no users in ufbx.c either (C does not warn on
 // an unreferenced typedef); kept so the `ufbxi_buf` type family is complete.
