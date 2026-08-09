@@ -3563,28 +3563,31 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
     }
 
     // C: `ufbxi_tessellate_curve_context tc = { UFBX_ERROR_NONE };`
-    let mut tc = MaybeUninit::<TessellateCurveContext>::zeroed();
-    let tc: *mut TessellateCurveContext = tc.as_mut_ptr();
+    let tc = TessellateCurveContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
-        // C: `tc.opts = *opts` — struct assignment (memcpy).
-        core::ptr::copy_nonoverlapping(opts, &mut (*tc).opts, 1);
+        // C: `(*tc.get()).opts = *opts` — struct assignment (memcpy).
+        core::ptr::copy_nonoverlapping(opts, &mut (*tc.get()).opts, 1);
     }
 
-    (*tc).curve = curve;
+    (*tc.get()).curve = curve;
 
     // C: `int ok = ufbxi_tessellate_nurbs_curve_imp(&tc);`
-    let ok: bool = tessellate_nurbs_curve_imp(tc).is_ok();
+    let ok: bool = tessellate_nurbs_curve_imp(&tc).is_ok();
 
-    free_ator(&mut (*tc).ator_tmp);
+    free_ator(&mut (*tc.get()).ator_tmp);
 
     if ok {
         clear_error(error);
-        let imp: *mut LineCurveImp = (*tc).imp;
+        let imp: *mut LineCurveImp = (*tc.get()).imp;
         &raw mut (*imp).curve
     } else {
-        fix_error_type(&mut (*tc).error, b"Failed to tessellate\0".as_ptr(), error);
-        buf_free(&mut (*tc).result);
-        free_ator(&mut (*tc).ator_result);
+        fix_error_type(
+            &mut (*tc.get()).error,
+            b"Failed to tessellate\0".as_ptr(),
+            error,
+        );
+        buf_free(&mut (*tc.get()).result);
+        free_ator(&mut (*tc.get()).ator_result);
         core::ptr::null_mut()
     }
 }
@@ -3625,30 +3628,34 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     }
 
     // C: `ufbxi_tessellate_surface_context tc = { UFBX_ERROR_NONE };`
-    let mut tc = MaybeUninit::<TessellateSurfaceContext>::zeroed();
-    let tc: *mut TessellateSurfaceContext = tc.as_mut_ptr();
+    let tc =
+        TessellateSurfaceContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
-        // C: `tc.opts = *opts` — struct assignment (memcpy).
-        core::ptr::copy_nonoverlapping(opts, &mut (*tc).opts, 1);
+        // C: `(*tc.get()).opts = *opts` — struct assignment (memcpy).
+        core::ptr::copy_nonoverlapping(opts, &mut (*tc.get()).opts, 1);
     }
 
-    (*tc).surface = surface;
+    (*tc.get()).surface = surface;
 
     // C: `int ok = ufbxi_tessellate_nurbs_surface_imp(&tc);`
-    let ok: bool = tessellate_nurbs_surface_imp(tc).is_ok();
+    let ok: bool = tessellate_nurbs_surface_imp(&tc).is_ok();
 
-    buf_free(&mut (*tc).tmp);
-    map_free(&mut (*tc).position_map);
-    free_ator(&mut (*tc).ator_tmp);
+    buf_free(&mut (*tc.get()).tmp);
+    map_free(&mut (*tc.get()).position_map);
+    free_ator(&mut (*tc.get()).ator_tmp);
 
     if ok {
         clear_error(error);
-        let imp: *mut MeshImp = (*tc).imp;
+        let imp: *mut MeshImp = (*tc.get()).imp;
         &raw mut (*imp).mesh
     } else {
-        fix_error_type(&mut (*tc).error, b"Failed to tessellate\0".as_ptr(), error);
-        buf_free(&mut (*tc).result);
-        free_ator(&mut (*tc).ator_result);
+        fix_error_type(
+            &mut (*tc.get()).error,
+            b"Failed to tessellate\0".as_ptr(),
+            error,
+        );
+        buf_free(&mut (*tc.get()).result);
+        free_ator(&mut (*tc.get()).ator_result);
         core::ptr::null_mut()
     }
 }

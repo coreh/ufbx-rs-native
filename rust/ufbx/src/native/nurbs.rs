@@ -133,7 +133,7 @@ const _: () = assert!(core::mem::offset_of!(LineCurveImp, curve) == size_of::<Re
 // ufbx.c:27801-27817 `ufbxi_tessellate_curve_context`
 #[cfg(feature = "tessellation")]
 #[repr(C)]
-pub(crate) struct TessellateCurveContext {
+pub(crate) struct InnerTessellateCurveContext {
     pub error: Error,
 
     pub opts: RawTessellateCurveOpts,
@@ -150,10 +150,29 @@ pub(crate) struct TessellateCurveContext {
     pub imp: *mut LineCurveImp,
 }
 
+// Safe `&TessellateCurveContext` handle over `InnerTessellateCurveContext`,
+// mirroring the `Context`/`InnerContext` seam in `parse.rs`. `MaybeUninit` because
+// it embeds the public `LineCurve` (enum-bearing) in `line`; `UnsafeCell` gives the
+// interior mutability every `&TessellateCurveContext` site needs. Field is
+// `pub(crate)` — the sole construction site lives in `native::api`.
+#[cfg(feature = "tessellation")]
+#[repr(transparent)]
+pub(crate) struct TessellateCurveContext(
+    pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerTessellateCurveContext>>,
+);
+
+#[cfg(feature = "tessellation")]
+impl TessellateCurveContext {
+    #[inline(always)]
+    pub(crate) fn get(&self) -> *mut InnerTessellateCurveContext {
+        self.0.get().cast()
+    }
+}
+
 // ufbx.c:27819-27838 `ufbxi_tessellate_surface_context`
 #[cfg(feature = "tessellation")]
 #[repr(C)]
-pub(crate) struct TessellateSurfaceContext {
+pub(crate) struct InnerTessellateSurfaceContext {
     pub error: Error,
 
     pub opts: RawTessellateSurfaceOpts,
@@ -173,43 +192,60 @@ pub(crate) struct TessellateSurfaceContext {
     pub imp: *mut MeshImp,
 }
 
+// Safe `&TessellateSurfaceContext` handle over `InnerTessellateSurfaceContext`,
+// mirroring the `Context`/`InnerContext` seam in `parse.rs`. `MaybeUninit` because
+// it embeds the public `Mesh` (enum-bearing) in `mesh`; `UnsafeCell` gives the
+// interior mutability every `&TessellateSurfaceContext` site needs. Field is
+// `pub(crate)` — the sole construction site lives in `native::api`.
+#[cfg(feature = "tessellation")]
+#[repr(transparent)]
+pub(crate) struct TessellateSurfaceContext(
+    pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerTessellateSurfaceContext>>,
+);
+
+#[cfg(feature = "tessellation")]
+impl TessellateSurfaceContext {
+    #[inline(always)]
+    pub(crate) fn get(&self) -> *mut InnerTessellateSurfaceContext {
+        self.0.get().cast()
+    }
+}
+
 // ufbx.c:27840-27931 `ufbxi_tessellate_nurbs_curve_imp`
 #[cfg(feature = "tessellation")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn tessellate_nurbs_curve_imp(
-    tc: *mut TessellateCurveContext,
-) -> Result<(), Fail> {
+pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> Result<(), Fail> {
     // C: `tc->opts.span_subdivision <= 0` — `span_subdivision` is `size_t`.
-    if (*tc).opts.span_subdivision == 0 {
-        (*tc).opts.span_subdivision = 4;
+    if (*tc.get()).opts.span_subdivision == 0 {
+        (*tc.get()).opts.span_subdivision = 4;
     }
-    let num_sub: usize = (*tc).opts.span_subdivision;
+    let num_sub: usize = (*tc.get()).opts.span_subdivision;
 
-    let curve: *const NurbsCurve = (*tc).curve;
-    let line: *mut LineCurve = &mut (*tc).line;
+    let curve: *const NurbsCurve = (*tc.get()).curve;
+    let line: *mut LineCurve = &mut (*tc.get()).line;
     ufbxi_check_err_msg!(
-        &mut (*tc).error,
+        &mut (*tc.get()).error,
         (*curve).basis.valid && (*curve).control_points.count > 0,
         "Bad NURBS geometry",
         "curve->basis.valid && curve->control_points.count > 0"
     );
 
     init_ator(
-        &mut (*tc).error,
-        &mut (*tc).ator_tmp,
-        &(*tc).opts.temp_allocator,
+        &mut (*tc.get()).error,
+        &mut (*tc.get()).ator_tmp,
+        &(*tc.get()).opts.temp_allocator,
         b"temp\0".as_ptr(),
     );
     init_ator(
-        &mut (*tc).error,
-        &mut (*tc).ator_result,
-        &(*tc).opts.result_allocator,
+        &mut (*tc.get()).error,
+        &mut (*tc.get()).ator_result,
+        &(*tc.get()).opts.result_allocator,
         b"result\0".as_ptr(),
     );
 
-    (*tc).result.unordered = true;
-    (*tc).result.ator = &raw mut (*tc).ator_result;
+    (*tc.get()).result.unordered = true;
+    (*tc.get()).result.ator = &raw mut (*tc.get()).ator_result;
 
     let num_spans: usize = (*curve).basis.spans.count;
 
@@ -218,7 +254,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(
         let over_spans: usize = num_spans.wrapping_mul(2).wrapping_mul(size_of::<Real>());
         let over: usize = over_spans.wrapping_mul(num_sub);
         ufbxi_check_err!(
-            &mut (*tc).error,
+            &mut (*tc.get()).error,
             !does_overflow(over, over_spans, num_sub),
             "!ufbxi_does_overflow(over, over_spans, num_sub)"
         );
@@ -233,16 +269,16 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(
     );
     let num_vertices: usize = num_indices.wrapping_sub(if is_open { 0 } else { 1 });
     ufbxi_check_err!(
-        &mut (*tc).error,
+        &mut (*tc.get()).error,
         num_indices <= i32::MAX as usize,
         "num_indices <= INT32_MAX"
     );
 
-    let indices: *mut u32 = push::<u32>(&mut (*tc).result, num_indices);
-    let vertices: *mut Vec3 = push::<Vec3>(&mut (*tc).result, num_vertices);
-    let segments: *mut LineSegment = push::<LineSegment>(&mut (*tc).result, 1);
+    let indices: *mut u32 = push::<u32>(&mut (*tc.get()).result, num_indices);
+    let vertices: *mut Vec3 = push::<Vec3>(&mut (*tc.get()).result, num_vertices);
+    let segments: *mut LineSegment = push::<LineSegment>(&mut (*tc.get()).result, 1);
     ufbxi_check_err!(
-        &mut (*tc).error,
+        &mut (*tc.get()).error,
         !indices.is_null() && !vertices.is_null() && !segments.is_null(),
         "indices && vertices && segments"
     );
@@ -291,24 +327,32 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(
 
     line.from_tessellated_nurbs = true;
 
-    (*tc).imp = push::<LineCurveImp>(&mut (*tc).result, 1);
-    ufbxi_check_err!(&mut (*tc).error, !(*tc).imp.is_null(), "tc->imp");
+    (*tc.get()).imp = push::<LineCurveImp>(&mut (*tc.get()).result, 1);
+    ufbxi_check_err!(
+        &mut (*tc.get()).error,
+        !(*tc.get()).imp.is_null(),
+        "tc->imp"
+    );
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&LineCurve` pointer via exposed provenance.
-    ((*tc).imp as *mut u8).expose_provenance();
+    ((*tc.get()).imp as *mut u8).expose_provenance();
 
     init_ref(
-        &mut (*(*tc).imp).refcount,
+        &mut (*(*tc.get()).imp).refcount,
         LINE_CURVE_IMP_MAGIC,
         &mut (*get_imp::<SceneImp>(ref_ptr(&(*curve).element.scene) as *mut c_void)).refcount,
     );
 
-    (*(*tc).imp).magic = LINE_CURVE_IMP_MAGIC;
+    (*(*tc.get()).imp).magic = LINE_CURVE_IMP_MAGIC;
     // C: `tc->imp->curve = tc->line` — struct assignment (memcpy).
-    core::ptr::copy_nonoverlapping(&(*tc).line as *const LineCurve, &mut (*(*tc).imp).curve, 1);
-    (*(*tc).imp).refcount.ator = (*tc).ator_result;
-    (*(*tc).imp).refcount.buf = (*tc).result;
+    core::ptr::copy_nonoverlapping(
+        &(*tc.get()).line as *const LineCurve,
+        &mut (*(*tc.get()).imp).curve,
+        1,
+    );
+    (*(*tc.get()).imp).refcount.ator = (*tc.get()).ator_result;
+    (*(*tc.get()).imp).refcount.buf = (*tc.get()).result;
 
     Ok(())
 }
@@ -318,23 +362,23 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn tessellate_nurbs_surface_imp(
-    tc: *mut TessellateSurfaceContext,
+    tc: &TessellateSurfaceContext,
 ) -> Result<(), Fail> {
     // C: `tc->opts.span_subdivision_u <= 0` — `span_subdivision_u/v` are `size_t`.
-    if (*tc).opts.span_subdivision_u == 0 {
-        (*tc).opts.span_subdivision_u = 4;
+    if (*tc.get()).opts.span_subdivision_u == 0 {
+        (*tc.get()).opts.span_subdivision_u = 4;
     }
-    if (*tc).opts.span_subdivision_v == 0 {
-        (*tc).opts.span_subdivision_v = 4;
+    if (*tc.get()).opts.span_subdivision_v == 0 {
+        (*tc.get()).opts.span_subdivision_v = 4;
     }
 
-    let sub_u: usize = (*tc).opts.span_subdivision_u;
-    let sub_v: usize = (*tc).opts.span_subdivision_v;
+    let sub_u: usize = (*tc.get()).opts.span_subdivision_u;
+    let sub_v: usize = (*tc.get()).opts.span_subdivision_v;
 
-    let surface: *const NurbsSurface = (*tc).surface;
-    let mesh: *mut Mesh = &mut (*tc).mesh;
+    let surface: *const NurbsSurface = (*tc.get()).surface;
+    let mesh: *mut Mesh = &mut (*tc.get()).mesh;
     ufbxi_check_err_msg!(
-        &mut (*tc).error,
+        &mut (*tc.get()).error,
         (*surface).basis_u.valid
             && (*surface).basis_v.valid
             && (*surface).num_control_points_u > 0
@@ -344,23 +388,23 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     );
 
     init_ator(
-        &mut (*tc).error,
-        &mut (*tc).ator_tmp,
-        &(*tc).opts.temp_allocator,
+        &mut (*tc.get()).error,
+        &mut (*tc.get()).ator_tmp,
+        &(*tc.get()).opts.temp_allocator,
         b"temp\0".as_ptr(),
     );
     init_ator(
-        &mut (*tc).error,
-        &mut (*tc).ator_result,
-        &(*tc).opts.result_allocator,
+        &mut (*tc.get()).error,
+        &mut (*tc.get()).ator_result,
+        &(*tc.get()).opts.result_allocator,
         b"result\0".as_ptr(),
     );
 
-    (*tc).result.unordered = true;
-    (*tc).tmp.unordered = true;
+    (*tc.get()).result.unordered = true;
+    (*tc.get()).tmp.unordered = true;
 
-    (*tc).result.ator = &raw mut (*tc).ator_result;
-    (*tc).tmp.ator = &raw mut (*tc).ator_tmp;
+    (*tc.get()).result.ator = &raw mut (*tc.get()).ator_result;
+    (*tc.get()).tmp.ator = &raw mut (*tc.get()).ator_tmp;
 
     let open_u: bool = (*surface).basis_u.topology == NurbsTopology::Open;
     let open_v: bool = (*surface).basis_v.topology == NurbsTopology::Open;
@@ -376,17 +420,17 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
         let over_v: usize = over_spans_v.wrapping_mul(sub_v);
         let over_uv: usize = over_u.wrapping_mul(over_v);
         ufbxi_check_err!(
-            &mut (*tc).error,
+            &mut (*tc.get()).error,
             !does_overflow(over_u, over_spans_u, sub_u),
             "!ufbxi_does_overflow(over_u, over_spans_u, sub_u)"
         );
         ufbxi_check_err!(
-            &mut (*tc).error,
+            &mut (*tc.get()).error,
             !does_overflow(over_v, over_spans_v, sub_v),
             "!ufbxi_does_overflow(over_v, over_spans_v, sub_v)"
         );
         ufbxi_check_err!(
-            &mut (*tc).error,
+            &mut (*tc.get()).error,
             !does_overflow(over_uv, over_u, over_v),
             "!ufbxi_does_overflow(over_uv, over_u, over_v)"
         );
@@ -403,19 +447,19 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     let num_faces: usize = faces_u.wrapping_mul(faces_v);
     let num_indices: usize = indices_u.wrapping_mul(indices_v);
     ufbxi_check_err!(
-        &mut (*tc).error,
+        &mut (*tc.get()).error,
         num_indices <= i32::MAX as usize,
         "num_indices <= INT32_MAX"
     );
 
-    let position_ix: *mut u32 = push::<u32>(&mut (*tc).tmp, num_indices);
-    let mut positions: *mut Vec3 = push::<Vec3>(&mut (*tc).result, num_indices + 1);
-    let mut normals: *mut Vec3 = push::<Vec3>(&mut (*tc).result, num_indices + 1);
-    let mut uvs: *mut Vec2 = push::<Vec2>(&mut (*tc).result, num_indices + 1);
-    let mut tangents: *mut Vec3 = push::<Vec3>(&mut (*tc).result, num_indices + 1);
-    let mut bitangents: *mut Vec3 = push::<Vec3>(&mut (*tc).result, num_indices + 1);
+    let position_ix: *mut u32 = push::<u32>(&mut (*tc.get()).tmp, num_indices);
+    let mut positions: *mut Vec3 = push::<Vec3>(&mut (*tc.get()).result, num_indices + 1);
+    let mut normals: *mut Vec3 = push::<Vec3>(&mut (*tc.get()).result, num_indices + 1);
+    let mut uvs: *mut Vec2 = push::<Vec2>(&mut (*tc.get()).result, num_indices + 1);
+    let mut tangents: *mut Vec3 = push::<Vec3>(&mut (*tc.get()).result, num_indices + 1);
+    let mut bitangents: *mut Vec3 = push::<Vec3>(&mut (*tc.get()).result, num_indices + 1);
     ufbxi_check_err!(
-        &mut (*tc).error,
+        &mut (*tc.get()).error,
         !position_ix.is_null() && !uvs.is_null() && !tangents.is_null() && !bitangents.is_null(),
         "position_ix && uvs && tangents && bitangents"
     );
@@ -538,11 +582,11 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
         }
     }
 
-    let faces: *mut Face = push::<Face>(&mut (*tc).result, num_faces);
-    let vertex_ix: *mut u32 = push::<u32>(&mut (*tc).result, num_faces.wrapping_mul(4));
-    let attrib_ix: *mut u32 = push::<u32>(&mut (*tc).result, num_faces.wrapping_mul(4));
+    let faces: *mut Face = push::<Face>(&mut (*tc.get()).result, num_faces);
+    let vertex_ix: *mut u32 = push::<u32>(&mut (*tc.get()).result, num_faces.wrapping_mul(4));
+    let attrib_ix: *mut u32 = push::<u32>(&mut (*tc.get()).result, num_faces.wrapping_mul(4));
     ufbxi_check_err!(
-        &mut (*tc).error,
+        &mut (*tc.get()).error,
         !faces.is_null() && !vertex_ix.is_null() && !attrib_ix.is_null(),
         "faces && vertex_ix && attrib_ix"
     );
@@ -590,7 +634,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     }
 
     ufbxi_check_err!(
-        &mut (*tc).error,
+        &mut (*tc.get()).error,
         !positions.is_null() && !normals.is_null(),
         "positions && normals"
     );
@@ -649,34 +693,35 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     }
 
     if !opt_ptr(&(*surface).material).is_null() {
-        (*mesh).face_material.data = push_zero::<u32>(&mut (*tc).result, num_faces) as *const u32;
+        (*mesh).face_material.data =
+            push_zero::<u32>(&mut (*tc.get()).result, num_faces) as *const u32;
         ufbxi_check_err!(
-            &mut (*tc).error,
+            &mut (*tc.get()).error,
             !(*mesh).face_material.data.is_null(),
             "mesh->face_material.data"
         );
 
-        let mat: *mut *mut Material = push_zero::<*mut Material>(&mut (*tc).result, 1);
-        ufbxi_check_err!(&mut (*tc).error, !mat.is_null(), "mat");
+        let mat: *mut *mut Material = push_zero::<*mut Material>(&mut (*tc.get()).result, 1);
+        ufbxi_check_err!(&mut (*tc.get()).error, !mat.is_null(), "mat");
 
         *mat = opt_ptr(&(*surface).material);
         (*mesh).materials.data = mat as *const Ref<Material>;
         (*mesh).materials.count = 1;
     }
 
-    if !(*tc).opts.skip_mesh_parts {
+    if !(*tc.get()).opts.skip_mesh_parts {
         (*mesh).material_parts.count = 1;
         (*mesh).material_parts.data =
-            push_zero::<MeshPart>(&mut (*tc).result, 1) as *const MeshPart;
+            push_zero::<MeshPart>(&mut (*tc.get()).result, 1) as *const MeshPart;
         ufbxi_check_err!(
-            &mut (*tc).error,
+            &mut (*tc.get()).error,
             !(*mesh).material_parts.data.is_null(),
             "mesh->material_parts.data"
         );
     }
 
-    finalize_mesh_material(&mut (*tc).result, &mut (*tc).error, mesh)?;
-    finalize_mesh(&mut (*tc).result, &mut (*tc).error, mesh)?;
+    finalize_mesh_material(&mut (*tc.get()).result, &mut (*tc.get()).error, mesh)?;
+    finalize_mesh(&mut (*tc.get()).result, &mut (*tc.get()).error, mesh)?;
 
     (*mesh).generated_normals = true;
     compute_normals(
@@ -700,25 +745,33 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
         }
     }
 
-    (*tc).imp = push::<MeshImp>(&mut (*tc).result, 1);
-    ufbxi_check_err!(&mut (*tc).error, !(*tc).imp.is_null(), "tc->imp");
+    (*tc.get()).imp = push::<MeshImp>(&mut (*tc.get()).result, 1);
+    ufbxi_check_err!(
+        &mut (*tc.get()).error,
+        !(*tc.get()).imp.is_null(),
+        "tc->imp"
+    );
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&Mesh` pointer via exposed provenance.
-    ((*tc).imp as *mut u8).expose_provenance();
+    ((*tc.get()).imp as *mut u8).expose_provenance();
 
     init_ref(
-        &mut (*(*tc).imp).refcount,
+        &mut (*(*tc.get()).imp).refcount,
         MESH_IMP_MAGIC,
         &mut (*get_imp::<SceneImp>(ref_ptr(&(*surface).element.scene) as *mut c_void)).refcount,
     );
 
-    (*(*tc).imp).magic = MESH_IMP_MAGIC;
+    (*(*tc.get()).imp).magic = MESH_IMP_MAGIC;
     // C: `tc->imp->mesh = tc->mesh` — struct assignment (memcpy).
-    core::ptr::copy_nonoverlapping(&(*tc).mesh as *const Mesh, &mut (*(*tc).imp).mesh, 1);
-    (*(*tc).imp).refcount.ator = (*tc).ator_result;
-    (*(*tc).imp).refcount.buf = (*tc).result;
-    (*(*tc).imp).mesh.subdivision_evaluated = true;
+    core::ptr::copy_nonoverlapping(
+        &(*tc.get()).mesh as *const Mesh,
+        &mut (*(*tc.get()).imp).mesh,
+        1,
+    );
+    (*(*tc.get()).imp).refcount.ator = (*tc.get()).ator_result;
+    (*(*tc.get()).imp).refcount.buf = (*tc.get()).result;
+    (*(*tc.get()).imp).mesh.subdivision_evaluated = true;
 
     Ok(())
 }
