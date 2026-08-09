@@ -2049,6 +2049,14 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    // `src_scene` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn src_scene_mut(&self) -> *mut Scene {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).src_scene }
+    }
+
     // `scene` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn scene_mut(&self) -> *mut Scene {
@@ -2980,11 +2988,7 @@ pub(crate) unsafe fn evaluate_scene(
 
     ec.set_src_imp(get_imp::<SceneImp>(scene as *mut c_void));
     // C: `ec->src_scene = *scene;` (struct assignment)
-    ptr::copy_nonoverlapping(
-        scene as *const Scene,
-        ptr::addr_of_mut!((*ec.get()).src_scene),
-        1,
-    );
+    ptr::copy_nonoverlapping(scene as *const Scene, ec.src_scene_mut(), 1);
     ec.set_anim(if !anim.is_null() {
         anim as *mut Anim
     } else {
