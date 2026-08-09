@@ -198,7 +198,7 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
         "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&mesh->fbx_node->element_id)))"
     );
 
-    (*uc.obj().get()).face_material = NO_INDEX;
+    uc.obj().set_face_material(NO_INDEX);
     uc.obj().set_face_group(0);
     uc.obj().set_face_group_dirty(true);
     (*uc.obj().get()).material_dirty = true;
@@ -705,13 +705,15 @@ pub(crate) unsafe fn obj_parse_indices(
                 if (*mesh).usemtl_base == 0 {
                     (*mesh).usemtl_base = index;
                 }
-                (*uc.obj().get()).face_material = index.wrapping_sub((*mesh).usemtl_base);
+                uc.obj()
+                    .set_face_material(index.wrapping_sub((*mesh).usemtl_base));
             }
             // C-parity: the assignment above is immediately overwritten here;
             // both are in the C source and both are kept.
-            (*uc.obj().get()).face_material = (*entry).user_id.wrapping_sub((*mesh).usemtl_base);
+            uc.obj()
+                .set_face_material((*entry).user_id.wrapping_sub((*mesh).usemtl_base));
         } else {
-            (*uc.obj().get()).face_material = NO_INDEX;
+            uc.obj().set_face_material(NO_INDEX);
         }
     }
 
@@ -809,7 +811,7 @@ pub(crate) unsafe fn obj_parse_indices(
 
     let p_face_mat: *mut u32 = push_fast::<u32>(&mut (*uc.obj().get()).tmp_face_material, 1);
     ufbxi_check!(uc, !p_face_mat.is_null(), "p_face_mat");
-    *p_face_mat = (*uc.obj().get()).face_material;
+    *p_face_mat = uc.obj().face_material();
 
     if (*uc.obj().get()).has_face_smoothing {
         let p_face_smooth: *mut bool =

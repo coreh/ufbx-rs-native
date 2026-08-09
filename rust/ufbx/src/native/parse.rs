@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn face_material(&self) -> u32 {
+        // SAFETY: reading a scalar; all bit patterns of `u32` are valid.
+        unsafe { (*self.get()).face_material }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_face_material(&self, face_material: u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).face_material = face_material;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn face_group_dirty(&self) -> bool {
         // SAFETY: reading a `bool` we only ever store valid bools into.
         unsafe { (*self.get()).face_group_dirty }
