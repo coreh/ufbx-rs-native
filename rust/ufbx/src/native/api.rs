@@ -596,7 +596,7 @@ pub(crate) unsafe fn load_file_len(
     core::ptr::write_bytes(uc.get() as *mut u8, 0, size_of::<InnerContext>());
     uc.set_deferred_load(true);
     uc.set_load_filename(filename);
-    (*uc.get()).load_filename_len = filename_len;
+    uc.set_load_filename_len(filename_len);
     evaluate::load(uc, opts, error)
 }
 

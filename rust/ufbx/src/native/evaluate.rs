@@ -500,7 +500,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         let mut stream: RawStream = MaybeUninit::zeroed().assume_init();
         let mut opts: RawOpenFileOpts = MaybeUninit::zeroed().assume_init();
         let filename: *const u8 = uc.load_filename();
-        let mut filename_len: usize = (*uc.get()).load_filename_len;
+        let mut filename_len: usize = uc.load_filename_len();
         let ok: bool;
         if filename_len == usize::MAX {
             opts.filename_null_terminated = true;

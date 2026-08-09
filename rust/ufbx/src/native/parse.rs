@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `load_filename_len` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn load_filename_len(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).load_filename_len }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_load_filename_len(&self, load_filename_len: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).load_filename_len = load_filename_len;
+        }
+    }
+
     // `load_filename` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn load_filename(&self) -> *const u8 {
