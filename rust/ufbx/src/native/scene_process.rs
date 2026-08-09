@@ -2476,7 +2476,7 @@ pub(crate) unsafe fn patch_index_pointer(uc: &Context, p_index: *mut *mut u32) {
     if *p_index == SENTINEL_INDEX_ZERO.as_ptr() as *mut u32 {
         *p_index = uc.zero_indices();
     } else if *p_index == SENTINEL_INDEX_CONSECUTIVE.as_ptr() as *mut u32 {
-        *p_index = (*uc.get()).consecutive_indices;
+        *p_index = uc.consecutive_indices();
     }
 }
 
@@ -5428,7 +5428,7 @@ pub(crate) unsafe fn flip_attrib_winding(
     if (*indices).data == (*mesh).vertex_position.indices.data && !is_position {
         // Sharing indices with vertex position, already flipped.
         return Ok(());
-    } else if (*indices).data == (*uc.get()).consecutive_indices {
+    } else if (*indices).data == uc.consecutive_indices() {
         // Need to duplicate consecutive indices, but we can cache the per mesh.
         if !(*uc.get()).tmp_mesh_consecutive_indices.is_null() {
             (*indices).data = (*uc.get()).tmp_mesh_consecutive_indices;
@@ -7229,7 +7229,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         }
 
         uc.set_zero_indices(zero_indices);
-        (*uc.get()).consecutive_indices = consecutive_indices;
+        uc.set_consecutive_indices(consecutive_indices);
 
         // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
         let mut p_mesh: *mut *mut Mesh = (*uc.get()).scene.meshes.data as *mut *mut Mesh;
@@ -7412,7 +7412,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                     (*part).num_empty_faces = (*mesh).num_empty_faces;
                     (*part).num_point_faces = (*mesh).num_point_faces;
                     (*part).num_line_faces = (*mesh).num_line_faces;
-                    (*part).face_indices.data = (*uc.get()).consecutive_indices;
+                    (*part).face_indices.data = uc.consecutive_indices();
                     (*part).face_indices.count = (*mesh).num_faces;
                     (*mesh).material_part_usage_order.data = uc.zero_indices();
                     (*mesh).material_part_usage_order.count = 1;

@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `consecutive_indices` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn consecutive_indices(&self) -> *mut u32 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u32` are valid.
+        unsafe { (*self.get()).consecutive_indices }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_consecutive_indices(&self, consecutive_indices: *mut u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).consecutive_indices = consecutive_indices;
+        }
+    }
+
     // `zero_indices` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn zero_indices(&self) -> *mut u32 {
