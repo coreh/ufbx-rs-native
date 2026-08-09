@@ -710,6 +710,13 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `top_nodes` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn top_nodes(&self) -> *mut Node {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut Node` are valid.
+        unsafe { (*self.get()).top_nodes }
+    }
+
     // `p_element_id` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn p_element_id(&self) -> *mut u32 {
@@ -3720,7 +3727,7 @@ pub(crate) unsafe fn parse_toplevel_child_imp(
 #[must_use]
 pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(), Fail> {
     // C: `ufbxi_for(ufbxi_node, node, uc->top_nodes, uc->top_nodes_len)`
-    let mut node: *mut Node = (*uc.get()).top_nodes;
+    let mut node: *mut Node = uc.top_nodes();
     let node_end: *mut Node = add_ptr(node, (*uc.get()).top_nodes_len);
     while node != node_end {
         if (*node).name == name {
@@ -3787,7 +3794,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             ),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->top_nodes)), (&uc->top_nodes), (&uc->top_nodes_cap), (uc->top_nodes_len))"
         );
-        let node: *mut Node = (*uc.get()).top_nodes.add((*uc.get()).top_nodes_len - 1);
+        let node: *mut Node = uc.top_nodes().add((*uc.get()).top_nodes_len - 1);
         pop::<Node>(&mut (*uc.get()).tmp_stack, 1, node);
         if (*uc.get()).opts.retain_dom {
             retain_toplevel(uc, node)?;
