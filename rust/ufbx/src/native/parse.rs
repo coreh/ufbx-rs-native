@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `has_geometry_transform_nodes` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn has_geometry_transform_nodes(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).has_geometry_transform_nodes }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_has_geometry_transform_nodes(&self, has_geometry_transform_nodes: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).has_geometry_transform_nodes = has_geometry_transform_nodes;
+        }
+    }
+
     // `synthetic_id_counter` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn synthetic_id_counter(&self) -> u64 {

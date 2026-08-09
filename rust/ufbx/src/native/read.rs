@@ -1556,7 +1556,7 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
         (*geo_node).is_geometry_transform_helper = true;
 
         connect_oo(uc, geo_fbx_id, node_fbx_id)?;
-        (*uc.get()).has_geometry_transform_nodes = true;
+        uc.set_has_geometry_transform_nodes(true);
 
         let extra: *mut NodeExtra = push_element_extra(uc, (*node).element.element_id);
         ufbxi_check!(uc, !extra.is_null(), "extra");

@@ -1386,7 +1386,7 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
         }
 
         // Remap connections to geometry transform helpers if necessary, see `ufbxi_setup_geometry_transform_helper()` for how these are setup.
-        if (*uc.get()).has_geometry_transform_nodes {
+        if uc.has_geometry_transform_nodes() {
             if (*dst).type_ == ElementType::Node
                 && (*src).type_ as u32 >= ELEMENT_TYPE_FIRST_ATTRIB
                 && (*src).type_ as u32 <= ELEMENT_TYPE_LAST_ATTRIB
