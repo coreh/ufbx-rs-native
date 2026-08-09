@@ -1869,7 +1869,7 @@ pub(crate) unsafe fn bake_anim(
     let bc = evaluate::BakeContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
         // C: `(*bc.get()).opts = *opts;` (struct assignment)
-        core::ptr::copy_nonoverlapping(opts, core::ptr::addr_of_mut!((*bc.get()).opts), 1);
+        core::ptr::copy_nonoverlapping(opts, bc.opts_mut(), 1);
     }
 
     bc.set_scene(scene);
