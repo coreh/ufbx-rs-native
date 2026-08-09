@@ -941,17 +941,15 @@ unsafe fn binary_parse_node_rec(
                 // If the array is contained in the current read buffer and we need to convert
                 // the data anyway we can use the read buffer as the decoded array source, otherwise
                 // do a plain byte copy to the array/conversion buffer.
-                if (*uc.get()).yield_size.wrapping_add((*uc.get()).data_size)
+                if (*uc.get()).yield_size.wrapping_add(uc.data_size())
                     >= encoded_size as usize
                     && decoded_data != arr_data as *mut c_void
                 {
                     // Yield right after this if we crossed the yield threshold
                     if encoded_size as usize > (*uc.get()).yield_size {
-                        (*uc.get()).data_size =
-                            (*uc.get()).data_size.wrapping_add((*uc.get()).yield_size);
+                        uc.set_data_size(uc.data_size().wrapping_add((*uc.get()).yield_size));
                         (*uc.get()).yield_size = encoded_size as usize;
-                        (*uc.get()).data_size =
-                            (*uc.get()).data_size.wrapping_sub((*uc.get()).yield_size);
+                        uc.set_data_size(uc.data_size().wrapping_sub((*uc.get()).yield_size));
                     }
 
                     decoded_data = uc.data() as *mut c_void;
@@ -969,7 +967,7 @@ unsafe fn binary_parse_node_rec(
                 let input: *mut InflateInput = input.as_mut_ptr();
                 (*input).total_size = encoded_size as usize;
                 (*input).data = uc.data() as *const c_void;
-                (*input).data_size = (*uc.get()).data_size;
+                (*input).data_size = uc.data_size();
                 (*input).no_header = false;
                 (*input).no_checksum = false;
                 (*input).internal_fast_bits = 0;
@@ -1005,15 +1003,14 @@ unsafe fn binary_parse_node_rec(
                         (encoded_size as usize).wrapping_sub((*input).data_size) as u64,
                     );
                     uc.set_data(uc.data().add((*input).data_size));
-                    (*uc.get()).data_size = 0;
+                    uc.set_data_size(0);
                 } else {
                     (*input).buffer = core::ptr::null_mut();
                     (*input).buffer_size = 0;
                     (*input).read_fn = None;
                     (*input).read_user = core::ptr::null_mut();
                     uc.set_data(uc.data().add(encoded_size as usize));
-                    (*uc.get()).data_size =
-                        (*uc.get()).data_size.wrapping_sub(encoded_size as usize);
+                    uc.set_data_size(uc.data_size().wrapping_sub(encoded_size as usize));
                     resume_progress(uc)?;
                 }
 

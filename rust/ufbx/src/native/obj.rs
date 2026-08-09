@@ -266,7 +266,7 @@ pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
     (*uc.get()).obj.tmp_props.ator = uc.ator_tmp();
 
     // .obj parsing does its own yield logic
-    (*uc.get()).data_size += (*uc.get()).yield_size;
+    uc.set_data_size(uc.data_size() + (*uc.get()).yield_size);
 
     (*uc.get()).obj.object.data = EMPTY_CHAR.as_ptr();
     (*uc.get()).obj.group.data = EMPTY_CHAR.as_ptr();
@@ -345,17 +345,17 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     loop {
         let begin: *const u8 = add_ptr(uc.data() as *mut u8, offset) as *const u8;
         let end: *const u8 = if !begin.is_null() {
-            memchr(begin, b'\n', (*uc.get()).data_size - offset)
+            memchr(begin, b'\n', uc.data_size() - offset)
         } else {
             core::ptr::null()
         };
         if end.is_null() {
             if (*uc.get()).eof {
-                offset = (*uc.get()).data_size;
+                offset = uc.data_size();
                 (*uc.get()).obj.eof = true;
                 break;
             } else {
-                let new_cap: usize = max_sz(1, (*uc.get()).data_size.wrapping_mul(2));
+                let new_cap: usize = max_sz(1, uc.data_size().wrapping_mul(2));
                 ufbxi_check!(
                     uc,
                     !refill(uc, new_cap, false).is_null(),
@@ -384,7 +384,7 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     (*uc.get()).obj.line.data = uc.data();
     (*uc.get()).obj.line.length = line_len;
     uc.set_data(uc.data().add(line_len));
-    (*uc.get()).data_size -= line_len;
+    uc.set_data_size(uc.data_size() - line_len);
 
     (*uc.get()).obj.read_progress += line_len;
     if (*uc.get()).obj.read_progress >= (*uc.get()).progress_interval {
@@ -1881,7 +1881,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     (*uc.get()).read_user = core::ptr::null_mut();
     (*uc.get()).data_begin = core::ptr::null();
     uc.set_data(core::ptr::null());
-    (*uc.get()).data_size = 0;
+    uc.set_data_size(0);
     (*uc.get()).yield_size = 0;
     (*uc.get()).eof = false;
     (*uc.get()).obj.eof = false;
@@ -1889,7 +1889,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     if (*uc.get()).opts.obj_mtl_data.size > 0 {
         uc.set_data((*uc.get()).opts.obj_mtl_data.data);
         (*uc.get()).data_begin = uc.data();
-        (*uc.get()).data_size = (*uc.get()).opts.obj_mtl_data.size;
+        uc.set_data_size((*uc.get()).opts.obj_mtl_data.size);
         obj_parse_mtl(uc)?;
         return Ok(());
     }

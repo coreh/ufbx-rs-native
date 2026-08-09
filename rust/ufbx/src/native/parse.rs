@@ -748,6 +748,19 @@ impl Context {
         // SAFETY: storing a `*const u8`; cannot violate validity.
         unsafe { (*self.get()).data = data; }
     }
+
+    // Remaining bytes at the read cursor. Scalar `usize`: value getter + setter.
+    #[inline(always)]
+    pub(crate) fn data_size(&self) -> usize {
+        // SAFETY: reading a `usize` field; all bit patterns valid.
+        unsafe { (*self.get()).data_size }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_data_size(&self, data_size: usize) {
+        // SAFETY: storing a `usize`; cannot violate validity.
+        unsafe { (*self.get()).data_size = data_size; }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`
@@ -3097,7 +3110,7 @@ pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
 
         let mut lookahead: usize = MIN_FILE_FORMAT_LOOKAHEAD;
         while format == FileFormat::Unknown && lookahead <= (*uc.get()).opts.file_format_lookahead {
-            if lookahead > (*uc.get()).data_size {
+            if lookahead > uc.data_size() {
                 if (*uc.get()).eof {
                     break;
                 }
@@ -3108,7 +3121,7 @@ pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
                 );
             }
 
-            let data_size: usize = min_sz(lookahead, (*uc.get()).data_size);
+            let data_size: usize = min_sz(lookahead, uc.data_size());
             ufbxi_check_msg!(uc, data_size > 0, "Empty file");
 
             // C: `for (uint32_t fmt = UFBX_FILE_FORMAT_FBX; fmt < UFBX_FILE_FORMAT_COUNT; fmt++)`
@@ -3215,7 +3228,7 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
         (*uc.get()).ascii.src_yield = uc.data().add((*uc.get()).yield_size);
         (*uc.get()).ascii.src_end = (*uc.get())
             .data
-            .add((*uc.get()).data_size + (*uc.get()).yield_size);
+            .add(uc.data_size() + (*uc.get()).yield_size);
 
         // Initialize the first token
         crate::native::parse_ascii::ascii_next_token(uc, &raw mut (*uc.get()).ascii.token)?;

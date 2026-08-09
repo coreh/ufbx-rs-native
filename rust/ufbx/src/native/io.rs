@@ -39,12 +39,12 @@ use crate::prelude::OpenFileContext;
 // C: `static ufbxi_noinline const char *` — returns NULL on failure.
 #[inline(never)]
 pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *const u8 {
-    ufbx_assert!((*uc.get()).data_size < size);
+    ufbx_assert!(uc.data_size() < size);
     ufbxi_check_return!(uc, !(*uc.get()).eof, core::ptr::null(), "!uc->eof");
     if require_size {
         ufbxi_check_return_msg!(
             uc,
-            (*uc.get()).read_fn.is_some() || (*uc.get()).data_size > 0,
+            (*uc.get()).read_fn.is_some() || uc.data_size() > 0,
             core::ptr::null(),
             "Empty file",
             "uc->read_fn || uc->data_size > 0"
@@ -79,7 +79,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     }
 
     // Copy the remains of the previous buffer to the beginning of the new one
-    let mut data_size: usize = (*uc.get()).data_size;
+    let mut data_size: usize = uc.data_size();
     if data_size > 0 {
         ufbx_assert!(!(*uc.get()).read_buffer.is_null() && !uc.data().is_null());
         // C: `memmove(uc->read_buffer, uc->data, data_size)` — the ranges may
@@ -147,7 +147,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
         .wrapping_add(to_size(uc.data() as isize - (*uc.get()).data_begin as isize) as u64);
     (*uc.get()).data_begin = (*uc.get()).read_buffer;
     uc.set_data((*uc.get()).read_buffer);
-    (*uc.get()).data_size = data_size;
+    uc.set_data_size(data_size);
 
     (*uc.get()).read_buffer
 }
@@ -155,15 +155,15 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
 // ufbx.c:6783-6787 `ufbxi_pause_progress`
 #[inline(always)]
 pub(crate) unsafe fn pause_progress(uc: &Context) {
-    (*uc.get()).data_size += (*uc.get()).yield_size;
+    uc.set_data_size(uc.data_size() + (*uc.get()).yield_size);
     (*uc.get()).yield_size = 0;
 }
 
 // ufbx.c:6789-6799 `ufbxi_resume_progress`
 #[inline(never)]
 pub(crate) unsafe fn resume_progress(uc: &Context) -> Result<(), Fail> {
-    (*uc.get()).yield_size = min_sz((*uc.get()).data_size, (*uc.get()).progress_interval);
-    (*uc.get()).data_size -= (*uc.get()).yield_size;
+    (*uc.get()).yield_size = min_sz(uc.data_size(), (*uc.get()).progress_interval);
+    uc.set_data_size(uc.data_size() - (*uc.get()).yield_size);
 
     if get_read_offset(uc).wrapping_sub((*uc.get()).latest_progress_bytes)
         >= (*uc.get()).progress_interval as u64
@@ -182,17 +182,17 @@ pub(crate) unsafe fn resume_progress(uc: &Context) -> Result<(), Fail> {
 #[inline(never)]
 pub(crate) unsafe fn yield_(uc: &Context, size: usize) -> *const u8 {
     let ret: *const u8;
-    (*uc.get()).data_size += (*uc.get()).yield_size;
-    if (*uc.get()).data_size >= size {
+    uc.set_data_size(uc.data_size() + (*uc.get()).yield_size);
+    if uc.data_size() >= size {
         ret = uc.data();
     } else {
         ret = refill(uc, size, true);
     }
     (*uc.get()).yield_size = min_sz(
-        (*uc.get()).data_size,
+        uc.data_size(),
         max_sz(size, (*uc.get()).progress_interval),
     );
-    (*uc.get()).data_size -= (*uc.get()).yield_size;
+    uc.set_data_size(uc.data_size() - (*uc.get()).yield_size);
 
     ufbxi_check_return!(
         uc,
@@ -248,10 +248,10 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
     if (*uc.get()).skip_fn.is_some() {
         pause_progress(uc);
 
-        if size > (*uc.get()).data_size as u64 {
-            size -= (*uc.get()).data_size as u64;
-            uc.set_data(uc.data().add((*uc.get()).data_size));
-            (*uc.get()).data_size = 0;
+        if size > uc.data_size() as u64 {
+            size -= uc.data_size() as u64;
+            uc.set_data(uc.data().add(uc.data_size()));
+            uc.set_data_size(0);
 
             (*uc.get()).data_offset = (*uc.get()).data_offset.wrapping_add(size);
             while size >= MAX_SKIP_SIZE as u64 {
@@ -289,7 +289,7 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
             }
         } else {
             uc.set_data(uc.data().add(size as usize));
-            (*uc.get()).data_size -= size as usize;
+            uc.set_data_size(uc.data_size() - size as usize);
         }
 
         // C: `ufbxi_check(ufbxi_resume_progress(uc));` — caller-side frame.
@@ -322,12 +322,12 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
     pause_progress(uc);
 
     // Copy data from the current buffer first
-    let len: usize = min_sz((*uc.get()).data_size, size);
+    let len: usize = min_sz(uc.data_size(), size);
     // C-parity: `memcpy(ptr, uc->data, len)` — `uc->data` may be NULL when
     // `len == 0` (memory input fully consumed), as in C.
     core::ptr::copy_nonoverlapping(uc.data(), ptr, len);
     uc.set_data(uc.data().add(len));
-    (*uc.get()).data_size -= len;
+    uc.set_data_size(uc.data_size() - len);
     ptr = ptr.add(len);
     size -= len;
 
@@ -342,7 +342,7 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
 
         (*uc.get()).data_begin = core::ptr::null();
         uc.set_data(core::ptr::null());
-        (*uc.get()).data_size = 0;
+        uc.set_data_size(0);
         ufbxi_check!(uc, (*uc.get()).read_fn.is_some(), "uc->read_fn");
 
         while size > 0 {
