@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `tmp_element_flag` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn tmp_element_flag(&self) -> *mut u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        unsafe { (*self.get()).tmp_element_flag }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_tmp_element_flag(&self, tmp_element_flag: *mut u8) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).tmp_element_flag = tmp_element_flag;
+        }
+    }
+
     // `element_extra_cap` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn element_extra_cap(&self) -> usize {

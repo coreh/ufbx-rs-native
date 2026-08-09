@@ -1963,7 +1963,7 @@ pub(crate) unsafe fn fetch_dst_elements(
             if (*ref_ptr(&(*conn).src)).type_ == src_type {
                 if ignore_duplicates {
                     let element_id: u32 = (*ref_ptr(&(*conn).src)).element_id;
-                    if *(*uc.get()).tmp_element_flag.add(element_id as usize) != 0 {
+                    if *uc.tmp_element_flag().add(element_id as usize) != 0 {
                         ufbxi_check!(
                             uc,
                             ufbxi_warnf_tag!(
@@ -1978,7 +1978,7 @@ pub(crate) unsafe fn fetch_dst_elements(
                         );
                         continue;
                     }
-                    *(*uc.get()).tmp_element_flag.add(element_id as usize) = 1;
+                    *uc.tmp_element_flag().add(element_id as usize) = 1;
                 }
                 let p_elem: *mut *mut Element = push(&mut (*uc.get()).tmp_stack, 1);
                 ufbxi_check!(uc, !p_elem.is_null(), "p_elem");
@@ -2043,7 +2043,7 @@ pub(crate) unsafe fn fetch_src_elements(
             if (*ref_ptr(&(*conn).dst)).type_ == dst_type {
                 if ignore_duplicates {
                     let element_id: u32 = (*ref_ptr(&(*conn).dst)).element_id;
-                    if *(*uc.get()).tmp_element_flag.add(element_id as usize) != 0 {
+                    if *uc.tmp_element_flag().add(element_id as usize) != 0 {
                         ufbxi_check!(
                             uc,
                             ufbxi_warnf_tag!(
@@ -2058,7 +2058,7 @@ pub(crate) unsafe fn fetch_src_elements(
                         );
                         continue;
                     }
-                    *(*uc.get()).tmp_element_flag.add(element_id as usize) = 1;
+                    *uc.tmp_element_flag().add(element_id as usize) = 1;
                 }
                 let p_elem: *mut *mut Element = push(&mut (*uc.get()).tmp_stack, 1);
                 ufbxi_check!(uc, !p_elem.is_null(), "p_elem");
@@ -6566,12 +6566,8 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     buf_free(&mut (*uc.get()).tmp_element_offsets);
     buf_free(&mut (*uc.get()).tmp_elements);
 
-    (*uc.get()).tmp_element_flag = push_zero::<u8>(&mut (*uc.get()).tmp, num_elements);
-    ufbxi_check!(
-        uc,
-        !(*uc.get()).tmp_element_flag.is_null(),
-        "uc->tmp_element_flag"
-    );
+    uc.set_tmp_element_flag(push_zero::<u8>(&mut (*uc.get()).tmp, num_elements));
+    ufbxi_check!(uc, !uc.tmp_element_flag().is_null(), "uc->tmp_element_flag");
 
     (*uc.get()).scene.metadata.original_file_path = find_string(
         &(*uc.get()).scene.metadata.scene_props,
