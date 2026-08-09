@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `top_child_index` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn top_child_index(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).top_child_index }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_top_child_index(&self, top_child_index: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).top_child_index = top_child_index;
+        }
+    }
+
     // `parsed_to_end` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn parsed_to_end(&self) -> bool {
@@ -3769,7 +3784,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
     while node != node_end {
         if (*node).name == name {
             uc.set_top_node(node);
-            (*uc.get()).top_child_index = 0;
+            uc.set_top_child_index(0);
             return Ok(());
         }
         node = node.add(1);
@@ -3778,7 +3793,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
     // Reached end and not found in cache
     if uc.parsed_to_end() {
         uc.set_top_node(core::ptr::null_mut());
-        (*uc.get()).top_child_index = 0;
+        uc.set_top_child_index(0);
         return Ok(());
     }
 
@@ -3808,7 +3823,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         // Top-level node not found
         if end {
             uc.set_top_node(core::ptr::null_mut());
-            (*uc.get()).top_child_index = 0;
+            uc.set_top_child_index(0);
             uc.set_parsed_to_end(true);
             if (*uc.get()).opts.retain_dom {
                 retain_toplevel(uc, core::ptr::null_mut())?;
@@ -3840,7 +3855,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         // Return if we parsed the right one
         if (*node).name == name {
             uc.set_top_node(node);
-            (*uc.get()).top_child_index = usize::MAX;
+            uc.set_top_child_index(usize::MAX);
             return Ok(());
         }
 
@@ -3889,7 +3904,7 @@ pub(crate) unsafe fn parse_toplevel_child(
         return Ok(());
     }
 
-    if (*uc.get()).top_child_index == usize::MAX {
+    if uc.top_child_index() == usize::MAX {
         // Parse children on demand
         if tmp_buf.is_null() {
             buf_clear(&mut (*uc.get()).tmp_parse);
@@ -3921,11 +3936,11 @@ pub(crate) unsafe fn parse_toplevel_child(
         }
     } else {
         // Iterate already parsed nodes
-        let child_index = (*uc.get()).top_child_index;
+        let child_index = uc.top_child_index();
         if child_index == (*uc.top_node()).num_children as usize {
             *p_node = core::ptr::null_mut();
         } else {
-            (*uc.get()).top_child_index = (*uc.get()).top_child_index.wrapping_add(1);
+            uc.set_top_child_index(uc.top_child_index().wrapping_add(1));
             *p_node = (*uc.top_node()).children.add(child_index);
         }
     }
@@ -3963,13 +3978,13 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
     // Top-level node not found
     if end {
         uc.set_top_node(core::ptr::null_mut());
-        (*uc.get()).top_child_index = 0;
+        uc.set_top_child_index(0);
         uc.set_parsed_to_end(true);
         return Ok(());
     }
 
     pop::<Node>(&mut (*uc.get()).tmp_stack, 1, &mut (*uc.get()).legacy_node);
-    (*uc.get()).top_child_index = 0;
+    uc.set_top_child_index(0);
     uc.set_top_node(&mut (*uc.get()).legacy_node);
 
     if (*uc.get()).opts.retain_dom {
