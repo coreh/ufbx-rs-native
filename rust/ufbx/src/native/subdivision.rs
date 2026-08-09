@@ -170,6 +170,14 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp }
+    }
+
     // `src_mesh` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn src_mesh_mut(&self) -> *mut Mesh {
@@ -569,7 +577,7 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
 
     sc.set_total_weights(sc.total_weights().wrapping_add(num_weights));
     let weights: *mut SubdivisionWeight =
-        push_copy::<SubdivisionWeight>(&mut (*sc.get()).tmp, num_weights, tmp_weights);
+        push_copy::<SubdivisionWeight>(sc.tmp_mut(), num_weights, tmp_weights);
     // C: `ufbxi_check_err(&sc->error, weights);` — this function returns `int`,
     // so the C macro's `return 0` is a plain 0 here.
     ufbxi_check_return_err!(sc.error_mut(), !weights.is_null(), 0, "weights");
@@ -688,7 +696,7 @@ pub(crate) unsafe fn subdivide_layer(
     let num_initial_values: usize = num_edge_values
         .wrapping_add((*mesh).num_faces)
         .wrapping_add((*mesh).num_indices);
-    let values: *mut u8 = push_size(&mut (*sc.get()).tmp, stride, num_initial_values) as *mut u8;
+    let values: *mut u8 = push_size(sc.tmp_mut(), stride, num_initial_values) as *mut u8;
     ufbxi_check_err!(sc.error_mut(), !values.is_null(), "values");
 
     let face_values: *mut u8 = values;
@@ -1317,7 +1325,7 @@ pub(crate) unsafe fn subdivision_copy_weights(
     weights: crate::prelude::List<SubdivisionWeight>,
 ) -> *mut SubdivisionVertexWeights {
     let dst: *mut SubdivisionVertexWeights =
-        push::<SubdivisionVertexWeights>(&mut (*sc.get()).tmp, ranges.count);
+        push::<SubdivisionVertexWeights>(sc.tmp_mut(), ranges.count);
     ufbxi_check_return_err!(sc.error_mut(), !dst.is_null(), core::ptr::null_mut(), "dst");
 
     // C: `ufbxi_nounroll for (size_t i = 0; i != ranges.count; i++)`
@@ -1341,9 +1349,8 @@ pub(crate) unsafe fn init_source_vertex_weights(
     num_vertices: usize,
 ) -> *mut SubdivisionVertexWeights {
     let dst: *mut SubdivisionVertexWeights =
-        push::<SubdivisionVertexWeights>(&mut (*sc.get()).tmp, num_vertices);
-    let weights: *mut SubdivisionWeight =
-        push::<SubdivisionWeight>(&mut (*sc.get()).tmp, num_vertices);
+        push::<SubdivisionVertexWeights>(sc.tmp_mut(), num_vertices);
+    let weights: *mut SubdivisionWeight = push::<SubdivisionWeight>(sc.tmp_mut(), num_vertices);
     ufbxi_check_return_err!(
         sc.error_mut(),
         !dst.is_null() && !weights.is_null(),
@@ -1373,7 +1380,7 @@ pub(crate) unsafe fn init_skin_weights(
     skin: *const SkinDeformer,
 ) -> *mut SubdivisionVertexWeights {
     let dst: *mut SubdivisionVertexWeights =
-        push::<SubdivisionVertexWeights>(&mut (*sc.get()).tmp, num_vertices);
+        push::<SubdivisionVertexWeights>(sc.tmp_mut(), num_vertices);
     ufbxi_check_return_err!(sc.error_mut(), !dst.is_null(), core::ptr::null_mut(), "dst");
 
     let mut i: usize = 0;
@@ -1382,8 +1389,7 @@ pub(crate) unsafe fn init_skin_weights(
         let vertex: SkinVertex = *(*skin).vertices.data.add(i);
         let num_weights: usize = min_sz(sc.max_vertex_weights(), vertex.num_weights as usize);
 
-        let weights: *mut SubdivisionWeight =
-            push::<SubdivisionWeight>(&mut (*sc.get()).tmp, num_weights);
+        let weights: *mut SubdivisionWeight = push::<SubdivisionWeight>(sc.tmp_mut(), num_weights);
         // C: `ufbxi_check_err(&sc->error, weights);` — pointer-returning
         // function, so the C macro's `return 0` is NULL here.
         ufbxi_check_return_err!(
@@ -1563,7 +1569,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     // C: `*result = *mesh;` — struct assignment (memcpy).
     core::ptr::copy_nonoverlapping(mesh, result, 1);
 
-    let topo: *mut TopoEdge = push::<TopoEdge>(&mut (*sc.get()).tmp, (*mesh).num_indices);
+    let topo: *mut TopoEdge = push::<TopoEdge>(sc.tmp_mut(), (*mesh).num_indices);
     ufbxi_check_err!(sc.error_mut(), !topo.is_null(), "topo");
     compute_topology(mesh, topo, (*mesh).num_indices);
     sc.set_topo(topo);
@@ -1791,11 +1797,8 @@ pub(crate) unsafe fn subdivide_mesh_level(
             max_weights = max_sz(max_weights, (*skin).clusters.count);
         }
 
-        sc.set_tmp_vertex_weights(push_zero::<Real>(
-            &mut (*sc.get()).tmp,
-            (*mesh).num_vertices,
-        ));
-        sc.set_tmp_weights(push::<SubdivisionWeight>(&mut (*sc.get()).tmp, max_weights));
+        sc.set_tmp_vertex_weights(push_zero::<Real>(sc.tmp_mut(), (*mesh).num_vertices));
+        sc.set_tmp_weights(push::<SubdivisionWeight>(sc.tmp_mut(), max_weights));
         ufbxi_check_err!(
             sc.error_mut(),
             !sc.tmp_vertex_weights().is_null() && !sc.tmp_weights().is_null(),
@@ -2150,7 +2153,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
         );
 
         buf_free(sc.source_mut());
-        buf_free(&mut (*sc.get()).tmp);
+        buf_free(sc.tmp_mut());
         (*sc.get()).source = (*sc.get()).result;
         core::ptr::write_bytes(sc.result_mut() as *mut Buf as *mut u8, 0, size_of::<Buf>());
         i += 1;
@@ -2158,7 +2161,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
 
     (*sc.get()).result.ator = sc.ator_result_mut();
     subdivide_mesh_level(sc)?;
-    buf_free(&mut (*sc.get()).tmp);
+    buf_free(sc.tmp_mut());
 
     let mesh: *mut Mesh = sc.dst_mesh_mut();
 
@@ -2182,7 +2185,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     }
 
     if !(*sc.get()).opts.interpolate_normals && !(*sc.get()).opts.ignore_normals {
-        let topo: *mut TopoEdge = push::<TopoEdge>(&mut (*sc.get()).tmp, (*mesh).num_indices);
+        let topo: *mut TopoEdge = push::<TopoEdge>(sc.tmp_mut(), (*mesh).num_indices);
         ufbxi_check_err!(sc.error_mut(), !topo.is_null(), "topo");
         compute_topology(mesh, topo, (*mesh).num_indices);
 
@@ -2291,7 +2294,7 @@ pub(crate) unsafe fn subdivide_mesh(
     let ok: bool = subdivide_mesh_imp(sc, level).is_ok();
 
     free::<SubdivideInput>(sc.ator_tmp_mut(), sc.inputs(), sc.inputs_cap());
-    buf_free(&mut (*sc.get()).tmp);
+    buf_free(sc.tmp_mut());
     buf_free(sc.source_mut());
 
     if ok {
