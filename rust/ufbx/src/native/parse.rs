@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn num_tokens(&self) -> usize {
+        // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).num_tokens }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_num_tokens(&self, num_tokens: usize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).num_tokens = num_tokens;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn mrgb_vertex_count(&self) -> usize {
         // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
         unsafe { (*self.get()).mrgb_vertex_count }

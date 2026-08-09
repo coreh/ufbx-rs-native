@@ -404,8 +404,8 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 pub(crate) unsafe fn obj_span_token(uc: &Context, start_token: usize, end_token: usize) -> String {
-    ufbx_assert!(start_token < (*uc.obj().get()).num_tokens);
-    let end_token = min_sz(end_token, (*uc.obj().get()).num_tokens - 1);
+    ufbx_assert!(start_token < uc.obj().num_tokens());
+    let end_token = min_sz(end_token, uc.obj().num_tokens() - 1);
 
     ufbx_assert!(start_token <= end_token);
     let start: String = *(*uc.obj().get()).tokens.add(start_token);
@@ -425,7 +425,7 @@ pub(crate) unsafe fn obj_span_token(uc: &Context, start_token: usize, end_token:
 pub(crate) unsafe fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
     let mut ptr: *const u8 = (*uc.obj().get()).line.data;
     let end: *const u8 = ptr.add((*uc.obj().get()).line.length);
-    (*uc.obj().get()).num_tokens = 0;
+    uc.obj().set_num_tokens(0);
 
     loop {
         let mut c: u8;
@@ -457,12 +457,12 @@ pub(crate) unsafe fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
         if c == b'\n' {
             break;
         }
-        if c == b'#' && (*uc.obj().get()).num_tokens > 0 {
+        if c == b'#' && uc.obj().num_tokens() > 0 {
             break;
         }
 
-        let index: usize = (*uc.obj().get()).num_tokens;
-        (*uc.obj().get()).num_tokens += 1;
+        let index: usize = uc.obj().num_tokens();
+        uc.obj().set_num_tokens(uc.obj().num_tokens() + 1);
         ufbxi_check!(
             uc,
             grow_array::<String>(
@@ -540,13 +540,13 @@ pub(crate) unsafe fn obj_parse_vertex(
 
     let mut read_values: usize = num_values;
     if attrib == ObjAttrib::Color {
-        if offset + read_values > (*uc.obj().get()).num_tokens {
+        if offset + read_values > uc.obj().num_tokens() {
             read_values = 3;
         }
     }
     ufbxi_check!(
         uc,
-        offset + read_values <= (*uc.obj().get()).num_tokens,
+        offset + read_values <= uc.obj().num_tokens(),
         "offset + read_values <= uc->obj.num_tokens"
     );
 
@@ -843,7 +843,7 @@ pub(crate) unsafe fn obj_parse_indices(
 pub(crate) unsafe fn obj_parse_multi_indices(uc: &Context, window: usize) -> Result<(), Fail> {
     // C: `for (size_t begin = 1; begin + window <= uc->obj.num_tokens; begin++)`
     let mut begin: usize = 1;
-    while begin + window <= (*uc.obj().get()).num_tokens {
+    while begin + window <= uc.obj().num_tokens() {
         obj_parse_indices(uc, begin, window)?;
         begin += 1;
     }
@@ -880,7 +880,7 @@ pub(crate) unsafe fn parse_hex(digits: *const u8, length: usize) -> u32 {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
-    if (*uc.obj().get()).num_tokens >= 3
+    if uc.obj().num_tokens() >= 3
         && str_equal(*(*uc.obj().get()).tokens.add(1), str_c(b"MRGB\0".as_ptr()))
     {
         let num_color: usize = uc.obj().vertex_count_at(ObjAttrib::Color as usize).get();
@@ -951,7 +951,7 @@ pub(crate) unsafe fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
     uc.obj().set_material_dirty(true);
 
     // Allow empty `usemtl` lines to specify "no material".
-    if (*uc.obj().get()).num_tokens < 2 {
+    if uc.obj().num_tokens() < 2 {
         (*uc.obj().get()).usemtl_fbx_id = 0;
         return Ok(());
     }
@@ -1484,7 +1484,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
 pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
     while !(*uc.obj().get()).eof {
         obj_tokenize_line(uc)?;
-        let num_tokens: usize = (*uc.obj().get()).num_tokens;
+        let num_tokens: usize = uc.obj().num_tokens();
         if num_tokens == 0 {
             continue;
         }
@@ -1514,7 +1514,7 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
         } else if key == obj_cmd2(b'v', b'n') {
             obj_parse_vertex(uc, ObjAttrib::Normal, 1)?;
         } else if key == obj_cmd1(b'f') {
-            obj_parse_indices(uc, 1, (*uc.obj().get()).num_tokens - 1)?;
+            obj_parse_indices(uc, 1, uc.obj().num_tokens() - 1)?;
         } else if key == obj_cmd1(b'p') {
             obj_parse_multi_indices(uc, 1)?;
         } else if key == obj_cmd1(b'l') {
@@ -1568,11 +1568,7 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
         } else if key == obj_cmd1(b'#') {
             obj_parse_comment(uc)?;
         } else if str_equal(cmd, str_c(b"mtllib\0".as_ptr())) {
-            ufbxi_check!(
-                uc,
-                (*uc.obj().get()).num_tokens >= 2,
-                "uc->obj.num_tokens >= 2"
-            );
+            ufbxi_check!(uc, uc.obj().num_tokens() >= 2, "uc->obj.num_tokens >= 2");
             let mut lib: String = obj_span_token(uc, 1, usize::MAX);
             lib.data = push_copy::<u8>(uc.tmp_mut_ptr(), lib.length + 1, lib.data);
             ufbxi_check!(uc, !lib.data.is_null(), "lib.data");
@@ -1634,7 +1630,7 @@ pub(crate) unsafe fn obj_parse_prop(
     include_rest: bool,
     p_next: *mut usize,
 ) -> Result<(), Fail> {
-    if start >= (*uc.obj().get()).num_tokens {
+    if start >= uc.obj().num_tokens() {
         if !p_next.is_null() {
             *p_next = start;
         }
@@ -1656,7 +1652,7 @@ pub(crate) unsafe fn obj_parse_prop(
 
     let mut num_reals: usize = 0;
     while num_reals < 4 {
-        if start + num_reals >= (*uc.obj().get()).num_tokens {
+        if start + num_reals >= uc.obj().num_tokens() {
             break;
         }
         let tok: String = *(*uc.obj().get()).tokens.add(start + num_reals);
@@ -1679,7 +1675,7 @@ pub(crate) unsafe fn obj_parse_prop(
 
     let mut num_args: usize = 0;
     if !include_rest {
-        while start + num_args < (*uc.obj().get()).num_tokens - 1 {
+        while start + num_args < uc.obj().num_tokens() - 1 {
             if r#match(
                 (*uc.obj().get()).tokens.add(start + num_args),
                 b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr(),
@@ -1740,7 +1736,7 @@ pub(crate) unsafe fn obj_parse_prop(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), Fail> {
-    if (*uc.obj().get()).num_tokens < 2 {
+    if uc.obj().num_tokens() < 2 {
         return Ok(());
     }
 
@@ -1755,7 +1751,7 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Resul
 
     let mut start: usize = 1;
     // C: `for (; start + 1 < uc->obj.num_tokens; )`
-    while start + 1 < (*uc.obj().get()).num_tokens {
+    while start + 1 < uc.obj().num_tokens() {
         let mut tok: String = *(*uc.obj().get()).tokens.add(start);
         if r#match(&tok, b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr()) {
             tok.data = tok.data.add(1);
@@ -1815,7 +1811,7 @@ pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
 
     while !(*uc.obj().get()).eof {
         obj_tokenize_line(uc)?;
-        let num_tokens: usize = (*uc.obj().get()).num_tokens;
+        let num_tokens: usize = uc.obj().num_tokens();
         if num_tokens == 0 {
             continue;
         }
@@ -1823,11 +1819,7 @@ pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
         let cmd: String = *(*uc.obj().get()).tokens.add(0);
         if str_equal(cmd, str_c(b"newmtl\0".as_ptr())) {
             // HACK: Reuse mesh material parsing, but don't allow for empty material name
-            ufbxi_check!(
-                uc,
-                (*uc.obj().get()).num_tokens >= 2,
-                "uc->obj.num_tokens >= 2"
-            );
+            ufbxi_check!(uc, uc.obj().num_tokens() >= 2, "uc->obj.num_tokens >= 2");
             obj_flush_material(uc)?;
             obj_parse_material(uc)?;
         } else if cmd.length > 4 && memcmp(cmd.data, b"map_".as_ptr(), 4) == 0 {
