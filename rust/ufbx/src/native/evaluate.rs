@@ -2048,6 +2048,21 @@ impl EvalContext {
     pub(crate) fn get(&self) -> *mut InnerEvalContext {
         self.0.get().cast()
     }
+
+    // `src_element` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn src_element(&self) -> *mut u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        unsafe { (*self.get()).src_element }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_src_element(&self, src_element: *mut u8) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).src_element = src_element;
+        }
+    }
 }
 
 // ufbx.c:26070-26073 `ufbxi_translate_element`
@@ -2059,7 +2074,7 @@ pub(crate) unsafe fn translate_element(ec: &EvalContext, elem: *mut c_void) -> *
     if !elem.is_null() {
         (*ec.get())
             .dst_element
-            .offset((elem as *mut u8).offset_from((*ec.get()).src_element)) as *mut Element
+            .offset((elem as *mut u8).offset_from(ec.src_element())) as *mut Element
     } else {
         ptr::null_mut()
     }
@@ -2147,7 +2162,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     );
 
     // C: `ec->src_element = (char*)ec->src_scene.elements.data[0];`
-    (*ec.get()).src_element = *((*ec.get()).src_scene.elements.data as *mut *mut u8).add(0);
+    ec.set_src_element(*((*ec.get()).src_scene.elements.data as *mut *mut u8).add(0));
     (*ec.get()).dst_element = element_data;
 
     // C indexes `ec->scene.elements_by_type[i]`, the `ufbx_element_list` array
