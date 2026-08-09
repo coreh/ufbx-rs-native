@@ -515,6 +515,20 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn initialized(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).initialized }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_initialized(&self, initialized: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).initialized = initialized;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn has_vertex_color(&self) -> bool {
         // SAFETY: reading a `bool` we only ever store valid bools into.
         unsafe { (*self.get()).has_vertex_color }

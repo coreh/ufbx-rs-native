@@ -245,7 +245,7 @@ pub(crate) unsafe fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
 #[must_use]
 pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
     uc.set_from_ascii(true);
-    (*uc.obj().get()).initialized = true;
+    uc.obj().set_initialized(true);
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`
     for i in 0..OBJ_NUM_ATTRIBS_EXT {
@@ -297,7 +297,7 @@ pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 pub(crate) unsafe fn obj_free(uc: &Context) {
-    if !(*uc.obj().get()).initialized {
+    if !uc.obj().initialized() {
         return;
     }
 
