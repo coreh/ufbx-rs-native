@@ -465,11 +465,8 @@ pub(crate) unsafe fn fixup_opts_string(
 #[must_use]
 pub(crate) unsafe fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> {
     let num_elements: usize = (*uc.get()).tmp_element_id.num_items;
-    let element_ids: *mut u32 = push_pop::<u32>(
-        uc.tmp_mut_ptr(),
-        &mut (*uc.get()).tmp_element_id,
-        num_elements,
-    );
+    let element_ids: *mut u32 =
+        push_pop::<u32>(uc.tmp_mut_ptr(), uc.tmp_element_id_mut_ptr(), num_elements);
     ufbxi_check!(uc, !element_ids.is_null(), "element_ids");
 
     // C: `ufbxi_for_list(ufbx_warning, warning, uc->scene.metadata.warnings)`
@@ -917,7 +914,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     buf_free(&mut (*uc.get()).tmp_mesh_textures);
     buf_free(uc.tmp_full_weights_mut_ptr());
     buf_free(uc.tmp_dom_nodes_mut_ptr());
-    buf_free(&mut (*uc.get()).tmp_element_id);
+    buf_free(uc.tmp_element_id_mut_ptr());
     buf_free(&mut (*uc.get()).tmp_ascii_spans);
 
     free::<Node>(uc.ator_tmp_mut_ptr(), uc.top_nodes(), uc.top_nodes_cap());

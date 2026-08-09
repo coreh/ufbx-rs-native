@@ -6106,7 +6106,7 @@ pub(crate) unsafe fn read_object(uc: &Context, node: *mut Node) -> Result<(), Fa
 pub(crate) unsafe fn read_objects(uc: &Context) -> Result<(), Fail> {
     loop {
         // Push a deferred element ID for tagging warnings
-        uc.set_p_element_id(push::<u32>(&mut (*uc.get()).tmp_element_id, 1));
+        uc.set_p_element_id(push::<u32>(uc.tmp_element_id_mut_ptr(), 1));
         ufbxi_check!(uc, !uc.p_element_id().is_null(), "uc->p_element_id");
         *uc.p_element_id() = NO_INDEX;
         (*uc.get()).warnings.deferred_element_id_plus_one =
@@ -6163,7 +6163,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 buf_clear(uc.tmp_parse_mut_ptr());
 
                 // Push a deferred element ID for tagging warnings
-                uc.set_p_element_id(push::<u32>(&mut (*uc.get()).tmp_element_id, 1));
+                uc.set_p_element_id(push::<u32>(uc.tmp_element_id_mut_ptr(), 1));
                 ufbxi_check!(uc, !uc.p_element_id().is_null(), "uc->p_element_id");
                 *uc.p_element_id() = NO_INDEX;
                 (*uc.get()).warnings.deferred_element_id_plus_one =
