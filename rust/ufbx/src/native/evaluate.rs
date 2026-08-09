@@ -1048,7 +1048,7 @@ pub(crate) unsafe fn load(
         (*uc.get()).opts.thread_opts.memory_limit = 32 * 1024 * 1024;
     }
 
-    (*uc.get()).synthetic_id_counter = SYNTHETIC_ID_START;
+    uc.set_synthetic_id_counter(SYNTHETIC_ID_START);
 
     (*uc.get()).string_pool.error = ptr::addr_of_mut!((*uc.get()).error);
     map_init(

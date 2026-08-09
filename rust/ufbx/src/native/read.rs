@@ -918,8 +918,8 @@ pub(crate) const SYNTHETIC_ID_START: u64 = POINTER_ID_START + MAXIMUM_FAST_POINT
 #[inline(always)]
 pub(crate) unsafe fn push_synthetic_id(uc: &Context) -> u64 {
     // C: `return ++uc->synthetic_id_counter;` — pre-increment yields the NEW value.
-    (*uc.get()).synthetic_id_counter = (*uc.get()).synthetic_id_counter.wrapping_add(1);
-    (*uc.get()).synthetic_id_counter
+    uc.set_synthetic_id_counter(uc.synthetic_id_counter().wrapping_add(1));
+    uc.synthetic_id_counter()
 }
 
 // ufbx.c:12234-12248 `ufbxi_synthetic_id_from_ptr_id`
