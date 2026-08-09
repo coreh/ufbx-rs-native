@@ -3530,6 +3530,14 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `tmp_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_arr_size_mut(&self) -> *mut usize {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp_arr_size }
+    }
+
     // `tmp_arr` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_arr_mut(&self) -> *mut *mut u8 {
@@ -4007,7 +4015,7 @@ pub(crate) unsafe fn sort_bake_times(
         grow_array::<u8>(
             bc.ator_tmp_mut(),
             bc.tmp_arr_mut(),
-            ptr::addr_of_mut!((*bc.get()).tmp_arr_size),
+            bc.tmp_arr_size_mut(),
             count.wrapping_mul(size_of::<BakeTime>()),
         ),
         "ufbxi_grow_array_size((&bc->ator_tmp), sizeof(**(&bc->tmp_arr)), (&bc->tmp_arr), (&bc->tmp_arr_size), (count * sizeof(ufbxi_bake_time)))"
