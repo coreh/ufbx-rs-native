@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `legacy_node` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn legacy_node_mut_ptr(&self) -> *mut Node {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).legacy_node }
+    }
+
     // `tmp_mesh_textures` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mesh_textures_mut_ptr(&self) -> *mut Buf {
@@ -4672,12 +4680,12 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
         return Ok(());
     }
 
-    pop::<Node>(uc.tmp_stack_mut_ptr(), 1, &mut (*uc.get()).legacy_node);
+    pop::<Node>(uc.tmp_stack_mut_ptr(), 1, uc.legacy_node_mut_ptr());
     uc.set_top_child_index(0);
-    uc.set_top_node(&mut (*uc.get()).legacy_node);
+    uc.set_top_node(uc.legacy_node_mut_ptr());
 
     if (*uc.get()).opts.retain_dom {
-        retain_toplevel(uc, &mut (*uc.get()).legacy_node)?;
+        retain_toplevel(uc, uc.legacy_node_mut_ptr())?;
     }
 
     Ok(())
