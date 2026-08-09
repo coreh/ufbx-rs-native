@@ -515,6 +515,12 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn tokens_cap(&self) -> usize {
+        // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).tokens_cap }
+    }
+
+    #[inline(always)]
     pub(crate) fn tokens(&self) -> *mut String {
         // SAFETY: reading a scalar; all bit patterns of `*mut String` are valid.
         unsafe { (*self.get()).tokens }

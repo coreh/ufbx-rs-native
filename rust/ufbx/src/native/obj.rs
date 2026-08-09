@@ -320,7 +320,7 @@ pub(crate) unsafe fn obj_free(uc: &Context) {
     free::<String>(
         uc.ator_tmp_mut_ptr(),
         uc.obj().tokens(),
-        (*uc.obj().get()).tokens_cap,
+        uc.obj().tokens_cap(),
     );
     free::<*mut Material>(
         uc.ator_tmp_mut_ptr(),
