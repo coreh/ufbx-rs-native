@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `read_legacy_settings` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn read_legacy_settings(&self) -> bool {
+        // SAFETY: reading a `bool` we only ever store valid bools into.
+        unsafe { (*self.get()).read_legacy_settings }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_read_legacy_settings(&self, read_legacy_settings: bool) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).read_legacy_settings = read_legacy_settings;
+        }
+    }
+
     // `retain_mesh_parts` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn retain_mesh_parts(&self) -> bool {

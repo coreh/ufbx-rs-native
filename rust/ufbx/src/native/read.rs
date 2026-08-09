@@ -7234,10 +7234,10 @@ pub(crate) unsafe fn read_takes(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:15766-15816 `ufbxi_read_legacy_settings`
 #[inline(never)]
 pub(crate) unsafe fn read_legacy_settings(uc: &Context, node: *mut Node) -> Result<(), Fail> {
-    if (*uc.get()).read_legacy_settings {
+    if uc.read_legacy_settings() {
         return Ok(());
     }
-    (*uc.get()).read_legacy_settings = true;
+    uc.set_read_legacy_settings(true);
 
     let mut tmp_props: [Prop; 2] = core::mem::zeroed();
     let mut num_props: u32 = 0;
