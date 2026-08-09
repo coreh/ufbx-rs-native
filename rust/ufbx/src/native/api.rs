@@ -5610,7 +5610,7 @@ mod tests {
     use crate::generated::RawAllocatorOpts;
     use crate::native::allocator::{init_ator, MESH_IMP_MAGIC};
     use crate::native::buf::push_size;
-    use crate::native::parse::{get_imp, Context, MeshImp};
+    use crate::native::parse::{get_imp, MeshImp};
     use crate::prelude::Ref;
     use core::ffi::c_void;
     use core::mem::size_of;
@@ -5831,10 +5831,8 @@ mod tests {
 
     #[test]
     fn test_is_thread_safe() {
-        unsafe {
-            // C: `return UFBXI_THREAD_SAFE != 0;` (1 on every target we build).
-            assert!(is_thread_safe());
-        }
+        // C: `return UFBXI_THREAD_SAFE != 0;` (1 on every target we build).
+        assert!(is_thread_safe());
     }
 
     #[test]
@@ -5865,12 +5863,10 @@ mod tests {
         assert_eq!(AXES_RIGHT_HANDED_Z_UP.front, CoordinateAxis::NegativeY);
         assert_eq!(AXES_LEFT_HANDED_Y_UP.front, CoordinateAxis::NegativeZ);
         assert_eq!(AXES_LEFT_HANDED_Z_UP.front, CoordinateAxis::PositiveY);
-        unsafe {
-            assert!(coordinate_axes_valid(AXES_RIGHT_HANDED_Y_UP));
-            assert!(coordinate_axes_valid(AXES_RIGHT_HANDED_Z_UP));
-            assert!(coordinate_axes_valid(AXES_LEFT_HANDED_Y_UP));
-            assert!(coordinate_axes_valid(AXES_LEFT_HANDED_Z_UP));
-        }
+        assert!(coordinate_axes_valid(AXES_RIGHT_HANDED_Y_UP));
+        assert!(coordinate_axes_valid(AXES_RIGHT_HANDED_Z_UP));
+        assert!(coordinate_axes_valid(AXES_LEFT_HANDED_Y_UP));
+        assert!(coordinate_axes_valid(AXES_LEFT_HANDED_Z_UP));
     }
 
     // The lookup tables the `ufbx_find_*` entry points binary-search are built

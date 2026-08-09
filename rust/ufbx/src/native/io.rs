@@ -816,6 +816,7 @@ pub(crate) unsafe extern "C" fn memory_close(user: *mut c_void) {
 mod tests {
     use super::*;
     use crate::generated::RawLoadOpts;
+    use crate::native::parse::InnerContext;
 
     // A zeroed context is what C builds via `memset` before setup; only the
     // IO fields need real values (precedent: `native::parse` tests).
