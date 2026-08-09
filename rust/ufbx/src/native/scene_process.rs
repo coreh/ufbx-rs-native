@@ -423,7 +423,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
 
     let fbx_ids: *mut u64 = push_pop::<u64>(
         uc.tmp_parse_mut_ptr(),
-        &mut (*uc.get()).tmp_element_fbx_ids,
+        uc.tmp_element_fbx_ids_mut_ptr(),
         num_elements as usize,
     );
     ufbxi_check!(uc, !fbx_ids.is_null(), "fbx_ids");

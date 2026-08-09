@@ -1174,7 +1174,7 @@ pub(crate) unsafe fn push_element_size(
     );
     ufbxi_check_return!(
         uc,
-        !push_copy_fast::<u64>(&mut (*uc.get()).tmp_element_fbx_ids, 1, &(*info).fbx_id).is_null(),
+        !push_copy_fast::<u64>(uc.tmp_element_fbx_ids_mut_ptr(), 1, &(*info).fbx_id).is_null(),
         core::ptr::null_mut(),
         "((uint64_t*)ufbxi_push_size_copy_fast((&uc->tmp_element_fbx_ids), sizeof(uint64_t), (1), (&info->fbx_id)))"
     );
@@ -1289,7 +1289,7 @@ pub(crate) unsafe fn push_synthetic_element_size(
 
     ufbxi_check_return!(
         uc,
-        !push_copy_fast::<u64>(&mut (*uc.get()).tmp_element_fbx_ids, 1, p_fbx_id).is_null(),
+        !push_copy_fast::<u64>(uc.tmp_element_fbx_ids_mut_ptr(), 1, p_fbx_id).is_null(),
         core::ptr::null_mut(),
         "((uint64_t*)ufbxi_push_size_copy_fast((&uc->tmp_element_fbx_ids), sizeof(uint64_t), (1), (p_fbx_id)))"
     );
