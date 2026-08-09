@@ -284,6 +284,21 @@ impl DeflateContext {
         self.0.get().cast()
     }
 
+    // `out_ptr` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn out_ptr(&self) -> *mut u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        unsafe { (*self.get()).out_ptr }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_out_ptr(&self, out_ptr: *mut u8) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).out_ptr = out_ptr;
+        }
+    }
+
     // `out_begin` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn out_begin(&self) -> *mut u8 {
@@ -1308,7 +1323,7 @@ pub(crate) unsafe fn inflate_block_slow(
     let trees = &*trees;
 
     let mut max_symbols = max_symbols;
-    let mut out_ptr = (*dc.get()).out_ptr;
+    let mut out_ptr = dc.out_ptr();
     let out_begin = dc.out_begin();
     let out_end = (*dc.get()).out_end;
 
@@ -1344,7 +1359,7 @@ pub(crate) unsafe fn inflate_block_slow(
                 return -13;
             }
 
-            (*dc.get()).out_ptr = out_ptr;
+            dc.set_out_ptr(out_ptr);
             (*dc.get()).stream.bits = bits;
             (*dc.get()).stream.left = left;
             (*dc.get()).stream.chunk_ptr = data;
@@ -1422,7 +1437,7 @@ pub(crate) unsafe fn inflate_block_slow(
         }
     }
 
-    (*dc.get()).out_ptr = out_ptr;
+    dc.set_out_ptr(out_ptr);
     (*dc.get()).stream.bits = bits;
     (*dc.get()).stream.left = left;
     (*dc.get()).stream.chunk_ptr = data;
@@ -1458,10 +1473,10 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
             >= INFLATE_FAST_MIN_IN as isize
     );
     ufbxi_dev_assert!(
-        (*dc.get()).out_end.offset_from((*dc.get()).out_ptr) >= INFLATE_FAST_MIN_OUT as isize
+        (*dc.get()).out_end.offset_from(dc.out_ptr()) >= INFLATE_FAST_MIN_OUT as isize
     );
 
-    let mut out_ptr = (*dc.get()).out_ptr;
+    let mut out_ptr = dc.out_ptr();
     let out_begin: *mut u8 = dc.out_begin();
     let out_end: *mut u8 = (*dc.get()).out_end.sub(INFLATE_FAST_MIN_OUT);
 
@@ -1574,7 +1589,7 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
                 if huff_sym_value(sym0) != 0 {
                     return -13;
                 }
-                (*dc.get()).out_ptr = out_ptr;
+                dc.set_out_ptr(out_ptr);
                 (*dc.get()).stream.bits = bits;
                 (*dc.get()).stream.left = left;
                 (*dc.get()).stream.chunk_ptr = data;
@@ -1665,7 +1680,7 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
         break;
     }
 
-    (*dc.get()).out_ptr = out_ptr;
+    dc.set_out_ptr(out_ptr);
     (*dc.get()).stream.bits = bits;
     (*dc.get()).stream.left = left;
     (*dc.get()).stream.chunk_ptr = data;
@@ -1743,7 +1758,7 @@ pub(crate) unsafe fn inflate(
     let dc: DeflateContext = core::mem::zeroed();
     bit_stream_init(&raw mut (*dc.get()).stream, input);
     dc.set_out_begin(dst as *mut u8);
-    (*dc.get()).out_ptr = dst as *mut u8;
+    dc.set_out_ptr(dst as *mut u8);
     (*dc.get()).out_end = (dst as *mut u8).add(dst_size);
     if input.internal_fast_bits != 0 {
         dc.set_fast_bits(input.internal_fast_bits as u32);
@@ -1808,7 +1823,7 @@ pub(crate) unsafe fn inflate(
             if (len ^ nlen) != 0xffff {
                 return -4;
             }
-            if (*dc.get()).out_end.offset_from((*dc.get()).out_ptr) < len as isize {
+            if (*dc.get()).out_end.offset_from(dc.out_ptr()) < len as isize {
                 return -6;
             }
             bits >>= 32;
@@ -1820,7 +1835,7 @@ pub(crate) unsafe fn inflate(
 
             // Copy `len` bytes of literal data
             if bit_copy_bytes(
-                (*dc.get()).out_ptr as *mut c_void,
+                dc.out_ptr() as *mut c_void,
                 &raw mut (*dc.get()).stream,
                 len,
             ) == 0
@@ -1828,7 +1843,7 @@ pub(crate) unsafe fn inflate(
                 return -5;
             }
 
-            (*dc.get()).out_ptr = (*dc.get()).out_ptr.add(len);
+            dc.set_out_ptr(dc.out_ptr().add(len));
         } else if type_ <= 2 {
             (*dc.get()).stream.bits = bits;
             (*dc.get()).stream.left = left;
@@ -1856,7 +1871,7 @@ pub(crate) unsafe fn inflate(
 
             loop {
                 let fast_viable = (*trees).fast_bits == HUFF_FAST_BITS
-                    && (*dc.get()).out_end.offset_from((*dc.get()).out_ptr)
+                    && (*dc.get()).out_end.offset_from(dc.out_ptr())
                         >= INFLATE_FAST_MIN_OUT as isize;
 
                 // `ufbxi_inflate_block_fast()` needs a bit more upfront setup, see asserts on top of the function
@@ -1918,7 +1933,7 @@ pub(crate) unsafe fn inflate(
 
             let checksum = adler32(
                 dc.out_begin() as *const c_void,
-                to_size((*dc.get()).out_ptr.offset_from(dc.out_begin())),
+                to_size(dc.out_ptr().offset_from(dc.out_begin())),
             );
             if ref_ != checksum {
                 return -9;
@@ -1926,7 +1941,7 @@ pub(crate) unsafe fn inflate(
         }
     }
 
-    (*dc.get()).out_ptr.offset_from(dc.out_begin())
+    dc.out_ptr().offset_from(dc.out_begin())
 }
 
 // ufbx.c:3278 `#endif // !defined(ufbx_inflate)` — END of the DEFLATE section.
