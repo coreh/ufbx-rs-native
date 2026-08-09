@@ -177,6 +177,13 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `tmp_arr` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn tmp_arr(&self) -> *mut u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        unsafe { (*self.get()).tmp_arr }
+    }
+
     // `num_channels` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn num_channels(&self) -> usize {
@@ -717,7 +724,7 @@ pub(crate) unsafe fn cache_sort_tmp_channels(
         size_of::<CacheTmpChannel>(),
         16,
         channels as *mut c_void,
-        (*cc.get()).tmp_arr as *mut c_void,
+        cc.tmp_arr() as *mut c_void,
         count,
         tmp_channel_less,
         core::ptr::null_mut(),
@@ -1140,7 +1147,7 @@ pub(crate) unsafe fn cache_sort_frames(
         size_of::<CacheFrame>(),
         16,
         frames as *mut c_void,
-        (*cc.get()).tmp_arr as *mut c_void,
+        cc.tmp_arr() as *mut c_void,
         count,
         cmp_cache_frame_less,
         core::ptr::null_mut(),
@@ -1366,7 +1373,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
     buf_free(&mut (*cc.get()).tmp);
     buf_free(&mut (*cc.get()).tmp_stack);
     free::<u8>(cc.ator_tmp(), (*cc.get()).name_buf, (*cc.get()).name_cap);
-    free::<u8>(cc.ator_tmp(), (*cc.get()).tmp_arr, (*cc.get()).tmp_arr_size);
+    free::<u8>(cc.ator_tmp(), cc.tmp_arr(), (*cc.get()).tmp_arr_size);
     if !cc.owned_by_scene() {
         string_pool_temp_free(&mut (*cc.get()).string_pool);
         free_ator(cc.ator_tmp());
