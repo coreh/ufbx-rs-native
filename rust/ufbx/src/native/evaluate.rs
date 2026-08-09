@@ -916,7 +916,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     }
     buf_free(&mut (*uc.get()).tmp_mesh_textures);
     buf_free(uc.tmp_full_weights_mut_ptr());
-    buf_free(&mut (*uc.get()).tmp_dom_nodes);
+    buf_free(uc.tmp_dom_nodes_mut_ptr());
     buf_free(&mut (*uc.get()).tmp_element_id);
     buf_free(&mut (*uc.get()).tmp_ascii_spans);
 

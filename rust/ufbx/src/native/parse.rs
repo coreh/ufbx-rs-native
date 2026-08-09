@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `tmp_dom_nodes` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_dom_nodes_mut_ptr(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp_dom_nodes }
+    }
+
     // `dom_node_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn dom_node_map_mut_ptr(&self) -> *mut Map {
@@ -3670,7 +3678,7 @@ unsafe fn retain_dom_node_rec(
     ufbxi_check!(uc, !dst.is_null(), "dst");
     ufbxi_check!(
         uc,
-        !push_copy::<*mut DomNode>(&mut (*uc.get()).tmp_dom_nodes, 1, &dst).is_null(),
+        !push_copy::<*mut DomNode>(uc.tmp_dom_nodes_mut_ptr(), 1, &dst).is_null(),
         "((ufbx_dom_node**)ufbxi_push_size_copy((&uc->tmp_dom_nodes), sizeof(ufbx_dom_node*), (1), (&dst)))"
     );
 
@@ -3791,7 +3799,7 @@ unsafe fn retain_dom_node_rec(
         (*dst).children.count = (*node).num_children as usize;
         (*dst).children.data = push_pop::<*mut DomNode>(
             uc.result_mut_ptr(),
-            &mut (*uc.get()).tmp_dom_nodes,
+            uc.tmp_dom_nodes_mut_ptr(),
             (*node).num_children as usize,
         ) as *const Ref<DomNode>;
         ufbxi_check!(uc, !(*dst).children.data.is_null(), "dst->children.data");
@@ -3806,7 +3814,7 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
     if uc.dom_parse_num_children() > 0 {
         let children: *mut *mut DomNode = push_pop(
             uc.result_mut_ptr(),
-            &mut (*uc.get()).tmp_dom_nodes,
+            uc.tmp_dom_nodes_mut_ptr(),
             uc.dom_parse_num_children(),
         );
         ufbxi_check!(uc, !children.is_null(), "children");
@@ -3824,7 +3832,7 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
         let num_top_nodes = (*uc.get()).tmp_dom_nodes.num_items;
         let nodes: *mut *mut DomNode = push_pop(
             uc.result_mut_ptr(),
-            &mut (*uc.get()).tmp_dom_nodes,
+            uc.tmp_dom_nodes_mut_ptr(),
             num_top_nodes,
         );
         ufbxi_check!(uc, !nodes.is_null(), "nodes");
