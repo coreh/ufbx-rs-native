@@ -3025,6 +3025,21 @@ impl CreateAnimContext {
     pub(crate) fn get(&self) -> *mut InnerCreateAnimContext {
         self.0.get().cast()
     }
+
+    // `scene` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn scene(&self) -> *const Scene {
+        // SAFETY: reading a scalar field; all bit patterns of `*const Scene` are valid.
+        unsafe { (*self.get()).scene }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_scene(&self, scene: *const Scene) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).scene = scene;
+        }
+    }
 }
 
 // ufbx.c:26498-26510 `ufbxi_check_string`
@@ -3127,7 +3142,7 @@ pub(crate) unsafe extern "C" fn transform_override_less(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
-    let scene: *const Scene = (*ac.get()).scene;
+    let scene: *const Scene = ac.scene();
     let anim: *mut Anim = ptr::addr_of_mut!((*ac.get()).anim);
 
     init_ator(

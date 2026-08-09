@@ -1789,7 +1789,7 @@ pub(crate) unsafe fn create_anim(
         core::ptr::copy_nonoverlapping(opts, core::ptr::addr_of_mut!((*ac.get()).opts), 1);
     }
 
-    (*ac.get()).scene = scene;
+    ac.set_scene(scene);
 
     // C: `int ok = ufbxi_create_anim_imp(&ac);`
     let ok = evaluate::create_anim_imp(&ac);
