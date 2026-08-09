@@ -2049,6 +2049,21 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    // `src_imp` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn src_imp(&self) -> *mut SceneImp {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut SceneImp` are valid.
+        unsafe { (*self.get()).src_imp }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_src_imp(&self, src_imp: *mut SceneImp) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).src_imp = src_imp;
+        }
+    }
+
     #[inline(always)]
     pub(crate) fn set_dst_element(&self, dst_element: *mut u8) {
         // SAFETY: storing a scalar; cannot violate validity.
@@ -2814,11 +2829,11 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // (possibly narrowed) public `&Scene` pointer via exposed provenance.
     (imp as *mut u8).expose_provenance();
 
-    ufbx_assert!((*(*ec.get()).src_imp).magic == SCENE_IMP_MAGIC);
+    ufbx_assert!((*ec.src_imp()).magic == SCENE_IMP_MAGIC);
     init_ref(
         ptr::addr_of_mut!((*imp).refcount),
         SCENE_IMP_MAGIC,
-        ptr::addr_of_mut!((*(*ec.get()).src_imp).refcount),
+        ptr::addr_of_mut!((*ec.src_imp()).refcount),
     );
 
     (*imp).magic = SCENE_IMP_MAGIC;
@@ -2880,7 +2895,7 @@ pub(crate) unsafe fn evaluate_scene(
         );
     }
 
-    (*ec.get()).src_imp = get_imp::<SceneImp>(scene as *mut c_void);
+    ec.set_src_imp(get_imp::<SceneImp>(scene as *mut c_void));
     // C: `ec->src_scene = *scene;` (struct assignment)
     ptr::copy_nonoverlapping(
         scene as *const Scene,
