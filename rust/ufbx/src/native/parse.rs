@@ -864,6 +864,22 @@ impl Context {
             (*self.get()).progress_interval = progress_interval;
         }
     }
+
+    // Deepest open node on the parse stack. Scalar `*mut Node`: value getter +
+    // setter. Copies the pointer out; any deref stays the caller's obligation.
+    #[inline(always)]
+    pub(crate) fn top_node(&self) -> *mut Node {
+        // SAFETY: reading a `*mut Node` field; all bit patterns valid.
+        unsafe { (*self.get()).top_node }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_top_node(&self, top_node: *mut Node) {
+        // SAFETY: storing a `*mut Node`; cannot violate validity.
+        unsafe {
+            (*self.get()).top_node = top_node;
+        }
+    }
 }
 
 // ufbx.c:6652-6655 `ufbxi_fail_imp`
@@ -3373,7 +3389,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
     let node_end: *mut Node = add_ptr(node, (*uc.get()).top_nodes_len);
     while node != node_end {
         if (*node).name == name {
-            (*uc.get()).top_node = node;
+            uc.set_top_node(node);
             (*uc.get()).top_child_index = 0;
             return Ok(());
         }
@@ -3382,7 +3398,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
 
     // Reached end and not found in cache
     if (*uc.get()).parsed_to_end {
-        (*uc.get()).top_node = core::ptr::null_mut();
+        uc.set_top_node(core::ptr::null_mut());
         (*uc.get()).top_child_index = 0;
         return Ok(());
     }
@@ -3412,7 +3428,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
 
         // Top-level node not found
         if end {
-            (*uc.get()).top_node = core::ptr::null_mut();
+            uc.set_top_node(core::ptr::null_mut());
             (*uc.get()).top_child_index = 0;
             (*uc.get()).parsed_to_end = true;
             if (*uc.get()).opts.retain_dom {
@@ -3444,7 +3460,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
 
         // Return if we parsed the right one
         if (*node).name == name {
-            (*uc.get()).top_node = node;
+            uc.set_top_node(node);
             (*uc.get()).top_child_index = usize::MAX;
             return Ok(());
         }
@@ -3489,7 +3505,7 @@ pub(crate) unsafe fn parse_toplevel_child(
     tmp_buf: *mut Buf,
 ) -> Result<(), Fail> {
     // Top-level node not found
-    if (*uc.get()).top_node.is_null() {
+    if uc.top_node().is_null() {
         *p_node = core::ptr::null_mut();
         return Ok(());
     }
@@ -3500,7 +3516,7 @@ pub(crate) unsafe fn parse_toplevel_child(
             buf_clear(&mut (*uc.get()).tmp_parse);
         }
         let mut end = false;
-        let state: ParseState = update_parse_state(ParseState::Root, (*(*uc.get()).top_node).name);
+        let state: ParseState = update_parse_state(ParseState::Root, (*uc.top_node()).name);
         let buf: *mut Buf = if !tmp_buf.is_null() {
             tmp_buf
         } else {
@@ -3527,11 +3543,11 @@ pub(crate) unsafe fn parse_toplevel_child(
     } else {
         // Iterate already parsed nodes
         let child_index = (*uc.get()).top_child_index;
-        if child_index == (*(*uc.get()).top_node).num_children as usize {
+        if child_index == (*uc.top_node()).num_children as usize {
             *p_node = core::ptr::null_mut();
         } else {
             (*uc.get()).top_child_index = (*uc.get()).top_child_index.wrapping_add(1);
-            *p_node = (*(*uc.get()).top_node).children.add(child_index);
+            *p_node = (*uc.top_node()).children.add(child_index);
         }
     }
 
@@ -3567,7 +3583,7 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
 
     // Top-level node not found
     if end {
-        (*uc.get()).top_node = core::ptr::null_mut();
+        uc.set_top_node(core::ptr::null_mut());
         (*uc.get()).top_child_index = 0;
         (*uc.get()).parsed_to_end = true;
         return Ok(());
@@ -3575,7 +3591,7 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
 
     pop::<Node>(&mut (*uc.get()).tmp_stack, 1, &mut (*uc.get()).legacy_node);
     (*uc.get()).top_child_index = 0;
-    (*uc.get()).top_node = &mut (*uc.get()).legacy_node;
+    uc.set_top_node(&mut (*uc.get()).legacy_node);
 
     if (*uc.get()).opts.retain_dom {
         retain_toplevel(uc, &mut (*uc.get()).legacy_node)?;

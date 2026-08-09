@@ -7360,9 +7360,9 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
     // The ASCII exporter version is stored in top-level
     if (*uc.get()).exporter == Exporter::BlenderAscii {
         parse_toplevel(uc, sp::Creator.as_ptr())?;
-        if !(*uc.get()).top_node.is_null() {
+        if !uc.top_node().is_null() {
             ufbxi_ignore!(get_val1(
-                (*uc.get()).top_node,
+                uc.top_node(),
                 b"S\0".as_ptr(),
                 core::ptr::addr_of_mut!((*uc.get()).scene.metadata.creator)
                     as *mut core::ffi::c_void,
@@ -7432,7 +7432,7 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
         // even the objects are not found.
         ufbxi_check_msg!(
             uc,
-            !(*uc.get()).top_node.is_null(),
+            !uc.top_node().is_null(),
             "Not an FBX file",
             "uc->top_node"
         );
@@ -7453,14 +7453,14 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
 
     // Check if there's a top-level GlobalSettings that we skimmed over
     parse_toplevel(uc, sp::GlobalSettings.as_ptr())?;
-    if !(*uc.get()).top_node.is_null() {
-        read_global_settings(uc, (*uc.get()).top_node)?;
+    if !uc.top_node().is_null() {
+        read_global_settings(uc, uc.top_node())?;
     }
 
     // Version5: Pre-6000 settings
     parse_toplevel(uc, sp::Version5.as_ptr())?;
-    if !(*uc.get()).top_node.is_null() {
-        let settings: *mut Node = find_child_strcmp((*uc.get()).top_node, b"Settings\0".as_ptr());
+    if !uc.top_node().is_null() {
+        let settings: *mut Node = find_child_strcmp(uc.top_node(), b"Settings\0".as_ptr());
         if !settings.is_null() {
             read_legacy_settings(uc, settings)?;
         }
@@ -8431,11 +8431,11 @@ pub(crate) unsafe fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
 
     loop {
         parse_legacy_toplevel(uc)?;
-        if (*uc.get()).top_node.is_null() {
+        if uc.top_node().is_null() {
             break;
         }
 
-        let node: *mut Node = (*uc.get()).top_node;
+        let node: *mut Node = uc.top_node();
         if (*node).name == sp::FBXHeaderExtension.as_ptr() {
             read_header_extension(uc)?;
         } else if (*node).name == sp::Media.as_ptr() {
