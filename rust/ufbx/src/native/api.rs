@@ -508,7 +508,7 @@ pub(crate) unsafe fn open_memory_ctx(
     // Align the allocation size to 8 bytes to make sure the header is aligned.
     let self_size: usize = align_to_mask(size_of::<MemoryStream>().wrapping_add(copy_size), 7);
 
-    let memory: *mut u8 = alloc::<u8>(&mut (*fc.get()).ator, self_size);
+    let memory: *mut u8 = alloc::<u8>(fc.ator_mut(), self_size);
     if memory.is_null() {
         end_file_context(&fc, error, false);
         return false;

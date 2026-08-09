@@ -395,6 +395,14 @@ impl FileContext {
         self.0.get().cast()
     }
 
+    // `ator` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ator_mut(&self) -> *mut Allocator {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ator }
+    }
+
     // `parent_ator` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn parent_ator(&self) -> *mut Allocator {
@@ -426,7 +434,7 @@ pub(crate) unsafe fn begin_file_context(
     } else {
         init_ator(
             &mut (*fc.get()).error,
-            &mut (*fc.get()).ator,
+            fc.ator_mut(),
             ator_opts,
             b"file\0".as_ptr(),
         );
@@ -440,7 +448,7 @@ pub(crate) unsafe fn end_file_context(fc: &FileContext, error: *mut Error, ok: b
         (*fc.get()).ator.error = (*fc.parent_ator()).error;
         *fc.parent_ator() = (*fc.get()).ator;
     } else {
-        free_ator(&mut (*fc.get()).ator);
+        free_ator(fc.ator_mut());
     }
     if !error.is_null() {
         if !ok {
@@ -526,7 +534,7 @@ pub(crate) unsafe fn fopen(
     if path_len < 256 - 1 {
         wpath = wpath_buf.as_mut_ptr() as *mut u16;
     } else {
-        wpath = alloc::<u16>(&mut (*fc.get()).ator, path_len + 1);
+        wpath = alloc::<u16>(fc.ator_mut(), path_len + 1);
         if wpath.is_null() {
             return core::ptr::null_mut();
         }
@@ -592,7 +600,7 @@ pub(crate) unsafe fn fopen(
     // the compiler-version fork collapses to the plain `_wfopen` call.
     file = libc_stdio::_wfopen(wpath, [0x72u16, 0x62u16, 0u16].as_ptr()); // L"rb"
     if wpath != wpath_buf.as_mut_ptr() as *mut u16 {
-        free::<u16>(&mut (*fc.get()).ator, wpath, path_len + 1);
+        free::<u16>(fc.ator_mut(), wpath, path_len + 1);
     }
     if file.is_null() {
         set_err_info(&mut (*fc.get()).error, path, path_len);
@@ -619,7 +627,7 @@ pub(crate) unsafe fn fopen(
         if path_len < 256 - 1 {
             copy = copy_buf.as_mut_ptr() as *mut u8;
         } else {
-            copy = alloc::<u8>(&mut (*fc.get()).ator, path_len + 1);
+            copy = alloc::<u8>(fc.ator_mut(), path_len + 1);
             if copy.is_null() {
                 return core::ptr::null_mut();
             }
@@ -629,7 +637,7 @@ pub(crate) unsafe fn fopen(
     }
     file = libc_stdio::fopen(copy, b"rb\0".as_ptr());
     if !null_terminated && copy != copy_buf.as_mut_ptr() as *mut u8 {
-        free::<u8>(&mut (*fc.get()).ator, copy, path_len + 1);
+        free::<u8>(fc.ator_mut(), copy, path_len + 1);
     }
     if file.is_null() {
         set_err_info(&mut (*fc.get()).error, path, path_len);
