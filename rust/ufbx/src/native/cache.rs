@@ -177,6 +177,14 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `stream_filename` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn stream_filename_mut(&self) -> *mut String {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).stream_filename }
+    }
+
     // `stream` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn stream_mut(&self) -> *mut RawStream {
@@ -1061,7 +1069,7 @@ pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Res
     (*cc.get()).stream_filename = filename;
     push_string_place_str(
         &mut (*cc.get()).string_pool,
-        &mut (*cc.get()).stream_filename,
+        cc.stream_filename_mut(),
         false,
     )?;
 
