@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `progress_timer` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn progress_timer(&self) -> isize {
+        // SAFETY: reading a scalar field; all bit patterns of `isize` are valid.
+        unsafe { (*self.get()).progress_timer }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_progress_timer(&self, progress_timer: isize) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).progress_timer = progress_timer;
+        }
+    }
+
     // `consecutive_indices` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn consecutive_indices(&self) -> *mut u32 {
@@ -1376,7 +1391,7 @@ pub(crate) unsafe fn report_progress(uc: &Context) -> Result<(), Fail> {
         progress.bytes_total = progress.bytes_read;
     }
 
-    (*uc.get()).progress_timer = 1024;
+    uc.set_progress_timer(1024);
     // C: `(uint32_t)uc->opts.progress_cb.fn(uc->opts.progress_cb.user, &progress)`
     // — the callback is `extern "C"`; the generated signature returns the enum
     // as a raw u32 (`RawEnum<ProgressResult>`).
@@ -1411,8 +1426,8 @@ pub(crate) unsafe fn progress(uc: &Context, work_units: usize) -> Result<(), Fai
     // C: `uc->progress_timer - (ptrdiff_t)work_units` — signed arithmetic on
     // values that stay tiny in practice; wrapping matches the release-build
     // C behavior if it ever did overflow.
-    let left: isize = (*uc.get()).progress_timer.wrapping_sub(work_units as isize);
-    (*uc.get()).progress_timer = left;
+    let left: isize = uc.progress_timer().wrapping_sub(work_units as isize);
+    uc.set_progress_timer(left);
     if left > 0 {
         return Ok(());
     }
