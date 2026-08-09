@@ -1866,46 +1866,45 @@ pub(crate) unsafe fn bake_anim(
     }
 
     // C: `ufbxi_bake_context bc = { UFBX_ERROR_NONE };`
-    let mut bc = MaybeUninit::<evaluate::BakeContext>::zeroed();
-    let bc: *mut evaluate::BakeContext = bc.as_mut_ptr();
+    let bc = evaluate::BakeContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
-        // C: `bc.opts = *opts;` (struct assignment)
-        core::ptr::copy_nonoverlapping(opts, core::ptr::addr_of_mut!((*bc).opts), 1);
+        // C: `(*bc.get()).opts = *opts;` (struct assignment)
+        core::ptr::copy_nonoverlapping(opts, core::ptr::addr_of_mut!((*bc.get()).opts), 1);
     }
 
-    (*bc).scene = scene;
+    (*bc.get()).scene = scene;
 
     // C: `int ok = ufbxi_bake_anim_imp(&bc, anim);`
-    let ok = evaluate::bake_anim_imp(bc, anim);
+    let ok = evaluate::bake_anim_imp(&bc, anim);
 
-    buf_free(core::ptr::addr_of_mut!((*bc).tmp));
-    buf_free(core::ptr::addr_of_mut!((*bc).tmp_prop));
-    buf_free(core::ptr::addr_of_mut!((*bc).tmp_times));
-    buf_free(core::ptr::addr_of_mut!((*bc).tmp_bake_props));
-    buf_free(core::ptr::addr_of_mut!((*bc).tmp_nodes));
-    buf_free(core::ptr::addr_of_mut!((*bc).tmp_elements));
-    buf_free(core::ptr::addr_of_mut!((*bc).tmp_props));
-    buf_free(core::ptr::addr_of_mut!((*bc).tmp_bake_stack));
-    // C: `ufbxi_free(&bc.ator_tmp, char, bc.tmp_arr, bc.tmp_arr_size);`
+    buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp));
+    buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_prop));
+    buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_times));
+    buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_bake_props));
+    buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_nodes));
+    buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_elements));
+    buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_props));
+    buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_bake_stack));
+    // C: `ufbxi_free(&(*bc.get()).ator_tmp, char, (*bc.get()).tmp_arr, (*bc.get()).tmp_arr_size);`
     free::<u8>(
-        core::ptr::addr_of_mut!((*bc).ator_tmp),
-        (*bc).tmp_arr,
-        (*bc).tmp_arr_size,
+        core::ptr::addr_of_mut!((*bc.get()).ator_tmp),
+        (*bc.get()).tmp_arr,
+        (*bc.get()).tmp_arr_size,
     );
-    free_ator(core::ptr::addr_of_mut!((*bc).ator_tmp));
+    free_ator(core::ptr::addr_of_mut!((*bc.get()).ator_tmp));
 
     if ok.is_ok() {
         clear_error(error);
-        let imp: *mut BakedAnimImp = (*bc).imp;
+        let imp: *mut BakedAnimImp = (*bc.get()).imp;
         core::ptr::addr_of_mut!((*imp).bake)
     } else {
         fix_error_type(
-            core::ptr::addr_of_mut!((*bc).error),
+            core::ptr::addr_of_mut!((*bc.get()).error),
             b"Failed to bake anim\0".as_ptr(),
             error,
         );
-        buf_free(core::ptr::addr_of_mut!((*bc).result));
-        free_ator(core::ptr::addr_of_mut!((*bc).ator_result));
+        buf_free(core::ptr::addr_of_mut!((*bc.get()).result));
+        free_ator(core::ptr::addr_of_mut!((*bc.get()).ator_result));
         core::ptr::null_mut()
     }
 }

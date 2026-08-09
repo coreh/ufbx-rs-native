@@ -3294,7 +3294,7 @@ pub(crate) struct BakeTimeList {
 // ufbx.c:26687-26723 `ufbxi_bake_context`
 #[cfg(feature = "baking")]
 #[repr(C)]
-pub(crate) struct BakeContext {
+pub(crate) struct InnerBakeContext {
     pub error: Error,
     pub ator_tmp: Allocator,
     pub ator_result: Allocator,
@@ -3331,6 +3331,24 @@ pub(crate) struct BakeContext {
 
     pub bake: BakedAnim,
     pub imp: *mut BakedAnimImp,
+}
+
+// Safe `&BakeContext` handle over the fields-struct `InnerBakeContext`, mirroring
+// the `Context`/`InnerContext` seam in `parse.rs`. `MaybeUninit` because it embeds
+// the public `BakedAnim` (enum-bearing) in `bake`, so a plain `&InnerBakeContext`
+// could not be formed soundly; `UnsafeCell` gives the interior mutability every
+// `&BakeContext` site needs. Field is `pub(crate)` — the sole construction site
+// lives in `native::api`.
+#[repr(transparent)]
+pub(crate) struct BakeContext(
+    pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerBakeContext>>,
+);
+
+impl BakeContext {
+    #[inline(always)]
+    pub(crate) fn get(&self) -> *mut InnerBakeContext {
+        self.0.get().cast()
+    }
 }
 
 // ufbx.c:26725-26730 `ufbxi_bake_prop`
@@ -3403,8 +3421,8 @@ pub(crate) fn cmp_bake_time(a: BakeTime, b: BakeTime) -> i32 {
 #[cfg(feature = "baking")]
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn bake_push_time(bc: *mut BakeContext, time: f64, flags: u32) -> bool {
-    let p_key: *mut BakeTime = push_fast::<BakeTime>(ptr::addr_of_mut!((*bc).tmp_times), 1);
+pub(crate) unsafe fn bake_push_time(bc: &BakeContext, time: f64, flags: u32) -> bool {
+    let p_key: *mut BakeTime = push_fast::<BakeTime>(ptr::addr_of_mut!((*bc.get()).tmp_times), 1);
     if p_key.is_null() {
         return false;
     }
@@ -3418,14 +3436,14 @@ pub(crate) unsafe fn bake_push_time(bc: *mut BakeContext, time: f64, flags: u32)
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn bake_times(
-    bc: *mut BakeContext,
+    bc: &BakeContext,
     anim_value: *const AnimValue,
     resample_linear: bool,
     key_flag: u32,
 ) -> Result<(), Fail> {
-    let sample_rate: f64 = (*bc).opts.resample_rate;
-    let min_duration: f64 = if (*bc).opts.minimum_sample_rate > 0.0 {
-        1.0 / (*bc).opts.minimum_sample_rate
+    let sample_rate: f64 = (*bc.get()).opts.resample_rate;
+    let min_duration: f64 = if (*bc.get()).opts.minimum_sample_rate > 0.0 {
+        1.0 / (*bc.get()).opts.minimum_sample_rate
     } else {
         0.0
     };
@@ -3444,7 +3462,7 @@ pub(crate) unsafe fn bake_times(
             let a: Keyframe = *keys.add(key_ix);
             let a_time: f64 = a.time;
             ufbxi_check_err!(
-                &mut (*bc).error,
+                &mut (*bc.get()).error,
                 bake_push_time(bc, a_time, key_flag),
                 "ufbxi_bake_push_time(bc, a_time, key_flag)"
             );
@@ -3461,13 +3479,13 @@ pub(crate) unsafe fn bake_times(
 
             if a.interpolation as u32 == Interpolation::ConstantPrev as u32 {
                 ufbxi_check_err!(
-                    &mut (*bc).error,
+                    &mut (*bc.get()).error,
                     bake_push_time(bc, b_time, BakedKeyFlags::STEP_LEFT.raw()),
                     "ufbxi_bake_push_time(bc, b_time, UFBX_BAKED_KEY_STEP_LEFT)"
                 );
             } else if a.interpolation as u32 == Interpolation::ConstantNext as u32 {
                 ufbxi_check_err!(
-                    &mut (*bc).error,
+                    &mut (*bc.get()).error,
                     bake_push_time(bc, a_time, BakedKeyFlags::STEP_RIGHT.raw()),
                     "ufbxi_bake_push_time(bc, a_time, UFBX_BAKED_KEY_STEP_RIGHT)"
                 );
@@ -3480,20 +3498,22 @@ pub(crate) unsafe fn bake_times(
                 }
 
                 let mut factor: f64 = 1.0;
-                while duration * sample_rate / factor >= (*bc).opts.max_keyframe_segments as f64 {
+                while duration * sample_rate / factor
+                    >= (*bc.get()).opts.max_keyframe_segments as f64
+                {
                     factor *= 2.0;
                 }
 
                 let padding: f64 = 0.5 / sample_rate;
                 let start: f64 = math::ceil((a_time + padding) * sample_rate / factor) * factor;
                 let stop: f64 = b_time - padding;
-                for i in 0..(*bc).opts.max_keyframe_segments {
+                for i in 0..(*bc.get()).opts.max_keyframe_segments {
                     let time: f64 = (start + i as f64 * factor) / sample_rate;
                     if time >= stop {
                         break;
                     }
                     ufbxi_check_err!(
-                        &mut (*bc).error,
+                        &mut (*bc.get()).error,
                         bake_push_time(bc, time, 0),
                         "ufbxi_bake_push_time(bc, time, 0)"
                     );
@@ -3574,7 +3594,7 @@ pub(crate) unsafe fn in_list(items: *const *const u8, count: usize, item: *const
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn sort_bake_times(
-    bc: *mut BakeContext,
+    bc: &BakeContext,
     times: *mut BakeTime,
     count: usize,
 ) -> Result<(), Fail> {
@@ -3583,18 +3603,22 @@ pub(crate) unsafe fn sort_bake_times(
     // bytes (PORTING.md "Sorting & searching": this paired grow is the
     // allocation-parity invariant).
     ufbxi_check_err!(
-        &mut (*bc).error,
+        &mut (*bc.get()).error,
         grow_array::<u8>(
-            ptr::addr_of_mut!((*bc).ator_tmp),
-            ptr::addr_of_mut!((*bc).tmp_arr),
-            ptr::addr_of_mut!((*bc).tmp_arr_size),
+            ptr::addr_of_mut!((*bc.get()).ator_tmp),
+            ptr::addr_of_mut!((*bc.get()).tmp_arr),
+            ptr::addr_of_mut!((*bc.get()).tmp_arr_size),
             count.wrapping_mul(size_of::<BakeTime>()),
         ),
         "ufbxi_grow_array_size((&bc->ator_tmp), sizeof(**(&bc->tmp_arr)), (&bc->tmp_arr), (&bc->tmp_arr_size), (count * sizeof(ufbxi_bake_time)))"
     );
-    macro_stable_sort::<BakeTime>(32, times, (*bc).tmp_arr as *mut BakeTime, count, |a, b| {
-        cmp_bake_time(*a, *b) < 0
-    });
+    macro_stable_sort::<BakeTime>(
+        32,
+        times,
+        (*bc.get()).tmp_arr as *mut BakeTime,
+        count,
+        |a, b| cmp_bake_time(*a, *b) < 0,
+    );
     Ok(())
 }
 
@@ -3603,42 +3627,42 @@ pub(crate) unsafe fn sort_bake_times(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn finalize_bake_times(
-    bc: *mut BakeContext,
+    bc: &BakeContext,
     p_dst: *mut BakeTimeList,
 ) -> Result<(), Fail> {
-    if (*bc).layer_weight_times.count > 0 {
+    if (*bc.get()).layer_weight_times.count > 0 {
         ufbxi_check_err!(
-            &mut (*bc).error,
+            &mut (*bc.get()).error,
             !push_copy::<BakeTime>(
-                ptr::addr_of_mut!((*bc).tmp_times),
-                (*bc).layer_weight_times.count,
-                (*bc).layer_weight_times.data,
+                ptr::addr_of_mut!((*bc.get()).tmp_times),
+                (*bc.get()).layer_weight_times.count,
+                (*bc.get()).layer_weight_times.data,
             )
             .is_null(),
             "((ufbxi_bake_time*)ufbxi_push_size_copy((&bc->tmp_times), sizeof(ufbxi_bake_time), (bc->layer_weight_times.count), (bc->layer_weight_times.data)))"
         );
     }
 
-    if (*bc).tmp_times.num_items == 0 {
+    if (*bc.get()).tmp_times.num_items == 0 {
         ufbxi_check_err!(
-            &mut (*bc).error,
-            bake_push_time(bc, (*bc).time_begin, 0),
+            &mut (*bc.get()).error,
+            bake_push_time(bc, (*bc.get()).time_begin, 0),
             "ufbxi_bake_push_time(bc, bc->time_begin, 0)"
         );
         ufbxi_check_err!(
-            &mut (*bc).error,
-            bake_push_time(bc, (*bc).time_end, 0),
+            &mut (*bc.get()).error,
+            bake_push_time(bc, (*bc.get()).time_end, 0),
             "ufbxi_bake_push_time(bc, bc->time_end, 0)"
         );
     }
 
-    let mut num_times: usize = (*bc).tmp_times.num_items;
+    let mut num_times: usize = (*bc.get()).tmp_times.num_items;
     let times: *mut BakeTime = push_pop::<BakeTime>(
-        ptr::addr_of_mut!((*bc).tmp_prop),
-        ptr::addr_of_mut!((*bc).tmp_times),
+        ptr::addr_of_mut!((*bc.get()).tmp_prop),
+        ptr::addr_of_mut!((*bc.get()).tmp_times),
         num_times,
     );
-    ufbxi_check_err!(&mut (*bc).error, !times.is_null(), "times");
+    ufbxi_check_err!(&mut (*bc.get()).error, !times.is_null(), "times");
 
     sort_bake_times(bc, times, num_times)?;
 
@@ -3675,7 +3699,7 @@ pub(crate) unsafe fn finalize_bake_times(
 
     // Cull too close resampled keys, these may arise during merging multiple times
     if num_times > 0 {
-        let min_dist: f64 = 0.25 / (*bc).opts.resample_rate;
+        let min_dist: f64 = 0.25 / (*bc.get()).opts.resample_rate;
         let keep_flags: u32 = BakedKeyFlags::STEP_LEFT.raw()
             | BakedKeyFlags::STEP_RIGHT.raw()
             | BakedKeyFlags::STEP_KEY.raw()
@@ -3707,11 +3731,11 @@ pub(crate) unsafe fn finalize_bake_times(
     }
 
     // Enforce maximum sample rate
-    if (*bc).opts.maximum_sample_rate > 0.0 {
-        let epsilon: f64 = 0.0078125 / (*bc).opts.maximum_sample_rate;
-        let sample_rate: f64 = (*bc).opts.maximum_sample_rate;
-        let max_interval: f64 = 1.0 / (*bc).opts.maximum_sample_rate;
-        let min_interval: f64 = 1.0 / (*bc).opts.maximum_sample_rate - epsilon;
+    if (*bc.get()).opts.maximum_sample_rate > 0.0 {
+        let epsilon: f64 = 0.0078125 / (*bc.get()).opts.maximum_sample_rate;
+        let sample_rate: f64 = (*bc.get()).opts.maximum_sample_rate;
+        let max_interval: f64 = 1.0 / (*bc.get()).opts.maximum_sample_rate;
+        let min_interval: f64 = 1.0 / (*bc.get()).opts.maximum_sample_rate - epsilon;
         let mut dst: usize = 0;
         let mut src: usize = 0;
 
@@ -3775,11 +3799,11 @@ pub(crate) unsafe fn finalize_bake_times(
     }
 
     if num_times > 0 {
-        if (*times.add(0)).time < (*bc).time_min {
-            (*bc).time_min = (*times.add(0)).time;
+        if (*times.add(0)).time < (*bc.get()).time_min {
+            (*bc.get()).time_min = (*times.add(0)).time;
         }
-        if (*times.add(num_times - 1)).time > (*bc).time_max {
-            (*bc).time_max = (*times.add(num_times - 1)).time;
+        if (*times.add(num_times - 1)).time > (*bc.get()).time_max {
+            (*bc.get()).time_max = (*times.add(num_times - 1)).time;
         }
     }
 
@@ -3815,7 +3839,7 @@ pub(crate) fn sub_epsilon(a: f64, epsilon: f64) -> f64 {
 #[cfg(feature = "baking")]
 #[inline(never)]
 pub(crate) unsafe fn postprocess_step(
-    bc: *mut BakeContext,
+    bc: &BakeContext,
     prev_time: f64,
     next_time: f64,
     p_time: *mut f64,
@@ -3841,12 +3865,12 @@ pub(crate) unsafe fn postprocess_step(
     // `api::bake_anim` — the generated-type/read-idiom question is tree-wide
     // (same shape as `subdivision::subdivide_mesh_imp`'s `opts.boundary`) and
     // belongs to the generator, per PORTING.md ground rule 0.
-    let step_handling: u32 = (*bc).opts.step_handling as u32;
+    let step_handling: u32 = (*bc.get()).opts.step_handling as u32;
     if step_handling == BakeStepHandling::Default as u32 {
         // C: `break;`
     } else if step_handling == BakeStepHandling::CustomDuration as u32 {
-        step = (*bc).opts.step_custom_duration;
-        epsilon = 1.0 + (*bc).opts.step_custom_epsilon;
+        step = (*bc.get()).opts.step_custom_duration;
+        epsilon = 1.0 + (*bc.get()).opts.step_custom_epsilon;
     } else if step_handling == BakeStepHandling::IdenticalTime as u32 {
         return true;
     } else if step_handling == BakeStepHandling::AdjacentDouble as u32 {
@@ -3884,7 +3908,7 @@ pub(crate) unsafe fn postprocess_step(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn bake_postprocess_vec3(
-    bc: *mut BakeContext,
+    bc: &BakeContext,
     p_dst: *mut List<BakedVec3>,
     p_constant: *mut bool,
     mut src: List<BakedVec3>,
@@ -3897,9 +3921,9 @@ pub(crate) unsafe fn bake_postprocess_vec3(
     let data: *mut BakedVec3 = src.data as *mut BakedVec3;
 
     // Offset times
-    if (*bc).ktime_offset != 0.0 {
-        let scale: f64 = (*(*bc).scene).metadata.ktime_second as f64;
-        let offset: f64 = (*bc).ktime_offset;
+    if (*bc.get()).ktime_offset != 0.0 {
+        let scale: f64 = (*(*bc.get()).scene).metadata.ktime_second as f64;
+        let offset: f64 = (*bc.get()).ktime_offset;
         for i in 0..src.count {
             (*data.add(i)).time = math::rint((*data.add(i)).time * scale + offset) / scale;
         }
@@ -3940,10 +3964,10 @@ pub(crate) unsafe fn bake_postprocess_vec3(
         src.count = dst;
     }
 
-    if (*bc).opts.key_reduction_enabled {
+    if (*bc.get()).opts.key_reduction_enabled {
         let threshold: f64 =
-            (*bc).opts.key_reduction_threshold * (*bc).opts.key_reduction_threshold;
-        for _pass in 0..(*bc).opts.key_reduction_passes {
+            (*bc.get()).opts.key_reduction_threshold * (*bc.get()).opts.key_reduction_threshold;
+        for _pass in 0..(*bc.get()).opts.key_reduction_passes {
             let mut dst: usize = 1;
             let mut i: usize = 1;
             while i < src.count {
@@ -3993,8 +4017,12 @@ pub(crate) unsafe fn bake_postprocess_vec3(
     *p_constant = constant;
 
     (*p_dst).count = src.count;
-    (*p_dst).data = push_copy::<BakedVec3>(ptr::addr_of_mut!((*bc).result), src.count, data);
-    ufbxi_check_err!(&mut (*bc).error, !(*p_dst).data.is_null(), "p_dst->data");
+    (*p_dst).data = push_copy::<BakedVec3>(ptr::addr_of_mut!((*bc.get()).result), src.count, data);
+    ufbxi_check_err!(
+        &mut (*bc.get()).error,
+        !(*p_dst).data.is_null(),
+        "p_dst->data"
+    );
 
     Ok(())
 }
@@ -4004,7 +4032,7 @@ pub(crate) unsafe fn bake_postprocess_vec3(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn bake_postprocess_quat(
-    bc: *mut BakeContext,
+    bc: &BakeContext,
     p_dst: *mut List<BakedQuat>,
     p_constant: *mut bool,
     mut src: List<BakedQuat>,
@@ -4016,9 +4044,9 @@ pub(crate) unsafe fn bake_postprocess_quat(
     let data: *mut BakedQuat = src.data as *mut BakedQuat;
 
     // Offset times
-    if (*bc).ktime_offset != 0.0 {
-        let scale: f64 = (*(*bc).scene).metadata.ktime_second as f64;
-        let offset: f64 = (*bc).ktime_offset;
+    if (*bc.get()).ktime_offset != 0.0 {
+        let scale: f64 = (*(*bc.get()).scene).metadata.ktime_second as f64;
+        let offset: f64 = (*bc.get()).ktime_offset;
         for i in 0..src.count {
             (*data.add(i)).time = math::rint((*data.add(i)).time * scale + offset) / scale;
         }
@@ -4062,10 +4090,10 @@ pub(crate) unsafe fn bake_postprocess_quat(
         (*data.add(i)).value = quat_fix_antipodal((*data.add(i)).value, (*data.add(i - 1)).value);
     }
 
-    if (*bc).opts.key_reduction_enabled {
+    if (*bc.get()).opts.key_reduction_enabled {
         let threshold: f64 =
-            (*bc).opts.key_reduction_threshold * (*bc).opts.key_reduction_threshold;
-        for _pass in 0..(*bc).opts.key_reduction_passes {
+            (*bc.get()).opts.key_reduction_threshold * (*bc.get()).opts.key_reduction_threshold;
+        for _pass in 0..(*bc.get()).opts.key_reduction_passes {
             let mut dst: usize = 1;
             let mut i: usize = 1;
             while i < src.count {
@@ -4076,7 +4104,7 @@ pub(crate) unsafe fn bake_postprocess_quat(
                     let delta: f64 = (cur.time - prev.time) / (next.time - prev.time);
                     let mut error: f64 = 0.0;
 
-                    if (*bc).opts.key_reduction_rotation {
+                    if (*bc.get()).opts.key_reduction_rotation {
                         let tmp: Quat = quat_slerp(prev.value, next.value, delta as Real);
                         error += (tmp.x as f64 - cur.value.x as f64)
                             * (tmp.x as f64 - cur.value.x as f64);
@@ -4139,8 +4167,12 @@ pub(crate) unsafe fn bake_postprocess_quat(
     *p_constant = constant;
 
     (*p_dst).count = src.count;
-    (*p_dst).data = push_copy::<BakedQuat>(ptr::addr_of_mut!((*bc).result), src.count, data);
-    ufbxi_check_err!(&mut (*bc).error, !(*p_dst).data.is_null(), "p_dst->data");
+    (*p_dst).data = push_copy::<BakedQuat>(ptr::addr_of_mut!((*bc.get()).result), src.count, data);
+    ufbxi_check_err!(
+        &mut (*bc.get()).error,
+        !(*p_dst).data.is_null(),
+        "p_dst->data"
+    );
 
     Ok(())
 }
@@ -4168,14 +4200,15 @@ pub(crate) fn bake_time_sample_time(time: BakeTime) -> f64 {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn push_resampled_times(
-    bc: *mut BakeContext,
+    bc: &BakeContext,
     p_keys: *const List<BakedVec3>,
 ) -> Result<(), Fail> {
     // C: `ufbx_baked_vec3_list keys = *p_keys;`
     let keys: List<BakedVec3> = ptr::read(p_keys);
 
-    let times: *mut BakeTime = push::<BakeTime>(ptr::addr_of_mut!((*bc).tmp_times), keys.count);
-    ufbxi_check_err!(&mut (*bc).error, !times.is_null(), "times");
+    let times: *mut BakeTime =
+        push::<BakeTime>(ptr::addr_of_mut!((*bc.get()).tmp_times), keys.count);
+    ufbxi_check_err!(&mut (*bc.get()).error, !times.is_null(), "times");
     for i in 0..keys.count {
         let flags: BakedKeyFlags = (*keys.data.add(i)).flags;
         let mut time: f64 = (*keys.data.add(i)).time;
@@ -4202,15 +4235,15 @@ pub(crate) unsafe fn push_resampled_times(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn bake_node_imp(
-    bc: *mut BakeContext,
+    bc: &BakeContext,
     element_id: u32,
     props: *mut BakeProp,
     count: usize,
 ) -> Result<(), Fail> {
-    ufbx_assert!(!(*bc).baked_nodes.is_null() && !(*bc).nodes_to_bake.is_null());
+    ufbx_assert!(!(*bc.get()).baked_nodes.is_null() && !(*bc.get()).nodes_to_bake.is_null());
 
     let node: *mut UfbxNode =
-        *((*(*bc).scene).elements.data as *const *mut UfbxNode).add(element_id as usize);
+        *((*(*bc.get()).scene).elements.data as *const *mut UfbxNode).add(element_id as usize);
     ufbxi_dev_assert!((*node).element.type_ as u32 == ElementType::Node as u32);
 
     let mut complex_translation: bool = false;
@@ -4273,7 +4306,7 @@ pub(crate) unsafe fn bake_node_imp(
         ptr::null_mut()
     };
     if !(*node).is_scale_helper && !parent.is_null() && !parent_scale_helper.is_null() {
-        scale_helper_t = *(*bc)
+        scale_helper_t = *(*bc.get())
             .baked_nodes
             .add((*parent_scale_helper).element.typed_id as usize);
         if !scale_helper_t.is_null() {
@@ -4336,7 +4369,7 @@ pub(crate) unsafe fn bake_node_imp(
                 COMPLEX_ROTATION_SOURCES.0.len(),
                 (*prop).prop_name,
             ) {
-                let resample_linear: bool = !(*bc).opts.no_resample_rotation
+                let resample_linear: bool = !(*bc.get()).opts.no_resample_rotation
                     || (*prop).prop_name != sp::Lcl_Rotation.as_ptr();
                 let key_flag: u32 = if (*prop).prop_name == sp::Lcl_Rotation.as_ptr() {
                     BakedKeyFlags::KEYFRAME.raw()
@@ -4355,7 +4388,7 @@ pub(crate) unsafe fn bake_node_imp(
                 bake_times(
                     bc,
                     (*prop).anim_value,
-                    !(*bc).opts.no_resample_rotation,
+                    !(*bc.get()).opts.no_resample_rotation,
                     BakedKeyFlags::KEYFRAME.raw(),
                 )?;
             }
@@ -4391,7 +4424,7 @@ pub(crate) unsafe fn bake_node_imp(
         && !parent_inherit_scale_helper.is_null()
     {
         let inherit_helper: *mut UfbxNode = parent_inherit_scale_helper;
-        scale_helper_s = *(*bc)
+        scale_helper_s = *(*bc.get())
             .baked_nodes
             .add((*inherit_helper).element.typed_id as usize);
         if !scale_helper_s.is_null() {
@@ -4427,16 +4460,28 @@ pub(crate) unsafe fn bake_node_imp(
     let mut keys_s: List<BakedVec3> = MaybeUninit::zeroed().assume_init();
 
     keys_t.count = times_t.count;
-    keys_t.data = push::<BakedVec3>(ptr::addr_of_mut!((*bc).tmp_prop), keys_t.count);
-    ufbxi_check_err!(&mut (*bc).error, !keys_t.data.is_null(), "keys_t.data");
+    keys_t.data = push::<BakedVec3>(ptr::addr_of_mut!((*bc.get()).tmp_prop), keys_t.count);
+    ufbxi_check_err!(
+        &mut (*bc.get()).error,
+        !keys_t.data.is_null(),
+        "keys_t.data"
+    );
 
     keys_r.count = times_r.count;
-    keys_r.data = push::<BakedQuat>(ptr::addr_of_mut!((*bc).tmp_prop), keys_r.count);
-    ufbxi_check_err!(&mut (*bc).error, !keys_r.data.is_null(), "keys_r.data");
+    keys_r.data = push::<BakedQuat>(ptr::addr_of_mut!((*bc.get()).tmp_prop), keys_r.count);
+    ufbxi_check_err!(
+        &mut (*bc.get()).error,
+        !keys_r.data.is_null(),
+        "keys_r.data"
+    );
 
     keys_s.count = times_s.count;
-    keys_s.data = push::<BakedVec3>(ptr::addr_of_mut!((*bc).tmp_prop), keys_s.count);
-    ufbxi_check_err!(&mut (*bc).error, !keys_s.data.is_null(), "keys_s.data");
+    keys_s.data = push::<BakedVec3>(ptr::addr_of_mut!((*bc.get()).tmp_prop), keys_s.count);
+    ufbxi_check_err!(
+        &mut (*bc.get()).error,
+        !keys_s.data.is_null(),
+        "keys_s.data"
+    );
 
     let keys_t_data: *mut BakedVec3 = keys_t.data as *mut BakedVec3;
     let keys_r_data: *mut BakedQuat = keys_r.data as *mut BakedQuat;
@@ -4492,12 +4537,13 @@ pub(crate) unsafe fn bake_node_imp(
         flags |= TransformFlags::IGNORE_SCALE_HELPER.raw()
             | TransformFlags::IGNORE_COMPONENTWISE_SCALE.raw()
             | TransformFlags::EXPLICIT_INCLUDES.raw();
-        if ((*bc).opts.evaluate_flags & EvaluateFlags::NO_EXTRAPOLATION.raw()) != 0 {
+        if ((*bc.get()).opts.evaluate_flags & EvaluateFlags::NO_EXTRAPOLATION.raw()) != 0 {
             flags |= TransformFlags::NO_EXTRAPOLATION.raw();
         }
 
         let eval_time: f64 = bake_time_sample_time(bake_time);
-        let mut transform: Transform = evaluate_transform_flags((*bc).anim, node, eval_time, flags);
+        let mut transform: Transform =
+            evaluate_transform_flags((*bc.get()).anim, node, eval_time, flags);
 
         if (flags & TransformFlags::INCLUDE_TRANSLATION.raw()) != 0 {
             if !scale_helper_t.is_null() {
@@ -4547,8 +4593,9 @@ pub(crate) unsafe fn bake_node_imp(
         }
     }
 
-    let baked_node: *mut BakedNode = push_zero::<BakedNode>(ptr::addr_of_mut!((*bc).tmp_nodes), 1);
-    ufbxi_check_err!(&mut (*bc).error, !baked_node.is_null(), "baked_node");
+    let baked_node: *mut BakedNode =
+        push_zero::<BakedNode>(ptr::addr_of_mut!((*bc.get()).tmp_nodes), 1);
+    ufbxi_check_err!(&mut (*bc.get()).error, !baked_node.is_null(), "baked_node");
 
     (*baked_node).element_id = (*node).element.element_id;
     (*baked_node).typed_id = (*node).element.typed_id;
@@ -4571,9 +4618,11 @@ pub(crate) unsafe fn bake_node_imp(
         keys_s,
     )?;
 
-    *(*bc).baked_nodes.add((*node).element.typed_id as usize) = baked_node;
+    *(*bc.get())
+        .baked_nodes
+        .add((*node).element.typed_id as usize) = baked_node;
 
-    buf_clear(ptr::addr_of_mut!((*bc).tmp_prop));
+    buf_clear(ptr::addr_of_mut!((*bc.get()).tmp_prop));
 
     // If this node is a scale helper, make sure to bake its siblings and
     // potentially their scale helpers if they are not a part of the animation.
@@ -4588,12 +4637,17 @@ pub(crate) unsafe fn bake_node_imp(
                 p_child = p_child.add(1);
                 continue;
             }
-            if !*(*bc).nodes_to_bake.add((*child).element.typed_id as usize) {
-                *(*bc).nodes_to_bake.add((*child).element.typed_id as usize) = true;
+            if !*(*bc.get())
+                .nodes_to_bake
+                .add((*child).element.typed_id as usize)
+            {
+                *(*bc.get())
+                    .nodes_to_bake
+                    .add((*child).element.typed_id as usize) = true;
                 ufbxi_check_err!(
-                    &mut (*bc).error,
+                    &mut (*bc.get()).error,
                     !push_copy::<u32>(
-                        ptr::addr_of_mut!((*bc).tmp_bake_stack),
+                        ptr::addr_of_mut!((*bc.get()).tmp_bake_stack),
                         1,
                         ptr::addr_of!((*child).element.element_id),
                     )
@@ -4613,25 +4667,25 @@ pub(crate) unsafe fn bake_node_imp(
             if !child_inherit_scale_node.is_null()
                 && !child_inherit_scale_helper.is_null()
                 && !child_scale_helper.is_null()
-                && *(*bc)
+                && *(*bc.get())
                     .nodes_to_bake
                     .add((*child_inherit_scale_helper).element.typed_id as usize)
             {
-                ufbx_assert!(!(*(*bc)
+                ufbx_assert!(!(*(*bc.get())
                     .baked_nodes
                     .add((*child_inherit_scale_helper).element.typed_id as usize))
                 .is_null());
-                if !*(*bc)
+                if !*(*bc.get())
                     .nodes_to_bake
                     .add((*child_scale_helper).element.typed_id as usize)
                 {
-                    *(*bc)
+                    *(*bc.get())
                         .nodes_to_bake
                         .add((*child_scale_helper).element.typed_id as usize) = true;
                     ufbxi_check_err!(
-                        &mut (*bc).error,
+                        &mut (*bc.get()).error,
                         !push_copy::<u32>(
-                            ptr::addr_of_mut!((*bc).tmp_bake_stack),
+                            ptr::addr_of_mut!((*bc.get()).tmp_bake_stack),
                             1,
                             ptr::addr_of!((*child_scale_helper).element.element_id),
                         )
@@ -4652,7 +4706,7 @@ pub(crate) unsafe fn bake_node_imp(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn bake_node(
-    bc: *mut BakeContext,
+    bc: &BakeContext,
     element_id: u32,
     props: *mut BakeProp,
     count: usize,
@@ -4661,10 +4715,10 @@ pub(crate) unsafe fn bake_node(
 
     // Baking a node may cause further nodes to be baked, so keep going
     // until all dependencies are baked.
-    while (*bc).tmp_bake_stack.num_items > 0 {
+    while (*bc.get()).tmp_bake_stack.num_items > 0 {
         let mut child_id: u32 = 0;
         pop::<u32>(
-            ptr::addr_of_mut!((*bc).tmp_bake_stack),
+            ptr::addr_of_mut!((*bc.get()).tmp_bake_stack),
             1,
             ptr::addr_of_mut!(child_id),
         );
@@ -4679,7 +4733,7 @@ pub(crate) unsafe fn bake_node(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn bake_anim_prop(
-    bc: *mut BakeContext,
+    bc: &BakeContext,
     element: *mut Element,
     prop_name: *const u8,
     props: *mut BakeProp,
@@ -4700,8 +4754,8 @@ pub(crate) unsafe fn bake_anim_prop(
     // C: `ufbx_baked_vec3_list keys;`
     let mut keys: List<BakedVec3> = MaybeUninit::zeroed().assume_init();
     keys.count = times.count;
-    keys.data = push::<BakedVec3>(ptr::addr_of_mut!((*bc).tmp_prop), keys.count);
-    ufbxi_check_err!(&mut (*bc).error, !keys.data.is_null(), "keys.data");
+    keys.data = push::<BakedVec3>(ptr::addr_of_mut!((*bc.get()).tmp_prop), keys.count);
+    ufbxi_check_err!(&mut (*bc.get()).error, !keys.data.is_null(), "keys.data");
     let keys_data: *mut BakedVec3 = keys.data as *mut BakedVec3;
 
     // C: `ufbx_string name; name.data = prop_name; name.length = strlen(prop_name);`
@@ -4711,12 +4765,12 @@ pub(crate) unsafe fn bake_anim_prop(
         let bake_time: BakeTime = *times.data.add(i);
         let eval_time: f64 = bake_time_sample_time(bake_time);
         let prop: Prop = evaluate_prop_flags_len(
-            (*bc).anim,
+            (*bc.get()).anim,
             element,
             name.data,
             name.length,
             eval_time,
-            (*bc).opts.evaluate_flags,
+            (*bc.get()).opts.evaluate_flags,
         );
         (*keys_data.add(i)).time = bake_time.time;
         // C: `prop.value_vec3` — the value union's 3-real view over `value_vec4`.
@@ -4724,17 +4778,18 @@ pub(crate) unsafe fn bake_anim_prop(
         (*keys_data.add(i)).flags = BakedKeyFlags::from_raw(bake_time.flags);
     }
 
-    let baked_prop: *mut BakedProp = push_zero::<BakedProp>(ptr::addr_of_mut!((*bc).tmp_props), 1);
-    ufbxi_check_err!(&mut (*bc).error, !baked_prop.is_null(), "baked_prop");
+    let baked_prop: *mut BakedProp =
+        push_zero::<BakedProp>(ptr::addr_of_mut!((*bc.get()).tmp_props), 1);
+    ufbxi_check_err!(&mut (*bc.get()).error, !baked_prop.is_null(), "baked_prop");
 
     (*baked_prop).name.length = strlen(prop_name);
     (*baked_prop).name.data = push_copy::<u8>(
-        ptr::addr_of_mut!((*bc).result),
+        ptr::addr_of_mut!((*bc.get()).result),
         (*baked_prop).name.length + 1,
         prop_name,
     );
     ufbxi_check_err!(
-        &mut (*bc).error,
+        &mut (*bc.get()).error,
         !(*baked_prop).name.data.is_null(),
         "baked_prop->name.data"
     );
@@ -4746,7 +4801,7 @@ pub(crate) unsafe fn bake_anim_prop(
         keys,
     )?;
 
-    buf_clear(ptr::addr_of_mut!((*bc).tmp_prop));
+    buf_clear(ptr::addr_of_mut!((*bc.get()).tmp_prop));
 
     Ok(())
 }
@@ -4756,14 +4811,15 @@ pub(crate) unsafe fn bake_anim_prop(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn bake_element(
-    bc: *mut BakeContext,
+    bc: &BakeContext,
     element_id: u32,
     props: *mut BakeProp,
     count: usize,
 ) -> Result<(), Fail> {
     let element: *mut Element =
-        *((*(*bc).scene).elements.data as *const *mut Element).add(element_id as usize);
-    if (*element).type_ as u32 == ElementType::Node as u32 && !(*bc).opts.skip_node_transforms {
+        *((*(*bc.get()).scene).elements.data as *const *mut Element).add(element_id as usize);
+    if (*element).type_ as u32 == ElementType::Node as u32 && !(*bc.get()).opts.skip_node_transforms
+    {
         bake_node(bc, element_id, props, count)?;
     }
 
@@ -4777,7 +4833,7 @@ pub(crate) unsafe fn bake_element(
 
         // Don't bake transform related props for nodes unless specifically requested
         if (*element).type_ as u32 == ElementType::Node as u32
-            && !(*bc).opts.bake_transform_props
+            && !(*bc.get()).opts.bake_transform_props
             && in_list(
                 TRANSFORM_PROPS.0.as_ptr(),
                 TRANSFORM_PROPS.0.len(),
@@ -4792,21 +4848,21 @@ pub(crate) unsafe fn bake_element(
         begin = end;
     }
 
-    let num_props: usize = (*bc).tmp_props.num_items;
+    let num_props: usize = (*bc.get()).tmp_props.num_items;
     if num_props > 0 {
         let baked_elem: *mut BakedElement =
-            push_zero::<BakedElement>(ptr::addr_of_mut!((*bc).tmp_elements), 1);
-        ufbxi_check_err!(&mut (*bc).error, !baked_elem.is_null(), "baked_elem");
+            push_zero::<BakedElement>(ptr::addr_of_mut!((*bc.get()).tmp_elements), 1);
+        ufbxi_check_err!(&mut (*bc.get()).error, !baked_elem.is_null(), "baked_elem");
 
         (*baked_elem).element_id = (*element).element_id;
         (*baked_elem).props.count = num_props;
         (*baked_elem).props.data = push_pop::<BakedProp>(
-            ptr::addr_of_mut!((*bc).result),
-            ptr::addr_of_mut!((*bc).tmp_props),
+            ptr::addr_of_mut!((*bc.get()).result),
+            ptr::addr_of_mut!((*bc.get()).tmp_props),
             num_props,
         );
         ufbxi_check_err!(
-            &mut (*bc).error,
+            &mut (*bc.get()).error,
             !(*baked_elem).props.data.is_null(),
             "baked_elem->props.data"
         );
@@ -4847,23 +4903,25 @@ pub(crate) unsafe extern "C" fn baked_element_less(
 #[cfg(feature = "baking")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn bake_anim(bc: *mut BakeContext) -> Result<(), Fail> {
-    let anim: *const Anim = (*bc).anim;
-    let scene: *const Scene = (*bc).scene;
+pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
+    let anim: *const Anim = (*bc.get()).anim;
+    let scene: *const Scene = (*bc.get()).scene;
 
-    if !(*bc).opts.skip_node_transforms {
-        (*bc).baked_nodes =
-            push_zero::<*mut BakedNode>(ptr::addr_of_mut!((*bc).result), (*scene).nodes.count);
+    if !(*bc.get()).opts.skip_node_transforms {
+        (*bc.get()).baked_nodes = push_zero::<*mut BakedNode>(
+            ptr::addr_of_mut!((*bc.get()).result),
+            (*scene).nodes.count,
+        );
         ufbxi_check_err!(
-            &mut (*bc).error,
-            !(*bc).baked_nodes.is_null(),
+            &mut (*bc.get()).error,
+            !(*bc.get()).baked_nodes.is_null(),
             "bc->baked_nodes"
         );
-        (*bc).nodes_to_bake =
-            push_zero::<bool>(ptr::addr_of_mut!((*bc).result), (*scene).nodes.count);
+        (*bc.get()).nodes_to_bake =
+            push_zero::<bool>(ptr::addr_of_mut!((*bc.get()).result), (*scene).nodes.count);
         ufbxi_check_err!(
-            &mut (*bc).error,
-            !(*bc).nodes_to_bake.is_null(),
+            &mut (*bc.get()).error,
+            !(*bc.get()).nodes_to_bake.is_null(),
             "bc->nodes_to_bake"
         );
     }
@@ -4878,15 +4936,16 @@ pub(crate) unsafe fn bake_anim(bc: *mut BakeContext) -> Result<(), Fail> {
         let mut anim_prop: *mut AnimProp = (*layer).anim_props.data as *mut AnimProp;
         let anim_prop_end: *mut AnimProp = add_ptr(anim_prop, (*layer).anim_props.count);
         while anim_prop != anim_prop_end {
-            let prop: *mut BakeProp = push::<BakeProp>(ptr::addr_of_mut!((*bc).tmp_bake_props), 1);
-            ufbxi_check_err!(&mut (*bc).error, !prop.is_null(), "prop");
+            let prop: *mut BakeProp =
+                push::<BakeProp>(ptr::addr_of_mut!((*bc.get()).tmp_bake_props), 1);
+            ufbxi_check_err!(&mut (*bc.get()).error, !prop.is_null(), "prop");
 
             let element: *mut Element = ref_ptr(ptr::addr_of!((*anim_prop).element));
 
             // Sort nodes by `typed_id` to make sure we process them in order.
             if (*element).type_ as u32 == ElementType::Node as u32 {
-                if !(*bc).nodes_to_bake.is_null() {
-                    *(*bc).nodes_to_bake.add((*element).typed_id as usize) = true;
+                if !(*bc.get()).nodes_to_bake.is_null() {
+                    *(*bc.get()).nodes_to_bake.add((*element).typed_id as usize) = true;
                 }
                 (*prop).sort_id = (*element).typed_id;
             } else {
@@ -4903,13 +4962,13 @@ pub(crate) unsafe fn bake_anim(bc: *mut BakeContext) -> Result<(), Fail> {
         p_layer = p_layer.add(1);
     }
 
-    let num_props: usize = (*bc).tmp_bake_props.num_items;
+    let num_props: usize = (*bc.get()).tmp_bake_props.num_items;
     let props: *mut BakeProp = push_pop::<BakeProp>(
-        ptr::addr_of_mut!((*bc).tmp),
-        ptr::addr_of_mut!((*bc).tmp_bake_props),
+        ptr::addr_of_mut!((*bc.get()).tmp),
+        ptr::addr_of_mut!((*bc.get()).tmp_bake_props),
         num_props,
     );
-    ufbxi_check_err!(&mut (*bc).error, !props.is_null(), "props");
+    ufbxi_check_err!(&mut (*bc.get()).error, !props.is_null(), "props");
 
     unstable_sort(
         props as *mut c_void,
@@ -4920,7 +4979,7 @@ pub(crate) unsafe fn bake_anim(bc: *mut BakeContext) -> Result<(), Fail> {
     );
 
     // Pre-bake layer weight times
-    if !(*bc).opts.ignore_layer_weight_animation {
+    if !(*bc.get()).opts.ignore_layer_weight_animation {
         let mut has_weight_times: bool = false;
         // C: `ufbxi_for(ufbxi_bake_prop, prop, props, num_props)`
         let mut prop: *mut BakeProp = props;
@@ -4944,19 +5003,19 @@ pub(crate) unsafe fn bake_anim(bc: *mut BakeContext) -> Result<(), Fail> {
             let mut weight_times: BakeTimeList = MaybeUninit::zeroed().assume_init();
             finalize_bake_times(bc, ptr::addr_of_mut!(weight_times))?;
 
-            (*bc).layer_weight_times.count = weight_times.count;
-            (*bc).layer_weight_times.data = push_copy::<BakeTime>(
-                ptr::addr_of_mut!((*bc).tmp),
+            (*bc.get()).layer_weight_times.count = weight_times.count;
+            (*bc.get()).layer_weight_times.data = push_copy::<BakeTime>(
+                ptr::addr_of_mut!((*bc.get()).tmp),
                 weight_times.count,
                 weight_times.data,
             );
             ufbxi_check_err!(
-                &mut (*bc).error,
-                !(*bc).layer_weight_times.data.is_null(),
+                &mut (*bc.get()).error,
+                !(*bc.get()).layer_weight_times.data.is_null(),
                 "bc->layer_weight_times.data"
             );
 
-            buf_clear(ptr::addr_of_mut!((*bc).tmp_prop));
+            buf_clear(ptr::addr_of_mut!((*bc.get()).tmp_prop));
         }
     }
 
@@ -4971,57 +5030,57 @@ pub(crate) unsafe fn bake_anim(bc: *mut BakeContext) -> Result<(), Fail> {
         begin = end;
     }
 
-    let num_nodes: usize = (*bc).tmp_nodes.num_items;
-    let num_elements: usize = (*bc).tmp_elements.num_items;
+    let num_nodes: usize = (*bc.get()).tmp_nodes.num_items;
+    let num_elements: usize = (*bc.get()).tmp_elements.num_items;
 
-    (*bc).bake.nodes.count = num_nodes;
-    (*bc).bake.nodes.data = push_pop::<BakedNode>(
-        ptr::addr_of_mut!((*bc).result),
-        ptr::addr_of_mut!((*bc).tmp_nodes),
+    (*bc.get()).bake.nodes.count = num_nodes;
+    (*bc.get()).bake.nodes.data = push_pop::<BakedNode>(
+        ptr::addr_of_mut!((*bc.get()).result),
+        ptr::addr_of_mut!((*bc.get()).tmp_nodes),
         num_nodes,
     );
     ufbxi_check_err!(
-        &mut (*bc).error,
-        !(*bc).bake.nodes.data.is_null(),
+        &mut (*bc.get()).error,
+        !(*bc.get()).bake.nodes.data.is_null(),
         "bc->bake.nodes.data"
     );
 
-    (*bc).bake.elements.count = num_elements;
-    (*bc).bake.elements.data = push_pop::<BakedElement>(
-        ptr::addr_of_mut!((*bc).result),
-        ptr::addr_of_mut!((*bc).tmp_elements),
+    (*bc.get()).bake.elements.count = num_elements;
+    (*bc.get()).bake.elements.data = push_pop::<BakedElement>(
+        ptr::addr_of_mut!((*bc.get()).result),
+        ptr::addr_of_mut!((*bc.get()).tmp_elements),
         num_elements,
     );
     ufbxi_check_err!(
-        &mut (*bc).error,
-        !(*bc).bake.elements.data.is_null(),
+        &mut (*bc.get()).error,
+        !(*bc.get()).bake.elements.data.is_null(),
         "bc->bake.elements.data"
     );
 
     unstable_sort(
-        (*bc).bake.nodes.data as *mut c_void,
-        (*bc).bake.nodes.count,
+        (*bc.get()).bake.nodes.data as *mut c_void,
+        (*bc.get()).bake.nodes.count,
         size_of::<BakedNode>(),
         baked_node_less,
         ptr::null_mut(),
     );
     unstable_sort(
-        (*bc).bake.elements.data as *mut c_void,
-        (*bc).bake.elements.count,
+        (*bc.get()).bake.elements.data as *mut c_void,
+        (*bc.get()).bake.elements.count,
         size_of::<BakedElement>(),
         baked_element_less,
         ptr::null_mut(),
     );
 
-    if (*bc).time_min < (*bc).time_max {
-        (*bc).bake.key_time_min = (*bc).time_min;
-        (*bc).bake.key_time_max = (*bc).time_max;
+    if (*bc.get()).time_min < (*bc.get()).time_max {
+        (*bc.get()).bake.key_time_min = (*bc.get()).time_min;
+        (*bc.get()).bake.key_time_max = (*bc.get()).time_max;
     }
 
-    if (*bc).time_begin < (*bc).time_end {
-        (*bc).bake.playback_time_begin = (*bc).time_begin;
-        (*bc).bake.playback_time_end = (*bc).time_end;
-        (*bc).bake.playback_duration = (*bc).time_end - (*bc).time_begin;
+    if (*bc.get()).time_begin < (*bc.get()).time_end {
+        (*bc.get()).bake.playback_time_begin = (*bc.get()).time_begin;
+        (*bc.get()).bake.playback_time_end = (*bc.get()).time_end;
+        (*bc.get()).bake.playback_duration = (*bc.get()).time_end - (*bc.get()).time_begin;
     }
 
     Ok(())
@@ -5031,94 +5090,99 @@ pub(crate) unsafe fn bake_anim(bc: *mut BakeContext) -> Result<(), Fail> {
 #[cfg(feature = "baking")]
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn bake_anim_imp(bc: *mut BakeContext, anim: *const Anim) -> Result<(), Fail> {
-    if (*bc).opts.resample_rate <= 0.0 {
-        (*bc).opts.resample_rate = 30.0;
+pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Result<(), Fail> {
+    if (*bc.get()).opts.resample_rate <= 0.0 {
+        (*bc.get()).opts.resample_rate = 30.0;
     }
-    if (*bc).opts.minimum_sample_rate <= 0.0 {
-        (*bc).opts.minimum_sample_rate = 19.5;
+    if (*bc.get()).opts.minimum_sample_rate <= 0.0 {
+        (*bc.get()).opts.minimum_sample_rate = 19.5;
     }
-    if (*bc).opts.max_keyframe_segments == 0 {
-        (*bc).opts.max_keyframe_segments = 32;
+    if (*bc.get()).opts.max_keyframe_segments == 0 {
+        (*bc.get()).opts.max_keyframe_segments = 32;
     }
-    if (*bc).opts.key_reduction_threshold == 0.0 {
-        (*bc).opts.key_reduction_threshold = 0.000001;
+    if (*bc.get()).opts.key_reduction_threshold == 0.0 {
+        (*bc.get()).opts.key_reduction_threshold = 0.000001;
     }
-    if (*bc).opts.key_reduction_passes == 0 {
-        (*bc).opts.key_reduction_passes = 4;
+    if (*bc.get()).opts.key_reduction_passes == 0 {
+        (*bc.get()).opts.key_reduction_passes = 4;
     }
 
-    if (*bc).opts.trim_start_time && (*anim).time_begin > 0.0 {
-        (*bc).ktime_offset = -(*anim).time_begin * (*(*bc).scene).metadata.ktime_second as f64;
+    if (*bc.get()).opts.trim_start_time && (*anim).time_begin > 0.0 {
+        (*bc.get()).ktime_offset =
+            -(*anim).time_begin * (*(*bc.get()).scene).metadata.ktime_second as f64;
     }
 
     init_ator(
-        ptr::addr_of_mut!((*bc).error),
-        ptr::addr_of_mut!((*bc).ator_tmp),
-        ptr::addr_of!((*bc).opts.temp_allocator),
+        ptr::addr_of_mut!((*bc.get()).error),
+        ptr::addr_of_mut!((*bc.get()).ator_tmp),
+        ptr::addr_of!((*bc.get()).opts.temp_allocator),
         b"temp\0".as_ptr(),
     );
     init_ator(
-        ptr::addr_of_mut!((*bc).error),
-        ptr::addr_of_mut!((*bc).ator_result),
-        ptr::addr_of!((*bc).opts.result_allocator),
+        ptr::addr_of_mut!((*bc.get()).error),
+        ptr::addr_of_mut!((*bc.get()).ator_result),
+        ptr::addr_of!((*bc.get()).opts.result_allocator),
         b"result\0".as_ptr(),
     );
 
-    (*bc).result.unordered = true;
-    (*bc).result.ator = ptr::addr_of_mut!((*bc).ator_result);
+    (*bc.get()).result.unordered = true;
+    (*bc.get()).result.ator = ptr::addr_of_mut!((*bc.get()).ator_result);
 
-    (*bc).tmp.unordered = true;
-    (*bc).tmp.ator = ptr::addr_of_mut!((*bc).ator_tmp);
+    (*bc.get()).tmp.unordered = true;
+    (*bc.get()).tmp.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
 
-    (*bc).tmp_prop.ator = ptr::addr_of_mut!((*bc).ator_tmp);
-    (*bc).tmp_prop.unordered = true;
-    (*bc).tmp_prop.clearable = true;
+    (*bc.get()).tmp_prop.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
+    (*bc.get()).tmp_prop.unordered = true;
+    (*bc.get()).tmp_prop.clearable = true;
 
-    (*bc).tmp_times.ator = ptr::addr_of_mut!((*bc).ator_tmp);
-    (*bc).tmp_bake_props.ator = ptr::addr_of_mut!((*bc).ator_tmp);
-    (*bc).tmp_nodes.ator = ptr::addr_of_mut!((*bc).ator_tmp);
-    (*bc).tmp_elements.ator = ptr::addr_of_mut!((*bc).ator_tmp);
-    (*bc).tmp_props.ator = ptr::addr_of_mut!((*bc).ator_tmp);
-    (*bc).tmp_bake_stack.ator = ptr::addr_of_mut!((*bc).ator_tmp);
+    (*bc.get()).tmp_times.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
+    (*bc.get()).tmp_bake_props.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
+    (*bc.get()).tmp_nodes.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
+    (*bc.get()).tmp_elements.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
+    (*bc.get()).tmp_props.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
+    (*bc.get()).tmp_bake_stack.ator = ptr::addr_of_mut!((*bc.get()).ator_tmp);
 
-    (*bc).anim = anim;
+    (*bc.get()).anim = anim;
     if (*anim).time_begin < (*anim).time_end {
-        (*bc).time_begin = (*anim).time_begin;
-        (*bc).time_end = (*anim).time_end;
+        (*bc.get()).time_begin = (*anim).time_begin;
+        (*bc.get()).time_end = (*anim).time_end;
     }
-    (*bc).time_min = math::INFINITY;
-    (*bc).time_max = -math::INFINITY;
+    (*bc.get()).time_min = math::INFINITY;
+    (*bc.get()).time_max = -math::INFINITY;
 
-    (*bc).imp = push::<BakedAnimImp>(ptr::addr_of_mut!((*bc).result), 1);
-    ufbxi_check_err!(&mut (*bc).error, !(*bc).imp.is_null(), "bc->imp");
+    (*bc.get()).imp = push::<BakedAnimImp>(ptr::addr_of_mut!((*bc.get()).result), 1);
+    ufbxi_check_err!(
+        &mut (*bc.get()).error,
+        !(*bc.get()).imp.is_null(),
+        "bc->imp"
+    );
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&BakedAnim` pointer via exposed provenance.
-    ((*bc).imp as *mut u8).expose_provenance();
+    ((*bc.get()).imp as *mut u8).expose_provenance();
 
     bake_anim(bc)?;
 
     init_ref(
-        ptr::addr_of_mut!((*(*bc).imp).refcount),
+        ptr::addr_of_mut!((*(*bc.get()).imp).refcount),
         BAKED_ANIM_IMP_MAGIC,
         ptr::null_mut(),
     );
 
-    (*bc).bake.metadata.result_memory_used = (*bc).ator_result.current_size;
-    (*bc).bake.metadata.temp_memory_used = (*bc).ator_tmp.current_size;
-    (*bc).bake.metadata.result_allocs = (*bc).ator_result.num_allocs;
-    (*bc).bake.metadata.temp_allocs = (*bc).ator_tmp.num_allocs;
+    (*bc.get()).bake.metadata.result_memory_used = (*bc.get()).ator_result.current_size;
+    (*bc.get()).bake.metadata.temp_memory_used = (*bc.get()).ator_tmp.current_size;
+    (*bc.get()).bake.metadata.result_allocs = (*bc.get()).ator_result.num_allocs;
+    (*bc.get()).bake.metadata.temp_allocs = (*bc.get()).ator_tmp.num_allocs;
 
-    (*(*bc).imp).magic = BAKED_ANIM_IMP_MAGIC;
+    (*(*bc.get()).imp).magic = BAKED_ANIM_IMP_MAGIC;
     // C: `bc->imp->bake = bc->bake;` (struct assignment)
     ptr::copy_nonoverlapping(
-        ptr::addr_of!((*bc).bake),
-        ptr::addr_of_mut!((*(*bc).imp).bake),
+        ptr::addr_of!((*bc.get()).bake),
+        ptr::addr_of_mut!((*(*bc.get()).imp).bake),
         1,
     );
-    (*(*bc).imp).refcount.ator = (*bc).ator_result;
-    (*(*bc).imp).refcount.buf = (*bc).result;
+    (*(*bc.get()).imp).refcount.ator = (*bc.get()).ator_result;
+    (*(*bc.get()).imp).refcount.buf = (*bc.get()).result;
 
     Ok(())
 }
