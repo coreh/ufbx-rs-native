@@ -1520,7 +1520,7 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
         ufbxi_check!(uc, !geo_node.is_null(), "geo_node");
         ufbxi_check!(
             uc,
-            !push_copy::<u32>(&mut (*uc.get()).tmp_node_ids, 1, &(*geo_node).element.element_id)
+            !push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*geo_node).element.element_id)
                 .is_null(),
             "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&geo_node->element.element_id)))"
         );
@@ -1633,7 +1633,7 @@ pub(crate) unsafe fn setup_scale_helper(
     ufbxi_check!(
         uc,
         !push_copy::<u32>(
-            &mut (*uc.get()).tmp_node_ids,
+            uc.tmp_node_ids_mut_ptr(),
             1,
             &(*scale_node).element.element_id
         )
@@ -1698,7 +1698,7 @@ pub(crate) unsafe fn read_model(
     ufbxi_check!(uc, !elem_node.is_null(), "elem_node");
     ufbxi_check!(
         uc,
-        !push_copy::<u32>(&mut (*uc.get()).tmp_node_ids, 1, &(*elem_node).element.element_id).is_null(),
+        !push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*elem_node).element.element_id).is_null(),
         "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&elem_node->element.element_id)))"
     );
 
@@ -7381,7 +7381,7 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
         setup_root_node(uc, root);
         ufbxi_check!(
             uc,
-            !push_copy::<u32>(&mut (*uc.get()).tmp_node_ids, 1, &(*root).element.element_id).is_null(),
+            !push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*root).element.element_id).is_null(),
             // C-parity: verbatim post-expansion `#cond` text (see the C11
             // 6.10.3.1 note in `sort_shader_prop_bindings`).
             "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&root->element.element_id)))"
@@ -8283,7 +8283,7 @@ pub(crate) unsafe fn read_legacy_model(uc: &Context, node: *mut Node) -> Result<
     ufbxi_check!(uc, !elem_node.is_null(), "elem_node");
     ufbxi_check!(
         uc,
-        !push_copy::<u32>(&mut (*uc.get()).tmp_node_ids, 1, &(*elem_node).element.element_id).is_null(),
+        !push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*elem_node).element.element_id).is_null(),
         "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&elem_node->element.element_id)))"
     );
 
@@ -8386,7 +8386,7 @@ pub(crate) unsafe fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
         setup_root_node(uc, root);
         ufbxi_check!(
             uc,
-            !push_copy::<u32>(&mut (*uc.get()).tmp_node_ids, 1, &(*root).element.element_id).is_null(),
+            !push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*root).element.element_id).is_null(),
             // C-parity: verbatim post-expansion `#cond` text (see the C11
             // 6.10.3.1 note in `sort_shader_prop_bindings`).
             "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&root->element.element_id)))"

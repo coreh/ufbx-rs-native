@@ -1697,8 +1697,8 @@ pub(crate) unsafe fn add_connections_to_elements(uc: &Context) -> Result<(), Fai
 #[must_use]
 pub(crate) unsafe fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
     let num_nodes: usize = (*uc.get()).tmp_node_ids.num_items;
-    let node_ids: *mut u32 = push_pop(uc.tmp_mut_ptr(), &mut (*uc.get()).tmp_node_ids, num_nodes);
-    buf_free(&mut (*uc.get()).tmp_node_ids);
+    let node_ids: *mut u32 = push_pop(uc.tmp_mut_ptr(), uc.tmp_node_ids_mut_ptr(), num_nodes);
+    buf_free(uc.tmp_node_ids_mut_ptr());
     ufbxi_check!(uc, !node_ids.is_null(), "node_ids");
 
     let node_ptrs: *mut *mut Node = push(uc.tmp_stack_mut_ptr(), num_nodes);

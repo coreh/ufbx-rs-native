@@ -190,7 +190,7 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         !push_copy::<u32>(
-            &mut (*uc.get()).tmp_node_ids,
+            uc.tmp_node_ids_mut_ptr(),
             1,
             &(*(*mesh).fbx_node).element.element_id
         )
@@ -285,7 +285,7 @@ pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
         setup_root_node(uc, root);
         ufbxi_check!(
             uc,
-            !push_copy::<u32>(&mut (*uc.get()).tmp_node_ids, 1, &(*root).element.element_id).is_null(),
+            !push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*root).element.element_id).is_null(),
             "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&root->element.element_id)))"
         );
     }
