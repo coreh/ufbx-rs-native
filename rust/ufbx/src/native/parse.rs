@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `scene_imp` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn scene_imp(&self) -> *mut SceneImp {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut SceneImp` are valid.
+        unsafe { (*self.get()).scene_imp }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_scene_imp(&self, scene_imp: *mut SceneImp) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).scene_imp = scene_imp;
+        }
+    }
+
     // `blender_full_weights` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn blender_full_weights(&self) -> bool {

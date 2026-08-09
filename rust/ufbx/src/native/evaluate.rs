@@ -877,7 +877,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         p_elem = p_elem.add(1);
     }
 
-    (*uc.get()).scene_imp = imp;
+    uc.set_scene_imp(imp);
 
     Ok(())
 }
@@ -1170,7 +1170,7 @@ pub(crate) unsafe fn load(
         if !p_error.is_null() {
             clear_error(p_error);
         }
-        ptr::addr_of_mut!((*(*uc.get()).scene_imp).scene)
+        ptr::addr_of_mut!((*uc.scene_imp()).scene)
     } else {
         fix_error_type(
             &mut (*uc.get()).error,
