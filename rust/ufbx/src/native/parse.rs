@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `scene` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn scene_mut_ptr(&self) -> *mut Scene {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).scene }
+    }
+
     // `tmp_full_weights` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_full_weights_mut_ptr(&self) -> *mut Buf {

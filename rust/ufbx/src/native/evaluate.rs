@@ -765,12 +765,12 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     }
 
     // TODO: This could be done in evaluate as well with refactoring
-    update_adjust_transforms(uc, ptr::addr_of_mut!((*uc.get()).scene));
+    update_adjust_transforms(uc, uc.scene_mut_ptr());
 
     ufbxi_check!(uc, modify_geometry(uc).is_ok(), "ufbxi_modify_geometry(uc)");
     postprocess_scene(uc);
 
-    update_scene(ptr::addr_of_mut!((*uc.get()).scene), true, ptr::null(), 0);
+    update_scene(uc.scene_mut_ptr(), true, ptr::null(), 0);
 
     // Force a non-NULL anim pointer
     if ref_ptr(ptr::addr_of!((*uc.get()).scene.anim)).is_null() {
@@ -797,7 +797,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         ufbxi_check!(
             uc,
             evaluate_skinning(
-                ptr::addr_of_mut!((*uc.get()).scene),
+                uc.scene_mut_ptr(),
                 uc.error_mut_ptr(),
                 uc.result_mut_ptr(),
                 uc.tmp_mut_ptr(),

@@ -8091,7 +8091,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         p_texture = p_texture.add(1);
     }
 
-    propagate_main_textures(&mut (*uc.get()).scene);
+    propagate_main_textures(uc.scene_mut_ptr());
     pop_texture_files(uc)?;
 
     // Second pass to fetch material maps
@@ -8106,7 +8106,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             (*material).textures.data as *mut MaterialTexture,
             (*material).textures.count,
         )?;
-        fetch_maps(&mut (*uc.get()).scene, material);
+        fetch_maps(uc.scene_mut_ptr(), material);
 
         // Fetch `ufbx_material_texture.shader_prop` names
         let material_shader: *mut Shader = opt_ptr(&(*material).shader);
