@@ -177,6 +177,21 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `channels` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn channels(&self) -> *mut CacheTmpChannel {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut CacheTmpChannel` are valid.
+        unsafe { (*self.get()).channels }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_channels(&self, channels: *mut CacheTmpChannel) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).channels = channels;
+        }
+    }
+
     // `ator_tmp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn ator_tmp(&self) -> *mut Allocator {
@@ -779,10 +794,13 @@ pub(crate) unsafe fn cache_load_xml_imp(
         }
 
         if !tag_channels.is_null() {
-            (*cc.get()).channels = push_zero(&mut (*cc.get()).tmp, (*tag_channels).num_children);
+            cc.set_channels(push_zero(
+                &mut (*cc.get()).tmp,
+                (*tag_channels).num_children,
+            ));
             ufbxi_check_err!(
                 &mut (*cc.get()).error,
-                !(*cc.get()).channels.is_null(),
+                !cc.channels().is_null(),
                 "cc->channels"
             );
 
@@ -799,8 +817,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
                 }
 
                 // C: `&cc->channels[cc->num_channels++]`
-                let channel: *mut CacheTmpChannel =
-                    (*cc.get()).channels.add((*cc.get()).num_channels);
+                let channel: *mut CacheTmpChannel = cc.channels().add((*cc.get()).num_channels);
                 (*cc.get()).num_channels += 1;
                 (*channel).name = (*name).value;
                 (*channel).interpretation = (*interpretation).value;
@@ -833,7 +850,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
         }
     }
 
-    cache_sort_tmp_channels(cc, (*cc.get()).channels, (*cc.get()).num_channels)?;
+    cache_sort_tmp_channels(cc, cc.channels(), (*cc.get()).num_channels)?;
     Ok(())
 }
 
@@ -990,7 +1007,7 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
             // Find the first `time >= lowest_time` value that has data in some channel
             let mut time: u32 = u32::MAX;
             // C: `ufbxi_for(ufbxi_cache_tmp_channel, chan, cc->channels, cc->num_channels)`
-            let mut chan: *mut CacheTmpChannel = (*cc.get()).channels;
+            let mut chan: *mut CacheTmpChannel = cc.channels();
             let chan_end: *mut CacheTmpChannel = add_ptr(chan, (*cc.get()).num_channels);
             while chan != chan_end {
                 if !(*chan).try_load || (*chan).consecutive_fails > 10 {
@@ -1047,7 +1064,7 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
 
             // Update channel status
             // C: `ufbxi_for(ufbxi_cache_tmp_channel, chan, cc->channels, cc->num_channels)`
-            let mut chan: *mut CacheTmpChannel = (*cc.get()).channels;
+            let mut chan: *mut CacheTmpChannel = cc.channels();
             let chan_end: *mut CacheTmpChannel = add_ptr(chan, (*cc.get()).num_channels);
             while chan != chan_end {
                 if (*chan).current_time == time {
@@ -1150,7 +1167,7 @@ static CACHE_INTERPRETATION_NAMES: [CacheInterpretationName; 3] = [
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
-    let mut tmp_chan: *mut CacheTmpChannel = (*cc.get()).channels;
+    let mut tmp_chan: *mut CacheTmpChannel = cc.channels();
     let tmp_end: *mut CacheTmpChannel = add_ptr(tmp_chan, (*cc.get()).num_channels);
 
     let mut begin: usize = 0;
