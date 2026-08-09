@@ -177,6 +177,21 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    // `imp` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn imp(&self) -> *mut GeometryCacheImp {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut GeometryCacheImp` are valid.
+        unsafe { (*self.get()).imp }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_imp(&self, imp: *mut GeometryCacheImp) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).imp = imp;
+        }
+    }
+
     // `pos_end` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn pos_end(&self) -> *const u8 {
@@ -1434,34 +1449,27 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     cache_setup_channels(cc)?;
 
     // Must be last allocation!
-    (*cc.get()).imp = push(&mut (*cc.get()).result, 1);
-    ufbxi_check_err!(
-        &mut (*cc.get()).error,
-        !(*cc.get()).imp.is_null(),
-        "cc->imp"
-    );
+    cc.set_imp(push(&mut (*cc.get()).result, 1));
+    ufbxi_check_err!(&mut (*cc.get()).error, !cc.imp().is_null(), "cc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&GeometryCache` pointer via exposed provenance.
-    ((*cc.get()).imp as *mut u8).expose_provenance();
+    (cc.imp() as *mut u8).expose_provenance();
 
     init_ref(
-        &mut (*(*cc.get()).imp).refcount,
+        &mut (*cc.imp()).refcount,
         CACHE_IMP_MAGIC,
         core::ptr::null_mut(),
     );
 
-    core::ptr::write(
-        &mut (*(*cc.get()).imp).cache,
-        core::ptr::read(&(*cc.get()).cache),
-    );
-    (*(*cc.get()).imp).magic = CACHE_IMP_MAGIC;
-    (*(*cc.get()).imp).owned_by_scene = cc.owned_by_scene();
-    (*(*cc.get()).imp).refcount.ator = (*cc.get()).ator_result;
-    (*(*cc.get()).imp).refcount.buf = (*cc.get()).result;
-    (*(*cc.get()).imp).refcount.buf.ator = &raw mut (*(*cc.get()).imp).refcount.ator;
-    (*(*cc.get()).imp).string_buf = (*cc.get()).string_pool.buf;
-    (*(*cc.get()).imp).string_buf.ator = &raw mut (*(*cc.get()).imp).refcount.ator;
+    core::ptr::write(&mut (*cc.imp()).cache, core::ptr::read(&(*cc.get()).cache));
+    (*cc.imp()).magic = CACHE_IMP_MAGIC;
+    (*cc.imp()).owned_by_scene = cc.owned_by_scene();
+    (*cc.imp()).refcount.ator = (*cc.get()).ator_result;
+    (*cc.imp()).refcount.buf = (*cc.get()).result;
+    (*cc.imp()).refcount.buf.ator = &raw mut (*cc.imp()).refcount.ator;
+    (*cc.imp()).string_buf = (*cc.get()).string_pool.buf;
+    (*cc.imp()).string_buf.ator = &raw mut (*cc.imp()).refcount.ator;
 
     Ok(())
 }
@@ -1482,7 +1490,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
     }
 
     if ok {
-        &raw mut (*(*cc.get()).imp).cache
+        &raw mut (*cc.imp()).cache
     } else {
         fix_error_type(
             &mut (*cc.get()).error,
