@@ -2474,7 +2474,7 @@ pub(crate) unsafe fn find_prop_connection(
 #[inline(always)]
 pub(crate) unsafe fn patch_index_pointer(uc: &Context, p_index: *mut *mut u32) {
     if *p_index == SENTINEL_INDEX_ZERO.as_ptr() as *mut u32 {
-        *p_index = (*uc.get()).zero_indices;
+        *p_index = uc.zero_indices();
     } else if *p_index == SENTINEL_INDEX_CONSECUTIVE.as_ptr() as *mut u32 {
         *p_index = (*uc.get()).consecutive_indices;
     }
@@ -5421,7 +5421,7 @@ pub(crate) unsafe fn flip_attrib_winding(
     is_position: bool,
 ) -> Result<(), Fail> {
     // All zero, no flipping needed
-    if (*indices).data == (*uc.get()).zero_indices || (*indices).count == 0 {
+    if (*indices).data == uc.zero_indices() || (*indices).count == 0 {
         return Ok(());
     }
 
@@ -7228,7 +7228,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             *consecutive_indices.add(i) = i as u32;
         }
 
-        (*uc.get()).zero_indices = zero_indices;
+        uc.set_zero_indices(zero_indices);
         (*uc.get()).consecutive_indices = consecutive_indices;
 
         // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
@@ -7414,12 +7414,12 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                     (*part).num_line_faces = (*mesh).num_line_faces;
                     (*part).face_indices.data = (*uc.get()).consecutive_indices;
                     (*part).face_indices.count = (*mesh).num_faces;
-                    (*mesh).material_part_usage_order.data = (*uc.get()).zero_indices;
+                    (*mesh).material_part_usage_order.data = uc.zero_indices();
                     (*mesh).material_part_usage_order.count = 1;
                 }
 
                 if (*mesh).materials.count == 1 {
-                    (*mesh).face_material.data = (*uc.get()).zero_indices;
+                    (*mesh).face_material.data = uc.zero_indices();
                     (*mesh).face_material.count = (*mesh).num_faces;
                 } else {
                     (*mesh).face_material.data = ptr::null_mut();

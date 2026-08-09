@@ -710,6 +710,21 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `zero_indices` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn zero_indices(&self) -> *mut u32 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u32` are valid.
+        unsafe { (*self.get()).zero_indices }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_zero_indices(&self, zero_indices: *mut u32) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).zero_indices = zero_indices;
+        }
+    }
+
     // `has_next_child` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn has_next_child(&self) -> bool {
