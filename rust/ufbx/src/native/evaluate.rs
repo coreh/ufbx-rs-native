@@ -3530,6 +3530,14 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `tmp_bake_stack` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_bake_stack_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp_bake_stack }
+    }
+
     // `tmp_bake_props` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_bake_props_mut(&self) -> *mut Buf {
@@ -5038,7 +5046,7 @@ pub(crate) unsafe fn bake_node_imp(
                 ufbxi_check_err!(
                     bc.error_mut(),
                     !push_copy::<u32>(
-                        ptr::addr_of_mut!((*bc.get()).tmp_bake_stack),
+                        bc.tmp_bake_stack_mut(),
                         1,
                         ptr::addr_of!((*child).element.element_id),
                     )
@@ -5076,7 +5084,7 @@ pub(crate) unsafe fn bake_node_imp(
                     ufbxi_check_err!(
                         bc.error_mut(),
                         !push_copy::<u32>(
-                            ptr::addr_of_mut!((*bc.get()).tmp_bake_stack),
+                            bc.tmp_bake_stack_mut(),
                             1,
                             ptr::addr_of!((*child_scale_helper).element.element_id),
                         )
@@ -5108,11 +5116,7 @@ pub(crate) unsafe fn bake_node(
     // until all dependencies are baked.
     while (*bc.get()).tmp_bake_stack.num_items > 0 {
         let mut child_id: u32 = 0;
-        pop::<u32>(
-            ptr::addr_of_mut!((*bc.get()).tmp_bake_stack),
-            1,
-            ptr::addr_of_mut!(child_id),
-        );
+        pop::<u32>(bc.tmp_bake_stack_mut(), 1, ptr::addr_of_mut!(child_id));
         bake_node_imp(bc, child_id, ptr::null_mut(), 0)?;
     }
 
