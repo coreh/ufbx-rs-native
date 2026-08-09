@@ -928,14 +928,14 @@ pub(crate) unsafe fn synthetic_id_from_ptr_id(uc: &Context, ptr: usize, id: u64)
     let ptr_id = PtrId { ptr, id };
     let hash = hash_ptr_id(ptr_id);
     let mut entry: *mut PtrFbxIdEntry = map_find(
-        &mut (*uc.get()).ptr_fbx_id_map,
+        uc.ptr_fbx_id_map_mut_ptr(),
         hash,
         &ptr_id as *const PtrId as *const c_void,
     );
 
     if entry.is_null() {
         entry = map_insert(
-            &mut (*uc.get()).ptr_fbx_id_map,
+            uc.ptr_fbx_id_map_mut_ptr(),
             hash,
             &ptr_id as *const PtrId as *const c_void,
         );
