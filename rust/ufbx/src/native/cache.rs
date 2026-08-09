@@ -1872,7 +1872,7 @@ pub(crate) unsafe fn load_external_files(uc: &Context) -> Result<(), Fail> {
     while p_cache != p_cache_end {
         let cache: *mut CacheFile = *p_cache;
         if (*cache).filename.length > 0 {
-            let file: *mut ExternalFile = push_zero(&mut (*uc.get()).tmp_stack, 1);
+            let file: *mut ExternalFile = push_zero(uc.tmp_stack_mut_ptr(), 1);
             ufbxi_check!(uc, !file.is_null(), "file");
             // C: `file->index = num_files++;`
             (*file).index = num_files;
@@ -1886,7 +1886,7 @@ pub(crate) unsafe fn load_external_files(uc: &Context) -> Result<(), Fail> {
 
     // Sort and load the external files
     let files: *mut ExternalFile =
-        push_pop(&mut (*uc.get()).tmp, &mut (*uc.get()).tmp_stack, num_files);
+        push_pop(&mut (*uc.get()).tmp, uc.tmp_stack_mut_ptr(), num_files);
     ufbxi_check!(uc, !files.is_null(), "files");
     unstable_sort(
         files as *mut c_void,

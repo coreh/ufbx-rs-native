@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_stack_mut_ptr(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp_stack }
+    }
+
     // Reborrow a raw `*mut InnerContext` as `&Context` (layout-identical via
     // `repr(transparent)`). For the nullable-context (`maybe_uc`) call paths.
     // SAFETY: `ptr` must be non-null and point to a live context allocation.
@@ -3587,7 +3595,7 @@ unsafe fn retain_dom_node_rec(
             if mask == 0 {
                 break;
             }
-            let val: *mut DomValue = push_zero(&mut (*uc.get()).tmp_stack, 1);
+            let val: *mut DomValue = push_zero(uc.tmp_stack_mut_ptr(), 1);
             ufbxi_check!(uc, !val.is_null(), "val");
             (*val).value_str.data = EMPTY_CHAR.as_ptr();
 
@@ -3620,7 +3628,7 @@ unsafe fn retain_dom_node_rec(
 
         (*dst).values.count = ix;
         (*dst).values.data =
-            push_pop::<DomValue>(&mut (*uc.get()).result, &mut (*uc.get()).tmp_stack, ix);
+            push_pop::<DomValue>(&mut (*uc.get()).result, uc.tmp_stack_mut_ptr(), ix);
         ufbxi_check!(uc, !(*dst).values.data.is_null(), "dst->values.data");
     }
 
@@ -4306,7 +4314,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->top_nodes)), (&uc->top_nodes), (&uc->top_nodes_cap), (uc->top_nodes_len))"
         );
         let node: *mut Node = uc.top_nodes().add(uc.top_nodes_len() - 1);
-        pop::<Node>(&mut (*uc.get()).tmp_stack, 1, node);
+        pop::<Node>(uc.tmp_stack_mut_ptr(), 1, node);
         if (*uc.get()).opts.retain_dom {
             retain_toplevel(uc, node)?;
         }
@@ -4334,7 +4342,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         (*node).num_children = num_children;
         (*node).children = push_pop::<Node>(
             &mut (*uc.get()).tmp,
-            &mut (*uc.get()).tmp_stack,
+            uc.tmp_stack_mut_ptr(),
             num_children as usize,
         );
         ufbxi_check!(uc, !(*node).children.is_null(), "node->children");
@@ -4386,7 +4394,7 @@ pub(crate) unsafe fn parse_toplevel_child(
                 ufbxi_check!(uc, !dst.is_null(), "dst");
             }
 
-            pop::<Node>(&mut (*uc.get()).tmp_stack, 1, dst);
+            pop::<Node>(uc.tmp_stack_mut_ptr(), 1, dst);
             *p_node = dst;
 
             if (*uc.get()).opts.retain_dom {
@@ -4442,7 +4450,7 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
         return Ok(());
     }
 
-    pop::<Node>(&mut (*uc.get()).tmp_stack, 1, &mut (*uc.get()).legacy_node);
+    pop::<Node>(uc.tmp_stack_mut_ptr(), 1, &mut (*uc.get()).legacy_node);
     uc.set_top_child_index(0);
     uc.set_top_node(&mut (*uc.get()).legacy_node);
 

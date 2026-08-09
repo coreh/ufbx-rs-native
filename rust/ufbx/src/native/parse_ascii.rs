@@ -797,11 +797,11 @@ pub(crate) unsafe fn ascii_read_int_array(
         // Found comma, commit to the position and push the previous value to the array
         src = src_scan;
         if type_ == b'i' {
-            let v: *mut i32 = push_fast::<i32>(&raw mut (*uc.get()).tmp_stack, 1);
+            let v: *mut i32 = push_fast::<i32>(uc.tmp_stack_mut_ptr(), 1);
             ufbxi_check!(uc, !v.is_null(), "v");
             *v = val as i32;
         } else if type_ == b'l' {
-            let v: *mut i64 = push_fast::<i64>(&raw mut (*uc.get()).tmp_stack, 1);
+            let v: *mut i64 = push_fast::<i64>(uc.tmp_stack_mut_ptr(), 1);
             ufbxi_check!(uc, !v.is_null(), "v");
             *v = val as i64;
         }
@@ -1161,11 +1161,11 @@ pub(crate) unsafe fn ascii_read_float_array(
         // Found comma, commit to the position and push the previous value to the array
         src = src_scan;
         if type_ == b'd' {
-            let v: *mut f64 = push_fast::<f64>(&raw mut (*uc.get()).tmp_stack, 1);
+            let v: *mut f64 = push_fast::<f64>(uc.tmp_stack_mut_ptr(), 1);
             ufbxi_check!(uc, !v.is_null(), "v");
             *v = val as f64;
         } else if type_ == b'f' {
-            let v: *mut f32 = push_fast::<f32>(&raw mut (*uc.get()).tmp_stack, 1);
+            let v: *mut f32 = push_fast::<f32>(uc.tmp_stack_mut_ptr(), 1);
             ufbxi_check!(uc, !v.is_null(), "v");
             *v = val as f32;
         }
@@ -1375,7 +1375,7 @@ unsafe fn ascii_parse_node_rec(
 
     // Push the parsed node into the `tmp_stack` buffer, the nodes will be popped by
     // calling code after its done parsing all of it's children.
-    let node: *mut Node = push_zero::<Node>(&raw mut (*uc.get()).tmp_stack, 1);
+    let node: *mut Node = push_zero::<Node>(uc.tmp_stack_mut_ptr(), 1);
     ufbxi_check!(uc, !node.is_null(), "node");
     (*node).name = name;
     (*node).name_len = name_len as u8;
@@ -1424,7 +1424,7 @@ unsafe fn ascii_parse_node_rec(
             // in fast parsing functions.
             ufbxi_check!(
                 uc,
-                !push_size_zero(&raw mut (*uc.get()).tmp_stack, 8, 1).is_null(),
+                !push_size_zero(uc.tmp_stack_mut_ptr(), 8, 1).is_null(),
                 "ufbxi_push_size_zero(&uc->tmp_stack, 8, 1)"
             );
 
@@ -1432,7 +1432,7 @@ unsafe fn ascii_parse_node_rec(
             if (flags & ARRAY_FLAG_PAD_BEGIN) != 0 {
                 ufbxi_check!(
                     uc,
-                    !push_size_zero(&raw mut (*uc.get()).tmp_stack, arr_elem_size, 4).is_null(),
+                    !push_size_zero(uc.tmp_stack_mut_ptr(), arr_elem_size, 4).is_null(),
                     "ufbxi_push_size_zero(&uc->tmp_stack, arr_elem_size, 4)"
                 );
                 num_values += 4;
@@ -1485,7 +1485,7 @@ unsafe fn ascii_parse_node_rec(
             if arr_type != 0 {
                 if arr_type == b's' || arr_type == b'S' || arr_type == b'C' {
                     let raw: bool = arr_type == b's';
-                    let v: *mut String = push::<String>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut String = push::<String>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     if arr_type == b'C' {
                         let buf: *mut Buf = if (*uc.get()).opts.retain_dom {
@@ -1571,32 +1571,32 @@ unsafe fn ascii_parse_node_rec(
                 }
 
                 b'b' => {
-                    let v: *mut bool = push::<bool>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut bool = push::<bool>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val != 0;
                 }
                 b'c' => {
-                    let v: *mut u8 = push::<u8>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut u8 = push::<u8>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val as u8;
                 }
                 b'i' => {
-                    let v: *mut i32 = push::<i32>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut i32 = push::<i32>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val as i32;
                 }
                 b'l' => {
-                    let v: *mut i64 = push::<i64>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut i64 = push::<i64>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val;
                 }
                 b'f' => {
-                    let v: *mut f32 = push::<f32>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut f32 = push::<f32>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val as f32 * fsign as f32;
                 }
                 b'd' => {
-                    let v: *mut f64 = push::<f64>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut f64 = push::<f64>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val as f64 * fsign as f64;
                 }
@@ -1623,12 +1623,12 @@ unsafe fn ascii_parse_node_rec(
                 }
 
                 b'b' => {
-                    let v: *mut bool = push::<bool>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut bool = push::<bool>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val != 0.0;
                 }
                 b'c' => {
-                    let v: *mut u8 = push::<u8>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut u8 = push::<u8>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     // C-parity: C's `(uint8_t)val` on a `double` is UB out of range; the
                     // x86-64 oracle emits a 32-bit `cvttsd2si` + low-byte narrow. Plain
@@ -1638,22 +1638,22 @@ unsafe fn ascii_parse_node_rec(
                     *v = val as u8;
                 }
                 b'i' => {
-                    let v: *mut i32 = push::<i32>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut i32 = push::<i32>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = f64_to_i32(val);
                 }
                 b'l' => {
-                    let v: *mut i64 = push::<i64>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut i64 = push::<i64>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = f64_to_i64(val);
                 }
                 b'f' => {
-                    let v: *mut f32 = push::<f32>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut f32 = push::<f32>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val as f32;
                 }
                 b'd' => {
-                    let v: *mut f64 = push::<f64>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut f64 = push::<f64>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val;
                 }
@@ -1703,32 +1703,32 @@ unsafe fn ascii_parse_node_rec(
                 }
 
                 b'b' => {
-                    let v: *mut bool = push::<bool>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut bool = push::<bool>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val != 0;
                 }
                 b'c' => {
-                    let v: *mut u8 = push::<u8>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut u8 = push::<u8>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val as u8;
                 }
                 b'i' => {
-                    let v: *mut i32 = push::<i32>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut i32 = push::<i32>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val as i32;
                 }
                 b'l' => {
-                    let v: *mut i64 = push::<i64>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut i64 = push::<i64>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val;
                 }
                 b'f' => {
-                    let v: *mut f32 = push::<f32>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut f32 = push::<f32>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val_f as f32;
                 }
                 b'd' => {
-                    let v: *mut f64 = push::<f64>(&raw mut (*uc.get()).tmp_stack, 1);
+                    let v: *mut f64 = push::<f64>(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     *v = val_f;
                 }
@@ -1814,7 +1814,7 @@ unsafe fn ascii_parse_node_rec(
                 // Pop any previously pushed values
                 if num_values > 0 {
                     pop_size(
-                        &raw mut (*uc.get()).tmp_stack,
+                        uc.tmp_stack_mut_ptr(),
                         arr_elem_size,
                         num_values as usize,
                         arr_data,
@@ -1823,7 +1823,7 @@ unsafe fn ascii_parse_node_rec(
                 }
             } else if arr_error {
                 pop_size(
-                    &raw mut (*uc.get()).tmp_stack,
+                    uc.tmp_stack_mut_ptr(),
                     arr_elem_size,
                     num_values as usize,
                     core::ptr::null_mut(),
@@ -1834,7 +1834,7 @@ unsafe fn ascii_parse_node_rec(
             } else {
                 arr_data = push_pop_size(
                     arr_buf,
-                    &raw mut (*uc.get()).tmp_stack,
+                    uc.tmp_stack_mut_ptr(),
                     arr_elem_size,
                     num_values as usize,
                 );
@@ -1851,13 +1851,7 @@ unsafe fn ascii_parse_node_rec(
             }
 
             // Pop alignment helper
-            pop_size(
-                &raw mut (*uc.get()).tmp_stack,
-                8,
-                1,
-                core::ptr::null_mut(),
-                false,
-            );
+            pop_size(uc.tmp_stack_mut_ptr(), 8, 1, core::ptr::null_mut(), false);
 
             // Deferred parsing
             if deferred_size > 0 {
@@ -1916,8 +1910,7 @@ unsafe fn ascii_parse_node_rec(
             }
 
             // Pop children from `tmp_stack` to a contiguous array
-            (*node).children =
-                push_pop::<Node>(tmp_buf, &raw mut (*uc.get()).tmp_stack, num_children);
+            (*node).children = push_pop::<Node>(tmp_buf, uc.tmp_stack_mut_ptr(), num_children);
             ufbxi_check!(uc, !(*node).children.is_null(), "node->children");
             (*node).num_children = num_children as u32;
         }

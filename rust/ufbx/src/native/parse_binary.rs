@@ -763,7 +763,7 @@ unsafe fn binary_parse_node_rec(
 
     // Push the parsed node into the `tmp_stack` buffer, the nodes will be popped by
     // calling code after its done parsing all of it's children.
-    let node: *mut Node = push_zero::<Node>(&mut (*uc.get()).tmp_stack, 1);
+    let node: *mut Node = push_zero::<Node>(uc.tmp_stack_mut_ptr(), 1);
     ufbxi_check!(uc, !node.is_null(), "node");
 
     // Parse and intern the name to the string pool.
@@ -1223,7 +1223,7 @@ unsafe fn binary_parse_node_rec(
         (*node).num_children = num_children;
         if num_children > 0 {
             (*node).children =
-                push_pop::<Node>(tmp_buf, &mut (*uc.get()).tmp_stack, num_children as usize);
+                push_pop::<Node>(tmp_buf, uc.tmp_stack_mut_ptr(), num_children as usize);
             ufbxi_check!(uc, !(*node).children.is_null(), "node->children");
         }
     } else {

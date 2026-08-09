@@ -810,7 +810,7 @@ pub(crate) unsafe fn read_definitions(uc: &Context) -> Result<(), Fail> {
             continue;
         }
 
-        let tmpl: *mut Template = push_zero::<Template>(&mut (*uc.get()).tmp_stack, 1);
+        let tmpl: *mut Template = push_zero::<Template>(uc.tmp_stack_mut_ptr(), 1);
         uc.set_num_templates(uc.num_templates().wrapping_add(1));
         ufbxi_check!(uc, !tmpl.is_null(), "tmpl");
         ufbxi_check!(
@@ -861,7 +861,7 @@ pub(crate) unsafe fn read_definitions(uc: &Context) -> Result<(), Fail> {
     // TODO: Preserve only the `props` part of the templates
     uc.set_templates(push_pop::<Template>(
         &mut (*uc.get()).result,
-        &mut (*uc.get()).tmp_stack,
+        uc.tmp_stack_mut_ptr(),
         uc.num_templates(),
     ));
     ufbxi_check!(uc, !uc.templates().is_null(), "uc->templates");
@@ -2458,8 +2458,7 @@ pub(crate) unsafe fn read_shape(
     }
 
     if !sorted {
-        let offsets: *mut BlendOffset =
-            push::<BlendOffset>(&mut (*uc.get()).tmp_stack, num_offsets);
+        let offsets: *mut BlendOffset = push::<BlendOffset>(uc.tmp_stack_mut_ptr(), num_offsets);
         ufbxi_check!(uc, !offsets.is_null(), "offsets");
 
         for i in 0..num_offsets {
@@ -2481,11 +2480,7 @@ pub(crate) unsafe fn read_shape(
                     (*offsets.add(i)).normal_offset;
             }
         }
-        pop::<BlendOffset>(
-            &mut (*uc.get()).tmp_stack,
-            num_offsets,
-            core::ptr::null_mut(),
-        );
+        pop::<BlendOffset>(uc.tmp_stack_mut_ptr(), num_offsets, core::ptr::null_mut());
     }
 
     Ok(())
@@ -3246,9 +3241,9 @@ pub(crate) unsafe fn read_mesh(
     let mut num_textures: usize = 0;
 
     let bitangents: *mut TangentLayer =
-        push_zero::<TangentLayer>(&mut (*uc.get()).tmp_stack, num_bitangents);
+        push_zero::<TangentLayer>(uc.tmp_stack_mut_ptr(), num_bitangents);
     let tangents: *mut TangentLayer =
-        push_zero::<TangentLayer>(&mut (*uc.get()).tmp_stack, num_tangents);
+        push_zero::<TangentLayer>(uc.tmp_stack_mut_ptr(), num_tangents);
     ufbxi_check!(uc, !bitangents.is_null(), "bitangents");
     ufbxi_check!(uc, !tangents.is_null(), "tangents");
 
@@ -5317,7 +5312,7 @@ pub(crate) unsafe fn read_pose(
         }
         ufbxi_check!(uc, (*matrix).size >= 16, "matrix->size >= 16");
 
-        let tmp_pose: *mut TmpBonePose = push::<TmpBonePose>(&mut (*uc.get()).tmp_stack, 1);
+        let tmp_pose: *mut TmpBonePose = push::<TmpBonePose>(uc.tmp_stack_mut_ptr(), 1);
         ufbxi_check!(uc, !tmp_pose.is_null(), "tmp_pose");
 
         num_bones += 1;
@@ -5330,7 +5325,7 @@ pub(crate) unsafe fn read_pose(
     // HACK: Transport `ufbxi_tmp_bone_pose` array through the `ufbx_bone_pose` pointer
     (*pose).bone_poses.count = num_bones;
     (*pose).bone_poses.data =
-        push_pop::<TmpBonePose>(&mut (*uc.get()).tmp, &mut (*uc.get()).tmp_stack, num_bones)
+        push_pop::<TmpBonePose>(&mut (*uc.get()).tmp, uc.tmp_stack_mut_ptr(), num_bones)
             as *const BonePose;
     ufbxi_check!(
         uc,
@@ -5411,8 +5406,7 @@ pub(crate) unsafe fn read_binding_table(
         }
 
         if src_type == sp::FbxPropertyEntry.as_ptr() && dst_type == sp::FbxSemanticEntry.as_ptr() {
-            let bind: *mut ShaderPropBinding =
-                push::<ShaderPropBinding>(&mut (*uc.get()).tmp_stack, 1);
+            let bind: *mut ShaderPropBinding = push::<ShaderPropBinding>(uc.tmp_stack_mut_ptr(), 1);
             ufbxi_check!(uc, !bind.is_null(), "bind");
             (*bind).material_prop = src;
             (*bind).shader_prop = dst;
@@ -5420,8 +5414,7 @@ pub(crate) unsafe fn read_binding_table(
         } else if src_type == sp::FbxSemanticEntry.as_ptr()
             && dst_type == sp::FbxPropertyEntry.as_ptr()
         {
-            let bind: *mut ShaderPropBinding =
-                push::<ShaderPropBinding>(&mut (*uc.get()).tmp_stack, 1);
+            let bind: *mut ShaderPropBinding = push::<ShaderPropBinding>(uc.tmp_stack_mut_ptr(), 1);
             ufbxi_check!(uc, !bind.is_null(), "bind");
             (*bind).material_prop = dst;
             (*bind).shader_prop = src;
@@ -5432,11 +5425,8 @@ pub(crate) unsafe fn read_binding_table(
     }
 
     (*bindings).prop_bindings.count = num_entries;
-    (*bindings).prop_bindings.data = push_pop::<ShaderPropBinding>(
-        &mut (*uc.get()).result,
-        &mut (*uc.get()).tmp_stack,
-        num_entries,
-    );
+    (*bindings).prop_bindings.data =
+        push_pop::<ShaderPropBinding>(&mut (*uc.get()).result, uc.tmp_stack_mut_ptr(), num_entries);
     ufbxi_check!(
         uc,
         !(*bindings).prop_bindings.data.is_null(),
@@ -5703,7 +5693,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
         {
             ufbxi_check!(
                 uc,
-                !push_copy::<Prop>(&mut (*uc.get()).tmp_stack, 1, ps.add(src)).is_null(),
+                !push_copy::<Prop>(uc.tmp_stack_mut_ptr(), 1, ps.add(src)).is_null(),
                 // C-parity: verbatim post-expansion `#cond` text (see the C11
                 // 6.10.3.1 note in `sort_shader_prop_bindings`).
                 "((ufbx_prop*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_prop), (1), (&ps[src])))"
@@ -5722,7 +5712,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
     attrib_info.props.props.count = end - dst;
     attrib_info.props.props.data = push_pop::<Prop>(
         &mut (*uc.get()).result,
-        &mut (*uc.get()).tmp_stack,
+        uc.tmp_stack_mut_ptr(),
         attrib_info.props.props.count,
     );
     ufbxi_check!(
@@ -6258,7 +6248,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 }
                 ufbxi_check!(
                     uc,
-                    !push_copy::<*mut Node>(&mut (*uc.get()).tmp_stack, 1, &node).is_null(),
+                    !push_copy::<*mut Node>(uc.tmp_stack_mut_ptr(), 1, &node).is_null(),
                     // C-parity: verbatim post-expansion `#cond` text (see the C11
                     // 6.10.3.1 note in `sort_shader_prop_bindings`).
                     "((ufbxi_node**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbxi_node*), (1), (&node)))"
@@ -6277,7 +6267,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             }
 
             (*batch).num_nodes = num_nodes;
-            (*batch).nodes = push_pop::<*mut Node>(tmp_buf, &mut (*uc.get()).tmp_stack, num_nodes);
+            (*batch).nodes = push_pop::<*mut Node>(tmp_buf, uc.tmp_stack_mut_ptr(), num_nodes);
             ufbxi_check!(uc, !(*batch).nodes.is_null(), "batch->nodes");
             (*batch).task_index = (*uc.get()).thread_pool.start_index;
         }
@@ -8697,7 +8687,7 @@ pub(crate) unsafe fn resolve_relative_filename(
     }
 
     let result_cap: usize = prefix_length + src_length + 1;
-    let result: *mut u8 = push::<u8>(&mut (*uc.get()).tmp_stack, result_cap);
+    let result: *mut u8 = push::<u8>(uc.tmp_stack_mut_ptr(), result_cap);
     ufbxi_check!(uc, !result.is_null(), "result");
     let mut ptr: *mut u8 = result;
 
@@ -8722,11 +8712,7 @@ pub(crate) unsafe fn resolve_relative_filename(
     let mut dst: String = String::new_c(result, to_size(ptr.offset_from(result)));
     ufbx_assert!(dst.length <= result_cap);
     push_string_place_str(&mut (*uc.get()).string_pool, &mut dst, raw)?;
-    pop::<u8>(
-        &mut (*uc.get()).tmp_stack,
-        result_cap,
-        core::ptr::null_mut(),
-    );
+    pop::<u8>(uc.tmp_stack_mut_ptr(), result_cap, core::ptr::null_mut());
 
     strblob_set(p_dst, dst.data, dst.length, raw);
 
