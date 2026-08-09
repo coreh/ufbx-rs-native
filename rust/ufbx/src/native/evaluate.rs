@@ -3921,10 +3921,156 @@ pub(crate) struct BakeContext(
     pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerBakeContext>>,
 );
 
+// Typed interior-mutable VIEW over `BakedAnimMetadata` (non-Copy substruct).
+#[repr(transparent)]
+pub(crate) struct BakedAnimMetadataView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::BakedAnimMetadata>>,
+);
+
+impl BakedAnimMetadataView {
+    #[inline(always)]
+    fn get(&self) -> *mut crate::generated::BakedAnimMetadata {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn result_memory_used(&self) -> usize {
+        unsafe { (*self.get()).result_memory_used }
+    }
+    #[inline(always)]
+    pub(crate) fn set_result_memory_used(&self, result_memory_used: usize) {
+        unsafe {
+            (*self.get()).result_memory_used = result_memory_used;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn temp_memory_used(&self) -> usize {
+        unsafe { (*self.get()).temp_memory_used }
+    }
+    #[inline(always)]
+    pub(crate) fn set_temp_memory_used(&self, temp_memory_used: usize) {
+        unsafe {
+            (*self.get()).temp_memory_used = temp_memory_used;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn result_allocs(&self) -> usize {
+        unsafe { (*self.get()).result_allocs }
+    }
+    #[inline(always)]
+    pub(crate) fn set_result_allocs(&self, result_allocs: usize) {
+        unsafe {
+            (*self.get()).result_allocs = result_allocs;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn temp_allocs(&self) -> usize {
+        unsafe { (*self.get()).temp_allocs }
+    }
+    #[inline(always)]
+    pub(crate) fn set_temp_allocs(&self, temp_allocs: usize) {
+        unsafe {
+            (*self.get()).temp_allocs = temp_allocs;
+        }
+    }
+}
+
+// Typed interior-mutable VIEW over `BakeContext.bake` (public `BakedAnim`).
+#[repr(transparent)]
+pub(crate) struct BakedAnimView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::BakedAnim>>,
+);
+
+impl BakedAnimView {
+    #[inline(always)]
+    fn get(&self) -> *mut crate::generated::BakedAnim {
+        self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn nodes_view(&self) -> &crate::prelude::ListView<crate::generated::BakedNode> {
+        unsafe {
+            &*(&raw mut (*self.get()).nodes
+                as *mut crate::prelude::ListView<crate::generated::BakedNode>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn elements_view(
+        &self,
+    ) -> &crate::prelude::ListView<crate::generated::BakedElement> {
+        unsafe {
+            &*(&raw mut (*self.get()).elements
+                as *mut crate::prelude::ListView<crate::generated::BakedElement>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn key_time_min(&self) -> f64 {
+        unsafe { (*self.get()).key_time_min }
+    }
+    #[inline(always)]
+    pub(crate) fn set_key_time_min(&self, key_time_min: f64) {
+        unsafe {
+            (*self.get()).key_time_min = key_time_min;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn key_time_max(&self) -> f64 {
+        unsafe { (*self.get()).key_time_max }
+    }
+    #[inline(always)]
+    pub(crate) fn set_key_time_max(&self, key_time_max: f64) {
+        unsafe {
+            (*self.get()).key_time_max = key_time_max;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn playback_time_begin(&self) -> f64 {
+        unsafe { (*self.get()).playback_time_begin }
+    }
+    #[inline(always)]
+    pub(crate) fn set_playback_time_begin(&self, playback_time_begin: f64) {
+        unsafe {
+            (*self.get()).playback_time_begin = playback_time_begin;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn playback_time_end(&self) -> f64 {
+        unsafe { (*self.get()).playback_time_end }
+    }
+    #[inline(always)]
+    pub(crate) fn set_playback_time_end(&self, playback_time_end: f64) {
+        unsafe {
+            (*self.get()).playback_time_end = playback_time_end;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn playback_duration(&self) -> f64 {
+        unsafe { (*self.get()).playback_duration }
+    }
+    #[inline(always)]
+    pub(crate) fn set_playback_duration(&self, playback_duration: f64) {
+        unsafe {
+            (*self.get()).playback_duration = playback_duration;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn metadata_view(&self) -> &BakedAnimMetadataView {
+        unsafe { &*(&raw mut (*self.get()).metadata as *mut BakedAnimMetadataView) }
+    }
+}
+
 impl BakeContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerBakeContext {
         self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn bake_view(&self) -> &BakedAnimView {
+        // SAFETY: reinterpret the `bake` field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).bake as *mut BakedAnimView) }
     }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
@@ -5920,48 +6066,57 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     let num_nodes: usize = bc.tmp_nodes_view().num_items();
     let num_elements: usize = bc.tmp_elements_view().num_items();
 
-    (*bc.get()).bake.nodes.count = num_nodes;
-    (*bc.get()).bake.nodes.data =
-        push_pop::<BakedNode>(bc.result_mut_ptr(), bc.tmp_nodes_mut_ptr(), num_nodes);
+    bc.bake_view().nodes_view().set_count(num_nodes);
+    bc.bake_view().nodes_view().set_data(push_pop::<BakedNode>(
+        bc.result_mut_ptr(),
+        bc.tmp_nodes_mut_ptr(),
+        num_nodes,
+    ));
     ufbxi_check_err!(
         bc.error_mut_ptr(),
-        !(*bc.get()).bake.nodes.data.is_null(),
+        !bc.bake_view().nodes_view().data().is_null(),
         "bc->bake.nodes.data"
     );
 
-    (*bc.get()).bake.elements.count = num_elements;
-    (*bc.get()).bake.elements.data =
-        push_pop::<BakedElement>(bc.result_mut_ptr(), bc.tmp_elements_mut_ptr(), num_elements);
+    bc.bake_view().elements_view().set_count(num_elements);
+    bc.bake_view()
+        .elements_view()
+        .set_data(push_pop::<BakedElement>(
+            bc.result_mut_ptr(),
+            bc.tmp_elements_mut_ptr(),
+            num_elements,
+        ));
     ufbxi_check_err!(
         bc.error_mut_ptr(),
-        !(*bc.get()).bake.elements.data.is_null(),
+        !bc.bake_view().elements_view().data().is_null(),
         "bc->bake.elements.data"
     );
 
     unstable_sort(
-        (*bc.get()).bake.nodes.data as *mut c_void,
-        (*bc.get()).bake.nodes.count,
+        bc.bake_view().nodes_view().data() as *mut c_void,
+        bc.bake_view().nodes_view().count(),
         size_of::<BakedNode>(),
         baked_node_less,
         ptr::null_mut(),
     );
     unstable_sort(
-        (*bc.get()).bake.elements.data as *mut c_void,
-        (*bc.get()).bake.elements.count,
+        bc.bake_view().elements_view().data() as *mut c_void,
+        bc.bake_view().elements_view().count(),
         size_of::<BakedElement>(),
         baked_element_less,
         ptr::null_mut(),
     );
 
     if bc.time_min() < bc.time_max() {
-        (*bc.get()).bake.key_time_min = bc.time_min();
-        (*bc.get()).bake.key_time_max = bc.time_max();
+        bc.bake_view().set_key_time_min(bc.time_min());
+        bc.bake_view().set_key_time_max(bc.time_max());
     }
 
     if bc.time_begin() < bc.time_end() {
-        (*bc.get()).bake.playback_time_begin = bc.time_begin();
-        (*bc.get()).bake.playback_time_end = bc.time_end();
-        (*bc.get()).bake.playback_duration = bc.time_end() - bc.time_begin();
+        bc.bake_view().set_playback_time_begin(bc.time_begin());
+        bc.bake_view().set_playback_time_end(bc.time_end());
+        bc.bake_view()
+            .set_playback_duration(bc.time_end() - bc.time_begin());
     }
 
     Ok(())
@@ -6045,10 +6200,18 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
         ptr::null_mut(),
     );
 
-    (*bc.get()).bake.metadata.result_memory_used = (*bc.get()).ator_result.current_size;
-    (*bc.get()).bake.metadata.temp_memory_used = (*bc.get()).ator_tmp.current_size;
-    (*bc.get()).bake.metadata.result_allocs = (*bc.get()).ator_result.num_allocs;
-    (*bc.get()).bake.metadata.temp_allocs = (*bc.get()).ator_tmp.num_allocs;
+    bc.bake_view()
+        .metadata_view()
+        .set_result_memory_used((*bc.get()).ator_result.current_size);
+    bc.bake_view()
+        .metadata_view()
+        .set_temp_memory_used((*bc.get()).ator_tmp.current_size);
+    bc.bake_view()
+        .metadata_view()
+        .set_result_allocs((*bc.get()).ator_result.num_allocs);
+    bc.bake_view()
+        .metadata_view()
+        .set_temp_allocs((*bc.get()).ator_tmp.num_allocs);
 
     (*bc.imp()).magic = BAKED_ANIM_IMP_MAGIC;
     // C: `bc->imp->bake = bc->bake;` (struct assignment)
