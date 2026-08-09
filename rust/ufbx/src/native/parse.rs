@@ -710,6 +710,13 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `swap_arr_size` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn swap_arr_size(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).swap_arr_size }
+    }
+
     // `swap_arr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn swap_arr(&self) -> *mut u8 {

@@ -124,7 +124,7 @@ pub(crate) unsafe fn swap_endian(
         core::ptr::null_mut(),
         "!ufbxi_does_overflow(total_size, count, elem_size)"
     );
-    if (*uc.get()).swap_arr_size < total_size {
+    if uc.swap_arr_size() < total_size {
         ufbxi_check_return!(
             uc,
             grow_array(
