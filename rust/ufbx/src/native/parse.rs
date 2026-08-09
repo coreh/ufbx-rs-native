@@ -710,6 +710,13 @@ impl Context {
         &*(ptr as *const Context)
     }
 
+    // `element_extra_cap` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn element_extra_cap(&self) -> usize {
+        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).element_extra_cap }
+    }
+
     // `element_extra_arr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn element_extra_arr(&self) -> *mut *mut c_void {
@@ -1902,8 +1909,8 @@ pub(crate) unsafe fn find_child_strcmp(node: *mut Node, name: *const u8) -> *mut
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn push_element_extra_size(uc: &Context, id: u32, size: usize) -> *mut c_void {
-    if (*uc.get()).element_extra_cap <= id as usize {
-        let old_cap: usize = (*uc.get()).element_extra_cap;
+    if uc.element_extra_cap() <= id as usize {
+        let old_cap: usize = uc.element_extra_cap();
         // C: `id + 1` is `uint32_t` arithmetic before the `size_t` conversion.
         ufbxi_check_return!(
             uc,
@@ -1919,7 +1926,7 @@ pub(crate) unsafe fn push_element_extra_size(uc: &Context, id: u32, size: usize)
         core::ptr::write_bytes(
             uc.element_extra_arr().add(old_cap) as *mut u8,
             0,
-            ((*uc.get()).element_extra_cap - old_cap) * size_of::<*mut c_void>(),
+            (uc.element_extra_cap() - old_cap) * size_of::<*mut c_void>(),
         );
     }
 
@@ -1937,7 +1944,7 @@ pub(crate) unsafe fn push_element_extra_size(uc: &Context, id: u32, size: usize)
 // ufbx.c:7898-7905 `ufbxi_get_element_extra`
 #[inline(never)]
 pub(crate) unsafe fn get_element_extra(uc: &Context, id: u32) -> *mut c_void {
-    if (id as usize) < (*uc.get()).element_extra_cap {
+    if (id as usize) < uc.element_extra_cap() {
         *uc.element_extra_arr().add(id as usize)
     } else {
         core::ptr::null_mut()
