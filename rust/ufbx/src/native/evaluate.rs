@@ -3484,6 +3484,21 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `time_end` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn time_end(&self) -> f64 {
+        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
+        unsafe { (*self.get()).time_end }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_time_end(&self, time_end: f64) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).time_end = time_end;
+        }
+    }
+
     // `time_begin` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn time_begin(&self) -> f64 {
@@ -3855,7 +3870,7 @@ pub(crate) unsafe fn finalize_bake_times(
         );
         ufbxi_check_err!(
             &mut (*bc.get()).error,
-            bake_push_time(bc, (*bc.get()).time_end, 0),
+            bake_push_time(bc, bc.time_end(), 0),
             "ufbxi_bake_push_time(bc, bc->time_end, 0)"
         );
     }
@@ -5283,10 +5298,10 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         (*bc.get()).bake.key_time_max = (*bc.get()).time_max;
     }
 
-    if bc.time_begin() < (*bc.get()).time_end {
+    if bc.time_begin() < bc.time_end() {
         (*bc.get()).bake.playback_time_begin = bc.time_begin();
-        (*bc.get()).bake.playback_time_end = (*bc.get()).time_end;
-        (*bc.get()).bake.playback_duration = (*bc.get()).time_end - bc.time_begin();
+        (*bc.get()).bake.playback_time_end = bc.time_end();
+        (*bc.get()).bake.playback_duration = bc.time_end() - bc.time_begin();
     }
 
     Ok(())
@@ -5352,7 +5367,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     (*bc.get()).anim = anim;
     if (*anim).time_begin < (*anim).time_end {
         bc.set_time_begin((*anim).time_begin);
-        (*bc.get()).time_end = (*anim).time_end;
+        bc.set_time_end((*anim).time_end);
     }
     (*bc.get()).time_min = math::INFINITY;
     (*bc.get()).time_max = -math::INFINITY;
