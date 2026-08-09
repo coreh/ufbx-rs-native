@@ -3554,7 +3554,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
     let tc = TessellateCurveContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
         // C: `(*tc.get()).opts = *opts` — struct assignment (memcpy).
-        core::ptr::copy_nonoverlapping(opts, &mut (*tc.get()).opts, 1);
+        core::ptr::copy_nonoverlapping(opts, tc.opts_mut(), 1);
     }
 
     tc.set_curve(curve);
@@ -3616,7 +3616,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
         TessellateSurfaceContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
         // C: `(*tc.get()).opts = *opts` — struct assignment (memcpy).
-        core::ptr::copy_nonoverlapping(opts, &mut (*tc.get()).opts, 1);
+        core::ptr::copy_nonoverlapping(opts, tc.opts_mut(), 1);
     }
 
     tc.set_surface(surface);
