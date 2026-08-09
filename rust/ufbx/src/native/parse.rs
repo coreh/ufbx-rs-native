@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `element_extra_arr` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn element_extra_arr_mut_ptr(&self) -> *mut *mut *mut c_void {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).element_extra_arr }
+    }
+
     // `max_consecutive_indices` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn max_consecutive_indices_mut_ptr(&self) -> *mut usize {
@@ -2590,7 +2598,7 @@ pub(crate) unsafe fn push_element_extra_size(uc: &Context, id: u32, size: usize)
             uc,
             grow_array(
                 uc.ator_tmp_mut_ptr(),
-                &mut (*uc.get()).element_extra_arr,
+                uc.element_extra_arr_mut_ptr(),
                 &mut (*uc.get()).element_extra_cap,
                 id.wrapping_add(1) as usize
             ),
