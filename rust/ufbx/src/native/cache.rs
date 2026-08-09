@@ -232,10 +232,71 @@ impl GeometryCacheOptsView {
     }
 }
 
+// Typed interior-mutable VIEW over `CacheContext.cache` (approach A). List fields
+// recurse into `ListView`; the whole-`String` field uses value getter + setter.
+#[repr(transparent)]
+pub(crate) struct GeometryCacheView(core::cell::UnsafeCell<core::mem::MaybeUninit<GeometryCache>>);
+
+impl GeometryCacheView {
+    #[inline(always)]
+    fn get(&self) -> *mut GeometryCache {
+        self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn frames_view(&self) -> &crate::prelude::ListView<crate::generated::CacheFrame> {
+        // SAFETY: reinterpret the non-Copy `List` field in place as a view.
+        unsafe {
+            &*(&raw mut (*self.get()).frames
+                as *mut crate::prelude::ListView<crate::generated::CacheFrame>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn extra_info_view(&self) -> &crate::prelude::ListView<crate::prelude::String> {
+        // SAFETY: reinterpret the non-Copy `List` field in place as a view.
+        unsafe {
+            &*(&raw mut (*self.get()).extra_info
+                as *mut crate::prelude::ListView<crate::prelude::String>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn channels_view(
+        &self,
+    ) -> &crate::prelude::ListView<crate::generated::CacheChannel> {
+        // SAFETY: reinterpret the non-Copy `List` field in place as a view.
+        unsafe {
+            &*(&raw mut (*self.get()).channels
+                as *mut crate::prelude::ListView<crate::generated::CacheChannel>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn root_filename(&self) -> crate::prelude::String {
+        unsafe { (*self.get()).root_filename }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_root_filename(&self, root_filename: crate::prelude::String) {
+        unsafe {
+            (*self.get()).root_filename = root_filename;
+        }
+    }
+}
+
 impl CacheContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerCacheContext {
         self.0.get().cast()
+    }
+
+    // `cache` — typed VIEW handle (reinterpret-in-place); accessors on `GeometryCacheView`.
+    #[inline(always)]
+    pub(crate) fn cache_view(&self) -> &GeometryCacheView {
+        // SAFETY: repr(transparent) over the `cache` field inside this context's outer
+        // UnsafeCell; shared interior-mutable view, asserts no validity.
+        unsafe { &*(&raw mut (*self.get()).cache as *mut GeometryCacheView) }
     }
 
     // `error` — typed VIEW handle (reinterpret-in-place); accessors on `ErrorView`.
@@ -1063,12 +1124,17 @@ pub(crate) unsafe fn cache_load_xml_imp(
             num_extra += 1;
             tag = tag.add(1);
         }
-        (*cc.get()).cache.extra_info.count = num_extra;
-        (*cc.get()).cache.extra_info.data =
-            push_pop::<String>(cc.result_mut_ptr(), cc.tmp_stack_mut_ptr(), num_extra);
+        cc.cache_view().extra_info_view().set_count(num_extra);
+        cc.cache_view()
+            .extra_info_view()
+            .set_data(push_pop::<String>(
+                cc.result_mut_ptr(),
+                cc.tmp_stack_mut_ptr(),
+                num_extra,
+            ));
         ufbxi_check_err!(
             cc.error_mut_ptr(),
-            !(*cc.get()).cache.extra_info.data.is_null(),
+            !cc.cache_view().extra_info_view().data().is_null(),
             "cc->cache.extra_info.data"
         );
 
@@ -1479,11 +1545,12 @@ pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail>
 
     let mut begin: usize = 0;
     let mut num_channels: usize = 0;
-    while begin < (*cc.get()).cache.frames.count {
-        let frame: *mut CacheFrame = ((*cc.get()).cache.frames.data as *mut CacheFrame).add(begin);
+    while begin < cc.cache_view().frames_view().count() {
+        let frame: *mut CacheFrame =
+            (cc.cache_view().frames_view().data() as *mut CacheFrame).add(begin);
         let mut end: usize = begin + 1;
-        while end < (*cc.get()).cache.frames.count
-            && (*((*cc.get()).cache.frames.data as *mut CacheFrame).add(end))
+        while end < cc.cache_view().frames_view().count()
+            && (*(cc.cache_view().frames_view().data() as *mut CacheFrame).add(end))
                 .channel
                 .data
                 == (*frame).channel.data
@@ -1545,14 +1612,19 @@ pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail>
         begin = end;
     }
 
-    (*cc.get()).cache.channels.data =
-        push_pop::<CacheChannel>(cc.result_mut_ptr(), cc.tmp_stack_mut_ptr(), num_channels);
+    cc.cache_view()
+        .channels_view()
+        .set_data(push_pop::<CacheChannel>(
+            cc.result_mut_ptr(),
+            cc.tmp_stack_mut_ptr(),
+            num_channels,
+        ));
     ufbxi_check_err!(
         cc.error_mut_ptr(),
-        !(*cc.get()).cache.channels.data.is_null(),
+        !cc.cache_view().channels_view().data().is_null(),
         "cc->cache.channels.data"
     );
-    (*cc.get()).cache.channels.count = num_channels;
+    cc.cache_view().channels_view().set_count(num_channels);
 
     Ok(())
 }
@@ -1589,24 +1661,30 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
         ufbxi_fail_err_msg!(cc.error_mut_ptr(), "open_file_fn()", "File not found");
     }
 
-    (*cc.get()).cache.root_filename = (*cc.get()).stream_filename;
+    cc.cache_view()
+        .set_root_filename((*cc.get()).stream_filename);
 
     cache_load_frame_files(cc)?;
 
     let num_frames: usize = (*cc.get()).tmp_stack.num_items;
-    (*cc.get()).cache.frames.count = num_frames;
-    (*cc.get()).cache.frames.data =
-        push_pop::<CacheFrame>(cc.result_mut_ptr(), cc.tmp_stack_mut_ptr(), num_frames);
+    cc.cache_view().frames_view().set_count(num_frames);
+    cc.cache_view()
+        .frames_view()
+        .set_data(push_pop::<CacheFrame>(
+            cc.result_mut_ptr(),
+            cc.tmp_stack_mut_ptr(),
+            num_frames,
+        ));
     ufbxi_check_err!(
         cc.error_mut_ptr(),
-        !(*cc.get()).cache.frames.data.is_null(),
+        !cc.cache_view().frames_view().data().is_null(),
         "cc->cache.frames.data"
     );
 
     cache_sort_frames(
         cc,
-        (*cc.get()).cache.frames.data as *mut CacheFrame,
-        (*cc.get()).cache.frames.count,
+        cc.cache_view().frames_view().data() as *mut CacheFrame,
+        cc.cache_view().frames_view().count(),
     )?;
     cache_setup_channels(cc)?;
 

@@ -239,6 +239,39 @@ impl<T> Default for RawList<T> {
     }
 }
 
+// Typed interior-mutable VIEW over a `List<T>` field (the public safe list),
+// reinterpreted in place. Getters + setters (List fields are built by writing
+// `.count`/`.data`).
+#[repr(transparent)]
+pub(crate) struct ListView<T>(core::cell::UnsafeCell<core::mem::MaybeUninit<List<T>>>);
+
+impl<T> ListView<T> {
+    #[inline(always)]
+    fn get(&self) -> *mut List<T> {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn count(&self) -> usize {
+        unsafe { (*self.get()).count }
+    }
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *const T {
+        unsafe { (*self.get()).data }
+    }
+    #[inline(always)]
+    pub(crate) fn set_count(&self, count: usize) {
+        unsafe {
+            (*self.get()).count = count;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_data(&self, data: *const T) {
+        unsafe {
+            (*self.get()).data = data;
+        }
+    }
+}
+
 // Typed interior-mutable VIEW over a `RawList<T>` field, reinterpreted in place
 // (same pattern as the `*OptsView` handles). Leaf getters read the Copy fields;
 // `MaybeUninit` means forming `&RawListView` asserts no validity.
