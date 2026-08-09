@@ -3072,6 +3072,14 @@ impl CreateAnimContext {
         self.0.get().cast()
     }
 
+    // `result` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn result_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).result }
+    }
+
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn opts_mut(&self) -> *mut RawAnimOpts {
@@ -3172,7 +3180,7 @@ pub(crate) unsafe fn push_anim_string(
 ) -> Result<(), Fail> {
     let length: usize = (*str_).length;
     if length > 0 {
-        let copy: *mut u8 = push::<u8>(&mut (*ac.get()).result, length + 1);
+        let copy: *mut u8 = push::<u8>(ac.result_mut(), length + 1);
         ufbxi_check_err!(ac.error_mut(), !copy.is_null(), "copy");
         // C: `memcpy(copy, str->data, length);`
         ptr::copy_nonoverlapping((*str_).data, copy, length);
@@ -3253,7 +3261,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     let num_layers: usize = (*ac.get()).opts.layer_ids.count;
     (*anim).layers.count = num_layers;
     (*anim).layers.data =
-        push_zero::<*mut AnimLayer>(&mut (*ac.get()).result, num_layers) as *const Ref<AnimLayer>;
+        push_zero::<*mut AnimLayer>(ac.result_mut(), num_layers) as *const Ref<AnimLayer>;
     ufbxi_check_err!(
         ac.error_mut(),
         !(*anim).layers.data.is_null(),
@@ -3268,7 +3276,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
             "ac->opts.override_layer_weights.count == num_layers"
         );
         (*anim).override_layer_weights.data = push_copy::<Real>(
-            &mut (*ac.get()).result,
+            ac.result_mut(),
             num_layers,
             (*ac.get()).opts.override_layer_weights.data,
         );
@@ -3299,7 +3307,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     if prop_overrides.count > 0 {
         (*anim).prop_overrides.count = prop_overrides.count;
         (*anim).prop_overrides.data =
-            push_zero::<PropOverride>(&mut (*ac.get()).result, prop_overrides.count);
+            push_zero::<PropOverride>(ac.result_mut(), prop_overrides.count);
         ufbxi_check_err!(
             ac.error_mut(),
             !(*anim).prop_overrides.data.is_null(),
@@ -3410,7 +3418,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     if (*ac.get()).opts.transform_overrides.count > 0 {
         (*anim).transform_overrides.count = (*ac.get()).opts.transform_overrides.count;
         (*anim).transform_overrides.data = push_copy::<TransformOverride>(
-            &mut (*ac.get()).result,
+            ac.result_mut(),
             (*anim).transform_overrides.count,
             (*ac.get()).opts.transform_overrides.data,
         );
@@ -3428,7 +3436,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
         );
     }
 
-    ac.set_imp(push::<AnimImp>(&mut (*ac.get()).result, 1));
+    ac.set_imp(push::<AnimImp>(ac.result_mut(), 1));
     ufbxi_check_err!(ac.error_mut(), !ac.imp().is_null(), "ac->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a

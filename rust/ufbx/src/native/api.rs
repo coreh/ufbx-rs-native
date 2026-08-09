@@ -1800,7 +1800,7 @@ pub(crate) unsafe fn create_anim(
         core::ptr::addr_of_mut!((*imp).anim)
     } else {
         fix_error_type(ac.error_mut(), b"Failed to create anim\0".as_ptr(), error);
-        buf_free(core::ptr::addr_of_mut!((*ac.get()).result));
+        buf_free(ac.result_mut());
         free_ator(ac.ator_result_mut());
         core::ptr::null_mut()
     }
