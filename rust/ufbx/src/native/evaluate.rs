@@ -3530,6 +3530,14 @@ impl BakeContext {
         self.0.get().cast()
     }
 
+    // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn tmp_mut(&self) -> *mut Buf {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).tmp }
+    }
+
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut(&self) -> *mut Buf {
@@ -5319,7 +5327,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
 
     let num_props: usize = (*bc.get()).tmp_bake_props.num_items;
     let props: *mut BakeProp = push_pop::<BakeProp>(
-        ptr::addr_of_mut!((*bc.get()).tmp),
+        bc.tmp_mut(),
         ptr::addr_of_mut!((*bc.get()).tmp_bake_props),
         num_props,
     );
@@ -5359,11 +5367,8 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
             finalize_bake_times(bc, ptr::addr_of_mut!(weight_times))?;
 
             (*bc.get()).layer_weight_times.count = weight_times.count;
-            (*bc.get()).layer_weight_times.data = push_copy::<BakeTime>(
-                ptr::addr_of_mut!((*bc.get()).tmp),
-                weight_times.count,
-                weight_times.data,
-            );
+            (*bc.get()).layer_weight_times.data =
+                push_copy::<BakeTime>(bc.tmp_mut(), weight_times.count, weight_times.data);
             ufbxi_check_err!(
                 bc.error_mut(),
                 !(*bc.get()).layer_weight_times.data.is_null(),

@@ -1877,7 +1877,7 @@ pub(crate) unsafe fn bake_anim(
     // C: `int ok = ufbxi_bake_anim_imp(&bc, anim);`
     let ok = evaluate::bake_anim_imp(&bc, anim);
 
-    buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp));
+    buf_free(bc.tmp_mut());
     buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_prop));
     buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_times));
     buf_free(core::ptr::addr_of_mut!((*bc.get()).tmp_bake_props));
