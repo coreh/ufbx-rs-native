@@ -325,7 +325,7 @@ pub(crate) unsafe fn obj_free(uc: &Context) {
     free::<*mut Material>(
         uc.ator_tmp_mut_ptr(),
         uc.obj().tmp_materials(),
-        (*uc.obj().get()).tmp_materials_cap,
+        uc.obj().tmp_materials_cap(),
     );
 }
 

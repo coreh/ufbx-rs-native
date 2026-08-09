@@ -515,6 +515,12 @@ impl ObjContext {
     }
 
     #[inline(always)]
+    pub(crate) fn tmp_materials_cap(&self) -> usize {
+        // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
+        unsafe { (*self.get()).tmp_materials_cap }
+    }
+
+    #[inline(always)]
     pub(crate) fn tmp_materials(&self) -> *mut *mut crate::generated::Material {
         // SAFETY: reading a scalar; all bit patterns of `*mut *mut crate::generated::Material` are valid.
         unsafe { (*self.get()).tmp_materials }
