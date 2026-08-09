@@ -170,6 +170,14 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn ator_tmp_mut(&self) -> *mut Allocator {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).ator_tmp }
+    }
+
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut(&self) -> *mut Allocator {
@@ -640,7 +648,7 @@ pub(crate) unsafe fn subdivide_layer(
     ufbxi_check_err!(
         &mut (*sc.get()).error,
         grow_array::<SubdivideInput>(
-            &mut (*sc.get()).ator_tmp,
+            sc.ator_tmp_mut(),
             &mut (*sc.get()).inputs,
             &mut (*sc.get()).inputs_cap,
             min_inputs,
@@ -975,7 +983,7 @@ pub(crate) unsafe fn subdivide_layer(
                         ufbxi_check_err!(
                             &mut (*sc.get()).error,
                             grow_array::<SubdivideInput>(
-                                &mut (*sc.get()).ator_tmp,
+                                sc.ator_tmp_mut(),
                                 &mut (*sc.get()).inputs,
                                 &mut (*sc.get()).inputs_cap,
                                 num_inputs.wrapping_add(1),
@@ -1010,7 +1018,7 @@ pub(crate) unsafe fn subdivide_layer(
                         ufbxi_check_err!(
                             &mut (*sc.get()).error,
                             grow_array::<SubdivideInput>(
-                                &mut (*sc.get()).ator_tmp,
+                                sc.ator_tmp_mut(),
                                 &mut (*sc.get()).inputs,
                                 &mut (*sc.get()).inputs_cap,
                                 num_inputs.wrapping_add(2),
@@ -2076,7 +2084,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
 
     init_ator(
         &mut (*sc.get()).error,
-        &mut (*sc.get()).ator_tmp,
+        sc.ator_tmp_mut(),
         &(*sc.get()).opts.temp_allocator,
         b"temp\0".as_ptr(),
     );
@@ -2091,12 +2099,12 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     (*sc.get()).source.unordered = true;
     (*sc.get()).tmp.unordered = true;
 
-    (*sc.get()).source.ator = &raw mut (*sc.get()).ator_tmp;
-    (*sc.get()).tmp.ator = &raw mut (*sc.get()).ator_tmp;
+    (*sc.get()).source.ator = sc.ator_tmp_mut();
+    (*sc.get()).tmp.ator = sc.ator_tmp_mut();
 
     let mut i: usize = 1;
     while i < level {
-        (*sc.get()).result.ator = &raw mut (*sc.get()).ator_tmp;
+        (*sc.get()).result.ator = sc.ator_tmp_mut();
 
         subdivide_mesh_level(sc)?;
 
@@ -2261,12 +2269,12 @@ pub(crate) unsafe fn subdivide_mesh(
 
     let ok: bool = subdivide_mesh_imp(sc, level).is_ok();
 
-    free::<SubdivideInput>(&mut (*sc.get()).ator_tmp, sc.inputs(), sc.inputs_cap());
+    free::<SubdivideInput>(sc.ator_tmp_mut(), sc.inputs(), sc.inputs_cap());
     buf_free(&mut (*sc.get()).tmp);
     buf_free(&mut (*sc.get()).source);
 
     if ok {
-        free_ator(&mut (*sc.get()).ator_tmp);
+        free_ator(sc.ator_tmp_mut());
         if !p_error.is_null() {
             clear_error(p_error);
         }
@@ -2280,7 +2288,7 @@ pub(crate) unsafe fn subdivide_mesh(
             p_error,
         );
         buf_free(&mut (*sc.get()).result);
-        free_ator(&mut (*sc.get()).ator_tmp);
+        free_ator(sc.ator_tmp_mut());
         free_ator(sc.ator_result_mut());
         core::ptr::null_mut()
     }
