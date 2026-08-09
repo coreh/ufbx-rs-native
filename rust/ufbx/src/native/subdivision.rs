@@ -170,6 +170,21 @@ impl SubdivideContext {
         self.0.get().cast()
     }
 
+    // `src_mesh_ptr` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn src_mesh_ptr(&self) -> *mut Mesh {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut Mesh` are valid.
+        unsafe { (*self.get()).src_mesh_ptr }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_src_mesh_ptr(&self, src_mesh_ptr: *mut Mesh) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).src_mesh_ptr = src_mesh_ptr;
+        }
+    }
+
     // `imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn imp(&self) -> *mut MeshImp {
@@ -2069,14 +2084,12 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     }
 
     let parent: *mut Refcount;
-    if (*(*sc.get()).src_mesh_ptr).subdivision_evaluated
-        && (*(*sc.get()).src_mesh_ptr).from_tessellated_nurbs
-    {
-        let imp: *mut MeshImp = get_imp((*sc.get()).src_mesh_ptr as *mut c_void);
+    if (*sc.src_mesh_ptr()).subdivision_evaluated && (*sc.src_mesh_ptr()).from_tessellated_nurbs {
+        let imp: *mut MeshImp = get_imp(sc.src_mesh_ptr() as *mut c_void);
         parent = &mut (*imp).refcount;
     } else {
         let imp: *mut SceneImp =
-            get_imp(ref_ptr(&(*(*sc.get()).src_mesh_ptr).element.scene) as *mut c_void);
+            get_imp(ref_ptr(&(*sc.src_mesh_ptr()).element.scene) as *mut c_void);
         parent = &mut (*imp).refcount;
     }
 
@@ -2129,7 +2142,7 @@ pub(crate) unsafe fn subdivide_mesh(
         core::ptr::copy_nonoverlapping(user_opts, core::ptr::addr_of_mut!((*sc.get()).opts), 1);
     }
 
-    (*sc.get()).src_mesh_ptr = mesh as *mut Mesh;
+    sc.set_src_mesh_ptr(mesh as *mut Mesh);
     // C: `(*sc.get()).src_mesh = *mesh;` — struct assignment (memcpy).
     core::ptr::copy_nonoverlapping(mesh, core::ptr::addr_of_mut!((*sc.get()).src_mesh), 1);
 
