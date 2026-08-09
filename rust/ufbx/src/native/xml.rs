@@ -97,6 +97,21 @@ impl XmlContext {
     pub(crate) fn get(&self) -> *mut InnerXmlContext {
         self.0.get().cast()
     }
+
+    // `ator` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn ator(&self) -> *mut Allocator {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut Allocator` are valid.
+        unsafe { (*self.get()).ator }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_ator(&self, ator: *mut Allocator) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).ator = ator;
+        }
+    }
 }
 
 // ufbx.c:7297-7304 `enum { UFBXI_XML_CTYPE_* }`
@@ -167,7 +182,7 @@ pub(crate) unsafe fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), F
         ufbxi_check_err!(
             &mut (*xc.get()).error,
             grow_array::<u8>(
-                (*xc.get()).ator,
+                xc.ator(),
                 &mut (*xc.get()).tok,
                 &mut (*xc.get()).tok_cap,
                 (*xc.get()).tok_len + 1
@@ -625,12 +640,12 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     // C: `ufbxi_xml_context xc = { UFBX_ERROR_NONE };` — the aggregate
     // initializer zeroes the whole (4 KiB) context.
     let xc: XmlContext = core::mem::zeroed();
-    (*xc.get()).ator = (*opts).ator;
+    xc.set_ator((*opts).ator);
     (*xc.get()).read_fn = (*opts).read_fn;
     (*xc.get()).read_user = (*opts).read_user;
 
-    (*xc.get()).tmp_stack.ator = (*xc.get()).ator;
-    (*xc.get()).result.ator = (*xc.get()).ator;
+    (*xc.get()).tmp_stack.ator = xc.ator();
+    (*xc.get()).result.ator = xc.ator();
 
     (*xc.get()).result.unordered = true;
 
@@ -644,7 +659,7 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     let ok = xml_parse_root(&xc).is_ok();
 
     buf_free(&mut (*xc.get()).tmp_stack);
-    free::<u8>((*xc.get()).ator, (*xc.get()).tok, (*xc.get()).tok_cap);
+    free::<u8>(xc.ator(), (*xc.get()).tok, (*xc.get()).tok_cap);
 
     if ok {
         (*xc.get()).doc
