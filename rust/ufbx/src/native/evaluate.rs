@@ -922,7 +922,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     free::<Node>(uc.ator_tmp(), uc.top_nodes(), uc.top_nodes_cap());
     free::<*mut c_void>(
         uc.ator_tmp(),
-        (*uc.get()).element_extra_arr,
+        uc.element_extra_arr(),
         (*uc.get()).element_extra_cap,
     );
 
