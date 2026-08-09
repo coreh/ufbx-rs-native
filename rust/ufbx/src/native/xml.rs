@@ -98,6 +98,21 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    // `read_user` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn read_user(&self) -> *mut c_void {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut c_void` are valid.
+        unsafe { (*self.get()).read_user }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_read_user(&self, read_user: *mut c_void) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).read_user = read_user;
+        }
+    }
+
     // `read_fn` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn read_fn(
@@ -180,7 +195,7 @@ static XML_CTYPE: [u8; 256] = {
 #[inline(never)]
 pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
     let mut num: usize = (xc.read_fn().unwrap_unchecked())(
-        (*xc.get()).read_user,
+        xc.read_user(),
         (*xc.get()).data.as_mut_ptr() as *mut c_void,
         size_of_val(&(*xc.get()).data),
     );
@@ -673,7 +688,7 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     let xc: XmlContext = core::mem::zeroed();
     xc.set_ator((*opts).ator);
     xc.set_read_fn((*opts).read_fn);
-    (*xc.get()).read_user = (*opts).read_user;
+    xc.set_read_user((*opts).read_user);
 
     (*xc.get()).tmp_stack.ator = xc.ator();
     (*xc.get()).result.ator = xc.ator();
