@@ -551,9 +551,9 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             if error.type_ != ErrorType::None {
                 // cppcheck-suppress uninitStructMember
                 // C: `uc->error = error;` (struct copy)
-                ptr::copy_nonoverlapping(&error, ptr::addr_of_mut!((*uc.get()).error), 1);
+                ptr::copy_nonoverlapping(&error, uc.error_mut_ptr(), 1);
             } else {
-                set_err_info(&mut (*uc.get()).error, filename, filename_len);
+                set_err_info(uc.error_mut_ptr(), filename, filename_len);
             }
             ufbxi_fail_msg!(uc, "open_file_fn()", "File not found");
         }
@@ -628,7 +628,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         uc,
         thread_pool_init(
             ptr::addr_of_mut!((*uc.get()).thread_pool),
-            ptr::addr_of_mut!((*uc.get()).error),
+            uc.error_mut_ptr(),
             uc.ator_tmp_mut_ptr(),
             ptr::addr_of!((*uc.get()).opts.thread_opts),
         )
@@ -798,7 +798,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             uc,
             evaluate_skinning(
                 ptr::addr_of_mut!((*uc.get()).scene),
-                ptr::addr_of_mut!((*uc.get()).error),
+                uc.error_mut_ptr(),
                 uc.result_mut_ptr(),
                 uc.tmp_mut_ptr(),
                 0.0,
@@ -1009,13 +1009,13 @@ pub(crate) unsafe fn load(
     ptr::addr_of_mut!((*inflate_retain.as_mut_ptr()).initialized).write(false);
 
     init_ator(
-        &mut (*uc.get()).error,
+        uc.error_mut_ptr(),
         uc.ator_tmp_mut_ptr(),
         ptr::addr_of!((*uc.get()).opts.temp_allocator),
         b"temp\0".as_ptr(),
     );
     init_ator(
-        &mut (*uc.get()).error,
+        uc.error_mut_ptr(),
         &raw mut (*uc.get()).ator_result,
         ptr::addr_of!((*uc.get()).opts.result_allocator),
         b"result\0".as_ptr(),
@@ -1059,7 +1059,7 @@ pub(crate) unsafe fn load(
 
     uc.set_synthetic_id_counter(SYNTHETIC_ID_START);
 
-    (*uc.get()).string_pool.error = ptr::addr_of_mut!((*uc.get()).error);
+    (*uc.get()).string_pool.error = uc.error_mut_ptr();
     map_init(
         &mut (*uc.get()).string_pool.map,
         uc.ator_tmp_mut_ptr(),
@@ -1151,7 +1151,7 @@ pub(crate) unsafe fn load(
     (*uc.get()).tmp_parse.clearable = true;
     (*uc.get()).result.unordered = true;
 
-    (*uc.get()).warnings.error = ptr::addr_of_mut!((*uc.get()).error);
+    (*uc.get()).warnings.error = uc.error_mut_ptr();
     (*uc.get()).warnings.result = uc.result_mut_ptr();
     (*uc.get()).warnings.tmp_stack.ator = uc.ator_tmp_mut_ptr();
     (*uc.get()).string_pool.warnings = ptr::addr_of_mut!((*uc.get()).warnings);
@@ -1180,11 +1180,7 @@ pub(crate) unsafe fn load(
         }
         ptr::addr_of_mut!((*uc.scene_imp()).scene)
     } else {
-        fix_error_type(
-            &mut (*uc.get()).error,
-            b"Failed to load\0".as_ptr(),
-            p_error,
-        );
+        fix_error_type(uc.error_mut_ptr(), b"Failed to load\0".as_ptr(), p_error);
         if !p_error.is_null()
             && (*p_error).type_ == ErrorType::Unknown
             && (*uc.get()).scene.metadata.file_format == FileFormat::Fbx

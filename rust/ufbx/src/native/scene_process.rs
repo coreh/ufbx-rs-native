@@ -7392,7 +7392,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                     (*mesh).face_material.count = 0;
                 }
             } else if (*mesh).materials.count > 0 {
-                finalize_mesh_material(uc.result_mut_ptr(), &mut (*uc.get()).error, mesh)?;
+                finalize_mesh_material(uc.result_mut_ptr(), uc.error_mut_ptr(), mesh)?;
             }
 
             // Fetch deformers

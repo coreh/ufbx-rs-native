@@ -1817,7 +1817,7 @@ pub(crate) unsafe fn fix_index(
             // which reads an `unsigned int` — the low 32 bits on the oracle
             // targets. The `as u32` narrowing reproduces that exactly.
             ufbxi_fmt_err_info!(
-                &mut (*uc.get()).error,
+                uc.error_mut_ptr(),
                 "%u (max %u)",
                 index,
                 (if one_past_max_val != 0 {
@@ -3798,7 +3798,7 @@ pub(crate) unsafe fn read_mesh(
     if (*mesh).face_group.count > 0 && (*mesh).face_groups.count == 0 {
         assign_face_groups(
             uc.result_mut_ptr(),
-            &mut (*uc.get()).error,
+            uc.error_mut_ptr(),
             mesh,
             &mut (*uc.get()).max_consecutive_indices,
             uc.retain_mesh_parts(),

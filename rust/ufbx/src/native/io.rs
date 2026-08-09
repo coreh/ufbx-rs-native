@@ -868,7 +868,7 @@ mod tests {
 
     unsafe fn init_tmp_ator(uc: &Context) {
         init_ator(
-            &mut (*uc.get()).error,
+            uc.error_mut_ptr(),
             uc.ator_tmp_mut_ptr(),
             core::ptr::null(),
             b"tmp\0".as_ptr(),

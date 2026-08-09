@@ -1428,7 +1428,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             }
         }
 
-        finalize_mesh(uc.result_mut_ptr(), &mut (*uc.get()).error, fbx_mesh)?;
+        finalize_mesh(uc.result_mut_ptr(), uc.error_mut_ptr(), fbx_mesh)?;
 
         if uc.retain_mesh_parts() {
             (*fbx_mesh).face_group_parts.count = (*mesh).num_groups as usize;
@@ -1442,7 +1442,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         }
 
         if (*mesh).num_groups > 1 {
-            update_face_groups(uc.result_mut_ptr(), &mut (*uc.get()).error, fbx_mesh, false)?;
+            update_face_groups(uc.result_mut_ptr(), uc.error_mut_ptr(), fbx_mesh, false)?;
         } else if (*mesh).num_groups == 1 {
             (*fbx_mesh).face_group.data = SENTINEL_INDEX_ZERO.as_ptr();
             (*fbx_mesh).face_group.count = num_faces;
@@ -2020,7 +2020,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
 
         ok?;
     } else if needs_stream && !(*uc.get()).opts.ignore_missing_external_files {
-        set_err_info(&mut (*uc.get()).error, stream_path.data, stream_path.size);
+        set_err_info(uc.error_mut_ptr(), stream_path.data, stream_path.size);
         ufbxi_fail_msg!(uc, "ufbxi_obj_load_mtl()", "External file not found");
     }
 
@@ -2062,7 +2062,7 @@ pub(crate) unsafe fn mtl_load(uc: &Context) -> Result<(), Fail> {
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn obj_load(uc: &Context) -> Result<(), Fail> {
-    ufbxi_fmt_err_info!(&mut (*uc.get()).error, "UFBX_ENABLE_FORMAT_OBJ");
+    ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_FORMAT_OBJ");
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_FORMAT_OBJ", "Feature disabled");
 }
 
@@ -2071,7 +2071,7 @@ pub(crate) unsafe fn obj_load(uc: &Context) -> Result<(), Fail> {
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn mtl_load(uc: &Context) -> Result<(), Fail> {
-    ufbxi_fmt_err_info!(&mut (*uc.get()).error, "UFBX_ENABLE_FORMAT_OBJ");
+    ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_FORMAT_OBJ");
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_FORMAT_OBJ", "Feature disabled");
 }
 

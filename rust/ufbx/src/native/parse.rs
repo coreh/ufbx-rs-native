@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `error` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn error_mut_ptr(&self) -> *mut Error {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).error }
+    }
+
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
@@ -1785,7 +1793,7 @@ impl Context {
 // no-msg forms under `error-stack`.
 #[inline(never)]
 pub(crate) unsafe fn fail_imp(uc: &Context, cond: *const u8, func: *const u8, line: u32) -> i32 {
-    crate::native::error::fail_imp_err(&mut (*uc.get()).error, cond, func, line)
+    crate::native::error::fail_imp_err(uc.error_mut_ptr(), cond, func, line)
 }
 
 // ufbx.c:6657-6662 (`#else` branch of `UFBXI_FEATURE_ERROR_STACK`)
@@ -1794,12 +1802,7 @@ pub(crate) unsafe fn fail_imp(uc: &Context, cond: *const u8, func: *const u8, li
 #[cfg(not(feature = "error-stack"))]
 #[inline(never)]
 pub(crate) unsafe fn fail_imp_no_stack(uc: &Context) -> i32 {
-    crate::native::error::fail_imp_err(
-        &mut (*uc.get()).error,
-        core::ptr::null(),
-        core::ptr::null(),
-        0,
-    )
+    crate::native::error::fail_imp_err(uc.error_mut_ptr(), core::ptr::null(), core::ptr::null(), 0)
 }
 
 // -- Progress

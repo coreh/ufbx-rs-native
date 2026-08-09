@@ -1803,7 +1803,7 @@ pub(crate) unsafe fn load_external_cache(
             }
         }
 
-        core::ptr::write(&mut (*uc.get()).error, core::ptr::read(&(*cc.get()).error));
+        core::ptr::write(uc.error_mut_ptr(), core::ptr::read(&(*cc.get()).error));
         return Err(Fail);
     }
 
@@ -1824,7 +1824,7 @@ pub(crate) unsafe fn load_external_cache(
         return Ok(());
     }
 
-    ufbxi_fmt_err_info!(&mut (*uc.get()).error, "UFBX_ENABLE_GEOMETRY_CACHE");
+    ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_GEOMETRY_CACHE");
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_GEOMETRY_CACHE", "Feature disabled");
 }
 
