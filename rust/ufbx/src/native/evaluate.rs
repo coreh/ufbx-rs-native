@@ -2049,6 +2049,21 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    // `scene_imp` — scalar value accessor.
+    #[inline(always)]
+    pub(crate) fn scene_imp(&self) -> *mut SceneImp {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut SceneImp` are valid.
+        unsafe { (*self.get()).scene_imp }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_scene_imp(&self, scene_imp: *mut SceneImp) {
+        // SAFETY: storing a scalar; cannot violate validity.
+        unsafe {
+            (*self.get()).scene_imp = scene_imp;
+        }
+    }
+
     // `time` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn time(&self) -> f64 {
@@ -2896,7 +2911,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         p_elem = p_elem.add(1);
     }
 
-    (*ec.get()).scene_imp = imp;
+    ec.set_scene_imp(imp);
     (*ec.get()).result.ator = ptr::addr_of_mut!((*ec.get()).ator_result);
 
     Ok(())
@@ -2964,7 +2979,7 @@ pub(crate) unsafe fn evaluate_scene(
         if !p_error.is_null() {
             clear_error(p_error);
         }
-        ptr::addr_of_mut!((*(*ec.get()).scene_imp).scene)
+        ptr::addr_of_mut!((*ec.scene_imp()).scene)
     } else {
         fix_error_type(
             ptr::addr_of_mut!((*ec.get()).error),
