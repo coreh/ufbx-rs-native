@@ -702,6 +702,14 @@ impl Context {
         self.0.get().cast()
     }
 
+    // `node_prop_set` — raw-ptr getter (address of field for out-param/mutation sites).
+    #[inline(always)]
+    pub(crate) fn node_prop_set_mut_ptr(&self) -> *mut Map {
+        // SAFETY: `&raw mut` computes the field address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
+        unsafe { &raw mut (*self.get()).node_prop_set }
+    }
+
     // `prop_type_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn prop_type_map_mut_ptr(&self) -> *mut Map {
@@ -5181,7 +5189,7 @@ pub(crate) unsafe fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
         crate::native::hash::map_grow::<*const u8>(
-            &mut (*uc.get()).node_prop_set,
+            uc.node_prop_set_mut_ptr(),
             NODE_PROP_NAMES.0.len()
         ),
         "ufbxi_map_grow_size((&uc->node_prop_set), sizeof(const char*), ((sizeof(ufbxi_node_prop_names) / sizeof(*(ufbxi_node_prop_names)))))"
@@ -5201,7 +5209,7 @@ pub(crate) unsafe fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
         ufbxi_check!(uc, !pooled.is_null(), "pooled");
         let hash: u32 = crate::native::hash::hash_ptr!(pooled);
         let entry: *mut *const u8 = map_insert::<*const u8>(
-            &mut (*uc.get()).node_prop_set,
+            uc.node_prop_set_mut_ptr(),
             hash,
             &pooled as *const *const u8 as *const c_void,
         );
@@ -5222,7 +5230,7 @@ pub(crate) unsafe fn is_node_property_name(uc: &Context, name: *const u8) -> boo
     let name: *const u8 = name;
     let hash = crate::native::hash::hash_ptr!(name);
     let entry: *mut *const u8 = map_find(
-        &mut (*uc.get()).node_prop_set,
+        uc.node_prop_set_mut_ptr(),
         hash,
         &name as *const *const u8 as *const c_void,
     );
