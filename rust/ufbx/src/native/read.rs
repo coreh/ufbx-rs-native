@@ -927,7 +927,7 @@ pub(crate) const SYNTHETIC_ID_START: u64 = POINTER_ID_START + MAXIMUM_FAST_POINT
 
 // ufbx.c:12229-12232 `ufbxi_push_synthetic_id`
 #[inline(always)]
-pub(crate) unsafe fn push_synthetic_id(uc: &Context) -> u64 {
+pub(crate) fn push_synthetic_id(uc: &Context) -> u64 {
     // C: `return ++uc->synthetic_id_counter;` — pre-increment yields the NEW value.
     uc.set_synthetic_id_counter(uc.synthetic_id_counter().wrapping_add(1));
     uc.synthetic_id_counter()
@@ -1071,18 +1071,22 @@ pub(crate) unsafe fn insert_fbx_id(uc: &Context, fbx_id: u64, element_id: u32) -
 
 // ufbx.c:12325-12329 `ufbxi_find_fbx_id`
 #[inline(never)]
-pub(crate) unsafe fn find_fbx_id(uc: &Context, fbx_id: u64) -> *mut FbxIdEntry {
+pub(crate) fn find_fbx_id(uc: &Context, fbx_id: u64) -> *mut FbxIdEntry {
     let hash = hash64(fbx_id);
-    map_find(
-        uc.fbx_id_map_mut_ptr(),
-        hash,
-        &fbx_id as *const u64 as *const c_void,
-    )
+    // SAFETY: `fbx_id_map_mut_ptr()` is a valid map by construction; `hash` and
+    // the key pointer are valid local values.
+    unsafe {
+        map_find(
+            uc.fbx_id_map_mut_ptr(),
+            hash,
+            &fbx_id as *const u64 as *const c_void,
+        )
+    }
 }
 
 // ufbx.c:12331-12334 `ufbxi_fbx_id_exists`
 #[inline(always)]
-pub(crate) unsafe fn fbx_id_exists(uc: &Context, fbx_id: u64) -> bool {
+pub(crate) fn fbx_id_exists(uc: &Context, fbx_id: u64) -> bool {
     !find_fbx_id(uc, fbx_id).is_null()
 }
 
@@ -4367,7 +4371,7 @@ pub(crate) const KEY_VELOCITY_NEXT_LEFT: u32 = 0x20000000;
 
 // ufbx.c:14106-14167 `ufbxi_solve_auto_tangent`
 #[inline(never)]
-pub(crate) unsafe fn solve_auto_tangent(
+pub(crate) fn solve_auto_tangent(
     uc: &Context,
     prev_time: f64,
     time: f64,
@@ -4472,7 +4476,7 @@ pub(crate) unsafe fn solve_auto_tangent(
 }
 
 // ufbx.c:14169-14190 `ufbxi_solve_auto_tangent_left`
-pub(crate) unsafe fn solve_auto_tangent_left(
+pub(crate) fn solve_auto_tangent_left(
     uc: &Context,
     prev_time: f64,
     time: f64,
@@ -4506,7 +4510,7 @@ pub(crate) unsafe fn solve_auto_tangent_left(
 }
 
 // ufbx.c:14192-14213 `ufbxi_solve_auto_tangent_right`
-pub(crate) unsafe fn solve_auto_tangent_right(
+pub(crate) fn solve_auto_tangent_right(
     uc: &Context,
     time: f64,
     next_time: f64,
