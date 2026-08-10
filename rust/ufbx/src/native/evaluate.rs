@@ -864,12 +864,12 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         ptr::addr_of_mut!((*imp).scene),
         1,
     );
-    (*imp).refcount.ator = (*uc.get()).ator_result;
+    (*imp).refcount.ator = uc.ator_result();
     (*imp).refcount.ator.error = ptr::null_mut();
 
     // Copy retained buffers and translate the allocator struct to the one
     // contained within `ufbxi_scene_imp`
-    (*imp).refcount.buf = (*uc.get()).result;
+    (*imp).refcount.buf = uc.result();
     (*imp).refcount.buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
     (*imp).string_buf = uc.string_pool_view().buf();
     (*imp).string_buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
@@ -2132,6 +2132,16 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    #[inline(always)]
+    pub(crate) fn result(&self) -> crate::native::buf::Buf {
+        unsafe { (*self.get()).result }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
+        unsafe { (*self.get()).ator_result }
+    }
+
     // `scene` (Scene) — typed VIEW handle (reinterpret-in-place); accessors on SceneView.
     #[inline(always)]
     pub(crate) fn scene_view(&self) -> &crate::native::parse::SceneView {
@@ -3107,12 +3117,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         ptr::addr_of_mut!((*imp).scene),
         1,
     );
-    (*imp).refcount.ator = (*ec.get()).ator_result;
+    (*imp).refcount.ator = ec.ator_result();
     (*imp).refcount.ator.error = ptr::null_mut();
 
     // Copy retained buffers and translate the allocator struct to the one
     // contained within `ufbxi_scene_imp`
-    (*imp).refcount.buf = (*ec.get()).result;
+    (*imp).refcount.buf = ec.result();
     (*imp).refcount.buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
 
     (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
@@ -3302,6 +3312,16 @@ impl CreateAnimContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerCreateAnimContext {
         self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn result(&self) -> crate::native::buf::Buf {
+        unsafe { (*self.get()).result }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
+        unsafe { (*self.get()).ator_result }
     }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
@@ -3707,8 +3727,8 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
         ptr::addr_of_mut!((*ac.imp()).anim),
         1,
     );
-    (*ac.imp()).refcount.ator = (*ac.get()).ator_result;
-    (*ac.imp()).refcount.buf = (*ac.get()).result;
+    (*ac.imp()).refcount.ator = ac.ator_result();
+    (*ac.imp()).refcount.buf = ac.result();
 
     Ok(())
 }
@@ -4174,6 +4194,16 @@ impl BakeContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerBakeContext {
         self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn result(&self) -> crate::native::buf::Buf {
+        unsafe { (*self.get()).result }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
+        unsafe { (*self.get()).ator_result }
     }
 
     // `layer_weight_times` (BakeTimeList) — typed VIEW handle (reinterpret-in-place).
@@ -6349,8 +6379,8 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
         ptr::addr_of_mut!((*bc.imp()).bake),
         1,
     );
-    (*bc.imp()).refcount.ator = (*bc.get()).ator_result;
-    (*bc.imp()).refcount.buf = (*bc.get()).result;
+    (*bc.imp()).refcount.ator = bc.ator_result();
+    (*bc.imp()).refcount.buf = bc.result();
 
     Ok(())
 }

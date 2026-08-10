@@ -98,6 +98,11 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    #[inline(always)]
+    pub(crate) fn result(&self) -> crate::native::buf::Buf {
+        unsafe { (*self.get()).result }
+    }
+
     // `data` (`[u8; 4096]`) — whole-array raw-ptr getters (read/write buffer base).
     #[inline(always)]
     pub(crate) fn data_ptr(&self) -> *const u8 {
@@ -779,7 +784,7 @@ pub(crate) unsafe fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
     ufbxi_check_err!(xc.error_mut_ptr(), !xc.doc().is_null(), "xc->doc");
 
     (*xc.doc()).root = tag;
-    (*xc.doc()).buf = (*xc.get()).result;
+    (*xc.doc()).buf = xc.result();
 
     Ok(())
 }

@@ -349,6 +349,23 @@ impl SubdivideContext {
     }
 
     #[inline(always)]
+    pub(crate) fn result(&self) -> crate::native::buf::Buf {
+        unsafe { (*self.get()).result }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
+        unsafe { (*self.get()).ator_result }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_source(&self, source: crate::native::buf::Buf) {
+        unsafe {
+            (*self.get()).source = source;
+        }
+    }
+
+    #[inline(always)]
     pub(crate) fn src_mesh_view(&self) -> &MeshView {
         unsafe { &*(&raw mut (*self.get()).src_mesh as *mut MeshView) }
     }
@@ -2414,7 +2431,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
 
         buf_free(sc.source_mut_ptr());
         buf_free(sc.tmp_mut_ptr());
-        (*sc.get()).source = (*sc.get()).result;
+        sc.set_source(sc.result());
         core::ptr::write_bytes(
             sc.result_mut_ptr() as *mut Buf as *mut u8,
             0,
@@ -2531,8 +2548,8 @@ pub(crate) unsafe fn subdivide_mesh_imp(
         core::ptr::addr_of_mut!((*sc.imp()).mesh),
         1,
     );
-    (*sc.imp()).refcount.ator = (*sc.get()).ator_result;
-    (*sc.imp()).refcount.buf = (*sc.get()).result;
+    (*sc.imp()).refcount.ator = sc.ator_result();
+    (*sc.imp()).refcount.buf = sc.result();
     (*sc.imp()).mesh.subdivision_evaluated = true;
 
     Ok(())

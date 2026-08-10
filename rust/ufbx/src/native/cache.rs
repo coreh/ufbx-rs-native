@@ -291,6 +291,23 @@ impl CacheContext {
         self.0.get().cast()
     }
 
+    #[inline(always)]
+    pub(crate) fn result(&self) -> crate::native::buf::Buf {
+        unsafe { (*self.get()).result }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_result(&self, result: crate::native::buf::Buf) {
+        unsafe {
+            (*self.get()).result = result;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
+        unsafe { (*self.get()).ator_result }
+    }
+
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
     #[inline(always)]
     pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
@@ -1804,8 +1821,8 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     core::ptr::write(&mut (*cc.imp()).cache, core::ptr::read(&(*cc.get()).cache));
     (*cc.imp()).magic = CACHE_IMP_MAGIC;
     (*cc.imp()).owned_by_scene = cc.owned_by_scene();
-    (*cc.imp()).refcount.ator = (*cc.get()).ator_result;
-    (*cc.imp()).refcount.buf = (*cc.get()).result;
+    (*cc.imp()).refcount.ator = cc.ator_result();
+    (*cc.imp()).refcount.buf = cc.result();
     (*cc.imp()).refcount.buf.ator = &raw mut (*cc.imp()).refcount.ator;
     (*cc.imp()).string_buf = cc.string_pool_view().buf();
     (*cc.imp()).string_buf.ator = &raw mut (*cc.imp()).refcount.ator;
@@ -2019,7 +2036,7 @@ pub(crate) unsafe fn load_external_cache(
     // Temporarily "borrow" allocators for the geometry cache
     cc.set_ator_tmp(uc.ator_tmp_mut_ptr());
     cc.set_string_pool(uc.string_pool());
-    (*cc.get()).result = (*uc.get()).result;
+    cc.set_result(uc.result());
 
     cc.opts_view().set_mirror_axis(uc.mirror_axis());
     cc.opts_view().set_use_scale_factor(true);
@@ -2036,7 +2053,7 @@ pub(crate) unsafe fn load_external_cache(
 
     // Return the "borrowed" allocators
     uc.set_string_pool(cc.string_pool());
-    (*uc.get()).result = (*cc.get()).result;
+    uc.set_result(cc.result());
 
     if cache.is_null() {
         if cc.error_view().type_() == ErrorType::FileNotFound {

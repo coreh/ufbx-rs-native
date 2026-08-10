@@ -2518,6 +2518,23 @@ impl Context {
         self.0.get().cast()
     }
 
+    #[inline(always)]
+    pub(crate) fn result(&self) -> crate::native::buf::Buf {
+        unsafe { (*self.get()).result }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_result(&self, result: crate::native::buf::Buf) {
+        unsafe {
+            (*self.get()).result = result;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
+        unsafe { (*self.get()).ator_result }
+    }
+
     // `obj` — the embedded ObjContext sub-context handle (Context.obj field).
     #[inline(always)]
     pub(crate) fn obj(&self) -> &ObjContext {

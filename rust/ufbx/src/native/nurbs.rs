@@ -245,6 +245,16 @@ impl TessellateCurveContext {
     }
 
     #[inline(always)]
+    pub(crate) fn result(&self) -> crate::native::buf::Buf {
+        unsafe { (*self.get()).result }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
+        unsafe { (*self.get()).ator_result }
+    }
+
+    #[inline(always)]
     pub(crate) fn opts_view(&self) -> &TessellateCurveOptsView {
         unsafe { &*(&raw mut (*self.get()).opts as *mut TessellateCurveOptsView) }
     }
@@ -374,6 +384,16 @@ impl TessellateSurfaceContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerTessellateSurfaceContext {
         self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn result(&self) -> crate::native::buf::Buf {
+        unsafe { (*self.get()).result }
+    }
+
+    #[inline(always)]
+    pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
+        unsafe { (*self.get()).ator_result }
     }
 
     #[inline(always)]
@@ -622,8 +642,8 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
     (*tc.imp()).magic = LINE_CURVE_IMP_MAGIC;
     // C: `tc->imp->curve = tc->line` — struct assignment (memcpy).
     core::ptr::copy_nonoverlapping(&raw const (*tc.get()).line, &mut (*tc.imp()).curve, 1);
-    (*tc.imp()).refcount.ator = (*tc.get()).ator_result;
-    (*tc.imp()).refcount.buf = (*tc.get()).result;
+    (*tc.imp()).refcount.ator = tc.ator_result();
+    (*tc.imp()).refcount.buf = tc.result();
 
     Ok(())
 }
@@ -1031,8 +1051,8 @@ pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     (*tc.imp()).magic = MESH_IMP_MAGIC;
     // C: `tc->imp->mesh = tc->mesh` — struct assignment (memcpy).
     core::ptr::copy_nonoverlapping(&raw const (*tc.get()).mesh, &mut (*tc.imp()).mesh, 1);
-    (*tc.imp()).refcount.ator = (*tc.get()).ator_result;
-    (*tc.imp()).refcount.buf = (*tc.get()).result;
+    (*tc.imp()).refcount.ator = tc.ator_result();
+    (*tc.imp()).refcount.buf = tc.result();
     (*tc.imp()).mesh.subdivision_evaluated = true;
 
     Ok(())

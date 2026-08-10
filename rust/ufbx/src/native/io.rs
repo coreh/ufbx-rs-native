@@ -393,6 +393,18 @@ impl FileContext {
         self.0.get().cast()
     }
 
+    #[inline(always)]
+    pub(crate) fn ator(&self) -> crate::native::allocator::Allocator {
+        unsafe { (*self.get()).ator }
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_ator(&self, ator: crate::native::allocator::Allocator) {
+        unsafe {
+            (*self.get()).ator = ator;
+        }
+    }
+
     // `error` — const raw-ptr getter (read-only sites); see `error_mut_ptr` for mutation.
     #[inline(always)]
     pub(crate) fn error_ptr(&self) -> *const Error {
@@ -458,7 +470,7 @@ pub(crate) unsafe fn begin_file_context(
     core::ptr::write_bytes(fc.get() as *mut u8, 0, size_of::<InnerFileContext>());
     if ctx != 0 {
         fc.set_parent_ator(ctx as *mut Allocator);
-        (*fc.get()).ator = *fc.parent_ator();
+        fc.set_ator(*fc.parent_ator());
         fc.ator_view().set_error(fc.error_mut_ptr());
     } else {
         init_ator(
@@ -475,7 +487,7 @@ pub(crate) unsafe fn begin_file_context(
 pub(crate) unsafe fn end_file_context(fc: &FileContext, error: *mut Error, ok: bool) {
     if !fc.parent_ator().is_null() {
         fc.ator_view().set_error((*fc.parent_ator()).error);
-        *fc.parent_ator() = (*fc.get()).ator;
+        *fc.parent_ator() = fc.ator();
     } else {
         free_ator(fc.ator_mut_ptr());
     }
