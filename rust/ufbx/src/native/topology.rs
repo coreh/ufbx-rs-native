@@ -134,10 +134,6 @@ impl NgonContext {
         }
     }
     #[inline(always)]
-    pub(crate) fn cur_face(&self) -> Face {
-        unsafe { (*self.get()).cur_face }
-    }
-    #[inline(always)]
     pub(crate) fn set_cur_face(&self, cur_face: Face) {
         unsafe {
             (*self.get()).cur_face = cur_face;
