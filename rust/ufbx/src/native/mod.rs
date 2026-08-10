@@ -7,6 +7,9 @@
 pub mod math;
 // -- Platform / Atomic counter / Bit manipulation / Utility
 pub mod platform;
+// -- Rust-port infrastructure (not a ufbx.c section): reinterpret-in-place views
+//    + safe iteration over contiguous arena arrays (see module docs).
+pub mod view;
 // -- Float parsing (hand-rolled strtod + bigint)
 pub mod float_parse;
 // -- DEFLATE implementation

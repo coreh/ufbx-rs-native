@@ -48,10 +48,12 @@ use crate::native::string_pool::{
     map_cmp_string, push_string_place_str, str_cmp, str_equal, str_less, string_pool_temp_free,
     StringPool,
 };
+#[cfg(feature = "geometry-cache")]
+use crate::native::view::ArenaViewIter;
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "geometry-cache")]
 use crate::native::xml::{
-    free_xml, load_xml, xml_find_attrib, xml_find_child, XmlDocument, XmlLoadOpts, XmlTag,
+    free_xml, load_xml, xml_find_attrib, xml_find_child, XmlDocument, XmlLoadOpts, XmlTagView,
 };
 use crate::prelude::{Real, Ref, String};
 
@@ -1249,31 +1251,31 @@ pub(crate) unsafe fn cache_load_xml_imp(
     cc.set_xml_ticks_per_frame(250);
     cc.set_xml_filename(cc.stream_filename());
 
-    let tag_root: *mut XmlTag = xml_find_child((*doc).root, b"Autodesk_Cache_File\0".as_ptr());
-    if !tag_root.is_null() {
-        let tag_type: *mut XmlTag = xml_find_child(tag_root, b"cacheType\0".as_ptr());
-        let tag_fps: *mut XmlTag = xml_find_child(tag_root, b"cacheTimePerFrame\0".as_ptr());
-        let tag_channels: *mut XmlTag = xml_find_child(tag_root, b"Channels\0".as_ptr());
+    // SAFETY: `(*doc).root` is a valid arena `XmlTag`, stable for the document.
+    let root: &XmlTagView = XmlTagView::from_ptr((*doc).root);
+    if let Some(tag_root) = xml_find_child(root, c"Autodesk_Cache_File") {
+        let tag_type = xml_find_child(tag_root, c"cacheType");
+        let tag_fps = xml_find_child(tag_root, c"cacheTimePerFrame");
+        let tag_channels = xml_find_child(tag_root, c"Channels");
 
         let mut num_extra: usize = 0;
         // C: `ufbxi_for(ufbxi_xml_tag, tag, tag_root->children, tag_root->num_children)`
-        let mut tag: *mut XmlTag = (*tag_root).children;
-        let tag_end: *mut XmlTag = add_ptr(tag, (*tag_root).num_children);
-        while tag != tag_end {
-            if (*tag).num_children != 1 {
-                tag = tag.add(1);
+        // SAFETY: contiguous arena run stable for the document's lifetime.
+        let tags = ArenaViewIter::new(tag_root.children(), tag_root.num_children());
+        for tag in tags {
+            if tag.num_children() != 1 {
                 continue;
             }
-            if crate::native::error::strcmp((*tag).name.data, b"extra\0".as_ptr()) != 0 {
-                tag = tag.add(1);
+            if crate::native::error::strcmp(tag.name_data(), b"extra\0".as_ptr()) != 0 {
                 continue;
             }
             let extra: *mut String = push(cc.tmp_stack_mut_ptr(), 1);
             ufbxi_check_err!(cc.error_mut_ptr(), !extra.is_null(), "extra");
-            *extra = (*(*tag).children.add(0)).text;
+            // C: `tag->children[0].text` — `num_children == 1` guarantees the child.
+            // SAFETY: first element of a valid arena run of length >= 1.
+            *extra = XmlTagView::from_ptr(tag.children()).text();
             push_string_place_str(cc.string_pool_mut_ptr(), extra, false)?;
             num_extra += 1;
-            tag = tag.add(1);
         }
         cc.cache_view().extra_info_view().set_count(num_extra);
         cc.cache_view()
@@ -1289,62 +1291,62 @@ pub(crate) unsafe fn cache_load_xml_imp(
             "cc->cache.extra_info.data"
         );
 
-        if !tag_type.is_null() {
-            let type_ = xml_find_attrib(tag_type, b"Type\0".as_ptr());
-            let format = xml_find_attrib(tag_type, b"Format\0".as_ptr());
-            if !type_.is_null() {
-                if crate::native::error::strcmp((*type_).value.data, b"OneFilePerFrame\0".as_ptr())
+        if let Some(tag_type) = tag_type {
+            let type_ = xml_find_attrib(tag_type, c"Type");
+            let format = xml_find_attrib(tag_type, c"Format");
+            if let Some(type_) = type_ {
+                if crate::native::error::strcmp(type_.value().data, b"OneFilePerFrame\0".as_ptr())
                     == 0
                 {
                     cc.set_xml_type(CacheXmlType::FilePerFrame);
-                } else if crate::native::error::strcmp((*type_).value.data, b"OneFile\0".as_ptr())
+                } else if crate::native::error::strcmp(type_.value().data, b"OneFile\0".as_ptr())
                     == 0
                 {
                     cc.set_xml_type(CacheXmlType::SingleFile);
                 }
             }
-            if !format.is_null() {
-                if crate::native::error::strcmp((*format).value.data, b"mcc\0".as_ptr()) == 0 {
+            if let Some(format) = format {
+                if crate::native::error::strcmp(format.value().data, b"mcc\0".as_ptr()) == 0 {
                     cc.set_xml_format(CacheXmlFormat::Mcc);
-                } else if crate::native::error::strcmp((*format).value.data, b"mcx\0".as_ptr()) == 0
+                } else if crate::native::error::strcmp(format.value().data, b"mcx\0".as_ptr()) == 0
                 {
                     cc.set_xml_format(CacheXmlFormat::Mcx);
                 }
             }
         }
 
-        if !tag_fps.is_null() {
-            let fps = xml_find_attrib(tag_fps, b"TimePerFrame\0".as_ptr());
-            if !fps.is_null() {
+        if let Some(tag_fps) = tag_fps {
+            if let Some(fps) = xml_find_attrib(tag_fps, c"TimePerFrame") {
                 let value: u32 =
-                    crate::native::float_parse::parse_uint32_radix((*fps).value.data, 10);
+                    crate::native::float_parse::parse_uint32_radix(fps.value().data, 10);
                 if value > 0 {
                     cc.set_xml_ticks_per_frame(value);
                 }
             }
         }
 
-        if !tag_channels.is_null() {
-            cc.set_channels(push_zero(cc.tmp_mut_ptr(), (*tag_channels).num_children));
+        if let Some(tag_channels) = tag_channels {
+            cc.set_channels(push_zero(cc.tmp_mut_ptr(), tag_channels.num_children()));
             ufbxi_check_err!(cc.error_mut_ptr(), !cc.channels().is_null(), "cc->channels");
 
             // C: `ufbxi_for(ufbxi_xml_tag, tag, tag_channels->children, tag_channels->num_children)`
-            let mut tag: *mut XmlTag = (*tag_channels).children;
-            let tag_end: *mut XmlTag = add_ptr(tag, (*tag_channels).num_children);
-            while tag != tag_end {
-                let name = xml_find_attrib(tag, b"ChannelName\0".as_ptr());
-                let type_ = xml_find_attrib(tag, b"ChannelType\0".as_ptr());
-                let interpretation = xml_find_attrib(tag, b"ChannelInterpretation\0".as_ptr());
-                if !(!name.is_null() && !type_.is_null() && !interpretation.is_null()) {
-                    tag = tag.add(1);
+            // SAFETY: contiguous arena run stable for the document's lifetime.
+            let tags = ArenaViewIter::new(tag_channels.children(), tag_channels.num_children());
+            for tag in tags {
+                let name = xml_find_attrib(tag, c"ChannelName");
+                let type_ = xml_find_attrib(tag, c"ChannelType");
+                let interpretation = xml_find_attrib(tag, c"ChannelInterpretation");
+                let (Some(name), Some(_channel_type), Some(interpretation)) =
+                    (name, type_, interpretation)
+                else {
                     continue;
-                }
+                };
 
                 // C: `&cc->channels[cc->num_channels++]`
                 let channel: *mut CacheTmpChannel = cc.channels().add(cc.num_channels());
                 cc.set_num_channels(cc.num_channels() + 1);
-                (*channel).name = (*name).value;
-                (*channel).interpretation = (*interpretation).value;
+                (*channel).name = name.value();
+                (*channel).interpretation = interpretation.value();
                 push_string_place_str(cc.string_pool_mut_ptr(), &mut (*channel).name, false)?;
                 push_string_place_str(
                     cc.string_pool_mut_ptr(),
@@ -1352,24 +1354,23 @@ pub(crate) unsafe fn cache_load_xml_imp(
                     false,
                 )?;
 
-                let sampling_rate = xml_find_attrib(tag, b"SamplingRate\0".as_ptr());
-                let start_time = xml_find_attrib(tag, b"StartTime\0".as_ptr());
-                let end_time = xml_find_attrib(tag, b"EndTime\0".as_ptr());
-                if !sampling_rate.is_null() && !start_time.is_null() && !end_time.is_null() {
+                let sampling_rate = xml_find_attrib(tag, c"SamplingRate");
+                let start_time = xml_find_attrib(tag, c"StartTime");
+                let end_time = xml_find_attrib(tag, c"EndTime");
+                if let (Some(sampling_rate), Some(start_time), Some(end_time)) =
+                    (sampling_rate, start_time, end_time)
+                {
                     (*channel).sample_rate = crate::native::float_parse::parse_uint32_radix(
-                        (*sampling_rate).value.data,
+                        sampling_rate.value().data,
                         10,
                     );
-                    (*channel).start_time = crate::native::float_parse::parse_uint32_radix(
-                        (*start_time).value.data,
-                        10,
-                    );
+                    (*channel).start_time =
+                        crate::native::float_parse::parse_uint32_radix(start_time.value().data, 10);
                     (*channel).end_time =
-                        crate::native::float_parse::parse_uint32_radix((*end_time).value.data, 10);
+                        crate::native::float_parse::parse_uint32_radix(end_time.value().data, 10);
                     (*channel).current_time = (*channel).start_time;
                     (*channel).try_load = true;
                 }
-                tag = tag.add(1);
             }
         }
     }

@@ -13,7 +13,7 @@
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 #![cfg(feature = "geometry-cache")]
 
-use core::ffi::c_void;
+use core::ffi::{c_void, CStr};
 
 use crate::generated::Error;
 use crate::native::allocator::{free, grow_array, Allocator};
@@ -21,7 +21,8 @@ use crate::native::buf::{buf_free, push, push_copy, push_pop, push_zero, Buf};
 use crate::native::error::{
     strcmp, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_fail_err, Fail, EMPTY_CHAR,
 };
-use crate::native::platform::{add_ptr, ufbx_assert, IS_REGRESSION};
+use crate::native::platform::{ufbx_assert, IS_REGRESSION};
+use crate::native::view::{ArenaViewIter, View};
 use crate::prelude::String;
 
 // ufbx.c:53 `#define UFBXI_MAX_XML_DEPTH 32` — owned here; the XML tag parser
@@ -48,6 +49,62 @@ pub(crate) struct XmlTag {
 
     pub children: *mut XmlTag,
     pub num_children: usize,
+}
+
+// Reinterpret-in-place views over arena-allocated `XmlTag`/`XmlAttrib` runs
+// (Rust-port infrastructure; see `native::view`). ufbx materializes children and
+// attribs as contiguous `push_pop` runs walked by `ufbxi_for`, so
+// `ArenaViewIter` over `(children/attribs, num_children/num_attribs)` is the safe
+// iteration form. `View<T>` supplies `get()` / `from_ptr()`; the accessors below
+// are the per-struct residue.
+pub(crate) type XmlTagView = View<XmlTag>;
+
+impl View<XmlTag> {
+    #[inline(always)]
+    pub(crate) fn name_data(&self) -> *const u8 {
+        // SAFETY: reading the `name.data` pointer field of a valid arena `XmlTag`.
+        unsafe { (*self.get()).name.data }
+    }
+    #[inline(always)]
+    pub(crate) fn text(&self) -> String {
+        // SAFETY: `String` is a POD `{ptr,len}`; reading it from a valid `XmlTag`.
+        unsafe { (*self.get()).text }
+    }
+    #[inline(always)]
+    pub(crate) fn attribs(&self) -> *mut XmlAttrib {
+        // SAFETY: reading the `attribs` run pointer of a valid arena `XmlTag`.
+        unsafe { (*self.get()).attribs }
+    }
+    #[inline(always)]
+    pub(crate) fn num_attribs(&self) -> usize {
+        // SAFETY: reading a `usize` count field.
+        unsafe { (*self.get()).num_attribs }
+    }
+    #[inline(always)]
+    pub(crate) fn children(&self) -> *mut XmlTag {
+        // SAFETY: reading the `children` run pointer of a valid arena `XmlTag`.
+        unsafe { (*self.get()).children }
+    }
+    #[inline(always)]
+    pub(crate) fn num_children(&self) -> usize {
+        // SAFETY: reading a `usize` count field.
+        unsafe { (*self.get()).num_children }
+    }
+}
+
+pub(crate) type XmlAttribView = View<XmlAttrib>;
+
+impl View<XmlAttrib> {
+    #[inline(always)]
+    pub(crate) fn name_data(&self) -> *const u8 {
+        // SAFETY: reading the `name.data` pointer field of a valid arena `XmlAttrib`.
+        unsafe { (*self.get()).name.data }
+    }
+    #[inline(always)]
+    pub(crate) fn value(&self) -> String {
+        // SAFETY: `String` is a POD `{ptr,len}`; reading it from a valid `XmlAttrib`.
+        unsafe { (*self.get()).value }
+    }
 }
 
 // ufbx.c:7269-7272 `ufbxi_xml_document`
@@ -863,31 +920,43 @@ pub(crate) unsafe fn free_xml(doc: *mut XmlDocument) {
 }
 
 // ufbx.c:7662-7670 `ufbxi_xml_find_child`
+// Explicit loop (not `Iterator::find`) mirrors the C `ufbxi_for` control-flow for
+// upstream line-correspondence and hosts the per-element SAFETY note.
+#[allow(clippy::manual_find)]
 #[inline(never)]
-pub(crate) unsafe fn xml_find_child(tag: *mut XmlTag, name: *const u8) -> *mut XmlTag {
+pub(crate) fn xml_find_child<'a>(tag: &'a XmlTagView, name: &CStr) -> Option<&'a XmlTagView> {
     // C: `ufbxi_for(ufbxi_xml_tag, child, tag->children, tag->num_children)`
-    let mut child: *mut XmlTag = (*tag).children;
-    let child_end: *mut XmlTag = add_ptr(child, (*tag).num_children);
-    while child != child_end {
-        if strcmp((*child).name.data, name) == 0 {
-            return child;
+    // SAFETY: `children`/`num_children` describe a contiguous arena run (built by
+    // `xml_parse_tag` via `push_pop`), valid and stable for `tag`'s lifetime `'a`.
+    let children: ArenaViewIter<'a, XmlTag> =
+        unsafe { ArenaViewIter::new(tag.children(), tag.num_children()) };
+    for child in children {
+        // SAFETY: `child.name_data()` is a valid NUL-terminated arena string;
+        // `name` is a valid NUL-terminated C string.
+        if unsafe { strcmp(child.name_data(), name.as_ptr().cast()) } == 0 {
+            return Some(child);
         }
-        child = child.add(1);
     }
-    core::ptr::null_mut()
+    None
 }
 
 // ufbx.c:7672-7680 `ufbxi_xml_find_attrib`
+// Explicit loop (not `Iterator::find`) mirrors the C `ufbxi_for` control-flow for
+// upstream line-correspondence and hosts the per-element SAFETY note.
+#[allow(clippy::manual_find)]
 #[inline(never)]
-pub(crate) unsafe fn xml_find_attrib(tag: *mut XmlTag, name: *const u8) -> *mut XmlAttrib {
+pub(crate) fn xml_find_attrib<'a>(tag: &'a XmlTagView, name: &CStr) -> Option<&'a XmlAttribView> {
     // C: `ufbxi_for(ufbxi_xml_attrib, attrib, tag->attribs, tag->num_attribs)`
-    let mut attrib: *mut XmlAttrib = (*tag).attribs;
-    let attrib_end: *mut XmlAttrib = add_ptr(attrib, (*tag).num_attribs);
-    while attrib != attrib_end {
-        if strcmp((*attrib).name.data, name) == 0 {
-            return attrib;
+    // SAFETY: `attribs`/`num_attribs` describe a contiguous arena run (built by
+    // `xml_parse_tag` via `push_pop`), valid and stable for `tag`'s lifetime `'a`.
+    let attribs: ArenaViewIter<'a, XmlAttrib> =
+        unsafe { ArenaViewIter::new(tag.attribs(), tag.num_attribs()) };
+    for attrib in attribs {
+        // SAFETY: `attrib.name_data()` is a valid NUL-terminated arena string;
+        // `name` is a valid NUL-terminated C string.
+        if unsafe { strcmp(attrib.name_data(), name.as_ptr().cast()) } == 0 {
+            return Some(attrib);
         }
-        attrib = attrib.add(1);
     }
-    core::ptr::null_mut()
+    None
 }
