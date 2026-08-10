@@ -337,12 +337,17 @@ static XML_CTYPE: [u8; 256] = {
 
 // ufbx.c:7312-7321 `ufbxi_xml_refill`
 #[inline(never)]
-pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
-    let mut num: usize = (xc.read_fn().unwrap_unchecked())(
-        xc.read_user(),
-        xc.data_mut_ptr() as *mut c_void,
-        xc.data_size(),
-    );
+pub(crate) fn xml_refill(xc: &XmlContext) {
+    // SAFETY: `read_fn` is Some once the XML reader is initialized (refill is
+    // only reached in that state); the callback and buffer pointers are valid by
+    // construction.
+    let mut num: usize = unsafe {
+        (xc.read_fn().unwrap_unchecked())(
+            xc.read_user(),
+            xc.data_mut_ptr() as *mut c_void,
+            xc.data_size(),
+        )
+    };
     if num == usize::MAX || num < xc.data_size() {
         xc.set_io_error(true);
     }
@@ -361,9 +366,11 @@ pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
 
 // ufbx.c:7323-7326 `ufbxi_xml_advance`
 #[inline(always)]
-pub(crate) unsafe fn xml_advance(xc: &XmlContext) {
+pub(crate) fn xml_advance(xc: &XmlContext) {
     // C: `if (++xc->pos == xc->pos_end)` — pre-increment decomposed.
-    xc.set_pos(xc.pos().add(1));
+    // SAFETY: `pos` stays within `[data, pos_end]` by the parser invariant, so
+    // advancing by one is in-bounds (at most one-past-the-end).
+    xc.set_pos(unsafe { xc.pos().add(1) });
     if xc.pos() == xc.pos_end() {
         xml_refill(xc);
     }
@@ -393,8 +400,9 @@ pub(crate) unsafe fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), F
 // ufbx.c:7337-7345 `ufbxi_xml_accept`
 // C returns `int` 1/0; every call site consumes it as a boolean.
 #[inline(never)]
-pub(crate) unsafe fn xml_accept(xc: &XmlContext, ch: u8) -> bool {
-    if *xc.pos() == ch {
+pub(crate) fn xml_accept(xc: &XmlContext, ch: u8) -> bool {
+    // SAFETY: `pos` points at a valid byte within the nul-terminated buffer.
+    if unsafe { *xc.pos() } == ch {
         xml_advance(xc);
         true
     } else {
@@ -404,8 +412,9 @@ pub(crate) unsafe fn xml_accept(xc: &XmlContext, ch: u8) -> bool {
 
 // ufbx.c:7347-7352 `ufbxi_xml_skip_while`
 #[inline(never)]
-pub(crate) unsafe fn xml_skip_while(xc: &XmlContext, ctypes: u32) {
-    while XML_CTYPE[*xc.pos() as usize] as u32 & ctypes != 0 {
+pub(crate) fn xml_skip_while(xc: &XmlContext, ctypes: u32) {
+    // SAFETY: `pos` points at a valid byte within the nul-terminated buffer.
+    while XML_CTYPE[unsafe { *xc.pos() } as usize] as u32 & ctypes != 0 {
         xml_advance(xc);
     }
 }
