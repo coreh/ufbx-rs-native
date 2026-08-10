@@ -872,7 +872,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // contained within `ufbxi_scene_imp`
     (*imp).refcount.buf = (*uc.get()).result;
     (*imp).refcount.buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
-    (*imp).string_buf = (*uc.get()).string_pool.buf;
+    (*imp).string_buf = uc.string_pool_view().buf();
     (*imp).string_buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
 
     (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
@@ -971,7 +971,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
 #[inline(never)]
 pub(crate) unsafe fn free_result(uc: &Context) {
     buf_free(uc.result_mut_ptr());
-    buf_free(&mut (*uc.get()).string_pool.buf);
+    buf_free(uc.string_pool_view().buf_mut_ptr());
 
     free_ator(uc.ator_result_mut_ptr());
 }
@@ -1072,17 +1072,20 @@ pub(crate) unsafe fn load(
 
     uc.set_synthetic_id_counter(SYNTHETIC_ID_START);
 
-    (*uc.get()).string_pool.error = uc.error_mut_ptr();
+    uc.string_pool_view().set_error(uc.error_mut_ptr());
     map_init(
-        &mut (*uc.get()).string_pool.map,
+        uc.string_pool_view().map_mut_ptr(),
         uc.ator_tmp_mut_ptr(),
         map_cmp_string,
         ptr::null_mut(),
     );
-    (*uc.get()).string_pool.buf.ator = uc.ator_result_mut_ptr();
-    (*uc.get()).string_pool.buf.unordered = true;
-    (*uc.get()).string_pool.initial_size = 1024;
-    (*uc.get()).string_pool.error_handling = uc.opts_view().unicode_error_handling();
+    uc.string_pool_view()
+        .buf_view()
+        .set_ator(uc.ator_result_mut_ptr());
+    uc.string_pool_view().buf_view().set_unordered(true);
+    uc.string_pool_view().set_initial_size(1024);
+    uc.string_pool_view()
+        .set_error_handling(uc.opts_view().unicode_error_handling());
 
     map_init(
         uc.prop_type_map_mut_ptr(),
@@ -1169,7 +1172,7 @@ pub(crate) unsafe fn load(
     (*uc.get()).warnings.error = uc.error_mut_ptr();
     (*uc.get()).warnings.result = uc.result_mut_ptr();
     (*uc.get()).warnings.tmp_stack.ator = uc.ator_tmp_mut_ptr();
-    (*uc.get()).string_pool.warnings = uc.warnings_mut_ptr();
+    uc.string_pool_view().set_warnings(uc.warnings_mut_ptr());
 
     // Set zero size `swap_arr` to a non-NULL buffer so we can tell the difference between empty
     // array and an allocation failure.

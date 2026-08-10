@@ -409,6 +409,25 @@ impl CacheContext {
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).string_pool }
     }
+    // `string_pool` (StringPool) — typed VIEW handle (reinterpret-in-place) for nested
+    // access; whole value getter/setter for the faithful C struct-copy sites.
+    #[inline(always)]
+    pub(crate) fn string_pool_view(&self) -> &crate::native::string_pool::StringPoolView {
+        unsafe {
+            &*(&raw mut (*self.get()).string_pool
+                as *mut crate::native::string_pool::StringPoolView)
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn string_pool(&self) -> StringPool {
+        unsafe { (*self.get()).string_pool }
+    }
+    #[inline(always)]
+    pub(crate) fn set_string_pool(&self, string_pool: StringPool) {
+        unsafe {
+            (*self.get()).string_pool = string_pool;
+        }
+    }
 
     // `stream_filename` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
@@ -1758,7 +1777,7 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     (*cc.imp()).refcount.ator = (*cc.get()).ator_result;
     (*cc.imp()).refcount.buf = (*cc.get()).result;
     (*cc.imp()).refcount.buf.ator = &raw mut (*cc.imp()).refcount.ator;
-    (*cc.imp()).string_buf = (*cc.get()).string_pool.buf;
+    (*cc.imp()).string_buf = cc.string_pool_view().buf();
     (*cc.imp()).string_buf.ator = &raw mut (*cc.imp()).refcount.ator;
 
     Ok(())
@@ -1788,7 +1807,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
             core::ptr::null_mut(),
         );
         if !cc.owned_by_scene() {
-            buf_free(&mut (*cc.get()).string_pool.buf);
+            buf_free(cc.string_pool_view().buf_mut_ptr());
             free_ator(cc.ator_result_mut_ptr());
         }
         core::ptr::null_mut()
@@ -1831,16 +1850,18 @@ pub(crate) unsafe fn load_geometry_cache(
 
     (*cc.get()).open_file_cb = opts.open_file_cb;
 
-    (*cc.get()).string_pool.error = cc.error_mut_ptr();
+    cc.string_pool_view().set_error(cc.error_mut_ptr());
     map_init(
-        &mut (*cc.get()).string_pool.map,
+        cc.string_pool_view().map_mut_ptr(),
         cc.ator_tmp(),
         map_cmp_string,
         core::ptr::null_mut(),
     );
-    (*cc.get()).string_pool.buf.ator = cc.ator_result_mut_ptr();
-    (*cc.get()).string_pool.buf.unordered = true;
-    (*cc.get()).string_pool.initial_size = 64;
+    cc.string_pool_view()
+        .buf_view()
+        .set_ator(cc.ator_result_mut_ptr());
+    cc.string_pool_view().buf_view().set_unordered(true);
+    cc.string_pool_view().set_initial_size(64);
     cc.result_view().set_ator(cc.ator_result_mut_ptr());
 
     cc.set_frames_per_second(if opts.frames_per_second > 0.0 {
@@ -1967,7 +1988,7 @@ pub(crate) unsafe fn load_external_cache(
 
     // Temporarily "borrow" allocators for the geometry cache
     cc.set_ator_tmp(uc.ator_tmp_mut_ptr());
-    (*cc.get()).string_pool = (*uc.get()).string_pool;
+    cc.set_string_pool(uc.string_pool());
     (*cc.get()).result = (*uc.get()).result;
 
     cc.opts_view().set_mirror_axis((*uc.get()).mirror_axis);
@@ -1984,7 +2005,7 @@ pub(crate) unsafe fn load_external_cache(
     }
 
     // Return the "borrowed" allocators
-    (*uc.get()).string_pool = (*cc.get()).string_pool;
+    uc.set_string_pool(cc.string_pool());
     (*uc.get()).result = (*cc.get()).result;
 
     if cache.is_null() {

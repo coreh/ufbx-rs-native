@@ -61,6 +61,60 @@ pub(crate) struct StringPool {
     pub warnings: *mut Warnings,
 }
 
+// Typed interior-mutable VIEW over an owned `StringPool` field, reinterpreted in
+// place. `.buf` recurses into `BufView`; other leaves are getters/setters or raw-ptr
+// getters for addr-of sites. The whole-struct copy (`cc.string_pool = uc.string_pool`)
+// uses the context-level value getter/setter, not this view.
+#[repr(transparent)]
+pub(crate) struct StringPoolView(core::cell::UnsafeCell<core::mem::MaybeUninit<StringPool>>);
+
+impl StringPoolView {
+    #[inline(always)]
+    fn get(&self) -> *mut StringPool {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn buf(&self) -> Buf {
+        unsafe { (*self.get()).buf }
+    }
+    #[inline(always)]
+    pub(crate) fn buf_view(&self) -> &crate::native::buf::BufView {
+        unsafe { &*(&raw mut (*self.get()).buf as *mut crate::native::buf::BufView) }
+    }
+    #[inline(always)]
+    pub(crate) fn buf_mut_ptr(&self) -> *mut Buf {
+        unsafe { &raw mut (*self.get()).buf }
+    }
+    #[inline(always)]
+    pub(crate) fn set_error(&self, error: *mut Error) {
+        unsafe {
+            (*self.get()).error = error;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn map_mut_ptr(&self) -> *mut Map {
+        unsafe { &raw mut (*self.get()).map }
+    }
+    #[inline(always)]
+    pub(crate) fn set_initial_size(&self, initial_size: usize) {
+        unsafe {
+            (*self.get()).initial_size = initial_size;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_error_handling(&self, error_handling: UnicodeErrorHandling) {
+        unsafe {
+            (*self.get()).error_handling = error_handling;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_warnings(&self, warnings: *mut Warnings) {
+        unsafe {
+            (*self.get()).warnings = warnings;
+        }
+    }
+}
+
 // ufbx.c:4912-4916 `ufbxi_sanitized_string`
 #[repr(C)]
 #[derive(Clone, Copy)]

@@ -2931,6 +2931,25 @@ impl Context {
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).string_pool }
     }
+    // `string_pool` (StringPool) — typed VIEW handle (reinterpret-in-place) for nested
+    // access; whole value getter/setter for the faithful C struct-copy sites.
+    #[inline(always)]
+    pub(crate) fn string_pool_view(&self) -> &crate::native::string_pool::StringPoolView {
+        unsafe {
+            &*(&raw mut (*self.get()).string_pool
+                as *mut crate::native::string_pool::StringPoolView)
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn string_pool(&self) -> StringPool {
+        unsafe { (*self.get()).string_pool }
+    }
+    #[inline(always)]
+    pub(crate) fn set_string_pool(&self, string_pool: StringPool) {
+        unsafe {
+            (*self.get()).string_pool = string_pool;
+        }
+    }
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
