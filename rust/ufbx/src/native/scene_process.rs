@@ -410,13 +410,15 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
     let pre_nodes: *mut PreNode = push_zero::<PreNode>(uc.tmp_parse_mut_ptr(), num_nodes);
     ufbxi_check!(uc, !pre_nodes.is_null(), "pre_nodes");
 
-    let num_meshes: usize =
-        (*uc.get()).tmp_typed_element_offsets[ElementType::Mesh as usize].num_items;
+    let num_meshes: usize = uc
+        .tmp_typed_element_offsets_at(ElementType::Mesh as usize)
+        .num_items();
     let pre_meshes: *mut PreMesh = push_zero::<PreMesh>(uc.tmp_parse_mut_ptr(), num_meshes);
     ufbxi_check!(uc, !pre_meshes.is_null(), "pre_meshes");
 
-    let num_anim_values: usize =
-        (*uc.get()).tmp_typed_element_offsets[ElementType::AnimValue as usize].num_items;
+    let num_anim_values: usize = uc
+        .tmp_typed_element_offsets_at(ElementType::AnimValue as usize)
+        .num_items();
     let pre_anim_values: *mut PreAnimValue =
         push_zero::<PreAnimValue>(uc.tmp_parse_mut_ptr(), num_anim_values);
     ufbxi_check!(uc, !pre_anim_values.is_null(), "pre_anim_values");
@@ -1732,7 +1734,7 @@ pub(crate) unsafe fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
 
     let node_offsets: *mut usize = push_pop(
         uc.tmp_stack_mut_ptr(),
-        &mut (*uc.get()).tmp_typed_element_offsets[ElementType::Node as usize],
+        uc.tmp_typed_element_offsets_mut_ptr(ElementType::Node as usize),
         num_nodes,
     );
     ufbxi_check!(uc, !node_offsets.is_null(), "node_offsets");
@@ -1821,7 +1823,7 @@ pub(crate) unsafe fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
 
     for i in 0..num_nodes as u32 {
         let p_offset: *mut usize = push(
-            &mut (*uc.get()).tmp_typed_element_offsets[ElementType::Node as usize],
+            uc.tmp_typed_element_offsets_mut_ptr(ElementType::Node as usize),
             1,
         );
         ufbxi_check!(uc, !p_offset.is_null(), "p_offset");
@@ -6586,13 +6588,13 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     linearize_nodes(uc)?;
 
     for type_ in 0..ELEMENT_TYPE_COUNT {
-        let num_typed: usize = (*uc.get()).tmp_typed_element_offsets[type_].num_items;
+        let num_typed: usize = uc.tmp_typed_element_offsets_at(type_).num_items();
         let typed_offsets: *mut usize = push_pop::<usize>(
             uc.tmp_mut_ptr(),
-            &mut (*uc.get()).tmp_typed_element_offsets[type_],
+            uc.tmp_typed_element_offsets_mut_ptr(type_),
             num_typed,
         );
-        buf_free(&mut (*uc.get()).tmp_typed_element_offsets[type_]);
+        buf_free(uc.tmp_typed_element_offsets_mut_ptr(type_));
         ufbxi_check!(uc, !typed_offsets.is_null(), "typed_offsets");
 
         // C indexes `uc->scene.elements_by_type[type]`, the `ufbx_element_list`
@@ -6611,7 +6613,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                 element_data.add(*typed_offsets.add(i)) as *mut Element;
         }
 
-        buf_free(&mut (*uc.get()).tmp_typed_element_offsets[type_]);
+        buf_free(uc.tmp_typed_element_offsets_mut_ptr(type_));
     }
 
     // Create named elements

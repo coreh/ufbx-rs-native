@@ -153,6 +153,16 @@ impl NgonContext {
             (*self.get()).cur_axis_dir = cur_axis_dir;
         }
     }
+    // `axes` ([Vec3; 3]) / `kd_nodes` ([KdNode; N]) — per-element `ScalarView` (Cell)
+    // handles: `.get()`/`.set()` for the Copy elements, `.as_ptr()` for addr-of sites.
+    #[inline(always)]
+    pub(crate) fn axes_at(&self, i: usize) -> &crate::prelude::ScalarView<Vec3> {
+        unsafe { &*(&raw mut (*self.get()).axes[i] as *mut crate::prelude::ScalarView<Vec3>) }
+    }
+    #[inline(always)]
+    pub(crate) fn kd_nodes_at(&self, i: usize) -> &crate::prelude::ScalarView<KdNode> {
+        unsafe { &*(&raw mut (*self.get()).kd_nodes[i] as *mut crate::prelude::ScalarView<KdNode>) }
+    }
 
     // `positions` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
@@ -203,8 +213,8 @@ pub(crate) unsafe fn ngon_project(nc: &NgonContext, index: u32) -> Vec2 {
 
     // C: `ufbx_vec2 p;` — both fields are assigned below.
     let mut p: Vec2 = core::mem::zeroed();
-    p.x = dot3((*nc.get()).axes[0], point);
-    p.y = dot3((*nc.get()).axes[1], point);
+    p.x = dot3(nc.axes_at(0).get(), point);
+    p.y = dot3(nc.axes_at(1).get(), point);
     p
 }
 
@@ -303,7 +313,7 @@ unsafe fn kd_check_slow_rec(
                 .add(nc.face_view().index_begin().wrapping_add(index) as usize)
                 as usize,
         );
-        let split: Real = dot3(point, (*nc.get()).axes[axis as usize]);
+        let split: Real = dot3(point, nc.axes_at(axis as usize).get());
         let hit_left: bool = (*tri).min_t[axis as usize] <= split;
         let hit_right: bool = (*tri).max_t[axis as usize] >= split;
 
@@ -376,7 +386,7 @@ unsafe fn kd_check_fast_rec(
     let mut depth = depth;
 
     loop {
-        let node: KdNode = (*nc.get()).kd_nodes[kd_index as usize];
+        let node: KdNode = nc.kd_nodes_at(kd_index as usize).get();
         if node.index_plus_one == 0 {
             return false;
         }
@@ -558,7 +568,7 @@ unsafe fn kd_build_rec(
 
     // C: `ufbx_vertex_vec3 pos = nc->positions;` — a struct memcpy.
     let pos: VertexVec3 = core::ptr::read(nc.positions_mut_ptr());
-    let axis_dir: Vec3 = (*nc.get()).axes[axis as usize];
+    let axis_dir: Vec3 = nc.axes_at(axis as usize).get();
     let face: Face = nc.face();
 
     nc.set_cur_axis_dir(axis_dir);
@@ -588,7 +598,7 @@ unsafe fn kd_build_rec(
         };
 
         let index: u32 = *indices.add(num_left as usize);
-        let kd: *mut KdNode = core::ptr::addr_of_mut!((*nc.get()).kd_nodes[fast_index as usize]);
+        let kd: *mut KdNode = nc.kd_nodes_at(fast_index as usize).as_ptr();
 
         (*kd).split = dot3(
             axis_dir,
@@ -706,9 +716,10 @@ pub(crate) unsafe fn triangulate_ngon(
         axis.y = 1.0;
         axis.z = 0.0;
     }
-    (*nc.get()).axes[0] = slow_normalized_cross3(&axis, &normal);
-    (*nc.get()).axes[1] = slow_normalized_cross3(&normal, core::ptr::addr_of!((*nc.get()).axes[0]));
-    (*nc.get()).axes[2] = normal;
+    nc.axes_at(0).set(slow_normalized_cross3(&axis, &normal));
+    nc.axes_at(1)
+        .set(slow_normalized_cross3(&normal, nc.axes_at(0).as_ptr()));
+    nc.axes_at(2).set(normal);
 
     let kd_indices: *mut u32 = indices;
     nc.set_kd_indices(kd_indices);

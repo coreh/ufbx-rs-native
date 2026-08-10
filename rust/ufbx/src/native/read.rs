@@ -1154,7 +1154,7 @@ pub(crate) unsafe fn push_element_size(
     // verbatim anyway.
     let aligned_size: usize = size.wrapping_add(7) & (!0x7u32 as usize);
 
-    let typed_id: u32 = (*uc.get()).tmp_typed_element_offsets[type_ as usize].num_items as u32;
+    let typed_id: u32 = uc.tmp_typed_element_offsets_at(type_ as usize).num_items() as u32;
     // C: `uint32_t element_id = uc->num_elements++;` — post-increment yields
     // the OLD value.
     let element_id: u32 = uc.num_elements();
@@ -1163,7 +1163,7 @@ pub(crate) unsafe fn push_element_size(
     ufbxi_check_return!(
         uc,
         !push_copy_fast::<usize>(
-            &mut (*uc.get()).tmp_typed_element_offsets[type_ as usize],
+            uc.tmp_typed_element_offsets_mut_ptr(type_ as usize),
             1,
             &uc.tmp_element_byte_offset()
         )
@@ -1240,14 +1240,14 @@ pub(crate) unsafe fn push_synthetic_element_size(
     // verbatim anyway.
     let aligned_size: usize = size.wrapping_add(7) & (!0x7u32 as usize);
 
-    let typed_id: u32 = (*uc.get()).tmp_typed_element_offsets[type_ as usize].num_items as u32;
+    let typed_id: u32 = uc.tmp_typed_element_offsets_at(type_ as usize).num_items() as u32;
     let element_id: u32 = uc.num_elements();
     uc.set_num_elements(uc.num_elements().wrapping_add(1));
 
     ufbxi_check_return!(
         uc,
         !push_copy_fast::<usize>(
-            &mut (*uc.get()).tmp_typed_element_offsets[type_ as usize],
+            uc.tmp_typed_element_offsets_mut_ptr(type_ as usize),
             1,
             &uc.tmp_element_byte_offset()
         )
@@ -6181,7 +6181,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             (*batch).num_nodes = 0;
         }
 
-        let tmp_buf: *mut Buf = &mut (*uc.get()).tmp_thread_parse[batch_index];
+        let tmp_buf: *mut Buf = uc.tmp_thread_parse_mut_ptr(batch_index);
 
         // ASCII data may be in `tmp_buf`, so copy it to safety in case
         if uc.ascii_view().src_buf() == tmp_buf {

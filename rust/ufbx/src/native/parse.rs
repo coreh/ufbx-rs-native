@@ -2569,6 +2569,29 @@ impl Context {
     pub(crate) fn ascii_view(&self) -> &AsciiView {
         unsafe { &*(&raw mut (*self.get()).ascii as *mut AsciiView) }
     }
+    // `tmp_typed_element_offsets`/`tmp_thread_parse` ([Buf; N]) — per-element accessors:
+    // `_at(i)` → `&BufView` (subfields), `_mut_ptr(i)` → whole-element `*mut Buf` (buf-op out-param).
+    #[inline(always)]
+    pub(crate) fn tmp_typed_element_offsets_at(&self, i: usize) -> &crate::native::buf::BufView {
+        unsafe {
+            &*(&raw mut (*self.get()).tmp_typed_element_offsets[i]
+                as *mut crate::native::buf::BufView)
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_typed_element_offsets_mut_ptr(&self, i: usize) -> *mut Buf {
+        unsafe { &raw mut (*self.get()).tmp_typed_element_offsets[i] }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_thread_parse_at(&self, i: usize) -> &crate::native::buf::BufView {
+        unsafe {
+            &*(&raw mut (*self.get()).tmp_thread_parse[i] as *mut crate::native::buf::BufView)
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_thread_parse_mut_ptr(&self, i: usize) -> *mut Buf {
+        unsafe { &raw mut (*self.get()).tmp_thread_parse[i] }
+    }
     // `exporter`/`mirror_axis` (Copy enums) — value getter/setter.
     #[inline(always)]
     pub(crate) fn exporter(&self) -> Exporter {

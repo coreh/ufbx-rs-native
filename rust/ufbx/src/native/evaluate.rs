@@ -909,7 +909,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     buf_free(uc.tmp_mut_ptr());
     buf_free(uc.tmp_parse_mut_ptr());
     for i in 0..THREAD_GROUP_COUNT {
-        buf_free(&mut (*uc.get()).tmp_thread_parse[i]);
+        buf_free(uc.tmp_thread_parse_mut_ptr(i));
     }
     buf_free(uc.tmp_stack_mut_ptr());
     buf_free(uc.tmp_connections_mut_ptr());
@@ -919,7 +919,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     buf_free(uc.tmp_element_fbx_ids_mut_ptr());
     buf_free(uc.tmp_element_ptrs_mut_ptr());
     for i in 0..ELEMENT_TYPE_COUNT {
-        buf_free(&mut (*uc.get()).tmp_typed_element_offsets[i]);
+        buf_free(uc.tmp_typed_element_offsets_mut_ptr(i));
     }
     buf_free(uc.tmp_mesh_textures_mut_ptr());
     buf_free(uc.tmp_full_weights_mut_ptr());
@@ -1143,7 +1143,8 @@ pub(crate) unsafe fn load(
         .set_ator(uc.ator_tmp_mut_ptr());
     uc.tmp_element_ptrs_view().set_ator(uc.ator_tmp_mut_ptr());
     for i in 0..ELEMENT_TYPE_COUNT {
-        (*uc.get()).tmp_typed_element_offsets[i].ator = uc.ator_tmp_mut_ptr();
+        uc.tmp_typed_element_offsets_at(i)
+            .set_ator(uc.ator_tmp_mut_ptr());
     }
     uc.tmp_mesh_textures_view().set_ator(uc.ator_tmp_mut_ptr());
     uc.tmp_full_weights_view().set_ator(uc.ator_tmp_mut_ptr());
@@ -1152,9 +1153,9 @@ pub(crate) unsafe fn load(
     uc.tmp_ascii_spans_view().set_ator(uc.ator_tmp_mut_ptr());
 
     for i in 0..THREAD_GROUP_COUNT {
-        (*uc.get()).tmp_thread_parse[i].ator = uc.ator_tmp_mut_ptr();
-        (*uc.get()).tmp_thread_parse[i].unordered = true;
-        (*uc.get()).tmp_thread_parse[i].clearable = true;
+        uc.tmp_thread_parse_at(i).set_ator(uc.ator_tmp_mut_ptr());
+        uc.tmp_thread_parse_at(i).set_unordered(true);
+        uc.tmp_thread_parse_at(i).set_clearable(true);
     }
 
     uc.result_view().set_ator(uc.ator_result_mut_ptr());
