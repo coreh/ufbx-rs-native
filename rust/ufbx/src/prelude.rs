@@ -865,14 +865,21 @@ unsafe extern "C" fn allocator_imp_box_free_allocator(user: *mut c_void) {
     ator.free_allocator()
 }
 
-#[derive(Default)]
 pub enum Allocator {
     Libc,
-    #[default]
     Global,
     System,
     Box(Box<dyn AllocatorInterface>),
     Raw(Unsafe<RawAllocator>),
+}
+
+// Manual impl (rather than `#[derive(Default)]`) to keep the public-API
+// rendering stable for the ufbx-rust parity gate; see rust/tools/api/.
+#[allow(clippy::derivable_impls)]
+impl Default for Allocator {
+    fn default() -> Self {
+        Allocator::Global
+    }
 }
 
 impl Allocator {
@@ -917,11 +924,17 @@ impl Allocator {
     }
 }
 
-#[derive(Default)]
 pub enum ThreadPool {
-    #[default]
     None,
     Raw(Unsafe<RawThreadPool>),
+}
+
+// Manual impl (see Allocator's Default) to keep the public-API rendering stable.
+#[allow(clippy::derivable_impls)]
+impl Default for ThreadPool {
+    fn default() -> Self {
+        ThreadPool::None
+    }
 }
 
 impl ThreadPool {
@@ -1287,12 +1300,18 @@ pub(crate) trait FromRust {
     }
 }
 
-#[derive(Default)]
 pub enum StringOpt<'a> {
-    #[default]
     Unset,
     Ref(&'a str),
     Owned(string::String),
+}
+
+// Manual impl (see Allocator's Default) to keep the public-API rendering stable.
+#[allow(clippy::derivable_impls)]
+impl Default for StringOpt<'_> {
+    fn default() -> Self {
+        StringOpt::Unset
+    }
 }
 
 impl<'a> From<&'a str> for StringOpt<'a> {
@@ -1318,12 +1337,18 @@ impl<'a> FromRust for StringOpt<'a> {
     }
 }
 
-#[derive(Default)]
 pub enum BlobOpt<'a> {
-    #[default]
     Unset,
     Ref(&'a [u8]),
     Owned(Vec<u8>),
+}
+
+// Manual impl (see Allocator's Default) to keep the public-API rendering stable.
+#[allow(clippy::derivable_impls)]
+impl Default for BlobOpt<'_> {
+    fn default() -> Self {
+        BlobOpt::Unset
+    }
 }
 
 impl<'a> From<&'a [u8]> for BlobOpt<'a> {
@@ -1349,13 +1374,19 @@ impl<'a> FromRust for BlobOpt<'a> {
     }
 }
 
-#[derive(Default)]
 pub enum ListOpt<'a, T> {
-    #[default]
     Unset,
     Ref(&'a [T]),
     Mut(&'a mut [T]),
     Owned(Vec<T>),
+}
+
+// Manual impl (see Allocator's Default) to keep the public-API rendering stable.
+#[allow(clippy::derivable_impls)]
+impl<T> Default for ListOpt<'_, T> {
+    fn default() -> Self {
+        ListOpt::Unset
+    }
 }
 
 impl<'a, T> From<&'a [T]> for ListOpt<'a, T> {
