@@ -3749,6 +3749,40 @@ pub(crate) struct BakeTimeList {
     pub count: usize,
 }
 
+// Typed interior-mutable VIEW over a `BakeTimeList` field, reinterpreted in place
+// (getters + setters; the list is built by writing `.count`/`.data`).
+#[cfg(feature = "baking")]
+#[repr(transparent)]
+pub(crate) struct BakeTimeListView(core::cell::UnsafeCell<core::mem::MaybeUninit<BakeTimeList>>);
+
+#[cfg(feature = "baking")]
+impl BakeTimeListView {
+    #[inline(always)]
+    fn get(&self) -> *mut BakeTimeList {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn count(&self) -> usize {
+        unsafe { (*self.get()).count }
+    }
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *mut BakeTime {
+        unsafe { (*self.get()).data }
+    }
+    #[inline(always)]
+    pub(crate) fn set_count(&self, count: usize) {
+        unsafe {
+            (*self.get()).count = count;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_data(&self, data: *mut BakeTime) {
+        unsafe {
+            (*self.get()).data = data;
+        }
+    }
+}
+
 // ufbx.c:26687-26723 `ufbxi_bake_context`
 #[cfg(feature = "baking")]
 #[repr(C)]
@@ -4131,6 +4165,13 @@ impl BakeContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerBakeContext {
         self.0.get().cast()
+    }
+
+    // `layer_weight_times` (BakeTimeList) — typed VIEW handle (reinterpret-in-place).
+    #[inline(always)]
+    pub(crate) fn layer_weight_times_view(&self) -> &BakeTimeListView {
+        // SAFETY: reinterpret the BakeTimeList field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).layer_weight_times as *mut BakeTimeListView) }
     }
 
     #[inline(always)]
@@ -4790,13 +4831,13 @@ pub(crate) unsafe fn finalize_bake_times(
     bc: &BakeContext,
     p_dst: *mut BakeTimeList,
 ) -> Result<(), Fail> {
-    if (*bc.get()).layer_weight_times.count > 0 {
+    if bc.layer_weight_times_view().count() > 0 {
         ufbxi_check_err!(
             bc.error_mut_ptr(),
             !push_copy::<BakeTime>(
                 bc.tmp_times_mut_ptr(),
-                (*bc.get()).layer_weight_times.count,
-                (*bc.get()).layer_weight_times.data,
+                bc.layer_weight_times_view().count(),
+                bc.layer_weight_times_view().data(),
             )
             .is_null(),
             "((ufbxi_bake_time*)ufbxi_push_size_copy((&bc->tmp_times), sizeof(ufbxi_bake_time), (bc->layer_weight_times.count), (bc->layer_weight_times.data)))"
@@ -6123,12 +6164,15 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
             let mut weight_times: BakeTimeList = MaybeUninit::zeroed().assume_init();
             finalize_bake_times(bc, ptr::addr_of_mut!(weight_times))?;
 
-            (*bc.get()).layer_weight_times.count = weight_times.count;
-            (*bc.get()).layer_weight_times.data =
-                push_copy::<BakeTime>(bc.tmp_mut_ptr(), weight_times.count, weight_times.data);
+            bc.layer_weight_times_view().set_count(weight_times.count);
+            bc.layer_weight_times_view().set_data(push_copy::<BakeTime>(
+                bc.tmp_mut_ptr(),
+                weight_times.count,
+                weight_times.data,
+            ));
             ufbxi_check_err!(
                 bc.error_mut_ptr(),
-                !(*bc.get()).layer_weight_times.data.is_null(),
+                !bc.layer_weight_times_view().data().is_null(),
                 "bc->layer_weight_times.data"
             );
 
