@@ -53,6 +53,7 @@ use crate::native::platform::{
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{SanitizedString, StringPool};
 use crate::native::thread::{ThreadPool, THREAD_GROUP_COUNT};
+use crate::native::view::SliceViewIter;
 use crate::native::warnings::Warnings;
 use crate::prelude::{Blob, Real, Ref, String};
 
@@ -143,6 +144,54 @@ pub(crate) struct Node {
 pub(crate) union NodeContent {
     pub array: *mut ValueArray, // if `prop_type_mask == UFBXI_PROP_ARRAY`
     pub vals: *mut Value,       // otherwise
+}
+
+// Reinterpret-in-place view over an arena-allocated `Node` (Rust-port
+// infrastructure; see `native::view`). ufbx materializes each node's children as
+// a contiguous `push_pop` run walked in C by `ufbxi_for`, so `SliceViewIter` over
+// `(children, num_children)` is the safe navigation form. `View<Node>` supplies
+// `get()` / `from_ptr()`; the accessors below are the per-struct residue. `name`
+// is POOLED — it is compared with `==` by pointer value and never dereferenced.
+pub(crate) type NodeView = crate::native::view::View<Node>;
+
+impl NodeView {
+    #[inline(always)]
+    pub(crate) fn name(&self) -> *const u8 {
+        // SAFETY: reading the pooled `name` pointer field of a valid arena `Node`.
+        unsafe { (*self.get()).name }
+    }
+    #[inline(always)]
+    pub(crate) fn num_children(&self) -> u32 {
+        // SAFETY: reading a `u32` count field of a valid arena `Node`.
+        unsafe { (*self.get()).num_children }
+    }
+    #[inline(always)]
+    pub(crate) fn name_len(&self) -> u8 {
+        // SAFETY: reading a `u8` length field of a valid arena `Node`.
+        unsafe { (*self.get()).name_len }
+    }
+    #[inline(always)]
+    pub(crate) fn value_type_mask(&self) -> u16 {
+        // SAFETY: reading a `u16` scalar field of a valid arena `Node`.
+        unsafe { (*self.get()).value_type_mask }
+    }
+    #[inline(always)]
+    pub(crate) fn children(&self) -> *mut Node {
+        // SAFETY: reading the `children` run pointer of a valid arena `Node`.
+        unsafe { (*self.get()).children }
+    }
+    #[inline(always)]
+    pub(crate) fn vals(&self) -> *mut Value {
+        // SAFETY: reading the `vals` arm of the `content` union of a valid arena
+        // `Node` (PORTING.md "Unions"); a raw pointer, all bit patterns valid.
+        unsafe { (*self.get()).content.vals }
+    }
+    #[inline(always)]
+    pub(crate) fn array(&self) -> *mut ValueArray {
+        // SAFETY: reading the `array` arm of the `content` union of a valid arena
+        // `Node` (PORTING.md "Unions"); a raw pointer, all bit patterns valid.
+        unsafe { (*self.get()).content.array }
+    }
 }
 
 // ufbx.c:6215 `typedef struct ufbxi_refcount ufbxi_refcount;` (forward
@@ -4270,30 +4319,35 @@ pub(crate) fn array_type_size(type_: u8) -> usize {
 // -- Node operations
 
 // ufbx.c:7713-7719 `ufbxi_find_child`
+// Explicit loop (not `Iterator::find`) mirrors the C `ufbxi_for` control-flow for
+// upstream line-correspondence and hosts the per-run SAFETY note. `name` is
+// POOLED — compared with `==` by pointer VALUE, never dereferenced.
+#[allow(clippy::manual_find)]
 #[inline(never)]
-pub(crate) unsafe fn find_child(node: *mut Node, name: *const u8) -> *mut Node {
+pub(crate) fn find_child<'a>(node: &'a NodeView, name: *const u8) -> Option<&'a NodeView> {
     // C: `ufbxi_for(ufbxi_node, c, node->children, node->num_children)`
-    let mut c = (*node).children;
-    let c_end = crate::native::platform::add_ptr(c, (*node).num_children as usize);
-    while c != c_end {
-        if (*c).name == name {
-            return c;
+    // SAFETY: `children`/`num_children` describe a contiguous arena run (built via
+    // `push_pop`), valid and stable for `node`'s lifetime `'a`.
+    let children: SliceViewIter<'a, Node> =
+        unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) };
+    for c in children {
+        if c.name() == name {
+            return Some(c);
         }
-        c = c.add(1);
     }
-    core::ptr::null_mut()
+    None
 }
 
 // Retrieve the type of a given value
 // ufbx.c:7721-7725 `ufbxi_get_val_type`
 #[inline(always)]
-pub(crate) unsafe fn get_val_type(node: *mut Node, ix: usize) -> ValueType {
+pub(crate) fn get_val_type(node: &NodeView, ix: usize) -> ValueType {
     // C: `(ufbxi_value_type)((node->value_type_mask >> (ix*2)) & 0x3)` — the
     // 2-bits-per-value tag; the mask keeps the cast in range of the enum.
     // The `as i32` reproduces C's integer promotion of the `uint16_t` mask
     // (PORTING.md checklist 8): C shifts in `int`, so amounts of 16..31 yield 0
     // instead of overflowing a 16-bit shift.
-    value_type_from_raw(((((*node).value_type_mask as i32) >> (ix.wrapping_mul(2))) & 0x3) as u32)
+    value_type_from_raw((((node.value_type_mask() as i32) >> (ix.wrapping_mul(2))) & 0x3) as u32)
 }
 
 // C casts the masked 2-bit field straight to `ufbxi_value_type`; Rust needs an
@@ -4315,20 +4369,21 @@ fn value_type_from_raw(raw: u32) -> ValueType {
 // ufbx.c:7731-7792 `ufbxi_get_val_at`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_void) -> bool {
+pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_void) -> bool {
     ufbxi_dev_assert!(ix < MAX_NON_ARRAY_VALUES);
     // `as i32` mirrors C's promotion of the `uint16_t` mask to `int`.
     let type_: ValueType = value_type_from_raw(
-        ((((*node).value_type_mask as i32) >> (ix.wrapping_mul(2))) & 0x3) as u32,
+        (((node.value_type_mask() as i32) >> (ix.wrapping_mul(2))) & 0x3) as u32,
     );
     // `node->vals[ix]` reads the `vals` arm of the `ufbxi_node` union
     // (PORTING.md "Unions"); as in C the read happens only inside the arms that
     // need it, never for `'_'`, the `default:` arm, or a type mismatch.
+    let vals: *mut Value = node.vals();
     match fmt {
         b'_' => true,
         b'I' => {
             if type_ == ValueType::Number {
-                *(v as *mut i32) = (*(*node).content.vals.add(ix)).num.i as i32;
+                *(v as *mut i32) = (*vals.add(ix)).num.i as i32;
                 true
             } else {
                 false
@@ -4336,7 +4391,7 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b'L' => {
             if type_ == ValueType::Number {
-                *(v as *mut i64) = (*(*node).content.vals.add(ix)).num.i;
+                *(v as *mut i64) = (*vals.add(ix)).num.i;
                 true
             } else {
                 false
@@ -4344,7 +4399,7 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b'F' => {
             if type_ == ValueType::Number {
-                *(v as *mut f32) = (*(*node).content.vals.add(ix)).num.f as f32;
+                *(v as *mut f32) = (*vals.add(ix)).num.f as f32;
                 true
             } else {
                 false
@@ -4352,7 +4407,7 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b'D' => {
             if type_ == ValueType::Number {
-                *(v as *mut f64) = (*(*node).content.vals.add(ix)).num.f;
+                *(v as *mut f64) = (*vals.add(ix)).num.f;
                 true
             } else {
                 false
@@ -4360,7 +4415,7 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b'R' => {
             if type_ == ValueType::Number {
-                *(v as *mut Real) = (*(*node).content.vals.add(ix)).num.f as Real;
+                *(v as *mut Real) = (*vals.add(ix)).num.f as Real;
                 true
             } else {
                 false
@@ -4368,7 +4423,7 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b'B' => {
             if type_ == ValueType::Number {
-                *(v as *mut bool) = (*(*node).content.vals.add(ix)).num.i != 0;
+                *(v as *mut bool) = (*vals.add(ix)).num.i != 0;
                 true
             } else {
                 false
@@ -4376,10 +4431,10 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b'Z' => {
             if type_ == ValueType::Number {
-                if (*(*node).content.vals.add(ix)).num.i < 0 {
+                if (*vals.add(ix)).num.i < 0 {
                     return false;
                 }
-                *(v as *mut usize) = (*(*node).content.vals.add(ix)).num.i as usize;
+                *(v as *mut usize) = (*vals.add(ix)).num.i as usize;
                 true
             } else {
                 false
@@ -4387,7 +4442,7 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b'S' => {
             if type_ == ValueType::String {
-                let src: SanitizedString = (*(*node).content.vals.add(ix)).s;
+                let src: SanitizedString = (*vals.add(ix)).s;
                 let dst: *mut String = v as *mut String;
                 if src.utf8_length > 0 {
                     if src.utf8_length == u32::MAX {
@@ -4406,7 +4461,7 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b's' => {
             if type_ == ValueType::String {
-                let src: SanitizedString = (*(*node).content.vals.add(ix)).s;
+                let src: SanitizedString = (*vals.add(ix)).s;
                 let dst: *mut String = v as *mut String;
                 (*dst).data = src.raw_data;
                 (*dst).length = src.raw_length as usize;
@@ -4417,7 +4472,7 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b'C' => {
             if type_ == ValueType::String {
-                let src: SanitizedString = (*(*node).content.vals.add(ix)).s;
+                let src: SanitizedString = (*vals.add(ix)).s;
                 let dst: *mut *const u8 = v as *mut *const u8;
                 if src.utf8_length > 0 {
                     if src.utf8_length == u32::MAX {
@@ -4434,7 +4489,7 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b'c' => {
             if type_ == ValueType::String {
-                let src: SanitizedString = (*(*node).content.vals.add(ix)).s;
+                let src: SanitizedString = (*vals.add(ix)).s;
                 let dst: *mut *const u8 = v as *mut *const u8;
                 *dst = src.raw_data;
                 true
@@ -4444,7 +4499,7 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b'b' => {
             if type_ == ValueType::String {
-                let src: SanitizedString = (*(*node).content.vals.add(ix)).s;
+                let src: SanitizedString = (*vals.add(ix)).s;
                 let dst: *mut Blob = v as *mut Blob;
                 (*dst).data = src.raw_data;
                 (*dst).size = src.raw_length as usize;
@@ -4463,15 +4518,17 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
 // ufbx.c:7794-7803 `ufbxi_get_array`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn get_array(node: *mut Node, fmt: u8) -> *mut ValueArray {
-    if (*node).value_type_mask != ValueType::Array as u16 {
+pub(crate) fn get_array(node: &NodeView, fmt: u8) -> *mut ValueArray {
+    if node.value_type_mask() != ValueType::Array as u16 {
         return core::ptr::null_mut();
     }
-    let array: *mut ValueArray = (*node).content.array;
+    let array: *mut ValueArray = node.array();
     let mut fmt = fmt;
     if fmt != b'?' {
         fmt = normalize_array_type(fmt, b'b');
-        if (*array).type_ != fmt {
+        // SAFETY: `array` is the node's array-arm pointer to a valid arena
+        // `ValueArray`; reading its `type_` byte cannot violate validity.
+        if unsafe { (*array).type_ } != fmt {
             return core::ptr::null_mut();
         }
     }
@@ -4481,7 +4538,7 @@ pub(crate) unsafe fn get_array(node: *mut Node, fmt: u8) -> *mut ValueArray {
 // ufbx.c:7805-7809 `ufbxi_get_val1`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn get_val1(node: *mut Node, fmt: *const u8, v0: *mut c_void) -> bool {
+pub(crate) unsafe fn get_val1(node: &NodeView, fmt: *const u8, v0: *mut c_void) -> bool {
     if !get_val_at(node, 0, *fmt.add(0), v0) {
         return false;
     }
@@ -4492,7 +4549,7 @@ pub(crate) unsafe fn get_val1(node: *mut Node, fmt: *const u8, v0: *mut c_void) 
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn get_val2(
-    node: *mut Node,
+    node: &NodeView,
     fmt: *const u8,
     v0: *mut c_void,
     v1: *mut c_void,
@@ -4510,7 +4567,7 @@ pub(crate) unsafe fn get_val2(
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn get_val3(
-    node: *mut Node,
+    node: &NodeView,
     fmt: *const u8,
     v0: *mut c_void,
     v1: *mut c_void,
@@ -4532,7 +4589,7 @@ pub(crate) unsafe fn get_val3(
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn get_val4(
-    node: *mut Node,
+    node: &NodeView,
     fmt: *const u8,
     v0: *mut c_void,
     v1: *mut c_void,
@@ -4558,7 +4615,7 @@ pub(crate) unsafe fn get_val4(
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn get_val5(
-    node: *mut Node,
+    node: &NodeView,
     fmt: *const u8,
     v0: *mut c_void,
     v1: *mut c_void,
@@ -4588,15 +4645,15 @@ pub(crate) unsafe fn get_val5(
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn find_val1(
-    node: *mut Node,
+    node: &NodeView,
     name: *const u8,
     fmt: *const u8,
     v0: *mut c_void,
 ) -> bool {
-    let child: *mut Node = find_child(node, name);
-    if child.is_null() {
-        return false;
-    }
+    let child: &NodeView = match find_child(node, name) {
+        Some(child) => child,
+        None => return false,
+    };
     if !get_val_at(child, 0, *fmt.add(0), v0) {
         return false;
     }
@@ -4607,16 +4664,16 @@ pub(crate) unsafe fn find_val1(
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn find_val2(
-    node: *mut Node,
+    node: &NodeView,
     name: *const u8,
     fmt: *const u8,
     v0: *mut c_void,
     v1: *mut c_void,
 ) -> bool {
-    let child: *mut Node = find_child(node, name);
-    if child.is_null() {
-        return false;
-    }
+    let child: &NodeView = match find_child(node, name) {
+        Some(child) => child,
+        None => return false,
+    };
     if !get_val_at(child, 0, *fmt.add(0), v0) {
         return false;
     }
@@ -4629,31 +4686,37 @@ pub(crate) unsafe fn find_val2(
 // ufbx.c:7862-7867 `ufbxi_find_array`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn find_array(node: *mut Node, name: *const u8, fmt: u8) -> *mut ValueArray {
-    let child: *mut Node = find_child(node, name);
-    if child.is_null() {
-        return core::ptr::null_mut();
-    }
+pub(crate) fn find_array(node: &NodeView, name: *const u8, fmt: u8) -> *mut ValueArray {
+    let child: &NodeView = match find_child(node, name) {
+        Some(child) => child,
+        None => return core::ptr::null_mut(),
+    };
     get_array(child, fmt)
 }
 
 // ufbx.c:7869-7877 `ufbxi_find_child_strcmp`
-pub(crate) unsafe fn find_child_strcmp(node: *mut Node, name: *const u8) -> *mut Node {
+// Stays `unsafe fn`: it DEREFERENCES `name` (leading byte + `strcmp`). Returns
+// `Option<&NodeView>` so results thread as views to `&NodeView`-taking callers.
+#[allow(clippy::manual_find)]
+pub(crate) unsafe fn find_child_strcmp<'a>(
+    node: &'a NodeView,
+    name: *const u8,
+) -> Option<&'a NodeView> {
     let leading: u8 = *name.add(0);
     // C: `ufbxi_for(ufbxi_node, c, node->children, node->num_children)`
-    let mut c = (*node).children;
-    let c_end = crate::native::platform::add_ptr(c, (*node).num_children as usize);
-    while c != c_end {
-        if *(*c).name.add(0) != leading {
-            c = c.add(1);
+    // SAFETY: `children`/`num_children` describe a contiguous arena run (built via
+    // `push_pop`), valid and stable for `node`'s lifetime `'a`.
+    let children: SliceViewIter<'a, Node> =
+        unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) };
+    for c in children {
+        if *c.name().add(0) != leading {
             continue;
         }
-        if strcmp((*c).name, name) == 0 {
-            return c;
+        if strcmp(c.name(), name) == 0 {
+            return Some(c);
         }
-        c = c.add(1);
     }
-    core::ptr::null_mut()
+    None
 }
 
 // -- Element extra data allocation
@@ -5980,14 +6043,16 @@ unsafe fn retain_dom_node_rec(
 
             if mask == ValueType::String as u32 {
                 (*val).type_ = DomValueType::String;
+                // Bridge the raw parse-tree `node` to a view for the `get_val_at`
+                // extractor (this fn keeps the raw node for its owned derefs).
                 ufbxi_ignore!(get_val_at(
-                    node,
+                    NodeView::from_ptr(node),
                     ix,
                     b'S',
                     &mut (*val).value_str as *mut String as *mut c_void
                 ));
                 ufbxi_ignore!(get_val_at(
-                    node,
+                    NodeView::from_ptr(node),
                     ix,
                     b'b',
                     &mut (*val).value_blob as *mut Blob as *mut c_void
@@ -7577,10 +7642,11 @@ mod tests {
         // Values 0..3 typed NUMBER, STRING, NONE, ARRAY-tag bits.
         node.value_type_mask = 0x1 | (0x2 << 2) | (0x0 << 4) | (0x3 << 6);
         unsafe {
-            assert_eq!(get_val_type(&mut node, 0), ValueType::Number);
-            assert_eq!(get_val_type(&mut node, 1), ValueType::String);
-            assert_eq!(get_val_type(&mut node, 2), ValueType::None);
-            assert_eq!(get_val_type(&mut node, 3), ValueType::Array);
+            let node = NodeView::from_ptr(&mut node);
+            assert_eq!(get_val_type(node, 0), ValueType::Number);
+            assert_eq!(get_val_type(node, 1), ValueType::String);
+            assert_eq!(get_val_type(node, 2), ValueType::None);
+            assert_eq!(get_val_type(node, 3), ValueType::Array);
         }
     }
 
@@ -7604,7 +7670,7 @@ mod tests {
         node.content.vals = vals.as_mut_ptr();
 
         unsafe {
-            let node = &mut node as *mut Node;
+            let node = NodeView::from_ptr(&mut node);
             assert!(get_val_at(node, 0, b'_', core::ptr::null_mut()));
 
             let mut i32v: i32 = 0;
@@ -7737,7 +7803,7 @@ mod tests {
         let mut a: i64 = 0;
         let mut b: i64 = 0;
         unsafe {
-            let node = &mut node as *mut Node;
+            let node = NodeView::from_ptr(&mut node);
             assert!(get_val1(
                 node,
                 b"L\0".as_ptr(),
@@ -7783,33 +7849,29 @@ mod tests {
         node.num_children = 2;
 
         unsafe {
-            let node = &mut node as *mut Node;
-            assert_eq!(find_child(node, name_a.as_ptr()), children.as_mut_ptr());
+            let node = NodeView::from_ptr(&mut node);
+            let child0: &NodeView = NodeView::from_ptr(children.as_mut_ptr());
+            let child1: &NodeView = NodeView::from_ptr(children.as_mut_ptr().add(1));
+            assert_eq!(
+                find_child(node, name_a.as_ptr()).map(NodeView::get),
+                Some(children.as_mut_ptr())
+            );
             // Pointer comparison: an equal-but-unpooled name does not match.
-            assert!(find_child(node, name_b_copy.as_ptr()).is_null());
+            assert!(find_child(node, name_b_copy.as_ptr()).is_none());
             // ...while the strcmp variant does.
             assert_eq!(
-                find_child_strcmp(node, name_b_copy.as_ptr()),
-                children.as_mut_ptr().add(1)
+                find_child_strcmp(node, name_b_copy.as_ptr()).map(NodeView::get),
+                Some(children.as_mut_ptr().add(1))
             );
 
-            assert_eq!(
-                get_array(children.as_mut_ptr().add(1), real_type),
-                &mut array as *mut _
-            );
+            assert_eq!(get_array(child1, real_type), &mut array as *mut _);
             // 'r' normalizes to the array's concrete type in either Real mode.
-            assert_eq!(
-                get_array(children.as_mut_ptr().add(1), b'r'),
-                &mut array as *mut _
-            );
-            assert!(get_array(children.as_mut_ptr().add(1), b'i').is_null());
+            assert_eq!(get_array(child1, b'r'), &mut array as *mut _);
+            assert!(get_array(child1, b'i').is_null());
             // '?' skips the type check entirely.
-            assert_eq!(
-                get_array(children.as_mut_ptr().add(1), b'?'),
-                &mut array as *mut _
-            );
+            assert_eq!(get_array(child1, b'?'), &mut array as *mut _);
             // A non-array node has no array.
-            assert!(get_array(children.as_mut_ptr(), b'?').is_null());
+            assert!(get_array(child0, b'?').is_null());
 
             assert_eq!(
                 find_array(node, name_b.as_ptr(), real_type),

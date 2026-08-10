@@ -127,8 +127,8 @@ use crate::native::parse::{
     get_val1, get_val2, get_val3, get_val4, get_val5, get_val_at, get_val_type,
     init_node_prop_names, is_node_property_name, is_vec3_one, is_vec3_zero, parse_legacy_toplevel,
     parse_toplevel, parse_toplevel_child, push_element_extra, retain_toplevel, Ascii, Context,
-    ElementInfo, FbxAttrEntry, FbxIdEntry, MeshExtra, Node, PtrFbxIdEntry, Template, TextureExtra,
-    TmpAnimStack, TmpBonePose, TmpConnection, TmpMeshTexture, ValueArray, ValueType,
+    ElementInfo, FbxAttrEntry, FbxIdEntry, MeshExtra, Node, NodeView, PtrFbxIdEntry, Template,
+    TextureExtra, TmpAnimStack, TmpBonePose, TmpConnection, TmpMeshTexture, ValueArray, ValueType,
 };
 use crate::native::platform::{
     add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, math, max_real, max_sz, min32,
@@ -142,6 +142,7 @@ use crate::native::thread::{
     thread_pool_available_tasks, thread_pool_flush_group, thread_pool_wait_all,
     thread_pool_wait_group, THREAD_GROUP_COUNT,
 };
+use crate::native::view::SliceViewIter;
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::as_f64;
 use crate::prelude::{Blob, List, OpenFileContext, Real, Ref, String};
@@ -158,11 +159,12 @@ pub(crate) const THUMBNAIL_FORMAT_COUNT: i32 = ThumbnailFormat::Rgba32 as i32 + 
 pub(crate) unsafe fn read_embedded_blob(
     uc: &Context,
     dst_blob: *mut Blob,
-    node: *mut Node,
+    node: Option<&NodeView>,
 ) -> Result<(), Fail> {
-    if node.is_null() {
-        return Ok(());
-    }
+    let node: &NodeView = match node {
+        Some(node) => node,
+        None => return Ok(()),
+    };
 
     let content_arr: *mut ValueArray = get_array(node, b'C');
     if !content_arr.is_null() && (*content_arr).size > 0 {
@@ -204,7 +206,7 @@ pub(crate) unsafe fn read_embedded_blob(
 #[inline(never)]
 pub(crate) unsafe fn read_property(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     prop: *mut Prop,
     version: i32,
 ) -> Result<(), Fail> {
@@ -337,8 +339,8 @@ pub(crate) unsafe fn read_property(
     }
 
     // Very unlikely, seems to only exist in some "non standard" FBX files
-    if (*node).num_children > 0 {
-        let binary: *mut Node = find_child(node, sp::BinaryData.as_ptr());
+    if node.num_children() > 0 {
+        let binary = find_child(node, sp::BinaryData.as_ptr());
         read_embedded_blob(uc, &mut (*prop).value_blob, binary)?;
         flags |= PropFlags::VALUE_BLOB.raw();
     }
@@ -411,16 +413,16 @@ pub(crate) unsafe fn deduplicate_properties(list: *mut List<Prop>) {
 #[inline(never)]
 pub(crate) unsafe fn read_properties(
     uc: &Context,
-    parent: *mut Node,
+    parent: &NodeView,
     props: *mut Props,
 ) -> Result<(), Fail> {
     (*props).defaults = None;
 
     let mut version: i32 = 70;
-    let mut node: *mut Node = find_child(parent, sp::Properties70.as_ptr());
-    if node.is_null() {
+    let mut node: Option<&NodeView> = find_child(parent, sp::Properties70.as_ptr());
+    if node.is_none() {
         node = find_child(parent, sp::Properties60.as_ptr());
-        if node.is_null() {
+        if node.is_none() {
             // No properties found, not an error
             (*props).props.data = core::ptr::null();
             (*props).props.count = 0;
@@ -428,16 +430,17 @@ pub(crate) unsafe fn read_properties(
         }
         version = 60;
     }
+    let node: &NodeView = node.unwrap();
 
-    (*props).props.data = push_zero::<Prop>(uc.result_mut_ptr(), (*node).num_children as usize);
-    (*props).props.count = (*node).num_children as usize;
+    (*props).props.data = push_zero::<Prop>(uc.result_mut_ptr(), node.num_children() as usize);
+    (*props).props.count = node.num_children() as usize;
     ufbxi_check!(uc, !(*props).props.data.is_null(), "props->props.data");
 
     let mut i: usize = 0;
     while i < (*props).props.count {
         read_property(
             uc,
-            (*node).children.add(i),
+            NodeView::from_ptr(node.children().add(i)),
             (*props).props.data.add(i) as *mut Prop,
             version,
         )?;
@@ -454,7 +457,7 @@ pub(crate) unsafe fn read_properties(
 #[inline(never)]
 pub(crate) unsafe fn read_thumbnail(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     thumbnail: *mut Thumbnail,
 ) -> Result<(), Fail> {
     read_properties(uc, node, &mut (*thumbnail).props)?;
@@ -463,10 +466,10 @@ pub(crate) unsafe fn read_thumbnail(
     let custom_height: i64 = api_find_int(&(*thumbnail).props, b"CustomHeight\0".as_ptr(), 0);
 
     let mut format: i32 = 0;
-    let format_node: *mut Node = find_child_strcmp(node, b"Format\0".as_ptr());
-    if !format_node.is_null()
+    let format_node = find_child_strcmp(node, b"Format\0".as_ptr());
+    if format_node.is_some()
         && get_val1(
-            format_node,
+            format_node.unwrap(),
             b"I\0".as_ptr(),
             &mut format as *mut i32 as *mut c_void,
         )
@@ -525,15 +528,15 @@ fn thumbnail_format_from_raw(raw: i32) -> ThumbnailFormat {
 
 // ufbx.c:11969-11979 `ufbxi_read_scene_info`
 #[inline(never)]
-pub(crate) unsafe fn read_scene_info(uc: &Context, node: *mut Node) -> Result<(), Fail> {
+pub(crate) unsafe fn read_scene_info(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     read_properties(
         uc,
         node,
         uc.scene_view().metadata_view().scene_props_mut_ptr(),
     )?;
 
-    let thumbnail: *mut Node = find_child(node, sp::Thumbnail.as_ptr());
-    if !thumbnail.is_null() {
+    let thumbnail = find_child(node, sp::Thumbnail.as_ptr());
+    if let Some(thumbnail) = thumbnail {
         read_thumbnail(
             uc,
             thumbnail,
@@ -557,8 +560,10 @@ pub(crate) unsafe fn read_header_extension(uc: &Context) -> Result<(), Fail> {
         if child.is_null() {
             break;
         }
+        // Bridge the raw parse-tree node into a view for the navigation below.
+        let child: &NodeView = NodeView::from_ptr(child);
 
-        if (*child).name == sp::Creator.as_ptr() {
+        if child.name() == sp::Creator.as_ptr() {
             ufbxi_ignore!(get_val1(
                 child,
                 b"S\0".as_ptr(),
@@ -566,7 +571,7 @@ pub(crate) unsafe fn read_header_extension(uc: &Context) -> Result<(), Fail> {
             ));
         }
 
-        if uc.version() < 6000 && (*child).name == sp::FBXVersion.as_ptr() {
+        if uc.version() < 6000 && child.name() == sp::FBXVersion.as_ptr() {
             let mut version: i32 = 0;
             if get_val1(
                 child,
@@ -579,7 +584,7 @@ pub(crate) unsafe fn read_header_extension(uc: &Context) -> Result<(), Fail> {
             }
         }
 
-        if (*child).name == sp::FBXHeaderVersion.as_ptr() {
+        if child.name() == sp::FBXHeaderVersion.as_ptr() {
             ufbxi_ignore!(get_val1(
                 child,
                 b"I\0".as_ptr(),
@@ -587,7 +592,7 @@ pub(crate) unsafe fn read_header_extension(uc: &Context) -> Result<(), Fail> {
             ));
         }
 
-        if (*child).name == sp::OtherFlags.as_ptr() {
+        if child.name() == sp::OtherFlags.as_ptr() {
             if find_val1(
                 child,
                 sp::TCDefinition.as_ptr(),
@@ -598,7 +603,7 @@ pub(crate) unsafe fn read_header_extension(uc: &Context) -> Result<(), Fail> {
             }
         }
 
-        if (*child).name == sp::SceneInfo.as_ptr() {
+        if child.name() == sp::SceneInfo.as_ptr() {
             read_scene_info(uc, child)?;
         }
     }
@@ -785,8 +790,10 @@ pub(crate) unsafe fn read_document(uc: &Context) -> Result<(), Fail> {
         if child.is_null() {
             break;
         }
+        // Bridge the raw parse-tree node into a view for the navigation below.
+        let child: &NodeView = NodeView::from_ptr(child);
 
-        if (*child).name == sp::Document.as_ptr() && !found_root_id {
+        if child.name() == sp::Document.as_ptr() && !found_root_id {
             // Post-7000: Try to find the first document node and root ID.
             // TODO: Multiple documents / roots?
             if find_val1(
@@ -816,8 +823,10 @@ pub(crate) unsafe fn read_definitions(uc: &Context) -> Result<(), Fail> {
         if object.is_null() {
             break;
         }
+        // Bridge the raw parse-tree node into a view for the navigation below.
+        let object: &NodeView = NodeView::from_ptr(object);
 
-        if (*object).name != sp::ObjectType.as_ptr() {
+        if object.name() != sp::ObjectType.as_ptr() {
             continue;
         }
 
@@ -836,8 +845,8 @@ pub(crate) unsafe fn read_definitions(uc: &Context) -> Result<(), Fail> {
 
         // Pre-7000 FBX versions don't have property templates, they just have
         // the object counts by themselves.
-        let props: *mut Node = find_child(object, sp::PropertyTemplate.as_ptr());
-        if !props.is_null() {
+        let props = find_child(object, sp::PropertyTemplate.as_ptr());
+        if let Some(props) = props {
             ufbxi_check!(
                 uc,
                 get_val1(
@@ -1234,7 +1243,7 @@ pub(crate) unsafe fn push_element_size(
 pub(crate) unsafe fn push_synthetic_element_size(
     uc: &Context,
     p_fbx_id: *mut u64,
-    node: *mut Node,
+    node: Option<&NodeView>,
     name: *const u8,
     size: usize,
     type_: ElementType,
@@ -1279,7 +1288,10 @@ pub(crate) unsafe fn push_synthetic_element_size(
     (*elem).type_ = type_;
     (*elem).element_id = element_id;
     (*elem).typed_id = typed_id;
-    (*elem).dom_node = opt_ref(get_dom_node(uc, node));
+    (*elem).dom_node = opt_ref(get_dom_node(
+        uc,
+        node.map_or(core::ptr::null_mut(), NodeView::get),
+    ));
     if !name.is_null() {
         (*elem).name.data = name;
         (*elem).name.length = strlen(name);
@@ -1327,7 +1339,7 @@ pub(crate) unsafe fn push_element<T>(
 pub(crate) unsafe fn push_synthetic_element<T>(
     uc: &Context,
     p_fbx_id: *mut u64,
-    node: *mut Node,
+    node: Option<&NodeView>,
     name: *const u8,
     type_enum: ElementType,
 ) -> *mut T {
@@ -1524,7 +1536,7 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
         let geo_node: *mut UfbxNode = push_synthetic_element::<UfbxNode>(
             uc,
             &mut geo_fbx_id,
-            core::ptr::null_mut(),
+            None,
             uc.opts_view().geometry_transform_helper_name_view().data(),
             ElementType::Node,
         );
@@ -1636,7 +1648,7 @@ pub(crate) unsafe fn setup_scale_helper(
     let scale_node: *mut UfbxNode = push_synthetic_element::<UfbxNode>(
         uc,
         &mut scale_fbx_id,
-        core::ptr::null_mut(),
+        None,
         uc.opts_view().scale_helper_name_view().data(),
         ElementType::Node,
     );
@@ -1705,7 +1717,7 @@ pub(crate) unsafe fn setup_scale_helper(
 #[inline(never)]
 pub(crate) unsafe fn read_model(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     ufbxi_ignore!(node);
@@ -1740,7 +1752,7 @@ pub(crate) unsafe fn read_model(
 #[inline(never)]
 pub(crate) unsafe fn read_element(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
     size: usize,
     type_: ElementType,
@@ -1755,7 +1767,7 @@ pub(crate) unsafe fn read_element(
 #[inline(never)]
 pub(crate) unsafe fn read_unknown(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     element: *mut ElementInfo,
     type_: String,
     sub_type: String,
@@ -1944,7 +1956,7 @@ pub(crate) unsafe fn warn_polygon_mapping(
 pub(crate) unsafe fn read_vertex_element(
     uc: &Context,
     mesh: *mut Mesh,
-    node: *mut Node,
+    node: &NodeView,
     attrib: *mut VertexAttrib,
     data_name: *const u8,
     index_name: *const u8,
@@ -2201,7 +2213,7 @@ pub(crate) unsafe fn read_truncated_array(
     uc: &Context,
     p_data: *mut c_void,
     p_count: *mut usize,
-    node: *mut Node,
+    node: &NodeView,
     name: *const u8,
     fmt: u8,
     size: usize,
@@ -2399,15 +2411,17 @@ pub(crate) unsafe fn sort_blend_offsets(
 #[inline(never)]
 pub(crate) unsafe fn read_shape(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
-    let node_vertices: *mut Node = find_child(node, sp::Vertices.as_ptr());
-    let node_indices: *mut Node = find_child(node, sp::Indexes.as_ptr());
-    let node_normals: *mut Node = find_child(node, sp::Normals.as_ptr());
-    if node_vertices.is_null() || node_indices.is_null() {
+    let node_vertices = find_child(node, sp::Vertices.as_ptr());
+    let node_indices = find_child(node, sp::Indexes.as_ptr());
+    let node_normals = find_child(node, sp::Normals.as_ptr());
+    if node_vertices.is_none() || node_indices.is_none() {
         return Ok(());
     }
+    let node_vertices: &NodeView = node_vertices.unwrap();
+    let node_indices: &NodeView = node_indices.unwrap();
 
     let shape: *mut BlendShape = push_element::<BlendShape>(uc, info, ElementType::BlendShape);
     ufbxi_check!(uc, !shape.is_null(), "shape");
@@ -2440,7 +2454,7 @@ pub(crate) unsafe fn read_shape(
     (*shape).position_offsets.count = num_offsets;
     (*shape).offset_vertices.count = num_offsets;
 
-    if !node_normals.is_null() {
+    if let Some(node_normals) = node_normals {
         let normals: *mut ValueArray = get_array(node_normals, b'r');
         ufbxi_check!(
             uc,
@@ -2467,7 +2481,7 @@ pub(crate) unsafe fn read_shape(
         for i in 0..num_offsets {
             (*offsets.add(i)).vertex = *(*shape).offset_vertices.data.add(i);
             (*offsets.add(i)).position_offset = *(*shape).position_offsets.data.add(i);
-            if !node_normals.is_null() {
+            if node_normals.is_some() {
                 (*offsets.add(i)).normal_offset = *(*shape).normal_offsets.data.add(i);
             }
         }
@@ -2478,7 +2492,7 @@ pub(crate) unsafe fn read_shape(
             *((*shape).offset_vertices.data as *mut u32).add(i) = (*offsets.add(i)).vertex;
             *((*shape).position_offsets.data as *mut Vec3).add(i) =
                 (*offsets.add(i)).position_offset;
-            if !node_normals.is_null() {
+            if node_normals.is_some() {
                 *((*shape).normal_offsets.data as *mut Vec3).add(i) =
                     (*offsets.add(i)).normal_offset;
             }
@@ -2493,18 +2507,18 @@ pub(crate) unsafe fn read_shape(
 #[inline(never)]
 pub(crate) unsafe fn read_synthetic_blend_shapes(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let mut deformer: *mut BlendDeformer = core::ptr::null_mut();
     let mut deformer_fbx_id: u64 = 0;
 
     // C: `ufbxi_for (ufbxi_node, n, node->children, node->num_children)`
-    let mut n = (*node).children;
-    let n_end = add_ptr(n, (*node).num_children as usize);
-    while n != n_end {
-        if (*n).name != sp::Shape.as_ptr() {
-            n = n.add(1);
+    // SAFETY: `children`/`num_children` describe a contiguous arena run (built via
+    // `push_pop`), valid and stable for `node`'s borrow.
+    let children = SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize);
+    for n in children {
+        if n.name() != sp::Shape.as_ptr() {
             continue;
         }
 
@@ -2521,7 +2535,7 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
             deformer = push_synthetic_element::<BlendDeformer>(
                 uc,
                 &mut deformer_fbx_id,
-                n,
+                Some(n),
                 name.data,
                 ElementType::BlendDeformer,
             );
@@ -2533,7 +2547,7 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
         let channel: *mut BlendChannel = push_synthetic_element::<BlendChannel>(
             uc,
             &mut channel_fbx_id,
-            n,
+            Some(n),
             name.data,
             ElementType::BlendChannel,
         );
@@ -2591,14 +2605,12 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
 
         shape_info.fbx_id = push_synthetic_id(uc);
         shape_info.name = name;
-        shape_info.dom_node = get_dom_node(uc, n);
+        shape_info.dom_node = get_dom_node(uc, n.get());
 
         read_shape(uc, n, &mut shape_info)?;
 
         connect_oo(uc, channel_fbx_id, deformer_fbx_id)?;
         connect_oo(uc, shape_info.fbx_id, channel_fbx_id)?;
-
-        n = n.add(1);
     }
 
     Ok(())
@@ -3090,7 +3102,7 @@ fn subdivision_boundary_from_raw(raw: i32) -> SubdivisionBoundary {
 #[inline(never)]
 pub(crate) unsafe fn read_mesh(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let mesh: *mut Mesh = push_element::<Mesh>(uc, info, ElementType::Mesh);
@@ -3105,18 +3117,19 @@ pub(crate) unsafe fn read_mesh(
 
     // Sometimes there are empty meshes in FBX files?
     // TODO: Should these be included in output? option? strict mode?
-    let node_vertices: *mut Node = find_child(node, sp::Vertices.as_ptr());
-    let node_indices: *mut Node = find_child(node, sp::PolygonVertexIndex.as_ptr());
-    if node_vertices.is_null() {
+    let node_vertices = find_child(node, sp::Vertices.as_ptr());
+    let node_indices = find_child(node, sp::PolygonVertexIndex.as_ptr());
+    if node_vertices.is_none() {
         return Ok(());
     }
+    let node_vertices: &NodeView = node_vertices.unwrap();
 
     if uc.opts_view().ignore_geometry() {
         return Ok(());
     }
 
     let vertices: *mut ValueArray = get_array(node_vertices, b'r');
-    let indices: *mut ValueArray = if !node_indices.is_null() {
+    let indices: *mut ValueArray = if let Some(node_indices) = node_indices {
         get_array(node_indices, b'i')
     } else {
         core::ptr::null_mut()
@@ -3126,7 +3139,7 @@ pub(crate) unsafe fn read_mesh(
     // If node_indices exists, it must be an array
     ufbxi_check!(
         uc,
-        node_indices.is_null() || !indices.is_null(),
+        node_indices.is_none() || !indices.is_null(),
         "!node_indices || indices"
     );
     ufbxi_check!(uc, (*vertices).size % 3 == 0, "vertices->size % 3 == 0");
@@ -3223,22 +3236,20 @@ pub(crate) unsafe fn read_mesh(
     let mut num_bitangents: usize = 0;
     let mut num_tangents: usize = 0;
     // C: `ufbxi_for (ufbxi_node, n, node->children, node->num_children)`
-    let mut n: *mut Node = (*node).children;
-    let n_end = add_ptr(n, (*node).num_children as usize);
-    while n != n_end {
-        if (*n).name == sp::LayerElementUV.as_ptr() {
+    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
+    for n in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
+        if n.name() == sp::LayerElementUV.as_ptr() {
             num_uv += 1;
         }
-        if (*n).name == sp::LayerElementColor.as_ptr() {
+        if n.name() == sp::LayerElementColor.as_ptr() {
             num_color += 1;
         }
-        if (*n).name == sp::LayerElementBinormal.as_ptr() {
+        if n.name() == sp::LayerElementBinormal.as_ptr() {
             num_bitangents += 1;
         }
-        if (*n).name == sp::LayerElementTangent.as_ptr() {
+        if n.name() == sp::LayerElementTangent.as_ptr() {
             num_tangents += 1;
         }
-        n = n.add(1);
     }
 
     let mut num_textures: usize = 0;
@@ -3262,18 +3273,15 @@ pub(crate) unsafe fn read_mesh(
     let mut num_bitangents_read: usize = 0;
     let mut num_tangents_read: usize = 0;
     // C: `ufbxi_for (ufbxi_node, n, node->children, node->num_children)`
-    let mut n: *mut Node = (*node).children;
-    let n_end = add_ptr(n, (*node).num_children as usize);
-    while n != n_end {
-        if *(*n).name.add(0) != b'L' {
+    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
+    for n in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
+        if *n.name().add(0) != b'L' {
             // All names start with 'LayerElement*'
-            n = n.add(1);
             continue;
         }
 
-        if (*n).name == sp::LayerElementNormal.as_ptr() {
+        if n.name() == sp::LayerElementNormal.as_ptr() {
             if (*mesh).vertex_normal.exists {
-                n = n.add(1);
                 continue;
             }
             read_vertex_element(
@@ -3287,7 +3295,7 @@ pub(crate) unsafe fn read_mesh(
                 b'r',
                 3,
             )?;
-        } else if (*n).name == sp::LayerElementBinormal.as_ptr() {
+        } else if n.name() == sp::LayerElementBinormal.as_ptr() {
             let layer: *mut TangentLayer = bitangents.add(num_bitangents_read);
             num_bitangents_read += 1;
 
@@ -3310,7 +3318,7 @@ pub(crate) unsafe fn read_mesh(
             if !(*layer).elem.exists {
                 num_bitangents_read -= 1;
             }
-        } else if (*n).name == sp::LayerElementTangent.as_ptr() {
+        } else if n.name() == sp::LayerElementTangent.as_ptr() {
             let layer: *mut TangentLayer = tangents.add(num_tangents_read);
             num_tangents_read += 1;
 
@@ -3333,7 +3341,7 @@ pub(crate) unsafe fn read_mesh(
             if !(*layer).elem.exists {
                 num_tangents_read -= 1;
             }
-        } else if (*n).name == sp::LayerElementUV.as_ptr() {
+        } else if n.name() == sp::LayerElementUV.as_ptr() {
             let set: *mut UvSet = ((*mesh).uv_sets.data as *mut UvSet).add((*mesh).uv_sets.count);
             (*mesh).uv_sets.count += 1;
 
@@ -3365,7 +3373,7 @@ pub(crate) unsafe fn read_mesh(
             if !(*set).vertex_uv.exists {
                 (*mesh).uv_sets.count -= 1;
             }
-        } else if (*n).name == sp::LayerElementColor.as_ptr() {
+        } else if n.name() == sp::LayerElementColor.as_ptr() {
             let set: *mut ColorSet =
                 ((*mesh).color_sets.data as *mut ColorSet).add((*mesh).color_sets.count);
             (*mesh).color_sets.count += 1;
@@ -3398,7 +3406,7 @@ pub(crate) unsafe fn read_mesh(
             if !(*set).vertex_color.exists {
                 (*mesh).color_sets.count -= 1;
             }
-        } else if (*n).name == sp::LayerElementVertexCrease.as_ptr() {
+        } else if n.name() == sp::LayerElementVertexCrease.as_ptr() {
             read_vertex_element(
                 uc,
                 mesh,
@@ -3410,7 +3418,7 @@ pub(crate) unsafe fn read_mesh(
                 b'r',
                 1,
             )?;
-        } else if (*n).name == sp::LayerElementEdgeCrease.as_ptr() {
+        } else if n.name() == sp::LayerElementEdgeCrease.as_ptr() {
             // C: `const char *mapping = "";`
             let mut mapping: *const u8 = EMPTY_CHAR.as_ptr();
             ufbxi_ignore!(find_val1(
@@ -3421,7 +3429,6 @@ pub(crate) unsafe fn read_mesh(
             ));
             if mapping == sp::ByEdge.as_ptr() {
                 if (*mesh).edge_crease.count != 0 {
-                    n = n.add(1);
                     continue;
                 }
                 read_truncated_array(
@@ -3436,7 +3443,7 @@ pub(crate) unsafe fn read_mesh(
             } else {
                 warn_polygon_mapping(uc, sp::EdgeCrease.as_ptr(), mapping)?;
             }
-        } else if (*n).name == sp::LayerElementSmoothing.as_ptr() {
+        } else if n.name() == sp::LayerElementSmoothing.as_ptr() {
             // C: `const char *mapping = "";`
             let mut mapping: *const u8 = EMPTY_CHAR.as_ptr();
             ufbxi_ignore!(find_val1(
@@ -3447,7 +3454,6 @@ pub(crate) unsafe fn read_mesh(
             ));
             if mapping == sp::ByEdge.as_ptr() {
                 if (*mesh).edge_smoothing.count != 0 {
-                    n = n.add(1);
                     continue;
                 }
                 read_truncated_array(
@@ -3461,7 +3467,6 @@ pub(crate) unsafe fn read_mesh(
                 )?;
             } else if mapping == sp::ByPolygon.as_ptr() {
                 if (*mesh).face_smoothing.count != 0 {
-                    n = n.add(1);
                     continue;
                 }
                 read_truncated_array(
@@ -3476,7 +3481,7 @@ pub(crate) unsafe fn read_mesh(
             } else {
                 warn_polygon_mapping(uc, sp::Smoothing.as_ptr(), mapping)?;
             }
-        } else if (*n).name == sp::LayerElementVisibility.as_ptr() {
+        } else if n.name() == sp::LayerElementVisibility.as_ptr() {
             // C: `const char *mapping = "";`
             let mut mapping: *const u8 = EMPTY_CHAR.as_ptr();
             ufbxi_ignore!(find_val1(
@@ -3487,7 +3492,6 @@ pub(crate) unsafe fn read_mesh(
             ));
             if mapping == sp::ByEdge.as_ptr() {
                 if (*mesh).edge_visibility.count != 0 {
-                    n = n.add(1);
                     continue;
                 }
                 read_truncated_array(
@@ -3502,9 +3506,8 @@ pub(crate) unsafe fn read_mesh(
             } else {
                 warn_polygon_mapping(uc, sp::Visibility.as_ptr(), mapping)?;
             }
-        } else if (*n).name == sp::LayerElementMaterial.as_ptr() {
+        } else if n.name() == sp::LayerElementMaterial.as_ptr() {
             if (*mesh).face_material.count != 0 {
-                n = n.add(1);
                 continue;
             }
             // C: `const char *mapping = "";`
@@ -3555,9 +3558,8 @@ pub(crate) unsafe fn read_mesh(
             } else {
                 warn_polygon_mapping(uc, sp::Materials.as_ptr(), mapping)?;
             }
-        } else if (*n).name == sp::LayerElementPolygonGroup.as_ptr() {
+        } else if n.name() == sp::LayerElementPolygonGroup.as_ptr() {
             if (*mesh).face_group.count != 0 {
-                n = n.add(1);
                 continue;
             }
             // C: `const char *mapping = NULL;`
@@ -3583,9 +3585,8 @@ pub(crate) unsafe fn read_mesh(
                     (*mesh).num_faces,
                 )?;
             }
-        } else if (*n).name == sp::LayerElementHole.as_ptr() {
+        } else if n.name() == sp::LayerElementHole.as_ptr() {
             if (*mesh).face_group.count != 0 {
-                n = n.add(1);
                 continue;
             }
             // C: `const char *mapping = NULL;`
@@ -3611,29 +3612,29 @@ pub(crate) unsafe fn read_mesh(
                     (*mesh).num_faces,
                 )?;
             }
-        } else if strncmp((*n).name, b"LayerElement\0".as_ptr(), 12) == 0 {
+        } else if strncmp(n.name(), b"LayerElement\0".as_ptr(), 12) == 0 {
             // Make sure the name has no internal zero bytes
             ufbxi_check!(
                 uc,
-                memchr((*n).name, b'\0', (*n).name_len as usize).is_null(),
+                memchr(n.name(), b'\0', n.name_len() as usize).is_null(),
                 "!memchr(n->name, '\\0', n->name_len)"
             );
 
             // What?! 6x00 stores textures in mesh geometry, eg. "LayerElementTexture",
             // "LayerElementDiffuseFactorTextures", "LayerElementEmissive_Textures"...
             let mut prop_name: String = EMPTY_STRING.0;
-            if (*n).name_len > 20
+            if n.name_len() > 20
                 && strcmp(
-                    (*n).name.add((*n).name_len as usize - 8),
+                    n.name().add(n.name_len() as usize - 8),
                     b"Textures\0".as_ptr(),
                 ) == 0
             {
-                prop_name.data = (*n).name.add(12);
-                prop_name.length = (*n).name_len as usize - 20;
+                prop_name.data = n.name().add(12);
+                prop_name.length = n.name_len() as usize - 20;
                 if *prop_name.data.add(prop_name.length - 1) == b'_' {
                     prop_name.length -= 1;
                 }
-            } else if strcmp((*n).name, b"LayerElementTexture\0".as_ptr()) == 0 {
+            } else if strcmp(n.name(), b"LayerElementTexture\0".as_ptr()) == 0 {
                 prop_name.data = b"Diffuse\0".as_ptr();
                 prop_name.length = 7;
             }
@@ -3663,8 +3664,6 @@ pub(crate) unsafe fn read_mesh(
                 }
             }
         }
-
-        n = n.add(1);
     }
 
     // Always use a default zero material, this will be removed if no materials are found
@@ -3699,11 +3698,9 @@ pub(crate) unsafe fn read_mesh(
 
     // Connect bitangents/tangents to UV sets
     // C: `ufbxi_for (ufbxi_node, n, node->children, node->num_children)`
-    let mut n: *mut Node = (*node).children;
-    let n_end = add_ptr(n, (*node).num_children as usize);
-    while n != n_end {
-        if (*n).name != sp::Layer.as_ptr() {
-            n = n.add(1);
+    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
+    for n in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
+        if n.name() != sp::Layer.as_ptr() {
             continue;
         }
         let mut uv_set: *mut UvSet = core::ptr::null_mut();
@@ -3711,16 +3708,14 @@ pub(crate) unsafe fn read_mesh(
         let mut tangent_layer: *mut TangentLayer = core::ptr::null_mut();
 
         // C: `ufbxi_for (ufbxi_node, c, n->children, n->num_children)`
-        let mut c: *mut Node = (*n).children;
-        let c_end = add_ptr(c, (*n).num_children as usize);
-        while c != c_end {
+        // SAFETY: contiguous push_pop child run, valid for `n`'s borrow.
+        for c in SliceViewIter::from_raw_parts(n.children(), n.num_children() as usize) {
             // C: `uint32_t index; const char *type;` — both are fully written by
             // the guarded `ufbxi_find_val1` calls below before any read; zeroed
             // here (no upstream `ufbxi_uninit` marker).
             let mut index: u32 = 0;
             let mut type_: *const u8 = core::ptr::null();
-            if (*c).name != sp::LayerElement.as_ptr() {
-                c = c.add(1);
+            if c.name() != sp::LayerElement.as_ptr() {
                 continue;
             }
             if !find_val1(
@@ -3729,7 +3724,6 @@ pub(crate) unsafe fn read_mesh(
                 b"I\0".as_ptr(),
                 &mut index as *mut u32 as *mut c_void,
             ) {
-                c = c.add(1);
                 continue;
             }
             if !find_val1(
@@ -3738,7 +3732,6 @@ pub(crate) unsafe fn read_mesh(
                 b"C\0".as_ptr(),
                 &mut type_ as *mut *const u8 as *mut c_void,
             ) {
-                c = c.add(1);
                 continue;
             }
 
@@ -3776,8 +3769,6 @@ pub(crate) unsafe fn read_mesh(
                     layer = layer.add(1);
                 }
             }
-
-            c = c.add(1);
         }
 
         if !uv_set.is_null() {
@@ -3794,8 +3785,6 @@ pub(crate) unsafe fn read_mesh(
                 );
             }
         }
-
-        n = n.add(1);
     }
 
     (*mesh).skinned_is_local = true;
@@ -3904,7 +3893,7 @@ pub(crate) unsafe fn read_nurbs_topology(form: *const u8) -> NurbsTopology {
 #[inline(never)]
 pub(crate) unsafe fn read_nurbs_curve(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let nurbs: *mut NurbsCurve = push_element::<NurbsCurve>(uc, info, ElementType::NurbsCurve);
@@ -3962,7 +3951,7 @@ pub(crate) unsafe fn read_nurbs_curve(
 #[inline(never)]
 pub(crate) unsafe fn read_nurbs_surface(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let nurbs: *mut NurbsSurface =
@@ -4061,7 +4050,7 @@ pub(crate) unsafe fn read_nurbs_surface(
 #[inline(never)]
 pub(crate) unsafe fn read_line(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let line: *mut LineCurve = push_element::<LineCurve>(uc, info, ElementType::LineCurve);
@@ -4162,7 +4151,7 @@ pub(crate) unsafe fn read_transform_matrix(m: *mut Matrix, data: *mut Real) {
 #[inline(never)]
 pub(crate) unsafe fn read_bone(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
     sub_type: *const u8,
 ) -> Result<(), Fail> {
@@ -4182,7 +4171,7 @@ pub(crate) unsafe fn read_bone(
 #[inline(never)]
 pub(crate) unsafe fn read_marker(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
     sub_type: *const u8,
     type_: MarkerType,
@@ -4202,7 +4191,7 @@ pub(crate) unsafe fn read_marker(
 #[inline(never)]
 pub(crate) unsafe fn read_skin(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let skin: *mut SkinDeformer = push_element::<SkinDeformer>(uc, info, ElementType::SkinDeformer);
@@ -4244,7 +4233,7 @@ pub(crate) unsafe fn read_skin(
 #[inline(never)]
 pub(crate) unsafe fn read_skin_cluster(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let cluster: *mut SkinCluster = push_element::<SkinCluster>(uc, info, ElementType::SkinCluster);
@@ -4293,7 +4282,7 @@ pub(crate) unsafe fn read_skin_cluster(
 #[inline(never)]
 pub(crate) unsafe fn read_blend_channel(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let channel: *mut BlendChannel =
@@ -4317,26 +4306,31 @@ pub(crate) unsafe fn read_blend_channel(
 
     // Blender saves blend shapes with DeformPercent as a field, not a property.
     // However, the animations are mapped to the DeformPercent property.
-    let deform_percent: *mut Node = find_child(node, sp::DeformPercent.as_ptr());
-    if (*channel).element.props.props.count == 0 && !deform_percent.is_null() {
-        let num_shape_props: usize = 1;
-        let shape_props: *mut Prop = push_zero::<Prop>(uc.result_mut_ptr(), num_shape_props);
-        ufbxi_check!(uc, !shape_props.is_null(), "shape_props");
-        (*shape_props.add(0)).name.data = sp::DeformPercent.as_ptr();
-        (*shape_props.add(0)).name.length = sp::DeformPercent.len() - 1;
-        (*shape_props.add(0))._internal_key = get_name_key_c(sp::DeformPercent.as_ptr());
-        (*shape_props.add(0)).type_ = PropType::Number;
-        (*shape_props.add(0)).value_str = EMPTY_STRING.0;
-        // C-parity: `shape_props[0].value_real` is the `ufbx_prop` value
-        // union's first real (`value_vec4.x` in the generated struct).
-        (*shape_props.add(0)).value_vec4.x = 100.0 as Real;
-        ufbxi_ignore!(get_val1(
-            deform_percent,
-            b"R\0".as_ptr(),
-            &mut (*shape_props.add(0)).value_vec4.x as *mut Real as *mut c_void
-        ));
-        (*channel).element.props.props.data = shape_props;
-        (*channel).element.props.props.count = num_shape_props;
+    let deform_percent = find_child(node, sp::DeformPercent.as_ptr());
+    // C: `if (channel->element.props.props.count == 0 && deform_percent)` — the
+    // `count == 0` operand is checked first, then the `deform_percent` presence;
+    // both are side-effect free, so the nested form preserves the `&&` order.
+    if (*channel).element.props.props.count == 0 {
+        if let Some(deform_percent) = deform_percent {
+            let num_shape_props: usize = 1;
+            let shape_props: *mut Prop = push_zero::<Prop>(uc.result_mut_ptr(), num_shape_props);
+            ufbxi_check!(uc, !shape_props.is_null(), "shape_props");
+            (*shape_props.add(0)).name.data = sp::DeformPercent.as_ptr();
+            (*shape_props.add(0)).name.length = sp::DeformPercent.len() - 1;
+            (*shape_props.add(0))._internal_key = get_name_key_c(sp::DeformPercent.as_ptr());
+            (*shape_props.add(0)).type_ = PropType::Number;
+            (*shape_props.add(0)).value_str = EMPTY_STRING.0;
+            // C-parity: `shape_props[0].value_real` is the `ufbx_prop` value
+            // union's first real (`value_vec4.x` in the generated struct).
+            (*shape_props.add(0)).value_vec4.x = 100.0 as Real;
+            ufbxi_ignore!(get_val1(
+                deform_percent,
+                b"R\0".as_ptr(),
+                &mut (*shape_props.add(0)).value_vec4.x as *mut Real as *mut c_void
+            ));
+            (*channel).element.props.props.data = shape_props;
+            (*channel).element.props.props.count = num_shape_props;
+        }
     }
 
     Ok(())
@@ -4568,14 +4562,14 @@ pub(crate) unsafe fn solve_tcb(
 #[inline(never)]
 pub(crate) unsafe fn read_extrapolation(
     p_extrapolation: *mut Extrapolation,
-    node: *mut Node,
+    node: &NodeView,
     name: *const u8,
 ) {
-    let child: *mut Node = find_child(node, name);
+    let child = find_child(node, name);
     let mut mode: ExtrapolationMode = ExtrapolationMode::Constant;
     let mut repeat_count: i32 = -1;
 
-    if !child.is_null() {
+    if let Some(child) = child {
         // C: `int32_t mode_ch;` — uninitialized, only read when
         // `ufbxi_find_val1()` succeeded and wrote it.
         let mut mode_ch: i32 = 0;
@@ -4621,7 +4615,7 @@ pub(crate) unsafe fn read_extrapolation(
 #[inline(never)]
 pub(crate) unsafe fn read_animation_curve(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let curve: *mut AnimCurve = push_element::<AnimCurve>(uc, info, ElementType::AnimCurve);
@@ -5030,7 +5024,7 @@ pub(crate) unsafe fn read_animation_curve(
 #[inline(never)]
 pub(crate) unsafe fn read_material(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let material: *mut Material = push_element::<Material>(uc, info, ElementType::Material);
@@ -5054,7 +5048,7 @@ pub(crate) unsafe fn read_material(
 #[inline(never)]
 pub(crate) unsafe fn read_texture(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let texture: *mut Texture = push_element::<Texture>(uc, info, ElementType::Texture);
@@ -5123,7 +5117,7 @@ pub(crate) unsafe fn read_texture(
 #[inline(never)]
 pub(crate) unsafe fn read_layered_texture(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let texture: *mut Texture = push_element::<Texture>(uc, info, ElementType::Texture);
@@ -5158,7 +5152,7 @@ pub(crate) unsafe fn read_layered_texture(
 #[inline(never)]
 pub(crate) unsafe fn read_video(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let video: *mut Video = push_element::<Video>(uc, info, ElementType::Video);
@@ -5218,7 +5212,7 @@ pub(crate) unsafe fn read_video(
         &mut (*video).raw_relative_filename as *mut Blob as *mut c_void
     ));
 
-    let content_node: *mut Node = find_child(node, sp::Content.as_ptr());
+    let content_node = find_child(node, sp::Content.as_ptr());
     read_embedded_blob(uc, &mut (*video).content, content_node)?;
 
     Ok(())
@@ -5228,7 +5222,7 @@ pub(crate) unsafe fn read_video(
 #[inline(never)]
 pub(crate) unsafe fn read_anim_stack(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
@@ -5260,7 +5254,7 @@ pub(crate) unsafe fn read_anim_stack(
 #[inline(never)]
 pub(crate) unsafe fn read_pose(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
     sub_type: *const u8,
 ) -> Result<(), Fail> {
@@ -5272,11 +5266,9 @@ pub(crate) unsafe fn read_pose(
 
     let mut num_bones: usize = 0;
     // C: `ufbxi_for(ufbxi_node, n, node->children, node->num_children)`
-    let mut n = (*node).children;
-    let n_end = add_ptr(n, (*node).num_children as usize);
-    while n != n_end {
-        if (*n).name != sp::PoseNode.as_ptr() {
-            n = n.add(1);
+    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
+    for n in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
+        if n.name() != sp::PoseNode.as_ptr() {
             continue;
         }
 
@@ -5290,7 +5282,6 @@ pub(crate) unsafe fn read_pose(
                 b"c\0".as_ptr(),
                 &mut name as *mut *mut u8 as *mut c_void,
             ) {
-                n = n.add(1);
                 continue;
             }
             fbx_id = synthetic_id_from_string(uc, name);
@@ -5302,7 +5293,6 @@ pub(crate) unsafe fn read_pose(
                 b"L\0".as_ptr(),
                 &mut fbx_id as *mut u64 as *mut c_void,
             ) {
-                n = n.add(1);
                 continue;
             }
             validate_fbx_id(uc, &mut fbx_id)?;
@@ -5310,7 +5300,6 @@ pub(crate) unsafe fn read_pose(
 
         let matrix: *mut ValueArray = find_array(n, sp::Matrix.as_ptr(), b'r');
         if matrix.is_null() {
-            n = n.add(1);
             continue;
         }
         ufbxi_check!(uc, (*matrix).size >= 16, "matrix->size >= 16");
@@ -5321,8 +5310,6 @@ pub(crate) unsafe fn read_pose(
         num_bones += 1;
         (*tmp_pose).bone_fbx_id = fbx_id;
         read_transform_matrix(&mut (*tmp_pose).bone_to_world, (*matrix).data as *mut Real);
-
-        n = n.add(1);
     }
 
     // HACK: Transport `ufbxi_tmp_bone_pose` array through the `ufbx_bone_pose` pointer
@@ -5373,7 +5360,7 @@ pub(crate) unsafe fn sort_shader_prop_bindings(
 #[inline(never)]
 pub(crate) unsafe fn read_binding_table(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let bindings: *mut ShaderBinding =
@@ -5382,11 +5369,9 @@ pub(crate) unsafe fn read_binding_table(
 
     let mut num_entries: usize = 0;
     // C: `ufbxi_for (ufbxi_node, n, node->children, node->num_children)`
-    let mut n = (*node).children;
-    let n_end = add_ptr(n, (*node).num_children as usize);
-    while n != n_end {
-        if (*n).name != sp::Entry.as_ptr() {
-            n = n.add(1);
+    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
+    for n in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
+        if n.name() != sp::Entry.as_ptr() {
             continue;
         }
 
@@ -5404,7 +5389,6 @@ pub(crate) unsafe fn read_binding_table(
             &mut dst as *mut String as *mut c_void,
             &mut dst_type as *mut *const u8 as *mut c_void,
         ) {
-            n = n.add(1);
             continue;
         }
 
@@ -5423,8 +5407,6 @@ pub(crate) unsafe fn read_binding_table(
             (*bind).shader_prop = src;
             num_entries += 1;
         }
-
-        n = n.add(1);
     }
 
     (*bindings).prop_bindings.count = num_entries;
@@ -5449,7 +5431,7 @@ pub(crate) unsafe fn read_binding_table(
 #[inline(never)]
 pub(crate) unsafe fn read_selection_set(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
@@ -5462,7 +5444,7 @@ pub(crate) unsafe fn read_selection_set(
 
 // ufbx.c:14747-14754 `ufbxi_find_uint32_list`
 #[inline(never)]
-pub(crate) unsafe fn find_uint32_list(dst: *mut List<u32>, node: *mut Node, name: *const u8) {
+pub(crate) unsafe fn find_uint32_list(dst: *mut List<u32>, node: &NodeView, name: *const u8) {
     let arr: *mut ValueArray = find_array(node, name, b'i');
     if !arr.is_null() {
         (*dst).data = (*arr).data as *const u32;
@@ -5474,7 +5456,7 @@ pub(crate) unsafe fn find_uint32_list(dst: *mut List<u32>, node: *mut Node, name
 #[inline(never)]
 pub(crate) unsafe fn read_selection_node(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let sel: *mut SelectionNode =
@@ -5503,7 +5485,7 @@ pub(crate) unsafe fn read_selection_node(
 #[inline(never)]
 pub(crate) unsafe fn read_character(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
@@ -5520,7 +5502,7 @@ pub(crate) unsafe fn read_character(
 #[inline(never)]
 pub(crate) unsafe fn read_audio_clip(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let audio: *mut AudioClip = push_element::<AudioClip>(uc, info, ElementType::AudioClip);
@@ -5530,7 +5512,7 @@ pub(crate) unsafe fn read_audio_clip(
     (*audio).absolute_filename = EMPTY_STRING.0;
     (*audio).relative_filename = EMPTY_STRING.0;
 
-    let content_node: *mut Node = find_child(node, sp::Content.as_ptr());
+    let content_node = find_child(node, sp::Content.as_ptr());
     read_embedded_blob(uc, &mut (*audio).content, content_node)?;
 
     Ok(())
@@ -5581,7 +5563,7 @@ static CONSTRAINT_TYPES: [ConstraintTypeEntry; 6] = [
 #[inline(never)]
 pub(crate) unsafe fn read_constraint(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
@@ -5618,7 +5600,7 @@ pub(crate) unsafe fn read_constraint(
 #[inline(never)]
 pub(crate) unsafe fn read_synthetic_attribute(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
     type_str: String,
     sub_type: *const u8,
@@ -5629,9 +5611,9 @@ pub(crate) unsafe fn read_synthetic_attribute(
     // Some legacy (version 6000) files store mesh nodes without any `sub_type`
     // There seems to be no robust indicator, so detect it from `Vertices` and `PolygonVertexIndex`
     if sub_type == EMPTY_CHAR.as_ptr() {
-        let node_vertices: *mut Node = find_child(node, sp::Vertices.as_ptr());
-        let node_indices: *mut Node = find_child(node, sp::PolygonVertexIndex.as_ptr());
-        if !node_vertices.is_null() && !node_indices.is_null() {
+        let node_vertices = find_child(node, sp::Vertices.as_ptr());
+        let node_indices = find_child(node, sp::PolygonVertexIndex.as_ptr());
+        if node_vertices.is_some() && node_indices.is_some() {
             sub_type = sp::Mesh.as_ptr();
         }
     }
@@ -5757,28 +5739,28 @@ pub(crate) unsafe fn read_synthetic_attribute(
             ElementType::Empty,
         )?;
     } else if sub_type == sp::NurbsCurve.as_ptr() {
-        if find_child(node, sp::KnotVector.as_ptr()).is_null() {
+        if find_child(node, sp::KnotVector.as_ptr()).is_none() {
             return Ok(());
         }
         read_nurbs_curve(uc, node, &mut attrib_info)?;
     } else if sub_type == sp::NurbsSurface.as_ptr() {
-        if find_child(node, sp::KnotVectorU.as_ptr()).is_null() {
+        if find_child(node, sp::KnotVectorU.as_ptr()).is_none() {
             return Ok(());
         }
-        if find_child(node, sp::KnotVectorV.as_ptr()).is_null() {
+        if find_child(node, sp::KnotVectorV.as_ptr()).is_none() {
             return Ok(());
         }
         read_nurbs_surface(uc, node, &mut attrib_info)?;
     } else if sub_type == sp::Line.as_ptr() {
-        if find_child(node, sp::Points.as_ptr()).is_null() {
+        if find_child(node, sp::Points.as_ptr()).is_none() {
             return Ok(());
         }
-        if find_child(node, sp::PointsIndex.as_ptr()).is_null() {
+        if find_child(node, sp::PointsIndex.as_ptr()).is_none() {
             return Ok(());
         }
         read_line(uc, node, &mut attrib_info)?;
     } else if sub_type == sp::TrimNurbsSurface.as_ptr() {
-        if find_child(node, sp::Layer.as_ptr()).is_null() {
+        if find_child(node, sp::Layer.as_ptr()).is_none() {
             return Ok(());
         }
         read_element(
@@ -5842,18 +5824,18 @@ pub(crate) unsafe fn read_synthetic_attribute(
 
 // ufbx.c:14941-14945 `ufbxi_read_global_settings`
 #[inline(never)]
-pub(crate) unsafe fn read_global_settings(uc: &Context, node: *mut Node) -> Result<(), Fail> {
+pub(crate) unsafe fn read_global_settings(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     read_properties(uc, node, uc.scene_view().settings_view().props_mut_ptr())?;
     Ok(())
 }
 
 // ufbx.c:14947-15099 `ufbxi_read_object`
 #[inline(never)]
-pub(crate) unsafe fn read_object(uc: &Context, node: *mut Node) -> Result<(), Fail> {
+pub(crate) unsafe fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     let mut info: ElementInfo = core::mem::zeroed();
-    info.dom_node = get_dom_node(uc, node);
+    info.dom_node = get_dom_node(uc, node.get());
 
-    if (*node).name == sp::GlobalSettings.as_ptr() {
+    if node.name() == sp::GlobalSettings.as_ptr() {
         read_global_settings(uc, node)?;
         return Ok(());
     }
@@ -5904,7 +5886,7 @@ pub(crate) unsafe fn read_object(uc: &Context, node: *mut Node) -> Result<(), Fa
     let mut type_str: String = core::mem::zeroed();
     split_type_and_name(uc, type_and_name, &mut type_str, &mut info.name)?;
 
-    let name: *const u8 = (*node).name;
+    let name: *const u8 = node.name();
     let sub_type: *const u8 = sub_type_str.data;
     read_properties(uc, node, &mut info.props)?;
     info.props.defaults = opt_ref(find_template(uc, name, sub_type));
@@ -6133,6 +6115,8 @@ pub(crate) unsafe fn read_objects(uc: &Context) -> Result<(), Fail> {
         if node.is_null() {
             break;
         }
+        // Bridge the raw parse-tree node into a view for `read_object`.
+        let node: &NodeView = NodeView::from_ptr(node);
 
         read_object(uc, node)?;
 
@@ -6184,7 +6168,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 uc.warnings_view()
                     .set_deferred_element_id_plus_one(uc.tmp_element_id_view().num_items() as u32);
 
-                read_object(uc, *p_node)?;
+                read_object(uc, NodeView::from_ptr(*p_node))?;
 
                 uc.warnings_view().set_deferred_element_id_plus_one(0);
                 uc.set_p_element_id(core::ptr::null_mut());
@@ -6306,6 +6290,8 @@ pub(crate) unsafe fn read_connections(uc: &Context) -> Result<(), Fail> {
         if node.is_null() {
             break;
         }
+        // Bridge the raw parse-tree node into a view for the navigation below.
+        let node: &NodeView = NodeView::from_ptr(node);
 
         // C: `char *type;` — written by the `ufbxi_get_val1` guards below.
         let mut type_: *const u8 = core::ptr::null();
@@ -6485,7 +6471,7 @@ pub(crate) fn double_to_char(value: f64) -> u8 {
 #[inline(never)]
 pub(crate) unsafe fn read_take_anim_channel(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     value_fbx_id: u64,
     name: *const u8,
     p_default: *mut Real,
@@ -6507,7 +6493,7 @@ pub(crate) unsafe fn read_take_anim_channel(
     let curve: *mut AnimCurve = push_synthetic_element::<AnimCurve>(
         uc,
         &mut curve_fbx_id,
-        node,
+        Some(node),
         name,
         ElementType::AnimCurve,
     );
@@ -6824,7 +6810,7 @@ pub(crate) unsafe fn read_take_anim_channel(
 #[inline(never)]
 pub(crate) unsafe fn read_take_prop_channel(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     target_fbx_id: u64,
     layer_fbx_id: u64,
     name: String,
@@ -6851,7 +6837,7 @@ pub(crate) unsafe fn read_take_prop_channel(
 #[inline(never)]
 unsafe fn read_take_prop_channel_rec(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     target_fbx_id: u64,
     layer_fbx_id: u64,
     mut name: String,
@@ -6863,11 +6849,9 @@ unsafe fn read_take_prop_channel_rec(
         // new: Model: { Channel: "Lcl Translation" { Channel "X": { ... } } }
 
         // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
-        let mut child: *mut Node = (*node).children;
-        let child_end = add_ptr(child, (*node).num_children as usize);
-        while child != child_end {
-            if (*child).name != sp::Channel.as_ptr() {
-                child = child.add(1);
+        // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
+        for child in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
+            if child.name() != sp::Channel.as_ptr() {
                 continue;
             }
 
@@ -6893,14 +6877,11 @@ unsafe fn read_take_prop_channel_rec(
             } else if old_name == sp::S.as_ptr() {
                 new_name = String::new_c(sp::Lcl_Scaling.as_ptr(), sp::Lcl_Scaling.len() - 1);
             } else {
-                child = child.add(1);
                 continue;
             }
 
             // Read child as a top-level property channel
             read_take_prop_channel(uc, child, target_fbx_id, layer_fbx_id, new_name)?;
-
-            child = child.add(1);
         }
     } else {
         // Pre-6000 FBX files store blend shape keys with a " (Shape)" suffix
@@ -6921,31 +6902,30 @@ unsafe fn read_take_prop_channel_rec(
         }
 
         // Find 1-3 channel nodes that contain a `Key:` node
-        let mut channel_nodes: [*mut Node; 3] = [core::ptr::null_mut(); 3];
+        let mut channel_nodes: [Option<&NodeView>; 3] = [None; 3];
         let mut channel_names: [*const u8; 3] = [core::ptr::null(); 3];
         let mut num_channel_nodes: usize = 0;
 
-        if !find_child(node, sp::Key.as_ptr()).is_null()
-            || !find_child(node, sp::Default.as_ptr()).is_null()
+        if find_child(node, sp::Key.as_ptr()).is_some()
+            || find_child(node, sp::Default.as_ptr()).is_some()
         {
             // Channel has only a single curve
-            channel_nodes[0] = node;
+            channel_nodes[0] = Some(node);
             channel_names[0] = name.data;
             num_channel_nodes = 1;
         } else {
             // Channel is a compound of multiple curves
             // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
-            let mut child: *mut Node = (*node).children;
-            let child_end = add_ptr(child, (*node).num_children as usize);
-            while child != child_end {
-                if (*child).name != sp::Channel.as_ptr() {
-                    child = child.add(1);
+            // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
+            for child in
+                SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize)
+            {
+                if child.name() != sp::Channel.as_ptr() {
                     continue;
                 }
-                if find_child(child, sp::Key.as_ptr()).is_null()
-                    && find_child(child, sp::Default.as_ptr()).is_null()
+                if find_child(child, sp::Key.as_ptr()).is_none()
+                    && find_child(child, sp::Default.as_ptr()).is_none()
                 {
-                    child = child.add(1);
                     continue;
                 }
                 if !get_val1(
@@ -6953,17 +6933,14 @@ unsafe fn read_take_prop_channel_rec(
                     b"C\0".as_ptr(),
                     &mut channel_names[num_channel_nodes] as *mut *const u8 as *mut c_void,
                 ) {
-                    child = child.add(1);
                     continue;
                 }
-                channel_nodes[num_channel_nodes] = child;
+                channel_nodes[num_channel_nodes] = Some(child);
                 // C: `if (++num_channel_nodes == 3) break;`
                 num_channel_nodes += 1;
                 if num_channel_nodes == 3 {
                     break;
                 }
-
-                child = child.add(1);
             }
         }
 
@@ -6978,7 +6955,7 @@ unsafe fn read_take_prop_channel_rec(
         let value: *mut AnimValue = push_synthetic_element::<AnimValue>(
             uc,
             &mut value_fbx_id,
-            node,
+            Some(node),
             name.data,
             ElementType::AnimValue,
         );
@@ -6993,7 +6970,7 @@ unsafe fn read_take_prop_channel_rec(
             // the named-struct member, so the array view is reached by cast.
             read_take_anim_channel(
                 uc,
-                channel_nodes[i],
+                channel_nodes[i].unwrap(),
                 value_fbx_id,
                 channel_names[i],
                 (core::ptr::addr_of_mut!((*value).default_value) as *mut Real).add(i),
@@ -7008,7 +6985,7 @@ unsafe fn read_take_prop_channel_rec(
 #[inline(never)]
 pub(crate) unsafe fn read_take_object(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     layer_fbx_id: u64,
 ) -> Result<(), Fail> {
     // Takes are used only in pre-7000 FBX versions so objects are identified
@@ -7029,13 +7006,11 @@ pub(crate) unsafe fn read_take_object(
 
     // Add all suitable Channels as animated properties
     // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
-    let mut child: *mut Node = (*node).children;
-    let child_end = add_ptr(child, (*node).num_children as usize);
-    while child != child_end {
+    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
+    for child in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
         // C: `ufbx_string name;` — written by the `ufbxi_get_val1` guard below.
         let mut name: String = core::mem::zeroed();
-        if (*child).name != sp::Channel.as_ptr() {
-            child = child.add(1);
+        if child.name() != sp::Channel.as_ptr() {
             continue;
         }
         if !get_val1(
@@ -7043,13 +7018,10 @@ pub(crate) unsafe fn read_take_object(
             b"S\0".as_ptr(),
             &mut name as *mut String as *mut c_void,
         ) {
-            child = child.add(1);
             continue;
         }
 
         read_take_prop_channel(uc, child, target_fbx_id, layer_fbx_id, name)?;
-
-        child = child.add(1);
     }
 
     Ok(())
@@ -7057,7 +7029,7 @@ pub(crate) unsafe fn read_take_object(
 
 // ufbx.c:15688-15749 `ufbxi_read_take`
 #[inline(never)]
-pub(crate) unsafe fn read_take(uc: &Context, node: *mut Node) -> Result<(), Fail> {
+pub(crate) unsafe fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     let mut tmp_props: [Prop; 4] = core::mem::zeroed();
     let mut num_props: u32 = 0;
 
@@ -7154,7 +7126,7 @@ pub(crate) unsafe fn read_take(uc: &Context, node: *mut Node) -> Result<(), Fail
     let stack: *mut AnimStack = push_synthetic_element::<AnimStack>(
         uc,
         &mut stack_fbx_id,
-        node,
+        Some(node),
         name,
         ElementType::AnimStack,
     );
@@ -7172,7 +7144,7 @@ pub(crate) unsafe fn read_take(uc: &Context, node: *mut Node) -> Result<(), Fail
     let layer: *mut AnimLayer = push_synthetic_element::<AnimLayer>(
         uc,
         &mut layer_fbx_id,
-        node,
+        Some(node),
         sp::BaseLayer.as_ptr(),
         ElementType::AnimLayer,
     );
@@ -7182,18 +7154,14 @@ pub(crate) unsafe fn read_take(uc: &Context, node: *mut Node) -> Result<(), Fail
 
     // Read all properties of objects included in the take
     // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
-    let mut child: *mut Node = (*node).children;
-    let child_end = add_ptr(child, (*node).num_children as usize);
-    while child != child_end {
+    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
+    for child in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
         // TODO: Do some object types have another name?
-        if (*child).name != sp::Model.as_ptr() {
-            child = child.add(1);
+        if child.name() != sp::Model.as_ptr() {
             continue;
         }
 
         read_take_object(uc, child, layer_fbx_id)?;
-
-        child = child.add(1);
     }
 
     Ok(())
@@ -7209,8 +7177,10 @@ pub(crate) unsafe fn read_takes(uc: &Context) -> Result<(), Fail> {
         if node.is_null() {
             break;
         }
+        // Bridge the raw parse-tree node into a view for the navigation below.
+        let node: &NodeView = NodeView::from_ptr(node);
 
-        if (*node).name == sp::Take.as_ptr() {
+        if node.name() == sp::Take.as_ptr() {
             read_take(uc, node)?;
         }
     }
@@ -7220,7 +7190,7 @@ pub(crate) unsafe fn read_takes(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:15766-15816 `ufbxi_read_legacy_settings`
 #[inline(never)]
-pub(crate) unsafe fn read_legacy_settings(uc: &Context, node: *mut Node) -> Result<(), Fail> {
+pub(crate) unsafe fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     if uc.read_legacy_settings() {
         return Ok(());
     }
@@ -7229,8 +7199,8 @@ pub(crate) unsafe fn read_legacy_settings(uc: &Context, node: *mut Node) -> Resu
     let mut tmp_props: [Prop; 2] = core::mem::zeroed();
     let mut num_props: u32 = 0;
 
-    let frame_rate: *mut Node = find_child_strcmp(node, b"FrameRate\0".as_ptr());
-    if !frame_rate.is_null() {
+    let frame_rate = find_child_strcmp(node, b"FrameRate\0".as_ptr());
+    if let Some(frame_rate) = frame_rate {
         let mut fps: f64 = 0.0;
         if !get_val1(
             frame_rate,
@@ -7347,8 +7317,9 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
     if uc.exporter() == Exporter::BlenderAscii {
         parse_toplevel(uc, sp::Creator.as_ptr())?;
         if !uc.top_node().is_null() {
+            // Bridge the raw top node into a view for `get_val1`.
             ufbxi_ignore!(get_val1(
-                uc.top_node(),
+                NodeView::from_ptr(uc.top_node()),
                 b"S\0".as_ptr(),
                 uc.scene_view().metadata_view().creator_mut_ptr() as *mut core::ffi::c_void,
             ));
@@ -7439,14 +7410,17 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
     // Check if there's a top-level GlobalSettings that we skimmed over
     parse_toplevel(uc, sp::GlobalSettings.as_ptr())?;
     if !uc.top_node().is_null() {
-        read_global_settings(uc, uc.top_node())?;
+        // Bridge the raw top node into a view for `read_global_settings`.
+        read_global_settings(uc, NodeView::from_ptr(uc.top_node()))?;
     }
 
     // Version5: Pre-6000 settings
     parse_toplevel(uc, sp::Version5.as_ptr())?;
     if !uc.top_node().is_null() {
-        let settings: *mut Node = find_child_strcmp(uc.top_node(), b"Settings\0".as_ptr());
-        if !settings.is_null() {
+        // Bridge the raw top node into a view for the navigation below.
+        let top_node: &NodeView = NodeView::from_ptr(uc.top_node());
+        let settings = find_child_strcmp(top_node, b"Settings\0".as_ptr());
+        if let Some(settings) = settings {
             read_legacy_settings(uc, settings)?;
         }
     }
@@ -7659,7 +7633,7 @@ static LEGACY_MATERIAL_PROPS: [LegacyProp; LEGACY_MATERIAL_PROPS_COUNT] = [
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn read_legacy_prop(
-    node: *mut Node,
+    node: &NodeView,
     prop: *mut Prop,
     legacy_prop: *const LegacyProp,
 ) -> bool {
@@ -7769,7 +7743,7 @@ pub(crate) unsafe fn read_legacy_prop(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn read_legacy_props(
-    node: *mut Node,
+    node: &NodeView,
     props: *mut Prop,
     legacy_props: *const LegacyProp,
     num_legacy: usize,
@@ -7779,10 +7753,10 @@ pub(crate) unsafe fn read_legacy_props(
         let legacy_prop: *const LegacyProp = legacy_props.add(legacy_ix);
         let prop: *mut Prop = props.add(num_props);
 
-        let n: *mut Node = find_child_strcmp(node, (*legacy_prop).node_name);
-        if n.is_null() {
-            continue;
-        }
+        let n: &NodeView = match find_child_strcmp(node, (*legacy_prop).node_name) {
+            Some(n) => n,
+            None => continue,
+        };
         if !read_legacy_prop(n, prop, legacy_prop) {
             continue;
         }
@@ -7802,12 +7776,12 @@ pub(crate) unsafe fn read_legacy_props(
 #[inline(never)]
 pub(crate) unsafe fn read_legacy_material(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     p_fbx_id: *mut u64,
     name: *const u8,
 ) -> Result<(), Fail> {
     let material: *mut Material =
-        push_synthetic_element::<Material>(uc, p_fbx_id, node, name, ElementType::Material);
+        push_synthetic_element::<Material>(uc, p_fbx_id, Some(node), name, ElementType::Material);
     ufbxi_check!(uc, !material.is_null(), "material");
 
     // C: `ufbx_prop tmp_props[ufbxi_arraycount(ufbxi_legacy_material_props)];`
@@ -7841,12 +7815,17 @@ pub(crate) unsafe fn read_legacy_material(
 #[inline(never)]
 pub(crate) unsafe fn read_legacy_link(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     p_fbx_id: *mut u64,
     name: *const u8,
 ) -> Result<(), Fail> {
-    let cluster: *mut SkinCluster =
-        push_synthetic_element::<SkinCluster>(uc, p_fbx_id, node, name, ElementType::SkinCluster);
+    let cluster: *mut SkinCluster = push_synthetic_element::<SkinCluster>(
+        uc,
+        p_fbx_id,
+        Some(node),
+        name,
+        ElementType::SkinCluster,
+    );
     ufbxi_check!(uc, !cluster.is_null(), "cluster");
 
     // TODO: Merge with ufbxi_read_skin_cluster(), at least partially?
@@ -7893,7 +7872,7 @@ pub(crate) unsafe fn read_legacy_link(
 #[inline(never)]
 pub(crate) unsafe fn read_legacy_light(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let light: *mut Light = push_element::<Light>(uc, info, ElementType::Light);
@@ -7924,7 +7903,7 @@ pub(crate) unsafe fn read_legacy_light(
 #[inline(never)]
 pub(crate) unsafe fn read_legacy_camera(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let camera: *mut Camera = push_element::<Camera>(uc, info, ElementType::Camera);
@@ -7955,7 +7934,7 @@ pub(crate) unsafe fn read_legacy_camera(
 #[inline(never)]
 pub(crate) unsafe fn read_legacy_limb_node(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     let bone: *mut Bone = push_element::<Bone>(uc, info, ElementType::Bone);
@@ -7965,8 +7944,8 @@ pub(crate) unsafe fn read_legacy_limb_node(
     let mut tmp_props: [Prop; LEGACY_BONE_PROPS_COUNT] = core::mem::zeroed();
     let mut num_props: usize = 0;
 
-    let prop_node: *mut Node = find_child_strcmp(node, b"Properties\0".as_ptr());
-    if !prop_node.is_null() {
+    let prop_node = find_child_strcmp(node, b"Properties\0".as_ptr());
+    if let Some(prop_node) = prop_node {
         num_props = read_legacy_props(
             prop_node,
             tmp_props.as_mut_ptr(),
@@ -7991,15 +7970,17 @@ pub(crate) unsafe fn read_legacy_limb_node(
 #[inline(never)]
 pub(crate) unsafe fn read_legacy_mesh(
     uc: &Context,
-    node: *mut Node,
+    node: &NodeView,
     info: *mut ElementInfo,
 ) -> Result<(), Fail> {
     // Only read polygon meshes, ignore eg. NURBS without error
-    let node_vertices: *mut Node = find_child(node, sp::Vertices.as_ptr());
-    let node_indices: *mut Node = find_child(node, sp::PolygonVertexIndex.as_ptr());
-    if node_vertices.is_null() || node_indices.is_null() {
+    let node_vertices = find_child(node, sp::Vertices.as_ptr());
+    let node_indices = find_child(node, sp::PolygonVertexIndex.as_ptr());
+    if node_vertices.is_none() || node_indices.is_none() {
         return Ok(());
     }
+    let node_vertices: &NodeView = node_vertices.unwrap();
+    let node_indices: &NodeView = node_indices.unwrap();
 
     let mesh: *mut Mesh = push_element::<Mesh>(uc, info, ElementType::Mesh);
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
@@ -8085,8 +8066,8 @@ pub(crate) unsafe fn read_legacy_mesh(
     }
 
     // Optional UV values are stored pretty much like a modern vertex element
-    let uv_info: *mut Node = find_child(node, sp::GeometryUVInfo.as_ptr());
-    if !uv_info.is_null() {
+    let uv_info = find_child(node, sp::GeometryUVInfo.as_ptr());
+    if let Some(uv_info) = uv_info {
         let set: *mut UvSet = push_zero::<UvSet>(uc.result_mut_ptr(), 1);
         ufbxi_check!(uc, !set.is_null(), "set");
         (*set).index = 0;
@@ -8167,10 +8148,9 @@ pub(crate) unsafe fn read_legacy_mesh(
 
     // Materials, Skin Clusters
     // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
-    let mut child: *mut Node = (*node).children;
-    let child_end = add_ptr(child, (*node).num_children as usize);
-    while child != child_end {
-        if (*child).name == sp::Material.as_ptr() {
+    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
+    for child in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
+        if child.name() == sp::Material.as_ptr() {
             let mut fbx_id: u64 = 0;
             // C: `ufbx_string type_and_name, type, name;` — written below.
             let mut type_and_name: String = core::mem::zeroed();
@@ -8188,7 +8168,7 @@ pub(crate) unsafe fn read_legacy_mesh(
             split_type_and_name(uc, type_and_name, &mut type_, &mut name)?;
             read_legacy_material(uc, child, &mut fbx_id, name.data)?;
             connect_oo(uc, fbx_id, (*info).fbx_id)?;
-        } else if (*child).name == sp::Link.as_ptr() {
+        } else if child.name() == sp::Link.as_ptr() {
             let mut fbx_id: u64 = 0;
             // C: `ufbx_string type_and_name, type, name;` — written below.
             let mut type_and_name: String = core::mem::zeroed();
@@ -8213,7 +8193,7 @@ pub(crate) unsafe fn read_legacy_mesh(
                 skin = push_synthetic_element::<SkinDeformer>(
                     uc,
                     &mut skin_fbx_id,
-                    core::ptr::null_mut(),
+                    None,
                     (*info).name.data,
                     ElementType::SkinDeformer,
                 );
@@ -8222,8 +8202,6 @@ pub(crate) unsafe fn read_legacy_mesh(
             }
             connect_oo(uc, fbx_id, skin_fbx_id)?;
         }
-
-        child = child.add(1);
     }
 
     (*mesh).skinned_is_local = true;
@@ -8243,13 +8221,14 @@ pub(crate) unsafe fn read_legacy_mesh(
 
 // ufbx.c:16333-16348 `ufbxi_read_legacy_media`
 #[inline(never)]
-pub(crate) unsafe fn read_legacy_media(uc: &Context, node: *mut Node) -> Result<(), Fail> {
-    let videos: *mut Node = find_child(node, sp::Video.as_ptr());
-    if !videos.is_null() {
+pub(crate) unsafe fn read_legacy_media(uc: &Context, node: &NodeView) -> Result<(), Fail> {
+    let videos = find_child(node, sp::Video.as_ptr());
+    if let Some(videos) = videos {
         // C: `ufbxi_for(ufbxi_node, child, videos->children, videos->num_children)`
-        let mut child: *mut Node = (*videos).children;
-        let child_end = add_ptr(child, (*videos).num_children as usize);
-        while child != child_end {
+        // SAFETY: contiguous push_pop child run, valid for `videos`'s borrow.
+        for child in
+            SliceViewIter::from_raw_parts(videos.children(), videos.num_children() as usize)
+        {
             let mut video_info: ElementInfo = core::mem::zeroed();
             ufbxi_check!(
                 uc,
@@ -8261,11 +8240,9 @@ pub(crate) unsafe fn read_legacy_media(uc: &Context, node: *mut Node) -> Result<
                 "ufbxi_get_val1(child, \"S\", &video_info.name)"
             );
             video_info.fbx_id = push_synthetic_id(uc);
-            video_info.dom_node = get_dom_node(uc, node);
+            video_info.dom_node = get_dom_node(uc, node.get());
 
             read_video(uc, child, &mut video_info)?;
-
-            child = child.add(1);
         }
     }
 
@@ -8274,7 +8251,7 @@ pub(crate) unsafe fn read_legacy_media(uc: &Context, node: *mut Node) -> Result<
 
 // ufbx.c:16350-16422 `ufbxi_read_legacy_model`
 #[inline(never)]
-pub(crate) unsafe fn read_legacy_model(uc: &Context, node: *mut Node) -> Result<(), Fail> {
+pub(crate) unsafe fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     // C: `ufbx_string type_and_name, type, name;` — all three are written
     // before use by the two calls below.
     let mut type_and_name: String = core::mem::zeroed();
@@ -8295,7 +8272,7 @@ pub(crate) unsafe fn read_legacy_model(uc: &Context, node: *mut Node) -> Result<
     info.fbx_id = synthetic_id_from_string(uc, type_and_name.data);
     ufbxi_check!(uc, info.fbx_id != 0, "info.fbx_id");
     info.name = name;
-    info.dom_node = get_dom_node(uc, node);
+    info.dom_node = get_dom_node(uc, node.get());
 
     let elem_node: *mut UfbxNode = push_element::<UfbxNode>(uc, &mut info, ElementType::Node);
     ufbxi_check!(uc, !elem_node.is_null(), "elem_node");
@@ -8328,7 +8305,7 @@ pub(crate) unsafe fn read_legacy_model(uc: &Context, node: *mut Node) -> Result<
         read_legacy_camera(uc, node, &mut attrib_info)?;
     } else if attrib_type == sp::LimbNode.as_ptr() {
         read_legacy_limb_node(uc, node, &mut attrib_info)?;
-    } else if !find_child(node, sp::Vertices.as_ptr()).is_null() {
+    } else if find_child(node, sp::Vertices.as_ptr()).is_some() {
         read_legacy_mesh(uc, node, &mut attrib_info)?;
     } else {
         has_attrib = false;
@@ -8354,10 +8331,9 @@ pub(crate) unsafe fn read_legacy_model(uc: &Context, node: *mut Node) -> Result<
 
     // Non-take animation channels
     // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
-    let mut child: *mut Node = (*node).children;
-    let child_end = add_ptr(child, (*node).num_children as usize);
-    while child != child_end {
-        if (*child).name == sp::Channel.as_ptr() {
+    // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
+    for child in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
+        if child.name() == sp::Channel.as_ptr() {
             // C: `ufbx_string channel_name;` — written by the guard below.
             let mut channel_name: String = core::mem::zeroed();
             if get_val1(
@@ -8378,7 +8354,6 @@ pub(crate) unsafe fn read_legacy_model(uc: &Context, node: *mut Node) -> Result<
                 )?;
             }
         }
-        child = child.add(1);
     }
 
     Ok(())
@@ -8396,7 +8371,7 @@ pub(crate) unsafe fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
         let root: *mut UfbxNode = push_synthetic_element::<UfbxNode>(
             uc,
             uc.root_id_mut_ptr(),
-            core::ptr::null_mut(),
+            None,
             EMPTY_CHAR.as_ptr(),
             ElementType::Node,
         );
@@ -8421,16 +8396,17 @@ pub(crate) unsafe fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
             break;
         }
 
-        let node: *mut Node = uc.top_node();
-        if (*node).name == sp::FBXHeaderExtension.as_ptr() {
+        // Bridge the raw top node into a view for the navigation below.
+        let node: &NodeView = NodeView::from_ptr(uc.top_node());
+        if node.name() == sp::FBXHeaderExtension.as_ptr() {
             read_header_extension(uc)?;
-        } else if (*node).name == sp::Media.as_ptr() {
+        } else if node.name() == sp::Media.as_ptr() {
             read_legacy_media(uc, node)?;
-        } else if (*node).name == sp::Takes.as_ptr() {
+        } else if node.name() == sp::Takes.as_ptr() {
             read_takes(uc)?;
-        } else if (*node).name == sp::Model.as_ptr() {
+        } else if node.name() == sp::Model.as_ptr() {
             read_legacy_model(uc, node)?;
-        } else if strcmp((*node).name, b"Settings\0".as_ptr()) == 0 {
+        } else if strcmp(node.name(), b"Settings\0".as_ptr()) == 0 {
             read_legacy_settings(uc, node)?;
         }
     }

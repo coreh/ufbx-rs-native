@@ -166,17 +166,12 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
     (*mesh).fbx_node = push_synthetic_element::<UfbxNode>(
         uc,
         &mut (*mesh).fbx_node_id,
-        core::ptr::null_mut(),
+        None,
         name,
         ElementType::Node,
     );
-    (*mesh).fbx_mesh = push_synthetic_element::<Mesh>(
-        uc,
-        &mut (*mesh).fbx_mesh_id,
-        core::ptr::null_mut(),
-        name,
-        ElementType::Mesh,
-    );
+    (*mesh).fbx_mesh =
+        push_synthetic_element::<Mesh>(uc, &mut (*mesh).fbx_mesh_id, None, name, ElementType::Mesh);
     ufbxi_check!(
         uc,
         !(*mesh).fbx_node.is_null() && !(*mesh).fbx_mesh.is_null(),
@@ -1757,7 +1752,7 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Resul
     let texture: *mut Texture = push_synthetic_element::<Texture>(
         uc,
         &mut fbx_id,
-        core::ptr::null_mut(),
+        None,
         b"\0".as_ptr(),
         ElementType::Texture,
     );
