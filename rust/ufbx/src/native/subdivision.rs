@@ -2530,12 +2530,12 @@ pub(crate) unsafe fn subdivide_mesh(
     let sc = SubdivideContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     let sc = &sc;
     if !user_opts.is_null() {
-        // C: `(*sc.get()).opts = *user_opts;` — struct assignment (memcpy).
+        // C: `sc->opts = *user_opts;` — struct assignment (memcpy).
         core::ptr::copy_nonoverlapping(user_opts, sc.opts_mut_ptr(), 1);
     }
 
     sc.set_src_mesh_ptr(mesh as *mut Mesh);
-    // C: `(*sc.get()).src_mesh = *mesh;` — struct assignment (memcpy).
+    // C: `sc->src_mesh = *mesh;` — struct assignment (memcpy).
     core::ptr::copy_nonoverlapping(mesh, sc.src_mesh_mut_ptr(), 1);
 
     let ok: bool = subdivide_mesh_imp(sc, level).is_ok();

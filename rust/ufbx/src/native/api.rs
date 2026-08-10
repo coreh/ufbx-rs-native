@@ -1785,7 +1785,7 @@ pub(crate) unsafe fn create_anim(
     let ac =
         evaluate::CreateAnimContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
-        // C: `(*ac.get()).opts = *opts;` (struct assignment)
+        // C: `ac->opts = *opts;` (struct assignment)
         core::ptr::copy_nonoverlapping(opts, ac.opts_mut_ptr(), 1);
     }
 
@@ -1868,7 +1868,7 @@ pub(crate) unsafe fn bake_anim(
     // C: `ufbxi_bake_context bc = { UFBX_ERROR_NONE };`
     let bc = evaluate::BakeContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
-        // C: `(*bc.get()).opts = *opts;` (struct assignment)
+        // C: `bc->opts = *opts;` (struct assignment)
         core::ptr::copy_nonoverlapping(opts, bc.opts_mut_ptr(), 1);
     }
 
@@ -1885,7 +1885,7 @@ pub(crate) unsafe fn bake_anim(
     buf_free(bc.tmp_elements_mut_ptr());
     buf_free(bc.tmp_props_mut_ptr());
     buf_free(bc.tmp_bake_stack_mut_ptr());
-    // C: `ufbxi_free(&(*bc.get()).ator_tmp, char, bc.tmp_arr(), bc.tmp_arr_size());`
+    // C: `ufbxi_free(&bc->ator_tmp, char, bc->tmp_arr, bc->tmp_arr_size);`
     free::<u8>(bc.ator_tmp_mut_ptr(), bc.tmp_arr(), bc.tmp_arr_size());
     free_ator(bc.ator_tmp_mut_ptr());
 
@@ -3557,7 +3557,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
     // C: `ufbxi_tessellate_curve_context tc = { UFBX_ERROR_NONE };`
     let tc = TessellateCurveContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
-        // C: `(*tc.get()).opts = *opts` — struct assignment (memcpy).
+        // C: `tc->opts = *opts` — struct assignment (memcpy).
         core::ptr::copy_nonoverlapping(opts, tc.opts_mut_ptr(), 1);
     }
 
@@ -3623,7 +3623,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     let tc =
         TessellateSurfaceContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     if !opts.is_null() {
-        // C: `(*tc.get()).opts = *opts` — struct assignment (memcpy).
+        // C: `tc->opts = *opts` — struct assignment (memcpy).
         core::ptr::copy_nonoverlapping(opts, tc.opts_mut_ptr(), 1);
     }
 
