@@ -6121,8 +6121,8 @@ pub(crate) unsafe fn read_objects(uc: &Context) -> Result<(), Fail> {
         uc.set_p_element_id(push::<u32>(uc.tmp_element_id_mut_ptr(), 1));
         ufbxi_check!(uc, !uc.p_element_id().is_null(), "uc->p_element_id");
         *uc.p_element_id() = NO_INDEX;
-        (*uc.get()).warnings.deferred_element_id_plus_one =
-            uc.tmp_element_id_view().num_items() as u32;
+        uc.warnings_view()
+            .set_deferred_element_id_plus_one(uc.tmp_element_id_view().num_items() as u32);
 
         // C: `ufbxi_node *node;` — written by `ufbxi_parse_toplevel_child`.
         let mut node: *mut Node = core::ptr::null_mut();
@@ -6133,7 +6133,7 @@ pub(crate) unsafe fn read_objects(uc: &Context) -> Result<(), Fail> {
 
         read_object(uc, node)?;
 
-        (*uc.get()).warnings.deferred_element_id_plus_one = 0;
+        uc.warnings_view().set_deferred_element_id_plus_one(0);
         uc.set_p_element_id(core::ptr::null_mut());
     }
 
@@ -6178,12 +6178,12 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 uc.set_p_element_id(push::<u32>(uc.tmp_element_id_mut_ptr(), 1));
                 ufbxi_check!(uc, !uc.p_element_id().is_null(), "uc->p_element_id");
                 *uc.p_element_id() = NO_INDEX;
-                (*uc.get()).warnings.deferred_element_id_plus_one =
-                    uc.tmp_element_id_view().num_items() as u32;
+                uc.warnings_view()
+                    .set_deferred_element_id_plus_one(uc.tmp_element_id_view().num_items() as u32);
 
                 read_object(uc, *p_node)?;
 
-                (*uc.get()).warnings.deferred_element_id_plus_one = 0;
+                uc.warnings_view().set_deferred_element_id_plus_one(0);
                 uc.set_p_element_id(core::ptr::null_mut());
 
                 p_node = p_node.add(1);

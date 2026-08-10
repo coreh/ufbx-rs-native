@@ -52,6 +52,44 @@ pub(crate) struct Warnings {
     pub prev_warnings: [[*mut Warning; 2]; WARNING_TYPE_COUNT],
 }
 
+// Typed interior-mutable VIEW over an owned `Warnings` field, reinterpreted in place.
+// `.tmp_stack` recurses into `BufView`; other leaves are setters / raw-ptr getters.
+#[repr(transparent)]
+pub(crate) struct WarningsView(core::cell::UnsafeCell<core::mem::MaybeUninit<Warnings>>);
+
+impl WarningsView {
+    #[inline(always)]
+    fn get(&self) -> *mut Warnings {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_stack_view(&self) -> &crate::native::buf::BufView {
+        unsafe { &*(&raw mut (*self.get()).tmp_stack as *mut crate::native::buf::BufView) }
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_stack_mut_ptr(&self) -> *mut Buf {
+        unsafe { &raw mut (*self.get()).tmp_stack }
+    }
+    #[inline(always)]
+    pub(crate) fn set_error(&self, error: *mut Error) {
+        unsafe {
+            (*self.get()).error = error;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_result(&self, result: *mut Buf) {
+        unsafe {
+            (*self.get()).result = result;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_deferred_element_id_plus_one(&self, deferred_element_id_plus_one: u32) {
+        unsafe {
+            (*self.get()).deferred_element_id_plus_one = deferred_element_id_plus_one;
+        }
+    }
+}
+
 // ufbx.c:4833-4872 `ufbxi_vwarnf_imp`
 // C: `ufbxi_nodiscard static ufbxi_noinline int` — `return 1` becomes
 // `Ok(())`, the `ufbxi_check_err` failure path returns `Err(Fail)`.

@@ -2743,6 +2743,11 @@ impl Context {
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).warnings }
     }
+    // `warnings` (Warnings) — typed VIEW handle (reinterpret-in-place); accessors on WarningsView.
+    #[inline(always)]
+    pub(crate) fn warnings_view(&self) -> &crate::native::warnings::WarningsView {
+        unsafe { &*(&raw mut (*self.get()).warnings as *mut crate::native::warnings::WarningsView) }
+    }
 
     // `read_buffer_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]

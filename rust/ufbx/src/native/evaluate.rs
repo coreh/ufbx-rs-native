@@ -900,7 +900,7 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
     thread_pool_free(uc.thread_pool_mut_ptr());
 
     string_pool_temp_free(uc.string_pool_mut_ptr());
-    buf_free(&mut (*uc.get()).warnings.tmp_stack);
+    buf_free(uc.warnings_view().tmp_stack_mut_ptr());
 
     map_free(uc.prop_type_map_mut_ptr());
     map_free(uc.fbx_id_map_mut_ptr());
@@ -1169,9 +1169,11 @@ pub(crate) unsafe fn load(
     uc.tmp_parse_view().set_clearable(true);
     uc.result_view().set_unordered(true);
 
-    (*uc.get()).warnings.error = uc.error_mut_ptr();
-    (*uc.get()).warnings.result = uc.result_mut_ptr();
-    (*uc.get()).warnings.tmp_stack.ator = uc.ator_tmp_mut_ptr();
+    uc.warnings_view().set_error(uc.error_mut_ptr());
+    uc.warnings_view().set_result(uc.result_mut_ptr());
+    uc.warnings_view()
+        .tmp_stack_view()
+        .set_ator(uc.ator_tmp_mut_ptr());
     uc.string_pool_view().set_warnings(uc.warnings_mut_ptr());
 
     // Set zero size `swap_arr` to a non-NULL buffer so we can tell the difference between empty
