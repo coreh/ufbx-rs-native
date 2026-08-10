@@ -128,7 +128,7 @@ use crate::native::nurbs::{
 };
 use crate::native::parse::{
     find_enum, find_real as ufbxi_find_real, get_imp, get_name_key, Context, InnerContext, MeshImp,
-    Refcount, SceneImp, ELEMENT_TYPE_COUNT,
+    PropView, PropsView, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
 };
 use crate::native::platform::{
     add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
@@ -776,54 +776,49 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
 // ufbx_abi exports).
 
 // ufbx.c:30635-30650 `ufbx_find_prop_len`
-pub(crate) unsafe fn find_prop_len(
-    props: *const Props,
+pub(crate) unsafe fn find_prop_len<'a>(
+    props: &'a PropsView,
     name: *const u8,
     name_len: usize,
-) -> *mut Prop {
+) -> Option<&'a PropView> {
     let key = get_name_key(name, name_len);
     let name_str = safe_string(name, name_len);
 
-    let mut props = props;
-    while !props.is_null() {
+    let mut props: Option<&'a PropsView> = Some(props);
+    while let Some(cur) = props {
         let mut index: usize = usize::MAX;
         macro_lower_bound_eq::<Prop>(
             4,
             &mut index,
-            (*props).props.data,
+            cur.props_data(),
             0,
-            (*props).props.count,
+            cur.props_count(),
             |a| cmp_prop_less_ref(a, name_str, key),
             |a| (*a)._internal_key == key && str_equal((*a).name, name_str),
         );
         if index != usize::MAX {
-            return (*props).props.data.add(index) as *mut Prop;
+            return Some(PropView::from_ptr(cur.props_data().add(index)));
         }
 
-        props = match &(*props).defaults {
-            Some(defaults) => defaults.as_ref() as *const Props,
-            None => core::ptr::null(),
-        };
+        props = cur.defaults();
     }
 
-    core::ptr::null_mut()
+    None
 }
 
 // ufbx.c:30652-30660 `ufbx_find_real_len`
 pub(crate) unsafe fn find_real_len(
-    props: *const Props,
+    props: &PropsView,
     name: *const u8,
     name_len: usize,
     def: Real,
 ) -> Real {
-    let prop: *mut Prop = find_prop_len(props, name, name_len);
-    if !prop.is_null() {
+    match find_prop_len(props, name, name_len) {
         // C-parity: `prop->value_real` is the `ufbx_prop` value union's first
         // real; the generated struct keeps only `value_vec4` (same mapping as
         // `native::parse::find_real`).
-        (*prop).value_vec4.x
-    } else {
-        def
+        Some(prop) => prop.value_vec4().x,
+        None => def,
     }
 }
 
@@ -832,119 +827,106 @@ pub(crate) unsafe fn find_real_len(
 // (ufbx.c:23416, `native::scene_process`) calls `ufbx_find_vec3`.
 #[inline(never)]
 pub(crate) unsafe fn find_vec3_len(
-    props: *const Props,
+    props: &PropsView,
     name: *const u8,
     name_len: usize,
     def: Vec3,
 ) -> Vec3 {
-    let prop: *mut Prop = find_prop_len(props, name, name_len);
-    if !prop.is_null() {
+    match find_prop_len(props, name, name_len) {
         // C-parity: `prop->value_vec3` is the `ufbx_prop` value union's 3-real
         // view; the generated struct keeps only `value_vec4` (same mapping as
         // `native::parse::find_vec3`).
-        *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
-    } else {
-        def
+        Some(prop) => prop.value_vec3(),
+        None => def,
     }
 }
 
 // ufbx.c:30672-30680 `ufbx_find_int_len`
 #[inline(never)]
 pub(crate) unsafe fn find_int_len(
-    props: *const Props,
+    props: &PropsView,
     name: *const u8,
     name_len: usize,
     def: i64,
 ) -> i64 {
-    let prop: *mut Prop = find_prop_len(props, name, name_len);
-    if !prop.is_null() {
-        (*prop).value_int
-    } else {
-        def
+    match find_prop_len(props, name, name_len) {
+        Some(prop) => prop.value_int(),
+        None => def,
     }
 }
 
 // ufbx.c:30682-30690 `ufbx_find_bool_len`
 pub(crate) unsafe fn find_bool_len(
-    props: *const Props,
+    props: &PropsView,
     name: *const u8,
     name_len: usize,
     def: bool,
 ) -> bool {
-    let prop: *mut Prop = find_prop_len(props, name, name_len);
-    if !prop.is_null() {
-        (*prop).value_int != 0
-    } else {
-        def
+    match find_prop_len(props, name, name_len) {
+        Some(prop) => prop.value_int() != 0,
+        None => def,
     }
 }
 
 // ufbx.c:30692-30700 `ufbx_find_string_len`
 #[inline(never)]
 pub(crate) unsafe fn find_string_len(
-    props: *const Props,
+    props: &PropsView,
     name: *const u8,
     name_len: usize,
     def: String,
 ) -> String {
-    let prop: *mut Prop = find_prop_len(props, name, name_len);
-    if !prop.is_null() {
-        (*prop).value_str
-    } else {
-        def
+    match find_prop_len(props, name, name_len) {
+        Some(prop) => prop.value_str(),
+        None => def,
     }
 }
 
 // ufbx.c:30702-30710 `ufbx_find_blob_len`
 // C has no `ufbxi_noinline` here (unlike `ufbx_find_string_len` above).
 pub(crate) unsafe fn find_blob_len(
-    props: *const Props,
+    props: &PropsView,
     name: *const u8,
     name_len: usize,
     def: Blob,
 ) -> Blob {
-    let prop: *mut Prop = find_prop_len(props, name, name_len);
-    if !prop.is_null() {
-        (*prop).value_blob
-    } else {
-        def
+    match find_prop_len(props, name, name_len) {
+        Some(prop) => prop.value_blob(),
+        None => def,
     }
 }
 
 // ufbx.c:30712-30728 `ufbx_find_prop_concat`
 // Ported ahead of its banner section because `ufbxi_update_constraint`
 // (ufbx.c:23416, `native::scene_process`) calls it.
-pub(crate) unsafe fn find_prop_concat(
-    props: *const Props,
+pub(crate) unsafe fn find_prop_concat<'a>(
+    props: &'a PropsView,
     parts: *const String,
     num_parts: usize,
-) -> *mut Prop {
+) -> Option<&'a PropView> {
     let key: u32 = get_concat_key(parts, num_parts);
 
-    let mut props = props;
-    while !props.is_null() {
+    let mut props: Option<&'a PropsView> = Some(props);
+    while let Some(cur) = props {
         let mut index: usize = usize::MAX;
 
         macro_lower_bound_eq::<Prop>(
             2,
             &mut index,
-            (*props).props.data,
+            cur.props_data(),
             0,
-            (*props).props.count,
+            cur.props_count(),
             |a| cmp_prop_less_concat(a, parts, num_parts, key),
             |a| (*a)._internal_key == key && concat_str_cmp(&(*a).name, parts, num_parts) == 0,
         );
         if index != usize::MAX {
-            return (*props).props.data.add(index) as *mut Prop;
+            return Some(PropView::from_ptr(cur.props_data().add(index)));
         }
 
-        props = match &(*props).defaults {
-            Some(defaults) => defaults.as_ref() as *const Props,
-            None => core::ptr::null(),
-        };
+        props = cur.defaults();
     }
 
-    core::ptr::null_mut()
+    None
 }
 
 // ufbx.c:30730-30741 `ufbx_find_element_len`
@@ -998,11 +980,13 @@ pub(crate) unsafe fn find_prop_element_len(
     name_len: usize,
     type_: ElementType,
 ) -> *mut Element {
-    let prop: *const Prop = find_prop_len(core::ptr::addr_of!((*element).props), name, name_len);
-    if !prop.is_null() {
-        get_prop_element(element, prop, type_)
-    } else {
-        core::ptr::null_mut()
+    // Raw-element root: `element` is `*const Element`; bridge its props table to
+    // a view with `from_ptr` (addr_of avoids forming an intermediate `&Props`).
+    let props: &PropsView =
+        PropsView::from_ptr(core::ptr::addr_of!((*element).props) as *mut Props);
+    match find_prop_len(props, name, name_len) {
+        Some(prop) => get_prop_element(element, prop.get(), type_),
+        None => core::ptr::null_mut(),
     }
 }
 
@@ -1351,9 +1335,11 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
     // C: `ufbx_prop result;`
     let mut result: Prop;
 
-    let prop: *mut Prop = find_prop_len(core::ptr::addr_of!((*element).props), name, name_len);
-    if !prop.is_null() {
-        result = *prop;
+    let props: &PropsView =
+        PropsView::from_ptr(core::ptr::addr_of!((*element).props) as *mut Props);
+    let prop: Option<&PropView> = find_prop_len(props, name, name_len);
+    if let Some(found) = prop {
+        result = *found.get();
     } else {
         // C: `memset(&result, 0, sizeof(result));`
         result = MaybeUninit::zeroed().assume_init();
@@ -1382,12 +1368,14 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
 
     // C-parity: `prop->flags` — `prop` is non-NULL here because the NOT_FOUND
     // branch above always takes the early return.
-    if ((*prop).flags.raw() & PropFlags::CONNECTED.raw()) != 0 && !(*anim).ignore_connections {
+    if (prop.unwrap().flags().raw() & PropFlags::CONNECTED.raw()) != 0
+        && !(*anim).ignore_connections
+    {
         evaluate::evaluate_connected_prop(
             &mut result,
             anim,
             element,
-            (*prop).name.data,
+            prop.unwrap().name().data,
             time,
             flags,
         );
@@ -1642,7 +1630,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
 
     // C: `ufbx_prop buf[ufbxi_arraycount(ufbxi_transform_props_all)]; // ufbxi_uninit`
     let mut buf = MaybeUninit::<[Prop; TRANSFORM_PROPS_ALL_COUNT]>::uninit(); // ufbxi_uninit
-    let props: Props = evaluate::evaluate_selected_props(
+    let mut props: Props = evaluate::evaluate_selected_props(
         anim,
         core::ptr::addr_of!((*node).element),
         time,
@@ -1653,7 +1641,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
     );
     // C: `(ufbx_rotation_order)ufbxi_find_enum(...)` — clamped to the valid range.
     let order: RotationOrder = core::mem::transmute::<u32, RotationOrder>(find_enum(
-        &props,
+        PropsView::from_ptr(core::ptr::addr_of_mut!(props)),
         sp::RotationOrder.as_ptr(),
         RotationOrder::Xyz as i64,
         RotationOrder::Spheric as i64,
@@ -1663,16 +1651,28 @@ pub(crate) unsafe fn evaluate_transform_flags(
     let mut transform = MaybeUninit::<Transform>::uninit(); // ufbxi_uninit
     let t: *mut Transform = transform.as_mut_ptr();
     if (components & TransformFlags::INCLUDE_TRANSLATION.raw()) != 0 {
-        core::ptr::write(t, get_transform(&props, order, node, translation_scale));
+        core::ptr::write(
+            t,
+            get_transform(
+                PropsView::from_ptr(core::ptr::addr_of_mut!(props)),
+                order,
+                node,
+                translation_scale,
+            ),
+        );
     } else {
         (*t).translation = ZERO_VEC3;
         if (components & TransformFlags::INCLUDE_ROTATION.raw()) != 0 {
-            (*t).rotation = get_rotation(&props, order, node);
+            (*t).rotation = get_rotation(
+                PropsView::from_ptr(core::ptr::addr_of_mut!(props)),
+                order,
+                node,
+            );
         } else {
             (*t).rotation = IDENTITY_QUAT;
         }
         if (components & TransformFlags::INCLUDE_SCALE.raw()) != 0 {
-            (*t).scale = get_scale(&props, node);
+            (*t).scale = get_scale(PropsView::from_ptr(core::ptr::addr_of_mut!(props)), node);
         } else {
             (*t).scale = ONE_VEC3;
         }
@@ -1710,7 +1710,7 @@ pub(crate) unsafe fn evaluate_blend_weight_flags(
 
     // C: `ufbx_prop buf[ufbxi_arraycount(prop_names)]; // ufbxi_uninit`
     let mut buf = MaybeUninit::<[Prop; NUM_PROP_NAMES]>::uninit(); // ufbxi_uninit
-    let props: Props = evaluate::evaluate_selected_props(
+    let mut props: Props = evaluate::evaluate_selected_props(
         anim,
         core::ptr::addr_of!((*channel).element),
         time,
@@ -1721,7 +1721,7 @@ pub(crate) unsafe fn evaluate_blend_weight_flags(
     );
     // C: `ufbxi_find_real(&props, ufbxi_DeformPercent, channel->weight * (ufbx_real)100.0) * (ufbx_real)0.01`
     ufbxi_find_real(
-        &props,
+        PropsView::from_ptr(core::ptr::addr_of_mut!(props)),
         sp::DeformPercent.as_ptr(),
         (*channel).weight * (100.0 as Real),
     ) * (0.01 as Real)
@@ -5431,37 +5431,37 @@ pub(crate) unsafe fn dom_as_blob_list(node: *const DomNode) -> List<Blob> {
 }
 
 // ufbx.c:33142 `ufbx_find_prop`
-pub(crate) unsafe fn find_prop(props: *const Props, name: *const u8) -> *mut Prop {
+pub(crate) unsafe fn find_prop(props: &PropsView, name: *const u8) -> Option<&PropView> {
     find_prop_len(props, name, strlen(name))
 }
 
 // ufbx.c:33143 `ufbx_find_real`
-pub(crate) unsafe fn find_real(props: *const Props, name: *const u8, def: Real) -> Real {
+pub(crate) unsafe fn find_real(props: &PropsView, name: *const u8, def: Real) -> Real {
     find_real_len(props, name, strlen(name), def)
 }
 
 // ufbx.c:33144 `ufbx_find_vec3`
-pub(crate) unsafe fn find_vec3(props: *const Props, name: *const u8, def: Vec3) -> Vec3 {
+pub(crate) unsafe fn find_vec3(props: &PropsView, name: *const u8, def: Vec3) -> Vec3 {
     find_vec3_len(props, name, strlen(name), def)
 }
 
 // ufbx.c:33145 `ufbx_find_int`
-pub(crate) unsafe fn find_int(props: *const Props, name: *const u8, def: i64) -> i64 {
+pub(crate) unsafe fn find_int(props: &PropsView, name: *const u8, def: i64) -> i64 {
     find_int_len(props, name, strlen(name), def)
 }
 
 // ufbx.c:33146 `ufbx_find_bool`
-pub(crate) unsafe fn find_bool(props: *const Props, name: *const u8, def: bool) -> bool {
+pub(crate) unsafe fn find_bool(props: &PropsView, name: *const u8, def: bool) -> bool {
     find_bool_len(props, name, strlen(name), def)
 }
 
 // ufbx.c:33147 `ufbx_find_string`
-pub(crate) unsafe fn find_string(props: *const Props, name: *const u8, def: String) -> String {
+pub(crate) unsafe fn find_string(props: &PropsView, name: *const u8, def: String) -> String {
     find_string_len(props, name, strlen(name), def)
 }
 
 // ufbx.c:33148 `ufbx_find_blob`
-pub(crate) unsafe fn find_blob(props: *const Props, name: *const u8, def: Blob) -> Blob {
+pub(crate) unsafe fn find_blob(props: &PropsView, name: *const u8, def: Blob) -> Blob {
     find_blob_len(props, name, strlen(name), def)
 }
 

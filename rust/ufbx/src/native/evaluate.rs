@@ -95,7 +95,7 @@ use crate::native::parse::{
     Context, Node, Refcount, SceneImp, ELEMENT_TYPE_COUNT, MIN_FILE_FORMAT_LOOKAHEAD,
 };
 #[cfg(feature = "baking")]
-use crate::native::parse::{find_prop, is_vec3_zero};
+use crate::native::parse::{find_prop, is_vec3_zero, PropView, PropsView};
 #[cfg(feature = "skinning-eval")]
 use crate::native::platform::max_sz;
 use crate::native::platform::{
@@ -5387,10 +5387,13 @@ pub(crate) unsafe fn bake_node_imp(
 
     for i in 0..COMPLEX_TRANSLATION_PROPS.0.len() {
         let name: *const u8 = COMPLEX_TRANSLATION_PROPS.0[i];
-        let prop: *mut Prop = find_prop(ptr::addr_of!((*node).element.props), name);
+        let prop: Option<&PropView> = find_prop(
+            PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+            name,
+        );
         // C: `prop->value_vec3` — the `ufbx_prop` value union's 3-real view
         // over `value_vec4`.
-        if !prop.is_null() && !is_vec3_zero(*(ptr::addr_of!((*prop).value_vec4) as *const Vec3)) {
+        if prop.is_some_and(|prop| !is_vec3_zero(prop.value_vec3())) {
             complex_translation = true;
         }
         // C: `ufbxi_for(ufbxi_bake_prop, bprop, props, count)`

@@ -213,7 +213,20 @@ pub unsafe extern "C" fn ufbx_find_prop_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::Prop {
-    crate::native::api::find_prop_len(props, name, name_len)
+    // C-ABI root: `props` is a raw C pointer with no lifetime; bridge it to a
+    // `&PropsView` here and map the correlated `&PropView` back to raw. Null
+    // `props` yields null (the internal loop's `while !is_null` behavior).
+    if props.is_null() {
+        return core::ptr::null_mut();
+    }
+    match crate::native::api::find_prop_len(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        name_len,
+    ) {
+        Some(prop) => prop.get(),
+        None => core::ptr::null_mut(),
+    }
 }
 
 // ufbx.c:30652-30660 `ufbx_find_real_len` (impl: native/api.rs `find_real_len`)
@@ -224,7 +237,15 @@ pub unsafe extern "C" fn ufbx_find_real_len(
     name_len: usize,
     def: crate::prelude::Real,
 ) -> crate::prelude::Real {
-    crate::native::api::find_real_len(props, name, name_len, def)
+    if props.is_null() {
+        return def;
+    }
+    crate::native::api::find_real_len(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        name_len,
+        def,
+    )
 }
 
 // ufbx.c:30662-30670 `ufbx_find_vec3_len` (impl: native/api.rs `find_vec3_len`)
@@ -235,7 +256,15 @@ pub unsafe extern "C" fn ufbx_find_vec3_len(
     name_len: usize,
     def: crate::generated::Vec3,
 ) -> crate::generated::Vec3 {
-    crate::native::api::find_vec3_len(props, name, name_len, def)
+    if props.is_null() {
+        return def;
+    }
+    crate::native::api::find_vec3_len(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        name_len,
+        def,
+    )
 }
 
 // ufbx.c:30672-30680 `ufbx_find_int_len` (impl: native/api.rs `find_int_len`)
@@ -246,7 +275,15 @@ pub unsafe extern "C" fn ufbx_find_int_len(
     name_len: usize,
     def: i64,
 ) -> i64 {
-    crate::native::api::find_int_len(props, name, name_len, def)
+    if props.is_null() {
+        return def;
+    }
+    crate::native::api::find_int_len(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        name_len,
+        def,
+    )
 }
 
 // ufbx.c:30682-30690 `ufbx_find_bool_len` (impl: native/api.rs `find_bool_len`)
@@ -257,7 +294,15 @@ pub unsafe extern "C" fn ufbx_find_bool_len(
     name_len: usize,
     def: bool,
 ) -> bool {
-    crate::native::api::find_bool_len(props, name, name_len, def)
+    if props.is_null() {
+        return def;
+    }
+    crate::native::api::find_bool_len(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        name_len,
+        def,
+    )
 }
 
 // ufbx.c:30692-30700 `ufbx_find_string_len` (impl: native/api.rs `find_string_len`)
@@ -268,7 +313,15 @@ pub unsafe extern "C" fn ufbx_find_string_len(
     name_len: usize,
     def: crate::prelude::String,
 ) -> crate::prelude::String {
-    crate::native::api::find_string_len(props, name, name_len, def)
+    if props.is_null() {
+        return def;
+    }
+    crate::native::api::find_string_len(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        name_len,
+        def,
+    )
 }
 
 // ufbx.c:30702-30710 `ufbx_find_blob_len` (impl: native/api.rs `find_blob_len`)
@@ -279,7 +332,15 @@ pub unsafe extern "C" fn ufbx_find_blob_len(
     name_len: usize,
     def: crate::prelude::Blob,
 ) -> crate::prelude::Blob {
-    crate::native::api::find_blob_len(props, name, name_len, def)
+    if props.is_null() {
+        return def;
+    }
+    crate::native::api::find_blob_len(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        name_len,
+        def,
+    )
 }
 
 // ufbx.c:30712-30728 `ufbx_find_prop_concat` (impl: native/api.rs `find_prop_concat`)
@@ -289,7 +350,17 @@ pub unsafe extern "C" fn ufbx_find_prop_concat(
     parts: *const crate::prelude::String,
     num_parts: usize,
 ) -> *mut crate::generated::Prop {
-    crate::native::api::find_prop_concat(props, parts, num_parts)
+    if props.is_null() {
+        return core::ptr::null_mut();
+    }
+    match crate::native::api::find_prop_concat(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        parts,
+        num_parts,
+    ) {
+        Some(prop) => prop.get(),
+        None => core::ptr::null_mut(),
+    }
 }
 
 // ufbx.c:30730-30741 `ufbx_find_element_len` (impl: native/api.rs `find_element_len`)
@@ -1715,7 +1786,16 @@ pub unsafe extern "C" fn ufbx_find_prop(
     props: *const crate::generated::Props,
     name: *const u8,
 ) -> *mut crate::generated::Prop {
-    crate::native::api::find_prop(props, name)
+    if props.is_null() {
+        return core::ptr::null_mut();
+    }
+    match crate::native::api::find_prop(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+    ) {
+        Some(prop) => prop.get(),
+        None => core::ptr::null_mut(),
+    }
 }
 
 // ufbx.c:33143 `ufbx_find_real` (impl: native/api.rs `find_real`)
@@ -1725,7 +1805,14 @@ pub unsafe extern "C" fn ufbx_find_real(
     name: *const u8,
     def: crate::prelude::Real,
 ) -> crate::prelude::Real {
-    crate::native::api::find_real(props, name, def)
+    if props.is_null() {
+        return def;
+    }
+    crate::native::api::find_real(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        def,
+    )
 }
 
 // ufbx.c:33144 `ufbx_find_vec3` (impl: native/api.rs `find_vec3`)
@@ -1735,7 +1822,14 @@ pub unsafe extern "C" fn ufbx_find_vec3(
     name: *const u8,
     def: crate::generated::Vec3,
 ) -> crate::generated::Vec3 {
-    crate::native::api::find_vec3(props, name, def)
+    if props.is_null() {
+        return def;
+    }
+    crate::native::api::find_vec3(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        def,
+    )
 }
 
 // ufbx.c:33145 `ufbx_find_int` (impl: native/api.rs `find_int`)
@@ -1745,7 +1839,14 @@ pub unsafe extern "C" fn ufbx_find_int(
     name: *const u8,
     def: i64,
 ) -> i64 {
-    crate::native::api::find_int(props, name, def)
+    if props.is_null() {
+        return def;
+    }
+    crate::native::api::find_int(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        def,
+    )
 }
 
 // ufbx.c:33146 `ufbx_find_bool` (impl: native/api.rs `find_bool`)
@@ -1755,7 +1856,14 @@ pub unsafe extern "C" fn ufbx_find_bool(
     name: *const u8,
     def: bool,
 ) -> bool {
-    crate::native::api::find_bool(props, name, def)
+    if props.is_null() {
+        return def;
+    }
+    crate::native::api::find_bool(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        def,
+    )
 }
 
 // ufbx.c:33147 `ufbx_find_string` (impl: native/api.rs `find_string`)
@@ -1765,7 +1873,14 @@ pub unsafe extern "C" fn ufbx_find_string(
     name: *const u8,
     def: crate::prelude::String,
 ) -> crate::prelude::String {
-    crate::native::api::find_string(props, name, def)
+    if props.is_null() {
+        return def;
+    }
+    crate::native::api::find_string(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        def,
+    )
 }
 
 // ufbx.c:33148 `ufbx_find_blob` (impl: native/api.rs `find_blob`)
@@ -1775,7 +1890,14 @@ pub unsafe extern "C" fn ufbx_find_blob(
     name: *const u8,
     def: crate::prelude::Blob,
 ) -> crate::prelude::Blob {
-    crate::native::api::find_blob(props, name, def)
+    if props.is_null() {
+        return def;
+    }
+    crate::native::api::find_blob(
+        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        name,
+        def,
+    )
 }
 
 // ufbx.c:33149 `ufbx_find_prop_element` (impl: native/api.rs `find_prop_element`)

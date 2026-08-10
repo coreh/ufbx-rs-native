@@ -53,7 +53,7 @@ use crate::native::platform::{
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{SanitizedString, StringPool};
 use crate::native::thread::{ThreadPool, THREAD_GROUP_COUNT};
-use crate::native::view::SliceViewIter;
+use crate::native::view::{SliceViewIter, View};
 use crate::native::warnings::Warnings;
 use crate::prelude::{Blob, Real, Ref, String};
 
@@ -191,6 +191,93 @@ impl NodeView {
         // SAFETY: reading the `array` arm of the `content` union of a valid arena
         // `Node` (PORTING.md "Unions"); a raw pointer, all bit patterns valid.
         unsafe { (*self.get()).content.array }
+    }
+}
+
+// Rust-port infrastructure (not a ufbx.c section): views over the property
+// tables the finders walk. `Props` is the sorted `ufbx_prop` table plus a
+// `defaults` chain; `Prop` is a single entry. The finders (`ufbxi_find_prop` /
+// `ufbx_find_prop_len` and their wrappers) navigate a `&PropsView` and return a
+// `&PropView` correlated to it, so a found entry never outlives the table it was
+// found in. The binary-search / key-hash mechanics stay raw inside the leaves
+// (they are the leaf); the views supply the safe navigation surface.
+pub(crate) type PropsView = View<Props>;
+pub(crate) type PropView = View<Prop>;
+
+impl PropsView {
+    #[inline(always)]
+    pub(crate) fn props_data(&self) -> *mut Prop {
+        // SAFETY: reading the `props.data` run pointer of a valid arena `Props`.
+        unsafe { (*self.get()).props.data as *mut Prop }
+    }
+    #[inline(always)]
+    pub(crate) fn props_count(&self) -> usize {
+        // SAFETY: reading the `props.count` field of a valid arena `Props`.
+        unsafe { (*self.get()).props.count }
+    }
+    /// The `defaults` fallback table, viewed with the same lifetime as `self`.
+    #[inline(always)]
+    pub(crate) fn defaults(&self) -> Option<&PropsView> {
+        // SAFETY: reads the `defaults: Option<Ref<Props>>` field as its
+        // niche-packed bare pointer (like `read::opt_ptr`), NOT through
+        // `Ref::as_ref`. `as_ref` would form a SharedReadOnly `&Props` and then
+        // reinterpreting THAT as an interior-mutable view retags for write and
+        // trips Stacked Borrows; reading the pointer bits keeps the arena's
+        // mutable provenance. The viewed table lives as long as `self`.
+        unsafe {
+            let defaults_ptr: *mut Props =
+                *(core::ptr::addr_of!((*self.get()).defaults) as *const *mut Props);
+            if defaults_ptr.is_null() {
+                None
+            } else {
+                Some(PropsView::from_ptr(defaults_ptr))
+            }
+        }
+    }
+}
+
+impl PropView {
+    #[inline(always)]
+    pub(crate) fn value_vec4(&self) -> Vec4 {
+        // SAFETY: reading the `value_vec4` field of a valid arena `Prop`.
+        unsafe { (*self.get()).value_vec4 }
+    }
+    #[inline(always)]
+    pub(crate) fn value_vec3(&self) -> Vec3 {
+        // C-parity: the `ufbx_prop` value union's 3-real view; the generated
+        // struct keeps only `value_vec4` (same mapping as `find_vec3`).
+        // SAFETY: reading the first three reals of a valid arena `Prop`.
+        unsafe { *(&(*self.get()).value_vec4 as *const Vec4 as *const Vec3) }
+    }
+    #[inline(always)]
+    pub(crate) fn value_int(&self) -> i64 {
+        // SAFETY: reading the `value_int` field of a valid arena `Prop`.
+        unsafe { (*self.get()).value_int }
+    }
+    #[inline(always)]
+    pub(crate) fn value_str(&self) -> String {
+        // SAFETY: reading the `value_str` field of a valid arena `Prop`.
+        unsafe { (*self.get()).value_str }
+    }
+    #[inline(always)]
+    pub(crate) fn value_blob(&self) -> Blob {
+        // SAFETY: reading the `value_blob` field of a valid arena `Prop`.
+        unsafe { (*self.get()).value_blob }
+    }
+    #[inline(always)]
+    pub(crate) fn name(&self) -> String {
+        // SAFETY: reading the `name` field of a valid arena `Prop`.
+        unsafe { (*self.get()).name }
+    }
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> PropType {
+        // SAFETY: reading the `type_` field of a valid arena `Prop`.
+        unsafe { (*self.get()).type_ }
+    }
+    #[inline(always)]
+    pub(crate) fn flags(&self) -> PropFlags {
+        // SAFETY: reading the `flags` field of a valid arena `Prop`.
+        unsafe { (*self.get()).flags }
     }
 }
 
@@ -7115,16 +7202,16 @@ pub(crate) unsafe fn get_prop_type(uc: &Context, name: *const u8) -> PropType {
 
 // ufbx.c:11480-11509 `ufbxi_find_prop_with_key`
 #[inline(never)]
-pub(crate) unsafe fn find_prop_with_key(
-    props: *const Props,
+pub(crate) unsafe fn find_prop_with_key<'a>(
+    props: &'a PropsView,
     name: *const u8,
     key: u32,
-) -> *mut Prop {
-    let mut props = props;
-    loop {
-        let prop_data: *mut Prop = (*props).props.data as *mut Prop;
+) -> Option<&'a PropView> {
+    let mut props: Option<&'a PropsView> = Some(props);
+    while let Some(cur) = props {
+        let prop_data: *mut Prop = cur.props_data();
         let mut begin: usize = 0;
-        let mut end: usize = (*props).props.count;
+        let mut end: usize = cur.props_count();
         while end - begin >= 16 {
             let mid: usize = (begin + end) >> 1;
             let p: *const Prop = prop_data.add(mid);
@@ -7135,28 +7222,22 @@ pub(crate) unsafe fn find_prop_with_key(
             }
         }
 
-        end = (*props).props.count;
+        end = cur.props_count();
         while begin < end {
             let p: *const Prop = prop_data.add(begin);
             if (*p)._internal_key > key {
                 break;
             }
             if (*p).name.data == name && ((*p).flags.raw() & PropFlags::NO_VALUE.raw()) == 0 {
-                return p as *mut Prop;
+                return Some(PropView::from_ptr(p as *mut Prop));
             }
             begin += 1;
         }
 
-        props = match &(*props).defaults {
-            Some(defaults) => defaults.as_ref() as *const Props,
-            None => core::ptr::null(),
-        };
-        if props.is_null() {
-            break;
-        }
+        props = cur.defaults();
     }
 
-    core::ptr::null_mut()
+    None
 }
 
 // ufbx.c:11511-11514 `ufbxi_texture_file_entry`
@@ -7172,7 +7253,7 @@ pub(crate) struct TextureFileEntry {
 // sites pass a `ufbxi_*` string constant of at least 4 characters. This is NOT
 // `ufbxi_get_name_key()`, which handles shorter names.
 #[inline(always)]
-pub(crate) unsafe fn find_prop(props: *const Props, name: *const u8) -> *mut Prop {
+pub(crate) unsafe fn find_prop(props: &PropsView, name: *const u8) -> Option<&PropView> {
     let key = (*name.add(0) as u32) << 24
         | (*name.add(1) as u32) << 16
         | (*name.add(2) as u32) << 8
@@ -7182,50 +7263,44 @@ pub(crate) unsafe fn find_prop(props: *const Props, name: *const u8) -> *mut Pro
 
 // ufbx.c:11520-11528 `ufbxi_find_real`
 #[inline(always)]
-pub(crate) unsafe fn find_real(props: *const Props, name: *const u8, def: Real) -> Real {
-    let prop: *mut Prop = find_prop(props, name);
-    if !prop.is_null() {
+pub(crate) unsafe fn find_real(props: &PropsView, name: *const u8, def: Real) -> Real {
+    match find_prop(props, name) {
         // C-parity: `prop->value_real` is the `ufbx_prop` value union's first
         // real; the generated struct keeps only `value_vec4` (same mapping as
         // `find_vec3` below).
-        (*prop).value_vec4.x
-    } else {
-        def
+        Some(prop) => prop.value_vec4().x,
+        None => def,
     }
 }
 
 // ufbx.c:11530-11539 `ufbxi_find_vec3`
 #[inline(always)]
 pub(crate) unsafe fn find_vec3(
-    props: *const Props,
+    props: &PropsView,
     name: *const u8,
     def_x: Real,
     def_y: Real,
     def_z: Real,
 ) -> Vec3 {
-    let prop: *mut Prop = find_prop(props, name);
-    if !prop.is_null() {
+    match find_prop(props, name) {
         // C-parity: `prop->value_vec3` is the `ufbx_prop` value union's 3-real
         // view; the generated struct keeps only `value_vec4` (see
         // `native::read::read_property`).
-        *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
-    } else {
-        Vec3 {
+        Some(prop) => prop.value_vec3(),
+        None => Vec3 {
             x: def_x,
             y: def_y,
             z: def_z,
-        }
+        },
     }
 }
 
 // ufbx.c:11541-11549 `ufbxi_find_int`
 #[inline(always)]
-pub(crate) unsafe fn find_int(props: *const Props, name: *const u8, def: i64) -> i64 {
-    let prop: *mut Prop = find_prop(props, name);
-    if !prop.is_null() {
-        (*prop).value_int
-    } else {
-        def
+pub(crate) unsafe fn find_int(props: &PropsView, name: *const u8, def: i64) -> i64 {
+    match find_prop(props, name) {
+        Some(prop) => prop.value_int(),
+        None => def,
     }
 }
 
@@ -7234,21 +7309,21 @@ pub(crate) unsafe fn find_int(props: *const Props, name: *const u8, def: i64) ->
 // (`ufbxi_fetch_texture_layers`, ufbx.c:19251).
 #[inline(always)]
 pub(crate) unsafe fn find_enum(
-    props: *const Props,
+    props: &PropsView,
     name: *const u8,
     def: i64,
     max_value: i64,
 ) -> i64 {
-    let prop: *mut Prop = find_prop(props, name);
-    if !prop.is_null() {
-        let value: i64 = (*prop).value_int;
-        if value >= 0 && value <= max_value {
-            value
-        } else {
-            def
+    match find_prop(props, name) {
+        Some(prop) => {
+            let value: i64 = prop.value_int();
+            if value >= 0 && value <= max_value {
+                value
+            } else {
+                def
+            }
         }
-    } else {
-        def
+        None => def,
     }
 }
 

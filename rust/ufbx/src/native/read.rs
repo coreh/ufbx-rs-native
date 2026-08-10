@@ -127,8 +127,9 @@ use crate::native::parse::{
     get_val1, get_val2, get_val3, get_val4, get_val5, get_val_at, get_val_type,
     init_node_prop_names, is_node_property_name, is_vec3_one, is_vec3_zero, parse_legacy_toplevel,
     parse_toplevel, parse_toplevel_child, push_element_extra, retain_toplevel, Ascii, Context,
-    ElementInfo, FbxAttrEntry, FbxIdEntry, MeshExtra, Node, NodeView, PtrFbxIdEntry, Template,
-    TextureExtra, TmpAnimStack, TmpBonePose, TmpConnection, TmpMeshTexture, ValueArray, ValueType,
+    ElementInfo, FbxAttrEntry, FbxIdEntry, MeshExtra, Node, NodeView, PropView, PropsView,
+    PtrFbxIdEntry, Template, TextureExtra, TmpAnimStack, TmpBonePose, TmpConnection,
+    TmpMeshTexture, ValueArray, ValueType,
 };
 use crate::native::platform::{
     add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, math, max_real, max_sz, min32,
@@ -462,8 +463,16 @@ pub(crate) unsafe fn read_thumbnail(
 ) -> Result<(), Fail> {
     read_properties(uc, node, &mut (*thumbnail).props)?;
 
-    let custom_width: i64 = api_find_int(&(*thumbnail).props, b"CustomWidth\0".as_ptr(), 0);
-    let custom_height: i64 = api_find_int(&(*thumbnail).props, b"CustomHeight\0".as_ptr(), 0);
+    let custom_width: i64 = api_find_int(
+        PropsView::from_ptr(core::ptr::addr_of_mut!((*thumbnail).props)),
+        b"CustomWidth\0".as_ptr(),
+        0,
+    );
+    let custom_height: i64 = api_find_int(
+        PropsView::from_ptr(core::ptr::addr_of_mut!((*thumbnail).props)),
+        b"CustomHeight\0".as_ptr(),
+        0,
+    );
 
     let mut format: i32 = 0;
     let format_node = find_child_strcmp(node, b"Format\0".as_ptr());
@@ -1474,7 +1483,13 @@ pub(crate) unsafe fn set_own_prop_vec3_uniform(props: *mut Props, name: *const u
     // `Copy` but has no drop glue.
     let mut local_props: Props = core::ptr::read(props);
     local_props.defaults = None;
-    let prop: *mut Prop = api_find_prop(&local_props, name);
+    let prop: *mut Prop = match api_find_prop(
+        PropsView::from_ptr(core::ptr::addr_of_mut!(local_props)),
+        name,
+    ) {
+        Some(prop) => prop.get(),
+        None => core::ptr::null_mut(),
+    };
     if !prop.is_null() {
         (*prop).value_vec4.x = value;
         (*prop).value_vec4.y = value;
@@ -1506,21 +1521,21 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
     node_fbx_id: u64,
 ) -> Result<(), Fail> {
     let geo_translation: Vec3 = find_vec3(
-        &(*node).element.props,
+        PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
         sp::GeometricTranslation.as_ptr(),
         0.0,
         0.0,
         0.0,
     );
     let geo_rotation: Vec3 = find_vec3(
-        &(*node).element.props,
+        PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
         sp::GeometricRotation.as_ptr(),
         0.0,
         0.0,
         0.0,
     );
     let geo_scaling: Vec3 = find_vec3(
-        &(*node).element.props,
+        PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
         sp::GeometricScaling.as_ptr(),
         1.0,
         1.0,
@@ -1684,11 +1699,16 @@ pub(crate) unsafe fn setup_scale_helper(
     let mut i: usize = 0;
     while i < max_props {
         let hp: *const ScaleHelperProp = &SCALE_HELPER_PROPS[i];
-        let src_prop: *mut Prop = find_prop(&props_copy, (*hp).name);
-        if src_prop.is_null() {
-            i += 1;
-            continue;
-        }
+        let src_prop: *mut Prop = match find_prop(
+            PropsView::from_ptr(core::ptr::addr_of_mut!(props_copy)),
+            (*hp).name,
+        ) {
+            Some(prop) => prop.get(),
+            None => {
+                i += 1;
+                continue;
+            }
+        };
 
         *helper_props.add(num_props) = *src_prop;
         num_props += 1;
@@ -1726,7 +1746,11 @@ pub(crate) unsafe fn read_model(
         "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&elem_node->element.element_id)))"
     );
 
-    let inherit_type: i64 = find_int(&(*elem_node).element.props, sp::InheritType.as_ptr(), -1);
+    let inherit_type: i64 = find_int(
+        PropsView::from_ptr(core::ptr::addr_of_mut!((*elem_node).element.props)),
+        sp::InheritType.as_ptr(),
+        -1,
+    );
     match inherit_type {
         // RrSs
         0 => (*elem_node).original_inherit_mode = InheritMode::ComponentwiseScale,
@@ -2571,11 +2595,16 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
         (*shape_props.add(0)).value_str = EMPTY_STRING.0;
         (*shape_props.add(0)).value_blob = EMPTY_BLOB.0;
 
-        let self_prop: *mut Prop = find_prop_len(&(*info).props, name.data, name.length);
-        if !self_prop.is_null()
-            && ((*self_prop).type_ == PropType::Number || (*self_prop).type_ == PropType::Integer)
-        {
-            (*shape_props.add(0)).value_vec4.x = (*self_prop).value_vec4.x;
+        let self_prop: Option<&PropView> = find_prop_len(
+            PropsView::from_ptr(core::ptr::addr_of_mut!((*info).props)),
+            name.data,
+            name.length,
+        );
+        if self_prop.is_some_and(|prop| {
+            prop.type_() == PropType::Number || prop.type_() == PropType::Integer
+        }) {
+            // `is_some_and` above guarantees `self_prop` is `Some`.
+            (*shape_props.add(0)).value_vec4.x = self_prop.unwrap().value_vec4().x;
             connect_pp(
                 uc,
                 (*info).fbx_id,
