@@ -2538,6 +2538,15 @@ impl Context {
     pub(crate) fn ascii_view(&self) -> &AsciiView {
         unsafe { &*(&raw mut (*self.get()).ascii as *mut AsciiView) }
     }
+    // `node_prop_set`/`texture_file_map` (Map) — typed VIEW handles (reinterpret-in-place).
+    #[inline(always)]
+    pub(crate) fn node_prop_set_view(&self) -> &crate::native::hash::MapView {
+        unsafe { &*(&raw mut (*self.get()).node_prop_set as *mut crate::native::hash::MapView) }
+    }
+    #[inline(always)]
+    pub(crate) fn texture_file_map_view(&self) -> &crate::native::hash::MapView {
+        unsafe { &*(&raw mut (*self.get()).texture_file_map as *mut crate::native::hash::MapView) }
+    }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
     #[inline(always)]
@@ -7396,7 +7405,7 @@ pub(crate) unsafe fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:11736-11744 `ufbxi_is_node_property_name`
 pub(crate) unsafe fn is_node_property_name(uc: &Context, name: *const u8) -> bool {
     // You need to call `ufbxi_init_node_prop_names()` before calling this
-    ufbx_assert!((*uc.get()).node_prop_set.size > 0);
+    ufbx_assert!(uc.node_prop_set_view().size() > 0);
 
     // C takes the address of the parameter itself (`&name`) as the map key.
     let name: *const u8 = name;

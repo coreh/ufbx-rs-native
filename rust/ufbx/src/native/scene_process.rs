@@ -4878,7 +4878,7 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
         let file: *mut TextureFile = push_zero(uc.tmp_mut_ptr(), 1);
         ufbxi_check!(uc, !file.is_null(), "file");
 
-        (*file).index = (*uc.get()).texture_file_map.size - 1;
+        (*file).index = uc.texture_file_map_view().size() - 1;
 
         (*entry).key = key;
         (*entry).file = file;
@@ -4918,7 +4918,7 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn pop_texture_files(uc: &Context) -> Result<(), Fail> {
-    let num_files: u32 = (*uc.get()).texture_file_map.size;
+    let num_files: u32 = uc.texture_file_map_view().size();
     let files: *mut TextureFile = push(uc.result_mut_ptr(), num_files as usize);
     ufbxi_check!(uc, !files.is_null(), "files");
 
@@ -4928,7 +4928,7 @@ pub(crate) unsafe fn pop_texture_files(uc: &Context) -> Result<(), Fail> {
         .set_count(num_files as usize);
 
     let entries: *mut TextureFileEntry =
-        (*uc.get()).texture_file_map.items as *mut TextureFileEntry;
+        uc.texture_file_map_view().items() as *mut TextureFileEntry;
     for i in 0..num_files as usize {
         ptr::copy_nonoverlapping((*entries.add(i)).file, files.add(i), 1);
     }

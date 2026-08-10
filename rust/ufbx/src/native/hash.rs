@@ -250,6 +250,26 @@ pub(crate) struct Map {
     pub aa_root: *mut AaNode,
 }
 
+// Typed interior-mutable VIEW over an owned `Map` field, reinterpreted in place.
+// Read-only leaf getters for the sites that inspect an owned map's size/items.
+#[repr(transparent)]
+pub(crate) struct MapView(core::cell::UnsafeCell<core::mem::MaybeUninit<Map>>);
+
+impl MapView {
+    #[inline(always)]
+    fn get(&self) -> *mut Map {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn size(&self) -> u32 {
+        unsafe { (*self.get()).size }
+    }
+    #[inline(always)]
+    pub(crate) fn items(&self) -> *mut core::ffi::c_void {
+        unsafe { (*self.get()).items }
+    }
+}
+
 // ufbx.c:4393-4420 `ufbxi_map_init`
 #[inline(never)]
 pub(crate) unsafe fn map_init(
