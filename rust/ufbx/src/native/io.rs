@@ -427,6 +427,13 @@ impl FileContext {
         unsafe { &raw mut (*self.get()).ator }
     }
 
+    // `ator` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).ator as *mut crate::native::allocator::AllocatorView) }
+    }
+
     // `parent_ator` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn parent_ator(&self) -> *mut Allocator {
@@ -454,7 +461,7 @@ pub(crate) unsafe fn begin_file_context(
     if ctx != 0 {
         fc.set_parent_ator(ctx as *mut Allocator);
         (*fc.get()).ator = *fc.parent_ator();
-        (*fc.get()).ator.error = fc.error_mut_ptr();
+        fc.ator_view().set_error(fc.error_mut_ptr());
     } else {
         init_ator(
             fc.error_mut_ptr(),
@@ -469,7 +476,7 @@ pub(crate) unsafe fn begin_file_context(
 #[inline(never)]
 pub(crate) unsafe fn end_file_context(fc: &FileContext, error: *mut Error, ok: bool) {
     if !fc.parent_ator().is_null() {
-        (*fc.get()).ator.error = (*fc.parent_ator()).error;
+        fc.ator_view().set_error((*fc.parent_ator()).error);
         *fc.parent_ator() = (*fc.get()).ator;
     } else {
         free_ator(fc.ator_mut_ptr());

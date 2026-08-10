@@ -2223,6 +2223,15 @@ impl EvalContext {
         unsafe { &raw mut (*self.get()).ator_tmp }
     }
 
+    // `ator_tmp` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_tmp_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).ator_tmp as *mut crate::native::allocator::AllocatorView)
+        }
+    }
+
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
@@ -3098,9 +3107,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     (*imp).refcount.buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
 
     (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
-    (*imp).scene.metadata.temp_memory_used = (*ec.get()).ator_tmp.current_size;
+    (*imp).scene.metadata.temp_memory_used = ec.ator_tmp_view().current_size();
     (*imp).scene.metadata.result_allocs = (*imp).refcount.ator.num_allocs;
-    (*imp).scene.metadata.temp_allocs = (*ec.get()).ator_tmp.num_allocs;
+    (*imp).scene.metadata.temp_allocs = ec.ator_tmp_view().num_allocs();
 
     // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, imp->scene.elements)`
     let mut p_elem: *mut *mut Element = (*imp).scene.elements.data as *mut *mut Element;
@@ -4315,12 +4324,30 @@ impl BakeContext {
         unsafe { &raw mut (*self.get()).ator_tmp }
     }
 
+    // `ator_tmp` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_tmp_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).ator_tmp as *mut crate::native::allocator::AllocatorView)
+        }
+    }
+
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).ator_result }
+    }
+
+    // `ator_result` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_result_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).ator_result as *mut crate::native::allocator::AllocatorView)
+        }
     }
 
     // `scene` — scalar value accessor.
@@ -6259,16 +6286,16 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
 
     bc.bake_view()
         .metadata_view()
-        .set_result_memory_used((*bc.get()).ator_result.current_size);
+        .set_result_memory_used(bc.ator_result_view().current_size());
     bc.bake_view()
         .metadata_view()
-        .set_temp_memory_used((*bc.get()).ator_tmp.current_size);
+        .set_temp_memory_used(bc.ator_tmp_view().current_size());
     bc.bake_view()
         .metadata_view()
-        .set_result_allocs((*bc.get()).ator_result.num_allocs);
+        .set_result_allocs(bc.ator_result_view().num_allocs());
     bc.bake_view()
         .metadata_view()
-        .set_temp_allocs((*bc.get()).ator_tmp.num_allocs);
+        .set_temp_allocs(bc.ator_tmp_view().num_allocs());
 
     (*bc.imp()).magic = BAKED_ANIM_IMP_MAGIC;
     // C: `bc->imp->bake = bc->bake;` (struct assignment)

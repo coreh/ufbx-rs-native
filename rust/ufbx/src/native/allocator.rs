@@ -133,6 +133,35 @@ pub(crate) struct Allocator {
     pub name: *const u8,
 }
 
+// Typed interior-mutable VIEW over an OWNED `Allocator` field, reinterpreted in
+// place. Applies only to owned `Allocator` fields (`ator`/`ator_tmp`/`ator_result`);
+// pointer-to-allocator fields (`*mut Allocator`) are reached via their value getter
+// + deref instead. Getters read POD bookkeeping leaves; `set_error` wires the error
+// slot. The C-ABI `alloc()`/`free()` boundary keeps using the raw `*mut` getter.
+#[repr(transparent)]
+pub(crate) struct AllocatorView(core::cell::UnsafeCell<core::mem::MaybeUninit<Allocator>>);
+
+impl AllocatorView {
+    #[inline(always)]
+    fn get(&self) -> *mut Allocator {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn current_size(&self) -> usize {
+        unsafe { (*self.get()).current_size }
+    }
+    #[inline(always)]
+    pub(crate) fn num_allocs(&self) -> usize {
+        unsafe { (*self.get()).num_allocs }
+    }
+    #[inline(always)]
+    pub(crate) fn set_error(&self, error: *mut Error) {
+        unsafe {
+            (*self.get()).error = error;
+        }
+    }
+}
+
 // ufbx.c:3647-3653 `ufbxi_does_overflow`
 #[inline(always)]
 pub(crate) fn does_overflow(total: usize, a: usize, b: usize) -> bool {

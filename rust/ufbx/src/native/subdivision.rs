@@ -464,12 +464,30 @@ impl SubdivideContext {
         unsafe { &raw mut (*self.get()).ator_tmp }
     }
 
+    // `ator_tmp` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_tmp_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).ator_tmp as *mut crate::native::allocator::AllocatorView)
+        }
+    }
+
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).ator_result }
+    }
+
+    // `ator_result` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_result_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).ator_result as *mut crate::native::allocator::AllocatorView)
+        }
     }
 
     // `max_vertex_weights` — scalar value accessor.
@@ -2495,10 +2513,10 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     (sc.imp() as *mut u8).expose_provenance();
 
     let dst_sub: *mut SubdivisionResult = opt_ptr(sc.dst_mesh_view().subdivision_result_ptr());
-    (*dst_sub).result_memory_used = (*sc.get()).ator_result.current_size;
-    (*dst_sub).temp_memory_used = (*sc.get()).ator_tmp.current_size;
-    (*dst_sub).result_allocs = (*sc.get()).ator_result.num_allocs;
-    (*dst_sub).temp_allocs = (*sc.get()).ator_tmp.num_allocs;
+    (*dst_sub).result_memory_used = sc.ator_result_view().current_size();
+    (*dst_sub).temp_memory_used = sc.ator_tmp_view().current_size();
+    (*dst_sub).result_allocs = sc.ator_result_view().num_allocs();
+    (*dst_sub).temp_allocs = sc.ator_tmp_view().num_allocs();
 
     init_ref(&mut (*sc.imp()).refcount, MESH_IMP_MAGIC, parent);
 
