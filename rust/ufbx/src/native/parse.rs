@@ -3064,6 +3064,12 @@ impl Context {
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).tmp_arr_size }
     }
+    // Value getter for the read-only size sites (the `&mut`/grow-array out-param sites
+    // keep using `tmp_arr_size_mut_ptr`).
+    #[inline(always)]
+    pub(crate) fn tmp_arr_size(&self) -> usize {
+        unsafe { (*self.get()).tmp_arr_size }
+    }
 
     // `tmp_arr` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]

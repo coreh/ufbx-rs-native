@@ -418,6 +418,31 @@ impl CacheContext {
             (*self.get()).xml_format = xml_format;
         }
     }
+    // Whole-field accessors for fields that also expose a `_view` (subfield access):
+    // `channel_name` read, `xml_filename` write (String), `open_file_cb` write (Copy),
+    // `opts` write (RawGeometryCacheOpts is non-Copy — the setter moves the value in).
+    #[inline(always)]
+    pub(crate) fn channel_name(&self) -> String {
+        unsafe { (*self.get()).channel_name }
+    }
+    #[inline(always)]
+    pub(crate) fn set_xml_filename(&self, xml_filename: String) {
+        unsafe {
+            (*self.get()).xml_filename = xml_filename;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_open_file_cb(&self, open_file_cb: crate::generated::RawOpenFileCb) {
+        unsafe {
+            (*self.get()).open_file_cb = open_file_cb;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_opts(&self, opts: crate::generated::RawGeometryCacheOpts) {
+        unsafe {
+            (*self.get()).opts = opts;
+        }
+    }
 
     // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `GeometryCacheOptsView`.
     #[inline(always)]
@@ -1083,7 +1108,7 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                 "size >= elem_size * count"
             );
 
-            (*frame).channel = (*cc.get()).channel_name;
+            (*frame).channel = cc.channel_name();
             (*frame).time = time as f64 * (1.0 / 6000.0);
             (*frame).filename = cc.stream_filename();
             (*frame).data_format = format;
@@ -1151,7 +1176,7 @@ pub(crate) unsafe fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
         let frame: *mut CacheFrame = frames.add(i as usize);
 
         let sample_frame: f64 = start_frame + i as f64 * frames_per_sample;
-        (*frame).channel = (*cc.get()).channel_name;
+        (*frame).channel = cc.channel_name();
         (*frame).time = sample_frame / cc.frames_per_second();
         (*frame).filename = cc.stream_filename();
         (*frame).data_format = CacheDataFormat::Vec3Float;
@@ -1222,7 +1247,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
     doc: *mut XmlDocument,
 ) -> Result<(), Fail> {
     cc.set_xml_ticks_per_frame(250);
-    (*cc.get()).xml_filename = cc.stream_filename();
+    cc.set_xml_filename(cc.stream_filename());
 
     let tag_root: *mut XmlTag = xml_find_child((*doc).root, b"Autodesk_Cache_File\0".as_ptr());
     if !tag_root.is_null() {
@@ -1903,9 +1928,9 @@ pub(crate) unsafe fn load_geometry_cache(
     );
     cc.set_ator_tmp(&mut ator_tmp);
 
-    (*cc.get()).opts = core::ptr::read(&opts);
+    cc.set_opts(core::ptr::read(&opts));
 
-    (*cc.get()).open_file_cb = opts.open_file_cb;
+    cc.set_open_file_cb(opts.open_file_cb);
 
     cc.string_pool_view().set_error(cc.error_mut_ptr());
     map_init(
@@ -2040,7 +2065,7 @@ pub(crate) unsafe fn load_external_cache(
     let cc: CacheContext = core::mem::zeroed();
     cc.set_owned_by_scene(true);
 
-    (*cc.get()).open_file_cb = uc.opts_view().open_file_cb();
+    cc.set_open_file_cb(uc.opts_view().open_file_cb());
     cc.set_frames_per_second(uc.scene_view().settings_view().frames_per_second());
 
     // Temporarily "borrow" allocators for the geometry cache
@@ -2309,7 +2334,7 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
     }
 
     if uc.opts_view().space_conversion() == SpaceConversion::TransformRoot {
-        let mut axis_mat: Matrix = (*uc.get()).axis_matrix;
+        let mut axis_mat: Matrix = uc.axis_matrix();
         let root_node: *mut Node = ref_ptr(uc.scene_view().root_node_ptr());
         if !is_transform_identity(&(*root_node).local_transform) {
             let root_mat: Matrix = transform_to_matrix(&(*root_node).local_transform);
