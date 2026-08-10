@@ -1141,14 +1141,9 @@ macro_rules! ufbxi_check_opts_return_no_error {
 pub(crate) use ufbxi_check_opts_return_no_error;
 
 // Typed interior-mutable VIEW over an `Error` field, reinterpreted in place.
-#[repr(transparent)]
-pub(crate) struct ErrorView(core::cell::UnsafeCell<core::mem::MaybeUninit<Error>>);
+pub(crate) type ErrorView = crate::native::view::View<Error>;
 
 impl ErrorView {
-    #[inline(always)]
-    fn get(&self) -> *mut Error {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn type_(&self) -> crate::generated::ErrorType {
         // SAFETY: reading the error-type enum — same assertion the direct read makes.

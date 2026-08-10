@@ -206,14 +206,9 @@ pub struct RawString {
 pub(crate) type ScalarView<T> = core::cell::Cell<T>;
 
 // Typed interior-mutable VIEW over `RawString` (non-Copy; subfields read+written).
-#[repr(transparent)]
-pub(crate) struct RawStringView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawString>>);
+pub(crate) type RawStringView = crate::native::view::View<RawString>;
 
 impl RawStringView {
-    #[inline(always)]
-    fn get(&self) -> *mut RawString {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn data(&self) -> *const u8 {
         unsafe { (*self.get()).data }
@@ -261,14 +256,9 @@ pub struct RawBlob {
 }
 
 // Typed interior-mutable VIEW over `RawBlob` (non-Copy; subfields read+written).
-#[repr(transparent)]
-pub(crate) struct RawBlobView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawBlob>>);
+pub(crate) type RawBlobView = crate::native::view::View<RawBlob>;
 
 impl RawBlobView {
-    #[inline(always)]
-    fn get(&self) -> *mut RawBlob {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn data(&self) -> *const u8 {
         unsafe { (*self.get()).data }
@@ -280,14 +270,9 @@ impl RawBlobView {
 }
 
 // Typed interior-mutable VIEW over the public `Blob` (Copy; subfields read+written).
-#[repr(transparent)]
-pub(crate) struct BlobView(core::cell::UnsafeCell<core::mem::MaybeUninit<Blob>>);
+pub(crate) type BlobView = crate::native::view::View<Blob>;
 
 impl BlobView {
-    #[inline(always)]
-    fn get(&self) -> *mut Blob {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn data(&self) -> *const u8 {
         unsafe { (*self.get()).data }
@@ -311,16 +296,9 @@ impl BlobView {
 }
 
 // Typed interior-mutable VIEW over `crate::generated::RawThreadOpts` (non-Copy; subfields read+written).
-#[repr(transparent)]
-pub(crate) struct RawThreadOptsView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::RawThreadOpts>>,
-);
+pub(crate) type RawThreadOptsView = crate::native::view::View<crate::generated::RawThreadOpts>;
 
 impl RawThreadOptsView {
-    #[inline(always)]
-    fn get(&self) -> *mut crate::generated::RawThreadOpts {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn memory_limit(&self) -> usize {
         unsafe { (*self.get()).memory_limit }
@@ -335,16 +313,9 @@ impl RawThreadOptsView {
 
 // Typed interior-mutable VIEW over `RawStream` (the C-callback I/O stream struct);
 // callback/`user` leaves are read through it.
-#[repr(transparent)]
-pub(crate) struct RawStreamView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::RawStream>>,
-);
+pub(crate) type RawStreamView = crate::native::view::View<crate::generated::RawStream>;
 
 impl RawStreamView {
-    #[inline(always)]
-    fn get(&self) -> *mut crate::generated::RawStream {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn read_fn(
         &self,
@@ -367,16 +338,9 @@ impl RawStreamView {
 
 // Typed interior-mutable VIEW over `RawOpenFileCb` — Copy, but `.fn_` is WRITTEN
 // (default cb install), so it needs a view not a value getter.
-#[repr(transparent)]
-pub(crate) struct RawOpenFileCbView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::RawOpenFileCb>>,
-);
+pub(crate) type RawOpenFileCbView = crate::native::view::View<crate::generated::RawOpenFileCb>;
 
 impl RawOpenFileCbView {
-    #[inline(always)]
-    fn get(&self) -> *mut crate::generated::RawOpenFileCb {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn fn_(
         &self,
@@ -567,14 +531,9 @@ pub struct String {
 
 // Typed interior-mutable VIEW over a `String` field, reinterpreted in place — for
 // sites that read OR write String subfields (`err.description.data = ...`).
-#[repr(transparent)]
-pub(crate) struct StringView(core::cell::UnsafeCell<core::mem::MaybeUninit<String>>);
+pub(crate) type StringView = crate::native::view::View<String>;
 
 impl StringView {
-    #[inline(always)]
-    fn get(&self) -> *mut String {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn data(&self) -> *const u8 {
         unsafe { (*self.get()).data }

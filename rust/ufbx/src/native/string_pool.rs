@@ -66,14 +66,9 @@ pub(crate) struct StringPool {
 // place. `.buf` recurses into `BufView`; other leaves are getters/setters or raw-ptr
 // getters for addr-of sites. The whole-struct copy (`cc.string_pool = uc.string_pool`)
 // uses the context-level value getter/setter, not this view.
-#[repr(transparent)]
-pub(crate) struct StringPoolView(core::cell::UnsafeCell<core::mem::MaybeUninit<StringPool>>);
+pub(crate) type StringPoolView = crate::native::view::View<StringPool>;
 
 impl StringPoolView {
-    #[inline(always)]
-    fn get(&self) -> *mut StringPool {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn buf(&self) -> Buf {
         unsafe { (*self.get()).buf }

@@ -156,16 +156,10 @@ pub(crate) struct InnerTessellateCurveContext {
 // interior mutability every `&TessellateCurveContext` site needs. Field is
 // `pub(crate)` — the sole construction site lives in `native::api`.
 // Typed interior-mutable VIEW over the tessellate opts (approach A).
-#[repr(transparent)]
-pub(crate) struct TessellateCurveOptsView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::RawTessellateCurveOpts>>,
-);
+pub(crate) type TessellateCurveOptsView =
+    crate::native::view::View<crate::generated::RawTessellateCurveOpts>;
 
 impl TessellateCurveOptsView {
-    #[inline(always)]
-    fn get(&self) -> *mut crate::generated::RawTessellateCurveOpts {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn span_subdivision(&self) -> usize {
         unsafe { (*self.get()).span_subdivision }
@@ -187,16 +181,10 @@ impl TessellateCurveOptsView {
 }
 
 // Typed interior-mutable VIEW over the tessellate opts (approach A).
-#[repr(transparent)]
-pub(crate) struct TessellateSurfaceOptsView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::RawTessellateSurfaceOpts>>,
-);
+pub(crate) type TessellateSurfaceOptsView =
+    crate::native::view::View<crate::generated::RawTessellateSurfaceOpts>;
 
 impl TessellateSurfaceOptsView {
-    #[inline(always)]
-    fn get(&self) -> *mut crate::generated::RawTessellateSurfaceOpts {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn span_subdivision_u(&self) -> usize {
         unsafe { (*self.get()).span_subdivision_u }

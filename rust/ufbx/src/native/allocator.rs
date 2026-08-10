@@ -138,14 +138,9 @@ pub(crate) struct Allocator {
 // pointer-to-allocator fields (`*mut Allocator`) are reached via their value getter
 // + deref instead. Getters read POD bookkeeping leaves; `set_error` wires the error
 // slot. The C-ABI `alloc()`/`free()` boundary keeps using the raw `*mut` getter.
-#[repr(transparent)]
-pub(crate) struct AllocatorView(core::cell::UnsafeCell<core::mem::MaybeUninit<Allocator>>);
+pub(crate) type AllocatorView = crate::native::view::View<Allocator>;
 
 impl AllocatorView {
-    #[inline(always)]
-    fn get(&self) -> *mut Allocator {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn current_size(&self) -> usize {
         unsafe { (*self.get()).current_size }

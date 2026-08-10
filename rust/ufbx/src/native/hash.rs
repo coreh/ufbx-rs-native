@@ -252,14 +252,9 @@ pub(crate) struct Map {
 
 // Typed interior-mutable VIEW over an owned `Map` field, reinterpreted in place.
 // Read-only leaf getters for the sites that inspect an owned map's size/items.
-#[repr(transparent)]
-pub(crate) struct MapView(core::cell::UnsafeCell<core::mem::MaybeUninit<Map>>);
+pub(crate) type MapView = crate::native::view::View<Map>;
 
 impl MapView {
-    #[inline(always)]
-    fn get(&self) -> *mut Map {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn size(&self) -> u32 {
         unsafe { (*self.get()).size }

@@ -168,17 +168,9 @@ pub(crate) struct SubdivideContext(
 // (approach A). Generated ABI-fixed `RawSubdivideOpts` plays the `Inner` role;
 // `MaybeUninit` makes forming `&SubdivideOptsView` assert no validity — each leaf getter
 // asserts only the field it reads.
-#[repr(transparent)]
-pub(crate) struct SubdivideOptsView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<RawSubdivideOpts>>,
-);
+pub(crate) type SubdivideOptsView = crate::native::view::View<RawSubdivideOpts>;
 
 impl SubdivideOptsView {
-    #[inline(always)]
-    fn get(&self) -> *mut RawSubdivideOpts {
-        self.0.get().cast()
-    }
-
     #[inline(always)]
     pub(crate) fn boundary(&self) -> crate::generated::SubdivisionBoundary {
         // SAFETY: reading a POD/enum opts field by value — same assertion the
@@ -281,16 +273,9 @@ impl SubdivideOptsView {
 }
 
 // Typed interior-mutable VIEW over `VertexVec3` (non-Copy: has List fields).
-#[repr(transparent)]
-pub(crate) struct VertexVec3View(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::VertexVec3>>,
-);
+pub(crate) type VertexVec3View = crate::native::view::View<crate::generated::VertexVec3>;
 
 impl VertexVec3View {
-    #[inline(always)]
-    fn get(&self) -> *mut crate::generated::VertexVec3 {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn values_view(&self) -> &crate::prelude::ListView<crate::generated::Vec3> {
         unsafe {
@@ -306,14 +291,9 @@ impl VertexVec3View {
 
 // Typed interior-mutable VIEW over a `Mesh` field (public struct; only the sc-accessed
 // leaves are exposed).
-#[repr(transparent)]
-pub(crate) struct MeshView(core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::Mesh>>);
+pub(crate) type MeshView = crate::native::view::View<crate::generated::Mesh>;
 
 impl MeshView {
-    #[inline(always)]
-    fn get(&self) -> *mut crate::generated::Mesh {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn vertex_indices_view(&self) -> &crate::prelude::ListView<u32> {
         unsafe { &*(&raw mut (*self.get()).vertex_indices as *mut crate::prelude::ListView<u32>) }

@@ -119,14 +119,9 @@ pub(crate) struct BitStream {
 // the interior pointer stays valid, and `bit_stream_init` still sets it up through the
 // raw `stream_mut_ptr()`. Single-threaded (deflate), POD leaves. Verified under Miri
 // (SB + TB) on the DEFLATE-heavy load path. Only the hot-loop scalar leaves are exposed.
-#[repr(transparent)]
-pub(crate) struct BitStreamView(core::cell::UnsafeCell<core::mem::MaybeUninit<BitStream>>);
+pub(crate) type BitStreamView = crate::native::view::View<BitStream>;
 
 impl BitStreamView {
-    #[inline(always)]
-    fn get(&self) -> *mut BitStream {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn bits(&self) -> u64 {
         unsafe { (*self.get()).bits }

@@ -177,17 +177,9 @@ pub(crate) struct CacheContext(core::cell::UnsafeCell<core::mem::MaybeUninit<Inn
 // (approach A). Generated ABI-fixed `RawGeometryCacheOpts` plays the `Inner` role;
 // `MaybeUninit` makes forming `&GeometryCacheOptsView` assert no validity — each leaf getter
 // asserts only the field it reads.
-#[repr(transparent)]
-pub(crate) struct GeometryCacheOptsView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<RawGeometryCacheOpts>>,
-);
+pub(crate) type GeometryCacheOptsView = crate::native::view::View<RawGeometryCacheOpts>;
 
 impl GeometryCacheOptsView {
-    #[inline(always)]
-    fn get(&self) -> *mut RawGeometryCacheOpts {
-        self.0.get().cast()
-    }
-
     #[inline(always)]
     pub(crate) fn mirror_axis(&self) -> crate::generated::MirrorAxis {
         // SAFETY: reading a POD/enum opts field by value — same assertion the
@@ -236,15 +228,9 @@ impl GeometryCacheOptsView {
 
 // Typed interior-mutable VIEW over `CacheContext.cache` (approach A). List fields
 // recurse into `ListView`; the whole-`String` field uses value getter + setter.
-#[repr(transparent)]
-pub(crate) struct GeometryCacheView(core::cell::UnsafeCell<core::mem::MaybeUninit<GeometryCache>>);
+pub(crate) type GeometryCacheView = crate::native::view::View<GeometryCache>;
 
 impl GeometryCacheView {
-    #[inline(always)]
-    fn get(&self) -> *mut GeometryCache {
-        self.0.get().cast()
-    }
-
     #[inline(always)]
     pub(crate) fn frames_view(&self) -> &crate::prelude::ListView<crate::generated::CacheFrame> {
         // SAFETY: reinterpret the non-Copy `List` field in place as a view.

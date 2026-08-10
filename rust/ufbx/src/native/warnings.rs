@@ -54,14 +54,9 @@ pub(crate) struct Warnings {
 
 // Typed interior-mutable VIEW over an owned `Warnings` field, reinterpreted in place.
 // `.tmp_stack` recurses into `BufView`; other leaves are setters / raw-ptr getters.
-#[repr(transparent)]
-pub(crate) struct WarningsView(core::cell::UnsafeCell<core::mem::MaybeUninit<Warnings>>);
+pub(crate) type WarningsView = crate::native::view::View<Warnings>;
 
 impl WarningsView {
-    #[inline(always)]
-    fn get(&self) -> *mut Warnings {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn tmp_stack_view(&self) -> &crate::native::buf::BufView {
         unsafe { &*(&raw mut (*self.get()).tmp_stack as *mut crate::native::buf::BufView) }

@@ -232,14 +232,9 @@ pub(crate) struct AsciiToken {
 }
 
 // Typed interior-mutable VIEW over an `AsciiToken` field, reinterpreted in place.
-#[repr(transparent)]
-pub(crate) struct AsciiTokenView(core::cell::UnsafeCell<core::mem::MaybeUninit<AsciiToken>>);
+pub(crate) type AsciiTokenView = crate::native::view::View<AsciiToken>;
 
 impl AsciiTokenView {
-    #[inline(always)]
-    fn get(&self) -> *mut AsciiToken {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn str_data(&self) -> *mut u8 {
         unsafe { (*self.get()).str_data }
@@ -285,14 +280,9 @@ pub(crate) struct Ascii {
 // Typed interior-mutable VIEW over the owned `ascii` field (Ascii), reinterpreted in
 // place. `token`/`prev_token` recurse into `AsciiTokenView`; scalars are getters/setters;
 // `token` is also whole-addr'd (`_mut_ptr`).
-#[repr(transparent)]
-pub(crate) struct AsciiView(core::cell::UnsafeCell<core::mem::MaybeUninit<Ascii>>);
+pub(crate) type AsciiView = crate::native::view::View<Ascii>;
 
 impl AsciiView {
-    #[inline(always)]
-    fn get(&self) -> *mut Ascii {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn token_view(&self) -> &AsciiTokenView {
         unsafe { &*(&raw mut (*self.get()).token as *mut AsciiTokenView) }
@@ -1057,16 +1047,9 @@ impl ObjContext {
 }
 
 // Typed interior-mutable VIEW over `ObjFastIndices` (Copy, but subfields written).
-#[repr(transparent)]
-pub(crate) struct ObjFastIndicesView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<ObjFastIndices>>,
-);
+pub(crate) type ObjFastIndicesView = crate::native::view::View<ObjFastIndices>;
 
 impl ObjFastIndicesView {
-    #[inline(always)]
-    fn get(&self) -> *mut ObjFastIndices {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn set_indices(&self, indices: *mut u64) {
         unsafe {
@@ -1282,15 +1265,9 @@ pub(crate) struct Context(pub(crate) core::cell::UnsafeCell<core::mem::MaybeUnin
 // Typed interior-mutable VIEW over `Context.opts` (RawLoadOpts). Non-Copy nested
 // substructs (RawString/RawBlob/RawThreadOpts) recurse into their *View; Copy ones
 // (open_file_cb/progress_cb) use value getters; addr-of fields use _ptr.
-#[repr(transparent)]
-pub(crate) struct LoadOptsView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawLoadOpts>>);
+pub(crate) type LoadOptsView = crate::native::view::View<RawLoadOpts>;
 
 impl LoadOptsView {
-    #[inline(always)]
-    fn get(&self) -> *mut RawLoadOpts {
-        self.0.get().cast()
-    }
-
     #[inline(always)]
     pub(crate) fn root_transform(&self) -> crate::generated::Transform {
         unsafe { (*self.get()).root_transform }
@@ -1732,17 +1709,9 @@ impl LoadOptsView {
 // field (`Context.scene`, `EvalContext.scene`/`src_scene`). Sub-structs recurse
 // into their own *View; List/RefList fields use ListView/RefListView; Copy
 // scalars/Refs use value getters/setters or _ptr/_mut_ptr for addr-of sites.
-#[repr(transparent)]
-pub(crate) struct SceneView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::Scene>>,
-);
+pub(crate) type SceneView = crate::native::view::View<crate::generated::Scene>;
 
 impl SceneView {
-    #[inline(always)]
-    fn get(&self) -> *mut crate::generated::Scene {
-        self.0.get().cast()
-    }
-
     // `metadata` (Metadata) — typed VIEW handle (reinterpret-in-place).
     #[inline(always)]
     pub(crate) fn metadata_view(&self) -> &SceneMetadataView {
@@ -2177,17 +2146,9 @@ impl SceneView {
 // reinterpreted in place. String leaves recurse into StringView, Blob leaves into
 // BlobView, the warnings List into ListView; Copy scalars use value getters/setters;
 // addr-of sites use _ptr (const) / _mut_ptr (mut).
-#[repr(transparent)]
-pub(crate) struct SceneMetadataView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::Metadata>>,
-);
+pub(crate) type SceneMetadataView = crate::native::view::View<crate::generated::Metadata>;
 
 impl SceneMetadataView {
-    #[inline(always)]
-    fn get(&self) -> *mut crate::generated::Metadata {
-        self.0.get().cast()
-    }
-
     // --- scalar value getters / setters ---
     #[inline(always)]
     pub(crate) fn file_format(&self) -> crate::generated::FileFormat {
@@ -2458,16 +2419,9 @@ impl SceneMetadataView {
 // Typed interior-mutable VIEW over `Scene.settings` (the public `ufbx_scene_settings`),
 // reinterpreted in place. Copy scalars use value getters; `props` (Props aggregate)
 // uses a raw-ptr getter for its addr-of / nested-read sites.
-#[repr(transparent)]
-pub(crate) struct SceneSettingsView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::SceneSettings>>,
-);
+pub(crate) type SceneSettingsView = crate::native::view::View<crate::generated::SceneSettings>;
 
 impl SceneSettingsView {
-    #[inline(always)]
-    fn get(&self) -> *mut crate::generated::SceneSettings {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn axes(&self) -> crate::generated::CoordinateAxes {
         unsafe { (*self.get()).axes }

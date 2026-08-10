@@ -106,14 +106,9 @@ pub(crate) struct Buf {
 // Typed interior-mutable VIEW over a `Buf` field, reinterpreted in place. `Buf` is
 // large + Copy, and its subfields are written, so a value getter is wrong (would
 // copy 88 bytes and drop write-backs). Getters + setters for the accessed subfields.
-#[repr(transparent)]
-pub(crate) struct BufView(core::cell::UnsafeCell<core::mem::MaybeUninit<Buf>>);
+pub(crate) type BufView = crate::native::view::View<Buf>;
 
 impl BufView {
-    #[inline(always)]
-    fn get(&self) -> *mut Buf {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn set_ator(&self, ator: *mut Allocator) {
         unsafe {

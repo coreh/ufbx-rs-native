@@ -2063,15 +2063,9 @@ pub(crate) struct EvalContext(
 // (approach A). Generated ABI-fixed `RawEvaluateOpts` plays the `Inner` role;
 // `MaybeUninit` makes forming `&EvaluateOptsView` assert no validity — each leaf getter
 // asserts only the field it reads.
-#[repr(transparent)]
-pub(crate) struct EvaluateOptsView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawEvaluateOpts>>);
+pub(crate) type EvaluateOptsView = crate::native::view::View<RawEvaluateOpts>;
 
 impl EvaluateOptsView {
-    #[inline(always)]
-    fn get(&self) -> *mut RawEvaluateOpts {
-        self.0.get().cast()
-    }
-
     #[inline(always)]
     pub(crate) fn evaluate_caches(&self) -> bool {
         // SAFETY: reading a POD/enum opts field by value — same assertion the
@@ -3233,15 +3227,9 @@ pub(crate) struct CreateAnimContext(
 
 // Typed interior-mutable VIEW over `CreateAnimContext.opts` (approach A). Non-Copy
 // list fields recurse into `RawListView`; addr-of fields use `_ptr` getters.
-#[repr(transparent)]
-pub(crate) struct AnimOptsView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawAnimOpts>>);
+pub(crate) type AnimOptsView = crate::native::view::View<RawAnimOpts>;
 
 impl AnimOptsView {
-    #[inline(always)]
-    fn get(&self) -> *mut RawAnimOpts {
-        self.0.get().cast()
-    }
-
     #[inline(always)]
     pub(crate) fn ignore_connections(&self) -> bool {
         // SAFETY: reading a POD opts field by value.
@@ -3760,15 +3748,10 @@ pub(crate) struct BakeTimeList {
 // Typed interior-mutable VIEW over a `BakeTimeList` field, reinterpreted in place
 // (getters + setters; the list is built by writing `.count`/`.data`).
 #[cfg(feature = "baking")]
-#[repr(transparent)]
-pub(crate) struct BakeTimeListView(core::cell::UnsafeCell<core::mem::MaybeUninit<BakeTimeList>>);
+pub(crate) type BakeTimeListView = crate::native::view::View<BakeTimeList>;
 
 #[cfg(feature = "baking")]
 impl BakeTimeListView {
-    #[inline(always)]
-    fn get(&self) -> *mut BakeTimeList {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn count(&self) -> usize {
         unsafe { (*self.get()).count }
@@ -3837,15 +3820,9 @@ pub(crate) struct InnerBakeContext {
 // place (approach A). The generated ABI-fixed `RawBakeOpts` plays the `Inner` role;
 // `MaybeUninit` makes forming `&BakeOptsView` assert no validity — each leaf getter
 // asserts only the field it reads.
-#[repr(transparent)]
-pub(crate) struct BakeOptsView(core::cell::UnsafeCell<core::mem::MaybeUninit<RawBakeOpts>>);
+pub(crate) type BakeOptsView = crate::native::view::View<RawBakeOpts>;
 
 impl BakeOptsView {
-    #[inline(always)]
-    fn get(&self) -> *mut RawBakeOpts {
-        self.0.get().cast()
-    }
-
     #[inline(always)]
     pub(crate) fn trim_start_time(&self) -> bool {
         // SAFETY: reading a POD/enum opts field by value — same assertion the
@@ -4030,16 +4007,10 @@ pub(crate) struct BakeContext(
 );
 
 // Typed interior-mutable VIEW over `BakedAnimMetadata` (non-Copy substruct).
-#[repr(transparent)]
-pub(crate) struct BakedAnimMetadataView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::BakedAnimMetadata>>,
-);
+pub(crate) type BakedAnimMetadataView =
+    crate::native::view::View<crate::generated::BakedAnimMetadata>;
 
 impl BakedAnimMetadataView {
-    #[inline(always)]
-    fn get(&self) -> *mut crate::generated::BakedAnimMetadata {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn set_result_memory_used(&self, result_memory_used: usize) {
         unsafe {
@@ -4067,17 +4038,9 @@ impl BakedAnimMetadataView {
 }
 
 // Typed interior-mutable VIEW over `BakeContext.bake` (public `BakedAnim`).
-#[repr(transparent)]
-pub(crate) struct BakedAnimView(
-    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::BakedAnim>>,
-);
+pub(crate) type BakedAnimView = crate::native::view::View<crate::generated::BakedAnim>;
 
 impl BakedAnimView {
-    #[inline(always)]
-    fn get(&self) -> *mut crate::generated::BakedAnim {
-        self.0.get().cast()
-    }
-
     #[inline(always)]
     pub(crate) fn nodes_view(&self) -> &crate::prelude::ListView<crate::generated::BakedNode> {
         unsafe {
