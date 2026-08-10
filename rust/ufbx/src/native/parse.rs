@@ -4142,8 +4142,7 @@ pub(crate) unsafe fn fail_imp_no_stack(uc: &Context) -> i32 {
 // ufbx.c:6678-6681 `ufbxi_get_read_offset`
 #[inline(always)]
 pub(crate) unsafe fn get_read_offset(uc: &Context) -> u64 {
-    (*uc.get())
-        .data_offset
+    uc.data_offset()
         .wrapping_add(to_size(uc.data().offset_from(uc.data_begin())) as u64)
 }
 

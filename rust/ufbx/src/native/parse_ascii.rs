@@ -97,8 +97,7 @@ static ASCII_EMPTY_STRING: [u8; 1] = [0];
 pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
     let ua: *mut Ascii = uc.ascii_mut_ptr();
     uc.set_data_offset(
-        (*uc.get())
-            .data_offset
+        uc.data_offset()
             .wrapping_add(to_size((*ua).src as isize - uc.data_begin() as isize) as u64),
     );
     if uc.read_fn().is_some() {

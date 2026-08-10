@@ -143,8 +143,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
     // (`ufbxi_read_to` leaves them so), which `<*const u8>::offset_from` treats
     // as UB in Rust; the address subtraction is spelled out with casts instead.
     uc.set_data_offset(
-        (*uc.get())
-            .data_offset
+        uc.data_offset()
             .wrapping_add(to_size(uc.data() as isize - uc.data_begin() as isize) as u64),
     );
     uc.set_data_begin(uc.read_buffer());
@@ -332,8 +331,7 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
         // NULL after a previous `ufbxi_read_to` streamed past the buffer, so
         // the subtraction is done on addresses rather than via `offset_from`.
         uc.set_data_offset(
-            (*uc.get())
-                .data_offset
+            uc.data_offset()
                 .wrapping_add(to_size(uc.data() as isize - uc.data_begin() as isize) as u64),
         );
 

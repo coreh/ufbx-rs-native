@@ -2313,6 +2313,12 @@ impl EvalContext {
     }
 
     #[inline(always)]
+    pub(crate) fn dst_element(&self) -> *mut u8 {
+        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        unsafe { (*self.get()).dst_element }
+    }
+
+    #[inline(always)]
     pub(crate) fn set_dst_element(&self, dst_element: *mut u8) {
         // SAFETY: storing a scalar; cannot violate validity.
         unsafe {
@@ -2343,8 +2349,7 @@ impl EvalContext {
 pub(crate) unsafe fn translate_element(ec: &EvalContext, elem: *mut c_void) -> *mut Element {
     // C: `elem ? (ufbx_element*)(ec->dst_element + ((char*)elem - ec->src_element)) : NULL`
     if !elem.is_null() {
-        (*ec.get())
-            .dst_element
+        ec.dst_element()
             .offset((elem as *mut u8).offset_from(ec.src_element())) as *mut Element
     } else {
         ptr::null_mut()
@@ -5499,8 +5504,8 @@ pub(crate) unsafe fn bake_node_imp(
         ptr::null_mut()
     };
     if !(*node).is_scale_helper && !parent.is_null() && !parent_scale_helper.is_null() {
-        scale_helper_t = *(*bc.get())
-            .baked_nodes
+        scale_helper_t = *bc
+            .baked_nodes()
             .add((*parent_scale_helper).element.typed_id as usize);
         if !scale_helper_t.is_null() {
             if !(*scale_helper_t).constant_scale {
@@ -5617,8 +5622,8 @@ pub(crate) unsafe fn bake_node_imp(
         && !parent_inherit_scale_helper.is_null()
     {
         let inherit_helper: *mut UfbxNode = parent_inherit_scale_helper;
-        scale_helper_s = *(*bc.get())
-            .baked_nodes
+        scale_helper_s = *bc
+            .baked_nodes()
             .add((*inherit_helper).element.typed_id as usize);
         if !scale_helper_s.is_null() {
             if !(*scale_helper_s).constant_scale {
@@ -5797,9 +5802,7 @@ pub(crate) unsafe fn bake_node_imp(
         keys_s,
     )?;
 
-    *(*bc.get())
-        .baked_nodes
-        .add((*node).element.typed_id as usize) = baked_node;
+    *bc.baked_nodes().add((*node).element.typed_id as usize) = baked_node;
 
     buf_clear(bc.tmp_prop_mut_ptr());
 
@@ -5816,13 +5819,8 @@ pub(crate) unsafe fn bake_node_imp(
                 p_child = p_child.add(1);
                 continue;
             }
-            if !*(*bc.get())
-                .nodes_to_bake
-                .add((*child).element.typed_id as usize)
-            {
-                *(*bc.get())
-                    .nodes_to_bake
-                    .add((*child).element.typed_id as usize) = true;
+            if !*bc.nodes_to_bake().add((*child).element.typed_id as usize) {
+                *bc.nodes_to_bake().add((*child).element.typed_id as usize) = true;
                 ufbxi_check_err!(
                     bc.error_mut_ptr(),
                     !push_copy::<u32>(
@@ -5846,20 +5844,19 @@ pub(crate) unsafe fn bake_node_imp(
             if !child_inherit_scale_node.is_null()
                 && !child_inherit_scale_helper.is_null()
                 && !child_scale_helper.is_null()
-                && *(*bc.get())
-                    .nodes_to_bake
+                && *bc
+                    .nodes_to_bake()
                     .add((*child_inherit_scale_helper).element.typed_id as usize)
             {
-                ufbx_assert!(!(*(*bc.get())
-                    .baked_nodes
+                ufbx_assert!(!(*bc
+                    .baked_nodes()
                     .add((*child_inherit_scale_helper).element.typed_id as usize))
                 .is_null());
-                if !*(*bc.get())
-                    .nodes_to_bake
+                if !*bc
+                    .nodes_to_bake()
                     .add((*child_scale_helper).element.typed_id as usize)
                 {
-                    *(*bc.get())
-                        .nodes_to_bake
+                    *bc.nodes_to_bake()
                         .add((*child_scale_helper).element.typed_id as usize) = true;
                     ufbxi_check_err!(
                         bc.error_mut_ptr(),

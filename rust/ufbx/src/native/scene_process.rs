@@ -2014,9 +2014,7 @@ pub(crate) unsafe fn fetch_dst_elements(
         let mut p_elem: *mut *mut Element = (*list).data as *mut *mut Element;
         let p_elem_end: *mut *mut Element = add_ptr(p_elem, (*list).count);
         while p_elem != p_elem_end {
-            *(*uc.get())
-                .tmp_element_flag
-                .add((**p_elem).element_id as usize) = 0;
+            *uc.tmp_element_flag().add((**p_elem).element_id as usize) = 0;
             p_elem = p_elem.add(1);
         }
     }
@@ -2092,9 +2090,7 @@ pub(crate) unsafe fn fetch_src_elements(
         let mut p_elem: *mut *mut Element = (*list).data as *mut *mut Element;
         let p_elem_end: *mut *mut Element = add_ptr(p_elem, (*list).count);
         while p_elem != p_elem_end {
-            *(*uc.get())
-                .tmp_element_flag
-                .add((**p_elem).element_id as usize) = 0;
+            *uc.tmp_element_flag().add((**p_elem).element_id as usize) = 0;
             p_elem = p_elem.add(1);
         }
     }
