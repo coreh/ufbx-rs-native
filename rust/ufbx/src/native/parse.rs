@@ -4186,17 +4186,23 @@ pub(crate) unsafe fn fail_imp(uc: &Context, cond: *const u8, func: *const u8, li
 // macros when the error stack is disabled.
 #[cfg(not(feature = "error-stack"))]
 #[inline(never)]
-pub(crate) unsafe fn fail_imp_no_stack(uc: &Context) -> i32 {
-    crate::native::error::fail_imp_err(uc.error_mut_ptr(), core::ptr::null(), core::ptr::null(), 0)
+pub(crate) fn fail_imp_no_stack(uc: &Context) -> i32 {
+    // SAFETY: `error_mut_ptr()` is a valid Error by construction; the message
+    // pointers are null (no stack frame).
+    unsafe {
+        crate::native::error::fail_imp_err(uc.error_mut_ptr(), core::ptr::null(), core::ptr::null(), 0)
+    }
 }
 
 // -- Progress
 
 // ufbx.c:6678-6681 `ufbxi_get_read_offset`
 #[inline(always)]
-pub(crate) unsafe fn get_read_offset(uc: &Context) -> u64 {
+pub(crate) fn get_read_offset(uc: &Context) -> u64 {
+    // SAFETY: `data()` and `data_begin()` point into the same read buffer by
+    // construction, so `offset_from` is in-bounds.
     uc.data_offset()
-        .wrapping_add(to_size(uc.data().offset_from(uc.data_begin())) as u64)
+        .wrapping_add(to_size(unsafe { uc.data().offset_from(uc.data_begin()) }) as u64)
 }
 
 // ufbx.c:6683-6702 `ufbxi_report_progress`
@@ -4249,7 +4255,7 @@ pub(crate) unsafe fn report_progress(uc: &Context) -> Result<(), Fail> {
 // `ufbxi_unused` marker, which maps to this item-level attribute.
 #[allow(dead_code)]
 #[inline(always)]
-pub(crate) unsafe fn progress(uc: &Context, work_units: usize) -> Result<(), Fail> {
+pub(crate) fn progress(uc: &Context, work_units: usize) -> Result<(), Fail> {
     if uc.opts_view().progress_cb().fn_.is_none() {
         return Ok(());
     }
@@ -4261,7 +4267,8 @@ pub(crate) unsafe fn progress(uc: &Context, work_units: usize) -> Result<(), Fai
     if left > 0 {
         return Ok(());
     }
-    report_progress(uc)
+    // SAFETY: `report_progress` needs only a valid `uc` (upheld by the handle).
+    unsafe { report_progress(uc) }
 }
 
 // -- FBX value type information
@@ -4729,9 +4736,11 @@ pub(crate) unsafe fn push_element_extra_size(uc: &Context, id: u32, size: usize)
 
 // ufbx.c:7898-7905 `ufbxi_get_element_extra`
 #[inline(never)]
-pub(crate) unsafe fn get_element_extra(uc: &Context, id: u32) -> *mut c_void {
+pub(crate) fn get_element_extra(uc: &Context, id: u32) -> *mut c_void {
     if (id as usize) < uc.element_extra_cap() {
-        *uc.element_extra_arr().add(id as usize)
+        // SAFETY: `id < element_extra_cap()` checked above, and
+        // `element_extra_arr()` is valid for that many elements by construction.
+        unsafe { *uc.element_extra_arr().add(id as usize) }
     } else {
         core::ptr::null_mut()
     }
@@ -4740,8 +4749,10 @@ pub(crate) unsafe fn get_element_extra(uc: &Context, id: u32) -> *mut c_void {
 // ufbx.c:7907 `#define ufbxi_push_element_extra(uc, id, type) (type*)ufbxi_push_element_extra_size((uc), (id), sizeof(type))`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn push_element_extra<T>(uc: &Context, id: u32) -> *mut T {
-    push_element_extra_size(uc, id, size_of::<T>()) as *mut T
+pub(crate) fn push_element_extra<T>(uc: &Context, id: u32) -> *mut T {
+    // SAFETY: `push_element_extra_size` needs only a valid `uc` (upheld by the
+    // `&Context` handle).
+    unsafe { push_element_extra_size(uc, id, size_of::<T>()) as *mut T }
 }
 
 // -- Parsing state machine
