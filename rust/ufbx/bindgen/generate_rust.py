@@ -1710,6 +1710,24 @@ def emit_file():
     emit("// Fixes belong in the GENERATOR (see PORTING.md); hand edits are")
     emit("// silently overwritten on the next regeneration and CI diffs this file.")
     emit("")
+    # Module-level clippy allows for idioms the generator emits uniformly. These
+    # are scoped to this generated file so hand-written code (crate::native)
+    # stays honest for the same lints. Fixing them here would mean reshaping the
+    # emitter for cosmetic gain with no effect on behaviour or the C ABI.
+    emit("#![allow(")
+    emit("    clippy::derivable_impls, // explicit Default impls emitted per struct")
+    emit("    clippy::let_and_return, // `let x = ...; x` from the uniform wrapper template")
+    emit("    clippy::needless_lifetimes, // explicit lifetimes emitted uniformly on wrappers")
+    emit("    clippy::needless_borrow, // `&` emitted uniformly on call-argument passing")
+    emit("    clippy::redundant_field_names, // field: field emitted from IR field names")
+    emit("    clippy::redundant_static_lifetimes, // &'static str emitted in const name tables")
+    emit("    clippy::unused_unit, // -> () emitted uniformly for void-returning wrappers")
+    emit("    clippy::unnecessary_operation, // no-op expressions from uniform templates")
+    emit("    clippy::missing_transmute_annotations, // transmutes emitted without turbofish")
+    emit("    clippy::wrong_self_convention, // method names mirror the ufbx.h C API verbatim")
+    emit("    clippy::unnecessary_cast, // casts emitted uniformly to the IR field type")
+    emit(")]")
+    emit("")
     emit_lines(uses)
 
     rust_uses = []

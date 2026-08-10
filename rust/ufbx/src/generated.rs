@@ -3,6 +3,20 @@
 // Fixes belong in the GENERATOR (see PORTING.md); hand edits are
 // silently overwritten on the next regeneration and CI diffs this file.
 
+#![allow(
+    clippy::derivable_impls, // explicit Default impls emitted per struct
+    clippy::let_and_return, // `let x = ...; x` from the uniform wrapper template
+    clippy::needless_lifetimes, // explicit lifetimes emitted uniformly on wrappers
+    clippy::needless_borrow, // `&` emitted uniformly on call-argument passing
+    clippy::redundant_field_names, // field: field emitted from IR field names
+    clippy::redundant_static_lifetimes, // &'static str emitted in const name tables
+    clippy::unused_unit, // -> () emitted uniformly for void-returning wrappers
+    clippy::unnecessary_operation, // no-op expressions from uniform templates
+    clippy::missing_transmute_annotations, // transmutes emitted without turbofish
+    clippy::wrong_self_convention, // method names mirror the ufbx.h C API verbatim
+    clippy::unnecessary_cast, // casts emitted uniformly to the IR field type
+)]
+
 use crate::prelude::{
     call_close_memory_cb, call_open_file_cb, call_progress_cb, Allocator, Stream, ThreadPool,
 };
