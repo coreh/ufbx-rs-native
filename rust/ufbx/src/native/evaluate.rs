@@ -2136,6 +2136,14 @@ impl EvalContext {
         unsafe { &*(&raw mut (*self.get()).scene as *mut crate::native::parse::SceneView) }
     }
 
+    // `src_scene` (Scene) — typed VIEW handle (reinterpret-in-place); accessors on SceneView.
+    #[inline(always)]
+    pub(crate) fn src_scene_view(&self) -> &crate::native::parse::SceneView {
+        // SAFETY: repr(transparent) over the owned `src_scene` field inside the outer
+        // UnsafeCell; shared interior-mutable view, asserts no validity.
+        unsafe { &*(&raw mut (*self.get()).src_scene as *mut crate::native::parse::SceneView) }
+    }
+
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
     #[inline(always)]
     pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
@@ -2386,7 +2394,7 @@ pub(crate) unsafe fn translate_anim(ec: &EvalContext, p_anim: *mut *mut Anim) ->
 pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // C: `ec->scene = ec->src_scene;` — struct assignment (memcpy).
     ptr::copy_nonoverlapping(ptr::addr_of!((*ec.get()).src_scene), ec.scene_mut_ptr(), 1);
-    let num_elements: usize = (*ec.get()).scene.elements.count;
+    let num_elements: usize = ec.scene_view().elements_view().count();
 
     // C: `char *element_data = (char*)ufbxi_push(&ec->result, uint64_t, ec->scene.metadata.element_buffer_size/8);`
     let element_data: *mut u8 = push::<u64>(
@@ -2395,16 +2403,17 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     ) as *mut u8;
     ufbxi_check_err!(ec.error_mut_ptr(), !element_data.is_null(), "element_data");
 
-    (*ec.get()).scene.elements.data =
-        push::<*mut Element>(ec.result_mut_ptr(), num_elements) as *const Ref<Element>;
+    ec.scene_view()
+        .elements_view()
+        .set_data(push::<*mut Element>(ec.result_mut_ptr(), num_elements) as *const Ref<Element>);
     ufbxi_check_err!(
         ec.error_mut_ptr(),
-        !(*ec.get()).scene.elements.data.is_null(),
+        !ec.scene_view().elements_view().data().is_null(),
         "ec->scene.elements.data"
     );
 
     // C: `ec->src_element = (char*)ec->src_scene.elements.data[0];`
-    ec.set_src_element(*((*ec.get()).src_scene.elements.data as *mut *mut u8).add(0));
+    ec.set_src_element(*(ec.src_scene_view().elements_view().data() as *mut *mut u8).add(0));
     ec.set_dst_element(element_data);
 
     // C indexes `ec->scene.elements_by_type[i]`, the `ufbx_element_list` array
@@ -2412,7 +2421,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // struct keeps only the named branch, whose first member (`unknowns`) is
     // the array base (same treatment as `native::scene_process`).
     let by_type: *mut crate::prelude::RefList<Element> =
-        ptr::addr_of_mut!((*ec.get()).scene.unknowns) as *mut crate::prelude::RefList<Element>;
+        ec.scene_view().unknowns_mut_ptr() as *mut crate::prelude::RefList<Element>;
     for i in 0..ELEMENT_TYPE_COUNT {
         (*by_type.add(i)).data = push::<*mut Element>(ec.result_mut_ptr(), (*by_type.add(i)).count)
             as *const Ref<Element>;
@@ -2423,29 +2432,39 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         );
     }
 
-    let num_connections: usize = (*ec.get()).scene.connections_dst.count;
-    (*ec.get()).scene.connections_src.data =
-        push::<Connection>(ec.result_mut_ptr(), num_connections);
-    (*ec.get()).scene.connections_dst.data =
-        push::<Connection>(ec.result_mut_ptr(), num_connections);
+    let num_connections: usize = ec.scene_view().connections_dst_view().count();
+    ec.scene_view()
+        .connections_src_view()
+        .set_data(push::<Connection>(ec.result_mut_ptr(), num_connections));
+    ec.scene_view()
+        .connections_dst_view()
+        .set_data(push::<Connection>(ec.result_mut_ptr(), num_connections));
     ufbxi_check_err!(
         ec.error_mut_ptr(),
-        !(*ec.get()).scene.connections_src.data.is_null(),
+        !ec.scene_view().connections_src_view().data().is_null(),
         "ec->scene.connections_src.data"
     );
     ufbxi_check_err!(
         ec.error_mut_ptr(),
-        !(*ec.get()).scene.connections_dst.data.is_null(),
+        !ec.scene_view().connections_dst_view().data().is_null(),
         "ec->scene.connections_dst.data"
     );
     for i in 0..num_connections {
         let src: *mut Connection =
-            ((*ec.get()).scene.connections_src.data as *mut Connection).add(i);
+            (ec.scene_view().connections_src_view().data() as *mut Connection).add(i);
         let dst: *mut Connection =
-            ((*ec.get()).scene.connections_dst.data as *mut Connection).add(i);
+            (ec.scene_view().connections_dst_view().data() as *mut Connection).add(i);
         // C: `*src = ec->src_scene.connections_src.data[i];` (struct assignment)
-        ptr::copy_nonoverlapping((*ec.get()).src_scene.connections_src.data.add(i), src, 1);
-        ptr::copy_nonoverlapping((*ec.get()).src_scene.connections_dst.data.add(i), dst, 1);
+        ptr::copy_nonoverlapping(
+            ec.src_scene_view().connections_src_view().data().add(i),
+            src,
+            1,
+        );
+        ptr::copy_nonoverlapping(
+            ec.src_scene_view().connections_dst_view().data().add(i),
+            dst,
+            1,
+        );
         *(ptr::addr_of_mut!((*src).src) as *mut *mut Element) =
             translate_element(ec, ref_ptr(&(*src).src) as *mut c_void);
         *(ptr::addr_of_mut!((*src).dst) as *mut *mut Element) =
@@ -2456,47 +2475,46 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             translate_element(ec, ref_ptr(&(*dst).dst) as *mut c_void);
     }
 
-    (*ec.get()).scene.elements_by_name.data =
-        push::<NameElement>(ec.result_mut_ptr(), num_elements);
+    ec.scene_view()
+        .elements_by_name_view()
+        .set_data(push::<NameElement>(ec.result_mut_ptr(), num_elements));
     ufbxi_check_err!(
         ec.error_mut_ptr(),
-        !(*ec.get()).scene.elements_by_name.data.is_null(),
+        !ec.scene_view().elements_by_name_view().data().is_null(),
         "ec->scene.elements_by_name.data"
     );
 
     // C: `ec->scene.root_node = (ufbx_node*)ufbxi_translate_element(ec, ec->scene.root_node);`
-    *(ptr::addr_of_mut!((*ec.get()).scene.root_node) as *mut *mut UfbxNode) =
-        translate_element(ec, ref_ptr(&(*ec.get()).scene.root_node) as *mut c_void)
+    *(ec.scene_view().root_node_mut_ptr() as *mut *mut UfbxNode) =
+        translate_element(ec, ref_ptr(ec.scene_view().root_node_ptr()) as *mut c_void)
             as *mut UfbxNode;
-    translate_anim(
-        ec,
-        ptr::addr_of_mut!((*ec.get()).scene.anim) as *mut *mut Anim,
-    )?;
+    translate_anim(ec, ec.scene_view().anim_mut_ptr() as *mut *mut Anim)?;
 
     for i in 0..num_elements {
-        let src: *mut Element = *((*ec.get()).src_scene.elements.data as *mut *mut Element).add(i);
+        let src: *mut Element =
+            *(ec.src_scene_view().elements_view().data() as *mut *mut Element).add(i);
         let dst: *mut Element = translate_element(ec, src as *mut c_void);
         let size: usize = ELEMENT_TYPE_SIZE[(*src).type_ as usize];
         ufbx_assert!(size > 0);
         // C: `memcpy(dst, src, size);`
         ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, size);
 
-        *((*ec.get()).scene.elements.data as *mut *mut Element).add(i) = dst;
+        *(ec.scene_view().elements_view().data() as *mut *mut Element).add(i) = dst;
         *((*by_type.add((*src).type_ as usize)).data as *mut *mut Element)
             .add((*src).typed_id as usize) = dst;
 
         // C: `dst->connections_src.data = ec->scene.connections_src.data + (dst->connections_src.data - ec->src_scene.connections_src.data);`
-        (*dst).connections_src.data = (*ec.get()).scene.connections_src.data.offset(
+        (*dst).connections_src.data = ec.scene_view().connections_src_view().data().offset(
             (*dst)
                 .connections_src
                 .data
-                .offset_from((*ec.get()).src_scene.connections_src.data),
+                .offset_from(ec.src_scene_view().connections_src_view().data()),
         );
-        (*dst).connections_dst.data = (*ec.get()).scene.connections_dst.data.offset(
+        (*dst).connections_dst.data = ec.scene_view().connections_dst_view().data().offset(
             (*dst)
                 .connections_dst
                 .data
-                .offset_from((*ec.get()).src_scene.connections_dst.data),
+                .offset_from(ec.src_scene_view().connections_dst_view().data()),
         );
         if (*dst).instances.count > 0 {
             translate_element_list(ec, ptr::addr_of_mut!((*dst).instances) as *mut c_void)?;
@@ -2506,15 +2524,19 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // then `named.element = ...; ec->scene.elements_by_name.data[i] = named;`
         // — copied straight into the destination slot here (same writes).
         let named: *mut NameElement =
-            ((*ec.get()).scene.elements_by_name.data as *mut NameElement).add(i);
-        ptr::copy_nonoverlapping((*ec.get()).src_scene.elements_by_name.data.add(i), named, 1);
+            (ec.scene_view().elements_by_name_view().data() as *mut NameElement).add(i);
+        ptr::copy_nonoverlapping(
+            ec.src_scene_view().elements_by_name_view().data().add(i),
+            named,
+            1,
+        );
         *(ptr::addr_of_mut!((*named).element) as *mut *mut Element) =
             translate_element(ec, ref_ptr(&(*named).element) as *mut c_void);
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_node, p_node, ec->scene.nodes)`
-    let mut p_node: *mut *mut UfbxNode = (*ec.get()).scene.nodes.data as *mut *mut UfbxNode;
-    let p_node_end: *mut *mut UfbxNode = add_ptr(p_node, (*ec.get()).scene.nodes.count);
+    let mut p_node: *mut *mut UfbxNode = ec.scene_view().nodes_view().data() as *mut *mut UfbxNode;
+    let p_node_end: *mut *mut UfbxNode = add_ptr(p_node, ec.scene_view().nodes_view().count());
     while p_node != p_node_end {
         let node: *mut UfbxNode = *p_node;
         *(ptr::addr_of_mut!((*node).parent) as *mut *mut UfbxNode) =
@@ -2567,8 +2589,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, ec->scene.meshes)`
-    let mut p_mesh: *mut *mut Mesh = (*ec.get()).scene.meshes.data as *mut *mut Mesh;
-    let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, (*ec.get()).scene.meshes.count);
+    let mut p_mesh: *mut *mut Mesh = ec.scene_view().meshes_view().data() as *mut *mut Mesh;
+    let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, ec.scene_view().meshes_view().count());
     while p_mesh != p_mesh_end {
         let mesh: *mut Mesh = *p_mesh;
 
@@ -2588,9 +2610,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_stereo_camera, p_stereo, ec->scene.stereo_cameras)`
     let mut p_stereo: *mut *mut StereoCamera =
-        (*ec.get()).scene.stereo_cameras.data as *mut *mut StereoCamera;
+        ec.scene_view().stereo_cameras_view().data() as *mut *mut StereoCamera;
     let p_stereo_end: *mut *mut StereoCamera =
-        add_ptr(p_stereo, (*ec.get()).scene.stereo_cameras.count);
+        add_ptr(p_stereo, ec.scene_view().stereo_cameras_view().count());
     while p_stereo != p_stereo_end {
         let stereo: *mut StereoCamera = *p_stereo;
         *(ptr::addr_of_mut!((*stereo).left) as *mut *mut Camera) =
@@ -2604,9 +2626,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_skin_deformer, p_skin, ec->scene.skin_deformers)`
     let mut p_skin: *mut *mut SkinDeformer =
-        (*ec.get()).scene.skin_deformers.data as *mut *mut SkinDeformer;
+        ec.scene_view().skin_deformers_view().data() as *mut *mut SkinDeformer;
     let p_skin_end: *mut *mut SkinDeformer =
-        add_ptr(p_skin, (*ec.get()).scene.skin_deformers.count);
+        add_ptr(p_skin, ec.scene_view().skin_deformers_view().count());
     while p_skin != p_skin_end {
         let skin: *mut SkinDeformer = *p_skin;
         translate_element_list(ec, ptr::addr_of_mut!((*skin).clusters) as *mut c_void)?;
@@ -2615,9 +2637,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, ec->scene.skin_clusters)`
     let mut p_cluster: *mut *mut SkinCluster =
-        (*ec.get()).scene.skin_clusters.data as *mut *mut SkinCluster;
+        ec.scene_view().skin_clusters_view().data() as *mut *mut SkinCluster;
     let p_cluster_end: *mut *mut SkinCluster =
-        add_ptr(p_cluster, (*ec.get()).scene.skin_clusters.count);
+        add_ptr(p_cluster, ec.scene_view().skin_clusters_view().count());
     while p_cluster != p_cluster_end {
         let cluster: *mut SkinCluster = *p_cluster;
         *(ptr::addr_of_mut!((*cluster).bone_node) as *mut *mut UfbxNode) = translate_element(
@@ -2630,9 +2652,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_deformer, p_blend, ec->scene.blend_deformers)`
     let mut p_blend: *mut *mut BlendDeformer =
-        (*ec.get()).scene.blend_deformers.data as *mut *mut BlendDeformer;
+        ec.scene_view().blend_deformers_view().data() as *mut *mut BlendDeformer;
     let p_blend_end: *mut *mut BlendDeformer =
-        add_ptr(p_blend, (*ec.get()).scene.blend_deformers.count);
+        add_ptr(p_blend, ec.scene_view().blend_deformers_view().count());
     while p_blend != p_blend_end {
         let blend: *mut BlendDeformer = *p_blend;
         translate_element_list(ec, ptr::addr_of_mut!((*blend).channels) as *mut c_void)?;
@@ -2641,9 +2663,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_channel, p_chan, ec->scene.blend_channels)`
     let mut p_chan: *mut *mut BlendChannel =
-        (*ec.get()).scene.blend_channels.data as *mut *mut BlendChannel;
+        ec.scene_view().blend_channels_view().data() as *mut *mut BlendChannel;
     let p_chan_end: *mut *mut BlendChannel =
-        add_ptr(p_chan, (*ec.get()).scene.blend_channels.count);
+        add_ptr(p_chan, ec.scene_view().blend_channels_view().count());
     while p_chan != p_chan_end {
         let chan: *mut BlendChannel = *p_chan;
 
@@ -2668,9 +2690,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_cache_deformer, p_deformer, ec->scene.cache_deformers)`
     let mut p_deformer: *mut *mut CacheDeformer =
-        (*ec.get()).scene.cache_deformers.data as *mut *mut CacheDeformer;
+        ec.scene_view().cache_deformers_view().data() as *mut *mut CacheDeformer;
     let p_deformer_end: *mut *mut CacheDeformer =
-        add_ptr(p_deformer, (*ec.get()).scene.cache_deformers.count);
+        add_ptr(p_deformer, ec.scene_view().cache_deformers_view().count());
     while p_deformer != p_deformer_end {
         let deformer: *mut CacheDeformer = *p_deformer;
         *(ptr::addr_of_mut!((*deformer).file) as *mut *mut CacheFile) =
@@ -2680,8 +2702,10 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_material, p_material, ec->scene.materials)`
-    let mut p_material: *mut *mut Material = (*ec.get()).scene.materials.data as *mut *mut Material;
-    let p_material_end: *mut *mut Material = add_ptr(p_material, (*ec.get()).scene.materials.count);
+    let mut p_material: *mut *mut Material =
+        ec.scene_view().materials_view().data() as *mut *mut Material;
+    let p_material_end: *mut *mut Material =
+        add_ptr(p_material, ec.scene_view().materials_view().count());
     while p_material != p_material_end {
         let material: *mut Material = *p_material;
 
@@ -2718,8 +2742,10 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, ec->scene.textures)`
-    let mut p_texture: *mut *mut Texture = (*ec.get()).scene.textures.data as *mut *mut Texture;
-    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, (*ec.get()).scene.textures.count);
+    let mut p_texture: *mut *mut Texture =
+        ec.scene_view().textures_view().data() as *mut *mut Texture;
+    let p_texture_end: *mut *mut Texture =
+        add_ptr(p_texture, ec.scene_view().textures_view().count());
     while p_texture != p_texture_end {
         let texture: *mut Texture = *p_texture;
         *(ptr::addr_of_mut!((*texture).video) as *mut *mut Video) =
@@ -2762,8 +2788,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_shader, p_shader, ec->scene.shaders)`
-    let mut p_shader: *mut *mut Shader = (*ec.get()).scene.shaders.data as *mut *mut Shader;
-    let p_shader_end: *mut *mut Shader = add_ptr(p_shader, (*ec.get()).scene.shaders.count);
+    let mut p_shader: *mut *mut Shader = ec.scene_view().shaders_view().data() as *mut *mut Shader;
+    let p_shader_end: *mut *mut Shader = add_ptr(p_shader, ec.scene_view().shaders_view().count());
     while p_shader != p_shader_end {
         let shader: *mut Shader = *p_shader;
         translate_element_list(ec, ptr::addr_of_mut!((*shader).bindings) as *mut c_void)?;
@@ -2772,9 +2798,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_display_layer, p_layer, ec->scene.display_layers)`
     let mut p_layer: *mut *mut DisplayLayer =
-        (*ec.get()).scene.display_layers.data as *mut *mut DisplayLayer;
+        ec.scene_view().display_layers_view().data() as *mut *mut DisplayLayer;
     let p_layer_end: *mut *mut DisplayLayer =
-        add_ptr(p_layer, (*ec.get()).scene.display_layers.count);
+        add_ptr(p_layer, ec.scene_view().display_layers_view().count());
     while p_layer != p_layer_end {
         let layer: *mut DisplayLayer = *p_layer;
 
@@ -2784,8 +2810,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_selection_set, p_set, ec->scene.selection_sets)`
     let mut p_set: *mut *mut SelectionSet =
-        (*ec.get()).scene.selection_sets.data as *mut *mut SelectionSet;
-    let p_set_end: *mut *mut SelectionSet = add_ptr(p_set, (*ec.get()).scene.selection_sets.count);
+        ec.scene_view().selection_sets_view().data() as *mut *mut SelectionSet;
+    let p_set_end: *mut *mut SelectionSet =
+        add_ptr(p_set, ec.scene_view().selection_sets_view().count());
     while p_set != p_set_end {
         let set: *mut SelectionSet = *p_set;
 
@@ -2795,9 +2822,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_selection_node, p_node, ec->scene.selection_nodes)`
     let mut p_sel_node: *mut *mut SelectionNode =
-        (*ec.get()).scene.selection_nodes.data as *mut *mut SelectionNode;
+        ec.scene_view().selection_nodes_view().data() as *mut *mut SelectionNode;
     let p_sel_node_end: *mut *mut SelectionNode =
-        add_ptr(p_sel_node, (*ec.get()).scene.selection_nodes.count);
+        add_ptr(p_sel_node, ec.scene_view().selection_nodes_view().count());
     while p_sel_node != p_sel_node_end {
         let node: *mut SelectionNode = *p_sel_node;
 
@@ -2815,9 +2842,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_constraint, p_constraint, ec->scene.constraints)`
     let mut p_constraint: *mut *mut Constraint =
-        (*ec.get()).scene.constraints.data as *mut *mut Constraint;
+        ec.scene_view().constraints_view().data() as *mut *mut Constraint;
     let p_constraint_end: *mut *mut Constraint =
-        add_ptr(p_constraint, (*ec.get()).scene.constraints.count);
+        add_ptr(p_constraint, ec.scene_view().constraints_view().count());
     while p_constraint != p_constraint_end {
         let constraint: *mut Constraint = *p_constraint;
 
@@ -2857,9 +2884,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_audio_layer, p_layer, ec->scene.audio_layers)`
     let mut p_audio_layer: *mut *mut AudioLayer =
-        (*ec.get()).scene.audio_layers.data as *mut *mut AudioLayer;
+        ec.scene_view().audio_layers_view().data() as *mut *mut AudioLayer;
     let p_audio_layer_end: *mut *mut AudioLayer =
-        add_ptr(p_audio_layer, (*ec.get()).scene.audio_layers.count);
+        add_ptr(p_audio_layer, ec.scene_view().audio_layers_view().count());
     while p_audio_layer != p_audio_layer_end {
         let layer: *mut AudioLayer = *p_audio_layer;
 
@@ -2869,8 +2896,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_stack, p_stack, ec->scene.anim_stacks)`
     let mut p_stack: *mut *mut AnimStack =
-        (*ec.get()).scene.anim_stacks.data as *mut *mut AnimStack;
-    let p_stack_end: *mut *mut AnimStack = add_ptr(p_stack, (*ec.get()).scene.anim_stacks.count);
+        ec.scene_view().anim_stacks_view().data() as *mut *mut AnimStack;
+    let p_stack_end: *mut *mut AnimStack =
+        add_ptr(p_stack, ec.scene_view().anim_stacks_view().count());
     while p_stack != p_stack_end {
         let stack: *mut AnimStack = *p_stack;
 
@@ -2881,9 +2909,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_layer, p_layer, ec->scene.anim_layers)`
     let mut p_anim_layer: *mut *mut AnimLayer =
-        (*ec.get()).scene.anim_layers.data as *mut *mut AnimLayer;
+        ec.scene_view().anim_layers_view().data() as *mut *mut AnimLayer;
     let p_anim_layer_end: *mut *mut AnimLayer =
-        add_ptr(p_anim_layer, (*ec.get()).scene.anim_layers.count);
+        add_ptr(p_anim_layer, ec.scene_view().anim_layers_view().count());
     while p_anim_layer != p_anim_layer_end {
         let layer: *mut AnimLayer = *p_anim_layer;
 
@@ -2911,8 +2939,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_pose, p_pose, ec->scene.poses)`
-    let mut p_pose: *mut *mut Pose = (*ec.get()).scene.poses.data as *mut *mut Pose;
-    let p_pose_end: *mut *mut Pose = add_ptr(p_pose, (*ec.get()).scene.poses.count);
+    let mut p_pose: *mut *mut Pose = ec.scene_view().poses_view().data() as *mut *mut Pose;
+    let p_pose_end: *mut *mut Pose = add_ptr(p_pose, ec.scene_view().poses_view().count());
     while p_pose != p_pose_end {
         let pose: *mut Pose = *p_pose;
 
@@ -2933,8 +2961,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_value, p_value, ec->scene.anim_values)`
     let mut p_value: *mut *mut AnimValue =
-        (*ec.get()).scene.anim_values.data as *mut *mut AnimValue;
-    let p_value_end: *mut *mut AnimValue = add_ptr(p_value, (*ec.get()).scene.anim_values.count);
+        ec.scene_view().anim_values_view().data() as *mut *mut AnimValue;
+    let p_value_end: *mut *mut AnimValue =
+        add_ptr(p_value, ec.scene_view().anim_values_view().count());
     while p_value != p_value_end {
         let value: *mut AnimValue = *p_value;
         *(ptr::addr_of_mut!((*value).curves[0]) as *mut *mut AnimCurve) = translate_element(
@@ -2963,8 +2992,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // Evaluate the properties
     // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, ec->scene.elements)`
-    let mut p_elem: *mut *mut Element = (*ec.get()).scene.elements.data as *mut *mut Element;
-    let p_elem_end: *mut *mut Element = add_ptr(p_elem, (*ec.get()).scene.elements.count);
+    let mut p_elem: *mut *mut Element = ec.scene_view().elements_view().data() as *mut *mut Element;
+    let p_elem_end: *mut *mut Element = add_ptr(p_elem, ec.scene_view().elements_view().count());
     while p_elem != p_elem_end {
         let elem: *mut Element = *p_elem;
         let mut num_animated: usize = (*elem).props.num_animated;
@@ -3001,7 +3030,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         ptr::write(ptr::addr_of_mut!((*elem).props), new_props);
         // C: `elem->props.defaults = &ec->src_scene.elements.data[elem->element_id]->props;`
         *(ptr::addr_of_mut!((*elem).props.defaults) as *mut *const crate::generated::Props) = ptr::addr_of!(
-            (*(*((*ec.get()).src_scene.elements.data as *mut *mut Element)
+            (*(*(ec.src_scene_view().elements_view().data() as *mut *mut Element)
                 .add((*elem).element_id as usize)))
             .props
         );

@@ -2095,6 +2095,10 @@ impl SceneView {
         unsafe { &raw const (*self.get()).root_node }
     }
     #[inline(always)]
+    pub(crate) fn root_node_mut_ptr(&self) -> *mut crate::prelude::Ref<crate::generated::Node> {
+        unsafe { &raw mut (*self.get()).root_node }
+    }
+    #[inline(always)]
     pub(crate) fn anim_ptr(&self) -> *const crate::prelude::Ref<crate::generated::Anim> {
         unsafe { &raw const (*self.get()).anim }
     }
