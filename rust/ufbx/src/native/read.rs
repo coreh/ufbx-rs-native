@@ -1165,7 +1165,7 @@ pub(crate) unsafe fn push_element_size(
         !push_copy_fast::<usize>(
             &mut (*uc.get()).tmp_typed_element_offsets[type_ as usize],
             1,
-            &(*uc.get()).tmp_element_byte_offset
+            &uc.tmp_element_byte_offset()
         )
         .is_null(),
         core::ptr::null_mut(),
@@ -1176,7 +1176,7 @@ pub(crate) unsafe fn push_element_size(
         !push_copy_fast::<usize>(
             uc.tmp_element_offsets_mut_ptr(),
             1,
-            &(*uc.get()).tmp_element_byte_offset
+            &uc.tmp_element_byte_offset()
         )
         .is_null(),
         core::ptr::null_mut(),
@@ -1249,7 +1249,7 @@ pub(crate) unsafe fn push_synthetic_element_size(
         !push_copy_fast::<usize>(
             &mut (*uc.get()).tmp_typed_element_offsets[type_ as usize],
             1,
-            &(*uc.get()).tmp_element_byte_offset
+            &uc.tmp_element_byte_offset()
         )
         .is_null(),
         core::ptr::null_mut(),
@@ -1260,7 +1260,7 @@ pub(crate) unsafe fn push_synthetic_element_size(
         !push_copy_fast::<usize>(
             uc.tmp_element_offsets_mut_ptr(),
             1,
-            &(*uc.get()).tmp_element_byte_offset
+            &uc.tmp_element_byte_offset()
         )
         .is_null(),
         core::ptr::null_mut(),

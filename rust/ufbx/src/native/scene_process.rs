@@ -10164,8 +10164,8 @@ pub(crate) unsafe fn axis_matrix(
 #[inline(never)]
 pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
     let mut root_transform: Transform = IDENTITY_TRANSFORM;
-    if !matrix_all_zero(&(*uc.get()).axis_matrix) {
-        root_transform = matrix_to_transform(&(*uc.get()).axis_matrix);
+    if !matrix_all_zero(&uc.axis_matrix()) {
+        root_transform = matrix_to_transform(&uc.axis_matrix());
     }
     root_transform.scale.x *= uc.unit_scale();
     root_transform.scale.y *= uc.unit_scale();

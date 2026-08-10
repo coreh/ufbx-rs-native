@@ -923,7 +923,7 @@ pub(crate) unsafe fn subdivide_layer(
 ) -> Result<(), crate::native::error::Fail> {
     let boundary: SubdivisionBoundary = (*input).boundary;
 
-    let mesh: *const Mesh = core::ptr::addr_of!((*sc.get()).src_mesh);
+    let mesh: *const Mesh = sc.src_mesh_ptr();
     let topo: *const TopoEdge = sc.topo();
     let num_topo: usize = sc.num_topo();
 
@@ -1838,7 +1838,7 @@ pub(crate) unsafe fn subdivide_vertex_crease(
 pub(crate) unsafe fn subdivide_mesh_level(
     sc: &SubdivideContext,
 ) -> Result<(), crate::native::error::Fail> {
-    let mesh: *const Mesh = core::ptr::addr_of!((*sc.get()).src_mesh);
+    let mesh: *const Mesh = sc.src_mesh_ptr();
     let result: *mut Mesh = sc.dst_mesh_mut_ptr();
 
     // C: `*result = *mesh;` — struct assignment (memcpy).
@@ -2423,11 +2423,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
         subdivide_mesh_level(sc)?;
 
         // C: `sc->src_mesh = sc->dst_mesh;` — struct assignment (memcpy).
-        core::ptr::copy_nonoverlapping(
-            core::ptr::addr_of!((*sc.get()).dst_mesh),
-            sc.src_mesh_mut_ptr(),
-            1,
-        );
+        core::ptr::copy_nonoverlapping(sc.dst_mesh_mut_ptr(), sc.src_mesh_mut_ptr(), 1);
 
         buf_free(sc.source_mut_ptr());
         buf_free(sc.tmp_mut_ptr());
@@ -2544,7 +2540,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     (*sc.imp()).magic = MESH_IMP_MAGIC;
     // C: `sc->imp->mesh = sc->dst_mesh;` — struct assignment (memcpy).
     core::ptr::copy_nonoverlapping(
-        core::ptr::addr_of!((*sc.get()).dst_mesh),
+        sc.dst_mesh_mut_ptr(),
         core::ptr::addr_of_mut!((*sc.imp()).mesh),
         1,
     );

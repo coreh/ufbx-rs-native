@@ -2519,6 +2519,11 @@ impl Context {
     }
 
     #[inline(always)]
+    pub(crate) fn axis_matrix(&self) -> Matrix {
+        unsafe { (*self.get()).axis_matrix }
+    }
+
+    #[inline(always)]
     pub(crate) fn result(&self) -> crate::native::buf::Buf {
         unsafe { (*self.get()).result }
     }

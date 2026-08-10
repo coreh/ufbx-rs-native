@@ -288,7 +288,7 @@ unsafe fn kd_check_slow_rec(
     let mut axis = axis;
 
     // C: `ufbx_vertex_vec3 pos = nc->positions;` — a struct memcpy.
-    let pos: VertexVec3 = core::ptr::read(core::ptr::addr_of!((*nc.get()).positions));
+    let pos: VertexVec3 = core::ptr::read(nc.positions_mut_ptr());
     let kd_indices: *mut u32 = nc.kd_indices();
 
     while count > 0 {
@@ -557,7 +557,7 @@ unsafe fn kd_build_rec(
     }
 
     // C: `ufbx_vertex_vec3 pos = nc->positions;` — a struct memcpy.
-    let pos: VertexVec3 = core::ptr::read(core::ptr::addr_of!((*nc.get()).positions));
+    let pos: VertexVec3 = core::ptr::read(nc.positions_mut_ptr());
     let axis_dir: Vec3 = (*nc.get()).axes[axis as usize];
     let face: Face = nc.face();
 
@@ -685,10 +685,8 @@ pub(crate) unsafe fn triangulate_ngon(
     ufbx_assert!(face.num_indices > 4);
 
     // Form an orthonormal basis to project the polygon into a 2D plane
-    let mut normal: Vec3 = crate::native::api::get_weighted_face_normal(
-        core::ptr::addr_of!((*nc.get()).positions),
-        face,
-    );
+    let mut normal: Vec3 =
+        crate::native::api::get_weighted_face_normal(nc.positions_mut_ptr(), face);
     let len: Real = length3(normal);
     if len > math::EPSILON {
         normal = mul3(normal, 1.0 / len);

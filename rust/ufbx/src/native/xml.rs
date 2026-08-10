@@ -99,6 +99,11 @@ impl XmlContext {
     }
 
     #[inline(always)]
+    pub(crate) fn data_size(&self) -> usize {
+        unsafe { core::mem::size_of_val(&(*self.get()).data) }
+    }
+
+    #[inline(always)]
     pub(crate) fn result(&self) -> crate::native::buf::Buf {
         unsafe { (*self.get()).result }
     }
@@ -333,12 +338,12 @@ pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
     let mut num: usize = (xc.read_fn().unwrap_unchecked())(
         xc.read_user(),
         xc.data_mut_ptr() as *mut c_void,
-        size_of_val(&(*xc.get()).data),
+        xc.data_size(),
     );
-    if num == usize::MAX || num < size_of_val(&(*xc.get()).data) {
+    if num == usize::MAX || num < xc.data_size() {
         xc.set_io_error(true);
     }
-    if num < size_of_val(&(*xc.get()).data) {
+    if num < xc.data_size() {
         // C: `xc->data[num++] = '\0';`
         (*xc.get()).data[num] = b'\0';
         num += 1;
@@ -831,7 +836,7 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     } else {
         buf_free(xc.result_mut_ptr());
         if !error.is_null() {
-            core::ptr::write(error, core::ptr::read(&(*xc.get()).error));
+            core::ptr::write(error, core::ptr::read(xc.error_mut_ptr()));
         }
 
         core::ptr::null_mut()

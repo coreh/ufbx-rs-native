@@ -859,11 +859,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
     (*imp).magic = SCENE_IMP_MAGIC;
     // C: `imp->scene = uc->scene;` (struct copy)
-    ptr::copy_nonoverlapping(
-        ptr::addr_of!((*uc.get()).scene),
-        ptr::addr_of_mut!((*imp).scene),
-        1,
-    );
+    ptr::copy_nonoverlapping(uc.scene_mut_ptr(), ptr::addr_of_mut!((*imp).scene), 1);
     (*imp).refcount.ator = uc.ator_result();
     (*imp).refcount.ator.error = ptr::null_mut();
 
@@ -2421,7 +2417,7 @@ pub(crate) unsafe fn translate_anim(ec: &EvalContext, p_anim: *mut *mut Anim) ->
 #[must_use]
 pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // C: `ec->scene = ec->src_scene;` — struct assignment (memcpy).
-    ptr::copy_nonoverlapping(ptr::addr_of!((*ec.get()).src_scene), ec.scene_mut_ptr(), 1);
+    ptr::copy_nonoverlapping(ec.src_scene_mut_ptr(), ec.scene_mut_ptr(), 1);
     let num_elements: usize = ec.scene_view().elements_view().count();
 
     // C: `char *element_data = (char*)ufbxi_push(&ec->result, uint64_t, ec->scene.metadata.element_buffer_size/8);`
@@ -3112,11 +3108,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     (*imp).magic = SCENE_IMP_MAGIC;
     // C: `imp->scene = ec->scene;` (struct assignment)
-    ptr::copy_nonoverlapping(
-        ptr::addr_of!((*ec.get()).scene),
-        ptr::addr_of_mut!((*imp).scene),
-        1,
-    );
+    ptr::copy_nonoverlapping(ec.scene_mut_ptr(), ptr::addr_of_mut!((*imp).scene), 1);
     (*imp).refcount.ator = ec.ator_result();
     (*imp).refcount.ator.error = ptr::null_mut();
 
@@ -3722,11 +3714,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
 
     (*ac.imp()).magic = ANIM_IMP_MAGIC;
     // C: `ac->imp->anim = ac->anim;` (struct assignment)
-    ptr::copy_nonoverlapping(
-        ptr::addr_of!((*ac.get()).anim),
-        ptr::addr_of_mut!((*ac.imp()).anim),
-        1,
-    );
+    ptr::copy_nonoverlapping(ac.anim_mut_ptr(), ptr::addr_of_mut!((*ac.imp()).anim), 1);
     (*ac.imp()).refcount.ator = ac.ator_result();
     (*ac.imp()).refcount.buf = ac.result();
 
@@ -4194,6 +4182,11 @@ impl BakeContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerBakeContext {
         self.0.get().cast()
+    }
+
+    #[inline(always)]
+    pub(crate) fn bake_mut_ptr(&self) -> *mut BakedAnim {
+        unsafe { &raw mut (*self.get()).bake }
     }
 
     #[inline(always)]
@@ -6374,11 +6367,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
 
     (*bc.imp()).magic = BAKED_ANIM_IMP_MAGIC;
     // C: `bc->imp->bake = bc->bake;` (struct assignment)
-    ptr::copy_nonoverlapping(
-        ptr::addr_of!((*bc.get()).bake),
-        ptr::addr_of_mut!((*bc.imp()).bake),
-        1,
-    );
+    ptr::copy_nonoverlapping(bc.bake_mut_ptr(), ptr::addr_of_mut!((*bc.imp()).bake), 1);
     (*bc.imp()).refcount.ator = bc.ator_result();
     (*bc.imp()).refcount.buf = bc.result();
 

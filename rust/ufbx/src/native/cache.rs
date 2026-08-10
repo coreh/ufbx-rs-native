@@ -292,6 +292,11 @@ impl CacheContext {
     }
 
     #[inline(always)]
+    pub(crate) fn cache_mut_ptr(&self) -> *mut crate::generated::GeometryCache {
+        unsafe { &raw mut (*self.get()).cache }
+    }
+
+    #[inline(always)]
     pub(crate) fn result(&self) -> crate::native::buf::Buf {
         unsafe { (*self.get()).result }
     }
@@ -358,6 +363,11 @@ impl CacheContext {
     #[inline(always)]
     pub(crate) fn open_file_cb_view(&self) -> &crate::prelude::RawOpenFileCbView {
         unsafe { &*(&raw mut (*self.get()).open_file_cb as *mut crate::prelude::RawOpenFileCbView) }
+    }
+    // `open_file_cb` — raw-ptr getter (const address for `*const RawOpenFileCb` params).
+    #[inline(always)]
+    pub(crate) fn open_file_cb_ptr(&self) -> *const crate::generated::RawOpenFileCb {
+        unsafe { &raw const (*self.get()).open_file_cb }
     }
     // `stream` (RawStream) — typed VIEW handle (reinterpret-in-place); callback leaves read-only.
     #[inline(always)]
@@ -1423,7 +1433,7 @@ pub(crate) unsafe fn cache_try_open_file(
     core::ptr::write_bytes(cc.stream_mut_ptr() as *mut RawStream, 0, 1);
     ufbxi_regression_assert!(strlen(filename.data) == filename.length);
     if !open_file(
-        &(*cc.get()).open_file_cb,
+        cc.open_file_cb_ptr(),
         cc.stream_mut_ptr(),
         filename.data,
         filename.length,
@@ -1818,7 +1828,7 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
         core::ptr::null_mut(),
     );
 
-    core::ptr::write(&mut (*cc.imp()).cache, core::ptr::read(&(*cc.get()).cache));
+    core::ptr::write(&mut (*cc.imp()).cache, core::ptr::read(cc.cache_mut_ptr()));
     (*cc.imp()).magic = CACHE_IMP_MAGIC;
     (*cc.imp()).owned_by_scene = cc.owned_by_scene();
     (*cc.imp()).refcount.ator = cc.ator_result();
@@ -1922,7 +1932,7 @@ pub(crate) unsafe fn load_geometry_cache(
         if !cache.is_null() {
             clear_error(p_error);
         } else {
-            core::ptr::write(p_error, core::ptr::read(&(*cc.get()).error));
+            core::ptr::write(p_error, core::ptr::read(cc.error_mut_ptr()));
         }
     }
     cache
@@ -2081,7 +2091,7 @@ pub(crate) unsafe fn load_external_cache(
             }
         }
 
-        core::ptr::write(uc.error_mut_ptr(), core::ptr::read(&(*cc.get()).error));
+        core::ptr::write(uc.error_mut_ptr(), core::ptr::read(cc.error_mut_ptr()));
         return Err(Fail);
     }
 
@@ -2274,7 +2284,7 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
         return;
     }
 
-    if matrix_determinant(&(*uc.get()).axis_matrix) < 0.0f32 as Real {
+    if matrix_determinant(&uc.axis_matrix()) < 0.0f32 as Real {
         if uc.opts_view().handedness_conversion_axis() != MirrorAxis::None {
             let mirror_axis: MirrorAxis = uc.opts_view().handedness_conversion_axis();
             uc.set_mirror_axis(mirror_axis);
@@ -2283,7 +2293,7 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
                 .set_mirror_axis(uc.mirror_axis());
 
             mirror_matrix_dst(uc.axis_matrix_mut_ptr(), uc.mirror_axis());
-            ufbxi_dev_assert!(matrix_determinant(&(*uc.get()).axis_matrix) >= 0.0f32 as Real);
+            ufbxi_dev_assert!(matrix_determinant(&uc.axis_matrix()) >= 0.0f32 as Real);
 
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
             let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
