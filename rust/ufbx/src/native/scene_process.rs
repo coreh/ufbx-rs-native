@@ -446,7 +446,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
             let pre_node: *mut PreNode = pre_nodes.add(id as usize);
             (*pre_node).has_constant_scale = true;
             (*pre_node).constant_scale = find_vec3(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*element).props)),
+                PropsView::from_ptr(&raw mut (*element).props),
                 sp::Lcl_Scaling.as_ptr(),
                 1.0,
                 1.0,
@@ -463,32 +463,32 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
             let pre_value: *mut PreAnimValue = pre_anim_values.add(id as usize);
             (*pre_value).has_constant_value = true;
             (*pre_value).constant_value.x = find_real(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*element).props)),
+                PropsView::from_ptr(&raw mut (*element).props),
                 sp::X.as_ptr(),
                 math::NAN as Real,
             );
             (*pre_value).constant_value.x = find_real(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*element).props)),
+                PropsView::from_ptr(&raw mut (*element).props),
                 sp::d_X.as_ptr(),
                 (*pre_value).constant_value.x,
             );
             (*pre_value).constant_value.y = find_real(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*element).props)),
+                PropsView::from_ptr(&raw mut (*element).props),
                 sp::Y.as_ptr(),
                 math::NAN as Real,
             );
             (*pre_value).constant_value.y = find_real(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*element).props)),
+                PropsView::from_ptr(&raw mut (*element).props),
                 sp::d_Y.as_ptr(),
                 (*pre_value).constant_value.y,
             );
             (*pre_value).constant_value.z = find_real(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*element).props)),
+                PropsView::from_ptr(&raw mut (*element).props),
                 sp::Z.as_ptr(),
                 math::NAN as Real,
             );
             (*pre_value).constant_value.z = find_real(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*element).props)),
+                PropsView::from_ptr(&raw mut (*element).props),
                 sp::d_Z.as_ptr(),
                 (*pre_value).constant_value.z,
             );
@@ -682,21 +682,21 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
             let node: *mut Node = *elements.add((*pre_node).element_id as usize) as *mut Node;
 
             let rotation_pivot: Vec3 = find_vec3(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+                PropsView::from_ptr(&raw mut (*node).element.props),
                 sp::RotationPivot.as_ptr(),
                 0.0,
                 0.0,
                 0.0,
             );
             let scaling_pivot: Vec3 = find_vec3(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+                PropsView::from_ptr(&raw mut (*node).element.props),
                 sp::ScalingPivot.as_ptr(),
                 0.0,
                 0.0,
                 0.0,
             );
             let scaling_offset: Vec3 = find_vec3(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+                PropsView::from_ptr(&raw mut (*node).element.props),
                 sp::ScalingOffset.as_ptr(),
                 0.0,
                 0.0,
@@ -756,7 +756,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
 
                 if can_modify_pivot && (can_modify_geometry_transform || skip_geometry_transform) {
                     let mut geometric_translation: Vec3 = find_vec3(
-                        PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+                        PropsView::from_ptr(&raw mut (*node).element.props),
                         sp::GeometricTranslation.as_ptr(),
                         0.0,
                         0.0,
@@ -822,7 +822,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                         // We need to be careful when doing this in case any component of Z is 0. Fortunately,
                         // the above holds for all `Z != 0`, it will just result in non-zero translation in the parent.
                         let initial_scale: Vec3 = find_vec3(
-                            PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+                            PropsView::from_ptr(&raw mut (*node).element.props),
                             sp::Lcl_Scaling.as_ptr(),
                             1.0,
                             1.0,
@@ -1344,7 +1344,7 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
                 let src: *mut Element = find_element_by_fbx_id(uc, (*tmp_conn).src);
                 if src.is_null()
                     || find_prop_len(
-                        PropsView::from_ptr(core::ptr::addr_of_mut!((*src).props)),
+                        PropsView::from_ptr(&raw mut (*src).props),
                         (*tmp_conn).src_prop.data,
                         (*tmp_conn).src_prop.length,
                     )
@@ -1359,7 +1359,7 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
                 let dst: *mut Element = find_element_by_fbx_id(uc, (*tmp_conn).dst);
                 if dst.is_null()
                     || find_prop_len(
-                        PropsView::from_ptr(core::ptr::addr_of_mut!((*dst).props)),
+                        PropsView::from_ptr(&raw mut (*dst).props),
                         (*tmp_conn).dst_prop.data,
                         (*tmp_conn).dst_prop.length,
                     )
@@ -2404,7 +2404,7 @@ pub(crate) unsafe fn fetch_texture_layers(
                 alpha: 0.0,
             };
             layer.alpha = find_real(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+                PropsView::from_ptr(&raw mut (*texture).element.props),
                 sp::Texture_alpha.as_ptr(),
                 1.0,
             );
@@ -2412,7 +2412,7 @@ pub(crate) unsafe fn fetch_texture_layers(
             // clamps the result to `[0, UFBX_BLEND_OVERLAY]`, every value of
             // which is a valid `ufbx_blend_mode`.
             layer.blend_mode = core::mem::transmute::<u32, BlendMode>(find_enum(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+                PropsView::from_ptr(&raw mut (*texture).element.props),
                 sp::BlendMode.as_ptr(),
                 BlendMode::Replace as i64,
                 BlendMode::Overlay as i64,
@@ -3604,7 +3604,7 @@ pub(crate) unsafe fn fetch_mapping_maps(
             let name: String = (*binding).material_prop;
 
             let prop: *mut Prop = find_prop_len(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*material).element.props)),
+                PropsView::from_ptr(&raw mut (*material).element.props),
                 name.data,
                 name.length,
             )
@@ -3783,17 +3783,17 @@ pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
     // only the named struct, so the array view is recovered by casting the
     // whole aggregate (identical layout, PORTING.md "Unions").
     ptr::write_bytes(
-        ptr::addr_of_mut!((*material).fbx) as *mut u8,
+        &raw mut (*material).fbx as *mut u8,
         0,
         size_of::<MaterialFbxMaps>(),
     );
     ptr::write_bytes(
-        ptr::addr_of_mut!((*material).pbr) as *mut u8,
+        &raw mut (*material).pbr as *mut u8,
         0,
         size_of::<MaterialPbrMaps>(),
     );
     ptr::write_bytes(
-        ptr::addr_of_mut!((*material).features) as *mut u8,
+        &raw mut (*material).features as *mut u8,
         0,
         size_of::<MaterialFeatures>(),
     );
@@ -3801,11 +3801,11 @@ pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
     // These array views stay live for the rest of the function (the glossiness
     // remap loop below writes through `pbr_maps`/`feature_infos`), so every
     // other access to `material` in this body must be a raw place projection or
-    // an `addr_of_mut!` — never a `&mut`, which would retag and invalidate them.
-    let fbx_maps: *mut MaterialMap = ptr::addr_of_mut!((*material).fbx) as *mut MaterialMap;
-    let pbr_maps: *mut MaterialMap = ptr::addr_of_mut!((*material).pbr) as *mut MaterialMap;
+    // a `&raw mut` — never a `&mut`, which would retag and invalidate them.
+    let fbx_maps: *mut MaterialMap = &raw mut (*material).fbx as *mut MaterialMap;
+    let pbr_maps: *mut MaterialMap = &raw mut (*material).pbr as *mut MaterialMap;
     let feature_infos: *mut MaterialFeatureInfo =
-        ptr::addr_of_mut!((*material).features) as *mut MaterialFeatureInfo;
+        &raw mut (*material).features as *mut MaterialFeatureInfo;
 
     let mut base_mapping: *const ShaderMapping = BASE_FBX_MAPPING.as_ptr();
     let mut num_base_mapping: usize = BASE_FBX_MAPPING.len();
@@ -3900,53 +3900,53 @@ pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
     );
 
     update_factor(
-        ptr::addr_of_mut!((*material).fbx.diffuse_factor),
-        ptr::addr_of_mut!((*material).fbx.diffuse_color),
+        &raw mut (*material).fbx.diffuse_factor,
+        &raw mut (*material).fbx.diffuse_color,
     );
     update_factor(
-        ptr::addr_of_mut!((*material).fbx.specular_factor),
-        ptr::addr_of_mut!((*material).fbx.specular_color),
+        &raw mut (*material).fbx.specular_factor,
+        &raw mut (*material).fbx.specular_color,
     );
     update_factor(
-        ptr::addr_of_mut!((*material).fbx.reflection_factor),
-        ptr::addr_of_mut!((*material).fbx.reflection_color),
+        &raw mut (*material).fbx.reflection_factor,
+        &raw mut (*material).fbx.reflection_color,
     );
     update_factor(
-        ptr::addr_of_mut!((*material).fbx.transparency_factor),
-        ptr::addr_of_mut!((*material).fbx.transparency_color),
+        &raw mut (*material).fbx.transparency_factor,
+        &raw mut (*material).fbx.transparency_color,
     );
     update_factor(
-        ptr::addr_of_mut!((*material).fbx.emission_factor),
-        ptr::addr_of_mut!((*material).fbx.emission_color),
+        &raw mut (*material).fbx.emission_factor,
+        &raw mut (*material).fbx.emission_color,
     );
     update_factor(
-        ptr::addr_of_mut!((*material).fbx.ambient_factor),
-        ptr::addr_of_mut!((*material).fbx.ambient_color),
+        &raw mut (*material).fbx.ambient_factor,
+        &raw mut (*material).fbx.ambient_color,
     );
 
     update_factor(
-        ptr::addr_of_mut!((*material).pbr.base_factor),
-        ptr::addr_of_mut!((*material).pbr.base_color),
+        &raw mut (*material).pbr.base_factor,
+        &raw mut (*material).pbr.base_color,
     );
     update_factor(
-        ptr::addr_of_mut!((*material).pbr.specular_factor),
-        ptr::addr_of_mut!((*material).pbr.specular_color),
+        &raw mut (*material).pbr.specular_factor,
+        &raw mut (*material).pbr.specular_color,
     );
     update_factor(
-        ptr::addr_of_mut!((*material).pbr.emission_factor),
-        ptr::addr_of_mut!((*material).pbr.emission_color),
+        &raw mut (*material).pbr.emission_factor,
+        &raw mut (*material).pbr.emission_color,
     );
     update_factor(
-        ptr::addr_of_mut!((*material).pbr.sheen_factor),
-        ptr::addr_of_mut!((*material).pbr.sheen_color),
+        &raw mut (*material).pbr.sheen_factor,
+        &raw mut (*material).pbr.sheen_color,
     );
     update_factor(
-        ptr::addr_of_mut!((*material).pbr.thin_film_factor),
-        ptr::addr_of_mut!((*material).pbr.thin_film_thickness),
+        &raw mut (*material).pbr.thin_film_factor,
+        &raw mut (*material).pbr.thin_film_thickness,
     );
     update_factor(
-        ptr::addr_of_mut!((*material).pbr.transmission_factor),
-        ptr::addr_of_mut!((*material).pbr.transmission_color),
+        &raw mut (*material).pbr.transmission_factor,
+        &raw mut (*material).pbr.transmission_color,
     );
 
     // Patch transmission roughness if only extra roughness is defined
@@ -4150,7 +4150,7 @@ pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod: *mut LodGroup) -> Res
     loop {
         let len: i32 = ufbxi_snprintf!(prop_name, size_of::<[u8; 64]>(), "Thresholds|Level%zu", i);
         let prop: *mut Prop = find_prop_len(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*lod).element.props)),
+            PropsView::from_ptr(&raw mut (*lod).element.props),
             prop_name,
             len as usize,
         )
@@ -4166,28 +4166,28 @@ pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod: *mut LodGroup) -> Res
     ufbxi_check!(uc, !levels.is_null(), "levels");
 
     (*lod).relative_distances = api_find_bool(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*lod).element.props)),
+        PropsView::from_ptr(&raw mut (*lod).element.props),
         b"ThresholdsUsedAsPercentage\0".as_ptr(),
         false,
     );
     (*lod).ignore_parent_transform = !api_find_bool(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*lod).element.props)),
+        PropsView::from_ptr(&raw mut (*lod).element.props),
         b"WorldSpace\0".as_ptr(),
         true,
     );
 
     (*lod).use_distance_limit = api_find_bool(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*lod).element.props)),
+        PropsView::from_ptr(&raw mut (*lod).element.props),
         b"MinMaxDistance\0".as_ptr(),
         false,
     );
     (*lod).distance_limit_min = api_find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*lod).element.props)),
+        PropsView::from_ptr(&raw mut (*lod).element.props),
         b"MinDistance\0".as_ptr(),
         -100.0 as Real,
     );
     (*lod).distance_limit_max = api_find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*lod).element.props)),
+        PropsView::from_ptr(&raw mut (*lod).element.props),
         b"MaxDistance\0".as_ptr(),
         100.0 as Real,
     );
@@ -4206,7 +4206,7 @@ pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod: *mut LodGroup) -> Res
                 i - 1
             );
             (*level).distance = api_find_real_len(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*lod).element.props)),
+                PropsView::from_ptr(&raw mut (*lod).element.props),
                 prop_name,
                 len as usize,
                 0.0f32 as Real,
@@ -4223,7 +4223,7 @@ pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod: *mut LodGroup) -> Res
                 i
             );
             let display: i64 = api_find_int_len(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*lod).element.props)),
+                PropsView::from_ptr(&raw mut (*lod).element.props),
                 prop_name,
                 len as usize,
                 0,
@@ -4269,7 +4269,7 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(
 
     compute_normals(
         mesh,
-        ptr::addr_of!((*mesh).vertex_position),
+        &raw const (*mesh).vertex_position,
         normal_indices,
         num_indices,
         normal_data,
@@ -4287,8 +4287,8 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(
     // (memcpy); `VertexVec3` is not `Copy` in the generated bindings, so the
     // copy is spelled as a byte-identical `copy_nonoverlapping`.
     ptr::copy_nonoverlapping(
-        ptr::addr_of!((*mesh).vertex_normal),
-        ptr::addr_of_mut!((*mesh).skinned_normal),
+        &raw const (*mesh).vertex_normal,
+        &raw mut (*mesh).skinned_normal,
         1,
     );
 
@@ -4447,7 +4447,7 @@ pub(crate) unsafe fn update_shader_texture(texture: *mut Texture, shader: *mut S
         let mut prop: *mut Prop = opt_ptr(&(*input).prop);
         if !prop.is_null() {
             prop = find_prop_len(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+                PropsView::from_ptr(&raw mut (*texture).element.props),
                 (*prop).name.data,
                 (*prop).name.length,
             )
@@ -4467,7 +4467,7 @@ pub(crate) unsafe fn update_shader_texture(texture: *mut Texture, shader: *mut S
         prop = opt_ptr(&(*input).texture_prop);
         if !prop.is_null() {
             prop = find_prop_len(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+                PropsView::from_ptr(&raw mut (*texture).element.props),
                 (*prop).name.data,
                 (*prop).name.length,
             )
@@ -4484,7 +4484,7 @@ pub(crate) unsafe fn update_shader_texture(texture: *mut Texture, shader: *mut S
         prop = opt_ptr(&(*input).texture_enabled_prop);
         if !prop.is_null() {
             prop = find_prop_len(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+                PropsView::from_ptr(&raw mut (*texture).element.props),
                 (*prop).name.data,
                 (*prop).name.length,
             )
@@ -4530,19 +4530,19 @@ pub(crate) unsafe fn finalize_shader_texture(
     texture: *mut Texture,
 ) -> Result<(), Fail> {
     let classid_a: u32 = api_find_int(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+        PropsView::from_ptr(&raw mut (*texture).element.props),
         b"3dsMax|ClassIDa\0".as_ptr(),
         0,
     ) as u64 as u32;
     let classid_b: u32 = api_find_int(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+        PropsView::from_ptr(&raw mut (*texture).element.props),
         b"3dsMax|ClassIDb\0".as_ptr(),
         0,
     ) as u64 as u32;
     let classid: u64 = (classid_a as u64) << 32 | classid_b as u64;
 
     let max_texture: String = find_string(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+        PropsView::from_ptr(&raw mut (*texture).element.props),
         b"3dsMax|MaxTexture\0".as_ptr(),
         EMPTY_STRING.0,
     );
@@ -4588,7 +4588,7 @@ pub(crate) unsafe fn finalize_shader_texture(
     // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(name_props); i++)`
     for i in 0..NAME_PROPS.len() {
         let prop: *mut Prop = api_find_prop(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+            PropsView::from_ptr(&raw mut (*texture).element.props),
             NAME_PROPS[i].0,
         )
         .map_or(ptr::null_mut(), PropView::get);
@@ -4601,7 +4601,7 @@ pub(crate) unsafe fn finalize_shader_texture(
     // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(source_props); i++)`
     for i in 0..SOURCE_PROPS.len() {
         let prop: *mut Prop = api_find_prop(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+            PropsView::from_ptr(&raw mut (*texture).element.props),
             SOURCE_PROPS[i].0,
         )
         .map_or(ptr::null_mut(), PropView::get);
@@ -5200,7 +5200,7 @@ pub(crate) unsafe fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 // may alias the destination when a texture depends on itself,
                 // which rules out `copy_nonoverlapping`).
                 let src: *const RefList<Texture> =
-                    ptr::addr_of!((*(*deps.add(0)).texture).file_textures);
+                    &raw const (*(*deps.add(0)).texture).file_textures;
                 (*texture).file_textures.data = (*src).data;
                 (*texture).file_textures.count = (*src).count;
             } else {
@@ -5499,60 +5499,35 @@ pub(crate) unsafe fn flip_attrib_winding(
 #[inline(never)]
 pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), Fail> {
     uc.set_tmp_mesh_consecutive_indices(ptr::null_mut());
-    flip_attrib_winding(
-        uc,
-        mesh,
-        ptr::addr_of_mut!((*mesh).vertex_position.indices),
-        true,
-    )?;
-    flip_attrib_winding(
-        uc,
-        mesh,
-        ptr::addr_of_mut!((*mesh).vertex_normal.indices),
-        false,
-    )?;
-    flip_attrib_winding(
-        uc,
-        mesh,
-        ptr::addr_of_mut!((*mesh).vertex_crease.indices),
-        false,
-    )?;
+    flip_attrib_winding(uc, mesh, &raw mut (*mesh).vertex_position.indices, true)?;
+    flip_attrib_winding(uc, mesh, &raw mut (*mesh).vertex_normal.indices, false)?;
+    flip_attrib_winding(uc, mesh, &raw mut (*mesh).vertex_crease.indices, false)?;
     if (*mesh).uv_sets.count > 0 {
         // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
         let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
         let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
         while set != set_end {
-            flip_attrib_winding(uc, mesh, ptr::addr_of_mut!((*set).vertex_uv.indices), false)?;
-            flip_attrib_winding(
-                uc,
-                mesh,
-                ptr::addr_of_mut!((*set).vertex_tangent.indices),
-                false,
-            )?;
-            flip_attrib_winding(
-                uc,
-                mesh,
-                ptr::addr_of_mut!((*set).vertex_bitangent.indices),
-                false,
-            )?;
+            flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_uv.indices, false)?;
+            flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_tangent.indices, false)?;
+            flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_bitangent.indices, false)?;
             set = set.add(1);
         }
         // C: struct assignment (memcpy) of the vertex-attribute headers; the
         // `Vertex*` structs are not `Copy` in the generated bindings, so the
         // copy is spelled as a byte-identical `copy_nonoverlapping`.
         ptr::copy_nonoverlapping(
-            ptr::addr_of!((*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_uv),
-            ptr::addr_of_mut!((*mesh).vertex_uv),
+            &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_uv,
+            &raw mut (*mesh).vertex_uv,
             1,
         );
         ptr::copy_nonoverlapping(
-            ptr::addr_of!((*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_bitangent),
-            ptr::addr_of_mut!((*mesh).vertex_bitangent),
+            &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_bitangent,
+            &raw mut (*mesh).vertex_bitangent,
             1,
         );
         ptr::copy_nonoverlapping(
-            ptr::addr_of!((*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_tangent),
-            ptr::addr_of_mut!((*mesh).vertex_tangent),
+            &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_tangent,
+            &raw mut (*mesh).vertex_tangent,
             1,
         );
     }
@@ -5561,33 +5536,18 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
         let mut set: *mut ColorSet = (*mesh).color_sets.data as *mut ColorSet;
         let set_end: *mut ColorSet = add_ptr(set, (*mesh).color_sets.count);
         while set != set_end {
-            flip_attrib_winding(
-                uc,
-                mesh,
-                ptr::addr_of_mut!((*set).vertex_color.indices),
-                false,
-            )?;
+            flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_color.indices, false)?;
             set = set.add(1);
         }
         ptr::copy_nonoverlapping(
-            ptr::addr_of!((*((*mesh).color_sets.data as *mut ColorSet).add(0)).vertex_color),
-            ptr::addr_of_mut!((*mesh).vertex_color),
+            &raw const (*((*mesh).color_sets.data as *mut ColorSet).add(0)).vertex_color,
+            &raw mut (*mesh).vertex_color,
             1,
         );
     }
-    flip_attrib_winding(
-        uc,
-        mesh,
-        ptr::addr_of_mut!((*mesh).skinned_position.indices),
-        false,
-    )?;
+    flip_attrib_winding(uc, mesh, &raw mut (*mesh).skinned_position.indices, false)?;
     if (*mesh).skinned_normal.indices.data != (*mesh).vertex_normal.indices.data {
-        flip_attrib_winding(
-            uc,
-            mesh,
-            ptr::addr_of_mut!((*mesh).skinned_normal.indices),
-            false,
-        )?;
+        flip_attrib_winding(uc, mesh, &raw mut (*mesh).skinned_normal.indices, false)?;
     }
 
     update_vertex_first_index(mesh);
@@ -5667,13 +5627,11 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
                 continue;
             }
 
-            (*node).geometry_transform = get_geometry_transform(
-                PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
-                node,
-            );
-            if !is_transform_identity(ptr::addr_of!((*node).geometry_transform)) {
+            (*node).geometry_transform =
+                get_geometry_transform(PropsView::from_ptr(&raw mut (*node).element.props), node);
+            if !is_transform_identity(&raw const (*node).geometry_transform) {
                 (*node).geometry_to_node =
-                    transform_to_matrix(ptr::addr_of!((*node).geometry_transform));
+                    transform_to_matrix(&raw const (*node).geometry_transform);
                 (*node).has_geometry_transform = true;
             } else {
                 (*node).geometry_to_node = IDENTITY_MATRIX;
@@ -5703,7 +5661,7 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
 
         if do_scale {
             scale_vec3_list(
-                ptr::addr_of!((*shape).position_offsets) as *const c_void,
+                &raw const (*shape).position_offsets as *const c_void,
                 geometry_scale,
                 0,
             );
@@ -5711,12 +5669,12 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
 
         if do_mirror {
             mirror_vec3_list(
-                ptr::addr_of!((*shape).position_offsets) as *const c_void,
+                &raw const (*shape).position_offsets as *const c_void,
                 mirror_axis,
                 0,
             );
             mirror_vec3_list(
-                ptr::addr_of!((*shape).normal_offsets) as *const c_void,
+                &raw const (*shape).normal_offsets as *const c_void,
                 mirror_axis,
                 0,
             );
@@ -5732,7 +5690,7 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
 
         if do_scale {
             scale_vec3_list(
-                ptr::addr_of!((*mesh).vertex_position.values) as *const c_void,
+                &raw const (*mesh).vertex_position.values as *const c_void,
                 geometry_scale,
                 0,
             );
@@ -5741,12 +5699,12 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
         let mut do_flip_winding: bool = do_winding;
         if do_mirror {
             mirror_vec3_list(
-                ptr::addr_of!((*mesh).vertex_position.values) as *const c_void,
+                &raw const (*mesh).vertex_position.values as *const c_void,
                 mirror_axis,
                 0,
             );
             mirror_vec3_list(
-                ptr::addr_of!((*mesh).vertex_normal.values) as *const c_void,
+                &raw const (*mesh).vertex_normal.values as *const c_void,
                 mirror_axis,
                 0,
             );
@@ -5755,12 +5713,12 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
             let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
             while set != set_end {
                 mirror_vec3_list(
-                    ptr::addr_of!((*set).vertex_tangent.values) as *const c_void,
+                    &raw const (*set).vertex_tangent.values as *const c_void,
                     mirror_axis,
                     0,
                 );
                 mirror_vec3_list(
-                    ptr::addr_of!((*set).vertex_bitangent.values) as *const c_void,
+                    &raw const (*set).vertex_bitangent.values as *const c_void,
                     mirror_axis,
                     0,
                 );
@@ -5777,43 +5735,42 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
             flip_winding(uc, mesh)?;
         }
 
-        let geo_node: *mut Node = get_geometry_transform_node(ptr::addr_of_mut!((*mesh).element));
+        let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*mesh).element);
         if do_geometry_transforms && !geo_node.is_null() {
             let mut tangent_matrix: Matrix = (*geo_node).geometry_to_node;
             tangent_matrix.m03 = 0.0;
             tangent_matrix.m13 = 0.0;
             tangent_matrix.m23 = 0.0;
-            let normal_matrix: Matrix =
-                matrix_for_normals(ptr::addr_of!((*geo_node).geometry_to_node));
+            let normal_matrix: Matrix = matrix_for_normals(&raw const (*geo_node).geometry_to_node);
 
             transform_vec3_list(
-                ptr::addr_of!((*mesh).vertex_position.values) as *const c_void,
-                ptr::addr_of!((*geo_node).geometry_to_node),
+                &raw const (*mesh).vertex_position.values as *const c_void,
+                &raw const (*geo_node).geometry_to_node,
                 0,
             );
             transform_vec3_list(
-                ptr::addr_of!((*mesh).vertex_normal.values) as *const c_void,
+                &raw const (*mesh).vertex_normal.values as *const c_void,
                 &normal_matrix,
                 0,
             );
-            normalize_vec3_list(ptr::addr_of!((*mesh).vertex_normal.values));
+            normalize_vec3_list(&raw const (*mesh).vertex_normal.values);
 
             // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
             let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
             let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
             while set != set_end {
                 transform_vec3_list(
-                    ptr::addr_of!((*set).vertex_tangent.values) as *const c_void,
+                    &raw const (*set).vertex_tangent.values as *const c_void,
                     &tangent_matrix,
                     0,
                 );
                 transform_vec3_list(
-                    ptr::addr_of!((*set).vertex_bitangent.values) as *const c_void,
+                    &raw const (*set).vertex_bitangent.values as *const c_void,
                     &tangent_matrix,
                     0,
                 );
-                normalize_vec3_list(ptr::addr_of!((*set).vertex_tangent.values));
-                normalize_vec3_list(ptr::addr_of!((*set).vertex_bitangent.values));
+                normalize_vec3_list(&raw const (*set).vertex_tangent.values);
+                normalize_vec3_list(&raw const (*set).vertex_bitangent.values);
                 set = set.add(1);
             }
         }
@@ -5830,7 +5787,7 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
 
         if do_scale {
             scale_vec3_list(
-                ptr::addr_of!((*curve).control_points) as *const c_void,
+                &raw const (*curve).control_points as *const c_void,
                 geometry_scale,
                 0,
             );
@@ -5838,17 +5795,17 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
 
         if do_mirror {
             mirror_vec3_list(
-                ptr::addr_of!((*curve).control_points) as *const c_void,
+                &raw const (*curve).control_points as *const c_void,
                 mirror_axis,
                 0,
             );
         }
 
-        let geo_node: *mut Node = get_geometry_transform_node(ptr::addr_of_mut!((*curve).element));
+        let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*curve).element);
         if do_geometry_transforms && !geo_node.is_null() {
             transform_vec3_list(
-                ptr::addr_of!((*curve).control_points) as *const c_void,
-                ptr::addr_of!((*geo_node).geometry_to_node),
+                &raw const (*curve).control_points as *const c_void,
+                &raw const (*geo_node).geometry_to_node,
                 0,
             );
         }
@@ -5865,7 +5822,7 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
 
         if do_scale {
             scale_vec3_list(
-                ptr::addr_of!((*curve).control_points) as *const c_void,
+                &raw const (*curve).control_points as *const c_void,
                 geometry_scale,
                 size_of::<Vec4>(),
             );
@@ -5873,17 +5830,17 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
 
         if do_mirror {
             mirror_vec3_list(
-                ptr::addr_of!((*curve).control_points) as *const c_void,
+                &raw const (*curve).control_points as *const c_void,
                 mirror_axis,
                 size_of::<Vec4>(),
             );
         }
 
-        let geo_node: *mut Node = get_geometry_transform_node(ptr::addr_of_mut!((*curve).element));
+        let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*curve).element);
         if do_geometry_transforms && !geo_node.is_null() {
             transform_vec3_list(
-                ptr::addr_of!((*curve).control_points) as *const c_void,
-                ptr::addr_of!((*geo_node).geometry_to_node),
+                &raw const (*curve).control_points as *const c_void,
+                &raw const (*geo_node).geometry_to_node,
                 size_of::<Vec4>(),
             );
         }
@@ -5900,7 +5857,7 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
 
         if do_scale {
             scale_vec3_list(
-                ptr::addr_of!((*surface).control_points) as *const c_void,
+                &raw const (*surface).control_points as *const c_void,
                 geometry_scale,
                 size_of::<Vec4>(),
             );
@@ -5908,18 +5865,17 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
 
         if do_mirror {
             mirror_vec3_list(
-                ptr::addr_of!((*surface).control_points) as *const c_void,
+                &raw const (*surface).control_points as *const c_void,
                 mirror_axis,
                 size_of::<Vec4>(),
             );
         }
 
-        let geo_node: *mut Node =
-            get_geometry_transform_node(ptr::addr_of_mut!((*surface).element));
+        let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*surface).element);
         if do_geometry_transforms && !geo_node.is_null() {
             transform_vec3_list(
-                ptr::addr_of!((*surface).control_points) as *const c_void,
-                ptr::addr_of!((*geo_node).geometry_to_node),
+                &raw const (*surface).control_points as *const c_void,
+                &raw const (*geo_node).geometry_to_node,
                 size_of::<Vec4>(),
             );
         }
@@ -5940,17 +5896,17 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
 
             if (*node).has_geometry_transform {
                 set_own_prop_vec3_uniform(
-                    ptr::addr_of_mut!((*node).element.props),
+                    &raw mut (*node).element.props,
                     sp::GeometricTranslation.as_ptr(),
                     0.0,
                 );
                 set_own_prop_vec3_uniform(
-                    ptr::addr_of_mut!((*node).element.props),
+                    &raw mut (*node).element.props,
                     sp::GeometricRotation.as_ptr(),
                     0.0,
                 );
                 set_own_prop_vec3_uniform(
-                    ptr::addr_of_mut!((*node).element.props),
+                    &raw mut (*node).element.props,
                     sp::GeometricScaling.as_ptr(),
                     1.0,
                 );
@@ -5978,7 +5934,7 @@ pub(crate) unsafe fn postprocess_scene(uc: &Context) {
         while p_mesh != p_mesh_end {
             let mesh: *mut Mesh = *p_mesh;
             if uc.opts_view().normalize_normals() {
-                normalize_vec3_list(ptr::addr_of!((*mesh).vertex_normal.values));
+                normalize_vec3_list(&raw const (*mesh).vertex_normal.values);
             }
             if uc.opts_view().normalize_tangents() {
                 // C-parity: the loop body normalizes the MESH-level tangent and
@@ -5987,8 +5943,8 @@ pub(crate) unsafe fn postprocess_scene(uc: &Context) {
                 let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
                 let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
                 while set != set_end {
-                    normalize_vec3_list(ptr::addr_of!((*mesh).vertex_tangent.values));
-                    normalize_vec3_list(ptr::addr_of!((*mesh).vertex_bitangent.values));
+                    normalize_vec3_list(&raw const (*mesh).vertex_tangent.values);
+                    normalize_vec3_list(&raw const (*mesh).vertex_bitangent.values);
                     set = set.add(1);
                 }
             }
@@ -6254,22 +6210,22 @@ pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
         let video: *mut Video = *p_video;
         resolve_filenames(
             uc,
-            ptr::addr_of_mut!((*video).filename) as *mut Strblob,
-            ptr::addr_of_mut!((*video).absolute_filename) as *mut Strblob,
-            ptr::addr_of_mut!((*video).relative_filename) as *mut Strblob,
+            &raw mut (*video).filename as *mut Strblob,
+            &raw mut (*video).absolute_filename as *mut Strblob,
+            &raw mut (*video).relative_filename as *mut Strblob,
             false,
         )?;
         resolve_filenames(
             uc,
-            ptr::addr_of_mut!((*video).raw_filename) as *mut Strblob,
-            ptr::addr_of_mut!((*video).raw_absolute_filename) as *mut Strblob,
-            ptr::addr_of_mut!((*video).raw_relative_filename) as *mut Strblob,
+            &raw mut (*video).raw_filename as *mut Strblob,
+            &raw mut (*video).raw_absolute_filename as *mut Strblob,
+            &raw mut (*video).raw_relative_filename as *mut Strblob,
             true,
         )?;
         push_file_content(
             uc,
-            ptr::addr_of_mut!((*video).absolute_filename),
-            ptr::addr_of_mut!((*video).content),
+            &raw mut (*video).absolute_filename,
+            &raw mut (*video).content,
         )?;
         p_video = p_video.add(1);
     }
@@ -6282,43 +6238,43 @@ pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
     while p_clip != p_clip_end {
         let clip: *mut AudioClip = *p_clip;
         (*clip).absolute_filename = find_string(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*clip).element.props)),
+            PropsView::from_ptr(&raw mut (*clip).element.props),
             b"Path\0".as_ptr(),
             EMPTY_STRING.0,
         );
         (*clip).relative_filename = find_string(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*clip).element.props)),
+            PropsView::from_ptr(&raw mut (*clip).element.props),
             b"RelPath\0".as_ptr(),
             EMPTY_STRING.0,
         );
         (*clip).raw_absolute_filename = find_blob(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*clip).element.props)),
+            PropsView::from_ptr(&raw mut (*clip).element.props),
             b"Path\0".as_ptr(),
             EMPTY_BLOB.0,
         );
         (*clip).raw_relative_filename = find_blob(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*clip).element.props)),
+            PropsView::from_ptr(&raw mut (*clip).element.props),
             b"RelPath\0".as_ptr(),
             EMPTY_BLOB.0,
         );
         resolve_filenames(
             uc,
-            ptr::addr_of_mut!((*clip).filename) as *mut Strblob,
-            ptr::addr_of_mut!((*clip).absolute_filename) as *mut Strblob,
-            ptr::addr_of_mut!((*clip).relative_filename) as *mut Strblob,
+            &raw mut (*clip).filename as *mut Strblob,
+            &raw mut (*clip).absolute_filename as *mut Strblob,
+            &raw mut (*clip).relative_filename as *mut Strblob,
             false,
         )?;
         resolve_filenames(
             uc,
-            ptr::addr_of_mut!((*clip).raw_filename) as *mut Strblob,
-            ptr::addr_of_mut!((*clip).raw_absolute_filename) as *mut Strblob,
-            ptr::addr_of_mut!((*clip).raw_relative_filename) as *mut Strblob,
+            &raw mut (*clip).raw_filename as *mut Strblob,
+            &raw mut (*clip).raw_absolute_filename as *mut Strblob,
+            &raw mut (*clip).raw_relative_filename as *mut Strblob,
             true,
         )?;
         push_file_content(
             uc,
-            ptr::addr_of_mut!((*clip).absolute_filename),
-            ptr::addr_of_mut!((*clip).content),
+            &raw mut (*clip).absolute_filename,
+            &raw mut (*clip).content,
         )?;
         p_clip = p_clip.add(1);
     }
@@ -6339,8 +6295,8 @@ pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
         let video: *mut Video = *p_video;
         fetch_file_content(
             uc,
-            ptr::addr_of_mut!((*video).absolute_filename),
-            ptr::addr_of_mut!((*video).content),
+            &raw mut (*video).absolute_filename,
+            &raw mut (*video).content,
         );
         p_video = p_video.add(1);
     }
@@ -6354,8 +6310,8 @@ pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
         let clip: *mut AudioClip = *p_clip;
         fetch_file_content(
             uc,
-            ptr::addr_of_mut!((*clip).absolute_filename),
-            ptr::addr_of_mut!((*clip).content),
+            &raw mut (*clip).absolute_filename,
+            &raw mut (*clip).content,
         );
         p_clip = p_clip.add(1);
     }
@@ -6751,7 +6707,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                         !push_copy::<*mut Element>(
                             uc.tmp_stack_mut_ptr(),
                             1,
-                            ptr::addr_of!((*node).attrib) as *const *mut Element
+                            &raw const (*node).attrib as *const *mut Element
                         )
                         .is_null(),
                         "((ufbx_element**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_element*), (1), (&node->attrib)))"
@@ -6785,12 +6741,12 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                 "node->all_attribs.data"
             );
         } else if (*node).all_attribs.count == 1 {
-            (*node).all_attribs.data = ptr::addr_of!((*node).attrib) as *const Ref<Element>;
+            (*node).all_attribs.data = &raw const (*node).attrib as *const Ref<Element>;
         }
 
         fetch_dst_elements(
             uc,
-            ptr::addr_of_mut!((*node).materials) as *mut c_void,
+            &raw mut (*node).materials as *mut c_void,
             &mut (*node).element,
             false,
             false,
@@ -6871,7 +6827,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             let elem: *mut Element = *p_elem;
             fetch_src_elements(
                 uc,
-                ptr::addr_of_mut!((*elem).instances) as *mut c_void,
+                &raw mut (*elem).instances as *mut c_void,
                 elem,
                 false,
                 true,
@@ -6910,7 +6866,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         let skin: *mut SkinDeformer = *p_skin;
         fetch_dst_elements(
             uc,
-            ptr::addr_of_mut!((*skin).clusters) as *mut c_void,
+            &raw mut (*skin).clusters as *mut c_void,
             &mut (*skin).element,
             false,
             true,
@@ -7088,7 +7044,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         let blend: *mut BlendDeformer = *p_blend;
         fetch_dst_elements(
             uc,
-            ptr::addr_of_mut!((*blend).channels) as *mut c_void,
+            &raw mut (*blend).channels as *mut c_void,
             &mut (*blend).element,
             false,
             true,
@@ -7106,7 +7062,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     while p_deformer != p_deformer_end {
         let deformer: *mut CacheDeformer = *p_deformer;
         (*deformer).channel = find_string(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*deformer).element.props)),
+            PropsView::from_ptr(&raw mut (*deformer).element.props),
             b"ChannelName\0".as_ptr(),
             EMPTY_STRING.0,
         );
@@ -7128,29 +7084,29 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         let cache: *mut CacheFile = *p_cache;
 
         (*cache).absolute_filename = find_string(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*cache).element.props)),
+            PropsView::from_ptr(&raw mut (*cache).element.props),
             b"CacheAbsoluteFileName\0".as_ptr(),
             EMPTY_STRING.0,
         );
         (*cache).relative_filename = find_string(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*cache).element.props)),
+            PropsView::from_ptr(&raw mut (*cache).element.props),
             b"CacheFileName\0".as_ptr(),
             EMPTY_STRING.0,
         );
 
         (*cache).raw_absolute_filename = find_blob(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*cache).element.props)),
+            PropsView::from_ptr(&raw mut (*cache).element.props),
             b"CacheAbsoluteFileName\0".as_ptr(),
             EMPTY_BLOB.0,
         );
         (*cache).raw_relative_filename = find_blob(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*cache).element.props)),
+            PropsView::from_ptr(&raw mut (*cache).element.props),
             b"CacheFileName\0".as_ptr(),
             EMPTY_BLOB.0,
         );
 
         let type_: i64 = api_find_int(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*cache).element.props)),
+            PropsView::from_ptr(&raw mut (*cache).element.props),
             b"CacheFileType\0".as_ptr(),
             0,
         );
@@ -7162,16 +7118,16 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
         resolve_filenames(
             uc,
-            ptr::addr_of_mut!((*cache).filename) as *mut Strblob,
-            ptr::addr_of_mut!((*cache).absolute_filename) as *mut Strblob,
-            ptr::addr_of_mut!((*cache).relative_filename) as *mut Strblob,
+            &raw mut (*cache).filename as *mut Strblob,
+            &raw mut (*cache).absolute_filename as *mut Strblob,
+            &raw mut (*cache).relative_filename as *mut Strblob,
             false,
         )?;
         resolve_filenames(
             uc,
-            ptr::addr_of_mut!((*cache).raw_filename) as *mut Strblob,
-            ptr::addr_of_mut!((*cache).raw_absolute_filename) as *mut Strblob,
-            ptr::addr_of_mut!((*cache).raw_relative_filename) as *mut Strblob,
+            &raw mut (*cache).raw_filename as *mut Strblob,
+            &raw mut (*cache).raw_absolute_filename as *mut Strblob,
+            &raw mut (*cache).raw_relative_filename as *mut Strblob,
             true,
         )?;
         p_cache = p_cache.add(1);
@@ -7199,11 +7155,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     while p_channel != p_channel_end {
         let channel: *mut BlendChannel = *p_channel;
 
-        fetch_blend_keyframes(
-            uc,
-            ptr::addr_of_mut!((*channel).keyframes),
-            &mut (*channel).element,
-        )?;
+        fetch_blend_keyframes(uc, &raw mut (*channel).keyframes, &mut (*channel).element)?;
 
         for i in 0..(*channel).keyframes.count {
             let key: *mut BlendKeyframe = ((*channel).keyframes.data as *mut BlendKeyframe).add(i);
@@ -7236,7 +7188,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                     // `copy_nonoverlapping`.
                     ptr::copy_nonoverlapping(
                         full_weights as *const List<Real>,
-                        ptr::addr_of_mut!((*ref_ptr(&(*key).shape)).offset_weights),
+                        &raw mut (*ref_ptr(&(*key).shape)).offset_weights,
                         1,
                     );
                 }
@@ -7287,53 +7239,44 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
             patch_index_pointer(
                 uc,
-                ptr::addr_of_mut!((*mesh).vertex_position.indices.data) as *mut *mut u32,
+                &raw mut (*mesh).vertex_position.indices.data as *mut *mut u32,
             );
             patch_index_pointer(
                 uc,
-                ptr::addr_of_mut!((*mesh).vertex_normal.indices.data) as *mut *mut u32,
+                &raw mut (*mesh).vertex_normal.indices.data as *mut *mut u32,
             );
             patch_index_pointer(
                 uc,
-                ptr::addr_of_mut!((*mesh).vertex_color.indices.data) as *mut *mut u32,
+                &raw mut (*mesh).vertex_color.indices.data as *mut *mut u32,
             );
             patch_index_pointer(
                 uc,
-                ptr::addr_of_mut!((*mesh).vertex_crease.indices.data) as *mut *mut u32,
+                &raw mut (*mesh).vertex_crease.indices.data as *mut *mut u32,
             );
-            patch_index_pointer(
-                uc,
-                ptr::addr_of_mut!((*mesh).face_material.data) as *mut *mut u32,
-            );
-            patch_index_pointer(
-                uc,
-                ptr::addr_of_mut!((*mesh).face_group.data) as *mut *mut u32,
-            );
+            patch_index_pointer(uc, &raw mut (*mesh).face_material.data as *mut *mut u32);
+            patch_index_pointer(uc, &raw mut (*mesh).face_group.data as *mut *mut u32);
 
             patch_index_pointer(
                 uc,
-                ptr::addr_of_mut!((*mesh).skinned_position.indices.data) as *mut *mut u32,
+                &raw mut (*mesh).skinned_position.indices.data as *mut *mut u32,
             );
             patch_index_pointer(
                 uc,
-                ptr::addr_of_mut!((*mesh).skinned_normal.indices.data) as *mut *mut u32,
+                &raw mut (*mesh).skinned_normal.indices.data as *mut *mut u32,
             );
 
             // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
             let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
             let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
             while set != set_end {
+                patch_index_pointer(uc, &raw mut (*set).vertex_uv.indices.data as *mut *mut u32);
                 patch_index_pointer(
                     uc,
-                    ptr::addr_of_mut!((*set).vertex_uv.indices.data) as *mut *mut u32,
+                    &raw mut (*set).vertex_bitangent.indices.data as *mut *mut u32,
                 );
                 patch_index_pointer(
                     uc,
-                    ptr::addr_of_mut!((*set).vertex_bitangent.indices.data) as *mut *mut u32,
-                );
-                patch_index_pointer(
-                    uc,
-                    ptr::addr_of_mut!((*set).vertex_tangent.indices.data) as *mut *mut u32,
+                    &raw mut (*set).vertex_tangent.indices.data as *mut *mut u32,
                 );
                 set = set.add(1);
             }
@@ -7344,7 +7287,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             while cset != cset_end {
                 patch_index_pointer(
                     uc,
-                    ptr::addr_of_mut!((*cset).vertex_color.indices.data) as *mut *mut u32,
+                    &raw mut (*cset).vertex_color.indices.data as *mut *mut u32,
                 );
                 cset = cset.add(1);
             }
@@ -7361,27 +7304,25 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                 // generated bindings, so the copy is spelled as a
                 // byte-identical `copy_nonoverlapping`.
                 ptr::copy_nonoverlapping(
-                    ptr::addr_of!((*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_uv),
-                    ptr::addr_of_mut!((*mesh).vertex_uv),
+                    &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_uv,
+                    &raw mut (*mesh).vertex_uv,
                     1,
                 );
                 ptr::copy_nonoverlapping(
-                    ptr::addr_of!((*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_bitangent),
-                    ptr::addr_of_mut!((*mesh).vertex_bitangent),
+                    &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_bitangent,
+                    &raw mut (*mesh).vertex_bitangent,
                     1,
                 );
                 ptr::copy_nonoverlapping(
-                    ptr::addr_of!((*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_tangent),
-                    ptr::addr_of_mut!((*mesh).vertex_tangent),
+                    &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_tangent,
+                    &raw mut (*mesh).vertex_tangent,
                     1,
                 );
             }
             if (*mesh).color_sets.count > 0 {
                 ptr::copy_nonoverlapping(
-                    ptr::addr_of!(
-                        (*((*mesh).color_sets.data as *mut ColorSet).add(0)).vertex_color
-                    ),
-                    ptr::addr_of_mut!((*mesh).vertex_color),
+                    &raw const (*((*mesh).color_sets.data as *mut ColorSet).add(0)).vertex_color,
+                    &raw mut (*mesh).vertex_color,
                     1,
                 );
             }
@@ -7389,20 +7330,13 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             if (*mesh).face_group_parts.count == 1 {
                 patch_index_pointer(
                     uc,
-                    ptr::addr_of_mut!(
-                        (*((*mesh).face_group_parts.data as *mut MeshPart).add(0))
-                            .face_indices
-                            .data
-                    ) as *mut *mut u32,
+                    &raw mut (*((*mesh).face_group_parts.data as *mut MeshPart).add(0))
+                        .face_indices
+                        .data as *mut *mut u32,
                 );
             }
 
-            fetch_mesh_materials(
-                uc,
-                ptr::addr_of_mut!((*mesh).materials),
-                &mut (*mesh).element,
-                true,
-            )?;
+            fetch_mesh_materials(uc, &raw mut (*mesh).materials, &mut (*mesh).element, true)?;
 
             // Patch materials to instances if necessary
             if (*mesh).materials.count > 0 {
@@ -7479,7 +7413,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             // Fetch deformers
             fetch_dst_elements(
                 uc,
-                ptr::addr_of_mut!((*mesh).skin_deformers) as *mut c_void,
+                &raw mut (*mesh).skin_deformers as *mut c_void,
                 &mut (*mesh).element,
                 search_node,
                 true,
@@ -7488,7 +7422,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             )?;
             fetch_dst_elements(
                 uc,
-                ptr::addr_of_mut!((*mesh).blend_deformers) as *mut c_void,
+                &raw mut (*mesh).blend_deformers as *mut c_void,
                 &mut (*mesh).element,
                 search_node,
                 true,
@@ -7497,7 +7431,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             )?;
             fetch_dst_elements(
                 uc,
-                ptr::addr_of_mut!((*mesh).cache_deformers) as *mut c_void,
+                &raw mut (*mesh).cache_deformers as *mut c_void,
                 &mut (*mesh).element,
                 search_node,
                 true,
@@ -7506,7 +7440,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             )?;
             fetch_deformers(
                 uc,
-                ptr::addr_of_mut!((*mesh).all_deformers),
+                &raw mut (*mesh).all_deformers,
                 &mut (*mesh).element,
                 search_node,
             )?;
@@ -7559,7 +7493,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         add_ptr(p_nurbs_curve, uc.scene_view().nurbs_curves_view().count());
     while p_nurbs_curve != p_nurbs_curve_end {
         let curve: *mut NurbsCurve = *p_nurbs_curve;
-        finalize_nurbs_basis(uc, ptr::addr_of_mut!((*curve).basis))?;
+        finalize_nurbs_basis(uc, &raw mut (*curve).basis)?;
         p_nurbs_curve = p_nurbs_curve.add(1);
     }
 
@@ -7570,8 +7504,8 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         add_ptr(p_surface, uc.scene_view().nurbs_surfaces_view().count());
     while p_surface != p_surface_end {
         let surface: *mut NurbsSurface = *p_surface;
-        finalize_nurbs_basis(uc, ptr::addr_of_mut!((*surface).basis_u))?;
-        finalize_nurbs_basis(uc, ptr::addr_of_mut!((*surface).basis_v))?;
+        finalize_nurbs_basis(uc, &raw mut (*surface).basis_u)?;
+        finalize_nurbs_basis(uc, &raw mut (*surface).basis_v)?;
 
         (*surface).material = opt_ref(fetch_dst_element(
             &mut (*surface).element,
@@ -7591,7 +7525,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         let stack: *mut AnimStack = *p_stack;
         fetch_dst_elements(
             uc,
-            ptr::addr_of_mut!((*stack).layers) as *mut c_void,
+            &raw mut (*stack).layers as *mut c_void,
             &mut (*stack).element,
             false,
             true,
@@ -7601,7 +7535,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
         push_anim(
             uc,
-            ptr::addr_of_mut!((*stack).anim) as *mut *mut Anim,
+            &raw mut (*stack).anim as *mut *mut Anim,
             (*stack).layers.data as *mut *mut AnimLayer,
             (*stack).layers.count,
         )?;
@@ -7617,7 +7551,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         let layer: *mut AnimLayer = *p_layer;
         fetch_dst_elements(
             uc,
-            ptr::addr_of_mut!((*layer).anim_values) as *mut c_void,
+            &raw mut (*layer).anim_values as *mut c_void,
             &mut (*layer).element,
             false,
             true,
@@ -7625,12 +7559,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             ElementType::AnimValue,
         )?;
 
-        push_anim(
-            uc,
-            ptr::addr_of_mut!((*layer).anim) as *mut *mut Anim,
-            p_layer,
-            1,
-        )?;
+        push_anim(uc, &raw mut (*layer).anim as *mut *mut Anim, p_layer, 1)?;
 
         let mut min_id: u32 = u32::MAX;
         let mut max_id: u32 = 0;
@@ -7674,7 +7603,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         }
 
         match find_int(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*layer).element.props)),
+            PropsView::from_ptr(&raw mut (*layer).element.props),
             sp::BlendMode.as_ptr(),
             0,
         ) {
@@ -7701,7 +7630,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         }
 
         let weight_prop: *mut Prop = find_prop(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*layer).element.props)),
+            PropsView::from_ptr(&raw mut (*layer).element.props),
             sp::Weight.as_ptr(),
         )
         .map_or(ptr::null_mut(), PropView::get);
@@ -7724,12 +7653,12 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             (*layer).weight_is_animated = false;
         }
         (*layer).compose_rotation = find_int(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*layer).element.props)),
+            PropsView::from_ptr(&raw mut (*layer).element.props),
             sp::RotationAccumulationMode.as_ptr(),
             0,
         ) == 0;
         (*layer).compose_scale = find_int(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*layer).element.props)),
+            PropsView::from_ptr(&raw mut (*layer).element.props),
             sp::ScaleAccumulationMode.as_ptr(),
             0,
         ) == 0;
@@ -7770,32 +7699,32 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
         // TODO: Search for things like d|Visibility with a constructed name
         (*value).default_value.x = find_real(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*value).element.props)),
+            PropsView::from_ptr(&raw mut (*value).element.props),
             sp::X.as_ptr(),
             (*value).default_value.x,
         );
         (*value).default_value.x = find_real(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*value).element.props)),
+            PropsView::from_ptr(&raw mut (*value).element.props),
             sp::d_X.as_ptr(),
             (*value).default_value.x,
         );
         (*value).default_value.y = find_real(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*value).element.props)),
+            PropsView::from_ptr(&raw mut (*value).element.props),
             sp::Y.as_ptr(),
             (*value).default_value.y,
         );
         (*value).default_value.y = find_real(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*value).element.props)),
+            PropsView::from_ptr(&raw mut (*value).element.props),
             sp::d_Y.as_ptr(),
             (*value).default_value.y,
         );
         (*value).default_value.z = find_real(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*value).element.props)),
+            PropsView::from_ptr(&raw mut (*value).element.props),
             sp::Z.as_ptr(),
             (*value).default_value.z,
         );
         (*value).default_value.z = find_real(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*value).element.props)),
+            PropsView::from_ptr(&raw mut (*value).element.props),
             sp::d_Z.as_ptr(),
             (*value).default_value.z,
         );
@@ -7819,7 +7748,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                 }
 
                 let prop: *mut Prop = find_prop_len(
-                    PropsView::from_ptr(core::ptr::addr_of_mut!((*value).element.props)),
+                    PropsView::from_ptr(&raw mut (*value).element.props),
                     (*conn).dst_prop.data,
                     (*conn).dst_prop.length,
                 )
@@ -7828,7 +7757,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                     // C indexes the `ufbx_vec3` value union's `ufbx_real v[3]`
                     // view; the generated struct keeps only `x`/`y`/`z`, so the
                     // index is pointer arithmetic from the struct base.
-                    let v: *mut Real = ptr::addr_of_mut!((*value).default_value) as *mut Real;
+                    let v: *mut Real = &raw mut (*value).default_value as *mut Real;
                     *v.add(index as usize) = (*prop).value_vec4.x;
                 }
                 (*value).curves[index as usize] = opt_ref(curve);
@@ -7859,7 +7788,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         let shader: *mut Shader = *p_shader;
         fetch_dst_elements(
             uc,
-            ptr::addr_of_mut!((*shader).bindings) as *mut c_void,
+            &raw mut (*shader).bindings as *mut c_void,
             &mut (*shader).element,
             false,
             false,
@@ -7868,7 +7797,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         )?;
 
         let api: *mut Prop = api_find_prop(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*shader).element.props)),
+            PropsView::from_ptr(&raw mut (*shader).element.props),
             b"RenderAPI\0".as_ptr(),
         )
         .map_or(ptr::null_mut(), PropView::get);
@@ -7922,12 +7851,12 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             // TODO: Is this too strict?
             if (*material).shader_type == ShaderType::Unknown {
                 let classid_a: u32 = api_find_int(
-                    PropsView::from_ptr(core::ptr::addr_of_mut!((*material).element.props)),
+                    PropsView::from_ptr(&raw mut (*material).element.props),
                     b"3dsMax|ClassIDa\0".as_ptr(),
                     0,
                 ) as u64 as u32;
                 let classid_b: u32 = api_find_int(
-                    PropsView::from_ptr(core::ptr::addr_of_mut!((*material).element.props)),
+                    PropsView::from_ptr(&raw mut (*material).element.props),
                     b"3dsMax|ClassIDb\0".as_ptr(),
                     0,
                 ) as u64 as u32;
@@ -7952,7 +7881,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
         fetch_textures(
             uc,
-            ptr::addr_of_mut!((*material).textures),
+            &raw mut (*material).textures,
             &mut (*material).element,
             false,
         )?;
@@ -8135,7 +8064,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             get_element_extra(uc, (*texture).element.element_id) as *mut TextureExtra;
 
         let uv_set: *mut Prop = find_prop(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+            PropsView::from_ptr(&raw mut (*texture).element.props),
             sp::UVSet.as_ptr(),
         )
         .map_or(ptr::null_mut(), PropView::get);
@@ -8160,26 +8089,22 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
         resolve_filenames(
             uc,
-            ptr::addr_of_mut!((*texture).filename) as *mut Strblob,
-            ptr::addr_of_mut!((*texture).absolute_filename) as *mut Strblob,
-            ptr::addr_of_mut!((*texture).relative_filename) as *mut Strblob,
+            &raw mut (*texture).filename as *mut Strblob,
+            &raw mut (*texture).absolute_filename as *mut Strblob,
+            &raw mut (*texture).relative_filename as *mut Strblob,
             false,
         )?;
         resolve_filenames(
             uc,
-            ptr::addr_of_mut!((*texture).raw_filename) as *mut Strblob,
-            ptr::addr_of_mut!((*texture).raw_absolute_filename) as *mut Strblob,
-            ptr::addr_of_mut!((*texture).raw_relative_filename) as *mut Strblob,
+            &raw mut (*texture).raw_filename as *mut Strblob,
+            &raw mut (*texture).raw_absolute_filename as *mut Strblob,
+            &raw mut (*texture).raw_relative_filename as *mut Strblob,
             true,
         )?;
 
         // Fetch layered texture layers and patch alphas/blend modes
         if (*texture).type_ == TextureType::Layered {
-            fetch_texture_layers(
-                uc,
-                ptr::addr_of_mut!((*texture).layers),
-                &mut (*texture).element,
-            )?;
+            fetch_texture_layers(uc, &raw mut (*texture).layers, &mut (*texture).element)?;
             if !extra.is_null() {
                 let num: usize = min_sz((*extra).num_alphas, (*texture).layers.count);
                 for i in 0..num {
@@ -8280,7 +8205,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         let layer: *mut DisplayLayer = *p_display_layer;
         fetch_dst_elements(
             uc,
-            ptr::addr_of_mut!((*layer).nodes) as *mut c_void,
+            &raw mut (*layer).nodes as *mut c_void,
             &mut (*layer).element,
             false,
             true,
@@ -8299,7 +8224,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         let set: *mut SelectionSet = *p_set;
         fetch_dst_elements(
             uc,
-            ptr::addr_of_mut!((*set).nodes) as *mut c_void,
+            &raw mut (*set).nodes as *mut c_void,
             &mut (*set).element,
             false,
             true,
@@ -8339,13 +8264,9 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
         let mesh: *mut Mesh = opt_ptr(&(*node).target_mesh);
         if !mesh.is_null() {
-            validate_indices(
-                uc,
-                ptr::addr_of_mut!((*node).vertices),
-                (*mesh).num_vertices,
-            )?;
-            validate_indices(uc, ptr::addr_of_mut!((*node).edges), (*mesh).num_edges)?;
-            validate_indices(uc, ptr::addr_of_mut!((*node).faces), (*mesh).num_faces)?;
+            validate_indices(uc, &raw mut (*node).vertices, (*mesh).num_vertices)?;
+            validate_indices(uc, &raw mut (*node).edges, (*mesh).num_edges)?;
+            validate_indices(uc, &raw mut (*node).faces, (*mesh).num_faces)?;
         }
         p_sel_node = p_sel_node.add(1);
     }
@@ -8412,7 +8333,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         let layer: *mut AudioLayer = *p_audio_layer;
         fetch_dst_elements(
             uc,
-            ptr::addr_of_mut!((*layer).clips) as *mut c_void,
+            &raw mut (*layer).clips as *mut c_void,
             &mut (*layer).element,
             false,
             true,
@@ -9008,13 +8929,13 @@ pub(crate) unsafe fn update_node(
     // the result to `[0, UFBX_ROTATION_ORDER_SPHERIC]`, every value of which is
     // a valid `ufbx_rotation_order`.
     (*node).rotation_order = core::mem::transmute::<u32, RotationOrder>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+        PropsView::from_ptr(&raw mut (*node).element.props),
         sp::RotationOrder.as_ptr(),
         RotationOrder::Xyz as i64,
         RotationOrder::Spheric as i64,
     ) as u32);
     (*node).euler_rotation = find_vec3(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+        PropsView::from_ptr(&raw mut (*node).element.props),
         sp::Lcl_Rotation.as_ptr(),
         0.0,
         0.0,
@@ -9023,12 +8944,12 @@ pub(crate) unsafe fn update_node(
 
     if !(*node).is_root {
         let rotation_active: bool = find_int(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+            PropsView::from_ptr(&raw mut (*node).element.props),
             sp::RotationActive.as_ptr(),
             1,
         ) != 0;
         let rotation_limit_only: bool = find_int(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+            PropsView::from_ptr(&raw mut (*node).element.props),
             sp::RotationSpaceForLimitOnly.as_ptr(),
             0,
         ) != 0;
@@ -9045,7 +8966,7 @@ pub(crate) unsafe fn update_node(
                 .scale;
         }
         (*node).local_transform = get_transform(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+            PropsView::from_ptr(&raw mut (*node).element.props),
             (*node).rotation_order,
             node,
             transform_scale,
@@ -9085,10 +9006,8 @@ pub(crate) unsafe fn update_node(
             }
         }
         (*node).node_to_parent = transform_to_matrix(&(*node).local_transform);
-        (*node).geometry_transform = get_geometry_transform(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
-            node,
-        );
+        (*node).geometry_transform =
+            get_geometry_transform(PropsView::from_ptr(&raw mut (*node).element.props), node);
     } else {
         (*node).geometry_transform = IDENTITY_TRANSFORM;
     }
@@ -9145,7 +9064,7 @@ pub(crate) unsafe fn update_node(
     }
 
     (*node).visible = find_int(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+        PropsView::from_ptr(&raw mut (*node).element.props),
         sp::Visibility.as_ptr(),
         1,
     ) != 0;
@@ -9158,13 +9077,13 @@ pub(crate) unsafe fn update_light(light: *mut Light) {
     // Maya and Blender, should there be a quirks mode to not do this for specific
     // exporters. Does the FBX SDK do this transparently as well?
     (*light).intensity = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*light).element.props)),
+        PropsView::from_ptr(&raw mut (*light).element.props),
         sp::Intensity.as_ptr(),
         100.0 as Real,
     ) / (100.0 as Real);
 
     (*light).color = find_vec3(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*light).element.props)),
+        PropsView::from_ptr(&raw mut (*light).element.props),
         sp::Color.as_ptr(),
         1.0,
         1.0,
@@ -9173,55 +9092,55 @@ pub(crate) unsafe fn update_light(light: *mut Light) {
     // C: `(ufbx_light_type)ufbxi_find_enum(...)` etc — `ufbxi_find_enum` clamps
     // each result to its enum's `[0, LAST]` range.
     (*light).type_ = core::mem::transmute::<u32, LightType>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*light).element.props)),
+        PropsView::from_ptr(&raw mut (*light).element.props),
         sp::LightType.as_ptr(),
         0,
         LightType::Volume as i64,
     ) as u32);
     (*light).decay = core::mem::transmute::<u32, LightDecay>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*light).element.props)),
+        PropsView::from_ptr(&raw mut (*light).element.props),
         sp::DecayType.as_ptr(),
         LightDecay::None as i64,
         LightDecay::Cubic as i64,
     ) as u32);
     (*light).area_shape = core::mem::transmute::<u32, LightAreaShape>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*light).element.props)),
+        PropsView::from_ptr(&raw mut (*light).element.props),
         sp::AreaLightShape.as_ptr(),
         0,
         LightAreaShape::Sphere as i64,
     ) as u32);
     (*light).inner_angle = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*light).element.props)),
+        PropsView::from_ptr(&raw mut (*light).element.props),
         sp::HotSpot.as_ptr(),
         0.0,
     );
     (*light).inner_angle = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*light).element.props)),
+        PropsView::from_ptr(&raw mut (*light).element.props),
         sp::InnerAngle.as_ptr(),
         (*light).inner_angle,
     );
     (*light).outer_angle = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*light).element.props)),
+        PropsView::from_ptr(&raw mut (*light).element.props),
         sp::Cone_angle.as_ptr(),
         0.0,
     );
     (*light).outer_angle = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*light).element.props)),
+        PropsView::from_ptr(&raw mut (*light).element.props),
         sp::ConeAngle.as_ptr(),
         (*light).outer_angle,
     );
     (*light).outer_angle = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*light).element.props)),
+        PropsView::from_ptr(&raw mut (*light).element.props),
         sp::OuterAngle.as_ptr(),
         (*light).outer_angle,
     );
     (*light).cast_light = find_int(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*light).element.props)),
+        PropsView::from_ptr(&raw mut (*light).element.props),
         sp::CastLight.as_ptr(),
         1,
     ) != 0;
     (*light).cast_shadows = find_int(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*light).element.props)),
+        PropsView::from_ptr(&raw mut (*light).element.props),
         sp::CastShadows.as_ptr(),
         0,
     ) != 0;
@@ -9311,93 +9230,93 @@ pub(crate) unsafe fn update_camera(scene: *mut Scene, camera: *mut Camera) {
     // clamps each result to its enum's `[0, LAST]` range (same device as
     // `ufbxi_update_light` above).
     (*camera).projection_mode = core::mem::transmute::<u32, ProjectionMode>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::CameraProjectionType.as_ptr(),
         0,
         ProjectionMode::Orthographic as i64,
     ) as u32);
     (*camera).aspect_mode = core::mem::transmute::<u32, AspectMode>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::AspectRatioMode.as_ptr(),
         0,
         AspectMode::FixedHeight as i64,
     ) as u32);
     (*camera).aperture_mode = core::mem::transmute::<u32, ApertureMode>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::ApertureMode.as_ptr(),
         ApertureMode::Vertical as i64,
         ApertureMode::FocalLength as i64,
     ) as u32);
     (*camera).aperture_format = core::mem::transmute::<u32, ApertureFormat>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::ApertureFormat.as_ptr(),
         ApertureFormat::Custom as i64,
         ApertureFormat::Imax as i64,
     ) as u32);
     (*camera).gate_fit = core::mem::transmute::<u32, GateFit>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::GateFit.as_ptr(),
         0,
         GateFit::Stretch as i64,
     ) as u32);
 
     (*camera).near_plane = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::NearPlane.as_ptr(),
         0.0,
     );
     (*camera).far_plane = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::FarPlane.as_ptr(),
         0.0,
     );
 
     // Search both W/H and Width/Height but prefer the latter
     let mut aspect_x: Real = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::AspectW.as_ptr(),
         0.0,
     );
     let mut aspect_y: Real = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::AspectH.as_ptr(),
         0.0,
     );
     aspect_x = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::AspectWidth.as_ptr(),
         aspect_x,
     );
     aspect_y = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::AspectHeight.as_ptr(),
         aspect_y,
     );
 
     let fov: Real = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::FieldOfView.as_ptr(),
         0.0,
     );
     let fov_x: Real = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::FieldOfViewX.as_ptr(),
         0.0,
     );
     let fov_y: Real = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::FieldOfViewY.as_ptr(),
         0.0,
     );
 
     let focal_length: Real = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::FocalLength.as_ptr(),
         0.0,
     );
     let mut ortho_extent: Real = (*scene).metadata.ortho_size_unit
         * find_real(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+            PropsView::from_ptr(&raw mut (*camera).element.props),
             sp::OrthoZoom.as_ptr(),
             1.0,
         );
@@ -9414,17 +9333,17 @@ pub(crate) unsafe fn update_camera(scene: *mut Scene, camera: *mut Camera) {
     };
 
     film_size.x = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::FilmWidth.as_ptr(),
         film_size.x,
     );
     film_size.y = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::FilmHeight.as_ptr(),
         film_size.y,
     );
     squeeze_ratio = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*camera).element.props)),
+        PropsView::from_ptr(&raw mut (*camera).element.props),
         sp::FilmSqueezeRatio.as_ptr(),
         squeeze_ratio,
     );
@@ -9603,13 +9522,13 @@ pub(crate) unsafe fn update_bone(scene: *mut Scene, bone: *mut Bone) {
     let unit: Real = (*scene).metadata.bone_prop_size_unit;
 
     (*bone).radius = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*bone).element.props)),
+        PropsView::from_ptr(&raw mut (*bone).element.props),
         sp::Size.as_ptr(),
         unit,
     ) / unit;
     if (*scene).metadata.bone_prop_limb_length_relative {
         (*bone).relative_length = find_real(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*bone).element.props)),
+            PropsView::from_ptr(&raw mut (*bone).element.props),
             sp::LimbLength.as_ptr(),
             1.0,
         );
@@ -9622,7 +9541,7 @@ pub(crate) unsafe fn update_bone(scene: *mut Scene, bone: *mut Bone) {
 #[inline(never)]
 pub(crate) unsafe fn update_line_curve(line: *mut LineCurve) {
     (*line).color = find_vec3(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*line).element.props)),
+        PropsView::from_ptr(&raw mut (*line).element.props),
         sp::Color.as_ptr(),
         1.0,
         1.0,
@@ -9673,7 +9592,7 @@ pub(crate) unsafe fn update_skin_cluster(cluster: *mut SkinCluster) {
 #[inline(never)]
 pub(crate) unsafe fn update_blend_channel(channel: *mut BlendChannel) {
     let weight: Real = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*channel).element.props)),
+        PropsView::from_ptr(&raw mut (*channel).element.props),
         sp::DeformPercent.as_ptr(),
         0.0,
     ) * (0.01 as Real);
@@ -9753,9 +9672,8 @@ pub(crate) unsafe fn update_material(scene: *mut Scene, material: *mut Material)
 // ufbx.c:23351-23369 `ufbxi_update_texture`
 #[inline(never)]
 pub(crate) unsafe fn update_texture(texture: *mut Texture) {
-    (*texture).uv_transform = get_texture_transform(PropsView::from_ptr(core::ptr::addr_of_mut!(
-        (*texture).element.props
-    )));
+    (*texture).uv_transform =
+        get_texture_transform(PropsView::from_ptr(&raw mut (*texture).element.props));
     if !is_transform_identity(&(*texture).uv_transform) {
         (*texture).has_uv_transform = true;
         (*texture).texture_to_uv = transform_to_matrix(&(*texture).uv_transform);
@@ -9767,13 +9685,13 @@ pub(crate) unsafe fn update_texture(texture: *mut Texture) {
     }
     // C: `(ufbx_wrap_mode)ufbxi_find_enum(...)` — clamped to `[0, LAST]`.
     (*texture).wrap_u = core::mem::transmute::<u32, WrapMode>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+        PropsView::from_ptr(&raw mut (*texture).element.props),
         sp::WrapModeU.as_ptr(),
         0,
         WrapMode::Clamp as i64,
     ) as u32);
     (*texture).wrap_v = core::mem::transmute::<u32, WrapMode>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*texture).element.props)),
+        PropsView::from_ptr(&raw mut (*texture).element.props),
         sp::WrapModeV.as_ptr(),
         0,
         WrapMode::Clamp as i64,
@@ -9793,23 +9711,23 @@ pub(crate) unsafe fn update_anim_stack(scene: *mut Scene, stack: *mut AnimStack)
     let mut begin: *mut Prop;
     let mut end: *mut Prop;
     begin = find_prop(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*stack).element.props)),
+        PropsView::from_ptr(&raw mut (*stack).element.props),
         sp::LocalStart.as_ptr(),
     )
     .map_or(ptr::null_mut(), PropView::get);
     end = find_prop(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*stack).element.props)),
+        PropsView::from_ptr(&raw mut (*stack).element.props),
         sp::LocalStop.as_ptr(),
     )
     .map_or(ptr::null_mut(), PropView::get);
     if begin.is_null() || end.is_null() {
         begin = find_prop(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*stack).element.props)),
+            PropsView::from_ptr(&raw mut (*stack).element.props),
             sp::ReferenceStart.as_ptr(),
         )
         .map_or(ptr::null_mut(), PropView::get);
         end = find_prop(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*stack).element.props)),
+            PropsView::from_ptr(&raw mut (*stack).element.props),
             sp::ReferenceStop.as_ptr(),
         )
         .map_or(ptr::null_mut(), PropView::get);
@@ -9829,19 +9747,19 @@ pub(crate) unsafe fn update_anim_stack(scene: *mut Scene, stack: *mut AnimStack)
 #[inline(never)]
 pub(crate) unsafe fn update_display_layer(layer: *mut DisplayLayer) {
     (*layer).visible = find_int(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*layer).element.props)),
+        PropsView::from_ptr(&raw mut (*layer).element.props),
         sp::Show.as_ptr(),
         1,
     ) != 0;
     (*layer).frozen = find_int(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*layer).element.props)),
+        PropsView::from_ptr(&raw mut (*layer).element.props),
         sp::Freeze.as_ptr(),
         1,
     ) != 0;
     // C-parity: `0.8f` is a `float` literal widened to `ufbx_real` (double) —
     // NOT the decimal value 0.8 (PORTING.md "Floats").
     (*layer).ui_color = find_vec3(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*layer).element.props)),
+        PropsView::from_ptr(&raw mut (*layer).element.props),
         sp::Color.as_ptr(),
         0.8f32 as Real,
         0.8f32 as Real,
@@ -9882,9 +9800,9 @@ pub(crate) unsafe fn find_bool3(
 #[inline(never)]
 pub(crate) unsafe fn update_constraint(constraint: *mut Constraint) {
     // C: `ufbx_props *props = &constraint->props;` — kept live across writes
-    // through `constraint`, so this must be an `addr_of_mut!` and never a `&mut`
+    // through `constraint`, so this must be a `&raw mut` and never a `&mut`
     // (which would retag and be invalidated by those writes).
-    let props: &PropsView = PropsView::from_ptr(ptr::addr_of_mut!((*constraint).element.props));
+    let props: &PropsView = PropsView::from_ptr(&raw mut (*constraint).element.props);
     let constraint_type: ConstraintType = (*constraint).type_;
 
     (*constraint).transform_offset = get_constraint_transform(props);
@@ -10470,7 +10388,7 @@ pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
                 && (*node).original_inherit_mode == InheritMode::IgnoreParentScale
             {
                 let scale: Vec3 = find_vec3(
-                    PropsView::from_ptr(core::ptr::addr_of_mut!((*parent).element.props)),
+                    PropsView::from_ptr(&raw mut (*parent).element.props),
                     sp::Lcl_Scaling.as_ptr(),
                     1.0,
                     1.0,
@@ -10720,28 +10638,28 @@ pub(crate) unsafe fn round_if_near(targets: *const Real, num_targets: usize, val
 #[inline(never)]
 pub(crate) unsafe fn update_scene_settings(settings: *mut SceneSettings) {
     let unit_scale_factor: Real = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*settings).props)),
+        PropsView::from_ptr(&raw mut (*settings).props),
         sp::UnitScaleFactor.as_ptr(),
         1.0 as Real,
     );
     let original_unit_scale_factor: Real = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*settings).props)),
+        PropsView::from_ptr(&raw mut (*settings).props),
         sp::OriginalUnitScaleFactor.as_ptr(),
         unit_scale_factor,
     );
 
     (*settings).axes.up = find_axis(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*settings).props)),
+        PropsView::from_ptr(&raw mut (*settings).props),
         sp::UpAxis.as_ptr(),
         sp::UpAxisSign.as_ptr(),
     );
     (*settings).axes.front = find_axis(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*settings).props)),
+        PropsView::from_ptr(&raw mut (*settings).props),
         sp::FrontAxis.as_ptr(),
         sp::FrontAxisSign.as_ptr(),
     );
     (*settings).axes.right = find_axis(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*settings).props)),
+        PropsView::from_ptr(&raw mut (*settings).props),
         sp::CoordAxis.as_ptr(),
         sp::CoordAxisSign.as_ptr(),
     );
@@ -10758,25 +10676,25 @@ pub(crate) unsafe fn update_scene_settings(settings: *mut SceneSettings) {
     // C: `settings->frames_per_second` is `double` — the `ufbxi_find_real`
     // result promotes on assignment.
     (*settings).frames_per_second = find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*settings).props)),
+        PropsView::from_ptr(&raw mut (*settings).props),
         sp::CustomFrameRate.as_ptr(),
         24.0 as Real,
     ) as f64;
     (*settings).ambient_color = find_vec3(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*settings).props)),
+        PropsView::from_ptr(&raw mut (*settings).props),
         sp::AmbientColor.as_ptr(),
         0.0,
         0.0,
         0.0,
     );
     (*settings).original_axis_up = find_axis(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*settings).props)),
+        PropsView::from_ptr(&raw mut (*settings).props),
         sp::OriginalUpAxis.as_ptr(),
         sp::OriginalUpAxisSign.as_ptr(),
     );
 
     let default_camera: *mut Prop = find_prop(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*settings).props)),
+        PropsView::from_ptr(&raw mut (*settings).props),
         sp::DefaultCamera.as_ptr(),
     )
     .map_or(ptr::null_mut(), PropView::get);
@@ -10790,19 +10708,19 @@ pub(crate) unsafe fn update_scene_settings(settings: *mut SceneSettings) {
     // each result to its enum's `[0, LAST]` range (same device as
     // `ufbxi_update_camera` above).
     (*settings).time_mode = core::mem::transmute::<u32, TimeMode>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*settings).props)),
+        PropsView::from_ptr(&raw mut (*settings).props),
         sp::TimeMode.as_ptr(),
         TimeMode::E24Fps as i64,
         TimeMode::E5994Fps as i64,
     ) as u32);
     (*settings).time_protocol = core::mem::transmute::<u32, TimeProtocol>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*settings).props)),
+        PropsView::from_ptr(&raw mut (*settings).props),
         sp::TimeProtocol.as_ptr(),
         TimeProtocol::Default as i64,
         TimeProtocol::Default as i64,
     ) as u32);
     (*settings).snap_mode = core::mem::transmute::<u32, SnapMode>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*settings).props)),
+        PropsView::from_ptr(&raw mut (*settings).props),
         sp::SnapOnFrameMode.as_ptr(),
         SnapMode::None as i64,
         SnapMode::SnapAndPlay as i64,

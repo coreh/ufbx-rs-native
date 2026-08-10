@@ -226,7 +226,7 @@ impl PropsView {
         // mutable provenance. The viewed table lives as long as `self`.
         unsafe {
             let defaults_ptr: *mut Props =
-                *(core::ptr::addr_of!((*self.get()).defaults) as *const *mut Props);
+                *(&raw const (*self.get()).defaults as *const *mut Props);
             if defaults_ptr.is_null() {
                 None
             } else {
@@ -7651,7 +7651,7 @@ mod tests {
         let mut imp = core::mem::MaybeUninit::<MeshImp>::uninit();
         let imp_ptr = imp.as_mut_ptr();
         unsafe {
-            let mesh_ptr = core::ptr::addr_of_mut!((*imp_ptr).mesh);
+            let mesh_ptr = &raw mut (*imp_ptr).mesh;
             let back: *mut MeshImp = get_imp(mesh_ptr as *mut c_void);
             assert_eq!(back, imp_ptr);
         }

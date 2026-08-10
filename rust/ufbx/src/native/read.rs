@@ -464,12 +464,12 @@ pub(crate) unsafe fn read_thumbnail(
     read_properties(uc, node, &mut (*thumbnail).props)?;
 
     let custom_width: i64 = api_find_int(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*thumbnail).props)),
+        PropsView::from_ptr(&raw mut (*thumbnail).props),
         b"CustomWidth\0".as_ptr(),
         0,
     );
     let custom_height: i64 = api_find_int(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*thumbnail).props)),
+        PropsView::from_ptr(&raw mut (*thumbnail).props),
         b"CustomHeight\0".as_ptr(),
         0,
     );
@@ -1483,10 +1483,7 @@ pub(crate) unsafe fn set_own_prop_vec3_uniform(props: *mut Props, name: *const u
     // `Copy` but has no drop glue.
     let mut local_props: Props = core::ptr::read(props);
     local_props.defaults = None;
-    let prop: *mut Prop = match api_find_prop(
-        PropsView::from_ptr(core::ptr::addr_of_mut!(local_props)),
-        name,
-    ) {
+    let prop: *mut Prop = match api_find_prop(PropsView::from_ptr(&raw mut local_props), name) {
         Some(prop) => prop.get(),
         None => core::ptr::null_mut(),
     };
@@ -1521,21 +1518,21 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
     node_fbx_id: u64,
 ) -> Result<(), Fail> {
     let geo_translation: Vec3 = find_vec3(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+        PropsView::from_ptr(&raw mut (*node).element.props),
         sp::GeometricTranslation.as_ptr(),
         0.0,
         0.0,
         0.0,
     );
     let geo_rotation: Vec3 = find_vec3(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+        PropsView::from_ptr(&raw mut (*node).element.props),
         sp::GeometricRotation.as_ptr(),
         0.0,
         0.0,
         0.0,
     );
     let geo_scaling: Vec3 = find_vec3(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
+        PropsView::from_ptr(&raw mut (*node).element.props),
         sp::GeometricScaling.as_ptr(),
         1.0,
         1.0,
@@ -1699,16 +1696,14 @@ pub(crate) unsafe fn setup_scale_helper(
     let mut i: usize = 0;
     while i < max_props {
         let hp: *const ScaleHelperProp = &SCALE_HELPER_PROPS[i];
-        let src_prop: *mut Prop = match find_prop(
-            PropsView::from_ptr(core::ptr::addr_of_mut!(props_copy)),
-            (*hp).name,
-        ) {
-            Some(prop) => prop.get(),
-            None => {
-                i += 1;
-                continue;
-            }
-        };
+        let src_prop: *mut Prop =
+            match find_prop(PropsView::from_ptr(&raw mut props_copy), (*hp).name) {
+                Some(prop) => prop.get(),
+                None => {
+                    i += 1;
+                    continue;
+                }
+            };
 
         *helper_props.add(num_props) = *src_prop;
         num_props += 1;
@@ -1747,7 +1742,7 @@ pub(crate) unsafe fn read_model(
     );
 
     let inherit_type: i64 = find_int(
-        PropsView::from_ptr(core::ptr::addr_of_mut!((*elem_node).element.props)),
+        PropsView::from_ptr(&raw mut (*elem_node).element.props),
         sp::InheritType.as_ptr(),
         -1,
     );
@@ -2596,7 +2591,7 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
         (*shape_props.add(0)).value_blob = EMPTY_BLOB.0;
 
         let self_prop: Option<&PropView> = find_prop_len(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*info).props)),
+            PropsView::from_ptr(&raw mut (*info).props),
             name.data,
             name.length,
         );
@@ -2830,7 +2825,7 @@ pub(crate) unsafe fn mesh_part_add_face(part: *mut MeshPart, num_indices: u32) {
         // C-parity: indexing off one field into its two siblings (the static
         // asserts above pin the offsets); ported as pointer arithmetic from the
         // field address rather than a match on `num_indices`.
-        let p_empty: *mut usize = core::ptr::addr_of_mut!((*part).num_empty_faces);
+        let p_empty: *mut usize = &raw mut (*part).num_empty_faces;
         let p: *mut usize = p_empty.add(num_indices as usize);
         *p = (*p).wrapping_add(1);
     }
@@ -6999,7 +6994,7 @@ unsafe fn read_take_prop_channel_rec(
                 channel_nodes[i].unwrap(),
                 value_fbx_id,
                 channel_names[i],
-                (core::ptr::addr_of_mut!((*value).default_value) as *mut Real).add(i),
+                (&raw mut (*value).default_value as *mut Real).add(i),
             )?;
         }
     }

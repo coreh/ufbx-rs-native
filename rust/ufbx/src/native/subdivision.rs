@@ -2515,11 +2515,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
 
     (*sc.imp()).magic = MESH_IMP_MAGIC;
     // C: `sc->imp->mesh = sc->dst_mesh;` — struct assignment (memcpy).
-    core::ptr::copy_nonoverlapping(
-        sc.dst_mesh_mut_ptr(),
-        core::ptr::addr_of_mut!((*sc.imp()).mesh),
-        1,
-    );
+    core::ptr::copy_nonoverlapping(sc.dst_mesh_mut_ptr(), &raw mut (*sc.imp()).mesh, 1);
     (*sc.imp()).refcount.ator = sc.ator_result();
     (*sc.imp()).refcount.buf = sc.result();
     (*sc.imp()).mesh.subdivision_evaluated = true;
@@ -2562,7 +2558,7 @@ pub(crate) unsafe fn subdivide_mesh(
         }
 
         let imp: *mut MeshImp = sc.imp();
-        core::ptr::addr_of_mut!((*imp).mesh)
+        &raw mut (*imp).mesh
     } else {
         fix_error_type(
             sc.error_mut_ptr(),

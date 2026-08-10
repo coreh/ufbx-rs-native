@@ -750,8 +750,7 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
     let line_width: i32 = 6;
     for i in 0..stack_size {
         // C: `const ufbx_error_frame *frame = &error->stack[i];`
-        let frame: *const ErrorFrame =
-            (core::ptr::addr_of!((*error).stack) as *const ErrorFrame).add(i);
+        let frame: *const ErrorFrame = (&raw const (*error).stack as *const ErrorFrame).add(i);
         let num: i32 = ufbxi_snprintf!(
             dst.add(offset),
             dst_size - offset,
@@ -981,9 +980,8 @@ pub(crate) unsafe fn find_prop_element_len(
     type_: ElementType,
 ) -> *mut Element {
     // Raw-element root: `element` is `*const Element`; bridge its props table to
-    // a view with `from_ptr` (addr_of avoids forming an intermediate `&Props`).
-    let props: &PropsView =
-        PropsView::from_ptr(core::ptr::addr_of!((*element).props) as *mut Props);
+    // a view with `from_ptr` (`&raw` avoids forming an intermediate `&Props`).
+    let props: &PropsView = PropsView::from_ptr(&raw const (*element).props as *mut Props);
     match find_prop_len(props, name, name_len) {
         Some(prop) => get_prop_element(element, prop.get(), type_),
         None => core::ptr::null_mut(),
@@ -1121,8 +1119,7 @@ pub(crate) unsafe fn get_compatible_matrix_for_normals(node: *const Node) -> Mat
     geom_rot.rotation = (*node).geometry_transform.rotation;
     let geom_rot_mat: Matrix = transform_to_matrix(&geom_rot);
 
-    let mut norm_mat: Matrix =
-        matrix_mul(core::ptr::addr_of!((*node).node_to_world), &geom_rot_mat);
+    let mut norm_mat: Matrix = matrix_mul(&raw const (*node).node_to_world, &geom_rot_mat);
     norm_mat = matrix_for_normals(&norm_mat);
     norm_mat
 }
@@ -1270,7 +1267,7 @@ pub(crate) unsafe fn evaluate_anim_value_real_flags(
 
     let mut res: Real = (*anim_value).default_value.x;
     // C: `if (anim_value->curves[0]) res = ufbx_evaluate_curve_flags(anim_value->curves[0], time, res, flags);`
-    let curve0: *mut AnimCurve = opt_ptr(core::ptr::addr_of!((*anim_value).curves[0]));
+    let curve0: *mut AnimCurve = opt_ptr(&raw const (*anim_value).curves[0]);
     if !curve0.is_null() {
         res = evaluate_curve_flags(curve0, time, res, flags);
     }
@@ -1295,15 +1292,15 @@ pub(crate) unsafe fn evaluate_anim_value_vec3_flags(
     }
 
     let mut res: Vec3 = (*anim_value).default_value;
-    let curve0: *mut AnimCurve = opt_ptr(core::ptr::addr_of!((*anim_value).curves[0]));
+    let curve0: *mut AnimCurve = opt_ptr(&raw const (*anim_value).curves[0]);
     if !curve0.is_null() {
         res.x = evaluate_curve_flags(curve0, time, res.x, flags);
     }
-    let curve1: *mut AnimCurve = opt_ptr(core::ptr::addr_of!((*anim_value).curves[1]));
+    let curve1: *mut AnimCurve = opt_ptr(&raw const (*anim_value).curves[1]);
     if !curve1.is_null() {
         res.y = evaluate_curve_flags(curve1, time, res.y, flags);
     }
-    let curve2: *mut AnimCurve = opt_ptr(core::ptr::addr_of!((*anim_value).curves[2]));
+    let curve2: *mut AnimCurve = opt_ptr(&raw const (*anim_value).curves[2]);
     if !curve2.is_null() {
         res.z = evaluate_curve_flags(curve2, time, res.z, flags);
     }
@@ -1335,8 +1332,7 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
     // C: `ufbx_prop result;`
     let mut result: Prop;
 
-    let props: &PropsView =
-        PropsView::from_ptr(core::ptr::addr_of!((*element).props) as *mut Props);
+    let props: &PropsView = PropsView::from_ptr(&raw const (*element).props as *mut Props);
     let prop: Option<&PropView> = find_prop_len(props, name, name_len);
     if let Some(found) = prop {
         result = *found.get();
@@ -1355,7 +1351,7 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
 
     if (*anim).prop_overrides.count > 0 {
         evaluate::find_prop_override(
-            core::ptr::addr_of!((*anim).prop_overrides),
+            &raw const (*anim).prop_overrides,
             (*element).element_id,
             &mut result,
         );
@@ -1454,8 +1450,7 @@ pub(crate) unsafe fn evaluate_props_flags(
     ret.num_animated = num_anim;
     // C: `ret.defaults = (ufbx_props*)&element->props;` — raw pointer store
     // into the `Option<Ref<Props>>` slot (same layout).
-    *(core::ptr::addr_of_mut!(ret.defaults) as *mut *const Props) =
-        core::ptr::addr_of!((*element).props);
+    *(&raw mut ret.defaults as *mut *const Props) = &raw const (*element).props;
     ret
 }
 
@@ -1566,27 +1561,27 @@ pub(crate) unsafe fn evaluate_transform_flags(
     let mut scale_factor: Vec3 = ONE_VEC3;
     let mut use_scale_factor: bool = false;
 
-    if !opt_ptr(core::ptr::addr_of!((*node).parent)).is_null()
+    if !opt_ptr(&raw const (*node).parent).is_null()
         && (flags
             & (TransformFlags::INCLUDE_SCALE.raw() | TransformFlags::INCLUDE_TRANSLATION.raw()))
             != 0
     {
-        let parent: *mut Node = opt_ptr(core::ptr::addr_of!((*node).parent));
+        let parent: *mut Node = opt_ptr(&raw const (*node).parent);
 
         if (flags & TransformFlags::IGNORE_COMPONENTWISE_SCALE.raw()) == 0
-            && !opt_ptr(core::ptr::addr_of!((*parent).inherit_scale_node)).is_null()
+            && !opt_ptr(&raw const (*parent).inherit_scale_node).is_null()
         {
-            let mut p: *mut Node = opt_ptr(core::ptr::addr_of!((*parent).inherit_scale_node));
+            let mut p: *mut Node = opt_ptr(&raw const (*parent).inherit_scale_node);
 
             if (*node).is_scale_helper {
                 use_scale_factor = true;
             }
 
-            while !p.is_null() && !opt_ptr(core::ptr::addr_of!((*p).scale_helper)).is_null() {
+            while !p.is_null() && !opt_ptr(&raw const (*p).scale_helper).is_null() {
                 // C: `ufbx_prop scale = ufbx_evaluate_prop(anim, &p->scale_helper->element, ufbxi_Lcl_Scaling, time);`
                 let scale: Prop = evaluate_prop(
                     anim,
-                    core::ptr::addr_of!((*opt_ptr(core::ptr::addr_of!((*p).scale_helper))).element),
+                    &raw const (*opt_ptr(&raw const (*p).scale_helper)).element,
                     sp::Lcl_Scaling.as_ptr(),
                     time,
                 );
@@ -1594,18 +1589,16 @@ pub(crate) unsafe fn evaluate_transform_flags(
                 scale_factor.x *= scale.value_vec4.x;
                 scale_factor.y *= scale.value_vec4.y;
                 scale_factor.z *= scale.value_vec4.z;
-                p = opt_ptr(core::ptr::addr_of!((*p).inherit_scale_node));
+                p = opt_ptr(&raw const (*p).inherit_scale_node);
             }
         }
 
-        if !opt_ptr(core::ptr::addr_of!((*parent).scale_helper)).is_null()
+        if !opt_ptr(&raw const (*parent).scale_helper).is_null()
             && (flags & TransformFlags::IGNORE_SCALE_HELPER.raw()) == 0
         {
             helper_scale.write(evaluate_prop(
                 anim,
-                core::ptr::addr_of!(
-                    (*opt_ptr(core::ptr::addr_of!((*parent).scale_helper))).element
-                ),
+                &raw const (*opt_ptr(&raw const (*parent).scale_helper)).element,
                 sp::Lcl_Scaling.as_ptr(),
                 time,
             ));
@@ -1619,7 +1612,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
             (*hs).value_vec4.y *= scale_factor.y;
             (*hs).value_vec4.z *= scale_factor.z;
             // C: `translation_scale = &helper_scale.value_vec3;`
-            translation_scale = core::ptr::addr_of!((*hs).value_vec4) as *const Vec3;
+            translation_scale = &raw const (*hs).value_vec4 as *const Vec3;
         }
     }
 
@@ -1632,7 +1625,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
     let mut buf = MaybeUninit::<[Prop; TRANSFORM_PROPS_ALL_COUNT]>::uninit(); // ufbxi_uninit
     let mut props: Props = evaluate::evaluate_selected_props(
         anim,
-        core::ptr::addr_of!((*node).element),
+        &raw const (*node).element,
         time,
         buf.as_mut_ptr() as *mut Prop,
         prop_names,
@@ -1641,7 +1634,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
     );
     // C: `(ufbx_rotation_order)ufbxi_find_enum(...)` — clamped to the valid range.
     let order: RotationOrder = core::mem::transmute::<u32, RotationOrder>(find_enum(
-        PropsView::from_ptr(core::ptr::addr_of_mut!(props)),
+        PropsView::from_ptr(&raw mut props),
         sp::RotationOrder.as_ptr(),
         RotationOrder::Xyz as i64,
         RotationOrder::Spheric as i64,
@@ -1654,7 +1647,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
         core::ptr::write(
             t,
             get_transform(
-                PropsView::from_ptr(core::ptr::addr_of_mut!(props)),
+                PropsView::from_ptr(&raw mut props),
                 order,
                 node,
                 translation_scale,
@@ -1663,16 +1656,12 @@ pub(crate) unsafe fn evaluate_transform_flags(
     } else {
         (*t).translation = ZERO_VEC3;
         if (components & TransformFlags::INCLUDE_ROTATION.raw()) != 0 {
-            (*t).rotation = get_rotation(
-                PropsView::from_ptr(core::ptr::addr_of_mut!(props)),
-                order,
-                node,
-            );
+            (*t).rotation = get_rotation(PropsView::from_ptr(&raw mut props), order, node);
         } else {
             (*t).rotation = IDENTITY_QUAT;
         }
         if (components & TransformFlags::INCLUDE_SCALE.raw()) != 0 {
-            (*t).scale = get_scale(PropsView::from_ptr(core::ptr::addr_of_mut!(props)), node);
+            (*t).scale = get_scale(PropsView::from_ptr(&raw mut props), node);
         } else {
             (*t).scale = ONE_VEC3;
         }
@@ -1712,7 +1701,7 @@ pub(crate) unsafe fn evaluate_blend_weight_flags(
     let mut buf = MaybeUninit::<[Prop; NUM_PROP_NAMES]>::uninit(); // ufbxi_uninit
     let mut props: Props = evaluate::evaluate_selected_props(
         anim,
-        core::ptr::addr_of!((*channel).element),
+        &raw const (*channel).element,
         time,
         buf.as_mut_ptr() as *mut Prop,
         prop_names.as_ptr(),
@@ -1721,7 +1710,7 @@ pub(crate) unsafe fn evaluate_blend_weight_flags(
     );
     // C: `ufbxi_find_real(&props, ufbxi_DeformPercent, channel->weight * (ufbx_real)100.0) * (ufbx_real)0.01`
     ufbxi_find_real(
-        PropsView::from_ptr(core::ptr::addr_of_mut!(props)),
+        PropsView::from_ptr(&raw mut props),
         sp::DeformPercent.as_ptr(),
         (*channel).weight * (100.0 as Real),
     ) * (0.01 as Real)
@@ -1794,7 +1783,7 @@ pub(crate) unsafe fn create_anim(
     if ok.is_ok() {
         clear_error(error);
         let imp: *mut AnimImp = ac.imp();
-        core::ptr::addr_of_mut!((*imp).anim)
+        &raw mut (*imp).anim
     } else {
         fix_error_type(
             ac.error_mut_ptr(),
@@ -1859,7 +1848,7 @@ pub(crate) unsafe fn bake_anim(
     ufbxi_check_opts_ptr!(BakedAnim, opts, error);
     let mut anim = anim;
     if anim.is_null() {
-        anim = ref_ptr(core::ptr::addr_of!((*scene).anim));
+        anim = ref_ptr(&raw const (*scene).anim);
     }
 
     // C: `ufbxi_bake_context bc = { UFBX_ERROR_NONE };`
@@ -1889,7 +1878,7 @@ pub(crate) unsafe fn bake_anim(
     if ok.is_ok() {
         clear_error(error);
         let imp: *mut BakedAnimImp = bc.imp();
-        core::ptr::addr_of_mut!((*imp).bake)
+        &raw mut (*imp).bake
     } else {
         fix_error_type(bc.error_mut_ptr(), b"Failed to bake anim\0".as_ptr(), error);
         buf_free(bc.result_mut_ptr());
@@ -5662,7 +5651,7 @@ mod tests {
             );
             retain_ref(&raw mut (*imp).refcount);
 
-            let mesh_ptr = core::ptr::addr_of_mut!((*imp).mesh) as *mut c_void;
+            let mesh_ptr = &raw mut (*imp).mesh as *mut c_void;
             let back: *mut MeshImp = get_imp(mesh_ptr);
             assert_eq!(back, imp);
 
@@ -5900,9 +5889,7 @@ mod tests {
                 ElementType::AnimStack,
             ];
             let mut elements = zeroed_elements(4);
-            let ptrs: std::vec::Vec<*mut Element> = (0..4)
-                .map(|i| core::ptr::addr_of_mut!(elements[i]))
-                .collect();
+            let ptrs: std::vec::Vec<*mut Element> = (0..4).map(|i| &raw mut elements[i]).collect();
 
             let mut entries: std::vec::Vec<NameElement> = (0..4)
                 .map(|i| NameElement {
@@ -5972,15 +5959,15 @@ mod tests {
     fn test_find_anim_prop_len_and_find_anim_props() {
         unsafe {
             let mut elements = zeroed_elements(3);
-            let e0: *mut Element = core::ptr::addr_of_mut!(elements[0]);
-            let e1: *mut Element = core::ptr::addr_of_mut!(elements[1]);
-            let e2: *mut Element = core::ptr::addr_of_mut!(elements[2]);
+            let e0: *mut Element = &raw mut elements[0];
+            let e1: *mut Element = &raw mut elements[1];
+            let e2: *mut Element = &raw mut elements[2];
             // The `ufbx_anim_prop` array is sorted by element ADDRESS, so pin
             // the ordering assumption the test data relies on.
             assert!((e0 as *const Element) < e1 && (e1 as *const Element) < e2);
 
             let mut av: crate::generated::AnimValue = MaybeUninit::zeroed().assume_init();
-            let anim_value: *mut crate::generated::AnimValue = core::ptr::addr_of_mut!(av);
+            let anim_value: *mut crate::generated::AnimValue = &raw mut av;
 
             let entries: [(*mut Element, &[u8]); 3] = [
                 (e0, b"Lcl Scaling"),
@@ -6186,7 +6173,7 @@ mod tests {
             (*imp).refcount.ator = ator;
             (*imp).refcount.buf = buf;
 
-            let scene: *mut Scene = core::ptr::addr_of_mut!((*imp).scene);
+            let scene: *mut Scene = &raw mut (*imp).scene;
             retain_scene(scene);
             assert_eq!(
                 (*imp)
@@ -6245,7 +6232,7 @@ mod tests {
             let mut error = Error::default();
             let imp: *mut AnimImp = make_typed_imp(&mut error, ANIM_IMP_MAGIC);
             (*imp).magic = ANIM_IMP_MAGIC;
-            let anim: *mut Anim = core::ptr::addr_of_mut!((*imp).anim);
+            let anim: *mut Anim = &raw mut (*imp).anim;
 
             // C: `if (!anim->custom) return;` — a non-custom `ufbx_anim` is
             // owned by its scene, so BOTH entry points bail before touching
@@ -6279,7 +6266,7 @@ mod tests {
             let mut error = Error::default();
             let imp: *mut BakedAnimImp = make_typed_imp(&mut error, BAKED_ANIM_IMP_MAGIC);
             (*imp).magic = BAKED_ANIM_IMP_MAGIC;
-            let bake: *mut BakedAnim = core::ptr::addr_of_mut!((*imp).bake);
+            let bake: *mut BakedAnim = &raw mut (*imp).bake;
 
             // `ufbxi_get_imp` round-trip: no `custom` gate on this pair.
             let back: *mut BakedAnimImp = get_imp(bake as *mut c_void);
@@ -6343,7 +6330,7 @@ mod tests {
             assert!(find_baked_node(core::ptr::null_mut(), &mut node).is_null());
             assert!(find_baked_node(bake_ptr, core::ptr::null_mut()).is_null());
 
-            let element: *mut Element = core::ptr::addr_of_mut!(node.element);
+            let element: *mut Element = &raw mut node.element;
             assert_eq!(find_baked_element(bake_ptr, element), elem_base.add(2));
             assert!(find_baked_element(core::ptr::null_mut(), element).is_null());
             assert!(find_baked_element(bake_ptr, core::ptr::null_mut()).is_null());
@@ -6782,11 +6769,10 @@ mod tests {
         offset_weights: &[Real],
     ) -> *mut BlendShape {
         let shape: *mut BlendShape = storage.as_mut_ptr();
-        core::ptr::addr_of_mut!((*shape).num_offsets).write(offset_vertices.len());
-        core::ptr::addr_of_mut!((*shape).offset_vertices).write(List::from_slice(offset_vertices));
-        core::ptr::addr_of_mut!((*shape).position_offsets)
-            .write(List::from_slice(position_offsets));
-        core::ptr::addr_of_mut!((*shape).offset_weights).write(List::from_slice(offset_weights));
+        (&raw mut (*shape).num_offsets).write(offset_vertices.len());
+        (&raw mut (*shape).offset_vertices).write(List::from_slice(offset_vertices));
+        (&raw mut (*shape).position_offsets).write(List::from_slice(position_offsets));
+        (&raw mut (*shape).offset_weights).write(List::from_slice(offset_weights));
         shape
     }
 

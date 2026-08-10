@@ -264,8 +264,7 @@ pub(crate) unsafe fn evaluate_skinning(
             let p_cache_end: *mut *mut CacheDeformer =
                 add_ptr(p_cache, (*mesh).cache_deformers.count);
             while p_cache != p_cache_end {
-                let channel: *mut CacheChannel =
-                    opt_ptr(ptr::addr_of!((*(*p_cache)).external_channel));
+                let channel: *mut CacheChannel = opt_ptr(&raw const (*(*p_cache)).external_channel);
                 if channel.is_null() {
                     p_cache = p_cache.add(1);
                     continue;
@@ -333,10 +332,8 @@ pub(crate) unsafe fn evaluate_skinning(
                 // (`mesh->instances` reads through the anonymous `ufbx_element`
                 // union member; the generated bindings spell it out.)
                 let fallback: *mut Matrix = if (*mesh).element.instances.count > 0 {
-                    ptr::addr_of_mut!(
-                        (*ref_ptr::<UfbxNode>((*mesh).element.instances.data.add(0)))
-                            .geometry_to_world
-                    )
+                    &raw mut (*ref_ptr::<UfbxNode>((*mesh).element.instances.data.add(0)))
+                        .geometry_to_world
                 } else {
                     ptr::null_mut()
                 };
@@ -384,7 +381,7 @@ pub(crate) unsafe fn evaluate_skinning(
 
             compute_normals(
                 mesh,
-                ptr::addr_of!((*mesh).skinned_position),
+                &raw const (*mesh).skinned_position,
                 normal_indices,
                 num_indices,
                 normal_data,
@@ -855,16 +852,16 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
     (*imp).magic = SCENE_IMP_MAGIC;
     // C: `imp->scene = uc->scene;` (struct copy)
-    ptr::copy_nonoverlapping(uc.scene_mut_ptr(), ptr::addr_of_mut!((*imp).scene), 1);
+    ptr::copy_nonoverlapping(uc.scene_mut_ptr(), &raw mut (*imp).scene, 1);
     (*imp).refcount.ator = uc.ator_result();
     (*imp).refcount.ator.error = ptr::null_mut();
 
     // Copy retained buffers and translate the allocator struct to the one
     // contained within `ufbxi_scene_imp`
     (*imp).refcount.buf = uc.result();
-    (*imp).refcount.buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
+    (*imp).refcount.buf.ator = &raw mut (*imp).refcount.ator;
     (*imp).string_buf = uc.string_pool_view().buf();
-    (*imp).string_buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
+    (*imp).string_buf.ator = &raw mut (*imp).refcount.ator;
 
     (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
     (*imp).scene.metadata.temp_memory_used = (*uc.ator_tmp_mut_ptr()).current_size;
@@ -876,7 +873,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     let p_elem_end: *mut *mut Element = add_ptr(p_elem, (*imp).scene.elements.count);
     while p_elem != p_elem_end {
         // C: `(*p_elem)->scene = &imp->scene;`
-        *(ptr::addr_of_mut!((**p_elem).scene) as *mut *mut Scene) = ptr::addr_of_mut!((*imp).scene);
+        *(&raw mut (**p_elem).scene as *mut *mut Scene) = &raw mut (*imp).scene;
         p_elem = p_elem.add(1);
     }
 
@@ -1005,7 +1002,7 @@ pub(crate) unsafe fn load(
     // C: `ufbx_inflate_retain inflate_retain; inflate_retain.initialized = false;`
     // — only `initialized` is written before use.
     let mut inflate_retain = MaybeUninit::<InflateRetain>::uninit();
-    ptr::addr_of_mut!((*inflate_retain.as_mut_ptr()).initialized).write(false);
+    (&raw mut (*inflate_retain.as_mut_ptr()).initialized).write(false);
 
     init_ator(
         uc.error_mut_ptr(),
@@ -1190,7 +1187,7 @@ pub(crate) unsafe fn load(
         if !p_error.is_null() {
             clear_error(p_error);
         }
-        ptr::addr_of_mut!((*uc.scene_imp()).scene)
+        &raw mut (*uc.scene_imp()).scene
     } else {
         fix_error_type(uc.error_mut_ptr(), b"Failed to load\0".as_ptr(), p_error);
         if !p_error.is_null()
@@ -1275,7 +1272,7 @@ pub(crate) unsafe fn find_prop_override(
         // C: `prop->value_real_arr[3] = 0.0f;` — the `ufbx_prop` value union's
         // `ufbx_real value_real_arr[4]` view; the generated struct keeps only
         // `value_vec4`.
-        *(ptr::addr_of_mut!((*prop).value_vec4) as *mut Real).add(3) = 0.0;
+        *(&raw mut (*prop).value_vec4 as *mut Real).add(3) = 0.0;
         (*prop).value_int = (*over).value_int;
         (*prop).value_str = (*over).value_str;
         (*prop).value_blob.data = (*prop).value_str.data;
@@ -1511,7 +1508,7 @@ pub(crate) unsafe fn evaluate_props(
         };
         if (*layer).weight_is_animated && (*layer).blended {
             let weight_aprop: *mut AnimProp =
-                find_anim_prop_start(layer, ptr::addr_of!((*layer).element));
+                find_anim_prop_start(layer, &raw const (*layer).element);
             if !weight_aprop.is_null() {
                 // C: `weight = ufbx_evaluate_anim_value_real_flags(...) / (ufbx_real)100.0;`
                 weight = evaluate_anim_value_real_flags(
@@ -1576,14 +1573,14 @@ pub(crate) unsafe fn evaluate_props(
                 if layer_ix == 0 {
                     // C: `prop->value_vec3 = v;` — the `ufbx_prop` value
                     // union's 3-real view over `value_vec4`.
-                    *(ptr::addr_of_mut!((*prop).value_vec4) as *mut Vec3) = v;
+                    *(&raw mut (*prop).value_vec4 as *mut Vec3) = v;
                 } else {
                     combine_anim_layer(
                         &mut combine_ctx,
                         layer,
                         weight,
                         (*prop).name.data,
-                        ptr::addr_of_mut!((*prop).value_vec4) as *mut Vec3,
+                        &raw mut (*prop).value_vec4 as *mut Vec3,
                         &v,
                     );
                 }
@@ -1710,16 +1707,12 @@ pub(crate) unsafe fn init_prop_iter_slow(
         .add((*element).props.props.count);
 
     let over: List<PropOverride> =
-        find_element_prop_overrides(ptr::addr_of!((*anim).prop_overrides), (*element).element_id);
+        find_element_prop_overrides(&raw const (*anim).prop_overrides, (*element).element_id);
     (*iter).over = over.data;
     (*iter).over_end = over.data.add(over.count);
     if over.count > 0 {
         // C: `memset(&iter->tmp, 0, sizeof(ufbx_prop));`
-        ptr::write_bytes(
-            ptr::addr_of_mut!((*iter).tmp) as *mut u8,
-            0,
-            size_of::<Prop>(),
-        );
+        ptr::write_bytes(&raw mut (*iter).tmp as *mut u8, 0, size_of::<Prop>());
     }
 }
 
@@ -1775,7 +1768,7 @@ pub(crate) unsafe fn next_prop_slow(iter: *mut PropIter) -> *const Prop {
     }
 
     if cmp >= 0 {
-        let dst: *mut Prop = ptr::addr_of_mut!((*iter).tmp);
+        let dst: *mut Prop = &raw mut (*iter).tmp;
         (*dst).name = (*over).prop_name;
         (*dst)._internal_key = (*over)._internal_key;
         (*dst).type_ = PropType::Unknown;
@@ -1891,8 +1884,8 @@ pub(crate) unsafe fn evaluate_selected_props(
     prop_list.num_animated = num_props;
     // C: `prop_list.defaults = (ufbx_props*)&element->props;` — raw pointer
     // store into the `Option<Ref<Props>>` slot (same layout).
-    *(ptr::addr_of_mut!(prop_list.defaults) as *mut *const crate::generated::Props) =
-        ptr::addr_of!((*element).props);
+    *(&raw mut prop_list.defaults as *mut *const crate::generated::Props) =
+        &raw const (*element).props;
     prop_list
 }
 
@@ -1934,10 +1927,10 @@ unsafe fn extrapolate_curve_rec(curve: *const AnimCurve, real_time: f64, flags: 
     let ext: *const Extrapolation;
     if pre {
         key = (*curve).keyframes.data.add(0);
-        ext = ptr::addr_of!((*curve).pre_extrapolation);
+        ext = &raw const (*curve).pre_extrapolation;
     } else {
         key = (*curve).keyframes.data.add((*curve).keyframes.count - 1);
-        ext = ptr::addr_of!((*curve).post_extrapolation);
+        ext = &raw const (*curve).post_extrapolation;
     }
 
     if (*ext).mode == ExtrapolationMode::Constant {
@@ -1945,9 +1938,9 @@ unsafe fn extrapolate_curve_rec(curve: *const AnimCurve, real_time: f64, flags: 
     } else if (*ext).mode == ExtrapolationMode::Slope {
         // C: `ufbx_tangent tangent = *(pre ? &key->right : &key->left);`
         let tangent: Tangent = *(if pre {
-            ptr::addr_of!((*key).right)
+            &raw const (*key).right
         } else {
-            ptr::addr_of!((*key).left)
+            &raw const (*key).left
         });
         // C: `key->value + (ufbx_real)(tangent.dy * ((real_time - key->time) / tangent.dx))`
         // — `dx`/`dy` are float, promoted to double in the expression.
@@ -2382,8 +2375,8 @@ pub(crate) unsafe fn translate_maps(ec: &EvalContext, maps: *mut MaterialMap, co
     let mut map: *mut MaterialMap = maps;
     let map_end: *mut MaterialMap = add_ptr(maps, count);
     while map != map_end {
-        *(ptr::addr_of_mut!((*map).texture) as *mut *mut Texture) =
-            translate_element(ec, opt_ptr(ptr::addr_of!((*map).texture)) as *mut c_void)
+        *(&raw mut (*map).texture as *mut *mut Texture) =
+            translate_element(ec, opt_ptr(&raw const (*map).texture) as *mut c_void)
                 as *mut Texture;
         map = map.add(1);
     }
@@ -2395,7 +2388,7 @@ pub(crate) unsafe fn translate_maps(ec: &EvalContext, maps: *mut MaterialMap, co
 pub(crate) unsafe fn translate_anim(ec: &EvalContext, p_anim: *mut *mut Anim) -> Result<(), Fail> {
     let anim: *mut Anim = push_copy::<Anim>(ec.result_mut_ptr(), 1, *p_anim);
     ufbxi_check_err!(ec.error_mut_ptr(), !anim.is_null(), "anim");
-    translate_element_list(ec, ptr::addr_of_mut!((*anim).layers) as *mut c_void)?;
+    translate_element_list(ec, &raw mut (*anim).layers as *mut c_void)?;
     *p_anim = anim;
     Ok(())
 }
@@ -2477,13 +2470,13 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             dst,
             1,
         );
-        *(ptr::addr_of_mut!((*src).src) as *mut *mut Element) =
+        *(&raw mut (*src).src as *mut *mut Element) =
             translate_element(ec, ref_ptr(&(*src).src) as *mut c_void);
-        *(ptr::addr_of_mut!((*src).dst) as *mut *mut Element) =
+        *(&raw mut (*src).dst as *mut *mut Element) =
             translate_element(ec, ref_ptr(&(*src).dst) as *mut c_void);
-        *(ptr::addr_of_mut!((*dst).src) as *mut *mut Element) =
+        *(&raw mut (*dst).src as *mut *mut Element) =
             translate_element(ec, ref_ptr(&(*dst).src) as *mut c_void);
-        *(ptr::addr_of_mut!((*dst).dst) as *mut *mut Element) =
+        *(&raw mut (*dst).dst as *mut *mut Element) =
             translate_element(ec, ref_ptr(&(*dst).dst) as *mut c_void);
     }
 
@@ -2529,7 +2522,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                 .offset_from(ec.src_scene_view().connections_dst_view().data()),
         );
         if (*dst).instances.count > 0 {
-            translate_element_list(ec, ptr::addr_of_mut!((*dst).instances) as *mut c_void)?;
+            translate_element_list(ec, &raw mut (*dst).instances as *mut c_void)?;
         }
 
         // C: `ufbx_name_element named = ec->src_scene.elements_by_name.data[i];`
@@ -2542,7 +2535,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             named,
             1,
         );
-        *(ptr::addr_of_mut!((*named).element) as *mut *mut Element) =
+        *(&raw mut (*named).element as *mut *mut Element) =
             translate_element(ec, ref_ptr(&(*named).element) as *mut c_void);
     }
 
@@ -2551,52 +2544,48 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     let p_node_end: *mut *mut UfbxNode = add_ptr(p_node, ec.scene_view().nodes_view().count());
     while p_node != p_node_end {
         let node: *mut UfbxNode = *p_node;
-        *(ptr::addr_of_mut!((*node).parent) as *mut *mut UfbxNode) =
-            translate_element(ec, opt_ptr(ptr::addr_of!((*node).parent)) as *mut c_void)
+        *(&raw mut (*node).parent as *mut *mut UfbxNode) =
+            translate_element(ec, opt_ptr(&raw const (*node).parent) as *mut c_void)
                 as *mut UfbxNode;
-        translate_element_list(ec, ptr::addr_of_mut!((*node).children) as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*node).children as *mut c_void)?;
 
-        *(ptr::addr_of_mut!((*node).attrib) as *mut *mut Element) =
-            translate_element(ec, opt_ptr(ptr::addr_of!((*node).attrib)) as *mut c_void);
-        *(ptr::addr_of_mut!((*node).mesh) as *mut *mut Mesh) =
-            translate_element(ec, opt_ptr(ptr::addr_of!((*node).mesh)) as *mut c_void) as *mut Mesh;
-        *(ptr::addr_of_mut!((*node).light) as *mut *mut crate::generated::Light) =
-            translate_element(ec, opt_ptr(ptr::addr_of!((*node).light)) as *mut c_void)
+        *(&raw mut (*node).attrib as *mut *mut Element) =
+            translate_element(ec, opt_ptr(&raw const (*node).attrib) as *mut c_void);
+        *(&raw mut (*node).mesh as *mut *mut Mesh) =
+            translate_element(ec, opt_ptr(&raw const (*node).mesh) as *mut c_void) as *mut Mesh;
+        *(&raw mut (*node).light as *mut *mut crate::generated::Light) =
+            translate_element(ec, opt_ptr(&raw const (*node).light) as *mut c_void)
                 as *mut crate::generated::Light;
-        *(ptr::addr_of_mut!((*node).camera) as *mut *mut Camera) =
-            translate_element(ec, opt_ptr(ptr::addr_of!((*node).camera)) as *mut c_void)
-                as *mut Camera;
-        *(ptr::addr_of_mut!((*node).bone) as *mut *mut crate::generated::Bone) =
-            translate_element(ec, opt_ptr(ptr::addr_of!((*node).bone)) as *mut c_void)
+        *(&raw mut (*node).camera as *mut *mut Camera) =
+            translate_element(ec, opt_ptr(&raw const (*node).camera) as *mut c_void) as *mut Camera;
+        *(&raw mut (*node).bone as *mut *mut crate::generated::Bone) =
+            translate_element(ec, opt_ptr(&raw const (*node).bone) as *mut c_void)
                 as *mut crate::generated::Bone;
-        *(ptr::addr_of_mut!((*node).inherit_scale_node) as *mut *mut UfbxNode) = translate_element(
+        *(&raw mut (*node).inherit_scale_node as *mut *mut UfbxNode) = translate_element(
             ec,
-            opt_ptr(ptr::addr_of!((*node).inherit_scale_node)) as *mut c_void,
-        )
-            as *mut UfbxNode;
-        *(ptr::addr_of_mut!((*node).scale_helper) as *mut *mut UfbxNode) = translate_element(
-            ec,
-            opt_ptr(ptr::addr_of!((*node).scale_helper)) as *mut c_void,
-        )
-            as *mut UfbxNode;
-        *(ptr::addr_of_mut!((*node).bind_pose) as *mut *mut Pose) =
-            translate_element(ec, opt_ptr(ptr::addr_of!((*node).bind_pose)) as *mut c_void)
+            opt_ptr(&raw const (*node).inherit_scale_node) as *mut c_void,
+        ) as *mut UfbxNode;
+        *(&raw mut (*node).scale_helper as *mut *mut UfbxNode) =
+            translate_element(ec, opt_ptr(&raw const (*node).scale_helper) as *mut c_void)
+                as *mut UfbxNode;
+        *(&raw mut (*node).bind_pose as *mut *mut Pose) =
+            translate_element(ec, opt_ptr(&raw const (*node).bind_pose) as *mut c_void)
                 as *mut Pose;
 
         if (*node).all_attribs.count > 1 {
-            translate_element_list(ec, ptr::addr_of_mut!((*node).all_attribs) as *mut c_void)?;
+            translate_element_list(ec, &raw mut (*node).all_attribs as *mut c_void)?;
         } else if (*node).all_attribs.count == 1 {
             // C: `node->all_attribs.data = &node->attrib;`
-            (*node).all_attribs.data = ptr::addr_of!((*node).attrib) as *const Ref<Element>;
+            (*node).all_attribs.data = &raw const (*node).attrib as *const Ref<Element>;
         }
 
-        *(ptr::addr_of_mut!((*node).geometry_transform_helper) as *mut *mut UfbxNode) =
-            translate_element(
-                ec,
-                opt_ptr(ptr::addr_of!((*node).geometry_transform_helper)) as *mut c_void,
-            ) as *mut UfbxNode;
+        *(&raw mut (*node).geometry_transform_helper as *mut *mut UfbxNode) = translate_element(
+            ec,
+            opt_ptr(&raw const (*node).geometry_transform_helper) as *mut c_void,
+        )
+            as *mut UfbxNode;
 
-        translate_element_list(ec, ptr::addr_of_mut!((*node).materials) as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*node).materials as *mut c_void)?;
         p_node = p_node.add(1);
     }
 
@@ -2606,17 +2595,11 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_mesh != p_mesh_end {
         let mesh: *mut Mesh = *p_mesh;
 
-        translate_element_list(ec, ptr::addr_of_mut!((*mesh).materials) as *mut c_void)?;
-        translate_element_list(ec, ptr::addr_of_mut!((*mesh).skin_deformers) as *mut c_void)?;
-        translate_element_list(
-            ec,
-            ptr::addr_of_mut!((*mesh).blend_deformers) as *mut c_void,
-        )?;
-        translate_element_list(
-            ec,
-            ptr::addr_of_mut!((*mesh).cache_deformers) as *mut c_void,
-        )?;
-        translate_element_list(ec, ptr::addr_of_mut!((*mesh).all_deformers) as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*mesh).materials as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*mesh).skin_deformers as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*mesh).blend_deformers as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*mesh).cache_deformers as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*mesh).all_deformers as *mut c_void)?;
         p_mesh = p_mesh.add(1);
     }
 
@@ -2627,11 +2610,10 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         add_ptr(p_stereo, ec.scene_view().stereo_cameras_view().count());
     while p_stereo != p_stereo_end {
         let stereo: *mut StereoCamera = *p_stereo;
-        *(ptr::addr_of_mut!((*stereo).left) as *mut *mut Camera) =
-            translate_element(ec, opt_ptr(ptr::addr_of!((*stereo).left)) as *mut c_void)
-                as *mut Camera;
-        *(ptr::addr_of_mut!((*stereo).right) as *mut *mut Camera) =
-            translate_element(ec, opt_ptr(ptr::addr_of!((*stereo).right)) as *mut c_void)
+        *(&raw mut (*stereo).left as *mut *mut Camera) =
+            translate_element(ec, opt_ptr(&raw const (*stereo).left) as *mut c_void) as *mut Camera;
+        *(&raw mut (*stereo).right as *mut *mut Camera) =
+            translate_element(ec, opt_ptr(&raw const (*stereo).right) as *mut c_void)
                 as *mut Camera;
         p_stereo = p_stereo.add(1);
     }
@@ -2643,7 +2625,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         add_ptr(p_skin, ec.scene_view().skin_deformers_view().count());
     while p_skin != p_skin_end {
         let skin: *mut SkinDeformer = *p_skin;
-        translate_element_list(ec, ptr::addr_of_mut!((*skin).clusters) as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*skin).clusters as *mut c_void)?;
         p_skin = p_skin.add(1);
     }
 
@@ -2654,11 +2636,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         add_ptr(p_cluster, ec.scene_view().skin_clusters_view().count());
     while p_cluster != p_cluster_end {
         let cluster: *mut SkinCluster = *p_cluster;
-        *(ptr::addr_of_mut!((*cluster).bone_node) as *mut *mut UfbxNode) = translate_element(
-            ec,
-            opt_ptr(ptr::addr_of!((*cluster).bone_node)) as *mut c_void,
-        )
-            as *mut UfbxNode;
+        *(&raw mut (*cluster).bone_node as *mut *mut UfbxNode) =
+            translate_element(ec, opt_ptr(&raw const (*cluster).bone_node) as *mut c_void)
+                as *mut UfbxNode;
         p_cluster = p_cluster.add(1);
     }
 
@@ -2669,7 +2649,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         add_ptr(p_blend, ec.scene_view().blend_deformers_view().count());
     while p_blend != p_blend_end {
         let blend: *mut BlendDeformer = *p_blend;
-        translate_element_list(ec, ptr::addr_of_mut!((*blend).channels) as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*blend).channels as *mut c_void)?;
         p_blend = p_blend.add(1);
     }
 
@@ -2687,16 +2667,14 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         for i in 0..(*chan).keyframes.count {
             // C: `keys[i] = chan->keyframes.data[i];` (struct assignment)
             ptr::copy_nonoverlapping((*chan).keyframes.data.add(i), keys.add(i), 1);
-            *(ptr::addr_of_mut!((*keys.add(i)).shape) as *mut *mut BlendShape) =
+            *(&raw mut (*keys.add(i)).shape as *mut *mut BlendShape) =
                 translate_element(ec, ref_ptr(&(*keys.add(i)).shape) as *mut c_void)
                     as *mut BlendShape;
         }
         (*chan).keyframes.data = keys;
-        *(ptr::addr_of_mut!((*chan).target_shape) as *mut *mut BlendShape) = translate_element(
-            ec,
-            opt_ptr(ptr::addr_of!((*chan).target_shape)) as *mut c_void,
-        )
-            as *mut BlendShape;
+        *(&raw mut (*chan).target_shape as *mut *mut BlendShape) =
+            translate_element(ec, opt_ptr(&raw const (*chan).target_shape) as *mut c_void)
+                as *mut BlendShape;
         p_chan = p_chan.add(1);
     }
 
@@ -2707,8 +2685,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         add_ptr(p_deformer, ec.scene_view().cache_deformers_view().count());
     while p_deformer != p_deformer_end {
         let deformer: *mut CacheDeformer = *p_deformer;
-        *(ptr::addr_of_mut!((*deformer).file) as *mut *mut CacheFile) =
-            translate_element(ec, opt_ptr(ptr::addr_of!((*deformer).file)) as *mut c_void)
+        *(&raw mut (*deformer).file as *mut *mut CacheFile) =
+            translate_element(ec, opt_ptr(&raw const (*deformer).file) as *mut c_void)
                 as *mut CacheFile;
         p_deformer = p_deformer.add(1);
     }
@@ -2721,21 +2699,20 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_material != p_material_end {
         let material: *mut Material = *p_material;
 
-        *(ptr::addr_of_mut!((*material).shader) as *mut *mut Shader) = translate_element(
-            ec,
-            opt_ptr(ptr::addr_of!((*material).shader)) as *mut c_void,
-        ) as *mut Shader;
+        *(&raw mut (*material).shader as *mut *mut Shader) =
+            translate_element(ec, opt_ptr(&raw const (*material).shader) as *mut c_void)
+                as *mut Shader;
         // C: `material->fbx.maps` / `material->pbr.maps` — the flat `maps[]`
         // union view; the generated struct keeps only the named branch, whose
         // base is the aggregate itself (layout pinned in `native::scene_process`).
         translate_maps(
             ec,
-            ptr::addr_of_mut!((*material).fbx) as *mut MaterialMap,
+            &raw mut (*material).fbx as *mut MaterialMap,
             MATERIAL_FBX_MAP_COUNT,
         );
         translate_maps(
             ec,
-            ptr::addr_of_mut!((*material).pbr) as *mut MaterialMap,
+            &raw mut (*material).pbr as *mut MaterialMap,
             MATERIAL_PBR_MAP_COUNT,
         );
 
@@ -2745,7 +2722,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         for i in 0..(*material).textures.count {
             // C: `textures[i] = material->textures.data[i];` (struct assignment)
             ptr::copy_nonoverlapping((*material).textures.data.add(i), textures.add(i), 1);
-            *(ptr::addr_of_mut!((*textures.add(i)).texture) as *mut *mut Texture) =
+            *(&raw mut (*textures.add(i)).texture as *mut *mut Texture) =
                 translate_element(ec, ref_ptr(&(*textures.add(i)).texture) as *mut c_void)
                     as *mut Texture;
         }
@@ -2760,8 +2737,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         add_ptr(p_texture, ec.scene_view().textures_view().count());
     while p_texture != p_texture_end {
         let texture: *mut Texture = *p_texture;
-        *(ptr::addr_of_mut!((*texture).video) as *mut *mut Video) =
-            translate_element(ec, opt_ptr(ptr::addr_of!((*texture).video)) as *mut c_void)
+        *(&raw mut (*texture).video as *mut *mut Video) =
+            translate_element(ec, opt_ptr(&raw const (*texture).video) as *mut c_void)
                 as *mut Video;
 
         let layers: *mut TextureLayer =
@@ -2770,23 +2747,20 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         for i in 0..(*texture).layers.count {
             // C: `layers[i] = texture->layers.data[i];` (struct assignment)
             ptr::copy_nonoverlapping((*texture).layers.data.add(i), layers.add(i), 1);
-            *(ptr::addr_of_mut!((*layers.add(i)).texture) as *mut *mut Texture) =
+            *(&raw mut (*layers.add(i)).texture as *mut *mut Texture) =
                 translate_element(ec, ref_ptr(&(*layers.add(i)).texture) as *mut c_void)
                     as *mut Texture;
         }
         (*texture).layers.data = layers;
 
-        translate_element_list(
-            ec,
-            ptr::addr_of_mut!((*texture).file_textures) as *mut c_void,
-        )?;
+        translate_element_list(ec, &raw mut (*texture).file_textures as *mut c_void)?;
 
         // C: `if (texture->shader) { ... }`
-        if !opt_ptr(ptr::addr_of!((*texture).shader)).is_null() {
-            let mut shader: *mut ShaderTexture = opt_ptr(ptr::addr_of!((*texture).shader));
+        if !opt_ptr(&raw const (*texture).shader).is_null() {
+            let mut shader: *mut ShaderTexture = opt_ptr(&raw const (*texture).shader);
             shader = push_copy::<ShaderTexture>(ec.result_mut_ptr(), 1, shader);
             ufbxi_check_err!(ec.error_mut_ptr(), !shader.is_null(), "shader");
-            *(ptr::addr_of_mut!((*texture).shader) as *mut *mut ShaderTexture) = shader;
+            *(&raw mut (*texture).shader as *mut *mut ShaderTexture) = shader;
 
             let inputs: *mut ShaderTextureInput = push_copy::<ShaderTextureInput>(
                 ec.result_mut_ptr(),
@@ -2804,7 +2778,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     let p_shader_end: *mut *mut Shader = add_ptr(p_shader, ec.scene_view().shaders_view().count());
     while p_shader != p_shader_end {
         let shader: *mut Shader = *p_shader;
-        translate_element_list(ec, ptr::addr_of_mut!((*shader).bindings) as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*shader).bindings as *mut c_void)?;
         p_shader = p_shader.add(1);
     }
 
@@ -2816,7 +2790,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_layer != p_layer_end {
         let layer: *mut DisplayLayer = *p_layer;
 
-        translate_element_list(ec, ptr::addr_of_mut!((*layer).nodes) as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*layer).nodes as *mut c_void)?;
         p_layer = p_layer.add(1);
     }
 
@@ -2828,7 +2802,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_set != p_set_end {
         let set: *mut SelectionSet = *p_set;
 
-        translate_element_list(ec, ptr::addr_of_mut!((*set).nodes) as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*set).nodes as *mut c_void)?;
         p_set = p_set.add(1);
     }
 
@@ -2840,15 +2814,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_sel_node != p_sel_node_end {
         let node: *mut SelectionNode = *p_sel_node;
 
-        *(ptr::addr_of_mut!((*node).target_node) as *mut *mut UfbxNode) = translate_element(
-            ec,
-            opt_ptr(ptr::addr_of!((*node).target_node)) as *mut c_void,
-        )
-            as *mut UfbxNode;
-        *(ptr::addr_of_mut!((*node).target_mesh) as *mut *mut Mesh) = translate_element(
-            ec,
-            opt_ptr(ptr::addr_of!((*node).target_mesh)) as *mut c_void,
-        ) as *mut Mesh;
+        *(&raw mut (*node).target_node as *mut *mut UfbxNode) =
+            translate_element(ec, opt_ptr(&raw const (*node).target_node) as *mut c_void)
+                as *mut UfbxNode;
+        *(&raw mut (*node).target_mesh as *mut *mut Mesh) =
+            translate_element(ec, opt_ptr(&raw const (*node).target_mesh) as *mut c_void)
+                as *mut Mesh;
         p_sel_node = p_sel_node.add(1);
     }
 
@@ -2860,25 +2831,21 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_constraint != p_constraint_end {
         let constraint: *mut Constraint = *p_constraint;
 
-        *(ptr::addr_of_mut!((*constraint).node) as *mut *mut UfbxNode) = translate_element(
+        *(&raw mut (*constraint).node as *mut *mut UfbxNode) =
+            translate_element(ec, opt_ptr(&raw const (*constraint).node) as *mut c_void)
+                as *mut UfbxNode;
+        *(&raw mut (*constraint).aim_up_node as *mut *mut UfbxNode) = translate_element(
             ec,
-            opt_ptr(ptr::addr_of!((*constraint).node)) as *mut c_void,
+            opt_ptr(&raw const (*constraint).aim_up_node) as *mut c_void,
         ) as *mut UfbxNode;
-        *(ptr::addr_of_mut!((*constraint).aim_up_node) as *mut *mut UfbxNode) = translate_element(
+        *(&raw mut (*constraint).ik_effector as *mut *mut UfbxNode) = translate_element(
             ec,
-            opt_ptr(ptr::addr_of!((*constraint).aim_up_node)) as *mut c_void,
-        )
-            as *mut UfbxNode;
-        *(ptr::addr_of_mut!((*constraint).ik_effector) as *mut *mut UfbxNode) = translate_element(
+            opt_ptr(&raw const (*constraint).ik_effector) as *mut c_void,
+        ) as *mut UfbxNode;
+        *(&raw mut (*constraint).ik_end_node as *mut *mut UfbxNode) = translate_element(
             ec,
-            opt_ptr(ptr::addr_of!((*constraint).ik_effector)) as *mut c_void,
-        )
-            as *mut UfbxNode;
-        *(ptr::addr_of_mut!((*constraint).ik_end_node) as *mut *mut UfbxNode) = translate_element(
-            ec,
-            opt_ptr(ptr::addr_of!((*constraint).ik_end_node)) as *mut c_void,
-        )
-            as *mut UfbxNode;
+            opt_ptr(&raw const (*constraint).ik_end_node) as *mut c_void,
+        ) as *mut UfbxNode;
 
         let targets: *mut ConstraintTarget =
             push::<ConstraintTarget>(ec.result_mut_ptr(), (*constraint).targets.count);
@@ -2886,7 +2853,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         for i in 0..(*constraint).targets.count {
             // C: `targets[i] = constraint->targets.data[i];` (struct assignment)
             ptr::copy_nonoverlapping((*constraint).targets.data.add(i), targets.add(i), 1);
-            *(ptr::addr_of_mut!((*targets.add(i)).node) as *mut *mut UfbxNode) =
+            *(&raw mut (*targets.add(i)).node as *mut *mut UfbxNode) =
                 translate_element(ec, ref_ptr(&(*targets.add(i)).node) as *mut c_void)
                     as *mut UfbxNode;
         }
@@ -2902,7 +2869,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_audio_layer != p_audio_layer_end {
         let layer: *mut AudioLayer = *p_audio_layer;
 
-        translate_element_list(ec, ptr::addr_of_mut!((*layer).clips) as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*layer).clips as *mut c_void)?;
         p_audio_layer = p_audio_layer.add(1);
     }
 
@@ -2914,8 +2881,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_stack != p_stack_end {
         let stack: *mut AnimStack = *p_stack;
 
-        translate_element_list(ec, ptr::addr_of_mut!((*stack).layers) as *mut c_void)?;
-        translate_anim(ec, ptr::addr_of_mut!((*stack).anim) as *mut *mut Anim)?;
+        translate_element_list(ec, &raw mut (*stack).layers as *mut c_void)?;
+        translate_anim(ec, &raw mut (*stack).anim as *mut *mut Anim)?;
         p_stack = p_stack.add(1);
     }
 
@@ -2927,16 +2894,16 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_anim_layer != p_anim_layer_end {
         let layer: *mut AnimLayer = *p_anim_layer;
 
-        translate_element_list(ec, ptr::addr_of_mut!((*layer).anim_values) as *mut c_void)?;
+        translate_element_list(ec, &raw mut (*layer).anim_values as *mut c_void)?;
         let props: *mut AnimProp =
             push::<AnimProp>(ec.result_mut_ptr(), (*layer).anim_props.count + 1);
         ufbxi_check_err!(ec.error_mut_ptr(), !props.is_null(), "props");
         for i in 0..(*layer).anim_props.count {
             // C: `props[i] = layer->anim_props.data[i];` (struct assignment)
             ptr::copy_nonoverlapping((*layer).anim_props.data.add(i), props.add(i), 1);
-            *(ptr::addr_of_mut!((*props.add(i)).element) as *mut *mut Element) =
+            *(&raw mut (*props.add(i)).element as *mut *mut Element) =
                 translate_element(ec, ref_ptr(&(*props.add(i)).element) as *mut c_void);
-            *(ptr::addr_of_mut!((*props.add(i)).anim_value) as *mut *mut AnimValue) =
+            *(&raw mut (*props.add(i)).anim_value as *mut *mut AnimValue) =
                 translate_element(ec, ref_ptr(&(*props.add(i)).anim_value) as *mut c_void)
                     as *mut AnimValue;
         }
@@ -2961,7 +2928,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         for i in 0..(*pose).bone_poses.count {
             // C: `bones[i] = pose->bone_poses.data[i];` (struct assignment)
             ptr::copy_nonoverlapping((*pose).bone_poses.data.add(i), bones.add(i), 1);
-            *(ptr::addr_of_mut!((*bones.add(i)).bone_node) as *mut *mut UfbxNode) =
+            *(&raw mut (*bones.add(i)).bone_node as *mut *mut UfbxNode) =
                 translate_element(ec, ref_ptr(&(*bones.add(i)).bone_node) as *mut c_void)
                     as *mut UfbxNode;
         }
@@ -2978,21 +2945,15 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         add_ptr(p_value, ec.scene_view().anim_values_view().count());
     while p_value != p_value_end {
         let value: *mut AnimValue = *p_value;
-        *(ptr::addr_of_mut!((*value).curves[0]) as *mut *mut AnimCurve) = translate_element(
-            ec,
-            opt_ptr(ptr::addr_of!((*value).curves[0])) as *mut c_void,
-        )
-            as *mut AnimCurve;
-        *(ptr::addr_of_mut!((*value).curves[1]) as *mut *mut AnimCurve) = translate_element(
-            ec,
-            opt_ptr(ptr::addr_of!((*value).curves[1])) as *mut c_void,
-        )
-            as *mut AnimCurve;
-        *(ptr::addr_of_mut!((*value).curves[2]) as *mut *mut AnimCurve) = translate_element(
-            ec,
-            opt_ptr(ptr::addr_of!((*value).curves[2])) as *mut c_void,
-        )
-            as *mut AnimCurve;
+        *(&raw mut (*value).curves[0] as *mut *mut AnimCurve) =
+            translate_element(ec, opt_ptr(&raw const (*value).curves[0]) as *mut c_void)
+                as *mut AnimCurve;
+        *(&raw mut (*value).curves[1] as *mut *mut AnimCurve) =
+            translate_element(ec, opt_ptr(&raw const (*value).curves[1]) as *mut c_void)
+                as *mut AnimCurve;
+        *(&raw mut (*value).curves[2] as *mut *mut AnimCurve) =
+            translate_element(ec, opt_ptr(&raw const (*value).curves[2]) as *mut c_void)
+                as *mut AnimCurve;
         p_value = p_value.add(1);
     }
 
@@ -3039,13 +3000,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             num_animated,
             ec.opts_view().evaluate_flags(),
         );
-        ptr::write(ptr::addr_of_mut!((*elem).props), new_props);
+        ptr::write(&raw mut (*elem).props, new_props);
         // C: `elem->props.defaults = &ec->src_scene.elements.data[elem->element_id]->props;`
-        *(ptr::addr_of_mut!((*elem).props.defaults) as *mut *const crate::generated::Props) = ptr::addr_of!(
-            (*(*(ec.src_scene_view().elements_view().data() as *mut *mut Element)
+        *(&raw mut (*elem).props.defaults as *mut *const crate::generated::Props) =
+            &raw const (*(*(ec.src_scene_view().elements_view().data() as *mut *mut Element)
                 .add((*elem).element_id as usize)))
-            .props
-        );
+            .props;
         p_elem = p_elem.add(1);
     }
 
@@ -3064,7 +3024,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // C: `cache_opts.open_file_cb = ec->opts.open_file_cb;` (struct assignment)
         ptr::copy_nonoverlapping(
             ec.opts_view().open_file_cb_ptr(),
-            ptr::addr_of_mut!(cache_opts.open_file_cb),
+            &raw mut cache_opts.open_file_cb,
             1,
         );
         evaluate_skinning(
@@ -3089,21 +3049,21 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     ufbx_assert!((*ec.src_imp()).magic == SCENE_IMP_MAGIC);
     init_ref(
-        ptr::addr_of_mut!((*imp).refcount),
+        &raw mut (*imp).refcount,
         SCENE_IMP_MAGIC,
-        ptr::addr_of_mut!((*ec.src_imp()).refcount),
+        &raw mut (*ec.src_imp()).refcount,
     );
 
     (*imp).magic = SCENE_IMP_MAGIC;
     // C: `imp->scene = ec->scene;` (struct assignment)
-    ptr::copy_nonoverlapping(ec.scene_mut_ptr(), ptr::addr_of_mut!((*imp).scene), 1);
+    ptr::copy_nonoverlapping(ec.scene_mut_ptr(), &raw mut (*imp).scene, 1);
     (*imp).refcount.ator = ec.ator_result();
     (*imp).refcount.ator.error = ptr::null_mut();
 
     // Copy retained buffers and translate the allocator struct to the one
     // contained within `ufbxi_scene_imp`
     (*imp).refcount.buf = ec.result();
-    (*imp).refcount.buf.ator = ptr::addr_of_mut!((*imp).refcount.ator);
+    (*imp).refcount.buf.ator = &raw mut (*imp).refcount.ator;
 
     (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
     (*imp).scene.metadata.temp_memory_used = ec.ator_tmp_view().current_size();
@@ -3115,8 +3075,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     let p_elem_end: *mut *mut Element = add_ptr(p_elem, (*imp).scene.elements.count);
     while p_elem != p_elem_end {
         // C: `(*p_elem)->scene = &imp->scene;`
-        *(ptr::addr_of_mut!((*(*p_elem)).scene) as *mut *mut Scene) =
-            ptr::addr_of_mut!((*imp).scene);
+        *(&raw mut (*(*p_elem)).scene as *mut *mut Scene) = &raw mut (*imp).scene;
         p_elem = p_elem.add(1);
     }
 
@@ -3184,7 +3143,7 @@ pub(crate) unsafe fn evaluate_scene(
         if !p_error.is_null() {
             clear_error(p_error);
         }
-        ptr::addr_of_mut!((*ec.scene_imp()).scene)
+        &raw mut (*ec.scene_imp()).scene
     } else {
         fix_error_type(
             ec.error_mut_ptr(),
@@ -3572,13 +3531,13 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
             // C: `ufbxi_check_err(&ac->error, ufbxi_check_string(&ac->error, &dst->prop_name, &src->prop_name));`
             check_string(
                 ac.error_mut_ptr(),
-                ptr::addr_of_mut!((*dst).prop_name),
-                ptr::addr_of!((*src).prop_name) as *const String,
+                &raw mut (*dst).prop_name,
+                &raw const (*src).prop_name as *const String,
             )?;
             check_string(
                 ac.error_mut_ptr(),
-                ptr::addr_of_mut!((*dst).value_str),
-                ptr::addr_of!((*src).value_str) as *const String,
+                &raw mut (*dst).value_str,
+                &raw const (*src).value_str as *const String,
             )?;
 
             (*dst)._internal_key = get_name_key((*dst).prop_name.data, (*dst).prop_name.length);
@@ -3604,7 +3563,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
         while over != over_end {
             if (*over).value_str.length > 0 {
                 // C: `ufbxi_check_err(&ac->error, ufbxi_push_anim_string(ac, &over->value_str));`
-                push_anim_string(ac, ptr::addr_of_mut!((*over).value_str))?;
+                push_anim_string(ac, &raw mut (*over).value_str)?;
             }
 
             if str_equal((*over).prop_name, prev_name) {
@@ -3620,7 +3579,7 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
             if global_str != global_end && str_equal(*global_str, (*over).prop_name) {
                 (*over).prop_name = *global_str;
             } else {
-                push_anim_string(ac, ptr::addr_of_mut!((*over).prop_name))?;
+                push_anim_string(ac, &raw mut (*over).prop_name)?;
             }
 
             prev_name = (*over).prop_name;
@@ -3686,14 +3645,14 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
     (ac.imp() as *mut u8).expose_provenance();
 
     init_ref(
-        ptr::addr_of_mut!((*ac.imp()).refcount),
+        &raw mut (*ac.imp()).refcount,
         ANIM_IMP_MAGIC,
-        ptr::addr_of_mut!((*get_imp::<SceneImp>(scene as *mut Scene as *mut c_void)).refcount),
+        &raw mut (*get_imp::<SceneImp>(scene as *mut Scene as *mut c_void)).refcount,
     );
 
     (*ac.imp()).magic = ANIM_IMP_MAGIC;
     // C: `ac->imp->anim = ac->anim;` (struct assignment)
-    ptr::copy_nonoverlapping(ac.anim_mut_ptr(), ptr::addr_of_mut!((*ac.imp()).anim), 1);
+    ptr::copy_nonoverlapping(ac.anim_mut_ptr(), &raw mut (*ac.imp()).anim, 1);
     (*ac.imp()).refcount.ator = ac.ator_result();
     (*ac.imp()).refcount.buf = ac.result();
 
@@ -4608,7 +4567,7 @@ pub(crate) unsafe fn bake_times(
 
     for curve_ix in 0..3usize {
         let curve: *mut AnimCurve = opt_ptr(
-            (ptr::addr_of!((*anim_value).curves) as *const Option<Ref<AnimCurve>>).add(curve_ix),
+            (&raw const (*anim_value).curves as *const Option<Ref<AnimCurve>>).add(curve_ix),
         );
         if curve.is_null() {
             continue;
@@ -5093,13 +5052,7 @@ pub(crate) unsafe fn bake_postprocess_vec3(
                 & (BakedKeyFlags::STEP_LEFT.raw() | BakedKeyFlags::STEP_RIGHT.raw()))
                 != 0
             {
-                keep = postprocess_step(
-                    bc,
-                    prev_time,
-                    next_time,
-                    ptr::addr_of_mut!(cur.time),
-                    cur.flags,
-                );
+                keep = postprocess_step(bc, prev_time, next_time, &raw mut cur.time, cur.flags);
             }
             if keep {
                 // C: `src.data[dst] = cur; dst++; prev_time = cur.time;`
@@ -5211,13 +5164,7 @@ pub(crate) unsafe fn bake_postprocess_quat(
                 & (BakedKeyFlags::STEP_LEFT.raw() | BakedKeyFlags::STEP_RIGHT.raw()))
                 != 0
             {
-                keep = postprocess_step(
-                    bc,
-                    prev_time,
-                    next_time,
-                    ptr::addr_of_mut!(cur.time),
-                    cur.flags,
-                );
+                keep = postprocess_step(bc, prev_time, next_time, &raw mut cur.time, cur.flags);
             }
             if keep {
                 prev_time = cur.time;
@@ -5387,10 +5334,8 @@ pub(crate) unsafe fn bake_node_imp(
 
     for i in 0..COMPLEX_TRANSLATION_PROPS.0.len() {
         let name: *const u8 = COMPLEX_TRANSLATION_PROPS.0[i];
-        let prop: Option<&PropView> = find_prop(
-            PropsView::from_ptr(core::ptr::addr_of_mut!((*node).element.props)),
-            name,
-        );
+        let prop: Option<&PropView> =
+            find_prop(PropsView::from_ptr(&raw mut (*node).element.props), name);
         // C: `prop->value_vec3` — the `ufbx_prop` value union's 3-real view
         // over `value_vec4`.
         if prop.is_some_and(|prop| !is_vec3_zero(prop.value_vec3())) {
@@ -5438,9 +5383,9 @@ pub(crate) unsafe fn bake_node_imp(
     };
     // C: `node->parent` / `node->parent->scale_helper` — short-circuit chain,
     // so the inner loads only happen when the outer pointer is non-NULL.
-    let parent: *mut UfbxNode = opt_ptr(ptr::addr_of!((*node).parent));
+    let parent: *mut UfbxNode = opt_ptr(&raw const (*node).parent);
     let parent_scale_helper: *mut UfbxNode = if !parent.is_null() {
-        opt_ptr(ptr::addr_of!((*parent).scale_helper))
+        opt_ptr(&raw const (*parent).scale_helper)
     } else {
         ptr::null_mut()
     };
@@ -5452,7 +5397,7 @@ pub(crate) unsafe fn bake_node_imp(
             if !(*scale_helper_t).constant_scale {
                 resample_translation = true;
             }
-            push_resampled_times(bc, ptr::addr_of!((*scale_helper_t).scale_keys))?;
+            push_resampled_times(bc, &raw const (*scale_helper_t).scale_keys)?;
         } else {
             constant_scale_t = (*parent_scale_helper).inherit_scale;
         }
@@ -5496,7 +5441,7 @@ pub(crate) unsafe fn bake_node_imp(
         }
     }
 
-    finalize_bake_times(bc, ptr::addr_of_mut!(times_t))?;
+    finalize_bake_times(bc, &raw mut times_t)?;
 
     // Rotation
     if complex_rotation {
@@ -5534,7 +5479,7 @@ pub(crate) unsafe fn bake_node_imp(
             prop = prop.add(1);
         }
     }
-    finalize_bake_times(bc, ptr::addr_of_mut!(times_r))?;
+    finalize_bake_times(bc, &raw mut times_r)?;
 
     // Scaling
     let mut resample_scale: bool = false;
@@ -5548,12 +5493,12 @@ pub(crate) unsafe fn bake_node_imp(
     };
     // C: `node->parent->inherit_scale_node->scale_helper` — short-circuit chain.
     let parent_inherit_scale_node: *mut UfbxNode = if !parent.is_null() {
-        opt_ptr(ptr::addr_of!((*parent).inherit_scale_node))
+        opt_ptr(&raw const (*parent).inherit_scale_node)
     } else {
         ptr::null_mut()
     };
     let parent_inherit_scale_helper: *mut UfbxNode = if !parent_inherit_scale_node.is_null() {
-        opt_ptr(ptr::addr_of!((*parent_inherit_scale_node).scale_helper))
+        opt_ptr(&raw const (*parent_inherit_scale_node).scale_helper)
     } else {
         ptr::null_mut()
     };
@@ -5570,7 +5515,7 @@ pub(crate) unsafe fn bake_node_imp(
             if !(*scale_helper_s).constant_scale {
                 resample_scale = true;
             }
-            push_resampled_times(bc, ptr::addr_of!((*scale_helper_s).scale_keys))?;
+            push_resampled_times(bc, &raw const (*scale_helper_s).scale_keys)?;
         } else {
             constant_scale_s = (*inherit_helper).local_transform.scale;
         }
@@ -5591,7 +5536,7 @@ pub(crate) unsafe fn bake_node_imp(
             prop = prop.add(1);
         }
     }
-    finalize_bake_times(bc, ptr::addr_of_mut!(times_s))?;
+    finalize_bake_times(bc, &raw mut times_s)?;
 
     // C: `ufbx_baked_vec3_list keys_t; ufbx_baked_quat_list keys_r; ufbx_baked_vec3_list keys_s;`
     let mut keys_t: List<BakedVec3> = MaybeUninit::zeroed().assume_init();
@@ -5674,7 +5619,7 @@ pub(crate) unsafe fn bake_node_imp(
         if (flags & TransformFlags::INCLUDE_TRANSLATION.raw()) != 0 {
             if !scale_helper_t.is_null() {
                 let scale: Vec3 = evaluate_baked_vec3(
-                    ptr::read(ptr::addr_of!((*scale_helper_t).scale_keys)),
+                    ptr::read(&raw const (*scale_helper_t).scale_keys),
                     eval_time,
                 );
                 transform.translation.x *= scale.x;
@@ -5700,7 +5645,7 @@ pub(crate) unsafe fn bake_node_imp(
         if (flags & TransformFlags::INCLUDE_SCALE.raw()) != 0 {
             if !scale_helper_s.is_null() {
                 let scale: Vec3 = evaluate_baked_vec3(
-                    ptr::read(ptr::addr_of!((*scale_helper_s).scale_keys)),
+                    ptr::read(&raw const (*scale_helper_s).scale_keys),
                     eval_time,
                 );
                 transform.scale.x *= scale.x;
@@ -5726,20 +5671,20 @@ pub(crate) unsafe fn bake_node_imp(
     (*baked_node).typed_id = (*node).element.typed_id;
     bake_postprocess_vec3(
         bc,
-        ptr::addr_of_mut!((*baked_node).translation_keys),
-        ptr::addr_of_mut!((*baked_node).constant_translation),
+        &raw mut (*baked_node).translation_keys,
+        &raw mut (*baked_node).constant_translation,
         keys_t,
     )?;
     bake_postprocess_quat(
         bc,
-        ptr::addr_of_mut!((*baked_node).rotation_keys),
-        ptr::addr_of_mut!((*baked_node).constant_rotation),
+        &raw mut (*baked_node).rotation_keys,
+        &raw mut (*baked_node).constant_rotation,
         keys_r,
     )?;
     bake_postprocess_vec3(
         bc,
-        ptr::addr_of_mut!((*baked_node).scale_keys),
-        ptr::addr_of_mut!((*baked_node).constant_scale),
+        &raw mut (*baked_node).scale_keys,
+        &raw mut (*baked_node).constant_scale,
         keys_s,
     )?;
 
@@ -5767,7 +5712,7 @@ pub(crate) unsafe fn bake_node_imp(
                     !push_copy::<u32>(
                         bc.tmp_bake_stack_mut_ptr(),
                         1,
-                        ptr::addr_of!((*child).element.element_id),
+                        &raw const (*child).element.element_id,
                     )
                     .is_null(),
                     "((uint32_t*)ufbxi_push_size_copy((&bc->tmp_bake_stack), sizeof(uint32_t), (1), (&child->element_id)))"
@@ -5775,13 +5720,13 @@ pub(crate) unsafe fn bake_node_imp(
             }
             // C: `child->inherit_scale_node && child->inherit_scale_node->scale_helper && child->scale_helper`
             let child_inherit_scale_node: *mut UfbxNode =
-                opt_ptr(ptr::addr_of!((*child).inherit_scale_node));
+                opt_ptr(&raw const (*child).inherit_scale_node);
             let child_inherit_scale_helper: *mut UfbxNode = if !child_inherit_scale_node.is_null() {
-                opt_ptr(ptr::addr_of!((*child_inherit_scale_node).scale_helper))
+                opt_ptr(&raw const (*child_inherit_scale_node).scale_helper)
             } else {
                 ptr::null_mut()
             };
-            let child_scale_helper: *mut UfbxNode = opt_ptr(ptr::addr_of!((*child).scale_helper));
+            let child_scale_helper: *mut UfbxNode = opt_ptr(&raw const (*child).scale_helper);
             if !child_inherit_scale_node.is_null()
                 && !child_inherit_scale_helper.is_null()
                 && !child_scale_helper.is_null()
@@ -5804,7 +5749,7 @@ pub(crate) unsafe fn bake_node_imp(
                         !push_copy::<u32>(
                             bc.tmp_bake_stack_mut_ptr(),
                             1,
-                            ptr::addr_of!((*child_scale_helper).element.element_id),
+                            &raw const (*child_scale_helper).element.element_id,
                         )
                         .is_null(),
                         "((uint32_t*)ufbxi_push_size_copy((&bc->tmp_bake_stack), sizeof(uint32_t), (1), (&child->scale_helper->element_id)))"
@@ -5833,7 +5778,7 @@ pub(crate) unsafe fn bake_node(
     // until all dependencies are baked.
     while bc.tmp_bake_stack_view().num_items() > 0 {
         let mut child_id: u32 = 0;
-        pop::<u32>(bc.tmp_bake_stack_mut_ptr(), 1, ptr::addr_of_mut!(child_id));
+        pop::<u32>(bc.tmp_bake_stack_mut_ptr(), 1, &raw mut child_id);
         bake_node_imp(bc, child_id, ptr::null_mut(), 0)?;
     }
 
@@ -5860,7 +5805,7 @@ pub(crate) unsafe fn bake_anim_prop(
 
     // C: `ufbxi_bake_time_list times;`
     let mut times: BakeTimeList = MaybeUninit::zeroed().assume_init();
-    finalize_bake_times(bc, ptr::addr_of_mut!(times))?;
+    finalize_bake_times(bc, &raw mut times)?;
 
     // C: `ufbx_baked_vec3_list keys;`
     let mut keys: List<BakedVec3> = MaybeUninit::zeroed().assume_init();
@@ -5885,7 +5830,7 @@ pub(crate) unsafe fn bake_anim_prop(
         );
         (*keys_data.add(i)).time = bake_time.time;
         // C: `prop.value_vec3` — the value union's 3-real view over `value_vec4`.
-        (*keys_data.add(i)).value = *(ptr::addr_of!(prop.value_vec4) as *const Vec3);
+        (*keys_data.add(i)).value = *(&raw const prop.value_vec4 as *const Vec3);
         (*keys_data.add(i)).flags = BakedKeyFlags::from_raw(bake_time.flags);
     }
 
@@ -5906,8 +5851,8 @@ pub(crate) unsafe fn bake_anim_prop(
 
     bake_postprocess_vec3(
         bc,
-        ptr::addr_of_mut!((*baked_prop).keys),
-        ptr::addr_of_mut!((*baked_prop).constant_value),
+        &raw mut (*baked_prop).keys,
+        &raw mut (*baked_prop).constant_value,
         keys,
     )?;
 
@@ -6042,7 +5987,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
             let prop: *mut BakeProp = push::<BakeProp>(bc.tmp_bake_props_mut_ptr(), 1);
             ufbxi_check_err!(bc.error_mut_ptr(), !prop.is_null(), "prop");
 
-            let element: *mut Element = ref_ptr(ptr::addr_of!((*anim_prop).element));
+            let element: *mut Element = ref_ptr(&raw const (*anim_prop).element);
 
             // Sort nodes by `typed_id` to make sure we process them in order.
             if (*element).type_ as u32 == ElementType::Node as u32 {
@@ -6056,7 +6001,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
 
             (*prop).element_id = (*element).element_id;
             (*prop).prop_name = (*anim_prop).prop_name.data;
-            (*prop).anim_value = ref_ptr(ptr::addr_of!((*anim_prop).anim_value));
+            (*prop).anim_value = ref_ptr(&raw const (*anim_prop).anim_value);
 
             anim_prop = anim_prop.add(1);
         }
@@ -6100,7 +6045,7 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
         if has_weight_times {
             // C: `ufbxi_bake_time_list weight_times = { 0 };`
             let mut weight_times: BakeTimeList = MaybeUninit::zeroed().assume_init();
-            finalize_bake_times(bc, ptr::addr_of_mut!(weight_times))?;
+            finalize_bake_times(bc, &raw mut weight_times)?;
 
             bc.layer_weight_times_view().set_count(weight_times.count);
             bc.layer_weight_times_view().set_data(push_copy::<BakeTime>(
@@ -6260,7 +6205,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     bake_anim(bc)?;
 
     init_ref(
-        ptr::addr_of_mut!((*bc.imp()).refcount),
+        &raw mut (*bc.imp()).refcount,
         BAKED_ANIM_IMP_MAGIC,
         ptr::null_mut(),
     );
@@ -6280,7 +6225,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
 
     (*bc.imp()).magic = BAKED_ANIM_IMP_MAGIC;
     // C: `bc->imp->bake = bc->bake;` (struct assignment)
-    ptr::copy_nonoverlapping(bc.bake_mut_ptr(), ptr::addr_of_mut!((*bc.imp()).bake), 1);
+    ptr::copy_nonoverlapping(bc.bake_mut_ptr(), &raw mut (*bc.imp()).bake, 1);
     (*bc.imp()).refcount.ator = bc.ator_result();
     (*bc.imp()).refcount.buf = bc.result();
 
