@@ -2599,7 +2599,7 @@ pub(crate) unsafe fn subdivide_mesh(
 // ufbx.c:30071-30079 `ufbxi_subdivide_mesh` (`#else` — feature disabled)
 #[cfg(not(feature = "subdivision"))]
 #[inline(never)]
-pub(crate) unsafe fn subdivide_mesh(
+pub(crate) fn subdivide_mesh(
     mesh: *const Mesh,
     level: usize,
     user_opts: *const RawSubdivideOpts,

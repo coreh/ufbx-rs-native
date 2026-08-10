@@ -1749,7 +1749,7 @@ pub(crate) unsafe fn evaluate_scene(
 }
 
 #[cfg(not(feature = "scene-eval"))]
-pub(crate) unsafe fn evaluate_scene(
+pub(crate) fn evaluate_scene(
     scene: *const Scene,
     anim: *const Anim,
     time: f64,
@@ -1899,7 +1899,7 @@ pub(crate) unsafe fn bake_anim(
 }
 
 #[cfg(not(feature = "baking"))]
-pub(crate) unsafe fn bake_anim(
+pub(crate) fn bake_anim(
     scene: *const Scene,
     anim: *const Anim,
     opts: *const RawBakeOpts,
@@ -3591,7 +3591,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
 // disabled). That arm is C parity (a build without `feature = "tessellation"`
 // reports `UFBX_ERROR_FEATURE_DISABLED`), NOT a stub.
 #[cfg(not(feature = "tessellation"))]
-pub(crate) unsafe fn tessellate_nurbs_curve(
+pub(crate) fn tessellate_nurbs_curve(
     curve: *const crate::generated::NurbsCurve,
     opts: *const crate::generated::RawTessellateCurveOpts,
     error: *mut Error,
@@ -3659,7 +3659,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
 // disabled). C-parity note: this arm has NO `ufbxi_fmt_err_info` call (unlike
 // `ufbx_tessellate_nurbs_curve` above) — do not add one.
 #[cfg(not(feature = "tessellation"))]
-pub(crate) unsafe fn tessellate_nurbs_surface(
+pub(crate) fn tessellate_nurbs_surface(
     surface: *const crate::generated::NurbsSurface,
     opts: *const crate::generated::RawTessellateSurfaceOpts,
     error: *mut Error,
@@ -3887,7 +3887,7 @@ pub(crate) unsafe fn catch_triangulate_face(
 // C: `ufbx_abi ufbxi_noinline` (ufbx.c:32392).
 #[cfg(not(feature = "triangulation"))]
 #[inline(never)]
-pub(crate) unsafe fn catch_triangulate_face(
+pub(crate) fn catch_triangulate_face(
     panic: *mut Panic,
     indices: *mut u32,
     num_indices: usize,

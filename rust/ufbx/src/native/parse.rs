@@ -181,7 +181,7 @@ pub(crate) struct Refcount {
 // its wide (allocation-covering) pointer once at creation, so the header falls
 // within an exposed allocation and the recovered pointer can legally reach it.
 #[inline(always)]
-pub(crate) unsafe fn get_imp<T>(ptr: *mut c_void) -> *mut T {
+pub(crate) fn get_imp<T>(ptr: *mut c_void) -> *mut T {
     let addr = (ptr as *mut u8).addr();
     core::ptr::with_exposed_provenance_mut::<u8>(addr - size_of::<Refcount>()) as *mut T
 }

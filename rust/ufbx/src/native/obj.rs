@@ -2042,7 +2042,7 @@ pub(crate) unsafe fn mtl_load(uc: &Context) -> Result<(), Fail> {
 #[cfg(not(feature = "obj"))]
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn obj_load(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn obj_load(uc: &Context) -> Result<(), Fail> {
     ufbxi_fmt_err_info!(uc.error_ptr(), "UFBX_ENABLE_FORMAT_OBJ");
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_FORMAT_OBJ", "Feature disabled");
 }
@@ -2051,7 +2051,7 @@ pub(crate) unsafe fn obj_load(uc: &Context) -> Result<(), Fail> {
 #[cfg(not(feature = "obj"))]
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn mtl_load(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn mtl_load(uc: &Context) -> Result<(), Fail> {
     ufbxi_fmt_err_info!(uc.error_ptr(), "UFBX_ENABLE_FORMAT_OBJ");
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_FORMAT_OBJ", "Feature disabled");
 }
@@ -2059,6 +2059,6 @@ pub(crate) unsafe fn mtl_load(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:18061-18063 `ufbxi_obj_free` (`#else` branch — feature disabled)
 #[cfg(not(feature = "obj"))]
 #[inline(always)]
-pub(crate) unsafe fn obj_free(uc: &Context) {
+pub(crate) fn obj_free(uc: &Context) {
     let _ = uc;
 }

@@ -266,7 +266,7 @@ pub(crate) unsafe fn generate_indices(
 // ufbx.c:30231-30239 `ufbxi_generate_indices` (`#else` branch — feature disabled)
 #[cfg(not(feature = "index-gen"))]
 #[inline(never)]
-pub(crate) unsafe fn generate_indices(
+pub(crate) fn generate_indices(
     user_streams: *const RawVertexStream,
     num_streams: usize,
     indices: *mut u32,

@@ -1986,7 +1986,7 @@ pub(crate) struct GeometryCacheImp {
 // build with `UFBX_MINIMAL`.
 #[cfg(not(feature = "geometry-cache"))]
 #[inline(never)]
-pub(crate) unsafe fn load_geometry_cache(
+pub(crate) fn load_geometry_cache(
     filename: String,
     user_opts: *const RawGeometryCacheOpts,
     p_error: *mut Error,
@@ -2004,7 +2004,7 @@ pub(crate) unsafe fn load_geometry_cache(
 // ufbx.c:24781-24783 `ufbxi_free_geometry_cache_imp` (`#else` branch — feature disabled)
 #[cfg(not(feature = "geometry-cache"))]
 #[inline(always)]
-pub(crate) unsafe fn free_geometry_cache_imp(imp: *mut GeometryCacheImp) {
+pub(crate) fn free_geometry_cache_imp(imp: *mut GeometryCacheImp) {
     let _ = imp;
 }
 
@@ -2127,10 +2127,7 @@ pub(crate) unsafe fn load_external_cache(
 // ufbx.c:24862-24865 (`#else` branch of `UFBXI_FEATURE_GEOMETRY_CACHE`)
 #[cfg(not(feature = "geometry-cache"))]
 #[inline(never)]
-pub(crate) unsafe fn load_external_cache(
-    uc: &Context,
-    file: *mut ExternalFile,
-) -> Result<(), Fail> {
+pub(crate) fn load_external_cache(uc: &Context, file: *mut ExternalFile) -> Result<(), Fail> {
     // C: `file` is unreferenced in the `#else` arm.
     let _ = file;
     if uc.opts_view().ignore_missing_external_files() {
