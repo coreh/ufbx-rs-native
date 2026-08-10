@@ -785,9 +785,7 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
     }
     // Merge sort ping-ponging between `m_data` and `m_tmp`
     while block_size < size {
-        let swap = dst;
-        dst = src;
-        src = swap;
+        std::mem::swap(&mut dst, &mut src);
         let mut base = 0usize;
         while base < size {
             let mut i = base;
@@ -1000,9 +998,7 @@ pub(crate) unsafe fn stable_sort(
     }
     // Merge sort ping-ponging between `data` and `tmp`
     while block_size < size {
-        let swap = dst;
-        dst = src;
-        src = swap;
+        std::mem::swap(&mut dst, &mut src);
         let mut base = 0usize;
         while base < size {
             let mut i = base;
@@ -1089,7 +1085,7 @@ pub(crate) unsafe fn unstable_sort(
             } else {
                 child
             };
-            if child + 1 <= end
+            if child < end
                 && less_fn(
                     less_user,
                     data.add(next * stride) as *const c_void,
@@ -1271,6 +1267,9 @@ pub(crate) mod math {
 
 #[cfg(test)]
 mod tests {
+    // Tests assert compile-time invariants on `const`s (e.g. `assert!(IS_REGRESSION)`);
+    // asserting on a constant is the intent, so `assertions_on_constants` is allowed here.
+    #![allow(clippy::assertions_on_constants)]
     use super::*;
 
     #[test]

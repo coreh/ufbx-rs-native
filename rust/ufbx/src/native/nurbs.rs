@@ -513,7 +513,6 @@ impl TessellateSurfaceContext {
 // ufbx.c:27840-27931 `ufbxi_tessellate_nurbs_curve_imp`
 #[cfg(feature = "tessellation")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> Result<(), Fail> {
     // C: `tc->opts.span_subdivision <= 0` — `span_subdivision` is `size_t`.
     if tc.opts_view().span_subdivision() == 0 {
@@ -651,7 +650,6 @@ pub(crate) unsafe fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> 
 // ufbx.c:27933-28239 `ufbxi_tessellate_nurbs_surface_imp`
 #[cfg(feature = "tessellation")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn tessellate_nurbs_surface_imp(
     tc: &TessellateSurfaceContext,
 ) -> Result<(), Fail> {

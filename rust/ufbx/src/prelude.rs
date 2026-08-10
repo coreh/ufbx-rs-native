@@ -1,3 +1,10 @@
+// The `FromRust` trait converts a Rust-side options/callback value into its raw
+// C-ABI representation; its method is spelled `from_rust(&self)`, which clippy's
+// `wrong_self_convention` dislikes (`from_*` conventionally takes no `self`). The
+// name is deliberate and pervasive across the trait impls, so it is allowed for
+// this module.
+#![allow(clippy::wrong_self_convention)]
+
 use crate::generated::format_error;
 use crate::generated::{
     Error, Progress, ProgressResult, RawAllocator, RawStream, RawVertexStream, Vec2, Vec3, Vec4,
@@ -79,7 +86,7 @@ impl<'a, T> IntoIterator for &'a List<T> {
     type Item = &'a T;
     type IntoIter = slice::Iter<'a, T>;
     fn into_iter(self) -> Self::IntoIter {
-        self.as_ref().into_iter()
+        self.as_ref().iter()
     }
 }
 
@@ -136,7 +143,7 @@ impl<'a, T> IntoIterator for &'a RefList<T> {
     type IntoIter = RefIter<'a, T>;
     fn into_iter(self) -> RefIter<'a, T> {
         RefIter::<'_, T> {
-            inner: self.as_ref().into_iter(),
+            inner: self.as_ref().iter(),
         }
     }
 }
@@ -764,7 +771,9 @@ pub trait StreamInterface {
             while left > 0 {
                 let to_read = min(left, local_buf.len());
                 let num_read = self
-                    .read(mem::transmute(&mut local_buf[0..to_read]))
+                    .read(mem::transmute::<&mut [mem::MaybeUninit<u8>], &mut [u8]>(
+                        &mut local_buf[0..to_read],
+                    ))
                     .unwrap_or(0);
                 if num_read != to_read {
                     return false;
@@ -856,18 +865,14 @@ unsafe extern "C" fn allocator_imp_box_free_allocator(user: *mut c_void) {
     ator.free_allocator()
 }
 
+#[derive(Default)]
 pub enum Allocator {
     Libc,
+    #[default]
     Global,
     System,
     Box(Box<dyn AllocatorInterface>),
     Raw(Unsafe<RawAllocator>),
-}
-
-impl Default for Allocator {
-    fn default() -> Self {
-        Allocator::Global
-    }
 }
 
 impl Allocator {
@@ -912,16 +917,13 @@ impl Allocator {
     }
 }
 
+#[derive(Default)]
 pub enum ThreadPool {
+    #[default]
     None,
     Raw(Unsafe<RawThreadPool>),
 }
 
-impl Default for ThreadPool {
-    fn default() -> Self {
-        ThreadPool::None
-    }
-}
 impl ThreadPool {
     pub(crate) fn from_rust(&self) -> RawThreadPool {
         match self {
@@ -958,12 +960,12 @@ pub struct VertexStream<'a> {
 
 impl VertexStream<'_> {
     pub fn new<T: Copy + Sized>(data: &mut [T]) -> VertexStream<'_> {
-        return VertexStream {
+        VertexStream {
             data: data.as_mut_ptr() as *mut c_void,
             vertex_count: data.len(),
             vertex_size: mem::size_of::<T>(),
             _marker: PhantomData,
-        };
+        }
     }
 }
 
@@ -1122,7 +1124,7 @@ pub unsafe extern "C" fn call_close_memory_cb<F>(
     data: *mut c_void,
     data_size: usize,
 ) where
-    F: FnMut(*mut c_void, usize) -> (),
+    F: FnMut(*mut c_void, usize),
 {
     let func: &mut F = &mut *(user as *mut F);
     (func)(data, data_size)
@@ -1147,10 +1149,14 @@ impl Debug for Error {
         unsafe {
             let mut local_buf: [mem::MaybeUninit<u8>; 1024] =
                 mem::MaybeUninit::uninit().assume_init();
-            let length = format_error(mem::transmute(local_buf.as_mut_slice()), self);
-            f.write_str(str::from_utf8_unchecked(mem::transmute(
-                &local_buf[..length],
-            )))
+            let length = format_error(
+                mem::transmute::<&mut [mem::MaybeUninit<u8>], &mut [u8]>(local_buf.as_mut_slice()),
+                self,
+            );
+            f.write_str(str::from_utf8_unchecked(mem::transmute::<
+                &[mem::MaybeUninit<u8>],
+                &[u8],
+            >(&local_buf[..length])))
         }
     }
 }
@@ -1199,7 +1205,7 @@ impl Arena {
         ptr
     }
     pub fn push_vec<T: 'static>(&mut self, vec: Vec<T>) -> *const T {
-        if vec.len() == 0 {
+        if vec.is_empty() {
             return ptr::null();
         }
         let ptr = vec.as_ptr();
@@ -1281,16 +1287,12 @@ pub(crate) trait FromRust {
     }
 }
 
+#[derive(Default)]
 pub enum StringOpt<'a> {
+    #[default]
     Unset,
     Ref(&'a str),
     Owned(string::String),
-}
-
-impl Default for StringOpt<'_> {
-    fn default() -> Self {
-        StringOpt::Unset
-    }
 }
 
 impl<'a> From<&'a str> for StringOpt<'a> {
@@ -1316,16 +1318,12 @@ impl<'a> FromRust for StringOpt<'a> {
     }
 }
 
+#[derive(Default)]
 pub enum BlobOpt<'a> {
+    #[default]
     Unset,
     Ref(&'a [u8]),
     Owned(Vec<u8>),
-}
-
-impl Default for BlobOpt<'_> {
-    fn default() -> Self {
-        BlobOpt::Unset
-    }
 }
 
 impl<'a> From<&'a [u8]> for BlobOpt<'a> {
@@ -1351,17 +1349,13 @@ impl<'a> FromRust for BlobOpt<'a> {
     }
 }
 
+#[derive(Default)]
 pub enum ListOpt<'a, T> {
+    #[default]
     Unset,
     Ref(&'a [T]),
     Mut(&'a mut [T]),
     Owned(Vec<T>),
-}
-
-impl<T> Default for ListOpt<'_, T> {
-    fn default() -> Self {
-        ListOpt::Unset
-    }
 }
 
 impl<'a, T> From<&'a [T]> for ListOpt<'a, T> {
@@ -1397,7 +1391,7 @@ impl<'a, T: FromRust> FromRust for ListOpt<'a, T> {
         let items: Vec<T::Result> = match mem::take(self) {
             ListOpt::Unset => return RawList::default(),
             ListOpt::Ref(v) => v.iter().map(|v| T::from_rust(v, arena)).collect(),
-            ListOpt::Mut(v) => v.into_iter().map(|v| T::from_rust_mut(v, arena)).collect(),
+            ListOpt::Mut(v) => v.iter_mut().map(|v| T::from_rust_mut(v, arena)).collect(),
             ListOpt::Owned(v) => v
                 .into_iter()
                 .map(|mut v| T::from_rust_mut(&mut v, arena))

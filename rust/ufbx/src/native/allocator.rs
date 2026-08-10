@@ -602,8 +602,10 @@ mod tests {
     fn test_allocation_limit() {
         unsafe {
             let mut err = Error::default();
-            let mut opts = RawAllocatorOpts::default();
-            opts.allocation_limit = 1;
+            let opts = RawAllocatorOpts {
+                allocation_limit: 1,
+                ..Default::default()
+            };
             let mut ator = make_ator(&mut err, &opts);
 
             let p = alloc::<u8>(&mut ator, 8);
@@ -630,8 +632,10 @@ mod tests {
     fn test_memory_limit() {
         unsafe {
             let mut err = Error::default();
-            let mut opts = RawAllocatorOpts::default();
-            opts.memory_limit = 100;
+            let opts = RawAllocatorOpts {
+                memory_limit: 100,
+                ..Default::default()
+            };
             let mut ator = make_ator(&mut err, &opts);
 
             // C check is `total < max_size - current_size`: exactly-at-limit fails.

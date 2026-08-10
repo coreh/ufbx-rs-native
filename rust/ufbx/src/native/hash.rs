@@ -812,24 +812,24 @@ mod tests {
     #[test]
     fn check_ascii_flag() {
         // Pure ASCII (0x01..=0x7f) must NOT set the flag.
-        assert_eq!(hsca(b"a").1, false);
-        assert_eq!(hsca(b"ab").1, false);
-        assert_eq!(hsca(b"abc").1, false);
-        assert_eq!(hsca(b"abcd").1, false);
-        assert_eq!(hsca(b"abcdefg").1, false);
-        assert_eq!(hsca(b"\x01\x7f").1, false);
+        assert!(!hsca(b"a").1);
+        assert!(!hsca(b"ab").1);
+        assert!(!hsca(b"abc").1);
+        assert!(!hsca(b"abcd").1);
+        assert!(!hsca(b"abcdefg").1);
+        assert!(!hsca(b"\x01\x7f").1);
         // High bit set → non-ASCII, in every byte position of both paths.
-        assert_eq!(hsca(b"\x80").1, true);
-        assert_eq!(hsca(b"a\xff").1, true);
-        assert_eq!(hsca(b"ab\x80").1, true);
-        assert_eq!(hsca(b"abc\x80").1, true);
-        assert_eq!(hsca(b"abcd\x80").1, true);
-        assert_eq!(hsca(b"abcdefg\x80").1, true);
+        assert!(hsca(b"\x80").1);
+        assert!(hsca(b"a\xff").1);
+        assert!(hsca(b"ab\x80").1);
+        assert!(hsca(b"abc\x80").1);
+        assert!(hsca(b"abcd\x80").1);
+        assert!(hsca(b"abcdefg\x80").1);
         // Embedded zero → non-ASCII.
-        assert_eq!(hsca(b"a\x00").1, true);
-        assert_eq!(hsca(b"a\x00b").1, true);
-        assert_eq!(hsca(b"abc\x00").1, true);
-        assert_eq!(hsca(b"abcdef\x00h").1, true);
+        assert!(hsca(b"a\x00").1);
+        assert!(hsca(b"a\x00b").1);
+        assert!(hsca(b"abc\x00").1);
+        assert!(hsca(b"abcdef\x00h").1);
     }
 
     #[test]
@@ -839,7 +839,7 @@ mod tests {
         unsafe {
             let mut non_ascii = true;
             hash_string_check_ascii(b"abc".as_ptr(), 3, &mut non_ascii);
-            assert_eq!(non_ascii, true);
+            assert!(non_ascii);
         }
     }
 

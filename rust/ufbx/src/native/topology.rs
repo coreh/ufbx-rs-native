@@ -1004,9 +1004,7 @@ pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge) {
                 .add(face.index_begin.wrapping_add(ni) as usize);
 
             if vb < va {
-                let vt: u32 = va;
-                va = vb;
-                vb = vt;
+                std::mem::swap(&mut va, &mut vb);
             }
             (*te).index = face.index_begin.wrapping_add(pi);
             (*te).twin = NO_INDEX;
@@ -1035,9 +1033,7 @@ pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge) {
             let mut va: u32 = *(*mesh).vertex_indices.data.add(edge.a as usize);
             let mut vb: u32 = *(*mesh).vertex_indices.data.add(edge.b as usize);
             if vb < va {
-                let vt: u32 = va;
-                va = vb;
-                vb = vt;
+                std::mem::swap(&mut va, &mut vb);
             }
 
             let mut ix: usize = num_indices;

@@ -5,6 +5,7 @@
 //!   `ufbxi_context` — the Rust forms take the context as an explicit first
 //!   argument because `macro_rules!` hygiene cannot capture a call-site `uc`),
 //! - the options-validation guards (ufbx.c:30302-30328).
+//!
 //! Also hosts the panic entry points (`ufbxi_panicf_imp` ufbx.c:3384-3403 and
 //! the default panic handler ufbx.c:387-397) and the small libc string shims
 //! (`strlen`/`strcmp` — C uses libc via the string.h shim, ufbx.c:721-731).
@@ -210,8 +211,7 @@ pub(crate) unsafe fn snprintf(
     fmt: *const u8,
     args: &[PrintArg],
 ) -> i32 {
-    let result = vsnprintf(buf, buf_size, fmt, args);
-    result
+    vsnprintf(buf, buf_size, fmt, args)
 }
 
 // Call-site wrapper building the `&[PrintArg]` argument pack
@@ -1048,6 +1048,33 @@ macro_rules! ufbxi_check_opts_return_no_error {
 }
 pub(crate) use ufbxi_check_opts_return_no_error;
 
+// Typed interior-mutable VIEW over an `Error` field, reinterpreted in place.
+#[repr(transparent)]
+pub(crate) struct ErrorView(core::cell::UnsafeCell<core::mem::MaybeUninit<Error>>);
+
+impl ErrorView {
+    #[inline(always)]
+    fn get(&self) -> *mut Error {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> crate::generated::ErrorType {
+        // SAFETY: reading the error-type enum — same assertion the direct read makes.
+        unsafe { (*self.get()).type_ }
+    }
+    #[inline(always)]
+    pub(crate) fn set_type_(&self, type_: crate::generated::ErrorType) {
+        unsafe {
+            (*self.get()).type_ = type_;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn description_view(&self) -> &crate::prelude::StringView {
+        // SAFETY: reinterpret the `description: String` field in place as a view.
+        unsafe { &*(&raw mut (*self.get()).description as *mut crate::prelude::StringView) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1162,11 +1189,14 @@ mod tests {
     fn test_report_err_msg_keeps_going() {
         unsafe {
             let mut err = Error::default();
+            // Sentinel: stays `false` iff the macro early-returns (what this test forbids),
+            // so the initial value is load-bearing on the failure path.
+            #[allow(unused_assignments)]
             let mut reached = false;
-            (|| {
+            {
                 ufbxi_report_err_msg!(&mut err as *mut Error, "ptr", "Out of memory");
                 reached = true;
-            })();
+            };
             assert!(reached, "ufbxi_report_err_msg must not return early");
             assert_eq!(desc_bytes(&err), b"Out of memory");
         }
@@ -1290,8 +1320,10 @@ mod tests {
     #[test]
     fn test_uninitialized_options() {
         unsafe {
-            let mut err = Error::default();
-            err.type_ = ErrorType::Io;
+            let mut err = Error {
+                type_: ErrorType::Io,
+                ..Default::default()
+            };
             let ret = uninitialized_options(&mut err);
             assert!(ret.is_null());
             assert_eq!(err.type_, ErrorType::UninitializedOptions);
@@ -1311,32 +1343,5 @@ mod tests {
             assert!(strcmp(b"ab\0".as_ptr(), b"abc\0".as_ptr()) < 0);
             assert!(strcmp(b"abc\0".as_ptr(), b"ab\0".as_ptr()) > 0);
         }
-    }
-}
-
-// Typed interior-mutable VIEW over an `Error` field, reinterpreted in place.
-#[repr(transparent)]
-pub(crate) struct ErrorView(core::cell::UnsafeCell<core::mem::MaybeUninit<Error>>);
-
-impl ErrorView {
-    #[inline(always)]
-    fn get(&self) -> *mut Error {
-        self.0.get().cast()
-    }
-    #[inline(always)]
-    pub(crate) fn type_(&self) -> crate::generated::ErrorType {
-        // SAFETY: reading the error-type enum — same assertion the direct read makes.
-        unsafe { (*self.get()).type_ }
-    }
-    #[inline(always)]
-    pub(crate) fn set_type_(&self, type_: crate::generated::ErrorType) {
-        unsafe {
-            (*self.get()).type_ = type_;
-        }
-    }
-    #[inline(always)]
-    pub(crate) fn description_view(&self) -> &crate::prelude::StringView {
-        // SAFETY: reinterpret the `description: String` field in place as a view.
-        unsafe { &*(&raw mut (*self.get()).description as *mut crate::prelude::StringView) }
     }
 }

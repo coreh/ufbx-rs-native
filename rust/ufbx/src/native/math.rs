@@ -26,6 +26,11 @@
 //!  ====================================================
 //! ```
 
+// `x - x`, `(x - x) / (x - x)` etc. are verbatim fdlibm idioms for generating a
+// signed zero or a NaN (with the correct exception behaviour); the equal operands
+// are intentional, so clippy::eq_op is allowed for this ported-math module only.
+#![allow(clippy::eq_op)]
+
 // C-parity: `ufbxm_int` = `int` = i32, `ufbxm_uint` = `unsigned` = u32
 // (ufbx_math.c:69-70). All the bit twiddling below is written against those
 // exact widths; signed wraparound (UB in C, two's-complement in practice on the
@@ -698,17 +703,15 @@ fn rem_pio2(x: f64, y: &mut [f64; 2]) -> i32 {
     let mut r: f64;
     let fn_: f64;
     let mut tx: [f64; 3] = [0.0; 3];
-    let e0: i32;
+
     let mut i: i32;
     let j: i32;
     let mut nx: i32;
     let n: i32;
-    let ix: i32;
-    let hx: i32;
 
     let bx = to_bits(x);
-    hx = bx.hi; /* high word of x */
-    ix = hx & 0x7fffffff;
+    let hx: i32 = bx.hi; /* high word of x */
+    let ix: i32 = hx & 0x7fffffff;
     if ix <= 0x3fe921fb
     /* |x| ~<= pi/4 , no need for reduction */
     {
@@ -798,7 +801,7 @@ fn rem_pio2(x: f64, y: &mut [f64; 2]) -> i32 {
         return 0;
     }
     /* set z = scalbn(|x|,ilogb(x)-23) */
-    e0 = (ix >> 20) - 1046; /* e0 = ilogb(z)-23; */
+    let e0: i32 = (ix >> 20) - 1046; /* e0 = ilogb(z)-23; */
     z = from_bits(ix - (e0 << 20), bx.lo);
     i = 0;
     while i < 2 {

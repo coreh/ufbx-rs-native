@@ -2519,7 +2519,7 @@ impl Context {
     pub(crate) fn obj(&self) -> &ObjContext {
         // SAFETY: the `obj` field IS an ObjContext (repr(transparent) UnsafeCell wrapper)
         // inside this context's outer UnsafeCell; a shared interior-mutable ref is sound.
-        unsafe { &*&raw mut (*self.get()).obj }
+        unsafe { &(*self.get()).obj }
     }
 
     // `opts` — typed VIEW handle (reinterpret-in-place); accessors on LoadOptsView.
@@ -3935,7 +3935,9 @@ impl Context {
         }
     }
 
-    // `from_ascii` — scalar value accessor.
+    // `from_ascii` — scalar value accessor. Named after the C field it reads; the
+    // `from_*(&self)` query shape is intentional, not a conversion constructor.
+    #[allow(clippy::wrong_self_convention)]
     #[inline(always)]
     pub(crate) fn from_ascii(&self) -> bool {
         // SAFETY: reading a `bool` we only ever store valid bools into.
@@ -5597,12 +5599,11 @@ pub(crate) unsafe fn is_array_node(
                 return true;
             } else if name == sp::FullWeights.as_ptr() {
                 (*info).type_ = b'r';
-                (*info).flags = (*info).flags
-                    | (if uc.blender_full_weights() {
-                        ARRAY_FLAG_RESULT
-                    } else {
-                        ARRAY_FLAG_TMP_BUF
-                    });
+                (*info).flags |= if uc.blender_full_weights() {
+                    ARRAY_FLAG_RESULT
+                } else {
+                    ARRAY_FLAG_TMP_BUF
+                };
                 return true;
             } else if strcmp(name, b"TransformAssociateModel\0".as_ptr()) == 0 {
                 (*info).type_ = if uc.opts_view().retain_dom() {
@@ -5836,10 +5837,8 @@ pub(crate) unsafe fn is_raw_string(
             }
         }
 
-        ParseState::Take => {
-            if name == sp::Model.as_ptr() {
-                return true;
-            }
+        ParseState::Take if name == sp::Model.as_ptr() => {
+            return true;
         }
 
         _ => {}
@@ -6489,7 +6488,6 @@ pub(crate) const MIN_FILE_FORMAT_LOOKAHEAD: usize = 32;
 
 // ufbx.c:11130-11191 `ufbxi_determine_format`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
     let mut format: FileFormat = uc.opts_view().file_format();
 
@@ -6578,7 +6576,6 @@ pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:11193-11240 `ufbxi_begin_parse`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
     let header: *const u8 = crate::native::io::peek_bytes(uc, BINARY_HEADER_SIZE);
     ufbxi_check!(uc, !header.is_null(), "header");
@@ -6649,7 +6646,6 @@ pub(crate) unsafe fn parse_toplevel_child_imp(
 
 // ufbx.c:11253-11330 `ufbxi_parse_toplevel`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(), Fail> {
     // C: `ufbxi_for(ufbxi_node, node, uc->top_nodes, uc->top_nodes_len)`
     let mut node: *mut Node = uc.top_nodes();
@@ -6823,7 +6819,6 @@ pub(crate) unsafe fn parse_toplevel_child(
 
 // ufbx.c:11379-11407 `ufbxi_parse_legacy_toplevel`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
     ufbx_assert!(uc.top_nodes_len() == 0);
 
@@ -6871,7 +6866,6 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:11411-11429 `ufbxi_load_strings`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn load_strings(uc: &Context) -> Result<(), Fail> {
     // C: `#if defined(UFBX_REGRESSION) ufbx_string reg_prev = ufbx_empty_string; #endif`
     #[cfg(feature = "regression")]
@@ -7161,12 +7155,11 @@ pub(crate) unsafe fn find_vec3(
         // `native::read::read_property`).
         *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
     } else {
-        let def = Vec3 {
+        Vec3 {
             x: def_x,
             y: def_y,
             z: def_z,
-        };
-        def
+        }
     }
 }
 
@@ -7424,7 +7417,6 @@ pub(crate) static NODE_PROP_NAMES: NodePropNameTable = NodePropNameTable([
 
 // ufbx.c:11720-11734 `ufbxi_init_node_prop_names`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
@@ -7479,7 +7471,6 @@ pub(crate) unsafe fn is_node_property_name(uc: &Context, name: *const u8) -> boo
 
 // ufbx.c:11746-11760 `ufbxi_load_maps`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn load_maps(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,

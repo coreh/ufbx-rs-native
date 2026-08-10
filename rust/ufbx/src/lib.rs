@@ -38,6 +38,16 @@
 #![allow(clippy::identity_op)]
 // `!(a < b)` preserves C float/NaN comparison semantics; `>=` would differ on NaN.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
+// nested `if`s mirror ufbx.c's conditional structure line-for-line.
+#![allow(clippy::collapsible_if)]
+// explicit branches mirror the C source's per-name/per-version handling even where arms currently coincide.
+#![allow(clippy::if_same_then_else)]
+// `!(a >= b)`, `!(a < b)` etc. preserve the C source's boolean spelling (overflow/loop guards).
+#![allow(clippy::nonminimal_bool)]
+// `T x; ... x = v;` mirrors C's declare-then-assign; the remaining sites are conditional inits.
+#![allow(clippy::needless_late_init)]
+// `for i in 0..n` mirrors C index loops that also index raw pointers / a second array (not iterable).
+#![allow(clippy::needless_range_loop)]
 
 pub mod generated;
 pub mod prelude;
@@ -86,7 +96,7 @@ pub fn set_panic_handler(handler: fn(&str)) {
 /// No C counterpart — ufbx-rust's own hand-written addition to its generated
 /// surface, reproduced verbatim (warts included) for drop-in parity;
 /// bevy_ufbx calls it.
-pub fn triangulate_face_vec(mut indices: &mut Vec<u32>, mesh: &Mesh, face: Face) -> u32 {
+pub fn triangulate_face_vec(indices: &mut Vec<u32>, mesh: &Mesh, face: Face) -> u32 {
     if face.num_indices < 3 {
         indices.clear();
         return 0;
@@ -94,7 +104,7 @@ pub fn triangulate_face_vec(mut indices: &mut Vec<u32>, mesh: &Mesh, face: Face)
 
     let num_triangles = face.num_indices as usize - 2;
     indices.resize(num_triangles * 3, 0);
-    let num_triangles = triangulate_face(&mut indices, mesh, face);
+    let num_triangles = triangulate_face(indices, mesh, face);
     indices.shrink_to(num_triangles as usize * 3);
     num_triangles
 }

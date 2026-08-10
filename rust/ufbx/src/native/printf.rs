@@ -160,11 +160,7 @@ pub(crate) unsafe fn print_append(
         }
         width += 1;
     }
-    let pad = if min_width > width {
-        min_width - width
-    } else {
-        0
-    };
+    let pad = min_width.saturating_sub(width);
     for _i in 0..pad {
         if buf.pos < buf.length {
             *buf.dst.add(buf.pos) = b' ';
@@ -186,7 +182,7 @@ pub(crate) unsafe fn print_format_int(mut buffer: *mut u8, mut value: u64) -> *m
     *buffer = b'\0';
     loop {
         let digit = (value % 10) as u32;
-        value = value / 10;
+        value /= 10;
         buffer = buffer.sub(1);
         *buffer = b'0' + digit as u8;
         if !(value > 0) {
@@ -222,12 +218,9 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
                 max_width = va_arg(args, &mut arg_ix).as_int() as usize;
             }
             let mut flags: u32 = 0;
-            match *p {
-                b'z' => {
-                    p = p.add(1);
-                    flags |= PRINT_SIZE_T;
-                }
-                _ => {}
+            if *p == b'z' {
+                p = p.add(1);
+                flags |= PRINT_SIZE_T;
             }
             let spec = *p;
             p = p.add(1);
@@ -265,7 +258,7 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
     }
     let buf = &mut *buf;
     if buf.length != 0 && !buf.dst.is_null() {
-        let end = if buf.pos <= buf.length - 1 {
+        let end = if buf.pos < buf.length {
             buf.pos
         } else {
             buf.length - 1

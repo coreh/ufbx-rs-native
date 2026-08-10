@@ -200,7 +200,6 @@ pub(crate) fn find_cubic_bezier_t(p1: f64, p2: f64, x0: f64) -> f64 {
 // `native::obj`). C return type `int` (1 = success) → `Result<(), Fail>`.
 #[cfg(feature = "skinning-eval")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn evaluate_skinning(
     scene: *mut Scene,
     error: *mut Error,
@@ -436,7 +435,6 @@ pub(crate) unsafe fn evaluate_skinning(
 
 // ufbx.c:25171-25185 `ufbxi_fixup_opts_string`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn fixup_opts_string(
     uc: &Context,
     str: *mut String,
@@ -463,7 +461,6 @@ pub(crate) unsafe fn fixup_opts_string(
 
 // ufbx.c:25187-25202 `ufbxi_resolve_warning_elements`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> {
     let num_elements: usize = uc.tmp_element_id_view().num_items();
     let element_ids: *mut u32 =
@@ -491,7 +488,6 @@ pub(crate) unsafe fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> 
 
 // ufbx.c:25204-25410 `ufbxi_load_imp`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // Check for deferred failure
     if uc.deferred_failure() {
@@ -1554,13 +1550,13 @@ pub(crate) unsafe fn evaluate_props(
 
             // Skip until we reach `aprop >= prop`
             // NOTE: No need to check for end as `anim_props` is terminated with a NULL sentinel.
-            while ref_ptr(&(*aprop).element) as *const Element == element
+            while std::ptr::eq(ref_ptr(&(*aprop).element), element)
                 && (*aprop)._internal_key < (*prop)._internal_key
             {
                 aprop = aprop.add(1);
             }
             if (*aprop).prop_name.data != (*prop).name.data {
-                while ref_ptr(&(*aprop).element) as *const Element == element
+                while std::ptr::eq(ref_ptr(&(*aprop).element), element)
                     && strcmp((*aprop).prop_name.data, (*prop).name.data) < 0
                 {
                     aprop = aprop.add(1);
@@ -2362,7 +2358,6 @@ pub(crate) unsafe fn translate_element(ec: &EvalContext, elem: *mut c_void) -> *
 // ufbx.c:26075-26087 `ufbxi_translate_element_list`
 #[cfg(feature = "scene-eval")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn translate_element_list(
     ec: &EvalContext,
     p_list: *mut c_void,
@@ -2399,7 +2394,6 @@ pub(crate) unsafe fn translate_maps(ec: &EvalContext, maps: *mut MaterialMap, co
 // ufbx.c:26096-26103 `ufbxi_translate_anim`
 #[cfg(feature = "scene-eval")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn translate_anim(ec: &EvalContext, p_anim: *mut *mut Anim) -> Result<(), Fail> {
     let anim: *mut Anim = push_copy::<Anim>(ec.result_mut_ptr(), 1, *p_anim);
     ufbxi_check_err!(ec.error_mut_ptr(), !anim.is_null(), "anim");
@@ -2411,7 +2405,6 @@ pub(crate) unsafe fn translate_anim(ec: &EvalContext, p_anim: *mut *mut Anim) ->
 // ufbx.c:26105-26444 `ufbxi_evaluate_imp`
 #[cfg(feature = "scene-eval")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // C: `ec->scene = ec->src_scene;` — struct assignment (memcpy).
     ptr::copy_nonoverlapping(ec.src_scene_mut_ptr(), ec.scene_mut_ptr(), 1);
@@ -3401,7 +3394,6 @@ impl CreateAnimContext {
 
 // ufbx.c:26498-26510 `ufbxi_check_string`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn check_string(
     error: *mut Error,
     dst: *mut String,
@@ -3429,7 +3421,6 @@ pub(crate) unsafe fn check_string(
 
 // ufbx.c:26512-26526 `ufbxi_push_anim_string`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn push_anim_string(
     ac: &CreateAnimContext,
     str_: *mut String,
@@ -3497,7 +3488,6 @@ pub(crate) unsafe extern "C" fn transform_override_less(
 
 // ufbx.c:26552-26668 `ufbxi_create_anim_imp`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
     let scene: *const Scene = ac.scene();
     let anim: *mut Anim = ac.anim_mut_ptr();
@@ -4632,7 +4622,6 @@ pub(crate) unsafe fn bake_push_time(bc: &BakeContext, time: f64, flags: u32) -> 
 // ufbx.c:26765-26813 `ufbxi_bake_times`
 #[cfg(feature = "baking")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn bake_times(
     bc: &BakeContext,
     anim_value: *const AnimValue,
@@ -4790,7 +4779,6 @@ pub(crate) unsafe fn in_list(items: *const *const u8, count: usize, item: *const
 // ufbx.c:26840-26845 `ufbxi_sort_bake_times`
 #[cfg(feature = "baking")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn sort_bake_times(
     bc: &BakeContext,
     times: *mut BakeTime,
@@ -4819,7 +4807,6 @@ pub(crate) unsafe fn sort_bake_times(
 // ufbx.c:26847-26968 `ufbxi_finalize_bake_times`
 #[cfg(feature = "baking")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn finalize_bake_times(
     bc: &BakeContext,
     p_dst: *mut BakeTimeList,
@@ -5097,7 +5084,6 @@ pub(crate) unsafe fn postprocess_step(
 // ufbx.c:27017-27097 `ufbxi_bake_postprocess_vec3`
 #[cfg(feature = "baking")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn bake_postprocess_vec3(
     bc: &BakeContext,
     p_dst: *mut List<BakedVec3>,
@@ -5217,7 +5203,6 @@ pub(crate) unsafe fn bake_postprocess_vec3(
 // ufbx.c:27099-27199 `ufbxi_bake_postprocess_quat`
 #[cfg(feature = "baking")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn bake_postprocess_quat(
     bc: &BakeContext,
     p_dst: *mut List<BakedQuat>,
@@ -5381,7 +5366,6 @@ pub(crate) fn bake_time_sample_time(time: BakeTime) -> f64 {
 // ufbx.c:27212-27231 `ufbxi_push_resampled_times`
 #[cfg(feature = "baking")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn push_resampled_times(
     bc: &BakeContext,
     p_keys: *const List<BakedVec3>,
@@ -5415,7 +5399,6 @@ pub(crate) unsafe fn push_resampled_times(
 // ufbx.c:27233-27490 `ufbxi_bake_node_imp`
 #[cfg(feature = "baking")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn bake_node_imp(
     bc: &BakeContext,
     element_id: u32,
@@ -5864,7 +5847,6 @@ pub(crate) unsafe fn bake_node_imp(
 // ufbx.c:27492-27505 `ufbxi_bake_node`
 #[cfg(feature = "baking")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn bake_node(
     bc: &BakeContext,
     element_id: u32,
@@ -5887,7 +5869,6 @@ pub(crate) unsafe fn bake_node(
 // ufbx.c:27507-27546 `ufbxi_bake_anim_prop`
 #[cfg(feature = "baking")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn bake_anim_prop(
     bc: &BakeContext,
     element: *mut Element,
@@ -5964,7 +5945,6 @@ pub(crate) unsafe fn bake_anim_prop(
 // ufbx.c:27548-27585 `ufbxi_bake_element`
 #[cfg(feature = "baking")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn bake_element(
     bc: &BakeContext,
     element_id: u32,
@@ -6053,7 +6033,6 @@ pub(crate) unsafe extern "C" fn baked_element_less(
 // ufbx.c:27601-27705 `ufbxi_bake_anim`
 #[cfg(feature = "baking")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     let anim: *const Anim = bc.anim();
     let scene: *const Scene = bc.scene();
@@ -6238,7 +6217,6 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
 // ufbx.c:27707-27765 `ufbxi_bake_anim_imp`
 #[cfg(feature = "baking")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Result<(), Fail> {
     if bc.opts_view().resample_rate() <= 0.0 {
         bc.opts_view().set_resample_rate(30.0);

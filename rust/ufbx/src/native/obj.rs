@@ -99,7 +99,6 @@ const _: () = assert!(OBJ_ATTRIB_STRIDE.len() == OBJ_NUM_ATTRIBS_EXT);
 // ufbx.c:16777-16805 `ufbxi_obj_pop_props`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_pop_props(
     uc: &Context,
     dst: *mut List<Prop>,
@@ -144,7 +143,6 @@ pub(crate) unsafe fn obj_pop_props(
 // ufbx.c:16807-16843 `ufbxi_obj_push_mesh`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
     let mesh: *mut ObjMesh = push_zero::<ObjMesh>(uc.obj().tmp_meshes_mut_ptr(), 1);
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
@@ -212,7 +210,6 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:16845-16860 `ufbxi_obj_flush_mesh`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
     if uc.obj().mesh().is_null() {
         return Ok(());
@@ -242,7 +239,6 @@ pub(crate) unsafe fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:16862-16900 `ufbxi_obj_init`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
     uc.set_from_ascii(true);
     uc.obj().set_initialized(true);
@@ -342,7 +338,6 @@ pub(crate) unsafe fn obj_free(uc: &Context) {
 // ufbx.c:16925-16981 `ufbxi_obj_read_line`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     ufbxi_dev_assert!(!uc.obj().eof());
 
@@ -435,7 +430,6 @@ pub(crate) unsafe fn obj_span_token(uc: &Context, start_token: usize, end_token:
 // ufbx.c:16999-17065 `ufbxi_obj_tokenize`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
     let mut ptr: *const u8 = uc.obj().line_view().data();
     let end: *const u8 = ptr.add(uc.obj().line_view().length());
@@ -527,7 +521,6 @@ pub(crate) unsafe fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:17067-17072 `ufbxi_obj_tokenize_line`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_tokenize_line(uc: &Context) -> Result<(), Fail> {
     obj_read_line(uc)?;
     obj_tokenize(uc)?;
@@ -593,7 +586,6 @@ pub(crate) unsafe fn obj_parse_vertex(
 // ufbx.c:17110-17166 `ufbxi_obj_parse_index`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_parse_index(
     uc: &Context,
     s: *mut String,
@@ -672,7 +664,6 @@ pub(crate) unsafe fn obj_parse_index(
 // ufbx.c:17168-17296 `ufbxi_obj_parse_indices`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_parse_indices(
     uc: &Context,
     token_begin: usize,
@@ -853,7 +844,6 @@ pub(crate) unsafe fn obj_parse_indices(
 // ufbx.c:17298-17304 `ufbxi_obj_parse_multi_indices`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_parse_multi_indices(uc: &Context, window: usize) -> Result<(), Fail> {
     // C: `for (size_t begin = 1; begin + window <= uc->obj.num_tokens; begin++)`
     let mut begin: usize = 1;
@@ -892,7 +882,6 @@ pub(crate) unsafe fn parse_hex(digits: *const u8, length: usize) -> u32 {
 // ufbx.c:17326-17365 `ufbxi_obj_parse_comment`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
     if uc.obj().num_tokens() >= 3 && str_equal(*uc.obj().tokens().add(1), str_c(b"MRGB\0".as_ptr()))
     {
@@ -959,7 +948,6 @@ pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:17367-17406 `ufbxi_obj_parse_material`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
     uc.obj().set_material_dirty(true);
 
@@ -1038,7 +1026,6 @@ pub(crate) const fn obj_cmd3(a: u8, b: u8, c: u8) -> u32 {
 // ufbx.c:17412-17432 `ufbxi_obj_pop_vertices`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_pop_vertices(
     uc: &Context,
     dst: *mut List<Real>,
@@ -1073,7 +1060,6 @@ pub(crate) unsafe fn obj_pop_vertices(
 // ufbx.c:17434-17481 `ufbxi_obj_setup_attrib`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_setup_attrib(
     uc: &Context,
     mesh: *mut ObjMesh,
@@ -1147,7 +1133,6 @@ pub(crate) unsafe fn obj_setup_attrib(
 // ufbx.c:17483-17496 `ufbxi_obj_pad_colors`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result<(), Fail> {
     if uc.opts_view().ignore_geometry() {
         return Ok(());
@@ -1181,7 +1166,6 @@ pub(crate) unsafe fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result
 // ufbx.c:17498-17679 `ufbxi_obj_pop_meshes`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
     let num_meshes: usize = uc.obj().tmp_meshes_view().num_items();
     let meshes: *mut ObjMesh =
@@ -1487,7 +1471,6 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:17681-17761 `ufbxi_obj_parse_file`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
     while !uc.obj().eof() {
         obj_tokenize_line(uc)?;
@@ -1600,7 +1583,6 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:17763-17775 `ufbxi_obj_flush_material`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_flush_material(uc: &Context) -> Result<(), Fail> {
     if uc.obj().usemtl_fbx_id() == 0 {
         return Ok(());
@@ -1621,7 +1603,6 @@ pub(crate) unsafe fn obj_flush_material(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:17777-17850 `ufbxi_obj_parse_prop`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_parse_prop(
     uc: &Context,
     name: String,
@@ -1733,7 +1714,6 @@ pub(crate) unsafe fn obj_parse_prop(
 // ufbx.c:17852-17902 `ufbxi_obj_parse_mtl_map`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), Fail> {
     if uc.obj().num_tokens() < 2 {
         return Ok(());
@@ -1803,7 +1783,6 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Resul
 // ufbx.c:17904-17934 `ufbxi_obj_parse_mtl`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
     uc.obj().set_mesh(core::ptr::null_mut());
     uc.obj().set_usemtl_fbx_id(0);
@@ -1850,7 +1829,6 @@ pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:17936-18027 `ufbxi_obj_load_mtl`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     // HACK: Reset everything and switch to loading the .mtl file globally
     if let Some(close_fn) = uc.close_fn() {
@@ -2030,7 +2008,6 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:18029-18037 `ufbxi_obj_load`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn obj_load(uc: &Context) -> Result<(), Fail> {
     obj_init(uc)?;
     obj_parse_file(uc)?;
@@ -2043,7 +2020,6 @@ pub(crate) unsafe fn obj_load(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:18039-18046 `ufbxi_mtl_load`
 #[cfg(feature = "obj")]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn mtl_load(uc: &Context) -> Result<(), Fail> {
     obj_init(uc)?;
     init_file_paths(uc)?;

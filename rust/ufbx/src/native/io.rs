@@ -643,7 +643,6 @@ pub(crate) unsafe fn fopen(
     path_len: usize,
     null_terminated: bool,
 ) -> *mut c_void {
-    let file: *mut c_void;
     let mut copy_buf = MaybeUninit::<[u8; 256]>::uninit(); // ufbxi_uninit
     let copy: *mut u8;
     if null_terminated {
@@ -660,7 +659,7 @@ pub(crate) unsafe fn fopen(
         core::ptr::copy_nonoverlapping(path, copy, path_len);
         *copy.add(path_len) = b'\0';
     }
-    file = libc_stdio::fopen(copy, b"rb\0".as_ptr());
+    let file: *mut c_void = libc_stdio::fopen(copy, b"rb\0".as_ptr());
     if !null_terminated && copy != copy_buf.as_mut_ptr() as *mut u8 {
         free::<u8>(fc.ator_mut_ptr(), copy, path_len + 1);
     }

@@ -158,8 +158,8 @@ pub(crate) unsafe fn warnf_imp(
 ) -> Result<(), Fail> {
     // NOTE: `ws` may be `NULL` here, handled by `ufbxi_vwarnf()`
     // C: `va_list args; // ufbxi_uninit` (ufbx.c:4876) — collapsed into `args`.
-    let ok = vwarnf_imp(ws, type_, element_id, fmt, args);
-    ok
+
+    vwarnf_imp(ws, type_, element_id, fmt, args)
 }
 
 // Call-site wrapper building the `&[PrintArg]` argument pack

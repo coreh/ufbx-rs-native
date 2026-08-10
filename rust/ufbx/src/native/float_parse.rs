@@ -632,11 +632,7 @@ pub(crate) unsafe fn parse_double(
                 lzcnt32(*big_mantissa.limbs.add((big_mantissa.length - 1) as usize));
             let mantissa_bits: u32 = big_mantissa.length * BIGINT_LIMB_BITS - mantissa_zeros;
             let mantissa_min_bits: u32 = divisor_bits + enc_mantissa_bits + 2;
-            let mut mantissa_shift: u32 = if mantissa_bits < mantissa_min_bits {
-                mantissa_min_bits - mantissa_bits
-            } else {
-                0
-            };
+            let mut mantissa_shift: u32 = mantissa_min_bits.saturating_sub(mantissa_bits);
             // Align mantissa to never have a high bit, this means we can skip the first digit during division.
             // C: `(mantissa_shift - mantissa_zeros)` — unsigned subtraction, wraps.
             mantissa_shift +=
@@ -893,10 +889,7 @@ mod tests {
     unsafe fn check_bigint(bi: Bigint, expected_: &str) {
         let mut radix: BigintLimb = 10;
         let mut expected = expected_;
-        if expected.as_bytes().len() >= 2
-            && expected.as_bytes()[0] == b'0'
-            && expected.as_bytes()[1] == b'x'
-        {
+        if expected.len() >= 2 && expected.as_bytes()[0] == b'0' && expected.as_bytes()[1] == b'x' {
             radix = 16;
             expected = &expected[2..];
         }
@@ -1066,11 +1059,10 @@ mod tests {
             let mut a = bigint_array!(a_limbs);
             let mut b = bigint_array!(b_limbs);
             let mut c = bigint_array!(c_limbs);
-            let rem: bool;
 
             bigint_parse(&mut a, "0x10000000000000000");
             bigint_parse(&mut b, "0x8000000000000000");
-            rem = bigint_div(&mut c, &mut a, &mut b);
+            let rem: bool = bigint_div(&mut c, &mut a, &mut b);
             check_bigint(c, "2");
             assert!(!rem);
         }

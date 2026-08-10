@@ -159,8 +159,7 @@ pub(crate) unsafe fn str_cmp(a: String, b: String) -> i32 {
 // ufbx.c:4940-4944 `ufbxi_str_c`
 #[inline(always)]
 pub(crate) unsafe fn str_c(str_: *const u8) -> String {
-    let s = String::new_c(str_, strlen(str_));
-    s
+    String::new_c(str_, strlen(str_))
 }
 
 // ufbx.c:4946-4958 `ufbxi_get_concat_key`
@@ -310,15 +309,14 @@ pub(crate) unsafe extern "C" fn map_cmp_string(
 // the resulting `String` soundly.
 #[inline(always)]
 pub(crate) fn safe_string(data: *const u8, length: usize) -> String {
-    let str_ = String::new_c(
+    String::new_c(
         if length > 0 {
             data
         } else {
             EMPTY_CHAR.as_ptr()
         },
         length,
-    );
-    str_
+    )
 }
 
 // ufbx.c:5028-5032 `ufbxi_string_pool_temp_free`
@@ -1449,34 +1447,31 @@ pub(crate) const MM_TO_INCH: Real = 0.0393700787_f64 as Real;
 // ufbx.c:5912-5915 `ufbxi_add3`
 #[inline(always)]
 pub(crate) fn add3(a: Vec3, b: Vec3) -> Vec3 {
-    let v = Vec3 {
+    Vec3 {
         x: a.x + b.x,
         y: a.y + b.y,
         z: a.z + b.z,
-    };
-    v
+    }
 }
 
 // ufbx.c:5917-5920 `ufbxi_sub3`
 #[inline(always)]
 pub(crate) fn sub3(a: Vec3, b: Vec3) -> Vec3 {
-    let v = Vec3 {
+    Vec3 {
         x: a.x - b.x,
         y: a.y - b.y,
         z: a.z - b.z,
-    };
-    v
+    }
 }
 
 // ufbx.c:5922-5925 `ufbxi_mul3`
 #[inline(always)]
 pub(crate) fn mul3(a: Vec3, b: Real) -> Vec3 {
-    let v = Vec3 {
+    Vec3 {
         x: a.x * b,
         y: a.y * b,
         z: a.z * b,
-    };
-    v
+    }
 }
 
 // ufbx.c:5927-5931 `ufbxi_lerp3`
@@ -1484,12 +1479,12 @@ pub(crate) fn mul3(a: Vec3, b: Real) -> Vec3 {
 pub(crate) fn lerp3(a: Vec3, b: Vec3, t: Real) -> Vec3 {
     // C: `ufbx_real u = 1.0f - t;`
     let u: Real = 1.0 - t;
-    let v = Vec3 {
+
+    Vec3 {
         x: a.x * u + b.x * t,
         y: a.y * u + b.y * t,
         z: a.z * u + b.z * t,
-    };
-    v
+    }
 }
 
 // ufbx.c:5933-5935 `ufbxi_dot3`
@@ -1516,12 +1511,11 @@ pub(crate) fn min3(v: Vec3) -> Real {
 // ufbx.c:5947-5950 `ufbxi_cross3`
 #[inline(always)]
 pub(crate) fn cross3(a: Vec3, b: Vec3) -> Vec3 {
-    let v = Vec3 {
+    Vec3 {
         x: a.y * b.z - a.z * b.y,
         y: a.z * b.x - a.x * b.z,
         z: a.x * b.y - a.y * b.x,
-    };
-    v
+    }
 }
 
 // ufbx.c:5952-5960 `ufbxi_normalize3`
@@ -1535,24 +1529,23 @@ pub(crate) fn normalize3(a: Vec3) -> Vec3 {
         mul3(a, 1.0 / len)
     } else {
         // C: `ufbx_vec3 zero = { (ufbx_real)0 };`
-        let zero = Vec3 {
+
+        Vec3 {
             x: 0.0,
             y: 0.0,
             z: 0.0,
-        };
-        zero
+        }
     }
 }
 
 // ufbx.c:5962-5965 `ufbxi_neg3`
 #[inline(always)]
 pub(crate) fn neg3(a: Vec3) -> Vec3 {
-    let v = Vec3 {
+    Vec3 {
         x: -a.x,
         y: -a.y,
         z: -a.z,
-    };
-    v
+    }
 }
 
 // ufbx.c:5967-5970 `ufbxi_distsq2`
@@ -1582,6 +1575,9 @@ pub(crate) unsafe fn slow_normalized_cross3(a: *const Vec3, b: *const Vec3) -> V
 
 #[cfg(test)]
 mod tests {
+    // Tests assert invariants on math `const`s (e.g. `assert_eq!(PI, DPI as Real)`);
+    // asserting on a constant is the intent, so `assertions_on_constants` is allowed here.
+    #![allow(clippy::assertions_on_constants)]
     use super::*;
     use crate::generated::UnicodeErrorHandling;
     use crate::native::allocator::{init_ator, Allocator};

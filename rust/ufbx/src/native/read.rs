@@ -1470,6 +1470,10 @@ pub(crate) unsafe fn set_own_prop_vec3_uniform(props: *mut Props, name: *const u
         // C-parity: bare `(int64_t)` cast on a float operand (saturating `as`).
         (*prop).value_int = value as i64;
     }
+    // `local_props` is a bitwise copy sharing the original's pointers; forgetting it
+    // documents that this copy must not be dropped as an owner (defensive against a
+    // future `Drop`), even though the type currently has no drop glue.
+    #[allow(clippy::forget_non_drop)]
     core::mem::forget(local_props);
 }
 
@@ -1681,6 +1685,10 @@ pub(crate) unsafe fn setup_scale_helper(
         (*src_prop).value_int = (*src_prop).value_vec4.x as i64;
         i += 1;
     }
+    // `props_copy` is a bitwise copy sharing the original's pointers; forgetting it
+    // documents that this copy must not be dropped as an owner (defensive against a
+    // future `Drop`), even though the type currently has no drop glue.
+    #[allow(clippy::forget_non_drop)]
     core::mem::forget(props_copy);
 
     (*scale_node).element.props.props.data = helper_props;
@@ -3867,7 +3875,7 @@ pub(crate) unsafe fn read_mesh(
         b"I\0".as_ptr(),
         &mut boundary as *mut i32 as *mut c_void,
     ) {
-        if boundary >= 0 && boundary <= SubdivisionBoundary::SharpCorners as i32 - 1 {
+        if boundary >= 0 && boundary < SubdivisionBoundary::SharpCorners as i32 {
             (*mesh).subdivision_boundary = subdivision_boundary_from_raw(boundary + 1);
         }
     }

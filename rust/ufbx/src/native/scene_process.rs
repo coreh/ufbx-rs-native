@@ -1090,7 +1090,6 @@ pub(crate) unsafe fn cmp_prop_less_concat(
 
 // ufbx.c:18584-18590 `ufbxi_sort_name_elements`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn sort_name_elements(
     uc: &Context,
     name_elems: *mut NameElement,
@@ -1146,7 +1145,6 @@ pub(crate) unsafe fn cmp_node_less(a: *mut Node, b: *mut Node) -> bool {
 
 // ufbx.c:18612-18618 `ufbxi_sort_node_ptrs`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn sort_node_ptrs(
     uc: &Context,
     nodes: *mut *mut Node,
@@ -1188,7 +1186,6 @@ pub(crate) unsafe fn cmp_tmp_material_texture_less(
 
 // ufbx.c:18627-18633 `ufbxi_sort_tmp_material_textures`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn sort_tmp_material_textures(
     uc: &Context,
     mat_texs: *mut TmpMaterialTexture,
@@ -1248,7 +1245,6 @@ pub(crate) unsafe fn cmp_connection_less(
 
 // ufbx.c:18648-18653 `ufbxi_sort_connections`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn sort_connections(
     uc: &Context,
     connections: *mut Connection,
@@ -1291,7 +1287,6 @@ pub(crate) unsafe fn find_attribute_fbx_id(uc: &Context, node_fbx_id: u64) -> u6
 
 // ufbx.c:18665-18780 `ufbxi_resolve_connections`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
     let num_connections: usize = uc.tmp_connections_view().num_items();
     let tmp_connections: *mut TmpConnection = push_pop(
@@ -1504,7 +1499,6 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:18782-18912 `ufbxi_add_connections_to_elements`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
     let mut conn_src: *mut Connection =
         uc.scene_view().connections_src_view().data() as *mut Connection;
@@ -1708,7 +1702,6 @@ pub(crate) unsafe fn add_connections_to_elements(uc: &Context) -> Result<(), Fai
 
 // ufbx.c:18914-18994 `ufbxi_linearize_nodes`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
     let num_nodes: usize = uc.tmp_node_ids_view().num_items();
     let node_ids: *mut u32 = push_pop(uc.tmp_mut_ptr(), uc.tmp_node_ids_mut_ptr(), num_nodes);
@@ -1947,7 +1940,6 @@ pub(crate) unsafe fn get_element_node(element: *mut Element) -> *mut Element {
 
 // ufbx.c:19047-19083 `ufbxi_fetch_dst_elements`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn fetch_dst_elements(
     uc: &Context,
     p_dst_list: *mut c_void,
@@ -2024,7 +2016,6 @@ pub(crate) unsafe fn fetch_dst_elements(
 
 // ufbx.c:19085-19121 `ufbxi_fetch_src_elements`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn fetch_src_elements(
     uc: &Context,
     p_dst_list: *mut c_void,
@@ -2168,7 +2159,6 @@ pub(crate) unsafe fn fetch_src_element(
 
 // ufbx.c:19151-19173 `ufbxi_fetch_textures`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn fetch_textures(
     uc: &Context,
     list: *mut List<MaterialTexture>,
@@ -2216,7 +2206,6 @@ pub(crate) unsafe fn fetch_textures(
 
 // ufbx.c:19175-19197 `ufbxi_fetch_mesh_materials`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn fetch_mesh_materials(
     uc: &Context,
     list: *mut RefList<Material>,
@@ -2267,7 +2256,6 @@ pub(crate) unsafe fn fetch_mesh_materials(
 
 // ufbx.c:19199-19219 `ufbxi_fetch_deformers`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn fetch_deformers(
     uc: &Context,
     list: *mut RefList<Element>,
@@ -2324,7 +2312,6 @@ pub(crate) unsafe fn fetch_deformers(
 
 // ufbx.c:19221-19239 `ufbxi_fetch_blend_keyframes`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn fetch_blend_keyframes(
     uc: &Context,
     list: *mut List<BlendKeyframe>,
@@ -2365,7 +2352,6 @@ pub(crate) unsafe fn fetch_blend_keyframes(
 
 // ufbx.c:19241-19262 `ufbxi_fetch_texture_layers`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn fetch_texture_layers(
     uc: &Context,
     list: *mut List<TextureLayer>,
@@ -2459,9 +2445,9 @@ pub(crate) unsafe fn find_prop_connection(
 // ufbx.c:19285-19292 `ufbxi_patch_index_pointer`
 #[inline(always)]
 pub(crate) unsafe fn patch_index_pointer(uc: &Context, p_index: *mut *mut u32) {
-    if *p_index == SENTINEL_INDEX_ZERO.as_ptr() as *mut u32 {
+    if std::ptr::eq(*p_index, SENTINEL_INDEX_ZERO.as_ptr()) {
         *p_index = uc.zero_indices();
-    } else if *p_index == SENTINEL_INDEX_CONSECUTIVE.as_ptr() as *mut u32 {
+    } else if std::ptr::eq(*p_index, SENTINEL_INDEX_CONSECUTIVE.as_ptr()) {
         *p_index = uc.consecutive_indices();
     }
 }
@@ -2482,7 +2468,6 @@ pub(crate) unsafe fn cmp_anim_prop_less(a: *const AnimProp, b: *const AnimProp) 
 
 // ufbx.c:19301-19306 `ufbxi_sort_anim_props`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn sort_anim_props(
     uc: &Context,
     aprops: *mut AnimProp,
@@ -2519,7 +2504,6 @@ pub(crate) unsafe extern "C" fn material_texture_less(
 
 // ufbx.c:19315-19320 `ufbxi_sort_material_textures`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn sort_material_textures(
     uc: &Context,
     textures: *mut MaterialTexture,
@@ -2575,7 +2559,7 @@ pub(crate) unsafe fn find_anim_prop_start(
         0,
         (*layer).anim_props.count,
         |a| (ref_ptr(&(*a).element) as *const Element) < element,
-        |a| (ref_ptr(&(*a).element) as *const Element) == element,
+        |a| std::ptr::eq(ref_ptr(&(*a).element), element),
     );
     if index != usize::MAX {
         (*layer).anim_props.data.add(index) as *mut AnimProp
@@ -2586,7 +2570,6 @@ pub(crate) unsafe fn find_anim_prop_start(
 
 // ufbx.c:19337-19343 `ufbxi_sort_bone_poses`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn sort_bone_poses(uc: &Context, pose: *mut Pose) -> Result<(), Fail> {
     let count: usize = (*pose).bone_poses.count;
     ufbxi_check!(
@@ -2613,7 +2596,6 @@ pub(crate) unsafe fn sort_bone_poses(uc: &Context, pose: *mut Pose) -> Result<()
 
 // ufbx.c:19345-19356 `ufbxi_sort_skin_weights`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn sort_skin_weights(uc: &Context, skin: *mut SkinDeformer) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
@@ -2657,7 +2639,6 @@ pub(crate) unsafe extern "C" fn blend_keyframe_less(
 
 // ufbx.c:19365-19370 `ufbxi_sort_blend_keyframes`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn sort_blend_keyframes(
     uc: &Context,
     keyframes: *mut BlendKeyframe,
@@ -4007,7 +3988,6 @@ static CONSTRAINT_PROPS: [ConstraintProp; 10] = [
 
 // ufbx.c:20244-20266 `ufbxi_add_constraint_prop`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn add_constraint_prop(
     uc: &Context,
     constraint: *mut Constraint,
@@ -4057,7 +4037,6 @@ pub(crate) unsafe fn add_constraint_prop(
 
 // ufbx.c:20268-20312 `ufbxi_finalize_nurbs_basis`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn finalize_nurbs_basis(
     uc: &Context,
     basis: *mut NurbsBasis,
@@ -4077,7 +4056,7 @@ pub(crate) unsafe fn finalize_nurbs_basis(
         let mut knots: List<Real> = MaybeUninit::zeroed().assume_init();
         knots.data = (*basis).knot_vector.data;
         knots.count = (*basis).knot_vector.count;
-        if knots.count >= 2 * degree + 1 {
+        if knots.count > 2 * degree {
             (*basis).t_min = *knots.data.add(degree);
             (*basis).t_max = *knots.data.add(knots.count - degree - 1);
 
@@ -4113,7 +4092,6 @@ pub(crate) unsafe fn finalize_nurbs_basis(
 
 // ufbx.c:20314-20362 `ufbxi_finalize_lod_group`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod: *mut LodGroup) -> Result<(), Fail> {
     let mut num_levels: usize = 0;
     for _i in 0..(*lod).element.instances.count {
@@ -4208,7 +4186,6 @@ pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod: *mut LodGroup) -> Res
 
 // ufbx.c:20363-20403 `ufbxi_generate_normals`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(), Fail> {
     let num_indices: usize = (*mesh).num_indices;
 
@@ -4267,7 +4244,6 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(
 
 // ufbx.c:20405-20427 `ufbxi_push_prop_prefix`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn push_prop_prefix(
     uc: &Context,
     dst: *mut String,
@@ -4297,7 +4273,6 @@ pub(crate) unsafe fn push_prop_prefix(
 
 // ufbx.c:20429-20478 `ufbxi_shader_texture_find_prefix`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn shader_texture_find_prefix(
     uc: &Context,
     texture: *mut Texture,
@@ -4492,7 +4467,6 @@ pub(crate) const SHADER_TEXTURE_TYPE_COUNT: u32 = ShaderTextureType::Osl as u32 
 
 // ufbx.c:20537-20690 `ufbxi_finalize_shader_texture`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn finalize_shader_texture(
     uc: &Context,
     texture: *mut Texture,
@@ -4839,7 +4813,6 @@ macro_rules! patch_empty {
 
 // ufbx.c:20757-20800 `ufbxi_insert_texture_file`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) -> Result<(), Fail> {
     (*texture).file_index = NO_INDEX;
 
@@ -4912,7 +4885,6 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
 
 // ufbx.c:20802-20817 `ufbxi_pop_texture_files`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn pop_texture_files(uc: &Context) -> Result<(), Fail> {
     let num_files: u32 = uc.texture_file_map_view().size();
     let files: *mut TextureFile = push(uc.result_mut_ptr(), num_files as usize);
@@ -4968,7 +4940,6 @@ pub(crate) unsafe extern "C" fn ordered_texture_less_order(
 
 // ufbx.c:20838-20867 `ufbxi_deduplicate_textures`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn deduplicate_textures(
     uc: &Context,
     dst_buf: *mut Buf,
@@ -5046,7 +5017,6 @@ pub(crate) const FILE_TEXTURE_FETCH_FINISHED: u32 = 2;
 // Populate `ufbx_texture.file_textures[]` arrays.
 // ufbx.c:20875-21007 `ufbxi_fetch_file_textures`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
     // We keep pointers to `ufbx_texture` in `tmp_stack` as a working set, since we don't know
     // how deep the shader graphs might be.
@@ -5399,7 +5369,6 @@ pub(crate) unsafe fn normalize_vec3_list(list: *const List<Vec3>) {
 
 // ufbx.c:21073-21107 `ufbxi_flip_attrib_winding`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn flip_attrib_winding(
     uc: &Context,
     mesh: *mut Mesh,
@@ -5456,7 +5425,6 @@ pub(crate) unsafe fn flip_attrib_winding(
 
 // ufbx.c:21109-21163 `ufbxi_flip_winding`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), Fail> {
     uc.set_tmp_mesh_consecutive_indices(ptr::null_mut());
     flip_attrib_winding(
@@ -5607,7 +5575,6 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
 
 // ufbx.c:21165-21332 `ufbxi_modify_geometry`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
     let mut do_mirror: bool = false;
     let do_winding: bool = uc.opts_view().reverse_winding();
@@ -5978,7 +5945,6 @@ pub(crate) unsafe fn next_path_segment(data: *const u8, begin: usize, length: us
 
 // ufbx.c:21368-21435 `ufbxi_absolute_to_relative_path`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn absolute_to_relative_path(
     uc: &Context,
     p_dst: *mut Strblob,
@@ -6086,7 +6052,6 @@ pub(crate) unsafe fn absolute_to_relative_path(
 
 // ufbx.c:21437-21450 `ufbxi_resolve_filenames`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn resolve_filenames(
     uc: &Context,
     filename: *mut Strblob,
@@ -6130,7 +6095,6 @@ pub(crate) unsafe extern "C" fn file_content_less(
 
 // ufbx.c:21459-21464 `ufbxi_sort_file_contents`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn sort_file_contents(
     uc: &Context,
     content: *mut FileContent,
@@ -6160,7 +6124,6 @@ pub(crate) unsafe fn sort_file_contents(
 
 // ufbx.c:21466-21474 `ufbxi_push_file_content`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn push_file_content(
     uc: &Context,
     p_filename: *mut String,
@@ -6206,7 +6169,6 @@ pub(crate) unsafe fn fetch_file_content(uc: &Context, p_filename: *mut String, p
 
 // ufbx.c:21489-21526 `ufbxi_resolve_file_content`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
     let initial_stack: usize = uc.tmp_stack_view().num_items();
 
@@ -6319,7 +6281,6 @@ pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:21528-21543 `ufbxi_validate_indices`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn validate_indices(
     uc: &Context,
     indices: *mut List<u32>,
@@ -6369,7 +6330,6 @@ pub(crate) unsafe extern "C" fn material_part_usage_less(
 
 // ufbx.c:21558-21620 `ufbxi_finalize_mesh_material`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn finalize_mesh_material(
     buf: *mut Buf,
     error: *mut Error,
@@ -6482,7 +6442,6 @@ const _: () = assert!(core::mem::offset_of!(AnimImp, anim) == size_of::<Refcount
 
 // ufbx.c:21628-21638 `ufbxi_push_anim`
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn push_anim(
     uc: &Context,
     p_anim: *mut *mut Anim,
@@ -6504,7 +6463,6 @@ pub(crate) unsafe fn push_anim(
 // into the public `ufbx_scene` graph. Split into no helpers upstream, so it is
 // ported as one function.
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     let num_elements: usize = uc.num_elements() as usize;
 

@@ -23,6 +23,11 @@
 //
 // Miri needs `-Zmiri-disable-isolation` for the `std::fs` reads.
 
+// These sums keep the accumulator in f64: the `.x as f64` etc. casts are no-ops
+// under the default `Real = f64` but load-bearing f32->f64 widenings under `real-is-f32`.
+// (The crate-internal `as_f64!` macro is not reachable from an integration test.)
+#![allow(clippy::unnecessary_cast)]
+
 use ufbx::{LoadOpts, Scene};
 
 fn data_path(name: &str) -> std::string::String {
@@ -90,7 +95,7 @@ fn walk(scene: &Scene) -> f64 {
 
 fn load_and_walk(name: &str) -> f64 {
     let scene = load(name);
-    assert!(scene.nodes.len() > 0, "{} has no nodes", name);
+    assert!(!scene.nodes.is_empty(), "{} has no nodes", name);
     walk(&scene)
 }
 
@@ -137,7 +142,7 @@ fn load_attribute_zoo_6100_binary() {
 #[test]
 fn load_skinned() {
     let scene = load("blender_293_half_skinned_7400_binary.fbx");
-    assert!(scene.skin_deformers.len() > 0);
+    assert!(!scene.skin_deformers.is_empty());
     let mut acc = 0.0f64;
     for skin in &scene.skin_deformers {
         for cluster in &skin.clusters {
@@ -158,7 +163,7 @@ fn load_skinned() {
 #[test]
 fn load_blend_shapes() {
     let scene = load("blender_279_shape_weights_7400_binary.fbx");
-    assert!(scene.blend_deformers.len() > 0);
+    assert!(!scene.blend_deformers.is_empty());
     let mut acc = 0.0f64;
     for deformer in &scene.blend_deformers {
         for channel in &deformer.channels {
@@ -208,7 +213,7 @@ fn load_embedded_textures() {
 #[test]
 fn evaluate_and_bake_animation() {
     let scene = load("maya_interpolation_modes_7500_binary.fbx");
-    assert!(scene.anim_stacks.len() > 0);
+    assert!(!scene.anim_stacks.is_empty());
 
     let mut acc = 0.0f64;
     for curve in &scene.anim_curves {
@@ -240,7 +245,7 @@ fn evaluate_and_bake_animation() {
 #[test]
 fn tessellate_nurbs_curve() {
     let scene = load("maya_nurbs_curve_form_7700_binary.fbx");
-    assert!(scene.nurbs_curves.len() > 0);
+    assert!(!scene.nurbs_curves.is_empty());
     let mut acc = 0.0f64;
     for curve in &scene.nurbs_curves {
         for u in [0.0, 0.5, 1.0] {
@@ -261,7 +266,7 @@ fn tessellate_nurbs_curve() {
 #[test]
 fn tessellate_nurbs_surface() {
     let scene = load("maya_nurbs_surface_plane_6100_ascii.fbx");
-    assert!(scene.nurbs_surfaces.len() > 0);
+    assert!(!scene.nurbs_surfaces.is_empty());
     let mut acc = 0.0f64;
     for surface in &scene.nurbs_surfaces {
         let mesh = ufbx::tessellate_nurbs_surface(surface, Default::default())
@@ -277,7 +282,7 @@ fn tessellate_nurbs_surface() {
 #[test]
 fn subdivide() {
     let scene = load("blender_293x_subsurf_boundary_7400_binary.fbx");
-    let mesh = scene.meshes.get(0).expect("no mesh");
+    let mesh = scene.meshes.first().expect("no mesh");
     let subdivided =
         ufbx::subdivide_mesh(mesh, 2, Default::default()).expect("subdivide_mesh failed");
     assert!(subdivided.num_faces > mesh.num_faces);
@@ -289,7 +294,7 @@ fn subdivide() {
 #[test]
 fn topology_triangulate_and_index_generation() {
     let scene = load("blender_293_ngon_subsurf_7400_binary.fbx");
-    let mesh = scene.meshes.get(0).expect("no mesh");
+    let mesh = scene.meshes.first().expect("no mesh");
 
     let mut topo = vec![ufbx::TopoEdge::default(); mesh.num_indices];
     ufbx::compute_topology(mesh, &mut topo);
@@ -331,6 +336,6 @@ fn walk_mesh(mesh: &ufbx::Mesh) -> f64 {
 fn load_cube_binary_from_file() {
     let scene = ufbx::load_file(&data_path("maya_cube_7500_binary.fbx"), LoadOpts::default())
         .expect("failed to load maya_cube_7500_binary.fbx");
-    assert!(scene.nodes.len() > 0);
+    assert!(!scene.nodes.is_empty());
     assert!(walk(&scene).is_finite());
 }

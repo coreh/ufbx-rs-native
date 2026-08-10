@@ -444,7 +444,6 @@ pub(crate) unsafe fn open_file_ctx(
     opts: *const RawOpenFileOpts,
     error: *mut Error,
 ) -> bool {
-    let ok: bool;
     // C: `ufbxi_file_context fc; // ufbxi_uninit`
     let fc = FileContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()));
     begin_file_context(&fc, ctx, core::ptr::null());
@@ -453,7 +452,7 @@ pub(crate) unsafe fn open_file_ctx(
     }
     // C: `#if !defined(UFBX_NO_STDIO)` — always taken (no matching feature);
     // the disabled branch reports `"UFBX_NO_STDIO", "Feature disabled"`.
-    ok = stdio_open(
+    let ok: bool = stdio_open(
         &fc,
         stream,
         path,
@@ -1067,10 +1066,7 @@ pub(crate) unsafe fn find_anim_prop_len(
                 str_less((*a).prop_name, prop_str)
             }
         },
-        |a| {
-            ref_ptr(&(*a).element) as *const Element == element
-                && str_equal((*a).prop_name, prop_str)
-        },
+        |a| std::ptr::eq(ref_ptr(&(*a).element), element) && str_equal((*a).prop_name, prop_str),
     );
 
     if index == usize::MAX {
@@ -1110,7 +1106,7 @@ pub(crate) unsafe fn find_anim_props(
         0,
         (*layer).anim_props.count,
         |a| (ref_ptr(&(*a).element) as *const Element) < element,
-        |a| ref_ptr(&(*a).element) as *const Element == element,
+        |a| std::ptr::eq(ref_ptr(&(*a).element), element),
     );
 
     macro_upper_bound_eq::<AnimProp>(
@@ -1119,7 +1115,7 @@ pub(crate) unsafe fn find_anim_props(
         (*layer).anim_props.data,
         begin,
         (*layer).anim_props.count,
-        |a| ref_ptr(&(*a).element) as *const Element == element,
+        |a| std::ptr::eq(ref_ptr(&(*a).element), element),
     );
 
     if begin != end {
@@ -2146,7 +2142,7 @@ pub(crate) unsafe fn get_bone_pose(pose: *const Pose, node: *const Node) -> *mut
         0,
         (*pose).bone_poses.count,
         |a| (*ref_ptr(&(*a).bone_node)).element.typed_id < (*node).element.typed_id,
-        |a| ref_ptr(&(*a).bone_node) as *const Node == node,
+        |a| std::ptr::eq(ref_ptr(&(*a).bone_node), node),
     );
     if index < usize::MAX {
         (*pose).bone_poses.data.add(index) as *mut BonePose
@@ -5601,6 +5597,10 @@ pub(crate) unsafe fn get_weighted_face_normal(positions: *const VertexVec3, face
 
 #[cfg(test)]
 mod tests {
+    // Test scaffolding builds dummy element/prop tables with `MaybeUninit::zeroed()`
+    // and only reads the POD sort-key fields; the zeroed values are never observed
+    // through their non-zeroable fields, so `invalid_value` is allowed for the tests.
+    #![allow(invalid_value)]
     use super::*;
     use crate::generated::Error;
     use crate::generated::RawAllocatorOpts;
@@ -5745,11 +5745,13 @@ mod tests {
         unsafe {
             let data = *b"no-copy";
             let mut hits: (usize, usize) = (0, 0);
-            let mut opts = RawOpenMemoryOpts::default();
-            opts.no_copy = true;
-            opts.close_cb = RawCloseMemoryCb {
-                fn_: Some(close_cb),
-                user: &mut hits as *mut (usize, usize) as *mut c_void,
+            let opts = RawOpenMemoryOpts {
+                no_copy: true,
+                close_cb: RawCloseMemoryCb {
+                    fn_: Some(close_cb),
+                    user: &mut hits as *mut (usize, usize) as *mut c_void,
+                },
+                ..Default::default()
             };
             let mut stream = RawStream::default();
             assert!(open_memory(
@@ -5808,8 +5810,7 @@ mod tests {
                 expected.len() as u64
             );
 
-            let mut got = std::vec::Vec::new();
-            got.resize(expected.len(), 0u8);
+            let mut got = vec![0; expected.len()];
             let mut read_total = 0usize;
             while read_total < expected.len() {
                 let n = (stream.read_fn.unwrap())(

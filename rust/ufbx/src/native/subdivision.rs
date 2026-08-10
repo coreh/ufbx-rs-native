@@ -1395,6 +1395,9 @@ pub(crate) unsafe fn subdivide_layer(
             } else if num_crease == 2 {
                 // Boundary: Interpolate edge
                 total_crease *= 0.5;
+                // Explicit min/max mirror the C source; `f64::clamp` differs on NaN
+                // (and panics if min > max), so it is not a faithful substitute.
+                #[allow(clippy::manual_clamp)]
                 if total_crease < 0.0 {
                     total_crease = 0.0;
                 }
@@ -1772,7 +1775,6 @@ pub(crate) unsafe fn subdivide_weights(
 
 // ufbx.c:29596-29629 `ufbxi_subdivide_vertex_crease`
 #[cfg(feature = "subdivision")]
-#[must_use]
 #[inline(never)]
 pub(crate) unsafe fn subdivide_vertex_crease(
     sc: &SubdivideContext,
@@ -1833,7 +1835,6 @@ pub(crate) unsafe fn subdivide_vertex_crease(
 
 // ufbx.c:29631-29925 `ufbxi_subdivide_mesh_level`
 #[cfg(feature = "subdivision")]
-#[must_use]
 #[inline(never)]
 pub(crate) unsafe fn subdivide_mesh_level(
     sc: &SubdivideContext,
@@ -2380,7 +2381,6 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
 // ufbx.c:29927-30034 `ufbxi_subdivide_mesh_imp`
 #[cfg(feature = "subdivision")]
-#[must_use]
 #[inline(never)]
 pub(crate) unsafe fn subdivide_mesh_imp(
     sc: &SubdivideContext,
