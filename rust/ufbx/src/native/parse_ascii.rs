@@ -340,7 +340,7 @@ pub(crate) unsafe fn ascii_skip_whitespace(uc: &Context) -> u8 {
                     if line_len >= 19
                         && memcmp(line.as_ptr(), b" Created by Blender".as_ptr(), 19) == 0
                     {
-                        (*uc.get()).exporter = Exporter::BlenderAscii;
+                        uc.set_exporter(Exporter::BlenderAscii);
                     }
                 }
             }

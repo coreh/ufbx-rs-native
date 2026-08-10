@@ -2547,6 +2547,27 @@ impl Context {
     pub(crate) fn ascii_view(&self) -> &AsciiView {
         unsafe { &*(&raw mut (*self.get()).ascii as *mut AsciiView) }
     }
+    // `exporter`/`mirror_axis` (Copy enums) — value getter/setter.
+    #[inline(always)]
+    pub(crate) fn exporter(&self) -> Exporter {
+        unsafe { (*self.get()).exporter }
+    }
+    #[inline(always)]
+    pub(crate) fn set_exporter(&self, exporter: Exporter) {
+        unsafe {
+            (*self.get()).exporter = exporter;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn mirror_axis(&self) -> MirrorAxis {
+        unsafe { (*self.get()).mirror_axis }
+    }
+    #[inline(always)]
+    pub(crate) fn set_mirror_axis(&self, mirror_axis: MirrorAxis) {
+        unsafe {
+            (*self.get()).mirror_axis = mirror_axis;
+        }
+    }
     // `node_prop_set`/`texture_file_map` (Map) — typed VIEW handles (reinterpret-in-place).
     #[inline(always)]
     pub(crate) fn node_prop_set_view(&self) -> &crate::native::hash::MapView {

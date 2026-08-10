@@ -5641,7 +5641,7 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
         }
         do_geometry_transforms = true;
     }
-    if (*uc.get()).mirror_axis != MirrorAxis::None {
+    if uc.mirror_axis() != MirrorAxis::None {
         do_mirror = true;
     }
     if uc.scene_view().metadata_view().geometry_scale() != 1.0 {
@@ -5649,7 +5649,7 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
     }
 
     let geometry_scale: Real = uc.scene_view().metadata_view().geometry_scale();
-    let mirror_axis: MirrorAxis = (*uc.get()).mirror_axis;
+    let mirror_axis: MirrorAxis = uc.mirror_axis();
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_shape, p_shape, uc->scene.blend_shapes)`
     let mut p_shape: *mut *mut BlendShape =
@@ -5954,7 +5954,7 @@ pub(crate) unsafe fn postprocess_scene(uc: &Context) {
         }
     }
 
-    if (*uc.get()).exporter == Exporter::BlenderBinary {
+    if uc.exporter() == Exporter::BlenderBinary {
         uc.scene_view()
             .metadata_view()
             .set_ortho_size_unit(1.0 / uc.scene_view().metadata_view().geometry_scale());
@@ -7854,7 +7854,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             (*material).shader_type = (*material_shader).type_;
         } else {
             if uc.opts_view().use_blender_pbr_material()
-                && (*uc.get()).exporter == Exporter::BlenderBinary
+                && uc.exporter() == Exporter::BlenderBinary
                 && uc.exporter_version() >= pack_version(4, 12, 0)
             {
                 (*material).shader_type = ShaderType::BlenderPhong;
@@ -8385,11 +8385,11 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         uc.scene_view()
             .metadata_view()
             .set_bone_prop_size_unit(1.0f32 as Real);
-    } else if (*uc.get()).exporter == Exporter::BlenderBinary {
+    } else if uc.exporter() == Exporter::BlenderBinary {
         uc.scene_view()
             .metadata_view()
             .set_bone_prop_size_unit(33.0f32 as Real);
-    } else if (*uc.get()).exporter == Exporter::BlenderAscii {
+    } else if uc.exporter() == Exporter::BlenderAscii {
         uc.scene_view()
             .metadata_view()
             .set_bone_prop_size_unit(1.0f32 as Real);
@@ -8398,7 +8398,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             .metadata_view()
             .set_bone_prop_size_unit((100.0 / 3.0) as Real);
     }
-    if (*uc.get()).exporter == Exporter::BlenderAscii {
+    if uc.exporter() == Exporter::BlenderAscii {
         uc.scene_view()
             .metadata_view()
             .set_bone_prop_limb_length_relative(false);

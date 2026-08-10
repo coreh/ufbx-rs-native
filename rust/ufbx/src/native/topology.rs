@@ -122,6 +122,37 @@ impl NgonContext {
             &*(&raw mut (*self.get()).positions as *mut crate::native::subdivision::VertexVec3View)
         }
     }
+    // `face`/`cur_face` (Copy `Face`) / `cur_axis_dir` (Copy `Vec3`) — value getter/setter.
+    #[inline(always)]
+    pub(crate) fn face(&self) -> Face {
+        unsafe { (*self.get()).face }
+    }
+    #[inline(always)]
+    pub(crate) fn set_face(&self, face: Face) {
+        unsafe {
+            (*self.get()).face = face;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn cur_face(&self) -> Face {
+        unsafe { (*self.get()).cur_face }
+    }
+    #[inline(always)]
+    pub(crate) fn set_cur_face(&self, cur_face: Face) {
+        unsafe {
+            (*self.get()).cur_face = cur_face;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn cur_axis_dir(&self) -> Vec3 {
+        unsafe { (*self.get()).cur_axis_dir }
+    }
+    #[inline(always)]
+    pub(crate) fn set_cur_axis_dir(&self, cur_axis_dir: Vec3) {
+        unsafe {
+            (*self.get()).cur_axis_dir = cur_axis_dir;
+        }
+    }
 
     // `positions` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
@@ -455,7 +486,7 @@ pub(crate) unsafe extern "C" fn kd_index_less(
     let a: u32 = *(va as *const u32);
     let b: u32 = *(vb as *const u32);
     let da: Real = dot3(
-        (*nc.get()).cur_axis_dir,
+        nc.cur_axis_dir(),
         *(*pos).values.data.add(
             *(*pos)
                 .indices
@@ -465,7 +496,7 @@ pub(crate) unsafe extern "C" fn kd_index_less(
         ),
     );
     let db: Real = dot3(
-        (*nc.get()).cur_axis_dir,
+        nc.cur_axis_dir(),
         *(*pos).values.data.add(
             *(*pos)
                 .indices
@@ -528,10 +559,10 @@ unsafe fn kd_build_rec(
     // C: `ufbx_vertex_vec3 pos = nc->positions;` — a struct memcpy.
     let pos: VertexVec3 = core::ptr::read(core::ptr::addr_of!((*nc.get()).positions));
     let axis_dir: Vec3 = (*nc.get()).axes[axis as usize];
-    let face: Face = (*nc.get()).face;
+    let face: Face = nc.face();
 
-    (*nc.get()).cur_axis_dir = axis_dir;
-    (*nc.get()).cur_face = face;
+    nc.set_cur_axis_dir(axis_dir);
+    nc.set_cur_face(face);
 
     // Sort the remaining indices based on the axis
     stable_sort(
@@ -650,7 +681,7 @@ pub(crate) unsafe fn triangulate_ngon(
     indices: *mut u32,
     num_indices: u32,
 ) -> u32 {
-    let face: Face = (*nc.get()).face;
+    let face: Face = nc.face();
     ufbx_assert!(face.num_indices > 4);
 
     // Form an orthonormal basis to project the polygon into a 2D plane

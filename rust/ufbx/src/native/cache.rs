@@ -360,6 +360,37 @@ impl CacheContext {
     pub(crate) fn buffer_size(&self) -> usize {
         unsafe { core::mem::size_of_val(&(*self.get()).buffer) }
     }
+    // `stream_filename` (String) / `xml_type`/`xml_format` (Copy enums) — value getter/setter.
+    #[inline(always)]
+    pub(crate) fn stream_filename(&self) -> String {
+        unsafe { (*self.get()).stream_filename }
+    }
+    #[inline(always)]
+    pub(crate) fn set_stream_filename(&self, stream_filename: String) {
+        unsafe {
+            (*self.get()).stream_filename = stream_filename;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn xml_type(&self) -> CacheXmlType {
+        unsafe { (*self.get()).xml_type }
+    }
+    #[inline(always)]
+    pub(crate) fn set_xml_type(&self, xml_type: CacheXmlType) {
+        unsafe {
+            (*self.get()).xml_type = xml_type;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn xml_format(&self) -> CacheXmlFormat {
+        unsafe { (*self.get()).xml_format }
+    }
+    #[inline(always)]
+    pub(crate) fn set_xml_format(&self, xml_format: CacheXmlFormat) {
+        unsafe {
+            (*self.get()).xml_format = xml_format;
+        }
+    }
 
     // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `GeometryCacheOptsView`.
     #[inline(always)]
@@ -1027,7 +1058,7 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
 
             (*frame).channel = (*cc.get()).channel_name;
             (*frame).time = time as f64 * (1.0 / 6000.0);
-            (*frame).filename = (*cc.get()).stream_filename;
+            (*frame).filename = cc.stream_filename();
             (*frame).data_format = format;
             (*frame).data_encoding = CacheDataEncoding::BigEndian;
             (*frame).data_offset = cc.file_offset();
@@ -1095,7 +1126,7 @@ pub(crate) unsafe fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
         let sample_frame: f64 = start_frame + i as f64 * frames_per_sample;
         (*frame).channel = (*cc.get()).channel_name;
         (*frame).time = sample_frame / cc.frames_per_second();
-        (*frame).filename = (*cc.get()).stream_filename;
+        (*frame).filename = cc.stream_filename();
         (*frame).data_format = CacheDataFormat::Vec3Float;
         (*frame).data_encoding = CacheDataEncoding::LittleEndian;
         (*frame).data_offset = offset;
@@ -1164,7 +1195,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
     doc: *mut XmlDocument,
 ) -> Result<(), Fail> {
     cc.set_xml_ticks_per_frame(250);
-    (*cc.get()).xml_filename = (*cc.get()).stream_filename;
+    (*cc.get()).xml_filename = cc.stream_filename();
 
     let tag_root: *mut XmlTag = xml_find_child((*doc).root, b"Autodesk_Cache_File\0".as_ptr());
     if !tag_root.is_null() {
@@ -1213,19 +1244,19 @@ pub(crate) unsafe fn cache_load_xml_imp(
                 if crate::native::error::strcmp((*type_).value.data, b"OneFilePerFrame\0".as_ptr())
                     == 0
                 {
-                    (*cc.get()).xml_type = CacheXmlType::FilePerFrame;
+                    cc.set_xml_type(CacheXmlType::FilePerFrame);
                 } else if crate::native::error::strcmp((*type_).value.data, b"OneFile\0".as_ptr())
                     == 0
                 {
-                    (*cc.get()).xml_type = CacheXmlType::SingleFile;
+                    cc.set_xml_type(CacheXmlType::SingleFile);
                 }
             }
             if !format.is_null() {
                 if crate::native::error::strcmp((*format).value.data, b"mcc\0".as_ptr()) == 0 {
-                    (*cc.get()).xml_format = CacheXmlFormat::Mcc;
+                    cc.set_xml_format(CacheXmlFormat::Mcc);
                 } else if crate::native::error::strcmp((*format).value.data, b"mcx\0".as_ptr()) == 0
                 {
-                    (*cc.get()).xml_format = CacheXmlFormat::Mcx;
+                    cc.set_xml_format(CacheXmlFormat::Mcx);
                 }
             }
         }
@@ -1320,7 +1351,7 @@ pub(crate) unsafe fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Result<(), Fail> {
-    (*cc.get()).stream_filename = filename;
+    cc.set_stream_filename(filename);
     push_string_place_str(
         cc.string_pool_mut_ptr(),
         cc.stream_filename_mut_ptr(),
@@ -1405,7 +1436,7 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
     }
 
     let extension: *const u8;
-    match (*cc.get()).xml_format {
+    match cc.xml_format() {
         CacheXmlFormat::Mcc => extension = b"mc\0".as_ptr(),
         CacheXmlFormat::Mcx => extension = b"mcx\0".as_ptr(),
         _ => return Ok(()),
@@ -1437,12 +1468,12 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
     let filename: *mut String = filename.as_mut_ptr();
     (*filename).data = name_buf;
 
-    if (*cc.get()).xml_type == CacheXmlType::SingleFile {
+    if cc.xml_type() == CacheXmlType::SingleFile {
         (*filename).length =
             prefix_len + ufbxi_snprintf!(suffix_data, suffix_len, ".%s", extension) as usize;
         let mut found: bool = false;
         cache_try_open_file(cc, *filename, core::ptr::null(), &mut found)?;
-    } else if (*cc.get()).xml_type == CacheXmlType::FilePerFrame {
+    } else if cc.xml_type() == CacheXmlType::FilePerFrame {
         let mut lowest_time: u32 = 0;
         loop {
             // Find the first `time >= lowest_time` value that has data in some channel
@@ -1730,8 +1761,7 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
         ufbxi_fail_err_msg!(cc.error_mut_ptr(), "open_file_fn()", "File not found");
     }
 
-    cc.cache_view()
-        .set_root_filename((*cc.get()).stream_filename);
+    cc.cache_view().set_root_filename(cc.stream_filename());
 
     cache_load_frame_files(cc)?;
 
@@ -1991,7 +2021,7 @@ pub(crate) unsafe fn load_external_cache(
     cc.set_string_pool(uc.string_pool());
     (*cc.get()).result = (*uc.get()).result;
 
-    cc.opts_view().set_mirror_axis((*uc.get()).mirror_axis);
+    cc.opts_view().set_mirror_axis(uc.mirror_axis());
     cc.opts_view().set_use_scale_factor(true);
     cc.opts_view()
         .set_scale_factor(uc.scene_view().metadata_view().geometry_scale());
@@ -2230,12 +2260,12 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
     if matrix_determinant(&(*uc.get()).axis_matrix) < 0.0f32 as Real {
         if uc.opts_view().handedness_conversion_axis() != MirrorAxis::None {
             let mirror_axis: MirrorAxis = uc.opts_view().handedness_conversion_axis();
-            (*uc.get()).mirror_axis = mirror_axis;
+            uc.set_mirror_axis(mirror_axis);
             uc.scene_view()
                 .metadata_view()
-                .set_mirror_axis((*uc.get()).mirror_axis);
+                .set_mirror_axis(uc.mirror_axis());
 
-            mirror_matrix_dst(uc.axis_matrix_mut_ptr(), (*uc.get()).mirror_axis);
+            mirror_matrix_dst(uc.axis_matrix_mut_ptr(), uc.mirror_axis());
             ufbxi_dev_assert!(matrix_determinant(&(*uc.get()).axis_matrix) >= 0.0f32 as Real);
 
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
@@ -2259,7 +2289,7 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
             axis_mat = matrix_mul(&root_mat, &axis_mat);
         }
 
-        mirror_matrix(&mut axis_mat, (*uc.get()).mirror_axis);
+        mirror_matrix(&mut axis_mat, uc.mirror_axis());
 
         (*root_node).local_transform = matrix_to_transform(&axis_mat);
         (*root_node).node_to_parent = axis_mat;

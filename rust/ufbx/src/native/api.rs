@@ -3857,7 +3857,7 @@ pub(crate) unsafe fn catch_triangulate_face(
             nc.positions_mut_ptr(),
             core::ptr::read(&(*mesh).vertex_position),
         );
-        (*nc.get()).face = face;
+        nc.set_face(face);
 
         let num_indices_u32: u32 = if num_indices < u32::MAX as usize {
             num_indices as u32
