@@ -328,6 +328,21 @@ impl CacheContext {
         unsafe { &*(&raw mut (*self.get()).error as *mut crate::native::error::ErrorView) }
     }
 
+    // `channel_name`/`xml_filename` (String) — typed VIEW handles (reinterpret-in-place).
+    #[inline(always)]
+    pub(crate) fn channel_name_view(&self) -> &crate::prelude::StringView {
+        unsafe { &*(&raw mut (*self.get()).channel_name as *mut crate::prelude::StringView) }
+    }
+    #[inline(always)]
+    pub(crate) fn xml_filename_view(&self) -> &crate::prelude::StringView {
+        unsafe { &*(&raw mut (*self.get()).xml_filename as *mut crate::prelude::StringView) }
+    }
+    // `open_file_cb` (RawOpenFileCb) — typed VIEW handle; `.fn_` is read + written.
+    #[inline(always)]
+    pub(crate) fn open_file_cb_view(&self) -> &crate::prelude::RawOpenFileCbView {
+        unsafe { &*(&raw mut (*self.get()).open_file_cb as *mut crate::prelude::RawOpenFileCbView) }
+    }
+
     // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `GeometryCacheOptsView`.
     #[inline(always)]
     pub(crate) fn opts_view(&self) -> &GeometryCacheOptsView {
@@ -951,8 +966,8 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                     "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->name_buf)), (&cc->name_buf), (&cc->name_cap), (padded_length))"
                 );
                 cache_read(cc, cc.name_buf() as *mut c_void, padded_length, false)?;
-                (*cc.get()).channel_name.data = cc.name_buf();
-                (*cc.get()).channel_name.length = length;
+                cc.channel_name_view().set_data(cc.name_buf());
+                cc.channel_name_view().set_length(length);
                 push_string_place_str(cc.string_pool_mut_ptr(), cc.channel_name_mut_ptr(), false)?;
             }
             TAG_SIZE => cache_mc_read_u32(cc, &mut count)?,
@@ -1353,7 +1368,7 @@ pub(crate) unsafe fn cache_try_open_file(
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
-    if (*cc.get()).xml_filename.length == 0 {
+    if cc.xml_filename_view().length() == 0 {
         return Ok(());
     }
 
@@ -1365,21 +1380,21 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
     }
 
     // Ensure worst case space for `path/filenameFrame123Tick456.mcx`
-    let name_buf_len: usize = (*cc.get()).xml_filename.length + 64;
+    let name_buf_len: usize = cc.xml_filename_view().length() + 64;
     let name_buf: *mut u8 = push(cc.tmp_mut_ptr(), name_buf_len);
     ufbxi_check_err!(cc.error_mut_ptr(), !name_buf.is_null(), "name_buf");
 
     // Find the prefix before `.xml`
-    let mut prefix_len: usize = (*cc.get()).xml_filename.length;
+    let mut prefix_len: usize = cc.xml_filename_view().length();
     let mut i: usize = prefix_len;
     while i > 0 {
-        if *(*cc.get()).xml_filename.data.add(i - 1) == b'.' {
+        if *cc.xml_filename_view().data().add(i - 1) == b'.' {
             prefix_len = i - 1;
             break;
         }
         i -= 1;
     }
-    core::ptr::copy_nonoverlapping((*cc.get()).xml_filename.data, name_buf, prefix_len);
+    core::ptr::copy_nonoverlapping(cc.xml_filename_view().data(), name_buf, prefix_len);
 
     let suffix_data: *mut u8 = name_buf.add(prefix_len);
     let suffix_len: usize = name_buf_len - prefix_len;
@@ -1657,10 +1672,11 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     cc.tmp_view().set_ator(cc.ator_tmp());
     cc.tmp_stack_view().set_ator(cc.ator_tmp());
 
-    (*cc.get()).channel_name.data = EMPTY_CHAR.as_ptr();
+    cc.channel_name_view().set_data(EMPTY_CHAR.as_ptr());
 
-    if (*cc.get()).open_file_cb.fn_.is_none() {
-        (*cc.get()).open_file_cb.fn_ = Some(crate::native::api::default_open_file);
+    if cc.open_file_cb_view().fn_().is_none() {
+        cc.open_file_cb_view()
+            .set_fn_(Some(crate::native::api::default_open_file));
     }
 
     // Make sure the filename we pass to `open_file_fn()` is NULL-terminated
