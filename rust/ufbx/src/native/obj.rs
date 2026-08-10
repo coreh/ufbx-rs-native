@@ -521,9 +521,12 @@ pub(crate) unsafe fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:17067-17072 `ufbxi_obj_tokenize_line`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_tokenize_line(uc: &Context) -> Result<(), Fail> {
-    obj_read_line(uc)?;
-    obj_tokenize(uc)?;
+pub(crate) fn obj_tokenize_line(uc: &Context) -> Result<(), Fail> {
+    // SAFETY: both pipeline stages need only a valid `uc` (upheld by the handle).
+    unsafe {
+        obj_read_line(uc)?;
+        obj_tokenize(uc)?;
+    }
     Ok(())
 }
 
@@ -844,11 +847,13 @@ pub(crate) unsafe fn obj_parse_indices(
 // ufbx.c:17298-17304 `ufbxi_obj_parse_multi_indices`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_parse_multi_indices(uc: &Context, window: usize) -> Result<(), Fail> {
+pub(crate) fn obj_parse_multi_indices(uc: &Context, window: usize) -> Result<(), Fail> {
     // C: `for (size_t begin = 1; begin + window <= uc->obj.num_tokens; begin++)`
     let mut begin: usize = 1;
     while begin + window <= uc.obj().num_tokens() {
-        obj_parse_indices(uc, begin, window)?;
+        // SAFETY: `obj_parse_indices` needs only a valid `uc` and the in-range
+        // window (`begin + window <= num_tokens` checked above).
+        unsafe { obj_parse_indices(uc, begin, window)? };
         begin += 1;
     }
     Ok(())
