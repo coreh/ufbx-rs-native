@@ -98,6 +98,16 @@ impl XmlContext {
         self.0.get().cast()
     }
 
+    // `data` (`[u8; 4096]`) — whole-array raw-ptr getters (read/write buffer base).
+    #[inline(always)]
+    pub(crate) fn data_ptr(&self) -> *const u8 {
+        unsafe { (&raw mut (*self.get()).data) as *const u8 }
+    }
+    #[inline(always)]
+    pub(crate) fn data_mut_ptr(&self) -> *mut u8 {
+        unsafe { (&raw mut (*self.get()).data) as *mut u8 }
+    }
+
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
     #[inline(always)]
     pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
@@ -317,7 +327,7 @@ static XML_CTYPE: [u8; 256] = {
 pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
     let mut num: usize = (xc.read_fn().unwrap_unchecked())(
         xc.read_user(),
-        (*xc.get()).data.as_mut_ptr() as *mut c_void,
+        xc.data_mut_ptr() as *mut c_void,
         size_of_val(&(*xc.get()).data),
     );
     if num == usize::MAX || num < size_of_val(&(*xc.get()).data) {
@@ -328,12 +338,12 @@ pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
         (*xc.get()).data[num] = b'\0';
         num += 1;
     }
-    xc.set_pos((*xc.get()).data.as_ptr());
+    xc.set_pos(xc.data_ptr());
     // C-parity: `xc->pos_end = xc->data + num;` — a misbehaving `read_fn` can
     // return `SIZE_MAX` here (the `io_error` flag is set but the pointer is
     // still formed), so the offset is applied with wrapping semantics rather
     // than `add`, which would trip the pointer-overflow precondition.
-    xc.set_pos_end((*xc.get()).data.as_ptr().wrapping_add(num));
+    xc.set_pos_end(xc.data_ptr().wrapping_add(num));
 }
 
 // ufbx.c:7323-7326 `ufbxi_xml_advance`

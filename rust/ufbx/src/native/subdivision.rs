@@ -298,6 +298,10 @@ impl VertexVec3View {
                 as *mut crate::prelude::ListView<crate::generated::Vec3>)
         }
     }
+    #[inline(always)]
+    pub(crate) fn indices_view(&self) -> &crate::prelude::ListView<u32> {
+        unsafe { &*(&raw mut (*self.get()).indices as *mut crate::prelude::ListView<u32>) }
+    }
 }
 
 // Typed interior-mutable VIEW over a `Mesh` field (public struct; only the sc-accessed

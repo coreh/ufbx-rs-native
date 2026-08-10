@@ -748,7 +748,7 @@ pub(crate) unsafe fn cache_read(
             );
         }
         cc.set_pos(cc.buffer_ptr());
-        cc.set_pos_end((*cc.get()).buffer.as_ptr().add(cc.buffer_size()));
+        cc.set_pos_end(cc.buffer_ptr().add(cc.buffer_size()));
 
         core::ptr::copy_nonoverlapping(cc.pos(), dst as *mut u8, size);
         cc.set_pos(cc.pos().add(size));

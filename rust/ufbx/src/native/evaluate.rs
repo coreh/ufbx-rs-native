@@ -660,10 +660,9 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     uc.set_retain_mesh_parts(
         !uc.opts_view().ignore_geometry() && !uc.opts_view().skip_mesh_parts(),
     );
-    (*uc.get())
-        .scene
-        .metadata
-        .may_contain_missing_vertex_position = uc.opts_view().allow_missing_vertex_position();
+    uc.scene_view()
+        .metadata_view()
+        .set_may_contain_missing_vertex_position(uc.opts_view().allow_missing_vertex_position());
     uc.scene_view()
         .metadata_view()
         .set_may_contain_broken_elements(uc.opts_view().connect_broken_elements());

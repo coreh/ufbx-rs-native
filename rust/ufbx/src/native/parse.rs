@@ -2260,6 +2260,15 @@ impl SceneMetadataView {
         }
     }
     #[inline(always)]
+    pub(crate) fn set_may_contain_missing_vertex_position(
+        &self,
+        may_contain_missing_vertex_position: bool,
+    ) {
+        unsafe {
+            (*self.get()).may_contain_missing_vertex_position = may_contain_missing_vertex_position;
+        }
+    }
+    #[inline(always)]
     pub(crate) fn set_may_contain_broken_elements(&self, may_contain_broken_elements: bool) {
         unsafe {
             (*self.get()).may_contain_broken_elements = may_contain_broken_elements;

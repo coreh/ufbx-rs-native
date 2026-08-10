@@ -82,11 +82,45 @@ pub(crate) struct NgonContext(
     pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerNgonContext>>,
 );
 
+// Typed interior-mutable VIEW over a `Face` field, reinterpreted in place.
+#[cfg(feature = "triangulation")]
+#[repr(transparent)]
+pub(crate) struct FaceView(core::cell::UnsafeCell<core::mem::MaybeUninit<Face>>);
+
+#[cfg(feature = "triangulation")]
+impl FaceView {
+    #[inline(always)]
+    fn get(&self) -> *mut Face {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn index_begin(&self) -> u32 {
+        unsafe { (*self.get()).index_begin }
+    }
+}
+
 #[cfg(feature = "triangulation")]
 impl NgonContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerNgonContext {
         self.0.get().cast()
+    }
+
+    // `face`/`cur_face` (Face) — typed VIEW handles (reinterpret-in-place).
+    #[inline(always)]
+    pub(crate) fn face_view(&self) -> &FaceView {
+        unsafe { &*(&raw mut (*self.get()).face as *mut FaceView) }
+    }
+    #[inline(always)]
+    pub(crate) fn cur_face_view(&self) -> &FaceView {
+        unsafe { &*(&raw mut (*self.get()).cur_face as *mut FaceView) }
+    }
+    // `positions` (VertexVec3) — typed VIEW handle; reuse the shared VertexVec3View.
+    #[inline(always)]
+    pub(crate) fn positions_view(&self) -> &crate::native::subdivision::VertexVec3View {
+        unsafe {
+            &*(&raw mut (*self.get()).positions as *mut crate::native::subdivision::VertexVec3View)
+        }
     }
 
     // `positions` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -129,12 +163,11 @@ pub(crate) struct KdTriangle {
 #[cfg(feature = "triangulation")]
 #[inline(never)]
 pub(crate) unsafe fn ngon_project(nc: &NgonContext, index: u32) -> Vec2 {
-    let point: Vec3 = *(*nc.get()).positions.values.data.add(
-        *(*nc.get())
-            .positions
-            .indices
-            .data
-            .add((*nc.get()).face.index_begin.wrapping_add(index) as usize) as usize,
+    let point: Vec3 = *nc.positions_view().values_view().data().add(
+        *nc.positions_view()
+            .indices_view()
+            .data()
+            .add(nc.face_view().index_begin().wrapping_add(index) as usize) as usize,
     );
 
     // C: `ufbx_vec2 p;` — both fields are assigned below.
@@ -236,7 +269,7 @@ unsafe fn kd_check_slow_rec(
         let point: Vec3 = *pos.values.data.add(
             *pos.indices
                 .data
-                .add((*nc.get()).face.index_begin.wrapping_add(index) as usize)
+                .add(nc.face_view().index_begin().wrapping_add(index) as usize)
                 as usize,
         );
         let split: Real = dot3(point, (*nc.get()).axes[axis as usize]);
@@ -427,7 +460,7 @@ pub(crate) unsafe extern "C" fn kd_index_less(
             *(*pos)
                 .indices
                 .data
-                .add((*nc.get()).cur_face.index_begin.wrapping_add(a) as usize)
+                .add(nc.cur_face_view().index_begin().wrapping_add(a) as usize)
                 as usize,
         ),
     );
@@ -437,7 +470,7 @@ pub(crate) unsafe extern "C" fn kd_index_less(
             *(*pos)
                 .indices
                 .data
-                .add((*nc.get()).cur_face.index_begin.wrapping_add(b) as usize)
+                .add(nc.cur_face_view().index_begin().wrapping_add(b) as usize)
                 as usize,
         ),
     );
