@@ -1025,11 +1025,16 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:18547-18554 `ufbxi_find_element_by_fbx_id`
 #[inline(never)]
-pub(crate) unsafe fn find_element_by_fbx_id(uc: &Context, fbx_id: u64) -> *mut Element {
+pub(crate) fn find_element_by_fbx_id(uc: &Context, fbx_id: u64) -> *mut Element {
     let entry: *mut FbxIdEntry = find_fbx_id(uc, fbx_id);
     if !entry.is_null() {
-        return *(uc.scene_view().elements_view().data() as *mut *mut Element)
-            .add((*entry).element_id as usize);
+        // SAFETY: `entry` is non-null (checked) and a valid FbxIdEntry from the
+        // id map; its `element_id` indexes the scene's element array by
+        // construction.
+        return unsafe {
+            *(uc.scene_view().elements_view().data() as *mut *mut Element)
+                .add((*entry).element_id as usize)
+        };
     }
     ptr::null_mut()
 }
@@ -1272,15 +1277,20 @@ pub(crate) unsafe fn sort_connections(
 }
 
 // ufbx.c:18655-18663 `ufbxi_find_attribute_fbx_id`
-pub(crate) unsafe fn find_attribute_fbx_id(uc: &Context, node_fbx_id: u64) -> u64 {
+pub(crate) fn find_attribute_fbx_id(uc: &Context, node_fbx_id: u64) -> u64 {
     let hash: u32 = hash64(node_fbx_id);
-    let entry: *mut FbxAttrEntry = map_find(
-        uc.fbx_attr_map_mut_ptr(),
-        hash,
-        &node_fbx_id as *const u64 as *const c_void,
-    );
+    // SAFETY: `fbx_attr_map_mut_ptr()` is a valid map by construction; the key
+    // pointer is a valid local.
+    let entry: *mut FbxAttrEntry = unsafe {
+        map_find(
+            uc.fbx_attr_map_mut_ptr(),
+            hash,
+            &node_fbx_id as *const u64 as *const c_void,
+        )
+    };
     if !entry.is_null() {
-        return (*entry).attr_fbx_id;
+        // SAFETY: `entry` is non-null (checked) and a valid FbxAttrEntry.
+        return unsafe { (*entry).attr_fbx_id };
     }
     node_fbx_id
 }
