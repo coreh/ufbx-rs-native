@@ -923,7 +923,7 @@ pub(crate) unsafe fn subdivide_layer(
 ) -> Result<(), crate::native::error::Fail> {
     let boundary: SubdivisionBoundary = (*input).boundary;
 
-    let mesh: *const Mesh = sc.src_mesh_ptr();
+    let mesh: *const Mesh = sc.src_mesh_mut_ptr();
     let topo: *const TopoEdge = sc.topo();
     let num_topo: usize = sc.num_topo();
 
@@ -1839,7 +1839,7 @@ pub(crate) unsafe fn subdivide_vertex_crease(
 pub(crate) unsafe fn subdivide_mesh_level(
     sc: &SubdivideContext,
 ) -> Result<(), crate::native::error::Fail> {
-    let mesh: *const Mesh = sc.src_mesh_ptr();
+    let mesh: *const Mesh = sc.src_mesh_mut_ptr();
     let result: *mut Mesh = sc.dst_mesh_mut_ptr();
 
     // C: `*result = *mesh;` — struct assignment (memcpy).
