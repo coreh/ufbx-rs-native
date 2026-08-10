@@ -117,6 +117,10 @@ impl XmlContext {
     pub(crate) fn data_mut_ptr(&self) -> *mut u8 {
         unsafe { (&raw mut (*self.get()).data) as *mut u8 }
     }
+    #[inline(always)]
+    pub(crate) fn data_at(&self, i: usize) -> &crate::prelude::ScalarView<u8> {
+        unsafe { &*(&raw mut (*self.get()).data[i] as *mut crate::prelude::ScalarView<u8>) }
+    }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
     #[inline(always)]
@@ -345,7 +349,7 @@ pub(crate) unsafe fn xml_refill(xc: &XmlContext) {
     }
     if num < xc.data_size() {
         // C: `xc->data[num++] = '\0';`
-        (*xc.get()).data[num] = b'\0';
+        xc.data_at(num).set(b'\0');
         num += 1;
     }
     xc.set_pos(xc.data_ptr());
