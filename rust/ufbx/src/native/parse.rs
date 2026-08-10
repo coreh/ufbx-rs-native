@@ -4177,8 +4177,16 @@ impl Context {
 // (`native::error::ufbxi_check_msg!` etc.) in BOTH stack modes, and of the
 // no-msg forms under `error-stack`.
 #[inline(never)]
-pub(crate) unsafe fn fail_imp(uc: &Context, cond: *const u8, func: *const u8, line: u32) -> i32 {
-    crate::native::error::fail_imp_err(uc.error_mut_ptr(), cond, func, line)
+pub(crate) fn fail_imp(
+    uc: &Context,
+    cond: Option<crate::native::error::FailStr>,
+    func: Option<crate::native::error::FailStr>,
+    line: u32,
+) -> i32 {
+    // SAFETY: `error_mut_ptr()` returns a valid, initialized `Error` by context
+    // construction; `cond`/`func` carry the `FailStr` invariant (`'static`,
+    // NUL-terminated), so they are valid for the reads `fail_imp_err` performs.
+    unsafe { crate::native::error::fail_imp_err(uc.error_mut_ptr(), cond, func, line) }
 }
 
 // ufbx.c:6657-6662 (`#else` branch of `UFBXI_FEATURE_ERROR_STACK`)
@@ -4189,14 +4197,7 @@ pub(crate) unsafe fn fail_imp(uc: &Context, cond: *const u8, func: *const u8, li
 pub(crate) fn fail_imp_no_stack(uc: &Context) -> i32 {
     // SAFETY: `error_mut_ptr()` is a valid Error by construction; the message
     // pointers are null (no stack frame).
-    unsafe {
-        crate::native::error::fail_imp_err(
-            uc.error_mut_ptr(),
-            core::ptr::null(),
-            core::ptr::null(),
-            0,
-        )
-    }
+    unsafe { crate::native::error::fail_imp_err(uc.error_mut_ptr(), None, None, 0) }
 }
 
 // -- Progress

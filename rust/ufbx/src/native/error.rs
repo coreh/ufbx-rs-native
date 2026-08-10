@@ -52,6 +52,39 @@ use crate::native::printf::{vprint, PrintArg, PrintBuffer};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Fail;
 
+// Carrier for the `'static`, NUL-terminated byte strings the fail path forwards
+// as messages and function names (C: `const char *` literals). The invariant —
+// `'static` and NUL-terminated (messages are the packed `$desc\0cond\0` form,
+// interior NULs and all) — is what lets `fail_imp` / `fail_imp_no_stack` be safe
+// fns: the pointer they forward into `fail_imp_err` is valid by construction, not
+// by a caller obligation. Only the check-macro family constructs these, always
+// from `concat!(..., "\0")` literals or the NUL-padded `ufbxi_function!` buffer.
+#[derive(Clone, Copy)]
+pub(crate) struct FailStr(&'static [u8]);
+
+impl FailStr {
+    #[inline(always)]
+    pub(crate) const fn new(bytes: &'static [u8]) -> Self {
+        // `fail_imp_err` reads these via `strlen` from `.as_ptr()`; a trailing
+        // NUL is what keeps that read in bounds. Every constructor passes a
+        // NUL-terminated literal; assert it so a future non-terminated caller
+        // fails loudly rather than reading past the end.
+        debug_assert!(!bytes.is_empty() && bytes[bytes.len() - 1] == 0);
+        Self(bytes)
+    }
+    #[inline(always)]
+    pub(crate) fn as_ptr(self) -> *const u8 {
+        self.0.as_ptr()
+    }
+}
+
+// `Option<FailStr>` -> raw pointer, null for `None` (the no-stack / no-message
+// paths where C passes a null `const char *`).
+#[inline(always)]
+fn fail_str_ptr(s: Option<FailStr>) -> *const u8 {
+    s.map_or(core::ptr::null(), FailStr::as_ptr)
+}
+
 // ufbx.h:163-165 (array extents of the public error/panic types)
 pub(crate) const ERROR_STACK_MAX_DEPTH: usize = 8;
 pub(crate) const PANIC_MESSAGE_LENGTH: usize = 128;
@@ -305,10 +338,12 @@ pub(crate) use ufbxi_error_msg_cond;
 #[inline(never)]
 pub(crate) unsafe fn fail_imp_err(
     err: *mut Error,
-    mut cond: *const u8,
-    func: *const u8,
+    cond: Option<FailStr>,
+    func: Option<FailStr>,
     line: u32,
 ) -> i32 {
+    let mut cond: *const u8 = fail_str_ptr(cond);
+    let func: *const u8 = fail_str_ptr(func);
     let err = &mut *err;
     if !cond.is_null() && *cond == b'$' {
         if err.description.data.is_null() {
@@ -509,13 +544,13 @@ macro_rules! ufbxi_function {
     () => {{
         const LEN: usize = module_path!().len() + 1;
         static NAME: [u8; LEN] = $crate::native::error::function_name::<LEN>(module_path!());
-        NAME.as_ptr()
+        Some($crate::native::error::FailStr::new(&NAME))
     }};
 }
 #[cfg(not(feature = "error-stack"))]
 macro_rules! ufbxi_function {
     () => {
-        core::ptr::null::<u8>()
+        Option::<$crate::native::error::FailStr>::None
     };
 }
 pub(crate) use ufbxi_function;
@@ -584,7 +619,7 @@ pub(crate) use ufbxi_fail_err_no_msg;
 #[cfg(not(feature = "error-stack"))]
 #[inline(never)]
 pub(crate) unsafe fn fail_imp_err_no_stack(err: *mut Error) -> i32 {
-    fail_imp_err(err, core::ptr::null(), core::ptr::null(), 0)
+    fail_imp_err(err, None, None, 0)
 }
 
 // -- The check-macro family, error-target forms (ufbx.c:3550-3557)
@@ -601,7 +636,9 @@ macro_rules! ufbxi_check_err {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::ufbxi_fail_err_no_msg!(
                 $err,
-                $crate::native::error::ufbxi_cond_str!($cond).as_ptr()
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_cond_str!($cond).as_bytes(),
+                ))
             );
             return Err($crate::native::error::Fail);
         }
@@ -611,7 +648,9 @@ macro_rules! ufbxi_check_err {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::ufbxi_fail_err_no_msg!(
                 $err,
-                $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_ptr()
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_bytes(),
+                ))
             );
             return Err($crate::native::error::Fail);
         }
@@ -627,7 +666,9 @@ macro_rules! ufbxi_check_return_err {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::ufbxi_fail_err_no_msg!(
                 $err,
-                $crate::native::error::ufbxi_cond_str!($cond).as_ptr()
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_cond_str!($cond).as_bytes(),
+                ))
             );
             return $ret;
         }
@@ -637,7 +678,9 @@ macro_rules! ufbxi_check_return_err {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::ufbxi_fail_err_no_msg!(
                 $err,
-                $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_ptr()
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_bytes(),
+                ))
             );
             return $ret;
         }
@@ -649,7 +692,12 @@ pub(crate) use ufbxi_check_return_err;
 // `desc` is a verbatim string literal (all ufbx.c call sites are literals).
 macro_rules! ufbxi_fail_err {
     ($err:expr, $desc:literal) => {{
-        $crate::native::error::ufbxi_fail_err_no_msg!($err, concat!($desc, "\0").as_ptr());
+        $crate::native::error::ufbxi_fail_err_no_msg!(
+            $err,
+            Some($crate::native::error::FailStr::new(
+                concat!($desc, "\0").as_bytes()
+            ))
+        );
         return Err($crate::native::error::Fail);
     }};
 }
@@ -664,7 +712,9 @@ macro_rules! ufbxi_check_err_msg {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::fail_imp_err(
                 $err,
-                $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_ptr(),
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_bytes(),
+                )),
                 $crate::native::error::ufbxi_function!(),
                 $crate::native::error::ufbxi_line!(),
             );
@@ -676,7 +726,10 @@ macro_rules! ufbxi_check_err_msg {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::fail_imp_err(
                 $err,
-                $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str).as_ptr(),
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str)
+                        .as_bytes(),
+                )),
                 $crate::native::error::ufbxi_function!(),
                 $crate::native::error::ufbxi_line!(),
             );
@@ -694,7 +747,9 @@ macro_rules! ufbxi_check_return_err_msg {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::fail_imp_err(
                 $err,
-                $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_ptr(),
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_bytes(),
+                )),
                 $crate::native::error::ufbxi_function!(),
                 $crate::native::error::ufbxi_line!(),
             );
@@ -706,7 +761,10 @@ macro_rules! ufbxi_check_return_err_msg {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::fail_imp_err(
                 $err,
-                $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str).as_ptr(),
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str)
+                        .as_bytes(),
+                )),
                 $crate::native::error::ufbxi_function!(),
                 $crate::native::error::ufbxi_line!(),
             );
@@ -722,7 +780,9 @@ macro_rules! ufbxi_fail_err_msg {
     ($err:expr, $desc:literal, $msg:literal) => {{
         $crate::native::error::fail_imp_err(
             $err,
-            $crate::native::error::ufbxi_error_msg!($desc, $msg).as_ptr(),
+            Some($crate::native::error::FailStr::new(
+                $crate::native::error::ufbxi_error_msg!($desc, $msg).as_bytes(),
+            )),
             $crate::native::error::ufbxi_function!(),
             $crate::native::error::ufbxi_line!(),
         );
@@ -737,7 +797,9 @@ macro_rules! ufbxi_report_err_msg {
     ($err:expr, $desc:literal, $msg:literal) => {{
         let _ = $crate::native::error::fail_imp_err(
             $err,
-            $crate::native::error::ufbxi_error_msg!($desc, $msg).as_ptr(),
+            Some($crate::native::error::FailStr::new(
+                $crate::native::error::ufbxi_error_msg!($desc, $msg).as_bytes(),
+            )),
             $crate::native::error::ufbxi_function!(),
             $crate::native::error::ufbxi_line!(),
         );
@@ -781,7 +843,9 @@ macro_rules! ufbxi_check {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::ufbxi_fail_no_msg!(
                 $uc,
-                $crate::native::error::ufbxi_cond_str!($cond).as_ptr()
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_cond_str!($cond).as_bytes(),
+                ))
             );
             return Err($crate::native::error::Fail);
         }
@@ -791,7 +855,9 @@ macro_rules! ufbxi_check {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::ufbxi_fail_no_msg!(
                 $uc,
-                $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_ptr()
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_bytes(),
+                ))
             );
             return Err($crate::native::error::Fail);
         }
@@ -807,7 +873,9 @@ macro_rules! ufbxi_check_return {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::ufbxi_fail_no_msg!(
                 $uc,
-                $crate::native::error::ufbxi_cond_str!($cond).as_ptr()
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_cond_str!($cond).as_bytes(),
+                ))
             );
             return $ret;
         }
@@ -817,7 +885,9 @@ macro_rules! ufbxi_check_return {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::error::ufbxi_fail_no_msg!(
                 $uc,
-                $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_ptr()
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_cond_str!($cond, $c_cond_str).as_bytes(),
+                ))
             );
             return $ret;
         }
@@ -828,7 +898,12 @@ pub(crate) use ufbxi_check_return;
 // ufbx.c:6666 `ufbxi_fail(desc)`
 macro_rules! ufbxi_fail {
     ($uc:expr, $desc:literal) => {{
-        $crate::native::error::ufbxi_fail_no_msg!($uc, concat!($desc, "\0").as_ptr());
+        $crate::native::error::ufbxi_fail_no_msg!(
+            $uc,
+            Some($crate::native::error::FailStr::new(
+                concat!($desc, "\0").as_bytes()
+            ))
+        );
         return Err($crate::native::error::Fail);
     }};
 }
@@ -837,7 +912,12 @@ pub(crate) use ufbxi_fail;
 // ufbx.c:6667 `ufbxi_fail_return(desc, ret)`
 macro_rules! ufbxi_fail_return {
     ($uc:expr, $desc:literal, $ret:expr) => {{
-        $crate::native::error::ufbxi_fail_no_msg!($uc, concat!($desc, "\0").as_ptr());
+        $crate::native::error::ufbxi_fail_no_msg!(
+            $uc,
+            Some($crate::native::error::FailStr::new(
+                concat!($desc, "\0").as_bytes()
+            ))
+        );
         return $ret;
     }};
 }
@@ -851,7 +931,9 @@ macro_rules! ufbxi_check_msg {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::parse::fail_imp(
                 $uc,
-                $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_ptr(),
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_bytes(),
+                )),
                 $crate::native::error::ufbxi_function!(),
                 $crate::native::error::ufbxi_line!(),
             );
@@ -863,7 +945,10 @@ macro_rules! ufbxi_check_msg {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::parse::fail_imp(
                 $uc,
-                $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str).as_ptr(),
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str)
+                        .as_bytes(),
+                )),
                 $crate::native::error::ufbxi_function!(),
                 $crate::native::error::ufbxi_line!(),
             );
@@ -880,7 +965,9 @@ macro_rules! ufbxi_check_return_msg {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::parse::fail_imp(
                 $uc,
-                $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_ptr(),
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_bytes(),
+                )),
                 $crate::native::error::ufbxi_function!(),
                 $crate::native::error::ufbxi_line!(),
             );
@@ -892,7 +979,10 @@ macro_rules! ufbxi_check_return_msg {
         if $crate::native::platform::unlikely(!cond) {
             $crate::native::parse::fail_imp(
                 $uc,
-                $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str).as_ptr(),
+                Some($crate::native::error::FailStr::new(
+                    $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str)
+                        .as_bytes(),
+                )),
                 $crate::native::error::ufbxi_function!(),
                 $crate::native::error::ufbxi_line!(),
             );
@@ -909,7 +999,9 @@ macro_rules! ufbxi_fail_msg {
     ($uc:expr, $desc:literal, $msg:literal) => {{
         $crate::native::parse::fail_imp(
             $uc,
-            $crate::native::error::ufbxi_error_msg!($desc, $msg).as_ptr(),
+            Some($crate::native::error::FailStr::new(
+                $crate::native::error::ufbxi_error_msg!($desc, $msg).as_bytes(),
+            )),
             $crate::native::error::ufbxi_function!(),
             $crate::native::error::ufbxi_line!(),
         );
