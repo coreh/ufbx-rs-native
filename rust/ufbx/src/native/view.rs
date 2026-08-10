@@ -20,12 +20,14 @@
 //! `&View<T>` can be formed over a `T` embedding not-yet-valid bytes.
 //!
 //! ufbx stores child/attrib/element/etc. runs as contiguous `push_pop` arena
-//! arrays walked in C by `ufbxi_for` (plain `ptr++`); [`ArenaViewIter`] walks
+//! arrays walked in C by `ufbxi_for` (plain `ptr++`); [`SliceViewIter`] walks
 //! such a `(base, count)` run yielding `&View<T>`, with the only raw-pointer work
 //! — the in-bounds index and the per-element `*mut T -> &View<T>` bridge —
-//! localized to `new` (the arena vouch) and `next`. It is for contiguous runs
-//! ONLY; skip-flagged / free-list structures (maps, retired chunks) need a
-//! filtering iterator or stay raw.
+//! localized to `new` (the run vouch) and `next`. It is a dumb contiguous walk —
+//! morally `slice::Iter` with a reinterpret on the yield — and knows nothing
+//! about the allocator: it is for contiguous `push_pop`-materialized runs ONLY.
+//! Skip-flagged / free-list structures (maps, retired chunks) need an
+//! allocator-aware `ArenaViewIter` (not yet built) or stay raw.
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
@@ -54,18 +56,19 @@ impl<T> View<T> {
     }
 }
 
-/// Safe iterator over a contiguous arena run of `T`, yielding `&View<T>`.
+/// Safe iterator over a contiguous run of `T`, yielding `&View<T>`.
 ///
-/// Construction (`new`) is the single `unsafe` boundary that vouches for the run;
-/// iteration is then fully safe.
-pub(crate) struct ArenaViewIter<'a, T> {
+/// A dumb contiguous walk — `slice::Iter` with a reinterpret on the yield — that
+/// knows nothing about the allocator. Construction (`new`) is the single `unsafe`
+/// boundary that vouches for the run; iteration is then fully safe.
+pub(crate) struct SliceViewIter<'a, T> {
     base: *mut T,
     count: usize,
     idx: usize,
     _marker: PhantomData<&'a View<T>>,
 }
 
-impl<'a, T> ArenaViewIter<'a, T> {
+impl<'a, T> SliceViewIter<'a, T> {
     /// # Safety
     /// `base` must point to `count` contiguous, valid, initialized `T` that stay
     /// alive and unmoved for `'a` — one arena allocation run (e.g.
@@ -82,7 +85,7 @@ impl<'a, T> ArenaViewIter<'a, T> {
     }
 }
 
-impl<'a, T> Iterator for ArenaViewIter<'a, T> {
+impl<'a, T> Iterator for SliceViewIter<'a, T> {
     type Item = &'a View<T>;
 
     #[inline]

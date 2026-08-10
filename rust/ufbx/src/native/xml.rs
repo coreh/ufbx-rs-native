@@ -22,7 +22,7 @@ use crate::native::error::{
     strcmp, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_fail_err, Fail, EMPTY_CHAR,
 };
 use crate::native::platform::{ufbx_assert, IS_REGRESSION};
-use crate::native::view::{ArenaViewIter, View};
+use crate::native::view::{SliceViewIter, View};
 use crate::prelude::String;
 
 // ufbx.c:53 `#define UFBXI_MAX_XML_DEPTH 32` — owned here; the XML tag parser
@@ -54,7 +54,7 @@ pub(crate) struct XmlTag {
 // Reinterpret-in-place views over arena-allocated `XmlTag`/`XmlAttrib` runs
 // (Rust-port infrastructure; see `native::view`). ufbx materializes children and
 // attribs as contiguous `push_pop` runs walked by `ufbxi_for`, so
-// `ArenaViewIter` over `(children/attribs, num_children/num_attribs)` is the safe
+// `SliceViewIter` over `(children/attribs, num_children/num_attribs)` is the safe
 // iteration form. `View<T>` supplies `get()` / `from_ptr()`; the accessors below
 // are the per-struct residue.
 pub(crate) type XmlTagView = View<XmlTag>;
@@ -928,8 +928,8 @@ pub(crate) fn xml_find_child<'a>(tag: &'a XmlTagView, name: &CStr) -> Option<&'a
     // C: `ufbxi_for(ufbxi_xml_tag, child, tag->children, tag->num_children)`
     // SAFETY: `children`/`num_children` describe a contiguous arena run (built by
     // `xml_parse_tag` via `push_pop`), valid and stable for `tag`'s lifetime `'a`.
-    let children: ArenaViewIter<'a, XmlTag> =
-        unsafe { ArenaViewIter::new(tag.children(), tag.num_children()) };
+    let children: SliceViewIter<'a, XmlTag> =
+        unsafe { SliceViewIter::new(tag.children(), tag.num_children()) };
     for child in children {
         // SAFETY: `child.name_data()` is a valid NUL-terminated arena string;
         // `name` is a valid NUL-terminated C string.
@@ -949,8 +949,8 @@ pub(crate) fn xml_find_attrib<'a>(tag: &'a XmlTagView, name: &CStr) -> Option<&'
     // C: `ufbxi_for(ufbxi_xml_attrib, attrib, tag->attribs, tag->num_attribs)`
     // SAFETY: `attribs`/`num_attribs` describe a contiguous arena run (built by
     // `xml_parse_tag` via `push_pop`), valid and stable for `tag`'s lifetime `'a`.
-    let attribs: ArenaViewIter<'a, XmlAttrib> =
-        unsafe { ArenaViewIter::new(tag.attribs(), tag.num_attribs()) };
+    let attribs: SliceViewIter<'a, XmlAttrib> =
+        unsafe { SliceViewIter::new(tag.attribs(), tag.num_attribs()) };
     for attrib in attribs {
         // SAFETY: `attrib.name_data()` is a valid NUL-terminated arena string;
         // `name` is a valid NUL-terminated C string.
