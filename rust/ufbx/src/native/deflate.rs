@@ -113,6 +113,60 @@ pub(crate) struct BitStream {
     pub local_buffer: [u8; 256],
 }
 
+// Typed interior-mutable VIEW over the `stream` field (BitStream), reinterpreted in
+// place. Sound despite the self-referential `buffer`→`local_buffer` pointer: a view is
+// a typed lens over the same bytes at the same address — it never MOVES the struct, so
+// the interior pointer stays valid, and `bit_stream_init` still sets it up through the
+// raw `stream_mut_ptr()`. Single-threaded (deflate), POD leaves. Verified under Miri
+// (SB + TB) on the DEFLATE-heavy load path. Only the hot-loop scalar leaves are exposed.
+#[repr(transparent)]
+pub(crate) struct BitStreamView(core::cell::UnsafeCell<core::mem::MaybeUninit<BitStream>>);
+
+impl BitStreamView {
+    #[inline(always)]
+    fn get(&self) -> *mut BitStream {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn bits(&self) -> u64 {
+        unsafe { (*self.get()).bits }
+    }
+    #[inline(always)]
+    pub(crate) fn set_bits(&self, bits: u64) {
+        unsafe {
+            (*self.get()).bits = bits;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn left(&self) -> usize {
+        unsafe { (*self.get()).left }
+    }
+    #[inline(always)]
+    pub(crate) fn set_left(&self, left: usize) {
+        unsafe {
+            (*self.get()).left = left;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn chunk_ptr(&self) -> *const u8 {
+        unsafe { (*self.get()).chunk_ptr }
+    }
+    #[inline(always)]
+    pub(crate) fn set_chunk_ptr(&self, chunk_ptr: *const u8) {
+        unsafe {
+            (*self.get()).chunk_ptr = chunk_ptr;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn chunk_yield(&self) -> *const u8 {
+        unsafe { (*self.get()).chunk_yield }
+    }
+    #[inline(always)]
+    pub(crate) fn cancelled(&self) -> bool {
+        unsafe { (*self.get()).cancelled }
+    }
+}
+
 // C comment (ufbx.c:1932-1980):
 // Packed symbol information:
 //
@@ -290,6 +344,13 @@ impl DeflateContext {
         // SAFETY: `&raw mut` computes the field address with the cell's
         // provenance without forming a reference; no aliasing assertion.
         unsafe { &raw mut (*self.get()).stream }
+    }
+    // `stream` (BitStream) — typed VIEW handle (reinterpret-in-place); hot-loop scalar
+    // leaves via BitStreamView. The self-ref `buffer` pointer is set up through
+    // `stream_mut_ptr()` above and survives the view's in-place retag (Miri-verified).
+    #[inline(always)]
+    pub(crate) fn stream_view(&self) -> &BitStreamView {
+        unsafe { &*(&raw mut (*self.get()).stream as *mut BitStreamView) }
     }
 
     // `out_end` — scalar value accessor.
@@ -1037,15 +1098,15 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
     // `bit_stream_init`), so `dc` stays raw and is derefed as `(*dc.get()).field` to
     // avoid a whole-struct retag invalidating that interior pointer.
 
-    let mut bits = (*dc.get()).stream.bits;
-    let mut left = (*dc.get()).stream.left;
-    let mut data = (*dc.get()).stream.chunk_ptr;
+    let mut bits = dc.stream_view().bits();
+    let mut left = dc.stream_view().left();
+    let mut data = dc.stream_view().chunk_ptr();
 
     let mut symbol_index = 0u32;
     let mut prev = 0u8;
     while symbol_index < num_symbols {
         bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
-        if (*dc.get()).stream.cancelled {
+        if dc.stream_view().cancelled() {
             return -28;
         }
 
@@ -1110,9 +1171,9 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
         }
     }
 
-    (*dc.get()).stream.bits = bits;
-    (*dc.get()).stream.left = left;
-    (*dc.get()).stream.chunk_ptr = data;
+    dc.stream_view().set_bits(bits);
+    dc.stream_view().set_left(left);
+    dc.stream_view().set_chunk_ptr(data);
 
     0
 }
@@ -1126,11 +1187,11 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
     // not self-referential, so a local exclusive borrow is kept for it.
     let trees = &mut *trees;
 
-    let mut bits = (*dc.get()).stream.bits;
-    let mut left = (*dc.get()).stream.left;
-    let mut data = (*dc.get()).stream.chunk_ptr;
+    let mut bits = dc.stream_view().bits();
+    let mut left = dc.stream_view().left();
+    let mut data = dc.stream_view().chunk_ptr();
     bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
-    if (*dc.get()).stream.cancelled {
+    if dc.stream_view().cancelled() {
         return -28;
     }
 
@@ -1155,7 +1216,7 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
     for len_i in 0..num_code_lengths as usize {
         if len_i == 14 {
             bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
-            if (*dc.get()).stream.cancelled {
+            if dc.stream_view().cancelled() {
                 return -28;
             }
         }
@@ -1164,9 +1225,9 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
         left -= 3;
     }
 
-    (*dc.get()).stream.bits = bits;
-    (*dc.get()).stream.left = left;
-    (*dc.get()).stream.chunk_ptr = data;
+    dc.stream_view().set_bits(bits);
+    dc.stream_view().set_left(left);
+    dc.stream_view().set_chunk_ptr(data);
 
     // C: `ufbxi_huff_tree huff_code_length; // ufbxi_uninit` — zero-init,
     // `ufbxi_huff_build` writes everything that is later read.
@@ -1353,9 +1414,9 @@ pub(crate) unsafe fn inflate_block_slow(
     let fast_bits = trees.fast_bits;
     let fast_mask = (1u32 << fast_bits) - 1;
 
-    let mut bits = (*dc.get()).stream.bits;
-    let mut left = (*dc.get()).stream.left;
-    let mut data = (*dc.get()).stream.chunk_ptr;
+    let mut bits = dc.stream_view().bits();
+    let mut left = dc.stream_view().left();
+    let mut data = dc.stream_view().chunk_ptr();
 
     loop {
         // C: `if (max_symbols-- == 0) break;` (size_t; wraps past zero)
@@ -1383,9 +1444,9 @@ pub(crate) unsafe fn inflate_block_slow(
             }
 
             dc.set_out_ptr(out_ptr);
-            (*dc.get()).stream.bits = bits;
-            (*dc.get()).stream.left = left;
-            (*dc.get()).stream.chunk_ptr = data;
+            dc.stream_view().set_bits(bits);
+            dc.stream_view().set_left(left);
+            dc.stream_view().set_chunk_ptr(data);
             return 0;
         } else if (sym0 as u32 & HUFF_SYM_MATCH) == 0 {
             if out_ptr == out_end {
@@ -1461,9 +1522,9 @@ pub(crate) unsafe fn inflate_block_slow(
     }
 
     dc.set_out_ptr(out_ptr);
-    (*dc.get()).stream.bits = bits;
-    (*dc.get()).stream.left = left;
-    (*dc.get()).stream.chunk_ptr = data;
+    dc.stream_view().set_bits(bits);
+    dc.stream_view().set_left(left);
+    dc.stream_view().set_chunk_ptr(data);
     1
 }
 
@@ -1486,13 +1547,12 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
     // refill/decode macro below dereferences them directly.
     let trees = &*trees;
 
-    ufbxi_dev_assert!(!(*dc.get()).stream.cancelled);
+    ufbxi_dev_assert!(!dc.stream_view().cancelled());
     ufbxi_dev_assert!(trees.fast_bits == HUFF_FAST_BITS);
     ufbxi_dev_assert!(
-        (*dc.get())
-            .stream
-            .chunk_yield
-            .offset_from((*dc.get()).stream.chunk_ptr)
+        dc.stream_view()
+            .chunk_yield()
+            .offset_from(dc.stream_view().chunk_ptr())
             >= INFLATE_FAST_MIN_IN as isize
     );
     ufbxi_dev_assert!(dc.out_end().offset_from(dc.out_ptr()) >= INFLATE_FAST_MIN_OUT as isize);
@@ -1504,10 +1564,10 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
     let tree_lit_length: *const HuffTree = trees.lit_length();
     let tree_dist: *const HuffTree = trees.dist();
 
-    let mut bits = (*dc.get()).stream.bits;
-    let mut left = (*dc.get()).stream.left;
-    let mut data = (*dc.get()).stream.chunk_ptr;
-    let data_end: *const u8 = (*dc.get()).stream.chunk_yield.sub(INFLATE_FAST_MIN_IN);
+    let mut bits = dc.stream_view().bits();
+    let mut left = dc.stream_view().left();
+    let mut data = dc.stream_view().chunk_ptr();
+    let data_end: *const u8 = dc.stream_view().chunk_yield().sub(INFLATE_FAST_MIN_IN);
 
     let mut sym01_bits: u64;
     let mut sym0: HuffSym;
@@ -1611,9 +1671,9 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
                     return -13;
                 }
                 dc.set_out_ptr(out_ptr);
-                (*dc.get()).stream.bits = bits;
-                (*dc.get()).stream.left = left;
-                (*dc.get()).stream.chunk_ptr = data;
+                dc.stream_view().set_bits(bits);
+                dc.stream_view().set_left(left);
+                dc.stream_view().set_chunk_ptr(data);
                 return 0;
             }
 
@@ -1702,9 +1762,9 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
     }
 
     dc.set_out_ptr(out_ptr);
-    (*dc.get()).stream.bits = bits;
-    (*dc.get()).stream.left = left;
-    (*dc.get()).stream.chunk_ptr = data;
+    dc.stream_view().set_bits(bits);
+    dc.stream_view().set_left(left);
+    dc.stream_view().set_chunk_ptr(data);
     1
 }
 
@@ -1771,7 +1831,7 @@ pub(crate) unsafe fn inflate(
     // it is read on cancellation (ufbx.c:2184) as stack garbage. Zero-init pins
     // that read to 0 (benign: cancellation is re-checked after every block).
     // ACCEPTED DIVERGENCE (fuzz-table ledger): because the block loop checks
-    // `err < 0` before `(*dc.get()).stream.cancelled` (ufbx.c:3242-3245), C's garbage
+    // `err < 0` before `dc.stream_view().cancelled()` (ufbx.c:3242-3245), C's garbage
     // bits can produce a data-dependent decode error (-10/-11/-12/-13) before
     // the -28 cancel return; pinned-0 bits make the mid-block cancellation
     // return code deterministic here, which may differ from a given C build.
@@ -1791,12 +1851,12 @@ pub(crate) unsafe fn inflate(
         dc.set_fast_bits(if input.total_size > 2048 { 10 } else { 8 });
     }
 
-    let mut bits = (*dc.get()).stream.bits;
-    let mut left = (*dc.get()).stream.left;
-    let mut data = (*dc.get()).stream.chunk_ptr;
+    let mut bits = dc.stream_view().bits();
+    let mut left = dc.stream_view().left();
+    let mut data = dc.stream_view().chunk_ptr();
 
     bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
-    if (*dc.get()).stream.cancelled {
+    if dc.stream_view().cancelled() {
         return -28;
     }
 
@@ -1823,7 +1883,7 @@ pub(crate) unsafe fn inflate(
 
     loop {
         bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
-        if (*dc.get()).stream.cancelled {
+        if dc.stream_view().cancelled() {
             return -28;
         }
 
@@ -1850,9 +1910,9 @@ pub(crate) unsafe fn inflate(
             bits >>= 32;
             left -= 32;
 
-            (*dc.get()).stream.bits = bits;
-            (*dc.get()).stream.left = left;
-            (*dc.get()).stream.chunk_ptr = data;
+            dc.stream_view().set_bits(bits);
+            dc.stream_view().set_left(left);
+            dc.stream_view().set_chunk_ptr(data);
 
             // Copy `len` bytes of literal data
             if bit_copy_bytes(dc.out_ptr() as *mut c_void, dc.stream_mut_ptr(), len) == 0 {
@@ -1861,9 +1921,9 @@ pub(crate) unsafe fn inflate(
 
             dc.set_out_ptr(dc.out_ptr().add(len));
         } else if type_ <= 2 {
-            (*dc.get()).stream.bits = bits;
-            (*dc.get()).stream.left = left;
-            (*dc.get()).stream.chunk_ptr = data;
+            dc.stream_view().set_bits(bits);
+            dc.stream_view().set_left(left);
+            dc.stream_view().set_chunk_ptr(data);
 
             // C: `ufbxi_trees tree_data;` — zero-init (see `dc` note above;
             // `ufbxi_init_dynamic_huff` writes everything that is later read).
@@ -1891,10 +1951,10 @@ pub(crate) unsafe fn inflate(
 
                 // `ufbxi_inflate_block_fast()` needs a bit more upfront setup, see asserts on top of the function
                 if fast_viable
-                    && (*dc.get())
-                        .stream
-                        .chunk_yield
-                        .offset_from((*dc.get()).stream.chunk_ptr)
+                    && dc
+                        .stream_view()
+                        .chunk_yield()
+                        .offset_from(dc.stream_view().chunk_ptr())
                         >= INFLATE_FAST_MIN_IN as isize
                 {
                     err = inflate_block_fast(&dc, trees) as isize;
@@ -1908,7 +1968,7 @@ pub(crate) unsafe fn inflate(
                 }
 
                 // `ufbxi_inflate_block()` returns normally on cancel so check it here
-                if (*dc.get()).stream.cancelled {
+                if dc.stream_view().cancelled() {
                     return -28;
                 }
 
@@ -1921,9 +1981,9 @@ pub(crate) unsafe fn inflate(
             return -7;
         }
 
-        bits = (*dc.get()).stream.bits;
-        left = (*dc.get()).stream.left;
-        data = (*dc.get()).stream.chunk_ptr;
+        bits = dc.stream_view().bits();
+        left = dc.stream_view().left();
+        data = dc.stream_view().chunk_ptr();
 
         // BFINAL: End of stream
         if (header & 1) != 0 {
@@ -1938,7 +1998,7 @@ pub(crate) unsafe fn inflate(
         bits >>= align_bits;
         left -= align_bits;
         bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
-        if (*dc.get()).stream.cancelled {
+        if dc.stream_view().cancelled() {
             return -28;
         }
 
