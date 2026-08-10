@@ -1934,7 +1934,7 @@ mod tests {
     // `ufbxi_is_space` (ufbx.c:9543-9547) is context-free: exactly
     // ' ', '\t', '\r', '\n' and nothing else, including the c == 0 wraparound.
     #[test]
-   fn test_is_space() {
+    fn test_is_space() {
         for i in 0..=255u32 {
             let c = i as u8;
             let expect = c == b' ' || c == b'\t' || c == b'\r' || c == b'\n';

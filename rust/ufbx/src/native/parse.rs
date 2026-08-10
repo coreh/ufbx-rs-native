@@ -4190,7 +4190,12 @@ pub(crate) fn fail_imp_no_stack(uc: &Context) -> i32 {
     // SAFETY: `error_mut_ptr()` is a valid Error by construction; the message
     // pointers are null (no stack frame).
     unsafe {
-        crate::native::error::fail_imp_err(uc.error_mut_ptr(), core::ptr::null(), core::ptr::null(), 0)
+        crate::native::error::fail_imp_err(
+            uc.error_mut_ptr(),
+            core::ptr::null(),
+            core::ptr::null(),
+            0,
+        )
     }
 }
 
