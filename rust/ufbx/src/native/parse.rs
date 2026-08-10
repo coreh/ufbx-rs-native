@@ -1674,6 +1674,308 @@ impl LoadOptsView {
     }
 }
 
+// Typed interior-mutable VIEW over a `Scene` field (the public `ufbx_scene`),
+// reinterpreted in place. The public `Scene` type is untouched; this is a
+// pub(crate) internal handle. Reachable from any context that owns a `Scene`
+// field (`Context.scene`, `EvalContext.scene`/`src_scene`). Sub-structs recurse
+// into their own *View; List/RefList fields use ListView/RefListView; Copy
+// scalars/Refs use value getters/setters or _ptr/_mut_ptr for addr-of sites.
+#[repr(transparent)]
+pub(crate) struct SceneView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::Scene>>,
+);
+
+impl SceneView {
+    #[inline(always)]
+    fn get(&self) -> *mut crate::generated::Scene {
+        self.0.get().cast()
+    }
+
+    // `metadata` (Metadata) — typed VIEW handle (reinterpret-in-place).
+    #[inline(always)]
+    pub(crate) fn metadata_view(&self) -> &SceneMetadataView {
+        // SAFETY: reinterpret the Metadata field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).metadata as *mut SceneMetadataView) }
+    }
+    #[inline(always)]
+    pub(crate) fn metadata_mut_ptr(&self) -> *mut crate::generated::Metadata {
+        unsafe { &raw mut (*self.get()).metadata }
+    }
+}
+
+// Typed interior-mutable VIEW over `Scene.metadata` (the public `ufbx_metadata`),
+// reinterpreted in place. String leaves recurse into StringView, Blob leaves into
+// BlobView, the warnings List into ListView; Copy scalars use value getters/setters;
+// addr-of sites use _ptr (const) / _mut_ptr (mut).
+#[repr(transparent)]
+pub(crate) struct SceneMetadataView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::Metadata>>,
+);
+
+impl SceneMetadataView {
+    #[inline(always)]
+    fn get(&self) -> *mut crate::generated::Metadata {
+        self.0.get().cast()
+    }
+
+    // --- scalar value getters / setters ---
+    #[inline(always)]
+    pub(crate) fn file_format(&self) -> crate::generated::FileFormat {
+        unsafe { (*self.get()).file_format }
+    }
+    #[inline(always)]
+    pub(crate) fn set_file_format(&self, file_format: crate::generated::FileFormat) {
+        unsafe {
+            (*self.get()).file_format = file_format;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn geometry_scale(&self) -> crate::prelude::Real {
+        unsafe { (*self.get()).geometry_scale }
+    }
+    #[inline(always)]
+    pub(crate) fn set_bone_prop_size_unit(&self, bone_prop_size_unit: crate::prelude::Real) {
+        unsafe {
+            (*self.get()).bone_prop_size_unit = bone_prop_size_unit;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_bone_prop_limb_length_relative(&self, bone_prop_limb_length_relative: bool) {
+        unsafe {
+            (*self.get()).bone_prop_limb_length_relative = bone_prop_limb_length_relative;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_mirror_axis(&self, mirror_axis: crate::generated::MirrorAxis) {
+        unsafe {
+            (*self.get()).mirror_axis = mirror_axis;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_is_unsafe(&self, is_unsafe: bool) {
+        unsafe {
+            (*self.get()).is_unsafe = is_unsafe;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_may_contain_no_index(&self, may_contain_no_index: bool) {
+        unsafe {
+            (*self.get()).may_contain_no_index = may_contain_no_index;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_may_contain_broken_elements(&self, may_contain_broken_elements: bool) {
+        unsafe {
+            (*self.get()).may_contain_broken_elements = may_contain_broken_elements;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_version(&self, version: u32) {
+        unsafe {
+            (*self.get()).version = version;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_ascii(&self, ascii: bool) {
+        unsafe {
+            (*self.get()).ascii = ascii;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_big_endian(&self, big_endian: bool) {
+        unsafe {
+            (*self.get()).big_endian = big_endian;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_geometry_ignored(&self, geometry_ignored: bool) {
+        unsafe {
+            (*self.get()).geometry_ignored = geometry_ignored;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_animation_ignored(&self, animation_ignored: bool) {
+        unsafe {
+            (*self.get()).animation_ignored = animation_ignored;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_embedded_ignored(&self, embedded_ignored: bool) {
+        unsafe {
+            (*self.get()).embedded_ignored = embedded_ignored;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_exporter(&self, exporter: crate::generated::Exporter) {
+        unsafe {
+            (*self.get()).exporter = exporter;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_exporter_version(&self, exporter_version: u32) {
+        unsafe {
+            (*self.get()).exporter_version = exporter_version;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn num_shader_textures(&self) -> usize {
+        unsafe { (*self.get()).num_shader_textures }
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_shader_textures(&self, num_shader_textures: usize) {
+        unsafe {
+            (*self.get()).num_shader_textures = num_shader_textures;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_ortho_size_unit(&self, ortho_size_unit: crate::prelude::Real) {
+        unsafe {
+            (*self.get()).ortho_size_unit = ortho_size_unit;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn element_buffer_size(&self) -> usize {
+        unsafe { (*self.get()).element_buffer_size }
+    }
+    #[inline(always)]
+    pub(crate) fn set_element_buffer_size(&self, element_buffer_size: usize) {
+        unsafe {
+            (*self.get()).element_buffer_size = element_buffer_size;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn max_face_triangles(&self) -> usize {
+        unsafe { (*self.get()).max_face_triangles }
+    }
+    #[inline(always)]
+    pub(crate) fn set_max_face_triangles(&self, max_face_triangles: usize) {
+        unsafe {
+            (*self.get()).max_face_triangles = max_face_triangles;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_ktime_second(&self, ktime_second: i64) {
+        unsafe {
+            (*self.get()).ktime_second = ktime_second;
+        }
+    }
+
+    // --- String leaves: whole value getter/setter + StringView sub-view + _mut_ptr ---
+    #[inline(always)]
+    pub(crate) fn filename(&self) -> crate::prelude::String {
+        unsafe { (*self.get()).filename }
+    }
+    #[inline(always)]
+    pub(crate) fn set_filename(&self, filename: crate::prelude::String) {
+        unsafe {
+            (*self.get()).filename = filename;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn filename_view(&self) -> &crate::prelude::StringView {
+        unsafe { &*(&raw mut (*self.get()).filename as *mut crate::prelude::StringView) }
+    }
+    #[inline(always)]
+    pub(crate) fn filename_mut_ptr(&self) -> *mut crate::prelude::String {
+        unsafe { &raw mut (*self.get()).filename }
+    }
+    #[inline(always)]
+    pub(crate) fn creator(&self) -> crate::prelude::String {
+        unsafe { (*self.get()).creator }
+    }
+    #[inline(always)]
+    pub(crate) fn creator_view(&self) -> &crate::prelude::StringView {
+        unsafe { &*(&raw mut (*self.get()).creator as *mut crate::prelude::StringView) }
+    }
+    #[inline(always)]
+    pub(crate) fn creator_mut_ptr(&self) -> *mut crate::prelude::String {
+        unsafe { &raw mut (*self.get()).creator }
+    }
+    #[inline(always)]
+    pub(crate) fn relative_root_view(&self) -> &crate::prelude::StringView {
+        unsafe { &*(&raw mut (*self.get()).relative_root as *mut crate::prelude::StringView) }
+    }
+    #[inline(always)]
+    pub(crate) fn relative_root_mut_ptr(&self) -> *mut crate::prelude::String {
+        unsafe { &raw mut (*self.get()).relative_root }
+    }
+    #[inline(always)]
+    pub(crate) fn set_original_file_path(&self, original_file_path: crate::prelude::String) {
+        unsafe {
+            (*self.get()).original_file_path = original_file_path;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn original_file_path_ptr(&self) -> *const crate::prelude::String {
+        unsafe { &raw const (*self.get()).original_file_path }
+    }
+
+    // --- Blob leaves: whole setter + BlobView sub-view + _mut_ptr / _ptr ---
+    #[inline(always)]
+    pub(crate) fn set_raw_filename(&self, raw_filename: crate::prelude::Blob) {
+        unsafe {
+            (*self.get()).raw_filename = raw_filename;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename_view(&self) -> &crate::prelude::BlobView {
+        unsafe { &*(&raw mut (*self.get()).raw_filename as *mut crate::prelude::BlobView) }
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename_mut_ptr(&self) -> *mut crate::prelude::Blob {
+        unsafe { &raw mut (*self.get()).raw_filename }
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_root_view(&self) -> &crate::prelude::BlobView {
+        unsafe { &*(&raw mut (*self.get()).raw_relative_root as *mut crate::prelude::BlobView) }
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_root_mut_ptr(&self) -> *mut crate::prelude::Blob {
+        unsafe { &raw mut (*self.get()).raw_relative_root }
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_original_file_path(&self, raw_original_file_path: crate::prelude::Blob) {
+        unsafe {
+            (*self.get()).raw_original_file_path = raw_original_file_path;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn raw_original_file_path_ptr(&self) -> *const crate::prelude::Blob {
+        unsafe { &raw const (*self.get()).raw_original_file_path }
+    }
+
+    // --- warnings (List<Warning>): ListView sub-view + whole-addr _mut_ptr ---
+    #[inline(always)]
+    pub(crate) fn warnings_view(&self) -> &crate::prelude::ListView<crate::generated::Warning> {
+        unsafe {
+            &*(&raw mut (*self.get()).warnings
+                as *mut crate::prelude::ListView<crate::generated::Warning>)
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn warnings_mut_ptr(&self) -> *mut crate::prelude::List<crate::generated::Warning> {
+        unsafe { &raw mut (*self.get()).warnings }
+    }
+    #[inline(always)]
+    pub(crate) fn has_warning_mut_ptr(&self) -> *mut bool {
+        unsafe { (&raw mut (*self.get()).has_warning) as *mut bool }
+    }
+
+    // --- scene_props (Props) / thumbnail (Thumbnail): addr-of only ---
+    #[inline(always)]
+    pub(crate) fn scene_props_ptr(&self) -> *const crate::generated::Props {
+        unsafe { &raw const (*self.get()).scene_props }
+    }
+    #[inline(always)]
+    pub(crate) fn scene_props_mut_ptr(&self) -> *mut crate::generated::Props {
+        unsafe { &raw mut (*self.get()).scene_props }
+    }
+    #[inline(always)]
+    pub(crate) fn thumbnail_mut_ptr(&self) -> *mut crate::generated::Thumbnail {
+        unsafe { &raw mut (*self.get()).thumbnail }
+    }
+}
+
 impl Context {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerContext {
@@ -1694,6 +1996,14 @@ impl Context {
         // SAFETY: repr(transparent) over the `opts` field inside the outer UnsafeCell;
         // shared interior-mutable view, asserts no validity.
         unsafe { &*(&raw mut (*self.get()).opts as *mut LoadOptsView) }
+    }
+
+    // `scene` (Scene) — typed VIEW handle (reinterpret-in-place); accessors on SceneView.
+    #[inline(always)]
+    pub(crate) fn scene_view(&self) -> &SceneView {
+        // SAFETY: repr(transparent) over the `scene` field inside the outer UnsafeCell;
+        // shared interior-mutable view, asserts no validity.
+        unsafe { &*(&raw mut (*self.get()).scene as *mut SceneView) }
     }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
@@ -5636,7 +5946,7 @@ pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
         "Unrecognized file format",
         "format != UFBX_FILE_FORMAT_UNKNOWN"
     );
-    (*uc.get()).scene.metadata.file_format = format;
+    uc.scene_view().metadata_view().set_file_format(format);
 
     Ok(())
 }

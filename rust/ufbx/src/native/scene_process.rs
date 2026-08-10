@@ -4665,7 +4665,9 @@ pub(crate) unsafe fn finalize_shader_texture(
 
     (*texture).shader = opt_ref(shader);
     (*texture).type_ = TextureType::Shader;
-    (*uc.get()).scene.metadata.num_shader_textures += 1;
+    uc.scene_view()
+        .metadata_view()
+        .set_num_shader_textures(uc.scene_view().metadata_view().num_shader_textures() + 1);
 
     if !uc.opts_view().disable_quirks() {
         // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(ufbxi_file_shaders); i++)`
@@ -5629,11 +5631,11 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
     if (*uc.get()).mirror_axis != MirrorAxis::None {
         do_mirror = true;
     }
-    if (*uc.get()).scene.metadata.geometry_scale != 1.0 {
+    if uc.scene_view().metadata_view().geometry_scale() != 1.0 {
         do_scale = true;
     }
 
-    let geometry_scale: Real = (*uc.get()).scene.metadata.geometry_scale;
+    let geometry_scale: Real = uc.scene_view().metadata_view().geometry_scale();
     let mirror_axis: MirrorAxis = (*uc.get()).mirror_axis;
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_shape, p_shape, uc->scene.blend_shapes)`
@@ -5937,10 +5939,11 @@ pub(crate) unsafe fn postprocess_scene(uc: &Context) {
     }
 
     if (*uc.get()).exporter == Exporter::BlenderBinary {
-        (*uc.get()).scene.metadata.ortho_size_unit =
-            1.0 / (*uc.get()).scene.metadata.geometry_scale;
+        uc.scene_view()
+            .metadata_view()
+            .set_ortho_size_unit(1.0 / uc.scene_view().metadata_view().geometry_scale());
     } else {
-        (*uc.get()).scene.metadata.ortho_size_unit = 30.0;
+        uc.scene_view().metadata_view().set_ortho_size_unit(30.0);
     }
 }
 
@@ -6077,9 +6080,9 @@ pub(crate) unsafe fn resolve_filenames(
 ) -> Result<(), Fail> {
     if strblob_length(relative_filename, raw) == 0 {
         let original_file_path: *const Strblob = if raw {
-            &raw const (*uc.get()).scene.metadata.raw_original_file_path as *const Strblob
+            uc.scene_view().metadata_view().raw_original_file_path_ptr() as *const Strblob
         } else {
-            &raw const (*uc.get()).scene.metadata.original_file_path as *const Strblob
+            uc.scene_view().metadata_view().original_file_path_ptr() as *const Strblob
         };
 
         absolute_to_relative_path(
@@ -6494,7 +6497,9 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         "uc->scene.elements.data"
     );
 
-    (*uc.get()).scene.metadata.element_buffer_size = uc.tmp_element_byte_offset();
+    uc.scene_view()
+        .metadata_view()
+        .set_element_buffer_size(uc.tmp_element_byte_offset());
     let element_data: *mut u8 = push_pop::<u64>(
         uc.result_mut_ptr(),
         uc.tmp_elements_mut_ptr(),
@@ -6539,16 +6544,20 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     uc.set_tmp_element_flag(push_zero::<u8>(uc.tmp_mut_ptr(), num_elements));
     ufbxi_check!(uc, !uc.tmp_element_flag().is_null(), "uc->tmp_element_flag");
 
-    (*uc.get()).scene.metadata.original_file_path = find_string(
-        &(*uc.get()).scene.metadata.scene_props,
-        b"DocumentUrl\0".as_ptr(),
-        EMPTY_STRING.0,
-    );
-    (*uc.get()).scene.metadata.raw_original_file_path = find_blob(
-        &(*uc.get()).scene.metadata.scene_props,
-        b"DocumentUrl\0".as_ptr(),
-        EMPTY_BLOB.0,
-    );
+    uc.scene_view()
+        .metadata_view()
+        .set_original_file_path(find_string(
+            uc.scene_view().metadata_view().scene_props_ptr(),
+            b"DocumentUrl\0".as_ptr(),
+            EMPTY_STRING.0,
+        ));
+    uc.scene_view()
+        .metadata_view()
+        .set_raw_original_file_path(find_blob(
+            uc.scene_view().metadata_view().scene_props_ptr(),
+            b"DocumentUrl\0".as_ptr(),
+            EMPTY_BLOB.0,
+        ));
 
     // Resolve and add the connections to elements
     resolve_connections(uc)?;
@@ -7439,8 +7448,10 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             }
 
             // Update metadata
-            if (*mesh).max_face_triangles > (*uc.get()).scene.metadata.max_face_triangles {
-                (*uc.get()).scene.metadata.max_face_triangles = (*mesh).max_face_triangles;
+            if (*mesh).max_face_triangles > uc.scene_view().metadata_view().max_face_triangles() {
+                uc.scene_view()
+                    .metadata_view()
+                    .set_max_face_triangles((*mesh).max_face_triangles);
             }
             p_mesh = p_mesh.add(1);
         }
@@ -8325,22 +8336,36 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         )?;
     }
 
-    (*uc.get()).scene.metadata.ktime_second = uc.ktime_sec();
+    uc.scene_view()
+        .metadata_view()
+        .set_ktime_second(uc.ktime_sec());
 
     // Maya seems to use scale of 100/3, Blender binary uses exactly 33, ASCII has always value of 1.0
     if uc.version() < 6000 {
-        (*uc.get()).scene.metadata.bone_prop_size_unit = 1.0f32 as Real;
+        uc.scene_view()
+            .metadata_view()
+            .set_bone_prop_size_unit(1.0f32 as Real);
     } else if (*uc.get()).exporter == Exporter::BlenderBinary {
-        (*uc.get()).scene.metadata.bone_prop_size_unit = 33.0f32 as Real;
+        uc.scene_view()
+            .metadata_view()
+            .set_bone_prop_size_unit(33.0f32 as Real);
     } else if (*uc.get()).exporter == Exporter::BlenderAscii {
-        (*uc.get()).scene.metadata.bone_prop_size_unit = 1.0f32 as Real;
+        uc.scene_view()
+            .metadata_view()
+            .set_bone_prop_size_unit(1.0f32 as Real);
     } else {
-        (*uc.get()).scene.metadata.bone_prop_size_unit = (100.0 / 3.0) as Real;
+        uc.scene_view()
+            .metadata_view()
+            .set_bone_prop_size_unit((100.0 / 3.0) as Real);
     }
     if (*uc.get()).exporter == Exporter::BlenderAscii {
-        (*uc.get()).scene.metadata.bone_prop_limb_length_relative = false;
+        uc.scene_view()
+            .metadata_view()
+            .set_bone_prop_limb_length_relative(false);
     } else {
-        (*uc.get()).scene.metadata.bone_prop_limb_length_relative = true;
+        uc.scene_view()
+            .metadata_view()
+            .set_bone_prop_limb_length_relative(true);
     }
 
     Ok(())

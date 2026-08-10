@@ -470,8 +470,12 @@ pub(crate) unsafe fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> 
     ufbxi_check!(uc, !element_ids.is_null(), "element_ids");
 
     // C: `ufbxi_for_list(ufbx_warning, warning, uc->scene.metadata.warnings)`
-    let mut warning: *mut Warning = (*uc.get()).scene.metadata.warnings.data as *mut Warning;
-    let warning_end: *mut Warning = add_ptr(warning, (*uc.get()).scene.metadata.warnings.count);
+    let mut warning: *mut Warning =
+        uc.scene_view().metadata_view().warnings_view().data() as *mut Warning;
+    let warning_end: *mut Warning = add_ptr(
+        warning,
+        uc.scene_view().metadata_view().warnings_view().count(),
+    );
     while warning != warning_end {
         let element_id: u32 = (*warning).element_id;
         // Decode `element_id`, see HACK(warning-element) in `ufbxi_vwarnf_imp()` for the encoding.
@@ -644,11 +648,13 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             "uc->opts.unicode_error_handling != UFBX_UNICODE_ERROR_HANDLING_UNSAFE_IGNORE"
         );
     } else {
-        (*uc.get()).scene.metadata.is_unsafe = true;
+        uc.scene_view().metadata_view().set_is_unsafe(true);
     }
 
     if uc.opts_view().index_error_handling() == IndexErrorHandling::NoIndex {
-        (*uc.get()).scene.metadata.may_contain_no_index = true;
+        uc.scene_view()
+            .metadata_view()
+            .set_may_contain_no_index(true);
     }
 
     uc.set_retain_mesh_parts(
@@ -658,10 +664,14 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         .scene
         .metadata
         .may_contain_missing_vertex_position = uc.opts_view().allow_missing_vertex_position();
-    (*uc.get()).scene.metadata.may_contain_broken_elements =
-        uc.opts_view().connect_broken_elements();
+    uc.scene_view()
+        .metadata_view()
+        .set_may_contain_broken_elements(uc.opts_view().connect_broken_elements());
 
-    (*uc.get()).scene.metadata.creator.data = EMPTY_CHAR.as_ptr();
+    uc.scene_view()
+        .metadata_view()
+        .creator_view()
+        .set_data(EMPTY_CHAR.as_ptr());
 
     uc.set_unit_scale(1.0);
     if uc.data().is_null() {
@@ -684,7 +694,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         "ufbxi_determine_format(uc)"
     );
 
-    let format: FileFormat = (*uc.get()).scene.metadata.file_format;
+    let format: FileFormat = uc.scene_view().metadata_view().file_format();
 
     if format == FileFormat::Fbx {
         ufbxi_check!(uc, begin_parse(uc).is_ok(), "ufbxi_begin_parse(uc)");
@@ -710,14 +720,14 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
                 "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_UNSUPPORTED_VERSION, ~0u, \"Unsupported FBX version (%u)\", uc->version)"
             );
         }
-        update_scene_metadata(ptr::addr_of_mut!((*uc.get()).scene.metadata));
+        update_scene_metadata(uc.scene_view().metadata_mut_ptr());
         ufbxi_check!(uc, init_file_paths(uc).is_ok(), "ufbxi_init_file_paths(uc)");
     } else if format == FileFormat::Obj {
         ufbxi_check!(uc, obj_load(uc).is_ok(), "ufbxi_obj_load(uc)");
-        update_scene_metadata(ptr::addr_of_mut!((*uc.get()).scene.metadata));
+        update_scene_metadata(uc.scene_view().metadata_mut_ptr());
     } else if format == FileFormat::Mtl {
         ufbxi_check!(uc, mtl_load(uc).is_ok(), "ufbxi_mtl_load(uc)");
-        update_scene_metadata(ptr::addr_of_mut!((*uc.get()).scene.metadata));
+        update_scene_metadata(uc.scene_view().metadata_mut_ptr());
     }
 
     // Fake DOM root if necessary
@@ -740,7 +750,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(uc, finalize_scene(uc).is_ok(), "ufbxi_finalize_scene(uc)");
 
     update_scene_settings(ptr::addr_of_mut!((*uc.get()).scene.settings));
-    if (*uc.get()).scene.metadata.file_format == FileFormat::Obj {
+    if uc.scene_view().metadata_view().file_format() == FileFormat::Obj {
         update_scene_settings_obj(uc);
     }
 
@@ -809,8 +819,8 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         uc,
         pop_warnings(
             uc.warnings_mut_ptr(),
-            ptr::addr_of_mut!((*uc.get()).scene.metadata.warnings),
-            (*uc.get()).scene.metadata.has_warning.as_mut_ptr(),
+            uc.scene_view().metadata_view().warnings_mut_ptr(),
+            uc.scene_view().metadata_view().has_warning_mut_ptr(),
         )
         .is_ok(),
         "ufbxi_pop_warnings(&uc->warnings, &uc->scene.metadata.warnings, uc->scene.metadata.has_warning)"
@@ -822,12 +832,20 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     );
 
     // Copy local data to the scene
-    (*uc.get()).scene.metadata.version = uc.version();
-    (*uc.get()).scene.metadata.ascii = uc.from_ascii();
-    (*uc.get()).scene.metadata.big_endian = uc.file_big_endian();
-    (*uc.get()).scene.metadata.geometry_ignored = uc.opts_view().ignore_geometry();
-    (*uc.get()).scene.metadata.animation_ignored = uc.opts_view().ignore_animation();
-    (*uc.get()).scene.metadata.embedded_ignored = uc.opts_view().ignore_embedded();
+    uc.scene_view().metadata_view().set_version(uc.version());
+    uc.scene_view().metadata_view().set_ascii(uc.from_ascii());
+    uc.scene_view()
+        .metadata_view()
+        .set_big_endian(uc.file_big_endian());
+    uc.scene_view()
+        .metadata_view()
+        .set_geometry_ignored(uc.opts_view().ignore_geometry());
+    uc.scene_view()
+        .metadata_view()
+        .set_animation_ignored(uc.opts_view().ignore_animation());
+    uc.scene_view()
+        .metadata_view()
+        .set_embedded_ignored(uc.opts_view().ignore_embedded());
 
     // Retain the scene, this must be the final allocation as we copy
     // `ator_result` to `ufbx_scene_imp`.
@@ -1180,7 +1198,7 @@ pub(crate) unsafe fn load(
         fix_error_type(uc.error_mut_ptr(), b"Failed to load\0".as_ptr(), p_error);
         if !p_error.is_null()
             && (*p_error).type_ == ErrorType::Unknown
-            && (*uc.get()).scene.metadata.file_format == FileFormat::Fbx
+            && uc.scene_view().metadata_view().file_format() == FileFormat::Fbx
             && !supports_version(uc.version())
         {
             (*p_error).description.data = b"Unsupported version\0".as_ptr();
@@ -2110,6 +2128,14 @@ impl EvalContext {
         self.0.get().cast()
     }
 
+    // `scene` (Scene) — typed VIEW handle (reinterpret-in-place); accessors on SceneView.
+    #[inline(always)]
+    pub(crate) fn scene_view(&self) -> &crate::native::parse::SceneView {
+        // SAFETY: repr(transparent) over the owned `scene` field inside the outer
+        // UnsafeCell; shared interior-mutable view, asserts no validity.
+        unsafe { &*(&raw mut (*self.get()).scene as *mut crate::native::parse::SceneView) }
+    }
+
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
     #[inline(always)]
     pub(crate) fn result_view(&self) -> &crate::native::buf::BufView {
@@ -2365,7 +2391,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // C: `char *element_data = (char*)ufbxi_push(&ec->result, uint64_t, ec->scene.metadata.element_buffer_size/8);`
     let element_data: *mut u8 = push::<u64>(
         ec.result_mut_ptr(),
-        (*ec.get()).scene.metadata.element_buffer_size / 8,
+        ec.scene_view().metadata_view().element_buffer_size() / 8,
     ) as *mut u8;
     ufbxi_check_err!(ec.error_mut_ptr(), !element_data.is_null(), "element_data");
 

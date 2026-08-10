@@ -525,11 +525,19 @@ fn thumbnail_format_from_raw(raw: i32) -> ThumbnailFormat {
 // ufbx.c:11969-11979 `ufbxi_read_scene_info`
 #[inline(never)]
 pub(crate) unsafe fn read_scene_info(uc: &Context, node: *mut Node) -> Result<(), Fail> {
-    read_properties(uc, node, &mut (*uc.get()).scene.metadata.scene_props)?;
+    read_properties(
+        uc,
+        node,
+        uc.scene_view().metadata_view().scene_props_mut_ptr(),
+    )?;
 
     let thumbnail: *mut Node = find_child(node, sp::Thumbnail.as_ptr());
     if !thumbnail.is_null() {
-        read_thumbnail(uc, thumbnail, &mut (*uc.get()).scene.metadata.thumbnail)?;
+        read_thumbnail(
+            uc,
+            thumbnail,
+            uc.scene_view().metadata_view().thumbnail_mut_ptr(),
+        )?;
     }
 
     Ok(())
@@ -553,7 +561,7 @@ pub(crate) unsafe fn read_header_extension(uc: &Context) -> Result<(), Fail> {
             ufbxi_ignore!(get_val1(
                 child,
                 b"S\0".as_ptr(),
-                &raw mut (*uc.get()).scene.metadata.creator as *mut c_void,
+                uc.scene_view().metadata_view().creator_mut_ptr() as *mut c_void,
             ));
         }
 
@@ -695,7 +703,7 @@ pub(crate) unsafe fn match_version_string(
 // ufbx.c:12084-12128 `ufbxi_match_exporter`
 #[inline(never)]
 pub(crate) unsafe fn match_exporter(uc: &Context) -> Result<(), Fail> {
-    let creator: String = (*uc.get()).scene.metadata.creator;
+    let creator: String = uc.scene_view().metadata_view().creator();
     let mut version: [u32; 3] = [0; 3];
     if match_version_string(b"blender-- ?.?.?\0".as_ptr(), creator, version.as_mut_ptr()) {
         (*uc.get()).exporter = Exporter::BlenderBinary;
@@ -747,8 +755,12 @@ pub(crate) unsafe fn match_exporter(uc: &Context) -> Result<(), Fail> {
         uc.set_exporter_version(pack_version(0, 0, 1));
     }
 
-    (*uc.get()).scene.metadata.exporter = (*uc.get()).exporter;
-    (*uc.get()).scene.metadata.exporter_version = uc.exporter_version();
+    uc.scene_view()
+        .metadata_view()
+        .set_exporter((*uc.get()).exporter);
+    uc.scene_view()
+        .metadata_view()
+        .set_exporter_version(uc.exporter_version());
 
     // Un-detect the exporter in `ufbxi_context` to disable special cases
     if uc.opts_view().disable_quirks() {
@@ -7332,8 +7344,7 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
             ufbxi_ignore!(get_val1(
                 uc.top_node(),
                 b"S\0".as_ptr(),
-                core::ptr::addr_of_mut!((*uc.get()).scene.metadata.creator)
-                    as *mut core::ffi::c_void,
+                uc.scene_view().metadata_view().creator_mut_ptr() as *mut core::ffi::c_void,
             ));
         }
     }
@@ -8473,59 +8484,84 @@ pub(crate) unsafe fn trim_delimiters(uc: &Context, data: *const u8, length: usiz
 #[inline(never)]
 pub(crate) unsafe fn init_file_paths(uc: &Context) -> Result<(), Fail> {
     if uc.opts_view().filename_view().length() > 0 {
-        (*uc.get()).scene.metadata.filename = String::new_c(
+        uc.scene_view().metadata_view().set_filename(String::new_c(
             uc.opts_view().filename_view().data(),
             uc.opts_view().filename_view().length(),
-        );
+        ));
     } else if uc.opts_view().raw_filename_view().size() > 0 {
-        (*uc.get()).scene.metadata.filename.data = uc.opts_view().raw_filename_view().data();
-        (*uc.get()).scene.metadata.filename.length = uc.opts_view().raw_filename_view().size();
+        uc.scene_view()
+            .metadata_view()
+            .filename_view()
+            .set_data(uc.opts_view().raw_filename_view().data());
+        uc.scene_view()
+            .metadata_view()
+            .filename_view()
+            .set_length(uc.opts_view().raw_filename_view().size());
     }
 
     if uc.opts_view().raw_filename_view().size() > 0 {
-        (*uc.get()).scene.metadata.raw_filename = Blob::new_c(
-            uc.opts_view().raw_filename_view().data(),
-            uc.opts_view().raw_filename_view().size(),
-        );
+        uc.scene_view()
+            .metadata_view()
+            .set_raw_filename(Blob::new_c(
+                uc.opts_view().raw_filename_view().data(),
+                uc.opts_view().raw_filename_view().size(),
+            ));
     } else if uc.opts_view().filename_view().length() > 0 {
-        (*uc.get()).scene.metadata.raw_filename.data = uc.opts_view().filename_view().data();
-        (*uc.get()).scene.metadata.raw_filename.size = uc.opts_view().filename_view().length();
+        uc.scene_view()
+            .metadata_view()
+            .raw_filename_view()
+            .set_data(uc.opts_view().filename_view().data());
+        uc.scene_view()
+            .metadata_view()
+            .raw_filename_view()
+            .set_size(uc.opts_view().filename_view().length());
     }
 
     push_string_place_str(
         uc.string_pool_mut_ptr(),
-        &mut (*uc.get()).scene.metadata.filename,
+        uc.scene_view().metadata_view().filename_mut_ptr(),
         false,
     )?;
     push_string_place_blob(
         uc.string_pool_mut_ptr(),
-        &mut (*uc.get()).scene.metadata.raw_filename,
+        uc.scene_view().metadata_view().raw_filename_mut_ptr(),
         true,
     )?;
 
-    (*uc.get()).scene.metadata.relative_root.data = (*uc.get()).scene.metadata.filename.data;
-    (*uc.get()).scene.metadata.relative_root.length = trim_delimiters(
-        uc,
-        (*uc.get()).scene.metadata.filename.data,
-        (*uc.get()).scene.metadata.filename.length,
-    );
+    uc.scene_view()
+        .metadata_view()
+        .relative_root_view()
+        .set_data(uc.scene_view().metadata_view().filename_view().data());
+    uc.scene_view()
+        .metadata_view()
+        .relative_root_view()
+        .set_length(trim_delimiters(
+            uc,
+            uc.scene_view().metadata_view().filename_view().data(),
+            uc.scene_view().metadata_view().filename_view().length(),
+        ));
 
-    (*uc.get()).scene.metadata.raw_relative_root.data =
-        (*uc.get()).scene.metadata.raw_filename.data;
-    (*uc.get()).scene.metadata.raw_relative_root.size = trim_delimiters(
-        uc,
-        (*uc.get()).scene.metadata.raw_filename.data,
-        (*uc.get()).scene.metadata.raw_filename.size,
-    );
+    uc.scene_view()
+        .metadata_view()
+        .raw_relative_root_view()
+        .set_data(uc.scene_view().metadata_view().raw_filename_view().data());
+    uc.scene_view()
+        .metadata_view()
+        .raw_relative_root_view()
+        .set_size(trim_delimiters(
+            uc,
+            uc.scene_view().metadata_view().raw_filename_view().data(),
+            uc.scene_view().metadata_view().raw_filename_view().size(),
+        ));
 
     push_string_place_str(
         uc.string_pool_mut_ptr(),
-        &mut (*uc.get()).scene.metadata.relative_root,
+        uc.scene_view().metadata_view().relative_root_mut_ptr(),
         false,
     )?;
     push_string_place_blob(
         uc.string_pool_mut_ptr(),
-        &mut (*uc.get()).scene.metadata.raw_relative_root,
+        uc.scene_view().metadata_view().raw_relative_root_mut_ptr(),
         true,
     )?;
 
@@ -8620,11 +8656,23 @@ pub(crate) unsafe fn resolve_relative_filename(
     let prefix_data: *const u8;
     let mut prefix_length: usize;
     if raw {
-        prefix_data = (*uc.get()).scene.metadata.raw_relative_root.data;
-        prefix_length = (*uc.get()).scene.metadata.raw_relative_root.size;
+        prefix_data = uc
+            .scene_view()
+            .metadata_view()
+            .raw_relative_root_view()
+            .data();
+        prefix_length = uc
+            .scene_view()
+            .metadata_view()
+            .raw_relative_root_view()
+            .size();
     } else {
-        prefix_data = (*uc.get()).scene.metadata.relative_root.data;
-        prefix_length = (*uc.get()).scene.metadata.relative_root.length;
+        prefix_data = uc.scene_view().metadata_view().relative_root_view().data();
+        prefix_length = uc
+            .scene_view()
+            .metadata_view()
+            .relative_root_view()
+            .length();
     }
 
     // Retain absolute paths

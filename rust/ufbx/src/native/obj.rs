@@ -1950,7 +1950,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
             }
         }
 
-        let path: String = (*uc.get()).scene.metadata.filename;
+        let path: String = uc.scene_view().metadata_view().filename();
         if !has_stream
             && uc.opts_view().load_external_files()
             && uc.opts_view().obj_search_mtl_by_filename()

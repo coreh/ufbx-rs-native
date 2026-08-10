@@ -1944,7 +1944,7 @@ pub(crate) unsafe fn load_external_cache(
     cc.opts_view().set_mirror_axis((*uc.get()).mirror_axis);
     cc.opts_view().set_use_scale_factor(true);
     cc.opts_view()
-        .set_scale_factor((*uc.get()).scene.metadata.geometry_scale);
+        .set_scale_factor(uc.scene_view().metadata_view().geometry_scale());
 
     let mut cache: *mut GeometryCache = cache_load(&cc, (*file).filename);
     if cache.is_null() {
@@ -2179,7 +2179,9 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
         if uc.opts_view().handedness_conversion_axis() != MirrorAxis::None {
             let mirror_axis: MirrorAxis = uc.opts_view().handedness_conversion_axis();
             (*uc.get()).mirror_axis = mirror_axis;
-            (*uc.get()).scene.metadata.mirror_axis = (*uc.get()).mirror_axis;
+            uc.scene_view()
+                .metadata_view()
+                .set_mirror_axis((*uc.get()).mirror_axis);
 
             mirror_matrix_dst(uc.axis_matrix_mut_ptr(), (*uc.get()).mirror_axis);
             ufbxi_dev_assert!(matrix_determinant(&(*uc.get()).axis_matrix) >= 0.0f32 as Real);
