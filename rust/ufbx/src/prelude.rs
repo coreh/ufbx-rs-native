@@ -255,20 +255,8 @@ impl RawBlobView {
         unsafe { (*self.get()).data }
     }
     #[inline(always)]
-    pub(crate) fn set_data(&self, data: *const u8) {
-        unsafe {
-            (*self.get()).data = data;
-        }
-    }
-    #[inline(always)]
     pub(crate) fn size(&self) -> usize {
         unsafe { (*self.get()).size }
-    }
-    #[inline(always)]
-    pub(crate) fn set_size(&self, size: usize) {
-        unsafe {
-            (*self.get()).size = size;
-        }
     }
 }
 
