@@ -4047,18 +4047,10 @@ impl BakedAnimMetadataView {
         self.0.get().cast()
     }
     #[inline(always)]
-    pub(crate) fn result_memory_used(&self) -> usize {
-        unsafe { (*self.get()).result_memory_used }
-    }
-    #[inline(always)]
     pub(crate) fn set_result_memory_used(&self, result_memory_used: usize) {
         unsafe {
             (*self.get()).result_memory_used = result_memory_used;
         }
-    }
-    #[inline(always)]
-    pub(crate) fn temp_memory_used(&self) -> usize {
-        unsafe { (*self.get()).temp_memory_used }
     }
     #[inline(always)]
     pub(crate) fn set_temp_memory_used(&self, temp_memory_used: usize) {
@@ -4067,18 +4059,10 @@ impl BakedAnimMetadataView {
         }
     }
     #[inline(always)]
-    pub(crate) fn result_allocs(&self) -> usize {
-        unsafe { (*self.get()).result_allocs }
-    }
-    #[inline(always)]
     pub(crate) fn set_result_allocs(&self, result_allocs: usize) {
         unsafe {
             (*self.get()).result_allocs = result_allocs;
         }
-    }
-    #[inline(always)]
-    pub(crate) fn temp_allocs(&self) -> usize {
-        unsafe { (*self.get()).temp_allocs }
     }
     #[inline(always)]
     pub(crate) fn set_temp_allocs(&self, temp_allocs: usize) {
@@ -4119,18 +4103,10 @@ impl BakedAnimView {
     }
 
     #[inline(always)]
-    pub(crate) fn key_time_min(&self) -> f64 {
-        unsafe { (*self.get()).key_time_min }
-    }
-    #[inline(always)]
     pub(crate) fn set_key_time_min(&self, key_time_min: f64) {
         unsafe {
             (*self.get()).key_time_min = key_time_min;
         }
-    }
-    #[inline(always)]
-    pub(crate) fn key_time_max(&self) -> f64 {
-        unsafe { (*self.get()).key_time_max }
     }
     #[inline(always)]
     pub(crate) fn set_key_time_max(&self, key_time_max: f64) {
@@ -4139,28 +4115,16 @@ impl BakedAnimView {
         }
     }
     #[inline(always)]
-    pub(crate) fn playback_time_begin(&self) -> f64 {
-        unsafe { (*self.get()).playback_time_begin }
-    }
-    #[inline(always)]
     pub(crate) fn set_playback_time_begin(&self, playback_time_begin: f64) {
         unsafe {
             (*self.get()).playback_time_begin = playback_time_begin;
         }
     }
     #[inline(always)]
-    pub(crate) fn playback_time_end(&self) -> f64 {
-        unsafe { (*self.get()).playback_time_end }
-    }
-    #[inline(always)]
     pub(crate) fn set_playback_time_end(&self, playback_time_end: f64) {
         unsafe {
             (*self.get()).playback_time_end = playback_time_end;
         }
-    }
-    #[inline(always)]
-    pub(crate) fn playback_duration(&self) -> f64 {
-        unsafe { (*self.get()).playback_duration }
     }
     #[inline(always)]
     pub(crate) fn set_playback_duration(&self, playback_duration: f64) {

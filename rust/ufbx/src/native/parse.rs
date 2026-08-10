@@ -609,11 +609,6 @@ impl ObjContext {
     }
 
     #[inline(always)]
-    pub(crate) fn object(&self) -> String {
-        // SAFETY: Copy String/Blob value read.
-        unsafe { (*self.get()).object }
-    }
-    #[inline(always)]
     pub(crate) fn set_object(&self, object: String) {
         unsafe {
             (*self.get()).object = object;
@@ -625,17 +620,6 @@ impl ObjContext {
     }
 
     #[inline(always)]
-    pub(crate) fn line(&self) -> String {
-        // SAFETY: Copy String/Blob value read.
-        unsafe { (*self.get()).line }
-    }
-    #[inline(always)]
-    pub(crate) fn set_line(&self, line: String) {
-        unsafe {
-            (*self.get()).line = line;
-        }
-    }
-    #[inline(always)]
     pub(crate) fn line_mut_ptr(&self) -> *mut String {
         unsafe { &raw mut (*self.get()).line }
     }
@@ -644,12 +628,6 @@ impl ObjContext {
     pub(crate) fn mtllib_relative_path(&self) -> crate::prelude::Blob {
         // SAFETY: Copy String/Blob value read.
         unsafe { (*self.get()).mtllib_relative_path }
-    }
-    #[inline(always)]
-    pub(crate) fn set_mtllib_relative_path(&self, mtllib_relative_path: crate::prelude::Blob) {
-        unsafe {
-            (*self.get()).mtllib_relative_path = mtllib_relative_path;
-        }
     }
     #[inline(always)]
     pub(crate) fn mtllib_relative_path_mut_ptr(&self) -> *mut crate::prelude::Blob {
@@ -1088,10 +1066,6 @@ impl ObjFastIndicesView {
     #[inline(always)]
     fn get(&self) -> *mut ObjFastIndices {
         self.0.get().cast()
-    }
-    #[inline(always)]
-    pub(crate) fn indices(&self) -> *mut u64 {
-        unsafe { (*self.get()).indices }
     }
     #[inline(always)]
     pub(crate) fn set_indices(&self, indices: *mut u64) {
@@ -2733,6 +2707,11 @@ impl Context {
     }
 
     // `error` — const raw-ptr getter (read-only sites); see `error_mut_ptr` for mutation.
+    // Reached only from the feature-disabled `UFBX_ENABLE_*` error stubs (`not(feature =
+    // "geometry-cache")` in cache.rs, `not(feature = "format-obj")` in obj.rs), so it is
+    // legitimately unreachable in the full-feature build where `dead_code` is armed — the
+    // inverse of the module-level `cfg_attr(not(all(c-abi, dev)), allow(dead_code))`.
+    #[cfg_attr(all(feature = "c-abi", feature = "dev"), allow(dead_code))]
     #[inline(always)]
     pub(crate) fn error_ptr(&self) -> *const Error {
         // SAFETY: `&raw const` computes the field address with the cell's

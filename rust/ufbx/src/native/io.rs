@@ -406,20 +406,8 @@ impl FileContext {
     }
 
     // `error` — const raw-ptr getter (read-only sites); see `error_mut_ptr` for mutation.
-    #[inline(always)]
-    pub(crate) fn error_ptr(&self) -> *const Error {
-        // SAFETY: `&raw const` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw const (*self.get()).error }
-    }
 
     // `ator` — const raw-ptr getter (read-only sites); see `ator_mut_ptr` for mutation.
-    #[inline(always)]
-    pub(crate) fn ator_ptr(&self) -> *const Allocator {
-        // SAFETY: `&raw const` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw const (*self.get()).ator }
-    }
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]

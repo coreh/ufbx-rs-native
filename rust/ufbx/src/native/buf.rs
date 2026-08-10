@@ -115,10 +115,6 @@ impl BufView {
         self.0.get().cast()
     }
     #[inline(always)]
-    pub(crate) fn ator(&self) -> *mut Allocator {
-        unsafe { (*self.get()).ator }
-    }
-    #[inline(always)]
     pub(crate) fn set_ator(&self, ator: *mut Allocator) {
         unsafe {
             (*self.get()).ator = ator;
@@ -129,24 +125,10 @@ impl BufView {
         unsafe { (*self.get()).num_items }
     }
     #[inline(always)]
-    pub(crate) fn set_num_items(&self, num_items: usize) {
-        unsafe {
-            (*self.get()).num_items = num_items;
-        }
-    }
-    #[inline(always)]
-    pub(crate) fn unordered(&self) -> bool {
-        unsafe { (*self.get()).unordered }
-    }
-    #[inline(always)]
     pub(crate) fn set_unordered(&self, unordered: bool) {
         unsafe {
             (*self.get()).unordered = unordered;
         }
-    }
-    #[inline(always)]
-    pub(crate) fn clearable(&self) -> bool {
-        unsafe { (*self.get()).clearable }
     }
     #[inline(always)]
     pub(crate) fn set_clearable(&self, clearable: bool) {
