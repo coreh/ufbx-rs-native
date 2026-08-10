@@ -155,7 +155,7 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
 
 // ufbx.c:6783-6787 `ufbxi_pause_progress`
 #[inline(always)]
-pub(crate) unsafe fn pause_progress(uc: &Context) {
+pub(crate) fn pause_progress(uc: &Context) {
     uc.set_data_size(uc.data_size() + uc.yield_size());
     uc.set_yield_size(0);
 }
@@ -202,23 +202,25 @@ pub(crate) unsafe fn yield_(uc: &Context, size: usize) -> *const u8 {
 
 // ufbx.c:6817-6824 `ufbxi_peek_bytes`
 #[inline(always)]
-pub(crate) unsafe fn peek_bytes(uc: &Context, size: usize) -> *const u8 {
+pub(crate) fn peek_bytes(uc: &Context, size: usize) -> *const u8 {
     if uc.yield_size() >= size {
         uc.data()
     } else {
-        yield_(uc, size)
+        // SAFETY: `yield_` needs only a valid `uc` (upheld by the handle).
+        unsafe { yield_(uc, size) }
     }
 }
 
 // ufbx.c:6826-6841 `ufbxi_read_bytes`
 #[inline(always)]
-pub(crate) unsafe fn read_bytes(uc: &Context, size: usize) -> *const u8 {
+pub(crate) fn read_bytes(uc: &Context, size: usize) -> *const u8 {
     // Refill the current buffer if necessary
     let ret: *const u8;
     if uc.yield_size() >= size {
         ret = uc.data();
     } else {
-        ret = yield_(uc, size);
+        // SAFETY: `yield_` needs only a valid `uc` (upheld by the handle).
+        ret = unsafe { yield_(uc, size) };
         if ret.is_null() {
             return core::ptr::null();
         }
@@ -226,7 +228,10 @@ pub(crate) unsafe fn read_bytes(uc: &Context, size: usize) -> *const u8 {
 
     // Advance the read position inside the current buffer
     uc.set_yield_size(uc.yield_size() - size);
-    uc.set_data(ret.add(size));
+    // SAFETY: `ret` points into the current buffer, which holds at least `size`
+    // bytes here (checked above / guaranteed by `yield_`), so advancing by
+    // `size` stays in-bounds.
+    uc.set_data(unsafe { ret.add(size) });
     ret
 }
 
