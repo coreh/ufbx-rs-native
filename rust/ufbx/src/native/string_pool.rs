@@ -38,6 +38,7 @@ use crate::native::platform::{
     math, min_real, min_sz, to_size, ufbx_assert, ufbxi_regression_assert,
 };
 use crate::native::warnings::{ufbxi_warnf_imp, Warnings};
+use crate::prelude::as_f64;
 use crate::prelude::{Blob, Real, String};
 
 // -- String pool (ufbx.c:4895)
@@ -1433,10 +1434,10 @@ pub(crate) const DPI: f64 = 3.14159265358979323846;
 // ufbx.c:5906 `UFBXI_DEG_TO_RAD`
 // C: `((ufbx_real)(UFBXI_PI / 180.0))` — `UFBXI_PI` is `ufbx_real` but `180.0`
 // is `double`, so the division happens in `double` and narrows on the cast.
-pub(crate) const DEG_TO_RAD: Real = (PI as f64 / 180.0) as Real;
+pub(crate) const DEG_TO_RAD: Real = (as_f64!(PI) / 180.0) as Real;
 // ufbx.c:5907 `UFBXI_RAD_TO_DEG`
 // C: `((ufbx_real)(180.0 / UFBXI_PI))` — same `double` division, same narrowing.
-pub(crate) const RAD_TO_DEG: Real = (180.0 / PI as f64) as Real;
+pub(crate) const RAD_TO_DEG: Real = (180.0 / as_f64!(PI)) as Real;
 // ufbx.c:5908 `UFBXI_DEG_TO_RAD_DOUBLE`
 pub(crate) const DEG_TO_RAD_DOUBLE: f64 = DPI / 180.0;
 // ufbx.c:5909 `UFBXI_RAD_TO_DEG_DOUBLE`
@@ -1503,7 +1504,7 @@ pub(crate) fn length3(v: Vec3) -> Real {
     // C: `(ufbx_real)ufbx_sqrt(v.x*v.x + v.y*v.y + v.z*v.z)` — the `ufbx_real`
     // sum promotes to `double` at the `ufbx_sqrt` call and the result narrows
     // back on the explicit cast.
-    math::sqrt((v.x * v.x + v.y * v.y + v.z * v.z) as f64) as Real
+    math::sqrt(as_f64!(v.x * v.x + v.y * v.y + v.z * v.z)) as Real
 }
 
 // ufbx.c:5942-5945 `ufbxi_min3`

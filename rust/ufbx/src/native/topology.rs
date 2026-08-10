@@ -32,6 +32,7 @@ use crate::native::platform::{macro_lower_bound_eq, ufbx_assert, unstable_sort, 
 use crate::native::platform::{math, max_real, min_real, stable_sort, ufbxi_ignore, KD_FAST_DEPTH};
 #[cfg(feature = "triangulation")]
 use crate::native::string_pool::{distsq2, dot3, length3, mul3, slow_normalized_cross3};
+use crate::prelude::as_f64;
 #[cfg(feature = "triangulation")]
 use crate::prelude::Real;
 use core::ffi::c_void;
@@ -674,7 +675,7 @@ pub(crate) unsafe fn ngon_tri_weight(points: *const Vec2) -> Real {
     // C: `ufbx_fmax()` takes `double`, so `ab`/`bc`/`ca` and `UFBX_EPSILON` promote and
     // `2.0f - ufbx_fmax(...)` computes in `double`; the `(ufbx_real)` cast narrows.
     math::fmax(
-        math::EPSILON as f64,
+        as_f64!(math::EPSILON),
         2.0 - math::fmax(math::fmax(ab as f64, bc as f64), ca as f64),
     ) as Real
 }

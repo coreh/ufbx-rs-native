@@ -143,6 +143,7 @@ use crate::native::thread::{
     thread_pool_wait_group, THREAD_GROUP_COUNT,
 };
 use crate::native::warnings::ufbxi_warnf;
+use crate::prelude::as_f64;
 use crate::prelude::{Blob, List, OpenFileContext, Real, Ref, String};
 
 // ufbx.h:3618 `UFBX_ENUM_TYPE(ufbx_thumbnail_format, UFBX_THUMBNAIL_FORMAT, UFBX_THUMBNAIL_FORMAT_RGBA_32);`
@@ -792,7 +793,7 @@ pub(crate) unsafe fn read_document(uc: &Context) -> Result<(), Fail> {
                 child,
                 sp::RootNode.as_ptr(),
                 b"L\0".as_ptr(),
-                uc.root_id_mut_ptr() as *mut u64 as *mut c_void,
+                uc.root_id_mut_ptr() as *mut c_void,
             ) {
                 found_root_id = true;
             }
@@ -1446,7 +1447,7 @@ pub(crate) unsafe fn init_synthetic_vec3_prop(
     (*dst).flags = PropFlags::from_raw(PropFlags::SYNTHETIC.raw() | PropFlags::VALUE_VEC3.raw());
     // C: `ufbxi_f64_to_i64(dst->value_real)` — `ufbx_real` argument promoted to
     // the `double` parameter.
-    (*dst).value_int = f64_to_i64((*dst).value_vec4.x as f64);
+    (*dst).value_int = f64_to_i64(as_f64!((*dst).value_vec4.x));
     (*dst).value_str.data = EMPTY_CHAR.as_ptr();
 
     ufbxi_dev_assert!((*dst).name.length >= 4);
@@ -4374,8 +4375,8 @@ pub(crate) unsafe fn solve_auto_tangent(
     // Clamp tangent to zero if near either left or right key
     if flags & KEY_CLAMP != 0 {
         if math::fmin(
-            math::fabs((prev_value - value) as f64),
-            math::fabs((next_value - value) as f64),
+            math::fabs(as_f64!(prev_value - value)),
+            math::fabs(as_f64!(next_value - value)),
         ) <= uc.opts_view().key_clamp_threshold()
         {
             return 0.0f32;
@@ -4385,12 +4386,12 @@ pub(crate) unsafe fn solve_auto_tangent(
     // Time-independent: Set the initial slope to be the difference between the two keyframes.
     // C: the `ufbx_real` numerator is promoted to `double` by the `double`
     // denominator; the division itself happens in `double`.
-    let mut slope: f64 = (next_value - prev_value) as f64 / (next_time - prev_time);
+    let mut slope: f64 = as_f64!(next_value - prev_value) / (next_time - prev_time);
 
     // Non-time-independent tangents seem to blend between left/right tangent and the total difference.
     if (flags & KEY_TIME_INDEPENDENT) == 0 {
-        let slope_left: f64 = (value - prev_value) as f64 / (time - prev_time);
-        let slope_right: f64 = (next_value - value) as f64 / (next_time - time);
+        let slope_left: f64 = as_f64!(value - prev_value) / (time - prev_time);
+        let slope_right: f64 = as_f64!(next_value - value) / (next_time - time);
         let delta: f64 = (time - prev_time) / (next_time - prev_time);
         slope = slope * 0.5 + (slope_left * (1.0 - delta) + slope_right * delta) * 0.5;
 
@@ -4430,12 +4431,12 @@ pub(crate) unsafe fn solve_auto_tangent(
         let range_left: f64 = weight_left as f64 * (time - prev_time);
         let range_right: f64 = weight_right as f64 * (next_time - time);
         let mut max_left: f64 = if range_left > 0.0 {
-            slope_sign * (value - prev_value) as f64 / range_left
+            slope_sign * as_f64!(value - prev_value) / range_left
         } else {
             0.0
         };
         let mut max_right: f64 = if range_right > 0.0 {
-            slope_sign * (next_value - value) as f64 / range_right
+            slope_sign * as_f64!(next_value - value) / range_right
         } else {
             0.0
         };
@@ -4478,12 +4479,12 @@ pub(crate) unsafe fn solve_auto_tangent_left(
         return 0.0f32;
     }
     if flags & KEY_CLAMP != 0 {
-        if math::fabs((prev_value - value) as f64) <= uc.opts_view().key_clamp_threshold() {
+        if math::fabs(as_f64!(prev_value - value)) <= uc.opts_view().key_clamp_threshold() {
             return 0.0f32;
         }
     }
 
-    let mut slope: f64 = (value - prev_value) as f64 / (time - prev_time);
+    let mut slope: f64 = as_f64!(value - prev_value) / (time - prev_time);
 
     if (flags & KEY_TIME_INDEPENDENT) == 0 {
         let abs_bias_weight: f64 = math::fabs(auto_bias as f64) / 100.0 - 5.0;
@@ -4512,12 +4513,12 @@ pub(crate) unsafe fn solve_auto_tangent_right(
         return 0.0f32;
     }
     if flags & KEY_CLAMP != 0 {
-        if math::fabs((next_value - value) as f64) <= uc.opts_view().key_clamp_threshold() {
+        if math::fabs(as_f64!(next_value - value)) <= uc.opts_view().key_clamp_threshold() {
             return 0.0f32;
         }
     }
 
-    let mut slope: f64 = (next_value - value) as f64 / (next_time - time);
+    let mut slope: f64 = as_f64!(next_value - value) / (next_time - time);
 
     if (flags & KEY_TIME_INDEPENDENT) == 0 {
         let abs_bias_weight: f64 = math::fabs(auto_bias as f64) / 100.0 - 5.0;
@@ -4808,13 +4809,13 @@ pub(crate) unsafe fn read_animation_curve(
                 let mut tcb_edge: bool = false;
                 if i > 0 && (*key).time > prev_time {
                     tcb_slope_left =
-                        ((*key).value - *p_value.offset(-1)) as f64 / ((*key).time - prev_time);
+                        as_f64!((*key).value - *p_value.offset(-1)) / ((*key).time - prev_time);
                 } else {
                     tcb_edge = true;
                 }
                 if i + 1 < num_keys && next_time > (*key).time {
                     tcb_slope_right =
-                        (*p_value.add(1) - (*key).value) as f64 / (next_time - (*key).time);
+                        as_f64!(*p_value.add(1) - (*key).value) / (next_time - (*key).time);
                 } else {
                     tcb_edge = true;
                 }
@@ -4952,7 +4953,7 @@ pub(crate) unsafe fn read_animation_curve(
             if next_time > (*key).time {
                 let delta_time: f64 = next_time - (*key).time;
                 if delta_time > 0.0 {
-                    let slope: f64 = (*p_value.add(1) - (*key).value) as f64 / delta_time;
+                    let slope: f64 = as_f64!(*p_value.add(1) - (*key).value) / delta_time;
                     // C: `slope_right = next_slope_left = (float)slope;`
                     next_slope_left = slope as f32;
                     slope_right = next_slope_left;
@@ -6763,7 +6764,7 @@ pub(crate) unsafe fn read_take_anim_channel(
         // Set up linear cubic tangents if necessary
         if (*key).interpolation == Interpolation::Linear {
             if next_time > (*key).time {
-                let slope: f64 = (next_value - (*key).value as f64) / (next_time - (*key).time);
+                let slope: f64 = (next_value - as_f64!((*key).value)) / (next_time - (*key).time);
                 // C: `slope_right = next_slope_left = (float)slope;`
                 next_slope_left = slope as f32;
                 slope_right = next_slope_left;
@@ -7695,7 +7696,7 @@ pub(crate) unsafe fn read_legacy_prop(
                 if value_ix == 0 {
                     // C: `ufbxi_f64_to_i64(prop->value_real)` — `ufbx_real`
                     // argument promoted to the `double` parameter.
-                    (*prop).value_int = f64_to_i64(*value_real_arr.add(0) as f64);
+                    (*prop).value_int = f64_to_i64(as_f64!(*value_real_arr.add(0)));
                     *value_real_arr.add(1) = 0.0;
                     *value_real_arr.add(2) = 0.0;
                     *value_real_arr.add(3) = 0.0;

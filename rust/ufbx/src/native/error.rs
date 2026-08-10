@@ -1067,7 +1067,7 @@ mod tests {
                 "Frame%uTick%u.%s",
                 12u32,
                 7u32,
-                b"pc2\0".as_ptr() as *const u8
+                b"pc2\0".as_ptr()
             );
             assert_eq!(len, 16);
             assert_eq!(&buf[..len as usize], b"Frame12Tick7.pc2");
@@ -1079,12 +1079,7 @@ mod tests {
     fn test_snprintf_truncation_length() {
         unsafe {
             let mut buf = [0xAAu8; 8];
-            let len = ufbxi_snprintf!(
-                buf.as_mut_ptr(),
-                buf.len(),
-                "%s",
-                b"0123456789\0".as_ptr() as *const u8
-            );
+            let len = ufbxi_snprintf!(buf.as_mut_ptr(), buf.len(), "%s", b"0123456789\0".as_ptr());
             // pos saturates at length (8); returned min(pos, size - 1) = 7.
             assert_eq!(len, 7);
             assert_eq!(&buf[..8], b"0123456\0");

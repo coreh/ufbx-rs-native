@@ -2428,11 +2428,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
         buf_free(sc.source_mut_ptr());
         buf_free(sc.tmp_mut_ptr());
         sc.set_source(sc.result());
-        core::ptr::write_bytes(
-            sc.result_mut_ptr() as *mut Buf as *mut u8,
-            0,
-            size_of::<Buf>(),
-        );
+        core::ptr::write_bytes(sc.result_mut_ptr() as *mut u8, 0, size_of::<Buf>());
         i += 1;
     }
 

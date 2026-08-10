@@ -257,6 +257,7 @@ use crate::native::string_pool::{
     self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
 };
 use crate::native::warnings::ufbxi_warnf_tag;
+use crate::prelude::as_f64;
 use crate::prelude::{Blob, List, Real, Ref, RefList, String};
 
 // -- Scene pre-processing (ufbx.c:18066-18543)
@@ -309,15 +310,15 @@ pub(crate) fn pivot_nonzero(offset: Vec3) -> bool {
     let epsilon: f64 = 0.0009765625;
     // C: `ufbx_fabs(offset.x) >= epsilon` — `ufbx_fabs` takes `double`, so each
     // component promotes to double and the comparison is in double.
-    math::fabs(offset.x as f64) >= epsilon
-        || math::fabs(offset.y as f64) >= epsilon
-        || math::fabs(offset.z as f64) >= epsilon
+    math::fabs(as_f64!(offset.x)) >= epsilon
+        || math::fabs(as_f64!(offset.y)) >= epsilon
+        || math::fabs(as_f64!(offset.z)) >= epsilon
 }
 
 // ufbx.c:18099-18107 `ufbxi_pivot_div`
 pub(crate) fn pivot_div(offset: Real, initial_scale: Real) -> Real {
     let epsilon: f64 = 0.0078125;
-    if math::fabs(initial_scale as f64) >= epsilon {
+    if math::fabs(as_f64!(initial_scale)) >= epsilon {
         offset / initial_scale
     } else {
         offset
@@ -639,18 +640,15 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                                 // subtraction, double `fabs`, narrowed back to
                                 // real before accumulating.
                                 let mut error: Real = 0.0;
-                                error += math::fabs(
-                                    ((*pre_value).constant_value.x - (*pre_node).constant_scale.x)
-                                        as f64,
-                                ) as Real;
-                                error += math::fabs(
-                                    ((*pre_value).constant_value.y - (*pre_node).constant_scale.y)
-                                        as f64,
-                                ) as Real;
-                                error += math::fabs(
-                                    ((*pre_value).constant_value.z - (*pre_node).constant_scale.z)
-                                        as f64,
-                                ) as Real;
+                                error += math::fabs(as_f64!(
+                                    (*pre_value).constant_value.x - (*pre_node).constant_scale.x
+                                )) as Real;
+                                error += math::fabs(as_f64!(
+                                    (*pre_value).constant_value.y - (*pre_node).constant_scale.y
+                                )) as Real;
+                                error += math::fabs(as_f64!(
+                                    (*pre_value).constant_value.z - (*pre_node).constant_scale.z
+                                )) as Real;
                                 if error >= scale_epsilon {
                                     (*pre_node).has_constant_scale = false;
                                 }
@@ -734,9 +732,9 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                     // C: `err += (ufbx_real)ufbx_fabs(a - b)` — real subtraction,
                     // double `fabs`, narrowed back to real before accumulating.
                     let mut err: Real = 0.0;
-                    err += math::fabs((rotation_pivot.x - scaling_pivot.x) as f64) as Real;
-                    err += math::fabs((rotation_pivot.y - scaling_pivot.y) as f64) as Real;
-                    err += math::fabs((rotation_pivot.z - scaling_pivot.z) as f64) as Real;
+                    err += math::fabs(as_f64!(rotation_pivot.x - scaling_pivot.x)) as Real;
+                    err += math::fabs(as_f64!(rotation_pivot.y - scaling_pivot.y)) as Real;
+                    err += math::fabs(as_f64!(rotation_pivot.z - scaling_pivot.z)) as Real;
                     if err > pivot_epsilon {
                         can_modify_pivot = false;
                     }
@@ -952,7 +950,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                 let dz: Real = math::fabs((scale.z - r#ref) as f64) as Real;
                 if (dx + dy + dz >= scale_epsilon
                     || !(*pre_node).has_constant_scale
-                    || math::fabs(scale.x as f64) as Real <= compensate_epsilon)
+                    || math::fabs(as_f64!(scale.x)) as Real <= compensate_epsilon)
                     && uc.opts_view().inherit_mode_handling()
                         != InheritModeHandling::CompensateNoFallback
                 {
@@ -1007,7 +1005,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                 {
                     // C: `(ufbx_real)ufbx_fabs(scale.x - 1.0f)` — real
                     // subtraction, double `fabs`, narrowed back to real.
-                    if math::fabs((scale.x - 1.0) as f64) as Real >= scale_epsilon {
+                    if math::fabs(as_f64!(scale.x - 1.0)) as Real >= scale_epsilon {
                         (*node).is_scale_compensate_parent = true;
                     }
                 }
@@ -2703,7 +2701,7 @@ pub(crate) unsafe extern "C" fn mat_transform_invert_x(v: *mut Vec4) {
 // `(ufbx_real)0.1` cast happens before the widening back to `double`.
 pub(crate) unsafe extern "C" fn mat_transform_unknown_shininess(v: *mut Vec4) {
     if (*v).x >= 0.0 {
-        (*v).x = (1.0f64 - math::sqrt((*v).x as f64) * (0.1f64 as Real) as f64) as Real;
+        (*v).x = (1.0f64 - math::sqrt(as_f64!((*v).x)) * as_f64!(0.1f64 as Real)) as Real;
     }
     if !((*v).x >= 0.0) {
         (*v).x = 0.0;
@@ -2716,7 +2714,7 @@ pub(crate) unsafe extern "C" fn mat_transform_blender_opacity(v: *mut Vec4) {
 // ufbx.c:19379 `ufbxi_mat_transform_blender_shininess`
 pub(crate) unsafe extern "C" fn mat_transform_blender_shininess(v: *mut Vec4) {
     if (*v).x >= 0.0 {
-        (*v).x = (1.0f64 - math::sqrt((*v).x as f64) * (0.1f64 as Real) as f64) as Real;
+        (*v).x = (1.0f64 - math::sqrt(as_f64!((*v).x)) * as_f64!(0.1f64 as Real)) as Real;
     }
     if !((*v).x >= 0.0) {
         (*v).x = 0.0;
@@ -3628,7 +3626,7 @@ pub(crate) unsafe fn fetch_mapping_maps(
                         (*map).value_vec4.x *= (*prop).value_vec4.x;
                         // C: `ufbxi_f64_to_i64(map->value_vec4.x)` — the real
                         // argument promotes to double at the call.
-                        (*map).value_int = f64_to_i64((*map).value_vec4.x as f64);
+                        (*map).value_int = f64_to_i64(as_f64!((*map).value_vec4.x));
                     } else {
                         (*map).value_vec4 = (*prop).value_vec4;
                         (*map).value_int = (*prop).value_int;
@@ -9424,7 +9422,7 @@ pub(crate) unsafe fn update_camera(scene: *mut Scene, camera: *mut Camera) {
                 math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
             (*camera).field_of_view_tan.y = (*camera).field_of_view_tan.x / aspect_ratio;
             (*camera).field_of_view_deg.y =
-                math::atan((*camera).field_of_view_tan.y as f64) as Real * sp::RAD_TO_DEG * 2.0;
+                math::atan(as_f64!((*camera).field_of_view_tan.y)) as Real * sp::RAD_TO_DEG * 2.0;
         }
         ApertureMode::Vertical => {
             (*camera).field_of_view_deg.y = fov;
@@ -9432,7 +9430,7 @@ pub(crate) unsafe fn update_camera(scene: *mut Scene, camera: *mut Camera) {
                 math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
             (*camera).field_of_view_tan.x = (*camera).field_of_view_tan.y * aspect_ratio;
             (*camera).field_of_view_deg.x =
-                math::atan((*camera).field_of_view_tan.x as f64) as Real * sp::RAD_TO_DEG * 2.0;
+                math::atan(as_f64!((*camera).field_of_view_tan.x)) as Real * sp::RAD_TO_DEG * 2.0;
         }
         ApertureMode::FocalLength => {
             (*camera).field_of_view_tan.x =
@@ -9440,9 +9438,9 @@ pub(crate) unsafe fn update_camera(scene: *mut Scene, camera: *mut Camera) {
             (*camera).field_of_view_tan.y =
                 (*camera).aperture_size_inch.y / ((*camera).focal_length_mm * sp::MM_TO_INCH) * 0.5;
             (*camera).field_of_view_deg.x =
-                math::atan((*camera).field_of_view_tan.x as f64) as Real * sp::RAD_TO_DEG * 2.0;
+                math::atan(as_f64!((*camera).field_of_view_tan.x)) as Real * sp::RAD_TO_DEG * 2.0;
             (*camera).field_of_view_deg.y =
-                math::atan((*camera).field_of_view_tan.y as f64) as Real * sp::RAD_TO_DEG * 2.0;
+                math::atan(as_f64!((*camera).field_of_view_tan.y)) as Real * sp::RAD_TO_DEG * 2.0;
         }
         // C `default:` (ufbx.c:23243-23244).
         #[allow(unreachable_patterns)]
@@ -10298,10 +10296,10 @@ pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
                 // C: `ufbx_fabs(scale.y - 1.0f) < ufbx_fabs(size - 1.0f)` — real
                 // subtractions, promoted to double at the `fabs` calls, compared
                 // in double.
-                if math::fabs((scale.y - 1.0) as f64) < math::fabs((size - 1.0) as f64) {
+                if math::fabs(as_f64!(scale.y - 1.0)) < math::fabs((size - 1.0) as f64) {
                     size = scale.y;
                 }
-                if math::fabs((scale.z - 1.0) as f64) < math::fabs((size - 1.0) as f64) {
+                if math::fabs(as_f64!(scale.z - 1.0)) < math::fabs((size - 1.0) as f64) {
                     size = scale.z;
                 }
                 (*node).adjust_post_scale *= 1.0 / size;
@@ -10519,7 +10517,7 @@ pub(crate) unsafe fn round_if_near(targets: *const Real, num_targets: usize, val
     for i in 0..num_targets {
         // C: `double target = targets[i];` — the real target promotes to
         // double, and the range test below compares `value` in double too.
-        let target: f64 = *targets.add(i) as f64;
+        let target: f64 = as_f64!(*targets.add(i));
         let mut error: f64 = target * 9.5367431640625e-7;
         if error < 0.0 {
             error = -error;
@@ -10527,7 +10525,7 @@ pub(crate) unsafe fn round_if_near(targets: *const Real, num_targets: usize, val
         if error < 7.52316384526264005e-37 {
             error = 7.52316384526264005e-37;
         }
-        if value as f64 >= target - error && value as f64 <= target + error {
+        if as_f64!(value) >= target - error && as_f64!(value) <= target + error {
             return target as Real;
         }
     }
@@ -10619,7 +10617,8 @@ pub(crate) unsafe fn update_scene_settings(settings: *mut SceneSettings) {
 
     if (*settings).time_mode != TimeMode::Custom {
         // C: real `ufbxi_time_mode_fps[]` entry promotes to the `double` field.
-        (*settings).frames_per_second = TIME_MODE_FPS[(*settings).time_mode as u32 as usize] as f64;
+        (*settings).frames_per_second =
+            as_f64!(TIME_MODE_FPS[(*settings).time_mode as u32 as usize]);
     }
 }
 

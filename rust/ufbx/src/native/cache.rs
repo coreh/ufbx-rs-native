@@ -1455,7 +1455,7 @@ pub(crate) unsafe fn cache_try_open_file(
     original_filename: *const crate::prelude::Blob,
     p_found: *mut bool,
 ) -> Result<(), Fail> {
-    core::ptr::write_bytes(cc.stream_mut_ptr() as *mut RawStream, 0, 1);
+    core::ptr::write_bytes(cc.stream_mut_ptr(), 0, 1);
     ufbxi_regression_assert!(strlen(filename.data) == filename.length);
     if !open_file(
         cc.open_file_cb_ptr(),
@@ -2081,7 +2081,7 @@ pub(crate) unsafe fn load_external_cache(
     let mut cache: *mut GeometryCache = cache_load(&cc, (*file).filename);
     if cache.is_null() {
         if cc.error_view().type_() == ErrorType::FileNotFound {
-            core::ptr::write_bytes(cc.error_mut_ptr() as *mut Error, 0, 1);
+            core::ptr::write_bytes(cc.error_mut_ptr(), 0, 1);
             cache = cache_load(&cc, (*file).absolute_filename);
         }
     }

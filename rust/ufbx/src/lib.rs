@@ -6,22 +6,38 @@
 // at their sites instead. Generator-emitted style lints are allowed narrowly in
 // generated.rs (see its module header), not here.
 //
-// C-ABI surface (ufbx.h mirrored verbatim):
-#![allow(clippy::missing_safety_doc)] // unsafe fns mirror the ufbx.h C ABI; documenting each `# Safety` contract is a separate future effort
-#![allow(clippy::not_unsafe_ptr_arg_deref)] // public fns take raw pointers by C-ABI design, matching ufbx.h signatures
-#![allow(clippy::too_many_arguments)] // function arities are preserved verbatim from ufbx.c
-#![allow(clippy::manual_c_str_literals)] // `b"...\0"` byte strings mirror C string handling; `c"..."` would be churn
-#![allow(clippy::result_large_err)] // Error size mirrors ufbx_error; boxing it is a deferred design decision
-// Byte-exact numeric fidelity (hash-oracle parity, see PORTING.md):
-#![allow(clippy::excessive_precision)] // float literals are copied verbatim from ufbx.c for bit-exact results
-#![allow(clippy::approx_constant)] // π/e/ln2/… are ufbx.c's literals, not std consts, to keep bits identical
-// C control-flow / bit-expression structure preserved for line-by-line correspondence:
-#![allow(clippy::manual_range_contains)] // explicit bound comparisons mirror the C source
-#![allow(clippy::manual_is_multiple_of)] // `x % n == 0` mirrors C (and the lint is very new)
-#![allow(clippy::manual_bits)] // bit-width expressions mirror C
-#![allow(clippy::manual_rotate)] // explicit shift/or rotates mirror C bit ops in hash/deflate
-#![allow(clippy::identity_op)] // `x | 0`, `<< 0` etc. preserve C bit-expression structure
-#![allow(clippy::neg_cmp_op_on_partial_ord)] // `!(a < b)` preserves C float/NaN comparison semantics; `>=` would differ on NaN
+// -- C-ABI surface (ufbx.h mirrored verbatim) --
+// unsafe fns mirror the ufbx.h C ABI; documenting each `# Safety` contract is a separate future effort.
+#![allow(clippy::missing_safety_doc)]
+// public fns take raw pointers by C-ABI design, matching ufbx.h signatures.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+// function arities are preserved verbatim from ufbx.c.
+#![allow(clippy::too_many_arguments)]
+// `b"...\0"` byte strings mirror C string handling; `c"..."` would be churn.
+#![allow(clippy::manual_c_str_literals)]
+// Error size mirrors ufbx_error; boxing it is a deferred design decision.
+#![allow(clippy::result_large_err)]
+// -- Byte-exact numeric fidelity (hash-oracle parity, see PORTING.md) --
+// float literals are copied verbatim from ufbx.c for bit-exact results.
+#![allow(clippy::excessive_precision)]
+// π/e/ln2/… are ufbx.c's literals, not std consts, to keep bits identical.
+#![allow(clippy::approx_constant)]
+// (clippy::unnecessary_cast is deliberately NOT allowed here: hand-written Real→f64 promotions use the
+// `as_f64!` macro, which suppresses the lint at those sites while keeping it live everywhere else to catch
+// genuinely redundant casts.)
+// -- C control-flow / bit-expression structure preserved for line-by-line correspondence --
+// explicit bound comparisons mirror the C source.
+#![allow(clippy::manual_range_contains)]
+// `x % n == 0` mirrors C (and the lint is very new).
+#![allow(clippy::manual_is_multiple_of)]
+// bit-width expressions mirror C.
+#![allow(clippy::manual_bits)]
+// explicit shift/or rotates mirror C bit ops in hash/deflate.
+#![allow(clippy::manual_rotate)]
+// `x | 0`, `<< 0` etc. preserve C bit-expression structure.
+#![allow(clippy::identity_op)]
+// `!(a < b)` preserves C float/NaN comparison semantics; `>=` would differ on NaN.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
 
 pub mod generated;
 pub mod prelude;

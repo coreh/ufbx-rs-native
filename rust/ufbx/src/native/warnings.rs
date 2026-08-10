@@ -515,7 +515,7 @@ mod tests {
                     WarningType::MissingExternalFile,
                     !0u32,
                     "Could not open .mtl file: %s",
-                    long_z.as_ptr() as *const u8
+                    long_z.as_ptr()
                 ),
                 Ok(())
             );
@@ -525,7 +525,7 @@ mod tests {
                     WarningType::MissingExternalFile,
                     !0u32,
                     "Bad byte: %s",
-                    b"a\xffb\0".as_ptr() as *const u8
+                    b"a\xffb\0".as_ptr()
                 ),
                 Ok(())
             );

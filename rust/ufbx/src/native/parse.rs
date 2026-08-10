@@ -2519,7 +2519,7 @@ impl Context {
     pub(crate) fn obj(&self) -> &ObjContext {
         // SAFETY: the `obj` field IS an ObjContext (repr(transparent) UnsafeCell wrapper)
         // inside this context's outer UnsafeCell; a shared interior-mutable ref is sound.
-        unsafe { &*(&raw mut (*self.get()).obj as *mut ObjContext) }
+        unsafe { &*&raw mut (*self.get()).obj }
     }
 
     // `opts` — typed VIEW handle (reinterpret-in-place); accessors on LoadOptsView.
@@ -4367,7 +4367,7 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b'L' => {
             if type_ == ValueType::Number {
-                *(v as *mut i64) = (*(*node).content.vals.add(ix)).num.i as i64;
+                *(v as *mut i64) = (*(*node).content.vals.add(ix)).num.i;
                 true
             } else {
                 false
@@ -4383,7 +4383,7 @@ pub(crate) unsafe fn get_val_at(node: *mut Node, ix: usize, fmt: u8, v: *mut c_v
         }
         b'D' => {
             if type_ == ValueType::Number {
-                *(v as *mut f64) = (*(*node).content.vals.add(ix)).num.f as f64;
+                *(v as *mut f64) = (*(*node).content.vals.add(ix)).num.f;
                 true
             } else {
                 false
@@ -5597,12 +5597,12 @@ pub(crate) unsafe fn is_array_node(
                 return true;
             } else if name == sp::FullWeights.as_ptr() {
                 (*info).type_ = b'r';
-                (*info).flags = ((*info).flags
+                (*info).flags = (*info).flags
                     | (if uc.blender_full_weights() {
                         ARRAY_FLAG_RESULT
                     } else {
                         ARRAY_FLAG_TMP_BUF
-                    })) as u8;
+                    });
                 return true;
             } else if strcmp(name, b"TransformAssociateModel\0".as_ptr()) == 0 {
                 (*info).type_ = if uc.opts_view().retain_dom() {

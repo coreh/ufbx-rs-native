@@ -14,7 +14,7 @@
     clippy::unnecessary_operation, // no-op expressions from uniform templates
     clippy::missing_transmute_annotations, // transmutes emitted without turbofish
     clippy::wrong_self_convention, // method names mirror the ufbx.h C API verbatim
-    clippy::unnecessary_cast, // casts emitted uniformly to the IR field type
+    clippy::unnecessary_cast, // `*mut c_void as *mut c_void` etc. emitted uniformly at call boundaries
 )]
 
 use crate::prelude::{

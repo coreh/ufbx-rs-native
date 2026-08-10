@@ -24,6 +24,21 @@ use std::{ptr, slice, str};
 pub type Real = f64;
 #[cfg(feature = "real-is-f32")]
 pub type Real = f32;
+
+/// Promote an expression to `f64` for a double-precision intermediate, mirroring
+/// ufbx.c's explicit `(double)` casts on `ufbx_real` operands. Under the default
+/// `Real = f64` this is an identity cast; under `real-is-f32` it is a genuine
+/// f32→f64 widening, so the cast must not be stripped in either build. Spelling
+/// it as a macro documents that intent and — because clippy skips casts that
+/// originate in a macro expansion — keeps `clippy::unnecessary_cast` live at
+/// hand-written sites to catch genuinely redundant casts.
+macro_rules! as_f64 {
+    ($e:expr) => {
+        $e as f64
+    };
+}
+pub(crate) use as_f64;
+
 pub type ThreadPoolContext = usize;
 pub type OpenFileContext = usize;
 

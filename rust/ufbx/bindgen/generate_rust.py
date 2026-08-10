@@ -1725,7 +1725,7 @@ def emit_file():
     emit("    clippy::unnecessary_operation, // no-op expressions from uniform templates")
     emit("    clippy::missing_transmute_annotations, // transmutes emitted without turbofish")
     emit("    clippy::wrong_self_convention, // method names mirror the ufbx.h C API verbatim")
-    emit("    clippy::unnecessary_cast, // casts emitted uniformly to the IR field type")
+    emit("    clippy::unnecessary_cast, // `*mut c_void as *mut c_void` etc. emitted uniformly at call boundaries")
     emit(")]")
     emit("")
     emit_lines(uses)

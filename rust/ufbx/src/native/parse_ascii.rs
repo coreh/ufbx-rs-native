@@ -241,7 +241,7 @@ pub(crate) unsafe fn ascii_parse_version(uc: &Context) -> u32 {
                 if c < b'0' || c > b'9' {
                     return 0;
                 }
-                digits[num_digits as usize] = (c - b'0') as u8;
+                digits[num_digits as usize] = c - b'0';
                 num_digits += 1;
                 c = ascii_next(uc);
             }
@@ -802,7 +802,7 @@ pub(crate) unsafe fn ascii_read_int_array(
         } else if type_ == b'l' {
             let v: *mut i64 = push_fast::<i64>(uc.tmp_stack_mut_ptr(), 1);
             ufbxi_check!(uc, !v.is_null(), "v");
-            *v = val as i64;
+            *v = val;
         }
 
         // Try to parse the next value, we don't commit this until we find a comma after it above.
@@ -1162,7 +1162,7 @@ pub(crate) unsafe fn ascii_read_float_array(
         if type_ == b'd' {
             let v: *mut f64 = push_fast::<f64>(uc.tmp_stack_mut_ptr(), 1);
             ufbxi_check!(uc, !v.is_null(), "v");
-            *v = val as f64;
+            *v = val;
         } else if type_ == b'f' {
             let v: *mut f32 = push_fast::<f32>(uc.tmp_stack_mut_ptr(), 1);
             ufbxi_check!(uc, !v.is_null(), "v");

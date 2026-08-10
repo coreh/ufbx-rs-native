@@ -34,9 +34,9 @@ use crate::generated::{
     Anim, AnimCurve, AnimLayer, AnimProp, BakedAnim, Connection, DomNode, Element, Error,
     ErrorType, Extrapolation, ExtrapolationMode, FileFormat, IndexErrorHandling, InflateRetain,
     Keyframe, OpenFileInfo, OpenFileType, Prop, PropFlags, PropOverride, PropType, Quat,
-    RawAnimOpts, RawGeometryCacheDataOpts, RawLoadOpts, RawOpenFileCb, RawOpenFileOpts,
-    RawPropOverrideDesc, RawStream, RotationOrder, Scene, Tangent, TransformOverride,
-    UnicodeErrorHandling, Vec3, Warning, WarningType,
+    RawAnimOpts, RawGeometryCacheDataOpts, RawLoadOpts, RawOpenFileOpts, RawPropOverrideDesc,
+    RawStream, RotationOrder, Scene, Tangent, TransformOverride, UnicodeErrorHandling, Vec3,
+    Warning, WarningType,
 };
 #[cfg(feature = "scene-eval")]
 use crate::generated::{
@@ -125,6 +125,7 @@ use crate::native::string_pool::{
 };
 use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
 use crate::native::warnings::{pop_warnings, ufbxi_warnf};
+use crate::prelude::as_f64;
 use crate::prelude::{List, OpenFileContext, Real, Ref, String};
 
 // -- Curve evaluation (ufbx.c:25012)
@@ -795,8 +796,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     if uc.opts_view().evaluate_skinning() {
         // C: `ufbx_geometry_cache_data_opts cache_opts = { 0 };`
         let mut cache_opts: RawGeometryCacheDataOpts = MaybeUninit::zeroed().assume_init();
-        cache_opts.open_file_cb =
-            ptr::read(uc.opts_view().open_file_cb_ptr() as *const RawOpenFileCb);
+        cache_opts.open_file_cb = ptr::read(uc.opts_view().open_file_cb_ptr());
         ufbxi_check!(
             uc,
             evaluate_skinning(
@@ -1417,9 +1417,9 @@ unsafe fn combine_anim_layer_rec(
             // C: `result->x *= (ufbx_real)ufbxi_pow_abs(value->x, weight);`
             // — `ufbxi_pow_abs` takes `double`, so both args promote to double
             // and the result narrows back to `ufbx_real` before the multiply.
-            (*result).x *= pow_abs((*value).x as f64, weight as f64) as Real;
-            (*result).y *= pow_abs((*value).y as f64, weight as f64) as Real;
-            (*result).z *= pow_abs((*value).z as f64, weight as f64) as Real;
+            (*result).x *= pow_abs(as_f64!((*value).x), as_f64!(weight)) as Real;
+            (*result).y *= pow_abs(as_f64!((*value).y), as_f64!(weight)) as Real;
+            (*result).z *= pow_abs(as_f64!((*value).z), as_f64!(weight)) as Real;
         } else if (*layer).compose_rotation && prop_name == sp::Lcl_Rotation.as_ptr() {
             let a: Quat = euler_to_quat(*result, (*ctx).rotation_order);
             let mut b: Quat = euler_to_quat(*value, (*ctx).rotation_order);
@@ -1438,12 +1438,12 @@ unsafe fn combine_anim_layer_rec(
             // C: `result->x = (ufbx_real)(ufbxi_pow_abs(result->x, res_weight) * ufbxi_pow_abs(value->x, weight));`
             // — `ufbxi_pow_abs` takes `double`; the product stays in double and
             // narrows to `ufbx_real` only on the assignment.
-            (*result).x = (pow_abs((*result).x as f64, res_weight as f64)
-                * pow_abs((*value).x as f64, weight as f64)) as Real;
-            (*result).y = (pow_abs((*result).y as f64, res_weight as f64)
-                * pow_abs((*value).y as f64, weight as f64)) as Real;
-            (*result).z = (pow_abs((*result).z as f64, res_weight as f64)
-                * pow_abs((*value).z as f64, weight as f64)) as Real;
+            (*result).x = (pow_abs(as_f64!((*result).x), res_weight as f64)
+                * pow_abs(as_f64!((*value).x), as_f64!(weight))) as Real;
+            (*result).y = (pow_abs(as_f64!((*result).y), res_weight as f64)
+                * pow_abs(as_f64!((*value).y), as_f64!(weight))) as Real;
+            (*result).z = (pow_abs(as_f64!((*result).z), res_weight as f64)
+                * pow_abs(as_f64!((*value).z), as_f64!(weight))) as Real;
         } else if (*layer).compose_rotation && prop_name == sp::Lcl_Rotation.as_ptr() {
             let a: Quat = euler_to_quat(*result, (*ctx).rotation_order);
             let b: Quat = euler_to_quat(*value, (*ctx).rotation_order);
@@ -1602,7 +1602,7 @@ pub(crate) unsafe fn evaluate_props(
         // C: `prop->value_int = ufbxi_f64_to_i64(prop->value_real);` — the
         // value union's first real is `value_vec4.x`; `ufbxi_f64_to_i64` takes
         // `double`, so the `ufbx_real` argument promotes.
-        (*prop).value_int = f64_to_i64((*prop).value_vec4.x as f64);
+        (*prop).value_int = f64_to_i64(as_f64!((*prop).value_vec4.x));
         prop = prop.add(1);
     }
 }
