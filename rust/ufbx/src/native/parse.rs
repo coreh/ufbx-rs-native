@@ -1701,6 +1701,17 @@ impl SceneView {
     pub(crate) fn metadata_mut_ptr(&self) -> *mut crate::generated::Metadata {
         unsafe { &raw mut (*self.get()).metadata }
     }
+
+    // `settings` (SceneSettings) — typed VIEW handle (reinterpret-in-place).
+    #[inline(always)]
+    pub(crate) fn settings_view(&self) -> &SceneSettingsView {
+        // SAFETY: reinterpret the SceneSettings field in place; interior-mutable, no validity asserted.
+        unsafe { &*(&raw mut (*self.get()).settings as *mut SceneSettingsView) }
+    }
+    #[inline(always)]
+    pub(crate) fn settings_mut_ptr(&self) -> *mut crate::generated::SceneSettings {
+        unsafe { &raw mut (*self.get()).settings }
+    }
 }
 
 // Typed interior-mutable VIEW over `Scene.metadata` (the public `ufbx_metadata`),
@@ -1973,6 +1984,37 @@ impl SceneMetadataView {
     #[inline(always)]
     pub(crate) fn thumbnail_mut_ptr(&self) -> *mut crate::generated::Thumbnail {
         unsafe { &raw mut (*self.get()).thumbnail }
+    }
+}
+
+// Typed interior-mutable VIEW over `Scene.settings` (the public `ufbx_scene_settings`),
+// reinterpreted in place. Copy scalars use value getters; `props` (Props aggregate)
+// uses a raw-ptr getter for its addr-of / nested-read sites.
+#[repr(transparent)]
+pub(crate) struct SceneSettingsView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::SceneSettings>>,
+);
+
+impl SceneSettingsView {
+    #[inline(always)]
+    fn get(&self) -> *mut crate::generated::SceneSettings {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn axes(&self) -> crate::generated::CoordinateAxes {
+        unsafe { (*self.get()).axes }
+    }
+    #[inline(always)]
+    pub(crate) fn unit_meters(&self) -> crate::prelude::Real {
+        unsafe { (*self.get()).unit_meters }
+    }
+    #[inline(always)]
+    pub(crate) fn frames_per_second(&self) -> f64 {
+        unsafe { (*self.get()).frames_per_second }
+    }
+    #[inline(always)]
+    pub(crate) fn props_mut_ptr(&self) -> *mut crate::generated::Props {
+        unsafe { &raw mut (*self.get()).props }
     }
 }
 

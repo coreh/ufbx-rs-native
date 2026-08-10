@@ -749,7 +749,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
     ufbxi_check!(uc, finalize_scene(uc).is_ok(), "ufbxi_finalize_scene(uc)");
 
-    update_scene_settings(ptr::addr_of_mut!((*uc.get()).scene.settings));
+    update_scene_settings(uc.scene_view().settings_mut_ptr());
     if uc.scene_view().metadata_view().file_format() == FileFormat::Obj {
         update_scene_settings_obj(uc);
     }

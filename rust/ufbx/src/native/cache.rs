@@ -1934,7 +1934,7 @@ pub(crate) unsafe fn load_external_cache(
     cc.set_owned_by_scene(true);
 
     (*cc.get()).open_file_cb = uc.opts_view().open_file_cb();
-    cc.set_frames_per_second((*uc.get()).scene.settings.frames_per_second);
+    cc.set_frames_per_second(uc.scene_view().settings_view().frames_per_second());
 
     // Temporarily "borrow" allocators for the geometry cache
     cc.set_ator_tmp(uc.ator_tmp_mut_ptr());
@@ -2164,12 +2164,12 @@ pub(crate) unsafe fn load_external_files(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:24946-24981 `ufbxi_transform_to_axes`
 #[inline(never)]
 pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
-    if !coordinate_axes_valid((*uc.get()).scene.settings.axes) {
+    if !coordinate_axes_valid(uc.scene_view().settings_view().axes()) {
         return;
     }
     if !axis_matrix(
         uc.axis_matrix_mut_ptr(),
-        (*uc.get()).scene.settings.axes,
+        uc.scene_view().settings_view().axes(),
         dst_axes,
     ) {
         return;
@@ -2217,12 +2217,12 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
 // ufbx.c:24983-25010 `ufbxi_scale_units`
 #[inline(never)]
 pub(crate) unsafe fn scale_units(uc: &Context, mut target_meters: Real) -> Result<(), Fail> {
-    if (*uc.get()).scene.settings.unit_meters <= 0.0f32 as Real {
+    if uc.scene_view().settings_view().unit_meters() <= 0.0f32 as Real {
         return Ok(());
     }
     target_meters = round_if_near(POW10_TARGETS.as_ptr(), POW10_TARGETS.len(), target_meters);
 
-    let mut ratio: Real = (*uc.get()).scene.settings.unit_meters / target_meters;
+    let mut ratio: Real = uc.scene_view().settings_view().unit_meters() / target_meters;
     ratio = round_if_near(POW10_TARGETS.as_ptr(), POW10_TARGETS.len(), ratio);
     if ratio == 1.0f32 as Real {
         return Ok(());

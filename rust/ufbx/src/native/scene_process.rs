@@ -10584,7 +10584,7 @@ pub(crate) unsafe fn update_scene_settings(settings: *mut SceneSettings) {
 // ufbx.c:23933-23944 `ufbxi_update_scene_settings_obj`
 #[inline(never)]
 pub(crate) unsafe fn update_scene_settings_obj(uc: &Context) {
-    let settings: *mut SceneSettings = &mut (*uc.get()).scene.settings;
+    let settings: *mut SceneSettings = uc.scene_view().settings_mut_ptr();
     // C: `settings->original_unit_meters = settings->unit_meters = uc->opts.obj_unit_meters;`
     (*settings).unit_meters = uc.opts_view().obj_unit_meters();
     (*settings).original_unit_meters = (*settings).unit_meters;

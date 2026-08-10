@@ -5840,7 +5840,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
 // ufbx.c:14941-14945 `ufbxi_read_global_settings`
 #[inline(never)]
 pub(crate) unsafe fn read_global_settings(uc: &Context, node: *mut Node) -> Result<(), Fail> {
-    read_properties(uc, node, &mut (*uc.get()).scene.settings.props)?;
+    read_properties(uc, node, uc.scene_view().settings_view().props_mut_ptr())?;
     Ok(())
 }
 
@@ -7270,7 +7270,7 @@ pub(crate) unsafe fn read_legacy_settings(uc: &Context, node: *mut Node) -> Resu
     }
 
     if num_props > 0 {
-        let props: *mut Props = &mut (*uc.get()).scene.settings.props;
+        let props: *mut Props = uc.scene_view().settings_view().props_mut_ptr();
         let num_existing: usize = (*props).props.count;
 
         let new_count: usize = num_props as usize + num_existing;
@@ -7293,7 +7293,10 @@ pub(crate) unsafe fn read_legacy_settings(uc: &Context, node: *mut Node) -> Resu
 
         ufbxi_check!(
             uc,
-            !(*uc.get()).scene.settings.props.props.data.is_null(),
+            !(*uc.scene_view().settings_view().props_mut_ptr())
+                .props
+                .data
+                .is_null(),
             "uc->scene.settings.props.props.data"
         );
     }
