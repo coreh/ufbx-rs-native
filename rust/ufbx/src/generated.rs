@@ -3,20 +3,6 @@
 // Fixes belong in the GENERATOR (see PORTING.md); hand edits are
 // silently overwritten on the next regeneration and CI diffs this file.
 
-#![allow(
-    clippy::derivable_impls, // explicit Default impls emitted per struct
-    clippy::let_and_return, // `let x = ...; x` from the uniform wrapper template
-    clippy::needless_lifetimes, // explicit lifetimes emitted uniformly on wrappers
-    clippy::needless_borrow, // `&` emitted uniformly on call-argument passing
-    clippy::redundant_field_names, // field: field emitted from IR field names
-    clippy::redundant_static_lifetimes, // &'static str emitted in const name tables
-    clippy::unused_unit, // -> () emitted uniformly for void-returning wrappers
-    clippy::unnecessary_operation, // no-op expressions from uniform templates
-    clippy::missing_transmute_annotations, // transmutes emitted without turbofish
-    clippy::wrong_self_convention, // method names mirror the ufbx.h C API verbatim
-    clippy::unnecessary_cast, // `*mut c_void as *mut c_void` etc. emitted uniformly at call boundaries
-)]
-
 use crate::prelude::{
     call_close_memory_cb, call_open_file_cb, call_progress_cb, Allocator, Stream, ThreadPool,
 };
@@ -77,6 +63,7 @@ pub enum RotationOrder {
     Spheric = 6,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for RotationOrder {
     fn default() -> Self {
         Self::Xyz
@@ -128,6 +115,7 @@ pub enum DomValueType {
     ArrayIgnored = 8,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for DomValueType {
     fn default() -> Self {
         Self::Number
@@ -171,6 +159,7 @@ pub enum PropType {
     Reference = 15,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for PropType {
     fn default() -> Self {
         Self::Unknown
@@ -208,7 +197,7 @@ impl PropFlags {
     pub const VALUE_BLOB: PropFlags = PropFlags(0x4000000);
 }
 
-const PROPFLAGS_NAMES: [(&'static str, u32); 24] = [
+const PROPFLAGS_NAMES: [(&str, u32); 24] = [
     ("ANIMATABLE", 0x1),
     ("USER_DEFINED", 0x2),
     ("HIDDEN", 0x4),
@@ -254,6 +243,7 @@ impl PropFlags {
         self.0
     }
 }
+#[allow(clippy::derivable_impls)]
 impl Default for PropFlags {
     fn default() -> Self {
         Self(0)
@@ -365,6 +355,7 @@ pub enum ElementType {
     MetadataObject = 41,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ElementType {
     fn default() -> Self {
         Self::Unknown
@@ -410,6 +401,7 @@ pub enum InheritMode {
     ComponentwiseScale = 2,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for InheritMode {
     fn default() -> Self {
         Self::Normal
@@ -425,6 +417,7 @@ pub enum MirrorAxis {
     Z = 3,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for MirrorAxis {
     fn default() -> Self {
         Self::None
@@ -637,6 +630,7 @@ pub enum SubdivisionDisplayMode {
     Smooth = 3,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for SubdivisionDisplayMode {
     fn default() -> Self {
         Self::Disabled
@@ -654,6 +648,7 @@ pub enum SubdivisionBoundary {
     SharpInterior = 5,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for SubdivisionBoundary {
     fn default() -> Self {
         Self::Default
@@ -727,6 +722,7 @@ pub enum LightType {
     Volume = 4,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for LightType {
     fn default() -> Self {
         Self::Point
@@ -742,6 +738,7 @@ pub enum LightDecay {
     Cubic = 3,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for LightDecay {
     fn default() -> Self {
         Self::None
@@ -755,6 +752,7 @@ pub enum LightAreaShape {
     Sphere = 1,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for LightAreaShape {
     fn default() -> Self {
         Self::Rectangle
@@ -783,6 +781,7 @@ pub enum ProjectionMode {
     Orthographic = 1,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ProjectionMode {
     fn default() -> Self {
         Self::Perspective
@@ -799,6 +798,7 @@ pub enum AspectMode {
     FixedHeight = 4,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for AspectMode {
     fn default() -> Self {
         Self::WindowSize
@@ -814,6 +814,7 @@ pub enum ApertureMode {
     FocalLength = 3,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ApertureMode {
     fn default() -> Self {
         Self::HorizontalAndVertical
@@ -831,6 +832,7 @@ pub enum GateFit {
     Stretch = 5,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for GateFit {
     fn default() -> Self {
         Self::None
@@ -854,6 +856,7 @@ pub enum ApertureFormat {
     Imax = 11,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ApertureFormat {
     fn default() -> Self {
         Self::Custom
@@ -872,6 +875,7 @@ pub enum CoordinateAxis {
     Unknown = 6,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for CoordinateAxis {
     fn default() -> Self {
         Self::PositiveX
@@ -948,6 +952,7 @@ pub enum NurbsTopology {
     Closed = 2,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for NurbsTopology {
     fn default() -> Self {
         Self::Open
@@ -1023,6 +1028,7 @@ pub enum MarkerType {
     IkEffector = 2,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for MarkerType {
     fn default() -> Self {
         Self::Unknown
@@ -1043,6 +1049,7 @@ pub enum LodDisplay {
     Hide = 2,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for LodDisplay {
     fn default() -> Self {
         Self::UseLod
@@ -1076,6 +1083,7 @@ pub enum SkinningMethod {
     BlendedDqLinear = 3,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for SkinningMethod {
     fn default() -> Self {
         Self::Linear
@@ -1163,6 +1171,7 @@ pub enum CacheFileFormat {
     Mc = 2,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for CacheFileFormat {
     fn default() -> Self {
         Self::Unknown
@@ -1179,6 +1188,7 @@ pub enum CacheDataFormat {
     Vec3Double = 4,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for CacheDataFormat {
     fn default() -> Self {
         Self::Unknown
@@ -1193,6 +1203,7 @@ pub enum CacheDataEncoding {
     BigEndian = 2,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for CacheDataEncoding {
     fn default() -> Self {
         Self::Unknown
@@ -1208,6 +1219,7 @@ pub enum CacheInterpretation {
     VertexNormal = 3,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for CacheInterpretation {
     fn default() -> Self {
         Self::Unknown
@@ -1312,6 +1324,7 @@ pub enum ShaderType {
     WavefrontMtl = 12,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ShaderType {
     fn default() -> Self {
         Self::Unknown
@@ -1343,6 +1356,7 @@ pub enum MaterialFbxMap {
     VectorDisplacement = 19,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for MaterialFbxMap {
     fn default() -> Self {
         Self::DiffuseFactor
@@ -1410,6 +1424,7 @@ pub enum MaterialPbrMap {
     TransmissionGlossiness = 55,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for MaterialPbrMap {
     fn default() -> Self {
         Self::BaseFactor
@@ -1444,6 +1459,7 @@ pub enum MaterialFeature {
     TransmissionRoughnessAsGlossiness = 22,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for MaterialFeature {
     fn default() -> Self {
         Self::Pbr
@@ -1583,6 +1599,7 @@ pub enum TextureType {
     Shader = 3,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for TextureType {
     fn default() -> Self {
         Self::File
@@ -1625,6 +1642,7 @@ pub enum BlendMode {
     Overlay = 30,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for BlendMode {
     fn default() -> Self {
         Self::Translucent
@@ -1638,6 +1656,7 @@ pub enum WrapMode {
     Clamp = 1,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for WrapMode {
     fn default() -> Self {
         Self::Repeat
@@ -1659,6 +1678,7 @@ pub enum ShaderTextureType {
     Osl = 2,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ShaderTextureType {
     fn default() -> Self {
         Self::Unknown
@@ -1843,6 +1863,7 @@ pub enum Interpolation {
     Cubic = 3,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for Interpolation {
     fn default() -> Self {
         Self::ConstantPrev
@@ -1859,6 +1880,7 @@ pub enum ExtrapolationMode {
     RepeatRelative = 4,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ExtrapolationMode {
     fn default() -> Self {
         Self::Constant
@@ -1943,6 +1965,7 @@ pub enum ConstraintType {
     SingleChainIk = 6,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ConstraintType {
     fn default() -> Self {
         Self::Unknown
@@ -1966,6 +1989,7 @@ pub enum ConstraintAimUpType {
     None = 4,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ConstraintAimUpType {
     fn default() -> Self {
         Self::Scene
@@ -1979,6 +2003,7 @@ pub enum ConstraintIkPoleType {
     Node = 1,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ConstraintIkPoleType {
     fn default() -> Self {
         Self::Vector
@@ -2064,6 +2089,7 @@ pub enum Exporter {
     UfbxWrite = 5,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for Exporter {
     fn default() -> Self {
         Self::Unknown
@@ -2086,6 +2112,7 @@ pub enum FileFormat {
     Mtl = 3,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for FileFormat {
     fn default() -> Self {
         Self::Unknown
@@ -2112,6 +2139,7 @@ pub enum WarningType {
     UnknownObjDirective = 14,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for WarningType {
     fn default() -> Self {
         Self::MissingExternalFile
@@ -2134,6 +2162,7 @@ pub enum ThumbnailFormat {
     Rgba32 = 2,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ThumbnailFormat {
     fn default() -> Self {
         Self::Unknown
@@ -2148,6 +2177,7 @@ pub enum SpaceConversion {
     ModifyGeometry = 2,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for SpaceConversion {
     fn default() -> Self {
         Self::TransformRoot
@@ -2163,6 +2193,7 @@ pub enum GeometryTransformHandling {
     ModifyGeometryNoFallback = 3,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for GeometryTransformHandling {
     fn default() -> Self {
         Self::Preserve
@@ -2179,6 +2210,7 @@ pub enum InheritModeHandling {
     Ignore = 4,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for InheritModeHandling {
     fn default() -> Self {
         Self::Preserve
@@ -2193,6 +2225,7 @@ pub enum PivotHandling {
     AdjustToRotationPivot = 2,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for PivotHandling {
     fn default() -> Self {
         Self::Retain
@@ -2281,6 +2314,7 @@ pub enum TimeMode {
     E5994Fps = 17,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for TimeMode {
     fn default() -> Self {
         Self::Default
@@ -2295,6 +2329,7 @@ pub enum TimeProtocol {
     Default = 2,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for TimeProtocol {
     fn default() -> Self {
         Self::Smpte
@@ -2310,6 +2345,7 @@ pub enum SnapMode {
     SnapAndPlay = 3,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for SnapMode {
     fn default() -> Self {
         Self::None
@@ -2412,7 +2448,7 @@ impl TopoFlags {
     pub const NON_MANIFOLD: TopoFlags = TopoFlags(0x1);
 }
 
-const TOPOFLAGS_NAMES: [(&'static str, u32); 1] = [("NON_MANIFOLD", 0x1)];
+const TOPOFLAGS_NAMES: [(&str, u32); 1] = [("NON_MANIFOLD", 0x1)];
 
 impl TopoFlags {
     pub fn any(self) -> bool {
@@ -2433,6 +2469,7 @@ impl TopoFlags {
         self.0
     }
 }
+#[allow(clippy::derivable_impls)]
 impl Default for TopoFlags {
     fn default() -> Self {
         Self(0)
@@ -2507,6 +2544,7 @@ pub struct RawAllocator {
     pub user: *mut c_void,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for RawAllocator {
     fn default() -> Self {
         RawAllocator {
@@ -2539,6 +2577,7 @@ pub struct RawStream {
     pub user: *mut c_void,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for RawStream {
     fn default() -> Self {
         RawStream {
@@ -2559,6 +2598,7 @@ pub enum OpenFileType {
     ObjMtl = 2,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for OpenFileType {
     fn default() -> Self {
         Self::MainModel
@@ -2587,6 +2627,7 @@ pub struct RawOpenFileCb {
     pub user: *mut c_void,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for RawOpenFileCb {
     fn default() -> Self {
         RawOpenFileCb {
@@ -2612,6 +2653,7 @@ pub struct RawCloseMemoryCb {
     pub user: *mut c_void,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for RawCloseMemoryCb {
     fn default() -> Self {
         RawCloseMemoryCb {
@@ -2668,6 +2710,7 @@ pub enum ErrorType {
     UnsupportedVersion = 23,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ErrorType {
     fn default() -> Self {
         Self::None
@@ -2686,6 +2729,7 @@ pub struct Error {
 }
 
 impl Error {
+    #[allow(clippy::missing_transmute_annotations)]
     pub fn info(&self) -> &str {
         unsafe {
             let buf: &[mem::MaybeUninit<u8>; 256] = mem::transmute(&self.info_buf);
@@ -2707,6 +2751,7 @@ pub enum ProgressResult {
     Cancel = 512,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ProgressResult {
     fn default() -> Self {
         Self::Continue
@@ -2720,6 +2765,7 @@ pub struct RawProgressCb {
     pub user: *mut c_void,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for RawProgressCb {
     fn default() -> Self {
         RawProgressCb {
@@ -2762,6 +2808,7 @@ pub enum IndexErrorHandling {
     UnsafeIgnore = 3,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for IndexErrorHandling {
     fn default() -> Self {
         Self::Clamp
@@ -2779,6 +2826,7 @@ pub enum UnicodeErrorHandling {
     UnsafeIgnore = 5,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for UnicodeErrorHandling {
     fn default() -> Self {
         Self::ReplacementCharacter
@@ -2797,7 +2845,7 @@ impl BakedKeyFlags {
     pub const REDUCED: BakedKeyFlags = BakedKeyFlags(0x10);
 }
 
-const BAKEDKEYFLAGS_NAMES: [(&'static str, u32); 5] = [
+const BAKEDKEYFLAGS_NAMES: [(&str, u32); 5] = [
     ("STEP_LEFT", 0x1),
     ("STEP_RIGHT", 0x2),
     ("STEP_KEY", 0x4),
@@ -2824,6 +2872,7 @@ impl BakedKeyFlags {
         self.0
     }
 }
+#[allow(clippy::derivable_impls)]
 impl Default for BakedKeyFlags {
     fn default() -> Self {
         Self(0)
@@ -2943,6 +2992,7 @@ pub struct RawThreadPool {
     pub user: *mut c_void,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for RawThreadPool {
     fn default() -> Self {
         RawThreadPool {
@@ -2971,7 +3021,7 @@ impl EvaluateFlags {
     pub const NO_EXTRAPOLATION: EvaluateFlags = EvaluateFlags(0x1);
 }
 
-const EVALUATEFLAGS_NAMES: [(&'static str, u32); 1] = [("NO_EXTRAPOLATION", 0x1)];
+const EVALUATEFLAGS_NAMES: [(&str, u32); 1] = [("NO_EXTRAPOLATION", 0x1)];
 
 impl EvaluateFlags {
     pub fn any(self) -> bool {
@@ -2992,6 +3042,7 @@ impl EvaluateFlags {
         self.0
     }
 }
+#[allow(clippy::derivable_impls)]
 impl Default for EvaluateFlags {
     fn default() -> Self {
         Self(0)
@@ -3159,6 +3210,7 @@ pub enum BakeStepHandling {
     Ignore = 4,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for BakeStepHandling {
     fn default() -> Self {
         Self::Default
@@ -3267,6 +3319,7 @@ pub struct Panic {
 }
 
 impl Panic {
+    #[allow(clippy::missing_transmute_annotations)]
     pub fn message(&self) -> &str {
         unsafe {
             let buf: &[mem::MaybeUninit<u8>; 128] = mem::transmute(&self.message_buf);
@@ -3289,7 +3342,7 @@ impl TransformFlags {
     pub const NO_EXTRAPOLATION: TransformFlags = TransformFlags(0x80);
 }
 
-const TRANSFORMFLAGS_NAMES: [(&'static str, u32); 7] = [
+const TRANSFORMFLAGS_NAMES: [(&str, u32); 7] = [
     ("IGNORE_SCALE_HELPER", 0x1),
     ("IGNORE_COMPONENTWISE_SCALE", 0x2),
     ("EXPLICIT_INCLUDES", 0x4),
@@ -3318,6 +3371,7 @@ impl TransformFlags {
         self.0
     }
 }
+#[allow(clippy::derivable_impls)]
 impl Default for TransformFlags {
     fn default() -> Self {
         Self(0)
@@ -3402,6 +3456,7 @@ pub enum OpenFileCb<'a> {
     Raw(Unsafe<RawOpenFileCb>),
 }
 
+#[allow(clippy::derivable_impls)]
 impl<'a> Default for OpenFileCb<'a> {
     fn default() -> Self {
         Self::Unset
@@ -3418,6 +3473,7 @@ impl RawOpenFileCb {
 }
 
 impl OpenFileCb<'_> {
+    #[allow(clippy::wrong_self_convention)]
     fn from_rust(&self) -> RawOpenFileCb {
         match self {
             OpenFileCb::Unset => Default::default(),
@@ -3425,6 +3481,7 @@ impl OpenFileCb<'_> {
         }
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn from_rust_mut(&mut self) -> RawOpenFileCb {
         match self {
             OpenFileCb::Unset => Default::default(),
@@ -3465,11 +3522,12 @@ impl FromRust for OpenFileOpts {
 
 pub enum CloseMemoryCb<'a> {
     Unset,
-    Mut(&'a mut dyn FnMut(*mut c_void, usize) -> ()),
-    Ref(&'a dyn Fn(*mut c_void, usize) -> ()),
+    Mut(&'a mut dyn FnMut(*mut c_void, usize)),
+    Ref(&'a dyn Fn(*mut c_void, usize)),
     Raw(Unsafe<RawCloseMemoryCb>),
 }
 
+#[allow(clippy::derivable_impls)]
 impl<'a> Default for CloseMemoryCb<'a> {
     fn default() -> Self {
         Self::Unset
@@ -3477,7 +3535,7 @@ impl<'a> Default for CloseMemoryCb<'a> {
 }
 
 impl RawCloseMemoryCb {
-    fn from_func<F: FnMut(*mut c_void, usize) -> ()>(arg: &mut F) -> Self {
+    fn from_func<F: FnMut(*mut c_void, usize)>(arg: &mut F) -> Self {
         RawCloseMemoryCb {
             fn_: Some(call_close_memory_cb::<F>),
             user: arg as *mut F as *mut c_void,
@@ -3486,6 +3544,7 @@ impl RawCloseMemoryCb {
 }
 
 impl CloseMemoryCb<'_> {
+    #[allow(clippy::wrong_self_convention)]
     fn from_rust(&self) -> RawCloseMemoryCb {
         match self {
             CloseMemoryCb::Unset => Default::default(),
@@ -3493,6 +3552,7 @@ impl CloseMemoryCb<'_> {
         }
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn from_rust_mut(&mut self) -> RawCloseMemoryCb {
         match self {
             CloseMemoryCb::Unset => Default::default(),
@@ -3541,6 +3601,7 @@ pub enum ProgressCb<'a> {
     Raw(Unsafe<RawProgressCb>),
 }
 
+#[allow(clippy::derivable_impls)]
 impl<'a> Default for ProgressCb<'a> {
     fn default() -> Self {
         Self::Unset
@@ -3557,6 +3618,7 @@ impl RawProgressCb {
 }
 
 impl ProgressCb<'_> {
+    #[allow(clippy::wrong_self_convention)]
     fn from_rust(&self) -> RawProgressCb {
         match self {
             ProgressCb::Unset => Default::default(),
@@ -3564,6 +3626,7 @@ impl ProgressCb<'_> {
         }
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn from_rust_mut(&mut self) -> RawProgressCb {
         match self {
             ProgressCb::Unset => Default::default(),
@@ -4333,7 +4396,7 @@ pub struct BakedAnimRoot {
 impl SceneRoot {
     fn new(scene: *mut Scene) -> SceneRoot {
         SceneRoot {
-            scene: scene,
+            scene,
             _marker: marker::PhantomData,
         }
     }
@@ -4342,7 +4405,7 @@ impl SceneRoot {
 impl MeshRoot {
     fn new(mesh: *mut Mesh) -> MeshRoot {
         MeshRoot {
-            mesh: mesh,
+            mesh,
             _marker: marker::PhantomData,
         }
     }
@@ -4351,7 +4414,7 @@ impl MeshRoot {
 impl LineCurveRoot {
     fn new(line_curve: *mut LineCurve) -> LineCurveRoot {
         LineCurveRoot {
-            line_curve: line_curve,
+            line_curve,
             _marker: marker::PhantomData,
         }
     }
@@ -4360,7 +4423,7 @@ impl LineCurveRoot {
 impl GeometryCacheRoot {
     fn new(cache: *mut GeometryCache) -> GeometryCacheRoot {
         GeometryCacheRoot {
-            cache: cache,
+            cache,
             _marker: marker::PhantomData,
         }
     }
@@ -4369,7 +4432,7 @@ impl GeometryCacheRoot {
 impl AnimRoot {
     fn new(anim: *mut Anim) -> AnimRoot {
         AnimRoot {
-            anim: anim,
+            anim,
             _marker: marker::PhantomData,
         }
     }
@@ -4378,7 +4441,7 @@ impl AnimRoot {
 impl BakedAnimRoot {
     fn new(anim: *mut BakedAnim) -> BakedAnimRoot {
         BakedAnimRoot {
-            anim: anim,
+            anim,
             _marker: marker::PhantomData,
         }
     }
@@ -4522,6 +4585,7 @@ unsafe impl Sync for AnimRoot {}
 unsafe impl Send for BakedAnimRoot {}
 unsafe impl Sync for BakedAnimRoot {}
 
+#[allow(clippy::let_and_return)]
 pub fn is_thread_safe() -> bool {
     let result = unsafe { ufbx_is_thread_safe() };
     result
@@ -4575,7 +4639,7 @@ pub fn load_file(filename: &str, opts: LoadOpts) -> Result<SceneRoot> {
 
 pub unsafe fn load_stdio_raw(file: *mut c_void, opts: &RawLoadOpts) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_load_stdio(file as *mut c_void, opts as *const RawLoadOpts, &mut error) };
+    let result = { ufbx_load_stdio(file, opts as *const RawLoadOpts, &mut error) };
     if error.type_ != ErrorType::None {
         return Err(error);
     }
@@ -4597,7 +4661,7 @@ pub unsafe fn load_stdio_prefix_raw(
     let mut error: Error = Error::default();
     let result = {
         ufbx_load_stdio_prefix(
-            file as *mut c_void,
+            file,
             prefix.as_ptr() as *const c_void,
             prefix.len(),
             opts as *const RawLoadOpts,
@@ -4671,11 +4735,13 @@ pub fn load_stream_prefix(stream: Stream, prefix: &[u8], opts: LoadOpts) -> Resu
     unsafe { load_stream_prefix_raw(&stream_raw, prefix, &opts_raw) }
 }
 
+#[allow(clippy::let_and_return)]
 pub fn format_error(dst: &mut [u8], error: &Error) -> usize {
     let result = unsafe { ufbx_format_error(dst.as_mut_ptr(), dst.len(), error as *const Error) };
     result
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_prop<'a>(props: &'a Props, name: &str) -> Option<&'a Prop> {
     let result = unsafe { ufbx_find_prop_len(props as *const Props, name.as_ptr(), name.len()) };
     if result.is_null() {
@@ -4695,6 +4761,7 @@ pub fn find_prop<'a>(props: &'a Props, name: &str) -> Option<&'a Prop> {
 
 // TODO: Property find functions
 
+#[allow(clippy::let_and_return)]
 pub fn find_blob(props: &Props, name: &str, def: Blob) -> Blob {
     let result =
         unsafe { ufbx_find_blob_len(props as *const Props, name.as_ptr(), name.len(), def) };
@@ -4703,6 +4770,7 @@ pub fn find_blob(props: &Props, name: &str, def: Blob) -> Blob {
 
 // TODO: ufbx_find_prop_concat()
 
+#[allow(clippy::needless_lifetimes)]
 pub fn get_prop_element<'a>(
     element: &'a Element,
     prop: &Prop,
@@ -4717,6 +4785,7 @@ pub fn get_prop_element<'a>(
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_prop_element<'a>(
     element: &'a Element,
     name: &str,
@@ -4732,6 +4801,7 @@ pub fn find_prop_element<'a>(
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Option<&'a Element> {
     let result =
         unsafe { ufbx_find_element_len(scene as *const Scene, type_, name.as_ptr(), name.len()) };
@@ -4742,6 +4812,7 @@ pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Opt
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
     let result = unsafe { ufbx_find_node_len(scene as *const Scene, name.as_ptr(), name.len()) };
     if result.is_null() {
@@ -4751,6 +4822,7 @@ pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_anim_stack<'a>(scene: &'a Scene, name: &str) -> Option<&'a AnimStack> {
     let result =
         unsafe { ufbx_find_anim_stack_len(scene as *const Scene, name.as_ptr(), name.len()) };
@@ -4761,6 +4833,7 @@ pub fn find_anim_stack<'a>(scene: &'a Scene, name: &str) -> Option<&'a AnimStack
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_material<'a>(scene: &'a Scene, name: &str) -> Option<&'a Material> {
     let result =
         unsafe { ufbx_find_material_len(scene as *const Scene, name.as_ptr(), name.len()) };
@@ -4771,6 +4844,7 @@ pub fn find_material<'a>(scene: &'a Scene, name: &str) -> Option<&'a Material> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_anim_prop<'a>(
     layer: &'a AnimLayer,
     element: &'a Element,
@@ -4791,17 +4865,20 @@ pub fn find_anim_prop<'a>(
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_anim_props<'a>(layer: &'a AnimLayer, element: &'a Element) -> &'a [AnimProp] {
     let result =
         unsafe { ufbx_find_anim_props(layer as *const AnimLayer, element as *const Element) };
     unsafe { result.as_static_ref() }
 }
 
+#[allow(clippy::let_and_return)]
 pub fn get_compatible_matrix_for_normals(node: &Node) -> Matrix {
     let result = unsafe { ufbx_get_compatible_matrix_for_normals(node as *const Node) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn inflate(dst: &mut [u8], input: &InflateInput, retain: &mut InflateRetain) -> isize {
     let result = unsafe {
         ufbx_inflate(
@@ -4814,6 +4891,7 @@ pub fn inflate(dst: &mut [u8], input: &InflateInput, retain: &mut InflateRetain)
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub unsafe fn default_open_file_raw(
     user: *mut c_void,
     stream: &mut RawStream,
@@ -4822,7 +4900,7 @@ pub unsafe fn default_open_file_raw(
 ) -> bool {
     let result = {
         ufbx_default_open_file(
-            user as *mut c_void,
+            user,
             stream as *mut RawStream,
             path.as_ptr(),
             path.len(),
@@ -4920,33 +4998,39 @@ pub unsafe fn open_memory_ctx_raw(
     Ok(result)
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_curve(curve: &AnimCurve, time: f64, default_value: Real) -> Real {
     let result = unsafe { ufbx_evaluate_curve(curve as *const AnimCurve, time, default_value) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_curve_flags(curve: &AnimCurve, time: f64, default_value: Real, flags: u32) -> Real {
     let result =
         unsafe { ufbx_evaluate_curve_flags(curve as *const AnimCurve, time, default_value, flags) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_anim_value_real(anim_value: &AnimValue, time: f64) -> Real {
     let result = unsafe { ufbx_evaluate_anim_value_real(anim_value as *const AnimValue, time) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_anim_value_vec3(anim_value: &AnimValue, time: f64) -> Vec3 {
     let result = unsafe { ufbx_evaluate_anim_value_vec3(anim_value as *const AnimValue, time) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_anim_value_real_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Real {
     let result =
         unsafe { ufbx_evaluate_anim_value_real_flags(anim_value as *const AnimValue, time, flags) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_anim_value_vec3_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Vec3 {
     let result =
         unsafe { ufbx_evaluate_anim_value_vec3_flags(anim_value as *const AnimValue, time, flags) };
@@ -4974,6 +5058,7 @@ where
     unsafe { ExternalRef::new(result) }
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_prop_flags(
     anim: &Anim,
     element: &Element,
@@ -5015,6 +5100,7 @@ where
     unsafe { ExternalRef::new(result) }
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_props_flags(
     anim: &Anim,
     element: &Element,
@@ -5036,11 +5122,13 @@ pub fn evaluate_props_flags(
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_transform(anim: &Anim, node: &Node, time: f64) -> Transform {
     let result = unsafe { ufbx_evaluate_transform(anim as *const Anim, node as *const Node, time) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_transform_flags(anim: &Anim, node: &Node, time: f64, flags: u32) -> Transform {
     let result = unsafe {
         ufbx_evaluate_transform_flags(anim as *const Anim, node as *const Node, time, flags)
@@ -5048,6 +5136,7 @@ pub fn evaluate_transform_flags(anim: &Anim, node: &Node, time: f64, flags: u32)
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_blend_weight(anim: &Anim, channel: &BlendChannel, time: f64) -> Real {
     let result = unsafe {
         ufbx_evaluate_blend_weight(anim as *const Anim, channel as *const BlendChannel, time)
@@ -5055,6 +5144,7 @@ pub fn evaluate_blend_weight(anim: &Anim, channel: &BlendChannel, time: f64) -> 
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_blend_weight_flags(
     anim: &Anim,
     channel: &BlendChannel,
@@ -5155,6 +5245,7 @@ pub fn bake_anim(scene: &Scene, anim: &Anim, opts: BakeOpts) -> Result<BakedAnim
     unsafe { bake_anim_raw(scene, anim, &opts_raw) }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_baked_node_by_typed_id<'a>(
     bake: &mut BakedAnim,
     typed_id: u32,
@@ -5167,6 +5258,7 @@ pub fn find_baked_node_by_typed_id<'a>(
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_baked_node<'a>(bake: &mut BakedAnim, node: &'a mut Node) -> Option<&'a BakedNode> {
     let result = unsafe { ufbx_find_baked_node(bake as *mut BakedAnim, node as *mut Node) };
     if result.is_null() {
@@ -5176,6 +5268,7 @@ pub fn find_baked_node<'a>(bake: &mut BakedAnim, node: &'a mut Node) -> Option<&
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_baked_element_by_element_id<'a>(
     bake: &mut BakedAnim,
     element_id: u32,
@@ -5189,6 +5282,7 @@ pub fn find_baked_element_by_element_id<'a>(
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_baked_element<'a>(
     bake: &mut BakedAnim,
     element: &'a mut Element,
@@ -5202,16 +5296,19 @@ pub fn find_baked_element<'a>(
     }
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_baked_vec3(keyframes: &[BakedVec3], time: f64) -> Vec3 {
     let result = unsafe { ufbx_evaluate_baked_vec3(List::from_slice(keyframes), time) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_baked_quat(keyframes: &[BakedQuat], time: f64) -> Quat {
     let result = unsafe { ufbx_evaluate_baked_quat(List::from_slice(keyframes), time) };
     result
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn get_bone_pose<'a>(pose: &'a Pose, node: &'a Node) -> Option<&'a BonePose> {
     let result = unsafe { ufbx_get_bone_pose(pose as *const Pose, node as *const Node) };
     if result.is_null() {
@@ -5221,6 +5318,7 @@ pub fn get_bone_pose<'a>(pose: &'a Pose, node: &'a Node) -> Option<&'a BonePose>
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_prop_texture<'a>(material: &'a Material, name: &str) -> Option<&'a Texture> {
     let result = unsafe {
         ufbx_find_prop_texture_len(material as *const Material, name.as_ptr(), name.len())
@@ -5238,6 +5336,7 @@ pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
     unsafe { result.as_static_ref() }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_shader_prop_bindings<'a>(shader: &'a Shader, name: &str) -> &'a [ShaderPropBinding] {
     let result = unsafe {
         ufbx_find_shader_prop_bindings_len(shader as *const Shader, name.as_ptr(), name.len())
@@ -5245,6 +5344,7 @@ pub fn find_shader_prop_bindings<'a>(shader: &'a Shader, name: &str) -> &'a [Sha
     unsafe { result.as_static_ref() }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn find_shader_texture_input<'a>(
     shader: &ShaderTexture,
     name: &str,
@@ -5263,91 +5363,109 @@ pub fn find_shader_texture_input<'a>(
     }
 }
 
+#[allow(clippy::let_and_return)]
 pub fn coordinate_axes_valid(axes: CoordinateAxes) -> bool {
     let result = unsafe { ufbx_coordinate_axes_valid(axes) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn vec3_normalize(v: Vec3) -> Vec3 {
     let result = unsafe { ufbx_vec3_normalize(v) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn quat_dot(a: Quat, b: Quat) -> Real {
     let result = unsafe { ufbx_quat_dot(a, b) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn quat_mul(a: Quat, b: Quat) -> Quat {
     let result = unsafe { ufbx_quat_mul(a, b) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn quat_normalize(q: Quat) -> Quat {
     let result = unsafe { ufbx_quat_normalize(q) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn quat_fix_antipodal(q: Quat, reference: Quat) -> Quat {
     let result = unsafe { ufbx_quat_fix_antipodal(q, reference) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn quat_slerp(a: Quat, b: Quat, t: Real) -> Quat {
     let result = unsafe { ufbx_quat_slerp(a, b, t) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn quat_rotate_vec3(q: Quat, v: Vec3) -> Vec3 {
     let result = unsafe { ufbx_quat_rotate_vec3(q, v) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn quat_to_euler(q: Quat, order: RotationOrder) -> Vec3 {
     let result = unsafe { ufbx_quat_to_euler(q, order) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn euler_to_quat(v: Vec3, order: RotationOrder) -> Quat {
     let result = unsafe { ufbx_euler_to_quat(v, order) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn matrix_mul(a: &Matrix, b: &Matrix) -> Matrix {
     let result = unsafe { ufbx_matrix_mul(a as *const Matrix, b as *const Matrix) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn matrix_determinant(m: &Matrix) -> Real {
     let result = unsafe { ufbx_matrix_determinant(m as *const Matrix) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn matrix_invert(m: &Matrix) -> Matrix {
     let result = unsafe { ufbx_matrix_invert(m as *const Matrix) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn matrix_for_normals(m: &Matrix) -> Matrix {
     let result = unsafe { ufbx_matrix_for_normals(m as *const Matrix) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn transform_position(m: &Matrix, v: Vec3) -> Vec3 {
     let result = unsafe { ufbx_transform_position(m as *const Matrix, v) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn transform_direction(m: &Matrix, v: Vec3) -> Vec3 {
     let result = unsafe { ufbx_transform_direction(m as *const Matrix, v) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn transform_to_matrix(t: &Transform) -> Matrix {
     let result = unsafe { ufbx_transform_to_matrix(t as *const Transform) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn matrix_to_transform(m: &Matrix) -> Transform {
     let result = unsafe { ufbx_matrix_to_transform(m as *const Matrix) };
     result
@@ -5369,16 +5487,19 @@ pub fn get_skin_vertex_matrix(skin: &SkinDeformer, vertex: usize, fallback: &Mat
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn get_blend_shape_offset_index(shape: &BlendShape, vertex: usize) -> u32 {
     let result = unsafe { ufbx_get_blend_shape_offset_index(shape as *const BlendShape, vertex) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn get_blend_shape_vertex_offset(shape: &BlendShape, vertex: usize) -> Vec3 {
     let result = unsafe { ufbx_get_blend_shape_vertex_offset(shape as *const BlendShape, vertex) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn get_blend_vertex_offset(blend: &BlendDeformer, vertex: usize) -> Vec3 {
     let result = unsafe { ufbx_get_blend_vertex_offset(blend as *const BlendDeformer, vertex) };
     result
@@ -5406,6 +5527,7 @@ pub fn add_blend_vertex_offsets(blend: &BlendDeformer, vertices: &mut [Vec3], we
     };
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_nurbs_basis(
     basis: &NurbsBasis,
     u: Real,
@@ -5425,11 +5547,13 @@ pub fn evaluate_nurbs_basis(
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_nurbs_curve(curve: &NurbsCurve, u: Real) -> CurvePoint {
     let result = unsafe { ufbx_evaluate_nurbs_curve(curve as *const NurbsCurve, u) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn evaluate_nurbs_surface(surface: &NurbsSurface, u: Real, v: Real) -> SurfacePoint {
     let result = unsafe { ufbx_evaluate_nurbs_surface(surface as *const NurbsSurface, u, v) };
     result
@@ -5491,6 +5615,7 @@ pub fn tessellate_nurbs_surface(
     unsafe { tessellate_nurbs_surface_raw(surface, &opts_raw) }
 }
 
+#[allow(clippy::let_and_return)]
 pub fn find_face_index(mesh: &mut Mesh, index: usize) -> u32 {
     let result = unsafe { ufbx_find_face_index(mesh as *mut Mesh, index) };
     result
@@ -5659,6 +5784,7 @@ pub fn load_geometry_cache(filename: &str, opts: GeometryCacheOpts) -> Result<Ge
     unsafe { load_geometry_cache_raw(filename, &opts_raw) }
 }
 
+#[allow(clippy::let_and_return)]
 pub unsafe fn read_geometry_cache_real_raw(
     frame: &CacheFrame,
     data: &mut [Real],
@@ -5686,6 +5812,7 @@ pub fn read_geometry_cache_real(
     unsafe { read_geometry_cache_real_raw(frame, data, &opts_raw) }
 }
 
+#[allow(clippy::let_and_return)]
 pub unsafe fn read_geometry_cache_vec3_raw(
     frame: &CacheFrame,
     data: &mut [Vec3],
@@ -5713,6 +5840,7 @@ pub fn read_geometry_cache_vec3(
     unsafe { read_geometry_cache_vec3_raw(frame, data, &opts_raw) }
 }
 
+#[allow(clippy::let_and_return)]
 pub unsafe fn sample_geometry_cache_real_raw(
     channel: &CacheChannel,
     time: f64,
@@ -5743,6 +5871,7 @@ pub fn sample_geometry_cache_real(
     unsafe { sample_geometry_cache_real_raw(channel, time, data, &opts_raw) }
 }
 
+#[allow(clippy::let_and_return)]
 pub unsafe fn sample_geometry_cache_vec3_raw(
     channel: &CacheChannel,
     time: f64,
@@ -5773,6 +5902,7 @@ pub fn sample_geometry_cache_vec3(
     unsafe { sample_geometry_cache_vec3_raw(channel, time, data, &opts_raw) }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn dom_find<'a>(parent: &DomNode, name: &str) -> Option<&'a DomNode> {
     let result = unsafe { ufbx_dom_find_len(parent as *const DomNode, name.as_ptr(), name.len()) };
     if result.is_null() {
@@ -5817,13 +5947,11 @@ pub fn generate_indices(
 }
 
 pub unsafe fn thread_pool_run_task(ctx: ThreadPoolContext, index: u32) {
-    {
-        ufbx_thread_pool_run_task(ctx, index)
-    };
+    ufbx_thread_pool_run_task(ctx, index);
 }
 
 pub unsafe fn thread_pool_set_user_ptr(ctx: ThreadPoolContext, user_ptr: *mut c_void) {
-    ufbx_thread_pool_set_user_ptr(ctx, user_ptr as *mut c_void)
+    ufbx_thread_pool_set_user_ptr(ctx, user_ptr)
 }
 
 pub unsafe fn thread_pool_get_user_ptr(ctx: ThreadPoolContext) -> *mut c_void {
@@ -5875,6 +6003,7 @@ pub fn get_vertex_w_vec3(v: &VertexVec3, index: usize) -> Real {
     result
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_unknown<'a>(element: &'a Element) -> Option<&'a Unknown> {
     let result = unsafe { ufbx_as_unknown(element as *const Element) };
     if result.is_null() {
@@ -5884,6 +6013,7 @@ pub fn as_unknown<'a>(element: &'a Element) -> Option<&'a Unknown> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_node<'a>(element: &'a Element) -> Option<&'a Node> {
     let result = unsafe { ufbx_as_node(element as *const Element) };
     if result.is_null() {
@@ -5893,6 +6023,7 @@ pub fn as_node<'a>(element: &'a Element) -> Option<&'a Node> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_mesh<'a>(element: &'a Element) -> Option<&'a Mesh> {
     let result = unsafe { ufbx_as_mesh(element as *const Element) };
     if result.is_null() {
@@ -5902,6 +6033,7 @@ pub fn as_mesh<'a>(element: &'a Element) -> Option<&'a Mesh> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_light<'a>(element: &'a Element) -> Option<&'a Light> {
     let result = unsafe { ufbx_as_light(element as *const Element) };
     if result.is_null() {
@@ -5911,6 +6043,7 @@ pub fn as_light<'a>(element: &'a Element) -> Option<&'a Light> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_camera<'a>(element: &'a Element) -> Option<&'a Camera> {
     let result = unsafe { ufbx_as_camera(element as *const Element) };
     if result.is_null() {
@@ -5920,6 +6053,7 @@ pub fn as_camera<'a>(element: &'a Element) -> Option<&'a Camera> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_bone<'a>(element: &'a Element) -> Option<&'a Bone> {
     let result = unsafe { ufbx_as_bone(element as *const Element) };
     if result.is_null() {
@@ -5929,6 +6063,7 @@ pub fn as_bone<'a>(element: &'a Element) -> Option<&'a Bone> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_empty<'a>(element: &'a Element) -> Option<&'a Empty> {
     let result = unsafe { ufbx_as_empty(element as *const Element) };
     if result.is_null() {
@@ -5938,6 +6073,7 @@ pub fn as_empty<'a>(element: &'a Element) -> Option<&'a Empty> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_line_curve<'a>(element: &'a Element) -> Option<&'a LineCurve> {
     let result = unsafe { ufbx_as_line_curve(element as *const Element) };
     if result.is_null() {
@@ -5947,6 +6083,7 @@ pub fn as_line_curve<'a>(element: &'a Element) -> Option<&'a LineCurve> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_curve<'a>(element: &'a Element) -> Option<&'a NurbsCurve> {
     let result = unsafe { ufbx_as_nurbs_curve(element as *const Element) };
     if result.is_null() {
@@ -5956,6 +6093,7 @@ pub fn as_nurbs_curve<'a>(element: &'a Element) -> Option<&'a NurbsCurve> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_surface<'a>(element: &'a Element) -> Option<&'a NurbsSurface> {
     let result = unsafe { ufbx_as_nurbs_surface(element as *const Element) };
     if result.is_null() {
@@ -5965,6 +6103,7 @@ pub fn as_nurbs_surface<'a>(element: &'a Element) -> Option<&'a NurbsSurface> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_trim_surface<'a>(element: &'a Element) -> Option<&'a NurbsTrimSurface> {
     let result = unsafe { ufbx_as_nurbs_trim_surface(element as *const Element) };
     if result.is_null() {
@@ -5974,6 +6113,7 @@ pub fn as_nurbs_trim_surface<'a>(element: &'a Element) -> Option<&'a NurbsTrimSu
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_trim_boundary<'a>(element: &'a Element) -> Option<&'a NurbsTrimBoundary> {
     let result = unsafe { ufbx_as_nurbs_trim_boundary(element as *const Element) };
     if result.is_null() {
@@ -5983,6 +6123,7 @@ pub fn as_nurbs_trim_boundary<'a>(element: &'a Element) -> Option<&'a NurbsTrimB
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_procedural_geometry<'a>(element: &'a Element) -> Option<&'a ProceduralGeometry> {
     let result = unsafe { ufbx_as_procedural_geometry(element as *const Element) };
     if result.is_null() {
@@ -5992,6 +6133,7 @@ pub fn as_procedural_geometry<'a>(element: &'a Element) -> Option<&'a Procedural
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_stereo_camera<'a>(element: &'a Element) -> Option<&'a StereoCamera> {
     let result = unsafe { ufbx_as_stereo_camera(element as *const Element) };
     if result.is_null() {
@@ -6001,6 +6143,7 @@ pub fn as_stereo_camera<'a>(element: &'a Element) -> Option<&'a StereoCamera> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_camera_switcher<'a>(element: &'a Element) -> Option<&'a CameraSwitcher> {
     let result = unsafe { ufbx_as_camera_switcher(element as *const Element) };
     if result.is_null() {
@@ -6010,6 +6153,7 @@ pub fn as_camera_switcher<'a>(element: &'a Element) -> Option<&'a CameraSwitcher
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_marker<'a>(element: &'a Element) -> Option<&'a Marker> {
     let result = unsafe { ufbx_as_marker(element as *const Element) };
     if result.is_null() {
@@ -6019,6 +6163,7 @@ pub fn as_marker<'a>(element: &'a Element) -> Option<&'a Marker> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_lod_group<'a>(element: &'a Element) -> Option<&'a LodGroup> {
     let result = unsafe { ufbx_as_lod_group(element as *const Element) };
     if result.is_null() {
@@ -6028,6 +6173,7 @@ pub fn as_lod_group<'a>(element: &'a Element) -> Option<&'a LodGroup> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_skin_deformer<'a>(element: &'a Element) -> Option<&'a SkinDeformer> {
     let result = unsafe { ufbx_as_skin_deformer(element as *const Element) };
     if result.is_null() {
@@ -6037,6 +6183,7 @@ pub fn as_skin_deformer<'a>(element: &'a Element) -> Option<&'a SkinDeformer> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_skin_cluster<'a>(element: &'a Element) -> Option<&'a SkinCluster> {
     let result = unsafe { ufbx_as_skin_cluster(element as *const Element) };
     if result.is_null() {
@@ -6046,6 +6193,7 @@ pub fn as_skin_cluster<'a>(element: &'a Element) -> Option<&'a SkinCluster> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_blend_deformer<'a>(element: &'a Element) -> Option<&'a BlendDeformer> {
     let result = unsafe { ufbx_as_blend_deformer(element as *const Element) };
     if result.is_null() {
@@ -6055,6 +6203,7 @@ pub fn as_blend_deformer<'a>(element: &'a Element) -> Option<&'a BlendDeformer> 
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_blend_channel<'a>(element: &'a Element) -> Option<&'a BlendChannel> {
     let result = unsafe { ufbx_as_blend_channel(element as *const Element) };
     if result.is_null() {
@@ -6064,6 +6213,7 @@ pub fn as_blend_channel<'a>(element: &'a Element) -> Option<&'a BlendChannel> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_blend_shape<'a>(element: &'a Element) -> Option<&'a BlendShape> {
     let result = unsafe { ufbx_as_blend_shape(element as *const Element) };
     if result.is_null() {
@@ -6073,6 +6223,7 @@ pub fn as_blend_shape<'a>(element: &'a Element) -> Option<&'a BlendShape> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_cache_deformer<'a>(element: &'a Element) -> Option<&'a CacheDeformer> {
     let result = unsafe { ufbx_as_cache_deformer(element as *const Element) };
     if result.is_null() {
@@ -6082,6 +6233,7 @@ pub fn as_cache_deformer<'a>(element: &'a Element) -> Option<&'a CacheDeformer> 
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_cache_file<'a>(element: &'a Element) -> Option<&'a CacheFile> {
     let result = unsafe { ufbx_as_cache_file(element as *const Element) };
     if result.is_null() {
@@ -6091,6 +6243,7 @@ pub fn as_cache_file<'a>(element: &'a Element) -> Option<&'a CacheFile> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_material<'a>(element: &'a Element) -> Option<&'a Material> {
     let result = unsafe { ufbx_as_material(element as *const Element) };
     if result.is_null() {
@@ -6100,6 +6253,7 @@ pub fn as_material<'a>(element: &'a Element) -> Option<&'a Material> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_texture<'a>(element: &'a Element) -> Option<&'a Texture> {
     let result = unsafe { ufbx_as_texture(element as *const Element) };
     if result.is_null() {
@@ -6109,6 +6263,7 @@ pub fn as_texture<'a>(element: &'a Element) -> Option<&'a Texture> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_video<'a>(element: &'a Element) -> Option<&'a Video> {
     let result = unsafe { ufbx_as_video(element as *const Element) };
     if result.is_null() {
@@ -6118,6 +6273,7 @@ pub fn as_video<'a>(element: &'a Element) -> Option<&'a Video> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_shader<'a>(element: &'a Element) -> Option<&'a Shader> {
     let result = unsafe { ufbx_as_shader(element as *const Element) };
     if result.is_null() {
@@ -6127,6 +6283,7 @@ pub fn as_shader<'a>(element: &'a Element) -> Option<&'a Shader> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_shader_binding<'a>(element: &'a Element) -> Option<&'a ShaderBinding> {
     let result = unsafe { ufbx_as_shader_binding(element as *const Element) };
     if result.is_null() {
@@ -6136,6 +6293,7 @@ pub fn as_shader_binding<'a>(element: &'a Element) -> Option<&'a ShaderBinding> 
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_anim_stack<'a>(element: &'a Element) -> Option<&'a AnimStack> {
     let result = unsafe { ufbx_as_anim_stack(element as *const Element) };
     if result.is_null() {
@@ -6145,6 +6303,7 @@ pub fn as_anim_stack<'a>(element: &'a Element) -> Option<&'a AnimStack> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_anim_layer<'a>(element: &'a Element) -> Option<&'a AnimLayer> {
     let result = unsafe { ufbx_as_anim_layer(element as *const Element) };
     if result.is_null() {
@@ -6154,6 +6313,7 @@ pub fn as_anim_layer<'a>(element: &'a Element) -> Option<&'a AnimLayer> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_anim_value<'a>(element: &'a Element) -> Option<&'a AnimValue> {
     let result = unsafe { ufbx_as_anim_value(element as *const Element) };
     if result.is_null() {
@@ -6163,6 +6323,7 @@ pub fn as_anim_value<'a>(element: &'a Element) -> Option<&'a AnimValue> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_anim_curve<'a>(element: &'a Element) -> Option<&'a AnimCurve> {
     let result = unsafe { ufbx_as_anim_curve(element as *const Element) };
     if result.is_null() {
@@ -6172,6 +6333,7 @@ pub fn as_anim_curve<'a>(element: &'a Element) -> Option<&'a AnimCurve> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_display_layer<'a>(element: &'a Element) -> Option<&'a DisplayLayer> {
     let result = unsafe { ufbx_as_display_layer(element as *const Element) };
     if result.is_null() {
@@ -6181,6 +6343,7 @@ pub fn as_display_layer<'a>(element: &'a Element) -> Option<&'a DisplayLayer> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_selection_set<'a>(element: &'a Element) -> Option<&'a SelectionSet> {
     let result = unsafe { ufbx_as_selection_set(element as *const Element) };
     if result.is_null() {
@@ -6190,6 +6353,7 @@ pub fn as_selection_set<'a>(element: &'a Element) -> Option<&'a SelectionSet> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_selection_node<'a>(element: &'a Element) -> Option<&'a SelectionNode> {
     let result = unsafe { ufbx_as_selection_node(element as *const Element) };
     if result.is_null() {
@@ -6199,6 +6363,7 @@ pub fn as_selection_node<'a>(element: &'a Element) -> Option<&'a SelectionNode> 
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_character<'a>(element: &'a Element) -> Option<&'a Character> {
     let result = unsafe { ufbx_as_character(element as *const Element) };
     if result.is_null() {
@@ -6208,6 +6373,7 @@ pub fn as_character<'a>(element: &'a Element) -> Option<&'a Character> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_constraint<'a>(element: &'a Element) -> Option<&'a Constraint> {
     let result = unsafe { ufbx_as_constraint(element as *const Element) };
     if result.is_null() {
@@ -6217,6 +6383,7 @@ pub fn as_constraint<'a>(element: &'a Element) -> Option<&'a Constraint> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_audio_layer<'a>(element: &'a Element) -> Option<&'a AudioLayer> {
     let result = unsafe { ufbx_as_audio_layer(element as *const Element) };
     if result.is_null() {
@@ -6226,6 +6393,7 @@ pub fn as_audio_layer<'a>(element: &'a Element) -> Option<&'a AudioLayer> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_audio_clip<'a>(element: &'a Element) -> Option<&'a AudioClip> {
     let result = unsafe { ufbx_as_audio_clip(element as *const Element) };
     if result.is_null() {
@@ -6235,6 +6403,7 @@ pub fn as_audio_clip<'a>(element: &'a Element) -> Option<&'a AudioClip> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_pose<'a>(element: &'a Element) -> Option<&'a Pose> {
     let result = unsafe { ufbx_as_pose(element as *const Element) };
     if result.is_null() {
@@ -6244,6 +6413,7 @@ pub fn as_pose<'a>(element: &'a Element) -> Option<&'a Pose> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn as_metadata_object<'a>(element: &'a Element) -> Option<&'a MetadataObject> {
     let result = unsafe { ufbx_as_metadata_object(element as *const Element) };
     if result.is_null() {
@@ -6253,41 +6423,49 @@ pub fn as_metadata_object<'a>(element: &'a Element) -> Option<&'a MetadataObject
     }
 }
 
+#[allow(clippy::let_and_return)]
 pub fn dom_is_array(node: &DomNode) -> bool {
     let result = unsafe { ufbx_dom_is_array(node as *const DomNode) };
     result
 }
 
+#[allow(clippy::let_and_return)]
 pub fn dom_array_size(node: &DomNode) -> usize {
     let result = unsafe { ufbx_dom_array_size(node as *const DomNode) };
     result
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn dom_as_int32_list<'a>(node: &DomNode) -> &'a [i32] {
     let result = unsafe { ufbx_dom_as_int32_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn dom_as_int64_list<'a>(node: &DomNode) -> &'a [i64] {
     let result = unsafe { ufbx_dom_as_int64_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn dom_as_float_list<'a>(node: &DomNode) -> &'a [f32] {
     let result = unsafe { ufbx_dom_as_float_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn dom_as_double_list<'a>(node: &DomNode) -> &'a [f64] {
     let result = unsafe { ufbx_dom_as_double_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn dom_as_real_list<'a>(node: &DomNode) -> &'a [Real] {
     let result = unsafe { ufbx_dom_as_real_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
 }
 
+#[allow(clippy::needless_lifetimes)]
 pub fn dom_as_blob_list<'a>(node: &DomNode) -> &'a [Blob] {
     let result = unsafe { ufbx_dom_as_blob_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
@@ -6363,46 +6541,54 @@ impl Matrix {
 }
 
 impl DomNode {
+    #[allow(clippy::needless_lifetimes)]
     pub fn find<'a>(&'a self, name: &str) -> Option<&'a DomNode> {
-        dom_find(&self, name)
+        dom_find(self, name)
     }
 
     pub fn is_array(&self) -> bool {
-        dom_is_array(&self)
+        dom_is_array(self)
     }
 
     pub fn array_size(&self) -> usize {
-        dom_array_size(&self)
+        dom_array_size(self)
     }
 
+    #[allow(clippy::needless_lifetimes)]
     pub fn as_int32_list<'a>(&'a self) -> &'a [i32] {
-        dom_as_int32_list(&self)
+        dom_as_int32_list(self)
     }
 
+    #[allow(clippy::needless_lifetimes)]
     pub fn as_int64_list<'a>(&'a self) -> &'a [i64] {
-        dom_as_int64_list(&self)
+        dom_as_int64_list(self)
     }
 
+    #[allow(clippy::needless_lifetimes)]
     pub fn as_float_list<'a>(&'a self) -> &'a [f32] {
-        dom_as_float_list(&self)
+        dom_as_float_list(self)
     }
 
+    #[allow(clippy::needless_lifetimes)]
     pub fn as_double_list<'a>(&'a self) -> &'a [f64] {
-        dom_as_double_list(&self)
+        dom_as_double_list(self)
     }
 
+    #[allow(clippy::needless_lifetimes)]
     pub fn as_real_list<'a>(&'a self) -> &'a [Real] {
-        dom_as_real_list(&self)
+        dom_as_real_list(self)
     }
 
+    #[allow(clippy::needless_lifetimes)]
     pub fn as_blob_list<'a>(&'a self) -> &'a [Blob] {
-        dom_as_blob_list(&self)
+        dom_as_blob_list(self)
     }
 }
 
 impl Props {
+    #[allow(clippy::needless_lifetimes)]
     pub fn find_prop<'a>(&'a self, name: &str) -> Option<&'a Prop> {
-        find_prop(&self, name)
+        find_prop(self, name)
     }
 
     // TODO: find_real()
@@ -6418,21 +6604,21 @@ impl Props {
 
 impl Node {
     pub fn get_compatible_matrix_for_normals(&self) -> Matrix {
-        get_compatible_matrix_for_normals(&self)
+        get_compatible_matrix_for_normals(self)
     }
 
     pub fn evaluate_transform(&self, anim: &Anim, time: f64) -> Transform {
-        evaluate_transform(anim, &self, time)
+        evaluate_transform(anim, self, time)
     }
 }
 
 impl Mesh {
     pub fn triangulate_face(&self, indices: &mut [u32], face: Face) -> u32 {
-        triangulate_face(indices, &self, face)
+        triangulate_face(indices, self, face)
     }
 
     pub fn subdivide(&self, level: usize, opts: SubdivideOpts) -> Result<MeshRoot> {
-        subdivide_mesh(&self, level, opts)
+        subdivide_mesh(self, level, opts)
     }
 }
 
@@ -6453,85 +6639,86 @@ impl CoordinateAxes {
 
 impl NurbsBasis {
     pub fn evaluate(&self, u: Real, weights: &mut [Real], derivatives: &mut [Real]) -> usize {
-        evaluate_nurbs_basis(&self, u, weights, derivatives)
+        evaluate_nurbs_basis(self, u, weights, derivatives)
     }
 }
 
 impl NurbsCurve {
     pub fn evaluate(&self, u: Real) -> CurvePoint {
-        evaluate_nurbs_curve(&self, u)
+        evaluate_nurbs_curve(self, u)
     }
 
     pub fn tessellate(&self, opts: TessellateCurveOpts) -> Result<LineCurveRoot> {
-        tessellate_nurbs_curve(&self, opts)
+        tessellate_nurbs_curve(self, opts)
     }
 }
 
 impl NurbsSurface {
     pub fn evaluate(&self, u: Real, v: Real) -> SurfacePoint {
-        evaluate_nurbs_surface(&self, u, v)
+        evaluate_nurbs_surface(self, u, v)
     }
 
     pub fn tessellate(&self, opts: TessellateSurfaceOpts) -> Result<MeshRoot> {
-        tessellate_nurbs_surface(&self, opts)
+        tessellate_nurbs_surface(self, opts)
     }
 }
 
 impl SkinDeformer {
     pub fn get_skin_vertex_matrix(&self, vertex: usize, fallback: &Matrix) -> Matrix {
-        get_skin_vertex_matrix(&self, vertex, fallback)
+        get_skin_vertex_matrix(self, vertex, fallback)
     }
 }
 
 impl BlendDeformer {
     pub fn get_vertex_offset(&self, vertex: usize) -> Vec3 {
-        get_blend_vertex_offset(&self, vertex)
+        get_blend_vertex_offset(self, vertex)
     }
 
     pub fn add_vertex_offsets(&self, vertices: &mut [Vec3], weight: Real) {
-        add_blend_vertex_offsets(&self, vertices, weight)
+        add_blend_vertex_offsets(self, vertices, weight)
     }
 }
 
 impl BlendChannel {
     pub fn evaluate_blend_weight(&self, anim: &Anim, time: f64) -> Real {
-        evaluate_blend_weight(anim, &self, time)
+        evaluate_blend_weight(anim, self, time)
     }
 }
 
 impl BlendShape {
     pub fn get_vertex_offset(&self, vertex: usize) -> Vec3 {
-        get_blend_shape_vertex_offset(&self, vertex)
+        get_blend_shape_vertex_offset(self, vertex)
     }
 
     pub fn add_vertex_offsets(&self, vertices: &mut [Vec3], weight: Real) {
-        add_blend_shape_vertex_offsets(&self, vertices, weight)
+        add_blend_shape_vertex_offsets(self, vertices, weight)
     }
 }
 
 impl CacheFrame {
     pub fn read_real(&self, data: &mut [Real], opts: GeometryCacheDataOpts) -> usize {
-        read_geometry_cache_real(&self, data, opts)
+        read_geometry_cache_real(self, data, opts)
     }
 
     pub fn read_vec3(&self, data: &mut [Vec3], opts: GeometryCacheDataOpts) -> usize {
-        read_geometry_cache_vec3(&self, data, opts)
+        read_geometry_cache_vec3(self, data, opts)
     }
 }
 
 impl CacheChannel {
     pub fn sample_real(&self, time: f64, data: &mut [Real], opts: GeometryCacheDataOpts) -> usize {
-        sample_geometry_cache_real(&self, time, data, opts)
+        sample_geometry_cache_real(self, time, data, opts)
     }
 
     pub fn sample_vec3(&self, time: f64, data: &mut [Vec3], opts: GeometryCacheDataOpts) -> usize {
-        sample_geometry_cache_vec3(&self, time, data, opts)
+        sample_geometry_cache_vec3(self, time, data, opts)
     }
 }
 
 impl Material {
+    #[allow(clippy::needless_lifetimes)]
     pub fn find_prop_texture<'a>(&'a self, name: &str) -> Option<&'a Texture> {
-        find_prop_texture(&self, name)
+        find_prop_texture(self, name)
     }
 }
 
@@ -6542,46 +6729,51 @@ impl Shader {
 }
 
 impl AnimLayer {
+    #[allow(clippy::needless_lifetimes)]
     pub fn find_anim_prop<'a>(&'a self, element: &'a Element, prop: &str) -> Option<&'a AnimProp> {
-        find_anim_prop(&self, element, prop)
+        find_anim_prop(self, element, prop)
     }
 
+    #[allow(clippy::needless_lifetimes)]
     pub fn find_anim_props<'a>(&'a self, element: &'a Element) -> &'a [AnimProp] {
-        find_anim_props(&self, element)
+        find_anim_props(self, element)
     }
 }
 
 impl AnimValue {
     pub fn evaluate_real(&self, time: f64) -> Real {
-        evaluate_anim_value_real(&self, time)
+        evaluate_anim_value_real(self, time)
     }
 
     pub fn evaluate_vec3(&self, time: f64) -> Vec3 {
-        evaluate_anim_value_vec3(&self, time)
+        evaluate_anim_value_vec3(self, time)
     }
 }
 
 impl AnimCurve {
     pub fn evaluate(&self, time: f64, default_value: Real) -> Real {
-        evaluate_curve(&self, time, default_value)
+        evaluate_curve(self, time, default_value)
     }
 }
 
 impl Scene {
+    #[allow(clippy::needless_lifetimes)]
     pub fn find_element<'a>(&'a self, type_: ElementType, name: &str) -> Option<&'a Element> {
-        find_element(&self, type_, name)
+        find_element(self, type_, name)
     }
 
+    #[allow(clippy::needless_lifetimes)]
     pub fn find_node<'a>(&'a self, name: &str) -> Option<&'a Node> {
-        find_node(&self, name)
+        find_node(self, name)
     }
 
+    #[allow(clippy::needless_lifetimes)]
     pub fn find_anim_stack<'a>(&'a self, name: &str) -> Option<&'a AnimStack> {
-        find_anim_stack(&self, name)
+        find_anim_stack(self, name)
     }
 
     pub fn evaluate(&self, anim: &Anim, time: f64, opts: EvaluateOpts) -> Result<SceneRoot> {
-        evaluate_scene(&self, anim, time, opts)
+        evaluate_scene(self, anim, time, opts)
     }
 }
 

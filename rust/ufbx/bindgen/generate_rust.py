@@ -50,7 +50,7 @@ pub struct BakedAnimRoot {
 impl SceneRoot {
     fn new(scene: *mut Scene) -> SceneRoot {
         SceneRoot {
-            scene: scene,
+            scene,
             _marker: marker::PhantomData,
         }
     }
@@ -59,7 +59,7 @@ impl SceneRoot {
 impl MeshRoot {
     fn new(mesh: *mut Mesh) -> MeshRoot {
         MeshRoot {
-            mesh: mesh,
+            mesh,
             _marker: marker::PhantomData,
         }
     }
@@ -68,7 +68,7 @@ impl MeshRoot {
 impl LineCurveRoot {
     fn new(line_curve: *mut LineCurve) -> LineCurveRoot {
         LineCurveRoot {
-            line_curve: line_curve,
+            line_curve,
             _marker: marker::PhantomData,
         }
     }
@@ -78,7 +78,7 @@ impl LineCurveRoot {
 impl GeometryCacheRoot {
     fn new(cache: *mut GeometryCache) -> GeometryCacheRoot {
         GeometryCacheRoot {
-            cache: cache,
+            cache,
             _marker: marker::PhantomData,
         }
     }
@@ -87,7 +87,7 @@ impl GeometryCacheRoot {
 impl AnimRoot {
     fn new(anim: *mut Anim) -> AnimRoot {
         AnimRoot {
-            anim: anim,
+            anim,
             _marker: marker::PhantomData,
         }
     }
@@ -96,7 +96,7 @@ impl AnimRoot {
 impl BakedAnimRoot {
     fn new(anim: *mut BakedAnim) -> BakedAnimRoot {
         BakedAnimRoot {
-            anim: anim,
+            anim,
             _marker: marker::PhantomData,
         }
     }
@@ -265,7 +265,7 @@ raw_types = {
 
 callback_signatures = {
     "ufbx_open_file_cb": "(&str, &OpenFileInfo) -> Option<Stream>",
-    "ufbx_close_memory_cb": "(*mut c_void, usize) -> ()",
+    "ufbx_close_memory_cb": "(*mut c_void, usize)",
     "ufbx_progress_cb": "(&Progress) -> ProgressResult",
 }
 
@@ -406,7 +406,7 @@ pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
 
 override_functions["ufbx_thread_pool_set_user_ptr"] = """
 pub unsafe fn thread_pool_set_user_ptr(ctx: ThreadPoolContext, user_ptr: *mut c_void) {
-    ufbx_thread_pool_set_user_ptr(ctx, user_ptr as *mut c_void)
+    ufbx_thread_pool_set_user_ptr(ctx, user_ptr)
 }
 """
 
@@ -1033,6 +1033,8 @@ def emit_struct(rs: RustStruct):
 
     if rs.ir.is_callback or rs.ir.is_interface:
         emit()
+        # some field-default structs are equivalent to `#[derive(Default)]`
+        emit("#[allow(clippy::derivable_impls)]")
         emit(f"impl Default for {rs.name} {{")
         indent()
         emit("fn default() -> Self {")
@@ -1077,6 +1079,8 @@ def emit_struct(rs: RustStruct):
                 if len_field.ir.kind == "inlineBufLength" and len_field.name.startswith(base_name):
                     len_name = len_field.name
                     break
+            # the two `mem::transmute`s below are emitted without turbofish types
+            emit("#[allow(clippy::missing_transmute_annotations)]")
             emit(f"pub fn {base_name}(&self) -> &str {{")
             indent()
             emit("unsafe {")
@@ -1104,6 +1108,7 @@ def emit_input_callback(rs: RustStruct):
     emit("}")
 
     emit()
+    emit("#[allow(clippy::derivable_impls)]")
     emit(f"impl<'a> Default for {rs.rust_name}<'a> {{")
     indent()
     emit("fn default() -> Self { Self::Unset }")
@@ -1133,6 +1138,8 @@ def emit_input_callback(rs: RustStruct):
     indent()
 
     emit()
+    # `from_rust` mirrors the crate-internal FromRust convention (Rust value -> raw)
+    emit("#[allow(clippy::wrong_self_convention)]")
     emit(f"fn from_rust(&self) -> {rs.name} {{")
     indent()
     emit("match self {")
@@ -1145,6 +1152,7 @@ def emit_input_callback(rs: RustStruct):
     emit("}")
 
     emit()
+    emit("#[allow(clippy::wrong_self_convention)]")
     emit(f"fn from_rust_mut(&mut self) -> {rs.name} {{")
     indent()
     emit("match self {")
@@ -1270,7 +1278,7 @@ def emit_flag(re: RustEnum):
 
     emit()
     names_name = f"{re.name.upper()}_NAMES"
-    emit(f"const {names_name}: [(&'static str, u32); {num_values}] = [")
+    emit(f"const {names_name}: [(&str, u32); {num_values}] = [")
     indent()
     for value in re.values:
         if value.ir.auxiliary: continue
@@ -1296,6 +1304,7 @@ def emit_flag(re: RustEnum):
     unindent()
     emit("}")
 
+    emit("#[allow(clippy::derivable_impls)]")
     emit(f"impl Default for {re.name} {{")
     indent()
     emit(f"fn default() -> Self {{ Self(0) }}")
@@ -1349,6 +1358,7 @@ def emit_enum(re: RustEnum):
     emit("}")
 
     emit()
+    emit("#[allow(clippy::derivable_impls)]")
     emit(f"impl Default for {re.name} {{")
     indent()
     emit(f"fn default() -> Self {{ Self::{re.values[0].name} }}")
@@ -1424,7 +1434,13 @@ def emit_arg_pass(args: List[str], ra: RustArgument):
             args.append(f"{ra.name}.as_mut_ptr() as *mut c_void")
         args.append(f"{ra.name}.len()")
     elif ra.type.ir.kind == "pointer":
-        args.append(f"{ra.name} as {ra.type.fmt_raw()}")
+        raw = ra.type.fmt_raw()
+        # a `void*` arg is already spelled `*mut/*const c_void` in the safe
+        # signature, so `x as *mut c_void` at the call boundary is a no-op cast.
+        if raw in ("*mut c_void", "*const c_void"):
+            args.append(ra.name)
+        else:
+            args.append(f"{ra.name} as {raw}")
     elif ra.type.is_list:
         args.append(f"List::from_slice({ra.name})")
     else:
@@ -1473,6 +1489,18 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
     is_unsafe = False
 
     emit()
+    # Per-item clippy allows for idioms this wrapper template emits uniformly.
+    _allows = []
+    if lt:
+        _allows.append("clippy::needless_lifetimes")
+    if not non_raw:
+        # non-void passthrough with no error/panic/wrapping emits `let r = ..; r`
+        if (not rf.return_type.is_void and not rf.ir.has_error and not rf.ir.has_panic
+                and not rf.ir.alloc_type and not rf.return_type.is_list
+                and rf.return_type.kind != "pointer"):
+            _allows.append("clippy::let_and_return")
+    if _allows:
+        emit(f"#[allow({', '.join(_allows)})]")
     if is_raw:
         emit(f"pub unsafe fn {rf.name}_raw{lt}({arg_str}){ret} {{")
         is_unsafe = True
@@ -1534,8 +1562,12 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
         arg_pass_str = ", ".join(arg_pass)
         if not rf.return_type.is_void:
             emit(f"let result = {unsafe}{{ {rf.ir.name}({arg_pass_str}) }};")
-        else:
+        elif unsafe:
             emit(f"{unsafe}{{ {rf.ir.name}({arg_pass_str}) }};")
+        else:
+            # already inside an `unsafe fn`: no wrapping block needed, and a bare
+            # `{ ... };` statement would trip clippy::unnecessary_operation.
+            emit(f"{rf.ir.name}({arg_pass_str});")
 
         if rf.ir.has_panic:
             emit(f"if panic.did_panic {{")
@@ -1651,13 +1683,18 @@ def emit_struct_impl(rs: RustStruct):
             ret = f" -> {rt}"
 
         emit()
+        if lt:
+            # explicit `<'a>` is emitted uniformly for reference-returning wrappers
+            emit("#[allow(clippy::needless_lifetimes)]")
         emit(f"pub fn {name}{lt}({arg_str}){ret} {{")
         indent()
 
         pass_args = []
         for arg in rf.args:
             if arg.original_index == mf.self_index:
-                pass_args.append("&self")
+                # `self` is already `&Self` here; passing `&self` would be a
+                # needless double borrow (clippy::needless_borrow).
+                pass_args.append("self")
             else:
                 pass_args.append(arg.name)
         pass_str = ", ".join(pass_args)
@@ -1710,24 +1747,13 @@ def emit_file():
     emit("// Fixes belong in the GENERATOR (see PORTING.md); hand edits are")
     emit("// silently overwritten on the next regeneration and CI diffs this file.")
     emit("")
-    # Module-level clippy allows for idioms the generator emits uniformly. These
-    # are scoped to this generated file so hand-written code (crate::native)
-    # stays honest for the same lints. Fixing them here would mean reshaping the
-    # emitter for cosmetic gain with no effect on behaviour or the C ABI.
-    emit("#![allow(")
-    emit("    clippy::derivable_impls, // explicit Default impls emitted per struct")
-    emit("    clippy::let_and_return, // `let x = ...; x` from the uniform wrapper template")
-    emit("    clippy::needless_lifetimes, // explicit lifetimes emitted uniformly on wrappers")
-    emit("    clippy::needless_borrow, // `&` emitted uniformly on call-argument passing")
-    emit("    clippy::redundant_field_names, // field: field emitted from IR field names")
-    emit("    clippy::redundant_static_lifetimes, // &'static str emitted in const name tables")
-    emit("    clippy::unused_unit, // -> () emitted uniformly for void-returning wrappers")
-    emit("    clippy::unnecessary_operation, // no-op expressions from uniform templates")
-    emit("    clippy::missing_transmute_annotations, // transmutes emitted without turbofish")
-    emit("    clippy::wrong_self_convention, // method names mirror the ufbx.h C API verbatim")
-    emit("    clippy::unnecessary_cast, // `*mut c_void as *mut c_void` etc. emitted uniformly at call boundaries")
-    emit(")]")
-    emit("")
+    # Clippy: rather than a single file-wide `#![allow]`, the emitters that
+    # produce a lint-triggering idiom attach a targeted `#[allow(...)]` to that
+    # specific item (see emit_function / emit_struct_impl / emit_struct /
+    # emit_input_callback), and the trivially-fixable idioms (redundant field
+    # names, `-> ()`, `&'static str`, needless `&self` borrows) are emitted in
+    # their clean form. This keeps each suppression scoped to the construct that
+    # needs it instead of blanket-disabling lints for the whole generated file.
     emit_lines(uses)
 
     rust_uses = []
