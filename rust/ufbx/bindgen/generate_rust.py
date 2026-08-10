@@ -12,7 +12,7 @@ use std::ffi::{c_void};
 use std::{marker, result, ptr, mem, str};
 use std::fmt::{self, Debug};
 use std::ops::{Deref, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, FnMut, Index};
-use crate::prelude::{Real, List, Ref, RefList, String, Blob, RawString, RawBlob, RawList, Unsafe, RawEnum, ExternalRef, InlineBuf, VertexStream, Arena, FromRust, StringOpt, BlobOpt, ListOpt, ThreadPoolContext, OpenFileContext, format_flags};
+use crate::prelude::{Real, List, Ref, RefList, String, Blob, RawString, RawBlob, RawList, Unsafe, RawEnum, ExternalRef, InlineBuf, VertexStream, Arena, ToRaw, StringOpt, BlobOpt, ListOpt, ThreadPoolContext, OpenFileContext, format_flags};
 """.strip()
 
 post_ffi = r"""
@@ -1138,9 +1138,8 @@ def emit_input_callback(rs: RustStruct):
     indent()
 
     emit()
-    # `from_rust` mirrors the crate-internal FromRust convention (Rust value -> raw)
-    emit("#[allow(clippy::wrong_self_convention)]")
-    emit(f"fn from_rust(&self) -> {rs.name} {{")
+    # `to_raw` mirrors the crate-internal ToRaw convention (Rust value -> raw)
+    emit(f"fn to_raw(&self) -> {rs.name} {{")
     indent()
     emit("match self {")
     indent()
@@ -1152,8 +1151,7 @@ def emit_input_callback(rs: RustStruct):
     emit("}")
 
     emit()
-    emit("#[allow(clippy::wrong_self_convention)]")
-    emit(f"fn from_rust_mut(&mut self) -> {rs.name} {{")
+    emit(f"fn to_raw_mut(&mut self) -> {rs.name} {{")
     indent()
     emit("match self {")
     indent()
@@ -1209,7 +1207,7 @@ def emit_input_struct(rs: RustStruct):
     emit("}")
 
     emit()
-    emit(f"impl{lifetime_a} FromRust for {rs.rust_name}{lifetime_a} {{")
+    emit(f"impl{lifetime_a} ToRaw for {rs.rust_name}{lifetime_a} {{")
     indent()
 
     emit(f"type Result = {rs.name};")
@@ -1217,7 +1215,7 @@ def emit_input_struct(rs: RustStruct):
     for mut in ("", "mut "):
         mut_us = "_mut" if mut  else ""
         emit(f"#[allow(unused, unused_variables, dead_code)]")
-        emit(f"fn from_rust{mut_us}(&{mut}self, arena: &mut Arena) -> Self::Result {{")
+        emit(f"fn to_raw{mut_us}(&{mut}self, arena: &mut Arena) -> Self::Result {{")
         indent()
         emit(f"{rs.name} {{")
         indent()
@@ -1241,9 +1239,9 @@ def emit_input_struct(rs: RustStruct):
 
             if has_from:
                 if has_arena:
-                    emit(f"{field.name}: self.{field.name}.from_rust{mut_us}(arena),")
+                    emit(f"{field.name}: self.{field.name}.to_raw{mut_us}(arena),")
                 else:
-                    emit(f"{field.name}: self.{field.name}.from_rust{mut_us}(),")
+                    emit(f"{field.name}: self.{field.name}.to_raw{mut_us}(),")
             elif field.type.kind == "unsafe":
                 if mut:
                     emit(f"{field.name}: self.{field.name}.take(),")
@@ -1533,15 +1531,15 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
                         emit(f"let mut arena = Arena::new();")
                     if use_mut:
                         emit(f"let mut {arg.name}_mut = {arg.name};")
-                        emit(f"let {arg.name}_raw = {arg.name}_mut.from_rust_mut(&mut arena);")
+                        emit(f"let {arg.name}_raw = {arg.name}_mut.to_raw_mut(&mut arena);")
                     else:
-                        emit(f"let {arg.name}_raw = {arg.name}.from_rust_mut(&mut arena);")
+                        emit(f"let {arg.name}_raw = {arg.name}.to_raw_mut(&mut arena);")
                 else:
                     if use_mut:
                         emit(f"let mut {arg.name}_mut = {arg.name};")
-                        emit(f"let {arg.name}_raw = {arg.name}_mut.from_rust_mut();")
+                        emit(f"let {arg.name}_raw = {arg.name}_mut.to_raw_mut();")
                     else:
-                        emit(f"let {arg.name}_raw = {arg.name}.from_rust_mut();")
+                        emit(f"let {arg.name}_raw = {arg.name}.to_raw_mut();")
         params = []
         for arg in rf.args:
             if arg.is_raw:

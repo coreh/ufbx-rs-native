@@ -7,9 +7,9 @@ use crate::prelude::{
     call_close_memory_cb, call_open_file_cb, call_progress_cb, Allocator, Stream, ThreadPool,
 };
 use crate::prelude::{
-    format_flags, Arena, Blob, BlobOpt, ExternalRef, FromRust, InlineBuf, List, ListOpt,
-    OpenFileContext, RawBlob, RawEnum, RawList, RawString, Real, Ref, RefList, String, StringOpt,
-    ThreadPoolContext, Unsafe, VertexStream,
+    format_flags, Arena, Blob, BlobOpt, ExternalRef, InlineBuf, List, ListOpt, OpenFileContext,
+    RawBlob, RawEnum, RawList, RawString, Real, Ref, RefList, String, StringOpt, ThreadPoolContext,
+    ToRaw, Unsafe, VertexStream,
 };
 use std::ffi::c_void;
 use std::fmt::{self, Debug};
@@ -3425,12 +3425,12 @@ pub struct AllocatorOpts {
     pub max_chunk_size: usize,
 }
 
-impl FromRust for AllocatorOpts {
+impl ToRaw for AllocatorOpts {
     type Result = RawAllocatorOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawAllocatorOpts {
-            allocator: self.allocator.from_rust(),
+            allocator: self.allocator.to_raw(),
             memory_limit: self.memory_limit,
             allocation_limit: self.allocation_limit,
             huge_threshold: self.huge_threshold,
@@ -3438,9 +3438,9 @@ impl FromRust for AllocatorOpts {
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawAllocatorOpts {
-            allocator: self.allocator.from_rust_mut(),
+            allocator: self.allocator.to_raw_mut(),
             memory_limit: self.memory_limit,
             allocation_limit: self.allocation_limit,
             huge_threshold: self.huge_threshold,
@@ -3473,16 +3473,14 @@ impl RawOpenFileCb {
 }
 
 impl OpenFileCb<'_> {
-    #[allow(clippy::wrong_self_convention)]
-    fn from_rust(&self) -> RawOpenFileCb {
+    fn to_raw(&self) -> RawOpenFileCb {
         match self {
             OpenFileCb::Unset => Default::default(),
             _ => panic!("required mutable"),
         }
     }
 
-    #[allow(clippy::wrong_self_convention)]
-    fn from_rust_mut(&mut self) -> RawOpenFileCb {
+    fn to_raw_mut(&mut self) -> RawOpenFileCb {
         match self {
             OpenFileCb::Unset => Default::default(),
             OpenFileCb::Ref(f) => RawOpenFileCb::from_func(f),
@@ -3498,22 +3496,22 @@ pub struct OpenFileOpts {
     pub filename_null_terminated: Unsafe<bool>,
 }
 
-impl FromRust for OpenFileOpts {
+impl ToRaw for OpenFileOpts {
     type Result = RawOpenFileOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawOpenFileOpts {
             _begin_zero: 0,
-            allocator: self.allocator.from_rust(arena),
+            allocator: self.allocator.to_raw(arena),
             filename_null_terminated: panic!("required mutable"),
             _end_zero: 0,
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawOpenFileOpts {
             _begin_zero: 0,
-            allocator: self.allocator.from_rust_mut(arena),
+            allocator: self.allocator.to_raw_mut(arena),
             filename_null_terminated: self.filename_null_terminated.take(),
             _end_zero: 0,
         }
@@ -3544,16 +3542,14 @@ impl RawCloseMemoryCb {
 }
 
 impl CloseMemoryCb<'_> {
-    #[allow(clippy::wrong_self_convention)]
-    fn from_rust(&self) -> RawCloseMemoryCb {
+    fn to_raw(&self) -> RawCloseMemoryCb {
         match self {
             CloseMemoryCb::Unset => Default::default(),
             _ => panic!("required mutable"),
         }
     }
 
-    #[allow(clippy::wrong_self_convention)]
-    fn from_rust_mut(&mut self) -> RawCloseMemoryCb {
+    fn to_raw_mut(&mut self) -> RawCloseMemoryCb {
         match self {
             CloseMemoryCb::Unset => Default::default(),
             CloseMemoryCb::Ref(f) => RawCloseMemoryCb::from_func(f),
@@ -3570,25 +3566,25 @@ pub struct OpenMemoryOpts<'a> {
     pub close_cb: CloseMemoryCb<'a>,
 }
 
-impl<'a> FromRust for OpenMemoryOpts<'a> {
+impl<'a> ToRaw for OpenMemoryOpts<'a> {
     type Result = RawOpenMemoryOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawOpenMemoryOpts {
             _begin_zero: 0,
-            allocator: self.allocator.from_rust(arena),
+            allocator: self.allocator.to_raw(arena),
             no_copy: panic!("required mutable"),
-            close_cb: self.close_cb.from_rust(),
+            close_cb: self.close_cb.to_raw(),
             _end_zero: 0,
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawOpenMemoryOpts {
             _begin_zero: 0,
-            allocator: self.allocator.from_rust_mut(arena),
+            allocator: self.allocator.to_raw_mut(arena),
             no_copy: self.no_copy.take(),
-            close_cb: self.close_cb.from_rust_mut(),
+            close_cb: self.close_cb.to_raw_mut(),
             _end_zero: 0,
         }
     }
@@ -3618,16 +3614,14 @@ impl RawProgressCb {
 }
 
 impl ProgressCb<'_> {
-    #[allow(clippy::wrong_self_convention)]
-    fn from_rust(&self) -> RawProgressCb {
+    fn to_raw(&self) -> RawProgressCb {
         match self {
             ProgressCb::Unset => Default::default(),
             _ => panic!("required mutable"),
         }
     }
 
-    #[allow(clippy::wrong_self_convention)]
-    fn from_rust_mut(&mut self) -> RawProgressCb {
+    fn to_raw_mut(&mut self) -> RawProgressCb {
         match self {
             ProgressCb::Unset => Default::default(),
             ProgressCb::Ref(f) => RawProgressCb::from_func(f),
@@ -3644,20 +3638,20 @@ pub struct ThreadOpts {
     pub memory_limit: usize,
 }
 
-impl FromRust for ThreadOpts {
+impl ToRaw for ThreadOpts {
     type Result = RawThreadOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawThreadOpts {
-            pool: self.pool.from_rust(),
+            pool: self.pool.to_raw(),
             num_tasks: self.num_tasks,
             memory_limit: self.memory_limit,
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawThreadOpts {
-            pool: self.pool.from_rust_mut(),
+            pool: self.pool.to_raw_mut(),
             num_tasks: self.num_tasks,
             memory_limit: self.memory_limit,
         }
@@ -3737,15 +3731,15 @@ pub struct LoadOpts<'a> {
     pub obj_axes: CoordinateAxes,
 }
 
-impl<'a> FromRust for LoadOpts<'a> {
+impl<'a> ToRaw for LoadOpts<'a> {
     type Result = RawLoadOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawLoadOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust(arena),
-            result_allocator: self.result_allocator.from_rust(arena),
-            thread_opts: self.thread_opts.from_rust(arena),
+            temp_allocator: self.temp_allocator.to_raw(arena),
+            result_allocator: self.result_allocator.to_raw(arena),
+            thread_opts: self.thread_opts.to_raw(arena),
             ignore_geometry: self.ignore_geometry,
             ignore_animation: self.ignore_animation,
             ignore_embedded: self.ignore_embedded,
@@ -3773,11 +3767,11 @@ impl<'a> FromRust for LoadOpts<'a> {
             node_depth_limit: self.node_depth_limit,
             file_size_estimate: self.file_size_estimate,
             read_buffer_size: self.read_buffer_size,
-            filename: self.filename.from_rust(arena),
-            raw_filename: self.raw_filename.from_rust(arena),
-            progress_cb: self.progress_cb.from_rust(),
+            filename: self.filename.to_raw(arena),
+            raw_filename: self.raw_filename.to_raw(arena),
+            progress_cb: self.progress_cb.to_raw(),
             progress_interval_hint: self.progress_interval_hint,
-            open_file_cb: self.open_file_cb.from_rust(),
+            open_file_cb: self.open_file_cb.to_raw(),
             geometry_transform_handling: self.geometry_transform_handling,
             inherit_mode_handling: self.inherit_mode_handling,
             space_conversion: self.space_conversion,
@@ -3790,8 +3784,8 @@ impl<'a> FromRust for LoadOpts<'a> {
             target_unit_meters: self.target_unit_meters,
             target_camera_axes: self.target_camera_axes,
             target_light_axes: self.target_light_axes,
-            geometry_transform_helper_name: self.geometry_transform_helper_name.from_rust(arena),
-            scale_helper_name: self.scale_helper_name.from_rust(arena),
+            geometry_transform_helper_name: self.geometry_transform_helper_name.to_raw(arena),
+            scale_helper_name: self.scale_helper_name.to_raw(arena),
             normalize_normals: self.normalize_normals,
             normalize_tangents: self.normalize_tangents,
             use_root_transform: self.use_root_transform,
@@ -3808,20 +3802,20 @@ impl<'a> FromRust for LoadOpts<'a> {
             obj_merge_objects: self.obj_merge_objects,
             obj_merge_groups: self.obj_merge_groups,
             obj_split_groups: self.obj_split_groups,
-            obj_mtl_path: self.obj_mtl_path.from_rust(arena),
-            obj_mtl_data: self.obj_mtl_data.from_rust(arena),
+            obj_mtl_path: self.obj_mtl_path.to_raw(arena),
+            obj_mtl_data: self.obj_mtl_data.to_raw(arena),
             obj_unit_meters: self.obj_unit_meters,
             obj_axes: self.obj_axes,
             _end_zero: 0,
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawLoadOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust_mut(arena),
-            result_allocator: self.result_allocator.from_rust_mut(arena),
-            thread_opts: self.thread_opts.from_rust_mut(arena),
+            temp_allocator: self.temp_allocator.to_raw_mut(arena),
+            result_allocator: self.result_allocator.to_raw_mut(arena),
+            thread_opts: self.thread_opts.to_raw_mut(arena),
             ignore_geometry: self.ignore_geometry,
             ignore_animation: self.ignore_animation,
             ignore_embedded: self.ignore_embedded,
@@ -3849,11 +3843,11 @@ impl<'a> FromRust for LoadOpts<'a> {
             node_depth_limit: self.node_depth_limit,
             file_size_estimate: self.file_size_estimate,
             read_buffer_size: self.read_buffer_size,
-            filename: self.filename.from_rust_mut(arena),
-            raw_filename: self.raw_filename.from_rust_mut(arena),
-            progress_cb: self.progress_cb.from_rust_mut(),
+            filename: self.filename.to_raw_mut(arena),
+            raw_filename: self.raw_filename.to_raw_mut(arena),
+            progress_cb: self.progress_cb.to_raw_mut(),
             progress_interval_hint: self.progress_interval_hint,
-            open_file_cb: self.open_file_cb.from_rust_mut(),
+            open_file_cb: self.open_file_cb.to_raw_mut(),
             geometry_transform_handling: self.geometry_transform_handling,
             inherit_mode_handling: self.inherit_mode_handling,
             space_conversion: self.space_conversion,
@@ -3866,10 +3860,8 @@ impl<'a> FromRust for LoadOpts<'a> {
             target_unit_meters: self.target_unit_meters,
             target_camera_axes: self.target_camera_axes,
             target_light_axes: self.target_light_axes,
-            geometry_transform_helper_name: self
-                .geometry_transform_helper_name
-                .from_rust_mut(arena),
-            scale_helper_name: self.scale_helper_name.from_rust_mut(arena),
+            geometry_transform_helper_name: self.geometry_transform_helper_name.to_raw_mut(arena),
+            scale_helper_name: self.scale_helper_name.to_raw_mut(arena),
             normalize_normals: self.normalize_normals,
             normalize_tangents: self.normalize_tangents,
             use_root_transform: self.use_root_transform,
@@ -3886,8 +3878,8 @@ impl<'a> FromRust for LoadOpts<'a> {
             obj_merge_objects: self.obj_merge_objects,
             obj_merge_groups: self.obj_merge_groups,
             obj_split_groups: self.obj_split_groups,
-            obj_mtl_path: self.obj_mtl_path.from_rust_mut(arena),
-            obj_mtl_data: self.obj_mtl_data.from_rust_mut(arena),
+            obj_mtl_path: self.obj_mtl_path.to_raw_mut(arena),
+            obj_mtl_data: self.obj_mtl_data.to_raw_mut(arena),
             obj_unit_meters: self.obj_unit_meters,
             obj_axes: self.obj_axes,
             _end_zero: 0,
@@ -3906,33 +3898,33 @@ pub struct EvaluateOpts<'a> {
     pub open_file_cb: OpenFileCb<'a>,
 }
 
-impl<'a> FromRust for EvaluateOpts<'a> {
+impl<'a> ToRaw for EvaluateOpts<'a> {
     type Result = RawEvaluateOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawEvaluateOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust(arena),
-            result_allocator: self.result_allocator.from_rust(arena),
+            temp_allocator: self.temp_allocator.to_raw(arena),
+            result_allocator: self.result_allocator.to_raw(arena),
             evaluate_skinning: self.evaluate_skinning,
             evaluate_caches: self.evaluate_caches,
             evaluate_flags: self.evaluate_flags,
             load_external_files: self.load_external_files,
-            open_file_cb: self.open_file_cb.from_rust(),
+            open_file_cb: self.open_file_cb.to_raw(),
             _end_zero: 0,
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawEvaluateOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust_mut(arena),
-            result_allocator: self.result_allocator.from_rust_mut(arena),
+            temp_allocator: self.temp_allocator.to_raw_mut(arena),
+            result_allocator: self.result_allocator.to_raw_mut(arena),
             evaluate_skinning: self.evaluate_skinning,
             evaluate_caches: self.evaluate_caches,
             evaluate_flags: self.evaluate_flags,
             load_external_files: self.load_external_files,
-            open_file_cb: self.open_file_cb.from_rust_mut(),
+            open_file_cb: self.open_file_cb.to_raw_mut(),
             _end_zero: 0,
         }
     }
@@ -3947,25 +3939,25 @@ pub struct PropOverrideDesc<'a> {
     pub value_int: i64,
 }
 
-impl<'a> FromRust for PropOverrideDesc<'a> {
+impl<'a> ToRaw for PropOverrideDesc<'a> {
     type Result = RawPropOverrideDesc;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawPropOverrideDesc {
             element_id: self.element_id,
-            prop_name: self.prop_name.from_rust(arena),
+            prop_name: self.prop_name.to_raw(arena),
             value: self.value,
-            value_str: self.value_str.from_rust(arena),
+            value_str: self.value_str.to_raw(arena),
             value_int: self.value_int,
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawPropOverrideDesc {
             element_id: self.element_id,
-            prop_name: self.prop_name.from_rust_mut(arena),
+            prop_name: self.prop_name.to_raw_mut(arena),
             value: self.value,
-            value_str: self.value_str.from_rust_mut(arena),
+            value_str: self.value_str.to_raw_mut(arena),
             value_int: self.value_int,
         }
     }
@@ -3981,31 +3973,31 @@ pub struct AnimOpts<'a> {
     pub result_allocator: AllocatorOpts,
 }
 
-impl<'a> FromRust for AnimOpts<'a> {
+impl<'a> ToRaw for AnimOpts<'a> {
     type Result = RawAnimOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawAnimOpts {
             _begin_zero: 0,
-            layer_ids: self.layer_ids.from_rust(arena),
-            override_layer_weights: self.override_layer_weights.from_rust(arena),
-            prop_overrides: self.prop_overrides.from_rust(arena),
-            transform_overrides: self.transform_overrides.from_rust(arena),
+            layer_ids: self.layer_ids.to_raw(arena),
+            override_layer_weights: self.override_layer_weights.to_raw(arena),
+            prop_overrides: self.prop_overrides.to_raw(arena),
+            transform_overrides: self.transform_overrides.to_raw(arena),
             ignore_connections: self.ignore_connections,
-            result_allocator: self.result_allocator.from_rust(arena),
+            result_allocator: self.result_allocator.to_raw(arena),
             _end_zero: 0,
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawAnimOpts {
             _begin_zero: 0,
-            layer_ids: self.layer_ids.from_rust_mut(arena),
-            override_layer_weights: self.override_layer_weights.from_rust_mut(arena),
-            prop_overrides: self.prop_overrides.from_rust_mut(arena),
-            transform_overrides: self.transform_overrides.from_rust_mut(arena),
+            layer_ids: self.layer_ids.to_raw_mut(arena),
+            override_layer_weights: self.override_layer_weights.to_raw_mut(arena),
+            prop_overrides: self.prop_overrides.to_raw_mut(arena),
+            transform_overrides: self.transform_overrides.to_raw_mut(arena),
             ignore_connections: self.ignore_connections,
-            result_allocator: self.result_allocator.from_rust_mut(arena),
+            result_allocator: self.result_allocator.to_raw_mut(arena),
             _end_zero: 0,
         }
     }
@@ -4034,14 +4026,14 @@ pub struct BakeOpts {
     pub key_reduction_passes: usize,
 }
 
-impl FromRust for BakeOpts {
+impl ToRaw for BakeOpts {
     type Result = RawBakeOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawBakeOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust(arena),
-            result_allocator: self.result_allocator.from_rust(arena),
+            temp_allocator: self.temp_allocator.to_raw(arena),
+            result_allocator: self.result_allocator.to_raw(arena),
             trim_start_time: self.trim_start_time,
             resample_rate: self.resample_rate,
             minimum_sample_rate: self.minimum_sample_rate,
@@ -4063,11 +4055,11 @@ impl FromRust for BakeOpts {
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawBakeOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust_mut(arena),
-            result_allocator: self.result_allocator.from_rust_mut(arena),
+            temp_allocator: self.temp_allocator.to_raw_mut(arena),
+            result_allocator: self.result_allocator.to_raw_mut(arena),
             trim_start_time: self.trim_start_time,
             resample_rate: self.resample_rate,
             minimum_sample_rate: self.minimum_sample_rate,
@@ -4097,24 +4089,24 @@ pub struct TessellateCurveOpts {
     pub span_subdivision: usize,
 }
 
-impl FromRust for TessellateCurveOpts {
+impl ToRaw for TessellateCurveOpts {
     type Result = RawTessellateCurveOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawTessellateCurveOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust(arena),
-            result_allocator: self.result_allocator.from_rust(arena),
+            temp_allocator: self.temp_allocator.to_raw(arena),
+            result_allocator: self.result_allocator.to_raw(arena),
             span_subdivision: self.span_subdivision,
             _end_zero: 0,
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawTessellateCurveOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust_mut(arena),
-            result_allocator: self.result_allocator.from_rust_mut(arena),
+            temp_allocator: self.temp_allocator.to_raw_mut(arena),
+            result_allocator: self.result_allocator.to_raw_mut(arena),
             span_subdivision: self.span_subdivision,
             _end_zero: 0,
         }
@@ -4130,14 +4122,14 @@ pub struct TessellateSurfaceOpts {
     pub skip_mesh_parts: bool,
 }
 
-impl FromRust for TessellateSurfaceOpts {
+impl ToRaw for TessellateSurfaceOpts {
     type Result = RawTessellateSurfaceOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawTessellateSurfaceOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust(arena),
-            result_allocator: self.result_allocator.from_rust(arena),
+            temp_allocator: self.temp_allocator.to_raw(arena),
+            result_allocator: self.result_allocator.to_raw(arena),
             span_subdivision_u: self.span_subdivision_u,
             span_subdivision_v: self.span_subdivision_v,
             skip_mesh_parts: self.skip_mesh_parts,
@@ -4145,11 +4137,11 @@ impl FromRust for TessellateSurfaceOpts {
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawTessellateSurfaceOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust_mut(arena),
-            result_allocator: self.result_allocator.from_rust_mut(arena),
+            temp_allocator: self.temp_allocator.to_raw_mut(arena),
+            result_allocator: self.result_allocator.to_raw_mut(arena),
             span_subdivision_u: self.span_subdivision_u,
             span_subdivision_v: self.span_subdivision_v,
             skip_mesh_parts: self.skip_mesh_parts,
@@ -4174,14 +4166,14 @@ pub struct SubdivideOpts {
     pub skin_deformer_index: usize,
 }
 
-impl FromRust for SubdivideOpts {
+impl ToRaw for SubdivideOpts {
     type Result = RawSubdivideOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawSubdivideOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust(arena),
-            result_allocator: self.result_allocator.from_rust(arena),
+            temp_allocator: self.temp_allocator.to_raw(arena),
+            result_allocator: self.result_allocator.to_raw(arena),
             boundary: self.boundary,
             uv_boundary: self.uv_boundary,
             ignore_normals: self.ignore_normals,
@@ -4196,11 +4188,11 @@ impl FromRust for SubdivideOpts {
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawSubdivideOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust_mut(arena),
-            result_allocator: self.result_allocator.from_rust_mut(arena),
+            temp_allocator: self.temp_allocator.to_raw_mut(arena),
+            result_allocator: self.result_allocator.to_raw_mut(arena),
             boundary: self.boundary,
             uv_boundary: self.uv_boundary,
             ignore_normals: self.ignore_normals,
@@ -4227,15 +4219,15 @@ pub struct GeometryCacheOpts<'a> {
     pub scale_factor: Real,
 }
 
-impl<'a> FromRust for GeometryCacheOpts<'a> {
+impl<'a> ToRaw for GeometryCacheOpts<'a> {
     type Result = RawGeometryCacheOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawGeometryCacheOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust(arena),
-            result_allocator: self.result_allocator.from_rust(arena),
-            open_file_cb: self.open_file_cb.from_rust(),
+            temp_allocator: self.temp_allocator.to_raw(arena),
+            result_allocator: self.result_allocator.to_raw(arena),
+            open_file_cb: self.open_file_cb.to_raw(),
             frames_per_second: self.frames_per_second,
             mirror_axis: self.mirror_axis,
             use_scale_factor: self.use_scale_factor,
@@ -4244,12 +4236,12 @@ impl<'a> FromRust for GeometryCacheOpts<'a> {
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawGeometryCacheOpts {
             _begin_zero: 0,
-            temp_allocator: self.temp_allocator.from_rust_mut(arena),
-            result_allocator: self.result_allocator.from_rust_mut(arena),
-            open_file_cb: self.open_file_cb.from_rust_mut(),
+            temp_allocator: self.temp_allocator.to_raw_mut(arena),
+            result_allocator: self.result_allocator.to_raw_mut(arena),
+            open_file_cb: self.open_file_cb.to_raw_mut(),
             frames_per_second: self.frames_per_second,
             mirror_axis: self.mirror_axis,
             use_scale_factor: self.use_scale_factor,
@@ -4268,13 +4260,13 @@ pub struct GeometryCacheDataOpts<'a> {
     pub ignore_transform: bool,
 }
 
-impl<'a> FromRust for GeometryCacheDataOpts<'a> {
+impl<'a> ToRaw for GeometryCacheDataOpts<'a> {
     type Result = RawGeometryCacheDataOpts;
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         RawGeometryCacheDataOpts {
             _begin_zero: 0,
-            open_file_cb: self.open_file_cb.from_rust(),
+            open_file_cb: self.open_file_cb.to_raw(),
             additive: self.additive,
             use_weight: self.use_weight,
             weight: self.weight,
@@ -4283,10 +4275,10 @@ impl<'a> FromRust for GeometryCacheDataOpts<'a> {
         }
     }
     #[allow(unused, unused_variables, dead_code)]
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         RawGeometryCacheDataOpts {
             _begin_zero: 0,
-            open_file_cb: self.open_file_cb.from_rust_mut(),
+            open_file_cb: self.open_file_cb.to_raw_mut(),
             additive: self.additive,
             use_weight: self.use_weight,
             weight: self.weight,
@@ -4610,7 +4602,7 @@ pub unsafe fn load_memory_raw(data: &[u8], opts: &RawLoadOpts) -> Result<SceneRo
 pub fn load_memory(data: &[u8], opts: LoadOpts) -> Result<SceneRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { load_memory_raw(data, &opts_raw) }
 }
 
@@ -4633,7 +4625,7 @@ pub unsafe fn load_file_raw(filename: &str, opts: &RawLoadOpts) -> Result<SceneR
 pub fn load_file(filename: &str, opts: LoadOpts) -> Result<SceneRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { load_file_raw(filename, &opts_raw) }
 }
 
@@ -4649,7 +4641,7 @@ pub unsafe fn load_stdio_raw(file: *mut c_void, opts: &RawLoadOpts) -> Result<Sc
 pub fn load_stdio(file: *mut c_void, opts: LoadOpts) -> Result<SceneRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { load_stdio_raw(file, &opts_raw) }
 }
 
@@ -4677,7 +4669,7 @@ pub unsafe fn load_stdio_prefix_raw(
 pub fn load_stdio_prefix(file: *mut c_void, prefix: &[u8], opts: LoadOpts) -> Result<SceneRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { load_stdio_prefix_raw(file, prefix, &opts_raw) }
 }
 
@@ -4698,10 +4690,10 @@ pub unsafe fn load_stream_raw(stream: &RawStream, opts: &RawLoadOpts) -> Result<
 
 pub fn load_stream(stream: Stream, opts: LoadOpts) -> Result<SceneRoot> {
     let mut stream_mut = stream;
-    let stream_raw = stream_mut.from_rust_mut();
+    let stream_raw = stream_mut.to_raw_mut();
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { load_stream_raw(&stream_raw, &opts_raw) }
 }
 
@@ -4728,10 +4720,10 @@ pub unsafe fn load_stream_prefix_raw(
 
 pub fn load_stream_prefix(stream: Stream, prefix: &[u8], opts: LoadOpts) -> Result<SceneRoot> {
     let mut stream_mut = stream;
-    let stream_raw = stream_mut.from_rust_mut();
+    let stream_raw = stream_mut.to_raw_mut();
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { load_stream_prefix_raw(&stream_raw, prefix, &opts_raw) }
 }
 
@@ -5192,7 +5184,7 @@ pub fn evaluate_scene(
 ) -> Result<SceneRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { evaluate_scene_raw(scene, anim, time, &opts_raw) }
 }
 
@@ -5214,7 +5206,7 @@ pub unsafe fn create_anim_raw(scene: &Scene, opts: &RawAnimOpts) -> Result<AnimR
 pub fn create_anim(scene: &Scene, opts: AnimOpts) -> Result<AnimRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { create_anim_raw(scene, &opts_raw) }
 }
 
@@ -5241,7 +5233,7 @@ pub unsafe fn bake_anim_raw(
 pub fn bake_anim(scene: &Scene, anim: &Anim, opts: BakeOpts) -> Result<BakedAnimRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { bake_anim_raw(scene, anim, &opts_raw) }
 }
 
@@ -5583,7 +5575,7 @@ pub fn tessellate_nurbs_curve(
 ) -> Result<LineCurveRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { tessellate_nurbs_curve_raw(curve, &opts_raw) }
 }
 
@@ -5611,7 +5603,7 @@ pub fn tessellate_nurbs_surface(
 ) -> Result<MeshRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { tessellate_nurbs_surface_raw(surface, &opts_raw) }
 }
 
@@ -5754,7 +5746,7 @@ pub unsafe fn subdivide_mesh_raw(
 pub fn subdivide_mesh(mesh: &Mesh, level: usize, opts: SubdivideOpts) -> Result<MeshRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { subdivide_mesh_raw(mesh, level, &opts_raw) }
 }
 
@@ -5780,7 +5772,7 @@ pub unsafe fn load_geometry_cache_raw(
 pub fn load_geometry_cache(filename: &str, opts: GeometryCacheOpts) -> Result<GeometryCacheRoot> {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { load_geometry_cache_raw(filename, &opts_raw) }
 }
 
@@ -5808,7 +5800,7 @@ pub fn read_geometry_cache_real(
 ) -> usize {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { read_geometry_cache_real_raw(frame, data, &opts_raw) }
 }
 
@@ -5836,7 +5828,7 @@ pub fn read_geometry_cache_vec3(
 ) -> usize {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { read_geometry_cache_vec3_raw(frame, data, &opts_raw) }
 }
 
@@ -5867,7 +5859,7 @@ pub fn sample_geometry_cache_real(
 ) -> usize {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { sample_geometry_cache_real_raw(channel, time, data, &opts_raw) }
 }
 
@@ -5898,7 +5890,7 @@ pub fn sample_geometry_cache_vec3(
 ) -> usize {
     let mut arena = Arena::new();
     let mut opts_mut = opts;
-    let opts_raw = opts_mut.from_rust_mut(&mut arena);
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
     unsafe { sample_geometry_cache_vec3_raw(channel, time, data, &opts_raw) }
 }
 
@@ -5940,9 +5932,9 @@ pub fn generate_indices(
     allocator: AllocatorOpts,
 ) -> Result<usize> {
     let mut arena = Arena::new();
-    let streams_raw = streams.from_rust_mut(&mut arena);
+    let streams_raw = streams.to_raw_mut(&mut arena);
     let mut allocator_mut = allocator;
-    let allocator_raw = allocator_mut.from_rust_mut(&mut arena);
+    let allocator_raw = allocator_mut.to_raw_mut(&mut arena);
     unsafe { generate_indices_raw(&streams_raw, indices, &allocator_raw) }
 }
 

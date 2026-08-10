@@ -1,10 +1,7 @@
-// The `FromRust` trait converts a Rust-side options/callback value into its raw
-// C-ABI representation; its method is spelled `from_rust(&self)`, which clippy's
-// `wrong_self_convention` dislikes (`from_*` conventionally takes no `self`). The
-// name is deliberate and pervasive across the trait impls, so it is allowed for
-// this module.
-#![allow(clippy::wrong_self_convention)]
-
+// The `ToRaw` trait converts a Rust-side options/callback value into its raw
+// C-ABI representation; its methods are spelled `to_raw(&self)` / `to_raw_mut(&mut
+// self)` — non-consuming conversions that build (and may arena-allocate) an owned
+// raw value, so `to_*` per Rust convention.
 use crate::generated::format_error;
 use crate::generated::{
     Error, Progress, ProgressResult, RawAllocator, RawStream, RawVertexStream, Vec2, Vec3, Vec4,
@@ -883,7 +880,7 @@ impl Default for Allocator {
 }
 
 impl Allocator {
-    pub(crate) fn from_rust(&self) -> RawAllocator {
+    pub(crate) fn to_raw(&self) -> RawAllocator {
         match self {
             Allocator::Libc => RawAllocator {
                 alloc_fn: None,
@@ -909,7 +906,7 @@ impl Allocator {
             _ => panic!("required mutable reference"),
         }
     }
-    pub(crate) fn from_rust_mut(&mut self) -> RawAllocator {
+    pub(crate) fn to_raw_mut(&mut self) -> RawAllocator {
         match self {
             Allocator::Box(b) => RawAllocator {
                 alloc_fn: Some(allocator_imp_alloc),
@@ -919,7 +916,7 @@ impl Allocator {
                 user: Box::into_raw(Box::new(b)) as *mut _,
             },
             Allocator::Raw(raw) => raw.take(),
-            _ => Self::from_rust(self),
+            _ => Self::to_raw(self),
         }
     }
 }
@@ -938,7 +935,7 @@ impl Default for ThreadPool {
 }
 
 impl ThreadPool {
-    pub(crate) fn from_rust(&self) -> RawThreadPool {
+    pub(crate) fn to_raw(&self) -> RawThreadPool {
         match self {
             ThreadPool::None => RawThreadPool {
                 init_fn: None,
@@ -950,7 +947,7 @@ impl ThreadPool {
             _ => panic!("required mutable reference"),
         }
     }
-    pub(crate) fn from_rust_mut(&mut self) -> RawThreadPool {
+    pub(crate) fn to_raw_mut(&mut self) -> RawThreadPool {
         match self {
             ThreadPool::None => RawThreadPool {
                 init_fn: None,
@@ -982,9 +979,9 @@ impl VertexStream<'_> {
     }
 }
 
-impl<'a> FromRust for [VertexStream<'a>] {
+impl<'a> ToRaw for [VertexStream<'a>] {
     type Result = Vec<RawVertexStream>;
-    fn from_rust_mut(&mut self, _arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, _arena: &mut Arena) -> Self::Result {
         self.iter()
             .map(|s| RawVertexStream {
                 data: s.data,
@@ -1066,7 +1063,7 @@ impl<T: Read + Seek> StreamInterface for StreamReadSeek<T> {
 }
 
 impl Stream {
-    pub(crate) fn from_rust_mut(&mut self) -> RawStream {
+    pub(crate) fn to_raw_mut(&mut self) -> RawStream {
         let local = mem::replace(
             self,
             Stream::Raw(unsafe { Unsafe::new(Default::default()) }),
@@ -1074,7 +1071,7 @@ impl Stream {
         match local {
             Stream::File(file) => {
                 let mut inner = Stream::Box(Box::new(StreamReadSeek(file)));
-                inner.from_rust_mut()
+                inner.to_raw_mut()
             }
             Stream::Read(b) => RawStream {
                 read_fn: Some(stream_read_read),
@@ -1128,7 +1125,7 @@ where
         None => return false,
     };
 
-    *dst = stream.from_rust_mut();
+    *dst = stream.to_raw_mut();
     true
 }
 
@@ -1290,13 +1287,13 @@ impl fmt::Display for Vec4 {
     }
 }
 
-pub(crate) trait FromRust {
+pub(crate) trait ToRaw {
     type Result: 'static;
-    fn from_rust(&self, _arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, _arena: &mut Arena) -> Self::Result {
         panic!("type must be used via mutable reference")
     }
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
-        self.from_rust(arena)
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
+        self.to_raw(arena)
     }
 }
 
@@ -1326,9 +1323,9 @@ impl<'a> From<string::String> for StringOpt<'a> {
     }
 }
 
-impl<'a> FromRust for StringOpt<'a> {
+impl<'a> ToRaw for StringOpt<'a> {
     type Result = RawString;
-    fn from_rust(&self, _arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, _arena: &mut Arena) -> Self::Result {
         match self {
             StringOpt::Unset => RawString::default(),
             StringOpt::Ref(r) => RawString::new(r.as_bytes()),
@@ -1363,9 +1360,9 @@ impl<'a> From<Vec<u8>> for BlobOpt<'a> {
     }
 }
 
-impl<'a> FromRust for BlobOpt<'a> {
+impl<'a> ToRaw for BlobOpt<'a> {
     type Result = RawBlob;
-    fn from_rust(&self, _arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, _arena: &mut Arena) -> Self::Result {
         match self {
             BlobOpt::Unset => RawBlob::default(),
             BlobOpt::Ref(r) => RawBlob::new(r),
@@ -1401,15 +1398,15 @@ impl<'a, T> From<Vec<T>> for ListOpt<'a, T> {
     }
 }
 
-impl<'a, T: FromRust> FromRust for ListOpt<'a, T> {
+impl<'a, T: ToRaw> ToRaw for ListOpt<'a, T> {
     type Result = RawList<T::Result>;
 
-    fn from_rust(&self, arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, arena: &mut Arena) -> Self::Result {
         let items: Vec<T::Result> = match self {
             ListOpt::Unset => return RawList::default(),
-            ListOpt::Ref(v) => v.iter().map(|v| T::from_rust(v, arena)).collect(),
-            ListOpt::Mut(v) => v.iter().map(|v| T::from_rust(v, arena)).collect(),
-            ListOpt::Owned(v) => v.iter().map(|v| T::from_rust(v, arena)).collect(),
+            ListOpt::Ref(v) => v.iter().map(|v| T::to_raw(v, arena)).collect(),
+            ListOpt::Mut(v) => v.iter().map(|v| T::to_raw(v, arena)).collect(),
+            ListOpt::Owned(v) => v.iter().map(|v| T::to_raw(v, arena)).collect(),
         };
         let count = items.len();
         RawList {
@@ -1418,14 +1415,14 @@ impl<'a, T: FromRust> FromRust for ListOpt<'a, T> {
         }
     }
 
-    fn from_rust_mut(&mut self, arena: &mut Arena) -> Self::Result {
+    fn to_raw_mut(&mut self, arena: &mut Arena) -> Self::Result {
         let items: Vec<T::Result> = match mem::take(self) {
             ListOpt::Unset => return RawList::default(),
-            ListOpt::Ref(v) => v.iter().map(|v| T::from_rust(v, arena)).collect(),
-            ListOpt::Mut(v) => v.iter_mut().map(|v| T::from_rust_mut(v, arena)).collect(),
+            ListOpt::Ref(v) => v.iter().map(|v| T::to_raw(v, arena)).collect(),
+            ListOpt::Mut(v) => v.iter_mut().map(|v| T::to_raw_mut(v, arena)).collect(),
             ListOpt::Owned(v) => v
                 .into_iter()
-                .map(|mut v| T::from_rust_mut(&mut v, arena))
+                .map(|mut v| T::to_raw_mut(&mut v, arena))
                 .collect(),
         };
         let count = items.len();
@@ -1436,9 +1433,9 @@ impl<'a, T: FromRust> FromRust for ListOpt<'a, T> {
     }
 }
 
-impl<T: Copy + 'static> FromRust for T {
+impl<T: Copy + 'static> ToRaw for T {
     type Result = T;
-    fn from_rust(&self, _arena: &mut Arena) -> Self::Result {
+    fn to_raw(&self, _arena: &mut Arena) -> Self::Result {
         *self
     }
 }

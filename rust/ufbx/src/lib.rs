@@ -72,7 +72,7 @@ pub mod impl_mint;
 pub fn open_memory(data: &[u8], opts: OpenMemoryOpts) -> Result<Stream> {
     let mut stream: RawStream = Default::default();
     let mut opts_mut = opts;
-    let opts_raw = RawOpenMemoryOpts::from_rust(&mut opts_mut);
+    let opts_raw = RawOpenMemoryOpts::to_raw_mut(&mut opts_mut);
     let ok = unsafe { open_memory_raw(&mut stream, data, &opts_raw) }?;
     assert!(ok);
     Ok(Stream::Raw(unsafe { Unsafe::new(stream) }))
