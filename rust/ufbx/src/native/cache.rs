@@ -1261,7 +1261,7 @@ pub(crate) unsafe fn cache_load_xml_imp(
         let mut num_extra: usize = 0;
         // C: `ufbxi_for(ufbxi_xml_tag, tag, tag_root->children, tag_root->num_children)`
         // SAFETY: contiguous arena run stable for the document's lifetime.
-        let tags = SliceViewIter::new(tag_root.children(), tag_root.num_children());
+        let tags = SliceViewIter::from_raw_parts(tag_root.children(), tag_root.num_children());
         for tag in tags {
             if tag.num_children() != 1 {
                 continue;
@@ -1331,7 +1331,8 @@ pub(crate) unsafe fn cache_load_xml_imp(
 
             // C: `ufbxi_for(ufbxi_xml_tag, tag, tag_channels->children, tag_channels->num_children)`
             // SAFETY: contiguous arena run stable for the document's lifetime.
-            let tags = SliceViewIter::new(tag_channels.children(), tag_channels.num_children());
+            let tags =
+                SliceViewIter::from_raw_parts(tag_channels.children(), tag_channels.num_children());
             for tag in tags {
                 let name = xml_find_attrib(tag, c"ChannelName");
                 let type_ = xml_find_attrib(tag, c"ChannelType");

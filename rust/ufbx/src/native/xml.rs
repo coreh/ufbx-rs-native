@@ -929,7 +929,7 @@ pub(crate) fn xml_find_child<'a>(tag: &'a XmlTagView, name: &CStr) -> Option<&'a
     // SAFETY: `children`/`num_children` describe a contiguous arena run (built by
     // `xml_parse_tag` via `push_pop`), valid and stable for `tag`'s lifetime `'a`.
     let children: SliceViewIter<'a, XmlTag> =
-        unsafe { SliceViewIter::new(tag.children(), tag.num_children()) };
+        unsafe { SliceViewIter::from_raw_parts(tag.children(), tag.num_children()) };
     for child in children {
         // SAFETY: `child.name_data()` is a valid NUL-terminated arena string;
         // `name` is a valid NUL-terminated C string.
@@ -950,7 +950,7 @@ pub(crate) fn xml_find_attrib<'a>(tag: &'a XmlTagView, name: &CStr) -> Option<&'
     // SAFETY: `attribs`/`num_attribs` describe a contiguous arena run (built by
     // `xml_parse_tag` via `push_pop`), valid and stable for `tag`'s lifetime `'a`.
     let attribs: SliceViewIter<'a, XmlAttrib> =
-        unsafe { SliceViewIter::new(tag.attribs(), tag.num_attribs()) };
+        unsafe { SliceViewIter::from_raw_parts(tag.attribs(), tag.num_attribs()) };
     for attrib in attribs {
         // SAFETY: `attrib.name_data()` is a valid NUL-terminated arena string;
         // `name` is a valid NUL-terminated C string.

@@ -23,7 +23,8 @@
 //! arrays walked in C by `ufbxi_for` (plain `ptr++`); [`SliceViewIter`] walks
 //! such a `(base, count)` run yielding `&View<T>`, with the only raw-pointer work
 //! — the in-bounds index and the per-element `*mut T -> &View<T>` bridge —
-//! localized to `new` (the run vouch) and `next`. It is a dumb contiguous walk —
+//! localized to `from_raw_parts` (the run vouch) and `next`. It is a dumb
+//! contiguous walk —
 //! morally `slice::Iter` with a reinterpret on the yield — and knows nothing
 //! about the allocator: it is for contiguous `push_pop`-materialized runs ONLY.
 //! Skip-flagged / free-list structures (maps, retired chunks) need an
@@ -59,8 +60,8 @@ impl<T> View<T> {
 /// Safe iterator over a contiguous run of `T`, yielding `&View<T>`.
 ///
 /// A dumb contiguous walk — `slice::Iter` with a reinterpret on the yield — that
-/// knows nothing about the allocator. Construction (`new`) is the single `unsafe`
-/// boundary that vouches for the run; iteration is then fully safe.
+/// knows nothing about the allocator. Construction (`from_raw_parts`) is the
+/// single `unsafe` boundary that vouches for the run; iteration is then fully safe.
 pub(crate) struct SliceViewIter<'a, T> {
     base: *mut T,
     count: usize,
@@ -75,7 +76,7 @@ impl<'a, T> SliceViewIter<'a, T> {
     /// `tag->children` / `tag->num_children`). The run must be genuinely
     /// contiguous (`push_pop`-materialized), not skip-flagged.
     #[inline]
-    pub(crate) unsafe fn new(base: *mut T, count: usize) -> Self {
+    pub(crate) unsafe fn from_raw_parts(base: *mut T, count: usize) -> Self {
         Self {
             base,
             count,
