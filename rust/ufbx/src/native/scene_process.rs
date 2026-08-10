@@ -239,7 +239,7 @@ use crate::native::parse::{
 // Only reachable from the two `ufbxi_regression_assert`s in `ufbxi_get_transform`
 // (ufbx.c:22901-22902), which is why C marks both `ufbxi_unused` (11594/11599).
 #[cfg(feature = "regression")]
-use crate::native::parse::{is_quat_equal, is_vec3_equal, Context};
+use crate::native::parse::{is_quat_equal, is_vec3_equal};
 use crate::native::platform::{
     add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, macro_upper_bound_eq, math,
     max32, max_sz, min32, min_sz, pack_version, stable_sort, to_size, ufbx_assert,
