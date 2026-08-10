@@ -437,6 +437,39 @@ impl<T> ListView<T> {
     }
 }
 
+// Typed interior-mutable VIEW over a `RefList<T>` field (the public reference
+// list), reinterpreted in place. Getters + setters (`RefList` fields are built
+// by writing `.count`/`.data`, where `data` points at `Ref<T>` elements).
+#[repr(transparent)]
+pub(crate) struct RefListView<T>(core::cell::UnsafeCell<core::mem::MaybeUninit<RefList<T>>>);
+
+impl<T> RefListView<T> {
+    #[inline(always)]
+    fn get(&self) -> *mut RefList<T> {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn count(&self) -> usize {
+        unsafe { (*self.get()).count }
+    }
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *const Ref<T> {
+        unsafe { (*self.get()).data }
+    }
+    #[inline(always)]
+    pub(crate) fn set_count(&self, count: usize) {
+        unsafe {
+            (*self.get()).count = count;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_data(&self, data: *const Ref<T>) {
+        unsafe {
+            (*self.get()).data = data;
+        }
+    }
+}
+
 // Typed interior-mutable VIEW over a `RawList<T>` field, reinterpreted in place
 // (same pattern as the `*OptsView` handles). Leaf getters read the Copy fields;
 // `MaybeUninit` means forming `&RawListView` asserts no validity.

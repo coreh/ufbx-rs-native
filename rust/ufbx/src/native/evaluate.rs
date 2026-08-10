@@ -731,11 +731,11 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     }
 
     // Fake DOM root if necessary
-    if uc.opts_view().retain_dom() && (*uc.get()).scene.dom_root.is_none() {
+    if uc.opts_view().retain_dom() && uc.scene_view().dom_root().is_none() {
         let dom_root: *mut DomNode = push_zero::<DomNode>(uc.result_mut_ptr(), 1);
         ufbxi_check!(uc, !dom_root.is_null(), "dom_root");
         (*dom_root).name.data = EMPTY_CHAR.as_ptr();
-        (*uc.get()).scene.dom_root = Some(Ref::from_ptr(dom_root));
+        uc.scene_view().set_dom_root(Some(Ref::from_ptr(dom_root)));
     }
 
     ufbxi_check!(
@@ -777,10 +777,10 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     update_scene(uc.scene_mut_ptr(), true, ptr::null(), 0);
 
     // Force a non-NULL anim pointer
-    if ref_ptr(ptr::addr_of!((*uc.get()).scene.anim)).is_null() {
+    if ref_ptr(uc.scene_view().anim_ptr()).is_null() {
         // C: `uc->scene.anim = ufbxi_push_zero(&uc->result, ufbx_anim, 1);`
         // (NOT `ufbxi_check`ed in C — a failed allocation leaves it NULL).
-        *(ptr::addr_of_mut!((*uc.get()).scene.anim) as *mut *mut Anim) =
+        *(uc.scene_view().anim_mut_ptr() as *mut *mut Anim) =
             push_zero::<Anim>(uc.result_mut_ptr(), 1);
     }
 

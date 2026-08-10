@@ -1712,6 +1712,409 @@ impl SceneView {
     pub(crate) fn settings_mut_ptr(&self) -> *mut crate::generated::SceneSettings {
         unsafe { &raw mut (*self.get()).settings }
     }
+
+    #[inline(always)]
+    pub(crate) fn anim_curves_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::AnimCurve> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).anim_curves
+                as *mut crate::prelude::RefListView<crate::generated::AnimCurve>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn anim_layers_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::AnimLayer> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).anim_layers
+                as *mut crate::prelude::RefListView<crate::generated::AnimLayer>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn anim_stacks_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::AnimStack> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).anim_stacks
+                as *mut crate::prelude::RefListView<crate::generated::AnimStack>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn anim_values_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::AnimValue> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).anim_values
+                as *mut crate::prelude::RefListView<crate::generated::AnimValue>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn audio_clips_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::AudioClip> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).audio_clips
+                as *mut crate::prelude::RefListView<crate::generated::AudioClip>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn audio_layers_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::AudioLayer> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).audio_layers
+                as *mut crate::prelude::RefListView<crate::generated::AudioLayer>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn blend_channels_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::BlendChannel> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).blend_channels
+                as *mut crate::prelude::RefListView<crate::generated::BlendChannel>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn blend_deformers_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::BlendDeformer> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).blend_deformers
+                as *mut crate::prelude::RefListView<crate::generated::BlendDeformer>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn blend_shapes_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::BlendShape> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).blend_shapes
+                as *mut crate::prelude::RefListView<crate::generated::BlendShape>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn cache_deformers_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::CacheDeformer> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).cache_deformers
+                as *mut crate::prelude::RefListView<crate::generated::CacheDeformer>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn cache_files_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::CacheFile> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).cache_files
+                as *mut crate::prelude::RefListView<crate::generated::CacheFile>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn connections_dst_view(
+        &self,
+    ) -> &crate::prelude::ListView<crate::generated::Connection> {
+        // SAFETY: reinterpret the List field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).connections_dst
+                as *mut crate::prelude::ListView<crate::generated::Connection>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn connections_src_view(
+        &self,
+    ) -> &crate::prelude::ListView<crate::generated::Connection> {
+        // SAFETY: reinterpret the List field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).connections_src
+                as *mut crate::prelude::ListView<crate::generated::Connection>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn constraints_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::Constraint> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).constraints
+                as *mut crate::prelude::RefListView<crate::generated::Constraint>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn display_layers_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::DisplayLayer> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).display_layers
+                as *mut crate::prelude::RefListView<crate::generated::DisplayLayer>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn elements_view(&self) -> &crate::prelude::RefListView<crate::generated::Element> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).elements
+                as *mut crate::prelude::RefListView<crate::generated::Element>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn elements_by_name_view(
+        &self,
+    ) -> &crate::prelude::ListView<crate::generated::NameElement> {
+        // SAFETY: reinterpret the List field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).elements_by_name
+                as *mut crate::prelude::ListView<crate::generated::NameElement>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn line_curves_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::LineCurve> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).line_curves
+                as *mut crate::prelude::RefListView<crate::generated::LineCurve>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn lod_groups_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::LodGroup> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).lod_groups
+                as *mut crate::prelude::RefListView<crate::generated::LodGroup>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn materials_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::Material> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).materials
+                as *mut crate::prelude::RefListView<crate::generated::Material>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn meshes_view(&self) -> &crate::prelude::RefListView<crate::generated::Mesh> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).meshes
+                as *mut crate::prelude::RefListView<crate::generated::Mesh>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn nodes_view(&self) -> &crate::prelude::RefListView<crate::generated::Node> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).nodes
+                as *mut crate::prelude::RefListView<crate::generated::Node>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn nurbs_curves_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::NurbsCurve> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).nurbs_curves
+                as *mut crate::prelude::RefListView<crate::generated::NurbsCurve>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn nurbs_surfaces_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::NurbsSurface> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).nurbs_surfaces
+                as *mut crate::prelude::RefListView<crate::generated::NurbsSurface>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn poses_view(&self) -> &crate::prelude::RefListView<crate::generated::Pose> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).poses
+                as *mut crate::prelude::RefListView<crate::generated::Pose>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn selection_nodes_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::SelectionNode> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).selection_nodes
+                as *mut crate::prelude::RefListView<crate::generated::SelectionNode>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn selection_sets_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::SelectionSet> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).selection_sets
+                as *mut crate::prelude::RefListView<crate::generated::SelectionSet>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn shaders_view(&self) -> &crate::prelude::RefListView<crate::generated::Shader> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).shaders
+                as *mut crate::prelude::RefListView<crate::generated::Shader>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn skin_clusters_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::SkinCluster> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).skin_clusters
+                as *mut crate::prelude::RefListView<crate::generated::SkinCluster>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn skin_deformers_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::SkinDeformer> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).skin_deformers
+                as *mut crate::prelude::RefListView<crate::generated::SkinDeformer>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn stereo_cameras_view(
+        &self,
+    ) -> &crate::prelude::RefListView<crate::generated::StereoCamera> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).stereo_cameras
+                as *mut crate::prelude::RefListView<crate::generated::StereoCamera>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn texture_files_view(
+        &self,
+    ) -> &crate::prelude::ListView<crate::generated::TextureFile> {
+        // SAFETY: reinterpret the List field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).texture_files
+                as *mut crate::prelude::ListView<crate::generated::TextureFile>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn textures_view(&self) -> &crate::prelude::RefListView<crate::generated::Texture> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).textures
+                as *mut crate::prelude::RefListView<crate::generated::Texture>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn videos_view(&self) -> &crate::prelude::RefListView<crate::generated::Video> {
+        // SAFETY: reinterpret the RefList field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).videos
+                as *mut crate::prelude::RefListView<crate::generated::Video>)
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn unknowns_mut_ptr(
+        &self,
+    ) -> *mut crate::prelude::RefList<crate::generated::Unknown> {
+        unsafe { &raw mut (*self.get()).unknowns }
+    }
+
+    #[inline(always)]
+    pub(crate) fn root_node(&self) -> crate::prelude::Ref<crate::generated::Node> {
+        unsafe { (*self.get()).root_node }
+    }
+    #[inline(always)]
+    pub(crate) fn set_root_node(&self, root_node: crate::prelude::Ref<crate::generated::Node>) {
+        unsafe {
+            (*self.get()).root_node = root_node;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn root_node_ptr(&self) -> *const crate::prelude::Ref<crate::generated::Node> {
+        unsafe { &raw const (*self.get()).root_node }
+    }
+    #[inline(always)]
+    pub(crate) fn anim_ptr(&self) -> *const crate::prelude::Ref<crate::generated::Anim> {
+        unsafe { &raw const (*self.get()).anim }
+    }
+    #[inline(always)]
+    pub(crate) fn anim_mut_ptr(&self) -> *mut crate::prelude::Ref<crate::generated::Anim> {
+        unsafe { &raw mut (*self.get()).anim }
+    }
+    #[inline(always)]
+    pub(crate) fn dom_root(&self) -> Option<crate::prelude::Ref<crate::generated::DomNode>> {
+        unsafe { (*self.get()).dom_root }
+    }
+    #[inline(always)]
+    pub(crate) fn set_dom_root(
+        &self,
+        dom_root: Option<crate::prelude::Ref<crate::generated::DomNode>>,
+    ) {
+        unsafe {
+            (*self.get()).dom_root = dom_root;
+        }
+    }
 }
 
 // Typed interior-mutable VIEW over `Scene.metadata` (the public `ufbx_metadata`),
@@ -5515,7 +5918,7 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
         (*dom_root).children.data = nodes as *const Ref<DomNode>;
         (*dom_root).children.count = num_top_nodes;
 
-        (*uc.get()).scene.dom_root = Some(Ref::from_ptr(dom_root));
+        uc.scene_view().set_dom_root(Some(Ref::from_ptr(dom_root)));
     }
 
     Ok(())

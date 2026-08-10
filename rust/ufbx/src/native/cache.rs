@@ -2048,8 +2048,9 @@ pub(crate) unsafe fn load_external_files(uc: &Context) -> Result<(), Fail> {
     // Gather external files to deduplicate them
     // C: `ufbxi_for_ptr_list(ufbx_cache_file, p_cache, uc->scene.cache_files)`
     let mut p_cache: *mut *mut CacheFile =
-        (*uc.get()).scene.cache_files.data as *mut *mut CacheFile;
-    let p_cache_end: *mut *mut CacheFile = add_ptr(p_cache, (*uc.get()).scene.cache_files.count);
+        uc.scene_view().cache_files_view().data() as *mut *mut CacheFile;
+    let p_cache_end: *mut *mut CacheFile =
+        add_ptr(p_cache, uc.scene_view().cache_files_view().count());
     while p_cache != p_cache_end {
         let cache: *mut CacheFile = *p_cache;
         if (*cache).filename.length > 0 {
@@ -2097,8 +2098,9 @@ pub(crate) unsafe fn load_external_files(uc: &Context) -> Result<(), Fail> {
     // Patch the loaded files
     // C: `ufbxi_for_ptr_list(ufbx_cache_file, p_cache, uc->scene.cache_files)`
     let mut p_cache: *mut *mut CacheFile =
-        (*uc.get()).scene.cache_files.data as *mut *mut CacheFile;
-    let p_cache_end: *mut *mut CacheFile = add_ptr(p_cache, (*uc.get()).scene.cache_files.count);
+        uc.scene_view().cache_files_view().data() as *mut *mut CacheFile;
+    let p_cache_end: *mut *mut CacheFile =
+        add_ptr(p_cache, uc.scene_view().cache_files_view().count());
     while p_cache != p_cache_end {
         let cache: *mut CacheFile = *p_cache;
         let file: *mut ExternalFile = find_external_file(
@@ -2116,9 +2118,9 @@ pub(crate) unsafe fn load_external_files(uc: &Context) -> Result<(), Fail> {
     // Patch the geometry deformers
     // C: `ufbxi_for_ptr_list(ufbx_cache_deformer, p_deformer, uc->scene.cache_deformers)`
     let mut p_deformer: *mut *mut CacheDeformer =
-        (*uc.get()).scene.cache_deformers.data as *mut *mut CacheDeformer;
+        uc.scene_view().cache_deformers_view().data() as *mut *mut CacheDeformer;
     let p_deformer_end: *mut *mut CacheDeformer =
-        add_ptr(p_deformer, (*uc.get()).scene.cache_deformers.count);
+        add_ptr(p_deformer, uc.scene_view().cache_deformers_view().count());
     while p_deformer != p_deformer_end {
         let deformer: *mut CacheDeformer = *p_deformer;
         let file: *mut CacheFile = opt_ptr(&(*deformer).file);
@@ -2187,8 +2189,8 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
             ufbxi_dev_assert!(matrix_determinant(&(*uc.get()).axis_matrix) >= 0.0f32 as Real);
 
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
-            let mut p_node: *mut *mut Node = (*uc.get()).scene.nodes.data as *mut *mut Node;
-            let p_node_end: *mut *mut Node = add_ptr(p_node, (*uc.get()).scene.nodes.count);
+            let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
+            let p_node_end: *mut *mut Node = add_ptr(p_node, uc.scene_view().nodes_view().count());
             while p_node != p_node_end {
                 let node: *mut Node = *p_node;
                 if !(*node).is_root {
@@ -2201,7 +2203,7 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
 
     if uc.opts_view().space_conversion() == SpaceConversion::TransformRoot {
         let mut axis_mat: Matrix = (*uc.get()).axis_matrix;
-        let root_node: *mut Node = ref_ptr(&(*uc.get()).scene.root_node);
+        let root_node: *mut Node = ref_ptr(uc.scene_view().root_node_ptr());
         if !is_transform_identity(&(*root_node).local_transform) {
             let root_mat: Matrix = transform_to_matrix(&(*root_node).local_transform);
             axis_mat = matrix_mul(&root_mat, &axis_mat);
@@ -2231,7 +2233,7 @@ pub(crate) unsafe fn scale_units(uc: &Context, mut target_meters: Real) -> Resul
     uc.set_unit_scale(ratio);
 
     if uc.opts_view().space_conversion() == SpaceConversion::TransformRoot {
-        let root_node: *mut Node = ref_ptr(&(*uc.get()).scene.root_node);
+        let root_node: *mut Node = ref_ptr(uc.scene_view().root_node_ptr());
         (*root_node).local_transform.scale.x *= ratio;
         (*root_node).local_transform.scale.y *= ratio;
         (*root_node).local_transform.scale.z *= ratio;
