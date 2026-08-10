@@ -956,11 +956,15 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
 
 // ufbx.c:25464-25470 `ufbxi_free_result`
 #[inline(never)]
-pub(crate) unsafe fn free_result(uc: &Context) {
-    buf_free(uc.result_mut_ptr());
-    buf_free(uc.string_pool_view().buf_mut_ptr());
+pub(crate) fn free_result(uc: &Context) {
+    // SAFETY: the buffer/allocator pointers come from `uc` accessors and are
+    // valid by construction; mirrors C `ufbxi_free_result`'s teardown.
+    unsafe {
+        buf_free(uc.result_mut_ptr());
+        buf_free(uc.string_pool_view().buf_mut_ptr());
 
-    free_ator(uc.ator_result_mut_ptr());
+        free_ator(uc.ator_result_mut_ptr());
+    }
 }
 
 // ufbx.c:25472-25625 `ufbxi_load`
@@ -4609,13 +4613,17 @@ pub(crate) fn cmp_bake_time(a: BakeTime, b: BakeTime) -> i32 {
 #[cfg(feature = "baking")]
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn bake_push_time(bc: &BakeContext, time: f64, flags: u32) -> bool {
-    let p_key: *mut BakeTime = push_fast::<BakeTime>(bc.tmp_times_mut_ptr(), 1);
+pub(crate) fn bake_push_time(bc: &BakeContext, time: f64, flags: u32) -> bool {
+    // SAFETY: `tmp_times_mut_ptr()` is a valid buffer by construction.
+    let p_key: *mut BakeTime = unsafe { push_fast::<BakeTime>(bc.tmp_times_mut_ptr(), 1) };
     if p_key.is_null() {
         return false;
     }
-    (*p_key).time = time;
-    (*p_key).flags = flags;
+    // SAFETY: `p_key` is non-null (checked) and points to freshly-pushed storage.
+    unsafe {
+        (*p_key).time = time;
+        (*p_key).flags = flags;
+    }
     true
 }
 
