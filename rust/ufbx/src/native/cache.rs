@@ -342,6 +342,24 @@ impl CacheContext {
     pub(crate) fn open_file_cb_view(&self) -> &crate::prelude::RawOpenFileCbView {
         unsafe { &*(&raw mut (*self.get()).open_file_cb as *mut crate::prelude::RawOpenFileCbView) }
     }
+    // `stream` (RawStream) — typed VIEW handle (reinterpret-in-place); callback leaves read-only.
+    #[inline(always)]
+    pub(crate) fn stream_view(&self) -> &crate::prelude::RawStreamView {
+        unsafe { &*(&raw mut (*self.get()).stream as *mut crate::prelude::RawStreamView) }
+    }
+    // `buffer` (`[u8; 128]`) — whole-array raw-ptr getters + byte size (mirrors `sizeof`).
+    #[inline(always)]
+    pub(crate) fn buffer_ptr(&self) -> *const u8 {
+        unsafe { (&raw mut (*self.get()).buffer) as *const u8 }
+    }
+    #[inline(always)]
+    pub(crate) fn buffer_mut_ptr(&self) -> *mut u8 {
+        unsafe { (&raw mut (*self.get()).buffer) as *mut u8 }
+    }
+    #[inline(always)]
+    pub(crate) fn buffer_size(&self) -> usize {
+        unsafe { core::mem::size_of_val(&(*self.get()).buffer) }
+    }
 
     // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `GeometryCacheOptsView`.
     #[inline(always)]
@@ -670,9 +688,9 @@ pub(crate) unsafe fn cache_read(
     }
     dst = (dst as *mut u8).add(buffered) as *mut c_void;
 
-    if size >= size_of_val(&(*cc.get()).buffer) {
+    if size >= cc.buffer_size() {
         let num_read: usize =
-            ((*cc.get()).stream.read_fn.unwrap_unchecked())((*cc.get()).stream.user, dst, size);
+            (cc.stream_view().read_fn().unwrap_unchecked())(cc.stream_view().user(), dst, size);
         ufbxi_check_err_msg!(
             cc.error_mut_ptr(),
             num_read <= size,
@@ -691,14 +709,14 @@ pub(crate) unsafe fn cache_read(
         size -= num_read;
         dst = (dst as *mut u8).add(num_read) as *mut c_void;
     } else {
-        let num_read: usize = ((*cc.get()).stream.read_fn.unwrap_unchecked())(
-            (*cc.get()).stream.user,
-            (*cc.get()).buffer.as_mut_ptr() as *mut c_void,
-            size_of_val(&(*cc.get()).buffer),
+        let num_read: usize = (cc.stream_view().read_fn().unwrap_unchecked())(
+            cc.stream_view().user(),
+            cc.buffer_mut_ptr() as *mut c_void,
+            cc.buffer_size(),
         );
         ufbxi_check_err_msg!(
             cc.error_mut_ptr(),
-            num_read <= size_of_val(&(*cc.get()).buffer),
+            num_read <= cc.buffer_size(),
             "IO error",
             "num_read <= sizeof(cc->buffer)"
         );
@@ -710,13 +728,8 @@ pub(crate) unsafe fn cache_read(
                 "num_read >= size"
             );
         }
-        cc.set_pos((*cc.get()).buffer.as_ptr());
-        cc.set_pos_end(
-            (*cc.get())
-                .buffer
-                .as_ptr()
-                .add(size_of_val(&(*cc.get()).buffer)),
-        );
+        cc.set_pos(cc.buffer_ptr());
+        cc.set_pos_end((*cc.get()).buffer.as_ptr().add(cc.buffer_size()));
 
         core::ptr::copy_nonoverlapping(cc.pos(), dst as *mut u8, size);
         cc.set_pos(cc.pos().add(size));
@@ -748,13 +761,13 @@ pub(crate) unsafe fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), 
     cc.set_pos(cc.pos().add(buffered as usize));
     size -= buffered;
 
-    if (*cc.get()).stream.skip_fn.is_some() {
+    if cc.stream_view().skip_fn().is_some() {
         while size >= MAX_SKIP_SIZE as u64 {
             size -= MAX_SKIP_SIZE as u64;
             ufbxi_check_err_msg!(
                 cc.error_mut_ptr(),
-                ((*cc.get()).stream.skip_fn.unwrap_unchecked())(
-                    (*cc.get()).stream.user,
+                (cc.stream_view().skip_fn().unwrap_unchecked())(
+                    cc.stream_view().user(),
                     MAX_SKIP_SIZE - 1
                 ),
                 "Truncated file",
@@ -765,8 +778,8 @@ pub(crate) unsafe fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), 
             // and causes us to seek indefinitely forwards as `fseek()` does not
             // report if we hit EOF...
             let mut single_byte = MaybeUninit::<[u8; 1]>::uninit(); // ufbxi_uninit
-            let num_read: usize = ((*cc.get()).stream.read_fn.unwrap_unchecked())(
-                (*cc.get()).stream.user,
+            let num_read: usize = (cc.stream_view().read_fn().unwrap_unchecked())(
+                cc.stream_view().user(),
                 single_byte.as_mut_ptr() as *mut c_void,
                 1,
             );
@@ -787,8 +800,8 @@ pub(crate) unsafe fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), 
         if size > 0 {
             ufbxi_check_err_msg!(
                 cc.error_mut_ptr(),
-                ((*cc.get()).stream.skip_fn.unwrap_unchecked())(
-                    (*cc.get()).stream.user,
+                (cc.stream_view().skip_fn().unwrap_unchecked())(
+                    cc.stream_view().user(),
                     size as usize
                 ),
                 "Truncated file",
@@ -802,8 +815,8 @@ pub(crate) unsafe fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), 
             size -= to_skip as u64;
             ufbxi_check_err_msg!(
                 cc.error_mut_ptr(),
-                ((*cc.get()).stream.read_fn.unwrap_unchecked())(
-                    (*cc.get()).stream.user,
+                (cc.stream_view().read_fn().unwrap_unchecked())(
+                    cc.stream_view().user(),
                     skip_buf.as_mut_ptr() as *mut c_void,
                     to_skip
                 ) != 0,
@@ -1270,8 +1283,8 @@ pub(crate) unsafe fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
     // C: `ufbxi_xml_load_opts opts = { 0 };`
     let mut opts: XmlLoadOpts = core::mem::zeroed();
     opts.ator = cc.ator_tmp();
-    opts.read_fn = (*cc.get()).stream.read_fn;
-    opts.read_user = (*cc.get()).stream.user;
+    opts.read_fn = cc.stream_view().read_fn();
+    opts.read_user = cc.stream_view().user();
     opts.prefix = cc.pos();
     opts.prefix_length = to_size(cc.pos_end().offset_from(cc.pos()));
     let doc: *mut XmlDocument = load_xml(&mut opts, cc.error_mut_ptr());
@@ -1296,9 +1309,9 @@ pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Res
     )?;
 
     // Assume all files have at least 16 bytes of header
-    let magic_len: usize = ((*cc.get()).stream.read_fn.unwrap_unchecked())(
-        (*cc.get()).stream.user,
-        (*cc.get()).buffer.as_mut_ptr() as *mut c_void,
+    let magic_len: usize = (cc.stream_view().read_fn().unwrap_unchecked())(
+        cc.stream_view().user(),
+        cc.buffer_mut_ptr() as *mut c_void,
         16,
     );
     ufbxi_check_err_msg!(
@@ -1313,15 +1326,15 @@ pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Res
         "Truncated file",
         "magic_len == 16"
     );
-    cc.set_pos((*cc.get()).buffer.as_ptr());
-    cc.set_pos_end((*cc.get()).buffer.as_ptr().add(16));
+    cc.set_pos(cc.buffer_ptr());
+    cc.set_pos_end(cc.buffer_ptr().add(16));
 
     cc.set_file_offset(0);
 
-    if crate::native::error::memcmp((*cc.get()).buffer.as_ptr(), b"POINTCACHE2".as_ptr(), 11) == 0 {
+    if crate::native::error::memcmp(cc.buffer_ptr(), b"POINTCACHE2".as_ptr(), 11) == 0 {
         cache_load_pc2(cc)?;
-    } else if crate::native::error::memcmp((*cc.get()).buffer.as_ptr(), b"FOR4".as_ptr(), 4) == 0
-        || crate::native::error::memcmp((*cc.get()).buffer.as_ptr(), b"FOR8".as_ptr(), 4) == 0
+    } else if crate::native::error::memcmp(cc.buffer_ptr(), b"FOR4".as_ptr(), 4) == 0
+        || crate::native::error::memcmp(cc.buffer_ptr(), b"FOR8".as_ptr(), 4) == 0
     {
         cache_load_mc(cc)?;
     } else {
@@ -1357,8 +1370,8 @@ pub(crate) unsafe fn cache_try_open_file(
     let ok = cache_load_file(cc, filename);
     *p_found = true;
 
-    if let Some(close_fn) = (*cc.get()).stream.close_fn {
-        close_fn((*cc.get()).stream.user);
+    if let Some(close_fn) = cc.stream_view().close_fn() {
+        close_fn(cc.stream_view().user());
     }
 
     ok

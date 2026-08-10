@@ -326,6 +326,38 @@ impl RawThreadOptsView {
     }
 }
 
+// Typed interior-mutable VIEW over `RawStream` (the C-callback I/O stream struct);
+// callback/`user` leaves are read through it.
+#[repr(transparent)]
+pub(crate) struct RawStreamView(
+    core::cell::UnsafeCell<core::mem::MaybeUninit<crate::generated::RawStream>>,
+);
+
+impl RawStreamView {
+    #[inline(always)]
+    fn get(&self) -> *mut crate::generated::RawStream {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn read_fn(
+        &self,
+    ) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize> {
+        unsafe { (*self.get()).read_fn }
+    }
+    #[inline(always)]
+    pub(crate) fn skip_fn(&self) -> Option<unsafe extern "C" fn(*mut c_void, usize) -> bool> {
+        unsafe { (*self.get()).skip_fn }
+    }
+    #[inline(always)]
+    pub(crate) fn close_fn(&self) -> Option<unsafe extern "C" fn(*mut c_void)> {
+        unsafe { (*self.get()).close_fn }
+    }
+    #[inline(always)]
+    pub(crate) fn user(&self) -> *mut c_void {
+        unsafe { (*self.get()).user }
+    }
+}
+
 // Typed interior-mutable VIEW over `RawOpenFileCb` — Copy, but `.fn_` is WRITTEN
 // (default cb install), so it needs a view not a value getter.
 #[repr(transparent)]
