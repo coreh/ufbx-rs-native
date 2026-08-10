@@ -222,13 +222,15 @@ pub(crate) unsafe fn ascii_next(uc: &Context) -> u8 {
 
 // ufbx.c:9497-9531 `ufbxi_ascii_parse_version`
 #[inline(never)]
-pub(crate) unsafe fn ascii_parse_version(uc: &Context) -> u32 {
+pub(crate) fn ascii_parse_version(uc: &Context) -> u32 {
     // C: `uint8_t digits[3];` — written before read (`num_digits` gates every
     // read), zero-filled here.
     let mut digits: [u8; 3] = [0; 3];
     let mut num_digits: u32 = 0;
 
-    let mut c: u8 = ascii_next(uc);
+    // SAFETY: `ascii_next` needs only a valid `uc` (upheld by the handle); it is
+    // the sole unsafe op in this parser, called at each step below.
+    let mut c: u8 = unsafe { ascii_next(uc) };
 
     let fmt: [u8; 11] = *b" FBX ?.?.?\0";
     let mut ix: u32 = 0;
@@ -243,13 +245,15 @@ pub(crate) unsafe fn ascii_parse_version(uc: &Context) -> u32 {
                 }
                 digits[num_digits as usize] = c - b'0';
                 num_digits += 1;
-                c = ascii_next(uc);
+                // SAFETY: see the first `ascii_next` above.
+                c = unsafe { ascii_next(uc) };
             }
 
             // Whitespace
             b' ' => {
                 while c == b' ' || c == b'\t' {
-                    c = ascii_next(uc);
+                    // SAFETY: see the first `ascii_next` above.
+                    c = unsafe { ascii_next(uc) };
                 }
             }
 
@@ -258,7 +262,8 @@ pub(crate) unsafe fn ascii_parse_version(uc: &Context) -> u32 {
                 if c != r#ref {
                     return 0;
                 }
-                c = ascii_next(uc);
+                // SAFETY: see the first `ascii_next` above.
+                c = unsafe { ascii_next(uc) };
             }
         }
     }
@@ -1929,7 +1934,7 @@ mod tests {
     // `ufbxi_is_space` (ufbx.c:9543-9547) is context-free: exactly
     // ' ', '\t', '\r', '\n' and nothing else, including the c == 0 wraparound.
     #[test]
-    fn test_is_space() {
+   fn test_is_space() {
         for i in 0..=255u32 {
             let c = i as u8;
             let expect = c == b' ' || c == b'\t' || c == b'\r' || c == b'\n';
