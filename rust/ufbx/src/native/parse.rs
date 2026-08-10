@@ -231,6 +231,25 @@ pub(crate) struct AsciiToken {
     pub value: AsciiTokenValue,
 }
 
+// Typed interior-mutable VIEW over an `AsciiToken` field, reinterpreted in place.
+#[repr(transparent)]
+pub(crate) struct AsciiTokenView(core::cell::UnsafeCell<core::mem::MaybeUninit<AsciiToken>>);
+
+impl AsciiTokenView {
+    #[inline(always)]
+    fn get(&self) -> *mut AsciiToken {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn str_data(&self) -> *mut u8 {
+        unsafe { (*self.get()).str_data }
+    }
+    #[inline(always)]
+    pub(crate) fn str_cap(&self) -> usize {
+        unsafe { (*self.get()).str_cap }
+    }
+}
+
 // ufbx.c:6267-6271 (anonymous `value` union inside `ufbxi_ascii_token`) —
 // untagged overlay discriminated by `type` (PORTING.md "Unions").
 #[repr(C)]
@@ -261,6 +280,65 @@ pub(crate) struct Ascii {
 
     pub prev_token: AsciiToken,
     pub token: AsciiToken,
+}
+
+// Typed interior-mutable VIEW over the owned `ascii` field (Ascii), reinterpreted in
+// place. `token`/`prev_token` recurse into `AsciiTokenView`; scalars are getters/setters;
+// `token` is also whole-addr'd (`_mut_ptr`).
+#[repr(transparent)]
+pub(crate) struct AsciiView(core::cell::UnsafeCell<core::mem::MaybeUninit<Ascii>>);
+
+impl AsciiView {
+    #[inline(always)]
+    fn get(&self) -> *mut Ascii {
+        self.0.get().cast()
+    }
+    #[inline(always)]
+    pub(crate) fn token_view(&self) -> &AsciiTokenView {
+        unsafe { &*(&raw mut (*self.get()).token as *mut AsciiTokenView) }
+    }
+    #[inline(always)]
+    pub(crate) fn prev_token_view(&self) -> &AsciiTokenView {
+        unsafe { &*(&raw mut (*self.get()).prev_token as *mut AsciiTokenView) }
+    }
+    #[inline(always)]
+    pub(crate) fn token_mut_ptr(&self) -> *mut AsciiToken {
+        unsafe { &raw mut (*self.get()).token }
+    }
+    #[inline(always)]
+    pub(crate) fn src_buf(&self) -> *mut Buf {
+        unsafe { (*self.get()).src_buf }
+    }
+    #[inline(always)]
+    pub(crate) fn set_src(&self, src: *const u8) {
+        unsafe {
+            (*self.get()).src = src;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_src_yield(&self, src_yield: *const u8) {
+        unsafe {
+            (*self.get()).src_yield = src_yield;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_src_end(&self, src_end: *const u8) {
+        unsafe {
+            (*self.get()).src_end = src_end;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_src_is_retained(&self, src_is_retained: bool) {
+        unsafe {
+            (*self.get()).src_is_retained = src_is_retained;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_found_version(&self, found_version: bool) {
+        unsafe {
+            (*self.get()).found_version = found_version;
+        }
+    }
 }
 
 // ufbx.c:6293-6297 `ufbxi_template`
@@ -2453,6 +2531,12 @@ impl Context {
         // SAFETY: repr(transparent) over the `scene` field inside the outer UnsafeCell;
         // shared interior-mutable view, asserts no validity.
         unsafe { &*(&raw mut (*self.get()).scene as *mut SceneView) }
+    }
+
+    // `ascii` (Ascii) — typed VIEW handle (reinterpret-in-place); accessors on AsciiView.
+    #[inline(always)]
+    pub(crate) fn ascii_view(&self) -> &AsciiView {
+        unsafe { &*(&raw mut (*self.get()).ascii as *mut AsciiView) }
     }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
@@ -6451,12 +6535,14 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
         // Use the current read buffer as the initial parse buffer
         // C: `memset(&uc->ascii, 0, sizeof(uc->ascii));`
         core::ptr::write_bytes(uc.ascii_mut_ptr() as *mut u8, 0, size_of::<Ascii>());
-        (*uc.get()).ascii.src = uc.data();
-        (*uc.get()).ascii.src_yield = uc.data().add(uc.yield_size());
-        (*uc.get()).ascii.src_end = (*uc.get()).data.add(uc.data_size() + uc.yield_size());
+        uc.ascii_view().set_src(uc.data());
+        uc.ascii_view()
+            .set_src_yield(uc.data().add(uc.yield_size()));
+        uc.ascii_view()
+            .set_src_end(uc.data().add(uc.data_size() + uc.yield_size()));
 
         // Initialize the first token
-        crate::native::parse_ascii::ascii_next_token(uc, &raw mut (*uc.get()).ascii.token)?;
+        crate::native::parse_ascii::ascii_next_token(uc, uc.ascii_view().token_mut_ptr())?;
 
         // Default to version 7400 if not found in header
         if uc.version() > 0 {

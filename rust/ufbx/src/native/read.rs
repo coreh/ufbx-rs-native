@@ -6194,7 +6194,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
         let tmp_buf: *mut Buf = &mut (*uc.get()).tmp_thread_parse[batch_index];
 
         // ASCII data may be in `tmp_buf`, so copy it to safety in case
-        if (*uc.get()).ascii.src_buf == tmp_buf {
+        if uc.ascii_view().src_buf() == tmp_buf {
             let ua: *mut Ascii = uc.ascii_mut_ptr();
             let size: usize = to_size((*ua).src_end.offset_from((*ua).src));
             if uc.read_buffer_size() < size {
@@ -6274,7 +6274,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
         }
 
         // Not safe to refer to this buffer anymore
-        (*uc.get()).ascii.src_is_retained = false;
+        uc.ascii_view().set_src_is_retained(false);
 
         thread_pool_flush_group(uc.thread_pool_mut_ptr());
 
@@ -7358,7 +7358,7 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
         init_node_prop_names(uc)?;
     }
     // Don't allow changing version from this point onwards
-    (*uc.get()).ascii.found_version = true;
+    uc.ascii_view().set_found_version(true);
 
     // Document: Read root ID
     if uc.version() >= 7000 {

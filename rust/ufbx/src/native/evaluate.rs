@@ -941,13 +941,13 @@ pub(crate) unsafe fn free_temp(uc: &Context) {
 
     free::<u8>(
         uc.ator_tmp_mut_ptr(),
-        (*uc.get()).ascii.token.str_data,
-        (*uc.get()).ascii.token.str_cap,
+        uc.ascii_view().token_view().str_data(),
+        uc.ascii_view().token_view().str_cap(),
     );
     free::<u8>(
         uc.ator_tmp_mut_ptr(),
-        (*uc.get()).ascii.prev_token.str_data,
-        (*uc.get()).ascii.prev_token.str_cap,
+        uc.ascii_view().prev_token_view().str_data(),
+        uc.ascii_view().prev_token_view().str_cap(),
     );
 
     free::<u8>(
