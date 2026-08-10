@@ -8417,10 +8417,12 @@ pub(crate) unsafe fn mul_scale_real(t: *mut Transform, v: Real) {
 
 // ufbx.c:22662-22670 `ufbxi_mul_quat`
 #[inline(never)]
-pub(crate) unsafe fn mul_quat(a: Quat, b: Quat) -> Quat {
+pub(crate) fn mul_quat(a: Quat, b: Quat) -> Quat {
     // C: `ufbx_quat r;` — every field is written below before the return, so
     // the zero-fill is inert (upstream carries no `// ufbxi_uninit` marker).
-    let mut r: Quat = core::mem::zeroed();
+    // SAFETY: `Quat` is POD (four `Real`s); the all-zero bit pattern is valid
+    // and every field is overwritten before `r` is read.
+    let mut r: Quat = unsafe { core::mem::zeroed() };
     r.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y;
     r.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x;
     r.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w;
