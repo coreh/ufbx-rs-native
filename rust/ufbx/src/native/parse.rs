@@ -4141,6 +4141,23 @@ impl Context {
         }
     }
 
+    // Rust-port: the top node borrowed AS A VIEW. The returned `&NodeView` borrows
+    // `self`, so its lifetime is `<= uc` — this is the "mint root views from
+    // &Context" rule that anchors a whole navigation chain to a single `uc`
+    // lifetime instead of a free `from_ptr` lifetime. `None` mirrors the C
+    // `uc->top_node != NULL` guard at every call site.
+    #[inline(always)]
+    pub(crate) fn top_node_view(&self) -> Option<&NodeView> {
+        let node = self.top_node();
+        if node.is_null() {
+            None
+        } else {
+            // SAFETY: a non-null top node points into `uc`'s DOM arena, valid and
+            // stable for the borrow of `self`.
+            Some(unsafe { NodeView::from_ptr(node) })
+        }
+    }
+
     // Backing read buffer. Scalar `*mut u8`: value getter + setter. The paired
     // `&mut uc.read_buffer` out-param sites in `refill` stay raw (a value getter
     // cannot express writing back through the field).
@@ -5894,12 +5911,14 @@ pub(crate) struct DomMapping {
 // ufbx.c:10703-10710 `ufbxi_get_dom_node_imp`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn get_dom_node_imp(uc: &Context, node: *mut Node) -> *mut DomNode {
-    if node.is_null() {
+pub(crate) unsafe fn get_dom_node_imp(uc: &Context, node: Option<&NodeView>) -> *mut DomNode {
+    let Some(node) = node else {
         return core::ptr::null_mut();
-    }
+    };
     let mapping = DomMapping {
-        node_ptr: node as usize,
+        // The node's address is the DOM-mapping key; `node.get()` recovers it
+        // from the view without dropping the `uc`-anchored lifetime at callers.
+        node_ptr: node.get() as usize,
         dom_node: core::ptr::null_mut(),
     };
     let hash = hash_uptr(mapping.node_ptr);
@@ -5918,7 +5937,7 @@ pub(crate) unsafe fn get_dom_node_imp(uc: &Context, node: *mut Node) -> *mut Dom
 // ufbx.c:10712-10716 `ufbxi_get_dom_node`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn get_dom_node(uc: &Context, node: *mut Node) -> *mut DomNode {
+pub(crate) unsafe fn get_dom_node(uc: &Context, node: Option<&NodeView>) -> *mut DomNode {
     if !uc.opts_view().retain_dom() {
         return core::ptr::null_mut();
     }
@@ -8041,11 +8060,17 @@ mod tests {
 
             // `ufbxi_get_dom_node` is gated on `opts.retain_dom`; the mapping
             // itself is populated regardless.
-            assert!(get_dom_node(uc_ptr, &mut root).is_null());
+            assert!(get_dom_node(uc_ptr, Some(NodeView::from_ptr(&mut root))).is_null());
             uc.opts.retain_dom = true;
-            assert_eq!(get_dom_node(uc_ptr, &mut root), dom);
-            assert_eq!(get_dom_node(uc_ptr, &mut leaf), child);
-            assert!(get_dom_node(uc_ptr, core::ptr::null_mut()).is_null());
+            assert_eq!(
+                get_dom_node(uc_ptr, Some(NodeView::from_ptr(&mut root))),
+                dom
+            );
+            assert_eq!(
+                get_dom_node(uc_ptr, Some(NodeView::from_ptr(&mut leaf))),
+                child
+            );
+            assert!(get_dom_node(uc_ptr, None).is_null());
 
             buf_free(&mut uc.result);
             buf_free(&mut uc.tmp_stack);

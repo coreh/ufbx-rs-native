@@ -1288,10 +1288,7 @@ pub(crate) unsafe fn push_synthetic_element_size(
     (*elem).type_ = type_;
     (*elem).element_id = element_id;
     (*elem).typed_id = typed_id;
-    (*elem).dom_node = opt_ref(get_dom_node(
-        uc,
-        node.map_or(core::ptr::null_mut(), NodeView::get),
-    ));
+    (*elem).dom_node = opt_ref(get_dom_node(uc, node));
     if !name.is_null() {
         (*elem).name.data = name;
         (*elem).name.length = strlen(name);
@@ -2605,7 +2602,7 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
 
         shape_info.fbx_id = push_synthetic_id(uc);
         shape_info.name = name;
-        shape_info.dom_node = get_dom_node(uc, n.get());
+        shape_info.dom_node = get_dom_node(uc, Some(n));
 
         read_shape(uc, n, &mut shape_info)?;
 
@@ -5833,7 +5830,7 @@ pub(crate) unsafe fn read_global_settings(uc: &Context, node: &NodeView) -> Resu
 #[inline(never)]
 pub(crate) unsafe fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     let mut info: ElementInfo = core::mem::zeroed();
-    info.dom_node = get_dom_node(uc, node.get());
+    info.dom_node = get_dom_node(uc, Some(node));
 
     if node.name() == sp::GlobalSettings.as_ptr() {
         read_global_settings(uc, node)?;
@@ -7316,10 +7313,9 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
     // The ASCII exporter version is stored in top-level
     if uc.exporter() == Exporter::BlenderAscii {
         parse_toplevel(uc, sp::Creator.as_ptr())?;
-        if !uc.top_node().is_null() {
-            // Bridge the raw top node into a view for `get_val1`.
+        if let Some(top_node) = uc.top_node_view() {
             ufbxi_ignore!(get_val1(
-                NodeView::from_ptr(uc.top_node()),
+                top_node,
                 b"S\0".as_ptr(),
                 uc.scene_view().metadata_view().creator_mut_ptr() as *mut core::ffi::c_void,
             ));
@@ -7409,16 +7405,13 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
 
     // Check if there's a top-level GlobalSettings that we skimmed over
     parse_toplevel(uc, sp::GlobalSettings.as_ptr())?;
-    if !uc.top_node().is_null() {
-        // Bridge the raw top node into a view for `read_global_settings`.
-        read_global_settings(uc, NodeView::from_ptr(uc.top_node()))?;
+    if let Some(top_node) = uc.top_node_view() {
+        read_global_settings(uc, top_node)?;
     }
 
     // Version5: Pre-6000 settings
     parse_toplevel(uc, sp::Version5.as_ptr())?;
-    if !uc.top_node().is_null() {
-        // Bridge the raw top node into a view for the navigation below.
-        let top_node: &NodeView = NodeView::from_ptr(uc.top_node());
+    if let Some(top_node) = uc.top_node_view() {
         let settings = find_child_strcmp(top_node, b"Settings\0".as_ptr());
         if let Some(settings) = settings {
             read_legacy_settings(uc, settings)?;
@@ -8240,7 +8233,7 @@ pub(crate) unsafe fn read_legacy_media(uc: &Context, node: &NodeView) -> Result<
                 "ufbxi_get_val1(child, \"S\", &video_info.name)"
             );
             video_info.fbx_id = push_synthetic_id(uc);
-            video_info.dom_node = get_dom_node(uc, node.get());
+            video_info.dom_node = get_dom_node(uc, Some(node));
 
             read_video(uc, child, &mut video_info)?;
         }
@@ -8272,7 +8265,7 @@ pub(crate) unsafe fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<
     info.fbx_id = synthetic_id_from_string(uc, type_and_name.data);
     ufbxi_check!(uc, info.fbx_id != 0, "info.fbx_id");
     info.name = name;
-    info.dom_node = get_dom_node(uc, node.get());
+    info.dom_node = get_dom_node(uc, Some(node));
 
     let elem_node: *mut UfbxNode = push_element::<UfbxNode>(uc, &mut info, ElementType::Node);
     ufbxi_check!(uc, !elem_node.is_null(), "elem_node");
@@ -8392,12 +8385,9 @@ pub(crate) unsafe fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
 
     loop {
         parse_legacy_toplevel(uc)?;
-        if uc.top_node().is_null() {
+        let Some(node) = uc.top_node_view() else {
             break;
-        }
-
-        // Bridge the raw top node into a view for the navigation below.
-        let node: &NodeView = NodeView::from_ptr(uc.top_node());
+        };
         if node.name() == sp::FBXHeaderExtension.as_ptr() {
             read_header_extension(uc)?;
         } else if node.name() == sp::Media.as_ptr() {
