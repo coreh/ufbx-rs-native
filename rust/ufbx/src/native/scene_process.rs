@@ -297,6 +297,30 @@ element_props_view!(TextureView, Texture);
 element_props_view!(AnimStackView, AnimStack);
 element_props_view!(DisplayLayerView, DisplayLayer);
 element_props_view!(ConstraintView, Constraint);
+element_props_view!(MaterialView, Material);
+element_props_view!(LodGroupView, LodGroup);
+element_props_view!(CacheDeformerView, CacheDeformer);
+element_props_view!(CacheFileView, CacheFile);
+element_props_view!(AudioClipView, AudioClip);
+element_props_view!(AnimValueView, AnimValue);
+element_props_view!(AnimLayerView, AnimLayer);
+element_props_view!(ShaderView, Shader);
+
+// The finalize path also walks the untyped `ufbx_element` run (the arena
+// `element_data` block); an `ElementView` reinterprets those `*mut Element`
+// pointers so the property table reached through them anchors to `uc` exactly
+// like the typed element views above, differing only in that `ufbx_element`
+// carries its `props` field directly (no embedded `element` member).
+pub(crate) type ElementView = crate::native::view::View<Element>;
+impl crate::native::view::View<Element> {
+    #[inline(always)]
+    pub(crate) fn props_view(&self) -> &PropsView {
+        // SAFETY: reinterpret the embedded `props` field in place (never a
+        // `&mut`, so writes through the element view do not retag it);
+        // interior-mutable, asserts no validity, correlated to `&self` (<= uc).
+        unsafe { PropsView::from_ptr(&raw mut (*self.get()).props) }
+    }
+}
 
 // -- Scene pre-processing (ufbx.c:18066-18543)
 
@@ -375,7 +399,7 @@ pub(crate) fn pivot_div(offset: Real, initial_scale: Real) -> Real {
 // The `UFBX_REGRESSION` `required = true` (ufbx.c:18122-18124) makes the three
 // preceding option tests dead in regression builds — kept verbatim.
 #[cfg_attr(feature = "regression", allow(unused_assignments))]
-pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
+pub(crate) unsafe fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let mut required: bool = false;
     if uc.opts_view().geometry_transform_handling() == GeometryTransformHandling::HelperNodes
         || uc.opts_view().geometry_transform_handling() == GeometryTransformHandling::ModifyGeometry
@@ -477,14 +501,15 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
     let compensate_epsilon: Real = 0.01f32 as Real;
 
     for i in 0..num_elements as usize {
-        let element: *mut Element = *elements.add(i);
+        let element_view: &'a ElementView = ElementView::from_ptr(*elements.add(i));
+        let element: *mut Element = element_view.get();
         let id: u32 = (*element).typed_id;
 
         if (*element).type_ == ElementType::Node {
             let pre_node: *mut PreNode = pre_nodes.add(id as usize);
             (*pre_node).has_constant_scale = true;
             (*pre_node).constant_scale = find_vec3(
-                PropsView::from_ptr(&raw mut (*element).props),
+                element_view.props_view(),
                 sp::Lcl_Scaling.as_ptr(),
                 1.0,
                 1.0,
@@ -500,33 +525,24 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
         if (*element).type_ == ElementType::AnimValue {
             let pre_value: *mut PreAnimValue = pre_anim_values.add(id as usize);
             (*pre_value).has_constant_value = true;
+            (*pre_value).constant_value.x =
+                find_real(element_view.props_view(), sp::X.as_ptr(), math::NAN as Real);
             (*pre_value).constant_value.x = find_real(
-                PropsView::from_ptr(&raw mut (*element).props),
-                sp::X.as_ptr(),
-                math::NAN as Real,
-            );
-            (*pre_value).constant_value.x = find_real(
-                PropsView::from_ptr(&raw mut (*element).props),
+                element_view.props_view(),
                 sp::d_X.as_ptr(),
                 (*pre_value).constant_value.x,
             );
+            (*pre_value).constant_value.y =
+                find_real(element_view.props_view(), sp::Y.as_ptr(), math::NAN as Real);
             (*pre_value).constant_value.y = find_real(
-                PropsView::from_ptr(&raw mut (*element).props),
-                sp::Y.as_ptr(),
-                math::NAN as Real,
-            );
-            (*pre_value).constant_value.y = find_real(
-                PropsView::from_ptr(&raw mut (*element).props),
+                element_view.props_view(),
                 sp::d_Y.as_ptr(),
                 (*pre_value).constant_value.y,
             );
+            (*pre_value).constant_value.z =
+                find_real(element_view.props_view(), sp::Z.as_ptr(), math::NAN as Real);
             (*pre_value).constant_value.z = find_real(
-                PropsView::from_ptr(&raw mut (*element).props),
-                sp::Z.as_ptr(),
-                math::NAN as Real,
-            );
-            (*pre_value).constant_value.z = find_real(
-                PropsView::from_ptr(&raw mut (*element).props),
+                element_view.props_view(),
                 sp::d_Z.as_ptr(),
                 (*pre_value).constant_value.z,
             );
@@ -717,24 +733,26 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
     {
         for i in 0..num_nodes {
             let pre_node: *mut PreNode = pre_nodes.add(i);
-            let node: *mut Node = *elements.add((*pre_node).element_id as usize) as *mut Node;
+            let node_view: &'a NodeView =
+                NodeView::from_ptr(*elements.add((*pre_node).element_id as usize) as *mut Node);
+            let node: *mut Node = node_view.get();
 
             let rotation_pivot: Vec3 = find_vec3(
-                PropsView::from_ptr(&raw mut (*node).element.props),
+                node_view.props_view(),
                 sp::RotationPivot.as_ptr(),
                 0.0,
                 0.0,
                 0.0,
             );
             let scaling_pivot: Vec3 = find_vec3(
-                PropsView::from_ptr(&raw mut (*node).element.props),
+                node_view.props_view(),
                 sp::ScalingPivot.as_ptr(),
                 0.0,
                 0.0,
                 0.0,
             );
             let scaling_offset: Vec3 = find_vec3(
-                PropsView::from_ptr(&raw mut (*node).element.props),
+                node_view.props_view(),
                 sp::ScalingOffset.as_ptr(),
                 0.0,
                 0.0,
@@ -794,7 +812,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
 
                 if can_modify_pivot && (can_modify_geometry_transform || skip_geometry_transform) {
                     let mut geometric_translation: Vec3 = find_vec3(
-                        PropsView::from_ptr(&raw mut (*node).element.props),
+                        node_view.props_view(),
                         sp::GeometricTranslation.as_ptr(),
                         0.0,
                         0.0,
@@ -860,7 +878,7 @@ pub(crate) unsafe fn pre_finalize_scene(uc: &Context) -> Result<(), Fail> {
                         // We need to be careful when doing this in case any component of Z is 0. Fortunately,
                         // the above holds for all `Z != 0`, it will just result in non-zero translation in the parent.
                         let initial_scale: Vec3 = find_vec3(
-                            PropsView::from_ptr(&raw mut (*node).element.props),
+                            node_view.props_view(),
                             sp::Lcl_Scaling.as_ptr(),
                             1.0,
                             1.0,
@@ -1382,7 +1400,10 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
                 let src: *mut Element = find_element_by_fbx_id(uc, (*tmp_conn).src);
                 if src.is_null()
                     || find_prop_len(
-                        PropsView::from_ptr(&raw mut (*src).props),
+                        // `src` is non-null here (the `||` short-circuits the
+                        // null case), and it resolves to a uc-arena element, so
+                        // its view anchors the lookup to `uc`.
+                        ElementView::from_ptr(src).props_view(),
                         (*tmp_conn).src_prop.data,
                         (*tmp_conn).src_prop.length,
                     )
@@ -1397,7 +1418,9 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
                 let dst: *mut Element = find_element_by_fbx_id(uc, (*tmp_conn).dst);
                 if dst.is_null()
                     || find_prop_len(
-                        PropsView::from_ptr(&raw mut (*dst).props),
+                        // `dst` is non-null here (short-circuit) and resolves to
+                        // a uc-arena element, so its view anchors to `uc`.
+                        ElementView::from_ptr(dst).props_view(),
                         (*tmp_conn).dst_prop.data,
                         (*tmp_conn).dst_prop.length,
                     )
@@ -2433,7 +2456,12 @@ pub(crate) unsafe fn fetch_texture_layers(
     let conn_end: *mut Connection = add_ptr(conn, conns.count);
     while conn != conn_end {
         if (*ref_ptr(&(*conn).src)).type_ == ElementType::Texture {
-            let texture: *mut Texture = ref_ptr(&(*conn).src) as *mut Texture;
+            // The layer's source texture is an arena element reached through the
+            // connection (write provenance), so its view anchors the property
+            // lookups exactly like the typed element views in `finalize_scene`.
+            let texture_view: &TextureView =
+                TextureView::from_ptr(ref_ptr(&(*conn).src) as *mut Texture);
+            let texture: *mut Texture = texture_view.get();
             // C: `ufbx_texture_layer layer = { texture };` — the remaining
             // fields are zero-initialized (`UFBX_BLEND_TRANSLUCENT` == 0).
             let mut layer = TextureLayer {
@@ -2441,16 +2469,12 @@ pub(crate) unsafe fn fetch_texture_layers(
                 blend_mode: BlendMode::Translucent,
                 alpha: 0.0,
             };
-            layer.alpha = find_real(
-                PropsView::from_ptr(&raw mut (*texture).element.props),
-                sp::Texture_alpha.as_ptr(),
-                1.0,
-            );
+            layer.alpha = find_real(texture_view.props_view(), sp::Texture_alpha.as_ptr(), 1.0);
             // C: `(ufbx_blend_mode)ufbxi_find_enum(...)` — `ufbxi_find_enum`
             // clamps the result to `[0, UFBX_BLEND_OVERLAY]`, every value of
             // which is a valid `ufbx_blend_mode`.
             layer.blend_mode = core::mem::transmute::<u32, BlendMode>(find_enum(
-                PropsView::from_ptr(&raw mut (*texture).element.props),
+                texture_view.props_view(),
                 sp::BlendMode.as_ptr(),
                 BlendMode::Replace as i64,
                 BlendMode::Overlay as i64,
@@ -4169,7 +4193,12 @@ pub(crate) unsafe fn finalize_nurbs_basis(
 
 // ufbx.c:20314-20362 `ufbxi_finalize_lod_group`
 #[inline(never)]
-pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod: *mut LodGroup) -> Result<(), Fail> {
+pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Result<(), Fail> {
+    // `lod_view` is the uc-anchored dispatch handle (minted in `finalize_scene`
+    // from the arena `lod_groups` run); the raw `lod` is used only for the field
+    // writes, while every property lookup goes through `lod_view.props_view()`
+    // (<= uc), collapsing the per-call free-lifetime `PropsView` bridges.
+    let lod: *mut LodGroup = lod_view.get();
     let mut num_levels: usize = 0;
     for _i in 0..(*lod).element.instances.count {
         // C-parity: the subscript really is `instances.data[0]` (not `[i]`) —
@@ -4187,12 +4216,8 @@ pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod: *mut LodGroup) -> Res
     let mut i: usize = 0;
     loop {
         let len: i32 = ufbxi_snprintf!(prop_name, size_of::<[u8; 64]>(), "Thresholds|Level%zu", i);
-        let prop: *mut Prop = find_prop_len(
-            PropsView::from_ptr(&raw mut (*lod).element.props),
-            prop_name,
-            len as usize,
-        )
-        .map_or(ptr::null_mut(), PropView::get);
+        let prop: *mut Prop = find_prop_len(lod_view.props_view(), prop_name, len as usize)
+            .map_or(ptr::null_mut(), PropView::get);
         if prop.is_null() {
             break;
         }
@@ -4204,28 +4229,22 @@ pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod: *mut LodGroup) -> Res
     ufbxi_check!(uc, !levels.is_null(), "levels");
 
     (*lod).relative_distances = api_find_bool(
-        PropsView::from_ptr(&raw mut (*lod).element.props),
+        lod_view.props_view(),
         b"ThresholdsUsedAsPercentage\0".as_ptr(),
         false,
     );
-    (*lod).ignore_parent_transform = !api_find_bool(
-        PropsView::from_ptr(&raw mut (*lod).element.props),
-        b"WorldSpace\0".as_ptr(),
-        true,
-    );
+    (*lod).ignore_parent_transform =
+        !api_find_bool(lod_view.props_view(), b"WorldSpace\0".as_ptr(), true);
 
-    (*lod).use_distance_limit = api_find_bool(
-        PropsView::from_ptr(&raw mut (*lod).element.props),
-        b"MinMaxDistance\0".as_ptr(),
-        false,
-    );
+    (*lod).use_distance_limit =
+        api_find_bool(lod_view.props_view(), b"MinMaxDistance\0".as_ptr(), false);
     (*lod).distance_limit_min = api_find_real(
-        PropsView::from_ptr(&raw mut (*lod).element.props),
+        lod_view.props_view(),
         b"MinDistance\0".as_ptr(),
         -100.0 as Real,
     );
     (*lod).distance_limit_max = api_find_real(
-        PropsView::from_ptr(&raw mut (*lod).element.props),
+        lod_view.props_view(),
         b"MaxDistance\0".as_ptr(),
         100.0 as Real,
     );
@@ -4244,7 +4263,7 @@ pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod: *mut LodGroup) -> Res
                 i - 1
             );
             (*level).distance = api_find_real_len(
-                PropsView::from_ptr(&raw mut (*lod).element.props),
+                lod_view.props_view(),
                 prop_name,
                 len as usize,
                 0.0f32 as Real,
@@ -4260,12 +4279,7 @@ pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod: *mut LodGroup) -> Res
                 "DisplayLevels|Level%zu",
                 i
             );
-            let display: i64 = api_find_int_len(
-                PropsView::from_ptr(&raw mut (*lod).element.props),
-                prop_name,
-                len as usize,
-                0,
-            );
+            let display: i64 = api_find_int_len(lod_view.props_view(), prop_name, len as usize, 0);
             if display >= 0 && display <= 2 {
                 // C: `(ufbx_lod_display)display` — guarded to [0, 2], every
                 // value of which is a valid `ufbx_lod_display`.
@@ -4566,22 +4580,17 @@ pub(crate) const SHADER_TEXTURE_TYPE_COUNT: u32 = ShaderTextureType::Osl as u32 
 #[inline(never)]
 pub(crate) unsafe fn finalize_shader_texture<'a>(
     uc: &'a Context,
-    texture: *mut Texture,
+    texture_view: &'a TextureView,
 ) -> Result<(), Fail> {
-    let classid_a: u32 = api_find_int(
-        PropsView::from_ptr(&raw mut (*texture).element.props),
-        b"3dsMax|ClassIDa\0".as_ptr(),
-        0,
-    ) as u64 as u32;
-    let classid_b: u32 = api_find_int(
-        PropsView::from_ptr(&raw mut (*texture).element.props),
-        b"3dsMax|ClassIDb\0".as_ptr(),
-        0,
-    ) as u64 as u32;
+    let texture: *mut Texture = texture_view.get();
+    let classid_a: u32 =
+        api_find_int(texture_view.props_view(), b"3dsMax|ClassIDa\0".as_ptr(), 0) as u64 as u32;
+    let classid_b: u32 =
+        api_find_int(texture_view.props_view(), b"3dsMax|ClassIDb\0".as_ptr(), 0) as u64 as u32;
     let classid: u64 = (classid_a as u64) << 32 | classid_b as u64;
 
     let max_texture: String = find_string(
-        PropsView::from_ptr(&raw mut (*texture).element.props),
+        texture_view.props_view(),
         b"3dsMax|MaxTexture\0".as_ptr(),
         EMPTY_STRING.0,
     );
@@ -4626,11 +4635,8 @@ pub(crate) unsafe fn finalize_shader_texture<'a>(
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(name_props); i++)`
     for i in 0..NAME_PROPS.len() {
-        let prop: *mut Prop = api_find_prop(
-            PropsView::from_ptr(&raw mut (*texture).element.props),
-            NAME_PROPS[i].0,
-        )
-        .map_or(ptr::null_mut(), PropView::get);
+        let prop: *mut Prop = api_find_prop(texture_view.props_view(), NAME_PROPS[i].0)
+            .map_or(ptr::null_mut(), PropView::get);
         if !prop.is_null() {
             (*shader).shader_name = (*prop).value_str;
             break;
@@ -4639,11 +4645,8 @@ pub(crate) unsafe fn finalize_shader_texture<'a>(
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(source_props); i++)`
     for i in 0..SOURCE_PROPS.len() {
-        let prop: *mut Prop = api_find_prop(
-            PropsView::from_ptr(&raw mut (*texture).element.props),
-            SOURCE_PROPS[i].0,
-        )
-        .map_or(ptr::null_mut(), PropView::get);
+        let prop: *mut Prop = api_find_prop(texture_view.props_view(), SOURCE_PROPS[i].0)
+            .map_or(ptr::null_mut(), PropView::get);
         if !prop.is_null() {
             (*shader).shader_source = (*prop).value_str;
             (*shader).raw_shader_source = (*prop).value_blob;
@@ -5650,7 +5653,7 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
 
 // ufbx.c:21165-21332 `ufbxi_modify_geometry`
 #[inline(never)]
-pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
+pub(crate) unsafe fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
     let mut do_mirror: bool = false;
     let do_winding: bool = uc.opts_view().reverse_winding();
     let mut do_scale: bool = false;
@@ -5664,14 +5667,14 @@ pub(crate) unsafe fn modify_geometry(uc: &Context) -> Result<(), Fail> {
         let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
         let p_node_end: *mut *mut Node = add_ptr(p_node, uc.scene_view().nodes_view().count());
         while p_node != p_node_end {
-            let node: *mut Node = *p_node;
+            let node_view: &'a NodeView = NodeView::from_ptr(*p_node);
+            let node: *mut Node = node_view.get();
             if (*node).is_root {
                 p_node = p_node.add(1);
                 continue;
             }
 
-            (*node).geometry_transform =
-                get_geometry_transform(PropsView::from_ptr(&raw mut (*node).element.props), node);
+            (*node).geometry_transform = get_geometry_transform(node_view.props_view(), node);
             if !is_transform_identity(&raw const (*node).geometry_transform) {
                 (*node).geometry_to_node =
                     transform_to_matrix(&raw const (*node).geometry_transform);
@@ -6243,7 +6246,7 @@ pub(crate) unsafe fn fetch_file_content(uc: &Context, p_filename: *mut String, p
 
 // ufbx.c:21489-21526 `ufbxi_resolve_file_content`
 #[inline(never)]
-pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
+pub(crate) unsafe fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
     let initial_stack: usize = uc.tmp_stack_view().num_items();
 
     // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
@@ -6279,27 +6282,19 @@ pub(crate) unsafe fn resolve_file_content(uc: &Context) -> Result<(), Fail> {
     let p_clip_end: *mut *mut AudioClip =
         add_ptr(p_clip, uc.scene_view().audio_clips_view().count());
     while p_clip != p_clip_end {
-        let clip: *mut AudioClip = *p_clip;
-        (*clip).absolute_filename = find_string(
-            PropsView::from_ptr(&raw mut (*clip).element.props),
-            b"Path\0".as_ptr(),
-            EMPTY_STRING.0,
-        );
+        let clip_view: &'a AudioClipView = AudioClipView::from_ptr(*p_clip);
+        let clip: *mut AudioClip = clip_view.get();
+        (*clip).absolute_filename =
+            find_string(clip_view.props_view(), b"Path\0".as_ptr(), EMPTY_STRING.0);
         (*clip).relative_filename = find_string(
-            PropsView::from_ptr(&raw mut (*clip).element.props),
+            clip_view.props_view(),
             b"RelPath\0".as_ptr(),
             EMPTY_STRING.0,
         );
-        (*clip).raw_absolute_filename = find_blob(
-            PropsView::from_ptr(&raw mut (*clip).element.props),
-            b"Path\0".as_ptr(),
-            EMPTY_BLOB.0,
-        );
-        (*clip).raw_relative_filename = find_blob(
-            PropsView::from_ptr(&raw mut (*clip).element.props),
-            b"RelPath\0".as_ptr(),
-            EMPTY_BLOB.0,
-        );
+        (*clip).raw_absolute_filename =
+            find_blob(clip_view.props_view(), b"Path\0".as_ptr(), EMPTY_BLOB.0);
+        (*clip).raw_relative_filename =
+            find_blob(clip_view.props_view(), b"RelPath\0".as_ptr(), EMPTY_BLOB.0);
         resolve_filenames(
             uc,
             &raw mut (*clip).filename as *mut Strblob,
@@ -6546,7 +6541,7 @@ pub(crate) unsafe fn push_anim(
 // into the public `ufbx_scene` graph. Split into no helpers upstream, so it is
 // ported as one function.
 #[inline(never)]
-pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
+pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let num_elements: usize = uc.num_elements() as usize;
 
     uc.scene_view().elements_view().set_count(num_elements);
@@ -7103,9 +7098,10 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     let p_deformer_end: *mut *mut CacheDeformer =
         add_ptr(p_deformer, uc.scene_view().cache_deformers_view().count());
     while p_deformer != p_deformer_end {
-        let deformer: *mut CacheDeformer = *p_deformer;
+        let deformer_view: &'a CacheDeformerView = CacheDeformerView::from_ptr(*p_deformer);
+        let deformer: *mut CacheDeformer = deformer_view.get();
         (*deformer).channel = find_string(
-            PropsView::from_ptr(&raw mut (*deformer).element.props),
+            deformer_view.props_view(),
             b"ChannelName\0".as_ptr(),
             EMPTY_STRING.0,
         );
@@ -7124,35 +7120,32 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     let p_cache_end: *mut *mut CacheFile =
         add_ptr(p_cache, uc.scene_view().cache_files_view().count());
     while p_cache != p_cache_end {
-        let cache: *mut CacheFile = *p_cache;
+        let cache_view: &'a CacheFileView = CacheFileView::from_ptr(*p_cache);
+        let cache: *mut CacheFile = cache_view.get();
 
         (*cache).absolute_filename = find_string(
-            PropsView::from_ptr(&raw mut (*cache).element.props),
+            cache_view.props_view(),
             b"CacheAbsoluteFileName\0".as_ptr(),
             EMPTY_STRING.0,
         );
         (*cache).relative_filename = find_string(
-            PropsView::from_ptr(&raw mut (*cache).element.props),
+            cache_view.props_view(),
             b"CacheFileName\0".as_ptr(),
             EMPTY_STRING.0,
         );
 
         (*cache).raw_absolute_filename = find_blob(
-            PropsView::from_ptr(&raw mut (*cache).element.props),
+            cache_view.props_view(),
             b"CacheAbsoluteFileName\0".as_ptr(),
             EMPTY_BLOB.0,
         );
         (*cache).raw_relative_filename = find_blob(
-            PropsView::from_ptr(&raw mut (*cache).element.props),
+            cache_view.props_view(),
             b"CacheFileName\0".as_ptr(),
             EMPTY_BLOB.0,
         );
 
-        let type_: i64 = api_find_int(
-            PropsView::from_ptr(&raw mut (*cache).element.props),
-            b"CacheFileType\0".as_ptr(),
-            0,
-        );
+        let type_: i64 = api_find_int(cache_view.props_view(), b"CacheFileType\0".as_ptr(), 0);
         if type_ >= 0 && type_ <= CacheFileFormat::Mc as i64 {
             // C: `(ufbx_cache_file_format)type` — the guard above pins `type`
             // into `0..=UFBX_CACHE_FILE_FORMAT_MC`, exactly the enum range.
@@ -7591,7 +7584,8 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     let p_layer_end: *mut *mut AnimLayer =
         add_ptr(p_layer, uc.scene_view().anim_layers_view().count());
     while p_layer != p_layer_end {
-        let layer: *mut AnimLayer = *p_layer;
+        let layer_view: &'a AnimLayerView = AnimLayerView::from_ptr(*p_layer);
+        let layer: *mut AnimLayer = layer_view.get();
         fetch_dst_elements(
             uc,
             &raw mut (*layer).anim_values as *mut c_void,
@@ -7645,11 +7639,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             (*layer)._max_element_id = max_id;
         }
 
-        match find_int(
-            PropsView::from_ptr(&raw mut (*layer).element.props),
-            sp::BlendMode.as_ptr(),
-            0,
-        ) {
+        match find_int(layer_view.props_view(), sp::BlendMode.as_ptr(), 0) {
             0 => {
                 // Additive
                 (*layer).blended = true;
@@ -7672,11 +7662,8 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             }
         }
 
-        let weight_prop: *mut Prop = find_prop(
-            PropsView::from_ptr(&raw mut (*layer).element.props),
-            sp::Weight.as_ptr(),
-        )
-        .map_or(ptr::null_mut(), PropView::get);
+        let weight_prop: *mut Prop = find_prop(layer_view.props_view(), sp::Weight.as_ptr())
+            .map_or(ptr::null_mut(), PropView::get);
         if !weight_prop.is_null() {
             // C-parity: `prop->value_real` is the `ufbx_prop` value union's
             // first real; the generated struct keeps only `value_vec4`.
@@ -7696,12 +7683,12 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             (*layer).weight_is_animated = false;
         }
         (*layer).compose_rotation = find_int(
-            PropsView::from_ptr(&raw mut (*layer).element.props),
+            layer_view.props_view(),
             sp::RotationAccumulationMode.as_ptr(),
             0,
         ) == 0;
         (*layer).compose_scale = find_int(
-            PropsView::from_ptr(&raw mut (*layer).element.props),
+            layer_view.props_view(),
             sp::ScaleAccumulationMode.as_ptr(),
             0,
         ) == 0;
@@ -7738,36 +7725,37 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     let p_value_end: *mut *mut AnimValue =
         add_ptr(p_value, uc.scene_view().anim_values_view().count());
     while p_value != p_value_end {
-        let value: *mut AnimValue = *p_value;
+        let value_view: &'a AnimValueView = AnimValueView::from_ptr(*p_value);
+        let value: *mut AnimValue = value_view.get();
 
         // TODO: Search for things like d|Visibility with a constructed name
         (*value).default_value.x = find_real(
-            PropsView::from_ptr(&raw mut (*value).element.props),
+            value_view.props_view(),
             sp::X.as_ptr(),
             (*value).default_value.x,
         );
         (*value).default_value.x = find_real(
-            PropsView::from_ptr(&raw mut (*value).element.props),
+            value_view.props_view(),
             sp::d_X.as_ptr(),
             (*value).default_value.x,
         );
         (*value).default_value.y = find_real(
-            PropsView::from_ptr(&raw mut (*value).element.props),
+            value_view.props_view(),
             sp::Y.as_ptr(),
             (*value).default_value.y,
         );
         (*value).default_value.y = find_real(
-            PropsView::from_ptr(&raw mut (*value).element.props),
+            value_view.props_view(),
             sp::d_Y.as_ptr(),
             (*value).default_value.y,
         );
         (*value).default_value.z = find_real(
-            PropsView::from_ptr(&raw mut (*value).element.props),
+            value_view.props_view(),
             sp::Z.as_ptr(),
             (*value).default_value.z,
         );
         (*value).default_value.z = find_real(
-            PropsView::from_ptr(&raw mut (*value).element.props),
+            value_view.props_view(),
             sp::d_Z.as_ptr(),
             (*value).default_value.z,
         );
@@ -7791,7 +7779,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
                 }
 
                 let prop: *mut Prop = find_prop_len(
-                    PropsView::from_ptr(&raw mut (*value).element.props),
+                    value_view.props_view(),
                     (*conn).dst_prop.data,
                     (*conn).dst_prop.length,
                 )
@@ -7828,7 +7816,8 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     let mut p_shader: *mut *mut Shader = uc.scene_view().shaders_view().data() as *mut *mut Shader;
     let p_shader_end: *mut *mut Shader = add_ptr(p_shader, uc.scene_view().shaders_view().count());
     while p_shader != p_shader_end {
-        let shader: *mut Shader = *p_shader;
+        let shader_view: &'a ShaderView = ShaderView::from_ptr(*p_shader);
+        let shader: *mut Shader = shader_view.get();
         fetch_dst_elements(
             uc,
             &raw mut (*shader).bindings as *mut c_void,
@@ -7839,11 +7828,8 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             ElementType::ShaderBinding,
         )?;
 
-        let api: *mut Prop = api_find_prop(
-            PropsView::from_ptr(&raw mut (*shader).element.props),
-            b"RenderAPI\0".as_ptr(),
-        )
-        .map_or(ptr::null_mut(), PropView::get);
+        let api: *mut Prop = api_find_prop(shader_view.props_view(), b"RenderAPI\0".as_ptr())
+            .map_or(ptr::null_mut(), PropView::get);
         if !api.is_null() {
             if strcmp((*api).value_str.data, b"ARNOLD_SHADER_ID\0".as_ptr()) == 0 {
                 (*shader).type_ = ShaderType::ArnoldStandardSurface;
@@ -7862,7 +7848,8 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     let p_material_end: *mut *mut Material =
         add_ptr(p_material, uc.scene_view().materials_view().count());
     while p_material != p_material_end {
-        let material: *mut Material = *p_material;
+        let material_view: &'a MaterialView = MaterialView::from_ptr(*p_material);
+        let material: *mut Material = material_view.get();
         (*material).shader = opt_ref(fetch_src_element(
             &mut (*material).element,
             false,
@@ -7893,16 +7880,12 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
 
             // TODO: Is this too strict?
             if (*material).shader_type == ShaderType::Unknown {
-                let classid_a: u32 = api_find_int(
-                    PropsView::from_ptr(&raw mut (*material).element.props),
-                    b"3dsMax|ClassIDa\0".as_ptr(),
-                    0,
-                ) as u64 as u32;
-                let classid_b: u32 = api_find_int(
-                    PropsView::from_ptr(&raw mut (*material).element.props),
-                    b"3dsMax|ClassIDb\0".as_ptr(),
-                    0,
-                ) as u64 as u32;
+                let classid_a: u32 =
+                    api_find_int(material_view.props_view(), b"3dsMax|ClassIDa\0".as_ptr(), 0)
+                        as u64 as u32;
+                let classid_b: u32 =
+                    api_find_int(material_view.props_view(), b"3dsMax|ClassIDb\0".as_ptr(), 0)
+                        as u64 as u32;
                 if classid_a == 0x3d6b1cecu32 && classid_b == 0xdeadc001u32 {
                     (*material).shader_type = ShaderType::E3DsMaxPhysicalMaterial;
                     (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|Parameters|\0");
@@ -8102,15 +8085,13 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
     let p_texture_end: *mut *mut Texture =
         add_ptr(p_texture, uc.scene_view().textures_view().count());
     while p_texture != p_texture_end {
-        let texture: *mut Texture = *p_texture;
+        let texture_view: &'a TextureView = TextureView::from_ptr(*p_texture);
+        let texture: *mut Texture = texture_view.get();
         let extra: *mut TextureExtra =
             get_element_extra(uc, (*texture).element.element_id) as *mut TextureExtra;
 
-        let uv_set: *mut Prop = find_prop(
-            PropsView::from_ptr(&raw mut (*texture).element.props),
-            sp::UVSet.as_ptr(),
-        )
-        .map_or(ptr::null_mut(), PropView::get);
+        let uv_set: *mut Prop = find_prop(texture_view.props_view(), sp::UVSet.as_ptr())
+            .map_or(ptr::null_mut(), PropView::get);
         if !uv_set.is_null() {
             (*texture).uv_set = (*uv_set).value_str;
         } else {
@@ -8128,7 +8109,7 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
             (*texture).content = (*texture_video).content;
         }
 
-        finalize_shader_texture(uc, texture)?;
+        finalize_shader_texture(uc, texture_view)?;
 
         resolve_filenames(
             uc,
@@ -8391,7 +8372,8 @@ pub(crate) unsafe fn finalize_scene(uc: &Context) -> Result<(), Fail> {
         uc.scene_view().lod_groups_view().data() as *mut *mut LodGroup;
     let p_lod_end: *mut *mut LodGroup = add_ptr(p_lod, uc.scene_view().lod_groups_view().count());
     while p_lod != p_lod_end {
-        finalize_lod_group(uc, *p_lod)?;
+        let lod: &'a LodGroupView = LodGroupView::from_ptr(*p_lod);
+        finalize_lod_group(uc, lod)?;
         p_lod = p_lod.add(1);
     }
 
