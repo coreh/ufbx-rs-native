@@ -979,8 +979,11 @@ pub(crate) unsafe fn find_prop_element_len(
     name_len: usize,
     type_: ElementType,
 ) -> *mut Element {
-    // Raw-element root: `element` is `*const Element`; bridge its props table to
-    // a view with `from_ptr` (`&raw` avoids forming an intermediate `&Props`).
+    // Public-boundary root: `element` is a caller-owned `*const Element` and the
+    // props view is used read-only. Do NOT thread this into a `uc`-anchored view:
+    // a public element's provenance can be a read-only `&Element`, which an
+    // interior-mutable `View` would retag (Miri SB — see the topology finding).
+    // `&raw` avoids forming an intermediate `&Props`.
     let props: &PropsView = PropsView::from_ptr(&raw const (*element).props as *mut Props);
     match find_prop_len(props, name, name_len) {
         Some(prop) => get_prop_element(element, prop.get(), type_),
@@ -1332,6 +1335,9 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
     // C: `ufbx_prop result;`
     let mut result: Prop;
 
+    // Public-boundary root: caller-owned `*const Element`, props used read-only.
+    // Do NOT anchor this to `uc` — public-element provenance can be a read-only
+    // `&Element` an interior-mutable `View` would retag (Miri SB, topology finding).
     let props: &PropsView = PropsView::from_ptr(&raw const (*element).props as *mut Props);
     let prop: Option<&PropView> = find_prop_len(props, name, name_len);
     if let Some(found) = prop {
