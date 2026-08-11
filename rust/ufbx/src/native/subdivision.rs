@@ -314,6 +314,15 @@ impl MeshView {
     pub(crate) fn num_vertices(&self) -> usize {
         unsafe { (*self.get()).num_vertices }
     }
+    // `edge_crease` (List<Real>) — typed VIEW handle (reinterpret-in-place);
+    // interior-mutable over the context-owned `src_mesh`, read via `.data()`.
+    #[inline(always)]
+    pub(crate) fn edge_crease_view(&self) -> &crate::prelude::ListView<crate::prelude::Real> {
+        unsafe {
+            &*(&raw mut (*self.get()).edge_crease
+                as *mut crate::prelude::ListView<crate::prelude::Real>)
+        }
+    }
     #[inline(always)]
     pub(crate) fn subdivision_result_ptr(
         &self,
@@ -872,7 +881,7 @@ pub(crate) unsafe fn is_edge_split(
 // ufbx.c:29036-29042 `ufbxi_edge_crease`
 #[cfg(feature = "subdivision")]
 pub(crate) unsafe fn edge_crease(
-    mesh: *const Mesh,
+    mesh: &MeshView,
     split: bool,
     topo: *const TopoEdge,
     index: u32,
@@ -883,10 +892,10 @@ pub(crate) unsafe fn edge_crease(
     if split {
         return 1.0;
     }
-    if !(*mesh).edge_crease.data.is_null() && (*topo.add(index as usize)).edge != NO_INDEX {
-        return *(*mesh)
-            .edge_crease
-            .data
+    if !mesh.edge_crease_view().data().is_null() && (*topo.add(index as usize)).edge != NO_INDEX {
+        return *mesh
+            .edge_crease_view()
+            .data()
             .add((*topo.add(index as usize)).edge as usize)
             * (10.0 as Real);
     }
@@ -1220,13 +1229,13 @@ pub(crate) unsafe fn subdivide_layer(
             let prev_split: bool = end_edge != NO_INDEX && is_edge_split(input, topo, end_edge);
 
             // Either of the first two edges may be creased
-            let start_crease: Real = edge_crease(mesh, start_split, topo, start);
+            let start_crease: Real = edge_crease(sc.src_mesh_view(), start_split, topo, start);
             if start_crease > 0.0 {
                 total_crease += start_crease;
                 crease_input_indices[num_crease] = 1;
                 num_crease += 1;
             }
-            let prev_crease: Real = edge_crease(mesh, prev_split, topo, start_prev);
+            let prev_crease: Real = edge_crease(sc.src_mesh_view(), prev_split, topo, start_prev);
             if prev_crease > 0.0 {
                 total_crease += prev_crease;
                 crease_input_indices[num_crease] = 2;
@@ -1305,7 +1314,7 @@ pub(crate) unsafe fn subdivide_layer(
 
                     // Add the edge crease, this also handles boundaries as they
                     // have an implicit crease of 1.0 using `ufbxi_edge_crease()`
-                    let cur_crease: Real = edge_crease(mesh, split, topo, cur);
+                    let cur_crease: Real = edge_crease(sc.src_mesh_view(), split, topo, cur);
                     if cur_crease > 0.0 {
                         total_crease += cur_crease;
                         if num_crease < 2 {
