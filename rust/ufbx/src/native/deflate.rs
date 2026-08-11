@@ -116,9 +116,10 @@ pub(crate) struct BitStream {
 // Typed interior-mutable VIEW over the `stream` field (BitStream), reinterpreted in
 // place. Sound despite the self-referential `buffer`→`local_buffer` pointer: a view is
 // a typed lens over the same bytes at the same address — it never MOVES the struct, so
-// the interior pointer stays valid, and `bit_stream_init` still sets it up through the
-// raw `stream_mut_ptr()`. Single-threaded (deflate), POD leaves. Verified under Miri
-// (SB + TB) on the DEFLATE-heavy load path. Only the hot-loop scalar leaves are exposed.
+// the interior pointer stays valid, and `bit_stream_init` sets it up through the raw
+// `s.get()` (`UnsafeCell` pointer, no retag). Single-threaded (deflate), POD leaves.
+// Verified under Miri (SB + TB) on the DEFLATE-heavy load path. The hot-loop scalar
+// leaves are exposed here; the `bit_*` machinery threads `&BitStreamView` whole.
 pub(crate) type BitStreamView = crate::native::view::View<BitStream>;
 
 impl BitStreamView {
@@ -333,16 +334,10 @@ impl DeflateContext {
         self.0.get().cast()
     }
 
-    // `stream` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn stream_mut_ptr(&self) -> *mut BitStream {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).stream }
-    }
-    // `stream` (BitStream) — typed VIEW handle (reinterpret-in-place); hot-loop scalar
-    // leaves via BitStreamView. The self-ref `buffer` pointer is set up through
-    // `stream_mut_ptr()` above and survives the view's in-place retag (Miri-verified).
+    // `stream` (BitStream) — typed VIEW handle (reinterpret-in-place); the anchored
+    // root the `bit_*` machinery threads as `&BitStreamView`, and the source of the
+    // hot-loop scalar leaves. The self-ref `buffer` pointer is set up through the
+    // view's raw `s.get()` and survives the view's in-place retag (Miri-verified).
     #[inline(always)]
     pub(crate) fn stream_view(&self) -> &BitStreamView {
         unsafe { &*(&raw mut (*self.get()).stream as *mut BitStreamView) }
@@ -423,40 +418,41 @@ pub(crate) fn bit_reverse(mask: u32, num_bits: u32) -> u32 {
 
 // ufbx.c:2051-2086 `ufbxi_bit_chunk_refill`
 #[inline(never)]
-pub(crate) unsafe fn bit_chunk_refill(s: *mut BitStream, ptr: *const u8) -> *const u8 {
+pub(crate) unsafe fn bit_chunk_refill(s: &BitStreamView, ptr: *const u8) -> *const u8 {
     // `s.buffer` may point into `s.local_buffer` (see `bit_stream_init`), i.e.
-    // the `BitStream` holds a raw pointer aliasing one of its own fields. A
-    // `&mut *s` reborrow here would retag the whole struct — including
-    // `local_buffer`'s range — and invalidate that interior pointer, so this
-    // function keeps `s` raw and derefs fields as `(*s).field`, matching the
-    // C `s->field` access. `ptr` is a plain byte position, not a borrow of `*s`.
+    // the `BitStream` holds a raw pointer aliasing one of its own fields. `s` is
+    // threaded as an interior-mutable `&BitStreamView`; field access goes
+    // through the raw `s.get()` (an `UnsafeCell` pointer, no retag) so the
+    // whole-struct — including `local_buffer`'s range — is never retagged and
+    // that interior pointer stays valid, matching the C `s->field` access.
+    // `ptr` is a plain byte position, not a borrow of the stream.
 
     // Copy any left-over data to the beginning of `buffer`
-    let mut left = to_size((*s).chunk_real_end.offset_from(ptr));
+    let mut left = to_size((*s.get()).chunk_real_end.offset_from(ptr));
     ufbxi_dev_assert!(left < 64);
     if left > 0 {
         // C: memmove(s->buffer, ptr, left)
-        core::ptr::copy(ptr, (*s).buffer, left);
+        core::ptr::copy(ptr, (*s.get()).buffer, left);
     }
 
-    (*s).num_read_before_chunk += to_size(ptr.offset_from((*s).chunk_begin));
+    (*s.get()).num_read_before_chunk += to_size(ptr.offset_from((*s.get()).chunk_begin));
 
     // Read more user data if the user supplied a `read_fn()`, otherwise
     // we assume the initial data chunk is the whole input buffer.
-    if (*s).read_fn.is_some() && !(*s).cancelled {
-        let to_read = min_sz((*s).input_left, (*s).buffer_size - left);
+    if (*s.get()).read_fn.is_some() && !(*s.get()).cancelled {
+        let to_read = min_sz((*s.get()).input_left, (*s.get()).buffer_size - left);
         if to_read > 0 {
-            let mut num_read = ((*s).read_fn.unwrap())(
-                (*s).read_user,
-                (*s).buffer.add(left) as *mut c_void,
+            let mut num_read = ((*s.get()).read_fn.unwrap())(
+                (*s.get()).read_user,
+                (*s.get()).buffer.add(left) as *mut c_void,
                 to_read,
             );
             // TODO: IO error, should unify with (currently broken) cancel logic
             if num_read > to_read {
                 num_read = 0;
             }
-            ufbxi_dev_assert!((*s).input_left >= num_read);
-            (*s).input_left -= num_read;
+            ufbxi_dev_assert!((*s.get()).input_left >= num_read);
+            (*s.get()).input_left -= num_read;
             left += num_read;
         }
     }
@@ -464,25 +460,26 @@ pub(crate) unsafe fn bit_chunk_refill(s: *mut BitStream, ptr: *const u8) -> *con
     // Pad the rest with zeros
     if left < 64 {
         // C: memset(s->buffer + left, 0, 64 - left)
-        core::ptr::write_bytes((*s).buffer.add(left), 0, 64 - left);
+        core::ptr::write_bytes((*s.get()).buffer.add(left), 0, 64 - left);
         left = 64;
     }
 
-    (*s).chunk_begin = (*s).buffer;
-    (*s).chunk_ptr = (*s).buffer;
-    (*s).chunk_end = (*s).buffer.add(left - 8);
-    (*s).chunk_real_end = (*s).buffer.add(left);
-    (*s).buffer
+    (*s.get()).chunk_begin = (*s.get()).buffer;
+    (*s.get()).chunk_ptr = (*s.get()).buffer;
+    (*s.get()).chunk_end = (*s.get()).buffer.add(left - 8);
+    (*s.get()).chunk_real_end = (*s.get()).buffer.add(left);
+    (*s.get()).buffer
 }
 
 // ufbx.c:2088-2139 `ufbxi_bit_stream_init`
 #[inline(never)]
-pub(crate) unsafe fn bit_stream_init(s: *mut BitStream, input: *const InflateInput) {
+pub(crate) unsafe fn bit_stream_init(s: &BitStreamView, input: *const InflateInput) {
     // `s.buffer` may point into `s.local_buffer` (set below), i.e. the
-    // `BitStream` holds a raw pointer aliasing one of its own fields, so `s`
-    // stays raw and is derefed as `(*s).field` to avoid a whole-struct retag
-    // invalidating that interior pointer. `input` has no such aliasing and is
-    // unconditionally dereferenced in the original C (never NULL), so a local
+    // `BitStream` holds a raw pointer aliasing one of its own fields, so `s` is
+    // an interior-mutable `&BitStreamView` and is derefed via the raw `s.get()`
+    // (`UnsafeCell`, no retag) as `(*s.get()).field` to avoid a whole-struct
+    // retag invalidating that interior pointer. `input` has no such aliasing and
+    // is unconditionally dereferenced in the original C (never NULL), so a local
     // shared borrow is kept for it.
     let input = &*input;
 
@@ -491,116 +488,126 @@ pub(crate) unsafe fn bit_stream_init(s: *mut BitStream, input: *const InflateInp
         data_size = input.total_size;
     }
 
-    (*s).read_fn = input.read_fn;
-    (*s).read_user = input.read_user;
+    (*s.get()).read_fn = input.read_fn;
+    (*s.get()).read_user = input.read_user;
     // C: struct assignment `s->progress_cb = input->progress_cb` (memcpy);
     // `RawProgressCb` has no `Copy` derive in generated.rs — field-wise copy.
-    (*s).progress_cb = RawProgressCb {
+    (*s.get()).progress_cb = RawProgressCb {
         fn_: input.progress_cb.fn_,
         user: input.progress_cb.user,
     };
-    (*s).chunk_begin = input.data as *const u8;
-    (*s).chunk_ptr = input.data as *const u8;
-    (*s).chunk_end = add_ptr(input.data as *mut u8, max_sz(8, data_size) - 8) as *const u8;
-    (*s).chunk_real_end = add_ptr(input.data as *mut u8, data_size) as *const u8;
-    (*s).input_left = input.total_size - data_size;
+    (*s.get()).chunk_begin = input.data as *const u8;
+    (*s.get()).chunk_ptr = input.data as *const u8;
+    (*s.get()).chunk_end = add_ptr(input.data as *mut u8, max_sz(8, data_size) - 8) as *const u8;
+    (*s.get()).chunk_real_end = add_ptr(input.data as *mut u8, data_size) as *const u8;
+    (*s.get()).input_left = input.total_size - data_size;
 
     // Use the user buffer if it's large enough, otherwise `local_buffer`
     if input.buffer_size > size_of::<[u8; 256]>() {
-        (*s).buffer = input.buffer as *mut u8;
-        (*s).buffer_size = input.buffer_size;
+        (*s.get()).buffer = input.buffer as *mut u8;
+        (*s.get()).buffer_size = input.buffer_size;
     } else {
-        (*s).buffer = (*s).local_buffer.as_mut_ptr();
-        (*s).buffer_size = size_of::<[u8; 256]>();
+        (*s.get()).buffer = (*s.get()).local_buffer.as_mut_ptr();
+        (*s.get()).buffer_size = size_of::<[u8; 256]>();
     }
-    (*s).num_read_before_chunk = 0;
-    (*s).progress_bias = input.progress_size_before;
+    (*s.get()).num_read_before_chunk = 0;
+    (*s.get()).progress_bias = input.progress_size_before;
     // C: `input->total_size + input->progress_size_before + input->progress_size_after`
     // in uint64_t (wraps on overflow of user-supplied sizes).
-    (*s).progress_total = (input.total_size as u64)
+    (*s.get()).progress_total = (input.total_size as u64)
         .wrapping_add(input.progress_size_before)
         .wrapping_add(input.progress_size_after);
-    if (*s).progress_cb.fn_.is_none() || input.progress_interval_hint >= usize::MAX as u64 {
-        (*s).progress_interval = usize::MAX;
+    if (*s.get()).progress_cb.fn_.is_none() || input.progress_interval_hint >= usize::MAX as u64 {
+        (*s.get()).progress_interval = usize::MAX;
     } else if input.progress_interval_hint > 0 {
-        (*s).progress_interval = input.progress_interval_hint as usize;
+        (*s.get()).progress_interval = input.progress_interval_hint as usize;
     } else {
-        (*s).progress_interval = 0x4000;
+        (*s.get()).progress_interval = 0x4000;
     }
-    (*s).cancelled = false;
+    (*s.get()).cancelled = false;
 
     // Clear the initial bit buffer
-    (*s).bits = 0;
-    (*s).left = 0;
+    (*s.get()).bits = 0;
+    (*s.get()).left = 0;
 
     // If the initial data buffer is not large enough to be read directly
     // from refill the chunk once.
     if data_size < 64 {
-        bit_chunk_refill(s, (*s).chunk_begin);
+        bit_chunk_refill(s, (*s.get()).chunk_begin);
     }
 
     // C-parity: `s->progress_interval + 8` wraps in size_t when
     // progress_interval == SIZE_MAX (progress_cb set + hint >= SIZE_MAX,
     // ufbx.c:2115-2116); the pointer `+` likewise wraps in practice.
-    if (*s).progress_cb.fn_.is_some()
-        && to_size((*s).chunk_end.offset_from((*s).chunk_ptr))
-            > (*s).progress_interval.wrapping_add(8)
+    if (*s.get()).progress_cb.fn_.is_some()
+        && to_size((*s.get()).chunk_end.offset_from((*s.get()).chunk_ptr))
+            > (*s.get()).progress_interval.wrapping_add(8)
     {
-        (*s).chunk_yield = (*s).chunk_ptr.wrapping_add((*s).progress_interval);
+        (*s.get()).chunk_yield = (*s.get())
+            .chunk_ptr
+            .wrapping_add((*s.get()).progress_interval);
     } else {
-        (*s).chunk_yield = (*s).chunk_end;
+        (*s.get()).chunk_yield = (*s.get()).chunk_end;
     }
 }
 
 // ufbx.c:2141-2174 `ufbxi_bit_yield`
 #[inline(never)]
-pub(crate) unsafe fn bit_yield(s: *mut BitStream, ptr: *const u8) -> *const u8 {
+pub(crate) unsafe fn bit_yield(s: &BitStreamView, ptr: *const u8) -> *const u8 {
     // `s.buffer` may point into `s.local_buffer` (see `bit_stream_init`), i.e.
     // the `BitStream` holds a raw pointer aliasing one of its own fields, so `s`
-    // stays raw and is derefed as `(*s).field` to avoid a whole-struct retag
-    // invalidating that interior pointer.
+    // is an interior-mutable `&BitStreamView` derefed via the raw `s.get()`
+    // (`UnsafeCell`, no retag) as `(*s.get()).field` to avoid a whole-struct
+    // retag invalidating that interior pointer.
 
     let mut ptr = ptr;
-    if ptr > (*s).chunk_end {
+    if ptr > (*s.get()).chunk_end {
         ptr = bit_chunk_refill(s, ptr);
     }
 
-    if (*s).progress_cb.fn_.is_some() {
-        let num_read = (*s).num_read_before_chunk + to_size(ptr.offset_from((*s).chunk_begin));
+    if (*s.get()).progress_cb.fn_.is_some() {
+        let num_read =
+            (*s.get()).num_read_before_chunk + to_size(ptr.offset_from((*s.get()).chunk_begin));
 
         // C: `ufbx_progress progress = { s->progress_bias + num_read, s->progress_total };`
         let progress = Progress {
-            bytes_read: (*s).progress_bias.wrapping_add(num_read as u64),
-            bytes_total: (*s).progress_total,
+            bytes_read: (*s.get()).progress_bias.wrapping_add(num_read as u64),
+            bytes_total: (*s.get()).progress_total,
         };
         // C: `(uint32_t)s->progress_cb.fn(...)` — the raw fn type returns
         // RawEnum<ProgressResult> so a contract-violating callback is not UB.
-        let result = ((*s).progress_cb.fn_.unwrap())((*s).progress_cb.user, &progress).as_raw();
+        let result =
+            ((*s.get()).progress_cb.fn_.unwrap())((*s.get()).progress_cb.user, &progress).as_raw();
         ufbx_assert!(
             result == ProgressResult::Continue as u32 || result == ProgressResult::Cancel as u32
         );
         if result == ProgressResult::Cancel as u32 {
-            (*s).cancelled = true;
-            ptr = (*s).local_buffer.as_ptr();
-            (*s).buffer = (*s).local_buffer.as_mut_ptr();
-            (*s).buffer_size = size_of::<[u8; 256]>();
-            (*s).chunk_begin = ptr;
-            (*s).chunk_ptr = ptr;
-            (*s).chunk_end = ptr.add(size_of::<[u8; 256]>() - 8);
-            (*s).chunk_real_end = ptr.add(size_of::<[u8; 256]>());
+            (*s.get()).cancelled = true;
+            ptr = (*s.get()).local_buffer.as_ptr();
+            (*s.get()).buffer = (*s.get()).local_buffer.as_mut_ptr();
+            (*s.get()).buffer_size = size_of::<[u8; 256]>();
+            (*s.get()).chunk_begin = ptr;
+            (*s.get()).chunk_ptr = ptr;
+            (*s.get()).chunk_end = ptr.add(size_of::<[u8; 256]>() - 8);
+            (*s.get()).chunk_real_end = ptr.add(size_of::<[u8; 256]>());
             // C: memset(s->local_buffer, 0, sizeof(s->local_buffer))
-            core::ptr::write_bytes((*s).local_buffer.as_mut_ptr(), 0, size_of::<[u8; 256]>());
+            core::ptr::write_bytes(
+                (*s.get()).local_buffer.as_mut_ptr(),
+                0,
+                size_of::<[u8; 256]>(),
+            );
         }
     }
 
     // C-parity: wrapping `+ 8` / pointer add for progress_interval == SIZE_MAX
     // (see `bit_stream_init`).
-    if (*s).progress_cb.fn_.is_some()
-        && to_size((*s).chunk_end.offset_from(ptr)) > (*s).progress_interval.wrapping_add(8)
+    if (*s.get()).progress_cb.fn_.is_some()
+        && to_size((*s.get()).chunk_end.offset_from(ptr))
+            > (*s.get()).progress_interval.wrapping_add(8)
     {
-        (*s).chunk_yield = ptr.wrapping_add((*s).progress_interval);
+        (*s.get()).chunk_yield = ptr.wrapping_add((*s.get()).progress_interval);
     } else {
-        (*s).chunk_yield = (*s).chunk_end;
+        (*s.get()).chunk_yield = (*s.get()).chunk_end;
     }
 
     ptr
@@ -612,19 +619,20 @@ pub(crate) unsafe fn bit_refill(
     p_bits: &mut u64,
     p_left: &mut usize,
     p_data: &mut *const u8,
-    s: *mut BitStream,
+    s: &BitStreamView,
 ) {
     // `s.buffer` may point into `s.local_buffer` (see `bit_stream_init`), i.e.
     // the `BitStream` holds a raw pointer aliasing one of its own fields, so `s`
-    // stays raw and is derefed as `(*s).field` to avoid a whole-struct retag
-    // invalidating that interior pointer.
+    // is an interior-mutable `&BitStreamView` derefed via the raw `s.get()`
+    // (`UnsafeCell`, no retag) as `(*s.get()).field` to avoid a whole-struct
+    // retag invalidating that interior pointer.
 
-    if *p_data > (*s).chunk_yield {
+    if *p_data > (*s.get()).chunk_yield {
         *p_data = bit_yield(s, *p_data);
-        if (*s).cancelled {
+        if (*s.get()).cancelled {
             // Force an end-of-block symbol when cancelled so we don't need an
             // extra branch in the chunk decoding loop.
-            *p_bits = (*s).cancel_bits;
+            *p_bits = (*s.get()).cancel_bits;
         }
     }
 
@@ -650,24 +658,25 @@ pub(crate) use macro_bit_refill_fast;
 
 // ufbx.c:2204-2248 `ufbxi_bit_copy_bytes`
 #[inline(never)]
-pub(crate) unsafe fn bit_copy_bytes(dst: *mut c_void, s: *mut BitStream, len: usize) -> i32 {
+pub(crate) unsafe fn bit_copy_bytes(dst: *mut c_void, s: &BitStreamView, len: usize) -> i32 {
     // `s.buffer` may point into `s.local_buffer` (see `bit_stream_init`), i.e.
     // the `BitStream` holds a raw pointer aliasing one of its own fields, so `s`
-    // stays raw and is derefed as `(*s).field` to avoid a whole-struct retag
-    // invalidating that interior pointer.
+    // is an interior-mutable `&BitStreamView` derefed via the raw `s.get()`
+    // (`UnsafeCell`, no retag) as `(*s.get()).field` to avoid a whole-struct
+    // retag invalidating that interior pointer.
 
-    ufbx_assert!((*s).left % 8 == 0);
+    ufbx_assert!((*s.get()).left % 8 == 0);
     let mut len = len;
     let mut ptr = dst as *mut u8;
 
     // Copy the buffered bits first
-    while len > 0 && (*s).left > 0 {
+    while len > 0 && (*s.get()).left > 0 {
         // C: `*ptr++ = (char)(uint8_t)s->bits;`
-        *ptr = (*s).bits as u8;
+        *ptr = (*s.get()).bits as u8;
         ptr = ptr.add(1);
         len -= 1;
-        (*s).bits >>= 8;
-        (*s).left -= 8;
+        (*s.get()).bits >>= 8;
+        (*s.get()).left -= 8;
     }
 
     // Copied fully from buffer
@@ -677,33 +686,33 @@ pub(crate) unsafe fn bit_copy_bytes(dst: *mut c_void, s: *mut BitStream, len: us
 
     // We need to clear the top bits as there may be data
     // read ahead past `s->left` in some cases
-    (*s).bits = 0;
+    (*s.get()).bits = 0;
 
     // Copy the current chunk
-    let chunk_left = to_size((*s).chunk_real_end.offset_from((*s).chunk_ptr));
+    let chunk_left = to_size((*s.get()).chunk_real_end.offset_from((*s.get()).chunk_ptr));
     if chunk_left >= len {
         // C: memcpy(ptr, s->chunk_ptr, len)
-        core::ptr::copy_nonoverlapping((*s).chunk_ptr, ptr, len);
-        (*s).chunk_ptr = (*s).chunk_ptr.add(len);
+        core::ptr::copy_nonoverlapping((*s.get()).chunk_ptr, ptr, len);
+        (*s.get()).chunk_ptr = (*s.get()).chunk_ptr.add(len);
         return 1;
     } else {
-        core::ptr::copy_nonoverlapping((*s).chunk_ptr, ptr, chunk_left);
-        (*s).chunk_ptr = (*s).chunk_ptr.add(chunk_left);
+        core::ptr::copy_nonoverlapping((*s.get()).chunk_ptr, ptr, chunk_left);
+        (*s.get()).chunk_ptr = (*s.get()).chunk_ptr.add(chunk_left);
         ptr = ptr.add(chunk_left);
         len -= chunk_left;
     }
 
     // Read extra bytes from user
-    if len > (*s).input_left {
+    if len > (*s.get()).input_left {
         return 0;
     }
     let mut num_read = 0usize;
-    if (*s).read_fn.is_some() {
-        num_read = ((*s).read_fn.unwrap())((*s).read_user, ptr as *mut c_void, len);
+    if (*s.get()).read_fn.is_some() {
+        num_read = ((*s.get()).read_fn.unwrap())((*s.get()).read_user, ptr as *mut c_void, len);
         // C-parity: no clamp on `num_read` here (unlike ufbxi_bit_chunk_refill,
         // ufbx.c:2068); a misbehaving read_fn wraps `input_left` in size_t and
         // the function returns 0 below.
-        (*s).input_left = (*s).input_left.wrapping_sub(num_read);
+        (*s.get()).input_left = (*s.get()).input_left.wrapping_sub(num_read);
     }
     (num_read == len) as i32
 }
@@ -1100,7 +1109,7 @@ pub(crate) unsafe fn decode_dynamic_huff_bits(
     let mut symbol_index = 0u32;
     let mut prev = 0u8;
     while symbol_index < num_symbols {
-        bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
+        bit_refill(&mut bits, &mut left, &mut data, dc.stream_view());
         if dc.stream_view().cancelled() {
             return -28;
         }
@@ -1185,7 +1194,7 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
     let mut bits = dc.stream_view().bits();
     let mut left = dc.stream_view().left();
     let mut data = dc.stream_view().chunk_ptr();
-    bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
+    bit_refill(&mut bits, &mut left, &mut data, dc.stream_view());
     if dc.stream_view().cancelled() {
         return -28;
     }
@@ -1210,7 +1219,7 @@ pub(crate) unsafe fn init_dynamic_huff(dc: &DeflateContext, trees: *mut Trees) -
 
     for len_i in 0..num_code_lengths as usize {
         if len_i == 14 {
-            bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
+            bit_refill(&mut bits, &mut left, &mut data, dc.stream_view());
             if dc.stream_view().cancelled() {
                 return -28;
             }
@@ -1421,7 +1430,7 @@ pub(crate) unsafe fn inflate_block_slow(
             break;
         }
 
-        bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
+        bit_refill(&mut bits, &mut left, &mut data, dc.stream_view());
         let sym_bits = bits;
 
         let sym0: HuffSym = huff_decode_bits(trees.lit_length(), bits, fast_bits, fast_mask);
@@ -1832,7 +1841,7 @@ pub(crate) unsafe fn inflate(
     // return code deterministic here, which may differ from a given C build.
     // No deterministic port can reproduce C's uninit read.
     let dc: DeflateContext = core::mem::zeroed();
-    bit_stream_init(dc.stream_mut_ptr(), input);
+    bit_stream_init(dc.stream_view(), input);
     dc.set_out_begin(dst as *mut u8);
     dc.set_out_ptr(dst as *mut u8);
     dc.set_out_end((dst as *mut u8).add(dst_size));
@@ -1850,7 +1859,7 @@ pub(crate) unsafe fn inflate(
     let mut left = dc.stream_view().left();
     let mut data = dc.stream_view().chunk_ptr();
 
-    bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
+    bit_refill(&mut bits, &mut left, &mut data, dc.stream_view());
     if dc.stream_view().cancelled() {
         return -28;
     }
@@ -1877,7 +1886,7 @@ pub(crate) unsafe fn inflate(
     }
 
     loop {
-        bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
+        bit_refill(&mut bits, &mut left, &mut data, dc.stream_view());
         if dc.stream_view().cancelled() {
             return -28;
         }
@@ -1910,7 +1919,7 @@ pub(crate) unsafe fn inflate(
             dc.stream_view().set_chunk_ptr(data);
 
             // Copy `len` bytes of literal data
-            if bit_copy_bytes(dc.out_ptr() as *mut c_void, dc.stream_mut_ptr(), len) == 0 {
+            if bit_copy_bytes(dc.out_ptr() as *mut c_void, dc.stream_view(), len) == 0 {
                 return -5;
             }
 
@@ -1992,7 +2001,7 @@ pub(crate) unsafe fn inflate(
         let align_bits = left & 0x7;
         bits >>= align_bits;
         left -= align_bits;
-        bit_refill(&mut bits, &mut left, &mut data, dc.stream_mut_ptr());
+        bit_refill(&mut bits, &mut left, &mut data, dc.stream_view());
         if dc.stream_view().cancelled() {
             return -28;
         }
