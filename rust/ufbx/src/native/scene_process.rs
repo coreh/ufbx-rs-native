@@ -233,8 +233,9 @@ use crate::native::parse::{
     find_enum, find_int, find_prop, find_prop_with_key, find_real, find_vec3, get_element_extra,
     get_name_key, is_node_property_name, is_quat_identity, is_transform_identity, is_vec3_zero,
     is_vec4_zero, matrix_all_zero, name_key_less, Context, FbxAttrEntry, FbxIdEntry, FileContent,
-    MeshExtra, PropView, PropsView, Refcount, TextureExtra, TextureFileEntry, TmpBonePose,
-    TmpConnection, TmpMaterialTexture, TmpMeshTexture, ELEMENT_TYPE_COUNT,
+    MeshExtra, PropView, PropsView, Refcount, SceneMetadataView, SceneSettingsView, SceneView,
+    TextureExtra, TextureFileEntry, TmpBonePose, TmpConnection, TmpMaterialTexture, TmpMeshTexture,
+    ELEMENT_TYPE_COUNT,
 };
 // Only reachable from the two `ufbxi_regression_assert`s in `ufbxi_get_transform`
 // (ufbx.c:22901-22902), which is why C marks both `ufbxi_unused` (11594/11599).
@@ -259,6 +260,43 @@ use crate::native::string_pool::{
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::as_f64;
 use crate::prelude::{Blob, List, Real, Ref, RefList, String};
+
+// Rust-port infrastructure (not a ufbx.c section): reinterpret-in-place VIEWS
+// over the scene-graph element structs the `ufbxi_update_*` family mutates.
+//
+// Each alias is `View<T>` (the shared reinterpret type) plus a `props_view()`
+// accessor that hands back a `&PropsView` correlated to `&self`. Because the
+// returned lifetime is tied to the element borrow — which the dispatch
+// (`ufbxi_update_scene`) anchors to `uc.scene_view()` — a property table found
+// through an element view can never outlive the arena-anchored `uc` scope, so
+// the property finders it feeds stay provably `<= uc` with no free-lifetime
+// bridge minted per call site.
+macro_rules! element_props_view {
+    ($alias:ident, $ty:ty) => {
+        pub(crate) type $alias = crate::native::view::View<$ty>;
+        impl crate::native::view::View<$ty> {
+            #[inline(always)]
+            pub(crate) fn props_view(&self) -> &PropsView {
+                // SAFETY: reinterpret the embedded `element.props` field in place
+                // (never a `&mut`, so writes through the element view do not
+                // retag it); interior-mutable, asserts no validity, correlated
+                // to `&self` (<= uc).
+                unsafe { PropsView::from_ptr(&raw mut (*self.get()).element.props) }
+            }
+        }
+    };
+}
+
+element_props_view!(NodeView, Node);
+element_props_view!(LightView, Light);
+element_props_view!(CameraView, Camera);
+element_props_view!(BoneView, Bone);
+element_props_view!(LineCurveView, LineCurve);
+element_props_view!(BlendChannelView, BlendChannel);
+element_props_view!(TextureView, Texture);
+element_props_view!(AnimStackView, AnimStack);
+element_props_view!(DisplayLayerView, DisplayLayer);
+element_props_view!(ConstraintView, Constraint);
 
 // -- Scene pre-processing (ufbx.c:18066-18543)
 
@@ -4438,7 +4476,8 @@ static FILE_SHADERS: [FileShader; 6] = [
 
 // ufbx.c:20496-20535 `ufbxi_update_shader_texture`
 #[inline(never)]
-pub(crate) unsafe fn update_shader_texture(texture: *mut Texture, shader: *mut ShaderTexture) {
+pub(crate) unsafe fn update_shader_texture(texture_view: &TextureView, shader: *mut ShaderTexture) {
+    let texture: *mut Texture = texture_view.get();
     // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
     let mut input: *mut ShaderTextureInput = (*shader).inputs.data as *mut ShaderTextureInput;
     let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
@@ -4447,7 +4486,7 @@ pub(crate) unsafe fn update_shader_texture(texture: *mut Texture, shader: *mut S
         let mut prop: *mut Prop = opt_ptr(&(*input).prop);
         if !prop.is_null() {
             prop = find_prop_len(
-                PropsView::from_ptr(&raw mut (*texture).element.props),
+                texture_view.props_view(),
                 (*prop).name.data,
                 (*prop).name.length,
             )
@@ -4467,7 +4506,7 @@ pub(crate) unsafe fn update_shader_texture(texture: *mut Texture, shader: *mut S
         prop = opt_ptr(&(*input).texture_prop);
         if !prop.is_null() {
             prop = find_prop_len(
-                PropsView::from_ptr(&raw mut (*texture).element.props),
+                texture_view.props_view(),
                 (*prop).name.data,
                 (*prop).name.length,
             )
@@ -4484,7 +4523,7 @@ pub(crate) unsafe fn update_shader_texture(texture: *mut Texture, shader: *mut S
         prop = opt_ptr(&(*input).texture_enabled_prop);
         if !prop.is_null() {
             prop = find_prop_len(
-                PropsView::from_ptr(&raw mut (*texture).element.props),
+                texture_view.props_view(),
                 (*prop).name.data,
                 (*prop).name.length,
             )
@@ -4525,8 +4564,8 @@ pub(crate) const SHADER_TEXTURE_TYPE_COUNT: u32 = ShaderTextureType::Osl as u32 
 
 // ufbx.c:20537-20690 `ufbxi_finalize_shader_texture`
 #[inline(never)]
-pub(crate) unsafe fn finalize_shader_texture(
-    uc: &Context,
+pub(crate) unsafe fn finalize_shader_texture<'a>(
+    uc: &'a Context,
     texture: *mut Texture,
 ) -> Result<(), Fail> {
     let classid_a: u32 = api_find_int(
@@ -4748,7 +4787,11 @@ pub(crate) unsafe fn finalize_shader_texture(
         }
     }
 
-    update_shader_texture(texture, shader);
+    // Anchor the texture to `'a` (= uc): `texture` lives in the uc arena, so the
+    // explicit `&'a` annotation forces the reinterpret lifetime to unify with the
+    // `uc` borrow rather than infer free.
+    let texture_view: &'a TextureView = TextureView::from_ptr(texture);
+    update_shader_texture(texture_view, shader);
 
     Ok(())
 }
@@ -8921,21 +8964,22 @@ pub(crate) unsafe fn get_constraint_transform(props: &PropsView) -> Transform {
 // ufbx.c:22955-23042 `ufbxi_update_node`
 #[inline(never)]
 pub(crate) unsafe fn update_node(
-    node: *mut Node,
+    node_view: &NodeView,
     overrides: *const TransformOverride,
     num_overrides: usize,
 ) {
+    let node: *mut Node = node_view.get();
     // C: `(ufbx_rotation_order)ufbxi_find_enum(...)` — `ufbxi_find_enum` clamps
     // the result to `[0, UFBX_ROTATION_ORDER_SPHERIC]`, every value of which is
     // a valid `ufbx_rotation_order`.
     (*node).rotation_order = core::mem::transmute::<u32, RotationOrder>(find_enum(
-        PropsView::from_ptr(&raw mut (*node).element.props),
+        node_view.props_view(),
         sp::RotationOrder.as_ptr(),
         RotationOrder::Xyz as i64,
         RotationOrder::Spheric as i64,
     ) as u32);
     (*node).euler_rotation = find_vec3(
-        PropsView::from_ptr(&raw mut (*node).element.props),
+        node_view.props_view(),
         sp::Lcl_Rotation.as_ptr(),
         0.0,
         0.0,
@@ -8943,13 +8987,10 @@ pub(crate) unsafe fn update_node(
     );
 
     if !(*node).is_root {
-        let rotation_active: bool = find_int(
-            PropsView::from_ptr(&raw mut (*node).element.props),
-            sp::RotationActive.as_ptr(),
-            1,
-        ) != 0;
+        let rotation_active: bool =
+            find_int(node_view.props_view(), sp::RotationActive.as_ptr(), 1) != 0;
         let rotation_limit_only: bool = find_int(
-            PropsView::from_ptr(&raw mut (*node).element.props),
+            node_view.props_view(),
             sp::RotationSpaceForLimitOnly.as_ptr(),
             0,
         ) != 0;
@@ -8966,7 +9007,7 @@ pub(crate) unsafe fn update_node(
                 .scale;
         }
         (*node).local_transform = get_transform(
-            PropsView::from_ptr(&raw mut (*node).element.props),
+            node_view.props_view(),
             (*node).rotation_order,
             node,
             transform_scale,
@@ -9006,8 +9047,7 @@ pub(crate) unsafe fn update_node(
             }
         }
         (*node).node_to_parent = transform_to_matrix(&(*node).local_transform);
-        (*node).geometry_transform =
-            get_geometry_transform(PropsView::from_ptr(&raw mut (*node).element.props), node);
+        (*node).geometry_transform = get_geometry_transform(node_view.props_view(), node);
     } else {
         (*node).geometry_transform = IDENTITY_TRANSFORM;
     }
@@ -9063,87 +9103,62 @@ pub(crate) unsafe fn update_node(
         (*node).has_geometry_transform = false;
     }
 
-    (*node).visible = find_int(
-        PropsView::from_ptr(&raw mut (*node).element.props),
-        sp::Visibility.as_ptr(),
-        1,
-    ) != 0;
+    (*node).visible = find_int(node_view.props_view(), sp::Visibility.as_ptr(), 1) != 0;
 }
 
 // ufbx.c:23044-23062 `ufbxi_update_light`
 #[inline(never)]
-pub(crate) unsafe fn update_light(light: *mut Light) {
+pub(crate) unsafe fn update_light(light_view: &LightView) {
+    let light: *mut Light = light_view.get();
     // NOTE: FBX seems to store intensities 100x of what's specified in at least
     // Maya and Blender, should there be a quirks mode to not do this for specific
     // exporters. Does the FBX SDK do this transparently as well?
     (*light).intensity = find_real(
-        PropsView::from_ptr(&raw mut (*light).element.props),
+        light_view.props_view(),
         sp::Intensity.as_ptr(),
         100.0 as Real,
     ) / (100.0 as Real);
 
-    (*light).color = find_vec3(
-        PropsView::from_ptr(&raw mut (*light).element.props),
-        sp::Color.as_ptr(),
-        1.0,
-        1.0,
-        1.0,
-    );
+    (*light).color = find_vec3(light_view.props_view(), sp::Color.as_ptr(), 1.0, 1.0, 1.0);
     // C: `(ufbx_light_type)ufbxi_find_enum(...)` etc — `ufbxi_find_enum` clamps
     // each result to its enum's `[0, LAST]` range.
     (*light).type_ = core::mem::transmute::<u32, LightType>(find_enum(
-        PropsView::from_ptr(&raw mut (*light).element.props),
+        light_view.props_view(),
         sp::LightType.as_ptr(),
         0,
         LightType::Volume as i64,
     ) as u32);
     (*light).decay = core::mem::transmute::<u32, LightDecay>(find_enum(
-        PropsView::from_ptr(&raw mut (*light).element.props),
+        light_view.props_view(),
         sp::DecayType.as_ptr(),
         LightDecay::None as i64,
         LightDecay::Cubic as i64,
     ) as u32);
     (*light).area_shape = core::mem::transmute::<u32, LightAreaShape>(find_enum(
-        PropsView::from_ptr(&raw mut (*light).element.props),
+        light_view.props_view(),
         sp::AreaLightShape.as_ptr(),
         0,
         LightAreaShape::Sphere as i64,
     ) as u32);
+    (*light).inner_angle = find_real(light_view.props_view(), sp::HotSpot.as_ptr(), 0.0);
     (*light).inner_angle = find_real(
-        PropsView::from_ptr(&raw mut (*light).element.props),
-        sp::HotSpot.as_ptr(),
-        0.0,
-    );
-    (*light).inner_angle = find_real(
-        PropsView::from_ptr(&raw mut (*light).element.props),
+        light_view.props_view(),
         sp::InnerAngle.as_ptr(),
         (*light).inner_angle,
     );
+    (*light).outer_angle = find_real(light_view.props_view(), sp::Cone_angle.as_ptr(), 0.0);
     (*light).outer_angle = find_real(
-        PropsView::from_ptr(&raw mut (*light).element.props),
-        sp::Cone_angle.as_ptr(),
-        0.0,
-    );
-    (*light).outer_angle = find_real(
-        PropsView::from_ptr(&raw mut (*light).element.props),
+        light_view.props_view(),
         sp::ConeAngle.as_ptr(),
         (*light).outer_angle,
     );
     (*light).outer_angle = find_real(
-        PropsView::from_ptr(&raw mut (*light).element.props),
+        light_view.props_view(),
         sp::OuterAngle.as_ptr(),
         (*light).outer_angle,
     );
-    (*light).cast_light = find_int(
-        PropsView::from_ptr(&raw mut (*light).element.props),
-        sp::CastLight.as_ptr(),
-        1,
-    ) != 0;
-    (*light).cast_shadows = find_int(
-        PropsView::from_ptr(&raw mut (*light).element.props),
-        sp::CastShadows.as_ptr(),
-        0,
-    ) != 0;
+    (*light).cast_light = find_int(light_view.props_view(), sp::CastLight.as_ptr(), 1) != 0;
+    (*light).cast_shadows = find_int(light_view.props_view(), sp::CastShadows.as_ptr(), 0) != 0;
 }
 
 // ufbx.c:23064-23067 `ufbxi_aperture_format`
@@ -9225,101 +9240,63 @@ static APERTURE_FORMATS: [ApertureFormatInfo; 12] = [
 
 // ufbx.c:23084-23252 `ufbxi_update_camera`
 #[inline(never)]
-pub(crate) unsafe fn update_camera(scene: *mut Scene, camera: *mut Camera) {
+pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraView) {
+    let scene: *mut Scene = scene.get();
+    let camera: *mut Camera = camera_view.get();
     // C: `(ufbx_projection_mode)ufbxi_find_enum(...)` etc — `ufbxi_find_enum`
     // clamps each result to its enum's `[0, LAST]` range (same device as
     // `ufbxi_update_light` above).
     (*camera).projection_mode = core::mem::transmute::<u32, ProjectionMode>(find_enum(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
+        camera_view.props_view(),
         sp::CameraProjectionType.as_ptr(),
         0,
         ProjectionMode::Orthographic as i64,
     ) as u32);
     (*camera).aspect_mode = core::mem::transmute::<u32, AspectMode>(find_enum(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
+        camera_view.props_view(),
         sp::AspectRatioMode.as_ptr(),
         0,
         AspectMode::FixedHeight as i64,
     ) as u32);
     (*camera).aperture_mode = core::mem::transmute::<u32, ApertureMode>(find_enum(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
+        camera_view.props_view(),
         sp::ApertureMode.as_ptr(),
         ApertureMode::Vertical as i64,
         ApertureMode::FocalLength as i64,
     ) as u32);
     (*camera).aperture_format = core::mem::transmute::<u32, ApertureFormat>(find_enum(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
+        camera_view.props_view(),
         sp::ApertureFormat.as_ptr(),
         ApertureFormat::Custom as i64,
         ApertureFormat::Imax as i64,
     ) as u32);
     (*camera).gate_fit = core::mem::transmute::<u32, GateFit>(find_enum(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
+        camera_view.props_view(),
         sp::GateFit.as_ptr(),
         0,
         GateFit::Stretch as i64,
     ) as u32);
 
-    (*camera).near_plane = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
-        sp::NearPlane.as_ptr(),
-        0.0,
-    );
-    (*camera).far_plane = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
-        sp::FarPlane.as_ptr(),
-        0.0,
-    );
+    (*camera).near_plane = find_real(camera_view.props_view(), sp::NearPlane.as_ptr(), 0.0);
+    (*camera).far_plane = find_real(camera_view.props_view(), sp::FarPlane.as_ptr(), 0.0);
 
     // Search both W/H and Width/Height but prefer the latter
-    let mut aspect_x: Real = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
-        sp::AspectW.as_ptr(),
-        0.0,
-    );
-    let mut aspect_y: Real = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
-        sp::AspectH.as_ptr(),
-        0.0,
-    );
-    aspect_x = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
-        sp::AspectWidth.as_ptr(),
-        aspect_x,
-    );
+    let mut aspect_x: Real = find_real(camera_view.props_view(), sp::AspectW.as_ptr(), 0.0);
+    let mut aspect_y: Real = find_real(camera_view.props_view(), sp::AspectH.as_ptr(), 0.0);
+    aspect_x = find_real(camera_view.props_view(), sp::AspectWidth.as_ptr(), aspect_x);
     aspect_y = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
+        camera_view.props_view(),
         sp::AspectHeight.as_ptr(),
         aspect_y,
     );
 
-    let fov: Real = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
-        sp::FieldOfView.as_ptr(),
-        0.0,
-    );
-    let fov_x: Real = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
-        sp::FieldOfViewX.as_ptr(),
-        0.0,
-    );
-    let fov_y: Real = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
-        sp::FieldOfViewY.as_ptr(),
-        0.0,
-    );
+    let fov: Real = find_real(camera_view.props_view(), sp::FieldOfView.as_ptr(), 0.0);
+    let fov_x: Real = find_real(camera_view.props_view(), sp::FieldOfViewX.as_ptr(), 0.0);
+    let fov_y: Real = find_real(camera_view.props_view(), sp::FieldOfViewY.as_ptr(), 0.0);
 
-    let focal_length: Real = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
-        sp::FocalLength.as_ptr(),
-        0.0,
-    );
+    let focal_length: Real = find_real(camera_view.props_view(), sp::FocalLength.as_ptr(), 0.0);
     let mut ortho_extent: Real = (*scene).metadata.ortho_size_unit
-        * find_real(
-            PropsView::from_ptr(&raw mut (*camera).element.props),
-            sp::OrthoZoom.as_ptr(),
-            1.0,
-        );
+        * find_real(camera_view.props_view(), sp::OrthoZoom.as_ptr(), 1.0);
 
     let format: ApertureFormatInfo = APERTURE_FORMATS[(*camera).aperture_format as usize];
     let mut film_size: Vec2 = Vec2 {
@@ -9333,17 +9310,17 @@ pub(crate) unsafe fn update_camera(scene: *mut Scene, camera: *mut Camera) {
     };
 
     film_size.x = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
+        camera_view.props_view(),
         sp::FilmWidth.as_ptr(),
         film_size.x,
     );
     film_size.y = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
+        camera_view.props_view(),
         sp::FilmHeight.as_ptr(),
         film_size.y,
     );
     squeeze_ratio = find_real(
-        PropsView::from_ptr(&raw mut (*camera).element.props),
+        camera_view.props_view(),
         sp::FilmSqueezeRatio.as_ptr(),
         squeeze_ratio,
     );
@@ -9518,20 +9495,14 @@ pub(crate) unsafe fn update_camera(scene: *mut Scene, camera: *mut Camera) {
 
 // ufbx.c:23254-23264 `ufbxi_update_bone`
 #[inline(never)]
-pub(crate) unsafe fn update_bone(scene: *mut Scene, bone: *mut Bone) {
+pub(crate) unsafe fn update_bone<'a>(scene: &'a SceneView, bone_view: &'a BoneView) {
+    let scene: *mut Scene = scene.get();
+    let bone: *mut Bone = bone_view.get();
     let unit: Real = (*scene).metadata.bone_prop_size_unit;
 
-    (*bone).radius = find_real(
-        PropsView::from_ptr(&raw mut (*bone).element.props),
-        sp::Size.as_ptr(),
-        unit,
-    ) / unit;
+    (*bone).radius = find_real(bone_view.props_view(), sp::Size.as_ptr(), unit) / unit;
     if (*scene).metadata.bone_prop_limb_length_relative {
-        (*bone).relative_length = find_real(
-            PropsView::from_ptr(&raw mut (*bone).element.props),
-            sp::LimbLength.as_ptr(),
-            1.0,
-        );
+        (*bone).relative_length = find_real(bone_view.props_view(), sp::LimbLength.as_ptr(), 1.0);
     } else {
         (*bone).relative_length = 1.0;
     }
@@ -9539,14 +9510,9 @@ pub(crate) unsafe fn update_bone(scene: *mut Scene, bone: *mut Bone) {
 
 // ufbx.c:23266-23269 `ufbxi_update_line_curve`
 #[inline(never)]
-pub(crate) unsafe fn update_line_curve(line: *mut LineCurve) {
-    (*line).color = find_vec3(
-        PropsView::from_ptr(&raw mut (*line).element.props),
-        sp::Color.as_ptr(),
-        1.0,
-        1.0,
-        1.0,
-    );
+pub(crate) unsafe fn update_line_curve(line_view: &LineCurveView) {
+    let line: *mut LineCurve = line_view.get();
+    (*line).color = find_vec3(line_view.props_view(), sp::Color.as_ptr(), 1.0, 1.0, 1.0);
 }
 
 // ufbx.c:23271-23287 `ufbxi_update_pose`
@@ -9590,12 +9556,10 @@ pub(crate) unsafe fn update_skin_cluster(cluster: *mut SkinCluster) {
 
 // ufbx.c:23299-23342 `ufbxi_update_blend_channel`
 #[inline(never)]
-pub(crate) unsafe fn update_blend_channel(channel: *mut BlendChannel) {
-    let weight: Real = find_real(
-        PropsView::from_ptr(&raw mut (*channel).element.props),
-        sp::DeformPercent.as_ptr(),
-        0.0,
-    ) * (0.01 as Real);
+pub(crate) unsafe fn update_blend_channel(channel_view: &BlendChannelView) {
+    let channel: *mut BlendChannel = channel_view.get();
+    let weight: Real =
+        find_real(channel_view.props_view(), sp::DeformPercent.as_ptr(), 0.0) * (0.01 as Real);
     (*channel).weight = weight;
 
     let num_keys: isize = (*channel).keyframes.count as isize;
@@ -9671,9 +9635,9 @@ pub(crate) unsafe fn update_material(scene: *mut Scene, material: *mut Material)
 
 // ufbx.c:23351-23369 `ufbxi_update_texture`
 #[inline(never)]
-pub(crate) unsafe fn update_texture(texture: *mut Texture) {
-    (*texture).uv_transform =
-        get_texture_transform(PropsView::from_ptr(&raw mut (*texture).element.props));
+pub(crate) unsafe fn update_texture(texture_view: &TextureView) {
+    let texture: *mut Texture = texture_view.get();
+    (*texture).uv_transform = get_texture_transform(texture_view.props_view());
     if !is_transform_identity(&(*texture).uv_transform) {
         (*texture).has_uv_transform = true;
         (*texture).texture_to_uv = transform_to_matrix(&(*texture).uv_transform);
@@ -9685,13 +9649,13 @@ pub(crate) unsafe fn update_texture(texture: *mut Texture) {
     }
     // C: `(ufbx_wrap_mode)ufbxi_find_enum(...)` — clamped to `[0, LAST]`.
     (*texture).wrap_u = core::mem::transmute::<u32, WrapMode>(find_enum(
-        PropsView::from_ptr(&raw mut (*texture).element.props),
+        texture_view.props_view(),
         sp::WrapModeU.as_ptr(),
         0,
         WrapMode::Clamp as i64,
     ) as u32);
     (*texture).wrap_v = core::mem::transmute::<u32, WrapMode>(find_enum(
-        PropsView::from_ptr(&raw mut (*texture).element.props),
+        texture_view.props_view(),
         sp::WrapModeV.as_ptr(),
         0,
         WrapMode::Clamp as i64,
@@ -9700,37 +9664,27 @@ pub(crate) unsafe fn update_texture(texture: *mut Texture) {
     // C: `if (texture->shader)` — pointer truthiness.
     let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
     if !shader.is_null() {
-        update_shader_texture(texture, shader);
+        update_shader_texture(texture_view, shader);
     }
 }
 
 // ufbx.c:23371-23388 `ufbxi_update_anim_stack`
 #[inline(never)]
-pub(crate) unsafe fn update_anim_stack(scene: *mut Scene, stack: *mut AnimStack) {
+pub(crate) unsafe fn update_anim_stack<'a>(scene: &'a SceneView, stack_view: &'a AnimStackView) {
+    let scene: *mut Scene = scene.get();
+    let stack: *mut AnimStack = stack_view.get();
     // C: `ufbx_prop *begin, *end;` — both are assigned before any read.
     let mut begin: *mut Prop;
     let mut end: *mut Prop;
-    begin = find_prop(
-        PropsView::from_ptr(&raw mut (*stack).element.props),
-        sp::LocalStart.as_ptr(),
-    )
-    .map_or(ptr::null_mut(), PropView::get);
-    end = find_prop(
-        PropsView::from_ptr(&raw mut (*stack).element.props),
-        sp::LocalStop.as_ptr(),
-    )
-    .map_or(ptr::null_mut(), PropView::get);
+    begin = find_prop(stack_view.props_view(), sp::LocalStart.as_ptr())
+        .map_or(ptr::null_mut(), PropView::get);
+    end = find_prop(stack_view.props_view(), sp::LocalStop.as_ptr())
+        .map_or(ptr::null_mut(), PropView::get);
     if begin.is_null() || end.is_null() {
-        begin = find_prop(
-            PropsView::from_ptr(&raw mut (*stack).element.props),
-            sp::ReferenceStart.as_ptr(),
-        )
-        .map_or(ptr::null_mut(), PropView::get);
-        end = find_prop(
-            PropsView::from_ptr(&raw mut (*stack).element.props),
-            sp::ReferenceStop.as_ptr(),
-        )
-        .map_or(ptr::null_mut(), PropView::get);
+        begin = find_prop(stack_view.props_view(), sp::ReferenceStart.as_ptr())
+            .map_or(ptr::null_mut(), PropView::get);
+        end = find_prop(stack_view.props_view(), sp::ReferenceStop.as_ptr())
+            .map_or(ptr::null_mut(), PropView::get);
     }
 
     if !begin.is_null() && !end.is_null() {
@@ -9745,21 +9699,14 @@ pub(crate) unsafe fn update_anim_stack(scene: *mut Scene, stack: *mut AnimStack)
 
 // ufbx.c:23390-23395 `ufbxi_update_display_layer`
 #[inline(never)]
-pub(crate) unsafe fn update_display_layer(layer: *mut DisplayLayer) {
-    (*layer).visible = find_int(
-        PropsView::from_ptr(&raw mut (*layer).element.props),
-        sp::Show.as_ptr(),
-        1,
-    ) != 0;
-    (*layer).frozen = find_int(
-        PropsView::from_ptr(&raw mut (*layer).element.props),
-        sp::Freeze.as_ptr(),
-        1,
-    ) != 0;
+pub(crate) unsafe fn update_display_layer(layer_view: &DisplayLayerView) {
+    let layer: *mut DisplayLayer = layer_view.get();
+    (*layer).visible = find_int(layer_view.props_view(), sp::Show.as_ptr(), 1) != 0;
+    (*layer).frozen = find_int(layer_view.props_view(), sp::Freeze.as_ptr(), 1) != 0;
     // C-parity: `0.8f` is a `float` literal widened to `ufbx_real` (double) —
     // NOT the decimal value 0.8 (PORTING.md "Floats").
     (*layer).ui_color = find_vec3(
-        PropsView::from_ptr(&raw mut (*layer).element.props),
+        layer_view.props_view(),
         sp::Color.as_ptr(),
         0.8f32 as Real,
         0.8f32 as Real,
@@ -9798,11 +9745,13 @@ pub(crate) unsafe fn find_bool3(
 
 // ufbx.c:23416-23488 `ufbxi_update_constraint`
 #[inline(never)]
-pub(crate) unsafe fn update_constraint(constraint: *mut Constraint) {
+pub(crate) unsafe fn update_constraint(constraint_view: &ConstraintView) {
+    let constraint: *mut Constraint = constraint_view.get();
     // C: `ufbx_props *props = &constraint->props;` — kept live across writes
     // through `constraint`, so this must be a `&raw mut` and never a `&mut`
-    // (which would retag and be invalidated by those writes).
-    let props: &PropsView = PropsView::from_ptr(&raw mut (*constraint).element.props);
+    // (which would retag and be invalidated by those writes). Correlated to the
+    // element view (<= uc) via `props_view`.
+    let props: &PropsView = constraint_view.props_view();
     let constraint_type: ConstraintType = (*constraint).type_;
 
     (*constraint).transform_offset = get_constraint_transform(props);
@@ -10264,7 +10213,8 @@ pub(crate) unsafe fn axis_matrix(
 
 // ufbx.c:23676-23804 `ufbxi_update_adjust_transforms`
 #[inline(never)]
-pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
+pub(crate) unsafe fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView) {
+    let scene: *mut Scene = scene.get();
     let mut root_transform: Transform = IDENTITY_TRANSFORM;
     if !matrix_all_zero(&uc.axis_matrix()) {
         root_transform = matrix_to_transform(&uc.axis_matrix());
@@ -10387,8 +10337,12 @@ pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
             if (*parent).is_scale_compensate_parent
                 && (*node).original_inherit_mode == InheritMode::IgnoreParentScale
             {
+                // Anchor the traversed parent node to `'a` (= uc) via an explicit
+                // annotation: `parent` lives in the same uc arena, so its props
+                // table is provably `<= uc` with no free-lifetime bridge.
+                let parent_view: &'a NodeView = NodeView::from_ptr(parent);
                 let scale: Vec3 = find_vec3(
-                    PropsView::from_ptr(&raw mut (*parent).element.props),
+                    parent_view.props_view(),
                     sp::Lcl_Scaling.as_ptr(),
                     1.0,
                     1.0,
@@ -10429,17 +10383,26 @@ pub(crate) unsafe fn update_adjust_transforms(uc: &Context, scene: *mut Scene) {
 
 // ufbx.c:23806-23867 `ufbxi_update_scene`
 #[inline(never)]
-pub(crate) unsafe fn update_scene(
-    scene: *mut Scene,
+pub(crate) unsafe fn update_scene<'a>(
+    scene_view: &'a SceneView,
     initial: bool,
     transform_overrides: *const TransformOverride,
     num_transform_overrides: usize,
 ) {
+    // The scene VIEW is the uc-anchored dispatch root: `scene_view` is
+    // `<= uc` (minted by the caller from `uc.scene_view()`), and every element
+    // view minted below carries an explicit `&'a` annotation that forces its
+    // reinterpret lifetime to unify with `'a` — so the property tables reached
+    // through them stay provably within the `uc` arena scope. The raw `scene`
+    // pointer is used only to walk the typed `*mut *mut T` element runs, exactly
+    // as C's `ufbxi_for_ptr_list` does.
+    let scene: *mut Scene = scene_view.get();
     // C: `ufbxi_for_ptr_list(ufbx_node, p_node, scene->nodes)`
     let mut p_node: *mut *mut Node = (*scene).nodes.data as *mut *mut Node;
     let p_node_end: *mut *mut Node = add_ptr(p_node, (*scene).nodes.count);
     while p_node != p_node_end {
-        update_node(*p_node, transform_overrides, num_transform_overrides);
+        let node: &'a NodeView = NodeView::from_ptr(*p_node);
+        update_node(node, transform_overrides, num_transform_overrides);
         p_node = p_node.add(1);
     }
 
@@ -10447,7 +10410,8 @@ pub(crate) unsafe fn update_scene(
     let mut p_light: *mut *mut Light = (*scene).lights.data as *mut *mut Light;
     let p_light_end: *mut *mut Light = add_ptr(p_light, (*scene).lights.count);
     while p_light != p_light_end {
-        update_light(*p_light);
+        let light: &'a LightView = LightView::from_ptr(*p_light);
+        update_light(light);
         p_light = p_light.add(1);
     }
 
@@ -10455,7 +10419,8 @@ pub(crate) unsafe fn update_scene(
     let mut p_camera: *mut *mut Camera = (*scene).cameras.data as *mut *mut Camera;
     let p_camera_end: *mut *mut Camera = add_ptr(p_camera, (*scene).cameras.count);
     while p_camera != p_camera_end {
-        update_camera(scene, *p_camera);
+        let camera: &'a CameraView = CameraView::from_ptr(*p_camera);
+        update_camera(scene_view, camera);
         p_camera = p_camera.add(1);
     }
 
@@ -10463,7 +10428,8 @@ pub(crate) unsafe fn update_scene(
     let mut p_bone: *mut *mut Bone = (*scene).bones.data as *mut *mut Bone;
     let p_bone_end: *mut *mut Bone = add_ptr(p_bone, (*scene).bones.count);
     while p_bone != p_bone_end {
-        update_bone(scene, *p_bone);
+        let bone: &'a BoneView = BoneView::from_ptr(*p_bone);
+        update_bone(scene_view, bone);
         p_bone = p_bone.add(1);
     }
 
@@ -10471,7 +10437,8 @@ pub(crate) unsafe fn update_scene(
     let mut p_line: *mut *mut LineCurve = (*scene).line_curves.data as *mut *mut LineCurve;
     let p_line_end: *mut *mut LineCurve = add_ptr(p_line, (*scene).line_curves.count);
     while p_line != p_line_end {
-        update_line_curve(*p_line);
+        let line: &'a LineCurveView = LineCurveView::from_ptr(*p_line);
+        update_line_curve(line);
         p_line = p_line.add(1);
     }
 
@@ -10500,7 +10467,8 @@ pub(crate) unsafe fn update_scene(
         (*scene).blend_channels.data as *mut *mut BlendChannel;
     let p_channel_end: *mut *mut BlendChannel = add_ptr(p_channel, (*scene).blend_channels.count);
     while p_channel != p_channel_end {
-        update_blend_channel(*p_channel);
+        let channel: &'a BlendChannelView = BlendChannelView::from_ptr(*p_channel);
+        update_blend_channel(channel);
         p_channel = p_channel.add(1);
     }
 
@@ -10508,7 +10476,8 @@ pub(crate) unsafe fn update_scene(
     let mut p_texture: *mut *mut Texture = (*scene).textures.data as *mut *mut Texture;
     let p_texture_end: *mut *mut Texture = add_ptr(p_texture, (*scene).textures.count);
     while p_texture != p_texture_end {
-        update_texture(*p_texture);
+        let texture: &'a TextureView = TextureView::from_ptr(*p_texture);
+        update_texture(texture);
         p_texture = p_texture.add(1);
     }
 
@@ -10526,7 +10495,8 @@ pub(crate) unsafe fn update_scene(
     let mut p_stack: *mut *mut AnimStack = (*scene).anim_stacks.data as *mut *mut AnimStack;
     let p_stack_end: *mut *mut AnimStack = add_ptr(p_stack, (*scene).anim_stacks.count);
     while p_stack != p_stack_end {
-        update_anim_stack(scene, *p_stack);
+        let stack: &'a AnimStackView = AnimStackView::from_ptr(*p_stack);
+        update_anim_stack(scene_view, stack);
         p_stack = p_stack.add(1);
     }
 
@@ -10535,7 +10505,8 @@ pub(crate) unsafe fn update_scene(
         (*scene).display_layers.data as *mut *mut DisplayLayer;
     let p_layer_end: *mut *mut DisplayLayer = add_ptr(p_layer, (*scene).display_layers.count);
     while p_layer != p_layer_end {
-        update_display_layer(*p_layer);
+        let layer: &'a DisplayLayerView = DisplayLayerView::from_ptr(*p_layer);
+        update_display_layer(layer);
         p_layer = p_layer.add(1);
     }
 
@@ -10543,7 +10514,8 @@ pub(crate) unsafe fn update_scene(
     let mut p_constraint: *mut *mut Constraint = (*scene).constraints.data as *mut *mut Constraint;
     let p_constraint_end: *mut *mut Constraint = add_ptr(p_constraint, (*scene).constraints.count);
     while p_constraint != p_constraint_end {
-        update_constraint(*p_constraint);
+        let constraint: &'a ConstraintView = ConstraintView::from_ptr(*p_constraint);
+        update_constraint(constraint);
         p_constraint = p_constraint.add(1);
     }
 
@@ -10552,8 +10524,9 @@ pub(crate) unsafe fn update_scene(
 
 // ufbx.c:23869-23878 `ufbxi_update_scene_metadata`
 #[inline(never)]
-pub(crate) unsafe fn update_scene_metadata(metadata: *mut Metadata) {
-    let props: &PropsView = PropsView::from_ptr(&mut (*metadata).scene_props);
+pub(crate) unsafe fn update_scene_metadata(metadata_view: &SceneMetadataView) {
+    let metadata: *mut Metadata = metadata_view.get();
+    let props: &PropsView = metadata_view.props_view();
     (*metadata).original_application.vendor = find_string(
         props,
         b"Original|ApplicationVendor\0".as_ptr(),
@@ -10636,30 +10609,31 @@ pub(crate) unsafe fn round_if_near(targets: *const Real, num_targets: usize, val
 
 // ufbx.c:23903-23931 `ufbxi_update_scene_settings`
 #[inline(never)]
-pub(crate) unsafe fn update_scene_settings(settings: *mut SceneSettings) {
+pub(crate) unsafe fn update_scene_settings(settings_view: &SceneSettingsView) {
+    let settings: *mut SceneSettings = settings_view.get();
     let unit_scale_factor: Real = find_real(
-        PropsView::from_ptr(&raw mut (*settings).props),
+        settings_view.props_view(),
         sp::UnitScaleFactor.as_ptr(),
         1.0 as Real,
     );
     let original_unit_scale_factor: Real = find_real(
-        PropsView::from_ptr(&raw mut (*settings).props),
+        settings_view.props_view(),
         sp::OriginalUnitScaleFactor.as_ptr(),
         unit_scale_factor,
     );
 
     (*settings).axes.up = find_axis(
-        PropsView::from_ptr(&raw mut (*settings).props),
+        settings_view.props_view(),
         sp::UpAxis.as_ptr(),
         sp::UpAxisSign.as_ptr(),
     );
     (*settings).axes.front = find_axis(
-        PropsView::from_ptr(&raw mut (*settings).props),
+        settings_view.props_view(),
         sp::FrontAxis.as_ptr(),
         sp::FrontAxisSign.as_ptr(),
     );
     (*settings).axes.right = find_axis(
-        PropsView::from_ptr(&raw mut (*settings).props),
+        settings_view.props_view(),
         sp::CoordAxis.as_ptr(),
         sp::CoordAxisSign.as_ptr(),
     );
@@ -10676,28 +10650,26 @@ pub(crate) unsafe fn update_scene_settings(settings: *mut SceneSettings) {
     // C: `settings->frames_per_second` is `double` — the `ufbxi_find_real`
     // result promotes on assignment.
     (*settings).frames_per_second = find_real(
-        PropsView::from_ptr(&raw mut (*settings).props),
+        settings_view.props_view(),
         sp::CustomFrameRate.as_ptr(),
         24.0 as Real,
     ) as f64;
     (*settings).ambient_color = find_vec3(
-        PropsView::from_ptr(&raw mut (*settings).props),
+        settings_view.props_view(),
         sp::AmbientColor.as_ptr(),
         0.0,
         0.0,
         0.0,
     );
     (*settings).original_axis_up = find_axis(
-        PropsView::from_ptr(&raw mut (*settings).props),
+        settings_view.props_view(),
         sp::OriginalUpAxis.as_ptr(),
         sp::OriginalUpAxisSign.as_ptr(),
     );
 
-    let default_camera: *mut Prop = find_prop(
-        PropsView::from_ptr(&raw mut (*settings).props),
-        sp::DefaultCamera.as_ptr(),
-    )
-    .map_or(ptr::null_mut(), PropView::get);
+    let default_camera: *mut Prop =
+        find_prop(settings_view.props_view(), sp::DefaultCamera.as_ptr())
+            .map_or(ptr::null_mut(), PropView::get);
     if !default_camera.is_null() {
         (*settings).default_camera = (*default_camera).value_str;
     } else {
@@ -10708,19 +10680,19 @@ pub(crate) unsafe fn update_scene_settings(settings: *mut SceneSettings) {
     // each result to its enum's `[0, LAST]` range (same device as
     // `ufbxi_update_camera` above).
     (*settings).time_mode = core::mem::transmute::<u32, TimeMode>(find_enum(
-        PropsView::from_ptr(&raw mut (*settings).props),
+        settings_view.props_view(),
         sp::TimeMode.as_ptr(),
         TimeMode::E24Fps as i64,
         TimeMode::E5994Fps as i64,
     ) as u32);
     (*settings).time_protocol = core::mem::transmute::<u32, TimeProtocol>(find_enum(
-        PropsView::from_ptr(&raw mut (*settings).props),
+        settings_view.props_view(),
         sp::TimeProtocol.as_ptr(),
         TimeProtocol::Default as i64,
         TimeProtocol::Default as i64,
     ) as u32);
     (*settings).snap_mode = core::mem::transmute::<u32, SnapMode>(find_enum(
-        PropsView::from_ptr(&raw mut (*settings).props),
+        settings_view.props_view(),
         sp::SnapOnFrameMode.as_ptr(),
         SnapMode::None as i64,
         SnapMode::SnapAndPlay as i64,

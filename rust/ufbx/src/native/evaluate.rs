@@ -713,14 +713,14 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
                 "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_UNSUPPORTED_VERSION, ~0u, \"Unsupported FBX version (%u)\", uc->version)"
             );
         }
-        update_scene_metadata(uc.scene_view().metadata_mut_ptr());
+        update_scene_metadata(uc.scene_view().metadata_view());
         ufbxi_check!(uc, init_file_paths(uc).is_ok(), "ufbxi_init_file_paths(uc)");
     } else if format == FileFormat::Obj {
         ufbxi_check!(uc, obj_load(uc).is_ok(), "ufbxi_obj_load(uc)");
-        update_scene_metadata(uc.scene_view().metadata_mut_ptr());
+        update_scene_metadata(uc.scene_view().metadata_view());
     } else if format == FileFormat::Mtl {
         ufbxi_check!(uc, mtl_load(uc).is_ok(), "ufbxi_mtl_load(uc)");
-        update_scene_metadata(uc.scene_view().metadata_mut_ptr());
+        update_scene_metadata(uc.scene_view().metadata_view());
     }
 
     // Fake DOM root if necessary
@@ -742,7 +742,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
     ufbxi_check!(uc, finalize_scene(uc).is_ok(), "ufbxi_finalize_scene(uc)");
 
-    update_scene_settings(uc.scene_view().settings_mut_ptr());
+    update_scene_settings(uc.scene_view().settings_view());
     if uc.scene_view().metadata_view().file_format() == FileFormat::Obj {
         update_scene_settings_obj(uc);
     }
@@ -762,12 +762,12 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     }
 
     // TODO: This could be done in evaluate as well with refactoring
-    update_adjust_transforms(uc, uc.scene_mut_ptr());
+    update_adjust_transforms(uc, uc.scene_view());
 
     ufbxi_check!(uc, modify_geometry(uc).is_ok(), "ufbxi_modify_geometry(uc)");
     postprocess_scene(uc);
 
-    update_scene(uc.scene_mut_ptr(), true, ptr::null(), 0);
+    update_scene(uc.scene_view(), true, ptr::null(), 0);
 
     // Force a non-NULL anim pointer
     if ref_ptr(uc.scene_view().anim_ptr()).is_null() {
@@ -3011,7 +3011,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // Update all derived values
     update_scene(
-        ec.scene_mut_ptr(),
+        ec.scene_view(),
         false,
         anim.transform_overrides.data,
         anim.transform_overrides.count,

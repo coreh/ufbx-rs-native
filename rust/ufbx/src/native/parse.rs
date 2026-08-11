@@ -1854,10 +1854,6 @@ impl SceneView {
         // SAFETY: reinterpret the Metadata field in place; interior-mutable, no validity asserted.
         unsafe { &*(&raw mut (*self.get()).metadata as *mut SceneMetadataView) }
     }
-    #[inline(always)]
-    pub(crate) fn metadata_mut_ptr(&self) -> *mut crate::generated::Metadata {
-        unsafe { &raw mut (*self.get()).metadata }
-    }
 
     // `settings` (SceneSettings) — typed VIEW handle (reinterpret-in-place).
     #[inline(always)]
@@ -2285,6 +2281,14 @@ impl SceneView {
 pub(crate) type SceneMetadataView = crate::native::view::View<crate::generated::Metadata>;
 
 impl SceneMetadataView {
+    // `scene_props` (Props) — property table VIEW correlated to `&self` (<= uc),
+    // so tables found here never outlive the metadata borrow.
+    #[inline(always)]
+    pub(crate) fn props_view(&self) -> &PropsView {
+        // SAFETY: reinterpret the `scene_props` field in place; never a `&mut`,
+        // interior-mutable, asserts no validity.
+        unsafe { PropsView::from_ptr(&raw mut (*self.get()).scene_props) }
+    }
     // --- scalar value getters / setters ---
     #[inline(always)]
     pub(crate) fn file_format(&self) -> crate::generated::FileFormat {
@@ -2558,6 +2562,14 @@ impl SceneMetadataView {
 pub(crate) type SceneSettingsView = crate::native::view::View<crate::generated::SceneSettings>;
 
 impl SceneSettingsView {
+    // `props` (Props) — property table VIEW correlated to `&self` (<= uc), so
+    // tables found here never outlive the settings borrow.
+    #[inline(always)]
+    pub(crate) fn props_view(&self) -> &PropsView {
+        // SAFETY: reinterpret the `props` field in place; never a `&mut`,
+        // interior-mutable, asserts no validity.
+        unsafe { PropsView::from_ptr(&raw mut (*self.get()).props) }
+    }
     #[inline(always)]
     pub(crate) fn axes(&self) -> crate::generated::CoordinateAxes {
         unsafe { (*self.get()).axes }
