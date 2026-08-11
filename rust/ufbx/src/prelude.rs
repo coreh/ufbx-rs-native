@@ -410,14 +410,9 @@ impl<T> Default for RawList<T> {
 // Typed interior-mutable VIEW over a `List<T>` field (the public safe list),
 // reinterpreted in place. Getters + setters (List fields are built by writing
 // `.count`/`.data`).
-#[repr(transparent)]
-pub(crate) struct ListView<T>(core::cell::UnsafeCell<core::mem::MaybeUninit<List<T>>>);
+pub(crate) type ListView<T> = crate::native::view::View<List<T>>;
 
 impl<T> ListView<T> {
-    #[inline(always)]
-    fn get(&self) -> *mut List<T> {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn count(&self) -> usize {
         unsafe { (*self.get()).count }
@@ -443,14 +438,9 @@ impl<T> ListView<T> {
 // Typed interior-mutable VIEW over a `RefList<T>` field (the public reference
 // list), reinterpreted in place. Getters + setters (`RefList` fields are built
 // by writing `.count`/`.data`, where `data` points at `Ref<T>` elements).
-#[repr(transparent)]
-pub(crate) struct RefListView<T>(core::cell::UnsafeCell<core::mem::MaybeUninit<RefList<T>>>);
+pub(crate) type RefListView<T> = crate::native::view::View<RefList<T>>;
 
 impl<T> RefListView<T> {
-    #[inline(always)]
-    fn get(&self) -> *mut RefList<T> {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn count(&self) -> usize {
         unsafe { (*self.get()).count }
@@ -476,14 +466,9 @@ impl<T> RefListView<T> {
 // Typed interior-mutable VIEW over a `RawList<T>` field, reinterpreted in place
 // (same pattern as the `*OptsView` handles). Leaf getters read the Copy fields;
 // `MaybeUninit` means forming `&RawListView` asserts no validity.
-#[repr(transparent)]
-pub(crate) struct RawListView<T>(core::cell::UnsafeCell<core::mem::MaybeUninit<RawList<T>>>);
+pub(crate) type RawListView<T> = crate::native::view::View<RawList<T>>;
 
 impl<T> RawListView<T> {
-    #[inline(always)]
-    fn get(&self) -> *mut RawList<T> {
-        self.0.get().cast()
-    }
     #[inline(always)]
     pub(crate) fn count(&self) -> usize {
         // SAFETY: reading a POD `usize` leaf.
