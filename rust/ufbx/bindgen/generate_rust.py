@@ -4,6 +4,7 @@ import ufbx_ir as ir
 import argparse
 import os
 import json
+import re
 
 g_argv = None
 
@@ -247,6 +248,11 @@ structs = { }
 enums = { }
 enum_values = { }
 functions = { }
+
+# Map ufbx_* C name -> (native_module, native_fn) for capi shims whose body is
+# a pure verbatim forward `crate::native::MOD::FN(<params in order>)`. Populated
+# from capi.rs at startup; see parse_capi_forwarders.
+capi_forward = { }
 
 file: ir.File = None
 
@@ -1412,6 +1418,93 @@ def emit_ffi_global(gl: ir.Global):
     gt = fmt_ffi_type(typ, "")
     emit(f"pub static {gl.name}: {gt};")
 
+def parse_capi_forwarders(capi_path):
+    # The safe wrappers in generated.rs historically call the `unsafe extern
+    # "C"` capi shims, which themselves just forward to the native port. When a
+    # shim is a *pure verbatim* forward — its whole body is one
+    # `crate::native::MOD::FN(<its own params, in order>)` expression — the
+    # wrapper can call that native fn directly, dropping one `unsafe fn` hop
+    # (and, when the native fn is safe, the `unsafe` block entirely). Shims that
+    # do anything else (null checks, `?`, `match`, view bridging like
+    # `PropsView::from_ptr(props ...)`, casts, `.into()`) are NOT verbatim and
+    # keep routing through capi. Result: capi_forward[cname] = (mod, fn).
+    #
+    # Parsed from capi.rs text rather than duplicated as a hand-list so the set
+    # tracks capi.rs automatically; any misclassification fails the build (a
+    # bad path or an arg-type mismatch against the native signature).
+    try:
+        src = open(capi_path, "rt", encoding="utf-8").read()
+    except FileNotFoundError:
+        return {}
+    out = {}
+    fn_re = re.compile(r'pub (?:unsafe )?extern "C" fn (ufbx_[A-Za-z0-9_]+)\s*\(')
+    for m in fn_re.finditer(src):
+        cname = m.group(1)
+        # Walk the parameter list to its closing paren, collecting top-level
+        # param names (the identifier before each top-level `:`).
+        j = m.end()
+        depth = 1
+        params = []
+        cur = ""
+        while depth:
+            ch = src[j]
+            if ch in "([{": depth += 1
+            elif ch in ")]}": depth -= 1
+            if depth == 0:
+                break
+            if depth == 1 and ch == ",":
+                params.append(cur); cur = ""
+            else:
+                cur += ch
+            j += 1
+        if cur.strip():
+            params.append(cur)
+        pnames = []
+        ok = True
+        for p in params:
+            p = p.strip()
+            if not p:
+                continue
+            pm = re.match(r'([A-Za-z_][A-Za-z0-9_]*)\s*:', p)
+            if not pm:
+                ok = False; break
+            pnames.append(pm.group(1))
+        if not ok:
+            continue
+        # Body: from the first '{' after the params to its matching '}'.
+        b = src.index("{", j)
+        depth = 1; k = b + 1
+        while depth:
+            if src[k] == "{": depth += 1
+            elif src[k] == "}": depth -= 1
+            k += 1
+        body = src[b + 1:k - 1]
+        # Strip line comments and collapse whitespace to a single statement.
+        lines = [ln.split("//", 1)[0].rstrip() for ln in body.splitlines()]
+        stmt = " ".join(ln.strip() for ln in lines if ln.strip())
+        cm = re.fullmatch(
+            r'crate::native::([a-z_]+)::([A-Za-z0-9_]+)\s*\((.*)\)', stmt)
+        if not cm:
+            continue
+        mod, fn, arg_str = cm.group(1), cm.group(2), cm.group(3)
+        # Split call args at top-level commas and require them to equal the
+        # param names verbatim (this is what makes generated.rs's own arg_pass,
+        # which mirrors the same C-ABI signature, a valid call to the native fn).
+        call_args = []
+        depth = 0; cur = ""
+        for ch in arg_str:
+            if ch in "([{": depth += 1
+            elif ch in ")]}": depth -= 1
+            if depth == 0 and ch == ",":
+                call_args.append(cur.strip()); cur = ""
+            else:
+                cur += ch
+        if cur.strip():
+            call_args.append(cur.strip())
+        if call_args == pnames:
+            out[cname] = (mod, fn)
+    return out
+
 def emit_arg_pass(args: List[str], ra: RustArgument):
     if ra.kind == "string":
         if ra.is_const:
@@ -1484,22 +1577,25 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
             rt = f"Option<{rt}>"
         ret = f" -> {rt}"
 
-    # Pure by-value wrappers — every arg passed as a plain value (no pointer,
-    # slice, string, blob, or list conversion), a plain-value return, and no
-    # error/panic/alloc post-processing — forward to a safe `native::api` fn.
-    # Call that impl directly instead of the `unsafe extern "C"` capi ABI shim,
-    # so the safe wrapper carries no `unsafe` block at all. The `pub use
-    # crate::capi::{...}` re-export above still exposes the raw ufbx_* symbol
-    # for C-ABI and raw callers; this only shortcuts the safe Rust path, which
-    # already routed through capi straight into the same native impl. `rf.name`
-    # is exactly the native fn name (it is also the safe wrapper's own name).
-    # If a matched native fn were `unsafe fn` or absent, the build fails loudly.
+    # Bypass the `unsafe extern "C"` capi ABI shim for wrappers whose shim is a
+    # pure verbatim forward to the native port (see parse_capi_forwarders): call
+    # the native fn directly, dropping one `unsafe fn` hop. The `pub use
+    # crate::capi::{...}` re-export above still exposes the raw ufbx_* symbol for
+    # C-ABI and raw callers; this only shortcuts the safe Rust path, which
+    # already routed through capi straight into the same native impl. The safe
+    # wrapper's arg_pass mirrors the same C-ABI signature the native fn was
+    # forwarded, so it is a valid direct call; a mismatch fails the build.
+    fwd = capi_forward.get(rf.ir.name)
+    # `direct_safe` additionally drops the `unsafe` block: a pure by-value shim
+    # (no pointer/slice/string/blob/list arg, plain-value return, no
+    # error/panic/alloc post-processing) forwards to a *safe* native fn.
     def _arg_by_value(a):
         return (a.kind not in ("string", "slice", "blob")
                 and a.type.ir.kind != "pointer"
                 and not a.type.is_list)
     direct_safe = (
-        not is_raw
+        fwd is not None
+        and not is_raw
         and not rf.ir.is_unsafe
         and not rf.ir.has_error
         and not rf.ir.has_panic
@@ -1510,6 +1606,9 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
         and rf.return_type.kind != "pointer"
         and all(_arg_by_value(a) for a in rf.args)
     )
+    # The callee for this wrapper body: the native fn when the shim is a pure
+    # forward, else the capi shim itself (adapters that bridge/adapt args).
+    call_head = f"crate::native::{fwd[0]}::{fwd[1]}" if fwd else rf.ir.name
 
     is_unsafe = False
 
@@ -1586,15 +1685,15 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
 
         arg_pass_str = ", ".join(arg_pass)
         if direct_safe:
-            emit(f"let result = crate::native::api::{rf.name}({arg_pass_str});")
+            emit(f"let result = {call_head}({arg_pass_str});")
         elif not rf.return_type.is_void:
-            emit(f"let result = {unsafe}{{ {rf.ir.name}({arg_pass_str}) }};")
+            emit(f"let result = {unsafe}{{ {call_head}({arg_pass_str}) }};")
         elif unsafe:
-            emit(f"{unsafe}{{ {rf.ir.name}({arg_pass_str}) }};")
+            emit(f"{unsafe}{{ {call_head}({arg_pass_str}) }};")
         else:
             # already inside an `unsafe fn`: no wrapping block needed, and a bare
             # `{ ... };` statement would trip clippy::unnecessary_operation.
-            emit(f"{rf.ir.name}({arg_pass_str});")
+            emit(f"{call_head}({arg_pass_str});")
 
         if rf.ir.has_panic:
             emit(f"if panic.did_panic {{")
@@ -1888,6 +1987,8 @@ if __name__ == "__main__":
 
     with open(input_file, "rt") as f:
         file = ir.from_json(ir.File, json.load(f))
+
+    capi_forward = parse_capi_forwarders(os.path.join(output_path, "capi.rs"))
 
     if not os.path.exists(output_path):
         os.makedirs(output_path, exist_ok=True)

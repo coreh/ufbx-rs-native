@@ -4586,7 +4586,7 @@ pub fn is_thread_safe() -> bool {
 pub unsafe fn load_memory_raw(data: &[u8], opts: &RawLoadOpts) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_load_memory(
+        crate::native::api::load_memory(
             data.as_ptr() as *const c_void,
             data.len(),
             opts as *const RawLoadOpts,
@@ -4609,7 +4609,7 @@ pub fn load_memory(data: &[u8], opts: LoadOpts) -> Result<SceneRoot> {
 pub unsafe fn load_file_raw(filename: &str, opts: &RawLoadOpts) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_load_file_len(
+        crate::native::api::load_file_len(
             filename.as_ptr(),
             filename.len(),
             opts as *const RawLoadOpts,
@@ -4631,7 +4631,7 @@ pub fn load_file(filename: &str, opts: LoadOpts) -> Result<SceneRoot> {
 
 pub unsafe fn load_stdio_raw(file: *mut c_void, opts: &RawLoadOpts) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
-    let result = { ufbx_load_stdio(file, opts as *const RawLoadOpts, &mut error) };
+    let result = { crate::native::api::load_stdio(file, opts as *const RawLoadOpts, &mut error) };
     if error.type_ != ErrorType::None {
         return Err(error);
     }
@@ -4652,7 +4652,7 @@ pub unsafe fn load_stdio_prefix_raw(
 ) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_load_stdio_prefix(
+        crate::native::api::load_stdio_prefix(
             file,
             prefix.as_ptr() as *const c_void,
             prefix.len(),
@@ -4676,7 +4676,7 @@ pub fn load_stdio_prefix(file: *mut c_void, prefix: &[u8], opts: LoadOpts) -> Re
 pub unsafe fn load_stream_raw(stream: &RawStream, opts: &RawLoadOpts) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_load_stream(
+        crate::native::api::load_stream(
             stream as *const RawStream,
             opts as *const RawLoadOpts,
             &mut error,
@@ -4704,7 +4704,7 @@ pub unsafe fn load_stream_prefix_raw(
 ) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_load_stream_prefix(
+        crate::native::api::load_stream_prefix(
             stream as *const RawStream,
             prefix.as_ptr() as *const c_void,
             prefix.len(),
@@ -4729,7 +4729,9 @@ pub fn load_stream_prefix(stream: Stream, prefix: &[u8], opts: LoadOpts) -> Resu
 
 #[allow(clippy::let_and_return)]
 pub fn format_error(dst: &mut [u8], error: &Error) -> usize {
-    let result = unsafe { ufbx_format_error(dst.as_mut_ptr(), dst.len(), error as *const Error) };
+    let result = unsafe {
+        crate::native::api::format_error(dst.as_mut_ptr(), dst.len(), error as *const Error)
+    };
     result
 }
 
@@ -4768,8 +4770,9 @@ pub fn get_prop_element<'a>(
     prop: &Prop,
     type_: ElementType,
 ) -> Option<&'a Element> {
-    let result =
-        unsafe { ufbx_get_prop_element(element as *const Element, prop as *const Prop, type_) };
+    let result = unsafe {
+        crate::native::api::get_prop_element(element as *const Element, prop as *const Prop, type_)
+    };
     if result.is_null() {
         None
     } else {
@@ -4784,7 +4787,12 @@ pub fn find_prop_element<'a>(
     type_: ElementType,
 ) -> Option<&'a Element> {
     let result = unsafe {
-        ufbx_find_prop_element_len(element as *const Element, name.as_ptr(), name.len(), type_)
+        crate::native::api::find_prop_element_len(
+            element as *const Element,
+            name.as_ptr(),
+            name.len(),
+            type_,
+        )
     };
     if result.is_null() {
         None
@@ -4795,8 +4803,14 @@ pub fn find_prop_element<'a>(
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Option<&'a Element> {
-    let result =
-        unsafe { ufbx_find_element_len(scene as *const Scene, type_, name.as_ptr(), name.len()) };
+    let result = unsafe {
+        crate::native::api::find_element_len(
+            scene as *const Scene,
+            type_,
+            name.as_ptr(),
+            name.len(),
+        )
+    };
     if result.is_null() {
         None
     } else {
@@ -4806,7 +4820,9 @@ pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Opt
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
-    let result = unsafe { ufbx_find_node_len(scene as *const Scene, name.as_ptr(), name.len()) };
+    let result = unsafe {
+        crate::native::api::find_node_len(scene as *const Scene, name.as_ptr(), name.len())
+    };
     if result.is_null() {
         None
     } else {
@@ -4816,8 +4832,9 @@ pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_anim_stack<'a>(scene: &'a Scene, name: &str) -> Option<&'a AnimStack> {
-    let result =
-        unsafe { ufbx_find_anim_stack_len(scene as *const Scene, name.as_ptr(), name.len()) };
+    let result = unsafe {
+        crate::native::api::find_anim_stack_len(scene as *const Scene, name.as_ptr(), name.len())
+    };
     if result.is_null() {
         None
     } else {
@@ -4827,8 +4844,9 @@ pub fn find_anim_stack<'a>(scene: &'a Scene, name: &str) -> Option<&'a AnimStack
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_material<'a>(scene: &'a Scene, name: &str) -> Option<&'a Material> {
-    let result =
-        unsafe { ufbx_find_material_len(scene as *const Scene, name.as_ptr(), name.len()) };
+    let result = unsafe {
+        crate::native::api::find_material_len(scene as *const Scene, name.as_ptr(), name.len())
+    };
     if result.is_null() {
         None
     } else {
@@ -4843,7 +4861,7 @@ pub fn find_anim_prop<'a>(
     prop: &str,
 ) -> Option<&'a AnimProp> {
     let result = unsafe {
-        ufbx_find_anim_prop_len(
+        crate::native::api::find_anim_prop_len(
             layer as *const AnimLayer,
             element as *const Element,
             prop.as_ptr(),
@@ -4859,21 +4877,23 @@ pub fn find_anim_prop<'a>(
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_anim_props<'a>(layer: &'a AnimLayer, element: &'a Element) -> &'a [AnimProp] {
-    let result =
-        unsafe { ufbx_find_anim_props(layer as *const AnimLayer, element as *const Element) };
+    let result = unsafe {
+        crate::native::api::find_anim_props(layer as *const AnimLayer, element as *const Element)
+    };
     unsafe { result.as_static_ref() }
 }
 
 #[allow(clippy::let_and_return)]
 pub fn get_compatible_matrix_for_normals(node: &Node) -> Matrix {
-    let result = unsafe { ufbx_get_compatible_matrix_for_normals(node as *const Node) };
+    let result =
+        unsafe { crate::native::api::get_compatible_matrix_for_normals(node as *const Node) };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn inflate(dst: &mut [u8], input: &InflateInput, retain: &mut InflateRetain) -> isize {
     let result = unsafe {
-        ufbx_inflate(
+        crate::native::deflate::inflate(
             dst.as_mut_ptr() as *mut c_void,
             dst.len(),
             input as *const InflateInput,
@@ -4909,7 +4929,7 @@ pub unsafe fn open_file_raw(
 ) -> Result<bool> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_open_file(
+        crate::native::api::open_file(
             stream as *mut RawStream,
             path.as_ptr(),
             path.len(),
@@ -4931,7 +4951,7 @@ pub unsafe fn open_file_ctx_raw(
 ) -> Result<bool> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_open_file_ctx(
+        crate::native::api::open_file_ctx(
             stream as *mut RawStream,
             ctx,
             path.as_ptr(),
@@ -4953,7 +4973,7 @@ pub unsafe fn open_memory_raw(
 ) -> Result<bool> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_open_memory(
+        crate::native::api::open_memory(
             stream as *mut RawStream,
             data.as_ptr() as *const c_void,
             data.len(),
@@ -4975,7 +4995,7 @@ pub unsafe fn open_memory_ctx_raw(
 ) -> Result<bool> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_open_memory_ctx(
+        crate::native::api::open_memory_ctx(
             stream as *mut RawStream,
             ctx,
             data.as_ptr() as *const c_void,
@@ -4992,40 +5012,62 @@ pub unsafe fn open_memory_ctx_raw(
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_curve(curve: &AnimCurve, time: f64, default_value: Real) -> Real {
-    let result = unsafe { ufbx_evaluate_curve(curve as *const AnimCurve, time, default_value) };
+    let result = unsafe {
+        crate::native::api::evaluate_curve(curve as *const AnimCurve, time, default_value)
+    };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_curve_flags(curve: &AnimCurve, time: f64, default_value: Real, flags: u32) -> Real {
-    let result =
-        unsafe { ufbx_evaluate_curve_flags(curve as *const AnimCurve, time, default_value, flags) };
+    let result = unsafe {
+        crate::native::api::evaluate_curve_flags(
+            curve as *const AnimCurve,
+            time,
+            default_value,
+            flags,
+        )
+    };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_anim_value_real(anim_value: &AnimValue, time: f64) -> Real {
-    let result = unsafe { ufbx_evaluate_anim_value_real(anim_value as *const AnimValue, time) };
+    let result = unsafe {
+        crate::native::api::evaluate_anim_value_real(anim_value as *const AnimValue, time)
+    };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_anim_value_vec3(anim_value: &AnimValue, time: f64) -> Vec3 {
-    let result = unsafe { ufbx_evaluate_anim_value_vec3(anim_value as *const AnimValue, time) };
+    let result = unsafe {
+        crate::native::api::evaluate_anim_value_vec3(anim_value as *const AnimValue, time)
+    };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_anim_value_real_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Real {
-    let result =
-        unsafe { ufbx_evaluate_anim_value_real_flags(anim_value as *const AnimValue, time, flags) };
+    let result = unsafe {
+        crate::native::api::evaluate_anim_value_real_flags(
+            anim_value as *const AnimValue,
+            time,
+            flags,
+        )
+    };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_anim_value_vec3_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Vec3 {
-    let result =
-        unsafe { ufbx_evaluate_anim_value_vec3_flags(anim_value as *const AnimValue, time, flags) };
+    let result = unsafe {
+        crate::native::api::evaluate_anim_value_vec3_flags(
+            anim_value as *const AnimValue,
+            time,
+            flags,
+        )
+    };
     result
 }
 
@@ -5059,7 +5101,7 @@ pub fn evaluate_prop_flags(
     flags: u32,
 ) -> Prop {
     let result = unsafe {
-        ufbx_evaluate_prop_flags_len(
+        crate::native::api::evaluate_prop_flags_len(
             anim as *const Anim,
             element as *const Element,
             name.as_ptr(),
@@ -5102,7 +5144,7 @@ pub fn evaluate_props_flags(
     flags: u32,
 ) -> Props {
     let result = unsafe {
-        ufbx_evaluate_props_flags(
+        crate::native::api::evaluate_props_flags(
             anim as *const Anim,
             element as *const Element,
             time,
@@ -5116,14 +5158,21 @@ pub fn evaluate_props_flags(
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_transform(anim: &Anim, node: &Node, time: f64) -> Transform {
-    let result = unsafe { ufbx_evaluate_transform(anim as *const Anim, node as *const Node, time) };
+    let result = unsafe {
+        crate::native::api::evaluate_transform(anim as *const Anim, node as *const Node, time)
+    };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_transform_flags(anim: &Anim, node: &Node, time: f64, flags: u32) -> Transform {
     let result = unsafe {
-        ufbx_evaluate_transform_flags(anim as *const Anim, node as *const Node, time, flags)
+        crate::native::api::evaluate_transform_flags(
+            anim as *const Anim,
+            node as *const Node,
+            time,
+            flags,
+        )
     };
     result
 }
@@ -5131,7 +5180,11 @@ pub fn evaluate_transform_flags(anim: &Anim, node: &Node, time: f64, flags: u32)
 #[allow(clippy::let_and_return)]
 pub fn evaluate_blend_weight(anim: &Anim, channel: &BlendChannel, time: f64) -> Real {
     let result = unsafe {
-        ufbx_evaluate_blend_weight(anim as *const Anim, channel as *const BlendChannel, time)
+        crate::native::api::evaluate_blend_weight(
+            anim as *const Anim,
+            channel as *const BlendChannel,
+            time,
+        )
     };
     result
 }
@@ -5144,7 +5197,7 @@ pub fn evaluate_blend_weight_flags(
     flags: u32,
 ) -> Real {
     let result = unsafe {
-        ufbx_evaluate_blend_weight_flags(
+        crate::native::api::evaluate_blend_weight_flags(
             anim as *const Anim,
             channel as *const BlendChannel,
             time,
@@ -5162,7 +5215,7 @@ pub unsafe fn evaluate_scene_raw(
 ) -> Result<SceneRoot> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_evaluate_scene(
+        crate::native::api::evaluate_scene(
             scene as *const Scene,
             anim as *const Anim,
             time,
@@ -5191,7 +5244,7 @@ pub fn evaluate_scene(
 pub unsafe fn create_anim_raw(scene: &Scene, opts: &RawAnimOpts) -> Result<AnimRoot> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_create_anim(
+        crate::native::api::create_anim(
             scene as *const Scene,
             opts as *const RawAnimOpts,
             &mut error,
@@ -5217,7 +5270,7 @@ pub unsafe fn bake_anim_raw(
 ) -> Result<BakedAnimRoot> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_bake_anim(
+        crate::native::api::bake_anim(
             scene as *const Scene,
             anim as *const Anim,
             opts as *const RawBakeOpts,
@@ -5242,7 +5295,9 @@ pub fn find_baked_node_by_typed_id<'a>(
     bake: &mut BakedAnim,
     typed_id: u32,
 ) -> Option<&'a BakedNode> {
-    let result = unsafe { ufbx_find_baked_node_by_typed_id(bake as *mut BakedAnim, typed_id) };
+    let result = unsafe {
+        crate::native::api::find_baked_node_by_typed_id(bake as *mut BakedAnim, typed_id)
+    };
     if result.is_null() {
         None
     } else {
@@ -5252,7 +5307,8 @@ pub fn find_baked_node_by_typed_id<'a>(
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_baked_node<'a>(bake: &mut BakedAnim, node: &'a mut Node) -> Option<&'a BakedNode> {
-    let result = unsafe { ufbx_find_baked_node(bake as *mut BakedAnim, node as *mut Node) };
+    let result =
+        unsafe { crate::native::api::find_baked_node(bake as *mut BakedAnim, node as *mut Node) };
     if result.is_null() {
         None
     } else {
@@ -5265,8 +5321,9 @@ pub fn find_baked_element_by_element_id<'a>(
     bake: &mut BakedAnim,
     element_id: u32,
 ) -> Option<&'a BakedElement> {
-    let result =
-        unsafe { ufbx_find_baked_element_by_element_id(bake as *mut BakedAnim, element_id) };
+    let result = unsafe {
+        crate::native::api::find_baked_element_by_element_id(bake as *mut BakedAnim, element_id)
+    };
     if result.is_null() {
         None
     } else {
@@ -5279,8 +5336,9 @@ pub fn find_baked_element<'a>(
     bake: &mut BakedAnim,
     element: &'a mut Element,
 ) -> Option<&'a BakedElement> {
-    let result =
-        unsafe { ufbx_find_baked_element(bake as *mut BakedAnim, element as *mut Element) };
+    let result = unsafe {
+        crate::native::api::find_baked_element(bake as *mut BakedAnim, element as *mut Element)
+    };
     if result.is_null() {
         None
     } else {
@@ -5290,19 +5348,22 @@ pub fn find_baked_element<'a>(
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_baked_vec3(keyframes: &[BakedVec3], time: f64) -> Vec3 {
-    let result = unsafe { ufbx_evaluate_baked_vec3(List::from_slice(keyframes), time) };
+    let result =
+        unsafe { crate::native::api::evaluate_baked_vec3(List::from_slice(keyframes), time) };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_baked_quat(keyframes: &[BakedQuat], time: f64) -> Quat {
-    let result = unsafe { ufbx_evaluate_baked_quat(List::from_slice(keyframes), time) };
+    let result =
+        unsafe { crate::native::api::evaluate_baked_quat(List::from_slice(keyframes), time) };
     result
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn get_bone_pose<'a>(pose: &'a Pose, node: &'a Node) -> Option<&'a BonePose> {
-    let result = unsafe { ufbx_get_bone_pose(pose as *const Pose, node as *const Node) };
+    let result =
+        unsafe { crate::native::api::get_bone_pose(pose as *const Pose, node as *const Node) };
     if result.is_null() {
         None
     } else {
@@ -5313,7 +5374,11 @@ pub fn get_bone_pose<'a>(pose: &'a Pose, node: &'a Node) -> Option<&'a BonePose>
 #[allow(clippy::needless_lifetimes)]
 pub fn find_prop_texture<'a>(material: &'a Material, name: &str) -> Option<&'a Texture> {
     let result = unsafe {
-        ufbx_find_prop_texture_len(material as *const Material, name.as_ptr(), name.len())
+        crate::native::api::find_prop_texture_len(
+            material as *const Material,
+            name.as_ptr(),
+            name.len(),
+        )
     };
     if result.is_null() {
         None
@@ -5331,7 +5396,11 @@ pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
 #[allow(clippy::needless_lifetimes)]
 pub fn find_shader_prop_bindings<'a>(shader: &'a Shader, name: &str) -> &'a [ShaderPropBinding] {
     let result = unsafe {
-        ufbx_find_shader_prop_bindings_len(shader as *const Shader, name.as_ptr(), name.len())
+        crate::native::api::find_shader_prop_bindings_len(
+            shader as *const Shader,
+            name.as_ptr(),
+            name.len(),
+        )
     };
     unsafe { result.as_static_ref() }
 }
@@ -5342,7 +5411,7 @@ pub fn find_shader_texture_input<'a>(
     name: &str,
 ) -> Option<&'a ShaderTextureInput> {
     let result = unsafe {
-        ufbx_find_shader_texture_input_len(
+        crate::native::api::find_shader_texture_input_len(
             shader as *const ShaderTexture,
             name.as_ptr(),
             name.len(),
@@ -5417,56 +5486,56 @@ pub fn euler_to_quat(v: Vec3, order: RotationOrder) -> Quat {
 
 #[allow(clippy::let_and_return)]
 pub fn matrix_mul(a: &Matrix, b: &Matrix) -> Matrix {
-    let result = unsafe { ufbx_matrix_mul(a as *const Matrix, b as *const Matrix) };
+    let result = unsafe { crate::native::api::matrix_mul(a as *const Matrix, b as *const Matrix) };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn matrix_determinant(m: &Matrix) -> Real {
-    let result = unsafe { ufbx_matrix_determinant(m as *const Matrix) };
+    let result = unsafe { crate::native::api::matrix_determinant(m as *const Matrix) };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn matrix_invert(m: &Matrix) -> Matrix {
-    let result = unsafe { ufbx_matrix_invert(m as *const Matrix) };
+    let result = unsafe { crate::native::api::matrix_invert(m as *const Matrix) };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn matrix_for_normals(m: &Matrix) -> Matrix {
-    let result = unsafe { ufbx_matrix_for_normals(m as *const Matrix) };
+    let result = unsafe { crate::native::api::matrix_for_normals(m as *const Matrix) };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn transform_position(m: &Matrix, v: Vec3) -> Vec3 {
-    let result = unsafe { ufbx_transform_position(m as *const Matrix, v) };
+    let result = unsafe { crate::native::api::transform_position(m as *const Matrix, v) };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn transform_direction(m: &Matrix, v: Vec3) -> Vec3 {
-    let result = unsafe { ufbx_transform_direction(m as *const Matrix, v) };
+    let result = unsafe { crate::native::api::transform_direction(m as *const Matrix, v) };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn transform_to_matrix(t: &Transform) -> Matrix {
-    let result = unsafe { ufbx_transform_to_matrix(t as *const Transform) };
+    let result = unsafe { crate::native::api::transform_to_matrix(t as *const Transform) };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn matrix_to_transform(m: &Matrix) -> Transform {
-    let result = unsafe { ufbx_matrix_to_transform(m as *const Matrix) };
+    let result = unsafe { crate::native::api::matrix_to_transform(m as *const Matrix) };
     result
 }
 
 pub fn get_skin_vertex_matrix(skin: &SkinDeformer, vertex: usize, fallback: &Matrix) -> Matrix {
     let mut panic: Panic = Default::default();
     let result = unsafe {
-        ufbx_catch_get_skin_vertex_matrix(
+        crate::native::api::catch_get_skin_vertex_matrix(
             &mut panic,
             skin as *const SkinDeformer,
             vertex,
@@ -5481,25 +5550,31 @@ pub fn get_skin_vertex_matrix(skin: &SkinDeformer, vertex: usize, fallback: &Mat
 
 #[allow(clippy::let_and_return)]
 pub fn get_blend_shape_offset_index(shape: &BlendShape, vertex: usize) -> u32 {
-    let result = unsafe { ufbx_get_blend_shape_offset_index(shape as *const BlendShape, vertex) };
+    let result = unsafe {
+        crate::native::api::get_blend_shape_offset_index(shape as *const BlendShape, vertex)
+    };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn get_blend_shape_vertex_offset(shape: &BlendShape, vertex: usize) -> Vec3 {
-    let result = unsafe { ufbx_get_blend_shape_vertex_offset(shape as *const BlendShape, vertex) };
+    let result = unsafe {
+        crate::native::api::get_blend_shape_vertex_offset(shape as *const BlendShape, vertex)
+    };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn get_blend_vertex_offset(blend: &BlendDeformer, vertex: usize) -> Vec3 {
-    let result = unsafe { ufbx_get_blend_vertex_offset(blend as *const BlendDeformer, vertex) };
+    let result = unsafe {
+        crate::native::api::get_blend_vertex_offset(blend as *const BlendDeformer, vertex)
+    };
     result
 }
 
 pub fn add_blend_shape_vertex_offsets(shape: &BlendShape, vertices: &mut [Vec3], weight: Real) {
     unsafe {
-        ufbx_add_blend_shape_vertex_offsets(
+        crate::native::api::add_blend_shape_vertex_offsets(
             shape as *const BlendShape,
             vertices.as_mut_ptr(),
             vertices.len(),
@@ -5510,7 +5585,7 @@ pub fn add_blend_shape_vertex_offsets(shape: &BlendShape, vertices: &mut [Vec3],
 
 pub fn add_blend_vertex_offsets(blend: &BlendDeformer, vertices: &mut [Vec3], weight: Real) {
     unsafe {
-        ufbx_add_blend_vertex_offsets(
+        crate::native::api::add_blend_vertex_offsets(
             blend as *const BlendDeformer,
             vertices.as_mut_ptr(),
             vertices.len(),
@@ -5527,7 +5602,7 @@ pub fn evaluate_nurbs_basis(
     derivatives: &mut [Real],
 ) -> usize {
     let result = unsafe {
-        ufbx_evaluate_nurbs_basis(
+        crate::native::api::evaluate_nurbs_basis(
             basis as *const NurbsBasis,
             u,
             weights.as_mut_ptr(),
@@ -5541,13 +5616,14 @@ pub fn evaluate_nurbs_basis(
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_nurbs_curve(curve: &NurbsCurve, u: Real) -> CurvePoint {
-    let result = unsafe { ufbx_evaluate_nurbs_curve(curve as *const NurbsCurve, u) };
+    let result = unsafe { crate::native::api::evaluate_nurbs_curve(curve as *const NurbsCurve, u) };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn evaluate_nurbs_surface(surface: &NurbsSurface, u: Real, v: Real) -> SurfacePoint {
-    let result = unsafe { ufbx_evaluate_nurbs_surface(surface as *const NurbsSurface, u, v) };
+    let result =
+        unsafe { crate::native::api::evaluate_nurbs_surface(surface as *const NurbsSurface, u, v) };
     result
 }
 
@@ -5557,7 +5633,7 @@ pub unsafe fn tessellate_nurbs_curve_raw(
 ) -> Result<LineCurveRoot> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_tessellate_nurbs_curve(
+        crate::native::api::tessellate_nurbs_curve(
             curve as *const NurbsCurve,
             opts as *const RawTessellateCurveOpts,
             &mut error,
@@ -5585,7 +5661,7 @@ pub unsafe fn tessellate_nurbs_surface_raw(
 ) -> Result<MeshRoot> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_tessellate_nurbs_surface(
+        crate::native::api::tessellate_nurbs_surface(
             surface as *const NurbsSurface,
             opts as *const RawTessellateSurfaceOpts,
             &mut error,
@@ -5609,14 +5685,14 @@ pub fn tessellate_nurbs_surface(
 
 #[allow(clippy::let_and_return)]
 pub fn find_face_index(mesh: &mut Mesh, index: usize) -> u32 {
-    let result = unsafe { ufbx_find_face_index(mesh as *mut Mesh, index) };
+    let result = unsafe { crate::native::api::find_face_index(mesh as *mut Mesh, index) };
     result
 }
 
 pub fn triangulate_face(indices: &mut [u32], mesh: &Mesh, face: Face) -> u32 {
     let mut panic: Panic = Default::default();
     let result = unsafe {
-        ufbx_catch_triangulate_face(
+        crate::native::api::catch_triangulate_face(
             &mut panic,
             indices.as_mut_ptr(),
             indices.len(),
@@ -5633,7 +5709,7 @@ pub fn triangulate_face(indices: &mut [u32], mesh: &Mesh, face: Face) -> u32 {
 pub fn compute_topology(mesh: &Mesh, topo: &mut [TopoEdge]) {
     let mut panic: Panic = Default::default();
     unsafe {
-        ufbx_catch_compute_topology(
+        crate::native::api::catch_compute_topology(
             &mut panic,
             mesh as *const Mesh,
             topo.as_mut_ptr(),
@@ -5647,8 +5723,14 @@ pub fn compute_topology(mesh: &Mesh, topo: &mut [TopoEdge]) {
 
 pub fn topo_next_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
     let mut panic: Panic = Default::default();
-    let result =
-        unsafe { ufbx_catch_topo_next_vertex_edge(&mut panic, topo.as_ptr(), topo.len(), index) };
+    let result = unsafe {
+        crate::native::api::catch_topo_next_vertex_edge(
+            &mut panic,
+            topo.as_ptr(),
+            topo.len(),
+            index,
+        )
+    };
     if panic.did_panic {
         panic!("ufbx::topo_next_vertex_edge() {}", panic.message());
     }
@@ -5657,8 +5739,14 @@ pub fn topo_next_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
 
 pub fn topo_prev_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
     let mut panic: Panic = Default::default();
-    let result =
-        unsafe { ufbx_catch_topo_prev_vertex_edge(&mut panic, topo.as_ptr(), topo.len(), index) };
+    let result = unsafe {
+        crate::native::api::catch_topo_prev_vertex_edge(
+            &mut panic,
+            topo.as_ptr(),
+            topo.len(),
+            index,
+        )
+    };
     if panic.did_panic {
         panic!("ufbx::topo_prev_vertex_edge() {}", panic.message());
     }
@@ -5668,7 +5756,11 @@ pub fn topo_prev_vertex_edge(topo: &[TopoEdge], index: u32) -> u32 {
 pub fn get_weighted_face_normal(positions: &VertexVec3, face: Face) -> Vec3 {
     let mut panic: Panic = Default::default();
     let result = unsafe {
-        ufbx_catch_get_weighted_face_normal(&mut panic, positions as *const VertexVec3, face)
+        crate::native::api::catch_get_weighted_face_normal(
+            &mut panic,
+            positions as *const VertexVec3,
+            face,
+        )
     };
     if panic.did_panic {
         panic!("ufbx::get_weighted_face_normal() {}", panic.message());
@@ -5684,7 +5776,7 @@ pub fn generate_normal_mapping(
 ) -> usize {
     let mut panic: Panic = Default::default();
     let result = unsafe {
-        ufbx_catch_generate_normal_mapping(
+        crate::native::api::catch_generate_normal_mapping(
             &mut panic,
             mesh as *const Mesh,
             topo.as_ptr(),
@@ -5708,7 +5800,7 @@ pub fn compute_normals(
 ) {
     let mut panic: Panic = Default::default();
     unsafe {
-        ufbx_catch_compute_normals(
+        crate::native::api::catch_compute_normals(
             &mut panic,
             mesh as *const Mesh,
             positions as *const VertexVec3,
@@ -5730,7 +5822,7 @@ pub unsafe fn subdivide_mesh_raw(
 ) -> Result<MeshRoot> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_subdivide_mesh(
+        crate::native::api::subdivide_mesh(
             mesh as *const Mesh,
             level,
             opts as *const RawSubdivideOpts,
@@ -5756,7 +5848,7 @@ pub unsafe fn load_geometry_cache_raw(
 ) -> Result<GeometryCacheRoot> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_load_geometry_cache_len(
+        crate::native::api::load_geometry_cache_len(
             filename.as_ptr(),
             filename.len(),
             opts as *const RawGeometryCacheOpts,
@@ -5783,7 +5875,7 @@ pub unsafe fn read_geometry_cache_real_raw(
     opts: &RawGeometryCacheDataOpts,
 ) -> usize {
     let result = {
-        ufbx_read_geometry_cache_real(
+        crate::native::api::read_geometry_cache_real(
             frame as *const CacheFrame,
             data.as_mut_ptr(),
             data.len(),
@@ -5811,7 +5903,7 @@ pub unsafe fn read_geometry_cache_vec3_raw(
     opts: &RawGeometryCacheDataOpts,
 ) -> usize {
     let result = {
-        ufbx_read_geometry_cache_vec3(
+        crate::native::api::read_geometry_cache_vec3(
             frame as *const CacheFrame,
             data.as_mut_ptr(),
             data.len(),
@@ -5840,7 +5932,7 @@ pub unsafe fn sample_geometry_cache_real_raw(
     opts: &RawGeometryCacheDataOpts,
 ) -> usize {
     let result = {
-        ufbx_sample_geometry_cache_real(
+        crate::native::api::sample_geometry_cache_real(
             channel as *const CacheChannel,
             time,
             data.as_mut_ptr(),
@@ -5871,7 +5963,7 @@ pub unsafe fn sample_geometry_cache_vec3_raw(
     opts: &RawGeometryCacheDataOpts,
 ) -> usize {
     let result = {
-        ufbx_sample_geometry_cache_vec3(
+        crate::native::api::sample_geometry_cache_vec3(
             channel as *const CacheChannel,
             time,
             data.as_mut_ptr(),
@@ -5896,7 +5988,9 @@ pub fn sample_geometry_cache_vec3(
 
 #[allow(clippy::needless_lifetimes)]
 pub fn dom_find<'a>(parent: &DomNode, name: &str) -> Option<&'a DomNode> {
-    let result = unsafe { ufbx_dom_find_len(parent as *const DomNode, name.as_ptr(), name.len()) };
+    let result = unsafe {
+        crate::native::api::dom_find_len(parent as *const DomNode, name.as_ptr(), name.len())
+    };
     if result.is_null() {
         None
     } else {
@@ -5911,7 +6005,7 @@ pub unsafe fn generate_indices_raw(
 ) -> Result<usize> {
     let mut error: Error = Error::default();
     let result = {
-        ufbx_generate_indices(
+        crate::native::api::generate_indices(
             streams.as_ptr(),
             streams.len(),
             indices.as_mut_ptr(),
@@ -5939,7 +6033,7 @@ pub fn generate_indices(
 }
 
 pub unsafe fn thread_pool_run_task(ctx: ThreadPoolContext, index: u32) {
-    ufbx_thread_pool_run_task(ctx, index);
+    crate::native::api::thread_pool_run_task(ctx, index);
 }
 
 pub unsafe fn thread_pool_set_user_ptr(ctx: ThreadPoolContext, user_ptr: *mut c_void) {
@@ -5952,7 +6046,9 @@ pub unsafe fn thread_pool_get_user_ptr(ctx: ThreadPoolContext) -> *mut c_void {
 
 pub fn get_vertex_real(v: &VertexReal, index: usize) -> Real {
     let mut panic: Panic = Default::default();
-    let result = unsafe { ufbx_catch_get_vertex_real(&mut panic, v as *const VertexReal, index) };
+    let result = unsafe {
+        crate::native::api::catch_get_vertex_real(&mut panic, v as *const VertexReal, index)
+    };
     if panic.did_panic {
         panic!("ufbx::get_vertex_real() {}", panic.message());
     }
@@ -5961,7 +6057,9 @@ pub fn get_vertex_real(v: &VertexReal, index: usize) -> Real {
 
 pub fn get_vertex_vec2(v: &VertexVec2, index: usize) -> Vec2 {
     let mut panic: Panic = Default::default();
-    let result = unsafe { ufbx_catch_get_vertex_vec2(&mut panic, v as *const VertexVec2, index) };
+    let result = unsafe {
+        crate::native::api::catch_get_vertex_vec2(&mut panic, v as *const VertexVec2, index)
+    };
     if panic.did_panic {
         panic!("ufbx::get_vertex_vec2() {}", panic.message());
     }
@@ -5970,7 +6068,9 @@ pub fn get_vertex_vec2(v: &VertexVec2, index: usize) -> Vec2 {
 
 pub fn get_vertex_vec3(v: &VertexVec3, index: usize) -> Vec3 {
     let mut panic: Panic = Default::default();
-    let result = unsafe { ufbx_catch_get_vertex_vec3(&mut panic, v as *const VertexVec3, index) };
+    let result = unsafe {
+        crate::native::api::catch_get_vertex_vec3(&mut panic, v as *const VertexVec3, index)
+    };
     if panic.did_panic {
         panic!("ufbx::get_vertex_vec3() {}", panic.message());
     }
@@ -5979,7 +6079,9 @@ pub fn get_vertex_vec3(v: &VertexVec3, index: usize) -> Vec3 {
 
 pub fn get_vertex_vec4(v: &VertexVec4, index: usize) -> Vec4 {
     let mut panic: Panic = Default::default();
-    let result = unsafe { ufbx_catch_get_vertex_vec4(&mut panic, v as *const VertexVec4, index) };
+    let result = unsafe {
+        crate::native::api::catch_get_vertex_vec4(&mut panic, v as *const VertexVec4, index)
+    };
     if panic.did_panic {
         panic!("ufbx::get_vertex_vec4() {}", panic.message());
     }
@@ -5988,7 +6090,9 @@ pub fn get_vertex_vec4(v: &VertexVec4, index: usize) -> Vec4 {
 
 pub fn get_vertex_w_vec3(v: &VertexVec3, index: usize) -> Real {
     let mut panic: Panic = Default::default();
-    let result = unsafe { ufbx_catch_get_vertex_w_vec3(&mut panic, v as *const VertexVec3, index) };
+    let result = unsafe {
+        crate::native::api::catch_get_vertex_w_vec3(&mut panic, v as *const VertexVec3, index)
+    };
     if panic.did_panic {
         panic!("ufbx::get_vertex_w_vec3() {}", panic.message());
     }
@@ -5997,7 +6101,7 @@ pub fn get_vertex_w_vec3(v: &VertexVec3, index: usize) -> Real {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_unknown<'a>(element: &'a Element) -> Option<&'a Unknown> {
-    let result = unsafe { ufbx_as_unknown(element as *const Element) };
+    let result = unsafe { crate::native::api::as_unknown(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6007,7 +6111,7 @@ pub fn as_unknown<'a>(element: &'a Element) -> Option<&'a Unknown> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_node<'a>(element: &'a Element) -> Option<&'a Node> {
-    let result = unsafe { ufbx_as_node(element as *const Element) };
+    let result = unsafe { crate::native::api::as_node(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6017,7 +6121,7 @@ pub fn as_node<'a>(element: &'a Element) -> Option<&'a Node> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_mesh<'a>(element: &'a Element) -> Option<&'a Mesh> {
-    let result = unsafe { ufbx_as_mesh(element as *const Element) };
+    let result = unsafe { crate::native::api::as_mesh(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6027,7 +6131,7 @@ pub fn as_mesh<'a>(element: &'a Element) -> Option<&'a Mesh> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_light<'a>(element: &'a Element) -> Option<&'a Light> {
-    let result = unsafe { ufbx_as_light(element as *const Element) };
+    let result = unsafe { crate::native::api::as_light(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6037,7 +6141,7 @@ pub fn as_light<'a>(element: &'a Element) -> Option<&'a Light> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_camera<'a>(element: &'a Element) -> Option<&'a Camera> {
-    let result = unsafe { ufbx_as_camera(element as *const Element) };
+    let result = unsafe { crate::native::api::as_camera(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6047,7 +6151,7 @@ pub fn as_camera<'a>(element: &'a Element) -> Option<&'a Camera> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_bone<'a>(element: &'a Element) -> Option<&'a Bone> {
-    let result = unsafe { ufbx_as_bone(element as *const Element) };
+    let result = unsafe { crate::native::api::as_bone(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6057,7 +6161,7 @@ pub fn as_bone<'a>(element: &'a Element) -> Option<&'a Bone> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_empty<'a>(element: &'a Element) -> Option<&'a Empty> {
-    let result = unsafe { ufbx_as_empty(element as *const Element) };
+    let result = unsafe { crate::native::api::as_empty(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6067,7 +6171,7 @@ pub fn as_empty<'a>(element: &'a Element) -> Option<&'a Empty> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_line_curve<'a>(element: &'a Element) -> Option<&'a LineCurve> {
-    let result = unsafe { ufbx_as_line_curve(element as *const Element) };
+    let result = unsafe { crate::native::api::as_line_curve(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6077,7 +6181,7 @@ pub fn as_line_curve<'a>(element: &'a Element) -> Option<&'a LineCurve> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_curve<'a>(element: &'a Element) -> Option<&'a NurbsCurve> {
-    let result = unsafe { ufbx_as_nurbs_curve(element as *const Element) };
+    let result = unsafe { crate::native::api::as_nurbs_curve(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6087,7 +6191,7 @@ pub fn as_nurbs_curve<'a>(element: &'a Element) -> Option<&'a NurbsCurve> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_surface<'a>(element: &'a Element) -> Option<&'a NurbsSurface> {
-    let result = unsafe { ufbx_as_nurbs_surface(element as *const Element) };
+    let result = unsafe { crate::native::api::as_nurbs_surface(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6097,7 +6201,7 @@ pub fn as_nurbs_surface<'a>(element: &'a Element) -> Option<&'a NurbsSurface> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_trim_surface<'a>(element: &'a Element) -> Option<&'a NurbsTrimSurface> {
-    let result = unsafe { ufbx_as_nurbs_trim_surface(element as *const Element) };
+    let result = unsafe { crate::native::api::as_nurbs_trim_surface(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6107,7 +6211,7 @@ pub fn as_nurbs_trim_surface<'a>(element: &'a Element) -> Option<&'a NurbsTrimSu
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_nurbs_trim_boundary<'a>(element: &'a Element) -> Option<&'a NurbsTrimBoundary> {
-    let result = unsafe { ufbx_as_nurbs_trim_boundary(element as *const Element) };
+    let result = unsafe { crate::native::api::as_nurbs_trim_boundary(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6117,7 +6221,7 @@ pub fn as_nurbs_trim_boundary<'a>(element: &'a Element) -> Option<&'a NurbsTrimB
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_procedural_geometry<'a>(element: &'a Element) -> Option<&'a ProceduralGeometry> {
-    let result = unsafe { ufbx_as_procedural_geometry(element as *const Element) };
+    let result = unsafe { crate::native::api::as_procedural_geometry(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6127,7 +6231,7 @@ pub fn as_procedural_geometry<'a>(element: &'a Element) -> Option<&'a Procedural
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_stereo_camera<'a>(element: &'a Element) -> Option<&'a StereoCamera> {
-    let result = unsafe { ufbx_as_stereo_camera(element as *const Element) };
+    let result = unsafe { crate::native::api::as_stereo_camera(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6137,7 +6241,7 @@ pub fn as_stereo_camera<'a>(element: &'a Element) -> Option<&'a StereoCamera> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_camera_switcher<'a>(element: &'a Element) -> Option<&'a CameraSwitcher> {
-    let result = unsafe { ufbx_as_camera_switcher(element as *const Element) };
+    let result = unsafe { crate::native::api::as_camera_switcher(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6147,7 +6251,7 @@ pub fn as_camera_switcher<'a>(element: &'a Element) -> Option<&'a CameraSwitcher
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_marker<'a>(element: &'a Element) -> Option<&'a Marker> {
-    let result = unsafe { ufbx_as_marker(element as *const Element) };
+    let result = unsafe { crate::native::api::as_marker(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6157,7 +6261,7 @@ pub fn as_marker<'a>(element: &'a Element) -> Option<&'a Marker> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_lod_group<'a>(element: &'a Element) -> Option<&'a LodGroup> {
-    let result = unsafe { ufbx_as_lod_group(element as *const Element) };
+    let result = unsafe { crate::native::api::as_lod_group(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6167,7 +6271,7 @@ pub fn as_lod_group<'a>(element: &'a Element) -> Option<&'a LodGroup> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_skin_deformer<'a>(element: &'a Element) -> Option<&'a SkinDeformer> {
-    let result = unsafe { ufbx_as_skin_deformer(element as *const Element) };
+    let result = unsafe { crate::native::api::as_skin_deformer(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6177,7 +6281,7 @@ pub fn as_skin_deformer<'a>(element: &'a Element) -> Option<&'a SkinDeformer> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_skin_cluster<'a>(element: &'a Element) -> Option<&'a SkinCluster> {
-    let result = unsafe { ufbx_as_skin_cluster(element as *const Element) };
+    let result = unsafe { crate::native::api::as_skin_cluster(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6187,7 +6291,7 @@ pub fn as_skin_cluster<'a>(element: &'a Element) -> Option<&'a SkinCluster> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_blend_deformer<'a>(element: &'a Element) -> Option<&'a BlendDeformer> {
-    let result = unsafe { ufbx_as_blend_deformer(element as *const Element) };
+    let result = unsafe { crate::native::api::as_blend_deformer(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6197,7 +6301,7 @@ pub fn as_blend_deformer<'a>(element: &'a Element) -> Option<&'a BlendDeformer> 
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_blend_channel<'a>(element: &'a Element) -> Option<&'a BlendChannel> {
-    let result = unsafe { ufbx_as_blend_channel(element as *const Element) };
+    let result = unsafe { crate::native::api::as_blend_channel(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6207,7 +6311,7 @@ pub fn as_blend_channel<'a>(element: &'a Element) -> Option<&'a BlendChannel> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_blend_shape<'a>(element: &'a Element) -> Option<&'a BlendShape> {
-    let result = unsafe { ufbx_as_blend_shape(element as *const Element) };
+    let result = unsafe { crate::native::api::as_blend_shape(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6217,7 +6321,7 @@ pub fn as_blend_shape<'a>(element: &'a Element) -> Option<&'a BlendShape> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_cache_deformer<'a>(element: &'a Element) -> Option<&'a CacheDeformer> {
-    let result = unsafe { ufbx_as_cache_deformer(element as *const Element) };
+    let result = unsafe { crate::native::api::as_cache_deformer(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6227,7 +6331,7 @@ pub fn as_cache_deformer<'a>(element: &'a Element) -> Option<&'a CacheDeformer> 
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_cache_file<'a>(element: &'a Element) -> Option<&'a CacheFile> {
-    let result = unsafe { ufbx_as_cache_file(element as *const Element) };
+    let result = unsafe { crate::native::api::as_cache_file(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6237,7 +6341,7 @@ pub fn as_cache_file<'a>(element: &'a Element) -> Option<&'a CacheFile> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_material<'a>(element: &'a Element) -> Option<&'a Material> {
-    let result = unsafe { ufbx_as_material(element as *const Element) };
+    let result = unsafe { crate::native::api::as_material(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6247,7 +6351,7 @@ pub fn as_material<'a>(element: &'a Element) -> Option<&'a Material> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_texture<'a>(element: &'a Element) -> Option<&'a Texture> {
-    let result = unsafe { ufbx_as_texture(element as *const Element) };
+    let result = unsafe { crate::native::api::as_texture(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6257,7 +6361,7 @@ pub fn as_texture<'a>(element: &'a Element) -> Option<&'a Texture> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_video<'a>(element: &'a Element) -> Option<&'a Video> {
-    let result = unsafe { ufbx_as_video(element as *const Element) };
+    let result = unsafe { crate::native::api::as_video(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6267,7 +6371,7 @@ pub fn as_video<'a>(element: &'a Element) -> Option<&'a Video> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_shader<'a>(element: &'a Element) -> Option<&'a Shader> {
-    let result = unsafe { ufbx_as_shader(element as *const Element) };
+    let result = unsafe { crate::native::api::as_shader(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6277,7 +6381,7 @@ pub fn as_shader<'a>(element: &'a Element) -> Option<&'a Shader> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_shader_binding<'a>(element: &'a Element) -> Option<&'a ShaderBinding> {
-    let result = unsafe { ufbx_as_shader_binding(element as *const Element) };
+    let result = unsafe { crate::native::api::as_shader_binding(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6287,7 +6391,7 @@ pub fn as_shader_binding<'a>(element: &'a Element) -> Option<&'a ShaderBinding> 
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_anim_stack<'a>(element: &'a Element) -> Option<&'a AnimStack> {
-    let result = unsafe { ufbx_as_anim_stack(element as *const Element) };
+    let result = unsafe { crate::native::api::as_anim_stack(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6297,7 +6401,7 @@ pub fn as_anim_stack<'a>(element: &'a Element) -> Option<&'a AnimStack> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_anim_layer<'a>(element: &'a Element) -> Option<&'a AnimLayer> {
-    let result = unsafe { ufbx_as_anim_layer(element as *const Element) };
+    let result = unsafe { crate::native::api::as_anim_layer(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6307,7 +6411,7 @@ pub fn as_anim_layer<'a>(element: &'a Element) -> Option<&'a AnimLayer> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_anim_value<'a>(element: &'a Element) -> Option<&'a AnimValue> {
-    let result = unsafe { ufbx_as_anim_value(element as *const Element) };
+    let result = unsafe { crate::native::api::as_anim_value(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6317,7 +6421,7 @@ pub fn as_anim_value<'a>(element: &'a Element) -> Option<&'a AnimValue> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_anim_curve<'a>(element: &'a Element) -> Option<&'a AnimCurve> {
-    let result = unsafe { ufbx_as_anim_curve(element as *const Element) };
+    let result = unsafe { crate::native::api::as_anim_curve(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6327,7 +6431,7 @@ pub fn as_anim_curve<'a>(element: &'a Element) -> Option<&'a AnimCurve> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_display_layer<'a>(element: &'a Element) -> Option<&'a DisplayLayer> {
-    let result = unsafe { ufbx_as_display_layer(element as *const Element) };
+    let result = unsafe { crate::native::api::as_display_layer(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6337,7 +6441,7 @@ pub fn as_display_layer<'a>(element: &'a Element) -> Option<&'a DisplayLayer> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_selection_set<'a>(element: &'a Element) -> Option<&'a SelectionSet> {
-    let result = unsafe { ufbx_as_selection_set(element as *const Element) };
+    let result = unsafe { crate::native::api::as_selection_set(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6347,7 +6451,7 @@ pub fn as_selection_set<'a>(element: &'a Element) -> Option<&'a SelectionSet> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_selection_node<'a>(element: &'a Element) -> Option<&'a SelectionNode> {
-    let result = unsafe { ufbx_as_selection_node(element as *const Element) };
+    let result = unsafe { crate::native::api::as_selection_node(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6357,7 +6461,7 @@ pub fn as_selection_node<'a>(element: &'a Element) -> Option<&'a SelectionNode> 
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_character<'a>(element: &'a Element) -> Option<&'a Character> {
-    let result = unsafe { ufbx_as_character(element as *const Element) };
+    let result = unsafe { crate::native::api::as_character(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6367,7 +6471,7 @@ pub fn as_character<'a>(element: &'a Element) -> Option<&'a Character> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_constraint<'a>(element: &'a Element) -> Option<&'a Constraint> {
-    let result = unsafe { ufbx_as_constraint(element as *const Element) };
+    let result = unsafe { crate::native::api::as_constraint(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6377,7 +6481,7 @@ pub fn as_constraint<'a>(element: &'a Element) -> Option<&'a Constraint> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_audio_layer<'a>(element: &'a Element) -> Option<&'a AudioLayer> {
-    let result = unsafe { ufbx_as_audio_layer(element as *const Element) };
+    let result = unsafe { crate::native::api::as_audio_layer(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6387,7 +6491,7 @@ pub fn as_audio_layer<'a>(element: &'a Element) -> Option<&'a AudioLayer> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_audio_clip<'a>(element: &'a Element) -> Option<&'a AudioClip> {
-    let result = unsafe { ufbx_as_audio_clip(element as *const Element) };
+    let result = unsafe { crate::native::api::as_audio_clip(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6397,7 +6501,7 @@ pub fn as_audio_clip<'a>(element: &'a Element) -> Option<&'a AudioClip> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_pose<'a>(element: &'a Element) -> Option<&'a Pose> {
-    let result = unsafe { ufbx_as_pose(element as *const Element) };
+    let result = unsafe { crate::native::api::as_pose(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6407,7 +6511,7 @@ pub fn as_pose<'a>(element: &'a Element) -> Option<&'a Pose> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn as_metadata_object<'a>(element: &'a Element) -> Option<&'a MetadataObject> {
-    let result = unsafe { ufbx_as_metadata_object(element as *const Element) };
+    let result = unsafe { crate::native::api::as_metadata_object(element as *const Element) };
     if result.is_null() {
         None
     } else {
@@ -6417,49 +6521,49 @@ pub fn as_metadata_object<'a>(element: &'a Element) -> Option<&'a MetadataObject
 
 #[allow(clippy::let_and_return)]
 pub fn dom_is_array(node: &DomNode) -> bool {
-    let result = unsafe { ufbx_dom_is_array(node as *const DomNode) };
+    let result = unsafe { crate::native::api::dom_is_array(node as *const DomNode) };
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn dom_array_size(node: &DomNode) -> usize {
-    let result = unsafe { ufbx_dom_array_size(node as *const DomNode) };
+    let result = unsafe { crate::native::api::dom_array_size(node as *const DomNode) };
     result
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn dom_as_int32_list<'a>(node: &DomNode) -> &'a [i32] {
-    let result = unsafe { ufbx_dom_as_int32_list(node as *const DomNode) };
+    let result = unsafe { crate::native::api::dom_as_int32_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn dom_as_int64_list<'a>(node: &DomNode) -> &'a [i64] {
-    let result = unsafe { ufbx_dom_as_int64_list(node as *const DomNode) };
+    let result = unsafe { crate::native::api::dom_as_int64_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn dom_as_float_list<'a>(node: &DomNode) -> &'a [f32] {
-    let result = unsafe { ufbx_dom_as_float_list(node as *const DomNode) };
+    let result = unsafe { crate::native::api::dom_as_float_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn dom_as_double_list<'a>(node: &DomNode) -> &'a [f64] {
-    let result = unsafe { ufbx_dom_as_double_list(node as *const DomNode) };
+    let result = unsafe { crate::native::api::dom_as_double_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn dom_as_real_list<'a>(node: &DomNode) -> &'a [Real] {
-    let result = unsafe { ufbx_dom_as_real_list(node as *const DomNode) };
+    let result = unsafe { crate::native::api::dom_as_real_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn dom_as_blob_list<'a>(node: &DomNode) -> &'a [Blob] {
-    let result = unsafe { ufbx_dom_as_blob_list(node as *const DomNode) };
+    let result = unsafe { crate::native::api::dom_as_blob_list(node as *const DomNode) };
     unsafe { result.as_static_ref() }
 }
 pub fn identity_matrix() -> Matrix {
