@@ -89,6 +89,103 @@ pub(crate) struct CacheTmpChannel {
     pub try_load: bool,
 }
 
+// Reinterpret-in-place VIEW over one `CacheTmpChannel` inside the `cc.channels`
+// contiguous `push_zero` run; `SliceViewIter` walks that run in
+// `cache_load_frame_files` yielding these, replacing the raw `chan.add(1)`
+// pointer walk. Interior-mutable, so the loop's per-channel mutations go through
+// setters.
+#[cfg(feature = "geometry-cache")]
+pub(crate) type CacheTmpChannelView = crate::native::view::View<CacheTmpChannel>;
+
+#[cfg(feature = "geometry-cache")]
+impl CacheTmpChannelView {
+    #[inline(always)]
+    pub(crate) fn try_load(&self) -> bool {
+        // SAFETY: reading a `bool` field of a valid arena `CacheTmpChannel`.
+        unsafe { (*self.get()).try_load }
+    }
+    #[inline(always)]
+    pub(crate) fn set_try_load(&self, try_load: bool) {
+        // SAFETY: interior-mutable write of a POD field.
+        unsafe {
+            (*self.get()).try_load = try_load;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn consecutive_fails(&self) -> u32 {
+        // SAFETY: reading a `u32` field.
+        unsafe { (*self.get()).consecutive_fails }
+    }
+    #[inline(always)]
+    pub(crate) fn set_consecutive_fails(&self, consecutive_fails: u32) {
+        // SAFETY: interior-mutable write of a POD field.
+        unsafe {
+            (*self.get()).consecutive_fails = consecutive_fails;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn sample_rate(&self) -> u32 {
+        // SAFETY: reading a `u32` field.
+        unsafe { (*self.get()).sample_rate }
+    }
+    #[inline(always)]
+    pub(crate) fn current_time(&self) -> u32 {
+        // SAFETY: reading a `u32` field.
+        unsafe { (*self.get()).current_time }
+    }
+    #[inline(always)]
+    pub(crate) fn set_current_time(&self, current_time: u32) {
+        // SAFETY: interior-mutable write of a POD field.
+        unsafe {
+            (*self.get()).current_time = current_time;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn end_time(&self) -> u32 {
+        // SAFETY: reading a `u32` field.
+        unsafe { (*self.get()).end_time }
+    }
+}
+
+// Reinterpret-in-place VIEW over the loaded `XmlDocument`; `cache_load_xml`
+// bridges the raw `load_xml` result once and threads the anchored view into
+// `cache_load_xml_imp`, whose `root()` supersedes the raw `(*doc).root` deref.
+#[cfg(feature = "geometry-cache")]
+pub(crate) type XmlDocumentView = crate::native::view::View<XmlDocument>;
+
+#[cfg(feature = "geometry-cache")]
+impl XmlDocumentView {
+    #[inline(always)]
+    pub(crate) fn root(&self) -> *mut crate::native::xml::XmlTag {
+        // SAFETY: reading the `root` run pointer of a valid arena `XmlDocument`.
+        unsafe { (*self.get()).root }
+    }
+}
+
+// Reinterpret-in-place VIEW over one `CacheFrame` inside a channel's contiguous
+// `frames` run; `SliceViewIter` walks it in `cache_setup_channels` to stamp the
+// per-frame mirror axis / scale factor, replacing the raw `f.add(1)` walk.
+#[cfg(feature = "geometry-cache")]
+pub(crate) type CacheFrameView = crate::native::view::View<CacheFrame>;
+
+#[cfg(feature = "geometry-cache")]
+impl CacheFrameView {
+    #[inline(always)]
+    pub(crate) fn set_mirror_axis(&self, mirror_axis: MirrorAxis) {
+        // SAFETY: interior-mutable write of a POD enum field.
+        unsafe {
+            (*self.get()).mirror_axis = mirror_axis;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_scale_factor(&self, scale_factor: Real) {
+        // SAFETY: interior-mutable write of a POD field.
+        unsafe {
+            (*self.get()).scale_factor = scale_factor;
+        }
+    }
+}
+
 // ufbx.c:23972-23976 `ufbxi_cache_xml_type`
 #[cfg(feature = "geometry-cache")]
 #[repr(u32)]
@@ -1232,13 +1329,13 @@ pub(crate) unsafe fn cache_sort_tmp_channels(
 #[inline(never)]
 pub(crate) unsafe fn cache_load_xml_imp(
     cc: &CacheContext,
-    doc: *mut XmlDocument,
+    doc: &XmlDocumentView,
 ) -> Result<(), Fail> {
     cc.set_xml_ticks_per_frame(250);
     cc.set_xml_filename(cc.stream_filename());
 
-    // SAFETY: `(*doc).root` is a valid arena `XmlTag`, stable for the document.
-    let root: &XmlTagView = XmlTagView::from_ptr((*doc).root);
+    // SAFETY: `doc.root()` is a valid arena `XmlTag`, stable for the document.
+    let root: &XmlTagView = XmlTagView::from_ptr(doc.root());
     if let Some(tag_root) = xml_find_child(root, c"Autodesk_Cache_File") {
         let tag_type = xml_find_child(tag_root, c"cacheType");
         let tag_fps = xml_find_child(tag_root, c"cacheTimePerFrame");
@@ -1380,7 +1477,11 @@ pub(crate) unsafe fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
     let doc: *mut XmlDocument = load_xml(&mut opts, cc.error_mut_ptr());
     ufbxi_check_err!(cc.error_mut_ptr(), !doc.is_null(), "doc");
 
-    let xml_ok = cache_load_xml_imp(cc, doc);
+    // Bridge the raw `load_xml` result once; the view anchors the document for
+    // the `cache_load_xml_imp` call, then `free_xml` reclaims the raw pointer.
+    // SAFETY: `doc` is non-null and points to a valid `XmlDocument` stable until
+    // `free_xml`.
+    let xml_ok = cache_load_xml_imp(cc, XmlDocumentView::from_ptr(doc));
     free_xml(doc);
     ufbxi_check_err!(cc.error_mut_ptr(), xml_ok.is_ok(), "xml_ok");
 
@@ -1519,35 +1620,34 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
             // Find the first `time >= lowest_time` value that has data in some channel
             let mut time: u32 = u32::MAX;
             // C: `ufbxi_for(ufbxi_cache_tmp_channel, chan, cc->channels, cc->num_channels)`
-            let mut chan: *mut CacheTmpChannel = cc.channels();
-            let chan_end: *mut CacheTmpChannel = add_ptr(chan, cc.num_channels());
-            while chan != chan_end {
-                if !(*chan).try_load || (*chan).consecutive_fails > 10 {
-                    chan = chan.add(1);
+            // SAFETY: `cc.channels` is a contiguous `push_zero` run of
+            // `cc.num_channels` `CacheTmpChannel`, stable for this load.
+            let chans = SliceViewIter::from_raw_parts(cc.channels(), cc.num_channels());
+            for chan in chans {
+                if !chan.try_load() || chan.consecutive_fails() > 10 {
                     continue;
                 }
-                let sample_rate: u32 = if (*chan).sample_rate != 0 {
-                    (*chan).sample_rate
+                let sample_rate: u32 = if chan.sample_rate() != 0 {
+                    chan.sample_rate()
                 } else {
                     cc.xml_ticks_per_frame()
                 };
-                if (*chan).current_time < lowest_time {
-                    let delta: u32 = (lowest_time - (*chan).current_time - 1) / sample_rate;
-                    (*chan).current_time = (*chan)
-                        .current_time
-                        .wrapping_add(delta.wrapping_mul(sample_rate));
-                    if u32::MAX - (*chan).current_time >= sample_rate {
-                        (*chan).current_time = (*chan).current_time.wrapping_add(sample_rate);
+                if chan.current_time() < lowest_time {
+                    let delta: u32 = (lowest_time - chan.current_time() - 1) / sample_rate;
+                    chan.set_current_time(
+                        chan.current_time()
+                            .wrapping_add(delta.wrapping_mul(sample_rate)),
+                    );
+                    if u32::MAX - chan.current_time() >= sample_rate {
+                        chan.set_current_time(chan.current_time().wrapping_add(sample_rate));
                     } else {
-                        (*chan).try_load = false;
-                        chan = chan.add(1);
+                        chan.set_try_load(false);
                         continue;
                     }
                 }
-                if (*chan).current_time <= (*chan).end_time {
-                    time = min32(time, (*chan).current_time);
+                if chan.current_time() <= chan.end_time() {
+                    time = min32(time, chan.current_time());
                 }
-                chan = chan.add(1);
             }
             if time == u32::MAX {
                 break;
@@ -1576,17 +1676,16 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
 
             // Update channel status
             // C: `ufbxi_for(ufbxi_cache_tmp_channel, chan, cc->channels, cc->num_channels)`
-            let mut chan: *mut CacheTmpChannel = cc.channels();
-            let chan_end: *mut CacheTmpChannel = add_ptr(chan, cc.num_channels());
-            while chan != chan_end {
-                if (*chan).current_time == time {
-                    (*chan).consecutive_fails = if found {
+            // SAFETY: same contiguous `cc.channels` run as above.
+            let chans = SliceViewIter::from_raw_parts(cc.channels(), cc.num_channels());
+            for chan in chans {
+                if chan.current_time() == time {
+                    chan.set_consecutive_fails(if found {
                         0
                     } else {
-                        (*chan).consecutive_fails.wrapping_add(1)
-                    };
+                        chan.consecutive_fails().wrapping_add(1)
+                    });
                 }
-                chan = chan.add(1);
             }
 
             lowest_time = time.wrapping_add(1);
@@ -1739,12 +1838,15 @@ pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail>
         (*chan).mirror_axis = mirror_axis;
         (*chan).scale_factor = scale_factor;
         // C: `ufbxi_for_list(ufbx_cache_frame, f, chan->frames)`
-        let mut f: *mut CacheFrame = (*chan).frames.data as *mut CacheFrame;
-        let f_end: *mut CacheFrame = add_ptr(f, (*chan).frames.count);
-        while f != f_end {
-            (*f).mirror_axis = mirror_axis;
-            (*f).scale_factor = scale_factor;
-            f = f.add(1);
+        // SAFETY: `chan->frames` is a contiguous run of `count` `CacheFrame`
+        // (a slice of the `tmp_stack`-materialized frames array), stable here.
+        let frames = SliceViewIter::from_raw_parts(
+            (*chan).frames.data as *mut CacheFrame,
+            (*chan).frames.count,
+        );
+        for f in frames {
+            f.set_mirror_axis(mirror_axis);
+            f.set_scale_factor(scale_factor);
         }
 
         num_channels += 1;
