@@ -1484,6 +1484,33 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
             rt = f"Option<{rt}>"
         ret = f" -> {rt}"
 
+    # Pure by-value wrappers — every arg passed as a plain value (no pointer,
+    # slice, string, blob, or list conversion), a plain-value return, and no
+    # error/panic/alloc post-processing — forward to a safe `native::api` fn.
+    # Call that impl directly instead of the `unsafe extern "C"` capi ABI shim,
+    # so the safe wrapper carries no `unsafe` block at all. The `pub use
+    # crate::capi::{...}` re-export above still exposes the raw ufbx_* symbol
+    # for C-ABI and raw callers; this only shortcuts the safe Rust path, which
+    # already routed through capi straight into the same native impl. `rf.name`
+    # is exactly the native fn name (it is also the safe wrapper's own name).
+    # If a matched native fn were `unsafe fn` or absent, the build fails loudly.
+    def _arg_by_value(a):
+        return (a.kind not in ("string", "slice", "blob")
+                and a.type.ir.kind != "pointer"
+                and not a.type.is_list)
+    direct_safe = (
+        not is_raw
+        and not rf.ir.is_unsafe
+        and not rf.ir.has_error
+        and not rf.ir.has_panic
+        and not rf.ir.alloc_type
+        and not rf.return_type.is_void
+        and not rf.return_type.is_list
+        and not rf.return_type.is_string
+        and rf.return_type.kind != "pointer"
+        and all(_arg_by_value(a) for a in rf.args)
+    )
+
     is_unsafe = False
 
     emit()
@@ -1558,7 +1585,9 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
             arg_pass.insert(0, "&mut panic")
 
         arg_pass_str = ", ".join(arg_pass)
-        if not rf.return_type.is_void:
+        if direct_safe:
+            emit(f"let result = crate::native::api::{rf.name}({arg_pass_str});")
+        elif not rf.return_type.is_void:
             emit(f"let result = {unsafe}{{ {rf.ir.name}({arg_pass_str}) }};")
         elif unsafe:
             emit(f"{unsafe}{{ {rf.ir.name}({arg_pass_str}) }};")

@@ -4579,7 +4579,7 @@ unsafe impl Sync for BakedAnimRoot {}
 
 #[allow(clippy::let_and_return)]
 pub fn is_thread_safe() -> bool {
-    let result = unsafe { ufbx_is_thread_safe() };
+    let result = crate::native::api::is_thread_safe();
     result
 }
 
@@ -5357,61 +5357,61 @@ pub fn find_shader_texture_input<'a>(
 
 #[allow(clippy::let_and_return)]
 pub fn coordinate_axes_valid(axes: CoordinateAxes) -> bool {
-    let result = unsafe { ufbx_coordinate_axes_valid(axes) };
+    let result = crate::native::api::coordinate_axes_valid(axes);
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn vec3_normalize(v: Vec3) -> Vec3 {
-    let result = unsafe { ufbx_vec3_normalize(v) };
+    let result = crate::native::api::vec3_normalize(v);
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn quat_dot(a: Quat, b: Quat) -> Real {
-    let result = unsafe { ufbx_quat_dot(a, b) };
+    let result = crate::native::api::quat_dot(a, b);
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn quat_mul(a: Quat, b: Quat) -> Quat {
-    let result = unsafe { ufbx_quat_mul(a, b) };
+    let result = crate::native::api::quat_mul(a, b);
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn quat_normalize(q: Quat) -> Quat {
-    let result = unsafe { ufbx_quat_normalize(q) };
+    let result = crate::native::api::quat_normalize(q);
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn quat_fix_antipodal(q: Quat, reference: Quat) -> Quat {
-    let result = unsafe { ufbx_quat_fix_antipodal(q, reference) };
+    let result = crate::native::api::quat_fix_antipodal(q, reference);
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn quat_slerp(a: Quat, b: Quat, t: Real) -> Quat {
-    let result = unsafe { ufbx_quat_slerp(a, b, t) };
+    let result = crate::native::api::quat_slerp(a, b, t);
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn quat_rotate_vec3(q: Quat, v: Vec3) -> Vec3 {
-    let result = unsafe { ufbx_quat_rotate_vec3(q, v) };
+    let result = crate::native::api::quat_rotate_vec3(q, v);
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn quat_to_euler(q: Quat, order: RotationOrder) -> Vec3 {
-    let result = unsafe { ufbx_quat_to_euler(q, order) };
+    let result = crate::native::api::quat_to_euler(q, order);
     result
 }
 
 #[allow(clippy::let_and_return)]
 pub fn euler_to_quat(v: Vec3, order: RotationOrder) -> Quat {
-    let result = unsafe { ufbx_euler_to_quat(v, order) };
+    let result = crate::native::api::euler_to_quat(v, order);
     result
 }
 
