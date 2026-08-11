@@ -124,6 +124,8 @@ use crate::native::string_pool::{
     map_cmp_string, push_string_place_str, str_equal, str_less, string_pool_temp_free, STRINGS,
 };
 use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
+#[cfg(feature = "baking")]
+use crate::native::view::SliceViewIter;
 use crate::native::warnings::{pop_warnings, ufbxi_warnf};
 use crate::prelude::as_f64;
 use crate::prelude::{List, OpenFileContext, Real, Ref, String};
@@ -4476,6 +4478,36 @@ pub(crate) struct BakeProp {
     pub anim_value: *mut AnimValue,
 }
 
+// Rust-port infra (not a ufbx.c type): reinterpret-in-place VIEW over a
+// `BakeProp`. The C `ufbxi_for(ufbxi_bake_prop, prop, props, count)` loops walk a
+// contiguous `push_pop`-materialized `BakeProp` run; `SliceViewIter` walks that
+// `(base, count)` run yielding `&BakePropView`, replacing raw `prop.add(1)`
+// navigation with a safe contiguous iteration whose only `unsafe` is the
+// `from_raw_parts` run vouch.
+#[cfg(feature = "baking")]
+pub(crate) type BakePropView = crate::native::view::View<BakeProp>;
+
+#[cfg(feature = "baking")]
+impl BakePropView {
+    #[inline(always)]
+    pub(crate) fn prop_name(&self) -> *const u8 {
+        // SAFETY: view over a valid, initialized `BakeProp`; leaf read.
+        unsafe { (*self.get()).prop_name }
+    }
+
+    #[inline(always)]
+    pub(crate) fn anim_value(&self) -> *mut AnimValue {
+        // SAFETY: view over a valid, initialized `BakeProp`; leaf read.
+        unsafe { (*self.get()).anim_value }
+    }
+
+    #[inline(always)]
+    pub(crate) fn element_id(&self) -> u32 {
+        // SAFETY: view over a valid, initialized `BakeProp`; leaf read.
+        unsafe { (*self.get()).element_id }
+    }
+}
+
 // ufbx.c:26732-26741 `ufbxi_bake_prop_less`
 #[cfg(feature = "baking")]
 pub(crate) unsafe extern "C" fn bake_prop_less(
@@ -5342,25 +5374,19 @@ pub(crate) unsafe fn bake_node_imp(
             complex_translation = true;
         }
         // C: `ufbxi_for(ufbxi_bake_prop, bprop, props, count)`
-        let mut bprop: *mut BakeProp = props;
-        let bprop_end: *mut BakeProp = add_ptr(props, count);
-        while bprop != bprop_end {
-            if (*bprop).prop_name == name {
+        for bprop in SliceViewIter::<BakeProp>::from_raw_parts(props, count) {
+            if bprop.prop_name() == name {
                 complex_translation = true;
             }
-            bprop = bprop.add(1);
         }
     }
 
     for i in 0..COMPLEX_ROTATION_PROPS.0.len() {
         let name: *const u8 = COMPLEX_ROTATION_PROPS.0[i];
-        let mut bprop: *mut BakeProp = props;
-        let bprop_end: *mut BakeProp = add_ptr(props, count);
-        while bprop != bprop_end {
-            if (*bprop).prop_name == name {
+        for bprop in SliceViewIter::<BakeProp>::from_raw_parts(props, count) {
+            if bprop.prop_name() == name {
                 complex_rotation = true;
             }
-            bprop = bprop.add(1);
         }
     }
 
@@ -5405,39 +5431,33 @@ pub(crate) unsafe fn bake_node_imp(
 
     if complex_translation {
         // C: `ufbxi_for(ufbxi_bake_prop, prop, props, count)`
-        let mut prop: *mut BakeProp = props;
-        let prop_end: *mut BakeProp = add_ptr(props, count);
-        while prop != prop_end {
+        for prop in SliceViewIter::<BakeProp>::from_raw_parts(props, count) {
             // Literally any transform related property can affect complex translation
             if in_list(
                 TRANSFORM_PROPS.0.as_ptr(),
                 TRANSFORM_PROPS.0.len(),
-                (*prop).prop_name,
+                prop.prop_name(),
             ) {
                 let resample_linear: bool =
-                    resample_translation || (*prop).prop_name != sp::Lcl_Translation.as_ptr();
-                let key_flag: u32 = if (*prop).prop_name == sp::Lcl_Translation.as_ptr() {
+                    resample_translation || prop.prop_name() != sp::Lcl_Translation.as_ptr();
+                let key_flag: u32 = if prop.prop_name() == sp::Lcl_Translation.as_ptr() {
                     BakedKeyFlags::KEYFRAME.raw()
                 } else {
                     0
                 };
-                bake_times(bc, (*prop).anim_value, resample_linear, key_flag)?;
+                bake_times(bc, prop.anim_value(), resample_linear, key_flag)?;
             }
-            prop = prop.add(1);
         }
     } else {
-        let mut prop: *mut BakeProp = props;
-        let prop_end: *mut BakeProp = add_ptr(props, count);
-        while prop != prop_end {
-            if (*prop).prop_name == sp::Lcl_Translation.as_ptr() {
+        for prop in SliceViewIter::<BakeProp>::from_raw_parts(props, count) {
+            if prop.prop_name() == sp::Lcl_Translation.as_ptr() {
                 bake_times(
                     bc,
-                    (*prop).anim_value,
+                    prop.anim_value(),
                     resample_translation,
                     BakedKeyFlags::KEYFRAME.raw(),
                 )?;
             }
-            prop = prop.add(1);
         }
     }
 
@@ -5445,38 +5465,32 @@ pub(crate) unsafe fn bake_node_imp(
 
     // Rotation
     if complex_rotation {
-        let mut prop: *mut BakeProp = props;
-        let prop_end: *mut BakeProp = add_ptr(props, count);
-        while prop != prop_end {
+        for prop in SliceViewIter::<BakeProp>::from_raw_parts(props, count) {
             if in_list(
                 COMPLEX_ROTATION_SOURCES.0.as_ptr(),
                 COMPLEX_ROTATION_SOURCES.0.len(),
-                (*prop).prop_name,
+                prop.prop_name(),
             ) {
                 let resample_linear: bool = !bc.opts_view().no_resample_rotation()
-                    || (*prop).prop_name != sp::Lcl_Rotation.as_ptr();
-                let key_flag: u32 = if (*prop).prop_name == sp::Lcl_Rotation.as_ptr() {
+                    || prop.prop_name() != sp::Lcl_Rotation.as_ptr();
+                let key_flag: u32 = if prop.prop_name() == sp::Lcl_Rotation.as_ptr() {
                     BakedKeyFlags::KEYFRAME.raw()
                 } else {
                     0
                 };
-                bake_times(bc, (*prop).anim_value, resample_linear, key_flag)?;
+                bake_times(bc, prop.anim_value(), resample_linear, key_flag)?;
             }
-            prop = prop.add(1);
         }
     } else {
-        let mut prop: *mut BakeProp = props;
-        let prop_end: *mut BakeProp = add_ptr(props, count);
-        while prop != prop_end {
-            if (*prop).prop_name == sp::Lcl_Rotation.as_ptr() {
+        for prop in SliceViewIter::<BakeProp>::from_raw_parts(props, count) {
+            if prop.prop_name() == sp::Lcl_Rotation.as_ptr() {
                 bake_times(
                     bc,
-                    (*prop).anim_value,
+                    prop.anim_value(),
                     !bc.opts_view().no_resample_rotation(),
                     BakedKeyFlags::KEYFRAME.raw(),
                 )?;
             }
-            prop = prop.add(1);
         }
     }
     finalize_bake_times(bc, &raw mut times_r)?;
@@ -5522,18 +5536,15 @@ pub(crate) unsafe fn bake_node_imp(
     }
 
     {
-        let mut prop: *mut BakeProp = props;
-        let prop_end: *mut BakeProp = add_ptr(props, count);
-        while prop != prop_end {
-            if (*prop).prop_name == sp::Lcl_Scaling.as_ptr() {
+        for prop in SliceViewIter::<BakeProp>::from_raw_parts(props, count) {
+            if prop.prop_name() == sp::Lcl_Scaling.as_ptr() {
                 bake_times(
                     bc,
-                    (*prop).anim_value,
+                    prop.anim_value(),
                     resample_scale,
                     BakedKeyFlags::KEYFRAME.raw(),
                 )?;
             }
-            prop = prop.add(1);
         }
     }
     finalize_bake_times(bc, &raw mut times_s)?;
@@ -5796,11 +5807,8 @@ pub(crate) unsafe fn bake_anim_prop(
     count: usize,
 ) -> Result<(), Fail> {
     // C: `ufbxi_for(ufbxi_bake_prop, prop, props, count)`
-    let mut prop: *mut BakeProp = props;
-    let prop_end: *mut BakeProp = add_ptr(props, count);
-    while prop != prop_end {
-        bake_times(bc, (*prop).anim_value, false, BakedKeyFlags::KEYFRAME.raw())?;
-        prop = prop.add(1);
+    for prop in SliceViewIter::<BakeProp>::from_raw_parts(props, count) {
+        bake_times(bc, prop.anim_value(), false, BakedKeyFlags::KEYFRAME.raw())?;
     }
 
     // C: `ufbxi_bake_time_list times;`
@@ -6026,20 +6034,16 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     if !bc.opts_view().ignore_layer_weight_animation() {
         let mut has_weight_times: bool = false;
         // C: `ufbxi_for(ufbxi_bake_prop, prop, props, num_props)`
-        let mut prop: *mut BakeProp = props;
-        let prop_end: *mut BakeProp = add_ptr(props, num_props);
-        while prop != prop_end {
-            if (*prop).prop_name != sp::Weight.as_ptr() {
-                prop = prop.add(1);
+        for prop in SliceViewIter::<BakeProp>::from_raw_parts(props, num_props) {
+            if prop.prop_name() != sp::Weight.as_ptr() {
                 continue;
             }
             let element: *mut Element =
-                *((*scene).elements.data as *const *mut Element).add((*prop).element_id as usize);
+                *((*scene).elements.data as *const *mut Element).add(prop.element_id() as usize);
             if (*element).type_ as u32 == ElementType::AnimLayer as u32 {
-                bake_times(bc, (*prop).anim_value, true, 0)?;
+                bake_times(bc, prop.anim_value(), true, 0)?;
                 has_weight_times = true;
             }
-            prop = prop.add(1);
         }
 
         if has_weight_times {
