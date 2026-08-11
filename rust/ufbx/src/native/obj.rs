@@ -59,7 +59,7 @@ use crate::native::io::refill;
 #[cfg(feature = "obj")]
 use crate::native::parse::{
     get_name_key, r#match, report_progress, Context, ElementInfo, FbxIdEntry, ObjAttrib,
-    ObjFastIndices, ObjGroupEntry, ObjIndexRange, ObjMesh, OBJ_NUM_ATTRIBS, OBJ_NUM_ATTRIBS_EXT,
+    ObjFastIndices, ObjGroupEntry, ObjMesh, OBJ_NUM_ATTRIBS, OBJ_NUM_ATTRIBS_EXT,
 };
 #[cfg(feature = "obj")]
 use crate::native::parse_ascii::is_space;
@@ -78,6 +78,8 @@ use crate::native::read::{
 #[cfg(feature = "obj")]
 use crate::native::string_pool::{push_string_place_blob, push_string_place_str, str_c, str_equal};
 #[cfg(feature = "obj")]
+use crate::native::view::{SliceViewIter, View};
+#[cfg(feature = "obj")]
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "obj")]
 use crate::prelude::{Blob, List, Real, String};
@@ -95,6 +97,106 @@ static OBJ_ATTRIB_STRIDE: [u8; 4] = [3, 2, 3, 4];
 // ufbx.c:16775 `ufbx_static_assert(obj_attrib_strides, ufbxi_arraycount(ufbxi_obj_attrib_stride) == UFBXI_OBJ_NUM_ATTRIBS_EXT);`
 #[cfg(feature = "obj")]
 const _: () = assert!(OBJ_ATTRIB_STRIDE.len() == OBJ_NUM_ATTRIBS_EXT);
+
+// Reinterpret-in-place view over an arena-allocated `ObjMesh` (the obj parser's
+// own per-mesh scratch struct, living in `uc.obj().tmp_meshes` / popped into
+// `uc.tmp`). Threaded through the mesh-navigation cluster (`obj_parse_index`,
+// `obj_setup_attrib`) and minted at the roots (`uc.obj().mesh()` in
+// `obj_parse_indices`; the popped `meshes` run in `obj_pop_meshes`) so the
+// leaf ops read/write mesh fields through anchored accessors instead of raw
+// `(*mesh).field` navigation. `ObjMesh` is `Copy`-field-only scratch with
+// interior mutability via the view's `UnsafeCell`, so a shared `&ObjMeshView`
+// may coexist with `&Context`/`&ObjContext` (distinct arenas), never forming
+// a `&ObjMesh`.
+#[cfg(feature = "obj")]
+pub(crate) type ObjMeshView = View<ObjMesh>;
+
+#[cfg(feature = "obj")]
+impl ObjMeshView {
+    #[inline(always)]
+    pub(crate) fn num_faces(&self) -> usize {
+        // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
+        unsafe { (*self.get()).num_faces }
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_faces(&self, v: usize) {
+        // SAFETY: storing a scalar field of a valid arena `ObjMesh`.
+        unsafe {
+            (*self.get()).num_faces = v;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn num_indices(&self) -> usize {
+        // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
+        unsafe { (*self.get()).num_indices }
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_indices(&self, v: usize) {
+        // SAFETY: storing a scalar field of a valid arena `ObjMesh`.
+        unsafe {
+            (*self.get()).num_indices = v;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn num_groups(&self) -> u32 {
+        // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
+        unsafe { (*self.get()).num_groups }
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_groups(&self, v: u32) {
+        // SAFETY: storing a scalar field of a valid arena `ObjMesh`.
+        unsafe {
+            (*self.get()).num_groups = v;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn usemtl_base(&self) -> u32 {
+        // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
+        unsafe { (*self.get()).usemtl_base }
+    }
+    #[inline(always)]
+    pub(crate) fn set_usemtl_base(&self, v: u32) {
+        // SAFETY: storing a scalar field of a valid arena `ObjMesh`.
+        unsafe {
+            (*self.get()).usemtl_base = v;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn fbx_mesh(&self) -> *mut Mesh {
+        // SAFETY: reading the `fbx_mesh` pointer field of a valid arena `ObjMesh`.
+        unsafe { (*self.get()).fbx_mesh }
+    }
+    #[inline(always)]
+    pub(crate) fn fbx_node_id(&self) -> u64 {
+        // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
+        unsafe { (*self.get()).fbx_node_id }
+    }
+    #[inline(always)]
+    pub(crate) fn vertex_range_min(&self, attrib: usize) -> u64 {
+        // SAFETY: `attrib < OBJ_NUM_ATTRIBS` (caller invariant); reads a scalar
+        // of the fixed-size `vertex_range` array of a valid arena `ObjMesh`.
+        unsafe { (*self.get()).vertex_range[attrib].min_ix }
+    }
+    #[inline(always)]
+    pub(crate) fn vertex_range_max(&self, attrib: usize) -> u64 {
+        // SAFETY: as `vertex_range_min`.
+        unsafe { (*self.get()).vertex_range[attrib].max_ix }
+    }
+    #[inline(always)]
+    pub(crate) fn set_vertex_range_min(&self, attrib: usize, v: u64) {
+        // SAFETY: as `vertex_range_min`; scalar store.
+        unsafe {
+            (*self.get()).vertex_range[attrib].min_ix = v;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_vertex_range_max(&self, attrib: usize, v: u64) {
+        // SAFETY: as `vertex_range_min`; scalar store.
+        unsafe {
+            (*self.get()).vertex_range[attrib].max_ix = v;
+        }
+    }
+}
 
 // ufbx.c:16777-16805 `ufbxi_obj_pop_props`
 #[cfg(feature = "obj")]
@@ -586,6 +688,7 @@ pub(crate) unsafe fn obj_parse_vertex(
 #[inline(never)]
 pub(crate) unsafe fn obj_parse_index(
     uc: &Context,
+    mesh: &ObjMeshView,
     s: *mut String,
     attrib: u32,
 ) -> Result<(), Fail> {
@@ -645,12 +748,10 @@ pub(crate) unsafe fn obj_parse_index(
     (*fast_indices).indices = (*fast_indices).indices.add(1);
     (*fast_indices).num_left -= 1;
 
-    let mesh: *mut ObjMesh = uc.obj().mesh();
-
     if index != u64::MAX {
-        let range: *mut ObjIndexRange = &mut (*mesh).vertex_range[attrib as usize];
-        (*range).min_ix = min64((*range).min_ix, index);
-        (*range).max_ix = max64((*range).max_ix, index);
+        let a: usize = attrib as usize;
+        mesh.set_vertex_range_min(a, min64(mesh.vertex_range_min(a), index));
+        mesh.set_vertex_range_max(a, max64(mesh.vertex_range_max(a), index));
     }
 
     (*s).data = ptr;
@@ -690,14 +791,16 @@ pub(crate) unsafe fn obj_parse_indices(
         obj_flush_mesh(uc)?;
         obj_push_mesh(uc)?;
     }
-    let mesh: *mut ObjMesh = uc.obj().mesh();
+    // Anchor the current-mesh view at the ObjContext root; thread it into the
+    // per-index leaf (`obj_parse_index`) below.
+    let mesh: &ObjMeshView = ObjMeshView::from_ptr(uc.obj().mesh());
 
     if uc.obj().material_dirty() {
         if uc.obj().usemtl_fbx_id() != 0 {
             let entry: *mut FbxIdEntry = find_fbx_id(uc, uc.obj().usemtl_fbx_id());
             ufbx_assert!(!entry.is_null());
-            if (*mesh).usemtl_base == 0 || (*entry).user_id < (*mesh).usemtl_base {
-                connect_oo(uc, uc.obj().usemtl_fbx_id(), (*mesh).fbx_node_id)?;
+            if mesh.usemtl_base() == 0 || (*entry).user_id < mesh.usemtl_base() {
+                connect_oo(uc, uc.obj().usemtl_fbx_id(), mesh.fbx_node_id())?;
 
                 // C: `uint32_t index = ++uc->obj.usemtl_index;`
                 uc.obj()
@@ -706,16 +809,16 @@ pub(crate) unsafe fn obj_parse_indices(
                 ufbxi_check!(uc, index < u32::MAX, "index < UINT32_MAX");
                 (*entry).user_id = index;
 
-                if (*mesh).usemtl_base == 0 {
-                    (*mesh).usemtl_base = index;
+                if mesh.usemtl_base() == 0 {
+                    mesh.set_usemtl_base(index);
                 }
                 uc.obj()
-                    .set_face_material(index.wrapping_sub((*mesh).usemtl_base));
+                    .set_face_material(index.wrapping_sub(mesh.usemtl_base()));
             }
             // C-parity: the assignment above is immediately overwritten here;
             // both are in the C source and both are kept.
             uc.obj()
-                .set_face_material((*entry).user_id.wrapping_sub((*mesh).usemtl_base));
+                .set_face_material((*entry).user_id.wrapping_sub(mesh.usemtl_base()));
         } else {
             uc.obj().set_face_material(NO_INDEX);
         }
@@ -767,11 +870,11 @@ pub(crate) unsafe fn obj_parse_indices(
             (*entry).local_id = 0;
         }
 
-        let mesh_id: u32 = (*(*mesh).fbx_mesh).element.element_id;
+        let mesh_id: u32 = (*mesh.fbx_mesh()).element.element_id;
         if (*entry).mesh_id != mesh_id {
             // C: `uint32_t id = mesh->num_groups++;`
-            let id: u32 = (*mesh).num_groups;
-            (*mesh).num_groups = (*mesh).num_groups.wrapping_add(1);
+            let id: u32 = mesh.num_groups();
+            mesh.set_num_groups(mesh.num_groups().wrapping_add(1));
             (*entry).mesh_id = mesh_id;
             (*entry).local_id = id;
 
@@ -800,18 +903,18 @@ pub(crate) unsafe fn obj_parse_indices(
     let num_indices: usize = num_tokens;
     ufbxi_check!(
         uc,
-        (u32::MAX as usize).wrapping_sub((*mesh).num_indices) >= num_indices,
+        (u32::MAX as usize).wrapping_sub(mesh.num_indices()) >= num_indices,
         "UINT32_MAX - mesh->num_indices >= num_indices"
     );
 
     let face: *mut Face = push_fast::<Face>(uc.obj().tmp_faces_mut_ptr(), 1);
     ufbxi_check!(uc, !face.is_null(), "face");
 
-    (*face).index_begin = (*mesh).num_indices as u32;
+    (*face).index_begin = mesh.num_indices() as u32;
     (*face).num_indices = num_indices as u32;
 
-    (*mesh).num_faces += 1;
-    (*mesh).num_indices += num_indices;
+    mesh.set_num_faces(mesh.num_faces() + 1);
+    mesh.set_num_indices(mesh.num_indices() + num_indices);
 
     let p_face_mat: *mut u32 = push_fast::<u32>(uc.obj().tmp_face_material_mut_ptr(), 1);
     ufbxi_check!(uc, !p_face_mat.is_null(), "p_face_mat");
@@ -832,7 +935,7 @@ pub(crate) unsafe fn obj_parse_indices(
     for ix in 0..num_indices {
         let mut tok: String = *uc.obj().tokens().add(token_begin + ix);
         for attrib in 0..OBJ_NUM_ATTRIBS as u32 {
-            obj_parse_index(uc, &mut tok, attrib)?;
+            obj_parse_index(uc, mesh, &mut tok, attrib)?;
         }
     }
 
@@ -1062,7 +1165,7 @@ pub(crate) unsafe fn obj_pop_vertices(
 #[inline(never)]
 pub(crate) unsafe fn obj_setup_attrib(
     uc: &Context,
-    mesh: *mut ObjMesh,
+    mesh: &ObjMeshView,
     tmp_indices: *mut u64,
     dst: *mut VertexAttrib,
     p_data: *const List<Real>,
@@ -1073,11 +1176,11 @@ pub(crate) unsafe fn obj_setup_attrib(
     // C: `ufbx_real_list data = *p_data;`
     let data: List<Real> = core::ptr::read(p_data);
 
-    let num_indices: usize = (*mesh).num_indices;
+    let num_indices: usize = mesh.num_indices();
     let stride: usize = OBJ_ATTRIB_STRIDE[attrib as usize] as usize;
     let num_values: usize = data.count / stride;
 
-    let mesh_min_ix: u64 = (*mesh).vertex_range[attrib as usize].min_ix;
+    let mesh_min_ix: u64 = mesh.vertex_range_min(attrib as usize);
     if num_indices == 0 || num_values == 0 || mesh_min_ix == u64::MAX {
         ufbxi_check!(
             uc,
@@ -1197,19 +1300,20 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
 
     let mut max_indices: usize = 0;
 
-    for i in 0..num_meshes {
-        let mesh: *mut ObjMesh = meshes.add(i);
-        max_indices = max_sz(max_indices, (*mesh).num_indices);
+    // Walk the popped `meshes` run as anchored views (contiguous `push_pop`).
+    for mesh in SliceViewIter::<ObjMesh>::from_raw_parts(meshes, num_meshes) {
+        max_indices = max_sz(max_indices, mesh.num_indices());
         // C: `ufbxi_nounroll for (uint32_t attrib = 0; attrib < UFBXI_OBJ_NUM_ATTRIBS; attrib++)`
         for attrib in 0..OBJ_NUM_ATTRIBS {
-            let range: ObjIndexRange = (*mesh).vertex_range[attrib];
-            if range.min_ix > range.max_ix {
+            let min_ix: u64 = mesh.vertex_range_min(attrib);
+            let max_ix: u64 = mesh.vertex_range_max(attrib);
+            if min_ix > max_ix {
                 continue;
             }
-            if range.min_ix < next_min[attrib] {
+            if min_ix < next_min[attrib] {
                 non_disjoint[attrib] = true;
             }
-            next_min[attrib] = range.max_ix.wrapping_add(1);
+            next_min[attrib] = max_ix.wrapping_add(1);
         }
     }
 
@@ -1241,11 +1345,11 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
     // C: `for (size_t i = num_meshes; i > 0; i--)`
     let mut i: usize = num_meshes;
     while i > 0 {
-        let mesh: *mut ObjMesh = meshes.add(i - 1);
+        let mesh: &ObjMeshView = ObjMeshView::from_ptr(meshes.add(i - 1));
 
-        let fbx_mesh: *mut Mesh = (*mesh).fbx_mesh;
+        let fbx_mesh: *mut Mesh = mesh.fbx_mesh();
 
-        let num_faces: usize = (*mesh).num_faces;
+        let num_faces: usize = mesh.num_faces();
 
         if !uc.opts_view().ignore_geometry() {
             // C: `ufbxi_nounroll for (uint32_t attrib = 0; attrib < UFBXI_OBJ_NUM_ATTRIBS; attrib++)`
@@ -1253,13 +1357,13 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 if non_disjoint[attrib] {
                     continue;
                 }
-                let min_ix: u64 = (*mesh).vertex_range[attrib].min_ix;
+                let min_ix: u64 = mesh.vertex_range_min(attrib);
                 if min_ix < u64::MAX {
                     obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, min_ix)?;
                 }
             }
             if uc.obj().has_vertex_color() && !non_disjoint[ObjAttrib::Position as usize] {
-                let min_ix: u64 = (*mesh).vertex_range[ObjAttrib::Position as usize].min_ix;
+                let min_ix: u64 = mesh.vertex_range_min(ObjAttrib::Position as usize);
                 ufbxi_check!(uc, min_ix < u64::MAX, "min_ix < UINT64_MAX");
                 obj_pop_vertices(
                     uc,
@@ -1312,7 +1416,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             }
 
             if uc.obj().has_face_group() {
-                if (*mesh).num_groups > 1 {
+                if mesh.num_groups() > 1 {
                     (*fbx_mesh).face_group.count = num_faces;
                     (*fbx_mesh).face_group.data = push_pop::<u32>(
                         uc.result_mut_ptr(),
@@ -1402,13 +1506,13 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                         let mut indices: *mut u32 =
                             (*fbx_mesh).vertex_color.indices.data as *mut u32;
                         indices =
-                            push_copy::<u32>(uc.result_mut_ptr(), (*mesh).num_indices, indices);
+                            push_copy::<u32>(uc.result_mut_ptr(), mesh.num_indices(), indices);
                         ufbxi_check!(uc, !indices.is_null(), "indices");
 
                         let num_values: usize = (*fbx_mesh).vertex_color.values.count;
                         // C: `ufbxi_for(uint32_t, p_ix, indices, mesh->num_indices)`
                         let mut p_ix: *mut u32 = indices;
-                        let p_ix_end: *mut u32 = add_ptr(p_ix, (*mesh).num_indices);
+                        let p_ix_end: *mut u32 = add_ptr(p_ix, mesh.num_indices());
                         while p_ix != p_ix_end {
                             if *p_ix as usize >= num_values || !*color_valid.add(*p_ix as usize) {
                                 fix_index(uc, p_ix, *p_ix, num_values)?;
@@ -1425,9 +1529,9 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         finalize_mesh(uc.result_mut_ptr(), uc.error_mut_ptr(), fbx_mesh)?;
 
         if uc.retain_mesh_parts() {
-            (*fbx_mesh).face_group_parts.count = (*mesh).num_groups as usize;
+            (*fbx_mesh).face_group_parts.count = mesh.num_groups() as usize;
             (*fbx_mesh).face_group_parts.data =
-                push_zero::<MeshPart>(uc.result_mut_ptr(), (*mesh).num_groups as usize);
+                push_zero::<MeshPart>(uc.result_mut_ptr(), mesh.num_groups() as usize);
             ufbxi_check!(
                 uc,
                 !(*fbx_mesh).face_group_parts.data.is_null(),
@@ -1435,9 +1539,9 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             );
         }
 
-        if (*mesh).num_groups > 1 {
+        if mesh.num_groups() > 1 {
             update_face_groups(uc.result_mut_ptr(), uc.error_mut_ptr(), fbx_mesh, false)?;
-        } else if (*mesh).num_groups == 1 {
+        } else if mesh.num_groups() == 1 {
             (*fbx_mesh).face_group.data = SENTINEL_INDEX_ZERO.as_ptr();
             (*fbx_mesh).face_group.count = num_faces;
             // NOTE: Consecutive and zero indices are always allocated so we can skip doing it here,
