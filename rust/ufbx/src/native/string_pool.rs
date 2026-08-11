@@ -368,13 +368,13 @@ pub(crate) unsafe fn sanitize_string(
     // Handle only invalid cases here
     ufbx_assert!(valid_length < length);
     ufbxi_check_err_msg!(
-        (*pool).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
         (*pool).error_handling != UnicodeErrorHandling::AbortLoading,
         "Invalid UTF-8",
         "pool->error_handling != UFBX_UNICODE_ERROR_HANDLING_ABORT_LOADING"
     );
     ufbxi_check_err!(
-        (*pool).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
         ufbxi_warnf_imp!(
             (*pool).warnings,
             WarningType::BadUnicode,
@@ -390,12 +390,12 @@ pub(crate) unsafe fn sanitize_string(
     if push_both {
         // Copy both the full raw string and the initial valid part
         ufbxi_check_err!(
-            (*pool).error,
+            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
             length <= usize::MAX / 2 - 64,
             "length <= SIZE_MAX / 2 - 64"
         );
         ufbxi_check_err!(
-            (*pool).error,
+            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
             grow_array::<u8>(
                 (*pool).map.ator,
                 &mut (*pool).temp_str,
@@ -411,12 +411,12 @@ pub(crate) unsafe fn sanitize_string(
     } else {
         // Copy the initial valid part
         ufbxi_check_err!(
-            (*pool).error,
+            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
             length <= usize::MAX - 64,
             "length <= SIZE_MAX - 64"
         );
         ufbxi_check_err!(
-            (*pool).error,
+            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
             grow_array::<u8>(
                 (*pool).map.ator,
                 &mut (*pool).temp_str,
@@ -436,7 +436,7 @@ pub(crate) unsafe fn sanitize_string(
         // Not optimal but not the worst thing ever
         if (*pool).temp_cap - dst_len < 16 {
             ufbxi_check_err!(
-                (*pool).error,
+                unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
                 grow_array::<u8>(
                     (*pool).map.ator,
                     &mut (*pool).temp_str,
@@ -505,7 +505,7 @@ pub(crate) unsafe fn sanitize_string(
     // The only problem case is a massive string that is full of unicode errors, ie.
     // >1GB binary blob, but these should never be sanitized.
     ufbxi_check_err!(
-        (*pool).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
         length <= u32::MAX as usize,
         "length <= UINT32_MAX"
     );
@@ -514,7 +514,7 @@ pub(crate) unsafe fn sanitize_string(
         // Reserve `UINT32_MAX` for invalid UTF-8 without sanitization
         let utf8_length = dst_len - (length + 1);
         ufbxi_check_err!(
-            (*pool).error,
+            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
             utf8_length < u32::MAX as usize,
             "utf8_length < UINT32_MAX"
         );
@@ -522,7 +522,7 @@ pub(crate) unsafe fn sanitize_string(
         (*sanitized).utf8_length = utf8_length as u32;
     } else {
         ufbxi_check_err!(
-            (*pool).error,
+            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
             dst_len <= u32::MAX as usize,
             "dst_len <= UINT32_MAX"
         );
@@ -546,12 +546,12 @@ pub(crate) unsafe fn push_sanitized_string(
     ufbxi_regression_assert!(hash == hash_string(str_, length));
 
     ufbxi_check_err!(
-        (*pool).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
         length <= u32::MAX as usize,
         "length <= UINT32_MAX"
     );
     ufbxi_check_err!(
-        (*pool).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
         map_grow::<String>(&mut (*pool).map, (*pool).initial_size),
         "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
     );
@@ -594,10 +594,18 @@ pub(crate) unsafe fn push_sanitized_string(
             hash,
             &ref_ as *const String as *const c_void,
         );
-        ufbxi_check_err!((*pool).error, !entry.is_null(), "entry");
+        ufbxi_check_err!(
+            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+            !entry.is_null(),
+            "entry"
+        );
         (*entry).length = total_length;
         let dst: *mut u8 = buf::push::<u8>(&mut (*pool).buf, total_length + 1);
-        ufbxi_check_err!((*pool).error, !dst.is_null(), "dst");
+        ufbxi_check_err!(
+            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+            !dst.is_null(),
+            "dst"
+        );
         ptr::copy_nonoverlapping(total_data, dst, total_length);
         *dst.add(total_length) = b'\0';
         (*entry).data = dst;
@@ -623,7 +631,7 @@ pub(crate) unsafe fn push_string_imp(
     }
 
     ufbxi_check_return_err!(
-        (*pool).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
         map_grow::<String>(&mut (*pool).map, (*pool).initial_size),
         ptr::null(),
         "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
@@ -673,11 +681,21 @@ pub(crate) unsafe fn push_string_imp(
         hash,
         &ref_ as *const String as *const c_void,
     );
-    ufbxi_check_return_err!((*pool).error, !entry.is_null(), ptr::null(), "entry");
+    ufbxi_check_return_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+        !entry.is_null(),
+        ptr::null(),
+        "entry"
+    );
     (*entry).length = length;
     if copy {
         let dst: *mut u8 = buf::push::<u8>(&mut (*pool).buf, length + 1);
-        ufbxi_check_return_err!((*pool).error, !dst.is_null(), ptr::null(), "dst");
+        ufbxi_check_return_err!(
+            unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+            !dst.is_null(),
+            ptr::null(),
+            "dst"
+        );
         ptr::copy_nonoverlapping(str_, dst, length);
         *dst.add(length) = b'\0';
         (*entry).data = dst;
@@ -710,12 +728,16 @@ pub(crate) unsafe fn push_string_place(
     let mut str_ = *p_str;
     let length = *p_length;
     ufbxi_check_err!(
-        (*pool).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
         !str_.is_null() || length == 0,
         "str || length == 0"
     );
     str_ = push_string(pool, str_, length, p_length, raw);
-    ufbxi_check_err!((*pool).error, !str_.is_null(), "str");
+    ufbxi_check_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+        !str_.is_null(),
+        "str"
+    );
     *p_str = str_;
     Ok(())
 }
@@ -727,7 +749,11 @@ pub(crate) unsafe fn push_string_place_str(
     p_str: *mut String,
     raw: bool,
 ) -> Result<(), Fail> {
-    ufbxi_check_err!((*pool).error, !p_str.is_null(), "p_str");
+    ufbxi_check_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+        !p_str.is_null(),
+        "p_str"
+    );
     push_string_place(pool, &mut (*p_str).data, &mut (*p_str).length, raw)
 }
 
@@ -749,7 +775,11 @@ pub(crate) unsafe fn push_string_place_blob(
         &mut (*p_blob).size,
         raw,
     );
-    ufbxi_check_err!((*pool).error, !(*p_blob).data.is_null(), "p_blob->data");
+    ufbxi_check_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+        !(*p_blob).data.is_null(),
+        "p_blob->data"
+    );
     Ok(())
 }
 

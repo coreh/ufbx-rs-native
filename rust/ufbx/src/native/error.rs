@@ -384,6 +384,22 @@ pub(crate) unsafe fn fail_imp_err(
     0
 }
 
+// Safe wrapper over `fail_imp_err` taking an anchored `&ErrorView` instead of a
+// raw `*mut Error`. The `unsafe {}` block encapsulates the message-pointer
+// unsafe inside `fail_imp_err`; `cond`/`func` are already-safe `FailStr`
+// carriers, and `err.get()` is a valid, initialized `Error` by construction.
+// This lets the error-target check macros be free of unsafe ops at safe call
+// sites (mirrors the uc-form `fail_imp` in parse.rs).
+#[inline]
+pub(crate) fn fail_err(
+    err: &ErrorView,
+    cond: Option<FailStr>,
+    func: Option<FailStr>,
+    line: u32,
+) -> i32 {
+    unsafe { fail_imp_err(err.get(), cond, func, line) }
+}
+
 // ufbx.c:3446-3486 `ufbxi_utf8_valid_length`
 #[must_use]
 #[inline(never)]
@@ -599,7 +615,7 @@ pub(crate) use ufbxi_cond_str;
 #[cfg(feature = "error-stack")]
 macro_rules! ufbxi_fail_err_no_msg {
     ($err:expr, $cond_str:expr) => {
-        $crate::native::error::fail_imp_err(
+        $crate::native::error::fail_err(
             $err,
             $cond_str,
             $crate::native::error::ufbxi_function!(),
@@ -610,7 +626,7 @@ macro_rules! ufbxi_fail_err_no_msg {
 #[cfg(not(feature = "error-stack"))]
 macro_rules! ufbxi_fail_err_no_msg {
     ($err:expr, $cond_str:expr) => {
-        $crate::native::error::fail_imp_err_no_stack($err)
+        $crate::native::error::fail_err_no_stack($err)
     };
 }
 pub(crate) use ufbxi_fail_err_no_msg;
@@ -620,6 +636,13 @@ pub(crate) use ufbxi_fail_err_no_msg;
 #[inline(never)]
 pub(crate) unsafe fn fail_imp_err_no_stack(err: *mut Error) -> i32 {
     fail_imp_err(err, None, None, 0)
+}
+
+// Safe wrapper over `fail_imp_err_no_stack` taking an anchored `&ErrorView`.
+#[cfg(not(feature = "error-stack"))]
+#[inline]
+pub(crate) fn fail_err_no_stack(err: &ErrorView) -> i32 {
+    unsafe { fail_imp_err_no_stack(err.get()) }
 }
 
 // -- The check-macro family, error-target forms (ufbx.c:3550-3557)
@@ -710,7 +733,7 @@ macro_rules! ufbxi_check_err_msg {
     ($err:expr, $cond:expr, $msg:literal) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::fail_imp_err(
+            $crate::native::error::fail_err(
                 $err,
                 Some($crate::native::error::FailStr::new(
                     $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_bytes(),
@@ -724,7 +747,7 @@ macro_rules! ufbxi_check_err_msg {
     ($err:expr, $cond:expr, $msg:literal, $c_cond_str:literal) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::fail_imp_err(
+            $crate::native::error::fail_err(
                 $err,
                 Some($crate::native::error::FailStr::new(
                     $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str)
@@ -745,7 +768,7 @@ macro_rules! ufbxi_check_return_err_msg {
     ($err:expr, $cond:expr, $ret:expr, $msg:literal) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::fail_imp_err(
+            $crate::native::error::fail_err(
                 $err,
                 Some($crate::native::error::FailStr::new(
                     $crate::native::error::ufbxi_error_msg_cond!($cond, $msg).as_bytes(),
@@ -759,7 +782,7 @@ macro_rules! ufbxi_check_return_err_msg {
     ($err:expr, $cond:expr, $ret:expr, $msg:literal, $c_cond_str:literal) => {{
         let cond = $cond;
         if $crate::native::platform::unlikely(!cond) {
-            $crate::native::error::fail_imp_err(
+            $crate::native::error::fail_err(
                 $err,
                 Some($crate::native::error::FailStr::new(
                     $crate::native::error::ufbxi_error_msg_cond!($cond, $msg, $c_cond_str)
@@ -778,7 +801,7 @@ pub(crate) use ufbxi_check_return_err_msg;
 // literal, NOT a stringified condition (PORTING.md: do not mix these up).
 macro_rules! ufbxi_fail_err_msg {
     ($err:expr, $desc:literal, $msg:literal) => {{
-        $crate::native::error::fail_imp_err(
+        $crate::native::error::fail_err(
             $err,
             Some($crate::native::error::FailStr::new(
                 $crate::native::error::ufbxi_error_msg!($desc, $msg).as_bytes(),
@@ -795,7 +818,7 @@ pub(crate) use ufbxi_fail_err_msg;
 // KEEPS GOING (C: `(void)` result). NOT a return (PORTING.md trap #16).
 macro_rules! ufbxi_report_err_msg {
     ($err:expr, $desc:literal, $msg:literal) => {{
-        let _ = $crate::native::error::fail_imp_err(
+        let _ = $crate::native::error::fail_err(
             $err,
             Some($crate::native::error::FailStr::new(
                 $crate::native::error::ufbxi_error_msg!($desc, $msg).as_bytes(),
@@ -1204,7 +1227,7 @@ mod tests {
         unsafe {
             // Evaluation-once: the condition increments `hits` exactly once.
             ufbxi_check_err_msg!(
-                err,
+                unsafe { crate::native::error::ErrorView::from_ptr(err) },
                 {
                     *hits += 1;
                     ok
@@ -1231,7 +1254,11 @@ mod tests {
             // First error wins: a second failure does not overwrite.
             fn fail2(err: *mut Error) -> Result<(), Fail> {
                 unsafe {
-                    ufbxi_check_err_msg!(err, false, "Truncated file");
+                    ufbxi_check_err_msg!(
+                        unsafe { crate::native::error::ErrorView::from_ptr(err) },
+                        false,
+                        "Truncated file"
+                    );
                     Ok(())
                 }
             }
@@ -1281,7 +1308,11 @@ mod tests {
             #[allow(unused_assignments)]
             let mut reached = false;
             {
-                ufbxi_report_err_msg!(&mut err as *mut Error, "ptr", "Out of memory");
+                ufbxi_report_err_msg!(
+                    unsafe { crate::native::error::ErrorView::from_ptr(&raw mut err) },
+                    "ptr",
+                    "Out of memory"
+                );
                 reached = true;
             };
             assert!(reached, "ufbxi_report_err_msg must not return early");
@@ -1297,7 +1328,10 @@ mod tests {
             let mut err = Error::default();
             fn f(err: *mut Error) -> Result<(), Fail> {
                 unsafe {
-                    ufbxi_fail_err!(err, "Task failed");
+                    ufbxi_fail_err!(
+                        unsafe { crate::native::error::ErrorView::from_ptr(err) },
+                        "Task failed"
+                    );
                 }
             }
             assert_eq!(f(&mut err), Err(Fail));
@@ -1318,7 +1352,11 @@ mod tests {
             let mut err = Error::default();
             fn g(err: *mut Error) -> u32 {
                 unsafe {
-                    ufbxi_check_return_err!(err, false, 7);
+                    ufbxi_check_return_err!(
+                        unsafe { crate::native::error::ErrorView::from_ptr(err) },
+                        false,
+                        7
+                    );
                     1
                 }
             }

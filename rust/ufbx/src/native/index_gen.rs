@@ -130,7 +130,7 @@ pub(crate) unsafe fn generate_indices(
             if (*user_streams.add(i)).vertex_count < num_indices {
                 ufbxi_fmt_err_info!(error, "%zu", i);
                 ufbxi_report_err_msg!(
-                    error,
+                    unsafe { crate::native::error::ErrorView::from_ptr(error) },
                     "user_streams[i].vertex_count < num_indices",
                     "Truncated vertex stream"
                 );
@@ -154,7 +154,11 @@ pub(crate) unsafe fn generate_indices(
     }
 
     if !fail && packed_size == 0 {
-        ufbxi_report_err_msg!(error, "packed_size != 0", "Zero vertex size");
+        ufbxi_report_err_msg!(
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            "packed_size != 0",
+            "Zero vertex size"
+        );
         fail = true;
     }
 
@@ -278,7 +282,11 @@ pub(crate) fn generate_indices(
     if !error.is_null() {
         core::ptr::write_bytes(error as *mut u8, 0, size_of::<Error>());
         ufbxi_fmt_err_info!(error, "UFBX_ENABLE_INDEX_GENERATION");
-        ufbxi_report_err_msg!(error, "UFBXI_FEATURE_INDEX_GENERATION", "Feature disabled");
+        ufbxi_report_err_msg!(
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            "UFBXI_FEATURE_INDEX_GENERATION",
+            "Feature disabled"
+        );
     }
     0
 }

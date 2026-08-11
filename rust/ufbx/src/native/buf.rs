@@ -345,7 +345,7 @@ pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_voi
     {
         let ator = (*b).ator;
         ufbxi_check_return_err_msg!(
-            (*ator).error,
+            unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
             (*ator).num_allocs < (*ator).max_allocs,
             core::ptr::null_mut(),
             "Allocation limit exceeded",
@@ -415,7 +415,7 @@ pub(crate) unsafe fn push_size_fast(b: *mut Buf, size: usize, n: usize) -> *mut 
     {
         let ator = (*b).ator;
         ufbxi_check_return_err_msg!(
-            (*ator).error,
+            unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
             (*ator).num_allocs < (*ator).max_allocs,
             core::ptr::null_mut(),
             "Allocation limit exceeded",

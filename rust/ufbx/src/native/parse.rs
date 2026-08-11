@@ -3176,6 +3176,15 @@ impl Context {
         unsafe { &raw mut (*self.get()).error }
     }
 
+    // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
+    // error-form check macros through the SAFE `fail_err`/`fail_err_no_stack`.
+    #[inline(always)]
+    pub(crate) fn error_view(&self) -> &crate::native::error::ErrorView {
+        // SAFETY: the context-owned `error` field is interior-mutable arena memory;
+        // `&raw mut` keeps write provenance (never `&T`); borrow of `self` anchors `'a <= self`.
+        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut (*self.get()).error) }
+    }
+
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
@@ -4302,10 +4311,9 @@ pub(crate) fn fail_imp(
     func: Option<crate::native::error::FailStr>,
     line: u32,
 ) -> i32 {
-    // SAFETY: `error_mut_ptr()` returns a valid, initialized `Error` by context
-    // construction; `cond`/`func` carry the `FailStr` invariant (`'static`,
-    // NUL-terminated), so they are valid for the reads `fail_imp_err` performs.
-    unsafe { crate::native::error::fail_imp_err(uc.error_mut_ptr(), cond, func, line) }
+    // Routes through the SAFE `fail_err` wrapper with the anchored `error_view()`;
+    // the message-pointer unsafe is encapsulated inside `fail_err`/`fail_imp_err`.
+    crate::native::error::fail_err(uc.error_view(), cond, func, line)
 }
 
 // ufbx.c:6657-6662 (`#else` branch of `UFBXI_FEATURE_ERROR_STACK`)
@@ -4314,9 +4322,9 @@ pub(crate) fn fail_imp(
 #[cfg(not(feature = "error-stack"))]
 #[inline(never)]
 pub(crate) fn fail_imp_no_stack(uc: &Context) -> i32 {
-    // SAFETY: `error_mut_ptr()` is a valid Error by construction; the message
-    // pointers are null (no stack frame).
-    unsafe { crate::native::error::fail_imp_err(uc.error_mut_ptr(), None, None, 0) }
+    // Routes through the SAFE `fail_err_no_stack` wrapper with the anchored
+    // `error_view()`; no message pointers (no stack frame).
+    crate::native::error::fail_err_no_stack(uc.error_view())
 }
 
 // -- Progress

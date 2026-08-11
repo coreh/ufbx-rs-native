@@ -458,7 +458,7 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
 
     // Check for overflow
     ufbxi_check_return_err!(
-        (*(*map).ator).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*(*map).ator).error) },
         usize::MAX / num_entries > size_of::<u64>(),
         false,
         "SIZE_MAX / num_entries > sizeof(uint64_t)"
@@ -467,7 +467,7 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
 
     // Allocate a combined entry/item memory block
     ufbxi_check_return_err!(
-        (*(*map).ator).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*(*map).ator).error) },
         (usize::MAX - alloc_size) / new_size > item_size,
         false,
         "(SIZE_MAX - alloc_size) / new_size > item_size"
@@ -475,7 +475,12 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
     let data_size = alloc_size + new_size * item_size;
 
     let data = alloc::<u8>((*map).ator, data_size);
-    ufbxi_check_return_err!((*(*map).ator).error, !data.is_null(), false, "data");
+    ufbxi_check_return_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr((*(*map).ator).error) },
+        !data.is_null(),
+        false,
+        "data"
+    );
 
     // Copy the previous user items over
     let old_entries = (*map).entries;
@@ -546,7 +551,7 @@ pub(crate) unsafe fn map_grow_size(map: *mut Map, size: usize, min_size: usize) 
     {
         let ator = (*map).ator;
         ufbxi_check_return_err_msg!(
-            (*ator).error,
+            unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
             (*ator).num_allocs < (*ator).max_allocs,
             false,
             "Allocation limit exceeded",

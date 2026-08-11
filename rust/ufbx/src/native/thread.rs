@@ -132,7 +132,10 @@ pub(crate) unsafe fn thread_pool_wait_imp(
             (*error).description.data = (*pool).error_desc;
             (*error).description.length = strlen((*pool).error_desc);
         }
-        ufbxi_fail_err!(error, "Task failed");
+        ufbxi_fail_err!(
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            "Task failed"
+        );
     }
     Ok(())
 }
@@ -181,7 +184,7 @@ pub(crate) unsafe fn thread_pool_init(
         let info: *mut ThreadPoolInfo = info.as_mut_ptr();
         (*info).max_concurrent_tasks = num_tasks;
         ufbxi_check_err!(
-            error,
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
             ((*pool).opts.pool.init_fn.unwrap())(
                 (*pool).opts.pool.user,
                 pool as ThreadPoolContext,
@@ -195,7 +198,11 @@ pub(crate) unsafe fn thread_pool_init(
 
     (*pool).num_tasks = num_tasks;
     (*pool).tasks = alloc::<TaskImp>(ator, num_tasks as usize);
-    ufbxi_check_err!(error, !(*pool).tasks.is_null(), "pool->tasks");
+    ufbxi_check_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr(error) },
+        !(*pool).tasks.is_null(),
+        "pool->tasks"
+    );
 
     Ok(())
 }

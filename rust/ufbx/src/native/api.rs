@@ -1751,7 +1751,11 @@ pub(crate) fn evaluate_scene(
     if !error.is_null() {
         core::ptr::write_bytes(error as *mut u8, 0, size_of::<Error>());
         ufbxi_fmt_err_info!(error, "UFBX_ENABLE_SCENE_EVALUATION");
-        ufbxi_report_err_msg!(error, "UFBXI_FEATURE_SCENE_EVALUATION", "Feature disabled");
+        ufbxi_report_err_msg!(
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            "UFBXI_FEATURE_SCENE_EVALUATION",
+            "Feature disabled"
+        );
     }
     core::ptr::null_mut()
 }
@@ -1900,7 +1904,11 @@ pub(crate) fn bake_anim(
     if !error.is_null() {
         core::ptr::write_bytes(error as *mut u8, 0, size_of::<Error>());
         ufbxi_fmt_err_info!(error, "UFBX_ENABLE_ANIMATION_BAKING");
-        ufbxi_report_err_msg!(error, "UFBXI_FEATURE_ANIMATION_BAKING", "Feature disabled");
+        ufbxi_report_err_msg!(
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            "UFBXI_FEATURE_ANIMATION_BAKING",
+            "Feature disabled"
+        );
     }
     core::ptr::null_mut()
 }
@@ -3590,7 +3598,11 @@ pub(crate) fn tessellate_nurbs_curve(
     if !error.is_null() {
         core::ptr::write_bytes(error as *mut u8, 0, size_of::<Error>());
         ufbxi_fmt_err_info!(error, "UFBX_ENABLE_TESSELLATION");
-        ufbxi_report_err_msg!(error, "UFBXI_FEATURE_TESSELLATION", "Feature disabled");
+        ufbxi_report_err_msg!(
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            "UFBXI_FEATURE_TESSELLATION",
+            "Feature disabled"
+        );
     }
     core::ptr::null_mut()
 }
@@ -3657,7 +3669,11 @@ pub(crate) fn tessellate_nurbs_surface(
     let _ = (surface, opts);
     if !error.is_null() {
         core::ptr::write_bytes(error as *mut u8, 0, size_of::<Error>());
-        ufbxi_report_err_msg!(error, "UFBXI_FEATURE_TESSELLATION", "Feature disabled");
+        ufbxi_report_err_msg!(
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            "UFBXI_FEATURE_TESSELLATION",
+            "Feature disabled"
+        );
     }
     core::ptr::null_mut()
 }

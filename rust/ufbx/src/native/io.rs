@@ -422,6 +422,15 @@ impl FileContext {
         unsafe { &raw mut (*self.get()).error }
     }
 
+    // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
+    // error-form check macros through the SAFE `fail_err`/`fail_err_no_stack`.
+    #[inline(always)]
+    pub(crate) fn error_view(&self) -> &crate::native::error::ErrorView {
+        // SAFETY: the context-owned `error` field is interior-mutable arena memory;
+        // `&raw mut` keeps write provenance (never `&T`); borrow of `self` anchors `'a <= self`.
+        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut (*self.get()).error) }
+    }
+
     // `ator` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_mut_ptr(&self) -> *mut Allocator {
@@ -634,7 +643,7 @@ pub(crate) fn fopen(
     }
     if file.is_null() {
         set_err_info(fc.error_mut_ptr(), path, path_len);
-        ufbxi_report_err_msg!(fc.error_mut_ptr(), "file", "File not found");
+        ufbxi_report_err_msg!(fc.error_view(), "file", "File not found");
     }
     file
 }
@@ -670,7 +679,7 @@ pub(crate) unsafe fn fopen(
     }
     if file.is_null() {
         set_err_info(fc.error_mut_ptr(), path, path_len);
-        ufbxi_report_err_msg!(fc.error_mut_ptr(), "file", "File not found");
+        ufbxi_report_err_msg!(fc.error_view(), "file", "File not found");
     }
     file
 }

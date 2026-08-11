@@ -126,10 +126,18 @@ pub(crate) unsafe fn vwarnf_imp(
     clean_string_utf8(desc.as_mut_ptr(), desc_len);
 
     let desc_copy: *mut u8 = buf::push_copy::<u8>((*ws).result, desc_len + 1, desc.as_ptr());
-    ufbxi_check_err!((*ws).error, !desc_copy.is_null(), "desc_copy");
+    ufbxi_check_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr((*ws).error) },
+        !desc_copy.is_null(),
+        "desc_copy"
+    );
 
     let warning: *mut Warning = buf::push::<Warning>(&mut (*ws).tmp_stack, 1);
-    ufbxi_check_err!((*ws).error, !warning.is_null(), "warning");
+    ufbxi_check_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr((*ws).error) },
+        !warning.is_null(),
+        "warning"
+    );
 
     (*warning).type_ = type_;
     (*warning).description.data = desc_copy;
@@ -199,7 +207,11 @@ pub(crate) unsafe fn pop_warnings(
     (*warnings).count = (*ws).tmp_stack.num_items;
     (*warnings).data =
         buf::push_pop::<Warning>((*ws).result, &mut (*ws).tmp_stack, (*warnings).count);
-    ufbxi_check_err!((*ws).error, !(*warnings).data.is_null(), "warnings->data");
+    ufbxi_check_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr((*ws).error) },
+        !(*warnings).data.is_null(),
+        "warnings->data"
+    );
     // C: `ufbxi_for_list(ufbx_warning, warning, *warnings)` (ufbx.c:1098)
     let mut warning = (*warnings).data as *mut Warning;
     let warning_end = crate::native::platform::add_ptr(warning, (*warnings).count);

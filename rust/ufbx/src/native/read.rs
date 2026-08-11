@@ -2844,20 +2844,27 @@ pub(crate) unsafe fn assign_face_groups(
     retain_parts: bool,
 ) -> Result<(), Fail> {
     let num_faces: usize = (*mesh).num_faces;
-    ufbxi_check_err!(error, num_faces > 0);
     ufbxi_check_err!(
-        error,
+        unsafe { crate::native::error::ErrorView::from_ptr(error) },
+        num_faces > 0
+    );
+    ufbxi_check_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr(error) },
         num_faces < u32::MAX as usize,
         "num_faces < UINT32_MAX"
     );
     ufbxi_check_err!(
-        error,
+        unsafe { crate::native::error::ErrorView::from_ptr(error) },
         (*mesh).face_group.count == num_faces,
         "mesh->face_group.count == num_faces"
     );
 
     let ids: *mut u32 = push::<u32>(buf, num_faces);
-    ufbxi_check_err!(error, !ids.is_null(), "ids");
+    ufbxi_check_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr(error) },
+        !ids.is_null(),
+        "ids"
+    );
 
     let mut num_ids: u32 = 0;
 
@@ -2918,7 +2925,11 @@ pub(crate) unsafe fn assign_face_groups(
 
     // Allocate group info structs
     let groups: *mut FaceGroup = push_zero::<FaceGroup>(buf, num_groups);
-    ufbxi_check_err!(error, !groups.is_null(), "groups");
+    ufbxi_check_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr(error) },
+        !groups.is_null(),
+        "groups"
+    );
     for i in 0..num_groups {
         (*groups.add(i)).id = *ids.add(i) as i32;
         (*groups.add(i)).name.data = EMPTY_CHAR.as_ptr();
@@ -2930,7 +2941,11 @@ pub(crate) unsafe fn assign_face_groups(
     let mut parts: *mut MeshPart = core::ptr::null_mut();
     if retain_parts {
         parts = push_zero::<MeshPart>(buf, num_groups);
-        ufbxi_check_err!(error, !parts.is_null(), "parts");
+        ufbxi_check_err!(
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            !parts.is_null(),
+            "parts"
+        );
         (*mesh).face_group_parts.data = parts;
         (*mesh).face_group_parts.count = num_groups;
     }
@@ -3049,14 +3064,18 @@ pub(crate) unsafe fn update_face_groups(
     if need_copy {
         (*mesh).face_group_parts.data = push_zero::<MeshPart>(buf, num_groups);
         ufbxi_check_err!(
-            error,
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
             !(*mesh).face_group_parts.data.is_null(),
             "mesh->face_group_parts.data"
         );
     }
 
     let mut face_indices: *mut u32 = push::<u32>(buf, num_faces);
-    ufbxi_check_err!(error, !face_indices.is_null(), "face_indices");
+    ufbxi_check_err!(
+        unsafe { crate::native::error::ErrorView::from_ptr(error) },
+        !face_indices.is_null(),
+        "face_indices"
+    );
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < num_faces; i++)`
     for i in 0..num_faces {
@@ -8873,7 +8892,7 @@ pub(crate) unsafe fn finalize_mesh(
         (*mesh).vertex_first_index.count = (*mesh).num_vertices;
         (*mesh).vertex_first_index.data = push::<u32>(buf, (*mesh).num_vertices);
         ufbxi_check_err!(
-            error,
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
             !(*mesh).vertex_first_index.data.is_null(),
             "mesh->vertex_first_index.data"
         );
@@ -8882,7 +8901,11 @@ pub(crate) unsafe fn finalize_mesh(
 
     if (*mesh).uv_sets.count == 0 && (*mesh).vertex_uv.exists {
         let uv_set: *mut UvSet = push_zero::<UvSet>(buf, 1);
-        ufbxi_check_err!(error, !uv_set.is_null(), "uv_set");
+        ufbxi_check_err!(
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            !uv_set.is_null(),
+            "uv_set"
+        );
 
         (*uv_set).name.data = EMPTY_CHAR.as_ptr();
         core::ptr::write(
@@ -8904,7 +8927,11 @@ pub(crate) unsafe fn finalize_mesh(
 
     if (*mesh).color_sets.count == 0 && (*mesh).vertex_color.exists {
         let color_set: *mut ColorSet = push_zero::<ColorSet>(buf, 1);
-        ufbxi_check_err!(error, !color_set.is_null(), "color_set");
+        ufbxi_check_err!(
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            !color_set.is_null(),
+            "color_set"
+        );
 
         (*color_set).name.data = EMPTY_CHAR.as_ptr();
         core::ptr::write(

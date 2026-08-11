@@ -458,6 +458,15 @@ impl SubdivideContext {
         unsafe { &raw mut (*self.get()).error }
     }
 
+    // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
+    // error-form check macros through the SAFE `fail_err`/`fail_err_no_stack`.
+    #[inline(always)]
+    pub(crate) fn error_view(&self) -> &crate::native::error::ErrorView {
+        // SAFETY: the context-owned `error` field is interior-mutable arena memory;
+        // `&raw mut` keeps write provenance (never `&T`); borrow of `self` anchors `'a <= self`.
+        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut (*self.get()).error) }
+    }
+
     // `dst_mesh` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn dst_mesh_mut_ptr(&self) -> *mut Mesh {
@@ -822,7 +831,7 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
         push_copy::<SubdivisionWeight>(sc.tmp_mut_ptr(), num_weights, tmp_weights);
     // C: `ufbxi_check_err(&sc->error, weights);` — this function returns `int`,
     // so the C macro's `return 0` is a plain 0 here.
-    ufbxi_check_return_err!(sc.error_mut_ptr(), !weights.is_null(), 0, "weights");
+    ufbxi_check_return_err!(sc.error_view(), !weights.is_null(), 0, "weights");
 
     let dst: *mut SubdivisionVertexWeights = output as *mut SubdivisionVertexWeights;
     (*dst).weights = weights;
@@ -917,7 +926,7 @@ pub(crate) unsafe fn subdivide_layer(
     let num_topo: usize = sc.num_topo();
 
     let edge_indices: *mut u32 = push::<u32>(sc.result_mut_ptr(), (*mesh).num_indices);
-    ufbxi_check_err!(sc.error_mut_ptr(), !edge_indices.is_null(), "edge_indices");
+    ufbxi_check_err!(sc.error_view(), !edge_indices.is_null(), "edge_indices");
 
     let mut num_edge_values: usize = 0;
     // C: `for (uint32_t ix = 0; ix < (uint32_t)mesh->num_indices; ix++)` — the
@@ -939,7 +948,7 @@ pub(crate) unsafe fn subdivide_layer(
         .wrapping_add((*mesh).num_faces)
         .wrapping_add((*mesh).num_indices);
     let values: *mut u8 = push_size(sc.tmp_mut_ptr(), stride, num_initial_values) as *mut u8;
-    ufbxi_check_err!(sc.error_mut_ptr(), !values.is_null(), "values");
+    ufbxi_check_err!(sc.error_view(), !values.is_null(), "values");
 
     let face_values: *mut u8 = values;
     let edge_values: *mut u8 = face_values.add((*mesh).num_faces.wrapping_mul(stride));
@@ -948,15 +957,11 @@ pub(crate) unsafe fn subdivide_layer(
     let mut num_vertex_values: usize = 0;
 
     let vertex_indices: *mut u32 = push::<u32>(sc.result_mut_ptr(), (*mesh).num_indices);
-    ufbxi_check_err!(
-        sc.error_mut_ptr(),
-        !vertex_indices.is_null(),
-        "vertex_indices"
-    );
+    ufbxi_check_err!(sc.error_view(), !vertex_indices.is_null(), "vertex_indices");
 
     let min_inputs: usize = max_sz(32, (*mesh).max_face_triangles.wrapping_add(2));
     ufbxi_check_err!(
-        sc.error_mut_ptr(),
+        sc.error_view(),
         grow_array::<SubdivideInput>(
             sc.ator_tmp_mut_ptr(),
             sc.inputs_mut_ptr(),
@@ -1030,7 +1035,7 @@ pub(crate) unsafe fn subdivide_layer(
         }
 
         ufbxi_check_err!(
-            sc.error_mut_ptr(),
+            sc.error_view(),
             sum_fn(
                 sum_user,
                 dst as *mut c_void,
@@ -1099,7 +1104,7 @@ pub(crate) unsafe fn subdivide_layer(
             (*inputs.add(3)).data = f1 as *const c_void;
             (*inputs.add(3)).weight = 0.25;
             ufbxi_check_err!(
-                sc.error_mut_ptr(),
+                sc.error_view(),
                 sum_fn(sum_user, dst as *mut c_void, inputs, 4) != 0,
                 "sum_fn(sum_user, dst, inputs, 4)"
             );
@@ -1109,7 +1114,7 @@ pub(crate) unsafe fn subdivide_layer(
             (*inputs.add(1)).data = v1 as *const c_void;
             (*inputs.add(1)).weight = 0.5;
             ufbxi_check_err!(
-                sc.error_mut_ptr(),
+                sc.error_view(),
                 sum_fn(sum_user, dst as *mut c_void, inputs, 2) != 0,
                 "sum_fn(sum_user, dst, inputs, 2)"
             );
@@ -1130,7 +1135,7 @@ pub(crate) unsafe fn subdivide_layer(
             (*inputs.add(3)).data = f1 as *const c_void;
             (*inputs.add(3)).weight = w1;
             ufbxi_check_err!(
-                sc.error_mut_ptr(),
+                sc.error_view(),
                 sum_fn(sum_user, dst as *mut c_void, inputs, 4) != 0,
                 "sum_fn(sum_user, dst, inputs, 4)"
             );
@@ -1251,7 +1256,7 @@ pub(crate) unsafe fn subdivide_layer(
             }
 
             ufbxi_check_err!(
-                sc.error_mut_ptr(),
+                sc.error_view(),
                 *vertex_indices.add(start as usize) == NO_INDEX,
                 "vertex_indices[start] == UFBX_NO_INDEX"
             );
@@ -1280,7 +1285,7 @@ pub(crate) unsafe fn subdivide_layer(
                         .flags
                         .has_any(TopoFlags::NON_MANIFOLD);
                     ufbxi_check_err!(
-                        sc.error_mut_ptr(),
+                        sc.error_view(),
                         *vertex_indices.add(cur as usize) == NO_INDEX,
                         "vertex_indices[cur] == UFBX_NO_INDEX"
                     );
@@ -1291,7 +1296,7 @@ pub(crate) unsafe fn subdivide_layer(
                     // Looped: Add the face from the other side still if not split
                     if cur == end_edge && !split {
                         ufbxi_check_err!(
-                            sc.error_mut_ptr(),
+                            sc.error_view(),
                             grow_array::<SubdivideInput>(
                                 sc.ator_tmp_mut_ptr(),
                                 sc.inputs_mut_ptr(),
@@ -1326,7 +1331,7 @@ pub(crate) unsafe fn subdivide_layer(
                     // Add the new edge and face to the sum
                     {
                         ufbxi_check_err!(
-                            sc.error_mut_ptr(),
+                            sc.error_view(),
                             grow_array::<SubdivideInput>(
                                 sc.ator_tmp_mut_ptr(),
                                 sc.inputs_mut_ptr(),
@@ -1451,7 +1456,7 @@ pub(crate) unsafe fn subdivide_layer(
             }
 
             ufbxi_check_err!(
-                sc.error_mut_ptr(),
+                sc.error_view(),
                 sum_fn(sum_user, dst as *mut c_void, inputs, num_inputs) != 0,
                 "sum_fn(sum_user, dst, inputs, num_inputs)"
             );
@@ -1474,7 +1479,7 @@ pub(crate) unsafe fn subdivide_layer(
             (*inputs.add(0)).data = src as *const c_void;
             (*inputs.add(0)).weight = 1.0;
             ufbxi_check_err!(
-                sc.error_mut_ptr(),
+                sc.error_view(),
                 sum_fn(sum_user, dst as *mut c_void, inputs, 1) != 0,
                 "sum_fn(sum_user, dst, inputs, 1)"
             );
@@ -1488,7 +1493,7 @@ pub(crate) unsafe fn subdivide_layer(
         .wrapping_add(num_vertex_values);
     let mut new_values: *mut u8 =
         push_size(sc.result_mut_ptr(), stride, num_values.wrapping_add(1)) as *mut u8;
-    ufbxi_check_err!(sc.error_mut_ptr(), !new_values.is_null(), "new_values");
+    ufbxi_check_err!(sc.error_view(), !new_values.is_null(), "new_values");
 
     core::ptr::write_bytes(new_values, 0, stride);
     new_values = new_values.add(stride);
@@ -1501,7 +1506,7 @@ pub(crate) unsafe fn subdivide_layer(
     if !(*input).ignore_indices {
         let new_indices: *mut u32 =
             push::<u32>(sc.result_mut_ptr(), (*mesh).num_indices.wrapping_mul(4));
-        ufbxi_check_err!(sc.error_mut_ptr(), !new_indices.is_null(), "new_indices");
+        ufbxi_check_err!(sc.error_view(), !new_indices.is_null(), "new_indices");
 
         let face_start: u32 = 0;
         let edge_start: u32 = face_start.wrapping_add((*mesh).num_faces as u32);
@@ -1576,7 +1581,7 @@ pub(crate) unsafe fn subdivision_copy_weights(
     let dst: *mut SubdivisionVertexWeights =
         push::<SubdivisionVertexWeights>(sc.tmp_mut_ptr(), ranges.count);
     ufbxi_check_return_err!(
-        sc.error_mut_ptr(),
+        sc.error_view(),
         !dst.is_null(),
         core::ptr::null_mut(),
         "dst"
@@ -1606,7 +1611,7 @@ pub(crate) unsafe fn init_source_vertex_weights(
         push::<SubdivisionVertexWeights>(sc.tmp_mut_ptr(), num_vertices);
     let weights: *mut SubdivisionWeight = push::<SubdivisionWeight>(sc.tmp_mut_ptr(), num_vertices);
     ufbxi_check_return_err!(
-        sc.error_mut_ptr(),
+        sc.error_view(),
         !dst.is_null() && !weights.is_null(),
         core::ptr::null_mut(),
         "dst && weights"
@@ -1636,7 +1641,7 @@ pub(crate) unsafe fn init_skin_weights(
     let dst: *mut SubdivisionVertexWeights =
         push::<SubdivisionVertexWeights>(sc.tmp_mut_ptr(), num_vertices);
     ufbxi_check_return_err!(
-        sc.error_mut_ptr(),
+        sc.error_view(),
         !dst.is_null(),
         core::ptr::null_mut(),
         "dst"
@@ -1653,7 +1658,7 @@ pub(crate) unsafe fn init_skin_weights(
         // C: `ufbxi_check_err(&sc->error, weights);` — pointer-returning
         // function, so the C macro's `return 0` is NULL here.
         ufbxi_check_return_err!(
-            sc.error_mut_ptr(),
+            sc.error_view(),
             !weights.is_null(),
             core::ptr::null_mut(),
             "weights"
@@ -1668,7 +1673,7 @@ pub(crate) unsafe fn init_skin_weights(
         let mut wi: usize = 0;
         while wi != num_weights {
             ufbxi_check_return_err!(
-                sc.error_mut_ptr(),
+                sc.error_view(),
                 (*skin_weights.add(wi)).cluster_index <= i32::MAX as u32,
                 core::ptr::null_mut(),
                 "skin_weights[wi].cluster_index <= INT32_MAX"
@@ -1692,7 +1697,7 @@ pub(crate) unsafe fn subdivide_weights(
     weights: *mut crate::prelude::List<SubdivisionWeight>,
     src: *const SubdivisionVertexWeights,
 ) -> Result<(), crate::native::error::Fail> {
-    ufbxi_check_err!(sc.error_mut_ptr(), !src.is_null(), "src");
+    ufbxi_check_err!(sc.error_view(), !src.is_null(), "src");
 
     let mut input_mem = MaybeUninit::<SubdivideLayerInput>::uninit(); // ufbxi_uninit
     let input: *mut SubdivideLayerInput = input_mem.as_mut_ptr();
@@ -1729,7 +1734,7 @@ pub(crate) unsafe fn subdivide_weights(
     // freshly pushed `dst_ranges && dst_weights` (ufbx.c:29573) — ported
     // verbatim.
     ufbxi_check_err!(
-        sc.error_mut_ptr(),
+        sc.error_view(),
         !ranges.is_null() && !weights.is_null(),
         "ranges && weights"
     );
@@ -1742,7 +1747,7 @@ pub(crate) unsafe fn subdivide_weights(
     while vi < num_vertices {
         let ws: SubdivisionVertexWeights = *src_weights.add(vi);
         ufbxi_check_err!(
-            sc.error_mut_ptr(),
+            sc.error_view(),
             (u32::MAX as usize).wrapping_sub(weight_offset) >= ws.num_weights,
             "(size_t)UINT32_MAX - weight_offset >= ws.num_weights"
         );
@@ -1776,7 +1781,7 @@ pub(crate) unsafe fn subdivide_vertex_crease(
     (*dst).values.count = src_values.wrapping_add(1);
     (*dst).values.data = push::<Real>(sc.result_mut_ptr(), (*dst).values.count);
     ufbxi_check_err!(
-        sc.error_mut_ptr(),
+        sc.error_view(),
         !(*dst).values.data.is_null(),
         "dst->values.data"
     );
@@ -1785,7 +1790,7 @@ pub(crate) unsafe fn subdivide_vertex_crease(
     (*dst).indices.count = src_indices.wrapping_mul(4);
     (*dst).indices.data = push::<u32>(sc.result_mut_ptr(), (*dst).indices.count);
     ufbxi_check_err!(
-        sc.error_mut_ptr(),
+        sc.error_view(),
         !(*dst).indices.data.is_null(),
         "dst->indices.data"
     );
@@ -1835,7 +1840,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     core::ptr::copy_nonoverlapping(mesh, result, 1);
 
     let topo: *mut TopoEdge = push::<TopoEdge>(sc.tmp_mut_ptr(), (*mesh).num_indices);
-    ufbxi_check_err!(sc.error_mut_ptr(), !topo.is_null(), "topo");
+    ufbxi_check_err!(sc.error_view(), !topo.is_null(), "topo");
     compute_topology(mesh, topo, (*mesh).num_indices);
     sc.set_topo(topo);
     sc.set_num_topo((*mesh).num_indices);
@@ -1874,7 +1879,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         (*result).uv_sets.data,
     );
     ufbxi_check_err!(
-        sc.error_mut_ptr(),
+        sc.error_view(),
         !(*result).uv_sets.data.is_null(),
         "result->uv_sets.data"
     );
@@ -1885,7 +1890,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         (*result).color_sets.data,
     );
     ufbxi_check_err!(
-        sc.error_mut_ptr(),
+        sc.error_view(),
         !(*result).color_sets.data.is_null(),
         "result->color_sets.data"
     );
@@ -2031,7 +2036,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     }
 
     let result_sub: *mut SubdivisionResult = push_zero::<SubdivisionResult>(sc.result_mut_ptr(), 1);
-    ufbxi_check_err!(sc.error_mut_ptr(), !result_sub.is_null(), "result_sub");
+    ufbxi_check_err!(sc.error_view(), !result_sub.is_null(), "result_sub");
     (*result).subdivision_result = opt_ref(result_sub);
 
     if sc.opts_view().evaluate_source_vertices() || sc.opts_view().evaluate_skin_weights() {
@@ -2041,7 +2046,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         if sc.opts_view().evaluate_skin_weights() {
             if (*mesh).skin_deformers.count > 0 {
                 ufbxi_check_err!(
-                    sc.error_mut_ptr(),
+                    sc.error_view(),
                     sc.opts_view().skin_deformer_index() < (*mesh).skin_deformers.count,
                     "sc->opts.skin_deformer_index < mesh->skin_deformers.count"
                 );
@@ -2065,7 +2070,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         sc.set_tmp_vertex_weights(push_zero::<Real>(sc.tmp_mut_ptr(), (*mesh).num_vertices));
         sc.set_tmp_weights(push::<SubdivisionWeight>(sc.tmp_mut_ptr(), max_weights));
         ufbxi_check_err!(
-            sc.error_mut_ptr(),
+            sc.error_view(),
             !sc.tmp_vertex_weights().is_null() && !sc.tmp_weights().is_null(),
             "sc->tmp_vertex_weights && sc->tmp_weights"
         );
@@ -2138,7 +2143,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     (*result).faces.count = (*result).num_faces;
     (*result).faces.data = push::<Face>(sc.result_mut_ptr(), (*result).num_faces);
     ufbxi_check_err!(
-        sc.error_mut_ptr(),
+        sc.error_view(),
         !(*result).faces.data.is_null(),
         "result->faces.data"
     );
@@ -2158,7 +2163,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         (*result).edges.count = (*result).num_edges;
         (*result).edges.data = push::<Edge>(sc.result_mut_ptr(), (*result).num_edges);
         ufbxi_check_err!(
-            sc.error_mut_ptr(),
+            sc.error_view(),
             !(*result).edges.data.is_null(),
             "result->edges.data"
         );
@@ -2167,7 +2172,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
             (*result).edge_crease.count = (*result).num_edges;
             (*result).edge_crease.data = push::<Real>(sc.result_mut_ptr(), (*result).num_edges);
             ufbxi_check_err!(
-                sc.error_mut_ptr(),
+                sc.error_view(),
                 !(*result).edge_crease.data.is_null(),
                 "result->edge_crease.data"
             );
@@ -2176,7 +2181,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
             (*result).edge_smoothing.count = (*result).num_edges;
             (*result).edge_smoothing.data = push::<bool>(sc.result_mut_ptr(), (*result).num_edges);
             ufbxi_check_err!(
-                sc.error_mut_ptr(),
+                sc.error_view(),
                 !(*result).edge_smoothing.data.is_null(),
                 "result->edge_smoothing.data"
             );
@@ -2185,7 +2190,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
             (*result).edge_visibility.count = (*result).num_edges;
             (*result).edge_visibility.data = push::<bool>(sc.result_mut_ptr(), (*result).num_edges);
             ufbxi_check_err!(
-                sc.error_mut_ptr(),
+                sc.error_view(),
                 !(*result).edge_visibility.data.is_null(),
                 "result->edge_visibility.data"
             );
@@ -2267,7 +2272,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         (*result).face_material.count = (*result).num_faces;
         (*result).face_material.data = push::<u32>(sc.result_mut_ptr(), (*result).num_faces);
         ufbxi_check_err!(
-            sc.error_mut_ptr(),
+            sc.error_view(),
             !(*result).face_material.data.is_null(),
             "result->face_material.data"
         );
@@ -2276,7 +2281,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         (*result).face_smoothing.count = (*result).num_faces;
         (*result).face_smoothing.data = push::<bool>(sc.result_mut_ptr(), (*result).num_faces);
         ufbxi_check_err!(
-            sc.error_mut_ptr(),
+            sc.error_view(),
             !(*result).face_smoothing.data.is_null(),
             "result->face_smoothing.data"
         );
@@ -2285,7 +2290,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         (*result).face_group.count = (*result).num_faces;
         (*result).face_group.data = push::<u32>(sc.result_mut_ptr(), (*result).num_faces);
         ufbxi_check_err!(
-            sc.error_mut_ptr(),
+            sc.error_view(),
             !(*result).face_group.data.is_null(),
             "result->face_group.data"
         );
@@ -2294,7 +2299,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         (*result).face_hole.count = (*result).num_faces;
         (*result).face_hole.data = push::<bool>(sc.result_mut_ptr(), (*result).num_faces);
         ufbxi_check_err!(
-            sc.error_mut_ptr(),
+            sc.error_view(),
             !(*result).face_hole.data.is_null(),
             "result->face_hole.data"
         );
@@ -2306,7 +2311,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
         // C-parity: upstream checks `result->materials.data` here
         // (ufbx.c:29882), not the freshly pushed `material_parts.data`.
         ufbxi_check_err!(
-            sc.error_mut_ptr(),
+            sc.error_view(),
             !(*result).materials.data.is_null(),
             "result->materials.data"
         );
@@ -2448,15 +2453,11 @@ pub(crate) unsafe fn subdivide_mesh_imp(
 
     if !sc.opts_view().interpolate_normals() && !sc.opts_view().ignore_normals() {
         let topo: *mut TopoEdge = push::<TopoEdge>(sc.tmp_mut_ptr(), (*mesh).num_indices);
-        ufbxi_check_err!(sc.error_mut_ptr(), !topo.is_null(), "topo");
+        ufbxi_check_err!(sc.error_view(), !topo.is_null(), "topo");
         compute_topology(mesh, topo, (*mesh).num_indices);
 
         let normal_indices: *mut u32 = push::<u32>(sc.result_mut_ptr(), (*mesh).num_indices);
-        ufbxi_check_err!(
-            sc.error_mut_ptr(),
-            !normal_indices.is_null(),
-            "normal_indices"
-        );
+        ufbxi_check_err!(sc.error_view(), !normal_indices.is_null(), "normal_indices");
 
         let num_normals: usize = generate_normal_mapping(
             mesh,
@@ -2472,7 +2473,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
 
         let mut normal_data: *mut Vec3 =
             push::<Vec3>(sc.result_mut_ptr(), num_normals.wrapping_add(1));
-        ufbxi_check_err!(sc.error_mut_ptr(), !normal_data.is_null(), "normal_data");
+        ufbxi_check_err!(sc.error_view(), !normal_data.is_null(), "normal_data");
         *normal_data.add(0) = ZERO_VEC3;
         normal_data = normal_data.add(1);
 
@@ -2508,7 +2509,7 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     patch_mesh_reals(mesh);
 
     sc.set_imp(push::<MeshImp>(sc.result_mut_ptr(), 1));
-    ufbxi_check_err!(sc.error_mut_ptr(), !sc.imp().is_null(), "sc->imp");
+    ufbxi_check_err!(sc.error_view(), !sc.imp().is_null(), "sc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&Mesh` pointer via exposed provenance.
@@ -2595,7 +2596,11 @@ pub(crate) fn subdivide_mesh(
     if !p_error.is_null() {
         core::ptr::write_bytes(p_error as *mut u8, 0, core::mem::size_of::<Error>());
         ufbxi_fmt_err_info!(p_error, "UFBX_ENABLE_SUBDIVISION");
-        ufbxi_report_err_msg!(p_error, "UFBXI_FEATURE_SUBDIVISION", "Feature disabled");
+        ufbxi_report_err_msg!(
+            unsafe { crate::native::error::ErrorView::from_ptr(p_error) },
+            "UFBXI_FEATURE_SUBDIVISION",
+            "Feature disabled"
+        );
     }
     core::ptr::null_mut()
 }

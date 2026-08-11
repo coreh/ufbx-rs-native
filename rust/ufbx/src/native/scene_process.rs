@@ -6464,7 +6464,7 @@ pub(crate) unsafe fn finalize_mesh_material(
             (*part).face_indices.count = (*part).num_faces;
             (*part).face_indices.data = push::<u32>(buf, (*part).num_faces);
             ufbxi_check_err!(
-                error,
+                unsafe { crate::native::error::ErrorView::from_ptr(error) },
                 !(*part).face_indices.data.is_null(),
                 "part->face_indices.data"
             );
@@ -6491,7 +6491,7 @@ pub(crate) unsafe fn finalize_mesh_material(
         (*mesh).material_part_usage_order.count = num_parts;
         (*mesh).material_part_usage_order.data = push::<u32>(buf, num_parts);
         ufbxi_check_err!(
-            error,
+            unsafe { crate::native::error::ErrorView::from_ptr(error) },
             !(*mesh).material_part_usage_order.data.is_null(),
             "mesh->material_part_usage_order.data"
         );

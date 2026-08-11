@@ -239,7 +239,11 @@ pub(crate) unsafe fn binary_convert_array(
             !maybe_uc.is_null() && (*maybe_uc).file_big_endian != (*maybe_uc).local_big_endian
         );
         src = swap_endian_array(Context::from_ptr(maybe_uc), src, size, src_type) as *const c_void;
-        ufbxi_check_err!(&mut (*maybe_uc).error, !src.is_null(), "src");
+        ufbxi_check_err!(
+            unsafe { crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error) },
+            !src.is_null(),
+            "src"
+        );
         core::ptr::copy_nonoverlapping(
             src as *const u8,
             dst as *mut u8,
@@ -250,7 +254,11 @@ pub(crate) unsafe fn binary_convert_array(
 
     if !maybe_uc.is_null() && (*maybe_uc).file_big_endian {
         src = swap_endian_array(Context::from_ptr(maybe_uc), src, size, src_type) as *const c_void;
-        ufbxi_check_err!(&mut (*maybe_uc).error, !src.is_null(), "src");
+        ufbxi_check_err!(
+            unsafe { crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error) },
+            !src.is_null(),
+            "src"
+        );
     }
 
     // C: the two `#define`s below live inside the `switch`; in Rust they must
@@ -296,7 +304,12 @@ pub(crate) unsafe fn binary_convert_array(
             b'd' => ufbxi_convert_loop_slow!(u8, ufbxi_cast_u8, 8, val, read_f64(val)),
             _ => {
                 if !maybe_uc.is_null() {
-                    ufbxi_fail_err!(&mut (*maybe_uc).error, "Bad array source type");
+                    ufbxi_fail_err!(
+                        unsafe {
+                            crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error)
+                        },
+                        "Bad array source type"
+                    );
                 }
                 return Err(Fail);
             }
@@ -316,7 +329,12 @@ pub(crate) unsafe fn binary_convert_array(
             b'd' => ufbxi_convert_loop_slow!(i32, ufbxi_cast_f64_to_i32, 8, val, read_f64(val)),
             _ => {
                 if !maybe_uc.is_null() {
-                    ufbxi_fail_err!(&mut (*maybe_uc).error, "Bad array source type");
+                    ufbxi_fail_err!(
+                        unsafe {
+                            crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error)
+                        },
+                        "Bad array source type"
+                    );
                 }
                 return Err(Fail);
             }
@@ -331,7 +349,12 @@ pub(crate) unsafe fn binary_convert_array(
             b'd' => ufbxi_convert_loop_slow!(i64, ufbxi_cast_f64_to_i64, 8, val, read_f64(val)),
             _ => {
                 if !maybe_uc.is_null() {
-                    ufbxi_fail_err!(&mut (*maybe_uc).error, "Bad array source type");
+                    ufbxi_fail_err!(
+                        unsafe {
+                            crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error)
+                        },
+                        "Bad array source type"
+                    );
                 }
                 return Err(Fail);
             }
@@ -346,7 +369,12 @@ pub(crate) unsafe fn binary_convert_array(
             b'd' => ufbxi_convert_loop_fast!(f32, ufbxi_cast_f32, 8, val, read_f64(val)),
             _ => {
                 if !maybe_uc.is_null() {
-                    ufbxi_fail_err!(&mut (*maybe_uc).error, "Bad array source type");
+                    ufbxi_fail_err!(
+                        unsafe {
+                            crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error)
+                        },
+                        "Bad array source type"
+                    );
                 }
                 return Err(Fail);
             }
@@ -361,7 +389,12 @@ pub(crate) unsafe fn binary_convert_array(
             // case 'd': ufbxi_convert_loop_slow(double, (double), 8, ufbxi_read_f64(val)); break;
             _ => {
                 if !maybe_uc.is_null() {
-                    ufbxi_fail_err!(&mut (*maybe_uc).error, "Bad array source type");
+                    ufbxi_fail_err!(
+                        unsafe {
+                            crate::native::error::ErrorView::from_ptr(&raw mut (*maybe_uc).error)
+                        },
+                        "Bad array source type"
+                    );
                 }
                 return Err(Fail);
             }

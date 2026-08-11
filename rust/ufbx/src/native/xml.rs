@@ -232,6 +232,15 @@ impl XmlContext {
         unsafe { &raw mut (*self.get()).error }
     }
 
+    // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
+    // error-form check macros through the SAFE `fail_err`/`fail_err_no_stack`.
+    #[inline(always)]
+    pub(crate) fn error_view(&self) -> &crate::native::error::ErrorView {
+        // SAFETY: the context-owned `error` field is interior-mutable arena memory;
+        // `&raw mut` keeps write provenance (never `&T`); borrow of `self` anchors `'a <= self`.
+        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut (*self.get()).error) }
+    }
+
     #[inline(always)]
     pub(crate) fn set_io_error(&self, io_error: bool) {
         // SAFETY: storing a scalar; cannot violate validity.
@@ -438,7 +447,7 @@ pub(crate) fn xml_advance(xc: &XmlContext) {
 pub(crate) unsafe fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), Fail> {
     if xc.tok_len() == xc.tok_cap() || IS_REGRESSION {
         ufbxi_check_err!(
-            xc.error_mut_ptr(),
+            xc.error_view(),
             grow_array::<u8>(
                 xc.ator(),
                 xc.tok_mut_ptr(),
@@ -493,7 +502,7 @@ pub(crate) unsafe fn xml_skip_until_string(
     ufbx_assert!(suffix_len < buf.len());
     loop {
         let c: u8 = *xc.pos();
-        ufbxi_check_err_msg!(xc.error_mut_ptr(), c != 0, "Truncated file");
+        ufbxi_check_err_msg!(xc.error_view(), c != 0, "Truncated file");
         xml_advance(xc);
         if ix >= suffix_len {
             xml_push_token_char(xc, buf[(ix - suffix_len) & wrap_mask])?;
@@ -522,7 +531,7 @@ pub(crate) unsafe fn xml_skip_until_string(
     if !dst.is_null() {
         (*dst).length = xc.tok_len() - 1;
         (*dst).data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok());
-        ufbxi_check_err!(xc.error_mut_ptr(), !(*dst).data.is_null(), "dst->data");
+        ufbxi_check_err!(xc.error_view(), !(*dst).data.is_null(), "dst->data");
     }
 
     Ok(())
@@ -545,7 +554,7 @@ pub(crate) unsafe fn xml_read_until(
             loop {
                 xml_advance(xc);
                 c = *xc.pos();
-                ufbxi_check_err!(xc.error_mut_ptr(), c != b'\0', "c != '\\0'");
+                ufbxi_check_err!(xc.error_view(), c != b'\0', "c != '\\0'");
                 if c == b';' {
                     break;
                 }
@@ -610,7 +619,7 @@ pub(crate) unsafe fn xml_read_until(
             if (XML_CTYPE[c as usize] as u32 & ctypes) != 0 {
                 break;
             }
-            ufbxi_check_err_msg!(xc.error_mut_ptr(), c != 0, "Truncated file");
+            ufbxi_check_err_msg!(xc.error_view(), c != 0, "Truncated file");
             xml_push_token_char(xc, c)?;
             xml_advance(xc);
         }
@@ -620,7 +629,7 @@ pub(crate) unsafe fn xml_read_until(
     if !dst.is_null() {
         (*dst).length = xc.tok_len() - 1;
         (*dst).data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok());
-        ufbxi_check_err!(xc.error_mut_ptr(), !(*dst).data.is_null(), "dst->data");
+        ufbxi_check_err!(xc.error_view(), !(*dst).data.is_null(), "dst->data");
     }
 
     Ok(())
@@ -667,7 +676,7 @@ unsafe fn xml_parse_tag_rec(
     opening: *const u8,
 ) -> Result<(), Fail> {
     ufbxi_check_err!(
-        xc.error_mut_ptr(),
+        xc.error_view(),
         depth < MAX_XML_DEPTH,
         "depth < UFBXI_MAX_XML_DEPTH"
     );
@@ -693,13 +702,13 @@ unsafe fn xml_parse_tag_rec(
 
             if has_text {
                 let tag: *mut XmlTag = push_zero(xc.tmp_stack_mut_ptr(), 1);
-                ufbxi_check_err!(xc.error_mut_ptr(), !tag.is_null(), "tag");
+                ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
                 (*tag).name.data = EMPTY_CHAR.as_ptr();
 
                 (*tag).text.length = xc.tok_len() - 1;
                 (*tag).text.data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok());
                 ufbxi_check_err!(
-                    xc.error_mut_ptr(),
+                    xc.error_view(),
                     !(*tag).text.data.is_null(),
                     "tag->text.data"
                 );
@@ -711,7 +720,7 @@ unsafe fn xml_parse_tag_rec(
     if xml_accept(xc, b'/') {
         xml_read_until(xc, core::ptr::null_mut(), XML_CTYPE_NAME_END)?;
         ufbxi_check_err!(
-            xc.error_mut_ptr(),
+            xc.error_view(),
             !opening.is_null() && strcmp(xc.tok(), opening) == 0,
             "opening && !strcmp(xc->tok, opening)"
         );
@@ -733,7 +742,7 @@ unsafe fn xml_parse_tag_rec(
             }
 
             let tag: *mut XmlTag = push_zero(xc.tmp_stack_mut_ptr(), 1);
-            ufbxi_check_err!(xc.error_mut_ptr(), !tag.is_null(), "tag");
+            ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
             xml_skip_until_string(xc, &mut (*tag).text, b"]]>\0".as_ptr())?;
             (*tag).name.data = EMPTY_CHAR.as_ptr();
         } else if xml_accept(xc, b'-') {
@@ -752,7 +761,7 @@ unsafe fn xml_parse_tag_rec(
     }
 
     let tag: *mut XmlTag = push_zero(xc.tmp_stack_mut_ptr(), 1);
-    ufbxi_check_err!(xc.error_mut_ptr(), !tag.is_null(), "tag");
+    ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
     xml_read_until(xc, &mut (*tag).name, XML_CTYPE_NAME_END)?;
     (*tag).text.data = EMPTY_CHAR.as_ptr();
 
@@ -771,7 +780,7 @@ unsafe fn xml_parse_tag_rec(
             break;
         } else {
             let attrib: *mut XmlAttrib = push_zero(xc.tmp_stack_mut_ptr(), 1);
-            ufbxi_check_err!(xc.error_mut_ptr(), !attrib.is_null(), "attrib");
+            ufbxi_check_err!(xc.error_view(), !attrib.is_null(), "attrib");
             xml_read_until(xc, &mut (*attrib).name, XML_CTYPE_NAME_END)?;
             xml_skip_while(xc, XML_CTYPE_WHITESPACE);
             if !xml_accept(xc, b'=') {
@@ -784,7 +793,7 @@ unsafe fn xml_parse_tag_rec(
             } else if xml_accept(xc, b'\'') {
                 quote_ctype = XML_CTYPE_SINGLE_QUOTE;
             } else {
-                ufbxi_fail_err!(xc.error_mut_ptr(), "Bad attrib value");
+                ufbxi_fail_err!(xc.error_view(), "Bad attrib value");
             }
             xml_read_until(xc, &mut (*attrib).value, quote_ctype)?;
             xml_advance(xc);
@@ -794,11 +803,7 @@ unsafe fn xml_parse_tag_rec(
 
     (*tag).num_attribs = num_attribs;
     (*tag).attribs = push_pop(xc.result_mut_ptr(), xc.tmp_stack_mut_ptr(), num_attribs);
-    ufbxi_check_err!(
-        xc.error_mut_ptr(),
-        !(*tag).attribs.is_null(),
-        "tag->attribs"
-    );
+    ufbxi_check_err!(xc.error_view(), !(*tag).attribs.is_null(), "tag->attribs");
 
     if has_children {
         let children_begin: usize = xc.tmp_stack_view().num_items();
@@ -816,11 +821,7 @@ unsafe fn xml_parse_tag_rec(
             xc.tmp_stack_mut_ptr(),
             (*tag).num_children,
         );
-        ufbxi_check_err!(
-            xc.error_mut_ptr(),
-            !(*tag).children.is_null(),
-            "tag->children"
-        );
+        ufbxi_check_err!(xc.error_view(), !(*tag).children.is_null(), "tag->children");
     }
 
     Ok(())
@@ -830,7 +831,7 @@ unsafe fn xml_parse_tag_rec(
 #[inline(never)]
 pub(crate) unsafe fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
     let tag: *mut XmlTag = push_zero(xc.result_mut_ptr(), 1);
-    ufbxi_check_err!(xc.error_mut_ptr(), !tag.is_null(), "tag");
+    ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
     (*tag).name.data = EMPTY_CHAR.as_ptr();
     (*tag).text.data = EMPTY_CHAR.as_ptr();
 
@@ -848,14 +849,10 @@ pub(crate) unsafe fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
         xc.tmp_stack_mut_ptr(),
         (*tag).num_children,
     );
-    ufbxi_check_err!(
-        xc.error_mut_ptr(),
-        !(*tag).children.is_null(),
-        "tag->children"
-    );
+    ufbxi_check_err!(xc.error_view(), !(*tag).children.is_null(), "tag->children");
 
     xc.set_doc(push(xc.result_mut_ptr(), 1));
-    ufbxi_check_err!(xc.error_mut_ptr(), !xc.doc().is_null(), "xc->doc");
+    ufbxi_check_err!(xc.error_view(), !xc.doc().is_null(), "xc->doc");
 
     (*xc.doc()).root = tag;
     (*xc.doc()).buf = xc.result();

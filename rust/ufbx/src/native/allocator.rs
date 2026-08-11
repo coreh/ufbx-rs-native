@@ -180,14 +180,14 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
 
     let total = size.wrapping_mul(n);
     ufbxi_check_return_err!(
-        (*ator).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
         !does_overflow(total, size, n),
         core::ptr::null_mut(),
         "!ufbxi_does_overflow(total, size, n)"
     );
     // Make sure it's always safe to double allocations
     ufbxi_check_return_err!(
-        (*ator).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
         total <= usize::MAX / 2,
         core::ptr::null_mut(),
         "total <= SIZE_MAX / 2"
@@ -195,7 +195,7 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
     if !(total < (*ator).max_size - (*ator).current_size) {
         let a = &mut *ator;
         ufbxi_report_err_msg!(
-            a.error,
+            unsafe { crate::native::error::ErrorView::from_ptr(a.error) },
             "total <= ator->max_size - ator->current_size",
             "Memory limit exceeded"
         );
@@ -205,7 +205,7 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
     if !((*ator).num_allocs < (*ator).max_allocs) {
         let a = &mut *ator;
         ufbxi_report_err_msg!(
-            a.error,
+            unsafe { crate::native::error::ErrorView::from_ptr(a.error) },
             "ator->num_allocs < ator->max_allocs",
             "Allocation limit exceeded"
         );
@@ -225,7 +225,11 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
 
     if ptr.is_null() {
         let a = &mut *ator;
-        ufbxi_report_err_msg!(a.error, "ptr", "Out of memory");
+        ufbxi_report_err_msg!(
+            unsafe { crate::native::error::ErrorView::from_ptr(a.error) },
+            "ptr",
+            "Out of memory"
+        );
         ufbxi_fmt_err_info!(a.error, "%s", a.name);
         return core::ptr::null_mut();
     }
@@ -264,27 +268,27 @@ pub(crate) unsafe fn realloc_size(
     ufbx_assert!(old_total <= (*ator).current_size);
 
     ufbxi_check_return_err!(
-        (*ator).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
         !does_overflow(total, size, n),
         core::ptr::null_mut(),
         "!ufbxi_does_overflow(total, size, n)"
     );
     // Make sure it's always safe to double allocations
     ufbxi_check_return_err!(
-        (*ator).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
         total <= usize::MAX / 2,
         core::ptr::null_mut(),
         "total <= SIZE_MAX / 2"
     );
     ufbxi_check_return_err_msg!(
-        (*ator).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
         total <= (*ator).max_size - (*ator).current_size,
         core::ptr::null_mut(),
         "Memory limit exceeded",
         "total <= ator->max_size - ator->current_size"
     );
     ufbxi_check_return_err_msg!(
-        (*ator).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
         (*ator).num_allocs < (*ator).max_allocs,
         core::ptr::null_mut(),
         "Allocation limit exceeded",
@@ -309,7 +313,7 @@ pub(crate) unsafe fn realloc_size(
     }
 
     ufbxi_check_return_err_msg!(
-        (*ator).error,
+        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
         !ptr.is_null(),
         core::ptr::null_mut(),
         "Out of memory",
@@ -369,7 +373,7 @@ pub(crate) unsafe fn grow_array_size(
     {
         let a = &mut *ator;
         ufbxi_check_return_err_msg!(
-            a.error,
+            unsafe { crate::native::error::ErrorView::from_ptr(a.error) },
             a.num_allocs < a.max_allocs,
             false,
             "Allocation limit exceeded",
