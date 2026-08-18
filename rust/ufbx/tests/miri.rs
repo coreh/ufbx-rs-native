@@ -419,3 +419,208 @@ fn public_downcasts_from_narrowed_element_refs() {
     }
     assert!(acc.is_finite());
 }
+
+// -- Public-API provenance sweep
+//
+// Calls every remaining `&T`-taking public wrapper family from shared
+// references rooted in the frozen scene, so the Miri SB leg checks the
+// boundary provenance of each cluster instead of us reasoning about it
+// (the find-family and as_* downcast regressions above were both found
+// empirically, not by inspection). Values are folded into an accumulator so
+// nothing is optimized away.
+//
+// Not coverable from safe code (upstream signature quirks, noted here so the
+// gap is deliberate): `find_baked_node`/`find_baked_element`(+`_by_*_id`)
+// take `&mut BakedAnim` (no `DerefMut` on `BakedAnimRoot`), `find_face_index`
+// takes `&mut Mesh`, and `evaluate_props` needs a `&mut [ExternalRef<Prop>]`
+// buffer that safe code cannot construct (`ExternalRef::new` is unsafe and
+// `Prop` has no public constructor).
+
+/// DOM retention: `dom_find` navigation and the typed `dom_as_*` array reads,
+/// all through `&DomNode`s reached from the scene's retained DOM root.
+#[test]
+fn public_dom_walkers_from_shared_refs() {
+    let data = read_data("maya_cube_7500_ascii.fbx");
+    let opts = LoadOpts {
+        retain_dom: true,
+        ..Default::default()
+    };
+    let root = ufbx::load_memory(&data, opts).expect("load with retain_dom");
+    let scene: &Scene = &root;
+    let dom_root: &ufbx::DomNode = scene.dom_root.as_ref().expect("dom_root retained").as_ref();
+
+    let mut acc = 0.0f64;
+    let objects = ufbx::dom_find(dom_root, "Objects").expect("Objects dom node");
+    for child in &objects.children {
+        acc += child.name.as_ref().len() as f64;
+        if ufbx::dom_is_array(child) {
+            acc += ufbx::dom_array_size(child) as f64;
+        }
+        // The typed list readers return empty lists on type mismatch, so
+        // calling each on every node is safe and cheap.
+        acc += ufbx::dom_as_int32_list(child).len() as f64;
+        acc += ufbx::dom_as_int64_list(child).len() as f64;
+        acc += ufbx::dom_as_float_list(child).len() as f64;
+        acc += ufbx::dom_as_double_list(child).len() as f64;
+        acc += ufbx::dom_as_real_list(child).len() as f64;
+        acc += ufbx::dom_as_blob_list(child)
+            .iter()
+            .map(|b| b.size)
+            .sum::<usize>() as f64;
+        for grandchild in &child.children {
+            if let Some(found) = ufbx::dom_find(child, grandchild.name.as_ref()) {
+                acc += found.values.len() as f64;
+            }
+            break; // one per node is enough for provenance coverage
+        }
+    }
+    assert!(acc.is_finite());
+}
+
+/// Animation evaluation from shared refs: per-value and per-prop evaluators,
+/// transform evaluation, the anim-prop finders, baked-keyframe interpolation,
+/// and the matrix/transform value helpers fed from scene data.
+#[test]
+fn public_anim_eval_from_shared_refs() {
+    let root = load("maya_interpolation_modes_7500_binary.fbx");
+    let scene: &Scene = &root;
+    let anim: &ufbx::Anim = &scene.anim;
+    let mut acc = 0.0f64;
+
+    for curve in &scene.anim_curves {
+        acc += ufbx::evaluate_curve_flags(curve, 0.4, 0.0, 0) as f64;
+    }
+    for layer in &scene.anim_layers {
+        for value in &layer.anim_values {
+            acc += ufbx::evaluate_anim_value_real(value, 0.2) as f64;
+            acc += ufbx::evaluate_anim_value_vec3(value, 0.2).x as f64;
+            acc += ufbx::evaluate_anim_value_real_flags(value, 0.3, 0) as f64;
+            acc += ufbx::evaluate_anim_value_vec3_flags(value, 0.3, 0).y as f64;
+        }
+        // Anim-prop finders navigate the layer's sorted prop table.
+        for prop in layer.anim_props.as_ref().iter().take(2) {
+            let elem: &ufbx::Element = prop.element.as_ref();
+            acc += ufbx::find_anim_props(layer, elem).len() as f64;
+            if let Some(found) = layer.find_anim_prop(elem, prop.prop_name.as_ref()) {
+                acc += found.prop_name.as_ref().len() as f64;
+            }
+        }
+    }
+    if let Some(stack) = ufbx::find_anim_stack(scene, "Take 001") {
+        acc += stack.time_end;
+    }
+
+    for node in scene.nodes.as_ref().iter().take(3) {
+        // evaluate_transform(_flags) from &Node: the stack `Props` these seed
+        // carries the caller's read-only provenance in its `defaults` chain, so
+        // the internal find family must walk it through `Const` views (the SB
+        // UB this once was is the regression this exercises).
+        let t = ufbx::evaluate_transform(anim, node, 0.25);
+        acc += t.translation.x as f64;
+        acc += ufbx::evaluate_transform_flags(anim, node, 0.25, 0).scale.y as f64;
+        let t = node.local_transform;
+
+        // Value helpers on data read from the scene.
+        let m = ufbx::transform_to_matrix(&t);
+        let back = ufbx::matrix_to_transform(&m);
+        acc += back.rotation.w as f64;
+        let prod = ufbx::matrix_mul(&m, &node.node_to_world);
+        acc += ufbx::matrix_determinant(&prod) as f64;
+        let inv = ufbx::matrix_invert(&m);
+        acc += inv.m03 as f64;
+        acc += ufbx::get_compatible_matrix_for_normals(node).m00 as f64;
+
+        // Per-prop evaluation through &Anim + &Element.
+        let elem: &ufbx::Element = &node.element;
+        let prop = ufbx::evaluate_prop(anim, elem, "Lcl Translation", 0.25);
+        acc += prop.value_vec4.x as f64;
+    }
+
+    // Baked-keyframe interpolation over slices from a baked result.
+    let baked = ufbx::bake_anim(scene, anim, Default::default()).expect("bake_anim");
+    for node in &baked.nodes {
+        acc += ufbx::evaluate_baked_vec3(node.translation_keys.as_ref(), 0.3).x as f64;
+        acc += ufbx::evaluate_baked_quat(node.rotation_keys.as_ref(), 0.3).w as f64;
+    }
+    assert!(acc.is_finite());
+}
+
+/// Mesh geometry helpers from shared refs: indexed vertex-attribute getters,
+/// face normals, and topology edge navigation plus normal-mapping generation
+/// over a caller-provided topology buffer.
+#[test]
+fn public_mesh_helpers_from_shared_refs() {
+    let root = load("maya_cube_7500_binary.fbx");
+    let scene: &Scene = &root;
+    let mesh = scene.meshes.first().expect("cube mesh");
+    let mut acc = 0.0f64;
+
+    for i in 0..mesh.num_indices.min(8) {
+        acc += ufbx::get_vertex_vec3(&mesh.vertex_position, i).x as f64;
+        acc += ufbx::get_vertex_w_vec3(&mesh.vertex_position, i) as f64;
+        if !mesh.vertex_uv.indices.is_empty() {
+            acc += ufbx::get_vertex_vec2(&mesh.vertex_uv, i).x as f64;
+        }
+        if !mesh.vertex_crease.indices.is_empty() {
+            acc += ufbx::get_vertex_real(&mesh.vertex_crease, i) as f64;
+        }
+        if !mesh.vertex_color.indices.is_empty() {
+            acc += ufbx::get_vertex_vec4(&mesh.vertex_color, i).w as f64;
+        }
+    }
+    for face in &mesh.faces {
+        acc += ufbx::get_weighted_face_normal(&mesh.vertex_position, *face).y as f64;
+    }
+
+    let mut topo = vec![ufbx::TopoEdge::default(); mesh.num_indices];
+    ufbx::compute_topology(mesh, &mut topo);
+    acc += ufbx::topo_next_vertex_edge(&topo, 0) as f64;
+    acc += ufbx::topo_prev_vertex_edge(&topo, 0) as f64;
+    let mut normal_indices = vec![0u32; mesh.num_indices];
+    acc += ufbx::generate_normal_mapping(mesh, &topo, &mut normal_indices, false) as f64;
+
+    assert!(acc.is_finite());
+}
+
+/// Deformer helpers from shared refs: skin vertex matrices, blend-shape
+/// offset lookups, blend-weight evaluation and bind-pose queries.
+#[test]
+fn public_deform_helpers_from_shared_refs() {
+    let mut acc = 0.0f64;
+
+    let root = load("blender_293_half_skinned_7400_binary.fbx");
+    let scene: &Scene = &root;
+    let identity = ufbx::Matrix::default();
+    for skin in &scene.skin_deformers {
+        for vertex in 0..skin.vertices.len().min(4) {
+            acc += ufbx::get_skin_vertex_matrix(skin, vertex, &identity).m00 as f64;
+        }
+    }
+    for pose in &scene.poses {
+        for bone_pose in pose.bone_poses.as_ref().iter().take(2) {
+            let node: &ufbx::Node = bone_pose.bone_node.as_ref();
+            if let Some(found) = ufbx::get_bone_pose(pose, node) {
+                acc += found.bone_to_world.m00 as f64;
+            }
+        }
+    }
+
+    let root = load("blender_279_shape_weights_7400_binary.fbx");
+    let scene: &Scene = &root;
+    let anim: &ufbx::Anim = &scene.anim;
+    for deformer in &scene.blend_deformers {
+        for vertex in 0..4 {
+            acc += ufbx::get_blend_vertex_offset(deformer, vertex).x as f64;
+        }
+        for channel in &deformer.channels {
+            acc += ufbx::evaluate_blend_weight(anim, channel, 0.5) as f64;
+            acc += ufbx::evaluate_blend_weight_flags(anim, channel, 0.5, 0) as f64;
+            for shape in &channel.keyframes {
+                let s: &ufbx::BlendShape = shape.shape.as_ref();
+                acc += ufbx::get_blend_shape_offset_index(s, 0) as f64;
+                acc += ufbx::get_blend_shape_vertex_offset(s, 0).x as f64;
+            }
+        }
+    }
+    assert!(acc.is_finite());
+}
