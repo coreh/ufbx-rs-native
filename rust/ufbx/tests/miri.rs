@@ -467,11 +467,11 @@ fn public_dom_walkers_from_shared_refs() {
             .iter()
             .map(|b| b.size)
             .sum::<usize>() as f64;
-        for grandchild in &child.children {
+        // One per node is enough for provenance coverage.
+        if let Some(grandchild) = child.children.as_ref().first() {
             if let Some(found) = ufbx::dom_find(child, grandchild.name.as_ref()) {
                 acc += found.values.len() as f64;
             }
-            break; // one per node is enough for provenance coverage
         }
     }
     assert!(acc.is_finite());

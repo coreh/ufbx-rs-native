@@ -400,7 +400,7 @@ pub(crate) fn pivot_div(offset: Real, initial_scale: Real) -> Real {
 // The `UFBX_REGRESSION` `required = true` (ufbx.c:18122-18124) makes the three
 // preceding option tests dead in regression builds — kept verbatim.
 #[cfg_attr(feature = "regression", allow(unused_assignments))]
-pub(crate) unsafe fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
+pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let mut required: bool = false;
     if uc.opts_view().geometry_transform_handling() == GeometryTransformHandling::HelperNodes
         || uc.opts_view().geometry_transform_handling() == GeometryTransformHandling::ModifyGeometry
@@ -429,69 +429,95 @@ pub(crate) unsafe fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail>
 
     let num_elements: u32 = uc.num_elements();
     let num_nodes: usize = uc.tmp_node_ids_view().num_items();
-    let elements: *mut *mut Element = push_pop::<*mut Element>(
-        uc.tmp_parse_mut_ptr(),
-        uc.tmp_element_ptrs_mut_ptr(),
-        num_elements as usize,
-    );
+    // SAFETY: every allocation in this prologue pops from, or pushes onto, uc's
+    // own buffers through its raw-ptr getters, with the element/node/connection
+    // counts read from those same buffers — so each returned run is exactly as
+    // long as the loops below assume.
+    let elements: *mut *mut Element = unsafe {
+        push_pop::<*mut Element>(
+            uc.tmp_parse_mut_ptr(),
+            uc.tmp_element_ptrs_mut_ptr(),
+            num_elements as usize,
+        )
+    };
     ufbxi_check!(uc, !elements.is_null(), "elements");
 
     let num_connections: usize = uc.tmp_connections_view().num_items();
-    let tmp_connections: *mut TmpConnection = push_peek::<TmpConnection>(
-        uc.tmp_parse_mut_ptr(),
-        uc.tmp_connections_mut_ptr(),
-        num_connections,
-    );
+    // SAFETY: same tmp_parse push contract as above.
+    let tmp_connections: *mut TmpConnection = unsafe {
+        push_peek::<TmpConnection>(
+            uc.tmp_parse_mut_ptr(),
+            uc.tmp_connections_mut_ptr(),
+            num_connections,
+        )
+    };
     ufbxi_check!(uc, !tmp_connections.is_null(), "tmp_connections");
 
+    // SAFETY: same tmp_parse push contract as above.
     let pre_connections: *mut PreConnection =
-        push::<PreConnection>(uc.tmp_parse_mut_ptr(), num_connections);
+        unsafe { push::<PreConnection>(uc.tmp_parse_mut_ptr(), num_connections) };
     ufbxi_check!(uc, !pre_connections.is_null(), "pre_connections");
 
-    let instance_counts: *mut u32 = push_zero::<u32>(uc.tmp_parse_mut_ptr(), num_elements as usize);
+    // SAFETY: same tmp_parse push contract as above.
+    let instance_counts: *mut u32 =
+        unsafe { push_zero::<u32>(uc.tmp_parse_mut_ptr(), num_elements as usize) };
     ufbxi_check!(uc, !instance_counts.is_null(), "instance_counts");
 
+    // SAFETY: same tmp_parse push contract as above.
     let modify_not_supported: *mut bool =
-        push_zero::<bool>(uc.tmp_parse_mut_ptr(), num_elements as usize);
+        unsafe { push_zero::<bool>(uc.tmp_parse_mut_ptr(), num_elements as usize) };
     ufbxi_check!(uc, !modify_not_supported.is_null(), "modify_not_supported");
 
+    // SAFETY: same tmp_parse push contract as above.
     let node_attrib_type: *mut ElementType =
-        push_zero::<ElementType>(uc.tmp_parse_mut_ptr(), num_nodes);
+        unsafe { push_zero::<ElementType>(uc.tmp_parse_mut_ptr(), num_nodes) };
     ufbxi_check!(uc, !node_attrib_type.is_null(), "node_attrib_type");
 
-    let has_unscaled_children: *mut bool = push_zero::<bool>(uc.tmp_parse_mut_ptr(), num_nodes);
+    // SAFETY: same tmp_parse push contract as above.
+    let has_unscaled_children: *mut bool =
+        unsafe { push_zero::<bool>(uc.tmp_parse_mut_ptr(), num_nodes) };
     ufbxi_check!(
         uc,
         !has_unscaled_children.is_null(),
         "has_unscaled_children"
     );
 
-    let has_scale_animation: *mut bool = push_zero::<bool>(uc.tmp_parse_mut_ptr(), num_nodes);
+    // SAFETY: same tmp_parse push contract as above.
+    let has_scale_animation: *mut bool =
+        unsafe { push_zero::<bool>(uc.tmp_parse_mut_ptr(), num_nodes) };
     ufbxi_check!(uc, !has_scale_animation.is_null(), "has_scale_animation");
     // C-parity: `has_scale_animation` is allocated and checked but never read
     // upstream; the allocation is observable so it stays.
 
-    let pre_nodes: *mut PreNode = push_zero::<PreNode>(uc.tmp_parse_mut_ptr(), num_nodes);
+    // SAFETY: same tmp_parse push contract as above.
+    let pre_nodes: *mut PreNode =
+        unsafe { push_zero::<PreNode>(uc.tmp_parse_mut_ptr(), num_nodes) };
     ufbxi_check!(uc, !pre_nodes.is_null(), "pre_nodes");
 
     let num_meshes: usize = uc
         .tmp_typed_element_offsets_at(ElementType::Mesh as usize)
         .num_items();
-    let pre_meshes: *mut PreMesh = push_zero::<PreMesh>(uc.tmp_parse_mut_ptr(), num_meshes);
+    // SAFETY: same tmp_parse push contract as above.
+    let pre_meshes: *mut PreMesh =
+        unsafe { push_zero::<PreMesh>(uc.tmp_parse_mut_ptr(), num_meshes) };
     ufbxi_check!(uc, !pre_meshes.is_null(), "pre_meshes");
 
     let num_anim_values: usize = uc
         .tmp_typed_element_offsets_at(ElementType::AnimValue as usize)
         .num_items();
+    // SAFETY: same tmp_parse push contract as above.
     let pre_anim_values: *mut PreAnimValue =
-        push_zero::<PreAnimValue>(uc.tmp_parse_mut_ptr(), num_anim_values);
+        unsafe { push_zero::<PreAnimValue>(uc.tmp_parse_mut_ptr(), num_anim_values) };
     ufbxi_check!(uc, !pre_anim_values.is_null(), "pre_anim_values");
 
-    let fbx_ids: *mut u64 = push_pop::<u64>(
-        uc.tmp_parse_mut_ptr(),
-        uc.tmp_element_fbx_ids_mut_ptr(),
-        num_elements as usize,
-    );
+    // SAFETY: same tmp_parse push contract as above.
+    let fbx_ids: *mut u64 = unsafe {
+        push_pop::<u64>(
+            uc.tmp_parse_mut_ptr(),
+            uc.tmp_element_fbx_ids_mut_ptr(),
+            num_elements as usize,
+        )
+    };
     ufbxi_check!(uc, !fbx_ids.is_null(), "fbx_ids");
 
     // TODO
@@ -501,225 +527,250 @@ pub(crate) unsafe fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail>
     let pivot_epsilon: Real = 0.001f32 as Real;
     let compensate_epsilon: Real = 0.01f32 as Real;
 
-    for i in 0..num_elements as usize {
-        let element_view: &'a ElementView = ElementView::from_ptr(*elements.add(i));
-        let element: *mut Element = element_view.get();
-        let id: u32 = (*element).typed_id;
+    // SAFETY: `i < num_elements` indexes the `elements` run popped above; each
+    // element is reached through an arena-anchored view and its `typed_id` indexes
+    // the matching per-type side table (`pre_nodes` / `pre_anim_values`) pushed
+    // above; the props lookups use NUL-terminated static names.
+    unsafe {
+        for i in 0..num_elements as usize {
+            let element_view: &'a ElementView = ElementView::from_ptr(*elements.add(i));
+            let element: *mut Element = element_view.get();
+            let id: u32 = (*element).typed_id;
 
-        if (*element).type_ == ElementType::Node {
-            let pre_node: *mut PreNode = pre_nodes.add(id as usize);
-            (*pre_node).has_constant_scale = true;
-            (*pre_node).constant_scale = find_vec3(
-                element_view.props_view(),
-                sp::Lcl_Scaling.as_ptr(),
-                1.0,
-                1.0,
-                1.0,
-            );
-            (*pre_node).element_id = (*element).element_id;
-            (*pre_node).first_child = !0u32;
-            (*pre_node).next_child = !0u32;
-            (*pre_node).parent = !0u32;
-        }
-        // C-parity: ufbx.c:18186 is `} if (...)`, not `} else if (...)` — the
-        // two element-type tests are independent statements.
-        if (*element).type_ == ElementType::AnimValue {
-            let pre_value: *mut PreAnimValue = pre_anim_values.add(id as usize);
-            (*pre_value).has_constant_value = true;
-            (*pre_value).constant_value.x =
-                find_real(element_view.props_view(), sp::X.as_ptr(), math::NAN as Real);
-            (*pre_value).constant_value.x = find_real(
-                element_view.props_view(),
-                sp::d_X.as_ptr(),
-                (*pre_value).constant_value.x,
-            );
-            (*pre_value).constant_value.y =
-                find_real(element_view.props_view(), sp::Y.as_ptr(), math::NAN as Real);
-            (*pre_value).constant_value.y = find_real(
-                element_view.props_view(),
-                sp::d_Y.as_ptr(),
-                (*pre_value).constant_value.y,
-            );
-            (*pre_value).constant_value.z =
-                find_real(element_view.props_view(), sp::Z.as_ptr(), math::NAN as Real);
-            (*pre_value).constant_value.z = find_real(
-                element_view.props_view(),
-                sp::d_Z.as_ptr(),
-                (*pre_value).constant_value.z,
-            );
+            if (*element).type_ == ElementType::Node {
+                let pre_node: *mut PreNode = pre_nodes.add(id as usize);
+                (*pre_node).has_constant_scale = true;
+                (*pre_node).constant_scale = find_vec3(
+                    element_view.props_view(),
+                    sp::Lcl_Scaling.as_ptr(),
+                    1.0,
+                    1.0,
+                    1.0,
+                );
+                (*pre_node).element_id = (*element).element_id;
+                (*pre_node).first_child = !0u32;
+                (*pre_node).next_child = !0u32;
+                (*pre_node).parent = !0u32;
+            }
+            // C-parity: ufbx.c:18186 is `} if (...)`, not `} else if (...)` — the
+            // two element-type tests are independent statements.
+            if (*element).type_ == ElementType::AnimValue {
+                let pre_value: *mut PreAnimValue = pre_anim_values.add(id as usize);
+                (*pre_value).has_constant_value = true;
+                (*pre_value).constant_value.x =
+                    find_real(element_view.props_view(), sp::X.as_ptr(), math::NAN as Real);
+                (*pre_value).constant_value.x = find_real(
+                    element_view.props_view(),
+                    sp::d_X.as_ptr(),
+                    (*pre_value).constant_value.x,
+                );
+                (*pre_value).constant_value.y =
+                    find_real(element_view.props_view(), sp::Y.as_ptr(), math::NAN as Real);
+                (*pre_value).constant_value.y = find_real(
+                    element_view.props_view(),
+                    sp::d_Y.as_ptr(),
+                    (*pre_value).constant_value.y,
+                );
+                (*pre_value).constant_value.z =
+                    find_real(element_view.props_view(), sp::Z.as_ptr(), math::NAN as Real);
+                (*pre_value).constant_value.z = find_real(
+                    element_view.props_view(),
+                    sp::d_Z.as_ptr(),
+                    (*pre_value).constant_value.z,
+                );
+            }
         }
     }
 
-    for i in 0..num_connections {
-        let tmp: *mut TmpConnection = tmp_connections.add(i);
-        let pre: *mut PreConnection = pre_connections.add(i);
+    // SAFETY: `i < num_connections` indexes the `tmp_connections`/
+    // `pre_connections` runs; each resolved `FbxIdEntry` carries an`element_id`
+    // into the `num_elements`-entry `elements` run, `src`/`dst` are null-checked
+    // before use, and every side-table write is indexed by an element's own
+    // `element_id`/`typed_id`.
+    unsafe {
+        for i in 0..num_connections {
+            let tmp: *mut TmpConnection = tmp_connections.add(i);
+            let pre: *mut PreConnection = pre_connections.add(i);
 
-        let src_entry: *mut FbxIdEntry = find_fbx_id(uc, (*tmp).src);
-        let dst_entry: *mut FbxIdEntry = find_fbx_id(uc, (*tmp).dst);
+            let src_entry: *mut FbxIdEntry = find_fbx_id(uc, (*tmp).src);
+            let dst_entry: *mut FbxIdEntry = find_fbx_id(uc, (*tmp).dst);
 
-        let src: *mut Element = if !src_entry.is_null() {
-            *elements.add((*src_entry).element_id as usize)
-        } else {
-            ptr::null_mut()
-        };
-        let dst: *mut Element = if !dst_entry.is_null() {
-            *elements.add((*dst_entry).element_id as usize)
-        } else {
-            ptr::null_mut()
-        };
-        (*pre).src = src;
-        (*pre).dst = dst;
-        if src.is_null() || dst.is_null() {
-            continue;
-        }
-
-        if (*tmp).src_prop.length == 0 && (*tmp).dst_prop.length == 0 {
-            // Count number of instances of each attribute
-            if (*dst).type_ == ElementType::Node {
-                let dst_node: *mut Node = dst as *mut Node;
-
-                if (*src).type_ as u32 >= ELEMENT_TYPE_FIRST_ATTRIB
-                    && (*src).type_ as u32 <= ELEMENT_TYPE_LAST_ATTRIB
-                {
-                    let p_count: *mut u32 = instance_counts.add((*src).element_id as usize);
-                    *p_count = (*p_count).wrapping_add(1);
-                    let count: u32 = *p_count;
-                    *node_attrib_type.add((*dst).typed_id as usize) = if count == 1 {
-                        (*src).type_
-                    } else {
-                        ElementType::Unknown
-                    };
-
-                    // These must match what can be trasnsformed in `ufbxi_modify_geometry()`
-                    match (*src).type_ {
-                        ElementType::Mesh
-                        | ElementType::LineCurve
-                        | ElementType::NurbsCurve
-                        | ElementType::NurbsSurface => {} // Nop, supported
-                        _ => {
-                            *modify_not_supported.add((*dst).element_id as usize) = true;
-                        }
-                    }
-                }
-
-                if (*src).type_ == ElementType::Node {
-                    let src_node: *mut Node = src as *mut Node;
-                    let pre_dst: *mut PreNode =
-                        pre_nodes.add((*dst_node).element.typed_id as usize);
-                    let pre_src: *mut PreNode =
-                        pre_nodes.add((*src_node).element.typed_id as usize);
-
-                    // Remember parent and add children into a linked list
-                    if (*pre_src).parent == !0u32 {
-                        (*pre_src).parent = (*dst_node).element.typed_id;
-                        (*pre_src).next_child = (*pre_dst).first_child;
-                        (*pre_dst).first_child = (*src_node).element.typed_id;
-                    }
-
-                    if uc.opts_view().inherit_mode_handling() != InheritModeHandling::Preserve {
-                        if !(*dst_node).is_root
-                            && (*src_node).original_inherit_mode != InheritMode::Normal
-                        {
-                            *has_unscaled_children.add((*dst).typed_id as usize) = true;
-                        }
-                    }
-                }
-            } else if (*dst).type_ == ElementType::Mesh {
-                if (*src).type_ == ElementType::SkinDeformer {
-                    let pre_mesh: *mut PreMesh = pre_meshes.add((*dst).typed_id as usize);
-                    (*pre_mesh).has_skin_deformer = true;
-                }
+            let src: *mut Element = if !src_entry.is_null() {
+                *elements.add((*src_entry).element_id as usize)
+            } else {
+                ptr::null_mut()
+            };
+            let dst: *mut Element = if !dst_entry.is_null() {
+                *elements.add((*dst_entry).element_id as usize)
+            } else {
+                ptr::null_mut()
+            };
+            (*pre).src = src;
+            (*pre).dst = dst;
+            if src.is_null() || dst.is_null() {
+                continue;
             }
-        } else if (*tmp).src_prop.length == 0 && (*tmp).dst_prop.length != 0 {
-            let dst_prop: *const u8 = (*tmp).dst_prop.data;
-            if (*dst).type_ == ElementType::AnimValue && (*src).type_ == ElementType::AnimCurve {
-                let src_curve: *mut AnimCurve = src as *mut AnimCurve;
-                let mut index: u32 = 0;
-                if dst_prop == sp::Y.as_ptr() || dst_prop == sp::d_Y.as_ptr() {
-                    index = 1;
-                } else if dst_prop == sp::Z.as_ptr() || dst_prop == sp::d_Z.as_ptr() {
-                    index = 2;
-                }
 
-                let pre_value: *mut PreAnimValue = pre_anim_values.add((*dst).typed_id as usize);
-                if (*src_curve).max_value - (*src_curve).min_value >= scale_epsilon {
-                    (*pre_value).has_constant_value = false;
-                } else {
-                    let constant_value: Real =
-                        ((*src_curve).min_value + (*src_curve).max_value) * 0.5;
-                    // C: `pre_value->constant_value.v[index]` — the `ufbx_vec3`
-                    // union's array view.
-                    let v: *mut Real = (&mut (*pre_value).constant_value as *mut Vec3 as *mut Real)
-                        .add(index as usize);
-                    if math::isnan(*v as f64) {
-                        *v = constant_value;
+            if (*tmp).src_prop.length == 0 && (*tmp).dst_prop.length == 0 {
+                // Count number of instances of each attribute
+                if (*dst).type_ == ElementType::Node {
+                    let dst_node: *mut Node = dst as *mut Node;
+
+                    if (*src).type_ as u32 >= ELEMENT_TYPE_FIRST_ATTRIB
+                        && (*src).type_ as u32 <= ELEMENT_TYPE_LAST_ATTRIB
+                    {
+                        let p_count: *mut u32 = instance_counts.add((*src).element_id as usize);
+                        *p_count = (*p_count).wrapping_add(1);
+                        let count: u32 = *p_count;
+                        *node_attrib_type.add((*dst).typed_id as usize) = if count == 1 {
+                            (*src).type_
+                        } else {
+                            ElementType::Unknown
+                        };
+
+                        // These must match what can be trasnsformed in `ufbxi_modify_geometry()`
+                        match (*src).type_ {
+                            ElementType::Mesh
+                            | ElementType::LineCurve
+                            | ElementType::NurbsCurve
+                            | ElementType::NurbsSurface => {} // Nop, supported
+                            _ => {
+                                *modify_not_supported.add((*dst).element_id as usize) = true;
+                            }
+                        }
                     }
-                    // C: `(ufbx_real)ufbx_fabs(v - constant_value) > scale_epsilon`
-                    // — the subtraction is in `ufbx_real`, only `fabs` runs in
-                    // double, and its result narrows back before the compare.
-                    if math::fabs((*v - constant_value) as f64) as Real > scale_epsilon {
+
+                    if (*src).type_ == ElementType::Node {
+                        let src_node: *mut Node = src as *mut Node;
+                        let pre_dst: *mut PreNode =
+                            pre_nodes.add((*dst_node).element.typed_id as usize);
+                        let pre_src: *mut PreNode =
+                            pre_nodes.add((*src_node).element.typed_id as usize);
+
+                        // Remember parent and add children into a linked list
+                        if (*pre_src).parent == !0u32 {
+                            (*pre_src).parent = (*dst_node).element.typed_id;
+                            (*pre_src).next_child = (*pre_dst).first_child;
+                            (*pre_dst).first_child = (*src_node).element.typed_id;
+                        }
+
+                        if uc.opts_view().inherit_mode_handling() != InheritModeHandling::Preserve {
+                            if !(*dst_node).is_root
+                                && (*src_node).original_inherit_mode != InheritMode::Normal
+                            {
+                                *has_unscaled_children.add((*dst).typed_id as usize) = true;
+                            }
+                        }
+                    }
+                } else if (*dst).type_ == ElementType::Mesh {
+                    if (*src).type_ == ElementType::SkinDeformer {
+                        let pre_mesh: *mut PreMesh = pre_meshes.add((*dst).typed_id as usize);
+                        (*pre_mesh).has_skin_deformer = true;
+                    }
+                }
+            } else if (*tmp).src_prop.length == 0 && (*tmp).dst_prop.length != 0 {
+                let dst_prop: *const u8 = (*tmp).dst_prop.data;
+                if (*dst).type_ == ElementType::AnimValue && (*src).type_ == ElementType::AnimCurve
+                {
+                    let src_curve: *mut AnimCurve = src as *mut AnimCurve;
+                    let mut index: u32 = 0;
+                    if dst_prop == sp::Y.as_ptr() || dst_prop == sp::d_Y.as_ptr() {
+                        index = 1;
+                    } else if dst_prop == sp::Z.as_ptr() || dst_prop == sp::d_Z.as_ptr() {
+                        index = 2;
+                    }
+
+                    let pre_value: *mut PreAnimValue =
+                        pre_anim_values.add((*dst).typed_id as usize);
+                    if (*src_curve).max_value - (*src_curve).min_value >= scale_epsilon {
                         (*pre_value).has_constant_value = false;
+                    } else {
+                        let constant_value: Real =
+                            ((*src_curve).min_value + (*src_curve).max_value) * 0.5;
+                        // C: `pre_value->constant_value.v[index]` — the `ufbx_vec3`
+                        // union's array view.
+                        let v: *mut Real = (&mut (*pre_value).constant_value as *mut Vec3
+                            as *mut Real)
+                            .add(index as usize);
+                        if math::isnan(*v as f64) {
+                            *v = constant_value;
+                        }
+                        // C: `(ufbx_real)ufbx_fabs(v - constant_value) > scale_epsilon`
+                        // — the subtraction is in `ufbx_real`, only `fabs` runs in
+                        // double, and its result narrows back before the compare.
+                        if math::fabs((*v - constant_value) as f64) as Real > scale_epsilon {
+                            (*pre_value).has_constant_value = false;
+                        }
                     }
                 }
             }
         }
     }
 
-    for i in 0..num_connections {
-        let tmp: *mut TmpConnection = tmp_connections.add(i);
-        let pre: *mut PreConnection = pre_connections.add(i);
-        let src: *mut Element = (*pre).src;
-        let dst: *mut Element = (*pre).dst;
-        if src.is_null() || dst.is_null() {
-            continue;
-        }
-
-        if (*tmp).src_prop.length == 0 && (*tmp).dst_prop.length == 0 {
-            // Count maximum number of instanced attributes in a node
-            if (*dst).type_ == ElementType::Node {
-                if (*src).type_ as u32 >= ELEMENT_TYPE_FIRST_ATTRIB
-                    && (*src).type_ as u32 <= ELEMENT_TYPE_LAST_ATTRIB
-                {
-                    *instance_counts.add((*dst).element_id as usize) = max32(
-                        *instance_counts.add((*dst).element_id as usize),
-                        *instance_counts.add((*src).element_id as usize),
-                    );
-                    if (*src).type_ == ElementType::Mesh {
-                        let pre_mesh: *mut PreMesh = pre_meshes.add((*src).typed_id as usize);
-                        if (*pre_mesh).has_skin_deformer {
-                            (*pre_nodes.add((*dst).typed_id as usize)).has_skin_deformer = true;
-                        }
-                    }
-                } else if (*src).type_ == ElementType::SkinDeformer {
-                    (*pre_nodes.add((*dst).typed_id as usize)).has_skin_deformer = true;
-                }
+    // SAFETY: `i < num_connections` indexes the `tmp_connections`/
+    // `pre_connections` runs; `src`/`dst` are the null-checked elements recorded
+    // by the pass above, and every side-table index is one of their own
+    // `element_id`/`typed_id` values, in range of the runs pushed above.
+    unsafe {
+        for i in 0..num_connections {
+            let tmp: *mut TmpConnection = tmp_connections.add(i);
+            let pre: *mut PreConnection = pre_connections.add(i);
+            let src: *mut Element = (*pre).src;
+            let dst: *mut Element = (*pre).dst;
+            if src.is_null() || dst.is_null() {
+                continue;
             }
-        } else if (*tmp).src_prop.length == 0 && (*tmp).dst_prop.length != 0 {
-            if (*dst).type_ == ElementType::Node {
-                if (*src).type_ == ElementType::AnimValue {
-                    if (*tmp).dst_prop.data == sp::Lcl_Scaling.as_ptr() {
-                        let pre_node: *mut PreNode = pre_nodes.add((*dst).typed_id as usize);
-                        if (*pre_node).has_constant_scale {
-                            let pre_value: *mut PreAnimValue =
-                                pre_anim_values.add((*src).typed_id as usize);
-                            if !(*pre_value).has_constant_value {
-                                (*pre_node).has_constant_scale = false;
-                            } else {
-                                // C: `error += (ufbx_real)ufbx_fabs(a - b)` — real
-                                // subtraction, double `fabs`, narrowed back to
-                                // real before accumulating.
-                                let mut error: Real = 0.0;
-                                error += math::fabs(as_f64!(
-                                    (*pre_value).constant_value.x - (*pre_node).constant_scale.x
-                                )) as Real;
-                                error += math::fabs(as_f64!(
-                                    (*pre_value).constant_value.y - (*pre_node).constant_scale.y
-                                )) as Real;
-                                error += math::fabs(as_f64!(
-                                    (*pre_value).constant_value.z - (*pre_node).constant_scale.z
-                                )) as Real;
-                                if error >= scale_epsilon {
+
+            if (*tmp).src_prop.length == 0 && (*tmp).dst_prop.length == 0 {
+                // Count maximum number of instanced attributes in a node
+                if (*dst).type_ == ElementType::Node {
+                    if (*src).type_ as u32 >= ELEMENT_TYPE_FIRST_ATTRIB
+                        && (*src).type_ as u32 <= ELEMENT_TYPE_LAST_ATTRIB
+                    {
+                        *instance_counts.add((*dst).element_id as usize) = max32(
+                            *instance_counts.add((*dst).element_id as usize),
+                            *instance_counts.add((*src).element_id as usize),
+                        );
+                        if (*src).type_ == ElementType::Mesh {
+                            let pre_mesh: *mut PreMesh = pre_meshes.add((*src).typed_id as usize);
+                            if (*pre_mesh).has_skin_deformer {
+                                (*pre_nodes.add((*dst).typed_id as usize)).has_skin_deformer = true;
+                            }
+                        }
+                    } else if (*src).type_ == ElementType::SkinDeformer {
+                        (*pre_nodes.add((*dst).typed_id as usize)).has_skin_deformer = true;
+                    }
+                }
+            } else if (*tmp).src_prop.length == 0 && (*tmp).dst_prop.length != 0 {
+                if (*dst).type_ == ElementType::Node {
+                    if (*src).type_ == ElementType::AnimValue {
+                        if (*tmp).dst_prop.data == sp::Lcl_Scaling.as_ptr() {
+                            let pre_node: *mut PreNode = pre_nodes.add((*dst).typed_id as usize);
+                            if (*pre_node).has_constant_scale {
+                                let pre_value: *mut PreAnimValue =
+                                    pre_anim_values.add((*src).typed_id as usize);
+                                if !(*pre_value).has_constant_value {
                                     (*pre_node).has_constant_scale = false;
+                                } else {
+                                    // C: `error += (ufbx_real)ufbx_fabs(a - b)` — real
+                                    // subtraction, double `fabs`, narrowed back to
+                                    // real before accumulating.
+                                    let mut error: Real = 0.0;
+                                    error += math::fabs(as_f64!(
+                                        (*pre_value).constant_value.x
+                                            - (*pre_node).constant_scale.x
+                                    )) as Real;
+                                    error += math::fabs(as_f64!(
+                                        (*pre_value).constant_value.y
+                                            - (*pre_node).constant_scale.y
+                                    )) as Real;
+                                    error += math::fabs(as_f64!(
+                                        (*pre_value).constant_value.z
+                                            - (*pre_node).constant_scale.z
+                                    )) as Real;
+                                    if error >= scale_epsilon {
+                                        (*pre_node).has_constant_scale = false;
+                                    }
                                 }
                             }
                         }
@@ -729,212 +780,141 @@ pub(crate) unsafe fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail>
         }
     }
 
-    if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot
-        || uc.opts_view().pivot_handling() == PivotHandling::AdjustToRotationPivot
-    {
-        for i in 0..num_nodes {
-            let pre_node: *mut PreNode = pre_nodes.add(i);
-            let node_view: &'a NodeView =
-                NodeView::from_ptr(*elements.add((*pre_node).element_id as usize) as *mut Node);
-            let node: *mut Node = node_view.get();
+    // SAFETY: `i < num_nodes` indexes the `pre_nodes` run pushed above; each
+    // `element_id` is an index into the `num_elements`-entry `elements` run, and
+    // the node it selects is reached through an arena-anchored view whose props
+    // are looked up with NUL-terminated static names; the child walk follows the
+    // `first_child`/`next_child` links built above, which are either `~0u32` or
+    // indices `< num_nodes`.
+    unsafe {
+        if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot
+            || uc.opts_view().pivot_handling() == PivotHandling::AdjustToRotationPivot
+        {
+            for i in 0..num_nodes {
+                let pre_node: *mut PreNode = pre_nodes.add(i);
+                let node_view: &'a NodeView =
+                    NodeView::from_ptr(*elements.add((*pre_node).element_id as usize) as *mut Node);
+                let node: *mut Node = node_view.get();
 
-            let rotation_pivot: Vec3 = find_vec3(
-                node_view.props_view(),
-                sp::RotationPivot.as_ptr(),
-                0.0,
-                0.0,
-                0.0,
-            );
-            let scaling_pivot: Vec3 = find_vec3(
-                node_view.props_view(),
-                sp::ScalingPivot.as_ptr(),
-                0.0,
-                0.0,
-                0.0,
-            );
-            let scaling_offset: Vec3 = find_vec3(
-                node_view.props_view(),
-                sp::ScalingOffset.as_ptr(),
-                0.0,
-                0.0,
-                0.0,
-            );
+                let rotation_pivot: Vec3 = find_vec3(
+                    node_view.props_view(),
+                    sp::RotationPivot.as_ptr(),
+                    0.0,
+                    0.0,
+                    0.0,
+                );
+                let scaling_pivot: Vec3 = find_vec3(
+                    node_view.props_view(),
+                    sp::ScalingPivot.as_ptr(),
+                    0.0,
+                    0.0,
+                    0.0,
+                );
+                let scaling_offset: Vec3 = find_vec3(
+                    node_view.props_view(),
+                    sp::ScalingOffset.as_ptr(),
+                    0.0,
+                    0.0,
+                    0.0,
+                );
 
-            let mut should_modify_pivot: bool = false;
-            if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot {
-                should_modify_pivot = !is_vec3_zero(rotation_pivot);
-            } else if uc.opts_view().pivot_handling() == PivotHandling::AdjustToRotationPivot {
-                should_modify_pivot = pivot_nonzero(rotation_pivot)
-                    || pivot_nonzero(scaling_pivot)
-                    || pivot_nonzero(scaling_offset);
-            }
+                let mut should_modify_pivot: bool = false;
+                if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot {
+                    should_modify_pivot = !is_vec3_zero(rotation_pivot);
+                } else if uc.opts_view().pivot_handling() == PivotHandling::AdjustToRotationPivot {
+                    should_modify_pivot = pivot_nonzero(rotation_pivot)
+                        || pivot_nonzero(scaling_pivot)
+                        || pivot_nonzero(scaling_offset);
+                }
 
-            if should_modify_pivot {
-                let mut skip_geometry_transform: bool = false;
-                let mut can_modify_geometry_transform: bool = true;
-                if uc.opts_view().pivot_handling() == PivotHandling::AdjustToRotationPivot {
-                    if *node_attrib_type.add((*node).element.typed_id as usize)
-                        == ElementType::Empty
+                if should_modify_pivot {
+                    let mut skip_geometry_transform: bool = false;
+                    let mut can_modify_geometry_transform: bool = true;
+                    if uc.opts_view().pivot_handling() == PivotHandling::AdjustToRotationPivot {
+                        if *node_attrib_type.add((*node).element.typed_id as usize)
+                            == ElementType::Empty
+                        {
+                            if !uc.opts_view().pivot_handling_retain_empties() {
+                                skip_geometry_transform = true;
+                            } else {
+                                can_modify_geometry_transform = false;
+                            }
+                        }
+                    }
+
+                    if uc.opts_view().geometry_transform_handling()
+                        == GeometryTransformHandling::ModifyGeometryNoFallback
                     {
-                        if !uc.opts_view().pivot_handling_retain_empties() {
-                            skip_geometry_transform = true;
-                        } else {
+                        if *instance_counts.add((*node).element.element_id as usize) > 1
+                            || *modify_not_supported.add((*node).element.element_id as usize)
+                        {
                             can_modify_geometry_transform = false;
                         }
                     }
-                }
-
-                if uc.opts_view().geometry_transform_handling()
-                    == GeometryTransformHandling::ModifyGeometryNoFallback
-                {
-                    if *instance_counts.add((*node).element.element_id as usize) > 1
-                        || *modify_not_supported.add((*node).element.element_id as usize)
-                    {
+                    // Currently, geometry transform messes up skinning
+                    if (*pre_node).has_skin_deformer {
                         can_modify_geometry_transform = false;
                     }
-                }
-                // Currently, geometry transform messes up skinning
-                if (*pre_node).has_skin_deformer {
-                    can_modify_geometry_transform = false;
-                }
 
-                let mut can_modify_pivot: bool = true;
-                if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot {
-                    // C: `err += (ufbx_real)ufbx_fabs(a - b)` — real subtraction,
-                    // double `fabs`, narrowed back to real before accumulating.
-                    let mut err: Real = 0.0;
-                    err += math::fabs(as_f64!(rotation_pivot.x - scaling_pivot.x)) as Real;
-                    err += math::fabs(as_f64!(rotation_pivot.y - scaling_pivot.y)) as Real;
-                    err += math::fabs(as_f64!(rotation_pivot.z - scaling_pivot.z)) as Real;
-                    if err > pivot_epsilon {
-                        can_modify_pivot = false;
-                    }
-                }
-
-                if can_modify_pivot && (can_modify_geometry_transform || skip_geometry_transform) {
-                    let mut geometric_translation: Vec3 = find_vec3(
-                        node_view.props_view(),
-                        sp::GeometricTranslation.as_ptr(),
-                        0.0,
-                        0.0,
-                        0.0,
-                    );
-
-                    let mut child_offset: Vec3 = Vec3 {
-                        x: 0.0,
-                        y: 0.0,
-                        z: 0.0,
-                    };
-                    let mut new_props: *mut Prop = ptr::null_mut();
-                    let num_props: usize = (*node).element.props.props.count;
-                    let mut new_prop_count: usize = num_props;
+                    let mut can_modify_pivot: bool = true;
                     if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot {
-                        ufbx_assert!(!skip_geometry_transform); // not supporeted in legacy mode
-                        child_offset = neg3(rotation_pivot);
-                        geometric_translation = add3(geometric_translation, child_offset);
+                        // C: `err += (ufbx_real)ufbx_fabs(a - b)` — real subtraction,
+                        // double `fabs`, narrowed back to real before accumulating.
+                        let mut err: Real = 0.0;
+                        err += math::fabs(as_f64!(rotation_pivot.x - scaling_pivot.x)) as Real;
+                        err += math::fabs(as_f64!(rotation_pivot.y - scaling_pivot.y)) as Real;
+                        err += math::fabs(as_f64!(rotation_pivot.z - scaling_pivot.z)) as Real;
+                        if err > pivot_epsilon {
+                            can_modify_pivot = false;
+                        }
+                    }
 
-                        new_props = push_zero::<Prop>(uc.result_mut_ptr(), num_props + 3);
-                        ufbxi_check!(uc, !new_props.is_null(), "new_props");
-                        ptr::copy_nonoverlapping(
-                            (*node).element.props.props.data,
-                            new_props,
-                            num_props,
-                        );
-
-                        init_synthetic_vec3_prop(
-                            new_props.add(new_prop_count),
-                            sp::RotationPivot.as_ptr(),
-                            &ZERO_VEC3,
-                            PropType::Vector,
-                        );
-                        new_prop_count += 1;
-                        init_synthetic_vec3_prop(
-                            new_props.add(new_prop_count),
-                            sp::ScalingPivot.as_ptr(),
-                            &ZERO_VEC3,
-                            PropType::Vector,
-                        );
-                        new_prop_count += 1;
-                        init_synthetic_vec3_prop(
-                            new_props.add(new_prop_count),
-                            sp::GeometricTranslation.as_ptr(),
-                            &geometric_translation,
-                            PropType::Vector,
-                        );
-                        new_prop_count += 1;
-                    } else if uc.opts_view().pivot_handling()
-                        == PivotHandling::AdjustToRotationPivot
+                    if can_modify_pivot
+                        && (can_modify_geometry_transform || skip_geometry_transform)
                     {
-                        // We can eliminate the post-rotation translation and move it to the geometry/children as follows.
-                        // Let Z be the initial value of S in the transform (aka `initial_scale`):
-                        //
-                        //   (Rp-1+Soff+Sp) + S * (Sp-1)
-                        //   S * (Sp-1 + (Rp-1+Soff+Sp)/S)
-                        //   S * (Sp-1 + (Rp-1+Soff+Sp)/S - (Rp-1+Soff+Sp)/Z + (Rp-1+Soff+Sp)/Z)
-                        //
-                        //   (Rp-1 + Soff + Sp) + S * (-(Rp-1 + Soff + Sp)/Z + (Sp-1 + (Rp-1 + Soff + Sp)/Z))
-                        //   ^-scaled_offset--^         ^-unscaled_offset--^           ^-unscaled_offset--^
-                        //   ^---------------- 0, when S=Z ----------------^   ^------- child_offset ------^
-                        //
-                        // We need to be careful when doing this in case any component of Z is 0. Fortunately,
-                        // the above holds for all `Z != 0`, it will just result in non-zero translation in the parent.
-                        let initial_scale: Vec3 = find_vec3(
+                        let mut geometric_translation: Vec3 = find_vec3(
                             node_view.props_view(),
-                            sp::Lcl_Scaling.as_ptr(),
-                            1.0,
-                            1.0,
-                            1.0,
+                            sp::GeometricTranslation.as_ptr(),
+                            0.0,
+                            0.0,
+                            0.0,
                         );
-                        let scaled_offset: Vec3 =
-                            sub3(add3(scaling_offset, scaling_pivot), rotation_pivot);
-                        // C: `ufbx_vec3 unscaled_offset;` — all three components
-                        // assigned below before any read (no upstream
-                        // `ufbxi_uninit` marker).
-                        let mut unscaled_offset: Vec3 = Vec3 {
+
+                        let mut child_offset: Vec3 = Vec3 {
                             x: 0.0,
                             y: 0.0,
                             z: 0.0,
                         };
-                        unscaled_offset.x = pivot_div(scaled_offset.x, initial_scale.x);
-                        unscaled_offset.y = pivot_div(scaled_offset.y, initial_scale.y);
-                        unscaled_offset.z = pivot_div(scaled_offset.z, initial_scale.z);
-
-                        // Convert `scaled_offset + S*unscaled_offset` to FBX scaling pivot and offset.
-                        let new_scaling_pivot: Vec3 = unscaled_offset;
-                        let new_scaling_offset: Vec3 = sub3(scaled_offset, new_scaling_pivot);
-                        child_offset = sub3(unscaled_offset, scaling_pivot);
-
-                        new_props = push_zero::<Prop>(uc.result_mut_ptr(), num_props + 4);
-                        ufbxi_check!(uc, !new_props.is_null(), "new_props");
-                        ptr::copy_nonoverlapping(
-                            (*node).element.props.props.data,
-                            new_props,
-                            num_props,
-                        );
-
-                        init_synthetic_vec3_prop(
-                            new_props.add(new_prop_count),
-                            sp::RotationPivot.as_ptr(),
-                            &ZERO_VEC3,
-                            PropType::Vector,
-                        );
-                        new_prop_count += 1;
-                        init_synthetic_vec3_prop(
-                            new_props.add(new_prop_count),
-                            sp::ScalingPivot.as_ptr(),
-                            &new_scaling_pivot,
-                            PropType::Vector,
-                        );
-                        new_prop_count += 1;
-                        init_synthetic_vec3_prop(
-                            new_props.add(new_prop_count),
-                            sp::ScalingOffset.as_ptr(),
-                            &new_scaling_offset,
-                            PropType::Vector,
-                        );
-                        new_prop_count += 1;
-                        if !skip_geometry_transform {
+                        let mut new_props: *mut Prop = ptr::null_mut();
+                        let num_props: usize = (*node).element.props.props.count;
+                        let mut new_prop_count: usize = num_props;
+                        if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot {
+                            ufbx_assert!(!skip_geometry_transform); // not supporeted in legacy mode
+                            child_offset = neg3(rotation_pivot);
                             geometric_translation = add3(geometric_translation, child_offset);
+
+                            new_props = push_zero::<Prop>(uc.result_mut_ptr(), num_props + 3);
+                            ufbxi_check!(uc, !new_props.is_null(), "new_props");
+                            ptr::copy_nonoverlapping(
+                                (*node).element.props.props.data,
+                                new_props,
+                                num_props,
+                            );
+
+                            init_synthetic_vec3_prop(
+                                new_props.add(new_prop_count),
+                                sp::RotationPivot.as_ptr(),
+                                &ZERO_VEC3,
+                                PropType::Vector,
+                            );
+                            new_prop_count += 1;
+                            init_synthetic_vec3_prop(
+                                new_props.add(new_prop_count),
+                                sp::ScalingPivot.as_ptr(),
+                                &ZERO_VEC3,
+                                PropType::Vector,
+                            );
+                            new_prop_count += 1;
                             init_synthetic_vec3_prop(
                                 new_props.add(new_prop_count),
                                 sp::GeometricTranslation.as_ptr(),
@@ -942,142 +922,237 @@ pub(crate) unsafe fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail>
                                 PropType::Vector,
                             );
                             new_prop_count += 1;
+                        } else if uc.opts_view().pivot_handling()
+                            == PivotHandling::AdjustToRotationPivot
+                        {
+                            // We can eliminate the post-rotation translation and move it to the geometry/children as follows.
+                            // Let Z be the initial value of S in the transform (aka `initial_scale`):
+                            //
+                            //   (Rp-1+Soff+Sp) + S * (Sp-1)
+                            //   S * (Sp-1 + (Rp-1+Soff+Sp)/S)
+                            //   S * (Sp-1 + (Rp-1+Soff+Sp)/S - (Rp-1+Soff+Sp)/Z + (Rp-1+Soff+Sp)/Z)
+                            //
+                            //   (Rp-1 + Soff + Sp) + S * (-(Rp-1 + Soff + Sp)/Z + (Sp-1 + (Rp-1 + Soff + Sp)/Z))
+                            //   ^-scaled_offset--^         ^-unscaled_offset--^           ^-unscaled_offset--^
+                            //   ^---------------- 0, when S=Z ----------------^   ^------- child_offset ------^
+                            //
+                            // We need to be careful when doing this in case any component of Z is 0. Fortunately,
+                            // the above holds for all `Z != 0`, it will just result in non-zero translation in the parent.
+                            let initial_scale: Vec3 = find_vec3(
+                                node_view.props_view(),
+                                sp::Lcl_Scaling.as_ptr(),
+                                1.0,
+                                1.0,
+                                1.0,
+                            );
+                            let scaled_offset: Vec3 =
+                                sub3(add3(scaling_offset, scaling_pivot), rotation_pivot);
+                            // C: `ufbx_vec3 unscaled_offset;` — all three components
+                            // assigned below before any read (no upstream
+                            // `ufbxi_uninit` marker).
+                            let mut unscaled_offset: Vec3 = Vec3 {
+                                x: 0.0,
+                                y: 0.0,
+                                z: 0.0,
+                            };
+                            unscaled_offset.x = pivot_div(scaled_offset.x, initial_scale.x);
+                            unscaled_offset.y = pivot_div(scaled_offset.y, initial_scale.y);
+                            unscaled_offset.z = pivot_div(scaled_offset.z, initial_scale.z);
+
+                            // Convert `scaled_offset + S*unscaled_offset` to FBX scaling pivot and offset.
+                            let new_scaling_pivot: Vec3 = unscaled_offset;
+                            let new_scaling_offset: Vec3 = sub3(scaled_offset, new_scaling_pivot);
+                            child_offset = sub3(unscaled_offset, scaling_pivot);
+
+                            new_props = push_zero::<Prop>(uc.result_mut_ptr(), num_props + 4);
+                            ufbxi_check!(uc, !new_props.is_null(), "new_props");
+                            ptr::copy_nonoverlapping(
+                                (*node).element.props.props.data,
+                                new_props,
+                                num_props,
+                            );
+
+                            init_synthetic_vec3_prop(
+                                new_props.add(new_prop_count),
+                                sp::RotationPivot.as_ptr(),
+                                &ZERO_VEC3,
+                                PropType::Vector,
+                            );
+                            new_prop_count += 1;
+                            init_synthetic_vec3_prop(
+                                new_props.add(new_prop_count),
+                                sp::ScalingPivot.as_ptr(),
+                                &new_scaling_pivot,
+                                PropType::Vector,
+                            );
+                            new_prop_count += 1;
+                            init_synthetic_vec3_prop(
+                                new_props.add(new_prop_count),
+                                sp::ScalingOffset.as_ptr(),
+                                &new_scaling_offset,
+                                PropType::Vector,
+                            );
+                            new_prop_count += 1;
+                            if !skip_geometry_transform {
+                                geometric_translation = add3(geometric_translation, child_offset);
+                                init_synthetic_vec3_prop(
+                                    new_props.add(new_prop_count),
+                                    sp::GeometricTranslation.as_ptr(),
+                                    &geometric_translation,
+                                    PropType::Vector,
+                                );
+                                new_prop_count += 1;
+                            }
                         }
-                    }
 
-                    (*node).element.props.props.data = new_props;
-                    (*node).element.props.props.count = new_prop_count;
-                    sort_properties(
-                        uc,
-                        (*node).element.props.props.data as *mut Prop,
-                        (*node).element.props.props.count,
-                    )?;
-                    deduplicate_properties(&mut (*node).element.props.props);
+                        (*node).element.props.props.data = new_props;
+                        (*node).element.props.props.count = new_prop_count;
+                        sort_properties(
+                            uc,
+                            (*node).element.props.props.data as *mut Prop,
+                            (*node).element.props.props.count,
+                        )?;
+                        deduplicate_properties(&mut (*node).element.props.props);
 
-                    (*node).adjust_pre_translation =
-                        add3((*node).adjust_pre_translation, rotation_pivot);
-                    (*node).has_adjust_transform = true;
-                    let mut ix: u32 = (*pre_node).first_child;
-                    while ix != !0u32 {
-                        let pre_child: *mut PreNode = pre_nodes.add(ix as usize);
-                        let child: *mut Node =
-                            *elements.add((*pre_child).element_id as usize) as *mut Node;
+                        (*node).adjust_pre_translation =
+                            add3((*node).adjust_pre_translation, rotation_pivot);
+                        (*node).has_adjust_transform = true;
+                        let mut ix: u32 = (*pre_node).first_child;
+                        while ix != !0u32 {
+                            let pre_child: *mut PreNode = pre_nodes.add(ix as usize);
+                            let child: *mut Node =
+                                *elements.add((*pre_child).element_id as usize) as *mut Node;
 
-                        (*child).adjust_pre_translation =
-                            add3((*child).adjust_pre_translation, child_offset);
-                        (*child).has_adjust_transform = true;
+                            (*child).adjust_pre_translation =
+                                add3((*child).adjust_pre_translation, child_offset);
+                            (*child).has_adjust_transform = true;
 
-                        ix = (*pre_child).next_child;
+                            ix = (*pre_child).next_child;
+                        }
                     }
                 }
             }
         }
     }
 
-    for i in 0..num_elements as usize {
-        let element: *mut Element = *elements.add(i);
-        let fbx_id: u64 = *fbx_ids.add(i);
+    // SAFETY: `i < num_elements` indexes the `elements`/`fbx_ids` runs popped
+    // above (both `num_elements` long), and the per-element side tables
+    // (`instance_counts`, `modify_not_supported`) are the equally sized zeroed
+    // pushes above.
+    unsafe {
+        for i in 0..num_elements as usize {
+            let element: *mut Element = *elements.add(i);
+            let fbx_id: u64 = *fbx_ids.add(i);
 
-        if (*element).type_ == ElementType::Node {
-            let node: *mut Node = element as *mut Node;
-            let mut requires_helper_node: bool = false;
-            if uc.opts_view().geometry_transform_handling()
-                == GeometryTransformHandling::HelperNodes
-            {
-                requires_helper_node = true;
-            } else if uc.opts_view().geometry_transform_handling()
-                == GeometryTransformHandling::ModifyGeometry
-            {
-                // Setup a geometry transform helper for nodes that have instanced attributes
-                requires_helper_node = *instance_counts.add(i) > 1 || *modify_not_supported.add(i);
-            }
-            if requires_helper_node {
-                setup_geometry_transform_helper(uc, node, fbx_id)?;
+            if (*element).type_ == ElementType::Node {
+                let node: *mut Node = element as *mut Node;
+                let mut requires_helper_node: bool = false;
+                if uc.opts_view().geometry_transform_handling()
+                    == GeometryTransformHandling::HelperNodes
+                {
+                    requires_helper_node = true;
+                } else if uc.opts_view().geometry_transform_handling()
+                    == GeometryTransformHandling::ModifyGeometry
+                {
+                    // Setup a geometry transform helper for nodes that have instanced attributes
+                    requires_helper_node =
+                        *instance_counts.add(i) > 1 || *modify_not_supported.add(i);
+                }
+                if requires_helper_node {
+                    setup_geometry_transform_helper(uc, node, fbx_id)?;
+                }
             }
         }
     }
 
-    for i in 0..num_elements as usize {
-        let element: *mut Element = *elements.add(i);
-        let fbx_id: u64 = *fbx_ids.add(i);
+    // SAFETY: same `elements`/`fbx_ids` indexing as the pass above; the per-node
+    // side tables (`pre_nodes`, `has_unscaled_children`) are indexed by that node's
+    // own `typed_id`, which is `< num_nodes` by construction.
+    unsafe {
+        for i in 0..num_elements as usize {
+            let element: *mut Element = *elements.add(i);
+            let fbx_id: u64 = *fbx_ids.add(i);
 
-        if (*element).type_ == ElementType::Node {
-            let node: *mut Node = element as *mut Node;
-            if *has_unscaled_children.add((*node).element.typed_id as usize)
-                && (*node).scale_helper.is_none()
-            {
-                let pre_node: *mut PreNode = pre_nodes.add((*node).element.typed_id as usize);
-                let r#ref: Real =
-                    if uc.opts_view().inherit_mode_handling() == InheritModeHandling::Compensate {
+            if (*element).type_ == ElementType::Node {
+                let node: *mut Node = element as *mut Node;
+                if *has_unscaled_children.add((*node).element.typed_id as usize)
+                    && (*node).scale_helper.is_none()
+                {
+                    let pre_node: *mut PreNode = pre_nodes.add((*node).element.typed_id as usize);
+                    let r#ref: Real = if uc.opts_view().inherit_mode_handling()
+                        == InheritModeHandling::Compensate
+                    {
                         (*pre_node).constant_scale.x
                     } else {
                         1.0
                     };
-                let scale: Vec3 = (*pre_node).constant_scale;
-                // C: `(ufbx_real)ufbx_fabs(scale.x - ref)` — real subtraction,
-                // double `fabs`, narrowed back to real.
-                let dx: Real = math::fabs((scale.x - r#ref) as f64) as Real;
-                let dy: Real = math::fabs((scale.y - r#ref) as f64) as Real;
-                let dz: Real = math::fabs((scale.z - r#ref) as f64) as Real;
-                if (dx + dy + dz >= scale_epsilon
-                    || !(*pre_node).has_constant_scale
-                    || math::fabs(as_f64!(scale.x)) as Real <= compensate_epsilon)
-                    && uc.opts_view().inherit_mode_handling()
-                        != InheritModeHandling::CompensateNoFallback
-                {
-                    setup_scale_helper(uc, node, fbx_id)?;
+                    let scale: Vec3 = (*pre_node).constant_scale;
+                    // C: `(ufbx_real)ufbx_fabs(scale.x - ref)` — real subtraction,
+                    // double `fabs`, narrowed back to real.
+                    let dx: Real = math::fabs((scale.x - r#ref) as f64) as Real;
+                    let dy: Real = math::fabs((scale.y - r#ref) as f64) as Real;
+                    let dz: Real = math::fabs((scale.z - r#ref) as f64) as Real;
+                    if (dx + dy + dz >= scale_epsilon
+                        || !(*pre_node).has_constant_scale
+                        || math::fabs(as_f64!(scale.x)) as Real <= compensate_epsilon)
+                        && uc.opts_view().inherit_mode_handling()
+                            != InheritModeHandling::CompensateNoFallback
+                    {
+                        setup_scale_helper(uc, node, fbx_id)?;
 
-                    // If we added a geometry transform helper that may scale further helpers
-                    // recursively for all child nodes using `UFBX_INHERIT_MODE_COMPONENTWISE_SCALE`
-                    // This is guaranteed to terminate as `ufbxi_pre_node` may only have one parent,
-                    // meaning any cycles must contain `node` itself.
-                    let mut ix: u32 = (*pre_node).first_child;
-                    while ix != !0u32 && ix != (*node).element.typed_id {
-                        let mut pre_child: *mut PreNode = pre_nodes.add(ix as usize);
-                        let child: *mut Node =
-                            *elements.add((*pre_child).element_id as usize) as *mut Node;
+                        // If we added a geometry transform helper that may scale further helpers
+                        // recursively for all child nodes using `UFBX_INHERIT_MODE_COMPONENTWISE_SCALE`
+                        // This is guaranteed to terminate as `ufbxi_pre_node` may only have one parent,
+                        // meaning any cycles must contain `node` itself.
+                        let mut ix: u32 = (*pre_node).first_child;
+                        while ix != !0u32 && ix != (*node).element.typed_id {
+                            let mut pre_child: *mut PreNode = pre_nodes.add(ix as usize);
+                            let child: *mut Node =
+                                *elements.add((*pre_child).element_id as usize) as *mut Node;
 
-                        if (*pre_child).parent != (*node).element.typed_id
-                            || (*child).original_inherit_mode == InheritMode::ComponentwiseScale
-                        {
-                            if !(*pre_child).has_recursive_scale_helper
-                                && (*child).original_inherit_mode != InheritMode::Normal
+                            if (*pre_child).parent != (*node).element.typed_id
+                                || (*child).original_inherit_mode == InheritMode::ComponentwiseScale
                             {
-                                (*pre_child).has_recursive_scale_helper = true;
+                                if !(*pre_child).has_recursive_scale_helper
+                                    && (*child).original_inherit_mode != InheritMode::Normal
+                                {
+                                    (*pre_child).has_recursive_scale_helper = true;
 
-                                let child_fbx_id: u64 =
-                                    *fbx_ids.add((*pre_child).element_id as usize);
-                                setup_scale_helper(uc, child, child_fbx_id)?;
-                                (*child).is_scale_compensate_parent = false;
+                                    let child_fbx_id: u64 =
+                                        *fbx_ids.add((*pre_child).element_id as usize);
+                                    setup_scale_helper(uc, child, child_fbx_id)?;
+                                    (*child).is_scale_compensate_parent = false;
 
-                                // Traverse to children if any
-                                if (*pre_child).first_child != !0u32 {
-                                    ix = (*pre_child).first_child;
-                                    continue;
+                                    // Traverse to children if any
+                                    if (*pre_child).first_child != !0u32 {
+                                        ix = (*pre_child).first_child;
+                                        continue;
+                                    }
                                 }
                             }
-                        }
 
-                        // Move to next child, popping parents until we find one
-                        while (*pre_child).next_child == !0u32 {
-                            ix = (*pre_child).parent;
-                            if ix == (*node).element.typed_id {
-                                break;
+                            // Move to next child, popping parents until we find one
+                            while (*pre_child).next_child == !0u32 {
+                                ix = (*pre_child).parent;
+                                if ix == (*node).element.typed_id {
+                                    break;
+                                }
+                                pre_child = pre_nodes.add(ix as usize);
                             }
-                            pre_child = pre_nodes.add(ix as usize);
+                            if ix != (*node).element.typed_id {
+                                ix = (*pre_child).next_child;
+                            }
                         }
-                        if ix != (*node).element.typed_id {
-                            ix = (*pre_child).next_child;
+                    } else if uc.opts_view().inherit_mode_handling()
+                        == InheritModeHandling::Compensate
+                        || uc.opts_view().inherit_mode_handling()
+                            == InheritModeHandling::CompensateNoFallback
+                    {
+                        // C: `(ufbx_real)ufbx_fabs(scale.x - 1.0f)` — real
+                        // subtraction, double `fabs`, narrowed back to real.
+                        if math::fabs(as_f64!(scale.x - 1.0)) as Real >= scale_epsilon {
+                            (*node).is_scale_compensate_parent = true;
                         }
-                    }
-                } else if uc.opts_view().inherit_mode_handling() == InheritModeHandling::Compensate
-                    || uc.opts_view().inherit_mode_handling()
-                        == InheritModeHandling::CompensateNoFallback
-                {
-                    // C: `(ufbx_real)ufbx_fabs(scale.x - 1.0f)` — real
-                    // subtraction, double `fabs`, narrowed back to real.
-                    if math::fabs(as_f64!(scale.x - 1.0)) as Real >= scale_epsilon {
-                        (*node).is_scale_compensate_parent = true;
                     }
                 }
             }
@@ -1368,20 +1443,29 @@ pub(crate) fn find_attribute_fbx_id(uc: &Context, node_fbx_id: u64) -> u64 {
 
 // ufbx.c:18665-18780 `ufbxi_resolve_connections`
 #[inline(never)]
-pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn resolve_connections(uc: &Context) -> Result<(), Fail> {
     let num_connections: usize = uc.tmp_connections_view().num_items();
-    let tmp_connections: *mut TmpConnection = push_pop(
-        uc.tmp_mut_ptr(),
-        uc.tmp_connections_mut_ptr(),
-        num_connections,
-    );
-    buf_free(uc.tmp_connections_mut_ptr());
+    // SAFETY: pops the `num_connections` recorded connections from uc's own
+    // `tmp_connections` buffer into uc's own tmp buffer.
+    let tmp_connections: *mut TmpConnection = unsafe {
+        push_pop(
+            uc.tmp_mut_ptr(),
+            uc.tmp_connections_mut_ptr(),
+            num_connections,
+        )
+    };
+    // SAFETY: frees the drained buffer through uc's raw-ptr getter.
+    unsafe { buf_free(uc.tmp_connections_mut_ptr()) };
     ufbxi_check!(uc, !tmp_connections.is_null(), "tmp_connections");
 
-    // NOTE: We truncate this array in case not all connections are resolved
-    uc.scene_view()
-        .connections_src_view()
-        .set_data(push::<Connection>(uc.result_mut_ptr(), num_connections));
+    // SAFETY: pushes `num_connections` entries onto uc's own result buffer
+    // through its raw-ptr getter.
+    unsafe {
+        // NOTE: We truncate this array in case not all connections are resolved
+        uc.scene_view()
+            .connections_src_view()
+            .set_data(push::<Connection>(uc.result_mut_ptr(), num_connections));
+    }
     ufbxi_check!(
         uc,
         !uc.scene_view().connections_src_view().data().is_null(),
@@ -1391,201 +1475,222 @@ pub(crate) unsafe fn resolve_connections(uc: &Context) -> Result<(), Fail> {
     // HACK: Translate property connections from node to attribute if the property name is not included
     // in the known node properties and is not a property of the node.
     if uc.version() > 0 && uc.version() < 7000 {
-        // C: `ufbxi_for(ufbxi_tmp_connection, tmp_conn, tmp_connections, num_connections)`
-        let mut tmp_conn: *mut TmpConnection = tmp_connections;
-        let tmp_conn_end: *mut TmpConnection = tmp_connections.add(num_connections);
-        while tmp_conn != tmp_conn_end {
-            if (*tmp_conn).src_prop.length > 0
-                && !is_node_property_name(uc, (*tmp_conn).src_prop.data)
-            {
-                let src: *mut Element = find_element_by_fbx_id(uc, (*tmp_conn).src);
-                if src.is_null()
-                    || find_prop_len(
-                        // `src` is non-null here (the `||` short-circuits the
-                        // null case), and it resolves to a uc-arena element, so
-                        // its view anchors the lookup to `uc`.
-                        ElementView::from_ptr(src).props_view(),
-                        (*tmp_conn).src_prop.data,
-                        (*tmp_conn).src_prop.length,
-                    )
-                    .is_none()
+        // SAFETY: walks the fresh `num_connections`-element `tmp_connections` run;
+        // each `src`/`dst` is null-checked before its props are read through an
+        // arena-anchored element view, with the prop name and length taken from the
+        // connection's own interned string.
+        unsafe {
+            // C: `ufbxi_for(ufbxi_tmp_connection, tmp_conn, tmp_connections, num_connections)`
+            let mut tmp_conn: *mut TmpConnection = tmp_connections;
+            let tmp_conn_end: *mut TmpConnection = tmp_connections.add(num_connections);
+            while tmp_conn != tmp_conn_end {
+                if (*tmp_conn).src_prop.length > 0
+                    && !is_node_property_name(uc, (*tmp_conn).src_prop.data)
                 {
-                    (*tmp_conn).src = find_attribute_fbx_id(uc, (*tmp_conn).src);
+                    let src: *mut Element = find_element_by_fbx_id(uc, (*tmp_conn).src);
+                    if src.is_null()
+                        || find_prop_len(
+                            // `src` is non-null here (the `||` short-circuits the
+                            // null case), and it resolves to a uc-arena element, so
+                            // its view anchors the lookup to `uc`.
+                            ElementView::from_ptr(src).props_view(),
+                            (*tmp_conn).src_prop.data,
+                            (*tmp_conn).src_prop.length,
+                        )
+                        .is_none()
+                    {
+                        (*tmp_conn).src = find_attribute_fbx_id(uc, (*tmp_conn).src);
+                    }
                 }
-            }
-            if (*tmp_conn).dst_prop.length > 0
-                && !is_node_property_name(uc, (*tmp_conn).dst_prop.data)
-            {
-                let dst: *mut Element = find_element_by_fbx_id(uc, (*tmp_conn).dst);
-                if dst.is_null()
-                    || find_prop_len(
-                        // `dst` is non-null here (short-circuit) and resolves to
-                        // a uc-arena element, so its view anchors to `uc`.
-                        ElementView::from_ptr(dst).props_view(),
-                        (*tmp_conn).dst_prop.data,
-                        (*tmp_conn).dst_prop.length,
-                    )
-                    .is_none()
+                if (*tmp_conn).dst_prop.length > 0
+                    && !is_node_property_name(uc, (*tmp_conn).dst_prop.data)
                 {
-                    (*tmp_conn).dst = find_attribute_fbx_id(uc, (*tmp_conn).dst);
+                    let dst: *mut Element = find_element_by_fbx_id(uc, (*tmp_conn).dst);
+                    if dst.is_null()
+                        || find_prop_len(
+                            // `dst` is non-null here (short-circuit) and resolves to
+                            // a uc-arena element, so its view anchors to `uc`.
+                            ElementView::from_ptr(dst).props_view(),
+                            (*tmp_conn).dst_prop.data,
+                            (*tmp_conn).dst_prop.length,
+                        )
+                        .is_none()
+                    {
+                        (*tmp_conn).dst = find_attribute_fbx_id(uc, (*tmp_conn).dst);
+                    }
                 }
+                tmp_conn = tmp_conn.add(1);
             }
-            tmp_conn = tmp_conn.add(1);
         }
     }
 
-    // C: `ufbxi_for(ufbxi_tmp_connection, tmp_conn, tmp_connections, num_connections)`
-    // — indexed here because the body `continue`s (the C `for` advances the
-    // iterator in its increment clause).
-    for conn_ix in 0..num_connections {
-        let tmp_conn: *mut TmpConnection = tmp_connections.add(conn_ix);
-        let mut src: *mut Element = find_element_by_fbx_id(uc, (*tmp_conn).src);
-        let mut dst: *mut Element = find_element_by_fbx_id(uc, (*tmp_conn).dst);
-        if src.is_null() || dst.is_null() {
-            continue;
-        }
-
-        if !uc.opts_view().disable_quirks() {
-            // Some exporters connect arbitrary non-nodes to root breaking further code, ignore those connections here!
-            if (*dst).type_ == ElementType::Node
-                && (*src).type_ != ElementType::Node
-                && (*(dst as *mut Node)).is_root
-            {
-                ufbxi_check!(
-                    uc,
-                    ufbxi_warnf_tag!(
-                        uc,
-                        WarningType::BadElementConnectedToRoot,
-                        (*src).element_id,
-                        "Non-node element connected to root"
-                    )
-                    .is_ok(),
-                    "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_BAD_ELEMENT_CONNECTED_TO_ROOT, (src->element_id), \"Non-node element connected to root\")"
-                );
+    // SAFETY: indexes the fresh `num_connections`-element `tmp_connections` run;
+    // `src`/`dst` are null-checked arena elements (the element-type tests gate
+    // every downcast), `get_element_extra`'s helper ids index the scene's own
+    // element-pointer run, and `conn` is the next unused slot of the
+    // `num_connections`-entry `connections_src` run pushed above.
+    unsafe {
+        // C: `ufbxi_for(ufbxi_tmp_connection, tmp_conn, tmp_connections, num_connections)`
+        // — indexed here because the body `continue`s (the C `for` advances the
+        // iterator in its increment clause).
+        for conn_ix in 0..num_connections {
+            let tmp_conn: *mut TmpConnection = tmp_connections.add(conn_ix);
+            let mut src: *mut Element = find_element_by_fbx_id(uc, (*tmp_conn).src);
+            let mut dst: *mut Element = find_element_by_fbx_id(uc, (*tmp_conn).dst);
+            if src.is_null() || dst.is_null() {
                 continue;
             }
-        }
 
-        // Remap connections to geometry transform helpers if necessary, see `ufbxi_setup_geometry_transform_helper()` for how these are setup.
-        if uc.has_geometry_transform_nodes() {
-            if (*dst).type_ == ElementType::Node
-                && (*src).type_ as u32 >= ELEMENT_TYPE_FIRST_ATTRIB
-                && (*src).type_ as u32 <= ELEMENT_TYPE_LAST_ATTRIB
-            {
-                let node: *mut Node = dst as *mut Node;
-                if (*node).has_geometry_transform {
-                    let extra: *mut NodeExtra =
-                        get_element_extra(uc, (*node).element.element_id) as *mut NodeExtra;
-                    ufbx_assert!(!extra.is_null());
-                    dst = *(uc.scene_view().elements_view().data() as *mut *mut Element)
-                        .add((*extra).geometry_helper_id as usize);
-                    ufbx_assert!(
-                        (*dst).type_ == ElementType::Node
-                            && (*(dst as *mut Node)).is_geometry_transform_helper
+            if !uc.opts_view().disable_quirks() {
+                // Some exporters connect arbitrary non-nodes to root breaking further code, ignore those connections here!
+                if (*dst).type_ == ElementType::Node
+                    && (*src).type_ != ElementType::Node
+                    && (*(dst as *mut Node)).is_root
+                {
+                    ufbxi_check!(
+                        uc,
+                        ufbxi_warnf_tag!(
+                            uc,
+                            WarningType::BadElementConnectedToRoot,
+                            (*src).element_id,
+                            "Non-node element connected to root"
+                        )
+                        .is_ok(),
+                        "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_BAD_ELEMENT_CONNECTED_TO_ROOT, (src->element_id), \"Non-node element connected to root\")"
                     );
+                    continue;
                 }
             }
-        }
 
-        // Remap connections to scale helpers if necessary, see `ufbxi_setup_scale_helper()` for how these are setup.
-        if uc.has_scale_helper_nodes() {
-            if (*dst).type_ == ElementType::Node {
-                let dst_node: *mut Node = dst as *mut Node;
-                let scale_helper: *mut Node = opt_ptr(&(*dst_node).scale_helper);
-                if !scale_helper.is_null() {
-                    if (*src).type_ == ElementType::Node {
-                        let src_node: *mut Node = src as *mut Node;
-                        if !(*src_node).is_scale_helper
-                            && (*src_node).original_inherit_mode == InheritMode::Normal
-                        {
-                            dst = &mut (*scale_helper).element as *mut Element;
-                        }
-                    } else if (*src).type_ == ElementType::AnimValue {
-                        if (*tmp_conn).dst_prop.data == sp::Lcl_Scaling.as_ptr() {
-                            dst = &mut (*scale_helper).element as *mut Element;
-                        }
-                    } else {
-                        dst = &mut (*scale_helper).element as *mut Element;
-                    }
-                }
-            } else if (*src).type_ == ElementType::Node {
-                let src_node: *mut Node = src as *mut Node;
-                let scale_helper: *mut Node = opt_ptr(&(*src_node).scale_helper);
-                if !scale_helper.is_null() {
-                    if (*dst).type_ == ElementType::SkinCluster {
-                        src = &mut (*scale_helper).element as *mut Element;
+            // Remap connections to geometry transform helpers if necessary, see `ufbxi_setup_geometry_transform_helper()` for how these are setup.
+            if uc.has_geometry_transform_nodes() {
+                if (*dst).type_ == ElementType::Node
+                    && (*src).type_ as u32 >= ELEMENT_TYPE_FIRST_ATTRIB
+                    && (*src).type_ as u32 <= ELEMENT_TYPE_LAST_ATTRIB
+                {
+                    let node: *mut Node = dst as *mut Node;
+                    if (*node).has_geometry_transform {
+                        let extra: *mut NodeExtra =
+                            get_element_extra(uc, (*node).element.element_id) as *mut NodeExtra;
+                        ufbx_assert!(!extra.is_null());
+                        dst = *(uc.scene_view().elements_view().data() as *mut *mut Element)
+                            .add((*extra).geometry_helper_id as usize);
+                        ufbx_assert!(
+                            (*dst).type_ == ElementType::Node
+                                && (*(dst as *mut Node)).is_geometry_transform_helper
+                        );
                     }
                 }
             }
-        }
 
-        // Translate deformers to point to the geometry in 6100, we don't need to worry about
-        // blend shapes here as they're always connected synthetically in older files.
-        if uc.version() > 0 && uc.version() < 7000 && (*dst).type_ == ElementType::Node {
-            if (*src).type_ == ElementType::SkinDeformer
-                || (*src).type_ == ElementType::CacheDeformer
-            {
-                let dst_id: u64 = find_attribute_fbx_id(uc, (*tmp_conn).dst);
-                let dst_elem: *mut Element = find_element_by_fbx_id(uc, dst_id);
-                if !dst_elem.is_null() {
-                    dst = dst_elem;
+            // Remap connections to scale helpers if necessary, see `ufbxi_setup_scale_helper()` for how these are setup.
+            if uc.has_scale_helper_nodes() {
+                if (*dst).type_ == ElementType::Node {
+                    let dst_node: *mut Node = dst as *mut Node;
+                    let scale_helper: *mut Node = opt_ptr(&(*dst_node).scale_helper);
+                    if !scale_helper.is_null() {
+                        if (*src).type_ == ElementType::Node {
+                            let src_node: *mut Node = src as *mut Node;
+                            if !(*src_node).is_scale_helper
+                                && (*src_node).original_inherit_mode == InheritMode::Normal
+                            {
+                                dst = &mut (*scale_helper).element as *mut Element;
+                            }
+                        } else if (*src).type_ == ElementType::AnimValue {
+                            if (*tmp_conn).dst_prop.data == sp::Lcl_Scaling.as_ptr() {
+                                dst = &mut (*scale_helper).element as *mut Element;
+                            }
+                        } else {
+                            dst = &mut (*scale_helper).element as *mut Element;
+                        }
+                    }
+                } else if (*src).type_ == ElementType::Node {
+                    let src_node: *mut Node = src as *mut Node;
+                    let scale_helper: *mut Node = opt_ptr(&(*src_node).scale_helper);
+                    if !scale_helper.is_null() {
+                        if (*dst).type_ == ElementType::SkinCluster {
+                            src = &mut (*scale_helper).element as *mut Element;
+                        }
+                    }
                 }
             }
-        }
 
-        let conn: *mut Connection = (uc.scene_view().connections_src_view().data()
-            as *mut Connection)
-            .add(uc.scene_view().connections_src_view().count());
-        uc.scene_view().connections_src_view().set_count(
-            uc.scene_view()
-                .connections_src_view()
-                .count()
-                .wrapping_add(1),
-        );
-        (*conn).src = Ref::from_ptr(src);
-        (*conn).dst = Ref::from_ptr(dst);
-        (*conn).src_prop = (*tmp_conn).src_prop;
-        (*conn).dst_prop = (*tmp_conn).dst_prop;
+            // Translate deformers to point to the geometry in 6100, we don't need to worry about
+            // blend shapes here as they're always connected synthetically in older files.
+            if uc.version() > 0 && uc.version() < 7000 && (*dst).type_ == ElementType::Node {
+                if (*src).type_ == ElementType::SkinDeformer
+                    || (*src).type_ == ElementType::CacheDeformer
+                {
+                    let dst_id: u64 = find_attribute_fbx_id(uc, (*tmp_conn).dst);
+                    let dst_elem: *mut Element = find_element_by_fbx_id(uc, dst_id);
+                    if !dst_elem.is_null() {
+                        dst = dst_elem;
+                    }
+                }
+            }
+
+            let conn: *mut Connection = (uc.scene_view().connections_src_view().data()
+                as *mut Connection)
+                .add(uc.scene_view().connections_src_view().count());
+            uc.scene_view().connections_src_view().set_count(
+                uc.scene_view()
+                    .connections_src_view()
+                    .count()
+                    .wrapping_add(1),
+            );
+            (*conn).src = Ref::from_ptr(src);
+            (*conn).dst = Ref::from_ptr(dst);
+            (*conn).src_prop = (*tmp_conn).src_prop;
+            (*conn).dst_prop = (*tmp_conn).dst_prop;
+        }
     }
 
     uc.scene_view()
         .connections_dst_view()
         .set_count(uc.scene_view().connections_src_view().count());
-    uc.scene_view()
-        .connections_dst_view()
-        .set_data(push_copy::<Connection>(
-            uc.result_mut_ptr(),
+    // SAFETY: copies the `connections_src` run just materialized in uc's own
+    // result buffer into a second run in that same buffer, then sorts both runs
+    // in place with their own counts.
+    unsafe {
+        uc.scene_view()
+            .connections_dst_view()
+            .set_data(push_copy::<Connection>(
+                uc.result_mut_ptr(),
+                uc.scene_view().connections_src_view().count(),
+                uc.scene_view().connections_src_view().data(),
+            ));
+        ufbxi_check!(
+            uc,
+            !uc.scene_view().connections_dst_view().data().is_null(),
+            "uc->scene.connections_dst.data"
+        );
+
+        sort_connections(
+            uc,
+            uc.scene_view().connections_src_view().data() as *mut Connection,
             uc.scene_view().connections_src_view().count(),
-            uc.scene_view().connections_src_view().data(),
-        ));
-    ufbxi_check!(
-        uc,
-        !uc.scene_view().connections_dst_view().data().is_null(),
-        "uc->scene.connections_dst.data"
-    );
+            0,
+        )?;
+        sort_connections(
+            uc,
+            uc.scene_view().connections_dst_view().data() as *mut Connection,
+            uc.scene_view().connections_dst_view().count(),
+            1,
+        )?;
+    }
 
-    sort_connections(
-        uc,
-        uc.scene_view().connections_src_view().data() as *mut Connection,
-        uc.scene_view().connections_src_view().count(),
-        0,
-    )?;
-    sort_connections(
-        uc,
-        uc.scene_view().connections_dst_view().data() as *mut Connection,
-        uc.scene_view().connections_dst_view().count(),
-        1,
-    )?;
-
-    // We don't need the temporary connections at this point anymore
-    buf_free(uc.tmp_connections_mut_ptr());
+    // SAFETY: frees uc's own `tmp_connections` buffer through its raw-ptr getter.
+    unsafe {
+        // We don't need the temporary connections at this point anymore
+        buf_free(uc.tmp_connections_mut_ptr());
+    }
 
     Ok(())
 }
 
 // ufbx.c:18782-18912 `ufbxi_add_connections_to_elements`
 #[inline(never)]
-pub(crate) unsafe fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
     let mut conn_src: *mut Connection =
         uc.scene_view().connections_src_view().data() as *mut Connection;
     let conn_src_end: *mut Connection =
@@ -1595,198 +1700,217 @@ pub(crate) unsafe fn add_connections_to_elements(uc: &Context) -> Result<(), Fai
     let conn_dst_end: *mut Connection =
         add_ptr(conn_dst, uc.scene_view().connections_dst_view().count());
 
-    // C: `ufbxi_for_ptr(ufbx_element, p_elem, uc->scene.elements.data, uc->scene.elements.count)`
-    let mut p_elem: *mut *mut Element = uc.scene_view().elements_view().data() as *mut *mut Element;
-    let p_elem_end: *mut *mut Element = p_elem.add(uc.scene_view().elements_view().count());
-    while p_elem != p_elem_end {
-        let elem: *mut Element = *p_elem;
-        let id: u32 = (*elem).element_id;
+    // SAFETY: one walk over the scene's stored element-pointer run (`count`
+    // entries) advancing in lockstep through the two `connections_src`/
+    // `connections_dst` runs, which are sorted by element id and bounded by the
+    // `*_end` cursors computed above — so every connection deref is inside its
+    // run and every `src_end`/`dst_end` slice is inside the element's own range.
+    // Within an element: `prop` walks that element's own property run against
+    // `prop_end`; `anim_def_prop` is a local fully zeroed before use;
+    // `find_prop_with_key` reads the element's own (`is_some`-checked) defaults
+    // table through an arena-anchored view; and each `push_copy`/`push_zero`/
+    // `push_pop` moves the counted properties between uc's own tmp stack and
+    // result buffers, with the pushed run null-checked before it is stored back
+    // on the element.
+    unsafe {
+        // C: `ufbxi_for_ptr(ufbx_element, p_elem, uc->scene.elements.data, uc->scene.elements.count)`
+        let mut p_elem: *mut *mut Element =
+            uc.scene_view().elements_view().data() as *mut *mut Element;
+        let p_elem_end: *mut *mut Element = p_elem.add(uc.scene_view().elements_view().count());
+        while p_elem != p_elem_end {
+            let elem: *mut Element = *p_elem;
+            let id: u32 = (*elem).element_id;
 
-        while conn_src < conn_src_end && (*ref_ptr(&(*conn_src).src)).element_id < id {
-            conn_src = conn_src.add(1);
-        }
-        while conn_dst < conn_dst_end && (*ref_ptr(&(*conn_dst).dst)).element_id < id {
-            conn_dst = conn_dst.add(1);
-        }
-        let mut src_end: *mut Connection = conn_src;
-        let mut dst_end: *mut Connection = conn_dst;
+            while conn_src < conn_src_end && (*ref_ptr(&(*conn_src).src)).element_id < id {
+                conn_src = conn_src.add(1);
+            }
+            while conn_dst < conn_dst_end && (*ref_ptr(&(*conn_dst).dst)).element_id < id {
+                conn_dst = conn_dst.add(1);
+            }
+            let mut src_end: *mut Connection = conn_src;
+            let mut dst_end: *mut Connection = conn_dst;
 
-        while src_end < conn_src_end && (*ref_ptr(&(*src_end).src)).element_id == id {
-            src_end = src_end.add(1);
-        }
-        while dst_end < conn_dst_end && (*ref_ptr(&(*dst_end).dst)).element_id == id {
-            dst_end = dst_end.add(1);
-        }
+            while src_end < conn_src_end && (*ref_ptr(&(*src_end).src)).element_id == id {
+                src_end = src_end.add(1);
+            }
+            while dst_end < conn_dst_end && (*ref_ptr(&(*dst_end).dst)).element_id == id {
+                dst_end = dst_end.add(1);
+            }
 
-        (*elem).connections_src.data = conn_src;
-        (*elem).connections_src.count = to_size(src_end.offset_from(conn_src));
-        (*elem).connections_dst.data = conn_dst;
-        (*elem).connections_dst.count = to_size(dst_end.offset_from(conn_dst));
+            (*elem).connections_src.data = conn_src;
+            (*elem).connections_src.count = to_size(src_end.offset_from(conn_src));
+            (*elem).connections_dst.data = conn_dst;
+            (*elem).connections_dst.count = to_size(dst_end.offset_from(conn_dst));
 
-        // Setup animated properties
-        // TODO: It seems we're invalidating a lot of properties here actually, maybe they
-        // should be initially pushed to `tmp` instead of result if this happens so much..
-        {
-            let mut prop: *mut Prop = (*elem).props.props.data as *mut Prop;
-            let prop_end: *mut Prop = add_ptr(prop, (*elem).props.props.count);
-            let mut copy_start: *mut Prop = prop;
-            let mut needs_copy: bool = false;
-            let mut num_animated: usize = 0;
-            let mut num_synthetic: usize = 0;
+            // Setup animated properties
+            // TODO: It seems we're invalidating a lot of properties here actually, maybe they
+            // should be initially pushed to `tmp` instead of result if this happens so much..
+            {
+                let mut prop: *mut Prop = (*elem).props.props.data as *mut Prop;
+                let prop_end: *mut Prop = add_ptr(prop, (*elem).props.props.count);
+                let mut copy_start: *mut Prop = prop;
+                let mut needs_copy: bool = false;
+                let mut num_animated: usize = 0;
+                let mut num_synthetic: usize = 0;
 
-            loop {
-                // Scan to the next animation connection
-                while conn_dst < dst_end {
-                    if (*conn_dst).dst_prop.length == 0 {
+                loop {
+                    // Scan to the next animation connection
+                    while conn_dst < dst_end {
+                        if (*conn_dst).dst_prop.length == 0 {
+                            conn_dst = conn_dst.add(1);
+                            continue;
+                        }
+                        if (*conn_dst).src_prop.length > 0 {
+                            break;
+                        }
+                        if (*ref_ptr(&(*conn_dst).src)).type_ == ElementType::AnimValue {
+                            break;
+                        }
                         conn_dst = conn_dst.add(1);
-                        continue;
                     }
-                    if (*conn_dst).src_prop.length > 0 {
+
+                    let mut name: String = EMPTY_STRING.0;
+                    if conn_dst < dst_end {
+                        name = (*conn_dst).dst_prop;
+                    }
+                    if name.length == 0 {
                         break;
                     }
-                    if (*ref_ptr(&(*conn_dst).src)).type_ == ElementType::AnimValue {
-                        break;
+
+                    // NOTE: "Animated" properties also include connected ones as we need
+                    // to resolve them during evaluation
+                    num_animated = num_animated.wrapping_add(1);
+
+                    let mut anim_value: *mut AnimValue = ptr::null_mut();
+                    let mut flags: u32 = 0;
+                    while conn_dst < dst_end && (*conn_dst).dst_prop.data == name.data {
+                        if (*conn_dst).src_prop.length > 0 {
+                            flags |= PropFlags::CONNECTED.raw();
+                        } else if (*ref_ptr(&(*conn_dst).src)).type_ == ElementType::AnimValue {
+                            anim_value = ref_ptr(&(*conn_dst).src) as *mut AnimValue;
+                            flags |= PropFlags::ANIMATED.raw();
+                        }
+                        conn_dst = conn_dst.add(1);
                     }
-                    conn_dst = conn_dst.add(1);
-                }
 
-                let mut name: String = EMPTY_STRING.0;
-                if conn_dst < dst_end {
-                    name = (*conn_dst).dst_prop;
-                }
-                if name.length == 0 {
-                    break;
-                }
-
-                // NOTE: "Animated" properties also include connected ones as we need
-                // to resolve them during evaluation
-                num_animated = num_animated.wrapping_add(1);
-
-                let mut anim_value: *mut AnimValue = ptr::null_mut();
-                let mut flags: u32 = 0;
-                while conn_dst < dst_end && (*conn_dst).dst_prop.data == name.data {
-                    if (*conn_dst).src_prop.length > 0 {
-                        flags |= PropFlags::CONNECTED.raw();
-                    } else if (*ref_ptr(&(*conn_dst).src)).type_ == ElementType::AnimValue {
-                        anim_value = ref_ptr(&(*conn_dst).src) as *mut AnimValue;
-                        flags |= PropFlags::ANIMATED.raw();
+                    let key: u32 = get_name_key(name.data, name.length);
+                    while prop != prop_end && name_key_less(prop, name.data, name.length, key) {
+                        prop = prop.add(1);
                     }
-                    conn_dst = conn_dst.add(1);
+
+                    if prop != prop_end && (*prop).name.data == name.data {
+                        (*prop).flags = PropFlags::from_raw((*prop).flags.raw() | flags);
+                    } else {
+                        // Animated property that is not in the element property list
+                        // Copy the preceding properties to the stack, then push a
+                        // synthetic property for the animated property.
+                        ufbxi_check!(
+                            uc,
+                            !push_copy::<Prop>(
+                                uc.tmp_stack_mut_ptr(),
+                                to_size(prop.offset_from(copy_start)),
+                                copy_start,
+                            )
+                            .is_null(),
+                            "((ufbx_prop*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_prop), (((size_t)(prop - copy_start))), (copy_start)))"
+                        );
+                        copy_start = prop;
+                        needs_copy = true;
+
+                        // Let's hope we can find the property in the defaults at least
+                        // C: `ufbx_prop anim_def_prop;` — only read after the
+                        // `memset` below (no upstream `ufbxi_uninit` marker).
+                        let mut anim_def_prop = MaybeUninit::<Prop>::uninit();
+                        let mut def_prop: *mut Prop = ptr::null_mut();
+                        if (*elem).props.defaults.is_some() {
+                            def_prop = match find_prop_with_key(
+                                PropsView::from_ptr(opt_ptr(&(*elem).props.defaults)),
+                                name.data,
+                                key,
+                            ) {
+                                Some(prop) => prop.get(),
+                                None => ptr::null_mut(),
+                            };
+                        } else if !anim_value.is_null() {
+                            let anim_def: *mut Prop = anim_def_prop.as_mut_ptr();
+                            ptr::write_bytes(anim_def as *mut u8, 0, size_of::<Prop>());
+                            // Hack a couple of common types
+                            let mut type_: PropType = PropType::Unknown;
+                            if name.data == sp::Lcl_Translation.as_ptr() {
+                                type_ = PropType::Translation;
+                            } else if name.data == sp::Lcl_Rotation.as_ptr() {
+                                type_ = PropType::Rotation;
+                            } else if name.data == sp::Lcl_Scaling.as_ptr() {
+                                type_ = PropType::Scaling;
+                                // C-parity: `value_vec3` is the `ufbx_prop` value union's
+                                // 3-real view; the generated struct keeps only `value_vec4`.
+                                let value_vec3: *mut Vec3 =
+                                    &mut (*anim_def).value_vec4 as *mut Vec4 as *mut Vec3;
+                                (*value_vec3).x = 1.0;
+                                (*value_vec3).y = 1.0;
+                                (*value_vec3).z = 1.0;
+                            }
+                            // Property values are only defined in anim_props on legacy files
+                            if uc.version() < 6000 {
+                                *(&mut (*anim_def).value_vec4 as *mut Vec4 as *mut Vec3) =
+                                    (*anim_value).default_value;
+                            }
+                            (*anim_def).type_ = type_;
+                            def_prop = anim_def;
+                        } else {
+                            flags |= PropFlags::NO_VALUE.raw();
+                        }
+
+                        let new_prop: *mut Prop = push_zero(uc.tmp_stack_mut_ptr(), 1);
+                        ufbxi_check!(uc, !new_prop.is_null(), "new_prop");
+                        if !def_prop.is_null() {
+                            *new_prop = *def_prop;
+                        }
+                        flags |= (*new_prop).flags.raw();
+                        (*new_prop).flags = PropFlags::from_raw(
+                            PropFlags::ANIMATABLE.raw() | PropFlags::SYNTHETIC.raw() | flags,
+                        );
+                        (*new_prop).name = name;
+                        (*new_prop)._internal_key = key;
+                        (*new_prop).value_str = EMPTY_STRING.0;
+                        (*new_prop).value_blob = EMPTY_BLOB.0;
+                        num_synthetic = num_synthetic.wrapping_add(1);
+                    }
                 }
 
-                let key: u32 = get_name_key(name.data, name.length);
-                while prop != prop_end && name_key_less(prop, name.data, name.length, key) {
-                    prop = prop.add(1);
-                }
-
-                if prop != prop_end && (*prop).name.data == name.data {
-                    (*prop).flags = PropFlags::from_raw((*prop).flags.raw() | flags);
-                } else {
-                    // Animated property that is not in the element property list
-                    // Copy the preceding properties to the stack, then push a
-                    // synthetic property for the animated property.
+                // Copy the properties if necessary
+                if needs_copy {
+                    let num_new_props: usize =
+                        (*elem).props.props.count.wrapping_add(num_synthetic);
                     ufbxi_check!(
                         uc,
                         !push_copy::<Prop>(
                             uc.tmp_stack_mut_ptr(),
-                            to_size(prop.offset_from(copy_start)),
+                            to_size(prop_end.offset_from(copy_start)),
                             copy_start,
                         )
                         .is_null(),
-                        "((ufbx_prop*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_prop), (((size_t)(prop - copy_start))), (copy_start)))"
+                        "((ufbx_prop*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_prop), (((size_t)(prop_end - copy_start))), (copy_start)))"
                     );
-                    copy_start = prop;
-                    needs_copy = true;
-
-                    // Let's hope we can find the property in the defaults at least
-                    // C: `ufbx_prop anim_def_prop;` — only read after the
-                    // `memset` below (no upstream `ufbxi_uninit` marker).
-                    let mut anim_def_prop = MaybeUninit::<Prop>::uninit();
-                    let mut def_prop: *mut Prop = ptr::null_mut();
-                    if (*elem).props.defaults.is_some() {
-                        def_prop = match find_prop_with_key(
-                            PropsView::from_ptr(opt_ptr(&(*elem).props.defaults)),
-                            name.data,
-                            key,
-                        ) {
-                            Some(prop) => prop.get(),
-                            None => ptr::null_mut(),
-                        };
-                    } else if !anim_value.is_null() {
-                        let anim_def: *mut Prop = anim_def_prop.as_mut_ptr();
-                        ptr::write_bytes(anim_def as *mut u8, 0, size_of::<Prop>());
-                        // Hack a couple of common types
-                        let mut type_: PropType = PropType::Unknown;
-                        if name.data == sp::Lcl_Translation.as_ptr() {
-                            type_ = PropType::Translation;
-                        } else if name.data == sp::Lcl_Rotation.as_ptr() {
-                            type_ = PropType::Rotation;
-                        } else if name.data == sp::Lcl_Scaling.as_ptr() {
-                            type_ = PropType::Scaling;
-                            // C-parity: `value_vec3` is the `ufbx_prop` value union's
-                            // 3-real view; the generated struct keeps only `value_vec4`.
-                            let value_vec3: *mut Vec3 =
-                                &mut (*anim_def).value_vec4 as *mut Vec4 as *mut Vec3;
-                            (*value_vec3).x = 1.0;
-                            (*value_vec3).y = 1.0;
-                            (*value_vec3).z = 1.0;
-                        }
-                        // Property values are only defined in anim_props on legacy files
-                        if uc.version() < 6000 {
-                            *(&mut (*anim_def).value_vec4 as *mut Vec4 as *mut Vec3) =
-                                (*anim_value).default_value;
-                        }
-                        (*anim_def).type_ = type_;
-                        def_prop = anim_def;
-                    } else {
-                        flags |= PropFlags::NO_VALUE.raw();
-                    }
-
-                    let new_prop: *mut Prop = push_zero(uc.tmp_stack_mut_ptr(), 1);
-                    ufbxi_check!(uc, !new_prop.is_null(), "new_prop");
-                    if !def_prop.is_null() {
-                        *new_prop = *def_prop;
-                    }
-                    flags |= (*new_prop).flags.raw();
-                    (*new_prop).flags = PropFlags::from_raw(
-                        PropFlags::ANIMATABLE.raw() | PropFlags::SYNTHETIC.raw() | flags,
-                    );
-                    (*new_prop).name = name;
-                    (*new_prop)._internal_key = key;
-                    (*new_prop).value_str = EMPTY_STRING.0;
-                    (*new_prop).value_blob = EMPTY_BLOB.0;
-                    num_synthetic = num_synthetic.wrapping_add(1);
-                }
-            }
-
-            // Copy the properties if necessary
-            if needs_copy {
-                let num_new_props: usize = (*elem).props.props.count.wrapping_add(num_synthetic);
-                ufbxi_check!(
-                    uc,
-                    !push_copy::<Prop>(
+                    (*elem).props.props.data = push_pop::<Prop>(
+                        uc.result_mut_ptr(),
                         uc.tmp_stack_mut_ptr(),
-                        to_size(prop_end.offset_from(copy_start)),
-                        copy_start,
-                    )
-                    .is_null(),
-                    "((ufbx_prop*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_prop), (((size_t)(prop_end - copy_start))), (copy_start)))"
-                );
-                (*elem).props.props.data =
-                    push_pop::<Prop>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_new_props);
-                ufbxi_check!(
-                    uc,
-                    !(*elem).props.props.data.is_null(),
-                    "elem->props.props.data"
-                );
-                (*elem).props.props.count = num_new_props;
+                        num_new_props,
+                    );
+                    ufbxi_check!(
+                        uc,
+                        !(*elem).props.props.data.is_null(),
+                        "elem->props.props.data"
+                    );
+                    (*elem).props.props.count = num_new_props;
+                }
+                (*elem).props.num_animated = num_animated;
             }
-            (*elem).props.num_animated = num_animated;
-        }
 
-        conn_src = src_end;
-        conn_dst = dst_end;
-        p_elem = p_elem.add(1);
+            conn_src = src_end;
+            conn_dst = dst_end;
+            p_elem = p_elem.add(1);
+        }
     }
 
     Ok(())
@@ -1794,132 +1918,164 @@ pub(crate) unsafe fn add_connections_to_elements(uc: &Context) -> Result<(), Fai
 
 // ufbx.c:18914-18994 `ufbxi_linearize_nodes`
 #[inline(never)]
-pub(crate) unsafe fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
     let num_nodes: usize = uc.tmp_node_ids_view().num_items();
-    let node_ids: *mut u32 = push_pop(uc.tmp_mut_ptr(), uc.tmp_node_ids_mut_ptr(), num_nodes);
-    buf_free(uc.tmp_node_ids_mut_ptr());
+    // SAFETY: pops the `num_nodes` recorded ids from uc's own `tmp_node_ids`
+    // buffer into uc's own tmp buffer, then frees the drained source buffer
+    // (both reached through uc's raw-ptr getters).
+    let node_ids: *mut u32 =
+        unsafe { push_pop(uc.tmp_mut_ptr(), uc.tmp_node_ids_mut_ptr(), num_nodes) };
+    // SAFETY: as above.
+    unsafe { buf_free(uc.tmp_node_ids_mut_ptr()) };
     ufbxi_check!(uc, !node_ids.is_null(), "node_ids");
 
-    let node_ptrs: *mut *mut Node = push(uc.tmp_stack_mut_ptr(), num_nodes);
+    // SAFETY: pushes `num_nodes` entries onto uc's own tmp stack.
+    let node_ptrs: *mut *mut Node = unsafe { push(uc.tmp_stack_mut_ptr(), num_nodes) };
     ufbxi_check!(uc, !node_ptrs.is_null(), "node_ptrs");
 
-    // Fetch the node pointers
-    for i in 0..num_nodes {
-        *node_ptrs.add(i) = *(uc.scene_view().elements_view().data() as *mut *mut Element)
-            .add(*node_ids.add(i) as usize) as *mut Node;
-        ufbx_assert!((**node_ptrs.add(i)).element.type_ == ElementType::Node);
+    // SAFETY: `node_ptrs` is the fresh `num_nodes`-element push above and each
+    // `node_ids[i]` is an index into the scene's element-pointer run (the ids were
+    // recorded as elements were created).
+    unsafe {
+        // Fetch the node pointers
+        for i in 0..num_nodes {
+            *node_ptrs.add(i) = *(uc.scene_view().elements_view().data() as *mut *mut Element)
+                .add(*node_ids.add(i) as usize) as *mut Node;
+            ufbx_assert!((**node_ptrs.add(i)).element.type_ == ElementType::Node);
+        }
+
+        // C reads `node_ptrs[0]` unconditionally; there is always at least the root
+        // node in `tmp_node_ids` by the time this runs.
+        uc.scene_view()
+            .set_root_node(Ref::from_ptr(*node_ptrs.add(0)));
     }
 
-    // C reads `node_ptrs[0]` unconditionally; there is always at least the root
-    // node in `tmp_node_ids` by the time this runs.
-    uc.scene_view()
-        .set_root_node(Ref::from_ptr(*node_ptrs.add(0)));
-
-    let node_offsets: *mut usize = push_pop(
-        uc.tmp_stack_mut_ptr(),
-        uc.tmp_typed_element_offsets_mut_ptr(ElementType::Node as usize),
-        num_nodes,
-    );
+    // SAFETY: pops the `num_nodes` node offsets recorded in uc's own typed
+    // element-offset buffer onto uc's own tmp stack.
+    let node_offsets: *mut usize = unsafe {
+        push_pop(
+            uc.tmp_stack_mut_ptr(),
+            uc.tmp_typed_element_offsets_mut_ptr(ElementType::Node as usize),
+            num_nodes,
+        )
+    };
     ufbxi_check!(uc, !node_offsets.is_null(), "node_offsets");
 
-    // Hook up the parent nodes, we'll assume that there's no cycles at this point
-    // C: `ufbxi_for_ptr(ufbx_node, p_node, node_ptrs, num_nodes)`
-    let mut p_node: *mut *mut Node = node_ptrs;
-    let p_node_end: *mut *mut Node = node_ptrs.add(num_nodes);
-    while p_node != p_node_end {
-        let node: *mut Node = *p_node;
+    // SAFETY: both passes below walk the fresh `num_nodes`-element `node_ptrs`
+    // run (the second reuses the first's `p_node_end`) and, per node, that
+    // node's own `connections_dst` run (`count` entries); `opt_ptr`/`ref_ptr`
+    // results are null-checked or always-resolved references of the same arena,
+    // and the parent-chain walk is bounded by the `num_nodes` cycle guard.
+    unsafe {
+        // Hook up the parent nodes, we'll assume that there's no cycles at this point
+        // C: `ufbxi_for_ptr(ufbx_node, p_node, node_ptrs, num_nodes)`
+        let mut p_node: *mut *mut Node = node_ptrs;
+        let p_node_end: *mut *mut Node = node_ptrs.add(num_nodes);
+        while p_node != p_node_end {
+            let node: *mut Node = *p_node;
 
-        // Pre-6000 files don't have any explicit root connections so they must always
-        // be connected to the root..
-        if opt_ptr(&(*node).parent).is_null()
-            && !(uc.opts_view().allow_nodes_out_of_root() && uc.version() >= 6000)
-        {
-            if node != ref_ptr(uc.scene_view().root_node_ptr()) {
-                (*node).parent = Some(uc.scene_view().root_node());
+            // Pre-6000 files don't have any explicit root connections so they must always
+            // be connected to the root..
+            if opt_ptr(&(*node).parent).is_null()
+                && !(uc.opts_view().allow_nodes_out_of_root() && uc.version() >= 6000)
+            {
+                if node != ref_ptr(uc.scene_view().root_node_ptr()) {
+                    (*node).parent = Some(uc.scene_view().root_node());
+                }
             }
-        }
 
-        // C: `ufbxi_for_list(ufbx_connection, conn, node->element.connections_dst)`
-        let mut conn: *mut Connection = (*node).element.connections_dst.data as *mut Connection;
-        let conn_end: *mut Connection = conn.add((*node).element.connections_dst.count);
-        while conn != conn_end {
-            if (*conn).src_prop.length > 0 || (*conn).dst_prop.length > 0 {
+            // C: `ufbxi_for_list(ufbx_connection, conn, node->element.connections_dst)`
+            let mut conn: *mut Connection = (*node).element.connections_dst.data as *mut Connection;
+            let conn_end: *mut Connection = conn.add((*node).element.connections_dst.count);
+            while conn != conn_end {
+                if (*conn).src_prop.length > 0 || (*conn).dst_prop.length > 0 {
+                    conn = conn.add(1);
+                    continue;
+                }
+                if (*ref_ptr(&(*conn).src)).type_ != ElementType::Node {
+                    conn = conn.add(1);
+                    continue;
+                }
+                (*(ref_ptr(&(*conn).src) as *mut Node)).parent = opt_ref(node);
                 conn = conn.add(1);
-                continue;
             }
-            if (*ref_ptr(&(*conn).src)).type_ != ElementType::Node {
-                conn = conn.add(1);
-                continue;
-            }
-            (*(ref_ptr(&(*conn).src) as *mut Node)).parent = opt_ref(node);
-            conn = conn.add(1);
+            p_node = p_node.add(1);
         }
-        p_node = p_node.add(1);
+
+        // Count the parent depths and child amounts
+        let mut p_node: *mut *mut Node = node_ptrs;
+        while p_node != p_node_end {
+            let node: *mut Node = *p_node;
+            let mut depth: u32 = 0;
+
+            // C: `for (ufbx_node *p = node->parent; p; p = p->parent)`
+            let mut p: *mut Node = opt_ptr(&(*node).parent);
+            while !p.is_null() {
+                depth = depth.wrapping_add((*p).node_depth.wrapping_add(1));
+                if (*p).node_depth > 0 {
+                    break;
+                }
+                ufbxi_check_msg!(
+                    uc,
+                    depth as usize <= num_nodes,
+                    "Cyclic node hierarchy",
+                    "depth <= num_nodes"
+                );
+                p = opt_ptr(&(*p).parent);
+            }
+
+            if uc.opts_view().node_depth_limit() > 0 {
+                ufbxi_check_msg!(
+                    uc,
+                    depth <= uc.opts_view().node_depth_limit(),
+                    "Node depth limit exceeded",
+                    "depth <= uc->opts.node_depth_limit"
+                );
+            }
+            (*node).node_depth = depth;
+
+            // Second pass to cache the depths to avoid O(n^2)
+            let mut p: *mut Node = opt_ptr(&(*node).parent);
+            while !p.is_null() {
+                depth = depth.wrapping_sub(1);
+                if depth <= (*p).node_depth {
+                    break;
+                }
+                (*p).node_depth = depth;
+                p = opt_ptr(&(*p).parent);
+            }
+            p_node = p_node.add(1);
+        }
     }
 
-    // Count the parent depths and child amounts
-    let mut p_node: *mut *mut Node = node_ptrs;
-    while p_node != p_node_end {
-        let node: *mut Node = *p_node;
-        let mut depth: u32 = 0;
+    // SAFETY: sorts the fresh `num_nodes`-element `node_ptrs` run, then re-indexes
+    // it; each `p_offset` is the fresh non-null result of a push onto uc's own
+    // typed-offset buffer, and `original_id` is that node's index into the
+    // equally sized `node_offsets` run.
+    unsafe {
+        sort_node_ptrs(uc, node_ptrs, num_nodes)?;
 
-        // C: `for (ufbx_node *p = node->parent; p; p = p->parent)`
-        let mut p: *mut Node = opt_ptr(&(*node).parent);
-        while !p.is_null() {
-            depth = depth.wrapping_add((*p).node_depth.wrapping_add(1));
-            if (*p).node_depth > 0 {
-                break;
-            }
-            ufbxi_check_msg!(
-                uc,
-                depth as usize <= num_nodes,
-                "Cyclic node hierarchy",
-                "depth <= num_nodes"
+        for i in 0..num_nodes as u32 {
+            let p_offset: *mut usize = push(
+                uc.tmp_typed_element_offsets_mut_ptr(ElementType::Node as usize),
+                1,
             );
-            p = opt_ptr(&(*p).parent);
-        }
+            ufbxi_check!(uc, !p_offset.is_null(), "p_offset");
+            let node: *mut Node = *node_ptrs.add(i as usize);
 
-        if uc.opts_view().node_depth_limit() > 0 {
-            ufbxi_check_msg!(
-                uc,
-                depth <= uc.opts_view().node_depth_limit(),
-                "Node depth limit exceeded",
-                "depth <= uc->opts.node_depth_limit"
-            );
+            let original_id: u32 = (*node).element.typed_id;
+            (*node).element.typed_id = i;
+            *p_offset = *node_offsets.add(original_id as usize);
         }
-        (*node).node_depth = depth;
-
-        // Second pass to cache the depths to avoid O(n^2)
-        let mut p: *mut Node = opt_ptr(&(*node).parent);
-        while !p.is_null() {
-            depth = depth.wrapping_sub(1);
-            if depth <= (*p).node_depth {
-                break;
-            }
-            (*p).node_depth = depth;
-            p = opt_ptr(&(*p).parent);
-        }
-        p_node = p_node.add(1);
     }
 
-    sort_node_ptrs(uc, node_ptrs, num_nodes)?;
-
-    for i in 0..num_nodes as u32 {
-        let p_offset: *mut usize = push(
-            uc.tmp_typed_element_offsets_mut_ptr(ElementType::Node as usize),
-            1,
-        );
-        ufbxi_check!(uc, !p_offset.is_null(), "p_offset");
-        let node: *mut Node = *node_ptrs.add(i as usize);
-
-        let original_id: u32 = (*node).element.typed_id;
-        (*node).element.typed_id = i;
-        *p_offset = *node_offsets.add(original_id as usize);
+    // SAFETY: pops the two temporary runs pushed above off uc's own tmp stack,
+    // discarding the values.
+    unsafe {
+        // Pop the temporary arrays
+        pop::<usize>(uc.tmp_stack_mut_ptr(), num_nodes, ptr::null_mut());
+        pop::<*mut Node>(uc.tmp_stack_mut_ptr(), num_nodes, ptr::null_mut());
     }
-
-    // Pop the temporary arrays
-    pop::<usize>(uc.tmp_stack_mut_ptr(), num_nodes, ptr::null_mut());
-    pop::<*mut Node>(uc.tmp_stack_mut_ptr(), num_nodes, ptr::null_mut());
 
     Ok(())
 }
@@ -4197,20 +4353,25 @@ pub(crate) unsafe fn finalize_nurbs_basis(
 
 // ufbx.c:20314-20362 `ufbxi_finalize_lod_group`
 #[inline(never)]
-pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Result<(), Fail> {
+pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Result<(), Fail> {
     // `lod_view` is the uc-anchored dispatch handle (minted in `finalize_scene`
     // from the arena `lod_groups` run); the raw `lod` is used only for the field
     // writes, while every property lookup goes through `lod_view.props_view()`
     // (<= uc), collapsing the per-call free-lifetime `PropsView` bridges.
     let lod: *mut LodGroup = lod_view.get();
     let mut num_levels: usize = 0;
-    for _i in 0..(*lod).element.instances.count {
-        // C-parity: the subscript really is `instances.data[0]` (not `[i]`) —
-        // ufbx.c:20318.
-        num_levels = max_sz(
-            num_levels,
-            (*ref_ptr((*lod).element.instances.data)).children.count,
-        );
+    // SAFETY: reads the LOD group's own instance run; C subscripts entry `0`
+    // (never `i`), which the loop guard proves present, and `ref_ptr` resolves
+    // the always-set node reference.
+    unsafe {
+        for _i in 0..(*lod).element.instances.count {
+            // C-parity: the subscript really is `instances.data[0]` (not `[i]`) —
+            // ufbx.c:20318.
+            num_levels = max_sz(
+                num_levels,
+                (*ref_ptr((*lod).element.instances.data)).children.count,
+            );
+        }
     }
 
     // C: `char prop_name[64];` — uninitialized local (no upstream
@@ -4218,76 +4379,96 @@ pub(crate) unsafe fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -
     let mut prop_name_storage = MaybeUninit::<[u8; 64]>::uninit();
     let prop_name: *mut u8 = prop_name_storage.as_mut_ptr() as *mut u8;
     let mut i: usize = 0;
-    loop {
-        let len: i32 = ufbxi_snprintf!(prop_name, size_of::<[u8; 64]>(), "Thresholds|Level%zu", i);
-        let prop: *mut Prop = find_prop_len(lod_view.props_view(), prop_name, len as usize)
-            .map_or(ptr::null_mut(), PropView::get);
-        if prop.is_null() {
-            break;
+    // SAFETY: `prop_name` is the local 64-byte buffer, NUL-terminated by
+    // `ufbxi_snprintf` with the matching `len` before each lookup of the LOD
+    // group's own props.
+    unsafe {
+        loop {
+            let len: i32 =
+                ufbxi_snprintf!(prop_name, size_of::<[u8; 64]>(), "Thresholds|Level%zu", i);
+            let prop: *mut Prop = find_prop_len(lod_view.props_view(), prop_name, len as usize)
+                .map_or(ptr::null_mut(), PropView::get);
+            if prop.is_null() {
+                break;
+            }
+            num_levels = max_sz(num_levels, i + 1);
+            i += 1;
         }
-        num_levels = max_sz(num_levels, i + 1);
-        i += 1;
     }
 
-    let levels: *mut LodLevel = push_zero(uc.result_mut_ptr(), num_levels);
+    // SAFETY: pushes `num_levels` zeroed entries onto uc's own result buffer
+    // through its raw-ptr getter.
+    let levels: *mut LodLevel = unsafe { push_zero(uc.result_mut_ptr(), num_levels) };
     ufbxi_check!(uc, !levels.is_null(), "levels");
 
-    (*lod).relative_distances = api_find_bool(
-        lod_view.props_view(),
-        b"ThresholdsUsedAsPercentage\0".as_ptr(),
-        false,
-    );
-    (*lod).ignore_parent_transform =
-        !api_find_bool(lod_view.props_view(), b"WorldSpace\0".as_ptr(), true);
+    // SAFETY: `lod` is the LOD-group view's own storage and every lookup reads
+    // that same view's props with a NUL-terminated literal; `levels` is the fresh
+    // non-null push above.
+    unsafe {
+        (*lod).relative_distances = api_find_bool(
+            lod_view.props_view(),
+            b"ThresholdsUsedAsPercentage\0".as_ptr(),
+            false,
+        );
+        (*lod).ignore_parent_transform =
+            !api_find_bool(lod_view.props_view(), b"WorldSpace\0".as_ptr(), true);
 
-    (*lod).use_distance_limit =
-        api_find_bool(lod_view.props_view(), b"MinMaxDistance\0".as_ptr(), false);
-    (*lod).distance_limit_min = api_find_real(
-        lod_view.props_view(),
-        b"MinDistance\0".as_ptr(),
-        -100.0 as Real,
-    );
-    (*lod).distance_limit_max = api_find_real(
-        lod_view.props_view(),
-        b"MaxDistance\0".as_ptr(),
-        100.0 as Real,
-    );
+        (*lod).use_distance_limit =
+            api_find_bool(lod_view.props_view(), b"MinMaxDistance\0".as_ptr(), false);
+        (*lod).distance_limit_min = api_find_real(
+            lod_view.props_view(),
+            b"MinDistance\0".as_ptr(),
+            -100.0 as Real,
+        );
+        (*lod).distance_limit_max = api_find_real(
+            lod_view.props_view(),
+            b"MaxDistance\0".as_ptr(),
+            100.0 as Real,
+        );
 
-    (*lod).lod_levels.data = levels;
-    (*lod).lod_levels.count = num_levels;
+        (*lod).lod_levels.data = levels;
+        (*lod).lod_levels.count = num_levels;
+    }
 
-    for i in 0..num_levels {
-        let level: *mut LodLevel = levels.add(i);
+    // SAFETY: `levels` is the fresh non-null `num_levels`-element push above, so
+    // every `add(i)` is in bounds; `prop_name` is the local 64-byte buffer that
+    // `ufbxi_snprintf` NUL-terminates with the matching `len`; the transmute is
+    // guarded by the explicit `[0, 2]` check.
+    unsafe {
+        for i in 0..num_levels {
+            let level: *mut LodLevel = levels.add(i);
 
-        if i > 0 {
-            let len: i32 = ufbxi_snprintf!(
-                prop_name,
-                size_of::<[u8; 64]>(),
-                "Thresholds|Level%zu",
-                i - 1
-            );
-            (*level).distance = api_find_real_len(
-                lod_view.props_view(),
-                prop_name,
-                len as usize,
-                0.0f32 as Real,
-            );
-        } else if (*lod).relative_distances {
-            (*level).distance = 100.0 as Real;
-        }
+            if i > 0 {
+                let len: i32 = ufbxi_snprintf!(
+                    prop_name,
+                    size_of::<[u8; 64]>(),
+                    "Thresholds|Level%zu",
+                    i - 1
+                );
+                (*level).distance = api_find_real_len(
+                    lod_view.props_view(),
+                    prop_name,
+                    len as usize,
+                    0.0f32 as Real,
+                );
+            } else if (*lod).relative_distances {
+                (*level).distance = 100.0 as Real;
+            }
 
-        {
-            let len: i32 = ufbxi_snprintf!(
-                prop_name,
-                size_of::<[u8; 64]>(),
-                "DisplayLevels|Level%zu",
-                i
-            );
-            let display: i64 = api_find_int_len(lod_view.props_view(), prop_name, len as usize, 0);
-            if display >= 0 && display <= 2 {
-                // C: `(ufbx_lod_display)display` — guarded to [0, 2], every
-                // value of which is a valid `ufbx_lod_display`.
-                (*level).display = core::mem::transmute::<u32, LodDisplay>(display as u32);
+            {
+                let len: i32 = ufbxi_snprintf!(
+                    prop_name,
+                    size_of::<[u8; 64]>(),
+                    "DisplayLevels|Level%zu",
+                    i
+                );
+                let display: i64 =
+                    api_find_int_len(lod_view.props_view(), prop_name, len as usize, 0);
+                if display >= 0 && display <= 2 {
+                    // C: `(ufbx_lod_display)display` — guarded to [0, 2], every
+                    // value of which is a valid `ufbx_lod_display`.
+                    (*level).display = core::mem::transmute::<u32, LodDisplay>(display as u32);
+                }
             }
         }
     }
@@ -4582,22 +4763,28 @@ pub(crate) const SHADER_TEXTURE_TYPE_COUNT: u32 = ShaderTextureType::Osl as u32 
 
 // ufbx.c:20537-20690 `ufbxi_finalize_shader_texture`
 #[inline(never)]
-pub(crate) unsafe fn finalize_shader_texture<'a>(
+pub(crate) fn finalize_shader_texture<'a>(
     uc: &'a Context,
     texture_view: &'a TextureView,
 ) -> Result<(), Fail> {
     let texture: *mut Texture = texture_view.get();
-    let classid_a: u32 =
-        api_find_int(texture_view.props_view(), b"3dsMax|ClassIDa\0".as_ptr(), 0) as u64 as u32;
-    let classid_b: u32 =
-        api_find_int(texture_view.props_view(), b"3dsMax|ClassIDb\0".as_ptr(), 0) as u64 as u32;
+    // SAFETY: props-view lookups with NUL-terminated literal names.
+    let (classid_a, classid_b): (u32, u32) = unsafe {
+        (
+            api_find_int(texture_view.props_view(), b"3dsMax|ClassIDa\0".as_ptr(), 0) as u64 as u32,
+            api_find_int(texture_view.props_view(), b"3dsMax|ClassIDb\0".as_ptr(), 0) as u64 as u32,
+        )
+    };
     let classid: u64 = (classid_a as u64) << 32 | classid_b as u64;
 
-    let max_texture: String = find_string(
-        texture_view.props_view(),
-        b"3dsMax|MaxTexture\0".as_ptr(),
-        EMPTY_STRING.0,
-    );
+    // SAFETY: as above.
+    let max_texture: String = unsafe {
+        find_string(
+            texture_view.props_view(),
+            b"3dsMax|MaxTexture\0".as_ptr(),
+            EMPTY_STRING.0,
+        )
+    };
 
     // Check first if the texture looks like it could be a shader.
     // C: `ufbx_shader_texture_type type = (ufbx_shader_texture_type)UFBX_SHADER_TEXTURE_TYPE_COUNT;`
@@ -4605,200 +4792,242 @@ pub(crate) unsafe fn finalize_shader_texture<'a>(
     // `uint32_t` C stores and only transmuted once the range check passed.
     let mut type_: u32 = SHADER_TEXTURE_TYPE_COUNT;
 
-    if strcmp(max_texture.data, b"MULTIOUTPUT_TO_OSLMap\0".as_ptr()) == 0
-        || classid == 0x896ef2fc44bd743f
-    {
-        type_ = ShaderTextureType::SelectOutput as u32;
-    } else if strcmp(max_texture.data, b"OSLMap\0".as_ptr()) == 0 || classid == 0x7f9a7b9d6fcdf00d {
-        type_ = ShaderTextureType::Osl as u32;
-    } else if (*texture).type_ == TextureType::File
-        && (*texture).relative_filename.length == 0
-        && (*texture).absolute_filename.length == 0
-        && opt_ptr(&(*texture).video).is_null()
-    {
-        type_ = ShaderTextureType::Unknown as u32;
+    // SAFETY: `max_texture` is an interned (NUL-terminated) string compared
+    // against literals, and `texture` is the texture view's own storage.
+    unsafe {
+        if strcmp(max_texture.data, b"MULTIOUTPUT_TO_OSLMap\0".as_ptr()) == 0
+            || classid == 0x896ef2fc44bd743f
+        {
+            type_ = ShaderTextureType::SelectOutput as u32;
+        } else if strcmp(max_texture.data, b"OSLMap\0".as_ptr()) == 0
+            || classid == 0x7f9a7b9d6fcdf00d
+        {
+            type_ = ShaderTextureType::Osl as u32;
+        } else if (*texture).type_ == TextureType::File
+            && (*texture).relative_filename.length == 0
+            && (*texture).absolute_filename.length == 0
+            && opt_ptr(&(*texture).video).is_null()
+        {
+            type_ = ShaderTextureType::Unknown as u32;
+        }
     }
 
     if type_ == SHADER_TEXTURE_TYPE_COUNT {
         return Ok(());
     }
 
-    let shader: *mut ShaderTexture = push_zero(uc.result_mut_ptr(), 1);
+    // SAFETY: pushes one zeroed entry onto uc's own result buffer through its
+    // raw-ptr getter.
+    let shader: *mut ShaderTexture = unsafe { push_zero(uc.result_mut_ptr(), 1) };
     ufbxi_check!(uc, !shader.is_null(), "shader");
 
-    (*shader).type_ = core::mem::transmute::<u32, ShaderTextureType>(type_);
+    // SAFETY: `shader` is the fresh non-null push above; `type_` passed the
+    // range check above, so the transmute is of a valid discriminant; the prop
+    // lookups use NUL-terminated static names and every `prop` is null-checked.
+    unsafe {
+        (*shader).type_ = core::mem::transmute::<u32, ShaderTextureType>(type_);
 
-    // C: `static const char *const name_props[] = { "3dsMax|params|OSLShaderName" };`
-    static NAME_PROPS: [CharPtr; 1] = [CharPtr(b"3dsMax|params|OSLShaderName\0".as_ptr())];
+        // C: `static const char *const name_props[] = { "3dsMax|params|OSLShaderName" };`
+        static NAME_PROPS: [CharPtr; 1] = [CharPtr(b"3dsMax|params|OSLShaderName\0".as_ptr())];
 
-    // C: `static const char *const source_props[] = { "3dsMax|params|OSLCode" };`
-    static SOURCE_PROPS: [CharPtr; 1] = [CharPtr(b"3dsMax|params|OSLCode\0".as_ptr())];
+        // C: `static const char *const source_props[] = { "3dsMax|params|OSLCode" };`
+        static SOURCE_PROPS: [CharPtr; 1] = [CharPtr(b"3dsMax|params|OSLCode\0".as_ptr())];
 
-    (*shader).shader_source.data = EMPTY_CHAR.as_ptr();
-    (*shader).shader_name.data = EMPTY_CHAR.as_ptr();
+        (*shader).shader_source.data = EMPTY_CHAR.as_ptr();
+        (*shader).shader_name.data = EMPTY_CHAR.as_ptr();
 
-    // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(name_props); i++)`
-    for i in 0..NAME_PROPS.len() {
-        let prop: *mut Prop = api_find_prop(texture_view.props_view(), NAME_PROPS[i].0)
-            .map_or(ptr::null_mut(), PropView::get);
-        if !prop.is_null() {
-            (*shader).shader_name = (*prop).value_str;
-            break;
+        // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(name_props); i++)`
+        for i in 0..NAME_PROPS.len() {
+            let prop: *mut Prop = api_find_prop(texture_view.props_view(), NAME_PROPS[i].0)
+                .map_or(ptr::null_mut(), PropView::get);
+            if !prop.is_null() {
+                (*shader).shader_name = (*prop).value_str;
+                break;
+            }
+        }
+
+        // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(source_props); i++)`
+        for i in 0..SOURCE_PROPS.len() {
+            let prop: *mut Prop = api_find_prop(texture_view.props_view(), SOURCE_PROPS[i].0)
+                .map_or(ptr::null_mut(), PropView::get);
+            if !prop.is_null() {
+                (*shader).shader_source = (*prop).value_str;
+                (*shader).raw_shader_source = (*prop).value_blob;
+                break;
+            }
         }
     }
 
-    // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(source_props); i++)`
-    for i in 0..SOURCE_PROPS.len() {
-        let prop: *mut Prop = api_find_prop(texture_view.props_view(), SOURCE_PROPS[i].0)
-            .map_or(ptr::null_mut(), PropView::get);
-        if !prop.is_null() {
-            (*shader).shader_source = (*prop).value_str;
-            (*shader).raw_shader_source = (*prop).value_blob;
-            break;
+    // SAFETY: `shader` is the fresh push above and `texture` the view's own
+    // storage; the suffix scan walks `name` backwards from its own length, so
+    // `begin` stays inside the interned string it slices.
+    unsafe {
+        shader_texture_find_prefix(uc, texture, shader)?;
+
+        if (*shader).shader_name.length == 0 {
+            let mut name: String = (*shader).prop_prefix;
+            if sp::remove_suffix_c(&mut name, b" Parameters/Connections|\0".as_ptr()) {
+                let mut begin: usize = name.length;
+                while begin > 0 && *name.data.add(begin - 1) != b'|' {
+                    begin -= 1;
+                }
+
+                (*shader).shader_name.data = name.data.add(begin);
+                (*shader).shader_name.length = name.length - begin;
+                sp::push_string_place_str(
+                    uc.string_pool_mut_ptr(),
+                    &mut (*shader).shader_name,
+                    false,
+                )?;
+            }
+        }
+
+        if (*shader).shader_name.length == 0 {
+            if max_texture.length > 0 {
+                (*shader).shader_name = max_texture;
+            }
+        }
+
+        if classid != 0 {
+            (*shader).shader_type_id = classid;
+        }
+
+        if (*shader).prop_prefix.length == 0 {
+            // If we not find any shader properties so we might have guessed wrong.
+            // We "leak" (freed with scene) the shader in this case but it's negligible.
+            return Ok(());
         }
     }
 
-    shader_texture_find_prefix(uc, texture, shader)?;
-
-    if (*shader).shader_name.length == 0 {
-        let mut name: String = (*shader).prop_prefix;
-        if sp::remove_suffix_c(&mut name, b" Parameters/Connections|\0".as_ptr()) {
-            let mut begin: usize = name.length;
-            while begin > 0 && *name.data.add(begin - 1) != b'|' {
-                begin -= 1;
+    // SAFETY: walks the texture's own property table (`count` entries); the
+    // growth targets uc's own paired `tmp_arr`/`tmp_arr_size` state, `input` is
+    // the entry the grow just made room for (and is zeroed before use), and every
+    // `base` is null-checked before its deref.
+    unsafe {
+        // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
+        let mut prop: *mut Prop = (*texture).element.props.props.data as *mut Prop;
+        let prop_end: *mut Prop = add_ptr(prop, (*texture).element.props.props.count);
+        while prop != prop_end {
+            let mut name: String = (*prop).name;
+            if !sp::remove_prefix_str(&mut name, (*shader).prop_prefix) {
+                prop = prop.add(1);
+                continue;
             }
 
-            (*shader).shader_name.data = name.data.add(begin);
-            (*shader).shader_name.length = name.length - begin;
-            sp::push_string_place_str(uc.string_pool_mut_ptr(), &mut (*shader).shader_name, false)?;
-        }
-    }
+            // Check if this property is a modifier to an existing input.
+            let mut base_name: String = name;
+            if sp::remove_suffix_c(&mut base_name, b"_map\0".as_ptr())
+                || sp::remove_suffix_c(&mut base_name, b".shader\0".as_ptr())
+            {
+                let base: *mut ShaderTextureInput =
+                    find_shader_texture_input_len(shader, base_name.data, base_name.length);
+                if !base.is_null() {
+                    (*base).texture_prop = opt_ref(prop);
+                    prop = prop.add(1);
+                    continue;
+                }
+            } else if sp::remove_suffix_c(&mut base_name, b".connected\0".as_ptr())
+                || sp::remove_suffix_c(&mut base_name, b"Enabled\0".as_ptr())
+            {
+                let base: *mut ShaderTextureInput =
+                    find_shader_texture_input_len(shader, base_name.data, base_name.length);
+                if !base.is_null() {
+                    (*base).texture_enabled_prop = opt_ref(prop);
+                    prop = prop.add(1);
+                    continue;
+                }
+            }
 
-    if (*shader).shader_name.length == 0 {
-        if max_texture.length > 0 {
-            (*shader).shader_name = max_texture;
-        }
-    }
+            // Use `uc->tmp_arr` to store the texture inputs so we can search them while we insert new ones.
+            ufbxi_check!(
+                uc,
+                grow_array::<u8>(
+                    uc.ator_tmp_mut_ptr(),
+                    uc.tmp_arr_mut_ptr(),
+                    uc.tmp_arr_size_mut_ptr(),
+                    (*shader)
+                        .inputs
+                        .count
+                        .wrapping_add(1)
+                        .wrapping_mul(size_of::<ShaderTextureInput>()),
+                ),
+                "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), ((shader->inputs.count + 1) * sizeof(ufbx_shader_texture_input)))"
+            );
+            (*shader).inputs.data = uc.tmp_arr() as *const ShaderTextureInput;
 
-    if classid != 0 {
-        (*shader).shader_type_id = classid;
-    }
+            // Add a new property
+            // C: `ufbx_shader_texture_input *input = &shader->inputs.data[shader->inputs.count++];`
+            let input: *mut ShaderTextureInput =
+                ((*shader).inputs.data as *mut ShaderTextureInput).add((*shader).inputs.count);
+            (*shader).inputs.count += 1;
+            ptr::write_bytes(input, 0, 1);
 
-    if (*shader).prop_prefix.length == 0 {
-        // If we not find any shader properties so we might have guessed wrong.
-        // We "leak" (freed with scene) the shader in this case but it's negligible.
-        return Ok(());
-    }
+            // NOTE: This is a bit hackish, we are using a suffix of an interned string. It won't compare
+            // pointer equal to the same string but that shouldn't matter..
+            (*input).name = name;
 
-    // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
-    let mut prop: *mut Prop = (*texture).element.props.props.data as *mut Prop;
-    let prop_end: *mut Prop = add_ptr(prop, (*texture).element.props.props.count);
-    while prop != prop_end {
-        let mut name: String = (*prop).name;
-        if !sp::remove_prefix_str(&mut name, (*shader).prop_prefix) {
+            // Connect the property only, values and textures etc are fetched in `ufbxi_update_shader_texture()`.
+            (*input).prop = opt_ref(prop);
+
             prop = prop.add(1);
-            continue;
         }
-
-        // Check if this property is a modifier to an existing input.
-        let mut base_name: String = name;
-        if sp::remove_suffix_c(&mut base_name, b"_map\0".as_ptr())
-            || sp::remove_suffix_c(&mut base_name, b".shader\0".as_ptr())
-        {
-            let base: *mut ShaderTextureInput =
-                find_shader_texture_input_len(shader, base_name.data, base_name.length);
-            if !base.is_null() {
-                (*base).texture_prop = opt_ref(prop);
-                prop = prop.add(1);
-                continue;
-            }
-        } else if sp::remove_suffix_c(&mut base_name, b".connected\0".as_ptr())
-            || sp::remove_suffix_c(&mut base_name, b"Enabled\0".as_ptr())
-        {
-            let base: *mut ShaderTextureInput =
-                find_shader_texture_input_len(shader, base_name.data, base_name.length);
-            if !base.is_null() {
-                (*base).texture_enabled_prop = opt_ref(prop);
-                prop = prop.add(1);
-                continue;
-            }
-        }
-
-        // Use `uc->tmp_arr` to store the texture inputs so we can search them while we insert new ones.
-        ufbxi_check!(
-            uc,
-            grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
-                uc.tmp_arr_mut_ptr(),
-                uc.tmp_arr_size_mut_ptr(),
-                (*shader)
-                    .inputs
-                    .count
-                    .wrapping_add(1)
-                    .wrapping_mul(size_of::<ShaderTextureInput>()),
-            ),
-            "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), ((shader->inputs.count + 1) * sizeof(ufbx_shader_texture_input)))"
-        );
-        (*shader).inputs.data = uc.tmp_arr() as *const ShaderTextureInput;
-
-        // Add a new property
-        // C: `ufbx_shader_texture_input *input = &shader->inputs.data[shader->inputs.count++];`
-        let input: *mut ShaderTextureInput =
-            ((*shader).inputs.data as *mut ShaderTextureInput).add((*shader).inputs.count);
-        (*shader).inputs.count += 1;
-        ptr::write_bytes(input, 0, 1);
-
-        // NOTE: This is a bit hackish, we are using a suffix of an interned string. It won't compare
-        // pointer equal to the same string but that shouldn't matter..
-        (*input).name = name;
-
-        // Connect the property only, values and textures etc are fetched in `ufbxi_update_shader_texture()`.
-        (*input).prop = opt_ref(prop);
-
-        prop = prop.add(1);
     }
 
     // Retain the shader inputs
-    (*shader).inputs.data = push_copy::<ShaderTextureInput>(
-        uc.result_mut_ptr(),
-        (*shader).inputs.count,
-        (*shader).inputs.data,
-    );
-    ufbxi_check!(uc, !(*shader).inputs.data.is_null(), "shader->inputs.data");
+    // SAFETY: copies the `inputs.count` entries accumulated in uc's own tmp array
+    // into uc's own result buffer, then records the fresh run on the texture's
+    // own shader.
+    unsafe {
+        (*shader).inputs.data = push_copy::<ShaderTextureInput>(
+            uc.result_mut_ptr(),
+            (*shader).inputs.count,
+            (*shader).inputs.data,
+        );
+        ufbxi_check!(uc, !(*shader).inputs.data.is_null(), "shader->inputs.data");
 
-    (*texture).shader = opt_ref(shader);
-    (*texture).type_ = TextureType::Shader;
-    uc.scene_view()
-        .metadata_view()
-        .set_num_shader_textures(uc.scene_view().metadata_view().num_shader_textures() + 1);
+        (*texture).shader = opt_ref(shader);
+        (*texture).type_ = TextureType::Shader;
+        uc.scene_view()
+            .metadata_view()
+            .set_num_shader_textures(uc.scene_view().metadata_view().num_shader_textures() + 1);
+    }
 
     if !uc.opts_view().disable_quirks() {
-        // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(ufbxi_file_shaders); i++)`
-        for i in 0..FILE_SHADERS.len() {
-            let fs: *const FileShader = &FILE_SHADERS[i];
+        // SAFETY: `shader`/`texture` as above; `fs` indexes the static `FILE_SHADERS`
+        // table whose name fields are NUL-terminated literals, and `input`/`prop` are
+        // null-checked before their derefs.
+        unsafe {
+            // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(ufbxi_file_shaders); i++)`
+            for i in 0..FILE_SHADERS.len() {
+                let fs: *const FileShader = &FILE_SHADERS[i];
 
-            if ((*fs).shader_id != 0 && (*shader).shader_type_id == (*fs).shader_id)
-                || strcmp((*shader).shader_name.data, (*fs).shader_name) == 0
-            {
-                let input: *mut ShaderTextureInput =
-                    find_shader_texture_input(shader, (*fs).input_name);
-                if !input.is_null() {
-                    // TODO: Support for specifying relative filename here if ever needed
-                    let prop: *mut Prop = opt_ptr(&(*input).prop);
-                    (*texture).absolute_filename = (*prop).value_str;
-                    (*texture).raw_absolute_filename = (*prop).value_blob;
-                    (*texture).type_ = TextureType::File;
-                    break;
+                if ((*fs).shader_id != 0 && (*shader).shader_type_id == (*fs).shader_id)
+                    || strcmp((*shader).shader_name.data, (*fs).shader_name) == 0
+                {
+                    let input: *mut ShaderTextureInput =
+                        find_shader_texture_input(shader, (*fs).input_name);
+                    if !input.is_null() {
+                        // TODO: Support for specifying relative filename here if ever needed
+                        let prop: *mut Prop = opt_ptr(&(*input).prop);
+                        (*texture).absolute_filename = (*prop).value_str;
+                        (*texture).raw_absolute_filename = (*prop).value_blob;
+                        (*texture).type_ = TextureType::File;
+                        break;
+                    }
                 }
             }
         }
     }
 
-    // Anchor the texture to `'a` (= uc): `texture` lives in the uc arena, so the
-    // explicit `&'a` annotation forces the reinterpret lifetime to unify with the
-    // `uc` borrow rather than infer free.
-    let texture_view: &'a TextureView = TextureView::from_ptr(texture);
-    update_shader_texture(texture_view, shader);
+    // SAFETY: `texture` lives in the uc arena, so the reinterpret satisfies the
+    // element-view construction invariant; `shader` is the fresh push above.
+    unsafe {
+        // Anchor the texture to `'a` (= uc): `texture` lives in the uc arena, so the
+        // explicit `&'a` annotation forces the reinterpret lifetime to unify with the
+        // `uc` borrow rather than infer free.
+        let texture_view: &'a TextureView = TextureView::from_ptr(texture);
+        update_shader_texture(texture_view, shader);
+    }
 
     Ok(())
 }
@@ -5007,9 +5236,11 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
 
 // ufbx.c:20802-20817 `ufbxi_pop_texture_files`
 #[inline(never)]
-pub(crate) unsafe fn pop_texture_files(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn pop_texture_files(uc: &Context) -> Result<(), Fail> {
     let num_files: u32 = uc.texture_file_map_view().size();
-    let files: *mut TextureFile = push(uc.result_mut_ptr(), num_files as usize);
+    // SAFETY: pushing `num_files` entries onto uc's own result buffer through
+    // its raw-ptr getter.
+    let files: *mut TextureFile = unsafe { push(uc.result_mut_ptr(), num_files as usize) };
     ufbxi_check!(uc, !files.is_null(), "files");
 
     uc.scene_view().texture_files_view().set_data(files);
@@ -5019,8 +5250,13 @@ pub(crate) unsafe fn pop_texture_files(uc: &Context) -> Result<(), Fail> {
 
     let entries: *mut TextureFileEntry =
         uc.texture_file_map_view().items() as *mut TextureFileEntry;
-    for i in 0..num_files as usize {
-        ptr::copy_nonoverlapping((*entries.add(i)).file, files.add(i), 1);
+    // SAFETY: `entries` is uc's own texture-file map storage, which holds
+    // `num_files` live entries; `files` is the fresh non-null `num_files`-entry
+    // push above, so both sides of every copy are in bounds and disjoint.
+    unsafe {
+        for i in 0..num_files as usize {
+            ptr::copy_nonoverlapping((*entries.add(i)).file, files.add(i), 1);
+        }
     }
 
     Ok(())
@@ -5139,25 +5375,32 @@ pub(crate) const FILE_TEXTURE_FETCH_FINISHED: u32 = 2;
 // Populate `ufbx_texture.file_textures[]` arrays.
 // ufbx.c:20875-21007 `ufbxi_fetch_file_textures`
 #[inline(never)]
-pub(crate) unsafe fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
     // We keep pointers to `ufbx_texture` in `tmp_stack` as a working set, since we don't know
     // how deep the shader graphs might be.
 
     // Start by pushing all the textures into the stack
     let mut num_stack_textures: usize = uc.scene_view().textures_view().count();
-    ufbxi_check!(
-        uc,
-        !push_copy::<*mut Texture>(
-            uc.tmp_stack_mut_ptr(),
-            num_stack_textures,
-            uc.scene_view().textures_view().data() as *const *mut Texture,
-        )
-        .is_null(),
-        "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (num_stack_textures), (uc->scene.textures.data)))"
-    );
+    // SAFETY: copies the scene's stored `textures` element-pointer run
+    // (`count` entries) onto uc's own tmp stack through its raw-ptr getter.
+    unsafe {
+        ufbxi_check!(
+            uc,
+            !push_copy::<*mut Texture>(
+                uc.tmp_stack_mut_ptr(),
+                num_stack_textures,
+                uc.scene_view().textures_view().data() as *const *mut Texture,
+            )
+            .is_null(),
+            "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (num_stack_textures), (uc->scene.textures.data)))"
+        );
+    }
 
     // Compressed `ufbxi_file_texture_fetch_state`
-    let states: *mut u8 = push_zero(uc.tmp_mut_ptr(), uc.scene_view().textures_view().count());
+    // SAFETY: pushes one zeroed byte per scene texture onto uc's own tmp buffer
+    // through its raw-ptr getter.
+    let states: *mut u8 =
+        unsafe { push_zero(uc.tmp_mut_ptr(), uc.scene_view().textures_view().count()) };
     ufbxi_check!(uc, !states.is_null(), "states");
 
     // C: `while (num_stack_textures-- > 0)` — the post-decrement runs on every
@@ -5171,208 +5414,229 @@ pub(crate) unsafe fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
         }
 
         let mut texture: *mut Texture = ptr::null_mut();
-        pop::<*mut Texture>(uc.tmp_stack_mut_ptr(), 1, &mut texture);
+        // SAFETY: pops one texture pointer from uc's own tmp stack (the loop
+        // counter guarantees an entry is there) into an unaliased local.
+        unsafe { pop::<*mut Texture>(uc.tmp_stack_mut_ptr(), 1, &mut texture) };
 
-        let state: u32 = *states.add((*texture).element.typed_id as usize) as u32;
+        // SAFETY: `states` is the fresh zeroed run pushed above, one byte per
+        // scene texture, indexed here by the texture's own `typed_id`.
+        let state: u32 = unsafe { *states.add((*texture).element.typed_id as usize) } as u32;
         if state == FILE_TEXTURE_FETCH_FINISHED {
             continue;
         }
-        let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
+        // SAFETY: reads the texture's own optional shader reference; the result
+        // is null-checked before every use.
+        let shader: *mut ShaderTexture = unsafe { opt_ptr(&(*texture).shader) };
 
+        // SAFETY: `texture`/`shader` as above; `states` is indexed by the texture's own
+        // `typed_id`; each `dst` is the fresh non-null result of a push onto uc's own
+        // tmp stack, `deduplicate_textures` writes its out-param before returning
+        // Ok, and every walked run (`layers`, `inputs`, `file_textures`, the `deps`/
+        // `files` runs) is traversed with its own count.
         if state == FILE_TEXTURE_FETCH_STARTED {
-            *states.add((*texture).element.typed_id as usize) = FILE_TEXTURE_FETCH_FINISHED as u8;
+            unsafe {
+                *states.add((*texture).element.typed_id as usize) =
+                    FILE_TEXTURE_FETCH_FINISHED as u8;
 
-            // HACK: Reuse `tmp_parse` for storing intermediate information as we can clear it.
-            buf_clear(uc.tmp_parse_mut_ptr());
+                // HACK: Reuse `tmp_parse` for storing intermediate information as we can clear it.
+                buf_clear(uc.tmp_parse_mut_ptr());
 
-            // Now all non-cyclical dependents should be processed.
-            let mut num_deps: usize = 0;
+                // Now all non-cyclical dependents should be processed.
+                let mut num_deps: usize = 0;
 
-            if (*texture).type_ == TextureType::File {
-                let dst: *mut OrderedTexture = push(uc.tmp_stack_mut_ptr(), 1);
-                ufbxi_check!(uc, !dst.is_null(), "dst");
-                (*dst).texture = texture;
-                (*dst).order = num_deps;
-                num_deps += 1;
-            }
-
-            // C: `ufbxi_for_list(ufbx_texture_layer, layer, texture->layers)`
-            let mut layer: *mut TextureLayer = (*texture).layers.data as *mut TextureLayer;
-            let layer_end: *mut TextureLayer = add_ptr(layer, (*texture).layers.count);
-            while layer != layer_end {
-                let dep_tex: *mut Texture = ref_ptr(&(*layer).texture);
-                if (*dep_tex).file_textures.count > 0 {
+                if (*texture).type_ == TextureType::File {
                     let dst: *mut OrderedTexture = push(uc.tmp_stack_mut_ptr(), 1);
                     ufbxi_check!(uc, !dst.is_null(), "dst");
-                    (*dst).texture = dep_tex;
+                    (*dst).texture = texture;
                     (*dst).order = num_deps;
                     num_deps += 1;
                 }
-                layer = layer.add(1);
-            }
 
-            if !shader.is_null() {
-                // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
-                let mut input: *mut ShaderTextureInput =
-                    (*shader).inputs.data as *mut ShaderTextureInput;
-                let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
-                while input != input_end {
-                    let dep_tex: *mut Texture = opt_ptr(&(*input).texture);
-                    if !dep_tex.is_null() && (*dep_tex).file_textures.count > 0 {
+                // C: `ufbxi_for_list(ufbx_texture_layer, layer, texture->layers)`
+                let mut layer: *mut TextureLayer = (*texture).layers.data as *mut TextureLayer;
+                let layer_end: *mut TextureLayer = add_ptr(layer, (*texture).layers.count);
+                while layer != layer_end {
+                    let dep_tex: *mut Texture = ref_ptr(&(*layer).texture);
+                    if (*dep_tex).file_textures.count > 0 {
                         let dst: *mut OrderedTexture = push(uc.tmp_stack_mut_ptr(), 1);
                         ufbxi_check!(uc, !dst.is_null(), "dst");
                         (*dst).texture = dep_tex;
                         (*dst).order = num_deps;
                         num_deps += 1;
                     }
-                    input = input.add(1);
+                    layer = layer.add(1);
                 }
-            }
 
-            // Deduplicate the direct dependencies first
-            // C: `ufbxi_ordered_texture *deps;` — `ufbxi_deduplicate_textures`
-            // writes it before the first read (no `// ufbxi_uninit` marker
-            // upstream), so the port keeps it genuinely uninitialized.
-            let mut deps: MaybeUninit<*mut OrderedTexture> = MaybeUninit::uninit();
-            deduplicate_textures(
-                uc,
-                uc.tmp_parse_mut_ptr(),
-                deps.as_mut_ptr(),
-                &mut num_deps,
-                num_deps,
-            )?;
-            let deps: *mut OrderedTexture = deps.assume_init();
-
-            if num_deps == 1 {
-                // If we have only a single dependency (that is not the same one) we can just copy the pointer
-                // C: struct assignment is a memcpy; `RefList<T>` is not `Copy`,
-                // so the two ABI fields are copied individually (and the source
-                // may alias the destination when a texture depends on itself,
-                // which rules out `copy_nonoverlapping`).
-                let src: *const RefList<Texture> =
-                    &raw const (*(*deps.add(0)).texture).file_textures;
-                (*texture).file_textures.data = (*src).data;
-                (*texture).file_textures.count = (*src).count;
-            } else {
-                // Now collect all the file textures and deduplicate them
-                let mut num_files: usize = 0;
-                // C: `ufbxi_for(ufbxi_ordered_texture, dep, deps, num_deps)`
-                let mut dep: *mut OrderedTexture = deps;
-                let dep_end: *mut OrderedTexture = add_ptr(dep, num_deps);
-                while dep != dep_end {
-                    // C: `ufbxi_for_ptr_list(ufbx_texture, p_tex, dep->texture->file_textures)`
-                    let mut p_tex: *mut *mut Texture =
-                        (*(*dep).texture).file_textures.data as *mut *mut Texture;
-                    let p_tex_end: *mut *mut Texture =
-                        add_ptr(p_tex, (*(*dep).texture).file_textures.count);
-                    while p_tex != p_tex_end {
-                        let dst: *mut OrderedTexture = push(uc.tmp_stack_mut_ptr(), 1);
-                        ufbxi_check!(uc, !dst.is_null(), "dst");
-                        (*dst).texture = *p_tex;
-                        (*dst).order = num_files;
-                        num_files += 1;
-                        p_tex = p_tex.add(1);
+                if !shader.is_null() {
+                    // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
+                    let mut input: *mut ShaderTextureInput =
+                        (*shader).inputs.data as *mut ShaderTextureInput;
+                    let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
+                    while input != input_end {
+                        let dep_tex: *mut Texture = opt_ptr(&(*input).texture);
+                        if !dep_tex.is_null() && (*dep_tex).file_textures.count > 0 {
+                            let dst: *mut OrderedTexture = push(uc.tmp_stack_mut_ptr(), 1);
+                            ufbxi_check!(uc, !dst.is_null(), "dst");
+                            (*dst).texture = dep_tex;
+                            (*dst).order = num_deps;
+                            num_deps += 1;
+                        }
+                        input = input.add(1);
                     }
-                    dep = dep.add(1);
                 }
 
-                // Deduplicate the file textures
-                let mut files: MaybeUninit<*mut OrderedTexture> = MaybeUninit::uninit();
+                // Deduplicate the direct dependencies first
+                // C: `ufbxi_ordered_texture *deps;` — `ufbxi_deduplicate_textures`
+                // writes it before the first read (no `// ufbxi_uninit` marker
+                // upstream), so the port keeps it genuinely uninitialized.
+                let mut deps: MaybeUninit<*mut OrderedTexture> = MaybeUninit::uninit();
                 deduplicate_textures(
                     uc,
                     uc.tmp_parse_mut_ptr(),
-                    files.as_mut_ptr(),
-                    &mut num_files,
-                    num_files,
+                    deps.as_mut_ptr(),
+                    &mut num_deps,
+                    num_deps,
                 )?;
-                let files: *mut OrderedTexture = files.assume_init();
+                let deps: *mut OrderedTexture = deps.assume_init();
 
-                (*texture).file_textures.count = num_files;
-                (*texture).file_textures.data =
-                    push::<*mut Texture>(uc.result_mut_ptr(), num_files) as *const Ref<Texture>;
-                ufbxi_check!(
-                    uc,
-                    !(*texture).file_textures.data.is_null(),
-                    "texture->file_textures.data"
-                );
+                if num_deps == 1 {
+                    // If we have only a single dependency (that is not the same one) we can just copy the pointer
+                    // C: struct assignment is a memcpy; `RefList<T>` is not `Copy`,
+                    // so the two ABI fields are copied individually (and the source
+                    // may alias the destination when a texture depends on itself,
+                    // which rules out `copy_nonoverlapping`).
+                    let src: *const RefList<Texture> =
+                        &raw const (*(*deps.add(0)).texture).file_textures;
+                    (*texture).file_textures.data = (*src).data;
+                    (*texture).file_textures.count = (*src).count;
+                } else {
+                    // Now collect all the file textures and deduplicate them
+                    let mut num_files: usize = 0;
+                    // C: `ufbxi_for(ufbxi_ordered_texture, dep, deps, num_deps)`
+                    let mut dep: *mut OrderedTexture = deps;
+                    let dep_end: *mut OrderedTexture = add_ptr(dep, num_deps);
+                    while dep != dep_end {
+                        // C: `ufbxi_for_ptr_list(ufbx_texture, p_tex, dep->texture->file_textures)`
+                        let mut p_tex: *mut *mut Texture =
+                            (*(*dep).texture).file_textures.data as *mut *mut Texture;
+                        let p_tex_end: *mut *mut Texture =
+                            add_ptr(p_tex, (*(*dep).texture).file_textures.count);
+                        while p_tex != p_tex_end {
+                            let dst: *mut OrderedTexture = push(uc.tmp_stack_mut_ptr(), 1);
+                            ufbxi_check!(uc, !dst.is_null(), "dst");
+                            (*dst).texture = *p_tex;
+                            (*dst).order = num_files;
+                            num_files += 1;
+                            p_tex = p_tex.add(1);
+                        }
+                        dep = dep.add(1);
+                    }
 
-                for i in 0..num_files {
-                    *((*texture).file_textures.data as *mut *mut Texture).add(i) =
-                        (*files.add(i)).texture;
+                    // Deduplicate the file textures
+                    let mut files: MaybeUninit<*mut OrderedTexture> = MaybeUninit::uninit();
+                    deduplicate_textures(
+                        uc,
+                        uc.tmp_parse_mut_ptr(),
+                        files.as_mut_ptr(),
+                        &mut num_files,
+                        num_files,
+                    )?;
+                    let files: *mut OrderedTexture = files.assume_init();
+
+                    (*texture).file_textures.count = num_files;
+                    (*texture).file_textures.data =
+                        push::<*mut Texture>(uc.result_mut_ptr(), num_files) as *const Ref<Texture>;
+                    ufbxi_check!(
+                        uc,
+                        !(*texture).file_textures.data.is_null(),
+                        "texture->file_textures.data"
+                    );
+
+                    for i in 0..num_files {
+                        *((*texture).file_textures.data as *mut *mut Texture).add(i) =
+                            (*files.add(i)).texture;
+                    }
                 }
             }
         } else {
-            if (*texture).type_ == TextureType::File {
-                // Simple case: Just point to self
-                (*texture).file_textures.count = 1;
-                (*texture).file_textures.data =
-                    push::<*mut Texture>(uc.result_mut_ptr(), 1) as *const Ref<Texture>;
-                ufbxi_check!(
-                    uc,
-                    !(*texture).file_textures.data.is_null(),
-                    "texture->file_textures.data"
-                );
-                *((*texture).file_textures.data as *mut *mut Texture).add(0) = texture;
+            // SAFETY: `texture`/`shader` as above; `states` is indexed by the texture's own
+            // `typed_id`; the `file_textures` run is the fresh non-null push right above
+            // the write into it, and every dependency pushed onto uc's own tmp stack is
+            // a `&raw` place inside a live element of the same arena.
+            unsafe {
+                if (*texture).type_ == TextureType::File {
+                    // Simple case: Just point to self
+                    (*texture).file_textures.count = 1;
+                    (*texture).file_textures.data =
+                        push::<*mut Texture>(uc.result_mut_ptr(), 1) as *const Ref<Texture>;
+                    ufbxi_check!(
+                        uc,
+                        !(*texture).file_textures.data.is_null(),
+                        "texture->file_textures.data"
+                    );
+                    *((*texture).file_textures.data as *mut *mut Texture).add(0) = texture;
 
-                // In simple cases we can quit here, for more complex file textures queue
-                // the texture in case there are other file textures as inputs.
-                if opt_ptr(&(*texture).shader).is_null() {
-                    *states.add((*texture).element.typed_id as usize) =
-                        FILE_TEXTURE_FETCH_FINISHED as u8;
-                    continue;
+                    // In simple cases we can quit here, for more complex file textures queue
+                    // the texture in case there are other file textures as inputs.
+                    if opt_ptr(&(*texture).shader).is_null() {
+                        *states.add((*texture).element.typed_id as usize) =
+                            FILE_TEXTURE_FETCH_FINISHED as u8;
+                        continue;
+                    }
                 }
-            }
 
-            // Complex: Process all dependencies first
-            *states.add((*texture).element.typed_id as usize) = FILE_TEXTURE_FETCH_STARTED as u8;
+                // Complex: Process all dependencies first
+                *states.add((*texture).element.typed_id as usize) =
+                    FILE_TEXTURE_FETCH_STARTED as u8;
 
-            // Push self first so we can return after processing dependencies
-            ufbxi_check!(
-                uc,
-                !push_copy::<*mut Texture>(uc.tmp_stack_mut_ptr(), 1, &texture).is_null(),
-                "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (1), (&texture)))"
-            );
-            num_stack_textures += 1;
-
-            // C: `ufbxi_for_list(ufbx_texture_layer, layer, texture->layers)`
-            let mut layer: *mut TextureLayer = (*texture).layers.data as *mut TextureLayer;
-            let layer_end: *mut TextureLayer = add_ptr(layer, (*texture).layers.count);
-            while layer != layer_end {
+                // Push self first so we can return after processing dependencies
                 ufbxi_check!(
                     uc,
-                    !push_copy::<*mut Texture>(
-                        uc.tmp_stack_mut_ptr(),
-                        1,
-                        &(*layer).texture as *const Ref<Texture> as *const *mut Texture,
-                    )
-                    .is_null(),
-                    "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (1), (&layer->texture)))"
+                    !push_copy::<*mut Texture>(uc.tmp_stack_mut_ptr(), 1, &texture).is_null(),
+                    "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (1), (&texture)))"
                 );
                 num_stack_textures += 1;
-                layer = layer.add(1);
-            }
 
-            if !shader.is_null() {
-                // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
-                let mut input: *mut ShaderTextureInput =
-                    (*shader).inputs.data as *mut ShaderTextureInput;
-                let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
-                while input != input_end {
-                    if !opt_ptr(&(*input).texture).is_null() {
-                        ufbxi_check!(
-                            uc,
-                            !push_copy::<*mut Texture>(
-                                uc.tmp_stack_mut_ptr(),
-                                1,
-                                &(*input).texture as *const Option<Ref<Texture>>
-                                    as *const *mut Texture,
-                            )
-                            .is_null(),
-                            "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (1), (&input->texture)))"
-                        );
-                        num_stack_textures += 1;
+                // C: `ufbxi_for_list(ufbx_texture_layer, layer, texture->layers)`
+                let mut layer: *mut TextureLayer = (*texture).layers.data as *mut TextureLayer;
+                let layer_end: *mut TextureLayer = add_ptr(layer, (*texture).layers.count);
+                while layer != layer_end {
+                    ufbxi_check!(
+                        uc,
+                        !push_copy::<*mut Texture>(
+                            uc.tmp_stack_mut_ptr(),
+                            1,
+                            &(*layer).texture as *const Ref<Texture> as *const *mut Texture,
+                        )
+                        .is_null(),
+                        "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (1), (&layer->texture)))"
+                    );
+                    num_stack_textures += 1;
+                    layer = layer.add(1);
+                }
+
+                if !shader.is_null() {
+                    // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
+                    let mut input: *mut ShaderTextureInput =
+                        (*shader).inputs.data as *mut ShaderTextureInput;
+                    let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
+                    while input != input_end {
+                        if !opt_ptr(&(*input).texture).is_null() {
+                            ufbxi_check!(
+                                uc,
+                                !push_copy::<*mut Texture>(
+                                    uc.tmp_stack_mut_ptr(),
+                                    1,
+                                    &(*input).texture as *const Option<Ref<Texture>>
+                                        as *const *mut Texture,
+                                )
+                                .is_null(),
+                                "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (1), (&input->texture)))"
+                            );
+                            num_stack_textures += 1;
+                        }
+                        input = input.add(1);
                     }
-                    input = input.add(1);
                 }
             }
         }
@@ -5657,7 +5921,7 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
 
 // ufbx.c:21165-21332 `ufbxi_modify_geometry`
 #[inline(never)]
-pub(crate) unsafe fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
+pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
     let mut do_mirror: bool = false;
     let do_winding: bool = uc.opts_view().reverse_winding();
     let mut do_scale: bool = false;
@@ -5667,27 +5931,32 @@ pub(crate) unsafe fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
             == GeometryTransformHandling::ModifyGeometryNoFallback
     {
         // Prefetch geometry transforms for processing, they will later be overwritten in `ufbxi_update_node()`.
-        // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
-        let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
-        let p_node_end: *mut *mut Node = add_ptr(p_node, uc.scene_view().nodes_view().count());
-        while p_node != p_node_end {
-            let node_view: &'a NodeView = NodeView::from_ptr(*p_node);
-            let node: *mut Node = node_view.get();
-            if (*node).is_root {
-                p_node = p_node.add(1);
-                continue;
-            }
+        // SAFETY: walks the stored `nodes` element-pointer run of the uc-owned scene
+        // (`count` entries); each node's props are reached through an arena-anchored
+        // view, and the transform helpers read that node's own fields.
+        unsafe {
+            // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
+            let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
+            let p_node_end: *mut *mut Node = add_ptr(p_node, uc.scene_view().nodes_view().count());
+            while p_node != p_node_end {
+                let node_view: &'a NodeView = NodeView::from_ptr(*p_node);
+                let node: *mut Node = node_view.get();
+                if (*node).is_root {
+                    p_node = p_node.add(1);
+                    continue;
+                }
 
-            (*node).geometry_transform = get_geometry_transform(node_view.props_view(), node);
-            if !is_transform_identity(&raw const (*node).geometry_transform) {
-                (*node).geometry_to_node =
-                    transform_to_matrix(&raw const (*node).geometry_transform);
-                (*node).has_geometry_transform = true;
-            } else {
-                (*node).geometry_to_node = IDENTITY_MATRIX;
-                (*node).has_geometry_transform = false;
+                (*node).geometry_transform = get_geometry_transform(node_view.props_view(), node);
+                if !is_transform_identity(&raw const (*node).geometry_transform) {
+                    (*node).geometry_to_node =
+                        transform_to_matrix(&raw const (*node).geometry_transform);
+                    (*node).has_geometry_transform = true;
+                } else {
+                    (*node).geometry_to_node = IDENTITY_MATRIX;
+                    (*node).has_geometry_transform = false;
+                }
+                p_node = p_node.add(1);
             }
-            p_node = p_node.add(1);
         }
         do_geometry_transforms = true;
     }
@@ -5701,273 +5970,308 @@ pub(crate) unsafe fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
     let geometry_scale: Real = uc.scene_view().metadata_view().geometry_scale();
     let mirror_axis: MirrorAxis = uc.mirror_axis();
 
-    // C: `ufbxi_for_ptr_list(ufbx_blend_shape, p_shape, uc->scene.blend_shapes)`
-    let mut p_shape: *mut *mut BlendShape =
-        uc.scene_view().blend_shapes_view().data() as *mut *mut BlendShape;
-    let p_shape_end: *mut *mut BlendShape =
-        add_ptr(p_shape, uc.scene_view().blend_shapes_view().count());
-    while p_shape != p_shape_end {
-        let shape: *mut BlendShape = *p_shape;
+    // SAFETY: walks the stored `blend_shapes` element-pointer run of the uc-owned
+    // scene (`count` entries); the list helpers take `&raw const` places of that
+    // shape's own offset lists, which carry their own lengths.
+    unsafe {
+        // C: `ufbxi_for_ptr_list(ufbx_blend_shape, p_shape, uc->scene.blend_shapes)`
+        let mut p_shape: *mut *mut BlendShape =
+            uc.scene_view().blend_shapes_view().data() as *mut *mut BlendShape;
+        let p_shape_end: *mut *mut BlendShape =
+            add_ptr(p_shape, uc.scene_view().blend_shapes_view().count());
+        while p_shape != p_shape_end {
+            let shape: *mut BlendShape = *p_shape;
 
-        if do_scale {
-            scale_vec3_list(
-                &raw const (*shape).position_offsets as *const c_void,
-                geometry_scale,
-                0,
-            );
-        }
+            if do_scale {
+                scale_vec3_list(
+                    &raw const (*shape).position_offsets as *const c_void,
+                    geometry_scale,
+                    0,
+                );
+            }
 
-        if do_mirror {
-            mirror_vec3_list(
-                &raw const (*shape).position_offsets as *const c_void,
-                mirror_axis,
-                0,
-            );
-            mirror_vec3_list(
-                &raw const (*shape).normal_offsets as *const c_void,
-                mirror_axis,
-                0,
-            );
-        }
-        p_shape = p_shape.add(1);
-    }
-
-    // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
-    let mut p_mesh: *mut *mut Mesh = uc.scene_view().meshes_view().data() as *mut *mut Mesh;
-    let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, uc.scene_view().meshes_view().count());
-    while p_mesh != p_mesh_end {
-        let mesh: *mut Mesh = *p_mesh;
-
-        if do_scale {
-            scale_vec3_list(
-                &raw const (*mesh).vertex_position.values as *const c_void,
-                geometry_scale,
-                0,
-            );
-        }
-
-        let mut do_flip_winding: bool = do_winding;
-        if do_mirror {
-            mirror_vec3_list(
-                &raw const (*mesh).vertex_position.values as *const c_void,
-                mirror_axis,
-                0,
-            );
-            mirror_vec3_list(
-                &raw const (*mesh).vertex_normal.values as *const c_void,
-                mirror_axis,
-                0,
-            );
-            // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
-            let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
-            let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
-            while set != set_end {
+            if do_mirror {
                 mirror_vec3_list(
-                    &raw const (*set).vertex_tangent.values as *const c_void,
+                    &raw const (*shape).position_offsets as *const c_void,
                     mirror_axis,
                     0,
                 );
                 mirror_vec3_list(
-                    &raw const (*set).vertex_bitangent.values as *const c_void,
+                    &raw const (*shape).normal_offsets as *const c_void,
                     mirror_axis,
                     0,
                 );
-                set = set.add(1);
             }
-            if !uc.opts_view().handedness_conversion_retain_winding() {
-                do_flip_winding = !do_flip_winding;
+            p_shape = p_shape.add(1);
+        }
+    }
+
+    // SAFETY: walks the stored `meshes` element-pointer run of the uc-owned scene
+    // (`count` entries) and, inside it, each mesh's own `uv_sets` run; the list
+    // helpers take `&raw const` places of the mesh's own attribute lists (each
+    // carrying its own length), and `geo_node` is null-checked before its
+    // transform is read.
+    unsafe {
+        // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
+        let mut p_mesh: *mut *mut Mesh = uc.scene_view().meshes_view().data() as *mut *mut Mesh;
+        let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, uc.scene_view().meshes_view().count());
+        while p_mesh != p_mesh_end {
+            let mesh: *mut Mesh = *p_mesh;
+
+            if do_scale {
+                scale_vec3_list(
+                    &raw const (*mesh).vertex_position.values as *const c_void,
+                    geometry_scale,
+                    0,
+                );
             }
-        }
 
-        // Flip face winding retaining the first vertex
-        if do_flip_winding {
-            (*mesh).reversed_winding = true;
-            flip_winding(uc, mesh)?;
-        }
+            let mut do_flip_winding: bool = do_winding;
+            if do_mirror {
+                mirror_vec3_list(
+                    &raw const (*mesh).vertex_position.values as *const c_void,
+                    mirror_axis,
+                    0,
+                );
+                mirror_vec3_list(
+                    &raw const (*mesh).vertex_normal.values as *const c_void,
+                    mirror_axis,
+                    0,
+                );
+                // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
+                let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
+                let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
+                while set != set_end {
+                    mirror_vec3_list(
+                        &raw const (*set).vertex_tangent.values as *const c_void,
+                        mirror_axis,
+                        0,
+                    );
+                    mirror_vec3_list(
+                        &raw const (*set).vertex_bitangent.values as *const c_void,
+                        mirror_axis,
+                        0,
+                    );
+                    set = set.add(1);
+                }
+                if !uc.opts_view().handedness_conversion_retain_winding() {
+                    do_flip_winding = !do_flip_winding;
+                }
+            }
 
-        let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*mesh).element);
-        if do_geometry_transforms && !geo_node.is_null() {
-            let mut tangent_matrix: Matrix = (*geo_node).geometry_to_node;
-            tangent_matrix.m03 = 0.0;
-            tangent_matrix.m13 = 0.0;
-            tangent_matrix.m23 = 0.0;
-            let normal_matrix: Matrix = matrix_for_normals(&raw const (*geo_node).geometry_to_node);
+            // Flip face winding retaining the first vertex
+            if do_flip_winding {
+                (*mesh).reversed_winding = true;
+                flip_winding(uc, mesh)?;
+            }
 
-            transform_vec3_list(
-                &raw const (*mesh).vertex_position.values as *const c_void,
-                &raw const (*geo_node).geometry_to_node,
-                0,
-            );
-            transform_vec3_list(
-                &raw const (*mesh).vertex_normal.values as *const c_void,
-                &normal_matrix,
-                0,
-            );
-            normalize_vec3_list(&raw const (*mesh).vertex_normal.values);
+            let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*mesh).element);
+            if do_geometry_transforms && !geo_node.is_null() {
+                let mut tangent_matrix: Matrix = (*geo_node).geometry_to_node;
+                tangent_matrix.m03 = 0.0;
+                tangent_matrix.m13 = 0.0;
+                tangent_matrix.m23 = 0.0;
+                let normal_matrix: Matrix =
+                    matrix_for_normals(&raw const (*geo_node).geometry_to_node);
 
-            // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
-            let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
-            let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
-            while set != set_end {
                 transform_vec3_list(
-                    &raw const (*set).vertex_tangent.values as *const c_void,
-                    &tangent_matrix,
+                    &raw const (*mesh).vertex_position.values as *const c_void,
+                    &raw const (*geo_node).geometry_to_node,
                     0,
                 );
                 transform_vec3_list(
-                    &raw const (*set).vertex_bitangent.values as *const c_void,
-                    &tangent_matrix,
+                    &raw const (*mesh).vertex_normal.values as *const c_void,
+                    &normal_matrix,
                     0,
                 );
-                normalize_vec3_list(&raw const (*set).vertex_tangent.values);
-                normalize_vec3_list(&raw const (*set).vertex_bitangent.values);
-                set = set.add(1);
+                normalize_vec3_list(&raw const (*mesh).vertex_normal.values);
+
+                // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
+                let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
+                let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
+                while set != set_end {
+                    transform_vec3_list(
+                        &raw const (*set).vertex_tangent.values as *const c_void,
+                        &tangent_matrix,
+                        0,
+                    );
+                    transform_vec3_list(
+                        &raw const (*set).vertex_bitangent.values as *const c_void,
+                        &tangent_matrix,
+                        0,
+                    );
+                    normalize_vec3_list(&raw const (*set).vertex_tangent.values);
+                    normalize_vec3_list(&raw const (*set).vertex_bitangent.values);
+                    set = set.add(1);
+                }
             }
+            p_mesh = p_mesh.add(1);
         }
-        p_mesh = p_mesh.add(1);
     }
 
-    // C: `ufbxi_for_ptr_list(ufbx_line_curve, p_curve, uc->scene.line_curves)`
-    let mut p_curve: *mut *mut LineCurve =
-        uc.scene_view().line_curves_view().data() as *mut *mut LineCurve;
-    let p_curve_end: *mut *mut LineCurve =
-        add_ptr(p_curve, uc.scene_view().line_curves_view().count());
-    while p_curve != p_curve_end {
-        let curve: *mut LineCurve = *p_curve;
+    // SAFETY: walks the stored `line_curves` element-pointer run of the uc-owned
+    // scene (`count` entries); same list-helper and null-checked `geo_node`
+    // contract as the loops around it.
+    unsafe {
+        // C: `ufbxi_for_ptr_list(ufbx_line_curve, p_curve, uc->scene.line_curves)`
+        let mut p_curve: *mut *mut LineCurve =
+            uc.scene_view().line_curves_view().data() as *mut *mut LineCurve;
+        let p_curve_end: *mut *mut LineCurve =
+            add_ptr(p_curve, uc.scene_view().line_curves_view().count());
+        while p_curve != p_curve_end {
+            let curve: *mut LineCurve = *p_curve;
 
-        if do_scale {
-            scale_vec3_list(
-                &raw const (*curve).control_points as *const c_void,
-                geometry_scale,
-                0,
-            );
-        }
+            if do_scale {
+                scale_vec3_list(
+                    &raw const (*curve).control_points as *const c_void,
+                    geometry_scale,
+                    0,
+                );
+            }
 
-        if do_mirror {
-            mirror_vec3_list(
-                &raw const (*curve).control_points as *const c_void,
-                mirror_axis,
-                0,
-            );
-        }
+            if do_mirror {
+                mirror_vec3_list(
+                    &raw const (*curve).control_points as *const c_void,
+                    mirror_axis,
+                    0,
+                );
+            }
 
-        let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*curve).element);
-        if do_geometry_transforms && !geo_node.is_null() {
-            transform_vec3_list(
-                &raw const (*curve).control_points as *const c_void,
-                &raw const (*geo_node).geometry_to_node,
-                0,
-            );
+            let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*curve).element);
+            if do_geometry_transforms && !geo_node.is_null() {
+                transform_vec3_list(
+                    &raw const (*curve).control_points as *const c_void,
+                    &raw const (*geo_node).geometry_to_node,
+                    0,
+                );
+            }
+            p_curve = p_curve.add(1);
         }
-        p_curve = p_curve.add(1);
     }
 
-    // C: `ufbxi_for_ptr_list(ufbx_nurbs_curve, p_curve, uc->scene.nurbs_curves)`
-    let mut p_curve: *mut *mut NurbsCurve =
-        uc.scene_view().nurbs_curves_view().data() as *mut *mut NurbsCurve;
-    let p_curve_end: *mut *mut NurbsCurve =
-        add_ptr(p_curve, uc.scene_view().nurbs_curves_view().count());
-    while p_curve != p_curve_end {
-        let curve: *mut NurbsCurve = *p_curve;
+    // SAFETY: walks the stored `nurbs_curves` element-pointer run of the uc-owned
+    // scene (`count` entries); same list-helper and null-checked `geo_node`
+    // contract as the loops around it.
+    unsafe {
+        // C: `ufbxi_for_ptr_list(ufbx_nurbs_curve, p_curve, uc->scene.nurbs_curves)`
+        let mut p_curve: *mut *mut NurbsCurve =
+            uc.scene_view().nurbs_curves_view().data() as *mut *mut NurbsCurve;
+        let p_curve_end: *mut *mut NurbsCurve =
+            add_ptr(p_curve, uc.scene_view().nurbs_curves_view().count());
+        while p_curve != p_curve_end {
+            let curve: *mut NurbsCurve = *p_curve;
 
-        if do_scale {
-            scale_vec3_list(
-                &raw const (*curve).control_points as *const c_void,
-                geometry_scale,
-                size_of::<Vec4>(),
-            );
-        }
+            if do_scale {
+                scale_vec3_list(
+                    &raw const (*curve).control_points as *const c_void,
+                    geometry_scale,
+                    size_of::<Vec4>(),
+                );
+            }
 
-        if do_mirror {
-            mirror_vec3_list(
-                &raw const (*curve).control_points as *const c_void,
-                mirror_axis,
-                size_of::<Vec4>(),
-            );
-        }
+            if do_mirror {
+                mirror_vec3_list(
+                    &raw const (*curve).control_points as *const c_void,
+                    mirror_axis,
+                    size_of::<Vec4>(),
+                );
+            }
 
-        let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*curve).element);
-        if do_geometry_transforms && !geo_node.is_null() {
-            transform_vec3_list(
-                &raw const (*curve).control_points as *const c_void,
-                &raw const (*geo_node).geometry_to_node,
-                size_of::<Vec4>(),
-            );
+            let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*curve).element);
+            if do_geometry_transforms && !geo_node.is_null() {
+                transform_vec3_list(
+                    &raw const (*curve).control_points as *const c_void,
+                    &raw const (*geo_node).geometry_to_node,
+                    size_of::<Vec4>(),
+                );
+            }
+            p_curve = p_curve.add(1);
         }
-        p_curve = p_curve.add(1);
     }
 
-    // C: `ufbxi_for_ptr_list(ufbx_nurbs_surface, p_surface, uc->scene.nurbs_surfaces)`
-    let mut p_surface: *mut *mut NurbsSurface =
-        uc.scene_view().nurbs_surfaces_view().data() as *mut *mut NurbsSurface;
-    let p_surface_end: *mut *mut NurbsSurface =
-        add_ptr(p_surface, uc.scene_view().nurbs_surfaces_view().count());
-    while p_surface != p_surface_end {
-        let surface: *mut NurbsSurface = *p_surface;
+    // SAFETY: walks the stored `nurbs_surfaces` element-pointer run of the
+    // uc-owned scene (`count` entries); each list helper is handed a `&raw const`
+    // of that surface's own control-point list, which carries its own length, and
+    // `geo_node` is null-checked before its transform is read.
+    unsafe {
+        // C: `ufbxi_for_ptr_list(ufbx_nurbs_surface, p_surface, uc->scene.nurbs_surfaces)`
+        let mut p_surface: *mut *mut NurbsSurface =
+            uc.scene_view().nurbs_surfaces_view().data() as *mut *mut NurbsSurface;
+        let p_surface_end: *mut *mut NurbsSurface =
+            add_ptr(p_surface, uc.scene_view().nurbs_surfaces_view().count());
+        while p_surface != p_surface_end {
+            let surface: *mut NurbsSurface = *p_surface;
 
-        if do_scale {
-            scale_vec3_list(
-                &raw const (*surface).control_points as *const c_void,
-                geometry_scale,
-                size_of::<Vec4>(),
-            );
-        }
+            if do_scale {
+                scale_vec3_list(
+                    &raw const (*surface).control_points as *const c_void,
+                    geometry_scale,
+                    size_of::<Vec4>(),
+                );
+            }
 
-        if do_mirror {
-            mirror_vec3_list(
-                &raw const (*surface).control_points as *const c_void,
-                mirror_axis,
-                size_of::<Vec4>(),
-            );
-        }
+            if do_mirror {
+                mirror_vec3_list(
+                    &raw const (*surface).control_points as *const c_void,
+                    mirror_axis,
+                    size_of::<Vec4>(),
+                );
+            }
 
-        let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*surface).element);
-        if do_geometry_transforms && !geo_node.is_null() {
-            transform_vec3_list(
-                &raw const (*surface).control_points as *const c_void,
-                &raw const (*geo_node).geometry_to_node,
-                size_of::<Vec4>(),
-            );
+            let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*surface).element);
+            if do_geometry_transforms && !geo_node.is_null() {
+                transform_vec3_list(
+                    &raw const (*surface).control_points as *const c_void,
+                    &raw const (*geo_node).geometry_to_node,
+                    size_of::<Vec4>(),
+                );
+            }
+            p_surface = p_surface.add(1);
         }
-        p_surface = p_surface.add(1);
     }
 
     if uc.opts_view().geometry_transform_handling() != GeometryTransformHandling::Preserve {
         // Reset all geometry transforms if we're not preserving them
         let mut defaults: *mut Props = ptr::null_mut();
-        // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
-        let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
-        let p_node_end: *mut *mut Node = add_ptr(p_node, uc.scene_view().nodes_view().count());
-        while p_node != p_node_end {
-            let node: *mut Node = *p_node;
-            if defaults.is_null() {
-                defaults = opt_ptr(&(*node).element.props.defaults);
+        // SAFETY: walks the stored `nodes` element-pointer run of the uc-owned scene
+        // (`count` entries); `set_own_prop_vec3_uniform` receives a `&raw mut` of that
+        // node's own props (or the null-checked shared `defaults` table) and a
+        // NUL-terminated static name.
+        unsafe {
+            // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
+            let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
+            let p_node_end: *mut *mut Node = add_ptr(p_node, uc.scene_view().nodes_view().count());
+            while p_node != p_node_end {
+                let node: *mut Node = *p_node;
+                if defaults.is_null() {
+                    defaults = opt_ptr(&(*node).element.props.defaults);
+                }
+
+                if (*node).has_geometry_transform {
+                    set_own_prop_vec3_uniform(
+                        &raw mut (*node).element.props,
+                        sp::GeometricTranslation.as_ptr(),
+                        0.0,
+                    );
+                    set_own_prop_vec3_uniform(
+                        &raw mut (*node).element.props,
+                        sp::GeometricRotation.as_ptr(),
+                        0.0,
+                    );
+                    set_own_prop_vec3_uniform(
+                        &raw mut (*node).element.props,
+                        sp::GeometricScaling.as_ptr(),
+                        1.0,
+                    );
+                }
+                p_node = p_node.add(1);
             }
 
-            if (*node).has_geometry_transform {
-                set_own_prop_vec3_uniform(
-                    &raw mut (*node).element.props,
-                    sp::GeometricTranslation.as_ptr(),
-                    0.0,
-                );
-                set_own_prop_vec3_uniform(
-                    &raw mut (*node).element.props,
-                    sp::GeometricRotation.as_ptr(),
-                    0.0,
-                );
-                set_own_prop_vec3_uniform(
-                    &raw mut (*node).element.props,
-                    sp::GeometricScaling.as_ptr(),
-                    1.0,
-                );
+            if !defaults.is_null() {
+                set_own_prop_vec3_uniform(defaults, sp::GeometricTranslation.as_ptr(), 0.0);
+                set_own_prop_vec3_uniform(defaults, sp::GeometricRotation.as_ptr(), 0.0);
+                set_own_prop_vec3_uniform(defaults, sp::GeometricScaling.as_ptr(), 1.0);
             }
-            p_node = p_node.add(1);
-        }
-
-        if !defaults.is_null() {
-            set_own_prop_vec3_uniform(defaults, sp::GeometricTranslation.as_ptr(), 0.0);
-            set_own_prop_vec3_uniform(defaults, sp::GeometricRotation.as_ptr(), 0.0);
-            set_own_prop_vec3_uniform(defaults, sp::GeometricScaling.as_ptr(), 1.0);
         }
     }
 
@@ -5976,29 +6280,35 @@ pub(crate) unsafe fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
 
 // ufbx.c:21334-21356 `ufbxi_postprocess_scene`
 #[inline(never)]
-pub(crate) unsafe fn postprocess_scene(uc: &Context) {
+pub(crate) fn postprocess_scene(uc: &Context) {
     if uc.opts_view().normalize_normals() || uc.opts_view().normalize_tangents() {
-        // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
-        let mut p_mesh: *mut *mut Mesh = uc.scene_view().meshes_view().data() as *mut *mut Mesh;
-        let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, uc.scene_view().meshes_view().count());
-        while p_mesh != p_mesh_end {
-            let mesh: *mut Mesh = *p_mesh;
-            if uc.opts_view().normalize_normals() {
-                normalize_vec3_list(&raw const (*mesh).vertex_normal.values);
-            }
-            if uc.opts_view().normalize_tangents() {
-                // C-parity: the loop body normalizes the MESH-level tangent and
-                // bitangent lists (not `set->...`), so it repeats the same work
-                // once per UV set. Ported verbatim.
-                let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
-                let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
-                while set != set_end {
-                    normalize_vec3_list(&raw const (*mesh).vertex_tangent.values);
-                    normalize_vec3_list(&raw const (*mesh).vertex_bitangent.values);
-                    set = set.add(1);
+        // SAFETY: walks the stored `meshes` element-pointer run of the uc-owned scene
+        // (`count` entries) and, inside it, each mesh's own `uv_sets` run;
+        // `normalize_vec3_list` is handed a `&raw const` of the mesh's own attribute
+        // list, which carries its own length.
+        unsafe {
+            // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
+            let mut p_mesh: *mut *mut Mesh = uc.scene_view().meshes_view().data() as *mut *mut Mesh;
+            let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, uc.scene_view().meshes_view().count());
+            while p_mesh != p_mesh_end {
+                let mesh: *mut Mesh = *p_mesh;
+                if uc.opts_view().normalize_normals() {
+                    normalize_vec3_list(&raw const (*mesh).vertex_normal.values);
                 }
+                if uc.opts_view().normalize_tangents() {
+                    // C-parity: the loop body normalizes the MESH-level tangent and
+                    // bitangent lists (not `set->...`), so it repeats the same work
+                    // once per UV set. Ported verbatim.
+                    let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
+                    let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
+                    while set != set_end {
+                        normalize_vec3_list(&raw const (*mesh).vertex_tangent.values);
+                        normalize_vec3_list(&raw const (*mesh).vertex_bitangent.values);
+                        set = set.add(1);
+                    }
+                }
+                p_mesh = p_mesh.add(1);
             }
-            p_mesh = p_mesh.add(1);
         }
     }
 
@@ -6250,112 +6560,138 @@ pub(crate) unsafe fn fetch_file_content(uc: &Context, p_filename: *mut String, p
 
 // ufbx.c:21489-21526 `ufbxi_resolve_file_content`
 #[inline(never)]
-pub(crate) unsafe fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
+pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
     let initial_stack: usize = uc.tmp_stack_view().num_items();
 
-    // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
-    let mut p_video: *mut *mut Video = uc.scene_view().videos_view().data() as *mut *mut Video;
-    let p_video_end: *mut *mut Video = add_ptr(p_video, uc.scene_view().videos_view().count());
-    while p_video != p_video_end {
-        let video: *mut Video = *p_video;
-        resolve_filenames(
-            uc,
-            &raw mut (*video).filename as *mut Strblob,
-            &raw mut (*video).absolute_filename as *mut Strblob,
-            &raw mut (*video).relative_filename as *mut Strblob,
-            false,
-        )?;
-        resolve_filenames(
-            uc,
-            &raw mut (*video).raw_filename as *mut Strblob,
-            &raw mut (*video).raw_absolute_filename as *mut Strblob,
-            &raw mut (*video).raw_relative_filename as *mut Strblob,
-            true,
-        )?;
-        push_file_content(
-            uc,
-            &raw mut (*video).absolute_filename,
-            &raw mut (*video).content,
-        )?;
-        p_video = p_video.add(1);
+    // SAFETY: walks the stored `videos` element-pointer run of the uc-owned scene
+    // (`count` entries); the resolve/push helpers receive `&raw mut` places inside
+    // that same video.
+    unsafe {
+        // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
+        let mut p_video: *mut *mut Video = uc.scene_view().videos_view().data() as *mut *mut Video;
+        let p_video_end: *mut *mut Video = add_ptr(p_video, uc.scene_view().videos_view().count());
+        while p_video != p_video_end {
+            let video: *mut Video = *p_video;
+            resolve_filenames(
+                uc,
+                &raw mut (*video).filename as *mut Strblob,
+                &raw mut (*video).absolute_filename as *mut Strblob,
+                &raw mut (*video).relative_filename as *mut Strblob,
+                false,
+            )?;
+            resolve_filenames(
+                uc,
+                &raw mut (*video).raw_filename as *mut Strblob,
+                &raw mut (*video).raw_absolute_filename as *mut Strblob,
+                &raw mut (*video).raw_relative_filename as *mut Strblob,
+                true,
+            )?;
+            push_file_content(
+                uc,
+                &raw mut (*video).absolute_filename,
+                &raw mut (*video).content,
+            )?;
+            p_video = p_video.add(1);
+        }
     }
 
-    // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
-    let mut p_clip: *mut *mut AudioClip =
-        uc.scene_view().audio_clips_view().data() as *mut *mut AudioClip;
-    let p_clip_end: *mut *mut AudioClip =
-        add_ptr(p_clip, uc.scene_view().audio_clips_view().count());
-    while p_clip != p_clip_end {
-        let clip_view: &'a AudioClipView = AudioClipView::from_ptr(*p_clip);
-        let clip: *mut AudioClip = clip_view.get();
-        (*clip).absolute_filename =
-            find_string(clip_view.props_view(), b"Path\0".as_ptr(), EMPTY_STRING.0);
-        (*clip).relative_filename = find_string(
-            clip_view.props_view(),
-            b"RelPath\0".as_ptr(),
-            EMPTY_STRING.0,
-        );
-        (*clip).raw_absolute_filename =
-            find_blob(clip_view.props_view(), b"Path\0".as_ptr(), EMPTY_BLOB.0);
-        (*clip).raw_relative_filename =
-            find_blob(clip_view.props_view(), b"RelPath\0".as_ptr(), EMPTY_BLOB.0);
-        resolve_filenames(
-            uc,
-            &raw mut (*clip).filename as *mut Strblob,
-            &raw mut (*clip).absolute_filename as *mut Strblob,
-            &raw mut (*clip).relative_filename as *mut Strblob,
-            false,
-        )?;
-        resolve_filenames(
-            uc,
-            &raw mut (*clip).raw_filename as *mut Strblob,
-            &raw mut (*clip).raw_absolute_filename as *mut Strblob,
-            &raw mut (*clip).raw_relative_filename as *mut Strblob,
-            true,
-        )?;
-        push_file_content(
-            uc,
-            &raw mut (*clip).absolute_filename,
-            &raw mut (*clip).content,
-        )?;
-        p_clip = p_clip.add(1);
+    // SAFETY: walks the stored `audio_clips` element-pointer run of the uc-owned
+    // scene (`count` entries); each clip's props are reached through an
+    // arena-anchored view with NUL-terminated literal names, and the resolve/push
+    // helpers receive `&raw mut` places inside that same clip.
+    unsafe {
+        // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
+        let mut p_clip: *mut *mut AudioClip =
+            uc.scene_view().audio_clips_view().data() as *mut *mut AudioClip;
+        let p_clip_end: *mut *mut AudioClip =
+            add_ptr(p_clip, uc.scene_view().audio_clips_view().count());
+        while p_clip != p_clip_end {
+            let clip_view: &'a AudioClipView = AudioClipView::from_ptr(*p_clip);
+            let clip: *mut AudioClip = clip_view.get();
+            (*clip).absolute_filename =
+                find_string(clip_view.props_view(), b"Path\0".as_ptr(), EMPTY_STRING.0);
+            (*clip).relative_filename = find_string(
+                clip_view.props_view(),
+                b"RelPath\0".as_ptr(),
+                EMPTY_STRING.0,
+            );
+            (*clip).raw_absolute_filename =
+                find_blob(clip_view.props_view(), b"Path\0".as_ptr(), EMPTY_BLOB.0);
+            (*clip).raw_relative_filename =
+                find_blob(clip_view.props_view(), b"RelPath\0".as_ptr(), EMPTY_BLOB.0);
+            resolve_filenames(
+                uc,
+                &raw mut (*clip).filename as *mut Strblob,
+                &raw mut (*clip).absolute_filename as *mut Strblob,
+                &raw mut (*clip).relative_filename as *mut Strblob,
+                false,
+            )?;
+            resolve_filenames(
+                uc,
+                &raw mut (*clip).raw_filename as *mut Strblob,
+                &raw mut (*clip).raw_absolute_filename as *mut Strblob,
+                &raw mut (*clip).raw_relative_filename as *mut Strblob,
+                true,
+            )?;
+            push_file_content(
+                uc,
+                &raw mut (*clip).absolute_filename,
+                &raw mut (*clip).content,
+            )?;
+            p_clip = p_clip.add(1);
+        }
     }
 
     uc.set_num_file_content(uc.tmp_stack_view().num_items() - initial_stack);
-    uc.set_file_content(push_pop::<FileContent>(
-        uc.tmp_mut_ptr(),
-        uc.tmp_stack_mut_ptr(),
-        uc.num_file_content(),
-    ));
-    ufbxi_check!(uc, !uc.file_content().is_null(), "uc->file_content");
-    sort_file_contents(uc, uc.file_content(), uc.num_file_content())?;
-
-    // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
-    let mut p_video: *mut *mut Video = uc.scene_view().videos_view().data() as *mut *mut Video;
-    let p_video_end: *mut *mut Video = add_ptr(p_video, uc.scene_view().videos_view().count());
-    while p_video != p_video_end {
-        let video: *mut Video = *p_video;
-        fetch_file_content(
-            uc,
-            &raw mut (*video).absolute_filename,
-            &raw mut (*video).content,
-        );
-        p_video = p_video.add(1);
+    // SAFETY: pops the `num_file_content` entries pushed by the loops above from
+    // uc's own tmp stack into uc's own tmp buffer, then sorts that fresh
+    // non-null run with its own length.
+    unsafe {
+        uc.set_file_content(push_pop::<FileContent>(
+            uc.tmp_mut_ptr(),
+            uc.tmp_stack_mut_ptr(),
+            uc.num_file_content(),
+        ));
+        ufbxi_check!(uc, !uc.file_content().is_null(), "uc->file_content");
+        sort_file_contents(uc, uc.file_content(), uc.num_file_content())?;
     }
 
-    // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
-    let mut p_clip: *mut *mut AudioClip =
-        uc.scene_view().audio_clips_view().data() as *mut *mut AudioClip;
-    let p_clip_end: *mut *mut AudioClip =
-        add_ptr(p_clip, uc.scene_view().audio_clips_view().count());
-    while p_clip != p_clip_end {
-        let clip: *mut AudioClip = *p_clip;
-        fetch_file_content(
-            uc,
-            &raw mut (*clip).absolute_filename,
-            &raw mut (*clip).content,
-        );
-        p_clip = p_clip.add(1);
+    // SAFETY: walks the stored `videos` element-pointer run of the uc-owned scene
+    // (`count` entries), handing each video's own filename/content fields to the
+    // lookup.
+    unsafe {
+        // C: `ufbxi_for_ptr_list(ufbx_video, p_video, uc->scene.videos)`
+        let mut p_video: *mut *mut Video = uc.scene_view().videos_view().data() as *mut *mut Video;
+        let p_video_end: *mut *mut Video = add_ptr(p_video, uc.scene_view().videos_view().count());
+        while p_video != p_video_end {
+            let video: *mut Video = *p_video;
+            fetch_file_content(
+                uc,
+                &raw mut (*video).absolute_filename,
+                &raw mut (*video).content,
+            );
+            p_video = p_video.add(1);
+        }
+    }
+
+    // SAFETY: walks the stored `audio_clips` element-pointer run of the uc-owned
+    // scene (`count` entries), handing each clip's own filename/content fields to
+    // the lookup.
+    unsafe {
+        // C: `ufbxi_for_ptr_list(ufbx_audio_clip, p_clip, uc->scene.audio_clips)`
+        let mut p_clip: *mut *mut AudioClip =
+            uc.scene_view().audio_clips_view().data() as *mut *mut AudioClip;
+        let p_clip_end: *mut *mut AudioClip =
+            add_ptr(p_clip, uc.scene_view().audio_clips_view().count());
+        while p_clip != p_clip_end {
+            let clip: *mut AudioClip = *p_clip;
+            fetch_file_content(
+                uc,
+                &raw mut (*clip).absolute_filename,
+                &raw mut (*clip).content,
+            );
+            p_clip = p_clip.add(1);
+        }
     }
 
     Ok(())
@@ -6545,6 +6881,10 @@ pub(crate) unsafe fn push_anim(
 // into the public `ufbx_scene` graph. Split into no helpers upstream, so it is
 // ported as one function.
 #[inline(never)]
+// Stays `unsafe fn`: ~1900 lines of raw arena work (push/pop runs, element
+// pointer patching, per-element fetch/sort passes) with ~930 residual raw
+// operations threaded through hundreds of escaping locals — no honest
+// clustering exists, only a whole-body wrap.
 pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let num_elements: usize = uc.num_elements() as usize;
 
@@ -8438,40 +8778,40 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
 // ufbx.c:22628-22633 `ufbxi_add_translate`
 #[inline(always)]
-pub(crate) unsafe fn add_translate(t: *mut Transform, v: Vec3) {
-    (*t).translation.x += v.x;
-    (*t).translation.y += v.y;
-    (*t).translation.z += v.z;
+pub(crate) fn add_translate(t: &mut Transform, v: Vec3) {
+    t.translation.x += v.x;
+    t.translation.y += v.y;
+    t.translation.z += v.z;
 }
 
 // ufbx.c:22635-22640 `ufbxi_sub_translate`
 #[inline(always)]
-pub(crate) unsafe fn sub_translate(t: *mut Transform, v: Vec3) {
-    (*t).translation.x -= v.x;
-    (*t).translation.y -= v.y;
-    (*t).translation.z -= v.z;
+pub(crate) fn sub_translate(t: &mut Transform, v: Vec3) {
+    t.translation.x -= v.x;
+    t.translation.y -= v.y;
+    t.translation.z -= v.z;
 }
 
 // ufbx.c:22642-22650 `ufbxi_mul_scale`
 #[inline(always)]
-pub(crate) unsafe fn mul_scale(t: *mut Transform, v: Vec3) {
-    (*t).translation.x *= v.x;
-    (*t).translation.y *= v.y;
-    (*t).translation.z *= v.z;
-    (*t).scale.x *= v.x;
-    (*t).scale.y *= v.y;
-    (*t).scale.z *= v.z;
+pub(crate) fn mul_scale(t: &mut Transform, v: Vec3) {
+    t.translation.x *= v.x;
+    t.translation.y *= v.y;
+    t.translation.z *= v.z;
+    t.scale.x *= v.x;
+    t.scale.y *= v.y;
+    t.scale.z *= v.z;
 }
 
 // ufbx.c:22652-22660 `ufbxi_mul_scale_real`
 #[inline(always)]
-pub(crate) unsafe fn mul_scale_real(t: *mut Transform, v: Real) {
-    (*t).translation.x *= v;
-    (*t).translation.y *= v;
-    (*t).translation.z *= v;
-    (*t).scale.x *= v;
-    (*t).scale.y *= v;
-    (*t).scale.z *= v;
+pub(crate) fn mul_scale_real(t: &mut Transform, v: Real) {
+    t.translation.x *= v;
+    t.translation.y *= v;
+    t.translation.z *= v;
+    t.scale.x *= v;
+    t.scale.y *= v;
+    t.scale.z *= v;
 }
 
 // ufbx.c:22662-22670 `ufbxi_mul_quat`
@@ -8521,42 +8861,42 @@ pub(crate) unsafe fn add_weighted_mat(r: *mut Matrix, b: *const Matrix, w: Real)
 }
 
 // ufbx.c:22695-22709 `ufbxi_mul_rotate`
-pub(crate) unsafe fn mul_rotate(t: *mut Transform, v: Vec3, order: RotationOrder) {
+pub(crate) fn mul_rotate(t: &mut Transform, v: Vec3, order: RotationOrder) {
     if is_vec3_zero(v) {
         return;
     }
 
     let q: Quat = euler_to_quat(v, order);
-    if (*t).rotation.w != 1.0 {
-        (*t).rotation = mul_quat(q, (*t).rotation);
+    if t.rotation.w != 1.0 {
+        t.rotation = mul_quat(q, t.rotation);
     } else {
-        (*t).rotation = q;
+        t.rotation = q;
     }
 
-    if !is_vec3_zero((*t).translation) {
-        (*t).translation = quat_rotate_vec3(q, (*t).translation);
+    if !is_vec3_zero(t.translation) {
+        t.translation = quat_rotate_vec3(q, t.translation);
     }
 }
 
 // ufbx.c:22711-22724 `ufbxi_mul_rotate_quat`
-pub(crate) unsafe fn mul_rotate_quat(t: *mut Transform, q: Quat) {
+pub(crate) fn mul_rotate_quat(t: &mut Transform, q: Quat) {
     if is_quat_identity(q) {
         return;
     }
 
-    if (*t).rotation.w != 1.0 {
-        (*t).rotation = mul_quat(q, (*t).rotation);
+    if t.rotation.w != 1.0 {
+        t.rotation = mul_quat(q, t.rotation);
     } else {
-        (*t).rotation = q;
+        t.rotation = q;
     }
 
-    if !is_vec3_zero((*t).translation) {
-        (*t).translation = quat_rotate_vec3(q, (*t).translation);
+    if !is_vec3_zero(t.translation) {
+        t.translation = quat_rotate_vec3(q, t.translation);
     }
 }
 
 // ufbx.c:22726-22741 `ufbxi_mul_inv_rotate`
-pub(crate) unsafe fn mul_inv_rotate(t: *mut Transform, v: Vec3, order: RotationOrder) {
+pub(crate) fn mul_inv_rotate(t: &mut Transform, v: Vec3, order: RotationOrder) {
     if is_vec3_zero(v) {
         return;
     }
@@ -8565,14 +8905,14 @@ pub(crate) unsafe fn mul_inv_rotate(t: *mut Transform, v: Vec3, order: RotationO
     q.x = -q.x;
     q.y = -q.y;
     q.z = -q.z;
-    if (*t).rotation.w != 1.0 {
-        (*t).rotation = mul_quat(q, (*t).rotation);
+    if t.rotation.w != 1.0 {
+        t.rotation = mul_quat(q, t.rotation);
     } else {
-        (*t).rotation = q;
+        t.rotation = q;
     }
 
-    if !is_vec3_zero((*t).translation) {
-        (*t).translation = quat_rotate_vec3(q, (*t).translation);
+    if !is_vec3_zero(t.translation) {
+        t.translation = quat_rotate_vec3(q, t.translation);
     }
 }
 
@@ -8855,13 +9195,19 @@ pub(crate) unsafe fn get_transform<M: Mode>(
 
 // ufbx.c:22907-22936 `ufbxi_get_texture_transform`
 #[inline(never)]
-pub(crate) unsafe fn get_texture_transform(props: &PropsView) -> Transform {
-    let scale_pivot: Vec3 = find_vec3(props, sp::TextureScalingPivot.as_ptr(), 0.0, 0.0, 0.0);
-    let rot_pivot: Vec3 = find_vec3(props, sp::TextureRotationPivot.as_ptr(), 0.0, 0.0, 0.0);
-
-    let translation: Vec3 = find_vec3(props, sp::Translation.as_ptr(), 0.0, 0.0, 0.0);
-    let rotation: Vec3 = find_vec3(props, sp::Rotation.as_ptr(), 0.0, 0.0, 0.0);
-    let scaling: Vec3 = find_vec3(props, sp::Scaling.as_ptr(), 1.0, 1.0, 1.0);
+pub(crate) fn get_texture_transform(props: &PropsView) -> Transform {
+    // SAFETY: `props` is a constructed props view; every `name` is a
+    // NUL-terminated static string constant, which is the property-lookup
+    // contract.
+    let (scale_pivot, rot_pivot, translation, rotation, scaling) = unsafe {
+        (
+            find_vec3(props, sp::TextureScalingPivot.as_ptr(), 0.0, 0.0, 0.0),
+            find_vec3(props, sp::TextureRotationPivot.as_ptr(), 0.0, 0.0, 0.0),
+            find_vec3(props, sp::Translation.as_ptr(), 0.0, 0.0, 0.0),
+            find_vec3(props, sp::Rotation.as_ptr(), 0.0, 0.0, 0.0),
+            find_vec3(props, sp::Scaling.as_ptr(), 1.0, 1.0, 1.0),
+        )
+    };
 
     // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
     let mut t: Transform = Transform {
@@ -8893,7 +9239,8 @@ pub(crate) unsafe fn get_texture_transform(props: &PropsView) -> Transform {
 
     add_translate(&mut t, translation);
 
-    if find_int(props, sp::UVSwap.as_ptr(), 0) != 0 {
+    // SAFETY: props-view lookup with a NUL-terminated static name, as above.
+    if unsafe { find_int(props, sp::UVSwap.as_ptr(), 0) } != 0 {
         let swap_scale: Vec3 = Vec3 {
             x: -1.0,
             y: 0.0,
@@ -8913,11 +9260,18 @@ pub(crate) unsafe fn get_texture_transform(props: &PropsView) -> Transform {
 
 // ufbx.c:22938-22953 `ufbxi_get_constraint_transform`
 #[inline(never)]
-pub(crate) unsafe fn get_constraint_transform(props: &PropsView) -> Transform {
-    let translation: Vec3 = find_vec3(props, sp::Translation.as_ptr(), 0.0, 0.0, 0.0);
-    let rotation: Vec3 = find_vec3(props, sp::Rotation.as_ptr(), 0.0, 0.0, 0.0);
-    let rotation_offset: Vec3 = find_vec3(props, sp::RotationOffset.as_ptr(), 0.0, 0.0, 0.0);
-    let scaling: Vec3 = find_vec3(props, sp::Scaling.as_ptr(), 1.0, 1.0, 1.0);
+pub(crate) fn get_constraint_transform(props: &PropsView) -> Transform {
+    // SAFETY: `props` is a constructed props view; every `name` is a
+    // NUL-terminated static string constant, which is the property-lookup
+    // contract.
+    let (translation, rotation, rotation_offset, scaling) = unsafe {
+        (
+            find_vec3(props, sp::Translation.as_ptr(), 0.0, 0.0, 0.0),
+            find_vec3(props, sp::Rotation.as_ptr(), 0.0, 0.0, 0.0),
+            find_vec3(props, sp::RotationOffset.as_ptr(), 0.0, 0.0, 0.0),
+            find_vec3(props, sp::Scaling.as_ptr(), 1.0, 1.0, 1.0),
+        )
+    };
 
     // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
     let mut t: Transform = Transform {
@@ -9094,57 +9448,63 @@ pub(crate) unsafe fn update_node(
 
 // ufbx.c:23044-23062 `ufbxi_update_light`
 #[inline(never)]
-pub(crate) unsafe fn update_light(light_view: &LightView) {
+pub(crate) fn update_light(light_view: &LightView) {
     let light: *mut Light = light_view.get();
     // NOTE: FBX seems to store intensities 100x of what's specified in at least
     // Maya and Blender, should there be a quirks mode to not do this for specific
     // exporters. Does the FBX SDK do this transparently as well?
-    (*light).intensity = find_real(
-        light_view.props_view(),
-        sp::Intensity.as_ptr(),
-        100.0 as Real,
-    ) / (100.0 as Real);
+    // SAFETY: `light` is the light view's own storage and every lookup reads that
+    // same view's props with a NUL-terminated static name; `ufbxi_find_enum`
+    // clamps each result to the `[0, LAST]` range passed, so the transmutes are
+    // of in-range discriminants.
+    unsafe {
+        (*light).intensity = find_real(
+            light_view.props_view(),
+            sp::Intensity.as_ptr(),
+            100.0 as Real,
+        ) / (100.0 as Real);
 
-    (*light).color = find_vec3(light_view.props_view(), sp::Color.as_ptr(), 1.0, 1.0, 1.0);
-    // C: `(ufbx_light_type)ufbxi_find_enum(...)` etc — `ufbxi_find_enum` clamps
-    // each result to its enum's `[0, LAST]` range.
-    (*light).type_ = core::mem::transmute::<u32, LightType>(find_enum(
-        light_view.props_view(),
-        sp::LightType.as_ptr(),
-        0,
-        LightType::Volume as i64,
-    ) as u32);
-    (*light).decay = core::mem::transmute::<u32, LightDecay>(find_enum(
-        light_view.props_view(),
-        sp::DecayType.as_ptr(),
-        LightDecay::None as i64,
-        LightDecay::Cubic as i64,
-    ) as u32);
-    (*light).area_shape = core::mem::transmute::<u32, LightAreaShape>(find_enum(
-        light_view.props_view(),
-        sp::AreaLightShape.as_ptr(),
-        0,
-        LightAreaShape::Sphere as i64,
-    ) as u32);
-    (*light).inner_angle = find_real(light_view.props_view(), sp::HotSpot.as_ptr(), 0.0);
-    (*light).inner_angle = find_real(
-        light_view.props_view(),
-        sp::InnerAngle.as_ptr(),
-        (*light).inner_angle,
-    );
-    (*light).outer_angle = find_real(light_view.props_view(), sp::Cone_angle.as_ptr(), 0.0);
-    (*light).outer_angle = find_real(
-        light_view.props_view(),
-        sp::ConeAngle.as_ptr(),
-        (*light).outer_angle,
-    );
-    (*light).outer_angle = find_real(
-        light_view.props_view(),
-        sp::OuterAngle.as_ptr(),
-        (*light).outer_angle,
-    );
-    (*light).cast_light = find_int(light_view.props_view(), sp::CastLight.as_ptr(), 1) != 0;
-    (*light).cast_shadows = find_int(light_view.props_view(), sp::CastShadows.as_ptr(), 0) != 0;
+        (*light).color = find_vec3(light_view.props_view(), sp::Color.as_ptr(), 1.0, 1.0, 1.0);
+        // C: `(ufbx_light_type)ufbxi_find_enum(...)` etc — `ufbxi_find_enum` clamps
+        // each result to its enum's `[0, LAST]` range.
+        (*light).type_ = core::mem::transmute::<u32, LightType>(find_enum(
+            light_view.props_view(),
+            sp::LightType.as_ptr(),
+            0,
+            LightType::Volume as i64,
+        ) as u32);
+        (*light).decay = core::mem::transmute::<u32, LightDecay>(find_enum(
+            light_view.props_view(),
+            sp::DecayType.as_ptr(),
+            LightDecay::None as i64,
+            LightDecay::Cubic as i64,
+        ) as u32);
+        (*light).area_shape = core::mem::transmute::<u32, LightAreaShape>(find_enum(
+            light_view.props_view(),
+            sp::AreaLightShape.as_ptr(),
+            0,
+            LightAreaShape::Sphere as i64,
+        ) as u32);
+        (*light).inner_angle = find_real(light_view.props_view(), sp::HotSpot.as_ptr(), 0.0);
+        (*light).inner_angle = find_real(
+            light_view.props_view(),
+            sp::InnerAngle.as_ptr(),
+            (*light).inner_angle,
+        );
+        (*light).outer_angle = find_real(light_view.props_view(), sp::Cone_angle.as_ptr(), 0.0);
+        (*light).outer_angle = find_real(
+            light_view.props_view(),
+            sp::ConeAngle.as_ptr(),
+            (*light).outer_angle,
+        );
+        (*light).outer_angle = find_real(
+            light_view.props_view(),
+            sp::OuterAngle.as_ptr(),
+            (*light).outer_angle,
+        );
+        (*light).cast_light = find_int(light_view.props_view(), sp::CastLight.as_ptr(), 1) != 0;
+        (*light).cast_shadows = find_int(light_view.props_view(), sp::CastShadows.as_ptr(), 0) != 0;
+    }
 }
 
 // ufbx.c:23064-23067 `ufbxi_aperture_format`
@@ -9226,6 +9586,11 @@ static APERTURE_FORMATS: [ApertureFormatInfo; 12] = [
 
 // ufbx.c:23084-23252 `ufbxi_update_camera`
 #[inline(never)]
+// Stays `unsafe fn`: the body is raw end-to-end — ~115 residual raw operations
+// (camera/scene field writes, `ufbxi_find_real` lookups, enum transmutes)
+// interleaved with a dozen escaping locals, so an honest decomposition would
+// need a dozen blocks and tuple-returning wraps that break the C line
+// correspondence.
 pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraView) {
     let scene: *mut Scene = scene.get();
     let camera: *mut Camera = camera_view.get();
@@ -9481,24 +9846,33 @@ pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a Ca
 
 // ufbx.c:23254-23264 `ufbxi_update_bone`
 #[inline(never)]
-pub(crate) unsafe fn update_bone<'a>(scene: &'a SceneView, bone_view: &'a BoneView) {
+pub(crate) fn update_bone<'a>(scene: &'a SceneView, bone_view: &'a BoneView) {
     let scene: *mut Scene = scene.get();
     let bone: *mut Bone = bone_view.get();
-    let unit: Real = (*scene).metadata.bone_prop_size_unit;
+    // SAFETY: `scene` and `bone` are the storage of the views passed in, and the
+    // lookups read the bone view's own props with NUL-terminated static names.
+    unsafe {
+        let unit: Real = (*scene).metadata.bone_prop_size_unit;
 
-    (*bone).radius = find_real(bone_view.props_view(), sp::Size.as_ptr(), unit) / unit;
-    if (*scene).metadata.bone_prop_limb_length_relative {
-        (*bone).relative_length = find_real(bone_view.props_view(), sp::LimbLength.as_ptr(), 1.0);
-    } else {
-        (*bone).relative_length = 1.0;
+        (*bone).radius = find_real(bone_view.props_view(), sp::Size.as_ptr(), unit) / unit;
+        if (*scene).metadata.bone_prop_limb_length_relative {
+            (*bone).relative_length =
+                find_real(bone_view.props_view(), sp::LimbLength.as_ptr(), 1.0);
+        } else {
+            (*bone).relative_length = 1.0;
+        }
     }
 }
 
 // ufbx.c:23266-23269 `ufbxi_update_line_curve`
 #[inline(never)]
-pub(crate) unsafe fn update_line_curve(line_view: &LineCurveView) {
+pub(crate) fn update_line_curve(line_view: &LineCurveView) {
     let line: *mut LineCurve = line_view.get();
-    (*line).color = find_vec3(line_view.props_view(), sp::Color.as_ptr(), 1.0, 1.0, 1.0);
+    // SAFETY: `line` is the line-curve view's own storage; the lookup reads that
+    // same view's props with a NUL-terminated static name.
+    unsafe {
+        (*line).color = find_vec3(line_view.props_view(), sp::Color.as_ptr(), 1.0, 1.0, 1.0);
+    }
 }
 
 // ufbx.c:23271-23287 `ufbxi_update_pose`
@@ -9542,71 +9916,81 @@ pub(crate) unsafe fn update_skin_cluster(cluster: *mut SkinCluster) {
 
 // ufbx.c:23299-23342 `ufbxi_update_blend_channel`
 #[inline(never)]
-pub(crate) unsafe fn update_blend_channel(channel_view: &BlendChannelView) {
+pub(crate) fn update_blend_channel(channel_view: &BlendChannelView) {
     let channel: *mut BlendChannel = channel_view.get();
-    let weight: Real =
-        find_real(channel_view.props_view(), sp::DeformPercent.as_ptr(), 0.0) * (0.01 as Real);
-    (*channel).weight = weight;
+    // SAFETY: props-view lookup with a NUL-terminated static name.
+    let weight: Real = unsafe {
+        find_real(channel_view.props_view(), sp::DeformPercent.as_ptr(), 0.0) * (0.01 as Real)
+    };
+    // SAFETY: `channel` is the blend-channel view's own storage.
+    unsafe { (*channel).weight = weight };
 
-    let num_keys: isize = (*channel).keyframes.count as isize;
+    // SAFETY: `channel` as above.
+    let num_keys: isize = unsafe { (*channel).keyframes.count } as isize;
     if num_keys > 0 {
-        let keys: *mut BlendKeyframe = (*channel).keyframes.data as *mut BlendKeyframe;
+        // SAFETY: `keys` is the channel's own `num_keys`-element keyframe run; every
+        // `offset` below is bounds-checked against `num_keys` (`last_negative` is an
+        // index into it, or -1), and `prev`/`next` are either such an element or the
+        // local `zero_key` sentinel.
+        unsafe {
+            let keys: *mut BlendKeyframe = (*channel).keyframes.data as *mut BlendKeyframe;
 
-        // Reset the effective weights to zero and find the split around zero
-        let mut last_negative: isize = -1;
-        let mut i: isize = 0;
-        while i < num_keys {
-            (*keys.offset(i)).effective_weight = 0.0 as Real;
-            if (*keys.offset(i)).target_weight < 0.0 {
-                last_negative = i;
-            }
-            i += 1;
-        }
-
-        // C: `ufbx_blend_keyframe zero_key = { NULL };` — a zeroed keyframe used
-        // only as a `{ target_weight = 0, effective_weight = 0 }` sentinel.
-        // `ufbx_blend_keyframe.shape` is a non-nullable `Ref<BlendShape>`
-        // (`NonNull`), so the zeroed storage stays in `MaybeUninit` and is only
-        // ever reached through a raw `*mut BlendKeyframe` — the `shape` member
-        // is never read (C-parity: C reads it just as little).
-        let mut zero_key_storage: MaybeUninit<BlendKeyframe> = MaybeUninit::zeroed();
-        let zero_key: *mut BlendKeyframe = zero_key_storage.as_mut_ptr();
-        let mut prev: *mut BlendKeyframe = zero_key;
-        let mut next: *mut BlendKeyframe = zero_key;
-        if weight > 0.0 {
-            if last_negative >= 0 {
-                prev = keys.offset(last_negative);
-            }
-            let mut i: isize = last_negative + 1;
+            // Reset the effective weights to zero and find the split around zero
+            let mut last_negative: isize = -1;
+            let mut i: isize = 0;
             while i < num_keys {
-                prev = next;
-                next = keys.offset(i);
-                if (*next).target_weight > weight {
-                    break;
+                (*keys.offset(i)).effective_weight = 0.0 as Real;
+                if (*keys.offset(i)).target_weight < 0.0 {
+                    last_negative = i;
                 }
                 i += 1;
             }
-        } else {
-            if last_negative + 1 < num_keys {
-                prev = keys.offset(last_negative + 1);
-            }
-            let mut i: isize = last_negative;
-            while i >= 0 {
-                prev = next;
-                next = keys.offset(i);
-                if (*next).target_weight < weight {
-                    break;
-                }
-                i -= 1;
-            }
-        }
 
-        // Linearly interpolate between the endpoints with the weight
-        let delta: Real = (*next).target_weight - (*prev).target_weight;
-        if delta != 0.0 {
-            let t: Real = (weight - (*prev).target_weight) / delta;
-            (*prev).effective_weight = 1.0 - t;
-            (*next).effective_weight = t;
+            // C: `ufbx_blend_keyframe zero_key = { NULL };` — a zeroed keyframe used
+            // only as a `{ target_weight = 0, effective_weight = 0 }` sentinel.
+            // `ufbx_blend_keyframe.shape` is a non-nullable `Ref<BlendShape>`
+            // (`NonNull`), so the zeroed storage stays in `MaybeUninit` and is only
+            // ever reached through a raw `*mut BlendKeyframe` — the `shape` member
+            // is never read (C-parity: C reads it just as little).
+            let mut zero_key_storage: MaybeUninit<BlendKeyframe> = MaybeUninit::zeroed();
+            let zero_key: *mut BlendKeyframe = zero_key_storage.as_mut_ptr();
+            let mut prev: *mut BlendKeyframe = zero_key;
+            let mut next: *mut BlendKeyframe = zero_key;
+            if weight > 0.0 {
+                if last_negative >= 0 {
+                    prev = keys.offset(last_negative);
+                }
+                let mut i: isize = last_negative + 1;
+                while i < num_keys {
+                    prev = next;
+                    next = keys.offset(i);
+                    if (*next).target_weight > weight {
+                        break;
+                    }
+                    i += 1;
+                }
+            } else {
+                if last_negative + 1 < num_keys {
+                    prev = keys.offset(last_negative + 1);
+                }
+                let mut i: isize = last_negative;
+                while i >= 0 {
+                    prev = next;
+                    next = keys.offset(i);
+                    if (*next).target_weight < weight {
+                        break;
+                    }
+                    i -= 1;
+                }
+            }
+
+            // Linearly interpolate between the endpoints with the weight
+            let delta: Real = (*next).target_weight - (*prev).target_weight;
+            if delta != 0.0 {
+                let t: Real = (weight - (*prev).target_weight) / delta;
+                (*prev).effective_weight = 1.0 - t;
+                (*next).effective_weight = t;
+            }
         }
     }
 }
@@ -9621,83 +10005,107 @@ pub(crate) unsafe fn update_material(scene: *mut Scene, material: *mut Material)
 
 // ufbx.c:23351-23369 `ufbxi_update_texture`
 #[inline(never)]
-pub(crate) unsafe fn update_texture(texture_view: &TextureView) {
+pub(crate) fn update_texture(texture_view: &TextureView) {
     let texture: *mut Texture = texture_view.get();
-    (*texture).uv_transform = get_texture_transform(texture_view.props_view());
-    if !is_transform_identity(&(*texture).uv_transform) {
-        (*texture).has_uv_transform = true;
-        (*texture).texture_to_uv = transform_to_matrix(&(*texture).uv_transform);
-        (*texture).uv_to_texture = matrix_invert(&(*texture).texture_to_uv);
-    } else {
-        (*texture).has_uv_transform = false;
-        (*texture).texture_to_uv = IDENTITY_MATRIX;
-        (*texture).uv_to_texture = IDENTITY_MATRIX;
+    // SAFETY: `texture` is the texture view's own storage and the transform is
+    // derived from that same view's props; the matrix helpers are pure value
+    // math over the texture's own fields.
+    unsafe {
+        (*texture).uv_transform = get_texture_transform(texture_view.props_view());
+        if !is_transform_identity(&(*texture).uv_transform) {
+            (*texture).has_uv_transform = true;
+            (*texture).texture_to_uv = transform_to_matrix(&(*texture).uv_transform);
+            (*texture).uv_to_texture = matrix_invert(&(*texture).texture_to_uv);
+        } else {
+            (*texture).has_uv_transform = false;
+            (*texture).texture_to_uv = IDENTITY_MATRIX;
+            (*texture).uv_to_texture = IDENTITY_MATRIX;
+        }
     }
-    // C: `(ufbx_wrap_mode)ufbxi_find_enum(...)` — clamped to `[0, LAST]`.
-    (*texture).wrap_u = core::mem::transmute::<u32, WrapMode>(find_enum(
-        texture_view.props_view(),
-        sp::WrapModeU.as_ptr(),
-        0,
-        WrapMode::Clamp as i64,
-    ) as u32);
-    (*texture).wrap_v = core::mem::transmute::<u32, WrapMode>(find_enum(
-        texture_view.props_view(),
-        sp::WrapModeV.as_ptr(),
-        0,
-        WrapMode::Clamp as i64,
-    ) as u32);
+    // SAFETY: `texture` as above; `ufbxi_find_enum` clamps each result to the
+    // `[0, LAST]` range passed, so both transmutes are of in-range discriminants.
+    unsafe {
+        // C: `(ufbx_wrap_mode)ufbxi_find_enum(...)` — clamped to `[0, LAST]`.
+        (*texture).wrap_u = core::mem::transmute::<u32, WrapMode>(find_enum(
+            texture_view.props_view(),
+            sp::WrapModeU.as_ptr(),
+            0,
+            WrapMode::Clamp as i64,
+        ) as u32);
+        (*texture).wrap_v = core::mem::transmute::<u32, WrapMode>(find_enum(
+            texture_view.props_view(),
+            sp::WrapModeV.as_ptr(),
+            0,
+            WrapMode::Clamp as i64,
+        ) as u32);
+    }
 
-    // C: `if (texture->shader)` — pointer truthiness.
-    let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
-    if !shader.is_null() {
-        update_shader_texture(texture_view, shader);
+    // SAFETY: `texture` as above; `opt_ptr` result is null-checked before use.
+    unsafe {
+        // C: `if (texture->shader)` — pointer truthiness.
+        let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
+        if !shader.is_null() {
+            update_shader_texture(texture_view, shader);
+        }
     }
 }
 
 // ufbx.c:23371-23388 `ufbxi_update_anim_stack`
 #[inline(never)]
-pub(crate) unsafe fn update_anim_stack<'a>(scene: &'a SceneView, stack_view: &'a AnimStackView) {
+pub(crate) fn update_anim_stack<'a>(scene: &'a SceneView, stack_view: &'a AnimStackView) {
     let scene: *mut Scene = scene.get();
     let stack: *mut AnimStack = stack_view.get();
     // C: `ufbx_prop *begin, *end;` — both are assigned before any read.
     let mut begin: *mut Prop;
     let mut end: *mut Prop;
-    begin = find_prop(stack_view.props_view(), sp::LocalStart.as_ptr())
-        .map_or(ptr::null_mut(), PropView::get);
-    end = find_prop(stack_view.props_view(), sp::LocalStop.as_ptr())
-        .map_or(ptr::null_mut(), PropView::get);
-    if begin.is_null() || end.is_null() {
-        begin = find_prop(stack_view.props_view(), sp::ReferenceStart.as_ptr())
+    // SAFETY: props-view lookups with NUL-terminated static names.
+    unsafe {
+        begin = find_prop(stack_view.props_view(), sp::LocalStart.as_ptr())
             .map_or(ptr::null_mut(), PropView::get);
-        end = find_prop(stack_view.props_view(), sp::ReferenceStop.as_ptr())
+        end = find_prop(stack_view.props_view(), sp::LocalStop.as_ptr())
             .map_or(ptr::null_mut(), PropView::get);
+        if begin.is_null() || end.is_null() {
+            begin = find_prop(stack_view.props_view(), sp::ReferenceStart.as_ptr())
+                .map_or(ptr::null_mut(), PropView::get);
+            end = find_prop(stack_view.props_view(), sp::ReferenceStop.as_ptr())
+                .map_or(ptr::null_mut(), PropView::get);
+        }
     }
 
-    if !begin.is_null() && !end.is_null() {
-        (*stack).time_begin = (*begin).value_int as f64 / (*scene).metadata.ktime_second as f64;
-        (*stack).time_end = (*end).value_int as f64 / (*scene).metadata.ktime_second as f64;
-    }
+    // SAFETY: `begin`/`end` are null-checked before the derefs; `scene`, `stack`
+    // and the stack's always-resolved `anim` reference are storage of the views
+    // passed in.
+    unsafe {
+        if !begin.is_null() && !end.is_null() {
+            (*stack).time_begin = (*begin).value_int as f64 / (*scene).metadata.ktime_second as f64;
+            (*stack).time_end = (*end).value_int as f64 / (*scene).metadata.ktime_second as f64;
+        }
 
-    let anim: *mut Anim = ref_ptr(&(*stack).anim);
-    (*anim).time_begin = (*stack).time_begin;
-    (*anim).time_end = (*stack).time_end;
+        let anim: *mut Anim = ref_ptr(&(*stack).anim);
+        (*anim).time_begin = (*stack).time_begin;
+        (*anim).time_end = (*stack).time_end;
+    }
 }
 
 // ufbx.c:23390-23395 `ufbxi_update_display_layer`
 #[inline(never)]
-pub(crate) unsafe fn update_display_layer(layer_view: &DisplayLayerView) {
+pub(crate) fn update_display_layer(layer_view: &DisplayLayerView) {
     let layer: *mut DisplayLayer = layer_view.get();
-    (*layer).visible = find_int(layer_view.props_view(), sp::Show.as_ptr(), 1) != 0;
-    (*layer).frozen = find_int(layer_view.props_view(), sp::Freeze.as_ptr(), 1) != 0;
-    // C-parity: `0.8f` is a `float` literal widened to `ufbx_real` (double) —
-    // NOT the decimal value 0.8 (PORTING.md "Floats").
-    (*layer).ui_color = find_vec3(
-        layer_view.props_view(),
-        sp::Color.as_ptr(),
-        0.8f32 as Real,
-        0.8f32 as Real,
-        0.8f32 as Real,
-    );
+    // SAFETY: `layer` is the display-layer view's own storage and every lookup
+    // reads that same view's props with a NUL-terminated static name.
+    unsafe {
+        (*layer).visible = find_int(layer_view.props_view(), sp::Show.as_ptr(), 1) != 0;
+        (*layer).frozen = find_int(layer_view.props_view(), sp::Freeze.as_ptr(), 1) != 0;
+        // C-parity: `0.8f` is a `float` literal widened to `ufbx_real` (double) —
+        // NOT the decimal value 0.8 (PORTING.md "Floats").
+        (*layer).ui_color = find_vec3(
+            layer_view.props_view(),
+            sp::Color.as_ptr(),
+            0.8f32 as Real,
+            0.8f32 as Real,
+            0.8f32 as Real,
+        );
+    }
 }
 
 // ufbx.c:23397-23414 `ufbxi_find_bool3`
@@ -9731,151 +10139,170 @@ pub(crate) unsafe fn find_bool3(
 
 // ufbx.c:23416-23488 `ufbxi_update_constraint`
 #[inline(never)]
-pub(crate) unsafe fn update_constraint(constraint_view: &ConstraintView) {
+pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
     let constraint: *mut Constraint = constraint_view.get();
     // C: `ufbx_props *props = &constraint->props;` — kept live across writes
     // through `constraint`, so this must be a `&raw mut` and never a `&mut`
     // (which would retag and be invalidated by those writes). Correlated to the
     // element view (<= uc) via `props_view`.
     let props: &PropsView = constraint_view.props_view();
-    let constraint_type: ConstraintType = (*constraint).type_;
+    // SAFETY: `constraint` is the constraint view's own storage.
+    let constraint_type: ConstraintType = unsafe { (*constraint).type_ };
 
-    (*constraint).transform_offset = get_constraint_transform(props);
+    // SAFETY: `constraint` and `props` are the constraint view's own storage; the
+    // lookup name is a NUL-terminated static.
+    unsafe {
+        (*constraint).transform_offset = get_constraint_transform(props);
 
-    // C: `ufbxi_find_real` — the internal 4-byte-key lookup, NOT `ufbx_find_real`.
-    (*constraint).weight = find_real(props, sp::Weight.as_ptr(), 100.0 as Real) / (100.0 as Real);
-
-    // C: `ufbxi_for_list(ufbx_constraint_target, target, constraint->targets)`
-    let mut target: *mut ConstraintTarget = (*constraint).targets.data as *mut ConstraintTarget;
-    let target_end: *mut ConstraintTarget = add_ptr(target, (*constraint).targets.count);
-    while target != target_end {
-        let node: *mut Node = ref_ptr(&(*target).node);
-
-        let mut weight_scale: Real = 100.0 as Real;
-        if constraint_type == ConstraintType::SingleChainIk {
-            // IK weights seem to be not scaled 100x?
-            weight_scale = 1.0 as Real;
-        }
-
-        let mut prop: *mut Prop; // ufbxi_uninit
-        let mut parts_storage = MaybeUninit::<[String; 2]>::uninit(); // ufbxi_uninit
-        let parts: *mut String = parts_storage.as_mut_ptr() as *mut String;
-        *parts.add(0) = (*node).element.name;
-        *parts.add(1) = sp::str_c(b".Weight\0".as_ptr());
-        prop = find_prop_concat(props, parts, 2).map_or(ptr::null_mut(), PropView::get);
-        // C: `prop->value_real` — the `ufbx_prop` value union's first real.
-        (*target).weight = (if !prop.is_null() {
-            (*prop).value_vec4.x
-        } else {
-            weight_scale
-        }) / weight_scale;
-
-        if constraint_type == ConstraintType::Parent {
-            *parts.add(1) = sp::str_c(b".Offset T\0".as_ptr());
-            prop = find_prop_concat(props, parts, 2).map_or(ptr::null_mut(), PropView::get);
-            let t: Vec3 = if !prop.is_null() {
-                *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
-            } else {
-                ZERO_VEC3
-            };
-            *parts.add(1) = sp::str_c(b".Offset R\0".as_ptr());
-            prop = find_prop_concat(props, parts, 2).map_or(ptr::null_mut(), PropView::get);
-            let r: Vec3 = if !prop.is_null() {
-                *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
-            } else {
-                ZERO_VEC3
-            };
-            *parts.add(1) = sp::str_c(b".Offset S\0".as_ptr());
-            prop = find_prop_concat(props, parts, 2).map_or(ptr::null_mut(), PropView::get);
-            let s: Vec3 = if !prop.is_null() {
-                *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
-            } else {
-                ONE_VEC3
-            };
-
-            (*target).transform.translation = t;
-            (*target).transform.rotation = euler_to_quat(r, RotationOrder::Xyz);
-            (*target).transform.scale = s;
-        }
-
-        target = target.add(1);
+        // C: `ufbxi_find_real` — the internal 4-byte-key lookup, NOT `ufbx_find_real`.
+        (*constraint).weight =
+            find_real(props, sp::Weight.as_ptr(), 100.0 as Real) / (100.0 as Real);
     }
 
-    (*constraint).active = api_find_int(props, b"Active\0".as_ptr(), 1) != 0;
-    if constraint_type == ConstraintType::Aim {
-        find_bool3(
-            (*constraint).constrain_rotation.as_mut_ptr(),
-            props,
-            b"Affect\0".as_ptr(),
-            true,
-        );
+    // SAFETY: walks the constraint's own `targets` run (`count` entries); `node`
+    // is an always-resolved reference from the same arena, `parts` is a local
+    // two-element array fully written before each lookup, and every `prop` is
+    // null-checked before its deref (`value_vec4`'s leading three reals are the
+    // `ufbx_prop` value union's `ufbx_vec3` view).
+    unsafe {
+        // C: `ufbxi_for_list(ufbx_constraint_target, target, constraint->targets)`
+        let mut target: *mut ConstraintTarget = (*constraint).targets.data as *mut ConstraintTarget;
+        let target_end: *mut ConstraintTarget = add_ptr(target, (*constraint).targets.count);
+        while target != target_end {
+            let node: *mut Node = ref_ptr(&(*target).node);
 
-        let default_aim: Vec3 = Vec3 {
-            x: 1.0,
-            y: 0.0,
-            z: 0.0,
-        };
-        let default_up: Vec3 = Vec3 {
-            x: 0.0,
-            y: 1.0,
-            z: 0.0,
-        };
+            let mut weight_scale: Real = 100.0 as Real;
+            if constraint_type == ConstraintType::SingleChainIk {
+                // IK weights seem to be not scaled 100x?
+                weight_scale = 1.0 as Real;
+            }
 
-        let up_type: i64 = api_find_int(props, b"WorldUpType\0".as_ptr(), 0);
-        if up_type >= 0 && up_type < ConstraintAimUpType::None as i64 {
-            // C: `(ufbx_constraint_aim_up_type)up_type` — the range check above
-            // admits only valid enum values.
-            (*constraint).aim_up_type =
-                core::mem::transmute::<u32, ConstraintAimUpType>(up_type as u32);
+            let mut prop: *mut Prop; // ufbxi_uninit
+            let mut parts_storage = MaybeUninit::<[String; 2]>::uninit(); // ufbxi_uninit
+            let parts: *mut String = parts_storage.as_mut_ptr() as *mut String;
+            *parts.add(0) = (*node).element.name;
+            *parts.add(1) = sp::str_c(b".Weight\0".as_ptr());
+            prop = find_prop_concat(props, parts, 2).map_or(ptr::null_mut(), PropView::get);
+            // C: `prop->value_real` — the `ufbx_prop` value union's first real.
+            (*target).weight = (if !prop.is_null() {
+                (*prop).value_vec4.x
+            } else {
+                weight_scale
+            }) / weight_scale;
+
+            if constraint_type == ConstraintType::Parent {
+                *parts.add(1) = sp::str_c(b".Offset T\0".as_ptr());
+                prop = find_prop_concat(props, parts, 2).map_or(ptr::null_mut(), PropView::get);
+                let t: Vec3 = if !prop.is_null() {
+                    *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
+                } else {
+                    ZERO_VEC3
+                };
+                *parts.add(1) = sp::str_c(b".Offset R\0".as_ptr());
+                prop = find_prop_concat(props, parts, 2).map_or(ptr::null_mut(), PropView::get);
+                let r: Vec3 = if !prop.is_null() {
+                    *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
+                } else {
+                    ZERO_VEC3
+                };
+                *parts.add(1) = sp::str_c(b".Offset S\0".as_ptr());
+                prop = find_prop_concat(props, parts, 2).map_or(ptr::null_mut(), PropView::get);
+                let s: Vec3 = if !prop.is_null() {
+                    *(&(*prop).value_vec4 as *const Vec4 as *const Vec3)
+                } else {
+                    ONE_VEC3
+                };
+
+                (*target).transform.translation = t;
+                (*target).transform.rotation = euler_to_quat(r, RotationOrder::Xyz);
+                (*target).transform.scale = s;
+            }
+
+            target = target.add(1);
         }
-        (*constraint).aim_vector = api_find_vec3(props, b"AimVector\0".as_ptr(), default_aim);
-        (*constraint).aim_up_vector = api_find_vec3(props, b"UpVector\0".as_ptr(), default_up);
-    } else if constraint_type == ConstraintType::Parent {
-        find_bool3(
-            (*constraint).constrain_translation.as_mut_ptr(),
-            props,
-            b"AffectTranslation\0".as_ptr(),
-            true,
-        );
-        find_bool3(
-            (*constraint).constrain_rotation.as_mut_ptr(),
-            props,
-            b"AffectRotation\0".as_ptr(),
-            true,
-        );
-        find_bool3(
-            (*constraint).constrain_scale.as_mut_ptr(),
-            props,
-            b"AffectScale\0".as_ptr(),
-            false,
-        );
-    } else if constraint_type == ConstraintType::Position {
-        find_bool3(
-            (*constraint).constrain_translation.as_mut_ptr(),
-            props,
-            b"Affect\0".as_ptr(),
-            true,
-        );
-    } else if constraint_type == ConstraintType::Rotation {
-        find_bool3(
-            (*constraint).constrain_rotation.as_mut_ptr(),
-            props,
-            b"Affect\0".as_ptr(),
-            true,
-        );
-    } else if constraint_type == ConstraintType::Scale {
-        find_bool3(
-            (*constraint).constrain_scale.as_mut_ptr(),
-            props,
-            b"Affect\0".as_ptr(),
-            true,
-        );
-    } else if constraint_type == ConstraintType::SingleChainIk {
-        (*constraint).constrain_rotation[0] = true;
-        (*constraint).constrain_rotation[1] = true;
-        (*constraint).constrain_rotation[2] = true;
-        (*constraint).ik_pole_vector =
-            api_find_vec3(props, b"PoleVectorType\0".as_ptr(), ZERO_VEC3);
+    }
+
+    // SAFETY: `constraint` and `props` are the constraint view's own storage;
+    // every lookup name is a NUL-terminated literal, `find_bool3` writes exactly
+    // the three `bool`s of the `[bool; 3]` field it is handed, and the transmute
+    // is guarded by the explicit `[0, LAST)` range check above it.
+    unsafe {
+        (*constraint).active = api_find_int(props, b"Active\0".as_ptr(), 1) != 0;
+        if constraint_type == ConstraintType::Aim {
+            find_bool3(
+                (*constraint).constrain_rotation.as_mut_ptr(),
+                props,
+                b"Affect\0".as_ptr(),
+                true,
+            );
+
+            let default_aim: Vec3 = Vec3 {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            };
+            let default_up: Vec3 = Vec3 {
+                x: 0.0,
+                y: 1.0,
+                z: 0.0,
+            };
+
+            let up_type: i64 = api_find_int(props, b"WorldUpType\0".as_ptr(), 0);
+            if up_type >= 0 && up_type < ConstraintAimUpType::None as i64 {
+                // C: `(ufbx_constraint_aim_up_type)up_type` — the range check above
+                // admits only valid enum values.
+                (*constraint).aim_up_type =
+                    core::mem::transmute::<u32, ConstraintAimUpType>(up_type as u32);
+            }
+            (*constraint).aim_vector = api_find_vec3(props, b"AimVector\0".as_ptr(), default_aim);
+            (*constraint).aim_up_vector = api_find_vec3(props, b"UpVector\0".as_ptr(), default_up);
+        } else if constraint_type == ConstraintType::Parent {
+            find_bool3(
+                (*constraint).constrain_translation.as_mut_ptr(),
+                props,
+                b"AffectTranslation\0".as_ptr(),
+                true,
+            );
+            find_bool3(
+                (*constraint).constrain_rotation.as_mut_ptr(),
+                props,
+                b"AffectRotation\0".as_ptr(),
+                true,
+            );
+            find_bool3(
+                (*constraint).constrain_scale.as_mut_ptr(),
+                props,
+                b"AffectScale\0".as_ptr(),
+                false,
+            );
+        } else if constraint_type == ConstraintType::Position {
+            find_bool3(
+                (*constraint).constrain_translation.as_mut_ptr(),
+                props,
+                b"Affect\0".as_ptr(),
+                true,
+            );
+        } else if constraint_type == ConstraintType::Rotation {
+            find_bool3(
+                (*constraint).constrain_rotation.as_mut_ptr(),
+                props,
+                b"Affect\0".as_ptr(),
+                true,
+            );
+        } else if constraint_type == ConstraintType::Scale {
+            find_bool3(
+                (*constraint).constrain_scale.as_mut_ptr(),
+                props,
+                b"Affect\0".as_ptr(),
+                true,
+            );
+        } else if constraint_type == ConstraintType::SingleChainIk {
+            (*constraint).constrain_rotation[0] = true;
+            (*constraint).constrain_rotation[1] = true;
+            (*constraint).constrain_rotation[2] = true;
+            (*constraint).ik_pole_vector =
+                api_find_vec3(props, b"PoleVectorType\0".as_ptr(), ZERO_VEC3);
+        }
     }
 }
 
@@ -10199,11 +10626,14 @@ pub(crate) unsafe fn axis_matrix(
 
 // ufbx.c:23676-23804 `ufbxi_update_adjust_transforms`
 #[inline(never)]
-pub(crate) unsafe fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView) {
+pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView) {
     let scene: *mut Scene = scene.get();
     let mut root_transform: Transform = IDENTITY_TRANSFORM;
-    if !matrix_all_zero(&uc.axis_matrix()) {
-        root_transform = matrix_to_transform(&uc.axis_matrix());
+    // SAFETY: pure value math over a local copy of uc's axis matrix.
+    unsafe {
+        if !matrix_all_zero(&uc.axis_matrix()) {
+            root_transform = matrix_to_transform(&uc.axis_matrix());
+        }
     }
     root_transform.scale.x *= uc.unit_scale();
     root_transform.scale.y *= uc.unit_scale();
@@ -10229,12 +10659,16 @@ pub(crate) unsafe fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a Sc
             up: CoordinateAxis::NegativeZ,
             front: CoordinateAxis::PositiveY,
         };
-        if axis_matrix(mat, uc.opts_view().target_light_axes(), light_axes) {
-            light_post_rotation = matrix_to_transform(mat).rotation;
+        // SAFETY: `mat` is a local uninit `Matrix`; `axis_matrix` fully writes it
+        // before returning true, so the reads below are of initialized memory.
+        unsafe {
+            if axis_matrix(mat, uc.opts_view().target_light_axes(), light_axes) {
+                light_post_rotation = matrix_to_transform(mat).rotation;
 
-            let inv: Matrix = matrix_invert(mat);
-            light_direction = transform_direction(&inv, light_direction);
-            has_light_transform = true;
+                let inv: Matrix = matrix_invert(mat);
+                light_direction = transform_direction(&inv, light_direction);
+                has_light_transform = true;
+            }
         }
     }
 
@@ -10246,124 +10680,148 @@ pub(crate) unsafe fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a Sc
             up: CoordinateAxis::PositiveY,
             front: CoordinateAxis::NegativeX,
         };
-        if axis_matrix(mat, uc.opts_view().target_camera_axes(), camera_axes) {
-            camera_post_rotation = matrix_to_transform(mat).rotation;
-            has_camera_transform = true;
+        // SAFETY: `mat` is a local uninit `Matrix`; `axis_matrix` fully writes it
+        // before returning true, so the read below is of initialized memory.
+        unsafe {
+            if axis_matrix(mat, uc.opts_view().target_camera_axes(), camera_axes) {
+                camera_post_rotation = matrix_to_transform(mat).rotation;
+                has_camera_transform = true;
+            }
         }
     }
 
-    // C: `ufbxi_for_ptr_list(ufbx_light, p_light, scene->lights)`
-    let mut p_light: *mut *mut Light = (*scene).lights.data as *mut *mut Light;
-    let p_light_end: *mut *mut Light = add_ptr(p_light, (*scene).lights.count);
-    while p_light != p_light_end {
-        let light: *mut Light = *p_light;
-        (*light).local_direction.x = 0.0;
-        (*light).local_direction.y = -1.0;
-        (*light).local_direction.z = 0.0;
-        p_light = p_light.add(1);
+    // SAFETY: walks the scene's stored `lights` element-pointer run (uc-owned
+    // arena, `count` entries), resetting each light's own direction.
+    unsafe {
+        // C: `ufbxi_for_ptr_list(ufbx_light, p_light, scene->lights)`
+        let mut p_light: *mut *mut Light = (*scene).lights.data as *mut *mut Light;
+        let p_light_end: *mut *mut Light = add_ptr(p_light, (*scene).lights.count);
+        while p_light != p_light_end {
+            let light: *mut Light = *p_light;
+            (*light).local_direction.x = 0.0;
+            (*light).local_direction.y = -1.0;
+            (*light).local_direction.z = 0.0;
+            p_light = p_light.add(1);
+        }
     }
 
-    (*scene).metadata.space_conversion = conversion;
-    (*scene).metadata.geometry_transform_handling = uc.opts_view().geometry_transform_handling();
-    (*scene).metadata.inherit_mode_handling = uc.opts_view().inherit_mode_handling();
-    (*scene).metadata.pivot_handling = uc.opts_view().pivot_handling();
-    (*scene).metadata.handedness_conversion_axis = uc.opts_view().handedness_conversion_axis();
+    // SAFETY: `scene` is the scene view's own storage; this run writes only its
+    // metadata fields.
+    unsafe {
+        (*scene).metadata.space_conversion = conversion;
+        (*scene).metadata.geometry_transform_handling =
+            uc.opts_view().geometry_transform_handling();
+        (*scene).metadata.inherit_mode_handling = uc.opts_view().inherit_mode_handling();
+        (*scene).metadata.pivot_handling = uc.opts_view().pivot_handling();
+        (*scene).metadata.handedness_conversion_axis = uc.opts_view().handedness_conversion_axis();
+    }
 
     let root_scale: Real = min3(root_transform.scale);
-    if conversion == SpaceConversion::ModifyGeometry {
-        (*scene).metadata.geometry_scale = root_scale;
-        (*scene).metadata.root_scale = 1.0 as Real;
-    } else {
-        (*scene).metadata.geometry_scale = 1.0 as Real;
-        (*scene).metadata.root_scale = root_scale;
+    // SAFETY: `scene` metadata as above.
+    unsafe {
+        if conversion == SpaceConversion::ModifyGeometry {
+            (*scene).metadata.geometry_scale = root_scale;
+            (*scene).metadata.root_scale = 1.0 as Real;
+        } else {
+            (*scene).metadata.geometry_scale = 1.0 as Real;
+            (*scene).metadata.root_scale = root_scale;
+        }
+        (*scene).metadata.root_rotation = root_transform.rotation;
     }
-    (*scene).metadata.root_rotation = root_transform.rotation;
 
-    // C: `ufbxi_for_ptr_list(ufbx_node, p_node, scene->nodes)`
-    let mut p_node: *mut *mut Node = (*scene).nodes.data as *mut *mut Node;
-    let p_node_end: *mut *mut Node = add_ptr(p_node, (*scene).nodes.count);
-    while p_node != p_node_end {
-        let node: *mut Node = *p_node;
+    // SAFETY: walks the scene's stored `nodes` element-pointer run (uc-owned arena,
+    // `count` entries) and writes each node's own adjust fields; `opt_ptr`
+    // results are null-checked before every deref, `parent` is another node of
+    // that same arena (hence the `&'a NodeView` anchor), and the props lookup
+    // uses a NUL-terminated static name.
+    unsafe {
+        // C: `ufbxi_for_ptr_list(ufbx_node, p_node, scene->nodes)`
+        let mut p_node: *mut *mut Node = (*scene).nodes.data as *mut *mut Node;
+        let p_node_end: *mut *mut Node = add_ptr(p_node, (*scene).nodes.count);
+        while p_node != p_node_end {
+            let node: *mut Node = *p_node;
 
-        (*node).adjust_post_rotation = IDENTITY_QUAT;
-        (*node).adjust_pre_rotation = IDENTITY_QUAT;
-        (*node).adjust_pre_scale = 1.0 as Real;
-        (*node).adjust_post_scale = 1.0 as Real;
-        (*node).adjust_translation_scale = 1.0 as Real;
+            (*node).adjust_post_rotation = IDENTITY_QUAT;
+            (*node).adjust_pre_rotation = IDENTITY_QUAT;
+            (*node).adjust_pre_scale = 1.0 as Real;
+            (*node).adjust_post_scale = 1.0 as Real;
+            (*node).adjust_translation_scale = 1.0 as Real;
 
-        if conversion == SpaceConversion::AdjustTransforms {
-            if (*node).node_depth <= 1 && !(*node).is_root {
-                (*node).adjust_pre_rotation = root_transform.rotation;
-                (*node).adjust_pre_scale = root_scale;
-                (*node).has_adjust_transform = true;
-                (*node).has_root_adjust_transform = true;
-            }
-        } else if conversion == SpaceConversion::ModifyGeometry {
-            if !(*node).is_root {
-                if (*node).node_depth <= 1 {
+            if conversion == SpaceConversion::AdjustTransforms {
+                if (*node).node_depth <= 1 && !(*node).is_root {
                     (*node).adjust_pre_rotation = root_transform.rotation;
+                    (*node).adjust_pre_scale = root_scale;
+                    (*node).has_adjust_transform = true;
+                    (*node).has_root_adjust_transform = true;
                 }
-                (*node).adjust_translation_scale = root_scale;
-                (*node).has_adjust_transform = true;
-            }
-        }
-
-        // C: `if (node->parent)` — pointer truthiness.
-        if !opt_ptr(&(*node).parent).is_null() {
-            // We are not inheriting local scale, so propagate root scale manually and
-            // apply scale compensation if necessary.
-            let parent: *mut Node = opt_ptr(&(*node).parent);
-            if (*parent).has_root_adjust_transform
-                && (*node).inherit_mode == InheritMode::IgnoreParentScale
-            {
-                (*node).adjust_post_scale *= root_scale;
-                (*node).has_adjust_transform = true;
-                (*node).has_root_adjust_transform = true;
-            }
-            if (*parent).is_scale_compensate_parent
-                && (*node).original_inherit_mode == InheritMode::IgnoreParentScale
-            {
-                // Anchor the traversed parent node to `'a` (= uc) via an explicit
-                // annotation: `parent` lives in the same uc arena, so its props
-                // table is provably `<= uc` with no free-lifetime bridge.
-                let parent_view: &'a NodeView = NodeView::from_ptr(parent);
-                let scale: Vec3 = find_vec3(
-                    parent_view.props_view(),
-                    sp::Lcl_Scaling.as_ptr(),
-                    1.0,
-                    1.0,
-                    1.0,
-                );
-                let mut size: Real = scale.x;
-                // C: `ufbx_fabs(scale.y - 1.0f) < ufbx_fabs(size - 1.0f)` — real
-                // subtractions, promoted to double at the `fabs` calls, compared
-                // in double.
-                if math::fabs(as_f64!(scale.y - 1.0)) < math::fabs((size - 1.0) as f64) {
-                    size = scale.y;
+            } else if conversion == SpaceConversion::ModifyGeometry {
+                if !(*node).is_root {
+                    if (*node).node_depth <= 1 {
+                        (*node).adjust_pre_rotation = root_transform.rotation;
+                    }
+                    (*node).adjust_translation_scale = root_scale;
+                    (*node).has_adjust_transform = true;
                 }
-                if math::fabs(as_f64!(scale.z - 1.0)) < math::fabs((size - 1.0) as f64) {
-                    size = scale.z;
+            }
+
+            // C: `if (node->parent)` — pointer truthiness.
+            if !opt_ptr(&(*node).parent).is_null() {
+                // We are not inheriting local scale, so propagate root scale manually and
+                // apply scale compensation if necessary.
+                let parent: *mut Node = opt_ptr(&(*node).parent);
+                if (*parent).has_root_adjust_transform
+                    && (*node).inherit_mode == InheritMode::IgnoreParentScale
+                {
+                    (*node).adjust_post_scale *= root_scale;
+                    (*node).has_adjust_transform = true;
+                    (*node).has_root_adjust_transform = true;
                 }
-                (*node).adjust_post_scale *= 1.0 / size;
-                (*node).has_adjust_transform = true;
+                if (*parent).is_scale_compensate_parent
+                    && (*node).original_inherit_mode == InheritMode::IgnoreParentScale
+                {
+                    // Anchor the traversed parent node to `'a` (= uc) via an explicit
+                    // annotation: `parent` lives in the same uc arena, so its props
+                    // table is provably `<= uc` with no free-lifetime bridge.
+                    let parent_view: &'a NodeView = NodeView::from_ptr(parent);
+                    let scale: Vec3 = find_vec3(
+                        parent_view.props_view(),
+                        sp::Lcl_Scaling.as_ptr(),
+                        1.0,
+                        1.0,
+                        1.0,
+                    );
+                    let mut size: Real = scale.x;
+                    // C: `ufbx_fabs(scale.y - 1.0f) < ufbx_fabs(size - 1.0f)` — real
+                    // subtractions, promoted to double at the `fabs` calls, compared
+                    // in double.
+                    if math::fabs(as_f64!(scale.y - 1.0)) < math::fabs((size - 1.0) as f64) {
+                        size = scale.y;
+                    }
+                    if math::fabs(as_f64!(scale.z - 1.0)) < math::fabs((size - 1.0) as f64) {
+                        size = scale.z;
+                    }
+                    (*node).adjust_post_scale *= 1.0 / size;
+                    (*node).has_adjust_transform = true;
+                }
             }
-        }
 
-        if (*node).all_attribs.count == 1 {
-            // C: `if (has_light_transform && node->light)` — pointer truthiness.
-            if has_light_transform && !opt_ptr(&(*node).light).is_null() {
-                (*node).adjust_post_rotation = light_post_rotation;
-                (*opt_ptr(&(*node).light)).local_direction = light_direction;
-                (*node).has_adjust_transform = true;
+            if (*node).all_attribs.count == 1 {
+                // C: `if (has_light_transform && node->light)` — pointer truthiness.
+                if has_light_transform && !opt_ptr(&(*node).light).is_null() {
+                    (*node).adjust_post_rotation = light_post_rotation;
+                    (*opt_ptr(&(*node).light)).local_direction = light_direction;
+                    (*node).has_adjust_transform = true;
+                }
+                if has_camera_transform && !opt_ptr(&(*node).camera).is_null() {
+                    (*node).adjust_post_rotation = camera_post_rotation;
+                    (*opt_ptr(&(*node).camera)).projection_axes =
+                        uc.opts_view().target_camera_axes();
+                    (*node).has_adjust_transform = true;
+                }
             }
-            if has_camera_transform && !opt_ptr(&(*node).camera).is_null() {
-                (*node).adjust_post_rotation = camera_post_rotation;
-                (*opt_ptr(&(*node).camera)).projection_axes = uc.opts_view().target_camera_axes();
-                (*node).has_adjust_transform = true;
-            }
-        }
 
-        p_node = p_node.add(1);
+            p_node = p_node.add(1);
+        }
     }
 }
 
@@ -10510,39 +10968,43 @@ pub(crate) unsafe fn update_scene<'a>(
 
 // ufbx.c:23869-23878 `ufbxi_update_scene_metadata`
 #[inline(never)]
-pub(crate) unsafe fn update_scene_metadata(metadata_view: &SceneMetadataView) {
+pub(crate) fn update_scene_metadata(metadata_view: &SceneMetadataView) {
     let metadata: *mut Metadata = metadata_view.get();
     let props: &PropsView = metadata_view.props_view();
-    (*metadata).original_application.vendor = find_string(
-        props,
-        b"Original|ApplicationVendor\0".as_ptr(),
-        EMPTY_STRING.0,
-    );
-    (*metadata).original_application.name = find_string(
-        props,
-        b"Original|ApplicationName\0".as_ptr(),
-        EMPTY_STRING.0,
-    );
-    (*metadata).original_application.version = find_string(
-        props,
-        b"Original|ApplicationVersion\0".as_ptr(),
-        EMPTY_STRING.0,
-    );
-    (*metadata).latest_application.vendor = find_string(
-        props,
-        b"LastSaved|ApplicationVendor\0".as_ptr(),
-        EMPTY_STRING.0,
-    );
-    (*metadata).latest_application.name = find_string(
-        props,
-        b"LastSaved|ApplicationName\0".as_ptr(),
-        EMPTY_STRING.0,
-    );
-    (*metadata).latest_application.version = find_string(
-        props,
-        b"LastSaved|ApplicationVersion\0".as_ptr(),
-        EMPTY_STRING.0,
-    );
+    // SAFETY: `metadata` is the metadata view's own storage and `props` is that
+    // same view's props; every lookup name is a NUL-terminated literal.
+    unsafe {
+        (*metadata).original_application.vendor = find_string(
+            props,
+            b"Original|ApplicationVendor\0".as_ptr(),
+            EMPTY_STRING.0,
+        );
+        (*metadata).original_application.name = find_string(
+            props,
+            b"Original|ApplicationName\0".as_ptr(),
+            EMPTY_STRING.0,
+        );
+        (*metadata).original_application.version = find_string(
+            props,
+            b"Original|ApplicationVersion\0".as_ptr(),
+            EMPTY_STRING.0,
+        );
+        (*metadata).latest_application.vendor = find_string(
+            props,
+            b"LastSaved|ApplicationVendor\0".as_ptr(),
+            EMPTY_STRING.0,
+        );
+        (*metadata).latest_application.name = find_string(
+            props,
+            b"LastSaved|ApplicationName\0".as_ptr(),
+            EMPTY_STRING.0,
+        );
+        (*metadata).latest_application.version = find_string(
+            props,
+            b"LastSaved|ApplicationVersion\0".as_ptr(),
+            EMPTY_STRING.0,
+        );
+    }
 }
 
 // ufbx.c:23880-23887 `ufbxi_pow10_targets`
@@ -10595,115 +11057,136 @@ pub(crate) unsafe fn round_if_near(targets: *const Real, num_targets: usize, val
 
 // ufbx.c:23903-23931 `ufbxi_update_scene_settings`
 #[inline(never)]
-pub(crate) unsafe fn update_scene_settings(settings_view: &SceneSettingsView) {
+pub(crate) fn update_scene_settings(settings_view: &SceneSettingsView) {
     let settings: *mut SceneSettings = settings_view.get();
-    let unit_scale_factor: Real = find_real(
-        settings_view.props_view(),
-        sp::UnitScaleFactor.as_ptr(),
-        1.0 as Real,
-    );
-    let original_unit_scale_factor: Real = find_real(
-        settings_view.props_view(),
-        sp::OriginalUnitScaleFactor.as_ptr(),
-        unit_scale_factor,
-    );
+    // SAFETY: `settings` is the settings view's own storage and every lookup
+    // below reads that same view's props with a NUL-terminated static name;
+    // `round_if_near` scans the static `POW10_TARGETS` with its own length.
+    unsafe {
+        let unit_scale_factor: Real = find_real(
+            settings_view.props_view(),
+            sp::UnitScaleFactor.as_ptr(),
+            1.0 as Real,
+        );
+        let original_unit_scale_factor: Real = find_real(
+            settings_view.props_view(),
+            sp::OriginalUnitScaleFactor.as_ptr(),
+            unit_scale_factor,
+        );
 
-    (*settings).axes.up = find_axis(
-        settings_view.props_view(),
-        sp::UpAxis.as_ptr(),
-        sp::UpAxisSign.as_ptr(),
-    );
-    (*settings).axes.front = find_axis(
-        settings_view.props_view(),
-        sp::FrontAxis.as_ptr(),
-        sp::FrontAxisSign.as_ptr(),
-    );
-    (*settings).axes.right = find_axis(
-        settings_view.props_view(),
-        sp::CoordAxis.as_ptr(),
-        sp::CoordAxisSign.as_ptr(),
-    );
-    (*settings).unit_meters = round_if_near(
-        POW10_TARGETS.as_ptr(),
-        POW10_TARGETS.len(),
-        unit_scale_factor * (0.01 as Real),
-    );
-    (*settings).original_unit_meters = round_if_near(
-        POW10_TARGETS.as_ptr(),
-        POW10_TARGETS.len(),
-        original_unit_scale_factor * (0.01 as Real),
-    );
-    // C: `settings->frames_per_second` is `double` — the `ufbxi_find_real`
-    // result promotes on assignment.
-    (*settings).frames_per_second = find_real(
-        settings_view.props_view(),
-        sp::CustomFrameRate.as_ptr(),
-        24.0 as Real,
-    ) as f64;
-    (*settings).ambient_color = find_vec3(
-        settings_view.props_view(),
-        sp::AmbientColor.as_ptr(),
-        0.0,
-        0.0,
-        0.0,
-    );
-    (*settings).original_axis_up = find_axis(
-        settings_view.props_view(),
-        sp::OriginalUpAxis.as_ptr(),
-        sp::OriginalUpAxisSign.as_ptr(),
-    );
-
-    let default_camera: *mut Prop =
-        find_prop(settings_view.props_view(), sp::DefaultCamera.as_ptr())
-            .map_or(ptr::null_mut(), PropView::get);
-    if !default_camera.is_null() {
-        (*settings).default_camera = (*default_camera).value_str;
-    } else {
-        (*settings).default_camera = EMPTY_STRING.0;
+        (*settings).axes.up = find_axis(
+            settings_view.props_view(),
+            sp::UpAxis.as_ptr(),
+            sp::UpAxisSign.as_ptr(),
+        );
+        (*settings).axes.front = find_axis(
+            settings_view.props_view(),
+            sp::FrontAxis.as_ptr(),
+            sp::FrontAxisSign.as_ptr(),
+        );
+        (*settings).axes.right = find_axis(
+            settings_view.props_view(),
+            sp::CoordAxis.as_ptr(),
+            sp::CoordAxisSign.as_ptr(),
+        );
+        (*settings).unit_meters = round_if_near(
+            POW10_TARGETS.as_ptr(),
+            POW10_TARGETS.len(),
+            unit_scale_factor * (0.01 as Real),
+        );
+        (*settings).original_unit_meters = round_if_near(
+            POW10_TARGETS.as_ptr(),
+            POW10_TARGETS.len(),
+            original_unit_scale_factor * (0.01 as Real),
+        );
+        // C: `settings->frames_per_second` is `double` — the `ufbxi_find_real`
+        // result promotes on assignment.
+        (*settings).frames_per_second = find_real(
+            settings_view.props_view(),
+            sp::CustomFrameRate.as_ptr(),
+            24.0 as Real,
+        ) as f64;
+        (*settings).ambient_color = find_vec3(
+            settings_view.props_view(),
+            sp::AmbientColor.as_ptr(),
+            0.0,
+            0.0,
+            0.0,
+        );
+        (*settings).original_axis_up = find_axis(
+            settings_view.props_view(),
+            sp::OriginalUpAxis.as_ptr(),
+            sp::OriginalUpAxisSign.as_ptr(),
+        );
     }
 
-    // C: `(ufbx_time_mode)ufbxi_find_enum(...)` etc — `ufbxi_find_enum` clamps
-    // each result to its enum's `[0, LAST]` range (same device as
-    // `ufbxi_update_camera` above).
-    (*settings).time_mode = core::mem::transmute::<u32, TimeMode>(find_enum(
-        settings_view.props_view(),
-        sp::TimeMode.as_ptr(),
-        TimeMode::E24Fps as i64,
-        TimeMode::E5994Fps as i64,
-    ) as u32);
-    (*settings).time_protocol = core::mem::transmute::<u32, TimeProtocol>(find_enum(
-        settings_view.props_view(),
-        sp::TimeProtocol.as_ptr(),
-        TimeProtocol::Default as i64,
-        TimeProtocol::Default as i64,
-    ) as u32);
-    (*settings).snap_mode = core::mem::transmute::<u32, SnapMode>(find_enum(
-        settings_view.props_view(),
-        sp::SnapOnFrameMode.as_ptr(),
-        SnapMode::None as i64,
-        SnapMode::SnapAndPlay as i64,
-    ) as u32);
+    // SAFETY: props-view lookup with a NUL-terminated static name; the returned
+    // prop pointer is null-checked before the deref, and `settings` is the
+    // view's own storage.
+    unsafe {
+        let default_camera: *mut Prop =
+            find_prop(settings_view.props_view(), sp::DefaultCamera.as_ptr())
+                .map_or(ptr::null_mut(), PropView::get);
+        if !default_camera.is_null() {
+            (*settings).default_camera = (*default_camera).value_str;
+        } else {
+            (*settings).default_camera = EMPTY_STRING.0;
+        }
+    }
 
-    if (*settings).time_mode != TimeMode::Custom {
-        // C: real `ufbxi_time_mode_fps[]` entry promotes to the `double` field.
-        (*settings).frames_per_second =
-            as_f64!(TIME_MODE_FPS[(*settings).time_mode as u32 as usize]);
+    // SAFETY: `settings` as above; `ufbxi_find_enum` clamps each result to the
+    // `[0, LAST]` range passed for its enum, so every transmute below is of an
+    // in-range discriminant, and `time_mode` indexes `TIME_MODE_FPS` within that
+    // same clamped range.
+    unsafe {
+        // C: `(ufbx_time_mode)ufbxi_find_enum(...)` etc — `ufbxi_find_enum` clamps
+        // each result to its enum's `[0, LAST]` range (same device as
+        // `ufbxi_update_camera` above).
+        (*settings).time_mode = core::mem::transmute::<u32, TimeMode>(find_enum(
+            settings_view.props_view(),
+            sp::TimeMode.as_ptr(),
+            TimeMode::E24Fps as i64,
+            TimeMode::E5994Fps as i64,
+        ) as u32);
+        (*settings).time_protocol = core::mem::transmute::<u32, TimeProtocol>(find_enum(
+            settings_view.props_view(),
+            sp::TimeProtocol.as_ptr(),
+            TimeProtocol::Default as i64,
+            TimeProtocol::Default as i64,
+        ) as u32);
+        (*settings).snap_mode = core::mem::transmute::<u32, SnapMode>(find_enum(
+            settings_view.props_view(),
+            sp::SnapOnFrameMode.as_ptr(),
+            SnapMode::None as i64,
+            SnapMode::SnapAndPlay as i64,
+        ) as u32);
+
+        if (*settings).time_mode != TimeMode::Custom {
+            // C: real `ufbxi_time_mode_fps[]` entry promotes to the `double` field.
+            (*settings).frames_per_second =
+                as_f64!(TIME_MODE_FPS[(*settings).time_mode as u32 as usize]);
+        }
     }
 }
 
 // ufbx.c:23933-23944 `ufbxi_update_scene_settings_obj`
 #[inline(never)]
-pub(crate) unsafe fn update_scene_settings_obj(uc: &Context) {
+pub(crate) fn update_scene_settings_obj(uc: &Context) {
     let settings: *mut SceneSettings = uc.scene_view().settings_mut_ptr();
-    // C: `settings->original_unit_meters = settings->unit_meters = uc->opts.obj_unit_meters;`
-    (*settings).unit_meters = uc.opts_view().obj_unit_meters();
-    (*settings).original_unit_meters = (*settings).unit_meters;
-    if coordinate_axes_valid(uc.opts_view().obj_axes()) {
-        (*settings).axes = uc.opts_view().obj_axes();
-    } else {
-        (*settings).axes.right = CoordinateAxis::Unknown;
-        (*settings).axes.up = CoordinateAxis::Unknown;
-        (*settings).axes.front = CoordinateAxis::Unknown;
+    // SAFETY: `settings` is uc's own scene-settings storage, reached through
+    // its raw-ptr getter (&Context construction invariant); this run writes
+    // only that struct's fields.
+    unsafe {
+        // C: `settings->original_unit_meters = settings->unit_meters = uc->opts.obj_unit_meters;`
+        (*settings).unit_meters = uc.opts_view().obj_unit_meters();
+        (*settings).original_unit_meters = (*settings).unit_meters;
+        if coordinate_axes_valid(uc.opts_view().obj_axes()) {
+            (*settings).axes = uc.opts_view().obj_axes();
+        } else {
+            (*settings).axes.right = CoordinateAxis::Unknown;
+            (*settings).axes.up = CoordinateAxis::Unknown;
+            (*settings).axes.front = CoordinateAxis::Unknown;
+        }
     }
 }
 
@@ -10740,13 +11223,18 @@ mod tests {
     // `prop_len` from the literal via `sizeof(str) - 1`, so it must equal the
     // NUL-terminated literal's length here; `index` and `transform` stand in
     // for enums whose ranges C checks nowhere at runtime.
-    unsafe fn check_table(table: &[ShaderMapping], index_count: u8) {
+    fn check_table(table: &[ShaderMapping], index_count: u8) {
         for mapping in table {
             assert!(mapping.transform < MatTransform::Count as u8);
             assert!(mapping.index < index_count);
             let mut len: usize = 0;
-            while *mapping.prop.add(len) != 0 {
-                len += 1;
+            // SAFETY: `prop` is a NUL-terminated static string literal in the
+            // mapping table, so the scan stops inside the literal — which is
+            // exactly the property this check exists to confirm.
+            unsafe {
+                while *mapping.prop.add(len) != 0 {
+                    len += 1;
+                }
             }
             assert_eq!(len, mapping.prop_len as usize);
         }
