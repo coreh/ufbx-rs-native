@@ -271,6 +271,9 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
 mod tests {
     use super::*;
 
+    // Stays `unsafe fn`: `args` is a raw-pointer carrier — every
+    // `PrintArg::Str` holds a `*const u8` that `%s` reads up to its NUL (or up
+    // to a `%.*s` precision), an obligation only the caller can discharge.
     unsafe fn fmt(buf: &mut [u8], fmt: &str, args: &[PrintArg]) -> (usize, Vec<u8>) {
         let mut pb = PrintBuffer {
             dst: buf.as_mut_ptr(),
