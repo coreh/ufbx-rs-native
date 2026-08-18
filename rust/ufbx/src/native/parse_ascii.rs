@@ -58,8 +58,8 @@ use crate::native::float_parse::{
 use crate::native::hash::hash_string_check_ascii;
 use crate::native::parse::{
     array_type_size, is_array_node, is_raw_string, normalize_array_type, report_progress,
-    update_parse_state, ArrayInfo, Ascii, AsciiToken, Context, Node, ParseState, Value, ValueArray,
-    ValueType, ARRAY_FLAG_ACCURATE_F32, ARRAY_FLAG_PAD_BEGIN, ARRAY_FLAG_RESULT,
+    update_parse_state, ArrayInfo, Ascii, AsciiToken, AsciiView, Context, Node, ParseState, Value,
+    ValueArray, ValueType, ARRAY_FLAG_ACCURATE_F32, ARRAY_FLAG_PAD_BEGIN, ARRAY_FLAG_RESULT,
     ARRAY_FLAG_TMP_BUF, MAX_NODE_DEPTH, MAX_NON_ARRAY_VALUES,
 };
 use crate::native::platform::{
@@ -94,51 +94,63 @@ static ASCII_EMPTY_STRING: [u8; 1] = [0];
 // initializers are kept verbatim even though both branches overwrite them.
 #[allow(unused_assignments)]
 #[inline(never)]
-pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
+pub(crate) fn ascii_refill(uc: &Context) -> u8 {
+    let ua: &AsciiView = uc.ascii_view();
     uc.set_data_offset(
         uc.data_offset()
-            .wrapping_add(to_size((*ua).src as isize - uc.data_begin() as isize) as u64),
+            .wrapping_add(to_size(ua.src() as isize - uc.data_begin() as isize) as u64),
     );
     if uc.read_fn().is_some() {
         let mut dst_buffer: *mut u8 = core::ptr::null_mut();
         let mut dst_size: usize = 0;
 
-        if !(*ua).retain_buf.is_null() {
+        if !ua.retain_buf().is_null() {
             dst_size = uc.opts_view().read_buffer_size();
-            dst_buffer = push::<u8>((*ua).retain_buf, dst_size);
+            // SAFETY: `retain_buf` is a non-null buf owned by `uc` (the array
+            // reader parks its retention target there before refilling).
+            dst_buffer = unsafe { push::<u8>(ua.retain_buf(), dst_size) };
             ufbxi_check_return!(uc, !dst_buffer.is_null(), b'\0', "dst_buffer");
-            (*ua).src_is_retained = true;
-            (*ua).src_buf = (*ua).retain_buf;
+            ua.set_src_is_retained(true);
+            ua.set_src_buf(ua.retain_buf());
         } else {
             // Grow the read buffer if necessary
             if uc.read_buffer_size() < uc.opts_view().read_buffer_size() {
                 let new_size: usize = uc.opts_view().read_buffer_size();
                 ufbxi_check_return!(
                     uc,
-                    crate::native::allocator::grow_array::<u8>(
-                        uc.ator_tmp_mut_ptr(),
-                        uc.read_buffer_mut_ptr(),
-                        uc.read_buffer_size_mut_ptr(),
-                        new_size
-                    ),
+                    // SAFETY: growing `uc`'s own paired `read_buffer`/
+                    // `read_buffer_size` growth state through its temp
+                    // allocator (uc construction invariant).
+                    unsafe {
+                        crate::native::allocator::grow_array::<u8>(
+                            uc.ator_tmp_mut_ptr(),
+                            uc.read_buffer_mut_ptr(),
+                            uc.read_buffer_size_mut_ptr(),
+                            new_size
+                        )
+                    },
                     b'\0',
                     "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->read_buffer)), (&uc->read_buffer), (&uc->read_buffer_size), (new_size))"
                 );
             }
             dst_buffer = uc.read_buffer();
             dst_size = uc.read_buffer_size();
-            (*ua).src_is_retained = false;
-            (*ua).src_buf = core::ptr::null_mut();
+            ua.set_src_is_retained(false);
+            ua.set_src_buf(core::ptr::null_mut());
         }
 
         // Read user data, return '\0' on EOF
         // TODO: Very unoptimal for non-full-size reads in some cases
-        let num_read: usize = (uc.read_fn().unwrap_unchecked())(
-            uc.read_user(),
-            dst_buffer as *mut core::ffi::c_void,
-            dst_size,
-        );
+        // SAFETY: `read_fn` is `Some` (enclosing branch) and is called with its
+        // paired `read_user`; `dst_buffer` is the freshly pushed retain-buf run
+        // or `uc`'s read buffer, in both cases `dst_size` writable bytes.
+        let num_read: usize = unsafe {
+            (uc.read_fn().unwrap_unchecked())(
+                uc.read_user(),
+                dst_buffer as *mut core::ffi::c_void,
+                dst_size,
+            )
+        };
         ufbxi_check_return_msg!(
             uc,
             num_read != usize::MAX,
@@ -151,42 +163,53 @@ pub(crate) unsafe fn ascii_refill(uc: &Context) -> u8 {
             return b'\0';
         }
 
-        (*ua).src = dst_buffer;
+        ua.set_src(dst_buffer);
         uc.set_data_begin(dst_buffer);
         uc.set_data(dst_buffer);
-        (*ua).src_end = dst_buffer.add(num_read);
-        *(*ua).src
+        // SAFETY: `num_read <= dst_size` (checked above), so the end cursor is
+        // at most one past the end of `dst_buffer`, and `num_read > 0` means
+        // the first byte was written by the read.
+        unsafe {
+            ua.set_src_end(dst_buffer.add(num_read));
+            *ua.src()
+        }
     } else {
         // If the user didn't specify a `read_fn()` treat anything
         // past the initial data buffer as EOF.
-        (*ua).src = ASCII_EMPTY_STRING.as_ptr();
+        ua.set_src(ASCII_EMPTY_STRING.as_ptr());
         uc.set_data_begin(ASCII_EMPTY_STRING.as_ptr());
         uc.set_data(ASCII_EMPTY_STRING.as_ptr());
-        (*ua).src_end = (*ua).src.add(1);
+        // SAFETY: `src` was just set to the one-byte `ASCII_EMPTY_STRING`
+        // static, so `+ 1` is its one-past-the-end.
+        ua.set_src_end(unsafe { ua.src().add(1) });
         b'\0'
     }
 }
 
 // ufbx.c:9457-9478 `ufbxi_ascii_yield`
 #[inline(never)]
-pub(crate) unsafe fn ascii_yield(uc: &Context) -> u8 {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
+pub(crate) fn ascii_yield(uc: &Context) -> u8 {
+    let ua: &AsciiView = uc.ascii_view();
 
     let ret: u8;
-    if (*ua).src == (*ua).src_end {
+    if ua.src() == ua.src_end() {
         ret = ascii_refill(uc);
     } else {
-        ret = *(*ua).src;
+        // SAFETY: `src != src_end`, so the cursor is inside the `src..src_end`
+        // source window and one byte is readable there.
+        ret = unsafe { *ua.src() };
     }
 
-    if to_size((*ua).src_end as isize - (*ua).src as isize) < uc.progress_interval() {
-        (*ua).src_yield = (*ua).src_end;
+    if to_size(ua.src_end() as isize - ua.src() as isize) < uc.progress_interval() {
+        ua.set_src_yield(ua.src_end());
     } else {
-        (*ua).src_yield = (*ua).src.add(uc.progress_interval());
+        // SAFETY: this branch has `src_end - src >= progress_interval`, so the
+        // yield cursor lands at or before `src_end`, inside the source window.
+        ua.set_src_yield(unsafe { ua.src().add(uc.progress_interval()) });
     }
 
     // TODO: Unify these properly
-    uc.set_data((*ua).src);
+    uc.set_data(ua.src());
     ufbxi_check_return!(
         uc,
         report_progress(uc).is_ok(),
@@ -198,26 +221,32 @@ pub(crate) unsafe fn ascii_yield(uc: &Context) -> u8 {
 
 // ufbx.c:9480-9485 `ufbxi_ascii_peek`
 #[inline(always)]
-pub(crate) unsafe fn ascii_peek(uc: &Context) -> u8 {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
-    if (*ua).src == (*ua).src_yield {
+pub(crate) fn ascii_peek(uc: &Context) -> u8 {
+    let ua: &AsciiView = uc.ascii_view();
+    if ua.src() == ua.src_yield() {
         return ascii_yield(uc);
     }
-    *(*ua).src
+    // SAFETY: `src != src_yield` and `src <= src_yield <= src_end` (the source
+    // window invariant), so one byte is readable at the cursor.
+    unsafe { *ua.src() }
 }
 
 // ufbx.c:9487-9495 `ufbxi_ascii_next`
 #[inline(always)]
-pub(crate) unsafe fn ascii_next(uc: &Context) -> u8 {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
-    if (*ua).src == (*ua).src_yield {
+pub(crate) fn ascii_next(uc: &Context) -> u8 {
+    let ua: &AsciiView = uc.ascii_view();
+    if ua.src() == ua.src_yield() {
         return ascii_yield(uc);
     }
-    (*ua).src = (*ua).src.add(1);
-    if (*ua).src == (*ua).src_yield {
+    // SAFETY: `src != src_yield` and `src <= src_yield <= src_end` (the source
+    // window invariant), so the one-step advance stays within that window.
+    ua.set_src(unsafe { ua.src().add(1) });
+    if ua.src() == ua.src_yield() {
         return ascii_yield(uc);
     }
-    *(*ua).src
+    // SAFETY: `src != src_yield` after the advance, so the cursor is strictly
+    // before the window end and one byte is readable there.
+    unsafe { *ua.src() }
 }
 
 // ufbx.c:9497-9531 `ufbxi_ascii_parse_version`
@@ -228,9 +257,7 @@ pub(crate) fn ascii_parse_version(uc: &Context) -> u32 {
     let mut digits: [u8; 3] = [0; 3];
     let mut num_digits: u32 = 0;
 
-    // SAFETY: `ascii_next` needs only a valid `uc` (upheld by the handle); it is
-    // the sole unsafe op in this parser, called at each step below.
-    let mut c: u8 = unsafe { ascii_next(uc) };
+    let mut c: u8 = ascii_next(uc);
 
     let fmt: [u8; 11] = *b" FBX ?.?.?\0";
     let mut ix: u32 = 0;
@@ -245,15 +272,13 @@ pub(crate) fn ascii_parse_version(uc: &Context) -> u32 {
                 }
                 digits[num_digits as usize] = c - b'0';
                 num_digits += 1;
-                // SAFETY: see the first `ascii_next` above.
-                c = unsafe { ascii_next(uc) };
+                c = ascii_next(uc);
             }
 
             // Whitespace
             b' ' => {
                 while c == b' ' || c == b'\t' {
-                    // SAFETY: see the first `ascii_next` above.
-                    c = unsafe { ascii_next(uc) };
+                    c = ascii_next(uc);
                 }
             }
 
@@ -262,8 +287,7 @@ pub(crate) fn ascii_parse_version(uc: &Context) -> u32 {
                 if c != r#ref {
                     return 0;
                 }
-                // SAFETY: see the first `ascii_next` above.
-                c = unsafe { ascii_next(uc) };
+                c = ascii_next(uc);
             }
         }
     }
@@ -294,8 +318,8 @@ pub(crate) fn is_space(c: u8) -> bool {
 
 // ufbx.c:9549-9610 `ufbxi_ascii_skip_whitespace`
 #[inline(never)]
-pub(crate) unsafe fn ascii_skip_whitespace(uc: &Context) -> u8 {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
+pub(crate) fn ascii_skip_whitespace(uc: &Context) -> u8 {
+    let ua: &AsciiView = uc.ascii_view();
 
     // Ignore whitespace
     let mut c: u8 = ascii_peek(uc);
@@ -309,12 +333,12 @@ pub(crate) unsafe fn ascii_skip_whitespace(uc: &Context) -> u8 {
             let mut read_magic = false;
             // FBX ASCII files begin with a magic comment of form "; FBX 7.7.0 project file"
             // Try to extract the version number from the magic comment
-            if !(*ua).read_first_comment {
-                (*ua).read_first_comment = true;
+            if !ua.read_first_comment() {
+                ua.set_read_first_comment(true);
                 let version: u32 = ascii_parse_version(uc);
                 if version != 0 {
                     uc.set_version(version);
-                    (*ua).found_version = true;
+                    ua.set_found_version(true);
                     read_magic = true;
                 }
             }
@@ -342,8 +366,11 @@ pub(crate) unsafe fn ascii_skip_whitespace(uc: &Context) -> u8 {
                         c = ascii_next(uc);
                     }
 
+                    // SAFETY: `line_len >= 19` bytes of the 32-byte local
+                    // `line` are filled, and the literal is 19 bytes long.
                     if line_len >= 19
-                        && memcmp(line.as_ptr(), b" Created by Blender".as_ptr(), 19) == 0
+                        && unsafe { memcmp(line.as_ptr(), b" Created by Blender".as_ptr(), 19) }
+                            == 0
                     {
                         uc.set_exporter(Exporter::BlenderAscii);
                     }
@@ -415,17 +442,23 @@ pub(crate) unsafe fn ascii_push_token_string(
 
 // ufbx.c:9639-9658 `ufbxi_ascii_skip_until`
 #[inline(never)]
-pub(crate) unsafe fn ascii_skip_until(uc: &Context, dst: u8) -> Result<(), Fail> {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
+pub(crate) fn ascii_skip_until(uc: &Context, dst: u8) -> Result<(), Fail> {
+    let ua: &AsciiView = uc.ascii_view();
 
     loop {
-        let buffered: usize = to_size((*ua).src_yield as isize - (*ua).src as isize);
-        let match_: *const u8 = memchr((*ua).src, dst, buffered);
-        if !match_.is_null() {
-            (*ua).src = match_;
-            break;
-        } else {
-            (*ua).src = (*ua).src.add(buffered);
+        let buffered: usize = to_size(ua.src_yield() as isize - ua.src() as isize);
+        // SAFETY: `buffered` is exactly the `src..src_yield` run, which is
+        // readable (source window invariant `src <= src_yield <= src_end`);
+        // `memchr` returns a pointer inside it, and the `else` advance by
+        // `buffered` lands on `src_yield`.
+        unsafe {
+            let match_: *const u8 = memchr(ua.src(), dst, buffered);
+            if !match_.is_null() {
+                ua.set_src(match_);
+                break;
+            } else {
+                ua.set_src(ua.src().add(buffered));
+            }
         }
         if buffered == 0 {
             let c: u8 = ascii_yield(uc);
@@ -744,13 +777,15 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
 // `ufbxi_check()` (ufbx.c:10308). Ported as `-> bool`.
 // C `ufbxi_nodiscard` -> `#[must_use]`.
 #[must_use]
-pub(crate) unsafe fn ascii_accept(uc: &Context, type_: u8) -> bool {
-    let ua: *mut Ascii = uc.ascii_mut_ptr();
+pub(crate) fn ascii_accept(uc: &Context, type_: u8) -> bool {
+    let ua: &AsciiView = uc.ascii_view();
 
-    if (*ua).token.type_ == type_ {
+    if ua.token_view().type_() == type_ {
         ufbxi_check_return!(
             uc,
-            ascii_next_token(uc, &raw mut (*ua).token).is_ok(),
+            // SAFETY: the token out-param is `uc`'s own `ascii.token` field,
+            // addressed through its view.
+            unsafe { ascii_next_token(uc, ua.token_mut_ptr()) }.is_ok(),
             false,
             "ufbxi_ascii_next_token(uc, &ua->token)"
         );
@@ -1199,30 +1234,35 @@ pub(crate) unsafe fn ascii_read_float_array(
 // C `ufbxi_nounroll` is an optimizer pragma with no Rust analogue; the loops
 // port as plain `while`s.
 #[inline(never)]
-pub(crate) unsafe fn setup_base64(uc: &Context) -> Result<(), Fail> {
-    let table: *mut u8 = push::<u8>(uc.tmp_mut_ptr(), 256);
+pub(crate) fn setup_base64(uc: &Context) -> Result<(), Fail> {
+    // SAFETY: pushing onto `uc`'s own `tmp` buf through its raw-ptr getter.
+    let table: *mut u8 = unsafe { push::<u8>(uc.tmp_mut_ptr(), 256) };
     ufbxi_check!(uc, !table.is_null(), "table");
     uc.set_base64_table(table);
 
-    core::ptr::write_bytes(table, 0x80, 256);
-    let mut c: u8 = b'A';
-    while c <= b'Z' {
-        *table.add(c as usize) = (c as i32 - b'A' as i32) as u8;
-        c += 1;
+    // SAFETY: `table` is the freshly pushed 256-byte run checked non-null
+    // above; every index written below is a `u8` value, hence `< 256`.
+    unsafe {
+        core::ptr::write_bytes(table, 0x80, 256);
+        let mut c: u8 = b'A';
+        while c <= b'Z' {
+            *table.add(c as usize) = (c as i32 - b'A' as i32) as u8;
+            c += 1;
+        }
+        let mut c: u8 = b'a';
+        while c <= b'z' {
+            *table.add(c as usize) = (26 + (c as i32 - b'a' as i32)) as u8;
+            c += 1;
+        }
+        let mut c: u8 = b'0';
+        while c <= b'9' {
+            *table.add(c as usize) = (52 + (c as i32 - b'0' as i32)) as u8;
+            c += 1;
+        }
+        *table.add(b'+' as usize) = 62;
+        *table.add(b'/' as usize) = 63;
+        *table.add(b'=' as usize) = 0x40;
     }
-    let mut c: u8 = b'a';
-    while c <= b'z' {
-        *table.add(c as usize) = (26 + (c as i32 - b'a' as i32)) as u8;
-        c += 1;
-    }
-    let mut c: u8 = b'0';
-    while c <= b'9' {
-        *table.add(c as usize) = (52 + (c as i32 - b'0' as i32)) as u8;
-        c += 1;
-    }
-    *table.add(b'+' as usize) = 62;
-    *table.add(b'/' as usize) = 63;
-    *table.add(b'=' as usize) = 0x40;
 
     Ok(())
 }

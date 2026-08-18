@@ -384,6 +384,10 @@ impl AsciiTokenView {
     pub(crate) fn str_cap(&self) -> usize {
         unsafe { (*self.get()).str_cap }
     }
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> u8 {
+        unsafe { (*self.get()).type_ }
+    }
 }
 
 // ufbx.c:6267-6271 (anonymous `value` union inside `ufbxi_ascii_token`) —
@@ -439,6 +443,38 @@ impl AsciiView {
     #[inline(always)]
     pub(crate) fn src_buf(&self) -> *mut Buf {
         unsafe { (*self.get()).src_buf }
+    }
+    #[inline(always)]
+    pub(crate) fn set_src_buf(&self, src_buf: *mut Buf) {
+        unsafe {
+            (*self.get()).src_buf = src_buf;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn retain_buf(&self) -> *mut Buf {
+        unsafe { (*self.get()).retain_buf }
+    }
+    #[inline(always)]
+    pub(crate) fn src(&self) -> *const u8 {
+        unsafe { (*self.get()).src }
+    }
+    #[inline(always)]
+    pub(crate) fn src_yield(&self) -> *const u8 {
+        unsafe { (*self.get()).src_yield }
+    }
+    #[inline(always)]
+    pub(crate) fn src_end(&self) -> *const u8 {
+        unsafe { (*self.get()).src_end }
+    }
+    #[inline(always)]
+    pub(crate) fn read_first_comment(&self) -> bool {
+        unsafe { (*self.get()).read_first_comment }
+    }
+    #[inline(always)]
+    pub(crate) fn set_read_first_comment(&self, read_first_comment: bool) {
+        unsafe {
+            (*self.get()).read_first_comment = read_first_comment;
+        }
     }
     #[inline(always)]
     pub(crate) fn set_src(&self, src: *const u8) {
@@ -4347,7 +4383,7 @@ pub(crate) fn get_read_offset(uc: &Context) -> u64 {
 // C: `ufbxi_nodiscard static ufbxi_noinline int` — `return 1` becomes
 // `Ok(())`, the `ufbxi_check_msg` failure path returns `Err(Fail)`.
 #[inline(never)]
-pub(crate) unsafe fn report_progress(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn report_progress(uc: &Context) -> Result<(), Fail> {
     if uc.opts_view().progress_cb().fn_.is_none() {
         return Ok(());
     }
@@ -4369,10 +4405,15 @@ pub(crate) unsafe fn report_progress(uc: &Context) -> Result<(), Fail> {
     // C: `(uint32_t)uc->opts.progress_cb.fn(uc->opts.progress_cb.user, &progress)`
     // — the callback is `extern "C"`; the generated signature returns the enum
     // as a raw u32 (`RawEnum<ProgressResult>`).
-    let result: u32 = (uc.opts_view().progress_cb().fn_.unwrap_unchecked())(
-        uc.opts_view().progress_cb().user,
-        &progress,
-    )
+    // SAFETY: `progress_cb.fn_` is `Some` (the `None` early-return above), and
+    // it is invoked with the `user` pointer it was paired with in the same
+    // callback struct — the C callback contract.
+    let result: u32 = unsafe {
+        (uc.opts_view().progress_cb().fn_.unwrap_unchecked())(
+            uc.opts_view().progress_cb().user,
+            &progress,
+        )
+    }
     .as_raw();
     ufbx_assert!(
         result == ProgressResult::Continue as u32 || result == ProgressResult::Cancel as u32
@@ -4405,8 +4446,7 @@ pub(crate) fn progress(uc: &Context, work_units: usize) -> Result<(), Fail> {
     if left > 0 {
         return Ok(());
     }
-    // SAFETY: `report_progress` needs only a valid `uc` (upheld by the handle).
-    unsafe { report_progress(uc) }
+    report_progress(uc)
 }
 
 // -- FBX value type information
@@ -4853,35 +4893,52 @@ pub(crate) unsafe fn find_child_strcmp<'a>(
 // ufbx.c:7881-7896 `ufbxi_push_element_extra_size`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn push_element_extra_size(uc: &Context, id: u32, size: usize) -> *mut c_void {
+pub(crate) fn push_element_extra_size(uc: &Context, id: u32, size: usize) -> *mut c_void {
     if uc.element_extra_cap() <= id as usize {
         let old_cap: usize = uc.element_extra_cap();
         // C: `id + 1` is `uint32_t` arithmetic before the `size_t` conversion.
         ufbxi_check_return!(
             uc,
-            grow_array(
-                uc.ator_tmp_mut_ptr(),
-                uc.element_extra_arr_mut_ptr(),
-                uc.element_extra_cap_mut_ptr(),
-                id.wrapping_add(1) as usize
-            ),
+            // SAFETY: growing `uc`'s own paired `element_extra_arr`/
+            // `element_extra_cap` growth state through its temp allocator (uc
+            // construction invariant).
+            unsafe {
+                grow_array(
+                    uc.ator_tmp_mut_ptr(),
+                    uc.element_extra_arr_mut_ptr(),
+                    uc.element_extra_cap_mut_ptr(),
+                    id.wrapping_add(1) as usize
+                )
+            },
             core::ptr::null_mut(),
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->element_extra_arr)), (&uc->element_extra_arr), (&uc->element_extra_cap), (id + 1))"
         );
-        core::ptr::write_bytes(
-            uc.element_extra_arr().add(old_cap) as *mut u8,
-            0,
-            (uc.element_extra_cap() - old_cap) * size_of::<*mut c_void>(),
-        );
+        // SAFETY: the grow above succeeded, so `element_extra_arr` holds
+        // `element_extra_cap >= old_cap` entries; the zeroed run is exactly the
+        // newly added tail.
+        unsafe {
+            core::ptr::write_bytes(
+                uc.element_extra_arr().add(old_cap) as *mut u8,
+                0,
+                (uc.element_extra_cap() - old_cap) * size_of::<*mut c_void>(),
+            );
+        }
     }
 
-    if !(*uc.element_extra_arr().add(id as usize)).is_null() {
-        return *uc.element_extra_arr().add(id as usize);
+    // SAFETY: `id < element_extra_cap()` holds here (either it already did, or
+    // the grow above raised the cap past `id`), and every entry is initialized
+    // — the newly grown tail by the `write_bytes` above.
+    let existing: *mut c_void = unsafe { *uc.element_extra_arr().add(id as usize) };
+    if !existing.is_null() {
+        return existing;
     }
 
-    let extra: *mut c_void = push_size_zero(uc.tmp_mut_ptr(), size, 1);
+    // SAFETY: pushing onto `uc`'s own `tmp` buf through its raw-ptr getter.
+    let extra: *mut c_void = unsafe { push_size_zero(uc.tmp_mut_ptr(), size, 1) };
     ufbxi_check_return!(uc, !extra.is_null(), core::ptr::null_mut(), "extra");
-    *uc.element_extra_arr().add(id as usize) = extra;
+    // SAFETY: `id < element_extra_cap()` as above; `push_size_zero` touches
+    // only `uc->tmp`, so the array is still that long.
+    unsafe { *uc.element_extra_arr().add(id as usize) = extra };
 
     extra
 }
@@ -4902,9 +4959,7 @@ pub(crate) fn get_element_extra(uc: &Context, id: u32) -> *mut c_void {
 #[inline(always)]
 #[must_use]
 pub(crate) fn push_element_extra<T>(uc: &Context, id: u32) -> *mut T {
-    // SAFETY: `push_element_extra_size` needs only a valid `uc` (upheld by the
-    // `&Context` handle).
-    unsafe { push_element_extra_size(uc, id, size_of::<T>()) as *mut T }
+    push_element_extra_size(uc, id, size_of::<T>()) as *mut T
 }
 
 // -- Parsing state machine
@@ -6023,7 +6078,7 @@ pub(crate) struct DomMapping {
 // ufbx.c:10703-10710 `ufbxi_get_dom_node_imp`
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn get_dom_node_imp(uc: &Context, node: Option<&NodeView>) -> *mut DomNode {
+pub(crate) fn get_dom_node_imp(uc: &Context, node: Option<&NodeView>) -> *mut DomNode {
     let Some(node) = node else {
         return core::ptr::null_mut();
     };
@@ -6034,22 +6089,27 @@ pub(crate) unsafe fn get_dom_node_imp(uc: &Context, node: Option<&NodeView>) -> 
         dom_node: core::ptr::null_mut(),
     };
     let hash = hash_uptr(mapping.node_ptr);
-    let result: *mut DomMapping = map_find(
-        uc.dom_node_map_mut_ptr(),
-        hash,
-        &mapping as *const DomMapping as *const c_void,
-    );
-    if !result.is_null() {
-        (*result).dom_node
-    } else {
-        core::ptr::null_mut()
+    // SAFETY: looking up in `uc`'s own `dom_node_map` through its raw-ptr
+    // getter, with a key that is a live local of the map's item type; a
+    // non-null result points at an entry owned by that map.
+    unsafe {
+        let result: *mut DomMapping = map_find(
+            uc.dom_node_map_mut_ptr(),
+            hash,
+            &mapping as *const DomMapping as *const c_void,
+        );
+        if !result.is_null() {
+            (*result).dom_node
+        } else {
+            core::ptr::null_mut()
+        }
     }
 }
 
 // ufbx.c:10712-10716 `ufbxi_get_dom_node`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn get_dom_node(uc: &Context, node: Option<&NodeView>) -> *mut DomNode {
+pub(crate) fn get_dom_node(uc: &Context, node: Option<&NodeView>) -> *mut DomNode {
     if !uc.opts_view().retain_dom() {
         return core::ptr::null_mut();
     }
@@ -6655,7 +6715,7 @@ pub(crate) const MIN_FILE_FORMAT_LOOKAHEAD: usize = 32;
 
 // ufbx.c:11130-11191 `ufbxi_determine_format`
 #[inline(never)]
-pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn determine_format(uc: &Context) -> Result<(), Fail> {
     let mut format: FileFormat = uc.opts_view().file_format();
 
     if format == FileFormat::Unknown && !uc.opts_view().no_format_from_content() {
@@ -6680,12 +6740,14 @@ pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
             // C: `for (uint32_t fmt = UFBX_FILE_FORMAT_FBX; fmt < UFBX_FILE_FORMAT_COUNT; fmt++)`
             let mut fmt: u32 = FileFormat::Fbx as u32;
             while fmt < FILE_FORMAT_COUNT {
-                if is_format(
-                    uc.data(),
-                    data_size,
-                    core::mem::transmute::<u32, FileFormat>(fmt),
-                ) {
-                    format = core::mem::transmute::<u32, FileFormat>(fmt);
+                // SAFETY: `data_size <= uc.data_size()` (clamped above), so
+                // `is_format` reads only inside the buffered read window; `fmt`
+                // ranges over `Fbx..FILE_FORMAT_COUNT`, every one of which is a
+                // valid `FileFormat` discriminant.
+                let fmt_enum: FileFormat = unsafe { core::mem::transmute::<u32, FileFormat>(fmt) };
+                // SAFETY: as above.
+                if unsafe { is_format(uc.data(), data_size, fmt_enum) } {
+                    format = fmt_enum;
                     break;
                 }
                 fmt += 1;
@@ -6710,22 +6772,32 @@ pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
                 uc.opts_view().filename_view().data(),
                 uc.opts_view().filename_view().length(),
             );
-            let mut i: usize = extension.length;
-            while i > 0 {
-                if *extension.data.add(i - 1) == b'.' {
-                    extension.data = extension.data.add(i - 1);
-                    extension.length -= i - 1;
-                    break;
+            // SAFETY: `extension` starts as `uc->opts.filename`, a
+            // `data`/`length` pair valid for `length` bytes (opts invariant);
+            // the scan only ever reads indices `< length` and only ever moves
+            // `data` forward inside that same run, shrinking `length` to match.
+            unsafe {
+                let mut i: usize = extension.length;
+                while i > 0 {
+                    if *extension.data.add(i - 1) == b'.' {
+                        extension.data = extension.data.add(i - 1);
+                        extension.length -= i - 1;
+                        break;
+                    }
+                    i -= 1;
                 }
-                i -= 1;
             }
 
-            if r#match(&extension, b"\\c\\.fbx\0".as_ptr()) {
-                format = FileFormat::Fbx;
-            } else if r#match(&extension, b"\\c\\.obj\0".as_ptr()) {
-                format = FileFormat::Obj;
-            } else if r#match(&extension, b"\\c\\.mtl\0".as_ptr()) {
-                format = FileFormat::Mtl;
+            // SAFETY: `extension` is the valid `data`/`length` run established
+            // above; the format strings are NUL-terminated literals.
+            unsafe {
+                if r#match(&extension, b"\\c\\.fbx\0".as_ptr()) {
+                    format = FileFormat::Fbx;
+                } else if r#match(&extension, b"\\c\\.obj\0".as_ptr()) {
+                    format = FileFormat::Obj;
+                } else if r#match(&extension, b"\\c\\.mtl\0".as_ptr()) {
+                    format = FileFormat::Mtl;
+                }
             }
         }
     }
@@ -6743,25 +6815,36 @@ pub(crate) unsafe fn determine_format(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:11193-11240 `ufbxi_begin_parse`
 #[inline(never)]
-pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn begin_parse(uc: &Context) -> Result<(), Fail> {
     let header: *const u8 = crate::native::io::peek_bytes(uc, BINARY_HEADER_SIZE);
     ufbxi_check!(uc, !header.is_null(), "header");
 
     // If the file starts with the binary magic parse it as binary, otherwise
     // treat it as an ASCII file.
-    if memcmp(header, BINARY_MAGIC.as_ptr(), BINARY_MAGIC_SIZE) == 0 {
+    // SAFETY: a non-null `peek_bytes` result is readable for the requested
+    // `BINARY_HEADER_SIZE` bytes, and `BINARY_MAGIC_SIZE <= BINARY_HEADER_SIZE`.
+    if unsafe { memcmp(header, BINARY_MAGIC.as_ptr(), BINARY_MAGIC_SIZE) } == 0 {
         // The byte after the magic indicates endianness
-        let endian: u8 = *header.add(BINARY_MAGIC_SIZE + 0);
+        // SAFETY: the header window is `BINARY_HEADER_SIZE` bytes and the magic
+        // plus the endian byte plus the 4-byte version word fit within it.
+        let endian: u8 = unsafe { *header.add(BINARY_MAGIC_SIZE + 0) };
         uc.set_file_big_endian(endian != 0);
 
         // Read the version directly from the header
-        let mut version_word: *const u8 = header.add(BINARY_MAGIC_SIZE + 1);
+        // SAFETY: as above — this is the 4-byte version word inside the header
+        // window.
+        let mut version_word: *const u8 = unsafe { header.add(BINARY_MAGIC_SIZE + 1) };
         if uc.file_big_endian() {
-            version_word =
-                crate::native::parse_binary::swap_endian(uc, version_word as *const c_void, 1, 4);
+            // SAFETY: `version_word` addresses 4 readable header bytes, which
+            // is what the `(count=1, elem_size=4)` swap is told to read.
+            version_word = unsafe {
+                crate::native::parse_binary::swap_endian(uc, version_word as *const c_void, 1, 4)
+            };
             ufbxi_check!(uc, !version_word.is_null(), "version_word");
         }
-        uc.set_version(read_u32(version_word));
+        // SAFETY: `version_word` is 4 readable bytes — either the header slice
+        // above or the swap buffer that replaced it.
+        uc.set_version(unsafe { read_u32(version_word) });
 
         // This is quite probably an FBX file..
         uc.set_sure_fbx(true);
@@ -6771,15 +6854,26 @@ pub(crate) unsafe fn begin_parse(uc: &Context) -> Result<(), Fail> {
 
         // Use the current read buffer as the initial parse buffer
         // C: `memset(&uc->ascii, 0, sizeof(uc->ascii));`
-        core::ptr::write_bytes(uc.ascii_mut_ptr() as *mut u8, 0, size_of::<Ascii>());
-        uc.ascii_view().set_src(uc.data());
-        uc.ascii_view()
-            .set_src_yield(uc.data().add(uc.yield_size()));
-        uc.ascii_view()
-            .set_src_end(uc.data().add(uc.data_size() + uc.yield_size()));
+        // SAFETY: this is the init run for `uc`'s own `ascii` field, addressed
+        // through its raw-ptr getter and sized by that field's type; the
+        // cursors it is seeded with span `data .. data + yield_size +
+        // data_size`, the buffered read window, so each lands in bounds
+        // (one-past-the-end at most).
+        unsafe {
+            core::ptr::write_bytes(uc.ascii_mut_ptr() as *mut u8, 0, size_of::<Ascii>());
+            uc.ascii_view().set_src(uc.data());
+            uc.ascii_view()
+                .set_src_yield(uc.data().add(uc.yield_size()));
+            uc.ascii_view()
+                .set_src_end(uc.data().add(uc.data_size() + uc.yield_size()));
+        }
 
         // Initialize the first token
-        crate::native::parse_ascii::ascii_next_token(uc, uc.ascii_view().token_mut_ptr())?;
+        // SAFETY: the token out-param is `uc`'s own `ascii.token` field,
+        // addressed through its view.
+        unsafe {
+            crate::native::parse_ascii::ascii_next_token(uc, uc.ascii_view().token_mut_ptr())?;
+        }
 
         // Default to version 7400 if not found in header
         if uc.version() > 0 {
@@ -6986,28 +7080,32 @@ pub(crate) unsafe fn parse_toplevel_child(
 
 // ufbx.c:11379-11407 `ufbxi_parse_legacy_toplevel`
 #[inline(never)]
-pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
     ufbx_assert!(uc.top_nodes_len() == 0);
 
     let mut end: bool = false;
-    if uc.from_ascii() {
-        crate::native::parse_ascii::ascii_parse_node(
-            uc,
-            0,
-            ParseState::Root,
-            &mut end,
-            uc.tmp_mut_ptr(),
-            true,
-        )?;
-    } else {
-        crate::native::parse_binary::binary_parse_node(
-            uc,
-            0,
-            ParseState::Root,
-            &mut end,
-            uc.tmp_mut_ptr(),
-            true,
-        )?;
+    // SAFETY: the `end` out-param is an unaliased local; the destination buf is
+    // `uc`'s own `tmp`, addressed through its raw-ptr getter.
+    unsafe {
+        if uc.from_ascii() {
+            crate::native::parse_ascii::ascii_parse_node(
+                uc,
+                0,
+                ParseState::Root,
+                &mut end,
+                uc.tmp_mut_ptr(),
+                true,
+            )?;
+        } else {
+            crate::native::parse_binary::binary_parse_node(
+                uc,
+                0,
+                ParseState::Root,
+                &mut end,
+                uc.tmp_mut_ptr(),
+                true,
+            )?;
+        }
     }
 
     // Top-level node not found
@@ -7018,12 +7116,17 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
         return Ok(());
     }
 
-    pop::<Node>(uc.tmp_stack_mut_ptr(), 1, uc.legacy_node_mut_ptr());
+    // SAFETY: the parse above pushed the node onto `uc`'s own `tmp_stack`, so
+    // popping one `Node` into `uc`'s own `legacy_node` field (both addressed
+    // through their raw-ptr getters) matches what is stored there.
+    unsafe { pop::<Node>(uc.tmp_stack_mut_ptr(), 1, uc.legacy_node_mut_ptr()) };
     uc.set_top_child_index(0);
     uc.set_top_node(uc.legacy_node_mut_ptr());
 
     if uc.opts_view().retain_dom() {
-        retain_toplevel(uc, uc.legacy_node_mut_ptr())?;
+        // SAFETY: `legacy_node` was just populated by the `pop` above and is
+        // `uc`'s own field.
+        unsafe { retain_toplevel(uc, uc.legacy_node_mut_ptr())? };
     }
 
     Ok(())
@@ -7033,7 +7136,7 @@ pub(crate) unsafe fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:11411-11429 `ufbxi_load_strings`
 #[inline(never)]
-pub(crate) unsafe fn load_strings(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn load_strings(uc: &Context) -> Result<(), Fail> {
     // C: `#if defined(UFBX_REGRESSION) ufbx_string reg_prev = ufbx_empty_string; #endif`
     #[cfg(feature = "regression")]
     let mut reg_prev: String = crate::native::api::EMPTY_STRING.0;
@@ -7043,21 +7146,29 @@ pub(crate) unsafe fn load_strings(uc: &Context) -> Result<(), Fail> {
     // C: `ufbxi_for(const ufbx_string, str, ufbxi_strings, ufbxi_arraycount(ufbxi_strings))`
     for str_ in sp::STRINGS.0.iter() {
         #[cfg(feature = "regression")]
-        {
+        // SAFETY: `STRINGS` holds NUL-terminated static literals paired with
+        // their lengths, which is what `strlen`/`str_less` read.
+        unsafe {
             ufbx_assert!(crate::native::error::strlen(str_.data) == str_.length);
             ufbx_assert!(sp::str_less(reg_prev, *str_));
             reg_prev = *str_;
         }
         ufbxi_check!(
             uc,
-            !sp::push_string_imp(
-                uc.string_pool_mut_ptr(),
-                str_.data,
-                str_.length,
-                core::ptr::null_mut(),
-                false,
-                true
-            )
+            // SAFETY: interning into `uc`'s own string pool through its raw-ptr
+            // getter; `str_` is a `data`/`length` pair over a static literal,
+            // and `'static` outlives the pool, which is why the no-copy
+            // (`copy == false`) intern is sound here.
+            !unsafe {
+                sp::push_string_imp(
+                    uc.string_pool_mut_ptr(),
+                    str_.data,
+                    str_.length,
+                    core::ptr::null_mut(),
+                    false,
+                    true,
+                )
+            }
             .is_null(),
             "ufbxi_push_string_imp(&uc->string_pool, str->data, str->length, NULL, false, true)"
         );
@@ -7581,36 +7692,51 @@ pub(crate) static NODE_PROP_NAMES: NodePropNameTable = NodePropNameTable([
 
 // ufbx.c:11720-11734 `ufbxi_init_node_prop_names`
 #[inline(never)]
-pub(crate) unsafe fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        crate::native::hash::map_grow::<*const u8>(
-            uc.node_prop_set_mut_ptr(),
-            NODE_PROP_NAMES.0.len()
-        ),
+        // SAFETY: growing `uc`'s own `node_prop_set` map through its raw-ptr
+        // getter, with the item type it was constructed for.
+        unsafe {
+            crate::native::hash::map_grow::<*const u8>(
+                uc.node_prop_set_mut_ptr(),
+                NODE_PROP_NAMES.0.len()
+            )
+        },
         "ufbxi_map_grow_size((&uc->node_prop_set), sizeof(const char*), ((sizeof(ufbxi_node_prop_names) / sizeof(*(ufbxi_node_prop_names)))))"
     );
     // C: `for (size_t i = 0; i < ufbxi_arraycount(ufbxi_node_prop_names); i++)`
     let mut i: usize = 0;
     while i < NODE_PROP_NAMES.0.len() {
         let name: *const u8 = NODE_PROP_NAMES.0[i];
-        let pooled: *const u8 = sp::push_string_imp(
-            uc.string_pool_mut_ptr(),
-            name,
-            crate::native::error::strlen(name),
-            core::ptr::null_mut(),
-            false,
-            true,
-        );
+        // SAFETY: `name` is a NUL-terminated static literal, so `strlen` finds
+        // its terminator and the `'static` bytes outlive the pool — which is
+        // what makes the no-copy (`copy == false`) intern into `uc`'s own
+        // string pool sound.
+        let pooled: *const u8 = unsafe {
+            sp::push_string_imp(
+                uc.string_pool_mut_ptr(),
+                name,
+                crate::native::error::strlen(name),
+                core::ptr::null_mut(),
+                false,
+                true,
+            )
+        };
         ufbxi_check!(uc, !pooled.is_null(), "pooled");
         let hash: u32 = crate::native::hash::hash_ptr!(pooled);
-        let entry: *mut *const u8 = map_insert::<*const u8>(
-            uc.node_prop_set_mut_ptr(),
-            hash,
-            &pooled as *const *const u8 as *const c_void,
-        );
-        ufbxi_check!(uc, !entry.is_null(), "entry");
-        *entry = pooled;
+        // SAFETY: inserting into `uc`'s own `node_prop_set` through its raw-ptr
+        // getter, keyed by a live local of the map's item type; a non-null
+        // result is a writable entry owned by that map.
+        unsafe {
+            let entry: *mut *const u8 = map_insert::<*const u8>(
+                uc.node_prop_set_mut_ptr(),
+                hash,
+                &pooled as *const *const u8 as *const c_void,
+            );
+            ufbxi_check!(uc, !entry.is_null(), "entry");
+            *entry = pooled;
+        }
         i += 1;
     }
 
@@ -7635,35 +7761,50 @@ pub(crate) unsafe fn is_node_property_name(uc: &Context, name: *const u8) -> boo
 
 // ufbx.c:11746-11760 `ufbxi_load_maps`
 #[inline(never)]
-pub(crate) unsafe fn load_maps(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn load_maps(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        crate::native::hash::map_grow::<PropTypeName>(
-            uc.prop_type_map_mut_ptr(),
-            PROP_TYPE_NAMES.0.len()
-        ),
+        // SAFETY: growing `uc`'s own `prop_type_map` through its raw-ptr
+        // getter, with the item type it was constructed for.
+        unsafe {
+            crate::native::hash::map_grow::<PropTypeName>(
+                uc.prop_type_map_mut_ptr(),
+                PROP_TYPE_NAMES.0.len()
+            )
+        },
         "ufbxi_map_grow_size((&uc->prop_type_map), sizeof(ufbxi_prop_type_name), ((sizeof(ufbxi_prop_type_names) / sizeof(*(ufbxi_prop_type_names)))))"
     );
     // C: `ufbxi_for(const ufbxi_prop_type_name, name, ufbxi_prop_type_names, ...)`
     for name in PROP_TYPE_NAMES.0.iter() {
-        let pooled: *const u8 = sp::push_string_imp(
-            uc.string_pool_mut_ptr(),
-            name.name,
-            crate::native::error::strlen(name.name),
-            core::ptr::null_mut(),
-            false,
-            true,
-        );
+        // SAFETY: `name.name` is a NUL-terminated static literal, so `strlen`
+        // finds its terminator and the `'static` bytes outlive the pool — what
+        // makes the no-copy (`copy == false`) intern into `uc`'s own string
+        // pool sound.
+        let pooled: *const u8 = unsafe {
+            sp::push_string_imp(
+                uc.string_pool_mut_ptr(),
+                name.name,
+                crate::native::error::strlen(name.name),
+                core::ptr::null_mut(),
+                false,
+                true,
+            )
+        };
         ufbxi_check!(uc, !pooled.is_null(), "pooled");
         let hash: u32 = crate::native::hash::hash_ptr!(pooled);
-        let entry: *mut PropTypeName = map_insert::<PropTypeName>(
-            uc.prop_type_map_mut_ptr(),
-            hash,
-            &pooled as *const *const u8 as *const c_void,
-        );
-        ufbxi_check!(uc, !entry.is_null(), "entry");
-        (*entry).type_ = name.type_;
-        (*entry).name = pooled;
+        // SAFETY: inserting into `uc`'s own `prop_type_map` through its raw-ptr
+        // getter, keyed by a live local; a non-null result is a writable entry
+        // owned by that map.
+        unsafe {
+            let entry: *mut PropTypeName = map_insert::<PropTypeName>(
+                uc.prop_type_map_mut_ptr(),
+                hash,
+                &pooled as *const *const u8 as *const c_void,
+            );
+            ufbxi_check!(uc, !entry.is_null(), "entry");
+            (*entry).type_ = name.type_;
+            (*entry).name = pooled;
+        }
     }
 
     Ok(())

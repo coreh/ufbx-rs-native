@@ -38,7 +38,7 @@ use crate::prelude::OpenFileContext;
 // ufbx.c:6716-6781 `ufbxi_refill`
 // C: `static ufbxi_noinline const char *` — returns NULL on failure.
 #[inline(never)]
-pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *const u8 {
+pub(crate) fn refill(uc: &Context, size: usize, require_size: bool) -> *const u8 {
     ufbx_assert!(uc.data_size() < size);
     ufbxi_check_return!(uc, !uc.eof(), core::ptr::null(), "!uc->eof");
     if require_size {
@@ -72,7 +72,9 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
         new_size = max_sz(new_size, uc.read_buffer_size().wrapping_mul(2));
         size_to_free = uc.read_buffer_size();
         data_to_free = uc.read_buffer();
-        let new_buffer: *mut u8 = alloc::<u8>(uc.ator_tmp_mut_ptr(), new_size);
+        // SAFETY: allocating from `uc`'s own temp allocator through its
+        // raw-ptr getter (uc construction invariant).
+        let new_buffer: *mut u8 = unsafe { alloc::<u8>(uc.ator_tmp_mut_ptr(), new_size) };
         ufbxi_check_return!(uc, !new_buffer.is_null(), core::ptr::null(), "new_buffer");
         uc.set_read_buffer(new_buffer);
         uc.set_read_buffer_size(new_size);
@@ -84,22 +86,36 @@ pub(crate) unsafe fn refill(uc: &Context, size: usize, require_size: bool) -> *c
         ufbx_assert!(!uc.read_buffer().is_null() && !uc.data().is_null());
         // C: `memmove(uc->read_buffer, uc->data, data_size)` — the ranges may
         // overlap when the buffer did not grow.
-        core::ptr::copy(uc.data(), uc.read_buffer(), data_size);
+        // SAFETY: `uc->data` has `data_size` readable bytes left (the buffered
+        // window invariant), and `read_buffer` is at least `read_buffer_size >=
+        // data_size` bytes — either the pre-existing buffer `data` points into,
+        // or the larger one just allocated.
+        unsafe { core::ptr::copy(uc.data(), uc.read_buffer(), data_size) };
     }
 
     if size_to_free != 0 {
-        free::<u8>(uc.ator_tmp_mut_ptr(), data_to_free, size_to_free);
+        // SAFETY: `data_to_free`/`size_to_free` are the previous
+        // `read_buffer`/`read_buffer_size` pair, allocated from this same
+        // allocator and already copied out of above.
+        unsafe { free::<u8>(uc.ator_tmp_mut_ptr(), data_to_free, size_to_free) };
     }
 
     // Fill the rest of the buffer with user data
     let data_capacity: usize = uc.read_buffer_size();
     while data_size < data_capacity {
         let to_read: usize = data_capacity - data_size;
-        let read_result: usize = (uc.read_fn().unwrap_unchecked())(
-            uc.read_user(),
-            uc.read_buffer().add(data_size) as *mut c_void,
-            to_read,
-        );
+        // SAFETY: `read_fn` is `Some` (checked at entry: `require_size` demands
+        // it, the `else` branch returned early without it); `read_buffer` holds
+        // `data_capacity` bytes and `data_size + to_read == data_capacity`, so
+        // the destination window is in bounds; `read_user` is the pointer
+        // paired with the callback.
+        let read_result: usize = unsafe {
+            (uc.read_fn().unwrap_unchecked())(
+                uc.read_user(),
+                uc.read_buffer().add(data_size) as *mut c_void,
+                to_read,
+            )
+        };
         ufbxi_check_return_msg!(
             uc,
             read_result != usize::MAX,
@@ -162,7 +178,7 @@ pub(crate) fn pause_progress(uc: &Context) {
 
 // ufbx.c:6789-6799 `ufbxi_resume_progress`
 #[inline(never)]
-pub(crate) unsafe fn resume_progress(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn resume_progress(uc: &Context) -> Result<(), Fail> {
     uc.set_yield_size(min_sz(uc.data_size(), uc.progress_interval()));
     uc.set_data_size(uc.data_size() - uc.yield_size());
 
@@ -180,7 +196,7 @@ pub(crate) unsafe fn resume_progress(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:6801-6815 `ufbxi_yield`
 // (`yield` is a reserved word in Rust — trailing underscore, cf. `type_`.)
 #[inline(never)]
-pub(crate) unsafe fn yield_(uc: &Context, size: usize) -> *const u8 {
+pub(crate) fn yield_(uc: &Context, size: usize) -> *const u8 {
     let ret: *const u8;
     uc.set_data_size(uc.data_size() + uc.yield_size());
     if uc.data_size() >= size {
@@ -206,8 +222,7 @@ pub(crate) fn peek_bytes(uc: &Context, size: usize) -> *const u8 {
     if uc.yield_size() >= size {
         uc.data()
     } else {
-        // SAFETY: `yield_` needs only a valid `uc` (upheld by the handle).
-        unsafe { yield_(uc, size) }
+        yield_(uc, size)
     }
 }
 
@@ -219,8 +234,7 @@ pub(crate) fn read_bytes(uc: &Context, size: usize) -> *const u8 {
     if uc.yield_size() >= size {
         ret = uc.data();
     } else {
-        // SAFETY: `yield_` needs only a valid `uc` (upheld by the handle).
-        ret = unsafe { yield_(uc, size) };
+        ret = yield_(uc, size);
         if ret.is_null() {
             return core::ptr::null();
         }
@@ -237,22 +251,27 @@ pub(crate) fn read_bytes(uc: &Context, size: usize) -> *const u8 {
 
 // ufbx.c:6843-6849 `ufbxi_consume_bytes`
 #[inline(always)]
-pub(crate) unsafe fn consume_bytes(uc: &Context, size: usize) {
+pub(crate) fn consume_bytes(uc: &Context, size: usize) {
     // Bytes must have been checked first with `ufbxi_peek_bytes()`
     ufbx_assert!(size <= uc.yield_size());
     uc.set_yield_size(uc.yield_size() - size);
-    uc.set_data(uc.data().add(size));
+    // SAFETY: `size <= yield_size()` is asserted above (`ufbx_assert!` is an
+    // unconditional `assert!`), so the cursor stays inside the buffered read
+    // window (`data .. data + yield_size + data_size`).
+    uc.set_data(unsafe { uc.data().add(size) });
 }
 
 // ufbx.c:6851-6896 `ufbxi_skip_bytes`
 #[inline(never)]
-pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
+pub(crate) fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
     if uc.skip_fn().is_some() {
         pause_progress(uc);
 
         if size > uc.data_size() as u64 {
             size -= uc.data_size() as u64;
-            uc.set_data(uc.data().add(uc.data_size()));
+            // SAFETY: advancing the read cursor by exactly the bytes still
+            // buffered lands on the end of the buffered window.
+            uc.set_data(unsafe { uc.data().add(uc.data_size()) });
             uc.set_data_size(0);
 
             uc.set_data_offset(uc.data_offset().wrapping_add(size));
@@ -260,7 +279,10 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
                 size -= MAX_SKIP_SIZE as u64;
                 ufbxi_check_msg!(
                     uc,
-                    (uc.skip_fn().unwrap_unchecked())(uc.read_user(), MAX_SKIP_SIZE - 1),
+                    // SAFETY: `skip_fn` is `Some` (enclosing branch); it is
+                    // called with its paired `read_user` — the C stream
+                    // callback contract.
+                    unsafe { (uc.skip_fn().unwrap_unchecked())(uc.read_user(), MAX_SKIP_SIZE - 1) },
                     "Truncated file",
                     "uc->skip_fn(uc->read_user, UFBXI_MAX_SKIP_SIZE - 1)"
                 );
@@ -269,11 +291,16 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
                 // and causes us to seek indefinitely forwards as `fseek()` does not
                 // report if we hit EOF...
                 let mut single_byte = MaybeUninit::<[u8; 1]>::uninit(); // ufbxi_uninit
-                let num_read: usize = (uc.read_fn().unwrap_unchecked())(
-                    uc.read_user(),
-                    single_byte.as_mut_ptr() as *mut c_void,
-                    1,
-                );
+                                                                        // SAFETY: a stream that provides `skip_fn` also provides
+                                                                        // `read_fn` (stream-setup invariant); the destination is a
+                                                                        // local 1-byte buffer and exactly 1 byte is requested.
+                let num_read: usize = unsafe {
+                    (uc.read_fn().unwrap_unchecked())(
+                        uc.read_user(),
+                        single_byte.as_mut_ptr() as *mut c_void,
+                        1,
+                    )
+                };
                 ufbxi_check_msg!(uc, num_read <= 1, "IO error", "num_read <= 1");
                 ufbxi_check_msg!(uc, num_read == 1, "Truncated file", "num_read == 1");
             }
@@ -281,13 +308,17 @@ pub(crate) unsafe fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail>
             if size > 0 {
                 ufbxi_check_msg!(
                     uc,
-                    (uc.skip_fn().unwrap_unchecked())(uc.read_user(), size as usize),
+                    // SAFETY: `skip_fn` is `Some` (enclosing branch); C stream
+                    // callback contract as above.
+                    unsafe { (uc.skip_fn().unwrap_unchecked())(uc.read_user(), size as usize) },
                     "Truncated file",
                     "uc->skip_fn(uc->read_user, (size_t)size)"
                 );
             }
         } else {
-            uc.set_data(uc.data().add(size as usize));
+            // SAFETY: this branch has `size <= data_size`, so the advance stays
+            // inside the buffered read window.
+            uc.set_data(unsafe { uc.data().add(size as usize) });
             uc.set_data_size(uc.data_size() - size as usize);
         }
 
@@ -900,13 +931,17 @@ mod tests {
         unsafe { std::boxed::Box::new_zeroed().assume_init() }
     }
 
-    unsafe fn init_tmp_ator(uc: &Context) {
-        init_ator(
-            uc.error_mut_ptr(),
-            uc.ator_tmp_mut_ptr(),
-            core::ptr::null(),
-            b"tmp\0".as_ptr(),
-        );
+    fn init_tmp_ator(uc: &Context) {
+        // SAFETY: initializing `uc`'s own `ator_tmp`/`error` fields through its
+        // raw-ptr getters; a null `opts` selects the defaults.
+        unsafe {
+            init_ator(
+                uc.error_mut_ptr(),
+                uc.ator_tmp_mut_ptr(),
+                core::ptr::null(),
+                b"tmp\0".as_ptr(),
+            );
+        }
     }
 
     struct SliceReader {
