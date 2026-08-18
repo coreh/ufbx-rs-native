@@ -444,21 +444,28 @@ pub(crate) fn xml_advance(xc: &XmlContext) {
 
 // ufbx.c:7328-7335 `ufbxi_xml_push_token_char`
 #[inline(never)]
-pub(crate) unsafe fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), Fail> {
+pub(crate) fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), Fail> {
     if xc.tok_len() == xc.tok_cap() || IS_REGRESSION {
         ufbxi_check_err!(
             xc.error_view(),
-            grow_array::<u8>(
-                xc.ator(),
-                xc.tok_mut_ptr(),
-                xc.tok_cap_mut_ptr(),
-                xc.tok_len() + 1
-            ),
+            // SAFETY: growing xc's own paired `tok`/`tok_cap` growth state
+            // through its allocator (xc construction invariant).
+            unsafe {
+                grow_array::<u8>(
+                    xc.ator(),
+                    xc.tok_mut_ptr(),
+                    xc.tok_cap_mut_ptr(),
+                    xc.tok_len() + 1
+                )
+            },
             "ufbxi_grow_array_size((xc->ator), sizeof(**(&xc->tok)), (&xc->tok), (&xc->tok_cap), (xc->tok_len + 1))"
         );
     }
     // C: `xc->tok[xc->tok_len++] = c;`
-    *xc.tok().add(xc.tok_len()) = c;
+    // SAFETY: `tok_len < tok_cap` holds here — either it already did, or the
+    // grow above succeeded to at least `tok_len + 1` — so this indexes within
+    // the token allocation.
+    unsafe { *xc.tok().add(xc.tok_len()) = c };
     xc.set_tok_len(xc.tok_len() + 1);
     Ok(())
 }
@@ -829,33 +836,55 @@ unsafe fn xml_parse_tag_rec(
 
 // ufbx.c:7586-7610 `ufbxi_xml_parse_root`
 #[inline(never)]
-pub(crate) unsafe fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
-    let tag: *mut XmlTag = push_zero(xc.result_mut_ptr(), 1);
+pub(crate) fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
+    // SAFETY: pushing onto xc's own result buf through its raw-ptr getter (xc
+    // construction invariant).
+    let tag: *mut XmlTag = unsafe { push_zero(xc.result_mut_ptr(), 1) };
     ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
-    (*tag).name.data = EMPTY_CHAR.as_ptr();
-    (*tag).text.data = EMPTY_CHAR.as_ptr();
+    // SAFETY: `tag` is a fresh non-null single-element push, so writing its
+    // fields is writing our own allocation; `EMPTY_CHAR` is a `'static` run.
+    unsafe {
+        (*tag).name.data = EMPTY_CHAR.as_ptr();
+        (*tag).text.data = EMPTY_CHAR.as_ptr();
+    }
 
     loop {
         let mut closing: bool = false;
-        xml_parse_tag(xc, 0, &mut closing, core::ptr::null())?;
+        // SAFETY: `closing` is an unaliased local out-param; a null `name`
+        // is the "root has no expected closing tag" sentinel the callee reads
+        // as such.
+        unsafe { xml_parse_tag(xc, 0, &mut closing, core::ptr::null())? };
         if closing {
             break;
         }
     }
 
-    (*tag).num_children = xc.tmp_stack_view().num_items();
-    (*tag).children = push_pop(
-        xc.result_mut_ptr(),
-        xc.tmp_stack_mut_ptr(),
-        (*tag).num_children,
+    // SAFETY: `tag` is still our fresh push; `push_pop` moves exactly the
+    // `num_items` tags this parse stacked on xc's own tmp stack into xc's own
+    // result buf, and `doc` is likewise a fresh single-element push whose
+    // fields we fill before any reader sees it.
+    unsafe {
+        (*tag).num_children = xc.tmp_stack_view().num_items();
+        (*tag).children = push_pop(
+            xc.result_mut_ptr(),
+            xc.tmp_stack_mut_ptr(),
+            (*tag).num_children,
+        );
+    }
+    ufbxi_check_err!(
+        xc.error_view(),
+        !unsafe { (*tag).children }.is_null(),
+        "tag->children"
     );
-    ufbxi_check_err!(xc.error_view(), !(*tag).children.is_null(), "tag->children");
 
-    xc.set_doc(push(xc.result_mut_ptr(), 1));
+    xc.set_doc(unsafe { push(xc.result_mut_ptr(), 1) });
     ufbxi_check_err!(xc.error_view(), !xc.doc().is_null(), "xc->doc");
 
-    (*xc.doc()).root = tag;
-    (*xc.doc()).buf = xc.result();
+    // SAFETY: `xc.doc()` was just checked non-null and is our fresh push.
+    unsafe {
+        (*xc.doc()).root = tag;
+        (*xc.doc()).buf = xc.result();
+    }
 
     Ok(())
 }

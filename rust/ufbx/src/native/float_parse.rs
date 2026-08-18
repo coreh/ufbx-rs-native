@@ -1084,7 +1084,7 @@ mod tests {
     }
 
     // test/unit_tests.c:590-621 `ufbxt_check_bigint_div`
-    unsafe fn check_bigint_div(dividend: &str, divisor: &str, quotient: &str, remainder: bool) {
+    fn check_bigint_div(dividend: &str, divisor: &str, quotient: &str, remainder: bool) {
         let mut a_limbs = [0 as BigintLimb; 64];
         let mut b_limbs = [0 as BigintLimb; 64];
         let mut c_limbs = [0 as BigintLimb; 64];
@@ -1092,82 +1092,100 @@ mod tests {
         let mut b = bigint_array!(b_limbs);
         let mut c = bigint_array!(c_limbs);
 
-        bigint_parse(&mut a, dividend);
-        bigint_parse(&mut b, divisor);
+        // SAFETY: `a`/`b` were built by `bigint_array!` over the 64-limb local
+        // arrays above, so each carries its own array's pointer and matching
+        // capacity; the parses stay within that capacity for these literals.
+        unsafe {
+            bigint_parse(&mut a, dividend);
+            bigint_parse(&mut b, divisor);
+        }
 
         assert!(b.length >= 1);
-        let mut shift = lzcnt64(*b.limbs.add((b.length - 1) as usize) as u64) - 32;
+        // SAFETY: `length >= 1` is asserted above and `length <= capacity` is
+        // the bigint invariant, so `length - 1` indexes a written limb of
+        // `b_limbs`; the shifts operate on the same locally-owned bigints.
+        let mut shift = unsafe { lzcnt64(*b.limbs.add((b.length - 1) as usize) as u64) - 32 };
         if b.length == 1 {
             shift += BIGINT_LIMB_BITS;
         }
 
-        bigint_shift_left(&mut a, shift);
-        bigint_shift_left(&mut b, shift);
+        unsafe {
+            bigint_shift_left(&mut a, shift);
+            bigint_shift_left(&mut b, shift);
+        }
 
         let mut a_shifted = false;
-        if a.length != 0 && *a.limbs.add((a.length - 1) as usize) >> (BIGINT_LIMB_BITS - 1) != 0 {
-            bigint_shift_left(&mut a, 1);
+        // SAFETY: guarded by `a.length != 0`, so `length - 1` indexes a
+        // written limb of `a_limbs`.
+        if a.length != 0
+            && unsafe { *a.limbs.add((a.length - 1) as usize) } >> (BIGINT_LIMB_BITS - 1) != 0
+        {
+            // SAFETY: as above — `a` owns `a_limbs`.
+            unsafe { bigint_shift_left(&mut a, 1) };
             a_shifted = true;
         }
 
-        let rem = bigint_div(&mut c, &mut a, &mut b);
-
-        if a_shifted {
-            bigint_shift_right1(&mut c);
-        }
-
-        check_bigint(c, quotient);
+        // SAFETY: `a`, `b` and `c` all point at distinct locally-owned limb
+        // arrays; `b` is normalized (top limb's high bit set) and `c` has the
+        // same 64-limb capacity as the dividend, which is what `bigint_div`
+        // requires. `check_bigint` then reads `c`'s own run.
+        let rem = unsafe {
+            let rem = bigint_div(&mut c, &mut a, &mut b);
+            if a_shifted {
+                bigint_shift_right1(&mut c);
+            }
+            check_bigint(c, quotient);
+            rem
+        };
         assert!(rem == remainder);
     }
 
     // test/unit_tests.c:623-647 `test_bigint_div`
     #[test]
     fn test_bigint_div() {
-        unsafe {
-            check_bigint_div("123", "10", "12", true);
-            check_bigint_div("120", "10", "12", false);
-            check_bigint_div("0xdeadbeef", "0x10000", "0xdead", true);
-            check_bigint_div(
-                "82718061255302767487140869206996285356581211090087890625",
-                "9094947017729282379150390625",
-                "9094947017729282379150390625",
-                false,
-            );
-            check_bigint_div(
-                "82718061255302767487140869206996285356581211090087890625",
-                "9094947017729282379150390624",
-                "9094947017729282379150390626",
-                true,
-            );
-            check_bigint_div(
-                "82718061255302767487140869206996285356581211090087890625",
-                "9094947017729282379150390626",
-                "9094947017729282379150390624",
-                true,
-            );
-            check_bigint_div(
-                "9173994463960286046443283581092555673948943761249553509941667449694421519688219440078102364094996072628225",
-                "6277101735386680763495507056286727952620534092958556749825",
-                "1461501637330902918282912995212100613184356876287", true);
-            check_bigint_div(
-                "0xffffffffffffffffffffffff00000000",
-                "0x8000000000000000ffffffff",
-                "0x1ffffffff",
-                true,
-            );
-            check_bigint_div(
-                "0x7fffffff000000010000000000000000",
-                "0x80000000fffffffefffffffe",
-                "0xfffffffc",
-                true,
-            );
-            check_bigint_div(
-                "0x7fffffff000000010000000000000000",
-                "0x8000000000000001fffffffe",
-                "0xfffffffd",
-                true,
-            );
-        }
+        check_bigint_div("123", "10", "12", true);
+        check_bigint_div("120", "10", "12", false);
+        check_bigint_div("0xdeadbeef", "0x10000", "0xdead", true);
+        check_bigint_div(
+            "82718061255302767487140869206996285356581211090087890625",
+            "9094947017729282379150390625",
+            "9094947017729282379150390625",
+            false,
+        );
+        check_bigint_div(
+            "82718061255302767487140869206996285356581211090087890625",
+            "9094947017729282379150390624",
+            "9094947017729282379150390626",
+            true,
+        );
+        check_bigint_div(
+            "82718061255302767487140869206996285356581211090087890625",
+            "9094947017729282379150390626",
+            "9094947017729282379150390624",
+            true,
+        );
+        check_bigint_div(
+            "9173994463960286046443283581092555673948943761249553509941667449694421519688219440078102364094996072628225",
+            "6277101735386680763495507056286727952620534092958556749825",
+            "1461501637330902918282912995212100613184356876287", true);
+        check_bigint_div(
+            "0xffffffffffffffffffffffff00000000",
+            "0x8000000000000000ffffffff",
+            "0x1ffffffff",
+            true,
+        );
+        check_bigint_div(
+            "0x7fffffff000000010000000000000000",
+            "0x80000000fffffffefffffffe",
+            "0xfffffffc",
+            true,
+        );
+        check_bigint_div(
+            "0x7fffffff000000010000000000000000",
+            "0x8000000000000001fffffffe",
+            "0xfffffffd",
+            true,
+        );
     }
 
     // Independent re-implementation of C `strtod`'s longest-valid-prefix rule
@@ -1224,7 +1242,7 @@ mod tests {
     // `str::parse` (also correctly rounded) applied to the longest valid prefix
     // determined by the independent `strtod_prefix_len` scanner above, so an
     // end-pointer bug in `parse_double` cannot shift the reference with it.
-    unsafe fn check_float(s: &str) {
+    fn check_float(s: &str) {
         let b = s.as_bytes();
         let prefix = s[..strtod_prefix_len(s)].trim_start();
         // strtod/strtof return 0.0 when no conversion could be performed.
@@ -1239,9 +1257,16 @@ mod tests {
             prefix.parse().unwrap()
         };
         let mut end: *const u8 = core::ptr::null();
-        let slow_d = parse_double(b.as_ptr(), b.len(), &mut end, 0);
-        let fast_d = parse_double(b.as_ptr(), b.len(), &mut end, PARSE_DOUBLE_ALLOW_FAST_PATH);
-        let slow_f = parse_double(b.as_ptr(), b.len(), &mut end, PARSE_DOUBLE_AS_BINARY32) as f32;
+        // SAFETY: `b` is `s`'s byte slice, so the pointer/length pair passed
+        // to each parse describes exactly one live run; `end` is an unaliased
+        // local out-param.
+        let (slow_d, fast_d, slow_f) = unsafe {
+            (
+                parse_double(b.as_ptr(), b.len(), &mut end, 0),
+                parse_double(b.as_ptr(), b.len(), &mut end, PARSE_DOUBLE_ALLOW_FAST_PATH),
+                parse_double(b.as_ptr(), b.len(), &mut end, PARSE_DOUBLE_AS_BINARY32) as f32,
+            )
+        };
 
         if ref_d.is_finite() {
             assert!(
@@ -1276,33 +1301,51 @@ mod tests {
     }
 
     // test/unit_tests.c:681-691 `ufbxt_check_nan`
-    unsafe fn check_nan(s: &str) {
+    fn check_nan(s: &str) {
         let b = s.as_bytes();
         let mut end_d: *const u8 = core::ptr::null();
         let mut end_f: *const u8 = core::ptr::null();
-        let slow_d = parse_double(b.as_ptr(), b.len(), &mut end_d, 0);
-        let slow_f = parse_double(b.as_ptr(), b.len(), &mut end_f, PARSE_DOUBLE_AS_BINARY32) as f32;
+        // SAFETY: `b` is `s`'s byte slice — one live run described exactly by
+        // the pointer/length pair; `end_d`/`end_f` are unaliased local
+        // out-params.
+        let (slow_d, slow_f) = unsafe {
+            (
+                parse_double(b.as_ptr(), b.len(), &mut end_d, 0),
+                parse_double(b.as_ptr(), b.len(), &mut end_f, PARSE_DOUBLE_AS_BINARY32) as f32,
+            )
+        };
         assert!(slow_d.is_nan());
         assert!(slow_f.is_nan());
-        assert!(end_d == b.as_ptr().add(b.len()));
-        assert!(end_f == b.as_ptr().add(b.len()));
+        // SAFETY: one-past-the-end of `b` is an in-bounds `add` for the slice.
+        let b_end = unsafe { b.as_ptr().add(b.len()) };
+        assert!(end_d == b_end);
+        assert!(end_f == b_end);
     }
 
     // test/unit_tests.c:692-705 `ufbxt_check_inf`
-    unsafe fn check_inf(s: &str, sign: i32) {
+    fn check_inf(s: &str, sign: i32) {
         let b = s.as_bytes();
         let mut end_d: *const u8 = core::ptr::null();
         let mut end_f: *const u8 = core::ptr::null();
-        let slow_d = parse_double(b.as_ptr(), b.len(), &mut end_d, 0);
-        let slow_f = parse_double(b.as_ptr(), b.len(), &mut end_f, PARSE_DOUBLE_AS_BINARY32) as f32;
+        // SAFETY: `b` is `s`'s byte slice — one live run described exactly by
+        // the pointer/length pair; `end_d`/`end_f` are unaliased local
+        // out-params.
+        let (slow_d, slow_f) = unsafe {
+            (
+                parse_double(b.as_ptr(), b.len(), &mut end_d, 0),
+                parse_double(b.as_ptr(), b.len(), &mut end_f, PARSE_DOUBLE_AS_BINARY32) as f32,
+            )
+        };
         assert!(slow_d.is_infinite());
         assert!(slow_f.is_infinite());
         // C: `slow_d < 0 == sign < 0`
         assert!((slow_d < 0.0) == (sign < 0));
         assert!((slow_f < 0.0) == (sign < 0));
         assert!(slow_f.is_infinite());
-        assert!(end_d == b.as_ptr().add(b.len()));
-        assert!(end_f == b.as_ptr().add(b.len()));
+        // SAFETY: one-past-the-end of `b` is an in-bounds `add` for the slice.
+        let b_end = unsafe { b.as_ptr().add(b.len()) };
+        assert!(end_d == b_end);
+        assert!(end_f == b_end);
     }
 
     // test/unit_tests.c:706-712 `TEST_NINES` (5 x 40 nines) / 713-718 `TEST_ZEROS`
@@ -1318,77 +1361,73 @@ mod tests {
     fn test_double_parse() {
         let nines = test_nines();
         let zeros = test_zeros();
-        unsafe {
-            check_float("1");
-            check_float("123.0");
-            check_float("123.456");
-            check_float("123e-6");
-            check_float("-1.5");
-            check_float("1112223333444.555666777888999");
-            check_float("0");
-            check_float("-0");
-            check_float(".5");
-            check_float("-.5");
-            check_float("1e100");
-            check_float("1e1000");
-            check_float("1e-1000");
-            check_float("1e10000");
-            check_float("1e-10000");
-            check_float("7.67844768714563e-239");
-            check_float(&nines);
-            check_float(&format!("{nines}.999999999999999999999999999999999999999"));
-            check_float(&format!("{nines}e+108"));
-            check_float(&format!("{nines}e+109"));
-            check_float(&format!("{nines}e+118"));
-            check_float(&format!("{nines}e+119"));
-            check_float(&format!("{nines}e+120"));
-            check_float(&format!("{nines}e+300"));
-            check_float(&format!("{nines}e-200"));
-            check_float(&format!("{nines}e-400"));
-            check_float(&format!("{nines}e-520"));
-            check_float(&format!("{nines}e-523"));
-            check_float(&format!("{nines}e-524"));
-            check_float(&format!("{zeros}123"));
-            check_float(&format!("{zeros}.123"));
-            check_float(&format!("{zeros}.{zeros}123"));
-            check_float(&format!("{zeros}.{zeros}123{zeros}"));
-            check_float(&format!("{zeros}.{zeros}{zeros}123"));
-            check_float("241309881603643e20");
-            check_float(".5.57999999993498");
-            check_float("-71862.4328795732984723456847839347829321867347892347893274982374982349872136217381623872E-273");
-            // C: `#if !defined(_MSC_VER)` — excluded there only because MSVC's
-            // reference strtod() rounds it incorrectly; the Rust reference is
-            // correctly rounded, so always included.
-            check_float("4656612873077392578125e-8");
-        }
+        check_float("1");
+        check_float("123.0");
+        check_float("123.456");
+        check_float("123e-6");
+        check_float("-1.5");
+        check_float("1112223333444.555666777888999");
+        check_float("0");
+        check_float("-0");
+        check_float(".5");
+        check_float("-.5");
+        check_float("1e100");
+        check_float("1e1000");
+        check_float("1e-1000");
+        check_float("1e10000");
+        check_float("1e-10000");
+        check_float("7.67844768714563e-239");
+        check_float(&nines);
+        check_float(&format!("{nines}.999999999999999999999999999999999999999"));
+        check_float(&format!("{nines}e+108"));
+        check_float(&format!("{nines}e+109"));
+        check_float(&format!("{nines}e+118"));
+        check_float(&format!("{nines}e+119"));
+        check_float(&format!("{nines}e+120"));
+        check_float(&format!("{nines}e+300"));
+        check_float(&format!("{nines}e-200"));
+        check_float(&format!("{nines}e-400"));
+        check_float(&format!("{nines}e-520"));
+        check_float(&format!("{nines}e-523"));
+        check_float(&format!("{nines}e-524"));
+        check_float(&format!("{zeros}123"));
+        check_float(&format!("{zeros}.123"));
+        check_float(&format!("{zeros}.{zeros}123"));
+        check_float(&format!("{zeros}.{zeros}123{zeros}"));
+        check_float(&format!("{zeros}.{zeros}{zeros}123"));
+        check_float("241309881603643e20");
+        check_float(".5.57999999993498");
+        check_float("-71862.4328795732984723456847839347829321867347892347893274982374982349872136217381623872E-273");
+        // C: `#if !defined(_MSC_VER)` — excluded there only because MSVC's
+        // reference strtod() rounds it incorrectly; the Rust reference is
+        // correctly rounded, so always included.
+        check_float("4656612873077392578125e-8");
     }
 
     // test/unit_tests.c:764-787 `test_double_parse_nan`
     #[test]
     fn test_double_parse_nan() {
-        unsafe {
-            check_nan("nan");
-            check_nan("NAN");
-            check_nan("NaN");
-            check_nan("-nan");
-            check_nan("+nan");
-            check_nan("nan(1234)");
-            check_nan("nan(0x123456789abcdef)");
-            check_nan("nan(nan)");
-            check_nan("nan(ind)");
-            check_nan("nan(nans)");
-            check_inf("inf", 1);
-            check_inf("-inf", -1);
-            check_inf("INF", 1);
-            check_inf("INFINITY", 1);
+        check_nan("nan");
+        check_nan("NAN");
+        check_nan("NaN");
+        check_nan("-nan");
+        check_nan("+nan");
+        check_nan("nan(1234)");
+        check_nan("nan(0x123456789abcdef)");
+        check_nan("nan(nan)");
+        check_nan("nan(ind)");
+        check_nan("nan(nans)");
+        check_inf("inf", 1);
+        check_inf("-inf", -1);
+        check_inf("INF", 1);
+        check_inf("INFINITY", 1);
 
-            check_nan("1.#NAN");
-            check_nan("0.#NAN12345678");
-            check_nan("1.#IND");
-            check_nan("-7.#NAN00");
-            check_inf("1.#INF", 1);
-            check_inf("-1.#INF", -1);
-        }
+        check_nan("1.#NAN");
+        check_nan("0.#NAN12345678");
+        check_nan("1.#IND");
+        check_nan("-7.#NAN00");
+        check_inf("1.#INF", 1);
+        check_inf("-1.#INF", -1);
     }
 
     // ufbx.c:1795-1805 — every Rust target evaluates f64 at native precision
@@ -1412,7 +1451,7 @@ mod tests {
         s
     }
 
-    unsafe fn test_double_parse_fmt(exp_fmt: bool, width: usize, bits: u32) {
+    fn test_double_parse_fmt(exp_fmt: bool, width: usize, bits: u32) {
         let max_hi: u32 = 1 << bits;
         for hi in 0..max_hi {
             for delta in -2i32..=2 {
@@ -1457,13 +1496,11 @@ mod tests {
         let bits: u32 = 12;
         let max_width: usize = 12;
 
-        unsafe {
-            for width in 4..=max_width {
-                test_double_parse_fmt(false, width, bits); // "%.*f"
-            }
-            for width in 4..=max_width {
-                test_double_parse_fmt(true, width, bits); // "%.*e"
-            }
+        for width in 4..=max_width {
+            test_double_parse_fmt(false, width, bits); // "%.*f"
+        }
+        for width in 4..=max_width {
+            test_double_parse_fmt(true, width, bits); // "%.*e"
         }
     }
 
@@ -1595,9 +1632,7 @@ mod tests {
                         for exp in min_exp..=max_exp {
                             bigdecimal_suffix(&mut pow5, &format!("e{:+}", exp));
                             let s = bigdecimal_string(&pow5);
-                            unsafe {
-                                check_float(&s);
-                            }
+                            check_float(&s);
                         }
                         bigdecimal_add(&mut pow5, 1);
                     }
@@ -1606,9 +1641,7 @@ mod tests {
                     for exp in min_exp..=max_exp {
                         bigdecimal_suffix(&mut pow5, &format!("e{:+}", exp));
                         let s = bigdecimal_string(&pow5);
-                        unsafe {
-                            check_float(&s);
-                        }
+                        check_float(&s);
                     }
                 }
 

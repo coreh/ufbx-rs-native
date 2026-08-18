@@ -855,7 +855,7 @@ mod tests {
         buf
     }
 
-    unsafe fn free_all_chunks(b: &mut Buf) {
+    fn free_all_chunks(b: &mut Buf) {
         // Test-only teardown (kept separate from `buf_free` above so these
         // tests don't depend on it): walk both chunk lists from their roots
         // and free every chunk.
@@ -864,16 +864,23 @@ mod tests {
             if chunk.is_null() {
                 continue;
             }
-            let mut c = (*chunk).root;
-            while !c.is_null() {
-                let next = (*c).next;
-                crate::native::allocator::free_size(
-                    b.ator,
-                    1,
-                    c as *mut core::ffi::c_void,
-                    size_of::<BufChunk>() + (*c).size,
-                );
-                c = next;
+            // SAFETY: `b` is a test fixture the caller owns exclusively
+            // (`&mut Buf`); its `chunks[list_ix]` entry is a live chunk of the
+            // `root`-linked list this buf pushed, each chunk allocated from
+            // `b.ator` with `sizeof(BufChunk) + size` bytes. Nothing else
+            // holds these chunks, so freeing them here is the last use.
+            unsafe {
+                let mut c = (*chunk).root;
+                while !c.is_null() {
+                    let next = (*c).next;
+                    crate::native::allocator::free_size(
+                        b.ator,
+                        1,
+                        c as *mut core::ffi::c_void,
+                        size_of::<BufChunk>() + (*c).size,
+                    );
+                    c = next;
+                }
             }
             b.chunks[list_ix] = core::ptr::null_mut();
         }
@@ -927,9 +934,7 @@ mod tests {
         assert_eq!(buf.pos, 16 + 16 + 8);
         assert_eq!(unsafe { (*buf.chunks[0]).padding_pos }, 16 + 16 + 1);
 
-        unsafe {
-            free_all_chunks(&mut buf);
-        }
+        free_all_chunks(&mut buf);
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
@@ -961,9 +966,7 @@ mod tests {
         assert_eq!(unsafe { (*(*buf.chunks[0]).prev).pushed_pos }, 100);
         assert_eq!(buf.pushed_size, 100);
 
-        unsafe {
-            free_all_chunks(&mut buf);
-        }
+        free_all_chunks(&mut buf);
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
@@ -992,9 +995,7 @@ mod tests {
         assert_eq!(unsafe { (*buf.chunks[1]).pushed_pos }, huge);
         assert_eq!(buf.pushed_size, huge);
 
-        unsafe {
-            free_all_chunks(&mut buf);
-        }
+        free_all_chunks(&mut buf);
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 
@@ -1031,9 +1032,7 @@ mod tests {
         let z = unsafe { push_size_copy(&mut buf, 4, 0, core::ptr::null()) };
         assert_eq!(z as *const u8, ZERO_SIZE_BUFFER.as_ptr());
 
-        unsafe {
-            free_all_chunks(&mut buf);
-        }
+        free_all_chunks(&mut buf);
         assert_eq!(unsafe { (*ator).current_size }, 0);
     }
 

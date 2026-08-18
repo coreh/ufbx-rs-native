@@ -207,6 +207,11 @@ pub(crate) struct KdTriangle {
 
 // ufbx.c:28274-28282 `ufbxi_ngon_project`
 // C: `ufbxi_noinline static`.
+// Stays `unsafe fn`: `index` is an unchecked index contract. It is added to
+// `face.index_begin` and used to read `positions.indices` with no bounds
+// check, and the value read is then used just as unchecked to index
+// `positions.values`. Only the caller knows `index < face.num_indices`, so the
+// obligation cannot be discharged here.
 #[cfg(feature = "triangulation")]
 #[inline(never)]
 pub(crate) unsafe fn ngon_project(nc: &NgonContext, index: u32) -> Vec2 {

@@ -485,10 +485,13 @@ pub(crate) unsafe fn fixup_opts_string(
 
 // ufbx.c:25187-25202 `ufbxi_resolve_warning_elements`
 #[inline(never)]
-pub(crate) unsafe fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> {
     let num_elements: usize = uc.tmp_element_id_view().num_items();
+    // SAFETY: popping uc's own element-id stack into uc's own tmp buf (both
+    // through uc's raw-ptr getters); `num_elements` is that stack's own item
+    // count, so the pop is exact.
     let element_ids: *mut u32 =
-        push_pop::<u32>(uc.tmp_mut_ptr(), uc.tmp_element_id_mut_ptr(), num_elements);
+        unsafe { push_pop::<u32>(uc.tmp_mut_ptr(), uc.tmp_element_id_mut_ptr(), num_elements) };
     ufbxi_check!(uc, !element_ids.is_null(), "element_ids");
 
     // C: `ufbxi_for_list(ufbx_warning, warning, uc->scene.metadata.warnings)`
@@ -499,18 +502,32 @@ pub(crate) unsafe fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> 
         uc.scene_view().metadata_view().warnings_view().count(),
     );
     while warning != warning_end {
-        let element_id: u32 = (*warning).element_id;
-        // Decode `element_id`, see HACK(warning-element) in `ufbxi_vwarnf_imp()` for the encoding.
-        if (element_id & 0x80000000u32) != 0 && element_id != !0u32 {
-            (*warning).element_id = *element_ids.add((element_id & !0x80000000u32) as usize);
+        // SAFETY: `warning` walks the scene's own warning run
+        // (`data`/`count`), and the tagged ids it carries were assigned by
+        // `ufbxi_vwarnf_imp` as positions in the very element-id stack that
+        // was just popped into `element_ids` — see HACK(warning-element) —
+        // so the decoded index is `< num_elements`.
+        unsafe {
+            let element_id: u32 = (*warning).element_id;
+            // Decode `element_id`, see HACK(warning-element) in `ufbxi_vwarnf_imp()` for the encoding.
+            if (element_id & 0x80000000u32) != 0 && element_id != !0u32 {
+                (*warning).element_id = *element_ids.add((element_id & !0x80000000u32) as usize);
+            }
+            warning = warning.add(1);
         }
-        warning = warning.add(1);
     }
 
     Ok(())
 }
 
 // ufbx.c:25204-25410 `ufbxi_load_imp`
+// Stays `unsafe fn`: this is the load orchestrator, and nearly every statement
+// in it is a call to another `unsafe fn` taking the same `&Context`
+// (`load_strings`, `determine_format`, `read_root`, `finalize_scene`,
+// `postprocess_scene`, ...). Flipping it today would mean ~20 blocks all
+// citing the one uc construction invariant, restating it rather than
+// discharging anything; the honest win arrives structurally once those
+// callees themselves go safe.
 #[inline(never)]
 pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // Check for deferred failure
@@ -911,71 +928,77 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:25412-25462 `ufbxi_free_temp`
 #[inline(never)]
-pub(crate) unsafe fn free_temp(uc: &Context) {
-    thread_pool_free(uc.thread_pool_mut_ptr());
+pub(crate) fn free_temp(uc: &Context) {
+    // SAFETY: every buffer, map, allocator and growth-state pair torn down
+    // here is uc's own temp-side state, reached through uc's accessors and
+    // valid by construction; this is the last use of all of it (mirrors C
+    // `ufbxi_free_temp`).
+    unsafe {
+        thread_pool_free(uc.thread_pool_mut_ptr());
 
-    string_pool_temp_free(uc.string_pool_mut_ptr());
-    buf_free(uc.warnings_view().tmp_stack_mut_ptr());
+        string_pool_temp_free(uc.string_pool_mut_ptr());
+        buf_free(uc.warnings_view().tmp_stack_mut_ptr());
 
-    map_free(uc.prop_type_map_mut_ptr());
-    map_free(uc.fbx_id_map_mut_ptr());
-    map_free(uc.ptr_fbx_id_map_mut_ptr());
-    map_free(uc.texture_file_map_mut_ptr());
-    map_free(uc.anim_stack_map_mut_ptr());
-    map_free(uc.fbx_attr_map_mut_ptr());
-    map_free(uc.node_prop_set_mut_ptr());
-    map_free(uc.dom_node_map_mut_ptr());
+        map_free(uc.prop_type_map_mut_ptr());
+        map_free(uc.fbx_id_map_mut_ptr());
+        map_free(uc.ptr_fbx_id_map_mut_ptr());
+        map_free(uc.texture_file_map_mut_ptr());
+        map_free(uc.anim_stack_map_mut_ptr());
+        map_free(uc.fbx_attr_map_mut_ptr());
+        map_free(uc.node_prop_set_mut_ptr());
+        map_free(uc.dom_node_map_mut_ptr());
 
-    buf_free(uc.tmp_mut_ptr());
-    buf_free(uc.tmp_parse_mut_ptr());
-    for i in 0..THREAD_GROUP_COUNT {
-        buf_free(uc.tmp_thread_parse_mut_ptr(i));
+        buf_free(uc.tmp_mut_ptr());
+        buf_free(uc.tmp_parse_mut_ptr());
+        for i in 0..THREAD_GROUP_COUNT {
+            buf_free(uc.tmp_thread_parse_mut_ptr(i));
+        }
+        buf_free(uc.tmp_stack_mut_ptr());
+        buf_free(uc.tmp_connections_mut_ptr());
+        buf_free(uc.tmp_node_ids_mut_ptr());
+        buf_free(uc.tmp_elements_mut_ptr());
+        buf_free(uc.tmp_element_offsets_mut_ptr());
+        buf_free(uc.tmp_element_fbx_ids_mut_ptr());
+        buf_free(uc.tmp_element_ptrs_mut_ptr());
+        for i in 0..ELEMENT_TYPE_COUNT {
+            buf_free(uc.tmp_typed_element_offsets_mut_ptr(i));
+        }
+        buf_free(uc.tmp_mesh_textures_mut_ptr());
+        buf_free(uc.tmp_full_weights_mut_ptr());
+        buf_free(uc.tmp_dom_nodes_mut_ptr());
+        buf_free(uc.tmp_element_id_mut_ptr());
+        buf_free(uc.tmp_ascii_spans_mut_ptr());
+
+        free::<Node>(uc.ator_tmp_mut_ptr(), uc.top_nodes(), uc.top_nodes_cap());
+        free::<*mut c_void>(
+            uc.ator_tmp_mut_ptr(),
+            uc.element_extra_arr(),
+            uc.element_extra_cap(),
+        );
+
+        free::<u8>(
+            uc.ator_tmp_mut_ptr(),
+            uc.ascii_view().token_view().str_data(),
+            uc.ascii_view().token_view().str_cap(),
+        );
+        free::<u8>(
+            uc.ator_tmp_mut_ptr(),
+            uc.ascii_view().prev_token_view().str_data(),
+            uc.ascii_view().prev_token_view().str_cap(),
+        );
+
+        free::<u8>(
+            uc.ator_tmp_mut_ptr(),
+            uc.read_buffer(),
+            uc.read_buffer_size(),
+        );
+        free::<u8>(uc.ator_tmp_mut_ptr(), uc.tmp_arr(), uc.tmp_arr_size());
+        free::<u8>(uc.ator_tmp_mut_ptr(), uc.swap_arr(), uc.swap_arr_size());
+
+        obj_free(uc);
+
+        free_ator(uc.ator_tmp_mut_ptr());
     }
-    buf_free(uc.tmp_stack_mut_ptr());
-    buf_free(uc.tmp_connections_mut_ptr());
-    buf_free(uc.tmp_node_ids_mut_ptr());
-    buf_free(uc.tmp_elements_mut_ptr());
-    buf_free(uc.tmp_element_offsets_mut_ptr());
-    buf_free(uc.tmp_element_fbx_ids_mut_ptr());
-    buf_free(uc.tmp_element_ptrs_mut_ptr());
-    for i in 0..ELEMENT_TYPE_COUNT {
-        buf_free(uc.tmp_typed_element_offsets_mut_ptr(i));
-    }
-    buf_free(uc.tmp_mesh_textures_mut_ptr());
-    buf_free(uc.tmp_full_weights_mut_ptr());
-    buf_free(uc.tmp_dom_nodes_mut_ptr());
-    buf_free(uc.tmp_element_id_mut_ptr());
-    buf_free(uc.tmp_ascii_spans_mut_ptr());
-
-    free::<Node>(uc.ator_tmp_mut_ptr(), uc.top_nodes(), uc.top_nodes_cap());
-    free::<*mut c_void>(
-        uc.ator_tmp_mut_ptr(),
-        uc.element_extra_arr(),
-        uc.element_extra_cap(),
-    );
-
-    free::<u8>(
-        uc.ator_tmp_mut_ptr(),
-        uc.ascii_view().token_view().str_data(),
-        uc.ascii_view().token_view().str_cap(),
-    );
-    free::<u8>(
-        uc.ator_tmp_mut_ptr(),
-        uc.ascii_view().prev_token_view().str_data(),
-        uc.ascii_view().prev_token_view().str_cap(),
-    );
-
-    free::<u8>(
-        uc.ator_tmp_mut_ptr(),
-        uc.read_buffer(),
-        uc.read_buffer_size(),
-    );
-    free::<u8>(uc.ator_tmp_mut_ptr(), uc.tmp_arr(), uc.tmp_arr_size());
-    free::<u8>(uc.ator_tmp_mut_ptr(), uc.swap_arr(), uc.swap_arr_size());
-
-    obj_free(uc);
-
-    free_ator(uc.ator_tmp_mut_ptr());
 }
 
 // ufbx.c:25464-25470 `ufbxi_free_result`
@@ -2434,6 +2457,14 @@ pub(crate) unsafe fn translate_anim(ec: &EvalContext, p_anim: *mut *mut Anim) ->
 }
 
 // ufbx.c:26105-26444 `ufbxi_evaluate_imp`
+// Stays `unsafe fn`: the body is raw end-to-end and rests on obligations no
+// narrow block can discharge — it rebuilds a whole scene by *cross-allocation
+// provenance arithmetic*, rebasing every element's `connections_src/dst` with
+// `offset_from` between the source scene's run and the freshly pushed one, and
+// copying `ELEMENT_TYPE_SIZE[type]` bytes over a bump-allocated
+// `element_buffer_size` region whose layout only the source scene's metadata
+// describes. Wrapping that would restate "the source scene is self-consistent"
+// dozens of times without establishing it.
 #[cfg(feature = "scene-eval")]
 #[inline(never)]
 pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
@@ -3492,29 +3523,41 @@ pub(crate) unsafe extern "C" fn transform_override_less(
 
 // ufbx.c:26552-26668 `ufbxi_create_anim_imp`
 #[inline(never)]
-pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
+pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
     let scene: *const Scene = ac.scene();
     let anim: *mut Anim = ac.anim_mut_ptr();
 
-    init_ator(
-        ac.error_mut_ptr(),
-        ac.ator_result_mut_ptr(),
-        ac.opts_view().result_allocator_ptr(),
-        b"result\0".as_ptr(),
-    );
+    // SAFETY: initializing ac's own result allocator from ac's own error slot
+    // and the caller's opts allocator descriptor, named by a `'static`
+    // NUL-terminated literal.
+    unsafe {
+        init_ator(
+            ac.error_mut_ptr(),
+            ac.ator_result_mut_ptr(),
+            ac.opts_view().result_allocator_ptr(),
+            b"result\0".as_ptr(),
+        );
+    }
     ac.result_view().set_unordered(true);
     ac.result_view().set_ator(ac.ator_result_mut_ptr());
 
-    (*anim).ignore_connections = ac.opts_view().ignore_connections();
-    (*anim).custom = true;
+    // SAFETY: `anim` is ac's own output `Anim` slot (ac construction
+    // invariant); the layer array is pushed onto ac's own result buf with one
+    // slot per requested layer id.
+    unsafe {
+        (*anim).ignore_connections = ac.opts_view().ignore_connections();
+        (*anim).custom = true;
+    }
 
     let num_layers: usize = ac.opts_view().layer_ids_view().count();
-    (*anim).layers.count = num_layers;
-    (*anim).layers.data =
-        push_zero::<*mut AnimLayer>(ac.result_mut_ptr(), num_layers) as *const Ref<AnimLayer>;
+    unsafe {
+        (*anim).layers.count = num_layers;
+        (*anim).layers.data =
+            push_zero::<*mut AnimLayer>(ac.result_mut_ptr(), num_layers) as *const Ref<AnimLayer>;
+    }
     ufbxi_check_err!(
         ac.error_view(),
-        !(*anim).layers.data.is_null(),
+        !unsafe { (*anim).layers.data }.is_null(),
         "anim->layers.data"
     );
 
@@ -3525,185 +3568,240 @@ pub(crate) unsafe fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail>
             "override_layer_weights[] count must match layer_ids[] count",
             "ac->opts.override_layer_weights.count == num_layers"
         );
-        (*anim).override_layer_weights.data = push_copy::<Real>(
-            ac.result_mut_ptr(),
-            num_layers,
-            ac.opts_view().override_layer_weights_view().data(),
-        );
+        // SAFETY: `override_layer_weights` was just checked to hold exactly
+        // `num_layers` entries, so the copy reads that whole caller run into a
+        // fresh push on ac's own result buf.
+        unsafe {
+            (*anim).override_layer_weights.data = push_copy::<Real>(
+                ac.result_mut_ptr(),
+                num_layers,
+                ac.opts_view().override_layer_weights_view().data(),
+            );
+        }
         ufbxi_check_err!(
             ac.error_view(),
-            !(*anim).override_layer_weights.data.is_null(),
+            !unsafe { (*anim).override_layer_weights.data }.is_null(),
             "anim->override_layer_weights.data"
         );
-        (*anim).override_layer_weights.count = num_layers;
+        unsafe { (*anim).override_layer_weights.count = num_layers };
     }
 
     for i in 0..num_layers {
-        let index: u32 = *ac.opts_view().layer_ids_view().data().add(i);
+        // SAFETY: `i < num_layers` is the opts' own `layer_ids` count.
+        let index: u32 = unsafe { *ac.opts_view().layer_ids_view().data().add(i) };
         ufbxi_check_err_msg!(
             ac.error_view(),
-            (index as usize) < (*scene).anim_layers.count,
+            (index as usize) < unsafe { (*scene).anim_layers.count },
             "layer_ids out of bounds",
             "index < scene->anim_layers.count"
         );
         // C: `anim->layers.data[i] = ac->scene->anim_layers.data[index];`
-        *((*anim).layers.data as *mut *mut AnimLayer).add(i) =
-            *((*scene).anim_layers.data as *mut *mut AnimLayer).add(index as usize);
+        // SAFETY: `index` was just bounds-checked against the live scene's
+        // `anim_layers`, and `i < num_layers` indexes the fresh layer push.
+        unsafe {
+            *((*anim).layers.data as *mut *mut AnimLayer).add(i) =
+                *((*scene).anim_layers.data as *mut *mut AnimLayer).add(index as usize);
+        }
     }
 
     // C: `ufbx_const_prop_override_desc_list prop_overrides = ac->opts.prop_overrides;`
+    // SAFETY: reading the opts' own list header (pointer + count) by value.
     let prop_overrides: crate::prelude::RawList<RawPropOverrideDesc> =
-        ptr::read(ac.opts_view().prop_overrides_ptr());
+        unsafe { ptr::read(ac.opts_view().prop_overrides_ptr()) };
     if prop_overrides.count > 0 {
-        (*anim).prop_overrides.count = prop_overrides.count;
-        (*anim).prop_overrides.data =
-            push_zero::<PropOverride>(ac.result_mut_ptr(), prop_overrides.count);
+        // SAFETY: one destination slot per caller-supplied override, pushed
+        // onto ac's own result buf.
+        unsafe {
+            (*anim).prop_overrides.count = prop_overrides.count;
+            (*anim).prop_overrides.data =
+                push_zero::<PropOverride>(ac.result_mut_ptr(), prop_overrides.count);
+        }
         ufbxi_check_err!(
             ac.error_view(),
-            !(*anim).prop_overrides.data.is_null(),
+            !unsafe { (*anim).prop_overrides.data }.is_null(),
             "anim->prop_overrides.data"
         );
 
         for i in 0..prop_overrides.count {
-            let src: *const RawPropOverrideDesc = prop_overrides.data.add(i);
-            let dst: *mut PropOverride = ((*anim).prop_overrides.data as *mut PropOverride).add(i);
+            // SAFETY: `i < prop_overrides.count` indexes both the caller's own
+            // override run and the fresh non-null push of the same length; the
+            // two string fields written are `dst`'s own, read from `src`'s.
+            unsafe {
+                let src: *const RawPropOverrideDesc = prop_overrides.data.add(i);
+                let dst: *mut PropOverride =
+                    ((*anim).prop_overrides.data as *mut PropOverride).add(i);
 
-            (*dst).element_id = (*src).element_id;
-            (*dst).value = (*src).value;
-            (*dst).value_int = (*src).value_int;
+                (*dst).element_id = (*src).element_id;
+                (*dst).value = (*src).value;
+                (*dst).value_int = (*src).value_int;
 
-            if (*dst).value.x != 0.0 && (*dst).value_int == 0 {
-                // C: `(int64_t)dst->value.x` — bare float→int cast; Rust `as`
-                // saturates (PORTING.md integer-semantics table, accepted
-                // divergence class).
-                (*dst).value_int = (*dst).value.x as i64;
-            } else if (*dst).value_int != 0 && (*dst).value.x == 0.0 {
-                (*dst).value.x = (*dst).value_int as Real;
+                if (*dst).value.x != 0.0 && (*dst).value_int == 0 {
+                    // C: `(int64_t)dst->value.x` — bare float→int cast; Rust `as`
+                    // saturates (PORTING.md integer-semantics table, accepted
+                    // divergence class).
+                    (*dst).value_int = (*dst).value.x as i64;
+                } else if (*dst).value_int != 0 && (*dst).value.x == 0.0 {
+                    (*dst).value.x = (*dst).value_int as Real;
+                }
+
+                // C: `ufbxi_check_err(&ac->error, ufbxi_check_string(&ac->error, &dst->prop_name, &src->prop_name));`
+                check_string(
+                    ac.error_mut_ptr(),
+                    &raw mut (*dst).prop_name,
+                    &raw const (*src).prop_name as *const String,
+                )?;
+                check_string(
+                    ac.error_mut_ptr(),
+                    &raw mut (*dst).value_str,
+                    &raw const (*src).value_str as *const String,
+                )?;
+
+                (*dst)._internal_key = get_name_key((*dst).prop_name.data, (*dst).prop_name.length);
             }
-
-            // C: `ufbxi_check_err(&ac->error, ufbxi_check_string(&ac->error, &dst->prop_name, &src->prop_name));`
-            check_string(
-                ac.error_mut_ptr(),
-                &raw mut (*dst).prop_name,
-                &raw const (*src).prop_name as *const String,
-            )?;
-            check_string(
-                ac.error_mut_ptr(),
-                &raw mut (*dst).value_str,
-                &raw const (*src).value_str as *const String,
-            )?;
-
-            (*dst)._internal_key = get_name_key((*dst).prop_name.data, (*dst).prop_name.length);
         }
 
         // Sort `anim->prop_overrides` first by `prop_name` only so we can deduplicate and
         // convert them to global strings in `ufbxi_strings[]` if possible.
-        unstable_sort(
-            (*anim).prop_overrides.data as *mut PropOverride as *mut c_void,
-            (*anim).prop_overrides.count,
-            size_of::<PropOverride>(),
-            prop_override_prop_name_less,
-            ptr::null_mut(),
-        );
+        // SAFETY: the run is the fresh non-null push of `prop_overrides.count`
+        // elements; neither comparator takes user data, so the null `user` is
+        // what they expect. The walk then stays inside that run, and
+        // `global_str` walks the `'static` `STRINGS` table between its own
+        // bounds. `str_equal`/`str_less` read the NUL-free `data`/`length`
+        // runs of interned or caller strings already validated by
+        // `check_string` above.
+        unsafe {
+            unstable_sort(
+                (*anim).prop_overrides.data as *mut PropOverride as *mut c_void,
+                (*anim).prop_overrides.count,
+                size_of::<PropOverride>(),
+                prop_override_prop_name_less,
+                ptr::null_mut(),
+            );
 
-        let mut global_str: *const String = STRINGS.0.as_ptr();
-        let global_end: *const String = global_str.add(STRINGS.0.len());
-        // C: `ufbx_string prev_name = { ufbxi_empty_char };`
-        let mut prev_name: String = String::new_c(EMPTY_CHAR.as_ptr(), 0);
-        // C: `ufbxi_for_list(ufbx_prop_override, over, anim->prop_overrides)`
-        let mut over: *mut PropOverride = (*anim).prop_overrides.data as *mut PropOverride;
-        let over_end: *mut PropOverride = add_ptr(over, (*anim).prop_overrides.count);
-        while over != over_end {
-            if (*over).value_str.length > 0 {
-                // C: `ufbxi_check_err(&ac->error, ufbxi_push_anim_string(ac, &over->value_str));`
-                push_anim_string(ac, &raw mut (*over).value_str)?;
-            }
+            let mut global_str: *const String = STRINGS.0.as_ptr();
+            let global_end: *const String = global_str.add(STRINGS.0.len());
+            // C: `ufbx_string prev_name = { ufbxi_empty_char };`
+            let mut prev_name: String = String::new_c(EMPTY_CHAR.as_ptr(), 0);
+            // C: `ufbxi_for_list(ufbx_prop_override, over, anim->prop_overrides)`
+            let mut over: *mut PropOverride = (*anim).prop_overrides.data as *mut PropOverride;
+            let over_end: *mut PropOverride = add_ptr(over, (*anim).prop_overrides.count);
+            while over != over_end {
+                if (*over).value_str.length > 0 {
+                    // C: `ufbxi_check_err(&ac->error, ufbxi_push_anim_string(ac, &over->value_str));`
+                    push_anim_string(ac, &raw mut (*over).value_str)?;
+                }
 
-            if str_equal((*over).prop_name, prev_name) {
-                (*over).prop_name = prev_name;
+                if str_equal((*over).prop_name, prev_name) {
+                    (*over).prop_name = prev_name;
+                    over = over.add(1);
+                    continue;
+                }
+
+                while global_str != global_end && str_less(*global_str, (*over).prop_name) {
+                    global_str = global_str.add(1);
+                }
+
+                if global_str != global_end && str_equal(*global_str, (*over).prop_name) {
+                    (*over).prop_name = *global_str;
+                } else {
+                    push_anim_string(ac, &raw mut (*over).prop_name)?;
+                }
+
+                prev_name = (*over).prop_name;
                 over = over.add(1);
-                continue;
             }
 
-            while global_str != global_end && str_less(*global_str, (*over).prop_name) {
-                global_str = global_str.add(1);
-            }
-
-            if global_str != global_end && str_equal(*global_str, (*over).prop_name) {
-                (*over).prop_name = *global_str;
-            } else {
-                push_anim_string(ac, &raw mut (*over).prop_name)?;
-            }
-
-            prev_name = (*over).prop_name;
-            over = over.add(1);
+            // Sort `anim->prop_overrides` to the actual order expected by evaluation.
+            unstable_sort(
+                (*anim).prop_overrides.data as *mut PropOverride as *mut c_void,
+                (*anim).prop_overrides.count,
+                size_of::<PropOverride>(),
+                prop_override_less,
+                ptr::null_mut(),
+            );
         }
 
-        // Sort `anim->prop_overrides` to the actual order expected by evaluation.
-        unstable_sort(
-            (*anim).prop_overrides.data as *mut PropOverride as *mut c_void,
-            (*anim).prop_overrides.count,
-            size_of::<PropOverride>(),
-            prop_override_less,
-            ptr::null_mut(),
-        );
-
         for i in 1..prop_overrides.count {
-            let prev: *const PropOverride = (*anim).prop_overrides.data.add(i - 1);
-            let next: *const PropOverride = (*anim).prop_overrides.data.add(i);
-            if (*prev).element_id == (*next).element_id
-                && (*prev).prop_name.data == (*next).prop_name.data
-            {
-                ufbxi_fmt_err_info!(
-                    ac.error_mut_ptr(),
-                    "element %u prop \"%s\"",
-                    (*prev).element_id,
-                    (*prev).prop_name.data
-                );
-                ufbxi_fail_err_msg!(ac.error_view(), "Duplicate override", "Duplicate override");
+            // SAFETY: `1 <= i < prop_overrides.count`, so both `i - 1` and `i`
+            // index the pushed run; `prop_name.data` is the NUL-terminated
+            // interned name the duplicate message formats.
+            unsafe {
+                let prev: *const PropOverride = (*anim).prop_overrides.data.add(i - 1);
+                let next: *const PropOverride = (*anim).prop_overrides.data.add(i);
+                if (*prev).element_id == (*next).element_id
+                    && (*prev).prop_name.data == (*next).prop_name.data
+                {
+                    ufbxi_fmt_err_info!(
+                        ac.error_mut_ptr(),
+                        "element %u prop \"%s\"",
+                        (*prev).element_id,
+                        (*prev).prop_name.data
+                    );
+                    ufbxi_fail_err_msg!(
+                        ac.error_view(),
+                        "Duplicate override",
+                        "Duplicate override"
+                    );
+                }
             }
         }
     }
 
     if ac.opts_view().transform_overrides_view().count() > 0 {
-        (*anim).transform_overrides.count = ac.opts_view().transform_overrides_view().count();
-        (*anim).transform_overrides.data = push_copy::<TransformOverride>(
-            ac.result_mut_ptr(),
-            (*anim).transform_overrides.count,
-            ac.opts_view().transform_overrides_view().data(),
-        );
+        // SAFETY: the copy reads exactly the caller's own transform-override
+        // run into a fresh push of the same length on ac's own result buf.
+        unsafe {
+            (*anim).transform_overrides.count = ac.opts_view().transform_overrides_view().count();
+            (*anim).transform_overrides.data = push_copy::<TransformOverride>(
+                ac.result_mut_ptr(),
+                (*anim).transform_overrides.count,
+                ac.opts_view().transform_overrides_view().data(),
+            );
+        }
         ufbxi_check_err!(
             ac.error_view(),
-            !(*anim).transform_overrides.data.is_null(),
+            !unsafe { (*anim).transform_overrides.data }.is_null(),
             "anim->transform_overrides.data"
         );
-        unstable_sort(
-            (*anim).transform_overrides.data as *mut TransformOverride as *mut c_void,
-            (*anim).transform_overrides.count,
-            size_of::<TransformOverride>(),
-            transform_override_less,
-            ptr::null_mut(),
-        );
+        // SAFETY: sorting the fresh non-null run just checked, over its own
+        // count; the comparator takes no user data.
+        unsafe {
+            unstable_sort(
+                (*anim).transform_overrides.data as *mut TransformOverride as *mut c_void,
+                (*anim).transform_overrides.count,
+                size_of::<TransformOverride>(),
+                transform_override_less,
+                ptr::null_mut(),
+            );
+        }
     }
 
-    ac.set_imp(push::<AnimImp>(ac.result_mut_ptr(), 1));
+    // SAFETY: pushing onto ac's own result buf through its raw-ptr getter.
+    ac.set_imp(unsafe { push::<AnimImp>(ac.result_mut_ptr(), 1) });
     ufbxi_check_err!(ac.error_view(), !ac.imp().is_null(), "ac->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&Anim` pointer via exposed provenance.
     (ac.imp() as *mut u8).expose_provenance();
 
-    init_ref(
-        &raw mut (*ac.imp()).refcount,
-        ANIM_IMP_MAGIC,
-        &raw mut (*get_imp::<SceneImp>(scene as *mut Scene as *mut c_void)).refcount,
-    );
+    // SAFETY: `ac.imp()` is the fresh non-null push just checked; the parent
+    // refcount is the `SceneImp` behind the scene this anim was created for,
+    // which owns it for the duration of this call, and `ac.anim_mut_ptr()` is
+    // a distinct allocation from the pushed imp, so the copy is
+    // non-overlapping.
+    unsafe {
+        init_ref(
+            &raw mut (*ac.imp()).refcount,
+            ANIM_IMP_MAGIC,
+            &raw mut (*get_imp::<SceneImp>(scene as *mut Scene as *mut c_void)).refcount,
+        );
 
-    (*ac.imp()).magic = ANIM_IMP_MAGIC;
-    // C: `ac->imp->anim = ac->anim;` (struct assignment)
-    ptr::copy_nonoverlapping(ac.anim_mut_ptr(), &raw mut (*ac.imp()).anim, 1);
-    (*ac.imp()).refcount.ator = ac.ator_result();
-    (*ac.imp()).refcount.buf = ac.result();
+        (*ac.imp()).magic = ANIM_IMP_MAGIC;
+        // C: `ac->imp->anim = ac->anim;` (struct assignment)
+        ptr::copy_nonoverlapping(ac.anim_mut_ptr(), &raw mut (*ac.imp()).anim, 1);
+        (*ac.imp()).refcount.ator = ac.ator_result();
+        (*ac.imp()).refcount.buf = ac.result();
+    }
 
     Ok(())
 }
@@ -6024,21 +6122,26 @@ pub(crate) unsafe extern "C" fn baked_element_less(
 // ufbx.c:27601-27705 `ufbxi_bake_anim`
 #[cfg(feature = "baking")]
 #[inline(never)]
-pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
+pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     let anim: *const Anim = bc.anim();
     let scene: *const Scene = bc.scene();
 
     if !bc.opts_view().skip_node_transforms() {
-        bc.set_baked_nodes(push_zero::<*mut BakedNode>(
-            bc.result_mut_ptr(),
-            (*scene).nodes.count,
-        ));
+        // SAFETY: `bc.scene()` is the live scene the bake context was built
+        // around (bc construction invariant); both arrays are pushed onto bc's
+        // own result buf, one slot per scene node, so a node's `typed_id`
+        // indexes them.
+        bc.set_baked_nodes(unsafe {
+            push_zero::<*mut BakedNode>(bc.result_mut_ptr(), (*scene).nodes.count)
+        });
         ufbxi_check_err!(
             bc.error_view(),
             !bc.baked_nodes().is_null(),
             "bc->baked_nodes"
         );
-        bc.set_nodes_to_bake(push_zero::<bool>(bc.result_mut_ptr(), (*scene).nodes.count));
+        bc.set_nodes_to_bake(unsafe {
+            push_zero::<bool>(bc.result_mut_ptr(), (*scene).nodes.count)
+        });
         ufbxi_check_err!(
             bc.error_view(),
             !bc.nodes_to_bake().is_null(),
@@ -6047,110 +6150,142 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_layer, p_layer, anim->layers)`
-    let mut p_layer: *mut *mut AnimLayer = (*anim).layers.data as *mut *mut AnimLayer;
-    let p_layer_end: *mut *mut AnimLayer = add_ptr(p_layer, (*anim).layers.count);
-    while p_layer != p_layer_end {
-        let layer: *mut AnimLayer = *p_layer;
+    // SAFETY: `bc.anim()` is the live anim being baked (bc construction
+    // invariant), so its `layers` run and every layer's `anim_props` run are
+    // the scene's own contiguous lists. `prop` is a fresh non-null push onto
+    // bc's own tmp-bake-props stack. `nodes_to_bake` holds one slot per scene
+    // node, so a node element's `typed_id` is in bounds of it.
+    unsafe {
+        let mut p_layer: *mut *mut AnimLayer = (*anim).layers.data as *mut *mut AnimLayer;
+        let p_layer_end: *mut *mut AnimLayer = add_ptr(p_layer, (*anim).layers.count);
+        while p_layer != p_layer_end {
+            let layer: *mut AnimLayer = *p_layer;
 
-        // C: `ufbxi_for_list(ufbx_anim_prop, anim_prop, layer->anim_props)`
-        let mut anim_prop: *mut AnimProp = (*layer).anim_props.data as *mut AnimProp;
-        let anim_prop_end: *mut AnimProp = add_ptr(anim_prop, (*layer).anim_props.count);
-        while anim_prop != anim_prop_end {
-            let prop: *mut BakeProp = push::<BakeProp>(bc.tmp_bake_props_mut_ptr(), 1);
-            ufbxi_check_err!(bc.error_view(), !prop.is_null(), "prop");
+            // C: `ufbxi_for_list(ufbx_anim_prop, anim_prop, layer->anim_props)`
+            let mut anim_prop: *mut AnimProp = (*layer).anim_props.data as *mut AnimProp;
+            let anim_prop_end: *mut AnimProp = add_ptr(anim_prop, (*layer).anim_props.count);
+            while anim_prop != anim_prop_end {
+                let prop: *mut BakeProp = push::<BakeProp>(bc.tmp_bake_props_mut_ptr(), 1);
+                ufbxi_check_err!(bc.error_view(), !prop.is_null(), "prop");
 
-            let element: *mut Element = ref_ptr(&raw const (*anim_prop).element);
+                let element: *mut Element = ref_ptr(&raw const (*anim_prop).element);
 
-            // Sort nodes by `typed_id` to make sure we process them in order.
-            if (*element).type_ as u32 == ElementType::Node as u32 {
-                if !bc.nodes_to_bake().is_null() {
-                    *bc.nodes_to_bake().add((*element).typed_id as usize) = true;
+                // Sort nodes by `typed_id` to make sure we process them in order.
+                if (*element).type_ as u32 == ElementType::Node as u32 {
+                    if !bc.nodes_to_bake().is_null() {
+                        *bc.nodes_to_bake().add((*element).typed_id as usize) = true;
+                    }
+                    (*prop).sort_id = (*element).typed_id;
+                } else {
+                    (*prop).sort_id = u32::MAX;
                 }
-                (*prop).sort_id = (*element).typed_id;
-            } else {
-                (*prop).sort_id = u32::MAX;
+
+                (*prop).element_id = (*element).element_id;
+                (*prop).prop_name = (*anim_prop).prop_name.data;
+                (*prop).anim_value = ref_ptr(&raw const (*anim_prop).anim_value);
+
+                anim_prop = anim_prop.add(1);
             }
 
-            (*prop).element_id = (*element).element_id;
-            (*prop).prop_name = (*anim_prop).prop_name.data;
-            (*prop).anim_value = ref_ptr(&raw const (*anim_prop).anim_value);
-
-            anim_prop = anim_prop.add(1);
+            p_layer = p_layer.add(1);
         }
-
-        p_layer = p_layer.add(1);
     }
 
     let num_props: usize = bc.tmp_bake_props_view().num_items();
+    // SAFETY: popping bc's own bake-prop stack into bc's own tmp buf;
+    // `num_props` is that stack's own item count, so the pop is exact, and the
+    // sort is then over exactly the popped run.
     let props: *mut BakeProp =
-        push_pop::<BakeProp>(bc.tmp_mut_ptr(), bc.tmp_bake_props_mut_ptr(), num_props);
+        unsafe { push_pop::<BakeProp>(bc.tmp_mut_ptr(), bc.tmp_bake_props_mut_ptr(), num_props) };
     ufbxi_check_err!(bc.error_view(), !props.is_null(), "props");
 
-    unstable_sort(
-        props as *mut c_void,
-        num_props,
-        size_of::<BakeProp>(),
-        bake_prop_less,
-        ptr::null_mut(),
-    );
+    // SAFETY: `props` is the fresh non-null `num_props`-element run just
+    // checked; `bake_prop_less` compares two `BakeProp`s and takes no user
+    // data, so the null `user` is what it expects.
+    unsafe {
+        unstable_sort(
+            props as *mut c_void,
+            num_props,
+            size_of::<BakeProp>(),
+            bake_prop_less,
+            ptr::null_mut(),
+        );
+    }
 
     // Pre-bake layer weight times
     if !bc.opts_view().ignore_layer_weight_animation() {
         let mut has_weight_times: bool = false;
         // C: `ufbxi_for(ufbxi_bake_prop, prop, props, num_props)`
-        for prop in SliceViewIter::<BakeProp>::from_raw_parts(props, num_props) {
-            if prop.prop_name() != sp::Weight.as_ptr() {
-                continue;
-            }
-            let element: *mut Element =
-                *((*scene).elements.data as *const *mut Element).add(prop.element_id() as usize);
-            if (*element).type_ as u32 == ElementType::AnimLayer as u32 {
-                bake_times(bc, prop.anim_value(), true, 0)?;
-                has_weight_times = true;
+        // SAFETY: `props`/`num_props` is the sorted run above; each entry's
+        // `element_id` was copied from a live scene element, so it indexes the
+        // scene's own `elements` list.
+        unsafe {
+            for prop in SliceViewIter::<BakeProp>::from_raw_parts(props, num_props) {
+                if prop.prop_name() != sp::Weight.as_ptr() {
+                    continue;
+                }
+                let element: *mut Element = *((*scene).elements.data as *const *mut Element)
+                    .add(prop.element_id() as usize);
+                if (*element).type_ as u32 == ElementType::AnimLayer as u32 {
+                    bake_times(bc, prop.anim_value(), true, 0)?;
+                    has_weight_times = true;
+                }
             }
         }
 
         if has_weight_times {
             // C: `ufbxi_bake_time_list weight_times = { 0 };`
-            let mut weight_times: BakeTimeList = MaybeUninit::zeroed().assume_init();
-            finalize_bake_times(bc, &raw mut weight_times)?;
+            // SAFETY: `BakeTimeList` is a data pointer plus a count, for which
+            // all-zero is the valid empty list; `finalize_bake_times` fills it
+            // through the unaliased local out-pointer, and the copy that
+            // follows reads exactly the `count` elements it reported into bc's
+            // own tmp buf.
+            let weight_times: BakeTimeList = unsafe {
+                let mut weight_times: BakeTimeList = MaybeUninit::zeroed().assume_init();
+                finalize_bake_times(bc, &raw mut weight_times)?;
+                weight_times
+            };
 
             bc.layer_weight_times_view().set_count(weight_times.count);
-            bc.layer_weight_times_view().set_data(push_copy::<BakeTime>(
-                bc.tmp_mut_ptr(),
-                weight_times.count,
-                weight_times.data,
-            ));
+            bc.layer_weight_times_view().set_data(unsafe {
+                push_copy::<BakeTime>(bc.tmp_mut_ptr(), weight_times.count, weight_times.data)
+            });
             ufbxi_check_err!(
                 bc.error_view(),
                 !bc.layer_weight_times_view().data().is_null(),
                 "bc->layer_weight_times.data"
             );
 
-            buf_clear(bc.tmp_prop_mut_ptr());
+            // SAFETY: clearing bc's own per-prop tmp buf.
+            unsafe { buf_clear(bc.tmp_prop_mut_ptr()) };
         }
     }
 
     let mut begin: usize = 0;
     while begin < num_props {
-        let element_id: u32 = (*props.add(begin)).element_id;
-        let mut end: usize = begin + 1;
-        while end < num_props && (*props.add(end)).element_id == element_id {
-            end += 1;
+        // SAFETY: `begin < num_props` and the inner scan stops at
+        // `num_props`, so every read and the `props.add(begin)` sub-run handed
+        // to `bake_element` stay inside the `num_props`-element run.
+        unsafe {
+            let element_id: u32 = (*props.add(begin)).element_id;
+            let mut end: usize = begin + 1;
+            while end < num_props && (*props.add(end)).element_id == element_id {
+                end += 1;
+            }
+            bake_element(bc, element_id, props.add(begin), end - begin)?;
+            begin = end;
         }
-        bake_element(bc, element_id, props.add(begin), end - begin)?;
-        begin = end;
     }
 
     let num_nodes: usize = bc.tmp_nodes_view().num_items();
     let num_elements: usize = bc.tmp_elements_view().num_items();
 
     bc.bake_view().nodes_view().set_count(num_nodes);
-    bc.bake_view().nodes_view().set_data(push_pop::<BakedNode>(
-        bc.result_mut_ptr(),
-        bc.tmp_nodes_mut_ptr(),
-        num_nodes,
-    ));
+    // SAFETY: popping bc's own node stack into bc's own result buf;
+    // `num_nodes` is that stack's own item count, so the pop is exact.
+    bc.bake_view().nodes_view().set_data(unsafe {
+        push_pop::<BakedNode>(bc.result_mut_ptr(), bc.tmp_nodes_mut_ptr(), num_nodes)
+    });
     ufbxi_check_err!(
         bc.error_view(),
         !bc.bake_view().nodes_view().data().is_null(),
@@ -6158,33 +6293,36 @@ pub(crate) unsafe fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     );
 
     bc.bake_view().elements_view().set_count(num_elements);
-    bc.bake_view()
-        .elements_view()
-        .set_data(push_pop::<BakedElement>(
-            bc.result_mut_ptr(),
-            bc.tmp_elements_mut_ptr(),
-            num_elements,
-        ));
+    // SAFETY: popping bc's own element stack into bc's own result buf;
+    // `num_elements` is that stack's own item count, so the pop is exact.
+    bc.bake_view().elements_view().set_data(unsafe {
+        push_pop::<BakedElement>(bc.result_mut_ptr(), bc.tmp_elements_mut_ptr(), num_elements)
+    });
     ufbxi_check_err!(
         bc.error_view(),
         !bc.bake_view().elements_view().data().is_null(),
         "bc->bake.elements.data"
     );
 
-    unstable_sort(
-        bc.bake_view().nodes_view().data() as *mut c_void,
-        bc.bake_view().nodes_view().count(),
-        size_of::<BakedNode>(),
-        baked_node_less,
-        ptr::null_mut(),
-    );
-    unstable_sort(
-        bc.bake_view().elements_view().data() as *mut c_void,
-        bc.bake_view().elements_view().count(),
-        size_of::<BakedElement>(),
-        baked_element_less,
-        ptr::null_mut(),
-    );
+    // SAFETY: both runs are the fresh non-null pops just checked, sorted over
+    // their own reported counts; neither comparator takes user data, so the
+    // null `user` is what they expect.
+    unsafe {
+        unstable_sort(
+            bc.bake_view().nodes_view().data() as *mut c_void,
+            bc.bake_view().nodes_view().count(),
+            size_of::<BakedNode>(),
+            baked_node_less,
+            ptr::null_mut(),
+        );
+        unstable_sort(
+            bc.bake_view().elements_view().data() as *mut c_void,
+            bc.bake_view().elements_view().count(),
+            size_of::<BakedElement>(),
+            baked_element_less,
+            ptr::null_mut(),
+        );
+    }
 
     if bc.time_min() < bc.time_max() {
         bc.bake_view().set_key_time_min(bc.time_min());

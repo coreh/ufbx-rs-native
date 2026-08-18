@@ -1208,8 +1208,11 @@ mod tests {
     use super::*;
     use crate::native::printf::PrintArg;
 
-    unsafe fn desc_bytes(err: &Error) -> &[u8] {
-        core::slice::from_raw_parts(err.description.data, err.description.length)
+    fn desc_bytes(err: &Error) -> &[u8] {
+        // SAFETY: every `err` inspected here was filled by an error setter in
+        // this module, whose descriptions are `'static` literals — so the
+        // `data`/`length` pair is a live run and outlives the borrow of `err`.
+        unsafe { core::slice::from_raw_parts(err.description.data, err.description.length) }
     }
 
     #[test]
@@ -1445,7 +1448,6 @@ mod tests {
         // Already-panicked: message preserved
         let fired = ufbxi_panicf!(panic, false, "other");
         assert!(fired);
-        drop(panic);
         assert!(storage.did_panic);
         assert_eq!(storage.message(), "vertex (5) out of bounds (3)");
     }

@@ -1612,13 +1612,18 @@ pub(crate) unsafe fn subdivision_copy_weights(
 // ufbx.c:29505-29519 `ufbxi_init_source_vertex_weights`
 #[cfg(feature = "subdivision")]
 #[inline(never)]
-pub(crate) unsafe fn init_source_vertex_weights(
+pub(crate) fn init_source_vertex_weights(
     sc: &SubdivideContext,
     num_vertices: usize,
 ) -> *mut SubdivisionVertexWeights {
-    let dst: *mut SubdivisionVertexWeights =
-        push::<SubdivisionVertexWeights>(sc.tmp_mut_ptr(), num_vertices);
-    let weights: *mut SubdivisionWeight = push::<SubdivisionWeight>(sc.tmp_mut_ptr(), num_vertices);
+    // SAFETY: two pushes onto sc's own tmp buf through its raw-ptr getter (sc
+    // construction invariant).
+    let (dst, weights): (*mut SubdivisionVertexWeights, *mut SubdivisionWeight) = unsafe {
+        (
+            push::<SubdivisionVertexWeights>(sc.tmp_mut_ptr(), num_vertices),
+            push::<SubdivisionWeight>(sc.tmp_mut_ptr(), num_vertices),
+        )
+    };
     ufbxi_check_return_err!(
         sc.error_view(),
         !dst.is_null() && !weights.is_null(),
@@ -1629,10 +1634,16 @@ pub(crate) unsafe fn init_source_vertex_weights(
     // C: `ufbxi_nounroll for (size_t i = 0; i != num_vertices; i++)`
     let mut i: usize = 0;
     while i != num_vertices {
-        (*dst.add(i)).weights = weights.add(i);
-        (*dst.add(i)).num_weights = 1;
-        (*weights.add(i)).index = i as u32;
-        (*weights.add(i)).weight = 1.0;
+        // SAFETY: `i < num_vertices`, and both `dst` and `weights` are fresh
+        // non-null `num_vertices`-element pushes (checked above), so each
+        // element write is in bounds; the stored `weights.add(i)` points into
+        // the same tmp arena `dst` lives in.
+        unsafe {
+            (*dst.add(i)).weights = weights.add(i);
+            (*dst.add(i)).num_weights = 1;
+            (*weights.add(i)).index = i as u32;
+            (*weights.add(i)).weight = 1.0;
+        }
         i += 1;
     }
 
@@ -1837,6 +1848,14 @@ pub(crate) unsafe fn subdivide_vertex_crease(
 }
 
 // ufbx.c:29631-29925 `ufbxi_subdivide_mesh_level`
+// Stays `unsafe fn`: the body is raw end-to-end and, beyond the context
+// invariant, it rests on index contracts carried by the *source mesh data*
+// rather than anything checkable here — `topo[edge.a]`, `faces[topo[..].face]`
+// and the per-face `face_material/smoothing/group/hole` writes at
+// `index_offset + ci` are all only in bounds because the input mesh is
+// internally consistent (`edge.a < num_indices`, face index ranges tiling
+// `num_indices`). Narrow blocks would restate that one obligation dozens of
+// times without discharging it.
 #[cfg(feature = "subdivision")]
 #[inline(never)]
 pub(crate) unsafe fn subdivide_mesh_level(
@@ -2385,7 +2404,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
 // ufbx.c:29927-30034 `ufbxi_subdivide_mesh_imp`
 #[cfg(feature = "subdivision")]
 #[inline(never)]
-pub(crate) unsafe fn subdivide_mesh_imp(
+pub(crate) fn subdivide_mesh_imp(
     sc: &SubdivideContext,
     level: usize,
 ) -> Result<(), crate::native::error::Fail> {
@@ -2399,18 +2418,23 @@ pub(crate) unsafe fn subdivide_mesh_imp(
             .set_uv_boundary(sc.src_mesh_view().subdivision_uv_boundary());
     }
 
-    init_ator(
-        sc.error_mut_ptr(),
-        sc.ator_tmp_mut_ptr(),
-        &sc.opts_view().temp_allocator(),
-        b"temp\0".as_ptr(),
-    );
-    init_ator(
-        sc.error_mut_ptr(),
-        sc.ator_result_mut_ptr(),
-        &sc.opts_view().result_allocator(),
-        b"result\0".as_ptr(),
-    );
+    // SAFETY: initializing sc's own two allocators from sc's own error slot
+    // and its own copy of the opts allocator descriptors, named by `'static`
+    // NUL-terminated literals.
+    unsafe {
+        init_ator(
+            sc.error_mut_ptr(),
+            sc.ator_tmp_mut_ptr(),
+            &sc.opts_view().temp_allocator(),
+            b"temp\0".as_ptr(),
+        );
+        init_ator(
+            sc.error_mut_ptr(),
+            sc.ator_result_mut_ptr(),
+            &sc.opts_view().result_allocator(),
+            b"result\0".as_ptr(),
+        );
+    }
 
     sc.result_view().set_unordered(true);
     sc.source_view().set_unordered(true);
@@ -2423,121 +2447,181 @@ pub(crate) unsafe fn subdivide_mesh_imp(
     while i < level {
         sc.result_view().set_ator(sc.ator_tmp_mut_ptr());
 
-        subdivide_mesh_level(sc)?;
+        // SAFETY: `sc` is a valid subdivide context (construction invariant);
+        // its `src_mesh`/`dst_mesh` slots are two distinct fields of that
+        // context, so the copy is non-overlapping, and the bufs freed and
+        // rotated here are sc's own. `Buf` is a plain pointer/integer/bool
+        // aggregate, so zeroing `result` leaves a valid empty buffer.
+        unsafe {
+            subdivide_mesh_level(sc)?;
 
-        // C: `sc->src_mesh = sc->dst_mesh;` — struct assignment (memcpy).
-        core::ptr::copy_nonoverlapping(sc.dst_mesh_mut_ptr(), sc.src_mesh_mut_ptr(), 1);
+            // C: `sc->src_mesh = sc->dst_mesh;` — struct assignment (memcpy).
+            core::ptr::copy_nonoverlapping(sc.dst_mesh_mut_ptr(), sc.src_mesh_mut_ptr(), 1);
 
-        buf_free(sc.source_mut_ptr());
-        buf_free(sc.tmp_mut_ptr());
-        sc.set_source(sc.result());
-        core::ptr::write_bytes(sc.result_mut_ptr() as *mut u8, 0, size_of::<Buf>());
+            buf_free(sc.source_mut_ptr());
+            buf_free(sc.tmp_mut_ptr());
+            sc.set_source(sc.result());
+            core::ptr::write_bytes(sc.result_mut_ptr() as *mut u8, 0, size_of::<Buf>());
+        }
         i += 1;
     }
 
     sc.result_view().set_ator(sc.ator_result_mut_ptr());
-    subdivide_mesh_level(sc)?;
-    buf_free(sc.tmp_mut_ptr());
+    // SAFETY: the final level and the tmp-buf teardown both act on sc's own
+    // state (construction invariant).
+    unsafe {
+        subdivide_mesh_level(sc)?;
+        buf_free(sc.tmp_mut_ptr());
+    }
 
     let mesh: *mut Mesh = sc.dst_mesh_mut_ptr();
 
     // Subdivision always results in a mesh that consists only of quads
-    (*mesh).max_face_triangles = 2;
-    (*mesh).num_empty_faces = 0;
-    (*mesh).num_point_faces = 0;
-    (*mesh).num_line_faces = 0;
+    // SAFETY: `mesh` is sc's own destination `Mesh` slot, filled by the levels
+    // above.
+    unsafe {
+        (*mesh).max_face_triangles = 2;
+        (*mesh).num_empty_faces = 0;
+        (*mesh).num_point_faces = 0;
+        (*mesh).num_line_faces = 0;
+    }
 
     if !sc.opts_view().interpolate_normals() {
-        core::ptr::write_bytes(
-            &mut (*mesh).vertex_normal as *mut _ as *mut u8,
-            0,
-            size_of::<VertexVec3>(),
-        );
-        core::ptr::write_bytes(
-            &mut (*mesh).skinned_normal as *mut _ as *mut u8,
-            0,
-            size_of::<VertexVec3>(),
-        );
+        // SAFETY: zeroing two `VertexVec3` fields of sc's own mesh slot in
+        // place; all-zero is a valid `VertexVec3` (null data, zero counts,
+        // `false` flags).
+        unsafe {
+            core::ptr::write_bytes(
+                &mut (*mesh).vertex_normal as *mut _ as *mut u8,
+                0,
+                size_of::<VertexVec3>(),
+            );
+            core::ptr::write_bytes(
+                &mut (*mesh).skinned_normal as *mut _ as *mut u8,
+                0,
+                size_of::<VertexVec3>(),
+            );
+        }
     }
 
     if !sc.opts_view().interpolate_normals() && !sc.opts_view().ignore_normals() {
-        let topo: *mut TopoEdge = push::<TopoEdge>(sc.tmp_mut_ptr(), (*mesh).num_indices);
+        // SAFETY: pushing `num_indices` topology edges onto sc's own tmp buf,
+        // then handing `compute_topology` exactly that mesh and that
+        // `num_indices`-element run.
+        let topo: *mut TopoEdge =
+            unsafe { push::<TopoEdge>(sc.tmp_mut_ptr(), (*mesh).num_indices) };
         ufbxi_check_err!(sc.error_view(), !topo.is_null(), "topo");
-        compute_topology(mesh, topo, (*mesh).num_indices);
+        unsafe { compute_topology(mesh, topo, (*mesh).num_indices) };
 
-        let normal_indices: *mut u32 = push::<u32>(sc.result_mut_ptr(), (*mesh).num_indices);
+        // SAFETY: pushing `num_indices` indices onto sc's own result buf.
+        let normal_indices: *mut u32 =
+            unsafe { push::<u32>(sc.result_mut_ptr(), (*mesh).num_indices) };
         ufbxi_check_err!(sc.error_view(), !normal_indices.is_null(), "normal_indices");
 
-        let num_normals: usize = generate_normal_mapping(
-            mesh,
-            topo,
-            (*mesh).num_indices,
-            normal_indices,
-            (*mesh).num_indices,
-            true,
-        );
-        if num_normals == (*mesh).num_vertices {
-            (*mesh).skinned_normal.unique_per_vertex = true;
+        // SAFETY: `topo` and `normal_indices` are the fresh non-null
+        // `num_indices`-element pushes just checked, and both counts passed
+        // are that same `num_indices`.
+        let num_normals: usize = unsafe {
+            generate_normal_mapping(
+                mesh,
+                topo,
+                (*mesh).num_indices,
+                normal_indices,
+                (*mesh).num_indices,
+                true,
+            )
+        };
+        if num_normals == unsafe { (*mesh).num_vertices } {
+            // SAFETY: writing a flag of sc's own mesh slot.
+            unsafe { (*mesh).skinned_normal.unique_per_vertex = true };
         }
 
+        // SAFETY: pushing onto sc's own result buf.
         let mut normal_data: *mut Vec3 =
-            push::<Vec3>(sc.result_mut_ptr(), num_normals.wrapping_add(1));
+            unsafe { push::<Vec3>(sc.result_mut_ptr(), num_normals.wrapping_add(1)) };
         ufbxi_check_err!(sc.error_view(), !normal_data.is_null(), "normal_data");
-        *normal_data.add(0) = ZERO_VEC3;
-        normal_data = normal_data.add(1);
+        // SAFETY: the push holds `num_normals + 1` elements, so element 0
+        // exists and one past it is in bounds; `compute_normals` then fills
+        // exactly the remaining `num_normals` through `normal_indices`, and
+        // the mapping above guarantees those indices are `< num_normals`.
+        // Finally `vertex_normal` and `skinned_normal` are distinct fields of
+        // the same mesh, so the copy is non-overlapping.
+        unsafe {
+            *normal_data.add(0) = ZERO_VEC3;
+            normal_data = normal_data.add(1);
 
-        compute_normals(
-            mesh,
-            &(*mesh).skinned_position,
-            normal_indices,
-            (*mesh).num_indices,
-            normal_data,
-            num_normals,
-        );
+            compute_normals(
+                mesh,
+                &(*mesh).skinned_position,
+                normal_indices,
+                (*mesh).num_indices,
+                normal_data,
+                num_normals,
+            );
 
-        (*mesh).generated_normals = true;
-        (*mesh).vertex_normal.exists = true;
-        (*mesh).vertex_normal.values.data = normal_data;
-        (*mesh).vertex_normal.values.count = num_normals;
-        (*mesh).vertex_normal.indices.data = normal_indices;
-        (*mesh).vertex_normal.indices.count = (*mesh).num_indices;
+            (*mesh).generated_normals = true;
+            (*mesh).vertex_normal.exists = true;
+            (*mesh).vertex_normal.values.data = normal_data;
+            (*mesh).vertex_normal.values.count = num_normals;
+            (*mesh).vertex_normal.indices.data = normal_indices;
+            (*mesh).vertex_normal.indices.count = (*mesh).num_indices;
 
-        core::ptr::copy_nonoverlapping(&(*mesh).vertex_normal, &mut (*mesh).skinned_normal, 1);
+            core::ptr::copy_nonoverlapping(&(*mesh).vertex_normal, &mut (*mesh).skinned_normal, 1);
+        }
     }
 
-    let parent: *mut Refcount;
-    if (*sc.src_mesh_ptr()).subdivision_evaluated && (*sc.src_mesh_ptr()).from_tessellated_nurbs {
-        let imp: *mut MeshImp = get_imp(sc.src_mesh_ptr() as *mut c_void);
-        parent = &mut (*imp).refcount;
-    } else {
-        let imp: *mut SceneImp =
-            get_imp(ref_ptr(&(*sc.src_mesh_ptr()).element.scene) as *mut c_void);
-        parent = &mut (*imp).refcount;
-    }
+    // SAFETY: `sc.src_mesh_ptr()` is sc's own source mesh; when it is an
+    // evaluated tessellated-NURBS mesh its wide allocation is a `MeshImp`,
+    // otherwise it belongs to a scene whose `SceneImp` owns it — the same
+    // discrimination `get_imp` expects, and either parent outlives this call.
+    let parent: *mut Refcount = unsafe {
+        if (*sc.src_mesh_ptr()).subdivision_evaluated && (*sc.src_mesh_ptr()).from_tessellated_nurbs
+        {
+            let imp: *mut MeshImp = get_imp(sc.src_mesh_ptr() as *mut c_void);
+            &mut (*imp).refcount
+        } else {
+            let imp: *mut SceneImp =
+                get_imp(ref_ptr(&(*sc.src_mesh_ptr()).element.scene) as *mut c_void);
+            &mut (*imp).refcount
+        }
+    };
 
-    patch_mesh_reals(mesh);
+    // SAFETY: patching sc's own destination mesh in place.
+    unsafe { patch_mesh_reals(mesh) };
 
-    sc.set_imp(push::<MeshImp>(sc.result_mut_ptr(), 1));
+    // SAFETY: pushing onto sc's own result buf through its raw-ptr getter.
+    sc.set_imp(unsafe { push::<MeshImp>(sc.result_mut_ptr(), 1) });
     ufbxi_check_err!(sc.error_view(), !sc.imp().is_null(), "sc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public `&Mesh` pointer via exposed provenance.
     (sc.imp() as *mut u8).expose_provenance();
 
-    let dst_sub: *mut SubdivisionResult = opt_ptr(sc.dst_mesh_view().subdivision_result_ptr());
-    (*dst_sub).result_memory_used = sc.ator_result_view().current_size();
-    (*dst_sub).temp_memory_used = sc.ator_tmp_view().current_size();
-    (*dst_sub).result_allocs = sc.ator_result_view().num_allocs();
-    (*dst_sub).temp_allocs = sc.ator_tmp_view().num_allocs();
+    // SAFETY: `subdivide_mesh_level` always installs a `SubdivisionResult` on
+    // the destination mesh (the `result_sub` push there), so this ref is
+    // non-null and points into sc's own result arena.
+    unsafe {
+        let dst_sub: *mut SubdivisionResult = opt_ptr(sc.dst_mesh_view().subdivision_result_ptr());
+        (*dst_sub).result_memory_used = sc.ator_result_view().current_size();
+        (*dst_sub).temp_memory_used = sc.ator_tmp_view().current_size();
+        (*dst_sub).result_allocs = sc.ator_result_view().num_allocs();
+        (*dst_sub).temp_allocs = sc.ator_tmp_view().num_allocs();
+    }
 
-    init_ref(&mut (*sc.imp()).refcount, MESH_IMP_MAGIC, parent);
+    // SAFETY: `sc.imp()` is the fresh non-null push just checked, so filling
+    // its header writes our own allocation; `parent` is the live owner picked
+    // above; `sc.dst_mesh_mut_ptr()` is a distinct allocation from the pushed
+    // imp, so the copy is non-overlapping.
+    unsafe {
+        init_ref(&mut (*sc.imp()).refcount, MESH_IMP_MAGIC, parent);
 
-    (*sc.imp()).magic = MESH_IMP_MAGIC;
-    // C: `sc->imp->mesh = sc->dst_mesh;` — struct assignment (memcpy).
-    core::ptr::copy_nonoverlapping(sc.dst_mesh_mut_ptr(), &raw mut (*sc.imp()).mesh, 1);
-    (*sc.imp()).refcount.ator = sc.ator_result();
-    (*sc.imp()).refcount.buf = sc.result();
-    (*sc.imp()).mesh.subdivision_evaluated = true;
+        (*sc.imp()).magic = MESH_IMP_MAGIC;
+        // C: `sc->imp->mesh = sc->dst_mesh;` — struct assignment (memcpy).
+        core::ptr::copy_nonoverlapping(sc.dst_mesh_mut_ptr(), &raw mut (*sc.imp()).mesh, 1);
+        (*sc.imp()).refcount.ator = sc.ator_result();
+        (*sc.imp()).refcount.buf = sc.result();
+        (*sc.imp()).mesh.subdivision_evaluated = true;
+    }
 
     Ok(())
 }

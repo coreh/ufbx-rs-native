@@ -238,30 +238,41 @@ mod tests {
         result: Buf,
     }
 
-    unsafe fn make_buf(ator: *mut Allocator) -> Buf {
-        let mut buf = MaybeUninit::<Buf>::zeroed().assume_init();
+    fn make_buf(ator: *mut Allocator) -> Buf {
+        // SAFETY: `Buf` is all pointers/usizes/bools; the all-zero bit pattern
+        // is a valid value for every field (null pointers, zero sizes,
+        // `false`). No field is dereferenced here.
+        let mut buf = unsafe { MaybeUninit::<Buf>::zeroed().assume_init() };
         buf.ator = ator;
         buf
     }
 
-    unsafe fn make_fixture() -> Box<Fixture> {
-        let mut fx: Box<Fixture> = Box::new(Fixture {
-            err: Error::default(),
-            ator: MaybeUninit::zeroed().assume_init(),
-            result: MaybeUninit::zeroed().assume_init(),
-        });
-        init_ator(
-            &mut fx.err,
-            &mut fx.ator,
-            core::ptr::null(),
-            b"test\0".as_ptr(),
-        );
+    fn make_fixture() -> Box<Fixture> {
+        // SAFETY: `Allocator` and `Buf` are both plain pointer/integer/bool
+        // aggregates for which all-zero is a valid value; `init_ator` then
+        // fills the allocator from the fixture's own `err` and a `'static`
+        // NUL-terminated name literal.
+        let mut fx: Box<Fixture> = unsafe {
+            Box::new(Fixture {
+                err: Error::default(),
+                ator: MaybeUninit::zeroed().assume_init(),
+                result: MaybeUninit::zeroed().assume_init(),
+            })
+        };
+        unsafe {
+            init_ator(
+                &mut fx.err,
+                &mut fx.ator,
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
+        }
         let ator = &mut fx.ator as *mut Allocator;
         fx.result = make_buf(ator);
         fx
     }
 
-    unsafe fn make_warnings(fx: &mut Fixture) -> Warnings {
+    fn make_warnings(fx: &mut Fixture) -> Warnings {
         Warnings {
             error: &mut fx.err,
             result: &mut fx.result,
@@ -271,22 +282,29 @@ mod tests {
         }
     }
 
-    unsafe fn free_all_chunks(b: &mut Buf) {
+    fn free_all_chunks(b: &mut Buf) {
         for list_ix in 0..2 {
             let chunk = b.chunks[list_ix];
             if chunk.is_null() {
                 continue;
             }
-            let mut c = (*chunk).root;
-            while !c.is_null() {
-                let next = (*c).next;
-                crate::native::allocator::free_size(
-                    b.ator,
-                    1,
-                    c as *mut core::ffi::c_void,
-                    core::mem::size_of::<crate::native::buf::BufChunk>() + (*c).size,
-                );
-                c = next;
+            // SAFETY: `b` is a test fixture buf the caller owns exclusively;
+            // `chunks[list_ix]` is a live chunk of the `root`-linked list this
+            // buf pushed, each allocated from `b.ator` with
+            // `sizeof(BufChunk) + size` bytes, and this teardown is their last
+            // use.
+            unsafe {
+                let mut c = (*chunk).root;
+                while !c.is_null() {
+                    let next = (*c).next;
+                    crate::native::allocator::free_size(
+                        b.ator,
+                        1,
+                        c as *mut core::ffi::c_void,
+                        core::mem::size_of::<crate::native::buf::BufChunk>() + (*c).size,
+                    );
+                    c = next;
+                }
             }
             b.chunks[list_ix] = core::ptr::null_mut();
         }

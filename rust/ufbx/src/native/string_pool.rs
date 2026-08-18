@@ -1616,43 +1616,65 @@ mod tests {
         pool: StringPool,
     }
 
-    unsafe fn make_fixture(handling: UnicodeErrorHandling) -> Box<Fixture> {
-        let mut fx: Box<Fixture> = Box::new(Fixture {
-            err: Error::default(),
-            ator: MaybeUninit::zeroed().assume_init(),
-            pool: MaybeUninit::zeroed().assume_init(),
-        });
-        init_ator(
-            &mut fx.err,
-            &mut fx.ator,
-            core::ptr::null(),
-            b"test\0".as_ptr(),
-        );
+    fn make_fixture(handling: UnicodeErrorHandling) -> Box<Fixture> {
+        // SAFETY: `Allocator` and `StringPool` are plain pointer/integer/enum
+        // aggregates whose all-zero bit pattern is a valid value for every
+        // field.
+        let mut fx: Box<Fixture> = unsafe {
+            Box::new(Fixture {
+                err: Error::default(),
+                ator: MaybeUninit::zeroed().assume_init(),
+                pool: MaybeUninit::zeroed().assume_init(),
+            })
+        };
+        // SAFETY: the allocator is initialized from the fixture's own `err`
+        // and a `'static` NUL-terminated name literal.
+        unsafe {
+            init_ator(
+                &mut fx.err,
+                &mut fx.ator,
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
+        }
         let ator = &mut fx.ator as *mut Allocator;
         fx.pool.error = &mut fx.err;
         fx.pool.buf.ator = ator;
         // C: `ufbxi_map_init(&uc->string_pool.map, &uc->ator_tmp, &ufbxi_map_cmp_string, NULL)`
-        map_init(
-            &mut fx.pool.map,
-            ator,
-            map_cmp_string,
-            core::ptr::null_mut(),
-        );
+        // SAFETY: initializing the fixture's own zeroed map against the
+        // fixture's own allocator; `map_cmp_string` takes no user data, so the
+        // null `user` is what it expects.
+        unsafe {
+            map_init(
+                &mut fx.pool.map,
+                ator,
+                map_cmp_string,
+                core::ptr::null_mut(),
+            );
+        }
         fx.pool.initial_size = 64; // ufbx.c:7192 `string_pool.initial_size = 1024` (smaller for tests)
         fx.pool.error_handling = handling;
         fx.pool.warnings = core::ptr::null_mut();
         fx
     }
 
-    unsafe fn free_fixture(fx: &mut Fixture) {
-        buf_free(&mut fx.pool.buf);
-        string_pool_temp_free(&mut fx.pool);
+    fn free_fixture(fx: &mut Fixture) {
+        // SAFETY: `fx` is a fixture the caller owns exclusively; its pool and
+        // buf were built by `make_fixture` over that same fixture's allocator,
+        // and this teardown is their last use.
+        unsafe {
+            buf_free(&mut fx.pool.buf);
+            string_pool_temp_free(&mut fx.pool);
+        }
         assert_eq!(fx.ator.current_size, 0);
     }
 
-    unsafe fn push(fx: &mut Fixture, s: &[u8]) -> (*const u8, usize) {
+    fn push(fx: &mut Fixture, s: &[u8]) -> (*const u8, usize) {
         let mut out_len = s.len();
-        let ptr_ = push_string(&mut fx.pool, s.as_ptr(), s.len(), &mut out_len, false);
+        // SAFETY: `s.as_ptr()`/`s.len()` describe exactly one live run;
+        // `out_len` is an unaliased local out-param; `fx.pool` is the
+        // fixture's own initialized pool.
+        let ptr_ = unsafe { push_string(&mut fx.pool, s.as_ptr(), s.len(), &mut out_len, false) };
         (ptr_, out_len)
     }
 
