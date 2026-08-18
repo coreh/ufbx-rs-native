@@ -257,7 +257,7 @@ use crate::native::read::{
 use crate::native::string_pool::{
     self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
 };
-use crate::native::view::{Const, View};
+use crate::native::view::{Const, Mode, View};
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::as_f64;
 use crate::prelude::{Blob, List, Real, Ref, RefList, String};
@@ -8664,8 +8664,8 @@ pub(crate) unsafe fn get_geometry_transform(props: &PropsView, node: *mut Node) 
 // function's composition chain. The two are pinned together by the
 // `ufbxi_regression_assert` at ufbx.c:22901.
 #[inline(never)]
-pub(crate) unsafe fn get_rotation(
-    props: &PropsView,
+pub(crate) unsafe fn get_rotation<M: Mode>(
+    props: &View<Props, M>,
     order: RotationOrder,
     node: *const Node,
 ) -> Quat {
@@ -8721,7 +8721,7 @@ pub(crate) unsafe fn get_rotation(
 // Scale-only fast path, pinned to `ufbxi_get_transform` by the
 // `ufbxi_regression_assert` at ufbx.c:22902.
 #[inline(never)]
-pub(crate) unsafe fn get_scale(props: &PropsView, node: *const Node) -> Vec3 {
+pub(crate) unsafe fn get_scale<M: Mode>(props: &View<Props, M>, node: *const Node) -> Vec3 {
     let scaling: Vec3 = find_vec3(props, sp::Lcl_Scaling.as_ptr(), 1.0, 1.0, 1.0);
 
     // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
@@ -8759,8 +8759,8 @@ pub(crate) unsafe fn get_scale(props: &PropsView, node: *const Node) -> Vec3 {
 
 // ufbx.c:22836-22905 `ufbxi_get_transform`
 #[inline(never)]
-pub(crate) unsafe fn get_transform(
-    props: &PropsView,
+pub(crate) unsafe fn get_transform<M: Mode>(
+    props: &View<Props, M>,
     order: RotationOrder,
     node: *const Node,
     translation_scale: *const Vec3,

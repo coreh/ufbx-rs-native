@@ -129,7 +129,7 @@ use crate::native::nurbs::{
 };
 use crate::native::parse::{
     find_enum, find_real as ufbxi_find_real, get_imp, get_name_key, Context, InnerContext, MeshImp,
-    PropsView, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
+    Refcount, SceneImp, ELEMENT_TYPE_COUNT,
 };
 use crate::native::platform::{
     add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
@@ -1634,7 +1634,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
 
     // C: `ufbx_prop buf[ufbxi_arraycount(ufbxi_transform_props_all)]; // ufbxi_uninit`
     let mut buf = MaybeUninit::<[Prop; TRANSFORM_PROPS_ALL_COUNT]>::uninit(); // ufbxi_uninit
-    let mut props: Props = evaluate::evaluate_selected_props(
+    let props: Props = evaluate::evaluate_selected_props(
         anim,
         &raw const (*node).element,
         time,
@@ -1644,8 +1644,10 @@ pub(crate) unsafe fn evaluate_transform_flags(
         eval_flags,
     );
     // C: `(ufbx_rotation_order)ufbxi_find_enum(...)` — clamped to the valid range.
+    // Const view: from the public `&Node` entry the defaults chain in `props`
+    // carries read-only provenance (Miri SB; sweep test TODO(provenance)).
     let order: RotationOrder = core::mem::transmute::<u32, RotationOrder>(find_enum(
-        PropsView::from_ptr(&raw mut props),
+        View::<Props, Const>::from_ptr(&raw const props),
         sp::RotationOrder.as_ptr(),
         RotationOrder::Xyz as i64,
         RotationOrder::Spheric as i64,
@@ -1658,7 +1660,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
         core::ptr::write(
             t,
             get_transform(
-                PropsView::from_ptr(&raw mut props),
+                View::<Props, Const>::from_ptr(&raw const props),
                 order,
                 node,
                 translation_scale,
@@ -1667,12 +1669,16 @@ pub(crate) unsafe fn evaluate_transform_flags(
     } else {
         (*t).translation = ZERO_VEC3;
         if (components & TransformFlags::INCLUDE_ROTATION.raw()) != 0 {
-            (*t).rotation = get_rotation(PropsView::from_ptr(&raw mut props), order, node);
+            (*t).rotation = get_rotation(
+                View::<Props, Const>::from_ptr(&raw const props),
+                order,
+                node,
+            );
         } else {
             (*t).rotation = IDENTITY_QUAT;
         }
         if (components & TransformFlags::INCLUDE_SCALE.raw()) != 0 {
-            (*t).scale = get_scale(PropsView::from_ptr(&raw mut props), node);
+            (*t).scale = get_scale(View::<Props, Const>::from_ptr(&raw const props), node);
         } else {
             (*t).scale = ONE_VEC3;
         }
@@ -1710,7 +1716,7 @@ pub(crate) unsafe fn evaluate_blend_weight_flags(
 
     // C: `ufbx_prop buf[ufbxi_arraycount(prop_names)]; // ufbxi_uninit`
     let mut buf = MaybeUninit::<[Prop; NUM_PROP_NAMES]>::uninit(); // ufbxi_uninit
-    let mut props: Props = evaluate::evaluate_selected_props(
+    let props: Props = evaluate::evaluate_selected_props(
         anim,
         &raw const (*channel).element,
         time,
@@ -1720,8 +1726,9 @@ pub(crate) unsafe fn evaluate_blend_weight_flags(
         flags,
     );
     // C: `ufbxi_find_real(&props, ufbxi_DeformPercent, channel->weight * (ufbx_real)100.0) * (ufbx_real)0.01`
+    // Const view: same read-only defaults-chain provenance as above.
     ufbxi_find_real(
-        PropsView::from_ptr(&raw mut props),
+        View::<Props, Const>::from_ptr(&raw const props),
         sp::DeformPercent.as_ptr(),
         (*channel).weight * (100.0 as Real),
     ) * (0.01 as Real)
@@ -5004,7 +5011,7 @@ pub(crate) unsafe fn as_unknown(element: *const Element) -> *mut Unknown {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Unknown` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5016,7 +5023,7 @@ pub(crate) unsafe fn as_node(element: *const Element) -> *mut Node {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Node` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5028,7 +5035,7 @@ pub(crate) unsafe fn as_mesh(element: *const Element) -> *mut Mesh {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Mesh` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5040,7 +5047,7 @@ pub(crate) unsafe fn as_light(element: *const Element) -> *mut Light {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Light` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5052,7 +5059,7 @@ pub(crate) unsafe fn as_camera(element: *const Element) -> *mut Camera {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Camera` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5064,7 +5071,7 @@ pub(crate) unsafe fn as_bone(element: *const Element) -> *mut Bone {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Bone` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5076,7 +5083,7 @@ pub(crate) unsafe fn as_empty(element: *const Element) -> *mut Empty {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Empty` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5088,7 +5095,7 @@ pub(crate) unsafe fn as_line_curve(element: *const Element) -> *mut LineCurve {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `LineCurve` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5100,7 +5107,7 @@ pub(crate) unsafe fn as_nurbs_curve(element: *const Element) -> *mut NurbsCurve 
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `NurbsCurve` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5112,7 +5119,7 @@ pub(crate) unsafe fn as_nurbs_surface(element: *const Element) -> *mut NurbsSurf
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `NurbsSurface` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5124,7 +5131,7 @@ pub(crate) unsafe fn as_nurbs_trim_surface(element: *const Element) -> *mut Nurb
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `NurbsTrimSurface` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5136,7 +5143,7 @@ pub(crate) unsafe fn as_nurbs_trim_boundary(element: *const Element) -> *mut Nur
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `NurbsTrimBoundary` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5148,7 +5155,7 @@ pub(crate) unsafe fn as_procedural_geometry(element: *const Element) -> *mut Pro
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `ProceduralGeometry` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5160,7 +5167,7 @@ pub(crate) unsafe fn as_stereo_camera(element: *const Element) -> *mut StereoCam
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `StereoCamera` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5172,7 +5179,7 @@ pub(crate) unsafe fn as_camera_switcher(element: *const Element) -> *mut CameraS
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `CameraSwitcher` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5184,7 +5191,7 @@ pub(crate) unsafe fn as_marker(element: *const Element) -> *mut Marker {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Marker` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5196,7 +5203,7 @@ pub(crate) unsafe fn as_lod_group(element: *const Element) -> *mut LodGroup {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `LodGroup` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5208,7 +5215,7 @@ pub(crate) unsafe fn as_skin_deformer(element: *const Element) -> *mut SkinDefor
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `SkinDeformer` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5220,7 +5227,7 @@ pub(crate) unsafe fn as_skin_cluster(element: *const Element) -> *mut SkinCluste
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `SkinCluster` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5232,7 +5239,7 @@ pub(crate) unsafe fn as_blend_deformer(element: *const Element) -> *mut BlendDef
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `BlendDeformer` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5244,7 +5251,7 @@ pub(crate) unsafe fn as_blend_channel(element: *const Element) -> *mut BlendChan
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `BlendChannel` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5256,7 +5263,7 @@ pub(crate) unsafe fn as_blend_shape(element: *const Element) -> *mut BlendShape 
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `BlendShape` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5268,7 +5275,7 @@ pub(crate) unsafe fn as_cache_deformer(element: *const Element) -> *mut CacheDef
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `CacheDeformer` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5280,7 +5287,7 @@ pub(crate) unsafe fn as_cache_file(element: *const Element) -> *mut CacheFile {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `CacheFile` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5292,7 +5299,7 @@ pub(crate) unsafe fn as_material(element: *const Element) -> *mut Material {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Material` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5304,7 +5311,7 @@ pub(crate) unsafe fn as_texture(element: *const Element) -> *mut Texture {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Texture` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5316,7 +5323,7 @@ pub(crate) unsafe fn as_video(element: *const Element) -> *mut Video {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Video` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5328,7 +5335,7 @@ pub(crate) unsafe fn as_shader(element: *const Element) -> *mut Shader {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Shader` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5340,7 +5347,7 @@ pub(crate) unsafe fn as_shader_binding(element: *const Element) -> *mut ShaderBi
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `ShaderBinding` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5352,7 +5359,7 @@ pub(crate) unsafe fn as_anim_stack(element: *const Element) -> *mut AnimStack {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `AnimStack` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5364,7 +5371,7 @@ pub(crate) unsafe fn as_anim_layer(element: *const Element) -> *mut AnimLayer {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `AnimLayer` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5376,7 +5383,7 @@ pub(crate) unsafe fn as_anim_value(element: *const Element) -> *mut AnimValue {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `AnimValue` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5388,7 +5395,7 @@ pub(crate) unsafe fn as_anim_curve(element: *const Element) -> *mut AnimCurve {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `AnimCurve` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5400,7 +5407,7 @@ pub(crate) unsafe fn as_display_layer(element: *const Element) -> *mut DisplayLa
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `DisplayLayer` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5412,7 +5419,7 @@ pub(crate) unsafe fn as_selection_set(element: *const Element) -> *mut Selection
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `SelectionSet` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5424,7 +5431,7 @@ pub(crate) unsafe fn as_selection_node(element: *const Element) -> *mut Selectio
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `SelectionNode` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5436,7 +5443,7 @@ pub(crate) unsafe fn as_character(element: *const Element) -> *mut Character {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Character` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5448,7 +5455,7 @@ pub(crate) unsafe fn as_constraint(element: *const Element) -> *mut Constraint {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Constraint` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5460,7 +5467,7 @@ pub(crate) unsafe fn as_audio_layer(element: *const Element) -> *mut AudioLayer 
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `AudioLayer` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5472,7 +5479,7 @@ pub(crate) unsafe fn as_audio_clip(element: *const Element) -> *mut AudioClip {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `AudioClip` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5484,7 +5491,7 @@ pub(crate) unsafe fn as_pose(element: *const Element) -> *mut Pose {
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `Pose` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }
@@ -5496,7 +5503,7 @@ pub(crate) unsafe fn as_metadata_object(element: *const Element) -> *mut Metadat
         // provenance: `element` may derive from a caller's `&Element`, whose
         // retag covers only the header — reading the full `MetadataObject` through it
         // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
-        core::ptr::with_exposed_provenance_mut(element as usize)
+        core::ptr::with_exposed_provenance_mut(element.expose_provenance())
     } else {
         core::ptr::null_mut()
     }

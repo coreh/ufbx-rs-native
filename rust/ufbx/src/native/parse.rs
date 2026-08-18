@@ -7227,12 +7227,12 @@ pub(crate) unsafe fn get_prop_type(uc: &Context, name: *const u8) -> PropType {
 
 // ufbx.c:11480-11509 `ufbxi_find_prop_with_key`
 #[inline(never)]
-pub(crate) unsafe fn find_prop_with_key<'a>(
-    props: &'a PropsView,
+pub(crate) unsafe fn find_prop_with_key<'a, M: Mode>(
+    props: &'a View<Props, M>,
     name: *const u8,
     key: u32,
-) -> Option<&'a PropView> {
-    let mut props: Option<&'a PropsView> = Some(props);
+) -> Option<&'a View<Prop, M>> {
+    let mut props: Option<&'a View<Props, M>> = Some(props);
     while let Some(cur) = props {
         let prop_data: *mut Prop = cur.props_data();
         let mut begin: usize = 0;
@@ -7254,7 +7254,9 @@ pub(crate) unsafe fn find_prop_with_key<'a>(
                 break;
             }
             if (*p).name.data == name && ((*p).flags.raw() & PropFlags::NO_VALUE.raw()) == 0 {
-                return Some(PropView::from_ptr(p as *mut Prop));
+                // Mode-generic mint from the STORED run pointer (`props_data()`
+                // value read) — adequate provenance for either mode.
+                return Some(View::<Prop, M>::mint(p as *mut Prop));
             }
             begin += 1;
         }
@@ -7278,7 +7280,10 @@ pub(crate) struct TextureFileEntry {
 // sites pass a `ufbxi_*` string constant of at least 4 characters. This is NOT
 // `ufbxi_get_name_key()`, which handles shorter names.
 #[inline(always)]
-pub(crate) unsafe fn find_prop(props: &PropsView, name: *const u8) -> Option<&PropView> {
+pub(crate) unsafe fn find_prop<M: Mode>(
+    props: &View<Props, M>,
+    name: *const u8,
+) -> Option<&View<Prop, M>> {
     let key = (*name.add(0) as u32) << 24
         | (*name.add(1) as u32) << 16
         | (*name.add(2) as u32) << 8
@@ -7288,7 +7293,11 @@ pub(crate) unsafe fn find_prop(props: &PropsView, name: *const u8) -> Option<&Pr
 
 // ufbx.c:11520-11528 `ufbxi_find_real`
 #[inline(always)]
-pub(crate) unsafe fn find_real(props: &PropsView, name: *const u8, def: Real) -> Real {
+pub(crate) unsafe fn find_real<M: Mode>(
+    props: &View<Props, M>,
+    name: *const u8,
+    def: Real,
+) -> Real {
     match find_prop(props, name) {
         // C-parity: `prop->value_real` is the `ufbx_prop` value union's first
         // real; the generated struct keeps only `value_vec4` (same mapping as
@@ -7300,8 +7309,8 @@ pub(crate) unsafe fn find_real(props: &PropsView, name: *const u8, def: Real) ->
 
 // ufbx.c:11530-11539 `ufbxi_find_vec3`
 #[inline(always)]
-pub(crate) unsafe fn find_vec3(
-    props: &PropsView,
+pub(crate) unsafe fn find_vec3<M: Mode>(
+    props: &View<Props, M>,
     name: *const u8,
     def_x: Real,
     def_y: Real,
@@ -7322,7 +7331,7 @@ pub(crate) unsafe fn find_vec3(
 
 // ufbx.c:11541-11549 `ufbxi_find_int`
 #[inline(always)]
-pub(crate) unsafe fn find_int(props: &PropsView, name: *const u8, def: i64) -> i64 {
+pub(crate) unsafe fn find_int<M: Mode>(props: &View<Props, M>, name: *const u8, def: i64) -> i64 {
     match find_prop(props, name) {
         Some(prop) => prop.value_int(),
         None => def,
@@ -7333,8 +7342,8 @@ pub(crate) unsafe fn find_int(props: &PropsView, name: *const u8, def: i64) -> i
 // Ported with the `// -- Scene processing` unit that first needs it
 // (`ufbxi_fetch_texture_layers`, ufbx.c:19251).
 #[inline(always)]
-pub(crate) unsafe fn find_enum(
-    props: &PropsView,
+pub(crate) unsafe fn find_enum<M: Mode>(
+    props: &View<Props, M>,
     name: *const u8,
     def: i64,
     max_value: i64,
