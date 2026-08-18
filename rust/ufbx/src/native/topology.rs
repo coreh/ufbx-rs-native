@@ -39,6 +39,19 @@ use crate::prelude::Real;
 use core::ffi::c_void;
 use core::mem::size_of;
 
+/// `Const` view over `mesh.vertex_normal` for the checked vertex reads: `mesh`
+/// is an arena pointer, and the accessor family only reads.
+///
+/// # Safety
+/// `mesh` must point to a valid, live `Mesh` (the callers' existing contract).
+unsafe fn vertex_normal_view<'a>(
+    mesh: *const Mesh,
+) -> &'a crate::native::view::View<crate::generated::VertexVec3, crate::native::view::Const> {
+    crate::native::view::View::<crate::generated::VertexVec3, crate::native::view::Const>::from_ptr(
+        &raw const (*mesh).vertex_normal,
+    )
+}
+
 // -- KD tree (ufbx.c:28245-28470, `#if UFBXI_FEATURE_KD`)
 
 // ufbx.c:28247-28253 `ufbxi_kd_node`
@@ -1157,16 +1170,16 @@ pub(crate) unsafe fn is_edge_smooth(
         let twin: u32 = (*topo.add(index as usize)).twin;
         if twin != NO_INDEX && (*mesh).vertex_normal.exists {
             ufbx_assert!((twin as usize) < num_topo);
-            let a0: Vec3 = get_vertex_vec3(&(*mesh).vertex_normal, index as usize);
+            let a0: Vec3 = get_vertex_vec3(vertex_normal_view(mesh), index as usize);
             let a1: Vec3 = get_vertex_vec3(
-                &(*mesh).vertex_normal,
+                vertex_normal_view(mesh),
                 (*topo.add(index as usize)).next as usize,
             );
             let b0: Vec3 = get_vertex_vec3(
-                &(*mesh).vertex_normal,
+                vertex_normal_view(mesh),
                 (*topo.add(twin as usize)).next as usize,
             );
-            let b1: Vec3 = get_vertex_vec3(&(*mesh).vertex_normal, twin as usize);
+            let b1: Vec3 = get_vertex_vec3(vertex_normal_view(mesh), twin as usize);
             if a0.x == b0.x && a0.y == b0.y && a0.z == b0.z {
                 return true;
             }

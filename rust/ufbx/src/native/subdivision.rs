@@ -1423,7 +1423,14 @@ pub(crate) unsafe fn subdivide_layer(
             }
 
             if (*mesh).vertex_crease.exists {
-                let mut v: Real = get_vertex_real(&(*mesh).vertex_crease, original_start as usize);
+                let mut v: Real = get_vertex_real(
+                    // SAFETY: Const view over the sc-owned mesh's crease attrib.
+                    crate::native::view::View::<
+                        crate::generated::VertexReal,
+                        crate::native::view::Const,
+                    >::from_ptr(&raw const (*mesh).vertex_crease),
+                    original_start as usize,
+                );
                 v *= 10.0 as Real;
                 if v > 0.0 {
                     if v > 1.0 {

@@ -5548,7 +5548,9 @@ pub fn get_skin_vertex_matrix(skin: &SkinDeformer, vertex: usize, fallback: &Mat
     let result = unsafe {
         crate::native::api::catch_get_skin_vertex_matrix(
             Some(&mut panic),
-            skin as *const SkinDeformer,
+            crate::native::view::View::<SkinDeformer, crate::native::view::Const>::from_ptr(
+                skin as *const SkinDeformer,
+            ),
             vertex,
             fallback as *const Matrix,
         )
@@ -5707,7 +5709,9 @@ pub fn triangulate_face(indices: &mut [u32], mesh: &Mesh, face: Face) -> u32 {
             Some(&mut panic),
             indices.as_mut_ptr(),
             indices.len(),
-            mesh as *const Mesh,
+            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ptr(
+                mesh as *const Mesh,
+            ),
             face,
         )
     };
@@ -5722,7 +5726,9 @@ pub fn compute_topology(mesh: &Mesh, topo: &mut [TopoEdge]) {
     unsafe {
         crate::native::api::catch_compute_topology(
             Some(&mut panic),
-            mesh as *const Mesh,
+            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ptr(
+                mesh as *const Mesh,
+            ),
             topo.as_mut_ptr(),
             topo.len(),
         )
@@ -5769,7 +5775,9 @@ pub fn get_weighted_face_normal(positions: &VertexVec3, face: Face) -> Vec3 {
     let result = unsafe {
         crate::native::api::catch_get_weighted_face_normal(
             Some(&mut panic),
-            positions as *const VertexVec3,
+            crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ptr(
+                positions as *const VertexVec3,
+            ),
             face,
         )
     };
@@ -5789,7 +5797,9 @@ pub fn generate_normal_mapping(
     let result = unsafe {
         crate::native::api::catch_generate_normal_mapping(
             Some(&mut panic),
-            mesh as *const Mesh,
+            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ptr(
+                mesh as *const Mesh,
+            ),
             topo.as_ptr(),
             topo.len(),
             normal_indices.as_mut_ptr(),
@@ -5813,8 +5823,12 @@ pub fn compute_normals(
     unsafe {
         crate::native::api::catch_compute_normals(
             Some(&mut panic),
-            mesh as *const Mesh,
-            positions as *const VertexVec3,
+            crate::native::view::View::<Mesh, crate::native::view::Const>::from_ptr(
+                mesh as *const Mesh,
+            ),
+            crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ptr(
+                positions as *const VertexVec3,
+            ),
             normal_indices.as_ptr(),
             normal_indices.len(),
             normals.as_mut_ptr(),
@@ -6059,7 +6073,13 @@ pub unsafe fn thread_pool_get_user_ptr(ctx: ThreadPoolContext) -> *mut c_void {
 pub fn get_vertex_real(v: &VertexReal, index: usize) -> Real {
     let mut panic: Panic = Default::default();
     let result = unsafe {
-        crate::native::api::catch_get_vertex_real(Some(&mut panic), v as *const VertexReal, index)
+        crate::native::api::catch_get_vertex_real(
+            Some(&mut panic),
+            crate::native::view::View::<VertexReal, crate::native::view::Const>::from_ptr(
+                v as *const VertexReal,
+            ),
+            index,
+        )
     };
     if panic.did_panic {
         panic!("ufbx::get_vertex_real() {}", panic.message());
@@ -6070,7 +6090,13 @@ pub fn get_vertex_real(v: &VertexReal, index: usize) -> Real {
 pub fn get_vertex_vec2(v: &VertexVec2, index: usize) -> Vec2 {
     let mut panic: Panic = Default::default();
     let result = unsafe {
-        crate::native::api::catch_get_vertex_vec2(Some(&mut panic), v as *const VertexVec2, index)
+        crate::native::api::catch_get_vertex_vec2(
+            Some(&mut panic),
+            crate::native::view::View::<VertexVec2, crate::native::view::Const>::from_ptr(
+                v as *const VertexVec2,
+            ),
+            index,
+        )
     };
     if panic.did_panic {
         panic!("ufbx::get_vertex_vec2() {}", panic.message());
@@ -6081,7 +6107,13 @@ pub fn get_vertex_vec2(v: &VertexVec2, index: usize) -> Vec2 {
 pub fn get_vertex_vec3(v: &VertexVec3, index: usize) -> Vec3 {
     let mut panic: Panic = Default::default();
     let result = unsafe {
-        crate::native::api::catch_get_vertex_vec3(Some(&mut panic), v as *const VertexVec3, index)
+        crate::native::api::catch_get_vertex_vec3(
+            Some(&mut panic),
+            crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ptr(
+                v as *const VertexVec3,
+            ),
+            index,
+        )
     };
     if panic.did_panic {
         panic!("ufbx::get_vertex_vec3() {}", panic.message());
@@ -6092,7 +6124,13 @@ pub fn get_vertex_vec3(v: &VertexVec3, index: usize) -> Vec3 {
 pub fn get_vertex_vec4(v: &VertexVec4, index: usize) -> Vec4 {
     let mut panic: Panic = Default::default();
     let result = unsafe {
-        crate::native::api::catch_get_vertex_vec4(Some(&mut panic), v as *const VertexVec4, index)
+        crate::native::api::catch_get_vertex_vec4(
+            Some(&mut panic),
+            crate::native::view::View::<VertexVec4, crate::native::view::Const>::from_ptr(
+                v as *const VertexVec4,
+            ),
+            index,
+        )
     };
     if panic.did_panic {
         panic!("ufbx::get_vertex_vec4() {}", panic.message());
@@ -6103,7 +6141,13 @@ pub fn get_vertex_vec4(v: &VertexVec4, index: usize) -> Vec4 {
 pub fn get_vertex_w_vec3(v: &VertexVec3, index: usize) -> Real {
     let mut panic: Panic = Default::default();
     let result = unsafe {
-        crate::native::api::catch_get_vertex_w_vec3(Some(&mut panic), v as *const VertexVec3, index)
+        crate::native::api::catch_get_vertex_w_vec3(
+            Some(&mut panic),
+            crate::native::view::View::<VertexVec3, crate::native::view::Const>::from_ptr(
+                v as *const VertexVec3,
+            ),
+            index,
+        )
     };
     if panic.did_panic {
         panic!("ufbx::get_vertex_w_vec3() {}", panic.message());

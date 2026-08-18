@@ -2971,12 +2971,15 @@ pub(crate) unsafe fn matrix_to_transform(m: *const Matrix) -> Transform {
 
 // ufbx.c:31928-32018 `ufbx_catch_get_skin_vertex_matrix`
 #[inline(never)]
-pub(crate) unsafe fn catch_get_skin_vertex_matrix(
+pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
     mut panic: Option<&mut Panic>,
-    skin: *const SkinDeformer,
+    skin: &View<SkinDeformer, M>,
     vertex: usize,
     fallback: *const Matrix,
 ) -> Matrix {
+    // View-typed boundary; the C-shaped body below reads through the raw
+    // pointer (reads via a `Const` view's SRO provenance are legal).
+    let skin: *const SkinDeformer = skin.as_ptr();
     ufbx_assert!(!skin.is_null());
     // C-parity: the panic guard dereferences `skin` BEFORE the `!skin` test on
     // the next line — keep the order (a null `skin` is already an assert
@@ -3764,13 +3767,15 @@ pub(crate) unsafe fn find_face_index(mesh: *mut Mesh, index: usize) -> u32 {
 // C: `ufbx_abi ufbxi_noinline` (ufbx.c:32392).
 #[cfg(feature = "triangulation")]
 #[inline(never)]
-pub(crate) unsafe fn catch_triangulate_face(
+pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
     mut panic: Option<&mut Panic>,
     indices: *mut u32,
     num_indices: usize,
-    mesh: *const Mesh,
+    mesh: &View<Mesh, M>,
     face: Face,
 ) -> u32 {
+    // View-typed boundary; C-shaped body reads through the raw pointer.
+    let mesh: *const Mesh = mesh.as_ptr();
     if face.num_indices < 3 {
         return 0;
     }
@@ -3910,11 +3915,11 @@ pub(crate) unsafe fn catch_triangulate_face(
 // C: `ufbx_abi ufbxi_noinline` (ufbx.c:32392).
 #[cfg(not(feature = "triangulation"))]
 #[inline(never)]
-pub(crate) unsafe fn catch_triangulate_face(
+pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
     mut panic: Option<&mut Panic>,
     indices: *mut u32,
     num_indices: usize,
-    mesh: *const Mesh,
+    mesh: &View<Mesh, M>,
     face: Face,
 ) -> u32 {
     // C: `indices`/`num_indices`/`mesh`/`face` are unreferenced in the `#else`
@@ -3929,12 +3934,15 @@ pub(crate) unsafe fn catch_triangulate_face(
 }
 
 // ufbx.c:32477-32482 `ufbx_catch_compute_topology`
-pub(crate) unsafe fn catch_compute_topology(
+pub(crate) unsafe fn catch_compute_topology<M: Mode>(
     mut panic: Option<&mut Panic>,
-    mesh: *const Mesh,
+    mesh: &View<Mesh, M>,
     indices: *mut TopoEdge,
     num_indices: usize,
 ) {
+    // View-typed boundary; the C-shaped body below reads through the raw
+    // pointer (reads via a `Const` view's SRO provenance are legal).
+    let mesh: *const Mesh = mesh.as_ptr();
     if ufbxi_panicf!(
         panic,
         num_indices >= (*mesh).num_indices,
@@ -4004,57 +4012,116 @@ pub(crate) unsafe fn catch_topo_prev_vertex_edge(
     (*topo.add((*topo.add(index as usize)).prev as usize)).twin
 }
 
+// Mode-generic read accessors over the public vertex-attribute structs
+// (`ufbx_vertex_*`): the get_vertex_* family serves safe Rust callers
+// (`&VertexVec3` -> `Const`) and internal `Mut` users alike. Names are
+// distinct from subdivision.rs's Mut-only `*_view` lenses on the same types.
+macro_rules! vertex_attrib_views {
+    ($($ty:ty => $elem:ty),* $(,)?) => {$(
+        impl<M: Mode> View<$ty, M> {
+            #[inline(always)]
+            pub(crate) fn indices_count(&self) -> usize {
+                // SAFETY: reading the `indices.count` field of a valid attrib.
+                unsafe { (*self.as_ptr()).indices.count }
+            }
+            #[inline(always)]
+            pub(crate) fn indices_data(&self) -> *const u32 {
+                // SAFETY: reading the `indices.data` run pointer (stored value).
+                unsafe { (*self.as_ptr()).indices.data }
+            }
+            #[inline(always)]
+            pub(crate) fn values_count(&self) -> usize {
+                // SAFETY: reading the `values.count` field of a valid attrib.
+                unsafe { (*self.as_ptr()).values.count }
+            }
+            #[inline(always)]
+            pub(crate) fn values_data(&self) -> *const $elem {
+                // SAFETY: reading the `values.data` run pointer (stored value).
+                unsafe { (*self.as_ptr()).values.data }
+            }
+        }
+    )*};
+}
+vertex_attrib_views! {
+    crate::generated::VertexReal => Real,
+    crate::generated::VertexVec2 => Vec2,
+    VertexVec3 => Vec3,
+    crate::generated::VertexVec4 => Vec4,
+}
+
+impl<M: Mode> View<VertexVec3, M> {
+    #[inline(always)]
+    pub(crate) fn values_w_count(&self) -> usize {
+        // SAFETY: reading the `values_w.count` field of a valid attrib.
+        unsafe { (*self.as_ptr()).values_w.count }
+    }
+    #[inline(always)]
+    pub(crate) fn values_w_data(&self) -> *const Real {
+        // SAFETY: reading the `values_w.data` run pointer (stored value).
+        unsafe { (*self.as_ptr()).values_w.data }
+    }
+}
+
 // ufbx.h:5763 `ufbx_get_vertex_real` (an `ufbx_inline`, not `ufbx_abi`, so no
 // shim); same `(int32_t)` index cast as `ufbx_get_vertex_vec3` below.
 #[inline(always)]
-pub(crate) unsafe fn get_vertex_real(v: *const crate::generated::VertexReal, index: usize) -> Real {
-    ufbx_assert!(index < (*v).indices.count);
-    *(*v)
-        .values
-        .data
-        .offset(*(*v).indices.data.add(index) as i32 as isize)
+pub(crate) fn get_vertex_real<M: Mode>(
+    v: &View<crate::generated::VertexReal, M>,
+    index: usize,
+) -> Real {
+    ufbx_assert!(index < v.indices_count());
+    // SAFETY: `index < indices.count` (always-on assert above); the stored
+    // index is a valid values index or NO_INDEX (== -1 as i32), which reads
+    // the zero element ufbx guarantees immediately BEFORE `values.data` —
+    // both in the attrib's arena allocation (scene-construction invariant;
+    // attribs are not constructible from safe code).
+    unsafe {
+        *v.values_data()
+            .offset(*v.indices_data().add(index) as i32 as isize)
+    }
 }
 
 // ufbx.h:5765 `ufbx_get_vertex_vec3` (an `ufbx_inline`, not `ufbx_abi`, so no
 // shim): `v->values.data[(int32_t)v->indices.data[index]]`. The `(int32_t)`
 // cast is C-parity — a >= 0x80000000 index sign-extends into a negative offset.
 #[inline(always)]
-pub(crate) unsafe fn get_vertex_vec3(v: *const VertexVec3, index: usize) -> Vec3 {
-    ufbx_assert!(index < (*v).indices.count);
-    *(*v)
-        .values
-        .data
-        .offset(*(*v).indices.data.add(index) as i32 as isize)
+pub(crate) fn get_vertex_vec3<M: Mode>(v: &View<VertexVec3, M>, index: usize) -> Vec3 {
+    ufbx_assert!(index < v.indices_count());
+    // SAFETY: same argument as `get_vertex_real` — checked index, and the
+    // NO_INDEX read lands on the guaranteed zero element before `values.data`.
+    unsafe {
+        *v.values_data()
+            .offset(*v.indices_data().add(index) as i32 as isize)
+    }
 }
 
 // ufbx.c:32501-32532 `ufbx_catch_get_weighted_face_normal`
 // C: `ufbx_abi ufbxi_noinline` (ufbx.c:32501).
 #[inline(never)]
-pub(crate) unsafe fn catch_get_weighted_face_normal(
+pub(crate) fn catch_get_weighted_face_normal<M: Mode>(
     mut panic: Option<&mut Panic>,
-    positions: *const VertexVec3,
+    positions: &View<VertexVec3, M>,
     face: Face,
 ) -> Vec3 {
     if ufbxi_panicf!(
         panic,
-        face.index_begin as usize <= (*positions).indices.count,
+        face.index_begin as usize <= positions.indices_count(),
         "Face index begin (%u) out of bounds (%zu)",
         face.index_begin,
-        (*positions).indices.count,
+        positions.indices_count(),
     ) {
         return ZERO_VEC3;
     }
     if ufbxi_panicf!(
         panic,
-        (*positions)
-            .indices
-            .count
+        positions
+            .indices_count()
             .wrapping_sub(face.index_begin as usize)
             >= face.num_indices as usize,
         "Face index end (%u + %u) out of bounds (%zu)",
         face.index_begin,
         face.num_indices,
-        (*positions).indices.count,
+        positions.indices_count(),
     ) {
         return ZERO_VEC3;
     }
@@ -4095,15 +4162,18 @@ pub(crate) unsafe fn catch_get_weighted_face_normal(
 // ufbx.c:32534-32578 `ufbx_catch_generate_normal_mapping`
 // C-parity: this one is declared WITHOUT `ufbx_abi` in ufbx.c (the `ufbx.h`
 // declaration carries it) — no behavioral difference here.
-pub(crate) unsafe fn catch_generate_normal_mapping(
+pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
     mut panic: Option<&mut Panic>,
-    mesh: *const Mesh,
+    mesh: &View<Mesh, M>,
     topo: *const TopoEdge,
     num_topo: usize,
     normal_indices: *mut u32,
     num_normal_indices: usize,
     assume_smooth: bool,
 ) -> usize {
+    // View-typed boundary; the C-shaped body below reads through the raw
+    // pointer (reads via a `Const` view's SRO provenance are legal).
+    let mesh: *const Mesh = mesh.as_ptr();
     let mut next_index: u32 = 0;
     if ufbxi_panicf!(
         panic,
@@ -4183,7 +4253,7 @@ pub(crate) unsafe fn generate_normal_mapping(
 ) -> usize {
     catch_generate_normal_mapping(
         None,
-        mesh,
+        View::<Mesh, Const>::from_ptr(mesh),
         topo,
         num_topo,
         normal_indices,
@@ -4193,15 +4263,18 @@ pub(crate) unsafe fn generate_normal_mapping(
 }
 
 // ufbx.c:32585-32612 `ufbx_catch_compute_normals`
-pub(crate) unsafe fn catch_compute_normals(
+pub(crate) unsafe fn catch_compute_normals<M: Mode>(
     mut panic: Option<&mut Panic>,
-    mesh: *const Mesh,
-    positions: *const VertexVec3,
+    mesh: &View<Mesh, M>,
+    positions: &View<VertexVec3, M>,
     normal_indices: *const u32,
     num_normal_indices: usize,
     normals: *mut Vec3,
     num_normals: usize,
 ) {
+    // View-typed boundary; the C-shaped body below reads through the raw
+    // pointer (reads via a `Const` view's SRO provenance are legal).
+    let mesh: *const Mesh = mesh.as_ptr();
     if ufbxi_panicf!(
         panic,
         num_normal_indices >= (*mesh).num_indices,
@@ -4220,7 +4293,7 @@ pub(crate) unsafe fn catch_compute_normals(
 
     for fi in 0..(*mesh).num_faces {
         let face: Face = *(*mesh).faces.data.add(fi);
-        let normal: Vec3 = get_weighted_face_normal(positions, face);
+        let normal: Vec3 = catch_get_weighted_face_normal(None, positions, face);
         for ix in 0..face.num_indices as usize {
             let index: u32 = *normal_indices.add((face.index_begin as usize).wrapping_add(ix));
 
@@ -4261,8 +4334,8 @@ pub(crate) unsafe fn compute_normals(
 ) {
     catch_compute_normals(
         None,
-        mesh,
-        positions,
+        View::<Mesh, Const>::from_ptr(mesh),
+        View::<VertexVec3, Const>::from_ptr(positions),
         normal_indices,
         num_normal_indices,
         normals,
@@ -4921,149 +4994,172 @@ pub(crate) unsafe fn thread_pool_get_user_ptr(ctx: ThreadPoolContext) -> *mut c_
 
 // ufbx.c:32993-32999 `ufbx_catch_get_vertex_real`
 #[inline(never)]
-pub(crate) unsafe fn catch_get_vertex_real(
+pub(crate) fn catch_get_vertex_real<M: Mode>(
     mut panic: Option<&mut Panic>,
-    v: *const VertexReal,
+    v: &View<VertexReal, M>,
     index: usize,
 ) -> Real {
     if ufbxi_panicf!(
         panic,
-        index < (*v).indices.count,
+        index < v.indices_count(),
         "index (%zu) out of range (%zu)",
         index,
-        (*v).indices.count,
+        v.indices_count(),
     ) {
         return 0.0;
     }
-    let ix: u32 = *(*v).indices.data.add(index);
+    // SAFETY: `index < indices.count` just checked; `indices.data` is the
+    // attrib's stored arena run.
+    let ix: u32 = unsafe { *v.indices_data().add(index) };
     if ufbxi_panicf!(
         panic,
-        (ix as usize) < (*v).values.count || ix == NO_INDEX,
+        (ix as usize) < v.values_count() || ix == NO_INDEX,
         "Corrupted or missing vertex attribute (%u) at %zu",
         ix,
         index,
     ) {
         return 0.0;
     }
-    *(*v).values.data.offset(ix as i32 as isize)
+    // SAFETY: `ix < values.count`, or `ix == NO_INDEX` (== -1 as i32) which
+    // reads the zero element ufbx guarantees immediately BEFORE `values.data`
+    // (same arena allocation; the C API relies on the same invariant).
+    unsafe { *v.values_data().offset(ix as i32 as isize) }
 }
 
 // ufbx.c:33001-33007 `ufbx_catch_get_vertex_vec2`
 #[inline(never)]
-pub(crate) unsafe fn catch_get_vertex_vec2(
+pub(crate) fn catch_get_vertex_vec2<M: Mode>(
     mut panic: Option<&mut Panic>,
-    v: *const VertexVec2,
+    v: &View<VertexVec2, M>,
     index: usize,
 ) -> Vec2 {
     if ufbxi_panicf!(
         panic,
-        index < (*v).indices.count,
+        index < v.indices_count(),
         "index (%zu) out of range (%zu)",
         index,
-        (*v).indices.count,
+        v.indices_count(),
     ) {
         return ZERO_VEC2;
     }
-    let ix: u32 = *(*v).indices.data.add(index);
+    // SAFETY: `index < indices.count` just checked; `indices.data` is the
+    // attrib's stored arena run.
+    let ix: u32 = unsafe { *v.indices_data().add(index) };
     if ufbxi_panicf!(
         panic,
-        (ix as usize) < (*v).values.count || ix == NO_INDEX,
+        (ix as usize) < v.values_count() || ix == NO_INDEX,
         "Corrupted or missing vertex attribute (%u) at %zu",
         ix,
         index,
     ) {
         return ZERO_VEC2;
     }
-    *(*v).values.data.offset(ix as i32 as isize)
+    // SAFETY: `ix < values.count`, or `ix == NO_INDEX` (== -1 as i32) which
+    // reads the zero element ufbx guarantees immediately BEFORE `values.data`
+    // (same arena allocation; the C API relies on the same invariant).
+    unsafe { *v.values_data().offset(ix as i32 as isize) }
 }
 
 // ufbx.c:33009-33015 `ufbx_catch_get_vertex_vec3`
 #[inline(never)]
-pub(crate) unsafe fn catch_get_vertex_vec3(
+pub(crate) fn catch_get_vertex_vec3<M: Mode>(
     mut panic: Option<&mut Panic>,
-    v: *const VertexVec3,
+    v: &View<VertexVec3, M>,
     index: usize,
 ) -> Vec3 {
     if ufbxi_panicf!(
         panic,
-        index < (*v).indices.count,
+        index < v.indices_count(),
         "index (%zu) out of range (%zu)",
         index,
-        (*v).indices.count,
+        v.indices_count(),
     ) {
         return ZERO_VEC3;
     }
-    let ix: u32 = *(*v).indices.data.add(index);
+    // SAFETY: `index < indices.count` just checked; `indices.data` is the
+    // attrib's stored arena run.
+    let ix: u32 = unsafe { *v.indices_data().add(index) };
     if ufbxi_panicf!(
         panic,
-        (ix as usize) < (*v).values.count || ix == NO_INDEX,
+        (ix as usize) < v.values_count() || ix == NO_INDEX,
         "Corrupted or missing vertex attribute (%u) at %zu",
         ix,
         index,
     ) {
         return ZERO_VEC3;
     }
-    *(*v).values.data.offset(ix as i32 as isize)
+    // SAFETY: `ix < values.count`, or `ix == NO_INDEX` (== -1 as i32) which
+    // reads the zero element ufbx guarantees immediately BEFORE `values.data`
+    // (same arena allocation; the C API relies on the same invariant).
+    unsafe { *v.values_data().offset(ix as i32 as isize) }
 }
 
 // ufbx.c:33017-33023 `ufbx_catch_get_vertex_vec4`
 #[inline(never)]
-pub(crate) unsafe fn catch_get_vertex_vec4(
+pub(crate) fn catch_get_vertex_vec4<M: Mode>(
     mut panic: Option<&mut Panic>,
-    v: *const VertexVec4,
+    v: &View<VertexVec4, M>,
     index: usize,
 ) -> Vec4 {
     if ufbxi_panicf!(
         panic,
-        index < (*v).indices.count,
+        index < v.indices_count(),
         "index (%zu) out of range (%zu)",
         index,
-        (*v).indices.count,
+        v.indices_count(),
     ) {
         return ZERO_VEC4;
     }
-    let ix: u32 = *(*v).indices.data.add(index);
+    // SAFETY: `index < indices.count` just checked; `indices.data` is the
+    // attrib's stored arena run.
+    let ix: u32 = unsafe { *v.indices_data().add(index) };
     if ufbxi_panicf!(
         panic,
-        (ix as usize) < (*v).values.count || ix == NO_INDEX,
+        (ix as usize) < v.values_count() || ix == NO_INDEX,
         "Corrupted or missing vertex attribute (%u) at %zu",
         ix,
         index,
     ) {
         return ZERO_VEC4;
     }
-    *(*v).values.data.offset(ix as i32 as isize)
+    // SAFETY: `ix < values.count`, or `ix == NO_INDEX` (== -1 as i32) which
+    // reads the zero element ufbx guarantees immediately BEFORE `values.data`
+    // (same arena allocation; the C API relies on the same invariant).
+    unsafe { *v.values_data().offset(ix as i32 as isize) }
 }
 
 // ufbx.c:33025-33032 `ufbx_catch_get_vertex_w_vec3`
-pub(crate) unsafe fn catch_get_vertex_w_vec3(
+pub(crate) fn catch_get_vertex_w_vec3<M: Mode>(
     mut panic: Option<&mut Panic>,
-    v: *const VertexVec3,
+    v: &View<VertexVec3, M>,
     index: usize,
 ) -> Real {
     if ufbxi_panicf!(
         panic,
-        index < (*v).indices.count,
+        index < v.indices_count(),
         "index (%zu) out of range (%zu)",
         index,
-        (*v).indices.count,
+        v.indices_count(),
     ) {
         return 0.0;
     }
-    if (*v).values_w.count == 0 {
+    if v.values_w_count() == 0 {
         return 0.0;
     }
-    let ix: u32 = *(*v).indices.data.add(index);
+    // SAFETY: `index < indices.count` just checked; stored arena run.
+    let ix: u32 = unsafe { *v.indices_data().add(index) };
     if ufbxi_panicf!(
         panic,
-        (ix as usize) < (*v).values.count || ix == NO_INDEX,
+        (ix as usize) < v.values_count() || ix == NO_INDEX,
         "Corrupted or missing vertex attribute (%u) at %zu",
         ix,
         index,
     ) {
         return 0.0;
     }
-    *(*v).values_w.data.offset(ix as i32 as isize)
+    // SAFETY: `values_w` mirrors `values` (same counts and sentinel; C indexes
+    // it with the same checked/NO_INDEX offset).
+    unsafe { *v.values_w_data().offset(ix as i32 as isize) }
 }
 
 // ufbx.c:33034-33075 `ufbx_as_*` — each returns `element` reinterpreted iff its
@@ -5881,12 +5977,18 @@ pub(crate) unsafe fn triangulate_face(
     mesh: *const Mesh,
     face: Face,
 ) -> u32 {
-    catch_triangulate_face(None, indices, num_indices, mesh, face)
+    catch_triangulate_face(
+        None,
+        indices,
+        num_indices,
+        View::<Mesh, Const>::from_ptr(mesh),
+        face,
+    )
 }
 
 // ufbx.c:33168-33170 `ufbx_compute_topology`
 pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge, num_topo: usize) {
-    catch_compute_topology(None, mesh, topo, num_topo)
+    catch_compute_topology(None, View::<Mesh, Const>::from_ptr(mesh), topo, num_topo)
 }
 
 // ufbx.c:33171-33173 `ufbx_topo_next_vertex_edge`
@@ -5909,7 +6011,7 @@ pub(crate) unsafe fn topo_prev_vertex_edge(
 
 // ufbx.c:33177-33179 `ufbx_get_weighted_face_normal`
 pub(crate) unsafe fn get_weighted_face_normal(positions: *const VertexVec3, face: Face) -> Vec3 {
-    catch_get_weighted_face_normal(None, positions, face)
+    catch_get_weighted_face_normal(None, View::<VertexVec3, Const>::from_ptr(positions), face)
 }
 
 #[cfg(test)]

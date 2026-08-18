@@ -1538,6 +1538,32 @@ def emit_ffi_global(gl: ir.Global):
     gt = fmt_ffi_type(typ, "")
     emit(f"pub static {gl.name}: {gt};")
 
+
+# Wrappers whose native fns take mode-generic views for these `&T` reference
+# args: the raw `name as *const T` pass is replaced with a read-only `Const`
+# view mint — the mint every readable provenance (including a safe caller's
+# `&T`) supports. Keys are C names; values map arg name -> generated type.
+const_view_args = {
+    "ufbx_catch_get_vertex_real": {"v": "VertexReal"},
+    "ufbx_catch_get_vertex_vec2": {"v": "VertexVec2"},
+    "ufbx_catch_get_vertex_vec3": {"v": "VertexVec3"},
+    "ufbx_catch_get_vertex_vec4": {"v": "VertexVec4"},
+    "ufbx_catch_get_vertex_w_vec3": {"v": "VertexVec3"},
+    "ufbx_catch_get_skin_vertex_matrix": {"skin": "SkinDeformer"},
+    "ufbx_catch_triangulate_face": {"mesh": "Mesh"},
+    "ufbx_catch_compute_topology": {"mesh": "Mesh"},
+    "ufbx_catch_generate_normal_mapping": {"mesh": "Mesh"},
+    "ufbx_catch_compute_normals": {"mesh": "Mesh", "positions": "VertexVec3"},
+    "ufbx_catch_get_weighted_face_normal": {"positions": "VertexVec3"},
+}
+
+def apply_const_view_args(cname, arg_pass):
+    for aname, aty in const_view_args.get(cname, {}).items():
+        raw = f"{aname} as *const {aty}"
+        mint = (f"crate::native::view::View::<{aty}, crate::native::view::Const>"
+                f"::from_ptr({raw})")
+        arg_pass[:] = [mint if a == raw else a for a in arg_pass]
+
 def parse_capi_forwarders(capi_path):
     # The safe wrappers in generated.rs historically call the `unsafe extern
     # "C"` capi shims, which themselves just forward to the native port. When a
@@ -1602,6 +1628,14 @@ def parse_capi_forwarders(capi_path):
         # Strip line comments and collapse whitespace to a single statement.
         lines = [ln.split("//", 1)[0].rstrip() for ln in body.splitlines()]
         stmt = " ".join(ln.strip() for ln in lines if ln.strip())
+        # A read-only Const-view mint of a param counts as verbatim (the
+        # wrapper re-mints from its own `&T`, see apply_const_view_args);
+        # strip it BEFORE arg-splitting — the mint's generic args contain
+        # commas the paren-depth splitter cannot see past.
+        stmt = re.sub(
+            r"crate::native::view::View::<[^>]*>::from_ptr\(\s*"
+            r"([A-Za-z_][A-Za-z0-9_]*)\s*,?\s*\)",
+            r"\1", stmt)
         cm = re.fullmatch(
             r'crate::native::([a-z_]+)::([A-Za-z0-9_]+)\s*\((.*)\)', stmt)
         if not cm:
@@ -1810,6 +1844,7 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
             # C-ABI `*mut Panic`.
             arg_pass.insert(0, "Some(&mut panic)" if fwd else "&mut panic")
 
+        apply_const_view_args(rf.ir.name, arg_pass)
         arg_pass_str = ", ".join(arg_pass)
         if direct_safe:
             emit(f"let result = {call_head}({arg_pass_str});")
