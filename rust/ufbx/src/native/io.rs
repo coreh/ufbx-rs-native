@@ -560,7 +560,7 @@ const SEEK_END: i32 = 2;
 // conversion + `_wfopen`).
 #[cfg(windows)]
 #[inline(never)]
-pub(crate) fn fopen(
+pub(crate) unsafe fn fopen(
     fc: &FileContext,
     path: *const u8,
     path_len: usize,

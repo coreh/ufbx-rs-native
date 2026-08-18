@@ -2067,7 +2067,7 @@ pub(crate) struct GeometryCacheImp {
 // build with `UFBX_MINIMAL`.
 #[cfg(not(feature = "geometry-cache"))]
 #[inline(never)]
-pub(crate) fn load_geometry_cache(
+pub(crate) unsafe fn load_geometry_cache(
     filename: String,
     user_opts: *const RawGeometryCacheOpts,
     p_error: *mut Error,
