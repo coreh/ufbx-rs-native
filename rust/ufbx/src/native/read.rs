@@ -1180,11 +1180,9 @@ pub(crate) fn insert_fbx_id(uc: &Context, fbx_id: u64, element_id: u32) -> Resul
             (*entry).user_id = 0;
         }
     } else {
-        // SAFETY: the warning macro reaches uc's own `warnings` state.
         ufbxi_check!(
             uc,
-            unsafe { ufbxi_warnf!(uc, WarningType::DuplicateObjectId, "Duplicate object ID") }
-                .is_ok(),
+            ufbxi_warnf!(uc, WarningType::DuplicateObjectId, "Duplicate object ID").is_ok(),
             "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_DUPLICATE_OBJECT_ID, ~0u, \"Duplicate object ID\")"
         );
     }

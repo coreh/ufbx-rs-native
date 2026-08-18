@@ -376,7 +376,10 @@ pub(crate) unsafe fn sanitize_string(
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
         ufbxi_warnf_imp!(
-            (*pool).warnings,
+            // SAFETY: `pool->warnings`, when non-null, is the context-owned
+            // warnings sink the pool was initialized with (`set_warnings`),
+            // live with write provenance for the whole load.
+            unsafe { crate::native::warnings::opt_warnings_view((*pool).warnings) },
             WarningType::BadUnicode,
             !0u32,
             "Bad UTF-8 string"

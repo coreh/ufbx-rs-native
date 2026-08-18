@@ -964,15 +964,11 @@ pub(crate) fn obj_parse_indices(
     if num_tokens == 0 && !uc.opts_view().allow_empty_faces() {
         ufbxi_check!(
             uc,
-            // SAFETY: appends to uc's own warning buffer; the format literal
-            // is NUL-terminated and takes no arguments.
-            unsafe {
-                ufbxi_warnf!(
-                    uc,
-                    WarningType::EmptyFaceRemoved,
-                    "Empty face has been removed"
-                )
-            }
+            ufbxi_warnf!(
+                uc,
+                WarningType::EmptyFaceRemoved,
+                "Empty face has been removed"
+            )
             .is_ok(),
             "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_EMPTY_FACE_REMOVED, ~0u, \"Empty face has been removed\")"
         );
@@ -1980,15 +1976,11 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
         } else {
             ufbxi_check!(
                 uc,
-                // SAFETY: appends to uc's own warning buffer; the format
-                // literal is NUL-terminated and takes no arguments.
-                unsafe {
-                    ufbxi_warnf!(
-                        uc,
-                        WarningType::UnknownObjDirective,
-                        "Unknown .obj directive, skipped line"
-                    )
-                }
+                ufbxi_warnf!(
+                    uc,
+                    WarningType::UnknownObjDirective,
+                    "Unknown .obj directive, skipped line"
+                )
                 .is_ok(),
                 "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_UNKNOWN_OBJ_DIRECTIVE, ~0u, \"Unknown .obj directive, skipped line\")"
             );
@@ -2351,17 +2343,14 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
             if !has_stream {
                 ufbxi_check!(
                     uc,
-                    // SAFETY: appends to uc's own warning buffer; the format
-                    // literal is NUL-terminated and its `%s` argument is the
-                    // caller-supplied `obj_mtl_path`, a NUL-terminated string.
-                    unsafe {
-                        ufbxi_warnf!(
-                            uc,
-                            WarningType::MissingExternalFile,
-                            "Could not open .mtl file: %s",
-                            uc.opts_view().obj_mtl_path_view().data()
-                        )
-                    }
+                    // The `%s` argument is the caller-supplied `obj_mtl_path`,
+                    // a NUL-terminated string (PrintArg pointer contract).
+                    ufbxi_warnf!(
+                        uc,
+                        WarningType::MissingExternalFile,
+                        "Could not open .mtl file: %s",
+                        uc.opts_view().obj_mtl_path_view().data()
+                    )
                     .is_ok(),
                     "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_EXTERNAL_FILE, ~0u, \"Could not open .mtl file: %s\", uc->opts.obj_mtl_path.data)"
                 );
@@ -2470,18 +2459,15 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                 if has_stream {
                     ufbxi_check!(
                         uc,
-                        // SAFETY: appends to uc's own warning buffer; the
-                        // format literal is NUL-terminated and `copy` is the
-                        // fresh arena copy of the filename, terminator
-                        // included.
-                        unsafe {
-                            ufbxi_warnf!(
-                                uc,
-                                WarningType::ImplicitMtl,
-                                "Opened .mtl file derived from .obj filename: %s",
-                                copy as *const u8
-                            )
-                        }
+                        // The `%s` argument `copy` is the fresh arena copy of
+                        // the filename, terminator included (PrintArg pointer
+                        // contract).
+                        ufbxi_warnf!(
+                            uc,
+                            WarningType::ImplicitMtl,
+                            "Opened .mtl file derived from .obj filename: %s",
+                            copy as *const u8
+                        )
                         .is_ok(),
                         "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_IMPLICIT_MTL, ~0u, \"Opened .mtl file derived from .obj filename: %s\", copy)"
                     );
