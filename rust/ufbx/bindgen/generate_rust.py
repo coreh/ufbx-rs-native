@@ -1621,6 +1621,11 @@ def parse_capi_forwarders(capi_path):
                 cur += ch
         if cur.strip():
             call_args.append(cur.strip())
+        # A `panic.as_mut()` bridge (C-ABI nullable `*mut Panic` -> native
+        # `Option<&mut Panic>`) still counts as a verbatim forward: the safe
+        # wrapper passes `Some(&mut panic)`, the same value by construction.
+        call_args = [a[:-len(".as_mut()")] if a.endswith(".as_mut()") else a
+                     for a in call_args]
         if call_args == pnames:
             out[cname] = (mod, fn)
     return out
@@ -1801,7 +1806,9 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
             arg_pass.append("&mut error")
         if rf.ir.has_panic:
             emit(f"let mut panic: Panic = Default::default();")
-            arg_pass.insert(0, "&mut panic")
+            # Native fns take `Option<&mut Panic>`; the capi shims keep the
+            # C-ABI `*mut Panic`.
+            arg_pass.insert(0, "Some(&mut panic)" if fwd else "&mut panic")
 
         arg_pass_str = ", ".join(arg_pass)
         if direct_safe:

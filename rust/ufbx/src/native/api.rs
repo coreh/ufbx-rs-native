@@ -2972,7 +2972,7 @@ pub(crate) unsafe fn matrix_to_transform(m: *const Matrix) -> Transform {
 // ufbx.c:31928-32018 `ufbx_catch_get_skin_vertex_matrix`
 #[inline(never)]
 pub(crate) unsafe fn catch_get_skin_vertex_matrix(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     skin: *const SkinDeformer,
     vertex: usize,
     fallback: *const Matrix,
@@ -3765,7 +3765,7 @@ pub(crate) unsafe fn find_face_index(mesh: *mut Mesh, index: usize) -> u32 {
 #[cfg(feature = "triangulation")]
 #[inline(never)]
 pub(crate) unsafe fn catch_triangulate_face(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     indices: *mut u32,
     num_indices: usize,
     mesh: *const Mesh,
@@ -3911,7 +3911,7 @@ pub(crate) unsafe fn catch_triangulate_face(
 #[cfg(not(feature = "triangulation"))]
 #[inline(never)]
 pub(crate) unsafe fn catch_triangulate_face(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     indices: *mut u32,
     num_indices: usize,
     mesh: *const Mesh,
@@ -3920,13 +3920,17 @@ pub(crate) unsafe fn catch_triangulate_face(
     // C: `indices`/`num_indices`/`mesh`/`face` are unreferenced in the `#else`
     // arm.
     let _ = (indices, num_indices, mesh, face);
-    crate::native::error::panicf_imp(panic, "Triangulation disabled\0".as_ptr(), &[]);
+    crate::native::error::panicf_imp(
+        panic.take(),
+        crate::native::error::FailStr::new(b"Triangulation disabled\0"),
+        &[],
+    );
     0
 }
 
 // ufbx.c:32477-32482 `ufbx_catch_compute_topology`
 pub(crate) unsafe fn catch_compute_topology(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     mesh: *const Mesh,
     indices: *mut TopoEdge,
     num_indices: usize,
@@ -3946,7 +3950,7 @@ pub(crate) unsafe fn catch_compute_topology(
 
 // ufbx.c:32484-32492 `ufbx_catch_topo_next_vertex_edge`
 pub(crate) unsafe fn catch_topo_next_vertex_edge(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     topo: *const TopoEdge,
     num_topo: usize,
     index: u32,
@@ -3979,7 +3983,7 @@ pub(crate) unsafe fn catch_topo_next_vertex_edge(
 
 // ufbx.c:32494-32499 `ufbx_catch_topo_prev_vertex_edge`
 pub(crate) unsafe fn catch_topo_prev_vertex_edge(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     topo: *const TopoEdge,
     num_topo: usize,
     index: u32,
@@ -4027,7 +4031,7 @@ pub(crate) unsafe fn get_vertex_vec3(v: *const VertexVec3, index: usize) -> Vec3
 // C: `ufbx_abi ufbxi_noinline` (ufbx.c:32501).
 #[inline(never)]
 pub(crate) unsafe fn catch_get_weighted_face_normal(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     positions: *const VertexVec3,
     face: Face,
 ) -> Vec3 {
@@ -4092,7 +4096,7 @@ pub(crate) unsafe fn catch_get_weighted_face_normal(
 // C-parity: this one is declared WITHOUT `ufbx_abi` in ufbx.c (the `ufbx.h`
 // declaration carries it) — no behavioral difference here.
 pub(crate) unsafe fn catch_generate_normal_mapping(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     mesh: *const Mesh,
     topo: *const TopoEdge,
     num_topo: usize,
@@ -4178,7 +4182,7 @@ pub(crate) unsafe fn generate_normal_mapping(
     assume_smooth: bool,
 ) -> usize {
     catch_generate_normal_mapping(
-        core::ptr::null_mut(),
+        None,
         mesh,
         topo,
         num_topo,
@@ -4190,7 +4194,7 @@ pub(crate) unsafe fn generate_normal_mapping(
 
 // ufbx.c:32585-32612 `ufbx_catch_compute_normals`
 pub(crate) unsafe fn catch_compute_normals(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     mesh: *const Mesh,
     positions: *const VertexVec3,
     normal_indices: *const u32,
@@ -4256,7 +4260,7 @@ pub(crate) unsafe fn compute_normals(
     num_normals: usize,
 ) {
     catch_compute_normals(
-        core::ptr::null_mut(),
+        None,
         mesh,
         positions,
         normal_indices,
@@ -4918,7 +4922,7 @@ pub(crate) unsafe fn thread_pool_get_user_ptr(ctx: ThreadPoolContext) -> *mut c_
 // ufbx.c:32993-32999 `ufbx_catch_get_vertex_real`
 #[inline(never)]
 pub(crate) unsafe fn catch_get_vertex_real(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     v: *const VertexReal,
     index: usize,
 ) -> Real {
@@ -4947,7 +4951,7 @@ pub(crate) unsafe fn catch_get_vertex_real(
 // ufbx.c:33001-33007 `ufbx_catch_get_vertex_vec2`
 #[inline(never)]
 pub(crate) unsafe fn catch_get_vertex_vec2(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     v: *const VertexVec2,
     index: usize,
 ) -> Vec2 {
@@ -4976,7 +4980,7 @@ pub(crate) unsafe fn catch_get_vertex_vec2(
 // ufbx.c:33009-33015 `ufbx_catch_get_vertex_vec3`
 #[inline(never)]
 pub(crate) unsafe fn catch_get_vertex_vec3(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     v: *const VertexVec3,
     index: usize,
 ) -> Vec3 {
@@ -5005,7 +5009,7 @@ pub(crate) unsafe fn catch_get_vertex_vec3(
 // ufbx.c:33017-33023 `ufbx_catch_get_vertex_vec4`
 #[inline(never)]
 pub(crate) unsafe fn catch_get_vertex_vec4(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     v: *const VertexVec4,
     index: usize,
 ) -> Vec4 {
@@ -5033,7 +5037,7 @@ pub(crate) unsafe fn catch_get_vertex_vec4(
 
 // ufbx.c:33025-33032 `ufbx_catch_get_vertex_w_vec3`
 pub(crate) unsafe fn catch_get_vertex_w_vec3(
-    panic: *mut Panic,
+    mut panic: Option<&mut Panic>,
     v: *const VertexVec3,
     index: usize,
 ) -> Real {
@@ -5877,12 +5881,12 @@ pub(crate) unsafe fn triangulate_face(
     mesh: *const Mesh,
     face: Face,
 ) -> u32 {
-    catch_triangulate_face(core::ptr::null_mut(), indices, num_indices, mesh, face)
+    catch_triangulate_face(None, indices, num_indices, mesh, face)
 }
 
 // ufbx.c:33168-33170 `ufbx_compute_topology`
 pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge, num_topo: usize) {
-    catch_compute_topology(core::ptr::null_mut(), mesh, topo, num_topo)
+    catch_compute_topology(None, mesh, topo, num_topo)
 }
 
 // ufbx.c:33171-33173 `ufbx_topo_next_vertex_edge`
@@ -5891,7 +5895,7 @@ pub(crate) unsafe fn topo_next_vertex_edge(
     num_topo: usize,
     index: u32,
 ) -> u32 {
-    catch_topo_next_vertex_edge(core::ptr::null_mut(), topo, num_topo, index)
+    catch_topo_next_vertex_edge(None, topo, num_topo, index)
 }
 
 // ufbx.c:33174-33176 `ufbx_topo_prev_vertex_edge`
@@ -5900,12 +5904,12 @@ pub(crate) unsafe fn topo_prev_vertex_edge(
     num_topo: usize,
     index: u32,
 ) -> u32 {
-    catch_topo_prev_vertex_edge(core::ptr::null_mut(), topo, num_topo, index)
+    catch_topo_prev_vertex_edge(None, topo, num_topo, index)
 }
 
 // ufbx.c:33177-33179 `ufbx_get_weighted_face_normal`
 pub(crate) unsafe fn get_weighted_face_normal(positions: *const VertexVec3, face: Face) -> Vec3 {
-    catch_get_weighted_face_normal(core::ptr::null_mut(), positions, face)
+    catch_get_weighted_face_normal(None, positions, face)
 }
 
 #[cfg(test)]

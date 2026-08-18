@@ -356,8 +356,7 @@ pub(crate) unsafe fn evaluate_skinning(
                     // C: `ufbx_get_skin_vertex_matrix(skin, i, fallback)` — the
                     // `ufbx_inline` wrapper in ufbx.h (5601-5603) forwarding to
                     // the catch impl with a NULL panic.
-                    let mat: Matrix =
-                        catch_get_skin_vertex_matrix(ptr::null_mut(), skin, i, fallback);
+                    let mat: Matrix = catch_get_skin_vertex_matrix(None, skin, i, fallback);
                     *result_pos.add(i) = transform_position(&mat, *result_pos.add(i));
                 }
 

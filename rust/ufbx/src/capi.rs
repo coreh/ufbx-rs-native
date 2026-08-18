@@ -964,7 +964,7 @@ pub unsafe extern "C" fn ufbx_catch_get_skin_vertex_matrix(
     vertex: usize,
     fallback: *const crate::generated::Matrix,
 ) -> crate::generated::Matrix {
-    crate::native::api::catch_get_skin_vertex_matrix(panic, skin, vertex, fallback)
+    crate::native::api::catch_get_skin_vertex_matrix(panic.as_mut(), skin, vertex, fallback)
 }
 
 // ufbx.c:32020-32033 `ufbx_get_blend_shape_offset_index`
@@ -1121,7 +1121,7 @@ pub unsafe extern "C" fn ufbx_catch_triangulate_face(
     mesh: *const crate::generated::Mesh,
     face: crate::generated::Face,
 ) -> u32 {
-    crate::native::api::catch_triangulate_face(panic, indices, num_indices, mesh, face)
+    crate::native::api::catch_triangulate_face(panic.as_mut(), indices, num_indices, mesh, face)
 }
 
 // ufbx.c:32477-32482 `ufbx_catch_compute_topology` (impl: native/api.rs
@@ -1133,7 +1133,7 @@ pub unsafe extern "C" fn ufbx_catch_compute_topology(
     indices: *mut crate::generated::TopoEdge,
     num_indices: usize,
 ) {
-    crate::native::api::catch_compute_topology(panic, mesh, indices, num_indices)
+    crate::native::api::catch_compute_topology(panic.as_mut(), mesh, indices, num_indices)
 }
 
 // ufbx.c:32484-32492 `ufbx_catch_topo_next_vertex_edge` (impl: native/api.rs
@@ -1145,7 +1145,7 @@ pub unsafe extern "C" fn ufbx_catch_topo_next_vertex_edge(
     num_topo: usize,
     index: u32,
 ) -> u32 {
-    crate::native::api::catch_topo_next_vertex_edge(panic, topo, num_topo, index)
+    crate::native::api::catch_topo_next_vertex_edge(panic.as_mut(), topo, num_topo, index)
 }
 
 // ufbx.c:32494-32499 `ufbx_catch_topo_prev_vertex_edge` (impl: native/api.rs
@@ -1157,7 +1157,7 @@ pub unsafe extern "C" fn ufbx_catch_topo_prev_vertex_edge(
     num_topo: usize,
     index: u32,
 ) -> u32 {
-    crate::native::api::catch_topo_prev_vertex_edge(panic, topo, num_topo, index)
+    crate::native::api::catch_topo_prev_vertex_edge(panic.as_mut(), topo, num_topo, index)
 }
 
 // ufbx.c:32501-32532 `ufbx_catch_get_weighted_face_normal` (impl: native/api.rs
@@ -1168,7 +1168,7 @@ pub unsafe extern "C" fn ufbx_catch_get_weighted_face_normal(
     positions: *const crate::generated::VertexVec3,
     face: crate::generated::Face,
 ) -> crate::generated::Vec3 {
-    crate::native::api::catch_get_weighted_face_normal(panic, positions, face)
+    crate::native::api::catch_get_weighted_face_normal(panic.as_mut(), positions, face)
 }
 
 // ufbx.c:32534-32578 `ufbx_catch_generate_normal_mapping` (impl: native/api.rs
@@ -1184,7 +1184,7 @@ pub unsafe extern "C" fn ufbx_catch_generate_normal_mapping(
     assume_smooth: bool,
 ) -> usize {
     crate::native::api::catch_generate_normal_mapping(
-        panic,
+        panic.as_mut(),
         mesh,
         topo,
         num_topo,
@@ -1228,7 +1228,7 @@ pub unsafe extern "C" fn ufbx_catch_compute_normals(
     num_normals: usize,
 ) {
     crate::native::api::catch_compute_normals(
-        panic,
+        panic.as_mut(),
         mesh,
         positions,
         normal_indices,
@@ -1445,7 +1445,7 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_real(
     v: *const crate::generated::VertexReal,
     index: usize,
 ) -> crate::prelude::Real {
-    crate::native::api::catch_get_vertex_real(panic, v, index)
+    crate::native::api::catch_get_vertex_real(panic.as_mut(), v, index)
 }
 
 // ufbx.c:33001-33007 `ufbx_catch_get_vertex_vec2` (impl: native/api.rs
@@ -1456,7 +1456,7 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_vec2(
     v: *const crate::generated::VertexVec2,
     index: usize,
 ) -> crate::generated::Vec2 {
-    crate::native::api::catch_get_vertex_vec2(panic, v, index)
+    crate::native::api::catch_get_vertex_vec2(panic.as_mut(), v, index)
 }
 
 // ufbx.c:33009-33015 `ufbx_catch_get_vertex_vec3` (impl: native/api.rs
@@ -1467,7 +1467,7 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_vec3(
     v: *const crate::generated::VertexVec3,
     index: usize,
 ) -> crate::generated::Vec3 {
-    crate::native::api::catch_get_vertex_vec3(panic, v, index)
+    crate::native::api::catch_get_vertex_vec3(panic.as_mut(), v, index)
 }
 
 // ufbx.c:33017-33023 `ufbx_catch_get_vertex_vec4` (impl: native/api.rs
@@ -1478,7 +1478,7 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_vec4(
     v: *const crate::generated::VertexVec4,
     index: usize,
 ) -> crate::generated::Vec4 {
-    crate::native::api::catch_get_vertex_vec4(panic, v, index)
+    crate::native::api::catch_get_vertex_vec4(panic.as_mut(), v, index)
 }
 
 // ufbx.c:33025-33032 `ufbx_catch_get_vertex_w_vec3` (impl: native/api.rs
@@ -1489,7 +1489,7 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_w_vec3(
     v: *const crate::generated::VertexVec3,
     index: usize,
 ) -> crate::prelude::Real {
-    crate::native::api::catch_get_vertex_w_vec3(panic, v, index)
+    crate::native::api::catch_get_vertex_w_vec3(panic.as_mut(), v, index)
 }
 
 // ufbx.c:33034-33075 `ufbx_as_*` (impls: native/api.rs `as_*`)

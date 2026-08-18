@@ -260,21 +260,38 @@ pub(crate) use ufbxi_snprintf;
 // ufbx.c:3384-3403 `ufbxi_panicf_imp`
 // C: `va_list args; // ufbxi_uninit` (ufbx.c:3388) — collapsed into `args`.
 #[inline(never)]
-pub(crate) unsafe fn panicf_imp(panic: *mut Panic, fmt: *const u8, args: &[PrintArg]) {
-    if !panic.is_null() && (*panic).did_panic {
-        return;
-    }
-
-    if !panic.is_null() {
-        let panic = &mut *panic;
-        panic.did_panic = true;
-        let message = panic.message_buf.data.as_mut_ptr() as *mut u8;
-        panic.message_length = vsnprintf(message, PANIC_MESSAGE_LENGTH, fmt, args) as usize;
-    } else {
-        let mut message = [0u8; PANIC_MESSAGE_LENGTH];
-        vsnprintf(message.as_mut_ptr(), PANIC_MESSAGE_LENGTH, fmt, args);
-
-        panic_handler(message.as_ptr());
+// Safe fn: `panic` is C's nullable catch-me out-param, modernized to
+// `Option<&mut Panic>` — unlike `Error` (aliased via stored back-pointers, so
+// it takes the interior-mutable `ErrorView`), a `Panic` is a caller stack
+// local with a single writer, which is exactly what `&mut` asserts. The
+// format string rides in a [`FailStr`] (NUL-terminated 'static literal from
+// the `ufbxi_panicf!` macro), carrying the invariant `vsnprintf` needs.
+pub(crate) fn panicf_imp(panic: Option<&mut Panic>, fmt: FailStr, args: &[PrintArg]) {
+    match panic {
+        Some(panic) => {
+            if panic.did_panic {
+                return;
+            }
+            panic.did_panic = true;
+            let message = panic.message_buf.data.as_mut_ptr() as *mut u8;
+            // SAFETY: `message` is the panic's own PANIC_MESSAGE_LENGTH buffer;
+            // `fmt` is NUL-terminated 'static (FailStr invariant).
+            panic.message_length =
+                unsafe { vsnprintf(message, PANIC_MESSAGE_LENGTH, fmt.as_ptr(), args) } as usize;
+        }
+        None => {
+            let mut message = [0u8; PANIC_MESSAGE_LENGTH];
+            // SAFETY: local buffer of PANIC_MESSAGE_LENGTH; NUL-terminated fmt.
+            unsafe {
+                vsnprintf(
+                    message.as_mut_ptr(),
+                    PANIC_MESSAGE_LENGTH,
+                    fmt.as_ptr(),
+                    args,
+                );
+                panic_handler(message.as_ptr());
+            }
+        }
     }
 }
 
@@ -287,7 +304,8 @@ macro_rules! ufbxi_panicf {
         if cond {
             false
         } else {
-            $crate::native::error::panicf_imp($panic, concat!($fmt, "\0").as_ptr(),
+            $crate::native::error::panicf_imp($panic.as_deref_mut(),
+                $crate::native::error::FailStr::new(concat!($fmt, "\0").as_bytes()),
                 &[$($crate::native::printf::PrintArg::from($arg)),*]);
             true
         }
@@ -1404,34 +1422,32 @@ mod tests {
 
     #[test]
     fn test_panicf() {
-        unsafe {
-            let mut panic = Panic::default();
-            let fired = ufbxi_panicf!(
-                &mut panic as *mut Panic,
-                1 < 2,
-                "vertex (%zu) out of bounds (%zu)",
-                5usize,
-                3usize
-            );
-            assert!(!fired);
-            assert!(!panic.did_panic);
+        let mut storage = Panic::default();
+        let mut panic = Some(&mut storage);
+        let fired = ufbxi_panicf!(
+            panic,
+            1 < 2,
+            "vertex (%zu) out of bounds (%zu)",
+            5usize,
+            3usize
+        );
+        assert!(!fired);
 
-            let fired = ufbxi_panicf!(
-                &mut panic as *mut Panic,
-                false,
-                "vertex (%zu) out of bounds (%zu)",
-                5usize,
-                3usize
-            );
-            assert!(fired);
-            assert!(panic.did_panic);
-            assert_eq!(panic.message(), "vertex (5) out of bounds (3)");
+        let fired = ufbxi_panicf!(
+            panic,
+            false,
+            "vertex (%zu) out of bounds (%zu)",
+            5usize,
+            3usize
+        );
+        assert!(fired);
 
-            // Already-panicked: message preserved
-            let fired = ufbxi_panicf!(&mut panic as *mut Panic, false, "other");
-            assert!(fired);
-            assert_eq!(panic.message(), "vertex (5) out of bounds (3)");
-        }
+        // Already-panicked: message preserved
+        let fired = ufbxi_panicf!(panic, false, "other");
+        assert!(fired);
+        drop(panic);
+        assert!(storage.did_panic);
+        assert_eq!(storage.message(), "vertex (5) out of bounds (3)");
     }
 
     #[test]
