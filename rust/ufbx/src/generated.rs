@@ -4441,78 +4441,78 @@ impl BakedAnimRoot {
 
 impl Drop for SceneRoot {
     fn drop(&mut self) {
-        unsafe { ufbx_free_scene(self.scene) }
+        unsafe { crate::native::api::free_scene(self.scene) }
     }
 }
 
 impl Drop for MeshRoot {
     fn drop(&mut self) {
-        unsafe { ufbx_free_mesh(self.mesh) }
+        unsafe { crate::native::api::free_mesh(self.mesh) }
     }
 }
 
 impl Drop for LineCurveRoot {
     fn drop(&mut self) {
-        unsafe { ufbx_free_line_curve(self.line_curve) }
+        unsafe { crate::native::api::free_line_curve(self.line_curve) }
     }
 }
 
 impl Drop for GeometryCacheRoot {
     fn drop(&mut self) {
-        unsafe { ufbx_free_geometry_cache(self.cache) }
+        unsafe { crate::native::api::free_geometry_cache(self.cache) }
     }
 }
 
 impl Drop for AnimRoot {
     fn drop(&mut self) {
-        unsafe { ufbx_free_anim(self.anim) }
+        unsafe { crate::native::api::free_anim(self.anim) }
     }
 }
 
 impl Drop for BakedAnimRoot {
     fn drop(&mut self) {
-        unsafe { ufbx_free_baked_anim(self.anim) }
+        unsafe { crate::native::api::free_baked_anim(self.anim) }
     }
 }
 
 impl Clone for SceneRoot {
     fn clone(&self) -> Self {
-        unsafe { ufbx_retain_scene(self.scene) }
+        unsafe { crate::native::api::retain_scene(self.scene) }
         SceneRoot::new(self.scene)
     }
 }
 
 impl Clone for MeshRoot {
     fn clone(&self) -> Self {
-        unsafe { ufbx_retain_mesh(self.mesh) }
+        unsafe { crate::native::api::retain_mesh(self.mesh) }
         MeshRoot::new(self.mesh)
     }
 }
 
 impl Clone for LineCurveRoot {
     fn clone(&self) -> Self {
-        unsafe { ufbx_retain_line_curve(self.line_curve) }
+        unsafe { crate::native::api::retain_line_curve(self.line_curve) }
         LineCurveRoot::new(self.line_curve)
     }
 }
 
 impl Clone for GeometryCacheRoot {
     fn clone(&self) -> Self {
-        unsafe { ufbx_retain_geometry_cache(self.cache) }
+        unsafe { crate::native::api::retain_geometry_cache(self.cache) }
         GeometryCacheRoot::new(self.cache)
     }
 }
 
 impl Clone for AnimRoot {
     fn clone(&self) -> Self {
-        unsafe { ufbx_retain_anim(self.anim) }
+        unsafe { crate::native::api::retain_anim(self.anim) }
         AnimRoot::new(self.anim)
     }
 }
 
 impl Clone for BakedAnimRoot {
     fn clone(&self) -> Self {
-        unsafe { ufbx_retain_baked_anim(self.anim) }
+        unsafe { crate::native::api::retain_baked_anim(self.anim) }
         BakedAnimRoot::new(self.anim)
     }
 }
