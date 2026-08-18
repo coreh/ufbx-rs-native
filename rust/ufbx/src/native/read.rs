@@ -537,20 +537,28 @@ fn thumbnail_format_from_raw(raw: i32) -> ThumbnailFormat {
 
 // ufbx.c:11969-11979 `ufbxi_read_scene_info`
 #[inline(never)]
-pub(crate) unsafe fn read_scene_info(uc: &Context, node: &NodeView) -> Result<(), Fail> {
-    read_properties(
-        uc,
-        node,
-        uc.scene_view().metadata_view().scene_props_mut_ptr(),
-    )?;
+pub(crate) fn read_scene_info(uc: &Context, node: &NodeView) -> Result<(), Fail> {
+    // SAFETY: `node` is a parse-tree NodeView and the destination is uc's own
+    // scene metadata `props` slot, reached through its element views.
+    unsafe {
+        read_properties(
+            uc,
+            node,
+            uc.scene_view().metadata_view().scene_props_mut_ptr(),
+        )?;
+    }
 
     let thumbnail = find_child(node, sp::Thumbnail.as_ptr());
     if let Some(thumbnail) = thumbnail {
-        read_thumbnail(
-            uc,
-            thumbnail,
-            uc.scene_view().metadata_view().thumbnail_mut_ptr(),
-        )?;
+        // SAFETY: `thumbnail` is a child NodeView of `node`; the destination is
+        // uc's own scene metadata `thumbnail` slot, reached through its views.
+        unsafe {
+            read_thumbnail(
+                uc,
+                thumbnail,
+                uc.scene_view().metadata_view().thumbnail_mut_ptr(),
+            )?;
+        }
     }
 
     Ok(())
@@ -558,35 +566,46 @@ pub(crate) unsafe fn read_scene_info(uc: &Context, node: &NodeView) -> Result<()
 
 // ufbx.c:11981-12033 `ufbxi_read_header_extension`
 #[inline(never)]
-pub(crate) unsafe fn read_header_extension(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn read_header_extension(uc: &Context) -> Result<(), Fail> {
     let mut has_tc_definition = false;
     let mut tc_definition: i32 = 0;
     let mut header_version: i32 = 0;
 
     loop {
         let mut child: *mut Node = core::ptr::null_mut();
-        parse_toplevel_child(uc, &mut child, core::ptr::null_mut())?;
+        // SAFETY: `child` is a local out-param slot; the null `tmp_buf` selects
+        // uc's own temp buffer, as in the C call.
+        unsafe { parse_toplevel_child(uc, &mut child, core::ptr::null_mut())? };
         if child.is_null() {
             break;
         }
         // Bridge the raw parse-tree node into a view for the navigation below.
-        let child: &NodeView = NodeView::from_ptr(child);
+        // SAFETY: `child` is the non-null node just parsed into uc's arena.
+        let child: &NodeView = unsafe { NodeView::from_ptr(child) };
 
         if child.name() == sp::Creator.as_ptr() {
-            ufbxi_ignore!(get_val1(
-                child,
-                b"S\0".as_ptr(),
-                uc.scene_view().metadata_view().creator_mut_ptr() as *mut c_void,
-            ));
+            // SAFETY: `child` is a parse-tree NodeView; the out-param is uc's
+            // own metadata `creator` string slot, reached through its views.
+            ufbxi_ignore!(unsafe {
+                get_val1(
+                    child,
+                    b"S\0".as_ptr(),
+                    uc.scene_view().metadata_view().creator_mut_ptr() as *mut c_void,
+                )
+            });
         }
 
         if uc.version() < 6000 && child.name() == sp::FBXVersion.as_ptr() {
             let mut version: i32 = 0;
-            if get_val1(
-                child,
-                b"I\0".as_ptr(),
-                &mut version as *mut i32 as *mut c_void,
-            ) {
+            // SAFETY: `child` is a parse-tree NodeView; `version` is an
+            // unaliased local matching the `I` format's `int32_t` out-param.
+            if unsafe {
+                get_val1(
+                    child,
+                    b"I\0".as_ptr(),
+                    &mut version as *mut i32 as *mut c_void,
+                )
+            } {
                 if version > 0 && version < 6000 && (version as u32) > uc.version() {
                     uc.set_version(version as u32);
                 }
@@ -594,20 +613,28 @@ pub(crate) unsafe fn read_header_extension(uc: &Context) -> Result<(), Fail> {
         }
 
         if child.name() == sp::FBXHeaderVersion.as_ptr() {
-            ufbxi_ignore!(get_val1(
-                child,
-                b"I\0".as_ptr(),
-                &mut header_version as *mut i32 as *mut c_void,
-            ));
+            // SAFETY: `child` is a parse-tree NodeView; `header_version` is an
+            // unaliased local matching the `I` format's `int32_t` out-param.
+            ufbxi_ignore!(unsafe {
+                get_val1(
+                    child,
+                    b"I\0".as_ptr(),
+                    &mut header_version as *mut i32 as *mut c_void,
+                )
+            });
         }
 
         if child.name() == sp::OtherFlags.as_ptr() {
-            if find_val1(
-                child,
-                sp::TCDefinition.as_ptr(),
-                b"I\0".as_ptr(),
-                &mut tc_definition as *mut i32 as *mut c_void,
-            ) {
+            // SAFETY: `child` is a parse-tree NodeView; `tc_definition` is an
+            // unaliased local matching the `I` format's `int32_t` out-param.
+            if unsafe {
+                find_val1(
+                    child,
+                    sp::TCDefinition.as_ptr(),
+                    b"I\0".as_ptr(),
+                    &mut tc_definition as *mut i32 as *mut c_void,
+                )
+            } {
                 has_tc_definition = true;
             }
         }
@@ -717,55 +744,75 @@ pub(crate) unsafe fn match_version_string(
 
 // ufbx.c:12084-12128 `ufbxi_match_exporter`
 #[inline(never)]
-pub(crate) unsafe fn match_exporter(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn match_exporter(uc: &Context) -> Result<(), Fail> {
     let creator: String = uc.scene_view().metadata_view().creator();
     let mut version: [u32; 3] = [0; 3];
-    if match_version_string(b"blender-- ?.?.?\0".as_ptr(), creator, version.as_mut_ptr()) {
+    // SAFETY (this whole chain): every `fmt` is a NUL-terminated byte-string
+    // literal, `creator` is uc's own pooled metadata string (data/length pair
+    // maintained by the string pool), and `version` is an unaliased local
+    // 3-element array — each pattern holds at most three `?` numbers, so the
+    // `p_version` writes stay inside it.
+    if unsafe { match_version_string(b"blender-- ?.?.?\0".as_ptr(), creator, version.as_mut_ptr()) }
+    {
         uc.set_exporter(Exporter::BlenderBinary);
         uc.set_exporter_version(pack_version(version[0], version[1], version[2]));
-    } else if match_version_string(b"blender- ?.?\0".as_ptr(), creator, version.as_mut_ptr()) {
+    } else if unsafe {
+        match_version_string(b"blender- ?.?\0".as_ptr(), creator, version.as_mut_ptr())
+    } {
         uc.set_exporter(Exporter::BlenderBinary);
         uc.set_exporter_version(pack_version(version[0], version[1], 0));
-    } else if match_version_string(
-        b"blender version ?.?\0".as_ptr(),
-        creator,
-        version.as_mut_ptr(),
-    ) {
+    } else if unsafe {
+        match_version_string(
+            b"blender version ?.?\0".as_ptr(),
+            creator,
+            version.as_mut_ptr(),
+        )
+    } {
         uc.set_exporter(Exporter::BlenderAscii);
         uc.set_exporter_version(pack_version(version[0], version[1], 0));
-    } else if match_version_string(
-        b"fbx sdk/fbx plugins version ?.?\0".as_ptr(),
-        creator,
-        version.as_mut_ptr(),
-    ) {
+    } else if unsafe {
+        match_version_string(
+            b"fbx sdk/fbx plugins version ?.?\0".as_ptr(),
+            creator,
+            version.as_mut_ptr(),
+        )
+    } {
         uc.set_exporter(Exporter::FbxSdk);
         uc.set_exporter_version(pack_version(version[0], version[1], 0));
-    } else if match_version_string(
-        b"fbx sdk/fbx plugins build ?\0".as_ptr(),
-        creator,
-        version.as_mut_ptr(),
-    ) {
+    } else if unsafe {
+        match_version_string(
+            b"fbx sdk/fbx plugins build ?\0".as_ptr(),
+            creator,
+            version.as_mut_ptr(),
+        )
+    } {
         uc.set_exporter(Exporter::FbxSdk);
         uc.set_exporter_version(pack_version(
             version[0] / 10000u32,
             version[0] / 100u32 % 100u32,
             version[0] % 100u32,
         ));
-    } else if match_version_string(
-        b"motionbuilder version ?.?\0".as_ptr(),
-        creator,
-        version.as_mut_ptr(),
-    ) {
+    } else if unsafe {
+        match_version_string(
+            b"motionbuilder version ?.?\0".as_ptr(),
+            creator,
+            version.as_mut_ptr(),
+        )
+    } {
         uc.set_exporter(Exporter::MotionBuilder);
         uc.set_exporter_version(pack_version(version[0], version[1], 0));
-    } else if match_version_string(
-        b"motionbuilder/mocap/online version ?.?\0".as_ptr(),
-        creator,
-        version.as_mut_ptr(),
-    ) {
+    } else if unsafe {
+        match_version_string(
+            b"motionbuilder/mocap/online version ?.?\0".as_ptr(),
+            creator,
+            version.as_mut_ptr(),
+        )
+    } {
         uc.set_exporter(Exporter::MotionBuilder);
         uc.set_exporter_version(pack_version(version[0], version[1], 0));
-    } else if match_version_string(b"ufbx_write\0".as_ptr(), creator, version.as_mut_ptr()) {
+    } else if unsafe {
+        match_version_string(b"ufbx_write\0".as_ptr(), creator, version.as_mut_ptr())
+    } {
         uc.set_exporter(Exporter::UfbxWrite);
         uc.set_exporter_version(pack_version(0, 0, 1));
     }
@@ -790,27 +837,34 @@ pub(crate) unsafe fn match_exporter(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:12130-12149 `ufbxi_read_document`
 #[inline(never)]
-pub(crate) unsafe fn read_document(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn read_document(uc: &Context) -> Result<(), Fail> {
     let mut found_root_id = false;
 
     loop {
         let mut child: *mut Node = core::ptr::null_mut();
-        parse_toplevel_child(uc, &mut child, core::ptr::null_mut())?;
+        // SAFETY: `child` is a local out-param slot; the null `tmp_buf` selects
+        // uc's own temp buffer, as in the C call.
+        unsafe { parse_toplevel_child(uc, &mut child, core::ptr::null_mut())? };
         if child.is_null() {
             break;
         }
         // Bridge the raw parse-tree node into a view for the navigation below.
-        let child: &NodeView = NodeView::from_ptr(child);
+        // SAFETY: `child` is the non-null node just parsed into uc's arena.
+        let child: &NodeView = unsafe { NodeView::from_ptr(child) };
 
         if child.name() == sp::Document.as_ptr() && !found_root_id {
             // Post-7000: Try to find the first document node and root ID.
             // TODO: Multiple documents / roots?
-            if find_val1(
-                child,
-                sp::RootNode.as_ptr(),
-                b"L\0".as_ptr(),
-                uc.root_id_mut_ptr() as *mut c_void,
-            ) {
+            // SAFETY: `child` is a parse-tree NodeView; the out-param is uc's
+            // own `root_id` field, whose `u64` matches the `L` format.
+            if unsafe {
+                find_val1(
+                    child,
+                    sp::RootNode.as_ptr(),
+                    b"L\0".as_ptr(),
+                    uc.root_id_mut_ptr() as *mut c_void,
+                )
+            } {
                 found_root_id = true;
             }
         }
@@ -825,30 +879,39 @@ static LOD_GROUP: [u8; b"LodGroup\0".len()] = *b"LodGroup\0";
 
 // ufbx.c:12151-12193 `ufbxi_read_definitions`
 #[inline(never)]
-pub(crate) unsafe fn read_definitions(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn read_definitions(uc: &Context) -> Result<(), Fail> {
     loop {
         let mut object: *mut Node = core::ptr::null_mut();
-        parse_toplevel_child(uc, &mut object, core::ptr::null_mut())?;
+        // SAFETY: `object` is a local out-param slot; the null `tmp_buf`
+        // selects uc's own temp buffer, as in the C call.
+        unsafe { parse_toplevel_child(uc, &mut object, core::ptr::null_mut())? };
         if object.is_null() {
             break;
         }
         // Bridge the raw parse-tree node into a view for the navigation below.
-        let object: &NodeView = NodeView::from_ptr(object);
+        // SAFETY: `object` is the non-null node just parsed into uc's arena.
+        let object: &NodeView = unsafe { NodeView::from_ptr(object) };
 
         if object.name() != sp::ObjectType.as_ptr() {
             continue;
         }
 
-        let tmpl: *mut Template = push_zero::<Template>(uc.tmp_stack_mut_ptr(), 1);
+        // SAFETY: pushing one zeroed `Template` onto uc's own tmp stack.
+        let tmpl: *mut Template = unsafe { push_zero::<Template>(uc.tmp_stack_mut_ptr(), 1) };
         uc.set_num_templates(uc.num_templates().wrapping_add(1));
         ufbxi_check!(uc, !tmpl.is_null(), "tmpl");
+        // SAFETY: `tmpl` is the fresh non-null push result checked just above,
+        // so its `type` field is a valid out-param for the `C` format; `object`
+        // is a parse-tree NodeView.
         ufbxi_check!(
             uc,
-            get_val1(
-                object,
-                b"C\0".as_ptr(),
-                &mut (*tmpl).type_ as *mut *const u8 as *mut c_void,
-            ),
+            unsafe {
+                get_val1(
+                    object,
+                    b"C\0".as_ptr(),
+                    &mut (*tmpl).type_ as *mut *const u8 as *mut c_void,
+                )
+            },
             "ufbxi_get_val1(object, \"C\", (char**)&tmpl->type)"
         );
 
@@ -856,43 +919,59 @@ pub(crate) unsafe fn read_definitions(uc: &Context) -> Result<(), Fail> {
         // the object counts by themselves.
         let props = find_child(object, sp::PropertyTemplate.as_ptr());
         if let Some(props) = props {
+            // SAFETY: `props` is a child NodeView of `object`; `tmpl` is the
+            // fresh push result above, so `&mut (*tmpl).sub_type` is a valid
+            // `ufbx_string` out-param for the `S` format.
             ufbxi_check!(
                 uc,
-                get_val1(
-                    props,
-                    b"S\0".as_ptr(),
-                    &mut (*tmpl).sub_type as *mut String as *mut c_void,
-                ),
+                unsafe {
+                    get_val1(
+                        props,
+                        b"S\0".as_ptr(),
+                        &mut (*tmpl).sub_type as *mut String as *mut c_void,
+                    )
+                },
                 "ufbxi_get_val1(props, \"S\", &tmpl->sub_type)"
             );
 
             // Remove the "Fbx" prefix from sub-types, remember to re-intern!
-            if (*tmpl).sub_type.length > 3
-                && strncmp((*tmpl).sub_type.data, b"Fbx\0".as_ptr(), 3) == 0
-            {
-                (*tmpl).sub_type.data = (*tmpl).sub_type.data.add(3);
-                (*tmpl).sub_type.length -= 3;
-
-                // HACK: LOD groups use LODGroup for Template, LodGroup for Object?
-                if (*tmpl).sub_type.length == 8
-                    && memcmp((*tmpl).sub_type.data, b"LODGroup\0".as_ptr(), 8) == 0
+            // SAFETY: `tmpl` is the fresh push result above; `sub_type` was
+            // just filled by the `S` read, so it is a pooled NUL-terminated
+            // string of `length` bytes and the compares/advance below stay
+            // inside it (each is guarded by a length check). The re-intern
+            // hands uc's own string pool the same field.
+            unsafe {
+                if (*tmpl).sub_type.length > 3
+                    && strncmp((*tmpl).sub_type.data, b"Fbx\0".as_ptr(), 3) == 0
                 {
-                    (*tmpl).sub_type.data = LOD_GROUP.as_ptr();
+                    (*tmpl).sub_type.data = (*tmpl).sub_type.data.add(3);
+                    (*tmpl).sub_type.length -= 3;
+
+                    // HACK: LOD groups use LODGroup for Template, LodGroup for Object?
+                    if (*tmpl).sub_type.length == 8
+                        && memcmp((*tmpl).sub_type.data, b"LODGroup\0".as_ptr(), 8) == 0
+                    {
+                        (*tmpl).sub_type.data = LOD_GROUP.as_ptr();
+                    }
+
+                    push_string_place_str(uc.string_pool_mut_ptr(), &mut (*tmpl).sub_type, false)?;
                 }
 
-                push_string_place_str(uc.string_pool_mut_ptr(), &mut (*tmpl).sub_type, false)?;
+                read_properties(uc, props, &mut (*tmpl).props)?;
             }
-
-            read_properties(uc, props, &mut (*tmpl).props)?;
         }
     }
 
     // TODO: Preserve only the `props` part of the templates
-    uc.set_templates(push_pop::<Template>(
-        uc.result_mut_ptr(),
-        uc.tmp_stack_mut_ptr(),
-        uc.num_templates(),
-    ));
+    // SAFETY: popping the `num_templates` entries just pushed onto uc's tmp
+    // stack into uc's own result buffer.
+    uc.set_templates(unsafe {
+        push_pop::<Template>(
+            uc.result_mut_ptr(),
+            uc.tmp_stack_mut_ptr(),
+            uc.num_templates(),
+        )
+    });
     ufbxi_check!(uc, !uc.templates().is_null(), "uc->templates");
 
     Ok(())
@@ -953,27 +1032,41 @@ pub(crate) fn push_synthetic_id(uc: &Context) -> u64 {
 
 // ufbx.c:12234-12248 `ufbxi_synthetic_id_from_ptr_id`
 #[inline(never)]
-pub(crate) unsafe fn synthetic_id_from_ptr_id(uc: &Context, ptr: usize, id: u64) -> u64 {
+pub(crate) fn synthetic_id_from_ptr_id(uc: &Context, ptr: usize, id: u64) -> u64 {
     let ptr_id = PtrId { ptr, id };
     let hash = hash_ptr_id(ptr_id);
-    let mut entry: *mut PtrFbxIdEntry = map_find(
-        uc.ptr_fbx_id_map_mut_ptr(),
-        hash,
-        &ptr_id as *const PtrId as *const c_void,
-    );
-
-    if entry.is_null() {
-        entry = map_insert(
+    // SAFETY: the key is a local `PtrId` passed by pointer to uc's own
+    // `ptr_fbx_id_map`, whose entries are `PtrFbxIdEntry` keyed by exactly that
+    // type; the lookup either returns one of its entries or null.
+    let mut entry: *mut PtrFbxIdEntry = unsafe {
+        map_find(
             uc.ptr_fbx_id_map_mut_ptr(),
             hash,
             &ptr_id as *const PtrId as *const c_void,
-        );
+        )
+    };
+
+    if entry.is_null() {
+        // SAFETY: same map and key type as the lookup above; the fresh
+        // non-null insert result is initialized right here before use.
+        entry = unsafe {
+            map_insert(
+                uc.ptr_fbx_id_map_mut_ptr(),
+                hash,
+                &ptr_id as *const PtrId as *const c_void,
+            )
+        };
         ufbxi_check_return!(uc, !entry.is_null(), 0, "entry");
-        (*entry).ptr_id = ptr_id;
-        (*entry).fbx_id = push_synthetic_id(uc);
+        // SAFETY: `entry` is the fresh non-null insert result checked above.
+        unsafe {
+            (*entry).ptr_id = ptr_id;
+            (*entry).fbx_id = push_synthetic_id(uc);
+        }
     }
 
-    (*entry).fbx_id
+    // SAFETY: `entry` is a non-null entry of uc's own map — either found above
+    // or freshly inserted and initialized.
+    unsafe { (*entry).fbx_id }
 }
 
 // ufbx.c:12250-12258 `ufbxi_synthetic_id_from_string`
@@ -1058,28 +1151,40 @@ pub(crate) unsafe fn split_type_and_name(
 
 // ufbx.c:12307-12323 `ufbxi_insert_fbx_id`
 #[inline(never)]
-pub(crate) unsafe fn insert_fbx_id(uc: &Context, fbx_id: u64, element_id: u32) -> Result<(), Fail> {
+pub(crate) fn insert_fbx_id(uc: &Context, fbx_id: u64, element_id: u32) -> Result<(), Fail> {
     let hash = hash64(fbx_id);
-    let mut entry: *mut FbxIdEntry = map_find(
-        uc.fbx_id_map_mut_ptr(),
-        hash,
-        &fbx_id as *const u64 as *const c_void,
-    );
-
-    if entry.is_null() {
-        entry = map_insert(
+    // SAFETY: the key is a local `u64` passed by pointer to uc's own
+    // `fbx_id_map`, whose entries are `FbxIdEntry` keyed by that `u64`.
+    let mut entry: *mut FbxIdEntry = unsafe {
+        map_find(
             uc.fbx_id_map_mut_ptr(),
             hash,
             &fbx_id as *const u64 as *const c_void,
-        );
+        )
+    };
+
+    if entry.is_null() {
+        // SAFETY: same map and key as the lookup above.
+        entry = unsafe {
+            map_insert(
+                uc.fbx_id_map_mut_ptr(),
+                hash,
+                &fbx_id as *const u64 as *const c_void,
+            )
+        };
         ufbxi_check!(uc, !entry.is_null(), "entry");
-        (*entry).fbx_id = fbx_id;
-        (*entry).element_id = element_id;
-        (*entry).user_id = 0;
+        // SAFETY: `entry` is the fresh non-null insert result checked above.
+        unsafe {
+            (*entry).fbx_id = fbx_id;
+            (*entry).element_id = element_id;
+            (*entry).user_id = 0;
+        }
     } else {
+        // SAFETY: the warning macro reaches uc's own `warnings` state.
         ufbxi_check!(
             uc,
-            ufbxi_warnf!(uc, WarningType::DuplicateObjectId, "Duplicate object ID").is_ok(),
+            unsafe { ufbxi_warnf!(uc, WarningType::DuplicateObjectId, "Duplicate object ID") }
+                .is_ok(),
             "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_DUPLICATE_OBJECT_ID, ~0u, \"Duplicate object ID\")"
         );
     }
@@ -1110,28 +1215,34 @@ pub(crate) fn fbx_id_exists(uc: &Context, fbx_id: u64) -> bool {
 
 // ufbx.c:12336-12350 `ufbxi_insert_fbx_attr`
 #[inline(never)]
-pub(crate) unsafe fn insert_fbx_attr(
-    uc: &Context,
-    fbx_id: u64,
-    attrib_fbx_id: u64,
-) -> Result<(), Fail> {
+pub(crate) fn insert_fbx_attr(uc: &Context, fbx_id: u64, attrib_fbx_id: u64) -> Result<(), Fail> {
     let hash = hash64(fbx_id);
-    let mut entry: *mut FbxAttrEntry = map_find(
-        uc.fbx_attr_map_mut_ptr(),
-        hash,
-        &fbx_id as *const u64 as *const c_void,
-    );
-    // TODO: Strict / warn about duplicate objects
-
-    if entry.is_null() {
-        entry = map_insert(
+    // SAFETY: the key is a local `u64` passed by pointer to uc's own
+    // `fbx_attr_map`, whose entries are `FbxAttrEntry` keyed by that `u64`.
+    let mut entry: *mut FbxAttrEntry = unsafe {
+        map_find(
             uc.fbx_attr_map_mut_ptr(),
             hash,
             &fbx_id as *const u64 as *const c_void,
-        );
+        )
+    };
+    // TODO: Strict / warn about duplicate objects
+
+    if entry.is_null() {
+        // SAFETY: same map and key as the lookup above.
+        entry = unsafe {
+            map_insert(
+                uc.fbx_attr_map_mut_ptr(),
+                hash,
+                &fbx_id as *const u64 as *const c_void,
+            )
+        };
         ufbxi_check!(uc, !entry.is_null(), "entry");
-        (*entry).node_fbx_id = fbx_id;
-        (*entry).attr_fbx_id = attrib_fbx_id;
+        // SAFETY: `entry` is the fresh non-null insert result checked above.
+        unsafe {
+            (*entry).node_fbx_id = fbx_id;
+            (*entry).attr_fbx_id = attrib_fbx_id;
+        }
     }
 
     Ok(())
@@ -1361,14 +1472,21 @@ pub(crate) unsafe fn push_synthetic_element<T>(
 
 // ufbx.c:12419-12427 `ufbxi_connect_oo`
 #[inline(never)]
-pub(crate) unsafe fn connect_oo(uc: &Context, src: u64, dst: u64) -> Result<(), Fail> {
-    let conn: *mut TmpConnection = push::<TmpConnection>(uc.tmp_connections_mut_ptr(), 1);
+pub(crate) fn connect_oo(uc: &Context, src: u64, dst: u64) -> Result<(), Fail> {
+    // SAFETY: pushing one `TmpConnection` onto uc's own `tmp_connections`
+    // buffer.
+    let conn: *mut TmpConnection =
+        unsafe { push::<TmpConnection>(uc.tmp_connections_mut_ptr(), 1) };
     ufbxi_check!(uc, !conn.is_null(), "conn");
-    (*conn).src = src;
-    (*conn).dst = dst;
-    // C: `conn->src_prop = conn->dst_prop = ufbx_empty_string;`
-    (*conn).dst_prop = EMPTY_STRING.0;
-    (*conn).src_prop = (*conn).dst_prop;
+    // SAFETY: `conn` is the fresh non-null push result checked above; the
+    // fields are fully initialized here, and `ufbx_empty_string` is static.
+    unsafe {
+        (*conn).src = src;
+        (*conn).dst = dst;
+        // C: `conn->src_prop = conn->dst_prop = ufbx_empty_string;`
+        (*conn).dst_prop = EMPTY_STRING.0;
+        (*conn).src_prop = (*conn).dst_prop;
+    }
     Ok(())
 }
 
@@ -5864,15 +5982,20 @@ pub(crate) unsafe fn read_synthetic_attribute(
 
 // ufbx.c:14941-14945 `ufbxi_read_global_settings`
 #[inline(never)]
-pub(crate) unsafe fn read_global_settings(uc: &Context, node: &NodeView) -> Result<(), Fail> {
-    read_properties(uc, node, uc.scene_view().settings_view().props_mut_ptr())?;
+pub(crate) fn read_global_settings(uc: &Context, node: &NodeView) -> Result<(), Fail> {
+    // SAFETY: `node` is a parse-tree NodeView and the destination is uc's own
+    // scene settings `props` slot, reached through its element views.
+    unsafe { read_properties(uc, node, uc.scene_view().settings_view().props_mut_ptr())? };
     Ok(())
 }
 
 // ufbx.c:14947-15099 `ufbxi_read_object`
 #[inline(never)]
-pub(crate) unsafe fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
-    let mut info: ElementInfo = core::mem::zeroed();
+pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
+    // SAFETY: `ElementInfo` is a plain C aggregate of scalars, pointers and
+    // `Option<Ref<_>>` niches, so the all-zero bit pattern is valid; `node` is
+    // a parse-tree NodeView, which is what the DOM lookup expects.
+    let mut info: ElementInfo = unsafe { core::mem::zeroed() };
     info.dom_node = get_dom_node(uc, Some(node));
 
     if node.name() == sp::GlobalSettings.as_ptr() {
@@ -5883,256 +6006,286 @@ pub(crate) unsafe fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fa
     // C: `ufbx_string type_and_name, sub_type_str;` — both fully written by the
     // `ufbxi_get_val*` calls below before any read (a partial failure returns
     // early); zero-initialized here (no upstream `ufbxi_uninit` marker).
-    let mut type_and_name: String = core::mem::zeroed();
-    let mut sub_type_str: String = core::mem::zeroed();
+    // SAFETY: `ufbx_string` is a `{ data, length }` pair, so all-zero (a null
+    // pointer and a zero length) is a valid bit pattern.
+    let mut type_and_name: String = unsafe { core::mem::zeroed() };
+    let mut sub_type_str: String = unsafe { core::mem::zeroed() };
 
     // Failing to parse the object properties is not an error since
     // there's some weird objects mixed in every now and then.
     // FBX version 7000 and up uses 64-bit unique IDs per object,
     // older FBX versions just use name/type pairs, which we can
     // use as IDs since all strings are interned into a string pool.
-    if uc.version() >= 7000 {
-        if !get_val3(
-            node,
-            b"Lss\0".as_ptr(),
-            &mut info.fbx_id as *mut u64 as *mut c_void,
-            &mut type_and_name as *mut String as *mut c_void,
-            &mut sub_type_str as *mut String as *mut c_void,
-        ) {
-            return Ok(());
+    // SAFETY: `node` is a parse-tree NodeView; the `Lss` / `ss` out-params are
+    // unaliased locals (and `info`'s own `fbx_id`) of exactly the `uint64_t` /
+    // `ufbx_string` types those format characters write. On success
+    // `type_and_name.data` is a pooled, NUL-terminated string, which is what
+    // the synthetic-id hash below reads.
+    unsafe {
+        if uc.version() >= 7000 {
+            if !get_val3(
+                node,
+                b"Lss\0".as_ptr(),
+                &mut info.fbx_id as *mut u64 as *mut c_void,
+                &mut type_and_name as *mut String as *mut c_void,
+                &mut sub_type_str as *mut String as *mut c_void,
+            ) {
+                return Ok(());
+            }
+            validate_fbx_id(uc, &mut info.fbx_id)?;
+        } else {
+            if !get_val2(
+                node,
+                b"ss\0".as_ptr(),
+                &mut type_and_name as *mut String as *mut c_void,
+                &mut sub_type_str as *mut String as *mut c_void,
+            ) {
+                return Ok(());
+            }
+            info.fbx_id = synthetic_id_from_string(uc, type_and_name.data);
+            ufbxi_check!(uc, info.fbx_id != 0, "info.fbx_id");
         }
-        validate_fbx_id(uc, &mut info.fbx_id)?;
-    } else {
-        if !get_val2(
-            node,
-            b"ss\0".as_ptr(),
-            &mut type_and_name as *mut String as *mut c_void,
-            &mut sub_type_str as *mut String as *mut c_void,
-        ) {
-            return Ok(());
-        }
-        info.fbx_id = synthetic_id_from_string(uc, type_and_name.data);
-        ufbxi_check!(uc, info.fbx_id != 0, "info.fbx_id");
     }
 
     // Remove the "Fbx" prefix from sub-types, remember to re-intern!
-    if sub_type_str.length > 3 && memcmp(sub_type_str.data, b"Fbx".as_ptr(), 3) == 0 {
-        sub_type_str.data = sub_type_str.data.add(3);
-        sub_type_str.length -= 3;
-        push_string_place_str(uc.string_pool_mut_ptr(), &mut sub_type_str, false)?;
+    // SAFETY: `sub_type_str` was filled by the reads above, so it is a pooled
+    // string of `length` bytes; the compare and the 3-byte advance are guarded
+    // by the `length > 3` check, and the re-intern goes to uc's own pool.
+    unsafe {
+        if sub_type_str.length > 3 && memcmp(sub_type_str.data, b"Fbx".as_ptr(), 3) == 0 {
+            sub_type_str.data = sub_type_str.data.add(3);
+            sub_type_str.length -= 3;
+            push_string_place_str(uc.string_pool_mut_ptr(), &mut sub_type_str, false)?;
+        }
     }
 
     // C: `ufbx_string type_str;` — fully written by `ufbxi_split_type_and_name`.
-    let mut type_str: String = core::mem::zeroed();
-    split_type_and_name(uc, type_and_name, &mut type_str, &mut info.name)?;
+    // SAFETY: all-zero is a valid `ufbx_string`; `type_and_name` is the pooled
+    // string read above, and the two out-params are an unaliased local and
+    // `info`'s own `name` field.
+    let mut type_str: String = unsafe { core::mem::zeroed() };
+    unsafe { split_type_and_name(uc, type_and_name, &mut type_str, &mut info.name)? };
 
     let name: *const u8 = node.name();
     let sub_type: *const u8 = sub_type_str.data;
-    read_properties(uc, node, &mut info.props)?;
-    info.props.defaults = opt_ref(find_template(uc, name, sub_type));
+    // SAFETY: `node` is a parse-tree NodeView and `&mut info.props` is a local
+    // `ufbx_props` out-param; `name`/`sub_type` are pooled strings, which is
+    // what the template lookup compares by pointer identity, and its result
+    // points into uc's own template array (or is null, mapped to `None`).
+    unsafe {
+        read_properties(uc, node, &mut info.props)?;
+        info.props.defaults = opt_ref(find_template(uc, name, sub_type));
+    }
 
-    if name == sp::Model.as_ptr() {
-        if uc.version() < 7000 {
-            read_synthetic_attribute(uc, node, &mut info, type_str, sub_type, name)?;
-        }
-        read_model(uc, node, &mut info)?;
-    } else if name == sp::NodeAttribute.as_ptr() {
-        if sub_type == sp::Light.as_ptr() {
-            read_element(uc, node, &mut info, size_of::<Light>(), ElementType::Light)?;
-        } else if sub_type == sp::Camera.as_ptr() {
+    // SAFETY (this whole dispatch): every arm hands the same parse-tree
+    // NodeView `node`, the local `&mut info`, and pooled `type_str` /
+    // `sub_type_str` / `name` / `sub_type` strings to the per-type reader
+    // selected by the pointer-identity comparisons — one logical dispatch, no
+    // pointer arithmetic of its own.
+    unsafe {
+        if name == sp::Model.as_ptr() {
+            if uc.version() < 7000 {
+                read_synthetic_attribute(uc, node, &mut info, type_str, sub_type, name)?;
+            }
+            read_model(uc, node, &mut info)?;
+        } else if name == sp::NodeAttribute.as_ptr() {
+            if sub_type == sp::Light.as_ptr() {
+                read_element(uc, node, &mut info, size_of::<Light>(), ElementType::Light)?;
+            } else if sub_type == sp::Camera.as_ptr() {
+                read_element(
+                    uc,
+                    node,
+                    &mut info,
+                    size_of::<Camera>(),
+                    ElementType::Camera,
+                )?;
+            } else if sub_type == sp::LimbNode.as_ptr()
+                || sub_type == sp::Limb.as_ptr()
+                || sub_type == sp::Root.as_ptr()
+            {
+                read_bone(uc, node, &mut info, sub_type)?;
+            } else if sub_type == sp::Null.as_ptr() || sub_type == sp::Marker.as_ptr() {
+                read_element(uc, node, &mut info, size_of::<Empty>(), ElementType::Empty)?;
+            } else if sub_type == sp::CameraStereo.as_ptr() {
+                read_element(
+                    uc,
+                    node,
+                    &mut info,
+                    size_of::<StereoCamera>(),
+                    ElementType::StereoCamera,
+                )?;
+            } else if sub_type == sp::CameraSwitcher.as_ptr() {
+                read_element(
+                    uc,
+                    node,
+                    &mut info,
+                    size_of::<CameraSwitcher>(),
+                    ElementType::CameraSwitcher,
+                )?;
+            } else if sub_type == sp::FKEffector.as_ptr() {
+                read_marker(uc, node, &mut info, sub_type, MarkerType::FkEffector)?;
+            } else if sub_type == sp::IKEffector.as_ptr() {
+                read_marker(uc, node, &mut info, sub_type, MarkerType::IkEffector)?;
+            } else if sub_type == sp::LodGroup.as_ptr() {
+                read_element(
+                    uc,
+                    node,
+                    &mut info,
+                    size_of::<LodGroup>(),
+                    ElementType::LodGroup,
+                )?;
+            } else {
+                read_unknown(uc, node, &mut info, type_str, sub_type_str, name)?;
+            }
+        } else if name == sp::Geometry.as_ptr() {
+            if sub_type == sp::Mesh.as_ptr() {
+                read_mesh(uc, node, &mut info)?;
+            } else if sub_type == sp::Shape.as_ptr() {
+                read_shape(uc, node, &mut info)?;
+            } else if sub_type == sp::NurbsCurve.as_ptr() {
+                read_nurbs_curve(uc, node, &mut info)?;
+            } else if sub_type == sp::NurbsSurface.as_ptr() {
+                read_nurbs_surface(uc, node, &mut info)?;
+            } else if sub_type == sp::Line.as_ptr() {
+                read_line(uc, node, &mut info)?;
+            } else if sub_type == sp::TrimNurbsSurface.as_ptr() {
+                read_element(
+                    uc,
+                    node,
+                    &mut info,
+                    size_of::<NurbsTrimSurface>(),
+                    ElementType::NurbsTrimSurface,
+                )?;
+            } else if sub_type == sp::Boundary.as_ptr() {
+                read_element(
+                    uc,
+                    node,
+                    &mut info,
+                    size_of::<NurbsTrimBoundary>(),
+                    ElementType::NurbsTrimBoundary,
+                )?;
+            } else {
+                read_unknown(uc, node, &mut info, type_str, sub_type_str, name)?;
+            }
+        } else if name == sp::Deformer.as_ptr() {
+            if sub_type == sp::Skin.as_ptr() {
+                read_skin(uc, node, &mut info)?;
+            } else if sub_type == sp::Cluster.as_ptr() {
+                read_skin_cluster(uc, node, &mut info)?;
+            } else if sub_type == sp::BlendShape.as_ptr() {
+                read_element(
+                    uc,
+                    node,
+                    &mut info,
+                    size_of::<BlendDeformer>(),
+                    ElementType::BlendDeformer,
+                )?;
+            } else if sub_type == sp::BlendShapeChannel.as_ptr() {
+                read_blend_channel(uc, node, &mut info)?;
+            } else if sub_type == sp::VertexCacheDeformer.as_ptr() {
+                read_element(
+                    uc,
+                    node,
+                    &mut info,
+                    size_of::<CacheDeformer>(),
+                    ElementType::CacheDeformer,
+                )?;
+            } else {
+                read_unknown(uc, node, &mut info, type_str, sub_type_str, name)?;
+            }
+        } else if name == sp::Material.as_ptr() {
+            read_material(uc, node, &mut info)?;
+        } else if name == sp::Texture.as_ptr() {
+            read_texture(uc, node, &mut info)?;
+        } else if name == sp::LayeredTexture.as_ptr() {
+            read_layered_texture(uc, node, &mut info)?;
+        } else if name == sp::Video.as_ptr() {
+            read_video(uc, node, &mut info)?;
+        } else if name == sp::AnimationStack.as_ptr() {
+            read_anim_stack(uc, node, &mut info)?;
+        } else if name == sp::AnimationLayer.as_ptr() {
             read_element(
                 uc,
                 node,
                 &mut info,
-                size_of::<Camera>(),
-                ElementType::Camera,
+                size_of::<AnimLayer>(),
+                ElementType::AnimLayer,
             )?;
-        } else if sub_type == sp::LimbNode.as_ptr()
-            || sub_type == sp::Limb.as_ptr()
-            || sub_type == sp::Root.as_ptr()
-        {
-            read_bone(uc, node, &mut info, sub_type)?;
-        } else if sub_type == sp::Null.as_ptr() || sub_type == sp::Marker.as_ptr() {
-            read_element(uc, node, &mut info, size_of::<Empty>(), ElementType::Empty)?;
-        } else if sub_type == sp::CameraStereo.as_ptr() {
+        } else if name == sp::AnimationCurveNode.as_ptr() {
             read_element(
                 uc,
                 node,
                 &mut info,
-                size_of::<StereoCamera>(),
-                ElementType::StereoCamera,
+                size_of::<AnimValue>(),
+                ElementType::AnimValue,
             )?;
-        } else if sub_type == sp::CameraSwitcher.as_ptr() {
+        } else if name == sp::AnimationCurve.as_ptr() {
+            read_animation_curve(uc, node, &mut info)?;
+        } else if name == sp::Pose.as_ptr() {
+            read_pose(uc, node, &mut info, sub_type)?;
+        } else if name == sp::Implementation.as_ptr() {
             read_element(
                 uc,
                 node,
                 &mut info,
-                size_of::<CameraSwitcher>(),
-                ElementType::CameraSwitcher,
+                size_of::<Shader>(),
+                ElementType::Shader,
             )?;
-        } else if sub_type == sp::FKEffector.as_ptr() {
-            read_marker(uc, node, &mut info, sub_type, MarkerType::FkEffector)?;
-        } else if sub_type == sp::IKEffector.as_ptr() {
-            read_marker(uc, node, &mut info, sub_type, MarkerType::IkEffector)?;
-        } else if sub_type == sp::LodGroup.as_ptr() {
+        } else if name == sp::BindingTable.as_ptr() {
+            read_binding_table(uc, node, &mut info)?;
+        } else if name == sp::Collection.as_ptr() {
+            if sub_type == sp::SelectionSet.as_ptr() {
+                read_selection_set(uc, node, &mut info)?;
+            }
+        } else if name == sp::CollectionExclusive.as_ptr() {
+            if sub_type == sp::DisplayLayer.as_ptr() {
+                read_element(
+                    uc,
+                    node,
+                    &mut info,
+                    size_of::<DisplayLayer>(),
+                    ElementType::DisplayLayer,
+                )?;
+            }
+        } else if name == sp::SelectionNode.as_ptr() {
+            read_selection_node(uc, node, &mut info)?;
+        } else if name == sp::Constraint.as_ptr() {
+            if sub_type == sp::Character.as_ptr() {
+                read_character(uc, node, &mut info)?;
+            } else {
+                read_constraint(uc, node, &mut info)?;
+            }
+        } else if name == sp::SceneInfo.as_ptr() {
+            read_scene_info(uc, node)?;
+        } else if name == sp::Cache.as_ptr() {
             read_element(
                 uc,
                 node,
                 &mut info,
-                size_of::<LodGroup>(),
-                ElementType::LodGroup,
+                size_of::<CacheFile>(),
+                ElementType::CacheFile,
             )?;
+        } else if name == sp::ObjectMetaData.as_ptr() {
+            read_element(
+                uc,
+                node,
+                &mut info,
+                size_of::<MetadataObject>(),
+                ElementType::MetadataObject,
+            )?;
+        } else if name == sp::AudioLayer.as_ptr() {
+            read_element(
+                uc,
+                node,
+                &mut info,
+                size_of::<AudioLayer>(),
+                ElementType::AudioLayer,
+            )?;
+        } else if name == sp::Audio.as_ptr() {
+            read_audio_clip(uc, node, &mut info)?;
         } else {
             read_unknown(uc, node, &mut info, type_str, sub_type_str, name)?;
         }
-    } else if name == sp::Geometry.as_ptr() {
-        if sub_type == sp::Mesh.as_ptr() {
-            read_mesh(uc, node, &mut info)?;
-        } else if sub_type == sp::Shape.as_ptr() {
-            read_shape(uc, node, &mut info)?;
-        } else if sub_type == sp::NurbsCurve.as_ptr() {
-            read_nurbs_curve(uc, node, &mut info)?;
-        } else if sub_type == sp::NurbsSurface.as_ptr() {
-            read_nurbs_surface(uc, node, &mut info)?;
-        } else if sub_type == sp::Line.as_ptr() {
-            read_line(uc, node, &mut info)?;
-        } else if sub_type == sp::TrimNurbsSurface.as_ptr() {
-            read_element(
-                uc,
-                node,
-                &mut info,
-                size_of::<NurbsTrimSurface>(),
-                ElementType::NurbsTrimSurface,
-            )?;
-        } else if sub_type == sp::Boundary.as_ptr() {
-            read_element(
-                uc,
-                node,
-                &mut info,
-                size_of::<NurbsTrimBoundary>(),
-                ElementType::NurbsTrimBoundary,
-            )?;
-        } else {
-            read_unknown(uc, node, &mut info, type_str, sub_type_str, name)?;
-        }
-    } else if name == sp::Deformer.as_ptr() {
-        if sub_type == sp::Skin.as_ptr() {
-            read_skin(uc, node, &mut info)?;
-        } else if sub_type == sp::Cluster.as_ptr() {
-            read_skin_cluster(uc, node, &mut info)?;
-        } else if sub_type == sp::BlendShape.as_ptr() {
-            read_element(
-                uc,
-                node,
-                &mut info,
-                size_of::<BlendDeformer>(),
-                ElementType::BlendDeformer,
-            )?;
-        } else if sub_type == sp::BlendShapeChannel.as_ptr() {
-            read_blend_channel(uc, node, &mut info)?;
-        } else if sub_type == sp::VertexCacheDeformer.as_ptr() {
-            read_element(
-                uc,
-                node,
-                &mut info,
-                size_of::<CacheDeformer>(),
-                ElementType::CacheDeformer,
-            )?;
-        } else {
-            read_unknown(uc, node, &mut info, type_str, sub_type_str, name)?;
-        }
-    } else if name == sp::Material.as_ptr() {
-        read_material(uc, node, &mut info)?;
-    } else if name == sp::Texture.as_ptr() {
-        read_texture(uc, node, &mut info)?;
-    } else if name == sp::LayeredTexture.as_ptr() {
-        read_layered_texture(uc, node, &mut info)?;
-    } else if name == sp::Video.as_ptr() {
-        read_video(uc, node, &mut info)?;
-    } else if name == sp::AnimationStack.as_ptr() {
-        read_anim_stack(uc, node, &mut info)?;
-    } else if name == sp::AnimationLayer.as_ptr() {
-        read_element(
-            uc,
-            node,
-            &mut info,
-            size_of::<AnimLayer>(),
-            ElementType::AnimLayer,
-        )?;
-    } else if name == sp::AnimationCurveNode.as_ptr() {
-        read_element(
-            uc,
-            node,
-            &mut info,
-            size_of::<AnimValue>(),
-            ElementType::AnimValue,
-        )?;
-    } else if name == sp::AnimationCurve.as_ptr() {
-        read_animation_curve(uc, node, &mut info)?;
-    } else if name == sp::Pose.as_ptr() {
-        read_pose(uc, node, &mut info, sub_type)?;
-    } else if name == sp::Implementation.as_ptr() {
-        read_element(
-            uc,
-            node,
-            &mut info,
-            size_of::<Shader>(),
-            ElementType::Shader,
-        )?;
-    } else if name == sp::BindingTable.as_ptr() {
-        read_binding_table(uc, node, &mut info)?;
-    } else if name == sp::Collection.as_ptr() {
-        if sub_type == sp::SelectionSet.as_ptr() {
-            read_selection_set(uc, node, &mut info)?;
-        }
-    } else if name == sp::CollectionExclusive.as_ptr() {
-        if sub_type == sp::DisplayLayer.as_ptr() {
-            read_element(
-                uc,
-                node,
-                &mut info,
-                size_of::<DisplayLayer>(),
-                ElementType::DisplayLayer,
-            )?;
-        }
-    } else if name == sp::SelectionNode.as_ptr() {
-        read_selection_node(uc, node, &mut info)?;
-    } else if name == sp::Constraint.as_ptr() {
-        if sub_type == sp::Character.as_ptr() {
-            read_character(uc, node, &mut info)?;
-        } else {
-            read_constraint(uc, node, &mut info)?;
-        }
-    } else if name == sp::SceneInfo.as_ptr() {
-        read_scene_info(uc, node)?;
-    } else if name == sp::Cache.as_ptr() {
-        read_element(
-            uc,
-            node,
-            &mut info,
-            size_of::<CacheFile>(),
-            ElementType::CacheFile,
-        )?;
-    } else if name == sp::ObjectMetaData.as_ptr() {
-        read_element(
-            uc,
-            node,
-            &mut info,
-            size_of::<MetadataObject>(),
-            ElementType::MetadataObject,
-        )?;
-    } else if name == sp::AudioLayer.as_ptr() {
-        read_element(
-            uc,
-            node,
-            &mut info,
-            size_of::<AudioLayer>(),
-            ElementType::AudioLayer,
-        )?;
-    } else if name == sp::Audio.as_ptr() {
-        read_audio_clip(uc, node, &mut info)?;
-    } else {
-        read_unknown(uc, node, &mut info, type_str, sub_type_str, name)?;
     }
 
     Ok(())
@@ -6140,23 +6293,28 @@ pub(crate) unsafe fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fa
 
 // ufbx.c:15101-15121 `ufbxi_read_objects`
 #[inline(never)]
-pub(crate) unsafe fn read_objects(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn read_objects(uc: &Context) -> Result<(), Fail> {
     loop {
         // Push a deferred element ID for tagging warnings
-        uc.set_p_element_id(push::<u32>(uc.tmp_element_id_mut_ptr(), 1));
+        // SAFETY: pushing one `u32` onto uc's own `tmp_element_id` buffer.
+        uc.set_p_element_id(unsafe { push::<u32>(uc.tmp_element_id_mut_ptr(), 1) });
         ufbxi_check!(uc, !uc.p_element_id().is_null(), "uc->p_element_id");
-        *uc.p_element_id() = NO_INDEX;
+        // SAFETY: `p_element_id` is the fresh non-null push result checked above.
+        unsafe { *uc.p_element_id() = NO_INDEX };
         uc.warnings_view()
             .set_deferred_element_id_plus_one(uc.tmp_element_id_view().num_items() as u32);
 
         // C: `ufbxi_node *node;` — written by `ufbxi_parse_toplevel_child`.
         let mut node: *mut Node = core::ptr::null_mut();
-        parse_toplevel_child(uc, &mut node, core::ptr::null_mut())?;
+        // SAFETY: `node` is a local out-param slot; the null `tmp_buf` selects
+        // uc's own temp buffer, as in the C call.
+        unsafe { parse_toplevel_child(uc, &mut node, core::ptr::null_mut())? };
         if node.is_null() {
             break;
         }
         // Bridge the raw parse-tree node into a view for `read_object`.
-        let node: &NodeView = NodeView::from_ptr(node);
+        // SAFETY: `node` is the non-null node just parsed into uc's arena.
+        let node: &NodeView = unsafe { NodeView::from_ptr(node) };
 
         read_object(uc, node)?;
 
@@ -6177,6 +6335,15 @@ pub(crate) struct ObjectBatch {
 }
 
 // ufbx.c:15129-15234 `ufbxi_read_objects_threaded`
+//
+// Stays `unsafe fn`: the body is raw end-to-end. It drives a local
+// `ObjectBatch` array through raw `batch` pointers, performs pointer surgery on
+// uc's ASCII source window (`ua->src`/`src_end`/`src_yield` retargeted at
+// `uc->read_buffer` after a `memcpy`), reads `uc->thread_pool` task counters and
+// `tmp_buf` fill levels through raw derefs, and hands `tmp_buf`-allocated node
+// runs to the worker tasks. The obligation that all of that state is coherent —
+// in particular that `tmp_buf` is not cleared while a batch still refers to it —
+// is a whole-function invariant with no narrow seam to name.
 #[inline(never)]
 pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
     uc.set_parse_threaded(true);
@@ -6321,17 +6488,20 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:15236-15310 `ufbxi_read_connections`
 #[inline(never)]
-pub(crate) unsafe fn read_connections(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn read_connections(uc: &Context) -> Result<(), Fail> {
     // Read the connections to the list first
     loop {
         // C: `ufbxi_node *node;` — written by `ufbxi_parse_toplevel_child`.
         let mut node: *mut Node = core::ptr::null_mut();
-        parse_toplevel_child(uc, &mut node, core::ptr::null_mut())?;
+        // SAFETY: `node` is a local out-param slot; the null `tmp_buf` selects
+        // uc's own temp buffer, as in the C call.
+        unsafe { parse_toplevel_child(uc, &mut node, core::ptr::null_mut())? };
         if node.is_null() {
             break;
         }
         // Bridge the raw parse-tree node into a view for the navigation below.
-        let node: &NodeView = NodeView::from_ptr(node);
+        // SAFETY: `node` is the non-null node just parsed into uc's arena.
+        let node: &NodeView = unsafe { NodeView::from_ptr(node) };
 
         // C: `char *type;` — written by the `ufbxi_get_val1` guards below.
         let mut type_: *const u8 = core::ptr::null();
@@ -6346,143 +6516,166 @@ pub(crate) unsafe fn read_connections(uc: &Context) -> Result<(), Fail> {
             let mut dst_name: *const u8 = core::ptr::null();
             // Pre-7000 versions use Type::Name pairs as identifiers
 
-            if !get_val1(
-                node,
-                b"c\0".as_ptr(),
-                &mut type_ as *mut *const u8 as *mut c_void,
-            ) {
-                continue;
-            }
+            // SAFETY (this branch): `node` is a parse-tree NodeView; every
+            // out-param is an unaliased local of exactly the type its format
+            // character writes (`c` → `char*`, `s` → `ufbx_string`, `_` →
+            // skipped, so the matching NULL is never written). The strings the
+            // reads produce are pooled and NUL-terminated, which is what the
+            // re-intern and the synthetic-id hashes below require.
+            unsafe {
+                if !get_val1(
+                    node,
+                    b"c\0".as_ptr(),
+                    &mut type_ as *mut *const u8 as *mut c_void,
+                ) {
+                    continue;
+                }
 
-            if type_ == sp::OO.as_ptr() {
-                if !get_val3(
-                    node,
-                    b"_cc\0".as_ptr(),
-                    core::ptr::null_mut(),
-                    &mut src_name as *mut *const u8 as *mut c_void,
-                    &mut dst_name as *mut *const u8 as *mut c_void,
-                ) {
+                if type_ == sp::OO.as_ptr() {
+                    if !get_val3(
+                        node,
+                        b"_cc\0".as_ptr(),
+                        core::ptr::null_mut(),
+                        &mut src_name as *mut *const u8 as *mut c_void,
+                        &mut dst_name as *mut *const u8 as *mut c_void,
+                    ) {
+                        continue;
+                    }
+                } else if type_ == sp::OP.as_ptr() {
+                    if !get_val4(
+                        node,
+                        b"_ccs\0".as_ptr(),
+                        core::ptr::null_mut(),
+                        &mut src_name as *mut *const u8 as *mut c_void,
+                        &mut dst_name as *mut *const u8 as *mut c_void,
+                        &mut dst_prop as *mut String as *mut c_void,
+                    ) {
+                        continue;
+                    }
+                } else if type_ == sp::PO.as_ptr() {
+                    if !get_val4(
+                        node,
+                        b"_csc\0".as_ptr(),
+                        core::ptr::null_mut(),
+                        &mut src_name as *mut *const u8 as *mut c_void,
+                        &mut src_prop as *mut String as *mut c_void,
+                        &mut dst_name as *mut *const u8 as *mut c_void,
+                    ) {
+                        continue;
+                    }
+                } else if type_ == sp::PP.as_ptr() {
+                    if !get_val5(
+                        node,
+                        b"_cscs\0".as_ptr(),
+                        core::ptr::null_mut(),
+                        &mut src_name as *mut *const u8 as *mut c_void,
+                        &mut src_prop as *mut String as *mut c_void,
+                        &mut dst_name as *mut *const u8 as *mut c_void,
+                        &mut dst_prop as *mut String as *mut c_void,
+                    ) {
+                        continue;
+                    }
+                } else {
+                    // TODO: Strict mode?
                     continue;
                 }
-            } else if type_ == sp::OP.as_ptr() {
-                if !get_val4(
-                    node,
-                    b"_ccs\0".as_ptr(),
-                    core::ptr::null_mut(),
-                    &mut src_name as *mut *const u8 as *mut c_void,
-                    &mut dst_name as *mut *const u8 as *mut c_void,
-                    &mut dst_prop as *mut String as *mut c_void,
-                ) {
-                    continue;
-                }
-            } else if type_ == sp::PO.as_ptr() {
-                if !get_val4(
-                    node,
-                    b"_csc\0".as_ptr(),
-                    core::ptr::null_mut(),
-                    &mut src_name as *mut *const u8 as *mut c_void,
-                    &mut src_prop as *mut String as *mut c_void,
-                    &mut dst_name as *mut *const u8 as *mut c_void,
-                ) {
-                    continue;
-                }
-            } else if type_ == sp::PP.as_ptr() {
-                if !get_val5(
-                    node,
-                    b"_cscs\0".as_ptr(),
-                    core::ptr::null_mut(),
-                    &mut src_name as *mut *const u8 as *mut c_void,
-                    &mut src_prop as *mut String as *mut c_void,
-                    &mut dst_name as *mut *const u8 as *mut c_void,
-                    &mut dst_prop as *mut String as *mut c_void,
-                ) {
-                    continue;
-                }
-            } else {
-                // TODO: Strict mode?
-                continue;
-            }
 
-            if src_prop.length > 0 {
-                push_string_place_str(uc.string_pool_mut_ptr(), &mut src_prop, false)?;
-            }
-            if dst_prop.length > 0 {
-                push_string_place_str(uc.string_pool_mut_ptr(), &mut dst_prop, false)?;
-            }
+                if src_prop.length > 0 {
+                    push_string_place_str(uc.string_pool_mut_ptr(), &mut src_prop, false)?;
+                }
+                if dst_prop.length > 0 {
+                    push_string_place_str(uc.string_pool_mut_ptr(), &mut dst_prop, false)?;
+                }
 
-            src_id = synthetic_id_from_string(uc, src_name);
-            dst_id = synthetic_id_from_string(uc, dst_name);
-            ufbxi_check!(uc, src_id != 0 && dst_id != 0, "src_id && dst_id");
+                src_id = synthetic_id_from_string(uc, src_name);
+                dst_id = synthetic_id_from_string(uc, dst_name);
+                ufbxi_check!(uc, src_id != 0 && dst_id != 0, "src_id && dst_id");
+            }
         } else {
             // Post-7000 versions use proper unique 64-bit IDs
 
-            if !get_val1(
-                node,
-                b"C\0".as_ptr(),
-                &mut type_ as *mut *const u8 as *mut c_void,
-            ) {
-                continue;
-            }
+            // SAFETY (this branch): `node` is a parse-tree NodeView; every
+            // out-param is an unaliased local of exactly the type its format
+            // character writes (`C` → `char*`, `L` → `uint64_t`, `S` →
+            // `ufbx_string`, `_` → skipped, so the matching NULL is never
+            // written), and the id validators take those same locals.
+            unsafe {
+                if !get_val1(
+                    node,
+                    b"C\0".as_ptr(),
+                    &mut type_ as *mut *const u8 as *mut c_void,
+                ) {
+                    continue;
+                }
 
-            if type_ == sp::OO.as_ptr() {
-                if !get_val3(
-                    node,
-                    b"_LL\0".as_ptr(),
-                    core::ptr::null_mut(),
-                    &mut src_id as *mut u64 as *mut c_void,
-                    &mut dst_id as *mut u64 as *mut c_void,
-                ) {
+                if type_ == sp::OO.as_ptr() {
+                    if !get_val3(
+                        node,
+                        b"_LL\0".as_ptr(),
+                        core::ptr::null_mut(),
+                        &mut src_id as *mut u64 as *mut c_void,
+                        &mut dst_id as *mut u64 as *mut c_void,
+                    ) {
+                        continue;
+                    }
+                } else if type_ == sp::OP.as_ptr() {
+                    if !get_val4(
+                        node,
+                        b"_LLS\0".as_ptr(),
+                        core::ptr::null_mut(),
+                        &mut src_id as *mut u64 as *mut c_void,
+                        &mut dst_id as *mut u64 as *mut c_void,
+                        &mut dst_prop as *mut String as *mut c_void,
+                    ) {
+                        continue;
+                    }
+                } else if type_ == sp::PO.as_ptr() {
+                    if !get_val4(
+                        node,
+                        b"_LSL\0".as_ptr(),
+                        core::ptr::null_mut(),
+                        &mut src_id as *mut u64 as *mut c_void,
+                        &mut src_prop as *mut String as *mut c_void,
+                        &mut dst_id as *mut u64 as *mut c_void,
+                    ) {
+                        continue;
+                    }
+                } else if type_ == sp::PP.as_ptr() {
+                    if !get_val5(
+                        node,
+                        b"_LSLS\0".as_ptr(),
+                        core::ptr::null_mut(),
+                        &mut src_id as *mut u64 as *mut c_void,
+                        &mut src_prop as *mut String as *mut c_void,
+                        &mut dst_id as *mut u64 as *mut c_void,
+                        &mut dst_prop as *mut String as *mut c_void,
+                    ) {
+                        continue;
+                    }
+                } else {
+                    // TODO: Strict mode?
                     continue;
                 }
-            } else if type_ == sp::OP.as_ptr() {
-                if !get_val4(
-                    node,
-                    b"_LLS\0".as_ptr(),
-                    core::ptr::null_mut(),
-                    &mut src_id as *mut u64 as *mut c_void,
-                    &mut dst_id as *mut u64 as *mut c_void,
-                    &mut dst_prop as *mut String as *mut c_void,
-                ) {
-                    continue;
-                }
-            } else if type_ == sp::PO.as_ptr() {
-                if !get_val4(
-                    node,
-                    b"_LSL\0".as_ptr(),
-                    core::ptr::null_mut(),
-                    &mut src_id as *mut u64 as *mut c_void,
-                    &mut src_prop as *mut String as *mut c_void,
-                    &mut dst_id as *mut u64 as *mut c_void,
-                ) {
-                    continue;
-                }
-            } else if type_ == sp::PP.as_ptr() {
-                if !get_val5(
-                    node,
-                    b"_LSLS\0".as_ptr(),
-                    core::ptr::null_mut(),
-                    &mut src_id as *mut u64 as *mut c_void,
-                    &mut src_prop as *mut String as *mut c_void,
-                    &mut dst_id as *mut u64 as *mut c_void,
-                    &mut dst_prop as *mut String as *mut c_void,
-                ) {
-                    continue;
-                }
-            } else {
-                // TODO: Strict mode?
-                continue;
-            }
 
-            validate_fbx_id(uc, &mut src_id)?;
-            validate_fbx_id(uc, &mut dst_id)?;
+                validate_fbx_id(uc, &mut src_id)?;
+                validate_fbx_id(uc, &mut dst_id)?;
+            }
         }
 
-        let conn: *mut TmpConnection = push::<TmpConnection>(uc.tmp_connections_mut_ptr(), 1);
+        // SAFETY: pushing one `TmpConnection` onto uc's own `tmp_connections`
+        // buffer.
+        let conn: *mut TmpConnection =
+            unsafe { push::<TmpConnection>(uc.tmp_connections_mut_ptr(), 1) };
         ufbxi_check!(uc, !conn.is_null(), "conn");
-        (*conn).src = src_id;
-        (*conn).dst = dst_id;
-        (*conn).src_prop = src_prop;
-        (*conn).dst_prop = dst_prop;
+        // SAFETY: `conn` is the fresh non-null push result checked above and is
+        // fully initialized here; the two prop strings are pooled (interned
+        // above), so they outlive the connection list.
+        unsafe {
+            (*conn).src = src_id;
+            (*conn).dst = dst_id;
+            (*conn).src_prop = src_prop;
+            (*conn).dst_prop = dst_prop;
+        }
     }
 
     Ok(())
@@ -7023,7 +7216,7 @@ unsafe fn read_take_prop_channel_rec(
 
 // ufbx.c:15664-15686 `ufbxi_read_take_object`
 #[inline(never)]
-pub(crate) unsafe fn read_take_object(
+pub(crate) fn read_take_object(
     uc: &Context,
     node: &NodeView,
     layer_fbx_id: u64,
@@ -7032,36 +7225,50 @@ pub(crate) unsafe fn read_take_object(
     // by their unique Type::Name pair that we use as unique IDs through the
     // pooled interned string pointers.
     let mut type_and_name: *const u8 = core::ptr::null();
+    // SAFETY: `node` is a parse-tree NodeView and `type_and_name` is an
+    // unaliased local `char*` slot, matching the `c` format; on success it
+    // holds a pooled NUL-terminated string, which is what the id hash reads.
     ufbxi_check!(
         uc,
-        get_val1(
-            node,
-            b"c\0".as_ptr(),
-            &mut type_and_name as *mut *const u8 as *mut c_void
-        ),
+        unsafe {
+            get_val1(
+                node,
+                b"c\0".as_ptr(),
+                &mut type_and_name as *mut *const u8 as *mut c_void,
+            )
+        },
         "ufbxi_get_val1(node, \"c\", (char**)&type_and_name)"
     );
-    let target_fbx_id: u64 = synthetic_id_from_string(uc, type_and_name);
+    // SAFETY: `type_and_name` is the pooled string just read above.
+    let target_fbx_id: u64 = unsafe { synthetic_id_from_string(uc, type_and_name) };
     ufbxi_check!(uc, target_fbx_id != 0, "target_fbx_id");
 
     // Add all suitable Channels as animated properties
     // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
     // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-    for child in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
+    for child in
+        unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
+    {
         // C: `ufbx_string name;` — written by the `ufbxi_get_val1` guard below.
-        let mut name: String = core::mem::zeroed();
+        // SAFETY: all-zero is a valid `ufbx_string`; `child` is a NodeView from
+        // `node`'s own child run and `name` is an unaliased local of exactly
+        // the type the `S` format writes, so on success it is pooled and safe
+        // to hand to the channel reader.
+        let mut name: String = unsafe { core::mem::zeroed() };
         if child.name() != sp::Channel.as_ptr() {
             continue;
         }
-        if !get_val1(
-            child,
-            b"S\0".as_ptr(),
-            &mut name as *mut String as *mut c_void,
-        ) {
-            continue;
-        }
+        unsafe {
+            if !get_val1(
+                child,
+                b"S\0".as_ptr(),
+                &mut name as *mut String as *mut c_void,
+            ) {
+                continue;
+            }
 
-        read_take_prop_channel(uc, child, target_fbx_id, layer_fbx_id, name)?;
+            read_take_prop_channel(uc, child, target_fbx_id, layer_fbx_id, name)?;
+        }
     }
 
     Ok(())
@@ -7069,66 +7276,78 @@ pub(crate) unsafe fn read_take_object(
 
 // ufbx.c:15688-15749 `ufbxi_read_take`
 #[inline(never)]
-pub(crate) unsafe fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
-    let mut tmp_props: [Prop; 4] = core::mem::zeroed();
+pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
+    // SAFETY: `ufbx_prop` is a plain C aggregate of strings, scalars and enum
+    // tags whose all-zero bit pattern is valid.
+    let mut tmp_props: [Prop; 4] = unsafe { core::mem::zeroed() };
     let mut num_props: u32 = 0;
 
     let mut start: i64 = 0;
     let mut stop: i64 = 0;
-    if find_val2(
-        node,
-        sp::LocalTime.as_ptr(),
-        b"LL\0".as_ptr(),
-        &mut start as *mut i64 as *mut c_void,
-        &mut stop as *mut i64 as *mut c_void,
-    ) {
-        init_synthetic_int_prop(
-            &mut tmp_props[num_props as usize],
-            sp::LocalStart.as_ptr(),
-            start,
-            PropType::Integer,
-        );
-        num_props += 1;
-        init_synthetic_int_prop(
-            &mut tmp_props[num_props as usize],
-            sp::LocalStop.as_ptr(),
-            stop,
-            PropType::Integer,
-        );
-        num_props += 1;
-    }
-    if find_val2(
-        node,
-        sp::ReferenceTime.as_ptr(),
-        b"LL\0".as_ptr(),
-        &mut start as *mut i64 as *mut c_void,
-        &mut stop as *mut i64 as *mut c_void,
-    ) {
-        init_synthetic_int_prop(
-            &mut tmp_props[num_props as usize],
-            sp::ReferenceStart.as_ptr(),
-            start,
-            PropType::Integer,
-        );
-        num_props += 1;
-        init_synthetic_int_prop(
-            &mut tmp_props[num_props as usize],
-            sp::ReferenceStop.as_ptr(),
-            stop,
-            PropType::Integer,
-        );
-        num_props += 1;
+    // SAFETY: `node` is a parse-tree NodeView; `start`/`stop` are unaliased
+    // locals of the `int64_t` type the `LL` format writes, and the synthetic
+    // props are initialized in place into the local `tmp_props` array — at most
+    // four are ever written, which is its length — from static pooled names.
+    unsafe {
+        if find_val2(
+            node,
+            sp::LocalTime.as_ptr(),
+            b"LL\0".as_ptr(),
+            &mut start as *mut i64 as *mut c_void,
+            &mut stop as *mut i64 as *mut c_void,
+        ) {
+            init_synthetic_int_prop(
+                &mut tmp_props[num_props as usize],
+                sp::LocalStart.as_ptr(),
+                start,
+                PropType::Integer,
+            );
+            num_props += 1;
+            init_synthetic_int_prop(
+                &mut tmp_props[num_props as usize],
+                sp::LocalStop.as_ptr(),
+                stop,
+                PropType::Integer,
+            );
+            num_props += 1;
+        }
+        if find_val2(
+            node,
+            sp::ReferenceTime.as_ptr(),
+            b"LL\0".as_ptr(),
+            &mut start as *mut i64 as *mut c_void,
+            &mut stop as *mut i64 as *mut c_void,
+        ) {
+            init_synthetic_int_prop(
+                &mut tmp_props[num_props as usize],
+                sp::ReferenceStart.as_ptr(),
+                start,
+                PropType::Integer,
+            );
+            num_props += 1;
+            init_synthetic_int_prop(
+                &mut tmp_props[num_props as usize],
+                sp::ReferenceStop.as_ptr(),
+                stop,
+                PropType::Integer,
+            );
+            num_props += 1;
+        }
     }
 
     // C: `const char *name;` — written by the `ufbxi_get_val1` check below.
     let mut name: *const u8 = core::ptr::null();
+    // SAFETY: `node` is a parse-tree NodeView and `name` is an unaliased local
+    // `char*` slot, matching the `C` format; on success it is a pooled string.
     ufbxi_check!(
         uc,
-        get_val1(
-            node,
-            b"C\0".as_ptr(),
-            &mut name as *mut *const u8 as *mut c_void
-        ),
+        unsafe {
+            get_val1(
+                node,
+                b"C\0".as_ptr(),
+                &mut name as *mut *const u8 as *mut c_void,
+            )
+        },
         "ufbxi_get_val1(node, \"C\", (char**)&name)"
     );
 
@@ -7136,23 +7355,35 @@ pub(crate) unsafe fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail
     // for fallback in case the information is missing in the stacks.
     if uc.version() >= 7000 {
         let hash: u32 = crate::native::hash::hash_ptr!(name);
-        let entry: *mut TmpAnimStack = map_find::<TmpAnimStack>(
-            uc.anim_stack_map_mut_ptr(),
-            hash,
-            &name as *const *const u8 as *const c_void,
-        );
+        // SAFETY: the key is a local pooled `char*` passed by pointer to uc's
+        // own `anim_stack_map`, whose entries are `TmpAnimStack` keyed by that
+        // pointer; a non-null entry holds a live element of uc's own scene, so
+        // its `props` run may be filled from the local `tmp_props` array — the
+        // `num_props` copied were written into it above.
+        let entry: *mut TmpAnimStack = unsafe {
+            map_find::<TmpAnimStack>(
+                uc.anim_stack_map_mut_ptr(),
+                hash,
+                &name as *const *const u8 as *const c_void,
+            )
+        };
 
         if !entry.is_null() {
-            let stack: *mut AnimStack = (*entry).stack;
-            if (*stack).element.props.props.count == 0 {
-                (*stack).element.props.props.count = num_props as usize;
-                (*stack).element.props.props.data =
-                    push_copy::<Prop>(uc.result_mut_ptr(), num_props as usize, tmp_props.as_ptr());
-                ufbxi_check!(
-                    uc,
-                    !(*stack).element.props.props.data.is_null(),
-                    "stack->props.props.data"
-                );
+            unsafe {
+                let stack: *mut AnimStack = (*entry).stack;
+                if (*stack).element.props.props.count == 0 {
+                    (*stack).element.props.props.count = num_props as usize;
+                    (*stack).element.props.props.data = push_copy::<Prop>(
+                        uc.result_mut_ptr(),
+                        num_props as usize,
+                        tmp_props.as_ptr(),
+                    );
+                    ufbxi_check!(
+                        uc,
+                        !(*stack).element.props.props.data.is_null(),
+                        "stack->props.props.data"
+                    );
+                }
             }
         }
 
@@ -7163,31 +7394,44 @@ pub(crate) unsafe fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail
     let mut layer_fbx_id: u64 = 0;
 
     // Treat the Take as a post-7000 version animation stack and layer.
-    let stack: *mut AnimStack = push_synthetic_element::<AnimStack>(
-        uc,
-        &mut stack_fbx_id,
-        Some(node),
-        name,
-        ElementType::AnimStack,
-    );
+    // SAFETY: `stack_fbx_id` is an unaliased local out-param, `node` is a
+    // parse-tree NodeView and `name` is the pooled string read above.
+    let stack: *mut AnimStack = unsafe {
+        push_synthetic_element::<AnimStack>(
+            uc,
+            &mut stack_fbx_id,
+            Some(node),
+            name,
+            ElementType::AnimStack,
+        )
+    };
     ufbxi_check!(uc, !stack.is_null(), "stack");
 
-    (*stack).element.props.props.count = num_props as usize;
-    (*stack).element.props.props.data =
-        push_copy::<Prop>(uc.result_mut_ptr(), num_props as usize, tmp_props.as_ptr());
-    ufbxi_check!(
-        uc,
-        !(*stack).element.props.props.data.is_null(),
-        "stack->props.props.data"
-    );
+    // SAFETY: `stack` is the fresh non-null element checked above; the copy
+    // source is the local `tmp_props` array, into which `num_props` entries
+    // were written, and the destination buffer is uc's own result arena.
+    unsafe {
+        (*stack).element.props.props.count = num_props as usize;
+        (*stack).element.props.props.data =
+            push_copy::<Prop>(uc.result_mut_ptr(), num_props as usize, tmp_props.as_ptr());
+        ufbxi_check!(
+            uc,
+            !(*stack).element.props.props.data.is_null(),
+            "stack->props.props.data"
+        );
+    }
 
-    let layer: *mut AnimLayer = push_synthetic_element::<AnimLayer>(
-        uc,
-        &mut layer_fbx_id,
-        Some(node),
-        sp::BaseLayer.as_ptr(),
-        ElementType::AnimLayer,
-    );
+    // SAFETY: `layer_fbx_id` is an unaliased local out-param, `node` is a
+    // parse-tree NodeView and the name is a static pooled string.
+    let layer: *mut AnimLayer = unsafe {
+        push_synthetic_element::<AnimLayer>(
+            uc,
+            &mut layer_fbx_id,
+            Some(node),
+            sp::BaseLayer.as_ptr(),
+            ElementType::AnimLayer,
+        )
+    };
     ufbxi_check!(uc, !layer.is_null(), "layer");
 
     connect_oo(uc, layer_fbx_id, stack_fbx_id)?;
@@ -7195,7 +7439,9 @@ pub(crate) unsafe fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail
     // Read all properties of objects included in the take
     // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
     // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-    for child in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
+    for child in
+        unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
+    {
         // TODO: Do some object types have another name?
         if child.name() != sp::Model.as_ptr() {
             continue;
@@ -7209,16 +7455,19 @@ pub(crate) unsafe fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail
 
 // ufbx.c:15751-15764 `ufbxi_read_takes`
 #[inline(never)]
-pub(crate) unsafe fn read_takes(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn read_takes(uc: &Context) -> Result<(), Fail> {
     loop {
         // C: `ufbxi_node *node;` — written by `ufbxi_parse_toplevel_child`.
         let mut node: *mut Node = core::ptr::null_mut();
-        parse_toplevel_child(uc, &mut node, core::ptr::null_mut())?;
+        // SAFETY: `node` is a local out-param slot; the null `tmp_buf` selects
+        // uc's own temp buffer, as in the C call.
+        unsafe { parse_toplevel_child(uc, &mut node, core::ptr::null_mut())? };
         if node.is_null() {
             break;
         }
         // Bridge the raw parse-tree node into a view for the navigation below.
-        let node: &NodeView = NodeView::from_ptr(node);
+        // SAFETY: `node` is the non-null node just parsed into uc's arena.
+        let node: &NodeView = unsafe { NodeView::from_ptr(node) };
 
         if node.name() == sp::Take.as_ptr() {
             read_take(uc, node)?;
@@ -7230,88 +7479,108 @@ pub(crate) unsafe fn read_takes(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:15766-15816 `ufbxi_read_legacy_settings`
 #[inline(never)]
-pub(crate) unsafe fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), Fail> {
+pub(crate) fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     if uc.read_legacy_settings() {
         return Ok(());
     }
     uc.set_read_legacy_settings(true);
 
-    let mut tmp_props: [Prop; 2] = core::mem::zeroed();
+    // SAFETY: `ufbx_prop` is a plain C aggregate whose all-zero bit pattern is
+    // valid.
+    let mut tmp_props: [Prop; 2] = unsafe { core::mem::zeroed() };
     let mut num_props: u32 = 0;
 
-    let frame_rate = find_child_strcmp(node, b"FrameRate\0".as_ptr());
+    // SAFETY: `node` is a parse-tree NodeView; the name is a NUL-terminated
+    // literal, which is what the by-content child search compares against.
+    let frame_rate = unsafe { find_child_strcmp(node, b"FrameRate\0".as_ptr()) };
     if let Some(frame_rate) = frame_rate {
         let mut fps: f64 = 0.0;
-        if !get_val1(
-            frame_rate,
-            b"D\0".as_ptr(),
-            &mut fps as *mut f64 as *mut c_void,
-        ) {
-            // C: `ufbx_string str;` — written by the `ufbxi_get_val1()` below.
-            let mut str_: String = core::mem::zeroed();
-            if get_val1(
+        // SAFETY: `frame_rate` is a child NodeView of `node`; `fps` and `str_`
+        // are unaliased locals of exactly the types the `D` / `S` formats
+        // write, and on success `str_` is a pooled `data`/`length` pair, so the
+        // double parse and the end-of-string compare stay inside it. The two
+        // synthetic props are written into the local 2-element `tmp_props`.
+        unsafe {
+            if !get_val1(
                 frame_rate,
-                b"S\0".as_ptr(),
-                &mut str_ as *mut String as *mut c_void,
+                b"D\0".as_ptr(),
+                &mut fps as *mut f64 as *mut c_void,
             ) {
-                // C: `char *end;` — written by `ufbxi_parse_double()`.
-                let mut end: *const u8 = core::ptr::null();
-                let val: f64 =
-                    parse_double(str_.data, str_.length, &mut end, uc.double_parse_flags());
-                if end == str_.data.add(str_.length) {
-                    fps = val;
+                // C: `ufbx_string str;` — written by the `ufbxi_get_val1()` below.
+                let mut str_: String = core::mem::zeroed();
+                if get_val1(
+                    frame_rate,
+                    b"S\0".as_ptr(),
+                    &mut str_ as *mut String as *mut c_void,
+                ) {
+                    // C: `char *end;` — written by `ufbxi_parse_double()`.
+                    let mut end: *const u8 = core::ptr::null();
+                    let val: f64 =
+                        parse_double(str_.data, str_.length, &mut end, uc.double_parse_flags());
+                    if end == str_.data.add(str_.length) {
+                        fps = val;
+                    }
                 }
             }
-        }
-        if fps > 0.0 {
-            init_synthetic_real_prop(
-                &mut tmp_props[num_props as usize],
-                sp::CustomFrameRate.as_ptr(),
-                fps as Real,
-                PropType::Number,
-            );
-            num_props += 1;
-            init_synthetic_real_prop(
-                &mut tmp_props[num_props as usize],
-                sp::TimeMode.as_ptr(),
-                // C: `UFBX_TIME_MODE_CUSTOM` implicitly converted to `ufbx_real`.
-                TimeMode::Custom as u32 as Real,
-                PropType::Integer,
-            );
-            num_props += 1;
+            if fps > 0.0 {
+                init_synthetic_real_prop(
+                    &mut tmp_props[num_props as usize],
+                    sp::CustomFrameRate.as_ptr(),
+                    fps as Real,
+                    PropType::Number,
+                );
+                num_props += 1;
+                init_synthetic_real_prop(
+                    &mut tmp_props[num_props as usize],
+                    sp::TimeMode.as_ptr(),
+                    // C: `UFBX_TIME_MODE_CUSTOM` implicitly converted to `ufbx_real`.
+                    TimeMode::Custom as u32 as Real,
+                    PropType::Integer,
+                );
+                num_props += 1;
+            }
         }
     }
 
     if num_props > 0 {
         let props: *mut Props = uc.scene_view().settings_view().props_mut_ptr();
-        let num_existing: usize = (*props).props.count;
+        // SAFETY: `props` is uc's own scene-settings `ufbx_props`, reached
+        // through its element views. `new_props` is a fresh `new_count`-element
+        // push into uc's result arena, checked non-null, and the two copies
+        // fill it exactly: `num_props` entries from the local `tmp_props`
+        // (that many were written above) followed by the `num_existing` entries
+        // of the current table. The sort/dedup then operate on that run before
+        // it is published back into `props`.
+        unsafe {
+            let num_existing: usize = (*props).props.count;
 
-        let new_count: usize = num_props as usize + num_existing;
-        let new_props: *mut Prop = push::<Prop>(uc.result_mut_ptr(), new_count);
-        ufbxi_check!(uc, !new_props.is_null(), "new_props");
+            let new_count: usize = num_props as usize + num_existing;
+            let new_props: *mut Prop = push::<Prop>(uc.result_mut_ptr(), new_count);
+            ufbxi_check!(uc, !new_props.is_null(), "new_props");
 
-        core::ptr::copy_nonoverlapping(tmp_props.as_ptr(), new_props, num_props as usize);
-        if num_existing > 0 {
-            core::ptr::copy_nonoverlapping(
-                (*props).props.data,
-                new_props.add(num_props as usize),
-                num_existing,
+            core::ptr::copy_nonoverlapping(tmp_props.as_ptr(), new_props, num_props as usize);
+            if num_existing > 0 {
+                core::ptr::copy_nonoverlapping(
+                    (*props).props.data,
+                    new_props.add(num_props as usize),
+                    num_existing,
+                );
+            }
+
+            sort_properties(uc, new_props, new_count)?;
+            (*props).props.data = new_props;
+            (*props).props.count = new_count;
+            deduplicate_properties(&mut (*props).props);
+
+            ufbxi_check!(
+                uc,
+                !(*uc.scene_view().settings_view().props_mut_ptr())
+                    .props
+                    .data
+                    .is_null(),
+                "uc->scene.settings.props.props.data"
             );
         }
-
-        sort_properties(uc, new_props, new_count)?;
-        (*props).props.data = new_props;
-        (*props).props.count = new_count;
-        deduplicate_properties(&mut (*props).props);
-
-        ufbxi_check!(
-            uc,
-            !(*uc.scene_view().settings_view().props_mut_ptr())
-                .props
-                .data
-                .is_null(),
-            "uc->scene.settings.props.props.data"
-        );
     }
 
     Ok(())
@@ -7348,20 +7617,28 @@ pub(crate) fn supports_version(version: u32) -> bool {
 
 // ufbx.c:15844-15936 `ufbxi_read_root`
 #[inline(never)]
-pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn read_root(uc: &Context) -> Result<(), Fail> {
     // FBXHeaderExtension: Some metadata (optional)
-    parse_toplevel(uc, sp::FBXHeaderExtension.as_ptr())?;
+    // SAFETY: every `parse_toplevel` in this function names a static pooled
+    // top-level section (or NULL, meaning "no such section") and drives uc's
+    // own parse state.
+    unsafe { parse_toplevel(uc, sp::FBXHeaderExtension.as_ptr())? };
     read_header_extension(uc)?;
 
     // The ASCII exporter version is stored in top-level
     if uc.exporter() == Exporter::BlenderAscii {
-        parse_toplevel(uc, sp::Creator.as_ptr())?;
+        // SAFETY: static pooled section name; `top_node_view()` yields the
+        // parsed top-level node as a NodeView, and the out-param is uc's own
+        // metadata `creator` string slot.
+        unsafe { parse_toplevel(uc, sp::Creator.as_ptr())? };
         if let Some(top_node) = uc.top_node_view() {
-            ufbxi_ignore!(get_val1(
-                top_node,
-                b"S\0".as_ptr(),
-                uc.scene_view().metadata_view().creator_mut_ptr() as *mut core::ffi::c_void,
-            ));
+            ufbxi_ignore!(unsafe {
+                get_val1(
+                    top_node,
+                    b"S\0".as_ptr(),
+                    uc.scene_view().metadata_view().creator_mut_ptr() as *mut core::ffi::c_void,
+                )
+            });
         }
     }
 
@@ -7375,7 +7652,8 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
 
     // Document: Read root ID
     if uc.version() >= 7000 {
-        parse_toplevel(uc, sp::Documents.as_ptr())?;
+        // SAFETY: static pooled section name (see above).
+        unsafe { parse_toplevel(uc, sp::Documents.as_ptr())? };
         read_document(uc)?;
     } else {
         // Pre-7000: Root node has a specific type-name pair "Model::Scene"
@@ -7385,43 +7663,58 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
         } else {
             b"Scene\x00\x01Model\0".as_ptr()
         };
-        root_name = sp::push_string_imp(
-            uc.string_pool_mut_ptr(),
-            root_name,
-            12,
-            core::ptr::null_mut(),
-            false,
-            true,
-        );
-        ufbxi_check!(uc, !root_name.is_null(), "root_name");
-        uc.set_root_id(synthetic_id_from_string(uc, root_name));
+        // SAFETY: `root_name` is one of the two byte-string literals above,
+        // each 12 bytes plus the NUL, so the requested length is in bounds; the
+        // intern goes to uc's own string pool and its result — checked non-null
+        // — is the pooled string the synthetic-id hash reads.
+        unsafe {
+            root_name = sp::push_string_imp(
+                uc.string_pool_mut_ptr(),
+                root_name,
+                12,
+                core::ptr::null_mut(),
+                false,
+                true,
+            );
+            ufbxi_check!(uc, !root_name.is_null(), "root_name");
+            uc.set_root_id(synthetic_id_from_string(uc, root_name));
+        }
         ufbxi_check!(uc, uc.root_id() != 0, "uc->root_id");
     }
 
     // Add a nameless root node with the root ID
     {
         // C: `ufbxi_element_info root_info = { uc->root_id };`
-        let mut root_info: ElementInfo = core::mem::zeroed();
-        root_info.fbx_id = uc.root_id();
-        root_info.name = EMPTY_STRING.0;
-        let root: *mut UfbxNode = push_element::<UfbxNode>(uc, &mut root_info, ElementType::Node);
-        ufbxi_check!(uc, !root.is_null(), "root");
-        setup_root_node(uc, root);
-        ufbxi_check!(
+        // SAFETY: all-zero is a valid `ufbxi_element_info`; `root_info` is an
+        // unaliased local, and `root` is the fresh non-null element the push
+        // returns — checked before it is initialized and before its
+        // `element_id` is copied into uc's own `tmp_node_ids` buffer.
+        unsafe {
+            let mut root_info: ElementInfo = core::mem::zeroed();
+            root_info.fbx_id = uc.root_id();
+            root_info.name = EMPTY_STRING.0;
+            let root: *mut UfbxNode =
+                push_element::<UfbxNode>(uc, &mut root_info, ElementType::Node);
+            ufbxi_check!(uc, !root.is_null(), "root");
+            setup_root_node(uc, root);
+            ufbxi_check!(
             uc,
             !push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*root).element.element_id).is_null(),
             // C-parity: verbatim post-expansion `#cond` text (see the C11
             // 6.10.3.1 note in `sort_shader_prop_bindings`).
             "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&root->element.element_id)))"
         );
+        }
     }
 
     // Definitions: Object type counts and property templates (optional)
-    parse_toplevel(uc, sp::Definitions.as_ptr())?;
+    // SAFETY: static pooled section name (see above).
+    unsafe { parse_toplevel(uc, sp::Definitions.as_ptr())? };
     read_definitions(uc)?;
 
     // Objects: Actual scene data
-    parse_toplevel(uc, sp::Objects.as_ptr())?;
+    // SAFETY: static pooled section name (see above).
+    unsafe { parse_toplevel(uc, sp::Objects.as_ptr())? };
     if !uc.sure_fbx() {
         // If the file is a bit iffy about being a real FBX file reject it if
         // even the objects are not found.
@@ -7432,30 +7725,38 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
             "uc->top_node"
         );
     }
-    if (*uc.get()).thread_pool.enabled {
-        read_objects_threaded(uc)?;
+    // SAFETY: reading uc's own `thread_pool.enabled` flag; the threaded reader
+    // is entered only with that pool live, which is its own precondition.
+    if unsafe { (*uc.get()).thread_pool.enabled } {
+        unsafe { read_objects_threaded(uc)? };
     } else {
         read_objects(uc)?;
     }
 
     // Connections: Relationships between nodes
-    parse_toplevel(uc, sp::Connections.as_ptr())?;
+    // SAFETY: static pooled section name (see above).
+    unsafe { parse_toplevel(uc, sp::Connections.as_ptr())? };
     read_connections(uc)?;
 
     // Takes: Pre-7000 animation data
-    parse_toplevel(uc, sp::Takes.as_ptr())?;
+    // SAFETY: static pooled section name (see above).
+    unsafe { parse_toplevel(uc, sp::Takes.as_ptr())? };
     read_takes(uc)?;
 
     // Check if there's a top-level GlobalSettings that we skimmed over
-    parse_toplevel(uc, sp::GlobalSettings.as_ptr())?;
+    // SAFETY: static pooled section name (see above).
+    unsafe { parse_toplevel(uc, sp::GlobalSettings.as_ptr())? };
     if let Some(top_node) = uc.top_node_view() {
         read_global_settings(uc, top_node)?;
     }
 
     // Version5: Pre-6000 settings
-    parse_toplevel(uc, sp::Version5.as_ptr())?;
+    // SAFETY: static pooled section name (see above).
+    unsafe { parse_toplevel(uc, sp::Version5.as_ptr())? };
     if let Some(top_node) = uc.top_node_view() {
-        let settings = find_child_strcmp(top_node, b"Settings\0".as_ptr());
+        // SAFETY: `top_node` is the parsed top-level NodeView; the name is a
+        // NUL-terminated literal for the by-content child search.
+        let settings = unsafe { find_child_strcmp(top_node, b"Settings\0".as_ptr()) };
         if let Some(settings) = settings {
             read_legacy_settings(uc, settings)?;
         }
@@ -7463,7 +7764,8 @@ pub(crate) unsafe fn read_root(uc: &Context) -> Result<(), Fail> {
 
     // Force parsing all the nodes by parsing a toplevel that cannot be found
     if uc.opts_view().retain_dom() {
-        parse_toplevel(uc, core::ptr::null())?;
+        // SAFETY: a NULL name is the documented "no such section" request.
+        unsafe { parse_toplevel(uc, core::ptr::null())? };
     }
 
     Ok(())
@@ -8257,28 +8559,35 @@ pub(crate) unsafe fn read_legacy_mesh(
 
 // ufbx.c:16333-16348 `ufbxi_read_legacy_media`
 #[inline(never)]
-pub(crate) unsafe fn read_legacy_media(uc: &Context, node: &NodeView) -> Result<(), Fail> {
+pub(crate) fn read_legacy_media(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     let videos = find_child(node, sp::Video.as_ptr());
     if let Some(videos) = videos {
         // C: `ufbxi_for(ufbxi_node, child, videos->children, videos->num_children)`
         // SAFETY: contiguous push_pop child run, valid for `videos`'s borrow.
-        for child in
+        for child in unsafe {
             SliceViewIter::from_raw_parts(videos.children(), videos.num_children() as usize)
-        {
-            let mut video_info: ElementInfo = core::mem::zeroed();
-            ufbxi_check!(
-                uc,
-                get_val1(
-                    child,
-                    b"S\0".as_ptr(),
-                    &mut video_info.name as *mut String as *mut c_void
-                ),
-                "ufbxi_get_val1(child, \"S\", &video_info.name)"
-            );
-            video_info.fbx_id = push_synthetic_id(uc);
-            video_info.dom_node = get_dom_node(uc, Some(node));
+        } {
+            // SAFETY: all-zero is a valid `ufbxi_element_info`; `child` is a
+            // NodeView from `videos`'s own child run, `video_info` is an
+            // unaliased local whose `name` is exactly the `ufbx_string` the `S`
+            // format writes, and `node` is the parse-tree NodeView the DOM
+            // lookup expects.
+            unsafe {
+                let mut video_info: ElementInfo = core::mem::zeroed();
+                ufbxi_check!(
+                    uc,
+                    get_val1(
+                        child,
+                        b"S\0".as_ptr(),
+                        &mut video_info.name as *mut String as *mut c_void
+                    ),
+                    "ufbxi_get_val1(child, \"S\", &video_info.name)"
+                );
+                video_info.fbx_id = push_synthetic_id(uc);
+                video_info.dom_node = get_dom_node(uc, Some(node));
 
-            read_video(uc, child, &mut video_info)?;
+                read_video(uc, child, &mut video_info)?;
+            }
         }
     }
 
@@ -8287,38 +8596,54 @@ pub(crate) unsafe fn read_legacy_media(uc: &Context, node: &NodeView) -> Result<
 
 // ufbx.c:16350-16422 `ufbxi_read_legacy_model`
 #[inline(never)]
-pub(crate) unsafe fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fail> {
+pub(crate) fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     // C: `ufbx_string type_and_name, type, name;` — all three are written
     // before use by the two calls below.
-    let mut type_and_name: String = core::mem::zeroed();
-    let mut type_: String = core::mem::zeroed();
-    let mut name: String = core::mem::zeroed();
+    // SAFETY: all-zero is a valid `ufbx_string`; `node` is a parse-tree
+    // NodeView and `type_and_name` is an unaliased local of exactly the type
+    // the `s` format writes, so on success it is a pooled `data`/`length` pair
+    // — which is what the split and the synthetic-id hash below read.
+    let mut type_and_name: String = unsafe { core::mem::zeroed() };
+    let mut type_: String = unsafe { core::mem::zeroed() };
+    let mut name: String = unsafe { core::mem::zeroed() };
     ufbxi_check!(
         uc,
-        get_val1(
-            node,
-            b"s\0".as_ptr(),
-            &mut type_and_name as *mut String as *mut c_void
-        ),
+        unsafe {
+            get_val1(
+                node,
+                b"s\0".as_ptr(),
+                &mut type_and_name as *mut String as *mut c_void,
+            )
+        },
         "ufbxi_get_val1(node, \"s\", &type_and_name)"
     );
-    split_type_and_name(uc, type_and_name, &mut type_, &mut name)?;
+    unsafe { split_type_and_name(uc, type_and_name, &mut type_, &mut name)? };
 
-    let mut info: ElementInfo = core::mem::zeroed();
-    info.fbx_id = synthetic_id_from_string(uc, type_and_name.data);
-    ufbxi_check!(uc, info.fbx_id != 0, "info.fbx_id");
-    info.name = name;
-    info.dom_node = get_dom_node(uc, Some(node));
+    // SAFETY: all-zero is a valid `ufbxi_element_info`; `info` is an unaliased
+    // local, `type_and_name.data` is the pooled string read above, `node` is a
+    // parse-tree NodeView, and `elem_node` is the fresh element the push
+    // returns — checked non-null before its `element_id` is copied into uc's
+    // own `tmp_node_ids` buffer.
+    let mut info: ElementInfo = unsafe { core::mem::zeroed() };
+    unsafe {
+        info.fbx_id = synthetic_id_from_string(uc, type_and_name.data);
+        ufbxi_check!(uc, info.fbx_id != 0, "info.fbx_id");
+        info.name = name;
+        info.dom_node = get_dom_node(uc, Some(node));
 
-    let elem_node: *mut UfbxNode = push_element::<UfbxNode>(uc, &mut info, ElementType::Node);
-    ufbxi_check!(uc, !elem_node.is_null(), "elem_node");
-    ufbxi_check!(
-        uc,
-        !push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*elem_node).element.element_id).is_null(),
-        "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&elem_node->element.element_id)))"
-    );
+        let elem_node: *mut UfbxNode = push_element::<UfbxNode>(uc, &mut info, ElementType::Node);
+        ufbxi_check!(uc, !elem_node.is_null(), "elem_node");
+        ufbxi_check!(
+            uc,
+            !push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*elem_node).element.element_id)
+                .is_null(),
+            "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&elem_node->element.element_id)))"
+        );
+    }
 
-    let mut attrib_info: ElementInfo = core::mem::zeroed();
+    // SAFETY: all-zero is a valid `ufbxi_element_info`; `name` is the pooled
+    // string split out above.
+    let mut attrib_info: ElementInfo = unsafe { core::mem::zeroed() };
     attrib_info.fbx_id = push_synthetic_id(uc);
     attrib_info.name = name;
     attrib_info.dom_node = info.dom_node;
@@ -8327,24 +8652,34 @@ pub(crate) unsafe fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<
     connect_oo(uc, attrib_info.fbx_id, info.fbx_id)?;
 
     let mut attrib_type: *const u8 = EMPTY_CHAR.as_ptr();
-    ufbxi_ignore!(find_val1(
-        node,
-        sp::Type.as_ptr(),
-        b"C\0".as_ptr(),
-        &mut attrib_type as *mut *const u8 as *mut c_void
-    ));
+    // SAFETY: `node` is a parse-tree NodeView; `attrib_type` is an unaliased
+    // local `char*` slot matching the `C` format, left at the static empty
+    // string when the child is absent.
+    ufbxi_ignore!(unsafe {
+        find_val1(
+            node,
+            sp::Type.as_ptr(),
+            b"C\0".as_ptr(),
+            &mut attrib_type as *mut *const u8 as *mut c_void,
+        )
+    });
 
+    // SAFETY (this dispatch): each arm hands the same parse-tree NodeView and
+    // the local `&mut attrib_info` to the legacy attribute reader selected by
+    // pointer-identity comparison of the pooled `attrib_type`.
     let mut has_attrib: bool = true;
-    if attrib_type == sp::Light.as_ptr() {
-        read_legacy_light(uc, node, &mut attrib_info)?;
-    } else if attrib_type == sp::Camera.as_ptr() {
-        read_legacy_camera(uc, node, &mut attrib_info)?;
-    } else if attrib_type == sp::LimbNode.as_ptr() {
-        read_legacy_limb_node(uc, node, &mut attrib_info)?;
-    } else if find_child(node, sp::Vertices.as_ptr()).is_some() {
-        read_legacy_mesh(uc, node, &mut attrib_info)?;
-    } else {
-        has_attrib = false;
+    unsafe {
+        if attrib_type == sp::Light.as_ptr() {
+            read_legacy_light(uc, node, &mut attrib_info)?;
+        } else if attrib_type == sp::Camera.as_ptr() {
+            read_legacy_camera(uc, node, &mut attrib_info)?;
+        } else if attrib_type == sp::LimbNode.as_ptr() {
+            read_legacy_limb_node(uc, node, &mut attrib_info)?;
+        } else if find_child(node, sp::Vertices.as_ptr()).is_some() {
+            read_legacy_mesh(uc, node, &mut attrib_info)?;
+        } else {
+            has_attrib = false;
+        }
     }
 
     // Mark the node as having an attribute so property connections can be forwarded
@@ -8355,39 +8690,52 @@ pub(crate) unsafe fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<
     // Children are represented as an array of strings
     let children: *mut ValueArray = find_array(node, sp::Children.as_ptr(), b's');
     if !children.is_null() {
-        let names: *mut String = (*children).data as *mut String;
-        let mut i: usize = 0;
-        while i < (*children).size {
-            let child_fbx_id: u64 = synthetic_id_from_string(uc, (*names.add(i)).data);
-            ufbxi_check!(uc, child_fbx_id != 0, "child_fbx_id");
-            connect_oo(uc, child_fbx_id, info.fbx_id)?;
-            i += 1;
+        // SAFETY: `children` is the non-null `'s'`-typed value array the search
+        // returned, so its `data` is a run of `size` pooled `ufbx_string`s;
+        // `i < size` keeps the indexing in bounds.
+        unsafe {
+            let names: *mut String = (*children).data as *mut String;
+            let mut i: usize = 0;
+            while i < (*children).size {
+                let child_fbx_id: u64 = synthetic_id_from_string(uc, (*names.add(i)).data);
+                ufbxi_check!(uc, child_fbx_id != 0, "child_fbx_id");
+                connect_oo(uc, child_fbx_id, info.fbx_id)?;
+                i += 1;
+            }
         }
     }
 
     // Non-take animation channels
     // C: `ufbxi_for(ufbxi_node, child, node->children, node->num_children)`
     // SAFETY: contiguous push_pop child run, valid for `node`'s borrow.
-    for child in SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) {
+    for child in
+        unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) }
+    {
         if child.name() == sp::Channel.as_ptr() {
             // C: `ufbx_string channel_name;` — written by the guard below.
-            let mut channel_name: String = core::mem::zeroed();
-            if get_val1(
-                child,
-                b"S\0".as_ptr(),
-                &mut channel_name as *mut String as *mut c_void,
-            ) {
-                if uc.legacy_implicit_anim_layer_id() == 0 {
-                    // Defer creation so we won't be the first animation stack..
-                    uc.set_legacy_implicit_anim_layer_id(push_synthetic_id(uc));
-                }
-                read_take_prop_channel(
-                    uc,
+            // SAFETY: all-zero is a valid `ufbx_string`; `child` is a NodeView
+            // from `node`'s own child run and `channel_name` is an unaliased
+            // local of exactly the type the `S` format writes, so on success it
+            // is pooled and safe to hand to the channel reader.
+            unsafe {
+                let mut channel_name: String = core::mem::zeroed();
+                if get_val1(
                     child,
-                    info.fbx_id,
-                    uc.legacy_implicit_anim_layer_id(),
-                    channel_name,
-                )?;
+                    b"S\0".as_ptr(),
+                    &mut channel_name as *mut String as *mut c_void,
+                ) {
+                    if uc.legacy_implicit_anim_layer_id() == 0 {
+                        // Defer creation so we won't be the first animation stack..
+                        uc.set_legacy_implicit_anim_layer_id(push_synthetic_id(uc));
+                    }
+                    read_take_prop_channel(
+                        uc,
+                        child,
+                        info.fbx_id,
+                        uc.legacy_implicit_anim_layer_id(),
+                        channel_name,
+                    )?;
+                }
             }
         }
     }
@@ -8397,29 +8745,35 @@ pub(crate) unsafe fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<
 
 // ufbx.c:16424-16483 `ufbxi_read_legacy_root`
 #[inline(never)]
-pub(crate) unsafe fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
     init_node_prop_names(uc)?;
 
     // Some legacy FBX files have an `Fbx_Root` node that could be used as the
     // root node. However no other formats have root node with transforms so it
     // might be better to leave it as-is and create an empty one.
     {
-        let root: *mut UfbxNode = push_synthetic_element::<UfbxNode>(
-            uc,
-            uc.root_id_mut_ptr(),
-            None,
-            EMPTY_CHAR.as_ptr(),
-            ElementType::Node,
-        );
-        ufbxi_check!(uc, !root.is_null(), "root");
-        setup_root_node(uc, root);
-        ufbxi_check!(
+        // SAFETY: the id out-param is uc's own `root_id` field, the name is the
+        // static empty string, and `root` is the fresh element the push returns
+        // — checked non-null before it is set up and before its `element_id` is
+        // copied into uc's own `tmp_node_ids` buffer.
+        unsafe {
+            let root: *mut UfbxNode = push_synthetic_element::<UfbxNode>(
+                uc,
+                uc.root_id_mut_ptr(),
+                None,
+                EMPTY_CHAR.as_ptr(),
+                ElementType::Node,
+            );
+            ufbxi_check!(uc, !root.is_null(), "root");
+            setup_root_node(uc, root);
+            ufbxi_check!(
             uc,
             !push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*root).element.element_id).is_null(),
             // C-parity: verbatim post-expansion `#cond` text (see the C11
             // 6.10.3.1 note in `sort_shader_prop_bindings`).
             "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&root->element.element_id)))"
         );
+        }
     }
 
     // NOTE: `ufbxi_read_header_extension()` is optional so use default KTime definition
@@ -8439,35 +8793,46 @@ pub(crate) unsafe fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
             read_takes(uc)?;
         } else if node.name() == sp::Model.as_ptr() {
             read_legacy_model(uc, node)?;
-        } else if strcmp(node.name(), b"Settings\0".as_ptr()) == 0 {
+        // SAFETY: `node.name()` is a pooled NUL-terminated string and the
+        // literal is NUL-terminated too, so the C compare stays in bounds.
+        } else if unsafe { strcmp(node.name(), b"Settings\0".as_ptr()) } == 0 {
             read_legacy_settings(uc, node)?;
         }
     }
 
     if uc.opts_view().retain_dom() {
-        retain_toplevel(uc, core::ptr::null_mut())?;
+        // SAFETY: a NULL node retains uc's whole current top-level run.
+        unsafe { retain_toplevel(uc, core::ptr::null_mut())? };
     }
 
     // Create the implicit animation stack if necessary
     if uc.legacy_implicit_anim_layer_id() != 0 {
         // C: `ufbxi_element_info layer_info = { 0 };`
-        let mut layer_info: ElementInfo = core::mem::zeroed();
-        layer_info.fbx_id = uc.legacy_implicit_anim_layer_id();
-        layer_info.name.data = b"(internal)\0".as_ptr();
-        layer_info.name.length = strlen(layer_info.name.data);
-        push_string_place_str(uc.string_pool_mut_ptr(), &mut layer_info.name, true)?;
-        let layer: *mut AnimLayer =
-            push_element::<AnimLayer>(uc, &mut layer_info, ElementType::AnimLayer);
-        ufbxi_check!(uc, !layer.is_null(), "layer");
+        // SAFETY: all-zero is a valid `ufbxi_element_info`. The name is a
+        // NUL-terminated literal, so `strlen` stays in bounds, and the intern
+        // into uc's own pool makes it outlive the elements. Both pushes take
+        // unaliased locals and their results are checked non-null; the
+        // `stack_info` copy is a plain bitwise struct copy of `layer_info`,
+        // which is fully initialized and holds no owning handles.
+        unsafe {
+            let mut layer_info: ElementInfo = core::mem::zeroed();
+            layer_info.fbx_id = uc.legacy_implicit_anim_layer_id();
+            layer_info.name.data = b"(internal)\0".as_ptr();
+            layer_info.name.length = strlen(layer_info.name.data);
+            push_string_place_str(uc.string_pool_mut_ptr(), &mut layer_info.name, true)?;
+            let layer: *mut AnimLayer =
+                push_element::<AnimLayer>(uc, &mut layer_info, ElementType::AnimLayer);
+            ufbxi_check!(uc, !layer.is_null(), "layer");
 
-        // C: `ufbxi_element_info stack_info = layer_info;` (struct copy)
-        let mut stack_info: ElementInfo = core::ptr::read(&layer_info);
-        stack_info.fbx_id = push_synthetic_id(uc);
-        let stack: *mut AnimStack =
-            push_element::<AnimStack>(uc, &mut stack_info, ElementType::AnimStack);
-        ufbxi_check!(uc, !stack.is_null(), "stack");
+            // C: `ufbxi_element_info stack_info = layer_info;` (struct copy)
+            let mut stack_info: ElementInfo = core::ptr::read(&layer_info);
+            stack_info.fbx_id = push_synthetic_id(uc);
+            let stack: *mut AnimStack =
+                push_element::<AnimStack>(uc, &mut stack_info, ElementType::AnimStack);
+            ufbxi_check!(uc, !stack.is_null(), "stack");
 
-        connect_oo(uc, layer_info.fbx_id, stack_info.fbx_id)?;
+            connect_oo(uc, layer_info.fbx_id, stack_info.fbx_id)?;
+        }
     }
 
     Ok(())
@@ -8497,7 +8862,7 @@ pub(crate) unsafe fn trim_delimiters(uc: &Context, data: *const u8, length: usiz
 
 // ufbx.c:16500-16529 `ufbxi_init_file_paths`
 #[inline(never)]
-pub(crate) unsafe fn init_file_paths(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn init_file_paths(uc: &Context) -> Result<(), Fail> {
     if uc.opts_view().filename_view().length() > 0 {
         uc.scene_view().metadata_view().set_filename(String::new_c(
             uc.opts_view().filename_view().data(),
@@ -8532,16 +8897,20 @@ pub(crate) unsafe fn init_file_paths(uc: &Context) -> Result<(), Fail> {
             .set_size(uc.opts_view().filename_view().length());
     }
 
-    push_string_place_str(
-        uc.string_pool_mut_ptr(),
-        uc.scene_view().metadata_view().filename_mut_ptr(),
-        false,
-    )?;
-    push_string_place_blob(
-        uc.string_pool_mut_ptr(),
-        uc.scene_view().metadata_view().raw_filename_mut_ptr(),
-        true,
-    )?;
+    // SAFETY: interning uc's own metadata `filename` / `raw_filename` slots,
+    // reached through its element views, into uc's own string pool.
+    unsafe {
+        push_string_place_str(
+            uc.string_pool_mut_ptr(),
+            uc.scene_view().metadata_view().filename_mut_ptr(),
+            false,
+        )?;
+        push_string_place_blob(
+            uc.string_pool_mut_ptr(),
+            uc.scene_view().metadata_view().raw_filename_mut_ptr(),
+            true,
+        )?;
+    }
 
     uc.scene_view()
         .metadata_view()
@@ -8550,11 +8919,15 @@ pub(crate) unsafe fn init_file_paths(uc: &Context) -> Result<(), Fail> {
     uc.scene_view()
         .metadata_view()
         .relative_root_view()
-        .set_length(trim_delimiters(
-            uc,
-            uc.scene_view().metadata_view().filename_view().data(),
-            uc.scene_view().metadata_view().filename_view().length(),
-        ));
+        // SAFETY: the scan reads uc's own metadata `filename`, interned just
+        // above, over exactly its own `length` bytes.
+        .set_length(unsafe {
+            trim_delimiters(
+                uc,
+                uc.scene_view().metadata_view().filename_view().data(),
+                uc.scene_view().metadata_view().filename_view().length(),
+            )
+        });
 
     uc.scene_view()
         .metadata_view()
@@ -8563,22 +8936,30 @@ pub(crate) unsafe fn init_file_paths(uc: &Context) -> Result<(), Fail> {
     uc.scene_view()
         .metadata_view()
         .raw_relative_root_view()
-        .set_size(trim_delimiters(
-            uc,
-            uc.scene_view().metadata_view().raw_filename_view().data(),
-            uc.scene_view().metadata_view().raw_filename_view().size(),
-        ));
+        // SAFETY: the scan reads uc's own metadata `raw_filename`, interned
+        // just above, over exactly its own `size` bytes.
+        .set_size(unsafe {
+            trim_delimiters(
+                uc,
+                uc.scene_view().metadata_view().raw_filename_view().data(),
+                uc.scene_view().metadata_view().raw_filename_view().size(),
+            )
+        });
 
-    push_string_place_str(
-        uc.string_pool_mut_ptr(),
-        uc.scene_view().metadata_view().relative_root_mut_ptr(),
-        false,
-    )?;
-    push_string_place_blob(
-        uc.string_pool_mut_ptr(),
-        uc.scene_view().metadata_view().raw_relative_root_mut_ptr(),
-        true,
-    )?;
+    // SAFETY: interning uc's own metadata `relative_root` / `raw_relative_root`
+    // slots — prefixes of the filenames interned above — into uc's string pool.
+    unsafe {
+        push_string_place_str(
+            uc.string_pool_mut_ptr(),
+            uc.scene_view().metadata_view().relative_root_mut_ptr(),
+            false,
+        )?;
+        push_string_place_blob(
+            uc.string_pool_mut_ptr(),
+            uc.scene_view().metadata_view().raw_relative_root_mut_ptr(),
+            true,
+        )?;
+    }
 
     Ok(())
 }
