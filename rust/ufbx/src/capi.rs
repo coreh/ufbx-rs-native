@@ -703,7 +703,14 @@ pub unsafe extern "C" fn ufbx_find_baked_node_by_typed_id(
     bake: *mut crate::generated::BakedAnim,
     typed_id: u32,
 ) -> *mut crate::generated::BakedNode {
-    crate::native::api::find_baked_node_by_typed_id(bake, typed_id)
+    match crate::native::api::find_baked_node_by_typed_id(
+        // C-parity: no null check on `bake` (mirrors the unchecked C deref).
+        crate::native::view::View::<crate::generated::BakedAnim, crate::native::view::Const>::from_ptr(bake),
+        typed_id,
+    ) {
+        Some(node) => node.as_ptr() as *mut crate::generated::BakedNode,
+        None => core::ptr::null_mut(),
+    }
 }
 
 // ufbx.c:31320-31324 `ufbx_find_baked_node` (impl: native/api.rs `find_baked_node`)
@@ -712,7 +719,27 @@ pub unsafe extern "C" fn ufbx_find_baked_node(
     bake: *mut crate::generated::BakedAnim,
     node: *mut crate::generated::Node,
 ) -> *mut crate::generated::BakedNode {
-    crate::native::api::find_baked_node(bake, node)
+    match crate::native::api::find_baked_node(
+        if bake.is_null() {
+            None
+        } else {
+            Some(crate::native::view::View::<
+                crate::generated::BakedAnim,
+                crate::native::view::Const,
+            >::from_ptr(bake))
+        },
+        if node.is_null() {
+            None
+        } else {
+            Some(crate::native::view::View::<
+                crate::generated::Node,
+                crate::native::view::Const,
+            >::from_ptr(node))
+        },
+    ) {
+        Some(baked) => baked.as_ptr() as *mut crate::generated::BakedNode,
+        None => core::ptr::null_mut(),
+    }
 }
 
 // ufbx.c:31326-31332 `ufbx_find_baked_element_by_element_id`
@@ -722,7 +749,14 @@ pub unsafe extern "C" fn ufbx_find_baked_element_by_element_id(
     bake: *mut crate::generated::BakedAnim,
     element_id: u32,
 ) -> *mut crate::generated::BakedElement {
-    crate::native::api::find_baked_element_by_element_id(bake, element_id)
+    match crate::native::api::find_baked_element_by_element_id(
+        // C-parity: no null check on `bake` (mirrors the unchecked C deref).
+        crate::native::view::View::<crate::generated::BakedAnim, crate::native::view::Const>::from_ptr(bake),
+        element_id,
+    ) {
+        Some(elem) => elem.as_ptr() as *mut crate::generated::BakedElement,
+        None => core::ptr::null_mut(),
+    }
 }
 
 // ufbx.c:31334-31338 `ufbx_find_baked_element` (impl: native/api.rs `find_baked_element`)
@@ -731,7 +765,27 @@ pub unsafe extern "C" fn ufbx_find_baked_element(
     bake: *mut crate::generated::BakedAnim,
     element: *mut crate::generated::Element,
 ) -> *mut crate::generated::BakedElement {
-    crate::native::api::find_baked_element(bake, element)
+    match crate::native::api::find_baked_element(
+        if bake.is_null() {
+            None
+        } else {
+            Some(crate::native::view::View::<
+                crate::generated::BakedAnim,
+                crate::native::view::Const,
+            >::from_ptr(bake))
+        },
+        if element.is_null() {
+            None
+        } else {
+            Some(crate::native::view::View::<
+                crate::generated::Element,
+                crate::native::view::Const,
+            >::from_ptr(element))
+        },
+    ) {
+        Some(elem) => elem.as_ptr() as *mut crate::generated::BakedElement,
+        None => core::ptr::null_mut(),
+    }
 }
 
 // ufbx.c:31340-31370 `ufbx_evaluate_baked_vec3` (impl: native/api.rs `evaluate_baked_vec3`)

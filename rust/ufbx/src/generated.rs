@@ -5300,60 +5300,69 @@ pub fn bake_anim(scene: &Scene, anim: &Anim, opts: BakeOpts) -> Result<BakedAnim
     unsafe { bake_anim_raw(scene, anim, &opts_raw) }
 }
 
-#[allow(clippy::needless_lifetimes)]
 pub fn find_baked_node_by_typed_id<'a>(
     bake: &mut BakedAnim,
     typed_id: u32,
 ) -> Option<&'a BakedNode> {
-    let result = unsafe {
-        crate::native::api::find_baked_node_by_typed_id(bake as *mut BakedAnim, typed_id)
-    };
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    let result = crate::native::api::find_baked_node_by_typed_id(
+        unsafe {
+            crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ptr(
+                bake as *const BakedAnim,
+            )
+        },
+        typed_id,
+    );
+    result.map(|node| unsafe { &*node.as_ptr() })
 }
 
-#[allow(clippy::needless_lifetimes)]
 pub fn find_baked_node<'a>(bake: &mut BakedAnim, node: &'a mut Node) -> Option<&'a BakedNode> {
-    let result =
-        unsafe { crate::native::api::find_baked_node(bake as *mut BakedAnim, node as *mut Node) };
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    let result = crate::native::api::find_baked_node(
+        Some(unsafe {
+            crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ptr(
+                bake as *const BakedAnim,
+            )
+        }),
+        Some(unsafe {
+            crate::native::view::View::<Node, crate::native::view::Const>::from_ptr(
+                node as *const Node,
+            )
+        }),
+    );
+    result.map(|node| unsafe { &*node.as_ptr() })
 }
 
-#[allow(clippy::needless_lifetimes)]
 pub fn find_baked_element_by_element_id<'a>(
     bake: &mut BakedAnim,
     element_id: u32,
 ) -> Option<&'a BakedElement> {
-    let result = unsafe {
-        crate::native::api::find_baked_element_by_element_id(bake as *mut BakedAnim, element_id)
-    };
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    let result = crate::native::api::find_baked_element_by_element_id(
+        unsafe {
+            crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ptr(
+                bake as *const BakedAnim,
+            )
+        },
+        element_id,
+    );
+    result.map(|elem| unsafe { &*elem.as_ptr() })
 }
 
-#[allow(clippy::needless_lifetimes)]
 pub fn find_baked_element<'a>(
     bake: &mut BakedAnim,
     element: &'a mut Element,
 ) -> Option<&'a BakedElement> {
-    let result = unsafe {
-        crate::native::api::find_baked_element(bake as *mut BakedAnim, element as *mut Element)
-    };
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    let result = crate::native::api::find_baked_element(
+        Some(unsafe {
+            crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ptr(
+                bake as *const BakedAnim,
+            )
+        }),
+        Some(unsafe {
+            crate::native::view::View::<Element, crate::native::view::Const>::from_ptr(
+                element as *const Element,
+            )
+        }),
+    );
+    result.map(|elem| unsafe { &*elem.as_ptr() })
 }
 
 #[allow(clippy::let_and_return)]

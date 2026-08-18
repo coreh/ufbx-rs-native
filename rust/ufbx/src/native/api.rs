@@ -1963,67 +1963,124 @@ pub(crate) unsafe fn free_baked_anim(bake: *mut BakedAnim) {
 
 // ufbx.c:31312-31318 `ufbx_find_baked_node_by_typed_id`
 // C-parity: no null check on `bake` — the C body dereferences it directly.
-pub(crate) unsafe fn find_baked_node_by_typed_id(
-    bake: *mut BakedAnim,
+
+// Mode-generic read accessors for the baked-anim finders.
+impl<M: Mode> View<BakedAnim, M> {
+    #[inline(always)]
+    pub(crate) fn nodes_data(&self) -> *mut BakedNode {
+        // SAFETY: reading the `nodes.data` run pointer (stored value).
+        unsafe { (*self.as_ptr()).nodes.data as *mut BakedNode }
+    }
+    #[inline(always)]
+    pub(crate) fn nodes_count(&self) -> usize {
+        // SAFETY: reading the `nodes.count` field of a valid `BakedAnim`.
+        unsafe { (*self.as_ptr()).nodes.count }
+    }
+    #[inline(always)]
+    pub(crate) fn elements_data(&self) -> *mut BakedElement {
+        // SAFETY: reading the `elements.data` run pointer (stored value).
+        unsafe { (*self.as_ptr()).elements.data as *mut BakedElement }
+    }
+    #[inline(always)]
+    pub(crate) fn elements_count(&self) -> usize {
+        // SAFETY: reading the `elements.count` field of a valid `BakedAnim`.
+        unsafe { (*self.as_ptr()).elements.count }
+    }
+}
+
+impl<M: Mode> View<Node, M> {
+    #[inline(always)]
+    pub(crate) fn element_typed_id(&self) -> u32 {
+        // SAFETY: reading the embedded header's `typed_id` of a valid `Node`.
+        unsafe { (*self.as_ptr()).element.typed_id }
+    }
+}
+
+impl<M: Mode> View<Element, M> {
+    #[inline(always)]
+    pub(crate) fn element_id(&self) -> u32 {
+        // SAFETY: reading the `element_id` field of a valid `Element`.
+        unsafe { (*self.as_ptr()).element_id }
+    }
+}
+
+pub(crate) fn find_baked_node_by_typed_id<M: Mode>(
+    bake: &View<BakedAnim, M>,
     typed_id: u32,
-) -> *mut BakedNode {
+) -> Option<&View<BakedNode, M>> {
     let mut index: usize = usize::MAX;
-    macro_lower_bound_eq::<BakedNode>(
-        8,
-        &mut index,
-        (*bake).nodes.data,
-        0,
-        (*bake).nodes.count,
-        |a| (*a).typed_id < typed_id,
-        |a| (*a).typed_id == typed_id,
-    );
+    // SAFETY: binary search over the stored `nodes` run of a valid `BakedAnim`
+    // (in-bounds derefs of the run macro_lower_bound_eq walks).
+    unsafe {
+        macro_lower_bound_eq::<BakedNode>(
+            8,
+            &mut index,
+            bake.nodes_data(),
+            0,
+            bake.nodes_count(),
+            |a| (*a).typed_id < typed_id,
+            |a| (*a).typed_id == typed_id,
+        );
+    }
     if index < usize::MAX {
-        (*bake).nodes.data.add(index) as *mut BakedNode
+        // SAFETY: in-bounds element of the stored (write-provenance) run,
+        // correlated to `bake`'s borrow; mode-generic mint.
+        Some(unsafe { View::<BakedNode, M>::mint(bake.nodes_data().add(index)) })
     } else {
-        core::ptr::null_mut()
+        None
     }
 }
 
 // ufbx.c:31320-31324 `ufbx_find_baked_node`
-pub(crate) unsafe fn find_baked_node(bake: *mut BakedAnim, node: *mut Node) -> *mut BakedNode {
-    if bake.is_null() || node.is_null() {
-        return core::ptr::null_mut();
-    }
-    find_baked_node_by_typed_id(bake, (*node).element.typed_id)
+pub(crate) fn find_baked_node<'a, M: Mode>(
+    bake: Option<&'a View<BakedAnim, M>>,
+    node: Option<&View<Node, M>>,
+) -> Option<&'a View<BakedNode, M>> {
+    // C: `if (!bake || !node) return NULL;`
+    let (Some(bake), Some(node)) = (bake, node) else {
+        return None;
+    };
+    find_baked_node_by_typed_id(bake, node.element_typed_id())
 }
 
 // ufbx.c:31326-31332 `ufbx_find_baked_element_by_element_id`
 // C-parity: no null check on `bake`, as above.
-pub(crate) unsafe fn find_baked_element_by_element_id(
-    bake: *mut BakedAnim,
+pub(crate) fn find_baked_element_by_element_id<M: Mode>(
+    bake: &View<BakedAnim, M>,
     element_id: u32,
-) -> *mut BakedElement {
+) -> Option<&View<BakedElement, M>> {
     let mut index: usize = usize::MAX;
-    macro_lower_bound_eq::<BakedElement>(
-        8,
-        &mut index,
-        (*bake).elements.data,
-        0,
-        (*bake).elements.count,
-        |a| (*a).element_id < element_id,
-        |a| (*a).element_id == element_id,
-    );
+    // SAFETY: binary search over the stored `elements` run of a valid
+    // `BakedAnim` (in-bounds derefs of the run macro_lower_bound_eq walks).
+    unsafe {
+        macro_lower_bound_eq::<BakedElement>(
+            8,
+            &mut index,
+            bake.elements_data(),
+            0,
+            bake.elements_count(),
+            |a| (*a).element_id < element_id,
+            |a| (*a).element_id == element_id,
+        );
+    }
     if index < usize::MAX {
-        (*bake).elements.data.add(index) as *mut BakedElement
+        // SAFETY: in-bounds element of the stored run; mode-generic mint.
+        Some(unsafe { View::<BakedElement, M>::mint(bake.elements_data().add(index)) })
     } else {
-        core::ptr::null_mut()
+        None
     }
 }
 
 // ufbx.c:31334-31338 `ufbx_find_baked_element`
-pub(crate) unsafe fn find_baked_element(
-    bake: *mut BakedAnim,
-    element: *mut Element,
-) -> *mut BakedElement {
-    if bake.is_null() || element.is_null() {
-        return core::ptr::null_mut();
-    }
-    find_baked_element_by_element_id(bake, (*element).element_id)
+pub(crate) fn find_baked_element<'a, M: Mode>(
+    bake: Option<&'a View<BakedAnim, M>>,
+    element: Option<&View<Element, M>>,
+) -> Option<&'a View<BakedElement, M>> {
+    // C: `if (!bake || !element) return NULL;`
+    let (Some(bake), Some(element)) = (bake, element) else {
+        return None;
+    };
+    find_baked_element_by_element_id(bake, element.element_id())
 }
 
 // ufbx.c:31340-31370 `ufbx_evaluate_baked_vec3`
@@ -6727,37 +6784,47 @@ mod tests {
             bake.nodes = List::from_slice(&nodes);
             bake.elements = List::from_slice(&elements);
             let bake_ptr: *mut BakedAnim = &mut bake;
+            // Mut view over the stack-local bake (write provenance).
+            let bv = View::<BakedAnim, crate::native::view::Mut>::from_ptr(bake_ptr);
             let node_base = nodes.as_ptr() as *mut BakedNode;
             let elem_base = elements.as_ptr() as *mut BakedElement;
+            fn np(r: Option<&View<BakedNode, crate::native::view::Mut>>) -> *mut BakedNode {
+                r.map_or(core::ptr::null_mut(), |n| n.as_ptr() as *mut BakedNode)
+            }
+            fn ep(r: Option<&View<BakedElement, crate::native::view::Mut>>) -> *mut BakedElement {
+                r.map_or(core::ptr::null_mut(), |e| e.as_ptr() as *mut BakedElement)
+            }
 
-            assert_eq!(find_baked_node_by_typed_id(bake_ptr, 1), node_base);
-            assert_eq!(find_baked_node_by_typed_id(bake_ptr, 3), node_base.add(1));
-            assert_eq!(find_baked_node_by_typed_id(bake_ptr, 5), node_base.add(2));
+            assert_eq!(np(find_baked_node_by_typed_id(bv, 1)), node_base);
+            assert_eq!(np(find_baked_node_by_typed_id(bv, 3)), node_base.add(1));
+            assert_eq!(np(find_baked_node_by_typed_id(bv, 5)), node_base.add(2));
             // `ufbxi_macro_lower_bound_eq` does NOT write the out-param on a
-            // miss; the `SIZE_MAX` pre-initializer is what makes this NULL.
-            assert!(find_baked_node_by_typed_id(bake_ptr, 4).is_null());
-            assert!(find_baked_node_by_typed_id(bake_ptr, 0).is_null());
-            assert!(find_baked_node_by_typed_id(bake_ptr, 9).is_null());
+            // miss; the `SIZE_MAX` pre-initializer is what makes this None.
+            assert!(find_baked_node_by_typed_id(bv, 4).is_none());
+            assert!(find_baked_node_by_typed_id(bv, 0).is_none());
+            assert!(find_baked_node_by_typed_id(bv, 9).is_none());
 
-            assert_eq!(find_baked_element_by_element_id(bake_ptr, 2), elem_base);
+            assert_eq!(ep(find_baked_element_by_element_id(bv, 2)), elem_base);
             assert_eq!(
-                find_baked_element_by_element_id(bake_ptr, 6),
+                ep(find_baked_element_by_element_id(bv, 6)),
                 elem_base.add(2)
             );
-            assert!(find_baked_element_by_element_id(bake_ptr, 3).is_null());
+            assert!(find_baked_element_by_element_id(bv, 3).is_none());
 
-            // The by-pointer wrappers ARE null-checked (unlike the by-id ones).
+            // The by-pointer wrappers ARE null-checked (unlike the by-id ones)
+            // — the null arms are the `None` cases.
             let mut node: Node = MaybeUninit::zeroed().assume_init();
             node.element.typed_id = 5;
             node.element.element_id = 6;
-            assert_eq!(find_baked_node(bake_ptr, &mut node), node_base.add(2));
-            assert!(find_baked_node(core::ptr::null_mut(), &mut node).is_null());
-            assert!(find_baked_node(bake_ptr, core::ptr::null_mut()).is_null());
+            let nv = View::<Node, crate::native::view::Mut>::from_ptr(&raw mut node);
+            assert_eq!(np(find_baked_node(Some(bv), Some(nv))), node_base.add(2));
+            assert!(find_baked_node(None, Some(nv)).is_none());
+            assert!(find_baked_node(Some(bv), None).is_none());
 
-            let element: *mut Element = &raw mut node.element;
-            assert_eq!(find_baked_element(bake_ptr, element), elem_base.add(2));
-            assert!(find_baked_element(core::ptr::null_mut(), element).is_null());
-            assert!(find_baked_element(bake_ptr, core::ptr::null_mut()).is_null());
+            let ev = View::<Element, crate::native::view::Mut>::from_ptr(&raw mut node.element);
+            assert_eq!(ep(find_baked_element(Some(bv), Some(ev))), elem_base.add(2));
+            assert!(find_baked_element(None, Some(ev)).is_none());
+            assert!(find_baked_element(Some(bv), None).is_none());
         }
     }
 

@@ -498,6 +498,60 @@ pub fn dom_as_blob_list<'a>(node: &DomNode) -> &'a [Blob] {
 }
 """
 
+
+# The baked-anim finders: native fns are safe over mode-generic views with
+# `Option` params for C's null checks. The upstream `&mut` signatures are
+# parity-locked (C non-const artifacts); wrappers keep them verbatim and mint
+# read-only `Const` views.
+override_functions["ufbx_find_baked_node_by_typed_id"] = """
+pub fn find_baked_node_by_typed_id<'a>(
+    bake: &mut BakedAnim,
+    typed_id: u32,
+) -> Option<&'a BakedNode> {
+    let result = crate::native::api::find_baked_node_by_typed_id(
+        unsafe { crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ptr(bake as *const BakedAnim) },
+        typed_id,
+    );
+    result.map(|node| unsafe { &*node.as_ptr() })
+}
+"""
+
+override_functions["ufbx_find_baked_node"] = """
+pub fn find_baked_node<'a>(bake: &mut BakedAnim, node: &'a mut Node) -> Option<&'a BakedNode> {
+    let result = crate::native::api::find_baked_node(
+        Some(unsafe { crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ptr(bake as *const BakedAnim) }),
+        Some(unsafe { crate::native::view::View::<Node, crate::native::view::Const>::from_ptr(node as *const Node) }),
+    );
+    result.map(|node| unsafe { &*node.as_ptr() })
+}
+"""
+
+override_functions["ufbx_find_baked_element_by_element_id"] = """
+pub fn find_baked_element_by_element_id<'a>(
+    bake: &mut BakedAnim,
+    element_id: u32,
+) -> Option<&'a BakedElement> {
+    let result = crate::native::api::find_baked_element_by_element_id(
+        unsafe { crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ptr(bake as *const BakedAnim) },
+        element_id,
+    );
+    result.map(|elem| unsafe { &*elem.as_ptr() })
+}
+"""
+
+override_functions["ufbx_find_baked_element"] = """
+pub fn find_baked_element<'a>(
+    bake: &mut BakedAnim,
+    element: &'a mut Element,
+) -> Option<&'a BakedElement> {
+    let result = crate::native::api::find_baked_element(
+        Some(unsafe { crate::native::view::View::<BakedAnim, crate::native::view::Const>::from_ptr(bake as *const BakedAnim) }),
+        Some(unsafe { crate::native::view::View::<Element, crate::native::view::Const>::from_ptr(element as *const Element) }),
+    );
+    result.map(|elem| unsafe { &*elem.as_ptr() })
+}
+"""
+
 # The find-prop adapters call the native finder directly with a read-only
 # `Const` view minted from the caller's `&Props` — the mint every readable
 # provenance (including a shared reference) supports, unlike the
