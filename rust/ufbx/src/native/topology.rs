@@ -32,6 +32,7 @@ use crate::native::platform::{macro_lower_bound_eq, ufbx_assert, unstable_sort, 
 use crate::native::platform::{math, max_real, min_real, stable_sort, ufbxi_ignore, KD_FAST_DEPTH};
 #[cfg(feature = "triangulation")]
 use crate::native::string_pool::{distsq2, dot3, length3, mul3, slow_normalized_cross3};
+#[cfg(feature = "triangulation")]
 use crate::prelude::as_f64;
 #[cfg(feature = "triangulation")]
 use crate::prelude::Real;

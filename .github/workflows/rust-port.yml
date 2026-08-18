@@ -41,6 +41,28 @@ jobs:
           ./rust/regen.sh
           git diff --exit-code rust/ufbx/src/generated.rs rust/ufbx/tests/layout.rs
 
+  # Feature-gated (UFBX_NO_*-parity) configs: every single-feature-off config
+  # plus fully lean must at least compile warning-free — these arms are
+  # otherwise dead in every other job, and rot silently (the 2026-08-18 repair
+  # found four configs that had stopped building).
+  lean_configs:
+    name: Check lean feature configs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo check, each single-feature-off + fully lean
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          ALL="subdivision,tessellation,geometry-cache,scene-eval,skinning-eval,baking,triangulation,index-gen,obj"
+          for feat in ${ALL//,/ }; do
+            rest=$(tr ',' '\n' <<<"$ALL" | grep -v "^$feat\$" | paste -sd, -)
+            echo "== without $feat"
+            cargo check --no-default-features --features "$rest"
+          done
+          echo "== fully lean"
+          cargo check --no-default-features
+
   rust_unit:
     name: Run Rust tests
     runs-on: ubuntu-24.04

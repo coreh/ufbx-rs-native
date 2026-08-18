@@ -313,8 +313,12 @@ impl RawThreadOptsView {
 
 // Typed interior-mutable VIEW over `RawStream` (the C-callback I/O stream struct);
 // callback/`user` leaves are read through it.
+// Only the geometry-cache loader reads streams through this view; lean builds
+// legitimately strand it (see the dead-code convention in native/).
+#[cfg_attr(not(feature = "geometry-cache"), allow(dead_code))]
 pub(crate) type RawStreamView = crate::native::view::View<crate::generated::RawStream>;
 
+#[cfg_attr(not(feature = "geometry-cache"), allow(dead_code))]
 impl RawStreamView {
     #[inline(always)]
     pub(crate) fn read_fn(

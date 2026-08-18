@@ -160,6 +160,7 @@ pub(crate) struct InnerSubdivideContext {
 // interior mutability every `&SubdivideContext` site relies on. The type-erased
 // `sum_user` task-callback pointer round-trips through the wrapper address.
 #[repr(transparent)]
+#[cfg(feature = "subdivision")]
 pub(crate) struct SubdivideContext(
     core::cell::UnsafeCell<core::mem::MaybeUninit<InnerSubdivideContext>>,
 );
@@ -331,6 +332,7 @@ impl MeshView {
     }
 }
 
+#[cfg(feature = "subdivision")]
 impl SubdivideContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerSubdivideContext {

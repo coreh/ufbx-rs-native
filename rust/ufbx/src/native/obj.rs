@@ -61,6 +61,9 @@ use crate::native::parse::{
     get_name_key, r#match, report_progress, Context, ElementInfo, FbxIdEntry, ObjAttrib,
     ObjFastIndices, ObjGroupEntry, ObjMesh, OBJ_NUM_ATTRIBS, OBJ_NUM_ATTRIBS_EXT,
 };
+// The `#else`-branch stubs still take `&Context`.
+#[cfg(not(feature = "obj"))]
+use crate::native::parse::Context;
 #[cfg(feature = "obj")]
 use crate::native::parse_ascii::is_space;
 #[cfg(feature = "obj")]
@@ -2142,7 +2145,7 @@ pub(crate) unsafe fn mtl_load(uc: &Context) -> Result<(), Fail> {
 #[inline(always)]
 #[must_use]
 pub(crate) fn obj_load(uc: &Context) -> Result<(), Fail> {
-    ufbxi_fmt_err_info!(uc.error_ptr(), "UFBX_ENABLE_FORMAT_OBJ");
+    unsafe { ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_FORMAT_OBJ") };
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_FORMAT_OBJ", "Feature disabled");
 }
 
@@ -2151,7 +2154,7 @@ pub(crate) fn obj_load(uc: &Context) -> Result<(), Fail> {
 #[inline(always)]
 #[must_use]
 pub(crate) fn mtl_load(uc: &Context) -> Result<(), Fail> {
-    ufbxi_fmt_err_info!(uc.error_ptr(), "UFBX_ENABLE_FORMAT_OBJ");
+    unsafe { ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_FORMAT_OBJ") };
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_FORMAT_OBJ", "Feature disabled");
 }
 

@@ -268,14 +268,17 @@ pub(crate) struct InnerCacheContext {
 // `&InnerCacheContext` could not be formed soundly); `UnsafeCell` gives the
 // interior mutability every `&CacheContext` call site relies on.
 #[repr(transparent)]
+#[cfg(feature = "geometry-cache")]
 pub(crate) struct CacheContext(core::cell::UnsafeCell<core::mem::MaybeUninit<InnerCacheContext>>);
 
 // Typed interior-mutable VIEW over the `opts` field, reinterpreted in place
 // (approach A). Generated ABI-fixed `RawGeometryCacheOpts` plays the `Inner` role;
 // `MaybeUninit` makes forming `&GeometryCacheOptsView` assert no validity — each leaf getter
 // asserts only the field it reads.
+#[cfg(feature = "geometry-cache")]
 pub(crate) type GeometryCacheOptsView = crate::native::view::View<RawGeometryCacheOpts>;
 
+#[cfg(feature = "geometry-cache")]
 impl GeometryCacheOptsView {
     #[inline(always)]
     pub(crate) fn mirror_axis(&self) -> crate::generated::MirrorAxis {
@@ -325,8 +328,10 @@ impl GeometryCacheOptsView {
 
 // Typed interior-mutable VIEW over `CacheContext.cache` (approach A). List fields
 // recurse into `ListView`; the whole-`String` field uses value getter + setter.
+#[cfg(feature = "geometry-cache")]
 pub(crate) type GeometryCacheView = crate::native::view::View<GeometryCache>;
 
+#[cfg(feature = "geometry-cache")]
 impl GeometryCacheView {
     #[inline(always)]
     pub(crate) fn frames_view(&self) -> &crate::prelude::ListView<crate::generated::CacheFrame> {
@@ -370,6 +375,7 @@ impl GeometryCacheView {
     }
 }
 
+#[cfg(feature = "geometry-cache")]
 impl CacheContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerCacheContext {
@@ -2219,7 +2225,7 @@ pub(crate) fn load_external_cache(uc: &Context, file: *mut ExternalFile) -> Resu
         return Ok(());
     }
 
-    ufbxi_fmt_err_info!(uc.error_ptr(), "UFBX_ENABLE_GEOMETRY_CACHE");
+    unsafe { ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_GEOMETRY_CACHE") };
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_GEOMETRY_CACHE", "Feature disabled");
 }
 

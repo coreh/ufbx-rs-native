@@ -2070,6 +2070,7 @@ pub(crate) struct InnerEvalContext {
 // mutability every `&EvalContext` site needs. Field is `pub(crate)` — the sole
 // construction site lives in `native::api`.
 #[repr(transparent)]
+#[cfg(feature = "scene-eval")]
 pub(crate) struct EvalContext(
     pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerEvalContext>>,
 );
@@ -2078,8 +2079,10 @@ pub(crate) struct EvalContext(
 // (approach A). Generated ABI-fixed `RawEvaluateOpts` plays the `Inner` role;
 // `MaybeUninit` makes forming `&EvaluateOptsView` assert no validity — each leaf getter
 // asserts only the field it reads.
+#[cfg(feature = "scene-eval")]
 pub(crate) type EvaluateOptsView = crate::native::view::View<RawEvaluateOpts>;
 
+#[cfg(feature = "scene-eval")]
 impl EvaluateOptsView {
     #[inline(always)]
     pub(crate) fn evaluate_caches(&self) -> bool {
@@ -2128,6 +2131,7 @@ impl EvaluateOptsView {
     }
 }
 
+#[cfg(feature = "scene-eval")]
 impl EvalContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerEvalContext {
@@ -3747,8 +3751,10 @@ pub(crate) struct BakeTimeList {
 // Typed interior-mutable VIEW over a `BakeTimeList` field, reinterpreted in place
 // (getters + setters; the list is built by writing `.count`/`.data`).
 #[cfg(feature = "baking")]
+#[cfg(feature = "baking")]
 pub(crate) type BakeTimeListView = crate::native::view::View<BakeTimeList>;
 
+#[cfg(feature = "baking")]
 #[cfg(feature = "baking")]
 impl BakeTimeListView {
     #[inline(always)]
@@ -3819,8 +3825,10 @@ pub(crate) struct InnerBakeContext {
 // place (approach A). The generated ABI-fixed `RawBakeOpts` plays the `Inner` role;
 // `MaybeUninit` makes forming `&BakeOptsView` assert no validity — each leaf getter
 // asserts only the field it reads.
+#[cfg(feature = "baking")]
 pub(crate) type BakeOptsView = crate::native::view::View<RawBakeOpts>;
 
+#[cfg(feature = "baking")]
 impl BakeOptsView {
     #[inline(always)]
     pub(crate) fn trim_start_time(&self) -> bool {
@@ -4001,6 +4009,7 @@ impl BakeOptsView {
 // `&BakeContext` site needs. Field is `pub(crate)` — the sole construction site
 // lives in `native::api`.
 #[repr(transparent)]
+#[cfg(feature = "baking")]
 pub(crate) struct BakeContext(
     pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerBakeContext>>,
 );
@@ -4095,6 +4104,7 @@ impl BakedAnimView {
     }
 }
 
+#[cfg(feature = "baking")]
 impl BakeContext {
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut InnerBakeContext {
@@ -4532,8 +4542,10 @@ pub(crate) struct BakeProp {
 // navigation with a safe contiguous iteration whose only `unsafe` is the
 // `from_raw_parts` run vouch.
 #[cfg(feature = "baking")]
+#[cfg(feature = "baking")]
 pub(crate) type BakePropView = crate::native::view::View<BakeProp>;
 
+#[cfg(feature = "baking")]
 #[cfg(feature = "baking")]
 impl BakePropView {
     #[inline(always)]
