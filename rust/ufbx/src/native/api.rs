@@ -5000,7 +5000,11 @@ pub(crate) unsafe fn catch_get_vertex_w_vec3(
 // ufbx.c:33034 `ufbx_as_unknown`
 pub(crate) unsafe fn as_unknown(element: *const Element) -> *mut Unknown {
     if !element.is_null() && (*element).type_ == ElementType::Unknown {
-        element as *mut Unknown
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Unknown` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5008,7 +5012,11 @@ pub(crate) unsafe fn as_unknown(element: *const Element) -> *mut Unknown {
 // ufbx.c:33035 `ufbx_as_node`
 pub(crate) unsafe fn as_node(element: *const Element) -> *mut Node {
     if !element.is_null() && (*element).type_ == ElementType::Node {
-        element as *mut Node
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Node` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5016,7 +5024,11 @@ pub(crate) unsafe fn as_node(element: *const Element) -> *mut Node {
 // ufbx.c:33036 `ufbx_as_mesh`
 pub(crate) unsafe fn as_mesh(element: *const Element) -> *mut Mesh {
     if !element.is_null() && (*element).type_ == ElementType::Mesh {
-        element as *mut Mesh
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Mesh` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5024,7 +5036,11 @@ pub(crate) unsafe fn as_mesh(element: *const Element) -> *mut Mesh {
 // ufbx.c:33037 `ufbx_as_light`
 pub(crate) unsafe fn as_light(element: *const Element) -> *mut Light {
     if !element.is_null() && (*element).type_ == ElementType::Light {
-        element as *mut Light
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Light` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5032,7 +5048,11 @@ pub(crate) unsafe fn as_light(element: *const Element) -> *mut Light {
 // ufbx.c:33038 `ufbx_as_camera`
 pub(crate) unsafe fn as_camera(element: *const Element) -> *mut Camera {
     if !element.is_null() && (*element).type_ == ElementType::Camera {
-        element as *mut Camera
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Camera` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5040,7 +5060,11 @@ pub(crate) unsafe fn as_camera(element: *const Element) -> *mut Camera {
 // ufbx.c:33039 `ufbx_as_bone`
 pub(crate) unsafe fn as_bone(element: *const Element) -> *mut Bone {
     if !element.is_null() && (*element).type_ == ElementType::Bone {
-        element as *mut Bone
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Bone` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5048,7 +5072,11 @@ pub(crate) unsafe fn as_bone(element: *const Element) -> *mut Bone {
 // ufbx.c:33040 `ufbx_as_empty`
 pub(crate) unsafe fn as_empty(element: *const Element) -> *mut Empty {
     if !element.is_null() && (*element).type_ == ElementType::Empty {
-        element as *mut Empty
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Empty` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5056,7 +5084,11 @@ pub(crate) unsafe fn as_empty(element: *const Element) -> *mut Empty {
 // ufbx.c:33041 `ufbx_as_line_curve`
 pub(crate) unsafe fn as_line_curve(element: *const Element) -> *mut LineCurve {
     if !element.is_null() && (*element).type_ == ElementType::LineCurve {
-        element as *mut LineCurve
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `LineCurve` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5064,7 +5096,11 @@ pub(crate) unsafe fn as_line_curve(element: *const Element) -> *mut LineCurve {
 // ufbx.c:33042 `ufbx_as_nurbs_curve`
 pub(crate) unsafe fn as_nurbs_curve(element: *const Element) -> *mut NurbsCurve {
     if !element.is_null() && (*element).type_ == ElementType::NurbsCurve {
-        element as *mut NurbsCurve
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `NurbsCurve` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5072,7 +5108,11 @@ pub(crate) unsafe fn as_nurbs_curve(element: *const Element) -> *mut NurbsCurve 
 // ufbx.c:33043 `ufbx_as_nurbs_surface`
 pub(crate) unsafe fn as_nurbs_surface(element: *const Element) -> *mut NurbsSurface {
     if !element.is_null() && (*element).type_ == ElementType::NurbsSurface {
-        element as *mut NurbsSurface
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `NurbsSurface` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5080,7 +5120,11 @@ pub(crate) unsafe fn as_nurbs_surface(element: *const Element) -> *mut NurbsSurf
 // ufbx.c:33044 `ufbx_as_nurbs_trim_surface`
 pub(crate) unsafe fn as_nurbs_trim_surface(element: *const Element) -> *mut NurbsTrimSurface {
     if !element.is_null() && (*element).type_ == ElementType::NurbsTrimSurface {
-        element as *mut NurbsTrimSurface
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `NurbsTrimSurface` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5088,7 +5132,11 @@ pub(crate) unsafe fn as_nurbs_trim_surface(element: *const Element) -> *mut Nurb
 // ufbx.c:33045 `ufbx_as_nurbs_trim_boundary`
 pub(crate) unsafe fn as_nurbs_trim_boundary(element: *const Element) -> *mut NurbsTrimBoundary {
     if !element.is_null() && (*element).type_ == ElementType::NurbsTrimBoundary {
-        element as *mut NurbsTrimBoundary
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `NurbsTrimBoundary` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5096,7 +5144,11 @@ pub(crate) unsafe fn as_nurbs_trim_boundary(element: *const Element) -> *mut Nur
 // ufbx.c:33046 `ufbx_as_procedural_geometry`
 pub(crate) unsafe fn as_procedural_geometry(element: *const Element) -> *mut ProceduralGeometry {
     if !element.is_null() && (*element).type_ == ElementType::ProceduralGeometry {
-        element as *mut ProceduralGeometry
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `ProceduralGeometry` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5104,7 +5156,11 @@ pub(crate) unsafe fn as_procedural_geometry(element: *const Element) -> *mut Pro
 // ufbx.c:33047 `ufbx_as_stereo_camera`
 pub(crate) unsafe fn as_stereo_camera(element: *const Element) -> *mut StereoCamera {
     if !element.is_null() && (*element).type_ == ElementType::StereoCamera {
-        element as *mut StereoCamera
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `StereoCamera` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5112,7 +5168,11 @@ pub(crate) unsafe fn as_stereo_camera(element: *const Element) -> *mut StereoCam
 // ufbx.c:33048 `ufbx_as_camera_switcher`
 pub(crate) unsafe fn as_camera_switcher(element: *const Element) -> *mut CameraSwitcher {
     if !element.is_null() && (*element).type_ == ElementType::CameraSwitcher {
-        element as *mut CameraSwitcher
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `CameraSwitcher` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5120,7 +5180,11 @@ pub(crate) unsafe fn as_camera_switcher(element: *const Element) -> *mut CameraS
 // ufbx.c:33049 `ufbx_as_marker`
 pub(crate) unsafe fn as_marker(element: *const Element) -> *mut Marker {
     if !element.is_null() && (*element).type_ == ElementType::Marker {
-        element as *mut Marker
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Marker` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5128,7 +5192,11 @@ pub(crate) unsafe fn as_marker(element: *const Element) -> *mut Marker {
 // ufbx.c:33050 `ufbx_as_lod_group`
 pub(crate) unsafe fn as_lod_group(element: *const Element) -> *mut LodGroup {
     if !element.is_null() && (*element).type_ == ElementType::LodGroup {
-        element as *mut LodGroup
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `LodGroup` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5136,7 +5204,11 @@ pub(crate) unsafe fn as_lod_group(element: *const Element) -> *mut LodGroup {
 // ufbx.c:33051 `ufbx_as_skin_deformer`
 pub(crate) unsafe fn as_skin_deformer(element: *const Element) -> *mut SkinDeformer {
     if !element.is_null() && (*element).type_ == ElementType::SkinDeformer {
-        element as *mut SkinDeformer
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `SkinDeformer` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5144,7 +5216,11 @@ pub(crate) unsafe fn as_skin_deformer(element: *const Element) -> *mut SkinDefor
 // ufbx.c:33052 `ufbx_as_skin_cluster`
 pub(crate) unsafe fn as_skin_cluster(element: *const Element) -> *mut SkinCluster {
     if !element.is_null() && (*element).type_ == ElementType::SkinCluster {
-        element as *mut SkinCluster
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `SkinCluster` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5152,7 +5228,11 @@ pub(crate) unsafe fn as_skin_cluster(element: *const Element) -> *mut SkinCluste
 // ufbx.c:33053 `ufbx_as_blend_deformer`
 pub(crate) unsafe fn as_blend_deformer(element: *const Element) -> *mut BlendDeformer {
     if !element.is_null() && (*element).type_ == ElementType::BlendDeformer {
-        element as *mut BlendDeformer
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `BlendDeformer` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5160,7 +5240,11 @@ pub(crate) unsafe fn as_blend_deformer(element: *const Element) -> *mut BlendDef
 // ufbx.c:33054 `ufbx_as_blend_channel`
 pub(crate) unsafe fn as_blend_channel(element: *const Element) -> *mut BlendChannel {
     if !element.is_null() && (*element).type_ == ElementType::BlendChannel {
-        element as *mut BlendChannel
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `BlendChannel` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5168,7 +5252,11 @@ pub(crate) unsafe fn as_blend_channel(element: *const Element) -> *mut BlendChan
 // ufbx.c:33055 `ufbx_as_blend_shape`
 pub(crate) unsafe fn as_blend_shape(element: *const Element) -> *mut BlendShape {
     if !element.is_null() && (*element).type_ == ElementType::BlendShape {
-        element as *mut BlendShape
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `BlendShape` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5176,7 +5264,11 @@ pub(crate) unsafe fn as_blend_shape(element: *const Element) -> *mut BlendShape 
 // ufbx.c:33056 `ufbx_as_cache_deformer`
 pub(crate) unsafe fn as_cache_deformer(element: *const Element) -> *mut CacheDeformer {
     if !element.is_null() && (*element).type_ == ElementType::CacheDeformer {
-        element as *mut CacheDeformer
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `CacheDeformer` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5184,7 +5276,11 @@ pub(crate) unsafe fn as_cache_deformer(element: *const Element) -> *mut CacheDef
 // ufbx.c:33057 `ufbx_as_cache_file`
 pub(crate) unsafe fn as_cache_file(element: *const Element) -> *mut CacheFile {
     if !element.is_null() && (*element).type_ == ElementType::CacheFile {
-        element as *mut CacheFile
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `CacheFile` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5192,7 +5288,11 @@ pub(crate) unsafe fn as_cache_file(element: *const Element) -> *mut CacheFile {
 // ufbx.c:33058 `ufbx_as_material`
 pub(crate) unsafe fn as_material(element: *const Element) -> *mut Material {
     if !element.is_null() && (*element).type_ == ElementType::Material {
-        element as *mut Material
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Material` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5200,7 +5300,11 @@ pub(crate) unsafe fn as_material(element: *const Element) -> *mut Material {
 // ufbx.c:33059 `ufbx_as_texture`
 pub(crate) unsafe fn as_texture(element: *const Element) -> *mut Texture {
     if !element.is_null() && (*element).type_ == ElementType::Texture {
-        element as *mut Texture
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Texture` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5208,7 +5312,11 @@ pub(crate) unsafe fn as_texture(element: *const Element) -> *mut Texture {
 // ufbx.c:33060 `ufbx_as_video`
 pub(crate) unsafe fn as_video(element: *const Element) -> *mut Video {
     if !element.is_null() && (*element).type_ == ElementType::Video {
-        element as *mut Video
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Video` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5216,7 +5324,11 @@ pub(crate) unsafe fn as_video(element: *const Element) -> *mut Video {
 // ufbx.c:33061 `ufbx_as_shader`
 pub(crate) unsafe fn as_shader(element: *const Element) -> *mut Shader {
     if !element.is_null() && (*element).type_ == ElementType::Shader {
-        element as *mut Shader
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Shader` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5224,7 +5336,11 @@ pub(crate) unsafe fn as_shader(element: *const Element) -> *mut Shader {
 // ufbx.c:33062 `ufbx_as_shader_binding`
 pub(crate) unsafe fn as_shader_binding(element: *const Element) -> *mut ShaderBinding {
     if !element.is_null() && (*element).type_ == ElementType::ShaderBinding {
-        element as *mut ShaderBinding
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `ShaderBinding` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5232,7 +5348,11 @@ pub(crate) unsafe fn as_shader_binding(element: *const Element) -> *mut ShaderBi
 // ufbx.c:33063 `ufbx_as_anim_stack`
 pub(crate) unsafe fn as_anim_stack(element: *const Element) -> *mut AnimStack {
     if !element.is_null() && (*element).type_ == ElementType::AnimStack {
-        element as *mut AnimStack
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `AnimStack` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5240,7 +5360,11 @@ pub(crate) unsafe fn as_anim_stack(element: *const Element) -> *mut AnimStack {
 // ufbx.c:33064 `ufbx_as_anim_layer`
 pub(crate) unsafe fn as_anim_layer(element: *const Element) -> *mut AnimLayer {
     if !element.is_null() && (*element).type_ == ElementType::AnimLayer {
-        element as *mut AnimLayer
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `AnimLayer` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5248,7 +5372,11 @@ pub(crate) unsafe fn as_anim_layer(element: *const Element) -> *mut AnimLayer {
 // ufbx.c:33065 `ufbx_as_anim_value`
 pub(crate) unsafe fn as_anim_value(element: *const Element) -> *mut AnimValue {
     if !element.is_null() && (*element).type_ == ElementType::AnimValue {
-        element as *mut AnimValue
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `AnimValue` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5256,7 +5384,11 @@ pub(crate) unsafe fn as_anim_value(element: *const Element) -> *mut AnimValue {
 // ufbx.c:33066 `ufbx_as_anim_curve`
 pub(crate) unsafe fn as_anim_curve(element: *const Element) -> *mut AnimCurve {
     if !element.is_null() && (*element).type_ == ElementType::AnimCurve {
-        element as *mut AnimCurve
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `AnimCurve` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5264,7 +5396,11 @@ pub(crate) unsafe fn as_anim_curve(element: *const Element) -> *mut AnimCurve {
 // ufbx.c:33067 `ufbx_as_display_layer`
 pub(crate) unsafe fn as_display_layer(element: *const Element) -> *mut DisplayLayer {
     if !element.is_null() && (*element).type_ == ElementType::DisplayLayer {
-        element as *mut DisplayLayer
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `DisplayLayer` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5272,7 +5408,11 @@ pub(crate) unsafe fn as_display_layer(element: *const Element) -> *mut DisplayLa
 // ufbx.c:33068 `ufbx_as_selection_set`
 pub(crate) unsafe fn as_selection_set(element: *const Element) -> *mut SelectionSet {
     if !element.is_null() && (*element).type_ == ElementType::SelectionSet {
-        element as *mut SelectionSet
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `SelectionSet` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5280,7 +5420,11 @@ pub(crate) unsafe fn as_selection_set(element: *const Element) -> *mut Selection
 // ufbx.c:33069 `ufbx_as_selection_node`
 pub(crate) unsafe fn as_selection_node(element: *const Element) -> *mut SelectionNode {
     if !element.is_null() && (*element).type_ == ElementType::SelectionNode {
-        element as *mut SelectionNode
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `SelectionNode` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5288,7 +5432,11 @@ pub(crate) unsafe fn as_selection_node(element: *const Element) -> *mut Selectio
 // ufbx.c:33070 `ufbx_as_character`
 pub(crate) unsafe fn as_character(element: *const Element) -> *mut Character {
     if !element.is_null() && (*element).type_ == ElementType::Character {
-        element as *mut Character
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Character` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5296,7 +5444,11 @@ pub(crate) unsafe fn as_character(element: *const Element) -> *mut Character {
 // ufbx.c:33071 `ufbx_as_constraint`
 pub(crate) unsafe fn as_constraint(element: *const Element) -> *mut Constraint {
     if !element.is_null() && (*element).type_ == ElementType::Constraint {
-        element as *mut Constraint
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Constraint` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5304,7 +5456,11 @@ pub(crate) unsafe fn as_constraint(element: *const Element) -> *mut Constraint {
 // ufbx.c:33072 `ufbx_as_audio_layer`
 pub(crate) unsafe fn as_audio_layer(element: *const Element) -> *mut AudioLayer {
     if !element.is_null() && (*element).type_ == ElementType::AudioLayer {
-        element as *mut AudioLayer
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `AudioLayer` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5312,7 +5468,11 @@ pub(crate) unsafe fn as_audio_layer(element: *const Element) -> *mut AudioLayer 
 // ufbx.c:33073 `ufbx_as_audio_clip`
 pub(crate) unsafe fn as_audio_clip(element: *const Element) -> *mut AudioClip {
     if !element.is_null() && (*element).type_ == ElementType::AudioClip {
-        element as *mut AudioClip
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `AudioClip` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5320,7 +5480,11 @@ pub(crate) unsafe fn as_audio_clip(element: *const Element) -> *mut AudioClip {
 // ufbx.c:33074 `ufbx_as_pose`
 pub(crate) unsafe fn as_pose(element: *const Element) -> *mut Pose {
     if !element.is_null() && (*element).type_ == ElementType::Pose {
-        element as *mut Pose
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `Pose` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }
@@ -5328,7 +5492,11 @@ pub(crate) unsafe fn as_pose(element: *const Element) -> *mut Pose {
 // ufbx.c:33075 `ufbx_as_metadata_object`
 pub(crate) unsafe fn as_metadata_object(element: *const Element) -> *mut MetadataObject {
     if !element.is_null() && (*element).type_ == ElementType::MetadataObject {
-        element as *mut MetadataObject
+        // Reconstitute a WIDE pointer via the arena allocation's exposed
+        // provenance: `element` may derive from a caller's `&Element`, whose
+        // retag covers only the header — reading the full `MetadataObject` through it
+        // is out-of-range UB (Miri SB; tests/miri.rs downcast regression).
+        core::ptr::with_exposed_provenance_mut(element as usize)
     } else {
         core::ptr::null_mut()
     }

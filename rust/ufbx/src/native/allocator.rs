@@ -235,6 +235,14 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
     }
     ufbx_assert!(is_aligned_mask(ptr, size_align_mask(total)));
 
+    // Expose the allocation's provenance so address-based widening
+    // (`with_exposed_provenance`, e.g. the `as_*` element downcasts and the
+    // `get_imp` container-of) is legal from any pointer into it — the
+    // arena-wide generalization of the per-`*Imp` G-class expose. Runtime
+    // no-op; Miri flags it only under `-Zmiri-strict-provenance`, which the
+    // CI gate deliberately leaves off.
+    (ptr as *mut u8).expose_provenance();
+
     (*ator).current_size += total;
 
     ptr
@@ -320,6 +328,10 @@ pub(crate) unsafe fn realloc_size(
         "ptr"
     );
     ufbx_assert!(is_aligned_mask(ptr, size_align_mask(total)));
+
+    // Same exposure as `alloc_size`: a realloc mints a NEW allocation whose
+    // provenance the old block's exposure does not carry over to.
+    (ptr as *mut u8).expose_provenance();
 
     let a = &mut *ator;
     a.current_size += total;

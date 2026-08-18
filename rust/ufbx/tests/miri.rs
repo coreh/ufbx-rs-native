@@ -388,3 +388,34 @@ fn public_find_wrappers_from_shared_refs() {
     }
     assert!(acc.is_finite());
 }
+
+// Public-boundary provenance regression #2 — downcast widening: `as_mesh(&e)`
+// takes a reference whose retag covers only the `Element` header and returns a
+// reference to the FULL containing struct. The native `as_*` family must
+// reconstitute a wide pointer via the arena allocation's exposed provenance
+// (allocator.rs `expose_provenance`); the naive `element as *mut Mesh` cast
+// keeps the narrowed range and reading any tail field is Stacked Borrows UB
+// (caught 2026-08-18; Tree Borrows accepts it, so SB is the load-bearing gate).
+#[test]
+fn public_downcasts_from_narrowed_element_refs() {
+    let root = load("maya_interpolation_modes_7500_binary.fbx");
+    let scene: &ufbx::Scene = &root;
+
+    let mut acc = 0.0f64;
+    for elem in &scene.elements {
+        let e: &ufbx::Element = elem;
+        if let Some(mesh) = ufbx::as_mesh(e) {
+            acc += mesh.num_vertices as f64; // tail read, outside &Element's range
+        }
+        if let Some(node) = ufbx::as_node(e) {
+            acc += node.local_transform.translation.x as f64;
+        }
+        if let Some(layer) = ufbx::as_anim_layer(e) {
+            acc += layer.anim_values.len() as f64;
+        }
+        if let Some(stack) = ufbx::as_anim_stack(e) {
+            acc += stack.time_end;
+        }
+    }
+    assert!(acc.is_finite());
+}
