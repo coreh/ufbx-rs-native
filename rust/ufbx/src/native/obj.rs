@@ -248,14 +248,20 @@ pub(crate) unsafe fn obj_pop_props(
 // ufbx.c:16807-16843 `ufbxi_obj_push_mesh`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
-    let mesh: *mut ObjMesh = push_zero::<ObjMesh>(uc.obj().tmp_meshes_mut_ptr(), 1);
+pub(crate) fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
+    // SAFETY: pushing onto the obj parser's own `tmp_meshes` arena through its
+    // raw-ptr getter (`uc.obj()` construction invariant).
+    let mesh: *mut ObjMesh = unsafe { push_zero::<ObjMesh>(uc.obj().tmp_meshes_mut_ptr(), 1) };
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
     uc.obj().set_mesh(mesh);
+    // SAFETY: `mesh` is the fresh non-null push result above; anchoring it as a
+    // view puts the field access below on the accessor path.
+    let mesh_view: &ObjMeshView = unsafe { ObjMeshView::from_ptr(mesh) };
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS; i++)`
     for i in 0..OBJ_NUM_ATTRIBS {
-        (*mesh).vertex_range[i].min_ix = u64::MAX;
+        // `i < OBJ_NUM_ATTRIBS` bounds the fixed `vertex_range` array.
+        mesh_view.set_vertex_range_min(i, u64::MAX);
     }
 
     // C: `const char *name = "";`
@@ -268,30 +274,49 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
         name = uc.obj().group_view().data();
     }
 
-    (*mesh).fbx_node = push_synthetic_element::<UfbxNode>(
-        uc,
-        &mut (*mesh).fbx_node_id,
-        None,
-        name,
-        ElementType::Node,
-    );
-    (*mesh).fbx_mesh =
-        push_synthetic_element::<Mesh>(uc, &mut (*mesh).fbx_mesh_id, None, name, ElementType::Mesh);
+    // SAFETY: `mesh` is the fresh push result, so its own `fbx_node_id` /
+    // `fbx_mesh_id` fields are unaliased out-params for the two element pushes.
+    unsafe {
+        (*mesh).fbx_node = push_synthetic_element::<UfbxNode>(
+            uc,
+            &mut (*mesh).fbx_node_id,
+            None,
+            name,
+            ElementType::Node,
+        );
+        (*mesh).fbx_mesh = push_synthetic_element::<Mesh>(
+            uc,
+            &mut (*mesh).fbx_mesh_id,
+            None,
+            name,
+            ElementType::Mesh,
+        );
+    }
     ufbxi_check!(
         uc,
-        !(*mesh).fbx_node.is_null() && !(*mesh).fbx_mesh.is_null(),
+        // SAFETY: reading the two pointer fields just written above.
+        unsafe { !(*mesh).fbx_node.is_null() && !(*mesh).fbx_mesh.is_null() },
         "mesh->fbx_node && mesh->fbx_mesh"
     );
 
-    (*(*mesh).fbx_mesh).vertex_position.unique_per_vertex = true;
+    // SAFETY: `mesh->fbx_mesh` is the element push result, non-null past the
+    // check above.
+    unsafe {
+        (*mesh_view.fbx_mesh()).vertex_position.unique_per_vertex = true;
+    }
 
     ufbxi_check!(
         uc,
-        !push_copy::<u32>(
-            uc.tmp_node_ids_mut_ptr(),
-            1,
-            &(*(*mesh).fbx_node).element.element_id
-        )
+        // SAFETY: copies the fresh node element's own `element_id` field onto
+        // uc's `tmp_node_ids` arena (uc construction invariant); `fbx_node` is
+        // non-null past the check above.
+        !unsafe {
+            push_copy::<u32>(
+                uc.tmp_node_ids_mut_ptr(),
+                1,
+                &(*(*mesh).fbx_node).element.element_id,
+            )
+        }
         .is_null(),
         "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&mesh->fbx_node->element_id)))"
     );
@@ -301,8 +326,12 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
     uc.obj().set_face_group_dirty(true);
     uc.obj().set_material_dirty(true);
 
-    connect_oo(uc, (*mesh).fbx_mesh_id, (*mesh).fbx_node_id)?;
-    connect_oo(uc, (*mesh).fbx_node_id, 0)?;
+    // SAFETY: connecting the fresh mesh's own synthetic ids (read from the
+    // push result / through the anchored view) in uc's connection arena.
+    unsafe {
+        connect_oo(uc, (*mesh).fbx_mesh_id, mesh_view.fbx_node_id())?;
+        connect_oo(uc, mesh_view.fbx_node_id(), 0)?;
+    }
 
     Ok(())
 }
@@ -310,28 +339,40 @@ pub(crate) unsafe fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:16845-16860 `ufbxi_obj_flush_mesh`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
     if uc.obj().mesh().is_null() {
         return Ok(());
     }
 
+    // SAFETY: the current mesh is a live `tmp_meshes` entry, non-null past the
+    // guard above; anchoring it as a view resolves `fbx_mesh` through the
+    // accessor.
+    let mesh: &ObjMeshView = unsafe { ObjMeshView::from_ptr(uc.obj().mesh()) };
+    let fbx_mesh: *mut Mesh = mesh.fbx_mesh();
+
     let num_props: usize = uc.obj().tmp_props_view().num_items();
-    obj_pop_props(
-        uc,
-        &mut (*(*uc.obj().mesh()).fbx_mesh).element.props.props,
-        num_props,
-    )?;
+    // SAFETY: `fbx_mesh` is the mesh's own element (non-null since
+    // `obj_push_mesh`), so its prop list is an unaliased destination.
+    unsafe { obj_pop_props(uc, &mut (*fbx_mesh).element.props.props, num_props)? };
 
     let num_groups: usize = uc.obj().tmp_face_group_infos_view().num_items();
-    let groups: *mut FaceGroup = push_pop::<FaceGroup>(
-        uc.result_mut_ptr(),
-        uc.obj().tmp_face_group_infos_mut_ptr(),
-        num_groups,
-    );
+    // SAFETY: pops the obj parser's own `tmp_face_group_infos` arena into uc's
+    // result arena through their raw-ptr getters.
+    let groups: *mut FaceGroup = unsafe {
+        push_pop::<FaceGroup>(
+            uc.result_mut_ptr(),
+            uc.obj().tmp_face_group_infos_mut_ptr(),
+            num_groups,
+        )
+    };
     ufbxi_check!(uc, !groups.is_null(), "groups");
 
-    (*(*uc.obj().mesh()).fbx_mesh).face_groups.data = groups;
-    (*(*uc.obj().mesh()).fbx_mesh).face_groups.count = num_groups;
+    // SAFETY: `fbx_mesh` as above; `groups` is the fresh non-null `num_groups`
+    // run popped just above.
+    unsafe {
+        (*fbx_mesh).face_groups.data = groups;
+        (*fbx_mesh).face_groups.count = num_groups;
+    }
 
     Ok(())
 }
@@ -339,7 +380,7 @@ pub(crate) unsafe fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:16862-16900 `ufbxi_obj_init`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
     uc.set_from_ascii(true);
     uc.obj().set_initialized(true);
 
@@ -373,25 +414,41 @@ pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
     uc.obj().object_view().set_data(EMPTY_CHAR.as_ptr());
     uc.obj().group_view().set_data(EMPTY_CHAR.as_ptr());
 
-    map_init(
-        uc.obj().group_map_mut_ptr(),
-        uc.ator_tmp_mut_ptr(),
-        map_cmp_const_char_ptr,
-        core::ptr::null_mut(),
-    );
+    // SAFETY: initializing the obj parser's own group map with uc's temp
+    // allocator, both taken through their raw-ptr getters (`uc.obj()` / `uc`
+    // construction invariants).
+    unsafe {
+        map_init(
+            uc.obj().group_map_mut_ptr(),
+            uc.ator_tmp_mut_ptr(),
+            map_cmp_const_char_ptr,
+            core::ptr::null_mut(),
+        );
+    }
 
     // Add a nameless root node with the root ID
     {
         // C: `ufbxi_element_info root_info = { uc->root_id };`
-        let mut root_info: ElementInfo = core::mem::zeroed();
+        // SAFETY: `ElementInfo` is plain C data whose all-zero bit pattern is
+        // the valid `{ 0 }` initializer.
+        let mut root_info: ElementInfo = unsafe { core::mem::zeroed() };
         root_info.fbx_id = uc.root_id();
         root_info.name = EMPTY_STRING.0;
-        let root: *mut UfbxNode = push_element::<UfbxNode>(uc, &mut root_info, ElementType::Node);
+        // SAFETY: `root_info` is an unaliased local passed as the element-push
+        // out-param; the push targets uc's own element arenas.
+        let root: *mut UfbxNode =
+            unsafe { push_element::<UfbxNode>(uc, &mut root_info, ElementType::Node) };
         ufbxi_check!(uc, !root.is_null(), "root");
-        setup_root_node(uc, root);
+        // SAFETY: `root` is the fresh non-null element push result.
+        unsafe { setup_root_node(uc, root) };
         ufbxi_check!(
             uc,
-            !push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*root).element.element_id).is_null(),
+            // SAFETY: copies `root`'s own `element_id` field onto uc's
+            // `tmp_node_ids` arena.
+            !unsafe {
+                push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*root).element.element_id)
+            }
+            .is_null(),
             "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&root->element.element_id)))"
         );
     }
@@ -402,51 +459,63 @@ pub(crate) unsafe fn obj_init(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:16902-16923 `ufbxi_obj_free`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_free(uc: &Context) {
+pub(crate) fn obj_free(uc: &Context) {
     if !uc.obj().initialized() {
         return;
     }
 
-    // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`
-    for i in 0..OBJ_NUM_ATTRIBS_EXT {
-        buf_free(uc.obj().tmp_vertices_mut_ptr(i));
-        buf_free(uc.obj().tmp_indices_mut_ptr(i));
+    // SAFETY: releases the obj parser's own arenas and group map through their
+    // raw-ptr getters, reached only once the context is initialized (guard
+    // above).
+    unsafe {
+        // C: `ufbxi_nounroll for (size_t i = 0; i < UFBXI_OBJ_NUM_ATTRIBS_EXT; i++)`
+        for i in 0..OBJ_NUM_ATTRIBS_EXT {
+            buf_free(uc.obj().tmp_vertices_mut_ptr(i));
+            buf_free(uc.obj().tmp_indices_mut_ptr(i));
+        }
+        buf_free(uc.obj().tmp_color_valid_mut_ptr());
+        buf_free(uc.obj().tmp_faces_mut_ptr());
+        buf_free(uc.obj().tmp_face_material_mut_ptr());
+        buf_free(uc.obj().tmp_face_smoothing_mut_ptr());
+        buf_free(uc.obj().tmp_face_group_mut_ptr());
+        buf_free(uc.obj().tmp_face_group_infos_mut_ptr());
+        buf_free(uc.obj().tmp_meshes_mut_ptr());
+        buf_free(uc.obj().tmp_props_mut_ptr());
+
+        map_free(uc.obj().group_map_mut_ptr());
     }
-    buf_free(uc.obj().tmp_color_valid_mut_ptr());
-    buf_free(uc.obj().tmp_faces_mut_ptr());
-    buf_free(uc.obj().tmp_face_material_mut_ptr());
-    buf_free(uc.obj().tmp_face_smoothing_mut_ptr());
-    buf_free(uc.obj().tmp_face_group_mut_ptr());
-    buf_free(uc.obj().tmp_face_group_infos_mut_ptr());
-    buf_free(uc.obj().tmp_meshes_mut_ptr());
-    buf_free(uc.obj().tmp_props_mut_ptr());
 
-    map_free(uc.obj().group_map_mut_ptr());
-
-    free::<String>(
-        uc.ator_tmp_mut_ptr(),
-        uc.obj().tokens(),
-        uc.obj().tokens_cap(),
-    );
-    free::<*mut Material>(
-        uc.ator_tmp_mut_ptr(),
-        uc.obj().tmp_materials(),
-        uc.obj().tmp_materials_cap(),
-    );
+    // SAFETY: each array is freed with the capacity it was grown to, through
+    // the same temp allocator that allocated it.
+    unsafe {
+        free::<String>(
+            uc.ator_tmp_mut_ptr(),
+            uc.obj().tokens(),
+            uc.obj().tokens_cap(),
+        );
+        free::<*mut Material>(
+            uc.ator_tmp_mut_ptr(),
+            uc.obj().tmp_materials(),
+            uc.obj().tmp_materials_cap(),
+        );
+    }
 }
 
 // ufbx.c:16925-16981 `ufbxi_obj_read_line`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     ufbxi_dev_assert!(!uc.obj().eof());
 
     let mut offset: usize = 0;
 
     loop {
         let begin: *const u8 = add_ptr(uc.data() as *mut u8, offset) as *const u8;
+        // SAFETY: `begin` is `offset` bytes into uc's read window and `offset`
+        // only ever advances to a scanned line end within it, so the remaining
+        // `data_size - offset` bytes searched are in bounds.
         let end: *const u8 = if !begin.is_null() {
-            memchr(begin, b'\n', uc.data_size() - offset)
+            unsafe { memchr(begin, b'\n', uc.data_size() - offset) }
         } else {
             core::ptr::null()
         };
@@ -470,11 +539,16 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
 
         // Handle line continuations
         let mut esc: *const u8 = end;
-        if esc > begin && *esc.offset(-1) == b'\r' {
-            esc = esc.offset(-1);
-        }
-        if esc > begin && *esc.offset(-1) == b'\\' {
-            continue;
+        // SAFETY: `esc` steps back from the newline `memchr` found only while
+        // it stays strictly above `begin`, so both byte reads are inside the
+        // read window.
+        unsafe {
+            if esc > begin && *esc.offset(-1) == b'\r' {
+                esc = esc.offset(-1);
+            }
+            if esc > begin && *esc.offset(-1) == b'\\' {
+                continue;
+            }
         }
 
         break;
@@ -484,7 +558,9 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
 
     uc.obj().line_view().set_data(uc.data());
     uc.obj().line_view().set_length(line_len);
-    uc.set_data(uc.data().add(line_len));
+    // SAFETY: `line_len` bytes were just scanned out of uc's read window, so
+    // advancing `data` past them stays inside the buffer.
+    unsafe { uc.set_data(uc.data().add(line_len)) };
     uc.set_data_size(uc.data_size() - line_len);
 
     uc.obj()
@@ -496,10 +572,16 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     }
 
     if uc.obj().eof() {
-        let new_data: *mut u8 = push::<u8>(uc.tmp_mut_ptr(), line_len + 1);
+        // SAFETY: pushes onto uc's own tmp arena through its raw-ptr getter.
+        let new_data: *mut u8 = unsafe { push::<u8>(uc.tmp_mut_ptr(), line_len + 1) };
         ufbxi_check!(uc, !new_data.is_null(), "new_data");
-        core::ptr::copy_nonoverlapping(uc.obj().line_view().data(), new_data, line_len);
-        *new_data.add(line_len) = b'\n';
+        // SAFETY: `new_data` is the fresh non-null `line_len + 1` byte run,
+        // disjoint from the `line_len`-byte source line still in the read
+        // window; the two writes fill it exactly.
+        unsafe {
+            core::ptr::copy_nonoverlapping(uc.obj().line_view().data(), new_data, line_len);
+            *new_data.add(line_len) = b'\n';
+        }
         uc.obj().line_view().set_data(new_data);
         uc.obj()
             .line_view()
@@ -512,16 +594,24 @@ pub(crate) unsafe fn obj_read_line(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:16983-16997 `ufbxi_obj_span_token`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_span_token(uc: &Context, start_token: usize, end_token: usize) -> String {
+pub(crate) fn obj_span_token(uc: &Context, start_token: usize, end_token: usize) -> String {
     ufbx_assert!(start_token < uc.obj().num_tokens());
     let end_token = min_sz(end_token, uc.obj().num_tokens() - 1);
 
     ufbx_assert!(start_token <= end_token);
-    let start: String = *uc.obj().tokens().add(start_token);
-    let end: String = *uc.obj().tokens().add(end_token);
+    // SAFETY: both indices are `< num_tokens` (asserted above / clamped into
+    // range), so they index the tokenizer's stored token run.
+    let (start, end): (String, String) = unsafe {
+        (
+            *uc.obj().tokens().add(start_token),
+            *uc.obj().tokens().add(end_token),
+        )
+    };
     let num_between: usize = to_size(end.data as isize - start.data as isize);
 
-    let mut result: String = core::mem::zeroed();
+    // SAFETY: `String` is plain C data whose all-zero bit pattern is the valid
+    // `{ 0 }` initializer.
+    let mut result: String = unsafe { core::mem::zeroed() };
     result.data = start.data;
     result.length = num_between + end.length;
     result
@@ -530,9 +620,11 @@ pub(crate) unsafe fn obj_span_token(uc: &Context, start_token: usize, end_token:
 // ufbx.c:16999-17065 `ufbxi_obj_tokenize`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
     let mut ptr: *const u8 = uc.obj().line_view().data();
-    let end: *const u8 = ptr.add(uc.obj().line_view().length());
+    // SAFETY: `line` is the window `obj_read_line` stored on the obj context,
+    // so `data + length` is its one-past-the-end.
+    let end: *const u8 = unsafe { ptr.add(uc.obj().line_view().length()) };
     uc.obj().set_num_tokens(0);
 
     loop {
@@ -540,28 +632,35 @@ pub(crate) unsafe fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
 
         // Skip whitespace
         loop {
-            c = *ptr;
-            if c == b' ' || c == b'\t' || c == b'\r' {
-                ptr = ptr.add(1);
-                continue;
-            }
-
-            // Treat line continuations as whitespace
-            if c == b'\\' {
-                let mut p: *const u8 = ptr.add(1);
-                if *p == b'\r' {
-                    p = p.add(1);
-                }
-                if *p == b'\n' && p < end.offset(-1) {
-                    ptr = p.add(1);
+            // SAFETY: the stored line window always ends in a '\n' sentinel
+            // (`obj_read_line` appends one at EOF), and the scan stops there,
+            // so every byte read stays inside the window; the continuation
+            // lookahead only steps forward while `p < end - 1`.
+            unsafe {
+                c = *ptr;
+                if c == b' ' || c == b'\t' || c == b'\r' {
+                    ptr = ptr.add(1);
                     continue;
+                }
+
+                // Treat line continuations as whitespace
+                if c == b'\\' {
+                    let mut p: *const u8 = ptr.add(1);
+                    if *p == b'\r' {
+                        p = p.add(1);
+                    }
+                    if *p == b'\n' && p < end.offset(-1) {
+                        ptr = p.add(1);
+                        continue;
+                    }
                 }
             }
 
             break;
         }
 
-        c = *ptr;
+        // SAFETY: as above — `ptr` rests on a byte of the stored line window.
+        c = unsafe { *ptr };
         if c == b'\n' {
             break;
         }
@@ -573,46 +672,65 @@ pub(crate) unsafe fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
         uc.obj().set_num_tokens(uc.obj().num_tokens() + 1);
         ufbxi_check!(
             uc,
-            grow_array::<String>(
-                uc.ator_tmp_mut_ptr(),
-                uc.obj().tokens_mut_ptr(),
-                uc.obj().tokens_cap_mut_ptr(),
-                index + 1
-            ),
+            // SAFETY: grows the obj context's own paired `tokens` / `tokens_cap`
+            // growth state through uc's temp allocator.
+            unsafe {
+                grow_array::<String>(
+                    uc.ator_tmp_mut_ptr(),
+                    uc.obj().tokens_mut_ptr(),
+                    uc.obj().tokens_cap_mut_ptr(),
+                    index + 1
+                )
+            },
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->obj.tokens)), (&uc->obj.tokens), (&uc->obj.tokens_cap), (index + 1))"
         );
 
-        let tok: *mut String = uc.obj().tokens().add(index);
-        (*tok).data = ptr;
+        // SAFETY: the grow above ensured `tokens` holds at least `index + 1`
+        // slots, so slot `index` is in bounds; `ptr` points into the stored
+        // line window.
+        let tok: *mut String = unsafe {
+            let tok: *mut String = uc.obj().tokens().add(index);
+            (*tok).data = ptr;
+            tok
+        };
 
         // Treat comment start as a single token
         if c == b'#' {
-            ptr = ptr.add(1);
-            (*tok).length = 1;
+            // SAFETY: `tok` is the slot ensured above; `ptr` rests on the '#'
+            // of the line window, so one byte past it is still inside.
+            unsafe {
+                ptr = ptr.add(1);
+                (*tok).length = 1;
+            }
             continue;
         }
 
-        loop {
-            // C: `c = *++ptr;`
-            ptr = ptr.add(1);
-            c = *ptr;
+        // SAFETY: the '\n' sentinel ending the stored line window stops this
+        // scan (`is_space('\n')` holds), so every byte read is inside the
+        // window; `tok` is the slot ensured above.
+        unsafe {
+            loop {
+                // C: `c = *++ptr;`
+                ptr = ptr.add(1);
+                c = *ptr;
 
-            if is_space(c) {
-                break;
-            }
-
-            if c == b'\\' {
-                let mut p: *const u8 = ptr.add(1);
-                if *p == b'\r' {
-                    p = p.add(1);
-                }
-                if *p == b'\n' && p < end.offset(-1) {
+                if is_space(c) {
                     break;
                 }
-            }
-        }
 
-        (*tok).length = to_size(ptr as isize - (*tok).data as isize);
+                if c == b'\\' {
+                    let mut p: *const u8 = ptr.add(1);
+                    if *p == b'\r' {
+                        p = p.add(1);
+                    }
+                    if *p == b'\n' && p < end.offset(-1) {
+                        break;
+                    }
+                }
+            }
+
+            (*tok).length = to_size(ptr as isize - (*tok).data as isize);
+        }
     }
 
     Ok(())
@@ -622,22 +740,15 @@ pub(crate) unsafe fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
 #[cfg(feature = "obj")]
 #[inline(never)]
 pub(crate) fn obj_tokenize_line(uc: &Context) -> Result<(), Fail> {
-    // SAFETY: both pipeline stages need only a valid `uc` (upheld by the handle).
-    unsafe {
-        obj_read_line(uc)?;
-        obj_tokenize(uc)?;
-    }
+    obj_read_line(uc)?;
+    obj_tokenize(uc)?;
     Ok(())
 }
 
 // ufbx.c:17074-17108 `ufbxi_obj_parse_vertex`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_parse_vertex(
-    uc: &Context,
-    attrib: ObjAttrib,
-    offset: usize,
-) -> Result<(), Fail> {
+pub(crate) fn obj_parse_vertex(uc: &Context, attrib: ObjAttrib, offset: usize) -> Result<(), Fail> {
     if uc.opts_view().ignore_geometry() {
         return Ok(());
     }
@@ -661,26 +772,36 @@ pub(crate) unsafe fn obj_parse_vertex(
     );
 
     let parse_flags: u32 = uc.double_parse_flags();
-    let vals: *mut Real = push_fast::<Real>(dst, num_values);
+    // SAFETY: pushes `num_values` reals onto the attribute's own tmp vertex
+    // arena (obj-context construction invariant).
+    let vals: *mut Real = unsafe { push_fast::<Real>(dst, num_values) };
     ufbxi_check!(uc, !vals.is_null(), "vals");
     for i in 0..read_values {
-        let str_: String = *uc.obj().tokens().add(offset + i);
-        // C: `char *end; // ufbxi_uninit`
-        let mut end: *const u8 = core::ptr::null(); // ufbxi_uninit
-        let val: f64 = parse_double(str_.data, str_.length, &mut end, parse_flags);
-        ufbxi_check!(
-            uc,
-            end == str_.data.add(str_.length),
-            "end == str.data + str.length"
-        );
-        *vals.add(i) = val as Real;
+        // SAFETY: `offset + read_values <= num_tokens` (checked above), so
+        // token `offset + i` is in the stored token run and `str_.data ..
+        // + length` is that token's own span; `end` is an unaliased local
+        // out-param; `i < read_values <= num_values` indexes the fresh push.
+        unsafe {
+            let str_: String = *uc.obj().tokens().add(offset + i);
+            // C: `char *end; // ufbxi_uninit`
+            let mut end: *const u8 = core::ptr::null(); // ufbxi_uninit
+            let val: f64 = parse_double(str_.data, str_.length, &mut end, parse_flags);
+            ufbxi_check!(
+                uc,
+                end == str_.data.add(str_.length),
+                "end == str.data + str.length"
+            );
+            *vals.add(i) = val as Real;
+        }
     }
 
     if read_values < num_values {
         ufbx_assert!(read_values + 1 == num_values);
         ufbx_assert!(attrib == ObjAttrib::Color);
         // C: `vals[read_values] = 1.0f;`
-        *vals.add(read_values) = 1.0f32 as Real;
+        // SAFETY: `read_values + 1 == num_values` here (asserted above), so the
+        // slot is the last of the fresh push.
+        unsafe { *vals.add(read_values) = 1.0f32 as Real };
     }
 
     Ok(())
@@ -766,7 +887,7 @@ pub(crate) unsafe fn obj_parse_index(
 // ufbx.c:17168-17296 `ufbxi_obj_parse_indices`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_parse_indices(
+pub(crate) fn obj_parse_indices(
     uc: &Context,
     token_begin: usize,
     num_tokens: usize,
@@ -796,32 +917,40 @@ pub(crate) unsafe fn obj_parse_indices(
     }
     // Anchor the current-mesh view at the ObjContext root; thread it into the
     // per-index leaf (`obj_parse_index`) below.
-    let mesh: &ObjMeshView = ObjMeshView::from_ptr(uc.obj().mesh());
+    // SAFETY: the current mesh is a live `tmp_meshes` entry, non-null after the
+    // push above.
+    let mesh: &ObjMeshView = unsafe { ObjMeshView::from_ptr(uc.obj().mesh()) };
 
     if uc.obj().material_dirty() {
         if uc.obj().usemtl_fbx_id() != 0 {
             let entry: *mut FbxIdEntry = find_fbx_id(uc, uc.obj().usemtl_fbx_id());
             ufbx_assert!(!entry.is_null());
-            if mesh.usemtl_base() == 0 || (*entry).user_id < mesh.usemtl_base() {
-                connect_oo(uc, uc.obj().usemtl_fbx_id(), mesh.fbx_node_id())?;
+            // SAFETY: `entry` is uc's own fbx-id map entry for the active
+            // `usemtl` id, non-null past the assert; the connection targets
+            // uc's connection arena and the mesh reads go through the anchored
+            // view.
+            unsafe {
+                if mesh.usemtl_base() == 0 || (*entry).user_id < mesh.usemtl_base() {
+                    connect_oo(uc, uc.obj().usemtl_fbx_id(), mesh.fbx_node_id())?;
 
-                // C: `uint32_t index = ++uc->obj.usemtl_index;`
-                uc.obj()
-                    .set_usemtl_index(uc.obj().usemtl_index().wrapping_add(1));
-                let index: u32 = uc.obj().usemtl_index();
-                ufbxi_check!(uc, index < u32::MAX, "index < UINT32_MAX");
-                (*entry).user_id = index;
+                    // C: `uint32_t index = ++uc->obj.usemtl_index;`
+                    uc.obj()
+                        .set_usemtl_index(uc.obj().usemtl_index().wrapping_add(1));
+                    let index: u32 = uc.obj().usemtl_index();
+                    ufbxi_check!(uc, index < u32::MAX, "index < UINT32_MAX");
+                    (*entry).user_id = index;
 
-                if mesh.usemtl_base() == 0 {
-                    mesh.set_usemtl_base(index);
+                    if mesh.usemtl_base() == 0 {
+                        mesh.set_usemtl_base(index);
+                    }
+                    uc.obj()
+                        .set_face_material(index.wrapping_sub(mesh.usemtl_base()));
                 }
+                // C-parity: the assignment above is immediately overwritten
+                // here; both are in the C source and both are kept.
                 uc.obj()
-                    .set_face_material(index.wrapping_sub(mesh.usemtl_base()));
+                    .set_face_material((*entry).user_id.wrapping_sub(mesh.usemtl_base()));
             }
-            // C-parity: the assignment above is immediately overwritten here;
-            // both are in the C source and both are kept.
-            uc.obj()
-                .set_face_material((*entry).user_id.wrapping_sub(mesh.usemtl_base()));
         } else {
             uc.obj().set_face_material(NO_INDEX);
         }
@@ -835,11 +964,15 @@ pub(crate) unsafe fn obj_parse_indices(
     if num_tokens == 0 && !uc.opts_view().allow_empty_faces() {
         ufbxi_check!(
             uc,
-            ufbxi_warnf!(
-                uc,
-                WarningType::EmptyFaceRemoved,
-                "Empty face has been removed"
-            )
+            // SAFETY: appends to uc's own warning buffer; the format literal
+            // is NUL-terminated and takes no arguments.
+            unsafe {
+                ufbxi_warnf!(
+                    uc,
+                    WarningType::EmptyFaceRemoved,
+                    "Empty face has been removed"
+                )
+            }
             .is_ok(),
             "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_EMPTY_FACE_REMOVED, ~0u, \"Empty face has been removed\")"
         );
@@ -856,45 +989,63 @@ pub(crate) unsafe fn obj_parse_indices(
         }
 
         let hash: u32 = hash_ptr!(name.data);
-        let mut entry: *mut ObjGroupEntry = map_find(
-            uc.obj().group_map_mut_ptr(),
-            hash,
-            &name.data as *const *const u8 as *const c_void,
-        );
-        if entry.is_null() {
-            entry = map_insert(
+        // SAFETY: looks the interned name pointer up in the obj parser's own
+        // group map (keyed by that pointer, whose address is taken from an
+        // unaliased local).
+        let mut entry: *mut ObjGroupEntry = unsafe {
+            map_find(
                 uc.obj().group_map_mut_ptr(),
                 hash,
                 &name.data as *const *const u8 as *const c_void,
-            );
+            )
+        };
+        if entry.is_null() {
+            // SAFETY: inserts into the same map with the same key.
+            entry = unsafe {
+                map_insert(
+                    uc.obj().group_map_mut_ptr(),
+                    hash,
+                    &name.data as *const *const u8 as *const c_void,
+                )
+            };
             ufbxi_check!(uc, !entry.is_null(), "entry");
-            (*entry).name = name.data;
-            (*entry).mesh_id = 0;
-            (*entry).local_id = 0;
+            // SAFETY: `entry` is the fresh non-null insert result.
+            unsafe {
+                (*entry).name = name.data;
+                (*entry).mesh_id = 0;
+                (*entry).local_id = 0;
+            }
         }
 
-        let mesh_id: u32 = (*mesh.fbx_mesh()).element.element_id;
-        if (*entry).mesh_id != mesh_id {
-            // C: `uint32_t id = mesh->num_groups++;`
-            let id: u32 = mesh.num_groups();
-            mesh.set_num_groups(mesh.num_groups().wrapping_add(1));
-            (*entry).mesh_id = mesh_id;
-            (*entry).local_id = id;
+        // SAFETY: `entry` is the group-map entry found or inserted above;
+        // `mesh.fbx_mesh()` is the mesh's own element (non-null since
+        // `obj_push_mesh`); `group` is the fresh result of the arena push.
+        unsafe {
+            let mesh_id: u32 = (*mesh.fbx_mesh()).element.element_id;
+            if (*entry).mesh_id != mesh_id {
+                // C: `uint32_t id = mesh->num_groups++;`
+                let id: u32 = mesh.num_groups();
+                mesh.set_num_groups(mesh.num_groups().wrapping_add(1));
+                (*entry).mesh_id = mesh_id;
+                (*entry).local_id = id;
 
-            let group: *mut FaceGroup =
-                push_zero::<FaceGroup>(uc.obj().tmp_face_group_infos_mut_ptr(), 1);
-            ufbxi_check!(uc, !group.is_null(), "group");
-            (*group).id = 0;
-            (*group).name = name;
+                let group: *mut FaceGroup =
+                    push_zero::<FaceGroup>(uc.obj().tmp_face_group_infos_mut_ptr(), 1);
+                ufbxi_check!(uc, !group.is_null(), "group");
+                (*group).id = 0;
+                (*group).name = name;
+            }
+
+            uc.obj().set_face_group((*entry).local_id);
         }
-
-        uc.obj().set_face_group((*entry).local_id);
 
         if !uc.obj().has_face_group() {
             uc.obj().set_has_face_group(true);
             ufbxi_check!(
                 uc,
-                !push_zero::<u32>(uc.obj().tmp_face_group_mut_ptr(), uc.obj().tmp_faces_view().num_items())
+                // SAFETY: zero-fills one face-group slot per already-recorded
+                // face on the obj parser's own `tmp_face_group` arena.
+                !unsafe { push_zero::<u32>(uc.obj().tmp_face_group_mut_ptr(), uc.obj().tmp_faces_view().num_items()) }
                     .is_null(),
                 "((uint32_t*)ufbxi_push_size_zero((&uc->obj.tmp_face_group), sizeof(uint32_t), (uc->obj.tmp_faces.num_items)))"
             );
@@ -910,35 +1061,56 @@ pub(crate) unsafe fn obj_parse_indices(
         "UINT32_MAX - mesh->num_indices >= num_indices"
     );
 
-    let face: *mut Face = push_fast::<Face>(uc.obj().tmp_faces_mut_ptr(), 1);
+    // SAFETY: pushes one face onto the obj parser's own `tmp_faces` arena.
+    let face: *mut Face = unsafe { push_fast::<Face>(uc.obj().tmp_faces_mut_ptr(), 1) };
     ufbxi_check!(uc, !face.is_null(), "face");
 
-    (*face).index_begin = mesh.num_indices() as u32;
-    (*face).num_indices = num_indices as u32;
+    // SAFETY: `face` is the fresh non-null push result.
+    unsafe {
+        (*face).index_begin = mesh.num_indices() as u32;
+        (*face).num_indices = num_indices as u32;
+    }
 
     mesh.set_num_faces(mesh.num_faces() + 1);
     mesh.set_num_indices(mesh.num_indices() + num_indices);
 
-    let p_face_mat: *mut u32 = push_fast::<u32>(uc.obj().tmp_face_material_mut_ptr(), 1);
+    // SAFETY: pushes one entry onto the obj parser's own `tmp_face_material`
+    // arena.
+    let p_face_mat: *mut u32 = unsafe { push_fast::<u32>(uc.obj().tmp_face_material_mut_ptr(), 1) };
     ufbxi_check!(uc, !p_face_mat.is_null(), "p_face_mat");
-    *p_face_mat = uc.obj().face_material();
+    // SAFETY: fresh push result, non-null past the check.
+    unsafe { *p_face_mat = uc.obj().face_material() };
 
     if uc.obj().has_face_smoothing() {
-        let p_face_smooth: *mut bool = push_fast::<bool>(uc.obj().tmp_face_smoothing_mut_ptr(), 1);
+        // SAFETY: pushes one entry onto the obj parser's own
+        // `tmp_face_smoothing` arena.
+        let p_face_smooth: *mut bool =
+            unsafe { push_fast::<bool>(uc.obj().tmp_face_smoothing_mut_ptr(), 1) };
         ufbxi_check!(uc, !p_face_smooth.is_null(), "p_face_smooth");
-        *p_face_smooth = uc.obj().face_smoothing();
+        // SAFETY: fresh push result, non-null past the check.
+        unsafe { *p_face_smooth = uc.obj().face_smoothing() };
     }
 
     if uc.obj().has_face_group() {
-        let p_face_group: *mut u32 = push_fast::<u32>(uc.obj().tmp_face_group_mut_ptr(), 1);
+        // SAFETY: pushes one entry onto the obj parser's own `tmp_face_group`
+        // arena.
+        let p_face_group: *mut u32 =
+            unsafe { push_fast::<u32>(uc.obj().tmp_face_group_mut_ptr(), 1) };
         ufbxi_check!(uc, !p_face_group.is_null(), "p_face_group");
-        *p_face_group = uc.obj().face_group();
+        // SAFETY: fresh push result, non-null past the check.
+        unsafe { *p_face_group = uc.obj().face_group() };
     }
 
     for ix in 0..num_indices {
-        let mut tok: String = *uc.obj().tokens().add(token_begin + ix);
-        for attrib in 0..OBJ_NUM_ATTRIBS as u32 {
-            obj_parse_index(uc, mesh, &mut tok, attrib)?;
+        // SAFETY: `token_begin + ix` is inside the caller's token window (its
+        // end is bounded by `num_tokens`), so it indexes the stored token run;
+        // `tok` is an unaliased local that the per-attribute parser advances,
+        // and `mesh` is the anchored current mesh.
+        unsafe {
+            let mut tok: String = *uc.obj().tokens().add(token_begin + ix);
+            for attrib in 0..OBJ_NUM_ATTRIBS as u32 {
+                obj_parse_index(uc, mesh, &mut tok, attrib)?;
+            }
         }
     }
 
@@ -952,9 +1124,9 @@ pub(crate) fn obj_parse_multi_indices(uc: &Context, window: usize) -> Result<(),
     // C: `for (size_t begin = 1; begin + window <= uc->obj.num_tokens; begin++)`
     let mut begin: usize = 1;
     while begin + window <= uc.obj().num_tokens() {
-        // SAFETY: `obj_parse_indices` needs only a valid `uc` and the in-range
-        // window (`begin + window <= num_tokens` checked above).
-        unsafe { obj_parse_indices(uc, begin, window)? };
+        // `begin + window <= num_tokens` (loop condition) keeps the window in
+        // range of the tokenizer's stored token run.
+        obj_parse_indices(uc, begin, window)?;
         begin += 1;
     }
     Ok(())
@@ -988,48 +1160,63 @@ pub(crate) unsafe fn parse_hex(digits: *const u8, length: usize) -> u32 {
 // ufbx.c:17326-17365 `ufbxi_obj_parse_comment`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
-    if uc.obj().num_tokens() >= 3 && str_equal(*uc.obj().tokens().add(1), str_c(b"MRGB\0".as_ptr()))
+pub(crate) fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
+    // SAFETY: the length guard runs first, so token 1 is in the tokenizer's
+    // stored token run; the literal is NUL-terminated for `str_c`.
+    if uc.obj().num_tokens() >= 3
+        && unsafe { str_equal(*uc.obj().tokens().add(1), str_c(b"MRGB\0".as_ptr())) }
     {
         let num_color: usize = uc.obj().vertex_count_at(ObjAttrib::Color as usize).get();
 
         // Pop standard vertex colors and replace them with MRGB colors
         if num_color > uc.obj().mrgb_vertex_count() {
             let num_pop: usize = num_color - uc.obj().mrgb_vertex_count();
-            pop::<bool>(
-                uc.obj().tmp_color_valid_mut_ptr(),
-                num_pop,
-                core::ptr::null_mut(),
-            );
-            pop::<Real>(
-                uc.obj().tmp_vertices_mut_ptr(ObjAttrib::Color as usize),
-                num_pop * 4,
-                core::ptr::null_mut(),
-            );
+            // SAFETY: discards `num_pop` entries from the obj parser's own
+            // color arenas (`num_pop` is the surplus over the MRGB count, so
+            // the arenas hold at least that much); null destination drops them.
+            unsafe {
+                pop::<bool>(
+                    uc.obj().tmp_color_valid_mut_ptr(),
+                    num_pop,
+                    core::ptr::null_mut(),
+                );
+                pop::<Real>(
+                    uc.obj().tmp_vertices_mut_ptr(ObjAttrib::Color as usize),
+                    num_pop * 4,
+                    core::ptr::null_mut(),
+                );
+            }
             uc.obj()
                 .vertex_count_at(ObjAttrib::Color as usize)
                 .set(uc.obj().vertex_count_at(ObjAttrib::Color as usize).get() - num_pop);
         }
 
-        let mrgb: String = *uc.obj().tokens().add(2);
+        // SAFETY: `num_tokens >= 3`, so token 2 is in the stored token run.
+        let mrgb: String = unsafe { *uc.obj().tokens().add(2) };
         // C: `for (size_t i = 0; i + 8 <= mrgb.length; i += 8)`
         let mut i: usize = 0;
         while i + 8 <= mrgb.length {
-            let p_rgba: *mut Real =
-                push::<Real>(uc.obj().tmp_vertices_mut_ptr(ObjAttrib::Color as usize), 4);
-            let p_valid: *mut bool = push::<bool>(uc.obj().tmp_color_valid_mut_ptr(), 1);
-            ufbxi_check!(
-                uc,
-                !p_rgba.is_null() && !p_valid.is_null(),
-                "p_rgba && p_valid"
-            );
-            *p_valid = true;
+            // SAFETY: pushes one RGBA quad and its validity flag onto the obj
+            // parser's own color arenas, then fills those fresh non-null runs
+            // exactly; the loop condition keeps the 8 hex digits read at
+            // `mrgb.data + i` inside the token's own span.
+            unsafe {
+                let p_rgba: *mut Real =
+                    push::<Real>(uc.obj().tmp_vertices_mut_ptr(ObjAttrib::Color as usize), 4);
+                let p_valid: *mut bool = push::<bool>(uc.obj().tmp_color_valid_mut_ptr(), 1);
+                ufbxi_check!(
+                    uc,
+                    !p_rgba.is_null() && !p_valid.is_null(),
+                    "p_rgba && p_valid"
+                );
+                *p_valid = true;
 
-            let hex: u32 = parse_hex(mrgb.data.add(i), 8);
-            *p_rgba.add(0) = ((hex >> 16) & 0xff) as Real / (255.0f32 as Real);
-            *p_rgba.add(1) = ((hex >> 8) & 0xff) as Real / (255.0f32 as Real);
-            *p_rgba.add(2) = ((hex >> 0) & 0xff) as Real / (255.0f32 as Real);
-            *p_rgba.add(3) = ((hex >> 24) & 0xff) as Real / (255.0f32 as Real);
+                let hex: u32 = parse_hex(mrgb.data.add(i), 8);
+                *p_rgba.add(0) = ((hex >> 16) & 0xff) as Real / (255.0f32 as Real);
+                *p_rgba.add(1) = ((hex >> 8) & 0xff) as Real / (255.0f32 as Real);
+                *p_rgba.add(2) = ((hex >> 0) & 0xff) as Real / (255.0f32 as Real);
+                *p_rgba.add(3) = ((hex >> 24) & 0xff) as Real / (255.0f32 as Real);
+            }
 
             i += 8;
         }
@@ -1038,10 +1225,14 @@ pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
     }
 
     if !uc.opts_view().disable_quirks() {
-        if r#match(
-            uc.obj().line_mut_ptr(),
-            b"\\s*#\\s*File exported by ZBrush.*\0".as_ptr(),
-        ) {
+        // SAFETY: matches a NUL-terminated pattern literal against the obj
+        // context's own stored line.
+        if unsafe {
+            r#match(
+                uc.obj().line_mut_ptr(),
+                b"\\s*#\\s*File exported by ZBrush.*\0".as_ptr(),
+            )
+        } {
             if uc.obj().mesh().is_null() {
                 uc.opts_view().set_obj_merge_groups(true);
             }
@@ -1054,7 +1245,7 @@ pub(crate) unsafe fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:17367-17406 `ufbxi_obj_parse_material`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
     uc.obj().set_material_dirty(true);
 
     // Allow empty `usemtl` lines to specify "no material".
@@ -1065,9 +1256,13 @@ pub(crate) unsafe fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
 
     let mut name: String = obj_span_token(uc, 1, usize::MAX);
 
-    push_string_place_str(uc.string_pool_mut_ptr(), &mut name, false)?;
-
-    let fbx_id: u64 = synthetic_id_from_string(uc, name.data);
+    // SAFETY: interns the span into uc's own string pool through an unaliased
+    // local, then derives the synthetic id from the interned (pool-owned,
+    // NUL-terminated) pointer.
+    let fbx_id: u64 = unsafe {
+        push_string_place_str(uc.string_pool_mut_ptr(), &mut name, false)?;
+        synthetic_id_from_string(uc, name.data)
+    };
     ufbxi_check!(uc, fbx_id != 0, "fbx_id");
 
     let entry: *mut FbxIdEntry = find_fbx_id(uc, fbx_id);
@@ -1076,30 +1271,41 @@ pub(crate) unsafe fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
 
     if entry.is_null() {
         // C: `ufbxi_element_info info = { 0 };`
-        let mut info: ElementInfo = core::mem::zeroed();
+        // SAFETY: `ElementInfo` is plain C data whose all-zero bit pattern is
+        // the valid `{ 0 }` initializer.
+        let mut info: ElementInfo = unsafe { core::mem::zeroed() };
         info.fbx_id = fbx_id;
         info.name = name;
 
+        // SAFETY: `info` is an unaliased local out-param for the element push
+        // onto uc's own element arenas.
         let material: *mut Material =
-            push_element::<Material>(uc, &mut info, ElementType::Material);
+            unsafe { push_element::<Material>(uc, &mut info, ElementType::Material) };
         ufbxi_check!(uc, !material.is_null(), "material");
 
-        (*material).shader_type = ShaderType::WavefrontMtl;
-        (*material).shading_model_name.data = EMPTY_CHAR.as_ptr();
-        (*material).shader_prop_prefix.data = EMPTY_CHAR.as_ptr();
-
-        let id: usize = (*material).element.element_id as usize;
+        // SAFETY: `material` is the fresh non-null element push result.
+        let id: usize = unsafe {
+            (*material).shader_type = ShaderType::WavefrontMtl;
+            (*material).shading_model_name.data = EMPTY_CHAR.as_ptr();
+            (*material).shader_prop_prefix.data = EMPTY_CHAR.as_ptr();
+            (*material).element.element_id as usize
+        };
         ufbxi_check!(
             uc,
-            grow_array::<*mut Material>(
-                uc.ator_tmp_mut_ptr(),
-                uc.obj().tmp_materials_mut_ptr(),
-                uc.obj().tmp_materials_cap_mut_ptr(),
-                id + 1
-            ),
+            // SAFETY: grows the obj context's own paired `tmp_materials` /
+            // `tmp_materials_cap` growth state through uc's temp allocator.
+            unsafe {
+                grow_array::<*mut Material>(
+                    uc.ator_tmp_mut_ptr(),
+                    uc.obj().tmp_materials_mut_ptr(),
+                    uc.obj().tmp_materials_cap_mut_ptr(),
+                    id + 1
+                )
+            },
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->obj.tmp_materials)), (&uc->obj.tmp_materials), (&uc->obj.tmp_materials_cap), (id + 1))"
         );
-        *uc.obj().tmp_materials().add(id) = material;
+        // SAFETY: the grow above ensured slot `id` exists in `tmp_materials`.
+        unsafe { *uc.obj().tmp_materials().add(id) = material };
     }
 
     Ok(())
@@ -1239,7 +1445,7 @@ pub(crate) unsafe fn obj_setup_attrib(
 // ufbx.c:17483-17496 `ufbxi_obj_pad_colors`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result<(), Fail> {
+pub(crate) fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result<(), Fail> {
     if uc.opts_view().ignore_geometry() {
         return Ok(());
     }
@@ -1249,16 +1455,22 @@ pub(crate) unsafe fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result
         let num_pad: usize = num_vertices - num_colors;
         ufbxi_check!(
             uc,
-            !push_zero::<Real>(
-                uc.obj().tmp_vertices_mut_ptr(ObjAttrib::Color as usize),
-                num_pad * 4
-            )
+            // SAFETY: zero-fills the padding quads on the obj parser's own
+            // color vertex arena.
+            !unsafe {
+                push_zero::<Real>(
+                    uc.obj().tmp_vertices_mut_ptr(ObjAttrib::Color as usize),
+                    num_pad * 4
+                )
+            }
             .is_null(),
             "((ufbx_real*)ufbxi_push_size_zero((&uc->obj.tmp_vertices[UFBXI_OBJ_ATTRIB_COLOR]), sizeof(ufbx_real), (num_pad * 4)))"
         );
         ufbxi_check!(
             uc,
-            !push_zero::<bool>(uc.obj().tmp_color_valid_mut_ptr(), num_pad).is_null(),
+            // SAFETY: matching validity flags on the obj parser's own
+            // `tmp_color_valid` arena.
+            !unsafe { push_zero::<bool>(uc.obj().tmp_color_valid_mut_ptr(), num_pad) }.is_null(),
             "((bool*)ufbxi_push_size_zero((&uc->obj.tmp_color_valid), sizeof(bool), (num_pad)))"
         );
         uc.obj()
@@ -1272,10 +1484,12 @@ pub(crate) unsafe fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result
 // ufbx.c:17498-17679 `ufbxi_obj_pop_meshes`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
     let num_meshes: usize = uc.obj().tmp_meshes_view().num_items();
+    // SAFETY: moves the obj parser's whole `tmp_meshes` run (its own item
+    // count) onto uc's tmp arena.
     let meshes: *mut ObjMesh =
-        push_pop::<ObjMesh>(uc.tmp_mut_ptr(), uc.obj().tmp_meshes_mut_ptr(), num_meshes);
+        unsafe { push_pop::<ObjMesh>(uc.tmp_mut_ptr(), uc.obj().tmp_meshes_mut_ptr(), num_meshes) };
     ufbxi_check!(uc, !meshes.is_null(), "meshes");
 
     if uc.obj().has_vertex_color() {
@@ -1287,24 +1501,32 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
 
     // Pop unused fast indices
     for i in 0..OBJ_NUM_ATTRIBS {
-        pop::<u64>(
-            uc.obj().tmp_indices_mut_ptr(i),
-            uc.obj().fast_indices_at(i).num_left(),
-            core::ptr::null_mut(),
-        );
+        // SAFETY: discards the tail the fast-index writer reserved but never
+        // filled (`num_left` of the attribute's own `tmp_indices` arena).
+        unsafe {
+            pop::<u64>(
+                uc.obj().tmp_indices_mut_ptr(i),
+                uc.obj().fast_indices_at(i).num_left(),
+                core::ptr::null_mut(),
+            );
+        }
     }
 
     // Check if the file has disjoint vertices
     let mut non_disjoint: [bool; OBJ_NUM_ATTRIBS] = [false; OBJ_NUM_ATTRIBS];
     let mut next_min: [u64; OBJ_NUM_ATTRIBS] = [0; OBJ_NUM_ATTRIBS];
     // C: `ufbx_real_list vertices[UFBXI_OBJ_NUM_ATTRIBS_EXT] = { 0 };`
-    let mut vertices: [List<Real>; OBJ_NUM_ATTRIBS_EXT] = core::mem::zeroed();
+    // SAFETY: `List<Real>` is plain C data whose all-zero bit pattern is the
+    // valid `{ 0 }` initializer.
+    let mut vertices: [List<Real>; OBJ_NUM_ATTRIBS_EXT] = unsafe { core::mem::zeroed() };
     let mut color_valid: *mut bool = core::ptr::null_mut();
 
     let mut max_indices: usize = 0;
 
     // Walk the popped `meshes` run as anchored views (contiguous `push_pop`).
-    for mesh in SliceViewIter::<ObjMesh>::from_raw_parts(meshes, num_meshes) {
+    // SAFETY: `meshes` is the fresh non-null `num_meshes`-item run popped
+    // above, so the whole walk stays inside that one allocation.
+    for mesh in unsafe { SliceViewIter::<ObjMesh>::from_raw_parts(meshes, num_meshes) } {
         max_indices = max_sz(max_indices, mesh.num_indices());
         // C: `ufbxi_nounroll for (uint32_t attrib = 0; attrib < UFBXI_OBJ_NUM_ATTRIBS; attrib++)`
         for attrib in 0..OBJ_NUM_ATTRIBS {
@@ -1320,7 +1542,8 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         }
     }
 
-    let tmp_indices: *mut u64 = push::<u64>(uc.tmp_mut_ptr(), max_indices);
+    // SAFETY: scratch run for the widest mesh, pushed onto uc's own tmp arena.
+    let tmp_indices: *mut u64 = unsafe { push::<u64>(uc.tmp_mut_ptr(), max_indices) };
     ufbxi_check!(uc, !tmp_indices.is_null(), "tmp_indices");
 
     // C: `ufbxi_nounroll for (uint32_t attrib = 0; attrib < UFBXI_OBJ_NUM_ATTRIBS; attrib++)`
@@ -1328,27 +1551,35 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         if !non_disjoint[attrib] {
             continue;
         }
-        obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, 0)?;
+        // SAFETY: `vertices[attrib]` is an unaliased local out-param and
+        // `attrib < OBJ_NUM_ATTRIBS` selects that attribute's own arenas.
+        unsafe { obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, 0)? };
     }
     if uc.obj().has_vertex_color() && non_disjoint[ObjAttrib::Position as usize] {
-        obj_pop_vertices(
-            uc,
-            &mut vertices[ObjAttrib::Color as usize],
-            ObjAttrib::Color as u32,
-            0,
-        )?;
-        color_valid = push_pop::<bool>(
-            uc.tmp_mut_ptr(),
-            uc.obj().tmp_color_valid_mut_ptr(),
-            vertices[ObjAttrib::Color as usize].count / 4,
-        );
+        // SAFETY: as above for the color attribute; the `color_valid` pop moves
+        // one flag per popped color quad off the obj parser's own arena.
+        unsafe {
+            obj_pop_vertices(
+                uc,
+                &mut vertices[ObjAttrib::Color as usize],
+                ObjAttrib::Color as u32,
+                0,
+            )?;
+            color_valid = push_pop::<bool>(
+                uc.tmp_mut_ptr(),
+                uc.obj().tmp_color_valid_mut_ptr(),
+                vertices[ObjAttrib::Color as usize].count / 4,
+            );
+        }
         ufbxi_check!(uc, !color_valid.is_null(), "color_valid");
     }
 
     // C: `for (size_t i = num_meshes; i > 0; i--)`
     let mut i: usize = num_meshes;
     while i > 0 {
-        let mesh: &ObjMeshView = ObjMeshView::from_ptr(meshes.add(i - 1));
+        // SAFETY: `i - 1 < num_meshes`, so this indexes the popped `meshes`
+        // run (one allocation) that anchors the view.
+        let mesh: &ObjMeshView = unsafe { ObjMeshView::from_ptr(meshes.add(i - 1)) };
 
         let fbx_mesh: *mut Mesh = mesh.fbx_mesh();
 
@@ -1362,205 +1593,249 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 }
                 let min_ix: u64 = mesh.vertex_range_min(attrib);
                 if min_ix < u64::MAX {
-                    obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, min_ix)?;
+                    // SAFETY: `vertices[attrib]` is an unaliased local
+                    // out-param; `attrib < OBJ_NUM_ATTRIBS` selects that
+                    // attribute's own arenas.
+                    unsafe { obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, min_ix)? };
                 }
             }
             if uc.obj().has_vertex_color() && !non_disjoint[ObjAttrib::Position as usize] {
                 let min_ix: u64 = mesh.vertex_range_min(ObjAttrib::Position as usize);
                 ufbxi_check!(uc, min_ix < u64::MAX, "min_ix < UINT64_MAX");
-                obj_pop_vertices(
-                    uc,
-                    &mut vertices[ObjAttrib::Color as usize],
-                    ObjAttrib::Color as u32,
-                    min_ix,
-                )?;
-                color_valid = push_pop::<bool>(
-                    uc.tmp_mut_ptr(),
-                    uc.obj().tmp_color_valid_mut_ptr(),
-                    vertices[ObjAttrib::Color as usize].count / 4,
-                );
+                // SAFETY: as above for the color attribute; the `color_valid`
+                // pop moves one flag per popped color quad off the obj
+                // parser's own arena.
+                unsafe {
+                    obj_pop_vertices(
+                        uc,
+                        &mut vertices[ObjAttrib::Color as usize],
+                        ObjAttrib::Color as u32,
+                        min_ix,
+                    )?;
+                    color_valid = push_pop::<bool>(
+                        uc.tmp_mut_ptr(),
+                        uc.obj().tmp_color_valid_mut_ptr(),
+                        vertices[ObjAttrib::Color as usize].count / 4,
+                    );
+                }
                 ufbxi_check!(uc, !color_valid.is_null(), "color_valid");
             }
 
-            (*fbx_mesh).faces.count = num_faces;
-            (*fbx_mesh).face_material.count = num_faces;
+            // SAFETY: `fbx_mesh` is this mesh's own element (non-null since
+            // `obj_push_mesh`); each list it is given here is the run popped
+            // for it out of the matching obj-parser arena, checked non-null
+            // right after, and the discarding pop takes this mesh's own faces.
+            unsafe {
+                (*fbx_mesh).faces.count = num_faces;
+                (*fbx_mesh).face_material.count = num_faces;
 
-            (*fbx_mesh).faces.data =
-                push_pop::<Face>(uc.result_mut_ptr(), uc.obj().tmp_faces_mut_ptr(), num_faces);
-            (*fbx_mesh).face_material.data = push_pop::<u32>(
-                uc.result_mut_ptr(),
-                uc.obj().tmp_face_material_mut_ptr(),
-                num_faces,
-            );
-
-            ufbxi_check!(
-                uc,
-                !(*fbx_mesh).faces.data.is_null(),
-                "fbx_mesh->faces.data"
-            );
-            ufbxi_check!(
-                uc,
-                !(*fbx_mesh).face_material.data.is_null(),
-                "fbx_mesh->face_material.data"
-            );
-
-            if uc.obj().has_face_smoothing() {
-                (*fbx_mesh).face_smoothing.count = num_faces;
-                (*fbx_mesh).face_smoothing.data = push_pop::<bool>(
+                (*fbx_mesh).faces.data =
+                    push_pop::<Face>(uc.result_mut_ptr(), uc.obj().tmp_faces_mut_ptr(), num_faces);
+                (*fbx_mesh).face_material.data = push_pop::<u32>(
                     uc.result_mut_ptr(),
-                    uc.obj().tmp_face_smoothing_mut_ptr(),
+                    uc.obj().tmp_face_material_mut_ptr(),
                     num_faces,
+                );
+
+                ufbxi_check!(
+                    uc,
+                    !(*fbx_mesh).faces.data.is_null(),
+                    "fbx_mesh->faces.data"
                 );
                 ufbxi_check!(
                     uc,
-                    !(*fbx_mesh).face_smoothing.data.is_null(),
-                    "fbx_mesh->face_smoothing.data"
+                    !(*fbx_mesh).face_material.data.is_null(),
+                    "fbx_mesh->face_material.data"
                 );
-            }
 
-            if uc.obj().has_face_group() {
-                if mesh.num_groups() > 1 {
-                    (*fbx_mesh).face_group.count = num_faces;
-                    (*fbx_mesh).face_group.data = push_pop::<u32>(
+                if uc.obj().has_face_smoothing() {
+                    (*fbx_mesh).face_smoothing.count = num_faces;
+                    (*fbx_mesh).face_smoothing.data = push_pop::<bool>(
                         uc.result_mut_ptr(),
-                        uc.obj().tmp_face_group_mut_ptr(),
+                        uc.obj().tmp_face_smoothing_mut_ptr(),
                         num_faces,
                     );
                     ufbxi_check!(
                         uc,
-                        !(*fbx_mesh).face_group.data.is_null(),
-                        "fbx_mesh->face_group.data"
+                        !(*fbx_mesh).face_smoothing.data.is_null(),
+                        "fbx_mesh->face_smoothing.data"
                     );
-                } else {
-                    pop::<u32>(
-                        uc.obj().tmp_face_group_mut_ptr(),
-                        num_faces,
-                        core::ptr::null_mut(),
-                    );
+                }
+
+                if uc.obj().has_face_group() {
+                    if mesh.num_groups() > 1 {
+                        (*fbx_mesh).face_group.count = num_faces;
+                        (*fbx_mesh).face_group.data = push_pop::<u32>(
+                            uc.result_mut_ptr(),
+                            uc.obj().tmp_face_group_mut_ptr(),
+                            num_faces,
+                        );
+                        ufbxi_check!(
+                            uc,
+                            !(*fbx_mesh).face_group.data.is_null(),
+                            "fbx_mesh->face_group.data"
+                        );
+                    } else {
+                        pop::<u32>(
+                            uc.obj().tmp_face_group_mut_ptr(),
+                            num_faces,
+                            core::ptr::null_mut(),
+                        );
+                    }
                 }
             }
 
-            obj_setup_attrib(
-                uc,
-                mesh,
-                tmp_indices,
-                &mut (*fbx_mesh).vertex_position as *mut VertexVec3 as *mut VertexAttrib,
-                &vertices[ObjAttrib::Position as usize],
-                ObjAttrib::Position as u32,
-                non_disjoint[ObjAttrib::Position as usize],
-                true,
-            )?;
+            // SAFETY: each attribute slot is a distinct field of `fbx_mesh`
+            // (the union-compatible `VertexAttrib` reinterpretation of the
+            // generated typed views), `tmp_indices` is the scratch run sized
+            // for the widest mesh, and `vertices[..]` are unaliased locals.
+            unsafe {
+                obj_setup_attrib(
+                    uc,
+                    mesh,
+                    tmp_indices,
+                    &mut (*fbx_mesh).vertex_position as *mut VertexVec3 as *mut VertexAttrib,
+                    &vertices[ObjAttrib::Position as usize],
+                    ObjAttrib::Position as u32,
+                    non_disjoint[ObjAttrib::Position as usize],
+                    true,
+                )?;
 
-            obj_setup_attrib(
-                uc,
-                mesh,
-                tmp_indices,
-                &mut (*fbx_mesh).vertex_uv as *mut VertexVec2 as *mut VertexAttrib,
-                &vertices[ObjAttrib::Uv as usize],
-                ObjAttrib::Uv as u32,
-                non_disjoint[ObjAttrib::Uv as usize],
-                false,
-            )?;
+                obj_setup_attrib(
+                    uc,
+                    mesh,
+                    tmp_indices,
+                    &mut (*fbx_mesh).vertex_uv as *mut VertexVec2 as *mut VertexAttrib,
+                    &vertices[ObjAttrib::Uv as usize],
+                    ObjAttrib::Uv as u32,
+                    non_disjoint[ObjAttrib::Uv as usize],
+                    false,
+                )?;
 
-            obj_setup_attrib(
-                uc,
-                mesh,
-                tmp_indices,
-                &mut (*fbx_mesh).vertex_normal as *mut VertexVec3 as *mut VertexAttrib,
-                &vertices[ObjAttrib::Normal as usize],
-                ObjAttrib::Normal as u32,
-                non_disjoint[ObjAttrib::Normal as usize],
-                false,
-            )?;
+                obj_setup_attrib(
+                    uc,
+                    mesh,
+                    tmp_indices,
+                    &mut (*fbx_mesh).vertex_normal as *mut VertexVec3 as *mut VertexAttrib,
+                    &vertices[ObjAttrib::Normal as usize],
+                    ObjAttrib::Normal as u32,
+                    non_disjoint[ObjAttrib::Normal as usize],
+                    false,
+                )?;
+            }
 
             if uc.obj().has_vertex_color() {
                 ufbx_assert!(!color_valid.is_null());
-                let mut has_color: bool = false;
-                let mut all_valid: bool = true;
-                let max_index: usize = (*fbx_mesh).vertex_position.values.count;
-                // C: `ufbxi_for_list(uint32_t, p_ix, fbx_mesh->vertex_position.indices)`
-                let mut p_ix: *mut u32 = (*fbx_mesh).vertex_position.indices.data as *mut u32;
-                let p_ix_end: *mut u32 = add_ptr(p_ix, (*fbx_mesh).vertex_position.indices.count);
-                while p_ix != p_ix_end {
-                    if (*p_ix as usize) < max_index {
-                        if *color_valid.add(*p_ix as usize) {
-                            has_color = true;
-                        } else {
-                            all_valid = false;
-                        }
-                    }
-                    p_ix = p_ix.add(1);
-                }
-
-                if has_color {
-                    (*fbx_mesh).vertex_color.exists = true;
-                    (*fbx_mesh).vertex_color.values.data =
-                        vertices[ObjAttrib::Color as usize].data as *const Vec4;
-                    (*fbx_mesh).vertex_color.values.count =
-                        vertices[ObjAttrib::Color as usize].count / 4;
-                    // C: `fbx_mesh->vertex_color.indices = fbx_mesh->vertex_position.indices;`
-                    core::ptr::write(
-                        &mut (*fbx_mesh).vertex_color.indices,
-                        core::ptr::read(&(*fbx_mesh).vertex_position.indices),
-                    );
-                    (*fbx_mesh).vertex_color.unique_per_vertex = true;
-
-                    if !all_valid {
-                        let mut indices: *mut u32 =
-                            (*fbx_mesh).vertex_color.indices.data as *mut u32;
-                        indices =
-                            push_copy::<u32>(uc.result_mut_ptr(), mesh.num_indices(), indices);
-                        ufbxi_check!(uc, !indices.is_null(), "indices");
-
-                        let num_values: usize = (*fbx_mesh).vertex_color.values.count;
-                        // C: `ufbxi_for(uint32_t, p_ix, indices, mesh->num_indices)`
-                        let mut p_ix: *mut u32 = indices;
-                        let p_ix_end: *mut u32 = add_ptr(p_ix, mesh.num_indices());
-                        while p_ix != p_ix_end {
-                            if *p_ix as usize >= num_values || !*color_valid.add(*p_ix as usize) {
-                                fix_index(uc, p_ix, *p_ix, num_values)?;
+                // SAFETY: `fbx_mesh` is this mesh's own element; both index
+                // walks run over `data .. data + count` of a list this
+                // function just populated (the position indices, then the
+                // fresh `push_copy` of them), and `color_valid` is indexed
+                // only after the index is checked against the value count it
+                // was popped for.
+                unsafe {
+                    let mut has_color: bool = false;
+                    let mut all_valid: bool = true;
+                    let max_index: usize = (*fbx_mesh).vertex_position.values.count;
+                    // C: `ufbxi_for_list(uint32_t, p_ix, fbx_mesh->vertex_position.indices)`
+                    let mut p_ix: *mut u32 = (*fbx_mesh).vertex_position.indices.data as *mut u32;
+                    let p_ix_end: *mut u32 =
+                        add_ptr(p_ix, (*fbx_mesh).vertex_position.indices.count);
+                    while p_ix != p_ix_end {
+                        if (*p_ix as usize) < max_index {
+                            if *color_valid.add(*p_ix as usize) {
+                                has_color = true;
+                            } else {
+                                all_valid = false;
                             }
-                            p_ix = p_ix.add(1);
                         }
+                        p_ix = p_ix.add(1);
+                    }
 
-                        (*fbx_mesh).vertex_color.indices.data = indices;
+                    if has_color {
+                        (*fbx_mesh).vertex_color.exists = true;
+                        (*fbx_mesh).vertex_color.values.data =
+                            vertices[ObjAttrib::Color as usize].data as *const Vec4;
+                        (*fbx_mesh).vertex_color.values.count =
+                            vertices[ObjAttrib::Color as usize].count / 4;
+                        // C: `fbx_mesh->vertex_color.indices = fbx_mesh->vertex_position.indices;`
+                        core::ptr::write(
+                            &mut (*fbx_mesh).vertex_color.indices,
+                            core::ptr::read(&(*fbx_mesh).vertex_position.indices),
+                        );
+                        (*fbx_mesh).vertex_color.unique_per_vertex = true;
+
+                        if !all_valid {
+                            let mut indices: *mut u32 =
+                                (*fbx_mesh).vertex_color.indices.data as *mut u32;
+                            indices =
+                                push_copy::<u32>(uc.result_mut_ptr(), mesh.num_indices(), indices);
+                            ufbxi_check!(uc, !indices.is_null(), "indices");
+
+                            let num_values: usize = (*fbx_mesh).vertex_color.values.count;
+                            // C: `ufbxi_for(uint32_t, p_ix, indices, mesh->num_indices)`
+                            let mut p_ix: *mut u32 = indices;
+                            let p_ix_end: *mut u32 = add_ptr(p_ix, mesh.num_indices());
+                            while p_ix != p_ix_end {
+                                if *p_ix as usize >= num_values || !*color_valid.add(*p_ix as usize)
+                                {
+                                    fix_index(uc, p_ix, *p_ix, num_values)?;
+                                }
+                                p_ix = p_ix.add(1);
+                            }
+
+                            (*fbx_mesh).vertex_color.indices.data = indices;
+                        }
                     }
                 }
             }
         }
 
-        finalize_mesh(uc.result_mut_ptr(), uc.error_mut_ptr(), fbx_mesh)?;
+        // SAFETY: finalizes this mesh's own element into uc's result arena.
+        unsafe { finalize_mesh(uc.result_mut_ptr(), uc.error_mut_ptr(), fbx_mesh)? };
 
         if uc.retain_mesh_parts() {
-            (*fbx_mesh).face_group_parts.count = mesh.num_groups() as usize;
-            (*fbx_mesh).face_group_parts.data =
-                push_zero::<MeshPart>(uc.result_mut_ptr(), mesh.num_groups() as usize);
-            ufbxi_check!(
-                uc,
-                !(*fbx_mesh).face_group_parts.data.is_null(),
-                "fbx_mesh->face_group_parts.data"
-            );
+            // SAFETY: `fbx_mesh` is this mesh's own element; the part run is
+            // freshly zero-pushed onto uc's result arena, checked below.
+            unsafe {
+                (*fbx_mesh).face_group_parts.count = mesh.num_groups() as usize;
+                (*fbx_mesh).face_group_parts.data =
+                    push_zero::<MeshPart>(uc.result_mut_ptr(), mesh.num_groups() as usize);
+                ufbxi_check!(
+                    uc,
+                    !(*fbx_mesh).face_group_parts.data.is_null(),
+                    "fbx_mesh->face_group_parts.data"
+                );
+            }
         }
 
         if mesh.num_groups() > 1 {
-            update_face_groups(uc.result_mut_ptr(), uc.error_mut_ptr(), fbx_mesh, false)?;
+            // SAFETY: updates this mesh's own element in uc's result arena.
+            unsafe {
+                update_face_groups(uc.result_mut_ptr(), uc.error_mut_ptr(), fbx_mesh, false)?
+            };
         } else if mesh.num_groups() == 1 {
-            (*fbx_mesh).face_group.data = SENTINEL_INDEX_ZERO.as_ptr();
-            (*fbx_mesh).face_group.count = num_faces;
-            // NOTE: Consecutive and zero indices are always allocated so we can skip doing it here,
-            // see HACK(consecutiv-faces)..
-            if (*fbx_mesh).face_group_parts.count > 0 {
-                let part: *mut MeshPart = (*fbx_mesh).face_group_parts.data as *mut MeshPart;
-                // C-parity: `part->num_faces` is assigned twice in a row
-                // (ufbx.c:17662-17663); the second write wins. Both are kept.
-                (*part).num_faces = (*fbx_mesh).num_faces;
-                (*part).num_faces = num_faces;
-                (*part).num_empty_faces = (*fbx_mesh).num_empty_faces;
-                (*part).num_point_faces = (*fbx_mesh).num_point_faces;
-                (*part).num_line_faces = (*fbx_mesh).num_line_faces;
-                (*part).num_triangles = (*fbx_mesh).num_triangles;
-                (*part).face_indices.data = SENTINEL_INDEX_CONSECUTIVE.as_ptr();
-                (*part).face_indices.count = num_faces;
+            // SAFETY: `fbx_mesh` is this mesh's own element; `part` is the
+            // first entry of the `face_group_parts` run pushed above, taken
+            // only when its count is non-zero, and the sentinel index arrays
+            // are static.
+            unsafe {
+                (*fbx_mesh).face_group.data = SENTINEL_INDEX_ZERO.as_ptr();
+                (*fbx_mesh).face_group.count = num_faces;
+                // NOTE: Consecutive and zero indices are always allocated so we can skip doing it here,
+                // see HACK(consecutiv-faces)..
+                if (*fbx_mesh).face_group_parts.count > 0 {
+                    let part: *mut MeshPart = (*fbx_mesh).face_group_parts.data as *mut MeshPart;
+                    // C-parity: `part->num_faces` is assigned twice in a row
+                    // (ufbx.c:17662-17663); the second write wins. Both are kept.
+                    (*part).num_faces = (*fbx_mesh).num_faces;
+                    (*part).num_faces = num_faces;
+                    (*part).num_empty_faces = (*fbx_mesh).num_empty_faces;
+                    (*part).num_point_faces = (*fbx_mesh).num_point_faces;
+                    (*part).num_line_faces = (*fbx_mesh).num_line_faces;
+                    (*part).num_triangles = (*fbx_mesh).num_triangles;
+                    (*part).face_indices.data = SENTINEL_INDEX_CONSECUTIVE.as_ptr();
+                    (*part).face_indices.count = num_faces;
+                }
             }
         }
 
@@ -1578,7 +1853,7 @@ pub(crate) unsafe fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:17681-17761 `ufbxi_obj_parse_file`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
     while !uc.obj().eof() {
         obj_tokenize_line(uc)?;
         let num_tokens: usize = uc.obj().num_tokens();
@@ -1586,8 +1861,12 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             continue;
         }
 
-        let cmd: String = *uc.obj().tokens().add(0);
-        let key: u32 = get_name_key(cmd.data, cmd.length);
+        // SAFETY: `num_tokens > 0` past the guard above, so token 0 is in the
+        // tokenizer's stored token run and `cmd.data .. + length` is its span.
+        let (cmd, key): (String, u32) = unsafe {
+            let cmd: String = *uc.obj().tokens().add(0);
+            (cmd, get_name_key(cmd.data, cmd.length))
+        };
         if key == obj_cmd1(b'v') {
             obj_parse_vertex(uc, ObjAttrib::Position, 1)?;
             if num_tokens >= 7 {
@@ -1601,9 +1880,13 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
                             == num_vertices - 1
                     );
                     obj_parse_vertex(uc, ObjAttrib::Color, 4)?;
-                    let valid: *mut bool = push::<bool>(uc.obj().tmp_color_valid_mut_ptr(), 1);
+                    // SAFETY: pushes one flag onto the obj parser's own
+                    // `tmp_color_valid` arena.
+                    let valid: *mut bool =
+                        unsafe { push::<bool>(uc.obj().tmp_color_valid_mut_ptr(), 1) };
                     ufbxi_check!(uc, !valid.is_null(), "valid");
-                    *valid = true;
+                    // SAFETY: fresh push result, non-null past the check.
+                    unsafe { *valid = true };
                 }
             }
         } else if key == obj_cmd2(b'v', b't') {
@@ -1619,10 +1902,11 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
         } else if key == obj_cmd1(b's') {
             if num_tokens >= 2 {
                 uc.obj().set_has_face_smoothing(true);
-                uc.obj().set_face_smoothing(!str_equal(
-                    *uc.obj().tokens().add(1),
-                    str_c(b"off\0".as_ptr()),
-                ));
+                // SAFETY: `num_tokens >= 2` here, so token 1 is in the stored
+                // token run; the literal is NUL-terminated for `str_c`.
+                uc.obj().set_face_smoothing(unsafe {
+                    !str_equal(*uc.obj().tokens().add(1), str_c(b"off\0".as_ptr()))
+                });
 
                 // Fill in previously missed face smoothing data
                 if uc.obj().tmp_face_smoothing_view().num_items() == 0
@@ -1630,10 +1914,15 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
                 {
                     ufbxi_check!(
                         uc,
-                        !push_zero::<bool>(
-                            uc.obj().tmp_face_smoothing_mut_ptr(),
-                            uc.obj().tmp_faces_view().num_items()
-                        )
+                        // SAFETY: zero-fills one smoothing flag per
+                        // already-recorded face on the obj parser's own
+                        // `tmp_face_smoothing` arena.
+                        !unsafe {
+                            push_zero::<bool>(
+                                uc.obj().tmp_face_smoothing_mut_ptr(),
+                                uc.obj().tmp_faces_view().num_items()
+                            )
+                        }
                         .is_null(),
                         "((bool*)ufbxi_push_size_zero((&uc->obj.tmp_face_smoothing), sizeof(bool), (uc->obj.tmp_faces.num_items)))"
                     );
@@ -1642,13 +1931,29 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
         } else if key == obj_cmd1(b'o') {
             if num_tokens >= 2 {
                 uc.obj().set_object(obj_span_token(uc, 1, usize::MAX));
-                push_string_place_str(uc.string_pool_mut_ptr(), uc.obj().object_mut_ptr(), false)?;
+                // SAFETY: interns the obj context's own `object` string into
+                // uc's string pool, both taken through their raw-ptr getters.
+                unsafe {
+                    push_string_place_str(
+                        uc.string_pool_mut_ptr(),
+                        uc.obj().object_mut_ptr(),
+                        false,
+                    )?
+                };
                 uc.obj().set_object_dirty(true);
             }
         } else if key == obj_cmd1(b'g') {
             if num_tokens >= 2 {
                 uc.obj().set_group(obj_span_token(uc, 1, usize::MAX));
-                push_string_place_str(uc.string_pool_mut_ptr(), uc.obj().group_mut_ptr(), false)?;
+                // SAFETY: interns the obj context's own `group` string into
+                // uc's string pool, both taken through their raw-ptr getters.
+                unsafe {
+                    push_string_place_str(
+                        uc.string_pool_mut_ptr(),
+                        uc.obj().group_mut_ptr(),
+                        false,
+                    )?
+                };
                 uc.obj().set_group_dirty(true);
             } else {
                 uc.obj().set_group(EMPTY_STRING.0);
@@ -1656,25 +1961,34 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             }
         } else if key == obj_cmd1(b'#') {
             obj_parse_comment(uc)?;
-        } else if str_equal(cmd, str_c(b"mtllib\0".as_ptr())) {
+        // SAFETY: `cmd` is token 0's span and the literals are NUL-terminated
+        // for `str_c`.
+        } else if unsafe { str_equal(cmd, str_c(b"mtllib\0".as_ptr())) } {
             ufbxi_check!(uc, uc.obj().num_tokens() >= 2, "uc->obj.num_tokens >= 2");
             let mut lib: String = obj_span_token(uc, 1, usize::MAX);
-            lib.data = push_copy::<u8>(uc.tmp_mut_ptr(), lib.length + 1, lib.data);
+            // SAFETY: copies the span (plus its terminator, still inside the
+            // line window) onto uc's own tmp arena.
+            lib.data = unsafe { push_copy::<u8>(uc.tmp_mut_ptr(), lib.length + 1, lib.data) };
             ufbxi_check!(uc, !lib.data.is_null(), "lib.data");
             uc.obj().mtllib_relative_path_view().set_data(lib.data);
             uc.obj().mtllib_relative_path_view().set_size(lib.length);
-        } else if str_equal(cmd, str_c(b"usemtl\0".as_ptr())) {
+        // SAFETY: as above.
+        } else if unsafe { str_equal(cmd, str_c(b"usemtl\0".as_ptr())) } {
             obj_parse_material(uc)?;
         } else if !uc.opts_view().disable_quirks() && key == 0 {
             // ZBrush exporter seems to end the files with '\0', sometimes..
         } else {
             ufbxi_check!(
                 uc,
-                ufbxi_warnf!(
-                    uc,
-                    WarningType::UnknownObjDirective,
-                    "Unknown .obj directive, skipped line"
-                )
+                // SAFETY: appends to uc's own warning buffer; the format
+                // literal is NUL-terminated and takes no arguments.
+                unsafe {
+                    ufbxi_warnf!(
+                        uc,
+                        WarningType::UnknownObjDirective,
+                        "Unknown .obj directive, skipped line"
+                    )
+                }
                 .is_ok(),
                 "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_UNKNOWN_OBJ_DIRECTIVE, ~0u, \"Unknown .obj directive, skipped line\")"
             );
@@ -1690,19 +2004,24 @@ pub(crate) unsafe fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:17763-17775 `ufbxi_obj_flush_material`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_flush_material(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn obj_flush_material(uc: &Context) -> Result<(), Fail> {
     if uc.obj().usemtl_fbx_id() == 0 {
         return Ok(());
     }
 
     let entry: *mut FbxIdEntry = find_fbx_id(uc, uc.obj().usemtl_fbx_id());
     ufbx_assert!(!entry.is_null());
-    let material: *mut Material = *(*uc.obj().get())
-        .tmp_materials
-        .add((*entry).element_id as usize);
+    // SAFETY: `entry` is uc's own fbx-id map entry for the active `usemtl` id
+    // (non-null past the assert), and `obj_parse_material` grew the obj
+    // parser's `tmp_materials` array to cover that element id when it recorded
+    // the material there.
+    let material: *mut Material =
+        unsafe { *uc.obj().tmp_materials().add((*entry).element_id as usize) };
 
     let num_props: usize = uc.obj().tmp_props_view().num_items();
-    obj_pop_props(uc, &mut (*material).element.props.props, num_props)?;
+    // SAFETY: `material` is the element stored for this id, so its own prop
+    // list is the unaliased destination.
+    unsafe { obj_pop_props(uc, &mut (*material).element.props.props, num_props)? };
 
     Ok(())
 }
@@ -1821,67 +2140,99 @@ pub(crate) unsafe fn obj_parse_prop(
 // ufbx.c:17852-17902 `ufbxi_obj_parse_mtl_map`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), Fail> {
+pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), Fail> {
     if uc.obj().num_tokens() < 2 {
         return Ok(());
     }
 
     let mut num_props: usize = 1;
-    obj_parse_prop(
-        uc,
-        str_c(b"obj|args\0".as_ptr()),
-        1,
-        true,
-        core::ptr::null_mut(),
-    )?;
+    // SAFETY: the property name is a NUL-terminated literal and `num_tokens
+    // >= 2` past the guard above, so token 1 starts the value span; the
+    // parser takes no out-param here.
+    unsafe {
+        obj_parse_prop(
+            uc,
+            str_c(b"obj|args\0".as_ptr()),
+            1,
+            true,
+            core::ptr::null_mut(),
+        )?
+    };
 
     let mut start: usize = 1;
     // C: `for (; start + 1 < uc->obj.num_tokens; )`
     while start + 1 < uc.obj().num_tokens() {
-        let mut tok: String = *uc.obj().tokens().add(start);
-        if r#match(&tok, b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr()) {
-            tok.data = tok.data.add(1);
-            tok.length -= 1;
-            obj_parse_prop(uc, tok, start + 1, false, &mut start)?;
-            num_props += 1;
-        } else {
-            break;
+        // SAFETY: `start + 1 < num_tokens` (loop condition), so token `start`
+        // is in the stored token run; the match guarantees the token is at
+        // least two bytes, so dropping the leading '-' keeps `tok` inside its
+        // own span; `start` is an unaliased local out-param.
+        unsafe {
+            let mut tok: String = *uc.obj().tokens().add(start);
+            if r#match(&tok, b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr()) {
+                tok.data = tok.data.add(1);
+                tok.length -= 1;
+                obj_parse_prop(uc, tok, start + 1, false, &mut start)?;
+                num_props += 1;
+            } else {
+                break;
+            }
         }
     }
 
     let mut tex_str: String = obj_span_token(uc, start, usize::MAX);
     let mut tex_raw: Blob = Blob::new_c(tex_str.data, tex_str.length);
 
-    push_string_place_str(uc.string_pool_mut_ptr(), &mut tex_str, false)?;
-    push_string_place_blob(uc.string_pool_mut_ptr(), &mut tex_raw, true)?;
+    // SAFETY: interns the texture path into uc's own string pool through two
+    // unaliased locals.
+    unsafe {
+        push_string_place_str(uc.string_pool_mut_ptr(), &mut tex_str, false)?;
+        push_string_place_blob(uc.string_pool_mut_ptr(), &mut tex_raw, true)?;
+    }
 
     let mut fbx_id: u64 = 0;
-    let texture: *mut Texture = push_synthetic_element::<Texture>(
-        uc,
-        &mut fbx_id,
-        None,
-        b"\0".as_ptr(),
-        ElementType::Texture,
-    );
+    // SAFETY: `fbx_id` is an unaliased local out-param and the name is a
+    // NUL-terminated literal; the push targets uc's own element arenas.
+    let texture: *mut Texture = unsafe {
+        push_synthetic_element::<Texture>(
+            uc,
+            &mut fbx_id,
+            None,
+            b"\0".as_ptr(),
+            ElementType::Texture,
+        )
+    };
     ufbxi_check!(uc, !texture.is_null(), "texture");
 
-    (*texture).filename.data = EMPTY_CHAR.as_ptr();
-    (*texture).absolute_filename.data = EMPTY_CHAR.as_ptr();
-    (*texture).uv_set.data = EMPTY_CHAR.as_ptr();
+    // SAFETY: `texture` is the fresh non-null element push result, so this run
+    // initializes its own fields and pops the props collected above into its
+    // own prop list.
+    unsafe {
+        (*texture).filename.data = EMPTY_CHAR.as_ptr();
+        (*texture).absolute_filename.data = EMPTY_CHAR.as_ptr();
+        (*texture).uv_set.data = EMPTY_CHAR.as_ptr();
 
-    (*texture).relative_filename = tex_str;
-    (*texture).raw_relative_filename = tex_raw;
+        (*texture).relative_filename = tex_str;
+        (*texture).raw_relative_filename = tex_raw;
 
-    obj_pop_props(uc, &mut (*texture).element.props.props, num_props)?;
+        obj_pop_props(uc, &mut (*texture).element.props.props, num_props)?;
+    }
 
-    let mut prop: String = *uc.obj().tokens().add(0);
-    ufbx_assert!(prop.length >= prefix_len);
-    prop.data = prop.data.add(prefix_len);
-    prop.length -= prefix_len;
-    push_string_place_str(uc.string_pool_mut_ptr(), &mut prop, false)?;
+    // SAFETY: `num_tokens >= 2` past the guard above, so token 0 is in the
+    // stored token run; `prop.length >= prefix_len` (asserted) keeps the
+    // trimmed span inside that token, and `prop` is an unaliased local.
+    let prop: String = unsafe {
+        let mut prop: String = *uc.obj().tokens().add(0);
+        ufbx_assert!(prop.length >= prefix_len);
+        prop.data = prop.data.add(prefix_len);
+        prop.length -= prefix_len;
+        push_string_place_str(uc.string_pool_mut_ptr(), &mut prop, false)?;
+        prop
+    };
 
     if uc.obj().usemtl_fbx_id() != 0 {
-        connect_op(uc, fbx_id, uc.obj().usemtl_fbx_id(), prop)?;
+        // SAFETY: connects the fresh texture id to the active material id in
+        // uc's connection arena.
+        unsafe { connect_op(uc, fbx_id, uc.obj().usemtl_fbx_id(), prop)? };
     }
 
     Ok(())
@@ -1890,7 +2241,7 @@ pub(crate) unsafe fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Resul
 // ufbx.c:17904-17934 `ufbxi_obj_parse_mtl`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
     uc.obj().set_mesh(core::ptr::null_mut());
     uc.obj().set_usemtl_fbx_id(0);
 
@@ -1901,30 +2252,37 @@ pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
             continue;
         }
 
-        let cmd: String = *uc.obj().tokens().add(0);
-        if str_equal(cmd, str_c(b"newmtl\0".as_ptr())) {
-            // HACK: Reuse mesh material parsing, but don't allow for empty material name
-            ufbxi_check!(uc, uc.obj().num_tokens() >= 2, "uc->obj.num_tokens >= 2");
-            obj_flush_material(uc)?;
-            obj_parse_material(uc)?;
-        } else if cmd.length > 4 && memcmp(cmd.data, b"map_".as_ptr(), 4) == 0 {
-            obj_parse_mtl_map(uc, 4)?;
-        } else if cmd.length == 4
-            && (memcmp(cmd.data, b"bump".as_ptr(), 4) == 0
-                || memcmp(cmd.data, b"disp".as_ptr(), 4) == 0
-                || memcmp(cmd.data, b"norm".as_ptr(), 4) == 0)
-        {
-            obj_parse_mtl_map(uc, 0)?;
-        } else if cmd.length == 1 && *cmd.data.add(0) == b'#' {
-            // Implement .mtl magic comment handling here if necessary
-        } else {
-            obj_parse_prop(
-                uc,
-                *uc.obj().tokens().add(0),
-                1,
-                true,
-                core::ptr::null_mut(),
-            )?;
+        // SAFETY: `num_tokens > 0` past the guard above, so token 0 is in the
+        // stored token run and every comparison below reads at most
+        // `cmd.length` bytes of its own span (guarded by the length tests);
+        // the literals are NUL-terminated for `str_c`, and the fallback
+        // property parse takes no out-param.
+        unsafe {
+            let cmd: String = *uc.obj().tokens().add(0);
+            if str_equal(cmd, str_c(b"newmtl\0".as_ptr())) {
+                // HACK: Reuse mesh material parsing, but don't allow for empty material name
+                ufbxi_check!(uc, uc.obj().num_tokens() >= 2, "uc->obj.num_tokens >= 2");
+                obj_flush_material(uc)?;
+                obj_parse_material(uc)?;
+            } else if cmd.length > 4 && memcmp(cmd.data, b"map_".as_ptr(), 4) == 0 {
+                obj_parse_mtl_map(uc, 4)?;
+            } else if cmd.length == 4
+                && (memcmp(cmd.data, b"bump".as_ptr(), 4) == 0
+                    || memcmp(cmd.data, b"disp".as_ptr(), 4) == 0
+                    || memcmp(cmd.data, b"norm".as_ptr(), 4) == 0)
+            {
+                obj_parse_mtl_map(uc, 0)?;
+            } else if cmd.length == 1 && *cmd.data.add(0) == b'#' {
+                // Implement .mtl magic comment handling here if necessary
+            } else {
+                obj_parse_prop(
+                    uc,
+                    *uc.obj().tokens().add(0),
+                    1,
+                    true,
+                    core::ptr::null_mut(),
+                )?;
+            }
         }
     }
 
@@ -1936,10 +2294,12 @@ pub(crate) unsafe fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:17936-18027 `ufbxi_obj_load_mtl`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     // HACK: Reset everything and switch to loading the .mtl file globally
     if let Some(close_fn) = uc.close_fn() {
-        close_fn(uc.read_user());
+        // SAFETY: invoking uc's own close callback with the `read_user` it was
+        // paired with is the C stream contract.
+        unsafe { close_fn(uc.read_user()) };
     }
 
     uc.set_read_fn(None);
@@ -1961,35 +2321,47 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     }
 
     // C: `ufbx_stream stream = { 0 };`
-    let mut stream: RawStream = core::mem::zeroed();
+    // SAFETY: `RawStream` and `Blob` are plain C data whose all-zero bit
+    // patterns are their valid `{ 0 }` initializers.
+    let mut stream: RawStream = unsafe { core::mem::zeroed() };
     let mut has_stream: bool = false;
     let mut needs_stream: bool = false;
     // C: `ufbx_blob stream_path = { 0 };`
-    let mut stream_path: Blob = core::mem::zeroed();
+    let mut stream_path: Blob = unsafe { core::mem::zeroed() };
 
     if uc.opts_view().open_file_cb_view().fn_().is_some() {
         if uc.opts_view().obj_mtl_path_view().length() > 0 {
-            has_stream = open_file(
-                uc.opts_view().open_file_cb_ptr(),
-                &mut stream,
-                uc.opts_view().obj_mtl_path_view().data(),
-                uc.opts_view().obj_mtl_path_view().length(),
-                core::ptr::null(),
-                uc.ator_tmp_mut_ptr(),
-                OpenFileType::ObjMtl,
-            );
+            // SAFETY: `stream` is an unaliased local out-param; the path is
+            // the caller-supplied `obj_mtl_path` with its own length, and the
+            // callback runs through uc's own temp allocator.
+            has_stream = unsafe {
+                open_file(
+                    uc.opts_view().open_file_cb_ptr(),
+                    &mut stream,
+                    uc.opts_view().obj_mtl_path_view().data(),
+                    uc.opts_view().obj_mtl_path_view().length(),
+                    core::ptr::null(),
+                    uc.ator_tmp_mut_ptr(),
+                    OpenFileType::ObjMtl,
+                )
+            };
             stream_path.data = uc.opts_view().obj_mtl_path_view().data();
             stream_path.size = uc.opts_view().obj_mtl_path_view().length();
             needs_stream = true;
             if !has_stream {
                 ufbxi_check!(
                     uc,
-                    ufbxi_warnf!(
-                        uc,
-                        WarningType::MissingExternalFile,
-                        "Could not open .mtl file: %s",
-                        uc.opts_view().obj_mtl_path_view().data()
-                    )
+                    // SAFETY: appends to uc's own warning buffer; the format
+                    // literal is NUL-terminated and its `%s` argument is the
+                    // caller-supplied `obj_mtl_path`, a NUL-terminated string.
+                    unsafe {
+                        ufbxi_warnf!(
+                            uc,
+                            WarningType::MissingExternalFile,
+                            "Could not open .mtl file: %s",
+                            uc.opts_view().obj_mtl_path_view().data()
+                        )
+                    }
                     .is_ok(),
                     "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_EXTERNAL_FILE, ~0u, \"Could not open .mtl file: %s\", uc->opts.obj_mtl_path.data)"
                 );
@@ -2003,32 +2375,43 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
             // C: `ufbx_blob dst; // ufbxi_uninit`
             let mut dst = MaybeUninit::<Blob>::uninit(); // ufbxi_uninit
             let dst: *mut Blob = dst.as_mut_ptr();
-            resolve_relative_filename(
-                uc,
-                dst as *mut Strblob,
-                uc.obj().mtllib_relative_path_mut_ptr() as *const Strblob,
-                true,
-            )?;
-            has_stream = open_file(
-                uc.opts_view().open_file_cb_ptr(),
-                &mut stream,
-                (*dst).data,
-                (*dst).size,
-                uc.obj().mtllib_relative_path_mut_ptr(),
-                uc.ator_tmp_mut_ptr(),
-                OpenFileType::ObjMtl,
-            );
+            // SAFETY: `dst` is the unaliased local out-param the resolver
+            // fully writes before Ok, so the open below reads an initialized
+            // blob; the relative path is the obj context's own stored one, and
+            // `stream` is likewise an unaliased local.
+            unsafe {
+                resolve_relative_filename(
+                    uc,
+                    dst as *mut Strblob,
+                    uc.obj().mtllib_relative_path_mut_ptr() as *const Strblob,
+                    true,
+                )?;
+                has_stream = open_file(
+                    uc.opts_view().open_file_cb_ptr(),
+                    &mut stream,
+                    (*dst).data,
+                    (*dst).size,
+                    uc.obj().mtllib_relative_path_mut_ptr(),
+                    uc.ator_tmp_mut_ptr(),
+                    OpenFileType::ObjMtl,
+                );
+            }
             stream_path = uc.obj().mtllib_relative_path();
             needs_stream = true;
             if !has_stream {
                 ufbxi_check!(
                     uc,
-                    ufbxi_warnf!(
-                        uc,
-                        WarningType::MissingExternalFile,
-                        "Could not open .mtl file: %s",
-                        (*dst).data
-                    )
+                    // SAFETY: appends to uc's own warning buffer; the format
+                    // literal is NUL-terminated and `dst` was fully written by
+                    // the resolver above, holding a NUL-terminated path.
+                    unsafe {
+                        ufbxi_warnf!(
+                            uc,
+                            WarningType::MissingExternalFile,
+                            "Could not open .mtl file: %s",
+                            (*dst).data
+                        )
+                    }
                     .is_ok(),
                     "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_EXTERNAL_FILE, ~0u, \"Could not open .mtl file: %s\", dst.data)"
                 );
@@ -2042,44 +2425,63 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
             && path.length > 4
         {
             // C: `ufbx_string ext = { path.data + path.length - 4, 4 };`
-            let ext: String = String::new_c(path.data.add(path.length - 4), 4);
-            if r#match(&ext, b"\\c.obj\0".as_ptr()) {
+            // SAFETY: `path.length > 4` (checked above), so the 4-byte
+            // extension window is inside the scene filename.
+            let ext: String = unsafe { String::new_c(path.data.add(path.length - 4), 4) };
+            // SAFETY: the pattern literal is NUL-terminated and `ext` spans
+            // the filename's own last 4 bytes.
+            if unsafe { r#match(&ext, b"\\c.obj\0".as_ptr()) } {
                 ufbxi_analysis_assert!(path.length < usize::MAX - 1);
-                let copy: *mut u8 = push_copy::<u8>(uc.tmp_mut_ptr(), path.length + 1, path.data);
+                // SAFETY: copies the filename (with its terminator) onto uc's
+                // own tmp arena.
+                let copy: *mut u8 =
+                    unsafe { push_copy::<u8>(uc.tmp_mut_ptr(), path.length + 1, path.data) };
                 ufbxi_check!(uc, !copy.is_null(), "copy");
-                *copy.add(path.length - 3) = if *copy.add(path.length - 3) == b'O' {
-                    b'M'
-                } else {
-                    b'm'
-                };
-                *copy.add(path.length - 2) = if *copy.add(path.length - 2) == b'B' {
-                    b'T'
-                } else {
-                    b't'
-                };
-                *copy.add(path.length - 1) = if *copy.add(path.length - 1) == b'J' {
-                    b'L'
-                } else {
-                    b'l'
-                };
-                has_stream = open_file(
-                    uc.opts_view().open_file_cb_ptr(),
-                    &mut stream,
-                    copy,
-                    path.length,
-                    core::ptr::null(),
-                    uc.ator_tmp_mut_ptr(),
-                    OpenFileType::ObjMtl,
-                );
+                // SAFETY: `copy` is the fresh non-null `path.length + 1` byte
+                // run and `path.length > 4`, so the three rewritten extension
+                // bytes are inside it; `stream` is an unaliased local
+                // out-param for the open below.
+                unsafe {
+                    *copy.add(path.length - 3) = if *copy.add(path.length - 3) == b'O' {
+                        b'M'
+                    } else {
+                        b'm'
+                    };
+                    *copy.add(path.length - 2) = if *copy.add(path.length - 2) == b'B' {
+                        b'T'
+                    } else {
+                        b't'
+                    };
+                    *copy.add(path.length - 1) = if *copy.add(path.length - 1) == b'J' {
+                        b'L'
+                    } else {
+                        b'l'
+                    };
+                    has_stream = open_file(
+                        uc.opts_view().open_file_cb_ptr(),
+                        &mut stream,
+                        copy,
+                        path.length,
+                        core::ptr::null(),
+                        uc.ator_tmp_mut_ptr(),
+                        OpenFileType::ObjMtl,
+                    );
+                }
                 if has_stream {
                     ufbxi_check!(
                         uc,
-                        ufbxi_warnf!(
-                            uc,
-                            WarningType::ImplicitMtl,
-                            "Opened .mtl file derived from .obj filename: %s",
-                            copy as *const u8
-                        )
+                        // SAFETY: appends to uc's own warning buffer; the
+                        // format literal is NUL-terminated and `copy` is the
+                        // fresh arena copy of the filename, terminator
+                        // included.
+                        unsafe {
+                            ufbxi_warnf!(
+                                uc,
+                                WarningType::ImplicitMtl,
+                                "Opened .mtl file derived from .obj filename: %s",
+                                copy as *const u8
+                            )
+                        }
                         .is_ok(),
                         "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_IMPLICIT_MTL, ~0u, \"Opened .mtl file derived from .obj filename: %s\", copy)"
                     );
@@ -2097,7 +2499,9 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
         let ok: Result<(), Fail> = obj_parse_mtl(uc);
 
         if let Some(close_fn) = uc.close_fn() {
-            close_fn(uc.read_user());
+            // SAFETY: closes the stream just adopted, with the `user` pointer
+            // it was paired with (C stream contract).
+            unsafe { close_fn(uc.read_user()) };
         }
         uc.set_read_fn(None);
         uc.set_close_fn(None);
@@ -2105,7 +2509,9 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
 
         ok?;
     } else if needs_stream && !uc.opts_view().ignore_missing_external_files() {
-        set_err_info(uc.error_mut_ptr(), stream_path.data, stream_path.size);
+        // SAFETY: records the attempted path (`data .. data + size` of the
+        // blob set alongside `needs_stream`) into uc's own error state.
+        unsafe { set_err_info(uc.error_mut_ptr(), stream_path.data, stream_path.size) };
         ufbxi_fail_msg!(uc, "ufbxi_obj_load_mtl()", "External file not found");
     }
 
@@ -2115,7 +2521,7 @@ pub(crate) unsafe fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:18029-18037 `ufbxi_obj_load`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn obj_load(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn obj_load(uc: &Context) -> Result<(), Fail> {
     obj_init(uc)?;
     obj_parse_file(uc)?;
     init_file_paths(uc)?;
@@ -2127,7 +2533,7 @@ pub(crate) unsafe fn obj_load(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:18039-18046 `ufbxi_mtl_load`
 #[cfg(feature = "obj")]
 #[inline(never)]
-pub(crate) unsafe fn mtl_load(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn mtl_load(uc: &Context) -> Result<(), Fail> {
     obj_init(uc)?;
     init_file_paths(uc)?;
     obj_parse_mtl(uc)?;
