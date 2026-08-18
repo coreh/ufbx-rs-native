@@ -405,8 +405,40 @@ override_functions["ufbx_find_prop_concat"] = """
 
 override_functions["ufbx_find_shader_prop_len"] = """
 pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
-    let result = unsafe { ufbx_find_shader_prop_len(shader as *const Shader, name.as_ptr(), name.len()) };
+    let result = unsafe { crate::native::api::find_shader_prop_len(shader as *const Shader, name.as_ptr(), name.len()) };
     unsafe { result.as_static_ref() }
+}
+"""
+
+# The find-prop adapters call the native finder directly with a read-only
+# `Const` view minted from the caller's `&Props` — the mint every readable
+# provenance (including a shared reference) supports, unlike the
+# interior-mutable `Mut` view (Miri Stacked Borrows; see native/view.rs).
+# The capi shims' null checks are C-ABI-only concerns a `&Props` cannot need.
+override_functions["ufbx_find_prop_len"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn find_prop<'a>(props: &'a Props, name: &str) -> Option<&'a Prop> {
+    let result = unsafe {
+        crate::native::api::find_prop_len(
+            crate::native::view::View::<Props, crate::native::view::Const>::from_ptr(props as *const Props),
+            name.as_ptr(),
+            name.len(),
+        )
+    };
+    result.map(|prop| unsafe { &*prop.as_ptr() })
+}
+"""
+
+override_functions["ufbx_find_blob_len"] = """
+pub fn find_blob(props: &Props, name: &str, def: Blob) -> Blob {
+    unsafe {
+        crate::native::api::find_blob_len(
+            crate::native::view::View::<Props, crate::native::view::Const>::from_ptr(props as *const Props),
+            name.as_ptr(),
+            name.len(),
+            def,
+        )
+    }
 }
 """
 

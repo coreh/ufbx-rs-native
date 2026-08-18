@@ -4737,12 +4737,16 @@ pub fn format_error(dst: &mut [u8], error: &Error) -> usize {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_prop<'a>(props: &'a Props, name: &str) -> Option<&'a Prop> {
-    let result = unsafe { ufbx_find_prop_len(props as *const Props, name.as_ptr(), name.len()) };
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    let result = unsafe {
+        crate::native::api::find_prop_len(
+            crate::native::view::View::<Props, crate::native::view::Const>::from_ptr(
+                props as *const Props,
+            ),
+            name.as_ptr(),
+            name.len(),
+        )
+    };
+    result.map(|prop| unsafe { &*prop.as_ptr() })
 }
 
 // TODO: Property find functions
@@ -4755,11 +4759,17 @@ pub fn find_prop<'a>(props: &'a Props, name: &str) -> Option<&'a Prop> {
 
 // TODO: Property find functions
 
-#[allow(clippy::let_and_return)]
 pub fn find_blob(props: &Props, name: &str, def: Blob) -> Blob {
-    let result =
-        unsafe { ufbx_find_blob_len(props as *const Props, name.as_ptr(), name.len(), def) };
-    result
+    unsafe {
+        crate::native::api::find_blob_len(
+            crate::native::view::View::<Props, crate::native::view::Const>::from_ptr(
+                props as *const Props,
+            ),
+            name.as_ptr(),
+            name.len(),
+            def,
+        )
+    }
 }
 
 // TODO: ufbx_find_prop_concat()
@@ -5388,8 +5398,9 @@ pub fn find_prop_texture<'a>(material: &'a Material, name: &str) -> Option<&'a T
 }
 
 pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
-    let result =
-        unsafe { ufbx_find_shader_prop_len(shader as *const Shader, name.as_ptr(), name.len()) };
+    let result = unsafe {
+        crate::native::api::find_shader_prop_len(shader as *const Shader, name.as_ptr(), name.len())
+    };
     unsafe { result.as_static_ref() }
 }
 
