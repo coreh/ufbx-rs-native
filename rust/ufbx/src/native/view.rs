@@ -34,26 +34,110 @@ use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Mutability mode of a [`View`]: picks the storage cell, and with it what the
+/// Rust abstract machine believes about the viewed bytes.
+///
+/// - [`Mut`] stores `UnsafeCell<MaybeUninit<T>>`: forming `&View<T, Mut>` retags
+///   SharedReadWrite, so it may only be minted from a pointer whose provenance
+///   is write-capable (context/arena-owned memory). This is the mode every
+///   internal view uses; writes and raw pointers coexist with it.
+/// - [`Const`] stores plain `MaybeUninit<T>`: forming `&View<T, Const>` retags
+///   SharedReadOnly, so it may be minted from ANY readable pointer — including
+///   a `*const T` derived from a public caller's `&T`. In exchange it is a
+///   frozen tag: it must not be held across a write to the same bytes through
+///   any parent pointer.
+///
+/// Read accessors written once on `impl<T, M: Mode> View<T, M>` (or per-type
+/// `impl<M: Mode> View<Foo, M>`) serve both modes; setters and `get()` live on
+/// `Mut` only. Mode propagates through navigation: a chain rooted `Const`
+/// stays `Const`.
+pub(crate) trait Mode: sealed::Sealed {
+    #[doc(hidden)]
+    type Storage<T>;
+}
+
+/// Interior-mutable view mode (the default; today's `View<T>`).
+pub(crate) struct Mut;
+/// Read-only view mode, mintable from `&`-derived pointers.
+pub(crate) struct Const;
+
+impl sealed::Sealed for Mut {}
+impl sealed::Sealed for Const {}
+impl Mode for Mut {
+    type Storage<T> = UnsafeCell<MaybeUninit<T>>;
+}
+impl Mode for Const {
+    type Storage<T> = MaybeUninit<T>;
+}
+
 /// Reinterpret-in-place view over an arena-allocated `T`.
 #[repr(transparent)]
-pub(crate) struct View<T>(UnsafeCell<MaybeUninit<T>>);
+pub(crate) struct View<T, M: Mode = Mut>(M::Storage<T>);
 
-impl<T> View<T> {
+impl<T, M: Mode> View<T, M> {
+    /// Raw read pointer to the viewed `T` (for mode-generic read accessors).
+    /// Reads through it are legal in both modes; never write through it.
+    #[inline(always)]
+    pub(crate) fn as_ptr(&self) -> *const T {
+        self as *const Self as *const T
+    }
+
+    /// Mode-generic mint for internal navigation (e.g. following a pointer
+    /// STORED in viewed memory, which carries its own stored provenance).
+    ///
+    /// # Safety
+    /// `ptr` must point to a `T` that stays alive and unmoved for `'a`, and its
+    /// provenance must be adequate for `M`: write-capable for [`Mut`], readable
+    /// for [`Const`]. Prefer the per-mode `from_ptr` at boundaries — this exists
+    /// so mode-generic fns can propagate their caller's `M`.
+    #[inline(always)]
+    pub(crate) unsafe fn mint<'a>(ptr: *mut T) -> &'a Self {
+        &*(ptr as *const Self)
+    }
+}
+
+impl<T> View<T, Mut> {
     /// Raw pointer to the viewed `T` (for accessor impls).
     #[inline(always)]
     pub(crate) fn get(&self) -> *mut T {
-        self.0.get().cast()
+        // Field access needs the concrete storage type, which `Mut` fixes.
+        let cell: &UnsafeCell<MaybeUninit<T>> = &self.0;
+        cell.get().cast()
     }
 
-    /// Reinterpret a raw arena pointer as a view reference.
+    /// Reinterpret a raw arena pointer as an interior-mutable view reference.
     ///
     /// # Safety
     /// `ptr` must point to a valid, initialized `T` that stays alive and unmoved
-    /// for `'a` (the arena-stability invariant) — and, per `UnsafeCell`, no `&mut`
-    /// to the same `T` may be active while the returned `&View<T>` is used.
+    /// for `'a` (the arena-stability invariant), and its PROVENANCE must be
+    /// write-capable: it must trace to context/arena-owned memory via `*mut`
+    /// (or FFI ingress), NEVER to a `&T` — forming `&View<T, Mut>` (an
+    /// `&UnsafeCell`) retags SharedReadWrite, which is UB over a read-only
+    /// parent even if nothing is ever written. For `&`-derived pointers use
+    /// `View<T, Const>::from_ptr`. Per `UnsafeCell`, no `&mut` to the same `T`
+    /// may be active while the returned view is used.
     #[inline(always)]
     pub(crate) unsafe fn from_ptr<'a>(ptr: *mut T) -> &'a Self {
-        &*(ptr as *const View<T>)
+        &*(ptr as *const Self)
+    }
+}
+
+impl<T> View<T, Const> {
+    /// Reinterpret a raw pointer as a read-only view reference. Legal for any
+    /// readable provenance, including a `*const T` cast from a caller's `&T`.
+    ///
+    /// # Safety
+    /// `ptr` must point to a `T` that stays alive and unmoved for `'a`, and the
+    /// viewed bytes must not be written through any parent pointer while the
+    /// returned view (or anything derived from it) is live — this is a frozen
+    /// (SharedReadOnly) tag.
+    #[inline(always)]
+    pub(crate) unsafe fn from_ptr<'a>(ptr: *const T) -> &'a Self {
+        &*(ptr as *const Self)
     }
 }
 
@@ -74,7 +158,9 @@ impl<'a, T> SliceViewIter<'a, T> {
     /// `base` must point to `count` contiguous, valid, initialized `T` that stay
     /// alive and unmoved for `'a` — one arena allocation run (e.g.
     /// `tag->children` / `tag->num_children`). The run must be genuinely
-    /// contiguous (`push_pop`-materialized), not skip-flagged.
+    /// contiguous (`push_pop`-materialized), not skip-flagged. When `count == 0`
+    /// `base` is never offset or dereferenced, so null-with-zero is allowed
+    /// (unlike `slice::from_raw_parts`).
     #[inline]
     pub(crate) unsafe fn from_raw_parts(base: *mut T, count: usize) -> Self {
         Self {

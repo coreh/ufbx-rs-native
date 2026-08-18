@@ -53,7 +53,7 @@ use crate::native::platform::{
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{SanitizedString, StringPool};
 use crate::native::thread::{ThreadPool, THREAD_GROUP_COUNT};
-use crate::native::view::{SliceViewIter, View};
+use crate::native::view::{Mode, SliceViewIter, View};
 use crate::native::warnings::Warnings;
 use crate::prelude::{Blob, Real, Ref, String};
 
@@ -204,80 +204,85 @@ impl NodeView {
 pub(crate) type PropsView = View<Props>;
 pub(crate) type PropView = View<Prop>;
 
-impl PropsView {
+// Mode-generic (`M: Mode`): the finders serve internal `Mut` views AND
+// public-boundary `Const` views minted from a caller's `&Props` — these
+// accessors only read, so one body serves both modes via `as_ptr()`.
+impl<M: Mode> View<Props, M> {
     #[inline(always)]
     pub(crate) fn props_data(&self) -> *mut Prop {
         // SAFETY: reading the `props.data` run pointer of a valid arena `Props`.
-        unsafe { (*self.get()).props.data as *mut Prop }
+        unsafe { (*self.as_ptr()).props.data as *mut Prop }
     }
     #[inline(always)]
     pub(crate) fn props_count(&self) -> usize {
         // SAFETY: reading the `props.count` field of a valid arena `Props`.
-        unsafe { (*self.get()).props.count }
+        unsafe { (*self.as_ptr()).props.count }
     }
-    /// The `defaults` fallback table, viewed with the same lifetime as `self`.
+    /// The `defaults` fallback table, viewed with the same lifetime and MODE as
+    /// `self` (a chain rooted `Const` stays `Const`).
     #[inline(always)]
-    pub(crate) fn defaults(&self) -> Option<&PropsView> {
+    pub(crate) fn defaults(&self) -> Option<&View<Props, M>> {
         // SAFETY: reads the `defaults: Option<Ref<Props>>` field as its
         // niche-packed bare pointer (like `read::opt_ptr`), NOT through
         // `Ref::as_ref`. `as_ref` would form a SharedReadOnly `&Props` and then
         // reinterpreting THAT as an interior-mutable view retags for write and
-        // trips Stacked Borrows; reading the pointer bits keeps the arena's
-        // mutable provenance. The viewed table lives as long as `self`.
+        // trips Stacked Borrows; reading the pointer bits keeps the STORED
+        // provenance (write-capable for arena tables), which is adequate for
+        // either mode. The viewed table lives as long as `self`.
         unsafe {
             let defaults_ptr: *mut Props =
-                *(&raw const (*self.get()).defaults as *const *mut Props);
+                *(&raw const (*self.as_ptr()).defaults as *const *mut Props);
             if defaults_ptr.is_null() {
                 None
             } else {
-                Some(PropsView::from_ptr(defaults_ptr))
+                Some(View::<Props, M>::mint(defaults_ptr))
             }
         }
     }
 }
 
-impl PropView {
+impl<M: Mode> View<Prop, M> {
     #[inline(always)]
     pub(crate) fn value_vec4(&self) -> Vec4 {
         // SAFETY: reading the `value_vec4` field of a valid arena `Prop`.
-        unsafe { (*self.get()).value_vec4 }
+        unsafe { (*self.as_ptr()).value_vec4 }
     }
     #[inline(always)]
     pub(crate) fn value_vec3(&self) -> Vec3 {
         // C-parity: the `ufbx_prop` value union's 3-real view; the generated
         // struct keeps only `value_vec4` (same mapping as `find_vec3`).
         // SAFETY: reading the first three reals of a valid arena `Prop`.
-        unsafe { *(&(*self.get()).value_vec4 as *const Vec4 as *const Vec3) }
+        unsafe { *(&(*self.as_ptr()).value_vec4 as *const Vec4 as *const Vec3) }
     }
     #[inline(always)]
     pub(crate) fn value_int(&self) -> i64 {
         // SAFETY: reading the `value_int` field of a valid arena `Prop`.
-        unsafe { (*self.get()).value_int }
+        unsafe { (*self.as_ptr()).value_int }
     }
     #[inline(always)]
     pub(crate) fn value_str(&self) -> String {
         // SAFETY: reading the `value_str` field of a valid arena `Prop`.
-        unsafe { (*self.get()).value_str }
+        unsafe { (*self.as_ptr()).value_str }
     }
     #[inline(always)]
     pub(crate) fn value_blob(&self) -> Blob {
         // SAFETY: reading the `value_blob` field of a valid arena `Prop`.
-        unsafe { (*self.get()).value_blob }
+        unsafe { (*self.as_ptr()).value_blob }
     }
     #[inline(always)]
     pub(crate) fn name(&self) -> String {
         // SAFETY: reading the `name` field of a valid arena `Prop`.
-        unsafe { (*self.get()).name }
+        unsafe { (*self.as_ptr()).name }
     }
     #[inline(always)]
     pub(crate) fn type_(&self) -> PropType {
         // SAFETY: reading the `type_` field of a valid arena `Prop`.
-        unsafe { (*self.get()).type_ }
+        unsafe { (*self.as_ptr()).type_ }
     }
     #[inline(always)]
     pub(crate) fn flags(&self) -> PropFlags {
         // SAFETY: reading the `flags` field of a valid arena `Prop`.
-        unsafe { (*self.get()).flags }
+        unsafe { (*self.as_ptr()).flags }
     }
 }
 

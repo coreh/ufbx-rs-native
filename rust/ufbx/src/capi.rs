@@ -214,17 +214,20 @@ pub unsafe extern "C" fn ufbx_find_prop_len(
     name_len: usize,
 ) -> *mut crate::generated::Prop {
     // C-ABI root: `props` is a raw C pointer with no lifetime; bridge it to a
-    // `&PropsView` here and map the correlated `&PropView` back to raw. Null
-    // `props` yields null (the internal loop's `while !is_null` behavior).
+    // read-only `&View<Props, Const>` (legal for ANY readable provenance,
+    // including a Rust caller's `&Props`) and map the correlated view back to
+    // raw. Null `props` yields null (the internal `while !is_null` behavior).
     if props.is_null() {
         return core::ptr::null_mut();
     }
     match crate::native::api::find_prop_len(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         name_len,
     ) {
-        Some(prop) => prop.get(),
+        Some(prop) => prop.as_ptr() as *mut crate::generated::Prop,
         None => core::ptr::null_mut(),
     }
 }
@@ -241,7 +244,9 @@ pub unsafe extern "C" fn ufbx_find_real_len(
         return def;
     }
     crate::native::api::find_real_len(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         name_len,
         def,
@@ -260,7 +265,9 @@ pub unsafe extern "C" fn ufbx_find_vec3_len(
         return def;
     }
     crate::native::api::find_vec3_len(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         name_len,
         def,
@@ -279,7 +286,9 @@ pub unsafe extern "C" fn ufbx_find_int_len(
         return def;
     }
     crate::native::api::find_int_len(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         name_len,
         def,
@@ -298,7 +307,9 @@ pub unsafe extern "C" fn ufbx_find_bool_len(
         return def;
     }
     crate::native::api::find_bool_len(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         name_len,
         def,
@@ -317,7 +328,9 @@ pub unsafe extern "C" fn ufbx_find_string_len(
         return def;
     }
     crate::native::api::find_string_len(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         name_len,
         def,
@@ -336,7 +349,9 @@ pub unsafe extern "C" fn ufbx_find_blob_len(
         return def;
     }
     crate::native::api::find_blob_len(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         name_len,
         def,
@@ -354,11 +369,13 @@ pub unsafe extern "C" fn ufbx_find_prop_concat(
         return core::ptr::null_mut();
     }
     match crate::native::api::find_prop_concat(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         parts,
         num_parts,
     ) {
-        Some(prop) => prop.get(),
+        Some(prop) => prop.as_ptr() as *mut crate::generated::Prop,
         None => core::ptr::null_mut(),
     }
 }
@@ -1790,10 +1807,12 @@ pub unsafe extern "C" fn ufbx_find_prop(
         return core::ptr::null_mut();
     }
     match crate::native::api::find_prop(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
     ) {
-        Some(prop) => prop.get(),
+        Some(prop) => prop.as_ptr() as *mut crate::generated::Prop,
         None => core::ptr::null_mut(),
     }
 }
@@ -1809,7 +1828,9 @@ pub unsafe extern "C" fn ufbx_find_real(
         return def;
     }
     crate::native::api::find_real(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         def,
     )
@@ -1826,7 +1847,9 @@ pub unsafe extern "C" fn ufbx_find_vec3(
         return def;
     }
     crate::native::api::find_vec3(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         def,
     )
@@ -1843,7 +1866,9 @@ pub unsafe extern "C" fn ufbx_find_int(
         return def;
     }
     crate::native::api::find_int(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         def,
     )
@@ -1860,7 +1885,9 @@ pub unsafe extern "C" fn ufbx_find_bool(
         return def;
     }
     crate::native::api::find_bool(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         def,
     )
@@ -1877,7 +1904,9 @@ pub unsafe extern "C" fn ufbx_find_string(
         return def;
     }
     crate::native::api::find_string(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         def,
     )
@@ -1894,7 +1923,9 @@ pub unsafe extern "C" fn ufbx_find_blob(
         return def;
     }
     crate::native::api::find_blob(
-        crate::native::parse::PropsView::from_ptr(props as *mut crate::generated::Props),
+        crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
+            props,
+        ),
         name,
         def,
     )

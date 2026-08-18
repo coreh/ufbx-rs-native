@@ -101,6 +101,7 @@ use crate::native::error::{
 #[cfg(feature = "geometry-cache")]
 use crate::native::platform::{min64, to_size, MAX_SKIP_SIZE};
 use crate::native::thread::ThreadPool;
+use crate::native::view::{Const, Mode, View};
 // Used by the feature-enabled arms of `ufbx_bake_anim` /
 // `ufbx_tessellate_nurbs_curve` / `_surface` and unconditionally by
 // `ufbx_subdivide_mesh` / `ufbx_load_geometry_cache_len`.
@@ -128,7 +129,7 @@ use crate::native::nurbs::{
 };
 use crate::native::parse::{
     find_enum, find_real as ufbxi_find_real, get_imp, get_name_key, Context, InnerContext, MeshImp,
-    PropView, PropsView, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
+    PropsView, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
 };
 use crate::native::platform::{
     add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
@@ -775,15 +776,15 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
 // ufbx_abi exports).
 
 // ufbx.c:30635-30650 `ufbx_find_prop_len`
-pub(crate) unsafe fn find_prop_len<'a>(
-    props: &'a PropsView,
+pub(crate) unsafe fn find_prop_len<'a, M: Mode>(
+    props: &'a View<Props, M>,
     name: *const u8,
     name_len: usize,
-) -> Option<&'a PropView> {
+) -> Option<&'a View<Prop, M>> {
     let key = get_name_key(name, name_len);
     let name_str = safe_string(name, name_len);
 
-    let mut props: Option<&'a PropsView> = Some(props);
+    let mut props: Option<&'a View<Props, M>> = Some(props);
     while let Some(cur) = props {
         let mut index: usize = usize::MAX;
         macro_lower_bound_eq::<Prop>(
@@ -796,7 +797,10 @@ pub(crate) unsafe fn find_prop_len<'a>(
             |a| (*a)._internal_key == key && str_equal((*a).name, name_str),
         );
         if index != usize::MAX {
-            return Some(PropView::from_ptr(cur.props_data().add(index)));
+            // Mode-generic mint: `props_data()` is a VALUE read of the stored
+            // run pointer, so this carries the table's stored (arena, write)
+            // provenance — adequate for either mode.
+            return Some(View::<Prop, M>::mint(cur.props_data().add(index)));
         }
 
         props = cur.defaults();
@@ -806,8 +810,8 @@ pub(crate) unsafe fn find_prop_len<'a>(
 }
 
 // ufbx.c:30652-30660 `ufbx_find_real_len`
-pub(crate) unsafe fn find_real_len(
-    props: &PropsView,
+pub(crate) unsafe fn find_real_len<M: Mode>(
+    props: &View<Props, M>,
     name: *const u8,
     name_len: usize,
     def: Real,
@@ -825,8 +829,8 @@ pub(crate) unsafe fn find_real_len(
 // Ported ahead of its banner section because `ufbxi_update_constraint`
 // (ufbx.c:23416, `native::scene_process`) calls `ufbx_find_vec3`.
 #[inline(never)]
-pub(crate) unsafe fn find_vec3_len(
-    props: &PropsView,
+pub(crate) unsafe fn find_vec3_len<M: Mode>(
+    props: &View<Props, M>,
     name: *const u8,
     name_len: usize,
     def: Vec3,
@@ -842,8 +846,8 @@ pub(crate) unsafe fn find_vec3_len(
 
 // ufbx.c:30672-30680 `ufbx_find_int_len`
 #[inline(never)]
-pub(crate) unsafe fn find_int_len(
-    props: &PropsView,
+pub(crate) unsafe fn find_int_len<M: Mode>(
+    props: &View<Props, M>,
     name: *const u8,
     name_len: usize,
     def: i64,
@@ -855,8 +859,8 @@ pub(crate) unsafe fn find_int_len(
 }
 
 // ufbx.c:30682-30690 `ufbx_find_bool_len`
-pub(crate) unsafe fn find_bool_len(
-    props: &PropsView,
+pub(crate) unsafe fn find_bool_len<M: Mode>(
+    props: &View<Props, M>,
     name: *const u8,
     name_len: usize,
     def: bool,
@@ -869,8 +873,8 @@ pub(crate) unsafe fn find_bool_len(
 
 // ufbx.c:30692-30700 `ufbx_find_string_len`
 #[inline(never)]
-pub(crate) unsafe fn find_string_len(
-    props: &PropsView,
+pub(crate) unsafe fn find_string_len<M: Mode>(
+    props: &View<Props, M>,
     name: *const u8,
     name_len: usize,
     def: String,
@@ -883,8 +887,8 @@ pub(crate) unsafe fn find_string_len(
 
 // ufbx.c:30702-30710 `ufbx_find_blob_len`
 // C has no `ufbxi_noinline` here (unlike `ufbx_find_string_len` above).
-pub(crate) unsafe fn find_blob_len(
-    props: &PropsView,
+pub(crate) unsafe fn find_blob_len<M: Mode>(
+    props: &View<Props, M>,
     name: *const u8,
     name_len: usize,
     def: Blob,
@@ -898,14 +902,14 @@ pub(crate) unsafe fn find_blob_len(
 // ufbx.c:30712-30728 `ufbx_find_prop_concat`
 // Ported ahead of its banner section because `ufbxi_update_constraint`
 // (ufbx.c:23416, `native::scene_process`) calls it.
-pub(crate) unsafe fn find_prop_concat<'a>(
-    props: &'a PropsView,
+pub(crate) unsafe fn find_prop_concat<'a, M: Mode>(
+    props: &'a View<Props, M>,
     parts: *const String,
     num_parts: usize,
-) -> Option<&'a PropView> {
+) -> Option<&'a View<Prop, M>> {
     let key: u32 = get_concat_key(parts, num_parts);
 
-    let mut props: Option<&'a PropsView> = Some(props);
+    let mut props: Option<&'a View<Props, M>> = Some(props);
     while let Some(cur) = props {
         let mut index: usize = usize::MAX;
 
@@ -919,7 +923,8 @@ pub(crate) unsafe fn find_prop_concat<'a>(
             |a| (*a)._internal_key == key && concat_str_cmp(&(*a).name, parts, num_parts) == 0,
         );
         if index != usize::MAX {
-            return Some(PropView::from_ptr(cur.props_data().add(index)));
+            // Same stored-provenance mint as `find_prop_len`.
+            return Some(View::<Prop, M>::mint(cur.props_data().add(index)));
         }
 
         props = cur.defaults();
@@ -979,14 +984,14 @@ pub(crate) unsafe fn find_prop_element_len(
     name_len: usize,
     type_: ElementType,
 ) -> *mut Element {
-    // Public-boundary root: `element` is a caller-owned `*const Element` and the
-    // props view is used read-only. Do NOT thread this into a `uc`-anchored view:
-    // a public element's provenance can be a read-only `&Element`, which an
-    // interior-mutable `View` would retag (Miri SB — see the topology finding).
+    // Public-boundary root: `element` is a caller-owned `*const Element` whose
+    // provenance can be a read-only `&Element` (safe Rust wrapper), so mint a
+    // read-only `Const` view — legal for any readable provenance, unlike the
+    // interior-mutable `Mut` view (Miri SB — see the topology finding).
     // `&raw` avoids forming an intermediate `&Props`.
-    let props: &PropsView = PropsView::from_ptr(&raw const (*element).props as *mut Props);
+    let props: &View<Props, Const> = View::<Props, Const>::from_ptr(&raw const (*element).props);
     match find_prop_len(props, name, name_len) {
-        Some(prop) => get_prop_element(element, prop.get(), type_),
+        Some(prop) => get_prop_element(element, prop.as_ptr(), type_),
         None => core::ptr::null_mut(),
     }
 }
@@ -1335,13 +1340,13 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
     // C: `ufbx_prop result;`
     let mut result: Prop;
 
-    // Public-boundary root: caller-owned `*const Element`, props used read-only.
-    // Do NOT anchor this to `uc` — public-element provenance can be a read-only
-    // `&Element` an interior-mutable `View` would retag (Miri SB, topology finding).
-    let props: &PropsView = PropsView::from_ptr(&raw const (*element).props as *mut Props);
-    let prop: Option<&PropView> = find_prop_len(props, name, name_len);
+    // Public-boundary root: caller-owned `*const Element` whose provenance can
+    // be a read-only `&Element` (safe Rust wrapper), so mint a read-only
+    // `Const` view — legal for any readable provenance (Miri SB, topology finding).
+    let props: &View<Props, Const> = View::<Props, Const>::from_ptr(&raw const (*element).props);
+    let prop: Option<&View<Prop, Const>> = find_prop_len(props, name, name_len);
     if let Some(found) = prop {
-        result = *found.get();
+        result = *found.as_ptr();
     } else {
         // C: `memset(&result, 0, sizeof(result));`
         result = MaybeUninit::zeroed().assume_init();
@@ -5442,37 +5447,60 @@ pub(crate) unsafe fn dom_as_blob_list(node: *const DomNode) -> List<Blob> {
 }
 
 // ufbx.c:33142 `ufbx_find_prop`
-pub(crate) unsafe fn find_prop(props: &PropsView, name: *const u8) -> Option<&PropView> {
+pub(crate) unsafe fn find_prop<M: Mode>(
+    props: &View<Props, M>,
+    name: *const u8,
+) -> Option<&View<Prop, M>> {
     find_prop_len(props, name, strlen(name))
 }
 
 // ufbx.c:33143 `ufbx_find_real`
-pub(crate) unsafe fn find_real(props: &PropsView, name: *const u8, def: Real) -> Real {
+pub(crate) unsafe fn find_real<M: Mode>(
+    props: &View<Props, M>,
+    name: *const u8,
+    def: Real,
+) -> Real {
     find_real_len(props, name, strlen(name), def)
 }
 
 // ufbx.c:33144 `ufbx_find_vec3`
-pub(crate) unsafe fn find_vec3(props: &PropsView, name: *const u8, def: Vec3) -> Vec3 {
+pub(crate) unsafe fn find_vec3<M: Mode>(
+    props: &View<Props, M>,
+    name: *const u8,
+    def: Vec3,
+) -> Vec3 {
     find_vec3_len(props, name, strlen(name), def)
 }
 
 // ufbx.c:33145 `ufbx_find_int`
-pub(crate) unsafe fn find_int(props: &PropsView, name: *const u8, def: i64) -> i64 {
+pub(crate) unsafe fn find_int<M: Mode>(props: &View<Props, M>, name: *const u8, def: i64) -> i64 {
     find_int_len(props, name, strlen(name), def)
 }
 
 // ufbx.c:33146 `ufbx_find_bool`
-pub(crate) unsafe fn find_bool(props: &PropsView, name: *const u8, def: bool) -> bool {
+pub(crate) unsafe fn find_bool<M: Mode>(
+    props: &View<Props, M>,
+    name: *const u8,
+    def: bool,
+) -> bool {
     find_bool_len(props, name, strlen(name), def)
 }
 
 // ufbx.c:33147 `ufbx_find_string`
-pub(crate) unsafe fn find_string(props: &PropsView, name: *const u8, def: String) -> String {
+pub(crate) unsafe fn find_string<M: Mode>(
+    props: &View<Props, M>,
+    name: *const u8,
+    def: String,
+) -> String {
     find_string_len(props, name, strlen(name), def)
 }
 
 // ufbx.c:33148 `ufbx_find_blob`
-pub(crate) unsafe fn find_blob(props: &PropsView, name: *const u8, def: Blob) -> Blob {
+pub(crate) unsafe fn find_blob<M: Mode>(
+    props: &View<Props, M>,
+    name: *const u8,
+    def: Blob,
+) -> Blob {
     find_blob_len(props, name, strlen(name), def)
 }
 

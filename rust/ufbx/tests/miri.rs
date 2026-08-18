@@ -339,3 +339,52 @@ fn load_cube_binary_from_file() {
     assert!(!scene.nodes.is_empty());
     assert!(walk(&scene).is_finite());
 }
+
+// Public-boundary provenance regression: every one of these entry points takes
+// a `&`-derived pointer (SharedReadOnly provenance) into memory the internal
+// view machinery navigates. They must route through read-only `Const` views —
+// an interior-mutable `Mut` view mint here retags SharedReadOnly ->
+// SharedReadWrite and fails Stacked Borrows even though nothing is written
+// (caught 2026-08-18; the corpus previously never called the safe find
+// wrappers, so the class was invisible to CI).
+#[test]
+fn public_find_wrappers_from_shared_refs() {
+    let root = load("maya_interpolation_modes_7500_binary.fbx");
+    let scene: &ufbx::Scene = &root;
+    let node: &ufbx::Node = &scene.root_node;
+    let props: &ufbx::Props = &node.element.props;
+
+    // Free find_prop: hit, miss, and the defaults-chain walk.
+    let hit = ufbx::find_prop(props, "Lcl Translation");
+    let miss = ufbx::find_prop(props, "DoesNotExist");
+    assert!(miss.is_none());
+    let mut acc = hit.map_or(0.0, |p| p.value_vec4.x as f64);
+
+    // Inherent method form and the value adapter.
+    if let Some(p) = props.find_prop("Lcl Scaling") {
+        acc += p.value_vec4.y as f64;
+    }
+    if let Some(p) = hit {
+        // Exercises the value-adapter shim path (`ufbx_find_blob_len`).
+        let blob = ufbx::find_blob(props, "Lcl Rotation", p.value_blob);
+        acc += blob.size as f64;
+    }
+
+    // Element-rooted paths (api.rs public-boundary roots).
+    let elem: &ufbx::Element = &node.element;
+    let _ = ufbx::find_prop_element(elem, "Lcl Translation", ufbx::ElementType::Node);
+
+    // Anim-eval path: evaluate_prop_flags reads props through the same roots,
+    // and evaluate_props builds a stack `Props` whose defaults chain crosses
+    // back into the scene arena — find_prop must walk it read-only.
+    if let Some(stack) = scene.anim_stacks.first() {
+        let anim: &ufbx::Anim = &stack.anim;
+        let prop = ufbx::evaluate_prop_flags(anim, elem, "Lcl Translation", 0.1, 0);
+        acc += prop.value_vec4.x as f64;
+    }
+
+    for material in &scene.materials {
+        let _ = ufbx::find_prop_texture(material, "DiffuseColor");
+    }
+    assert!(acc.is_finite());
+}

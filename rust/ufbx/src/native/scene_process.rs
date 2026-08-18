@@ -257,6 +257,7 @@ use crate::native::read::{
 use crate::native::string_pool::{
     self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
 };
+use crate::native::view::{Const, View};
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::as_f64;
 use crate::prelude::{Blob, List, Real, Ref, RefList, String};
@@ -3665,12 +3666,15 @@ pub(crate) unsafe fn fetch_mapping_maps(
         while binding != binding_end {
             let name: String = (*binding).material_prop;
 
-            let prop: *mut Prop = find_prop_len(
-                PropsView::from_ptr(&raw mut (*material).element.props),
+            // Read-only `Const` view: `update_material` is reachable from the
+            // public anim-eval path where `material` can derive from a caller's
+            // read-only `&Material`; every access through `prop` below is a read.
+            let prop: *const Prop = find_prop_len(
+                View::<Props, Const>::from_ptr(&raw const (*material).element.props),
                 name.data,
                 name.length,
             )
-            .map_or(ptr::null_mut(), PropView::get);
+            .map_or(ptr::null(), View::as_ptr);
             if (flags & MAPPING_FETCH_FEATURE) != 0 {
                 let feature: *mut MaterialFeatureInfo = features.add((*mapping).index as usize);
                 if !prop.is_null() && (*prop).type_ != PropType::Reference {
