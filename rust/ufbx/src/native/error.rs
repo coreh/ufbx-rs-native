@@ -1224,18 +1224,16 @@ mod tests {
     }
 
     fn checked_fn(err: *mut Error, ok: bool, hits: &mut u32) -> Result<u32, Fail> {
-        unsafe {
-            // Evaluation-once: the condition increments `hits` exactly once.
-            ufbxi_check_err_msg!(
-                unsafe { crate::native::error::ErrorView::from_ptr(err) },
-                {
-                    *hits += 1;
-                    ok
-                },
-                "Out of memory"
-            );
-            Ok(42)
-        }
+        // Evaluation-once: the condition increments `hits` exactly once.
+        ufbxi_check_err_msg!(
+            unsafe { crate::native::error::ErrorView::from_ptr(err) },
+            {
+                *hits += 1;
+                ok
+            },
+            "Out of memory"
+        );
+        Ok(42)
     }
 
     #[test]
@@ -1253,14 +1251,12 @@ mod tests {
 
             // First error wins: a second failure does not overwrite.
             fn fail2(err: *mut Error) -> Result<(), Fail> {
-                unsafe {
-                    ufbxi_check_err_msg!(
-                        unsafe { crate::native::error::ErrorView::from_ptr(err) },
-                        false,
-                        "Truncated file"
-                    );
-                    Ok(())
-                }
+                ufbxi_check_err_msg!(
+                    unsafe { crate::native::error::ErrorView::from_ptr(err) },
+                    false,
+                    "Truncated file"
+                );
+                Ok(())
             }
             assert_eq!(fail2(&mut err), Err(Fail));
             assert_eq!(desc_bytes(&err), b"Out of memory");
@@ -1309,7 +1305,7 @@ mod tests {
             let mut reached = false;
             {
                 ufbxi_report_err_msg!(
-                    unsafe { crate::native::error::ErrorView::from_ptr(&raw mut err) },
+                    crate::native::error::ErrorView::from_ptr(&raw mut err),
                     "ptr",
                     "Out of memory"
                 );
@@ -1327,12 +1323,10 @@ mod tests {
             // description (only the stack frame, when enabled).
             let mut err = Error::default();
             fn f(err: *mut Error) -> Result<(), Fail> {
-                unsafe {
-                    ufbxi_fail_err!(
-                        unsafe { crate::native::error::ErrorView::from_ptr(err) },
-                        "Task failed"
-                    );
-                }
+                ufbxi_fail_err!(
+                    unsafe { crate::native::error::ErrorView::from_ptr(err) },
+                    "Task failed"
+                );
             }
             assert_eq!(f(&mut err), Err(Fail));
             assert!(err.description.data.is_null());
@@ -1351,14 +1345,12 @@ mod tests {
             // check_return_err returns the given value verbatim.
             let mut err = Error::default();
             fn g(err: *mut Error) -> u32 {
-                unsafe {
-                    ufbxi_check_return_err!(
-                        unsafe { crate::native::error::ErrorView::from_ptr(err) },
-                        false,
-                        7
-                    );
-                    1
-                }
+                ufbxi_check_return_err!(
+                    unsafe { crate::native::error::ErrorView::from_ptr(err) },
+                    false,
+                    7
+                );
+                1
             }
             assert_eq!(g(&mut err), 7);
         }
