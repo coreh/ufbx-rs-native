@@ -4790,24 +4790,84 @@ pub(crate) unsafe fn sample_geometry_cache_vec3(
     }
 }
 
+// Mode-generic views over the public DOM types. The dom_* API is reachable
+// from safe Rust (`&DomNode` -> read-only provenance -> `Const`) and from the
+// C ABI (raw pointers, minted `Const` in the capi shims); nothing mutates a
+// retained DOM, but the impls stay `M: Mode`-generic for uniformity with the
+// find family.
+impl<M: Mode> View<DomNode, M> {
+    #[inline(always)]
+    pub(crate) fn children_data(&self) -> *mut *mut DomNode {
+        // SAFETY: reading the `children.data` run pointer (stored value; the
+        // `RefList` payload is a flat array of `ufbx_dom_node*`).
+        unsafe { (*self.as_ptr()).children.data as *mut *mut DomNode }
+    }
+    #[inline(always)]
+    pub(crate) fn children_count(&self) -> usize {
+        // SAFETY: reading the `children.count` field of a valid arena `DomNode`.
+        unsafe { (*self.as_ptr()).children.count }
+    }
+    #[inline(always)]
+    pub(crate) fn values_count(&self) -> usize {
+        // SAFETY: reading the `values.count` field of a valid arena `DomNode`.
+        unsafe { (*self.as_ptr()).values.count }
+    }
+    /// First entry of `values`, viewed with the same lifetime and mode as
+    /// `self`; `None` when the node has no values.
+    #[inline(always)]
+    pub(crate) fn first_value(&self) -> Option<&View<DomValue, M>> {
+        if self.values_count() == 0 {
+            return None;
+        }
+        // SAFETY: `values.data` points at `values.count >= 1` arena `DomValue`s
+        // (scene-construction invariant); the STORED pointer carries the
+        // arena's write provenance — adequate for either mode.
+        unsafe {
+            Some(View::<DomValue, M>::mint(
+                (*self.as_ptr()).values.data as *mut DomValue,
+            ))
+        }
+    }
+}
+
+impl<M: Mode> View<DomValue, M> {
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> DomValueType {
+        // SAFETY: reading the `type_` field of a valid arena `DomValue`.
+        unsafe { (*self.as_ptr()).type_ }
+    }
+    #[inline(always)]
+    pub(crate) fn value_int(&self) -> i64 {
+        // SAFETY: reading the `value_int` field of a valid arena `DomValue`.
+        unsafe { (*self.as_ptr()).value_int }
+    }
+    #[inline(always)]
+    pub(crate) fn value_blob(&self) -> Blob {
+        // SAFETY: reading the `value_blob` field of a valid arena `DomValue`.
+        unsafe { (*self.as_ptr()).value_blob }
+    }
+}
+
 // ufbx.c:32957-32964 `ufbx_dom_find_len`
-pub(crate) unsafe fn dom_find_len(
-    parent: *const DomNode,
+pub(crate) unsafe fn dom_find_len<M: Mode>(
+    parent: &View<DomNode, M>,
     name: *const u8,
     name_len: usize,
-) -> *mut DomNode {
+) -> Option<&View<DomNode, M>> {
     let ref_: String = safe_string(name, name_len);
     // C: `ufbxi_for_ptr_list(ufbx_dom_node, p_child, parent->children)` — the
     // `RefList` payload is a flat array of `ufbx_dom_node*`.
-    let mut p_child: *mut *mut DomNode = (*parent).children.data as *mut *mut DomNode;
-    let p_child_end: *mut *mut DomNode = p_child.add((*parent).children.count);
+    let mut p_child: *mut *mut DomNode = parent.children_data();
+    let p_child_end: *mut *mut DomNode = p_child.add(parent.children_count());
     while p_child != p_child_end {
         if str_equal((**p_child).name, ref_) {
-            return *p_child;
+            // Mode-generic mint from the STORED child pointer (arena write
+            // provenance), correlated to `parent`'s borrow.
+            return Some(View::<DomNode, M>::mint(*p_child));
         }
         p_child = p_child.add(1);
     }
-    core::ptr::null_mut()
+    None
 }
 
 // ufbx.c:32966-32974 `ufbx_generate_indices` — delegates to
@@ -5510,86 +5570,108 @@ pub(crate) unsafe fn as_metadata_object(element: *const Element) -> *mut Metadat
 }
 
 // ufbx.c:33077-33081 `ufbx_dom_is_array`
-pub(crate) unsafe fn dom_is_array(node: *const DomNode) -> bool {
-    if node.is_null() || (*node).values.count != 1 {
+pub(crate) fn dom_is_array<M: Mode>(node: Option<&View<DomNode, M>>) -> bool {
+    // C: `if (!node || node->values.count != 1) return false;` — the null arm
+    // is the `None` case.
+    let Some(node) = node else { return false };
+    if node.values_count() != 1 {
         return false;
     }
     // C: `ufbx_dom_value v = node->values.data[0];`
-    let v: &DomValue = &*(*node).values.data;
-    v.type_ as u32 >= DomValueType::ArrayI32 as u32
-        && v.type_ as u32 <= DomValueType::ArrayBlob as u32
+    let Some(v) = node.first_value() else {
+        return false;
+    };
+    v.type_() as u32 >= DomValueType::ArrayI32 as u32
+        && v.type_() as u32 <= DomValueType::ArrayBlob as u32
 }
 // ufbx.c:33082-33084 `ufbx_dom_array_size`
-pub(crate) unsafe fn dom_array_size(node: *const DomNode) -> usize {
+pub(crate) fn dom_array_size<M: Mode>(node: Option<&View<DomNode, M>>) -> usize {
     if dom_is_array(node) {
-        (*(*node).values.data).value_int as usize
+        // `dom_is_array` established `node` is `Some` with exactly one value.
+        match node.and_then(View::first_value) {
+            Some(v) => v.value_int() as usize,
+            None => 0,
+        }
     } else {
         0
     }
 }
 // ufbx.c:33085-33093 `ufbx_dom_as_int32_list`
-pub(crate) unsafe fn dom_as_int32_list(node: *const DomNode) -> List<i32> {
-    let mut list: List<i32> = MaybeUninit::zeroed().assume_init();
+pub(crate) fn dom_as_int32_list<M: Mode>(node: Option<&View<DomNode, M>>) -> List<i32> {
+    // SAFETY: an all-zero `List` is valid (null data, zero count).
+    let mut list: List<i32> = unsafe { MaybeUninit::zeroed().assume_init() };
     list.data = core::ptr::null();
     list.count = 0;
-    if !node.is_null()
-        && (*node).values.count == 1
-        && (*(*node).values.data).type_ == DomValueType::ArrayI32
-    {
-        let value: &DomValue = &*(*node).values.data;
-        list.data = value.value_blob.data as *const i32;
-        list.count = value.value_blob.size / size_of::<i32>();
+    if let Some(node) = node {
+        if node.values_count() == 1 {
+            if let Some(value) = node.first_value() {
+                if value.type_() == DomValueType::ArrayI32 {
+                    list.data = value.value_blob().data as *const i32;
+                    list.count = value.value_blob().size / size_of::<i32>();
+                }
+            }
+        }
     }
     list
 }
 // ufbx.c:33094-33102 `ufbx_dom_as_int64_list`
-pub(crate) unsafe fn dom_as_int64_list(node: *const DomNode) -> List<i64> {
-    let mut list: List<i64> = MaybeUninit::zeroed().assume_init();
+pub(crate) fn dom_as_int64_list<M: Mode>(node: Option<&View<DomNode, M>>) -> List<i64> {
+    // SAFETY: an all-zero `List` is valid (null data, zero count).
+    let mut list: List<i64> = unsafe { MaybeUninit::zeroed().assume_init() };
     list.data = core::ptr::null();
     list.count = 0;
-    if !node.is_null()
-        && (*node).values.count == 1
-        && (*(*node).values.data).type_ == DomValueType::ArrayI64
-    {
-        let value: &DomValue = &*(*node).values.data;
-        list.data = value.value_blob.data as *const i64;
-        list.count = value.value_blob.size / size_of::<i64>();
+    if let Some(node) = node {
+        if node.values_count() == 1 {
+            if let Some(value) = node.first_value() {
+                if value.type_() == DomValueType::ArrayI64 {
+                    list.data = value.value_blob().data as *const i64;
+                    list.count = value.value_blob().size / size_of::<i64>();
+                }
+            }
+        }
     }
     list
 }
 // ufbx.c:33103-33111 `ufbx_dom_as_float_list`
-pub(crate) unsafe fn dom_as_float_list(node: *const DomNode) -> List<f32> {
-    let mut list: List<f32> = MaybeUninit::zeroed().assume_init();
+pub(crate) fn dom_as_float_list<M: Mode>(node: Option<&View<DomNode, M>>) -> List<f32> {
+    // SAFETY: an all-zero `List` is valid (null data, zero count).
+    let mut list: List<f32> = unsafe { MaybeUninit::zeroed().assume_init() };
     list.data = core::ptr::null();
     list.count = 0;
-    if !node.is_null()
-        && (*node).values.count == 1
-        && (*(*node).values.data).type_ == DomValueType::ArrayF32
-    {
-        let value: &DomValue = &*(*node).values.data;
-        list.data = value.value_blob.data as *const f32;
-        list.count = value.value_blob.size / size_of::<f32>();
+    if let Some(node) = node {
+        if node.values_count() == 1 {
+            if let Some(value) = node.first_value() {
+                if value.type_() == DomValueType::ArrayF32 {
+                    list.data = value.value_blob().data as *const f32;
+                    list.count = value.value_blob().size / size_of::<f32>();
+                }
+            }
+        }
     }
     list
 }
 // ufbx.c:33112-33120 `ufbx_dom_as_double_list`
-pub(crate) unsafe fn dom_as_double_list(node: *const DomNode) -> List<f64> {
-    let mut list: List<f64> = MaybeUninit::zeroed().assume_init();
+pub(crate) fn dom_as_double_list<M: Mode>(node: Option<&View<DomNode, M>>) -> List<f64> {
+    // SAFETY: an all-zero `List` is valid (null data, zero count).
+    let mut list: List<f64> = unsafe { MaybeUninit::zeroed().assume_init() };
     list.data = core::ptr::null();
     list.count = 0;
-    if !node.is_null()
-        && (*node).values.count == 1
-        && (*(*node).values.data).type_ == DomValueType::ArrayF64
-    {
-        let value: &DomValue = &*(*node).values.data;
-        list.data = value.value_blob.data as *const f64;
-        list.count = value.value_blob.size / size_of::<f64>();
+    if let Some(node) = node {
+        if node.values_count() == 1 {
+            if let Some(value) = node.first_value() {
+                if value.type_() == DomValueType::ArrayF64 {
+                    list.data = value.value_blob().data as *const f64;
+                    list.count = value.value_blob().size / size_of::<f64>();
+                }
+            }
+        }
     }
     list
 }
 // ufbx.c:33121-33129 `ufbx_dom_as_real_list`
-pub(crate) unsafe fn dom_as_real_list(node: *const DomNode) -> List<Real> {
-    let mut list: List<Real> = MaybeUninit::zeroed().assume_init();
+pub(crate) fn dom_as_real_list<M: Mode>(node: Option<&View<DomNode, M>>) -> List<Real> {
+    // SAFETY: an all-zero `List` is valid (null data, zero count).
+    let mut list: List<Real> = unsafe { MaybeUninit::zeroed().assume_init() };
     list.data = core::ptr::null();
     list.count = 0;
     // C: `sizeof(ufbx_real) == sizeof(double) ? ARRAY_F64 : ARRAY_F32`
@@ -5598,25 +5680,33 @@ pub(crate) unsafe fn dom_as_real_list(node: *const DomNode) -> List<Real> {
     } else {
         DomValueType::ArrayF32
     };
-    if !node.is_null() && (*node).values.count == 1 && (*(*node).values.data).type_ == want {
-        let value: &DomValue = &*(*node).values.data;
-        list.data = value.value_blob.data as *const Real;
-        list.count = value.value_blob.size / size_of::<Real>();
+    if let Some(node) = node {
+        if node.values_count() == 1 {
+            if let Some(value) = node.first_value() {
+                if value.type_() == want {
+                    list.data = value.value_blob().data as *const Real;
+                    list.count = value.value_blob().size / size_of::<Real>();
+                }
+            }
+        }
     }
     list
 }
 // ufbx.c:33130-33138 `ufbx_dom_as_blob_list`
-pub(crate) unsafe fn dom_as_blob_list(node: *const DomNode) -> List<Blob> {
-    let mut list: List<Blob> = MaybeUninit::zeroed().assume_init();
+pub(crate) fn dom_as_blob_list<M: Mode>(node: Option<&View<DomNode, M>>) -> List<Blob> {
+    // SAFETY: an all-zero `List` is valid (null data, zero count).
+    let mut list: List<Blob> = unsafe { MaybeUninit::zeroed().assume_init() };
     list.data = core::ptr::null();
     list.count = 0;
-    if !node.is_null()
-        && (*node).values.count == 1
-        && (*(*node).values.data).type_ == DomValueType::ArrayBlob
-    {
-        let value: &DomValue = &*(*node).values.data;
-        list.data = value.value_blob.data as *const Blob;
-        list.count = value.value_blob.size / size_of::<Blob>();
+    if let Some(node) = node {
+        if node.values_count() == 1 {
+            if let Some(value) = node.first_value() {
+                if value.type_() == DomValueType::ArrayBlob {
+                    list.data = value.value_blob().data as *const Blob;
+                    list.count = value.value_blob().size / size_of::<Blob>();
+                }
+            }
+        }
     }
     list
 }
@@ -5769,7 +5859,10 @@ pub(crate) unsafe fn find_shader_texture_input(
 }
 
 // ufbx.c:33161 `ufbx_dom_find`
-pub(crate) unsafe fn dom_find(parent: *const DomNode, name: *const u8) -> *mut DomNode {
+pub(crate) unsafe fn dom_find<M: Mode>(
+    parent: &View<DomNode, M>,
+    name: *const u8,
+) -> Option<&View<DomNode, M>> {
     dom_find_len(parent, name, strlen(name))
 }
 

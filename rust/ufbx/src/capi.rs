@@ -1379,7 +1379,12 @@ pub unsafe extern "C" fn ufbx_dom_find_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::DomNode {
-    crate::native::api::dom_find_len(parent, name, name_len)
+    // C-ABI root: mirror C's unchecked `parent` deref — mint a read-only view
+    // (legal for any readable provenance) and map the correlated result to raw.
+    match crate::native::api::dom_find_len(crate::native::view::View::<crate::generated::DomNode, crate::native::view::Const>::from_ptr(parent), name, name_len) {
+        Some(node) => node.as_ptr() as *mut crate::generated::DomNode,
+        None => core::ptr::null_mut(),
+    }
 }
 
 // ufbx.c:32966-32974 `ufbx_generate_indices` (impl: native/api.rs
@@ -1744,54 +1749,110 @@ pub unsafe extern "C" fn ufbx_as_metadata_object(
 // ufbx.c:33077-33081 `ufbx_dom_is_array` (impl: native/api.rs `dom_is_array`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_dom_is_array(node: *const crate::generated::DomNode) -> bool {
-    crate::native::api::dom_is_array(node)
+    crate::native::api::dom_is_array(if node.is_null() {
+        None
+    } else {
+        Some(crate::native::view::View::<
+            crate::generated::DomNode,
+            crate::native::view::Const,
+        >::from_ptr(node))
+    })
 }
 // ufbx.c:33082-33084 `ufbx_dom_array_size` (impl: native/api.rs `dom_array_size`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_dom_array_size(node: *const crate::generated::DomNode) -> usize {
-    crate::native::api::dom_array_size(node)
+    crate::native::api::dom_array_size(if node.is_null() {
+        None
+    } else {
+        Some(crate::native::view::View::<
+            crate::generated::DomNode,
+            crate::native::view::Const,
+        >::from_ptr(node))
+    })
 }
 // ufbx.c:33085-33093 `ufbx_dom_as_int32_list` (impl: native/api.rs `dom_as_int32_list`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_dom_as_int32_list(
     node: *const crate::generated::DomNode,
 ) -> crate::prelude::List<i32> {
-    crate::native::api::dom_as_int32_list(node)
+    crate::native::api::dom_as_int32_list(if node.is_null() {
+        None
+    } else {
+        Some(crate::native::view::View::<
+            crate::generated::DomNode,
+            crate::native::view::Const,
+        >::from_ptr(node))
+    })
 }
 // ufbx.c:33094-33102 `ufbx_dom_as_int64_list` (impl: native/api.rs `dom_as_int64_list`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_dom_as_int64_list(
     node: *const crate::generated::DomNode,
 ) -> crate::prelude::List<i64> {
-    crate::native::api::dom_as_int64_list(node)
+    crate::native::api::dom_as_int64_list(if node.is_null() {
+        None
+    } else {
+        Some(crate::native::view::View::<
+            crate::generated::DomNode,
+            crate::native::view::Const,
+        >::from_ptr(node))
+    })
 }
 // ufbx.c:33103-33111 `ufbx_dom_as_float_list` (impl: native/api.rs `dom_as_float_list`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_dom_as_float_list(
     node: *const crate::generated::DomNode,
 ) -> crate::prelude::List<f32> {
-    crate::native::api::dom_as_float_list(node)
+    crate::native::api::dom_as_float_list(if node.is_null() {
+        None
+    } else {
+        Some(crate::native::view::View::<
+            crate::generated::DomNode,
+            crate::native::view::Const,
+        >::from_ptr(node))
+    })
 }
 // ufbx.c:33112-33120 `ufbx_dom_as_double_list` (impl: native/api.rs `dom_as_double_list`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_dom_as_double_list(
     node: *const crate::generated::DomNode,
 ) -> crate::prelude::List<f64> {
-    crate::native::api::dom_as_double_list(node)
+    crate::native::api::dom_as_double_list(if node.is_null() {
+        None
+    } else {
+        Some(crate::native::view::View::<
+            crate::generated::DomNode,
+            crate::native::view::Const,
+        >::from_ptr(node))
+    })
 }
 // ufbx.c:33121-33129 `ufbx_dom_as_real_list` (impl: native/api.rs `dom_as_real_list`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_dom_as_real_list(
     node: *const crate::generated::DomNode,
 ) -> crate::prelude::List<crate::prelude::Real> {
-    crate::native::api::dom_as_real_list(node)
+    crate::native::api::dom_as_real_list(if node.is_null() {
+        None
+    } else {
+        Some(crate::native::view::View::<
+            crate::generated::DomNode,
+            crate::native::view::Const,
+        >::from_ptr(node))
+    })
 }
 // ufbx.c:33130-33138 `ufbx_dom_as_blob_list` (impl: native/api.rs `dom_as_blob_list`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_dom_as_blob_list(
     node: *const crate::generated::DomNode,
 ) -> crate::prelude::List<crate::prelude::Blob> {
-    crate::native::api::dom_as_blob_list(node)
+    crate::native::api::dom_as_blob_list(if node.is_null() {
+        None
+    } else {
+        Some(crate::native::view::View::<
+            crate::generated::DomNode,
+            crate::native::view::Const,
+        >::from_ptr(node))
+    })
 }
 
 // -- String API (ufbx.c:33140+): the `strlen` wrappers over the `_len` entry
@@ -2056,7 +2117,17 @@ pub unsafe extern "C" fn ufbx_dom_find(
     parent: *const crate::generated::DomNode,
     name: *const u8,
 ) -> *mut crate::generated::DomNode {
-    crate::native::api::dom_find(parent, name)
+    // Same shape as `ufbx_dom_find_len`: unchecked `parent` (C parity),
+    // read-only view in, correlated view out, mapped back to raw.
+    match crate::native::api::dom_find(
+        crate::native::view::View::<crate::generated::DomNode, crate::native::view::Const>::from_ptr(
+            parent,
+        ),
+        name,
+    ) {
+        Some(node) => node.as_ptr() as *mut crate::generated::DomNode,
+        None => core::ptr::null_mut(),
+    }
 }
 
 // -- Catch API (ufbx.c:33163-33179): non-catch wrappers passing `panic == NULL`

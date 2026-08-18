@@ -410,6 +410,94 @@ pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
 }
 """
 
+
+# The dom_* family: native fns take mode-generic views; the safe wrappers mint
+# read-only `Const` views from the caller's `&DomNode` (the mint every readable
+# provenance supports) and call native directly. Signatures stay verbatim
+# upstream-parity (including their historical free lifetimes).
+override_functions["ufbx_dom_find_len"] = """
+pub fn dom_find<'a>(parent: &DomNode, name: &str) -> Option<&'a DomNode> {
+    let result = unsafe {
+        crate::native::api::dom_find_len(
+            crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(parent as *const DomNode),
+            name.as_ptr(),
+            name.len(),
+        )
+    };
+    result.map(|node| unsafe { &*node.as_ptr() })
+}
+"""
+
+override_functions["ufbx_dom_is_array"] = """
+pub fn dom_is_array(node: &DomNode) -> bool {
+    crate::native::api::dom_is_array(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(node as *const DomNode)
+    }))
+}
+"""
+
+override_functions["ufbx_dom_array_size"] = """
+pub fn dom_array_size(node: &DomNode) -> usize {
+    crate::native::api::dom_array_size(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(node as *const DomNode)
+    }))
+}
+"""
+
+override_functions["ufbx_dom_as_int32_list"] = """
+pub fn dom_as_int32_list<'a>(node: &DomNode) -> &'a [i32] {
+    let result = crate::native::api::dom_as_int32_list(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(node as *const DomNode)
+    }));
+    unsafe { result.as_static_ref() }
+}
+"""
+
+override_functions["ufbx_dom_as_int64_list"] = """
+pub fn dom_as_int64_list<'a>(node: &DomNode) -> &'a [i64] {
+    let result = crate::native::api::dom_as_int64_list(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(node as *const DomNode)
+    }));
+    unsafe { result.as_static_ref() }
+}
+"""
+
+override_functions["ufbx_dom_as_float_list"] = """
+pub fn dom_as_float_list<'a>(node: &DomNode) -> &'a [f32] {
+    let result = crate::native::api::dom_as_float_list(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(node as *const DomNode)
+    }));
+    unsafe { result.as_static_ref() }
+}
+"""
+
+override_functions["ufbx_dom_as_double_list"] = """
+pub fn dom_as_double_list<'a>(node: &DomNode) -> &'a [f64] {
+    let result = crate::native::api::dom_as_double_list(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(node as *const DomNode)
+    }));
+    unsafe { result.as_static_ref() }
+}
+"""
+
+override_functions["ufbx_dom_as_real_list"] = """
+pub fn dom_as_real_list<'a>(node: &DomNode) -> &'a [Real] {
+    let result = crate::native::api::dom_as_real_list(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(node as *const DomNode)
+    }));
+    unsafe { result.as_static_ref() }
+}
+"""
+
+override_functions["ufbx_dom_as_blob_list"] = """
+pub fn dom_as_blob_list<'a>(node: &DomNode) -> &'a [Blob] {
+    let result = crate::native::api::dom_as_blob_list(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(node as *const DomNode)
+    }));
+    unsafe { result.as_static_ref() }
+}
+"""
+
 # The find-prop adapters call the native finder directly with a read-only
 # `Const` view minted from the caller's `&Props` — the mint every readable
 # provenance (including a shared reference) supports, unlike the

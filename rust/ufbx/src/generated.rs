@@ -5997,16 +5997,17 @@ pub fn sample_geometry_cache_vec3(
     unsafe { sample_geometry_cache_vec3_raw(channel, time, data, &opts_raw) }
 }
 
-#[allow(clippy::needless_lifetimes)]
 pub fn dom_find<'a>(parent: &DomNode, name: &str) -> Option<&'a DomNode> {
     let result = unsafe {
-        crate::native::api::dom_find_len(parent as *const DomNode, name.as_ptr(), name.len())
+        crate::native::api::dom_find_len(
+            crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
+                parent as *const DomNode,
+            ),
+            name.as_ptr(),
+            name.len(),
+        )
     };
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    result.map(|node| unsafe { &*node.as_ptr() })
 }
 
 pub unsafe fn generate_indices_raw(
@@ -6530,51 +6531,73 @@ pub fn as_metadata_object<'a>(element: &'a Element) -> Option<&'a MetadataObject
     }
 }
 
-#[allow(clippy::let_and_return)]
 pub fn dom_is_array(node: &DomNode) -> bool {
-    let result = unsafe { crate::native::api::dom_is_array(node as *const DomNode) };
-    result
+    crate::native::api::dom_is_array(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
+            node as *const DomNode,
+        )
+    }))
 }
 
-#[allow(clippy::let_and_return)]
 pub fn dom_array_size(node: &DomNode) -> usize {
-    let result = unsafe { crate::native::api::dom_array_size(node as *const DomNode) };
-    result
+    crate::native::api::dom_array_size(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
+            node as *const DomNode,
+        )
+    }))
 }
 
-#[allow(clippy::needless_lifetimes)]
 pub fn dom_as_int32_list<'a>(node: &DomNode) -> &'a [i32] {
-    let result = unsafe { crate::native::api::dom_as_int32_list(node as *const DomNode) };
+    let result = crate::native::api::dom_as_int32_list(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
+            node as *const DomNode,
+        )
+    }));
     unsafe { result.as_static_ref() }
 }
 
-#[allow(clippy::needless_lifetimes)]
 pub fn dom_as_int64_list<'a>(node: &DomNode) -> &'a [i64] {
-    let result = unsafe { crate::native::api::dom_as_int64_list(node as *const DomNode) };
+    let result = crate::native::api::dom_as_int64_list(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
+            node as *const DomNode,
+        )
+    }));
     unsafe { result.as_static_ref() }
 }
 
-#[allow(clippy::needless_lifetimes)]
 pub fn dom_as_float_list<'a>(node: &DomNode) -> &'a [f32] {
-    let result = unsafe { crate::native::api::dom_as_float_list(node as *const DomNode) };
+    let result = crate::native::api::dom_as_float_list(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
+            node as *const DomNode,
+        )
+    }));
     unsafe { result.as_static_ref() }
 }
 
-#[allow(clippy::needless_lifetimes)]
 pub fn dom_as_double_list<'a>(node: &DomNode) -> &'a [f64] {
-    let result = unsafe { crate::native::api::dom_as_double_list(node as *const DomNode) };
+    let result = crate::native::api::dom_as_double_list(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
+            node as *const DomNode,
+        )
+    }));
     unsafe { result.as_static_ref() }
 }
 
-#[allow(clippy::needless_lifetimes)]
 pub fn dom_as_real_list<'a>(node: &DomNode) -> &'a [Real] {
-    let result = unsafe { crate::native::api::dom_as_real_list(node as *const DomNode) };
+    let result = crate::native::api::dom_as_real_list(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
+            node as *const DomNode,
+        )
+    }));
     unsafe { result.as_static_ref() }
 }
 
-#[allow(clippy::needless_lifetimes)]
 pub fn dom_as_blob_list<'a>(node: &DomNode) -> &'a [Blob] {
-    let result = unsafe { crate::native::api::dom_as_blob_list(node as *const DomNode) };
+    let result = crate::native::api::dom_as_blob_list(Some(unsafe {
+        crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
+            node as *const DomNode,
+        )
+    }));
     unsafe { result.as_static_ref() }
 }
 pub fn identity_matrix() -> Matrix {
