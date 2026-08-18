@@ -943,15 +943,18 @@ pub(crate) unsafe fn cache_read(
 // ufbx.c:24080-24116 `ufbxi_cache_skip`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), Fail> {
+pub(crate) fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), Fail> {
     // C-parity: `cc->file_offset += size;` is uint64_t addition, which wraps.
     // `ufbxi_cache_load_pc2` (ufbx.c:24270) passes `total_points * 12 - 1`
     // guarded only by `total_points < UINT64_MAX / 12` (ufbx.c:24262), so a
     // crafted PC2 header reaches this with `size` near `UINT64_MAX`.
     cc.set_file_offset(cc.file_offset().wrapping_add(size));
 
-    let buffered: u64 = min64(cc.pos_end().offset_from(cc.pos()) as u64, size);
-    cc.set_pos(cc.pos().add(buffered as usize));
+    // SAFETY: `pos..pos_end` is cc's buffered read window (one allocation, cc
+    // construction invariant); `buffered` is clamped to what remains, so the
+    // advance stays in bounds.
+    let buffered: u64 = unsafe { min64(cc.pos_end().offset_from(cc.pos()) as u64, size) };
+    unsafe { cc.set_pos(cc.pos().add(buffered as usize)) };
     size -= buffered;
 
     if cc.stream_view().skip_fn().is_some() {
@@ -959,10 +962,15 @@ pub(crate) unsafe fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), 
             size -= MAX_SKIP_SIZE as u64;
             ufbxi_check_err_msg!(
                 cc.error_view(),
-                (cc.stream_view().skip_fn().unwrap_unchecked())(
-                    cc.stream_view().user(),
-                    MAX_SKIP_SIZE - 1
-                ),
+                // SAFETY: `skip_fn` is Some (checked by the enclosing branch);
+                // invoking a stream callback with its paired `user` pointer is
+                // the C stream contract.
+                unsafe {
+                    (cc.stream_view().skip_fn().unwrap_unchecked())(
+                        cc.stream_view().user(),
+                        MAX_SKIP_SIZE - 1,
+                    )
+                },
                 "Truncated file",
                 "cc->stream.skip_fn(cc->stream.user, UFBXI_MAX_SKIP_SIZE - 1)"
             );
@@ -971,11 +979,15 @@ pub(crate) unsafe fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), 
             // and causes us to seek indefinitely forwards as `fseek()` does not
             // report if we hit EOF...
             let mut single_byte = MaybeUninit::<[u8; 1]>::uninit(); // ufbxi_uninit
-            let num_read: usize = (cc.stream_view().read_fn().unwrap_unchecked())(
-                cc.stream_view().user(),
-                single_byte.as_mut_ptr() as *mut c_void,
-                1,
-            );
+                                                                    // SAFETY: an open cache stream always has `read_fn` (stream-open
+                                                                    // invariant); local 1-byte buffer; C stream-callback contract.
+            let num_read: usize = unsafe {
+                (cc.stream_view().read_fn().unwrap_unchecked())(
+                    cc.stream_view().user(),
+                    single_byte.as_mut_ptr() as *mut c_void,
+                    1,
+                )
+            };
             ufbxi_check_err_msg!(cc.error_view(), num_read <= 1, "IO error", "num_read <= 1");
             ufbxi_check_err_msg!(
                 cc.error_view(),
@@ -988,10 +1000,14 @@ pub(crate) unsafe fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), 
         if size > 0 {
             ufbxi_check_err_msg!(
                 cc.error_view(),
-                (cc.stream_view().skip_fn().unwrap_unchecked())(
-                    cc.stream_view().user(),
-                    size as usize
-                ),
+                // SAFETY: `skip_fn` is Some (enclosing branch); C stream
+                // callback contract as above.
+                unsafe {
+                    (cc.stream_view().skip_fn().unwrap_unchecked())(
+                        cc.stream_view().user(),
+                        size as usize,
+                    )
+                },
                 "Truncated file",
                 "cc->stream.skip_fn(cc->stream.user, (size_t)size)"
             );
@@ -1003,11 +1019,16 @@ pub(crate) unsafe fn cache_skip(cc: &CacheContext, mut size: u64) -> Result<(), 
             size -= to_skip as u64;
             ufbxi_check_err_msg!(
                 cc.error_view(),
-                (cc.stream_view().read_fn().unwrap_unchecked())(
-                    cc.stream_view().user(),
-                    skip_buf.as_mut_ptr() as *mut c_void,
-                    to_skip
-                ) != 0,
+                // SAFETY: an open cache stream always has `read_fn`
+                // (stream-open invariant); local 2048-byte buffer with
+                // `to_skip` clamped to its size; C stream-callback contract.
+                unsafe {
+                    (cc.stream_view().read_fn().unwrap_unchecked())(
+                        cc.stream_view().user(),
+                        skip_buf.as_mut_ptr() as *mut c_void,
+                        to_skip,
+                    )
+                } != 0,
                 "Truncated file",
                 "cc->stream.read_fn(cc->stream.user, skip_buf, to_skip)"
             );
@@ -1027,14 +1048,21 @@ pub(crate) const fn cache_mc_tag(a: u8, b: u8, c: u8, d: u8) -> u32 {
 // ufbx.c:24120-24129 `ufbxi_cache_mc_read_tag`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_mc_read_tag(cc: &CacheContext, p_tag: *mut u32) -> Result<(), Fail> {
+// Safe fn: the out-param is an unaliased caller local, spelled `&mut u32`
+// (the panic-param policy applied to the cache readers).
+pub(crate) fn cache_mc_read_tag(cc: &CacheContext, p_tag: &mut u32) -> Result<(), Fail> {
     let mut buf = MaybeUninit::<[u8; 4]>::uninit(); // ufbxi_uninit
     let buf: *mut u8 = buf.as_mut_ptr() as *mut u8;
-    cache_read(cc, buf as *mut c_void, 4, true)?;
-    *p_tag = (*buf.add(0) as u32) << 24u32
-        | (*buf.add(1) as u32) << 16
-        | (*buf.add(2) as u32) << 8u32
-        | (*buf.add(3) as u32);
+    // SAFETY: `buf` is a local 4-byte buffer; `cache_read` writes exactly the
+    // 4 bytes it is asked for before Ok, so the byte reads below are of
+    // initialized memory.
+    unsafe {
+        cache_read(cc, buf as *mut c_void, 4, true)?;
+        *p_tag = (*buf.add(0) as u32) << 24u32
+            | (*buf.add(1) as u32) << 16
+            | (*buf.add(2) as u32) << 8u32
+            | (*buf.add(3) as u32);
+    }
     if *p_tag == cache_mc_tag(b'F', b'O', b'R', b'8') {
         cc.set_mc_for8(true);
     }
@@ -1044,16 +1072,19 @@ pub(crate) unsafe fn cache_mc_read_tag(cc: &CacheContext, p_tag: *mut u32) -> Re
 // ufbx.c:24131-24140 `ufbxi_cache_mc_read_u32`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_mc_read_u32(cc: &CacheContext, p_value: *mut u32) -> Result<(), Fail> {
+pub(crate) fn cache_mc_read_u32(cc: &CacheContext, p_value: &mut u32) -> Result<(), Fail> {
     let mut buf = MaybeUninit::<[u8; 4]>::uninit(); // ufbxi_uninit
     let buf: *mut u8 = buf.as_mut_ptr() as *mut u8;
-    cache_read(cc, buf as *mut c_void, 4, false)?;
-    *p_value = (*buf.add(0) as u32) << 24u32
-        | (*buf.add(1) as u32) << 16
-        | (*buf.add(2) as u32) << 8u32
-        | (*buf.add(3) as u32);
-    if cc.mc_for8() {
+    // SAFETY: local 4-byte buffer, fully written by `cache_read` before Ok.
+    unsafe {
         cache_read(cc, buf as *mut c_void, 4, false)?;
+        *p_value = (*buf.add(0) as u32) << 24u32
+            | (*buf.add(1) as u32) << 16
+            | (*buf.add(2) as u32) << 8u32
+            | (*buf.add(3) as u32);
+        if cc.mc_for8() {
+            cache_read(cc, buf as *mut c_void, 4, false)?;
+        }
     }
     Ok(())
 }
@@ -1061,24 +1092,27 @@ pub(crate) unsafe fn cache_mc_read_u32(cc: &CacheContext, p_value: *mut u32) -> 
 // ufbx.c:24142-24156 `ufbxi_cache_mc_read_u64`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_mc_read_u64(cc: &CacheContext, p_value: *mut u64) -> Result<(), Fail> {
+pub(crate) fn cache_mc_read_u64(cc: &CacheContext, p_value: &mut u64) -> Result<(), Fail> {
     if !cc.mc_for8() {
-        let mut v32 = MaybeUninit::<u32>::uninit(); // ufbxi_uninit
-        cache_mc_read_u32(cc, v32.as_mut_ptr())?;
-        *p_value = v32.assume_init() as u64;
+        let mut v32: u32 = 0; // C: ufbxi_uninit (fully written before the read)
+        cache_mc_read_u32(cc, &mut v32)?;
+        *p_value = v32 as u64;
     } else {
         let mut buf = MaybeUninit::<[u8; 8]>::uninit(); // ufbxi_uninit
         let buf: *mut u8 = buf.as_mut_ptr() as *mut u8;
-        cache_read(cc, buf as *mut c_void, 8, false)?;
-        let hi: u32 = (*buf.add(0) as u32) << 24u32
-            | (*buf.add(1) as u32) << 16
-            | (*buf.add(2) as u32) << 8u32
-            | (*buf.add(3) as u32);
-        let lo: u32 = (*buf.add(4) as u32) << 24u32
-            | (*buf.add(5) as u32) << 16
-            | (*buf.add(6) as u32) << 8u32
-            | (*buf.add(7) as u32);
-        *p_value = (hi as u64) << 32u32 | (lo as u64);
+        // SAFETY: local 8-byte buffer, fully written by `cache_read` before Ok.
+        unsafe {
+            cache_read(cc, buf as *mut c_void, 8, false)?;
+            let hi: u32 = (*buf.add(0) as u32) << 24u32
+                | (*buf.add(1) as u32) << 16
+                | (*buf.add(2) as u32) << 8u32
+                | (*buf.add(3) as u32);
+            let lo: u32 = (*buf.add(4) as u32) << 24u32
+                | (*buf.add(5) as u32) << 16
+                | (*buf.add(6) as u32) << 8u32
+                | (*buf.add(7) as u32);
+            *p_value = (hi as u64) << 32u32 | (lo as u64);
+        }
     }
     Ok(())
 }
@@ -1090,7 +1124,7 @@ static CACHE_DATA_FORMAT_SIZE: [u8; 5] = [0, 4, 12, 8, 24];
 // ufbx.c:24162-24243 `ufbxi_cache_load_mc`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
+pub(crate) fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
     const TAG_CACH: u32 = cache_mc_tag(b'C', b'A', b'C', b'H');
     const TAG_MYCH: u32 = cache_mc_tag(b'M', b'Y', b'C', b'H');
     const TAG_FOR4: u32 = cache_mc_tag(b'F', b'O', b'R', b'4');
@@ -1115,10 +1149,9 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
     let mut skip_buf = MaybeUninit::<[u8; 8]>::uninit(); // ufbxi_uninit
 
     loop {
-        let mut tag = MaybeUninit::<u32>::uninit(); // ufbxi_uninit
-        let mut size = MaybeUninit::<u64>::uninit(); // ufbxi_uninit
-        cache_mc_read_tag(cc, tag.as_mut_ptr())?;
-        let tag: u32 = tag.assume_init();
+        let mut tag: u32 = 0; // C: ufbxi_uninit (written before every read)
+        let mut size: u64 = 0; // C: ufbxi_uninit (written before every read)
+        cache_mc_read_tag(cc, &mut tag)?;
         if tag == 0 {
             break;
         }
@@ -1127,11 +1160,11 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
             continue;
         }
         if cc.mc_for8() {
-            cache_read(cc, skip_buf.as_mut_ptr() as *mut c_void, 4, false)?;
+            // SAFETY: local 8-byte skip buffer, 4 bytes requested.
+            unsafe { cache_read(cc, skip_buf.as_mut_ptr() as *mut c_void, 4, false)? };
         }
 
-        cache_mc_read_u64(cc, size.as_mut_ptr())?;
-        let size: u64 = size.assume_init();
+        cache_mc_read_u64(cc, &mut size)?;
         let begin: u64 = cc.file_offset();
 
         let alignment: usize = if cc.mc_for8() { 8 } else { 4 };
@@ -1158,18 +1191,32 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                     (size as usize).wrapping_add(alignment).wrapping_sub(1) & !(alignment - 1);
                 ufbxi_check_err!(
                     cc.error_view(),
-                    grow_array::<u8>(
-                        cc.ator_tmp(),
-                        cc.name_buf_mut_ptr(),
-                        cc.name_cap_mut_ptr(),
-                        padded_length
-                    ),
+                    // SAFETY: growing cc's own paired `name_buf`/`name_cap`
+                    // growth state through its temp allocator (cc construction
+                    // invariant).
+                    unsafe {
+                        grow_array::<u8>(
+                            cc.ator_tmp(),
+                            cc.name_buf_mut_ptr(),
+                            cc.name_cap_mut_ptr(),
+                            padded_length
+                        )
+                    },
                     "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->name_buf)), (&cc->name_buf), (&cc->name_cap), (padded_length))"
                 );
-                cache_read(cc, cc.name_buf() as *mut c_void, padded_length, false)?;
-                cc.channel_name_view().set_data(cc.name_buf());
-                cc.channel_name_view().set_length(length);
-                push_string_place_str(cc.string_pool_mut_ptr(), cc.channel_name_mut_ptr(), false)?;
+                // SAFETY: `name_buf` was just grown to `padded_length`; the
+                // string-pool intern reads cc's own channel-name storage
+                // through its raw-ptr getters (cc construction invariant).
+                unsafe {
+                    cache_read(cc, cc.name_buf() as *mut c_void, padded_length, false)?;
+                    cc.channel_name_view().set_data(cc.name_buf());
+                    cc.channel_name_view().set_length(length);
+                    push_string_place_str(
+                        cc.string_pool_mut_ptr(),
+                        cc.channel_name_mut_ptr(),
+                        false,
+                    )?;
+                }
             }
             TAG_SIZE => cache_mc_read_u32(cc, &mut count)?,
             TAG_FVCA => format = CacheDataFormat::Vec3Float,
@@ -1181,7 +1228,8 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
         }
 
         if format != CacheDataFormat::Unknown {
-            let frame: *mut CacheFrame = push_zero(cc.tmp_stack_mut_ptr(), 1);
+            // SAFETY: pushing onto cc's own tmp stack through its raw-ptr getter.
+            let frame: *mut CacheFrame = unsafe { push_zero(cc.tmp_stack_mut_ptr(), 1) };
             ufbxi_check_err!(cc.error_view(), !frame.is_null(), "frame");
 
             let elem_size: u32 = CACHE_DATA_FORMAT_SIZE[format as u32 as usize] as u32;
@@ -1194,16 +1242,19 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
                 "size >= elem_size * count"
             );
 
-            (*frame).channel = cc.channel_name();
-            (*frame).time = time as f64 * (1.0 / 6000.0);
-            (*frame).filename = cc.stream_filename();
-            (*frame).data_format = format;
-            (*frame).data_encoding = CacheDataEncoding::BigEndian;
-            (*frame).data_offset = cc.file_offset();
-            (*frame).data_count = count;
-            (*frame).data_element_bytes = elem_size;
-            (*frame).data_total_bytes = total_size;
-            (*frame).file_format = CacheFileFormat::Mc;
+            // SAFETY: `frame` is the fresh non-null result of the push above.
+            unsafe {
+                (*frame).channel = cc.channel_name();
+                (*frame).time = time as f64 * (1.0 / 6000.0);
+                (*frame).filename = cc.stream_filename();
+                (*frame).data_format = format;
+                (*frame).data_encoding = CacheDataEncoding::BigEndian;
+                (*frame).data_offset = cc.file_offset();
+                (*frame).data_count = count;
+                (*frame).data_element_bytes = elem_size;
+                (*frame).data_total_bytes = total_size;
+                (*frame).file_format = CacheFileFormat::Mc;
+            }
 
             let end: u64 = begin.wrapping_add(
                 size.wrapping_add(alignment as u64).wrapping_sub(1) & !((alignment - 1) as u64),
@@ -1224,20 +1275,27 @@ pub(crate) unsafe fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
 // ufbx.c:24245-24292 `ufbxi_cache_load_pc2`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
+pub(crate) fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
     let mut header = MaybeUninit::<[u8; 32]>::uninit(); // ufbxi_uninit
     let header: *mut u8 = header.as_mut_ptr() as *mut u8;
-    cache_read(cc, header as *mut c_void, size_of::<[u8; 32]>(), false)?;
-
-    let version: u32 = read_u32(header.add(12));
-    let num_points: u32 = read_u32(header.add(16));
-    let start_frame: f64 = read_f32(header.add(20)) as f64;
-    let frames_per_sample: f64 = read_f32(header.add(24)) as f64;
-    let num_samples: u32 = read_u32(header.add(28));
+    // SAFETY: local 32-byte header buffer, fully written by `cache_read`
+    // before Ok; the field reads below stay within its 32 bytes.
+    let (version, num_points, start_frame, frames_per_sample, num_samples) = unsafe {
+        cache_read(cc, header as *mut c_void, size_of::<[u8; 32]>(), false)?;
+        (
+            read_u32(header.add(12)),
+            read_u32(header.add(16)),
+            read_f32(header.add(20)) as f64,
+            read_f32(header.add(24)) as f64,
+            read_u32(header.add(28)),
+        )
+    };
 
     let _ = version;
 
-    let frames: *mut CacheFrame = push_zero(cc.tmp_stack_mut_ptr(), num_samples as usize);
+    // SAFETY: pushing onto cc's own tmp stack through its raw-ptr getter.
+    let frames: *mut CacheFrame =
+        unsafe { push_zero(cc.tmp_stack_mut_ptr(), num_samples as usize) };
     ufbxi_check_err!(cc.error_view(), !frames.is_null(), "frames");
 
     let total_points: u64 = num_points as u64 * num_samples as u64;
@@ -1254,26 +1312,32 @@ pub(crate) unsafe fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
     if total_points > 0 {
         let mut last_byte = MaybeUninit::<[u8; 1]>::uninit(); // ufbxi_uninit
         cache_skip(cc, total_points * 12 - 1)?;
-        cache_read(cc, last_byte.as_mut_ptr() as *mut c_void, 1, false)?;
+        // SAFETY: local 1-byte buffer.
+        unsafe { cache_read(cc, last_byte.as_mut_ptr() as *mut c_void, 1, false)? };
     }
 
     let mut i: u32 = 0;
     while i < num_samples {
-        let frame: *mut CacheFrame = frames.add(i as usize);
+        // SAFETY: `i < num_samples`, indexing the fresh non-null
+        // `num_samples`-element push result above.
+        let frame: *mut CacheFrame = unsafe { frames.add(i as usize) };
 
         let sample_frame: f64 = start_frame + i as f64 * frames_per_sample;
-        (*frame).channel = cc.channel_name();
-        (*frame).time = sample_frame / cc.frames_per_second();
-        (*frame).filename = cc.stream_filename();
-        (*frame).data_format = CacheDataFormat::Vec3Float;
-        (*frame).data_encoding = CacheDataEncoding::LittleEndian;
-        (*frame).data_offset = offset;
-        (*frame).data_count = num_points;
-        (*frame).data_element_bytes = 12;
-        // C: `num_points * 12` is `uint32_t` arithmetic (wraps mod 2^32) that
-        // is only then widened to `uint64_t`.
-        (*frame).data_total_bytes = num_points.wrapping_mul(12) as u64;
-        (*frame).file_format = CacheFileFormat::Pc2;
+        // SAFETY: `frame` is in bounds of the fresh push result (above).
+        unsafe {
+            (*frame).channel = cc.channel_name();
+            (*frame).time = sample_frame / cc.frames_per_second();
+            (*frame).filename = cc.stream_filename();
+            (*frame).data_format = CacheDataFormat::Vec3Float;
+            (*frame).data_encoding = CacheDataEncoding::LittleEndian;
+            (*frame).data_offset = offset;
+            (*frame).data_count = num_points;
+            (*frame).data_element_bytes = 12;
+            // C: `num_points * 12` is `uint32_t` arithmetic (wraps mod 2^32)
+            // that is only then widened to `uint64_t`.
+            (*frame).data_total_bytes = num_points.wrapping_mul(12) as u64;
+            (*frame).file_format = CacheFileFormat::Pc2;
+        }
         offset = offset.wrapping_add(num_points.wrapping_mul(12) as u64);
         i += 1;
     }
@@ -1328,15 +1392,12 @@ pub(crate) unsafe fn cache_sort_tmp_channels(
 // ufbx.c:24308-24394 `ufbxi_cache_load_xml_imp`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_xml_imp(
-    cc: &CacheContext,
-    doc: &XmlDocumentView,
-) -> Result<(), Fail> {
+pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Result<(), Fail> {
     cc.set_xml_ticks_per_frame(250);
     cc.set_xml_filename(cc.stream_filename());
 
     // SAFETY: `doc.root()` is a valid arena `XmlTag`, stable for the document.
-    let root: &XmlTagView = XmlTagView::from_ptr(doc.root());
+    let root: &XmlTagView = unsafe { XmlTagView::from_ptr(doc.root()) };
     if let Some(tag_root) = xml_find_child(root, c"Autodesk_Cache_File") {
         let tag_type = xml_find_child(tag_root, c"cacheType");
         let tag_fps = xml_find_child(tag_root, c"cacheTimePerFrame");
@@ -1345,30 +1406,36 @@ pub(crate) unsafe fn cache_load_xml_imp(
         let mut num_extra: usize = 0;
         // C: `ufbxi_for(ufbxi_xml_tag, tag, tag_root->children, tag_root->num_children)`
         // SAFETY: contiguous arena run stable for the document's lifetime.
-        let tags = SliceViewIter::from_raw_parts(tag_root.children(), tag_root.num_children());
+        let tags =
+            unsafe { SliceViewIter::from_raw_parts(tag_root.children(), tag_root.num_children()) };
         for tag in tags {
             if tag.num_children() != 1 {
                 continue;
             }
-            if crate::native::error::strcmp(tag.name_data(), b"extra\0".as_ptr()) != 0 {
+            // SAFETY: `name_data` is the tag's NUL-terminated arena name
+            // (xml-parser invariant), compared against a literal.
+            if unsafe { crate::native::error::strcmp(tag.name_data(), b"extra\0".as_ptr()) } != 0 {
                 continue;
             }
-            let extra: *mut String = push(cc.tmp_stack_mut_ptr(), 1);
+            // SAFETY: pushing onto cc's own tmp stack through its raw-ptr getter.
+            let extra: *mut String = unsafe { push(cc.tmp_stack_mut_ptr(), 1) };
             ufbxi_check_err!(cc.error_view(), !extra.is_null(), "extra");
             // C: `tag->children[0].text` — `num_children == 1` guarantees the child.
-            // SAFETY: first element of a valid arena run of length >= 1.
-            *extra = XmlTagView::from_ptr(tag.children()).text();
-            push_string_place_str(cc.string_pool_mut_ptr(), extra, false)?;
+            // SAFETY: `extra` is the fresh non-null push result; the child is the
+            // first element of a valid arena run of length >= 1; the intern goes
+            // through cc's own string pool.
+            unsafe {
+                *extra = XmlTagView::from_ptr(tag.children()).text();
+                push_string_place_str(cc.string_pool_mut_ptr(), extra, false)?;
+            }
             num_extra += 1;
         }
         cc.cache_view().extra_info_view().set_count(num_extra);
-        cc.cache_view()
-            .extra_info_view()
-            .set_data(push_pop::<String>(
-                cc.result_mut_ptr(),
-                cc.tmp_stack_mut_ptr(),
-                num_extra,
-            ));
+        // SAFETY: popping the `num_extra` strings pushed above from cc's own
+        // tmp stack into cc's own result buffer (both via raw-ptr getters).
+        cc.cache_view().extra_info_view().set_data(unsafe {
+            push_pop::<String>(cc.result_mut_ptr(), cc.tmp_stack_mut_ptr(), num_extra)
+        });
         ufbxi_check_err!(
             cc.error_view(),
             !cc.cache_view().extra_info_view().data().is_null(),
@@ -1379,20 +1446,31 @@ pub(crate) unsafe fn cache_load_xml_imp(
             let type_ = xml_find_attrib(tag_type, c"Type");
             let format = xml_find_attrib(tag_type, c"Format");
             if let Some(type_) = type_ {
-                if crate::native::error::strcmp(type_.value().data, b"OneFilePerFrame\0".as_ptr())
-                    == 0
+                if unsafe {
+                    // SAFETY: attrib values are NUL-terminated arena strings
+                    // (xml-parser invariant), compared against a literal.
+                    crate::native::error::strcmp(type_.value().data, b"OneFilePerFrame\0".as_ptr())
+                } == 0
                 {
                     cc.set_xml_type(CacheXmlType::FilePerFrame);
-                } else if crate::native::error::strcmp(type_.value().data, b"OneFile\0".as_ptr())
-                    == 0
+                } else if unsafe {
+                    // SAFETY: attrib values are NUL-terminated arena strings
+                    // (xml-parser invariant), compared against a literal.
+                    crate::native::error::strcmp(type_.value().data, b"OneFile\0".as_ptr())
+                } == 0
                 {
                     cc.set_xml_type(CacheXmlType::SingleFile);
                 }
             }
             if let Some(format) = format {
-                if crate::native::error::strcmp(format.value().data, b"mcc\0".as_ptr()) == 0 {
+                // SAFETY: NUL-terminated arena attrib values vs literals (as above).
+                if unsafe { crate::native::error::strcmp(format.value().data, b"mcc\0".as_ptr()) }
+                    == 0
+                {
                     cc.set_xml_format(CacheXmlFormat::Mcc);
-                } else if crate::native::error::strcmp(format.value().data, b"mcx\0".as_ptr()) == 0
+                } else if unsafe {
+                    crate::native::error::strcmp(format.value().data, b"mcx\0".as_ptr())
+                } == 0
                 {
                     cc.set_xml_format(CacheXmlFormat::Mcx);
                 }
@@ -1401,8 +1479,10 @@ pub(crate) unsafe fn cache_load_xml_imp(
 
         if let Some(tag_fps) = tag_fps {
             if let Some(fps) = xml_find_attrib(tag_fps, c"TimePerFrame") {
+                // SAFETY: attrib values are NUL-terminated arena strings
+                // (xml-parser invariant), which is what the radix parse scans.
                 let value: u32 =
-                    crate::native::float_parse::parse_uint32_radix(fps.value().data, 10);
+                    unsafe { crate::native::float_parse::parse_uint32_radix(fps.value().data, 10) };
                 if value > 0 {
                     cc.set_xml_ticks_per_frame(value);
                 }
@@ -1410,13 +1490,15 @@ pub(crate) unsafe fn cache_load_xml_imp(
         }
 
         if let Some(tag_channels) = tag_channels {
-            cc.set_channels(push_zero(cc.tmp_mut_ptr(), tag_channels.num_children()));
+            // SAFETY: pushing onto cc's own tmp buffer through its raw-ptr getter.
+            cc.set_channels(unsafe { push_zero(cc.tmp_mut_ptr(), tag_channels.num_children()) });
             ufbxi_check_err!(cc.error_view(), !cc.channels().is_null(), "cc->channels");
 
             // C: `ufbxi_for(ufbxi_xml_tag, tag, tag_channels->children, tag_channels->num_children)`
             // SAFETY: contiguous arena run stable for the document's lifetime.
-            let tags =
-                SliceViewIter::from_raw_parts(tag_channels.children(), tag_channels.num_children());
+            let tags = unsafe {
+                SliceViewIter::from_raw_parts(tag_channels.children(), tag_channels.num_children())
+            };
             for tag in tags {
                 let name = xml_find_attrib(tag, c"ChannelName");
                 let type_ = xml_find_attrib(tag, c"ChannelType");
@@ -1428,16 +1510,22 @@ pub(crate) unsafe fn cache_load_xml_imp(
                 };
 
                 // C: `&cc->channels[cc->num_channels++]`
-                let channel: *mut CacheTmpChannel = cc.channels().add(cc.num_channels());
+                // SAFETY: at most one channel is appended per child tag, so
+                // `num_channels` stays within the `num_children`-element run
+                // pushed above; `channel` is that fresh in-bounds slot, and
+                // the interns go through cc's own string pool.
+                let channel: *mut CacheTmpChannel = unsafe { cc.channels().add(cc.num_channels()) };
                 cc.set_num_channels(cc.num_channels() + 1);
-                (*channel).name = name.value();
-                (*channel).interpretation = interpretation.value();
-                push_string_place_str(cc.string_pool_mut_ptr(), &mut (*channel).name, false)?;
-                push_string_place_str(
-                    cc.string_pool_mut_ptr(),
-                    &mut (*channel).interpretation,
-                    false,
-                )?;
+                unsafe {
+                    (*channel).name = name.value();
+                    (*channel).interpretation = interpretation.value();
+                    push_string_place_str(cc.string_pool_mut_ptr(), &mut (*channel).name, false)?;
+                    push_string_place_str(
+                        cc.string_pool_mut_ptr(),
+                        &mut (*channel).interpretation,
+                        false,
+                    )?;
+                }
 
                 let sampling_rate = xml_find_attrib(tag, c"SamplingRate");
                 let start_time = xml_find_attrib(tag, c"StartTime");
@@ -1445,45 +1533,61 @@ pub(crate) unsafe fn cache_load_xml_imp(
                 if let (Some(sampling_rate), Some(start_time), Some(end_time)) =
                     (sampling_rate, start_time, end_time)
                 {
-                    (*channel).sample_rate = crate::native::float_parse::parse_uint32_radix(
-                        sampling_rate.value().data,
-                        10,
-                    );
-                    (*channel).start_time =
-                        crate::native::float_parse::parse_uint32_radix(start_time.value().data, 10);
-                    (*channel).end_time =
-                        crate::native::float_parse::parse_uint32_radix(end_time.value().data, 10);
-                    (*channel).current_time = (*channel).start_time;
-                    (*channel).try_load = true;
+                    // SAFETY: `channel` is the in-bounds slot from above; the
+                    // parses scan NUL-terminated arena attrib values.
+                    unsafe {
+                        (*channel).sample_rate = crate::native::float_parse::parse_uint32_radix(
+                            sampling_rate.value().data,
+                            10,
+                        );
+                        (*channel).start_time = crate::native::float_parse::parse_uint32_radix(
+                            start_time.value().data,
+                            10,
+                        );
+                        (*channel).end_time = crate::native::float_parse::parse_uint32_radix(
+                            end_time.value().data,
+                            10,
+                        );
+                        (*channel).current_time = (*channel).start_time;
+                        (*channel).try_load = true;
+                    }
                 }
             }
         }
     }
 
-    cache_sort_tmp_channels(cc, cc.channels(), cc.num_channels())?;
+    // SAFETY: sorting cc's own `channels` run of `num_channels` entries
+    // (populated above / empty when no Channels tag).
+    unsafe { cache_sort_tmp_channels(cc, cc.channels(), cc.num_channels())? };
     Ok(())
 }
 
 // ufbx.c:24396-24412 `ufbxi_cache_load_xml`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
+pub(crate) fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
     // C: `ufbxi_xml_load_opts opts = { 0 };`
-    let mut opts: XmlLoadOpts = core::mem::zeroed();
+    // SAFETY: all-zero `XmlLoadOpts` is valid (null pointers, `None`
+    // callbacks, zero lengths).
+    let mut opts: XmlLoadOpts = unsafe { core::mem::zeroed() };
     opts.ator = cc.ator_tmp();
     opts.read_fn = cc.stream_view().read_fn();
     opts.read_user = cc.stream_view().user();
     opts.prefix = cc.pos();
-    opts.prefix_length = to_size(cc.pos_end().offset_from(cc.pos()));
-    let doc: *mut XmlDocument = load_xml(&mut opts, cc.error_mut_ptr());
+    // SAFETY: `pos..pos_end` is cc's buffered read window (one allocation).
+    opts.prefix_length = unsafe { to_size(cc.pos_end().offset_from(cc.pos())) };
+    // SAFETY: `opts` is a valid local; the error out-pointer is cc's own
+    // error storage via its raw-ptr getter.
+    let doc: *mut XmlDocument = unsafe { load_xml(&mut opts, cc.error_mut_ptr()) };
     ufbxi_check_err!(cc.error_view(), !doc.is_null(), "doc");
 
     // Bridge the raw `load_xml` result once; the view anchors the document for
     // the `cache_load_xml_imp` call, then `free_xml` reclaims the raw pointer.
     // SAFETY: `doc` is non-null and points to a valid `XmlDocument` stable until
     // `free_xml`.
-    let xml_ok = cache_load_xml_imp(cc, XmlDocumentView::from_ptr(doc));
-    free_xml(doc);
+    let xml_ok = cache_load_xml_imp(cc, unsafe { XmlDocumentView::from_ptr(doc) });
+    // SAFETY: `doc` is the non-null `load_xml` result, not used after this.
+    unsafe { free_xml(doc) };
     ufbxi_check_err!(cc.error_view(), xml_ok.is_ok(), "xml_ok");
 
     Ok(())
@@ -1572,7 +1676,7 @@ pub(crate) unsafe fn cache_try_open_file(
 // ufbx.c:24457-24540 `ufbxi_cache_load_frame_files`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
+pub(crate) fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
     if cc.xml_filename_view().length() == 0 {
         return Ok(());
     }
@@ -1586,35 +1690,49 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
 
     // Ensure worst case space for `path/filenameFrame123Tick456.mcx`
     let name_buf_len: usize = cc.xml_filename_view().length() + 64;
-    let name_buf: *mut u8 = push(cc.tmp_mut_ptr(), name_buf_len);
+    // SAFETY: pushing onto cc's own tmp buffer through its raw-ptr getter.
+    let name_buf: *mut u8 = unsafe { push(cc.tmp_mut_ptr(), name_buf_len) };
     ufbxi_check_err!(cc.error_view(), !name_buf.is_null(), "name_buf");
 
     // Find the prefix before `.xml`
     let mut prefix_len: usize = cc.xml_filename_view().length();
     let mut i: usize = prefix_len;
     while i > 0 {
-        if *cc.xml_filename_view().data().add(i - 1) == b'.' {
+        // SAFETY: `i - 1 < length`, an in-bounds byte of the interned filename.
+        if unsafe { *cc.xml_filename_view().data().add(i - 1) } == b'.' {
             prefix_len = i - 1;
             break;
         }
         i -= 1;
     }
-    core::ptr::copy_nonoverlapping(cc.xml_filename_view().data(), name_buf, prefix_len);
+    // SAFETY: `prefix_len <= length` and `name_buf` holds `length + 64` bytes
+    // (the fresh non-null push above), so both source and destination ranges
+    // are in bounds and disjoint.
+    unsafe { core::ptr::copy_nonoverlapping(cc.xml_filename_view().data(), name_buf, prefix_len) };
 
-    let suffix_data: *mut u8 = name_buf.add(prefix_len);
+    // SAFETY: `prefix_len < name_buf_len`, in bounds of the push result.
+    let suffix_data: *mut u8 = unsafe { name_buf.add(prefix_len) };
     let suffix_len: usize = name_buf_len - prefix_len;
 
     // C: `ufbx_string filename;` — both members are written before any read,
     // and upstream carries no partial-init marker here.
     let mut filename = MaybeUninit::<String>::uninit();
     let filename: *mut String = filename.as_mut_ptr();
-    (*filename).data = name_buf;
+    // SAFETY: `filename` is a local; `data` is written here and `length` on
+    // every path before the value is read.
+    unsafe { (*filename).data = name_buf };
 
     if cc.xml_type() == CacheXmlType::SingleFile {
-        (*filename).length =
-            prefix_len + ufbxi_snprintf!(suffix_data, suffix_len, ".%s", extension) as usize;
-        let mut found: bool = false;
-        cache_try_open_file(cc, *filename, core::ptr::null(), &mut found)?;
+        // SAFETY: formats into the `suffix_len` bytes remaining in `name_buf`
+        // (sized for the worst-case name above); `extension` is a
+        // NUL-terminated literal; `*filename` is fully initialized by the
+        // writes above/here before `cache_try_open_file` reads it.
+        unsafe {
+            (*filename).length =
+                prefix_len + ufbxi_snprintf!(suffix_data, suffix_len, ".%s", extension) as usize;
+            let mut found: bool = false;
+            cache_try_open_file(cc, *filename, core::ptr::null(), &mut found)?;
+        }
     } else if cc.xml_type() == CacheXmlType::FilePerFrame {
         let mut lowest_time: u32 = 0;
         loop {
@@ -1623,7 +1741,7 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
             // C: `ufbxi_for(ufbxi_cache_tmp_channel, chan, cc->channels, cc->num_channels)`
             // SAFETY: `cc.channels` is a contiguous `push_zero` run of
             // `cc.num_channels` `CacheTmpChannel`, stable for this load.
-            let chans = SliceViewIter::from_raw_parts(cc.channels(), cc.num_channels());
+            let chans = unsafe { SliceViewIter::from_raw_parts(cc.channels(), cc.num_channels()) };
             for chan in chans {
                 if !chan.try_load() || chan.consecutive_fails() > 10 {
                     continue;
@@ -1657,28 +1775,33 @@ pub(crate) unsafe fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fai
             // Try to load a file at the specified frame/tick
             let frame: u32 = time / cc.xml_ticks_per_frame();
             let tick: u32 = time % cc.xml_ticks_per_frame();
-            if tick == 0 {
-                (*filename).length = prefix_len
-                    + ufbxi_snprintf!(suffix_data, suffix_len, "Frame%u.%s", frame, extension)
-                        as usize;
-            } else {
-                (*filename).length = prefix_len
-                    + ufbxi_snprintf!(
-                        suffix_data,
-                        suffix_len,
-                        "Frame%uTick%u.%s",
-                        frame,
-                        tick,
-                        extension
-                    ) as usize;
-            }
             let mut found: bool = false;
-            cache_try_open_file(cc, *filename, core::ptr::null(), &mut found)?;
+            // SAFETY: same contract as the SingleFile arm — formats into the
+            // remaining `suffix_len` bytes of `name_buf`, then reads the fully
+            // initialized `*filename`.
+            unsafe {
+                if tick == 0 {
+                    (*filename).length = prefix_len
+                        + ufbxi_snprintf!(suffix_data, suffix_len, "Frame%u.%s", frame, extension)
+                            as usize;
+                } else {
+                    (*filename).length = prefix_len
+                        + ufbxi_snprintf!(
+                            suffix_data,
+                            suffix_len,
+                            "Frame%uTick%u.%s",
+                            frame,
+                            tick,
+                            extension
+                        ) as usize;
+                }
+                cache_try_open_file(cc, *filename, core::ptr::null(), &mut found)?;
+            }
 
             // Update channel status
             // C: `ufbxi_for(ufbxi_cache_tmp_channel, chan, cc->channels, cc->num_channels)`
             // SAFETY: same contiguous `cc.channels` run as above.
-            let chans = SliceViewIter::from_raw_parts(cc.channels(), cc.num_channels());
+            let chans = unsafe { SliceViewIter::from_raw_parts(cc.channels(), cc.num_channels()) };
             for chan in chans {
                 if chan.current_time() == time {
                     chan.set_consecutive_fails(if found {
@@ -1778,73 +1901,89 @@ static CACHE_INTERPRETATION_NAMES: [CacheInterpretationName; 3] = [
 // ufbx.c:24572-24634 `ufbxi_cache_setup_channels`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
+pub(crate) fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
     let mut tmp_chan: *mut CacheTmpChannel = cc.channels();
     let tmp_end: *mut CacheTmpChannel = add_ptr(tmp_chan, cc.num_channels());
 
     let mut begin: usize = 0;
     let mut num_channels: usize = 0;
     while begin < cc.cache_view().frames_view().count() {
-        let frame: *mut CacheFrame =
-            (cc.cache_view().frames_view().data() as *mut CacheFrame).add(begin);
-        let mut end: usize = begin + 1;
-        while end < cc.cache_view().frames_view().count()
-            && (*(cc.cache_view().frames_view().data() as *mut CacheFrame).add(end))
-                .channel
-                .data
-                == (*frame).channel.data
-        {
-            end += 1;
-        }
+        // SAFETY: `begin < count` (loop guard) and `end` is bounds-checked
+        // before every deref, so the group scan stays inside the cache's
+        // materialized frames run.
+        let (frame, end) = unsafe {
+            let frame: *mut CacheFrame =
+                (cc.cache_view().frames_view().data() as *mut CacheFrame).add(begin);
+            let mut end: usize = begin + 1;
+            while end < cc.cache_view().frames_view().count()
+                && (*(cc.cache_view().frames_view().data() as *mut CacheFrame).add(end))
+                    .channel
+                    .data
+                    == (*frame).channel.data
+            {
+                end += 1;
+            }
+            (frame, end)
+        };
 
-        let chan: *mut CacheChannel = push_zero(cc.tmp_stack_mut_ptr(), 1);
+        // SAFETY: pushing onto cc's own tmp stack through its raw-ptr getter.
+        let chan: *mut CacheChannel = unsafe { push_zero(cc.tmp_stack_mut_ptr(), 1) };
         ufbxi_check_err!(cc.error_view(), !chan.is_null(), "chan");
 
-        (*chan).name = (*frame).channel;
-        (*chan).interpretation_name = EMPTY_STRING.0;
-        (*chan).frames.data = frame;
-        (*chan).frames.count = end - begin;
+        // SAFETY: `chan` is the fresh non-null push result; `tmp_chan` walks
+        // cc's own channels run bounds-checked against `tmp_end`; the interned
+        // channel-name Strings satisfy `str_less`/`str_equal`.
+        unsafe {
+            (*chan).name = (*frame).channel;
+            (*chan).interpretation_name = EMPTY_STRING.0;
+            (*chan).frames.data = frame;
+            (*chan).frames.count = end - begin;
 
-        while tmp_chan < tmp_end && str_less((*tmp_chan).name, (*chan).name) {
-            tmp_chan = tmp_chan.add(1);
-        }
-        if tmp_chan < tmp_end && str_equal((*tmp_chan).name, (*chan).name) {
-            (*chan).interpretation_name = (*tmp_chan).interpretation;
-        }
+            while tmp_chan < tmp_end && str_less((*tmp_chan).name, (*chan).name) {
+                tmp_chan = tmp_chan.add(1);
+            }
+            if tmp_chan < tmp_end && str_equal((*tmp_chan).name, (*chan).name) {
+                (*chan).interpretation_name = (*tmp_chan).interpretation;
+            }
 
-        if (*frame).file_format == CacheFileFormat::Pc2 {
-            (*chan).interpretation = CacheInterpretation::VertexPosition;
-        } else {
-            // C: `ufbxi_for(const ufbxi_cache_interpretation_name, name, ufbxi_cache_interpretation_names, ufbxi_arraycount(...))`
-            let mut name: *const CacheInterpretationName = CACHE_INTERPRETATION_NAMES.as_ptr();
-            let name_end: *const CacheInterpretationName =
-                name.add(CACHE_INTERPRETATION_NAMES.len());
-            while name != name_end {
-                if r#match(&(*chan).interpretation_name, (*name).pattern) {
-                    (*chan).interpretation = (*name).interpretation;
-                    break;
+            if (*frame).file_format == CacheFileFormat::Pc2 {
+                (*chan).interpretation = CacheInterpretation::VertexPosition;
+            } else {
+                // C: `ufbxi_for(const ufbxi_cache_interpretation_name, name, ufbxi_cache_interpretation_names, ufbxi_arraycount(...))`
+                // The patterns are NUL-terminated literals in a static array.
+                let mut name: *const CacheInterpretationName = CACHE_INTERPRETATION_NAMES.as_ptr();
+                let name_end: *const CacheInterpretationName =
+                    name.add(CACHE_INTERPRETATION_NAMES.len());
+                while name != name_end {
+                    if r#match(&(*chan).interpretation_name, (*name).pattern) {
+                        (*chan).interpretation = (*name).interpretation;
+                        break;
+                    }
+                    name = name.add(1);
                 }
-                name = name.add(1);
             }
         }
 
         let mut mirror_axis: MirrorAxis = MirrorAxis::None;
         let mut scale_factor: Real = 1.0f32 as Real;
-        if (*chan).interpretation != CacheInterpretation::Unknown {
+        // SAFETY: `chan` is the in-bounds push result from above.
+        if unsafe { (*chan).interpretation } != CacheInterpretation::Unknown {
             mirror_axis = cc.opts_view().mirror_axis();
             if cc.opts_view().use_scale_factor() {
                 scale_factor = cc.opts_view().scale_factor();
             }
         }
-        (*chan).mirror_axis = mirror_axis;
-        (*chan).scale_factor = scale_factor;
         // C: `ufbxi_for_list(ufbx_cache_frame, f, chan->frames)`
-        // SAFETY: `chan->frames` is a contiguous run of `count` `CacheFrame`
-        // (a slice of the `tmp_stack`-materialized frames array), stable here.
-        let frames = SliceViewIter::from_raw_parts(
-            (*chan).frames.data as *mut CacheFrame,
-            (*chan).frames.count,
-        );
+        // SAFETY: `chan` as above; `chan->frames` is the contiguous
+        // `end - begin` slice of the materialized frames run, stable here.
+        let frames = unsafe {
+            (*chan).mirror_axis = mirror_axis;
+            (*chan).scale_factor = scale_factor;
+            SliceViewIter::from_raw_parts(
+                (*chan).frames.data as *mut CacheFrame,
+                (*chan).frames.count,
+            )
+        };
         for f in frames {
             f.set_mirror_axis(mirror_axis);
             f.set_scale_factor(scale_factor);
@@ -1854,13 +1993,11 @@ pub(crate) unsafe fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail>
         begin = end;
     }
 
-    cc.cache_view()
-        .channels_view()
-        .set_data(push_pop::<CacheChannel>(
-            cc.result_mut_ptr(),
-            cc.tmp_stack_mut_ptr(),
-            num_channels,
-        ));
+    // SAFETY: popping the `num_channels` channels pushed above from cc's own
+    // tmp stack into cc's own result buffer (both via raw-ptr getters).
+    cc.cache_view().channels_view().set_data(unsafe {
+        push_pop::<CacheChannel>(cc.result_mut_ptr(), cc.tmp_stack_mut_ptr(), num_channels)
+    });
     ufbxi_check_err!(
         cc.error_view(),
         !cc.cache_view().channels_view().data().is_null(),
@@ -2262,122 +2399,148 @@ pub(crate) unsafe fn find_external_file(
 
 // ufbx.c:24878-24944 `ufbxi_load_external_files`
 #[inline(never)]
-pub(crate) unsafe fn load_external_files(uc: &Context) -> Result<(), Fail> {
+pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
     let mut num_files: usize = 0;
 
     // Gather external files to deduplicate them
     // C: `ufbxi_for_ptr_list(ufbx_cache_file, p_cache, uc->scene.cache_files)`
-    let mut p_cache: *mut *mut CacheFile =
-        uc.scene_view().cache_files_view().data() as *mut *mut CacheFile;
-    let p_cache_end: *mut *mut CacheFile =
-        add_ptr(p_cache, uc.scene_view().cache_files_view().count());
-    while p_cache != p_cache_end {
-        let cache: *mut CacheFile = *p_cache;
-        if (*cache).filename.length > 0 {
-            let file: *mut ExternalFile = push_zero(uc.tmp_stack_mut_ptr(), 1);
-            ufbxi_check!(uc, !file.is_null(), "file");
-            // C: `file->index = num_files++;`
-            (*file).index = num_files;
-            num_files += 1;
-            (*file).type_ = ExternalFileType::GeometryCache;
-            (*file).filename = (*cache).filename;
-            (*file).absolute_filename = (*cache).absolute_filename;
+    // SAFETY: walking the stored `cache_files` element-pointer run of the
+    // uc-owned scene (write-provenance arena, `count` entries); each pushed
+    // `file` is the fresh non-null result of a push onto uc's own tmp stack.
+    unsafe {
+        let mut p_cache: *mut *mut CacheFile =
+            uc.scene_view().cache_files_view().data() as *mut *mut CacheFile;
+        let p_cache_end: *mut *mut CacheFile =
+            add_ptr(p_cache, uc.scene_view().cache_files_view().count());
+        while p_cache != p_cache_end {
+            let cache: *mut CacheFile = *p_cache;
+            if (*cache).filename.length > 0 {
+                let file: *mut ExternalFile = push_zero(uc.tmp_stack_mut_ptr(), 1);
+                ufbxi_check!(uc, !file.is_null(), "file");
+                // C: `file->index = num_files++;`
+                (*file).index = num_files;
+                num_files += 1;
+                (*file).type_ = ExternalFileType::GeometryCache;
+                (*file).filename = (*cache).filename;
+                (*file).absolute_filename = (*cache).absolute_filename;
+            }
+            p_cache = p_cache.add(1);
         }
-        p_cache = p_cache.add(1);
     }
 
     // Sort and load the external files
-    let files: *mut ExternalFile = push_pop(uc.tmp_mut_ptr(), uc.tmp_stack_mut_ptr(), num_files);
+    // SAFETY: pops the `num_files` entries pushed above from uc's own tmp
+    // stack into uc's own tmp buffer, then sorts that fresh non-null run
+    // in place with the matching element size.
+    let files: *mut ExternalFile =
+        unsafe { push_pop(uc.tmp_mut_ptr(), uc.tmp_stack_mut_ptr(), num_files) };
     ufbxi_check!(uc, !files.is_null(), "files");
-    unstable_sort(
-        files as *mut c_void,
-        num_files,
-        size_of::<ExternalFile>(),
-        less_external_file,
-        core::ptr::null_mut(),
-    );
+    unsafe {
+        unstable_sort(
+            files as *mut c_void,
+            num_files,
+            size_of::<ExternalFile>(),
+            less_external_file,
+            core::ptr::null_mut(),
+        );
+    }
 
     let mut prev_type: ExternalFileType = ExternalFileType::GeometryCache;
     let mut prev_name: *const u8 = core::ptr::null();
     // C: `ufbxi_for(ufbxi_external_file, file, files, num_files)`
-    let mut file: *mut ExternalFile = files;
-    let file_end: *mut ExternalFile = add_ptr(file, num_files);
-    while file != file_end {
-        if (*file).filename.data == prev_name && (*file).type_ == prev_type {
+    // SAFETY: walking the fresh `num_files`-element run materialized above;
+    // `load_external_cache` receives an in-bounds element of it.
+    unsafe {
+        let mut file: *mut ExternalFile = files;
+        let file_end: *mut ExternalFile = add_ptr(file, num_files);
+        while file != file_end {
+            if (*file).filename.data == prev_name && (*file).type_ == prev_type {
+                file = file.add(1);
+                continue;
+            }
+            if (*file).type_ == ExternalFileType::GeometryCache {
+                load_external_cache(uc, file)?;
+            }
+            prev_name = (*file).filename.data;
+            prev_type = (*file).type_;
             file = file.add(1);
-            continue;
         }
-        if (*file).type_ == ExternalFileType::GeometryCache {
-            load_external_cache(uc, file)?;
-        }
-        prev_name = (*file).filename.data;
-        prev_type = (*file).type_;
-        file = file.add(1);
     }
 
     // Patch the loaded files
     // C: `ufbxi_for_ptr_list(ufbx_cache_file, p_cache, uc->scene.cache_files)`
-    let mut p_cache: *mut *mut CacheFile =
-        uc.scene_view().cache_files_view().data() as *mut *mut CacheFile;
-    let p_cache_end: *mut *mut CacheFile =
-        add_ptr(p_cache, uc.scene_view().cache_files_view().count());
-    while p_cache != p_cache_end {
-        let cache: *mut CacheFile = *p_cache;
-        let file: *mut ExternalFile = find_external_file(
-            files,
-            num_files,
-            ExternalFileType::GeometryCache,
-            (*cache).filename.data,
-        );
-        if !file.is_null() && !(*file).data.is_null() {
-            (*cache).external_cache = Some(Ref::from_ptr((*file).data as *mut GeometryCache));
+    // SAFETY: same stored `cache_files` run as above; `find_external_file`
+    // searches the `num_files` run materialized above; `(*file).data` is
+    // null-checked before the `Ref` wrap.
+    unsafe {
+        let mut p_cache: *mut *mut CacheFile =
+            uc.scene_view().cache_files_view().data() as *mut *mut CacheFile;
+        let p_cache_end: *mut *mut CacheFile =
+            add_ptr(p_cache, uc.scene_view().cache_files_view().count());
+        while p_cache != p_cache_end {
+            let cache: *mut CacheFile = *p_cache;
+            let file: *mut ExternalFile = find_external_file(
+                files,
+                num_files,
+                ExternalFileType::GeometryCache,
+                (*cache).filename.data,
+            );
+            if !file.is_null() && !(*file).data.is_null() {
+                (*cache).external_cache = Some(Ref::from_ptr((*file).data as *mut GeometryCache));
+            }
+            p_cache = p_cache.add(1);
         }
-        p_cache = p_cache.add(1);
     }
 
     // Patch the geometry deformers
     // C: `ufbxi_for_ptr_list(ufbx_cache_deformer, p_deformer, uc->scene.cache_deformers)`
-    let mut p_deformer: *mut *mut CacheDeformer =
-        uc.scene_view().cache_deformers_view().data() as *mut *mut CacheDeformer;
-    let p_deformer_end: *mut *mut CacheDeformer =
-        add_ptr(p_deformer, uc.scene_view().cache_deformers_view().count());
-    while p_deformer != p_deformer_end {
-        let deformer: *mut CacheDeformer = *p_deformer;
-        let file: *mut CacheFile = opt_ptr(&(*deformer).file);
-        if file.is_null() || opt_ptr(&(*file).external_cache).is_null() {
-            p_deformer = p_deformer.add(1);
-            continue;
-        }
-        let cache: *mut GeometryCache = opt_ptr(&(*file).external_cache);
-        (*deformer).external_cache = Some(Ref::from_ptr(cache));
-
-        // HACK: It seems like channels may be connected even if the name is wrong
-        // and they work when exporting from Marvelous to Maya...
-        if (*cache).channels.count == 1 {
-            (*deformer).external_channel = Some(Ref::from_ptr(
-                ((*cache).channels.data as *mut CacheChannel).add(0),
-            ));
-        } else {
-            let channel: String = (*deformer).channel;
-            // C: `size_t ix = SIZE_MAX;` — pre-initialized because
-            // `ufbxi_macro_lower_bound_eq` does NOT write the out-param on a miss.
-            let mut ix: usize = usize::MAX;
-            macro_lower_bound_eq::<CacheChannel>(
-                16,
-                &mut ix,
-                (*cache).channels.data,
-                0,
-                (*cache).channels.count,
-                |a: *const CacheChannel| str_less((*a).name, channel),
-                |a: *const CacheChannel| (*a).name.data == channel.data,
-            );
-            if ix != usize::MAX {
-                (*deformer).external_channel = Some(Ref::from_ptr(
-                    ((*cache).channels.data as *mut CacheChannel).add(ix),
-                ));
+    // SAFETY: walking the stored `cache_deformers` element-pointer run of the
+    // uc-owned scene; every deref below is either null-checked (`opt_ptr`
+    // results) or an in-bounds element of the deformer's channel list
+    // (`count == 1` fast path / lower-bound hit `ix < count`).
+    unsafe {
+        let mut p_deformer: *mut *mut CacheDeformer =
+            uc.scene_view().cache_deformers_view().data() as *mut *mut CacheDeformer;
+        let p_deformer_end: *mut *mut CacheDeformer =
+            add_ptr(p_deformer, uc.scene_view().cache_deformers_view().count());
+        while p_deformer != p_deformer_end {
+            let deformer: *mut CacheDeformer = *p_deformer;
+            let file: *mut CacheFile = opt_ptr(&(*deformer).file);
+            if file.is_null() || opt_ptr(&(*file).external_cache).is_null() {
+                p_deformer = p_deformer.add(1);
+                continue;
             }
+            let cache: *mut GeometryCache = opt_ptr(&(*file).external_cache);
+            (*deformer).external_cache = Some(Ref::from_ptr(cache));
+
+            // HACK: It seems like channels may be connected even if the name is wrong
+            // and they work when exporting from Marvelous to Maya...
+            if (*cache).channels.count == 1 {
+                (*deformer).external_channel = Some(Ref::from_ptr(
+                    ((*cache).channels.data as *mut CacheChannel).add(0),
+                ));
+            } else {
+                let channel: String = (*deformer).channel;
+                // C: `size_t ix = SIZE_MAX;` — pre-initialized because
+                // `ufbxi_macro_lower_bound_eq` does NOT write the out-param on a miss.
+                let mut ix: usize = usize::MAX;
+                macro_lower_bound_eq::<CacheChannel>(
+                    16,
+                    &mut ix,
+                    (*cache).channels.data,
+                    0,
+                    (*cache).channels.count,
+                    |a: *const CacheChannel| str_less((*a).name, channel),
+                    |a: *const CacheChannel| (*a).name.data == channel.data,
+                );
+                if ix != usize::MAX {
+                    (*deformer).external_channel = Some(Ref::from_ptr(
+                        ((*cache).channels.data as *mut CacheChannel).add(ix),
+                    ));
+                }
+            }
+            p_deformer = p_deformer.add(1);
         }
-        p_deformer = p_deformer.add(1);
     }
 
     Ok(())
@@ -2385,19 +2548,24 @@ pub(crate) unsafe fn load_external_files(uc: &Context) -> Result<(), Fail> {
 
 // ufbx.c:24946-24981 `ufbxi_transform_to_axes`
 #[inline(never)]
-pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
+pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
     if !coordinate_axes_valid(uc.scene_view().settings_view().axes()) {
         return;
     }
-    if !axis_matrix(
-        uc.axis_matrix_mut_ptr(),
-        uc.scene_view().settings_view().axes(),
-        dst_axes,
-    ) {
+    // SAFETY: writes uc's own `axis_matrix` storage through its raw-ptr
+    // getter; the axes arguments are by-value.
+    if !unsafe {
+        axis_matrix(
+            uc.axis_matrix_mut_ptr(),
+            uc.scene_view().settings_view().axes(),
+            dst_axes,
+        )
+    } {
         return;
     }
 
-    if matrix_determinant(&uc.axis_matrix()) < 0.0f32 as Real {
+    // SAFETY: pure value math over a local copy of the matrix.
+    if unsafe { matrix_determinant(&uc.axis_matrix()) } < 0.0f32 as Real {
         if uc.opts_view().handedness_conversion_axis() != MirrorAxis::None {
             let mirror_axis: MirrorAxis = uc.opts_view().handedness_conversion_axis();
             uc.set_mirror_axis(mirror_axis);
@@ -2405,47 +2573,65 @@ pub(crate) unsafe fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
                 .metadata_view()
                 .set_mirror_axis(uc.mirror_axis());
 
-            mirror_matrix_dst(uc.axis_matrix_mut_ptr(), uc.mirror_axis());
-            ufbxi_dev_assert!(matrix_determinant(&uc.axis_matrix()) >= 0.0f32 as Real);
+            // SAFETY: in-place update of uc's own `axis_matrix` storage,
+            // then a pure value read of it.
+            unsafe {
+                mirror_matrix_dst(uc.axis_matrix_mut_ptr(), uc.mirror_axis());
+                ufbxi_dev_assert!(matrix_determinant(&uc.axis_matrix()) >= 0.0f32 as Real);
+            }
 
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
-            let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
-            let p_node_end: *mut *mut Node = add_ptr(p_node, uc.scene_view().nodes_view().count());
-            while p_node != p_node_end {
-                let node: *mut Node = *p_node;
-                if !(*node).is_root {
-                    (*node).adjust_mirror_axis = mirror_axis;
+            // SAFETY: walking the stored `nodes` element-pointer run of the
+            // uc-owned scene (write-provenance arena, `count` entries).
+            unsafe {
+                let mut p_node: *mut *mut Node =
+                    uc.scene_view().nodes_view().data() as *mut *mut Node;
+                let p_node_end: *mut *mut Node =
+                    add_ptr(p_node, uc.scene_view().nodes_view().count());
+                while p_node != p_node_end {
+                    let node: *mut Node = *p_node;
+                    if !(*node).is_root {
+                        (*node).adjust_mirror_axis = mirror_axis;
+                    }
+                    p_node = p_node.add(1);
                 }
-                p_node = p_node.add(1);
             }
         }
     }
 
     if uc.opts_view().space_conversion() == SpaceConversion::TransformRoot {
         let mut axis_mat: Matrix = uc.axis_matrix();
-        let root_node: *mut Node = ref_ptr(uc.scene_view().root_node_ptr());
-        if !is_transform_identity(&(*root_node).local_transform) {
-            let root_mat: Matrix = transform_to_matrix(&(*root_node).local_transform);
-            axis_mat = matrix_mul(&root_mat, &axis_mat);
+        // SAFETY: `root_node` is the scene's stored (always-resolved) root
+        // reference from the uc arena; the matrix helpers are pure value math
+        // over locals and the root's own transform fields.
+        unsafe {
+            let root_node: *mut Node = ref_ptr(uc.scene_view().root_node_ptr());
+            if !is_transform_identity(&(*root_node).local_transform) {
+                let root_mat: Matrix = transform_to_matrix(&(*root_node).local_transform);
+                axis_mat = matrix_mul(&root_mat, &axis_mat);
+            }
+
+            mirror_matrix(&mut axis_mat, uc.mirror_axis());
+
+            (*root_node).local_transform = matrix_to_transform(&axis_mat);
+            (*root_node).node_to_parent = axis_mat;
         }
-
-        mirror_matrix(&mut axis_mat, uc.mirror_axis());
-
-        (*root_node).local_transform = matrix_to_transform(&axis_mat);
-        (*root_node).node_to_parent = axis_mat;
     }
 }
 
 // ufbx.c:24983-25010 `ufbxi_scale_units`
 #[inline(never)]
-pub(crate) unsafe fn scale_units(uc: &Context, mut target_meters: Real) -> Result<(), Fail> {
+pub(crate) fn scale_units(uc: &Context, mut target_meters: Real) -> Result<(), Fail> {
     if uc.scene_view().settings_view().unit_meters() <= 0.0f32 as Real {
         return Ok(());
     }
-    target_meters = round_if_near(POW10_TARGETS.as_ptr(), POW10_TARGETS.len(), target_meters);
+    // SAFETY: scans the static `POW10_TARGETS` array with its own length.
+    target_meters =
+        unsafe { round_if_near(POW10_TARGETS.as_ptr(), POW10_TARGETS.len(), target_meters) };
 
     let mut ratio: Real = uc.scene_view().settings_view().unit_meters() / target_meters;
-    ratio = round_if_near(POW10_TARGETS.as_ptr(), POW10_TARGETS.len(), ratio);
+    // SAFETY: as above.
+    ratio = unsafe { round_if_near(POW10_TARGETS.as_ptr(), POW10_TARGETS.len(), ratio) };
     if ratio == 1.0f32 as Real {
         return Ok(());
     }
@@ -2453,19 +2639,23 @@ pub(crate) unsafe fn scale_units(uc: &Context, mut target_meters: Real) -> Resul
     uc.set_unit_scale(ratio);
 
     if uc.opts_view().space_conversion() == SpaceConversion::TransformRoot {
-        let root_node: *mut Node = ref_ptr(uc.scene_view().root_node_ptr());
-        (*root_node).local_transform.scale.x *= ratio;
-        (*root_node).local_transform.scale.y *= ratio;
-        (*root_node).local_transform.scale.z *= ratio;
-        (*root_node).node_to_parent.m00 *= ratio;
-        (*root_node).node_to_parent.m01 *= ratio;
-        (*root_node).node_to_parent.m02 *= ratio;
-        (*root_node).node_to_parent.m10 *= ratio;
-        (*root_node).node_to_parent.m11 *= ratio;
-        (*root_node).node_to_parent.m12 *= ratio;
-        (*root_node).node_to_parent.m20 *= ratio;
-        (*root_node).node_to_parent.m21 *= ratio;
-        (*root_node).node_to_parent.m22 *= ratio;
+        // SAFETY: `root_node` is the scene's stored (always-resolved) root
+        // reference from the uc arena; the writes stay within its fields.
+        unsafe {
+            let root_node: *mut Node = ref_ptr(uc.scene_view().root_node_ptr());
+            (*root_node).local_transform.scale.x *= ratio;
+            (*root_node).local_transform.scale.y *= ratio;
+            (*root_node).local_transform.scale.z *= ratio;
+            (*root_node).node_to_parent.m00 *= ratio;
+            (*root_node).node_to_parent.m01 *= ratio;
+            (*root_node).node_to_parent.m02 *= ratio;
+            (*root_node).node_to_parent.m10 *= ratio;
+            (*root_node).node_to_parent.m11 *= ratio;
+            (*root_node).node_to_parent.m12 *= ratio;
+            (*root_node).node_to_parent.m20 *= ratio;
+            (*root_node).node_to_parent.m21 *= ratio;
+            (*root_node).node_to_parent.m22 *= ratio;
+        }
     }
 
     Ok(())
