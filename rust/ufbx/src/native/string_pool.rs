@@ -31,9 +31,7 @@ use crate::native::error::{
     memcmp, strlen, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_check_return_err,
     utf8_valid_length, Fail, EMPTY_CHAR,
 };
-use crate::native::hash::{
-    hash_string, hash_string_check_ascii, map_find, map_free, map_grow, map_insert, Map,
-};
+use crate::native::hash::{hash_string, hash_string_check_ascii, map_free, Map};
 use crate::native::platform::{
     math, min_real, min_sz, to_size, ufbx_assert, ufbxi_regression_assert,
 };
@@ -90,6 +88,11 @@ impl StringPoolView {
     #[inline(always)]
     pub(crate) fn map_mut_ptr(&self) -> *mut Map {
         unsafe { &raw mut (*self.get()).map }
+    }
+    // `map` (Map) — typed VIEW handle (reinterpret-in-place); accessors on MapView.
+    #[inline(always)]
+    pub(crate) fn map_view(&self) -> &crate::native::hash::MapView {
+        unsafe { &*(&raw mut (*self.get()).map as *mut crate::native::hash::MapView) }
     }
     #[inline(always)]
     pub(crate) fn set_initial_size(&self, initial_size: usize) {
@@ -555,7 +558,9 @@ pub(crate) unsafe fn push_sanitized_string(
     );
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        map_grow::<String>(&mut (*pool).map, (*pool).initial_size),
+        StringPoolView::from_ptr(pool)
+            .map_view()
+            .grow::<String>((*pool).initial_size),
         "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
     );
 
@@ -584,19 +589,15 @@ pub(crate) unsafe fn push_sanitized_string(
 
     let ref_ = String::new_c(total_data, total_length);
 
-    let entry: *mut String = map_find::<String>(
-        &mut (*pool).map,
-        hash,
-        &ref_ as *const String as *const c_void,
-    );
+    let entry: *mut String = StringPoolView::from_ptr(pool)
+        .map_view()
+        .find::<String, _>(hash, &ref_);
     if !entry.is_null() {
         (*sanitized).raw_data = (*entry).data;
     } else {
-        let entry = map_insert::<String>(
-            &mut (*pool).map,
-            hash,
-            &ref_ as *const String as *const c_void,
-        );
+        let entry = StringPoolView::from_ptr(pool)
+            .map_view()
+            .insert::<String, _>(hash, &ref_);
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
             !entry.is_null(),
@@ -635,7 +636,9 @@ pub(crate) unsafe fn push_string_imp(
 
     ufbxi_check_return_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        map_grow::<String>(&mut (*pool).map, (*pool).initial_size),
+        StringPoolView::from_ptr(pool)
+            .map_view()
+            .grow::<String>((*pool).initial_size),
         ptr::null(),
         "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
     );
@@ -671,19 +674,15 @@ pub(crate) unsafe fn push_string_imp(
 
     let ref_ = String::new_c(str_, length);
 
-    let entry: *mut String = map_find::<String>(
-        &mut (*pool).map,
-        hash,
-        &ref_ as *const String as *const c_void,
-    );
+    let entry: *mut String = StringPoolView::from_ptr(pool)
+        .map_view()
+        .find::<String, _>(hash, &ref_);
     if !entry.is_null() {
         return (*entry).data;
     }
-    let entry = map_insert::<String>(
-        &mut (*pool).map,
-        hash,
-        &ref_ as *const String as *const c_void,
-    );
+    let entry = StringPoolView::from_ptr(pool)
+        .map_view()
+        .insert::<String, _>(hash, &ref_);
     ufbxi_check_return_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
         !entry.is_null(),

@@ -5387,17 +5387,13 @@ pub(crate) unsafe fn read_anim_stack(
     ufbxi_check!(uc, !stack.is_null(), "stack");
 
     let hash: u32 = crate::native::hash::hash_ptr!((*info).name.data);
-    let mut entry: *mut TmpAnimStack = map_find::<TmpAnimStack>(
-        uc.anim_stack_map_mut_ptr(),
-        hash,
-        &(*info).name.data as *const *const u8 as *const c_void,
-    );
+    let mut entry: *mut TmpAnimStack = uc
+        .anim_stack_map_view()
+        .find::<TmpAnimStack, _>(hash, &(*info).name.data);
     if entry.is_null() {
-        entry = map_insert::<TmpAnimStack>(
-            uc.anim_stack_map_mut_ptr(),
-            hash,
-            &(*info).name.data as *const *const u8 as *const c_void,
-        );
+        entry = uc
+            .anim_stack_map_view()
+            .insert::<TmpAnimStack, _>(hash, &(*info).name.data);
         ufbxi_check!(uc, !entry.is_null(), "entry");
         (*entry).name = (*info).name.data;
         (*entry).stack = stack;
@@ -7353,20 +7349,15 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     // for fallback in case the information is missing in the stacks.
     if uc.version() >= 7000 {
         let hash: u32 = crate::native::hash::hash_ptr!(name);
-        // SAFETY: the key is a local pooled `char*` passed by pointer to uc's
-        // own `anim_stack_map`, whose entries are `TmpAnimStack` keyed by that
-        // pointer; a non-null entry holds a live element of uc's own scene, so
-        // its `props` run may be filled from the local `tmp_props` array — the
-        // `num_props` copied were written into it above.
-        let entry: *mut TmpAnimStack = unsafe {
-            map_find::<TmpAnimStack>(
-                uc.anim_stack_map_mut_ptr(),
-                hash,
-                &name as *const *const u8 as *const c_void,
-            )
-        };
+        let entry: *mut TmpAnimStack = uc
+            .anim_stack_map_view()
+            .find::<TmpAnimStack, _>(hash, &name);
 
         if !entry.is_null() {
+            // SAFETY: a non-null entry holds a live element of uc's own
+            // scene, so its `props` run may be filled from the local
+            // `tmp_props` array — the `num_props` copied were written into it
+            // above.
             unsafe {
                 let stack: *mut AnimStack = (*entry).stack;
                 if (*stack).element.props.props.count == 0 {

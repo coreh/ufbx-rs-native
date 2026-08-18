@@ -263,6 +263,41 @@ impl MapView {
     pub(crate) fn items(&self) -> *mut core::ffi::c_void {
         unsafe { (*self.get()).items }
     }
+
+    // Safe typed map operations over the view (ufbx.c:4657-4659 macros).
+    //
+    // `K` is the key type the map's `cmp_fn` was initialized for (untyped
+    // `const void *` in C). Key validity: the cmp may dereference pointers
+    // *inside* `K` (e.g. `map_cmp_const_char_ptr` follows the stored `char *`
+    // to a NUL-terminated string) — callers must pass keys meeting that
+    // pointee contract, same standing as the printf `%s` PrintArg contract.
+
+    // ufbx.c:4657 `ufbxi_map_grow(map, type, min_size)`
+    #[inline(always)]
+    pub(crate) fn grow<T>(&self, min_size: usize) -> bool {
+        // SAFETY: the view is only minted over a live, `map_init`ed `Map`
+        // (write provenance); growth allocates through the map's own stored
+        // allocator, live for the map's lifetime.
+        unsafe { map_grow::<T>(self.get(), min_size) }
+    }
+
+    // ufbx.c:4658 `ufbxi_map_find(map, type, hash, key)`
+    #[inline(always)]
+    pub(crate) fn find<T, K>(&self, hash: u32, key: &K) -> *mut T {
+        // SAFETY: view invariant as in `grow`; `cmp_fn` is the C-callback
+        // contract the map was initialized with, comparing `key` against
+        // stored items of the same key discipline (see impl-level note).
+        unsafe { map_find::<T>(self.get(), hash, key as *const K as *const c_void) }
+    }
+
+    // ufbx.c:4659 `ufbxi_map_insert(map, type, hash, key)`
+    #[inline(always)]
+    #[must_use]
+    pub(crate) fn insert<T, K>(&self, hash: u32, key: &K) -> *mut T {
+        // SAFETY: same as `find`; insertion may grow through the map's own
+        // stored allocator.
+        unsafe { map_insert::<T>(self.get(), hash, key as *const K as *const c_void) }
+    }
 }
 
 // ufbx.c:4393-4420 `ufbxi_map_init`

@@ -2739,6 +2739,14 @@ impl Context {
     pub(crate) fn texture_file_map_view(&self) -> &crate::native::hash::MapView {
         unsafe { &*(&raw mut (*self.get()).texture_file_map as *mut crate::native::hash::MapView) }
     }
+    #[inline(always)]
+    pub(crate) fn prop_type_map_view(&self) -> &crate::native::hash::MapView {
+        unsafe { &*(&raw mut (*self.get()).prop_type_map as *mut crate::native::hash::MapView) }
+    }
+    #[inline(always)]
+    pub(crate) fn anim_stack_map_view(&self) -> &crate::native::hash::MapView {
+        unsafe { &*(&raw mut (*self.get()).anim_stack_map as *mut crate::native::hash::MapView) }
+    }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
     #[inline(always)]
@@ -7695,14 +7703,8 @@ pub(crate) static NODE_PROP_NAMES: NodePropNameTable = NodePropNameTable([
 pub(crate) fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        // SAFETY: growing `uc`'s own `node_prop_set` map through its raw-ptr
-        // getter, with the item type it was constructed for.
-        unsafe {
-            crate::native::hash::map_grow::<*const u8>(
-                uc.node_prop_set_mut_ptr(),
-                NODE_PROP_NAMES.0.len()
-            )
-        },
+        uc.node_prop_set_view()
+            .grow::<*const u8>(NODE_PROP_NAMES.0.len()),
         "ufbxi_map_grow_size((&uc->node_prop_set), sizeof(const char*), ((sizeof(ufbxi_node_prop_names) / sizeof(*(ufbxi_node_prop_names)))))"
     );
     // C: `for (size_t i = 0; i < ufbxi_arraycount(ufbxi_node_prop_names); i++)`
@@ -7725,16 +7727,13 @@ pub(crate) fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
         };
         ufbxi_check!(uc, !pooled.is_null(), "pooled");
         let hash: u32 = crate::native::hash::hash_ptr!(pooled);
-        // SAFETY: inserting into `uc`'s own `node_prop_set` through its raw-ptr
-        // getter, keyed by a live local of the map's item type; a non-null
-        // result is a writable entry owned by that map.
+        let entry: *mut *const u8 = uc
+            .node_prop_set_view()
+            .insert::<*const u8, _>(hash, &pooled);
+        ufbxi_check!(uc, !entry.is_null(), "entry");
+        // SAFETY: a non-null insert result is a fresh writable entry owned by
+        // the map.
         unsafe {
-            let entry: *mut *const u8 = map_insert::<*const u8>(
-                uc.node_prop_set_mut_ptr(),
-                hash,
-                &pooled as *const *const u8 as *const c_void,
-            );
-            ufbxi_check!(uc, !entry.is_null(), "entry");
             *entry = pooled;
         }
         i += 1;
@@ -7751,11 +7750,7 @@ pub(crate) unsafe fn is_node_property_name(uc: &Context, name: *const u8) -> boo
     // C takes the address of the parameter itself (`&name`) as the map key.
     let name: *const u8 = name;
     let hash = crate::native::hash::hash_ptr!(name);
-    let entry: *mut *const u8 = map_find(
-        uc.node_prop_set_mut_ptr(),
-        hash,
-        &name as *const *const u8 as *const c_void,
-    );
+    let entry: *mut *const u8 = uc.node_prop_set_view().find::<*const u8, _>(hash, &name);
     !entry.is_null()
 }
 
@@ -7764,14 +7759,8 @@ pub(crate) unsafe fn is_node_property_name(uc: &Context, name: *const u8) -> boo
 pub(crate) fn load_maps(uc: &Context) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        // SAFETY: growing `uc`'s own `prop_type_map` through its raw-ptr
-        // getter, with the item type it was constructed for.
-        unsafe {
-            crate::native::hash::map_grow::<PropTypeName>(
-                uc.prop_type_map_mut_ptr(),
-                PROP_TYPE_NAMES.0.len()
-            )
-        },
+        uc.prop_type_map_view()
+            .grow::<PropTypeName>(PROP_TYPE_NAMES.0.len()),
         "ufbxi_map_grow_size((&uc->prop_type_map), sizeof(ufbxi_prop_type_name), ((sizeof(ufbxi_prop_type_names) / sizeof(*(ufbxi_prop_type_names)))))"
     );
     // C: `ufbxi_for(const ufbxi_prop_type_name, name, ufbxi_prop_type_names, ...)`
@@ -7792,16 +7781,13 @@ pub(crate) fn load_maps(uc: &Context) -> Result<(), Fail> {
         };
         ufbxi_check!(uc, !pooled.is_null(), "pooled");
         let hash: u32 = crate::native::hash::hash_ptr!(pooled);
-        // SAFETY: inserting into `uc`'s own `prop_type_map` through its raw-ptr
-        // getter, keyed by a live local; a non-null result is a writable entry
-        // owned by that map.
+        let entry: *mut PropTypeName = uc
+            .prop_type_map_view()
+            .insert::<PropTypeName, _>(hash, &pooled);
+        ufbxi_check!(uc, !entry.is_null(), "entry");
+        // SAFETY: a non-null insert result is a fresh writable entry owned by
+        // the map.
         unsafe {
-            let entry: *mut PropTypeName = map_insert::<PropTypeName>(
-                uc.prop_type_map_mut_ptr(),
-                hash,
-                &pooled as *const *const u8 as *const c_void,
-            );
-            ufbxi_check!(uc, !entry.is_null(), "entry");
             (*entry).type_ = name.type_;
             (*entry).name = pooled;
         }
