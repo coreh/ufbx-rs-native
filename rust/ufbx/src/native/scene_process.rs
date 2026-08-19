@@ -221,7 +221,7 @@ use crate::native::api::{
     transform_direction, transform_position, transform_to_matrix, EMPTY_BLOB, EMPTY_STRING,
     IDENTITY_MATRIX, IDENTITY_QUAT, IDENTITY_TRANSFORM, ZERO_VEC3,
 };
-use crate::native::buf::{buf_clear, buf_free, pop, push, push_copy, push_pop, push_zero, Buf};
+use crate::native::buf::{buf_clear, buf_free, pop, push, push_copy, push_pop, Buf};
 use crate::native::error::{
     memcmp, strcmp, strlen, ufbxi_check, ufbxi_check_err, ufbxi_check_msg, ufbxi_snprintf, Fail,
     EMPTY_CHAR,
@@ -427,17 +427,13 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
     let num_elements: u32 = uc.num_elements();
     let num_nodes: usize = uc.tmp_node_ids_view().num_items();
-    // SAFETY: every allocation in this prologue pops from, or pushes onto, uc's
-    // own buffers through its raw-ptr getters, with the element/node/connection
-    // counts read from those same buffers — so each returned run is exactly as
-    // long as the loops below assume.
-    let elements: *mut *mut Element = unsafe {
-        push_pop::<*mut Element>(
-            uc.tmp_parse_mut_ptr(),
-            uc.tmp_element_ptrs_mut_ptr(),
-            num_elements as usize,
-        )
-    };
+    // Every allocation in this prologue pops from, or pushes onto, uc's own
+    // buffers, with the element/node/connection counts read from those same
+    // buffers — so each returned run is exactly as long as the loops below
+    // assume.
+    let elements: *mut *mut Element = uc
+        .tmp_parse_view()
+        .push_pop::<*mut Element>(uc.tmp_element_ptrs_view(), num_elements as usize);
     ufbxi_check!(uc, !elements.is_null(), "elements");
 
     let num_connections: usize = uc.tmp_connections_view().num_items();
@@ -446,71 +442,53 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         .push_peek::<TmpConnection>(uc.tmp_connections_view(), num_connections);
     ufbxi_check!(uc, !tmp_connections.is_null(), "tmp_connections");
 
-    // SAFETY: same tmp_parse push contract as above.
     let pre_connections: *mut PreConnection =
-        unsafe { push::<PreConnection>(uc.tmp_parse_mut_ptr(), num_connections) };
+        uc.tmp_parse_view().push::<PreConnection>(num_connections);
     ufbxi_check!(uc, !pre_connections.is_null(), "pre_connections");
 
-    // SAFETY: same tmp_parse push contract as above.
-    let instance_counts: *mut u32 =
-        unsafe { push_zero::<u32>(uc.tmp_parse_mut_ptr(), num_elements as usize) };
+    let instance_counts: *mut u32 = uc.tmp_parse_view().push_zero::<u32>(num_elements as usize);
     ufbxi_check!(uc, !instance_counts.is_null(), "instance_counts");
 
-    // SAFETY: same tmp_parse push contract as above.
     let modify_not_supported: *mut bool =
-        unsafe { push_zero::<bool>(uc.tmp_parse_mut_ptr(), num_elements as usize) };
+        uc.tmp_parse_view().push_zero::<bool>(num_elements as usize);
     ufbxi_check!(uc, !modify_not_supported.is_null(), "modify_not_supported");
 
-    // SAFETY: same tmp_parse push contract as above.
     let node_attrib_type: *mut ElementType =
-        unsafe { push_zero::<ElementType>(uc.tmp_parse_mut_ptr(), num_nodes) };
+        uc.tmp_parse_view().push_zero::<ElementType>(num_nodes);
     ufbxi_check!(uc, !node_attrib_type.is_null(), "node_attrib_type");
 
-    // SAFETY: same tmp_parse push contract as above.
-    let has_unscaled_children: *mut bool =
-        unsafe { push_zero::<bool>(uc.tmp_parse_mut_ptr(), num_nodes) };
+    let has_unscaled_children: *mut bool = uc.tmp_parse_view().push_zero::<bool>(num_nodes);
     ufbxi_check!(
         uc,
         !has_unscaled_children.is_null(),
         "has_unscaled_children"
     );
 
-    // SAFETY: same tmp_parse push contract as above.
-    let has_scale_animation: *mut bool =
-        unsafe { push_zero::<bool>(uc.tmp_parse_mut_ptr(), num_nodes) };
+    let has_scale_animation: *mut bool = uc.tmp_parse_view().push_zero::<bool>(num_nodes);
     ufbxi_check!(uc, !has_scale_animation.is_null(), "has_scale_animation");
     // C-parity: `has_scale_animation` is allocated and checked but never read
     // upstream; the allocation is observable so it stays.
 
-    // SAFETY: same tmp_parse push contract as above.
-    let pre_nodes: *mut PreNode =
-        unsafe { push_zero::<PreNode>(uc.tmp_parse_mut_ptr(), num_nodes) };
+    let pre_nodes: *mut PreNode = uc.tmp_parse_view().push_zero::<PreNode>(num_nodes);
     ufbxi_check!(uc, !pre_nodes.is_null(), "pre_nodes");
 
     let num_meshes: usize = uc
         .tmp_typed_element_offsets_at(ElementType::Mesh as usize)
         .num_items();
-    // SAFETY: same tmp_parse push contract as above.
-    let pre_meshes: *mut PreMesh =
-        unsafe { push_zero::<PreMesh>(uc.tmp_parse_mut_ptr(), num_meshes) };
+    let pre_meshes: *mut PreMesh = uc.tmp_parse_view().push_zero::<PreMesh>(num_meshes);
     ufbxi_check!(uc, !pre_meshes.is_null(), "pre_meshes");
 
     let num_anim_values: usize = uc
         .tmp_typed_element_offsets_at(ElementType::AnimValue as usize)
         .num_items();
-    // SAFETY: same tmp_parse push contract as above.
-    let pre_anim_values: *mut PreAnimValue =
-        unsafe { push_zero::<PreAnimValue>(uc.tmp_parse_mut_ptr(), num_anim_values) };
+    let pre_anim_values: *mut PreAnimValue = uc
+        .tmp_parse_view()
+        .push_zero::<PreAnimValue>(num_anim_values);
     ufbxi_check!(uc, !pre_anim_values.is_null(), "pre_anim_values");
 
-    // SAFETY: same tmp_parse push contract as above.
-    let fbx_ids: *mut u64 = unsafe {
-        push_pop::<u64>(
-            uc.tmp_parse_mut_ptr(),
-            uc.tmp_element_fbx_ids_mut_ptr(),
-            num_elements as usize,
-        )
-    };
+    let fbx_ids: *mut u64 = uc
+        .tmp_parse_view()
+        .push_pop::<u64>(uc.tmp_element_fbx_ids_view(), num_elements as usize);
     ufbxi_check!(uc, !fbx_ids.is_null(), "fbx_ids");
 
     // TODO
@@ -886,7 +864,7 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             child_offset = neg3(rotation_pivot);
                             geometric_translation = add3(geometric_translation, child_offset);
 
-                            new_props = push_zero::<Prop>(uc.result_mut_ptr(), num_props + 3);
+                            new_props = uc.result_view().push_zero::<Prop>(num_props + 3);
                             ufbxi_check!(uc, !new_props.is_null(), "new_props");
                             ptr::copy_nonoverlapping(
                                 (*node).element.props.props.data,
@@ -957,7 +935,7 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             let new_scaling_offset: Vec3 = sub3(scaled_offset, new_scaling_pivot);
                             child_offset = sub3(unscaled_offset, scaling_pivot);
 
-                            new_props = push_zero::<Prop>(uc.result_mut_ptr(), num_props + 4);
+                            new_props = uc.result_view().push_zero::<Prop>(num_props + 4);
                             ufbxi_check!(uc, !new_props.is_null(), "new_props");
                             ptr::copy_nonoverlapping(
                                 (*node).element.props.props.data,
@@ -1438,27 +1416,19 @@ pub(crate) fn find_attribute_fbx_id(uc: &Context, node_fbx_id: u64) -> u64 {
 #[inline(never)]
 pub(crate) fn resolve_connections(uc: &Context) -> Result<(), Fail> {
     let num_connections: usize = uc.tmp_connections_view().num_items();
-    // SAFETY: pops the `num_connections` recorded connections from uc's own
-    // `tmp_connections` buffer into uc's own tmp buffer.
-    let tmp_connections: *mut TmpConnection = unsafe {
-        push_pop(
-            uc.tmp_mut_ptr(),
-            uc.tmp_connections_mut_ptr(),
-            num_connections,
-        )
-    };
+    // Pops the `num_connections` recorded connections from uc's
+    // `tmp_connections` buffer into uc's tmp buffer.
+    let tmp_connections: *mut TmpConnection = uc
+        .tmp_view()
+        .push_pop(uc.tmp_connections_view(), num_connections);
     // SAFETY: frees the drained buffer through uc's raw-ptr getter.
     unsafe { buf_free(uc.tmp_connections_mut_ptr()) };
     ufbxi_check!(uc, !tmp_connections.is_null(), "tmp_connections");
 
-    // SAFETY: pushes `num_connections` entries onto uc's own result buffer
-    // through its raw-ptr getter.
-    unsafe {
-        // NOTE: We truncate this array in case not all connections are resolved
-        uc.scene_view()
-            .connections_src_view()
-            .set_data(push::<Connection>(uc.result_mut_ptr(), num_connections));
-    }
+    // NOTE: We truncate this array in case not all connections are resolved
+    uc.scene_view()
+        .connections_src_view()
+        .set_data(uc.result_view().push::<Connection>(num_connections));
     ufbxi_check!(
         uc,
         !uc.scene_view().connections_src_view().data().is_null(),
@@ -1701,10 +1671,9 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
     // Within an element: `prop` walks that element's own property run against
     // `prop_end`; `anim_def_prop` is a local fully zeroed before use;
     // `find_prop_with_key` reads the element's own (`is_some`-checked) defaults
-    // table through an arena-anchored view; and each `push_copy`/`push_zero`/
-    // `push_pop` moves the counted properties between uc's own tmp stack and
-    // result buffers, with the pushed run null-checked before it is stored back
-    // on the element.
+    // table through an arena-anchored view; and each `push_copy` copies the
+    // counted properties out of the element's own property run onto uc's tmp
+    // stack.
     unsafe {
         // C: `ufbxi_for_ptr(ufbx_element, p_elem, uc->scene.elements.data, uc->scene.elements.count)`
         let mut p_elem: *mut *mut Element =
@@ -1854,7 +1823,7 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
                             flags |= PropFlags::NO_VALUE.raw();
                         }
 
-                        let new_prop: *mut Prop = push_zero(uc.tmp_stack_mut_ptr(), 1);
+                        let new_prop: *mut Prop = uc.tmp_stack_view().push_zero(1);
                         ufbxi_check!(uc, !new_prop.is_null(), "new_prop");
                         if !def_prop.is_null() {
                             *new_prop = *def_prop;
@@ -1885,11 +1854,9 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
                         .is_null(),
                         "((ufbx_prop*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_prop), (((size_t)(prop_end - copy_start))), (copy_start)))"
                     );
-                    (*elem).props.props.data = push_pop::<Prop>(
-                        uc.result_mut_ptr(),
-                        uc.tmp_stack_mut_ptr(),
-                        num_new_props,
-                    );
+                    (*elem).props.props.data = uc
+                        .result_view()
+                        .push_pop::<Prop>(uc.tmp_stack_view(), num_new_props);
                     ufbxi_check!(
                         uc,
                         !(*elem).props.props.data.is_null(),
@@ -1913,17 +1880,14 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
 #[inline(never)]
 pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
     let num_nodes: usize = uc.tmp_node_ids_view().num_items();
-    // SAFETY: pops the `num_nodes` recorded ids from uc's own `tmp_node_ids`
-    // buffer into uc's own tmp buffer, then frees the drained source buffer
-    // (both reached through uc's raw-ptr getters).
-    let node_ids: *mut u32 =
-        unsafe { push_pop(uc.tmp_mut_ptr(), uc.tmp_node_ids_mut_ptr(), num_nodes) };
-    // SAFETY: as above.
+    // Pops the `num_nodes` recorded ids from uc's `tmp_node_ids` buffer into
+    // uc's tmp buffer.
+    let node_ids: *mut u32 = uc.tmp_view().push_pop(uc.tmp_node_ids_view(), num_nodes);
+    // SAFETY: frees the drained source buffer through uc's raw-ptr getter.
     unsafe { buf_free(uc.tmp_node_ids_mut_ptr()) };
     ufbxi_check!(uc, !node_ids.is_null(), "node_ids");
 
-    // SAFETY: pushes `num_nodes` entries onto uc's own tmp stack.
-    let node_ptrs: *mut *mut Node = unsafe { push(uc.tmp_stack_mut_ptr(), num_nodes) };
+    let node_ptrs: *mut *mut Node = uc.tmp_stack_view().push(num_nodes);
     ufbxi_check!(uc, !node_ptrs.is_null(), "node_ptrs");
 
     // SAFETY: `node_ptrs` is the fresh `num_nodes`-element push above and each
@@ -1943,15 +1907,12 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
             .set_root_node(Ref::from_ptr(*node_ptrs.add(0)));
     }
 
-    // SAFETY: pops the `num_nodes` node offsets recorded in uc's own typed
-    // element-offset buffer onto uc's own tmp stack.
-    let node_offsets: *mut usize = unsafe {
-        push_pop(
-            uc.tmp_stack_mut_ptr(),
-            uc.tmp_typed_element_offsets_mut_ptr(ElementType::Node as usize),
-            num_nodes,
-        )
-    };
+    // Pops the `num_nodes` node offsets recorded in uc's typed element-offset
+    // buffer onto uc's tmp stack.
+    let node_offsets: *mut usize = uc.tmp_stack_view().push_pop(
+        uc.tmp_typed_element_offsets_at(ElementType::Node as usize),
+        num_nodes,
+    );
     ufbxi_check!(uc, !node_offsets.is_null(), "node_offsets");
 
     // SAFETY: both passes below walk the fresh `num_nodes`-element `node_ptrs`
@@ -2049,10 +2010,9 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
         sort_node_ptrs(uc, node_ptrs, num_nodes)?;
 
         for i in 0..num_nodes as u32 {
-            let p_offset: *mut usize = push(
-                uc.tmp_typed_element_offsets_mut_ptr(ElementType::Node as usize),
-                1,
-            );
+            let p_offset: *mut usize = uc
+                .tmp_typed_element_offsets_at(ElementType::Node as usize)
+                .push(1);
             ufbxi_check!(uc, !p_offset.is_null(), "p_offset");
             let node: *mut Node = *node_ptrs.add(i as usize);
 
@@ -2220,7 +2180,7 @@ pub(crate) unsafe fn fetch_dst_elements(
                     }
                     *uc.tmp_element_flag().add(element_id as usize) = 1;
                 }
-                let p_elem: *mut *mut Element = push(uc.tmp_stack_mut_ptr(), 1);
+                let p_elem: *mut *mut Element = uc.tmp_stack_view().push(1);
                 ufbxi_check!(uc, !p_elem.is_null(), "p_elem");
                 *p_elem = ref_ptr(&(*conn).src);
                 num_elements += 1;
@@ -2236,9 +2196,10 @@ pub(crate) unsafe fn fetch_dst_elements(
     }
 
     let list: *mut RefList<Element> = p_dst_list as *mut RefList<Element>;
-    (*list).data =
-        push_pop::<*mut Element>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_elements)
-            as *const Ref<Element>;
+    (*list).data = uc
+        .result_view()
+        .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
+        as *const Ref<Element>;
     (*list).count = num_elements;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -2295,7 +2256,7 @@ pub(crate) unsafe fn fetch_src_elements(
                     }
                     *uc.tmp_element_flag().add(element_id as usize) = 1;
                 }
-                let p_elem: *mut *mut Element = push(uc.tmp_stack_mut_ptr(), 1);
+                let p_elem: *mut *mut Element = uc.tmp_stack_view().push(1);
                 ufbxi_check!(uc, !p_elem.is_null(), "p_elem");
                 *p_elem = ref_ptr(&(*conn).dst);
                 num_elements += 1;
@@ -2311,9 +2272,10 @@ pub(crate) unsafe fn fetch_src_elements(
     }
 
     let list: *mut RefList<Element> = p_dst_list as *mut RefList<Element>;
-    (*list).data =
-        push_pop::<*mut Element>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_elements)
-            as *const Ref<Element>;
+    (*list).data = uc
+        .result_view()
+        .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
+        as *const Ref<Element>;
     (*list).count = num_elements;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -2419,7 +2381,7 @@ pub(crate) unsafe fn fetch_textures(
                 continue;
             }
             if (*ref_ptr(&(*conn).src)).type_ == ElementType::Texture {
-                let tex: *mut MaterialTexture = push(uc.tmp_stack_mut_ptr(), 1);
+                let tex: *mut MaterialTexture = uc.tmp_stack_view().push(1);
                 ufbxi_check!(uc, !tex.is_null(), "tex");
                 // C: `tex->shader_prop = tex->material_prop = conn->dst_prop;`
                 (*tex).material_prop = (*conn).dst_prop;
@@ -2437,8 +2399,9 @@ pub(crate) unsafe fn fetch_textures(
         }
     }
 
-    (*list).data =
-        push_pop::<MaterialTexture>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_textures);
+    (*list).data = uc
+        .result_view()
+        .push_pop::<MaterialTexture>(uc.tmp_stack_view(), num_textures);
     (*list).count = num_textures;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -2466,7 +2429,7 @@ pub(crate) unsafe fn fetch_mesh_materials(
                 let mat: *mut Material = ref_ptr(&(*conn).src) as *mut Material;
                 ufbxi_check!(
                     uc,
-                    !push_copy::<*mut Material>(uc.tmp_stack_mut_ptr(), 1, &mat).is_null(),
+                    !uc.tmp_stack_view().push_copy_ref(&mat).is_null(),
                     "((ufbx_material**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_material*), (1), (&mat)))"
                 );
                 num_materials += 1;
@@ -2486,9 +2449,10 @@ pub(crate) unsafe fn fetch_mesh_materials(
         }
     }
 
-    (*list).data =
-        push_pop::<*mut Material>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_materials)
-            as *const Ref<Material>;
+    (*list).data = uc
+        .result_view()
+        .push_pop::<*mut Material>(uc.tmp_stack_view(), num_materials)
+        as *const Ref<Material>;
     (*list).count = num_materials;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -2542,9 +2506,10 @@ pub(crate) unsafe fn fetch_deformers(
         }
     }
 
-    (*list).data =
-        push_pop::<*mut Element>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_deformers)
-            as *const Ref<Element>;
+    (*list).data = uc
+        .result_view()
+        .push_pop::<*mut Element>(uc.tmp_stack_view(), num_deformers)
+        as *const Ref<Element>;
     (*list).count = num_deformers;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -2575,7 +2540,7 @@ pub(crate) unsafe fn fetch_blend_keyframes(
             };
             ufbxi_check!(
                 uc,
-                !push_copy::<BlendKeyframe>(uc.tmp_stack_mut_ptr(), 1, &key).is_null(),
+                !uc.tmp_stack_view().push_copy_ref(&key).is_null(),
                 "((ufbx_blend_keyframe*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_blend_keyframe), (1), (&key)))"
             );
             num_keyframes += 1;
@@ -2583,8 +2548,9 @@ pub(crate) unsafe fn fetch_blend_keyframes(
         conn = conn.add(1);
     }
 
-    (*list).data =
-        push_pop::<BlendKeyframe>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_keyframes);
+    (*list).data = uc
+        .result_view()
+        .push_pop::<BlendKeyframe>(uc.tmp_stack_view(), num_keyframes);
     (*list).count = num_keyframes;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -2631,7 +2597,7 @@ pub(crate) unsafe fn fetch_texture_layers(
             ) as u32);
             ufbxi_check!(
                 uc,
-                !push_copy::<TextureLayer>(uc.tmp_stack_mut_ptr(), 1, &layer).is_null(),
+                !uc.tmp_stack_view().push_copy_ref(&layer).is_null(),
                 "((ufbx_texture_layer*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture_layer), (1), (&layer)))"
             );
             num_layers += 1;
@@ -2639,8 +2605,9 @@ pub(crate) unsafe fn fetch_texture_layers(
         conn = conn.add(1);
     }
 
-    (*list).data =
-        push_pop::<TextureLayer>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_layers);
+    (*list).data = uc
+        .result_view()
+        .push_pop::<TextureLayer>(uc.tmp_stack_view(), num_layers);
     (*list).count = num_layers;
     ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
 
@@ -4264,7 +4231,7 @@ pub(crate) unsafe fn add_constraint_prop(
             ConstraintPropType::IkEndNode => (*constraint).ik_end_node = opt_ref(node),
             ConstraintPropType::AimUp => (*constraint).aim_up_node = opt_ref(node),
             ConstraintPropType::Target => {
-                let target: *mut ConstraintTarget = push_zero(uc.tmp_stack_mut_ptr(), 1);
+                let target: *mut ConstraintTarget = uc.tmp_stack_view().push_zero(1);
                 ufbxi_check!(uc, !target.is_null(), "target");
                 // `ufbx_constraint_target.node` is a non-nullable
                 // `ufbx_node*`; the sole caller (ufbx.c:22576/22580) passes a
@@ -4315,7 +4282,7 @@ pub(crate) unsafe fn finalize_nurbs_basis(
             (*basis).t_max = *knots.data.add(knots.count - degree - 1);
 
             let max_spans: usize = knots.count - 2 * degree;
-            let spans: *mut Real = push(uc.result_mut_ptr(), max_spans);
+            let spans: *mut Real = uc.result_view().push(max_spans);
             ufbxi_check!(uc, !spans.is_null(), "spans");
 
             let mut prev: Real = -math::INFINITY as Real;
@@ -4389,9 +4356,7 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
         }
     }
 
-    // SAFETY: pushes `num_levels` zeroed entries onto uc's own result buffer
-    // through its raw-ptr getter.
-    let levels: *mut LodLevel = unsafe { push_zero(uc.result_mut_ptr(), num_levels) };
+    let levels: *mut LodLevel = uc.result_view().push_zero(num_levels);
     ufbxi_check!(uc, !levels.is_null(), "levels");
 
     // SAFETY: `lod` is the LOD-group view's own storage and every lookup reads
@@ -4476,10 +4441,10 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(
 
     (*mesh).generated_normals = true;
 
-    let topo: *mut TopoEdge = push::<TopoEdge>(uc.tmp_stack_mut_ptr(), num_indices);
+    let topo: *mut TopoEdge = uc.tmp_stack_view().push::<TopoEdge>(num_indices);
     ufbxi_check!(uc, !topo.is_null(), "topo");
 
-    let normal_indices: *mut u32 = push::<u32>(uc.result_mut_ptr(), num_indices);
+    let normal_indices: *mut u32 = uc.result_view().push::<u32>(num_indices);
     ufbxi_check!(uc, !normal_indices.is_null(), "normal_indices");
 
     compute_topology(mesh, topo, num_indices);
@@ -4490,7 +4455,7 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(
         (*mesh).vertex_normal.unique_per_vertex = true;
     }
 
-    let mut normal_data: *mut Vec3 = push::<Vec3>(uc.result_mut_ptr(), num_normals + 1);
+    let mut normal_data: *mut Vec3 = uc.result_view().push::<Vec3>(num_normals + 1);
     ufbxi_check!(uc, !normal_data.is_null(), "normal_data");
 
     // C: `normal_data[0] = ufbx_zero_vec3; normal_data++;`
@@ -4537,7 +4502,7 @@ pub(crate) unsafe fn push_prop_prefix(
     let mut stack_size: usize = 0;
     if prefix.length > 0 && *prefix.data.add(prefix.length - 1) != b'|' {
         stack_size = prefix.length + 1;
-        let copy: *mut u8 = push(uc.tmp_stack_mut_ptr(), stack_size);
+        let copy: *mut u8 = uc.tmp_stack_view().push(stack_size);
         ufbxi_check!(uc, !copy.is_null(), "copy");
         ptr::copy_nonoverlapping(prefix.data, copy, prefix.length);
         *copy.add(prefix.length) = b'|';
@@ -4809,9 +4774,7 @@ pub(crate) fn finalize_shader_texture<'a>(
         return Ok(());
     }
 
-    // SAFETY: pushes one zeroed entry onto uc's own result buffer through its
-    // raw-ptr getter.
-    let shader: *mut ShaderTexture = unsafe { push_zero(uc.result_mut_ptr(), 1) };
+    let shader: *mut ShaderTexture = uc.result_view().push_zero(1);
     ufbxi_check!(uc, !shader.is_null(), "shader");
 
     // SAFETY: `shader` is the fresh non-null push above; `type_` passed the
@@ -5188,7 +5151,7 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
         );
         ufbxi_check!(uc, !entry.is_null(), "entry");
 
-        let file: *mut TextureFile = push_zero(uc.tmp_mut_ptr(), 1);
+        let file: *mut TextureFile = uc.tmp_view().push_zero(1);
         ufbxi_check!(uc, !file.is_null(), "file");
 
         (*file).index = uc.texture_file_map_view().size() - 1;
@@ -5231,9 +5194,7 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
 #[inline(never)]
 pub(crate) fn pop_texture_files(uc: &Context) -> Result<(), Fail> {
     let num_files: u32 = uc.texture_file_map_view().size();
-    // SAFETY: pushing `num_files` entries onto uc's own result buffer through
-    // its raw-ptr getter.
-    let files: *mut TextureFile = unsafe { push(uc.result_mut_ptr(), num_files as usize) };
+    let files: *mut TextureFile = uc.result_view().push(num_files as usize);
     ufbxi_check!(uc, !files.is_null(), "files");
 
     uc.scene_view().texture_files_view().set_data(files);
@@ -5390,10 +5351,9 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
     }
 
     // Compressed `ufbxi_file_texture_fetch_state`
-    // SAFETY: pushes one zeroed byte per scene texture onto uc's own tmp buffer
-    // through its raw-ptr getter.
-    let states: *mut u8 =
-        unsafe { push_zero(uc.tmp_mut_ptr(), uc.scene_view().textures_view().count()) };
+    let states: *mut u8 = uc
+        .tmp_view()
+        .push_zero(uc.scene_view().textures_view().count());
     ufbxi_check!(uc, !states.is_null(), "states");
 
     // C: `while (num_stack_textures-- > 0)` — the post-decrement runs on every
@@ -5438,7 +5398,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 let mut num_deps: usize = 0;
 
                 if (*texture).type_ == TextureType::File {
-                    let dst: *mut OrderedTexture = push(uc.tmp_stack_mut_ptr(), 1);
+                    let dst: *mut OrderedTexture = uc.tmp_stack_view().push(1);
                     ufbxi_check!(uc, !dst.is_null(), "dst");
                     (*dst).texture = texture;
                     (*dst).order = num_deps;
@@ -5451,7 +5411,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 while layer != layer_end {
                     let dep_tex: *mut Texture = ref_ptr(&(*layer).texture);
                     if (*dep_tex).file_textures.count > 0 {
-                        let dst: *mut OrderedTexture = push(uc.tmp_stack_mut_ptr(), 1);
+                        let dst: *mut OrderedTexture = uc.tmp_stack_view().push(1);
                         ufbxi_check!(uc, !dst.is_null(), "dst");
                         (*dst).texture = dep_tex;
                         (*dst).order = num_deps;
@@ -5468,7 +5428,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                     while input != input_end {
                         let dep_tex: *mut Texture = opt_ptr(&(*input).texture);
                         if !dep_tex.is_null() && (*dep_tex).file_textures.count > 0 {
-                            let dst: *mut OrderedTexture = push(uc.tmp_stack_mut_ptr(), 1);
+                            let dst: *mut OrderedTexture = uc.tmp_stack_view().push(1);
                             ufbxi_check!(uc, !dst.is_null(), "dst");
                             (*dst).texture = dep_tex;
                             (*dst).order = num_deps;
@@ -5515,7 +5475,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                         let p_tex_end: *mut *mut Texture =
                             add_ptr(p_tex, (*(*dep).texture).file_textures.count);
                         while p_tex != p_tex_end {
-                            let dst: *mut OrderedTexture = push(uc.tmp_stack_mut_ptr(), 1);
+                            let dst: *mut OrderedTexture = uc.tmp_stack_view().push(1);
                             ufbxi_check!(uc, !dst.is_null(), "dst");
                             (*dst).texture = *p_tex;
                             (*dst).order = num_files;
@@ -5538,7 +5498,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
 
                     (*texture).file_textures.count = num_files;
                     (*texture).file_textures.data =
-                        push::<*mut Texture>(uc.result_mut_ptr(), num_files) as *const Ref<Texture>;
+                        uc.result_view().push::<*mut Texture>(num_files) as *const Ref<Texture>;
                     ufbxi_check!(
                         uc,
                         !(*texture).file_textures.data.is_null(),
@@ -5561,7 +5521,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                     // Simple case: Just point to self
                     (*texture).file_textures.count = 1;
                     (*texture).file_textures.data =
-                        push::<*mut Texture>(uc.result_mut_ptr(), 1) as *const Ref<Texture>;
+                        uc.result_view().push::<*mut Texture>(1) as *const Ref<Texture>;
                     ufbxi_check!(
                         uc,
                         !(*texture).file_textures.data.is_null(),
@@ -5585,7 +5545,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 // Push self first so we can return after processing dependencies
                 ufbxi_check!(
                     uc,
-                    !push_copy::<*mut Texture>(uc.tmp_stack_mut_ptr(), 1, &texture).is_null(),
+                    !uc.tmp_stack_view().push_copy_ref(&texture).is_null(),
                     "((ufbx_texture**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_texture*), (1), (&texture)))"
                 );
                 num_stack_textures += 1;
@@ -6516,7 +6476,7 @@ pub(crate) unsafe fn push_file_content(
     if (*p_data).size == 0 || (*p_filename).length == 0 {
         return Ok(());
     }
-    let content: *mut FileContent = push::<FileContent>(uc.tmp_stack_mut_ptr(), 1);
+    let content: *mut FileContent = uc.tmp_stack_view().push::<FileContent>(1);
     ufbxi_check!(uc, !content.is_null(), "content");
 
     (*content).absolute_filename = *p_filename;
@@ -6636,15 +6596,14 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
     }
 
     uc.set_num_file_content(uc.tmp_stack_view().num_items() - initial_stack);
-    // SAFETY: pops the `num_file_content` entries pushed by the loops above from
-    // uc's own tmp stack into uc's own tmp buffer, then sorts that fresh
-    // non-null run with its own length.
+    // Pops the `num_file_content` entries pushed by the loops above from uc's
+    // tmp stack into uc's tmp buffer.
+    // SAFETY: sorts that fresh non-null run with its own length.
     unsafe {
-        uc.set_file_content(push_pop::<FileContent>(
-            uc.tmp_mut_ptr(),
-            uc.tmp_stack_mut_ptr(),
-            uc.num_file_content(),
-        ));
+        uc.set_file_content(
+            uc.tmp_view()
+                .push_pop::<FileContent>(uc.tmp_stack_view(), uc.num_file_content()),
+        );
         ufbxi_check!(uc, !uc.file_content().is_null(), "uc->file_content");
         sort_file_contents(uc, uc.file_content(), uc.num_file_content())?;
     }
@@ -6859,7 +6818,7 @@ pub(crate) unsafe fn push_anim(
     layers: *mut *mut AnimLayer,
     num_layers: usize,
 ) -> Result<(), Fail> {
-    let anim: *mut Anim = push_zero::<Anim>(uc.result_mut_ptr(), 1);
+    let anim: *mut Anim = uc.result_view().push_zero::<Anim>(1);
     ufbxi_check!(uc, !anim.is_null(), "anim");
 
     (*anim).layers.data = layers as *const Ref<AnimLayer>;
@@ -6884,7 +6843,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     uc.scene_view().elements_view().set_count(num_elements);
     uc.scene_view()
         .elements_view()
-        .set_data(push::<*mut Element>(uc.result_mut_ptr(), num_elements) as *const Ref<Element>);
+        .set_data(uc.result_view().push::<*mut Element>(num_elements) as *const Ref<Element>);
     ufbxi_check!(
         uc,
         !uc.scene_view().elements_view().data().is_null(),
@@ -6894,22 +6853,19 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     uc.scene_view()
         .metadata_view()
         .set_element_buffer_size(uc.tmp_element_byte_offset());
-    let element_data: *mut u8 = push_pop::<u64>(
-        uc.result_mut_ptr(),
-        uc.tmp_elements_mut_ptr(),
-        uc.tmp_element_byte_offset() / 8,
-    ) as *mut u8;
+    let element_data: *mut u8 = uc
+        .result_view()
+        .push_pop::<u64>(uc.tmp_elements_view(), uc.tmp_element_byte_offset() / 8)
+        as *mut u8;
     ufbxi_check!(uc, !element_data.is_null(), "element_data");
 
     // C reads `uc->tmp_element_offsets.num_items` as the `ufbxi_push_pop()`
     // count argument; hoisted to a local so the `&mut` borrow of the same
     // buffer does not overlap the read.
     let num_element_offsets: usize = uc.tmp_element_offsets_view().num_items();
-    let element_offsets: *mut usize = push_pop::<usize>(
-        uc.tmp_mut_ptr(),
-        uc.tmp_element_offsets_mut_ptr(),
-        num_element_offsets,
-    );
+    let element_offsets: *mut usize = uc
+        .tmp_view()
+        .push_pop::<usize>(uc.tmp_element_offsets_view(), num_element_offsets);
     buf_free(uc.tmp_element_offsets_mut_ptr());
     ufbxi_check!(uc, !element_offsets.is_null(), "element_offsets");
     for i in 0..num_elements {
@@ -6935,7 +6891,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     buf_free(uc.tmp_element_offsets_mut_ptr());
     buf_free(uc.tmp_elements_mut_ptr());
 
-    uc.set_tmp_element_flag(push_zero::<u8>(uc.tmp_mut_ptr(), num_elements));
+    uc.set_tmp_element_flag(uc.tmp_view().push_zero::<u8>(num_elements));
     ufbxi_check!(uc, !uc.tmp_element_flag().is_null(), "uc->tmp_element_flag");
 
     uc.scene_view()
@@ -6960,11 +6916,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
     for type_ in 0..ELEMENT_TYPE_COUNT {
         let num_typed: usize = uc.tmp_typed_element_offsets_at(type_).num_items();
-        let typed_offsets: *mut usize = push_pop::<usize>(
-            uc.tmp_mut_ptr(),
-            uc.tmp_typed_element_offsets_mut_ptr(type_),
-            num_typed,
-        );
+        let typed_offsets: *mut usize = uc
+            .tmp_view()
+            .push_pop::<usize>(uc.tmp_typed_element_offsets_at(type_), num_typed);
         buf_free(uc.tmp_typed_element_offsets_mut_ptr(type_));
         ufbxi_check!(uc, !typed_offsets.is_null(), "typed_offsets");
 
@@ -6976,7 +6930,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             (uc.scene_view().unknowns_mut_ptr() as *mut RefList<Element>).add(type_);
         (*typed_elems).count = num_typed;
         (*typed_elems).data =
-            push::<*mut Element>(uc.result_mut_ptr(), num_typed) as *const Ref<Element>;
+            uc.result_view().push::<*mut Element>(num_typed) as *const Ref<Element>;
         ufbxi_check!(uc, !(*typed_elems).data.is_null(), "typed_elems->data");
 
         for i in 0..num_typed {
@@ -6993,7 +6947,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         .set_count(num_elements);
     uc.scene_view()
         .elements_by_name_view()
-        .set_data(push::<NameElement>(uc.result_mut_ptr(), num_elements));
+        .set_data(uc.result_view().push::<NameElement>(num_elements));
     ufbxi_check!(
         uc,
         !uc.scene_view().elements_by_name_view().data().is_null(),
@@ -7090,7 +7044,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 }
                 ufbxi_check!(
                     uc,
-                    !push_copy::<*mut Element>(uc.tmp_stack_mut_ptr(), 1, &elem).is_null(),
+                    !uc.tmp_stack_view().push_copy_ref(&elem).is_null(),
                     "((ufbx_element**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_element*), (1), (&elem)))"
                 );
             }
@@ -7105,11 +7059,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         }
 
         if (*node).all_attribs.count > 1 {
-            (*node).all_attribs.data = push_pop::<*mut Element>(
-                uc.result_mut_ptr(),
-                uc.tmp_stack_mut_ptr(),
-                (*node).all_attribs.count,
-            ) as *const Ref<Element>;
+            (*node).all_attribs.data = uc
+                .result_view()
+                .push_pop::<*mut Element>(uc.tmp_stack_view(), (*node).all_attribs.count)
+                as *const Ref<Element>;
             ufbxi_check!(
                 uc,
                 !(*node).all_attribs.data.is_null(),
@@ -7141,7 +7094,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // HACK: Transport `ufbxi_tmp_bone_pose` array through the `ufbx_bone_pose` pointer
         let num_bones: usize = (*pose).bone_poses.count;
         let tmp_poses: *mut TmpBonePose = (*pose).bone_poses.data as *mut TmpBonePose;
-        (*pose).bone_poses.data = push::<BonePose>(uc.result_mut_ptr(), num_bones);
+        (*pose).bone_poses.data = uc.result_view().push::<BonePose>(num_bones);
         ufbxi_check!(
             uc,
             !(*pose).bone_poses.data.is_null(),
@@ -7309,11 +7262,11 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
         if !uc.opts_view().skip_skin_vertices() {
             (*skin).vertices.count = num_vertices;
-            (*skin).vertices.data = push_zero::<SkinVertex>(uc.result_mut_ptr(), num_vertices);
+            (*skin).vertices.data = uc.result_view().push_zero::<SkinVertex>(num_vertices);
             ufbxi_check!(uc, !(*skin).vertices.data.is_null(), "skin->vertices.data");
 
             (*skin).weights.count = total_weights;
-            (*skin).weights.data = push_zero::<SkinWeight>(uc.result_mut_ptr(), total_weights);
+            (*skin).weights.data = uc.result_view().push_zero::<SkinWeight>(total_weights);
             ufbxi_check!(uc, !(*skin).weights.data.is_null(), "skin->weights.data");
 
             let retain_all: bool = !uc.opts_view().clean_skin_weights();
@@ -7512,11 +7465,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     // C reads `uc->tmp_full_weights.num_items` as the `ufbxi_push_pop()` count
     // argument; hoisted so the `&mut` borrow does not overlap the read.
     let num_full_weights: usize = uc.tmp_full_weights_view().num_items();
-    let mut full_weights: *mut List<Real> = push_pop::<List<Real>>(
-        uc.tmp_mut_ptr(),
-        uc.tmp_full_weights_mut_ptr(),
-        num_full_weights,
-    );
+    let mut full_weights: *mut List<Real> = uc
+        .tmp_view()
+        .push_pop::<List<Real>>(uc.tmp_full_weights_view(), num_full_weights);
     buf_free(uc.tmp_full_weights_mut_ptr());
     ufbxi_check!(uc, !full_weights.is_null(), "full_weights");
 
@@ -7587,9 +7538,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
     {
         // Generate and patch procedural index buffers
-        let zero_indices: *mut u32 = push::<u32>(uc.result_mut_ptr(), uc.max_zero_indices());
+        let zero_indices: *mut u32 = uc.result_view().push::<u32>(uc.max_zero_indices());
         let consecutive_indices: *mut u32 =
-            push::<u32>(uc.result_mut_ptr(), uc.max_consecutive_indices());
+            uc.result_view().push::<u32>(uc.max_consecutive_indices());
         ufbxi_check!(
             uc,
             !zero_indices.is_null() && !consecutive_indices.is_null(),
@@ -7726,8 +7677,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     if (*node).materials.count < (*mesh).materials.count
                         && !(*mesh_materials.add(0)).is_null()
                     {
-                        let materials: *mut *mut Material =
-                            push::<*mut Material>(uc.result_mut_ptr(), (*mesh).materials.count);
+                        let materials: *mut *mut Material = uc
+                            .result_view()
+                            .push::<*mut Material>((*mesh).materials.count);
                         ufbxi_check!(uc, !materials.is_null(), "materials");
                         // C: `ufbxi_nounroll for (...)` — the no-unroll pragma
                         // is optimizer-only and has no Rust analogue.
@@ -7747,7 +7699,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
             if uc.retain_mesh_parts() {
                 let num_parts: usize = max_sz((*mesh).materials.count, 1);
-                (*mesh).material_parts.data = push_zero::<MeshPart>(uc.result_mut_ptr(), num_parts);
+                (*mesh).material_parts.data = uc.result_view().push_zero::<MeshPart>(num_parts);
                 ufbxi_check!(
                     uc,
                     !(*mesh).material_parts.data.is_null(),
@@ -7950,7 +7902,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             let ac_end: *mut Connection = add_ptr(ac, (*value).element.connections_src.count);
             while ac != ac_end {
                 if (*ac).src_prop.length == 0 && (*ac).dst_prop.length > 0 {
-                    let aprop: *mut AnimProp = push::<AnimProp>(uc.tmp_stack_mut_ptr(), 1);
+                    let aprop: *mut AnimProp = uc.tmp_stack_view().push::<AnimProp>(1);
                     let id: u32 = (*ref_ptr(&(*ac).dst)).element_id;
                     min_id = min32(min_id, id);
                     max_id = max32(max_id, id);
@@ -8033,15 +7985,13 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // Add a dummy NULL element animated prop at the end so we can iterate
         // animated props without worrying about boundary conditions..
         {
-            let aprop: *mut AnimProp = push_zero::<AnimProp>(uc.tmp_stack_mut_ptr(), 1);
+            let aprop: *mut AnimProp = uc.tmp_stack_view().push_zero::<AnimProp>(1);
             ufbxi_check!(uc, !aprop.is_null(), "aprop");
         }
 
-        (*layer).anim_props.data = push_pop::<AnimProp>(
-            uc.result_mut_ptr(),
-            uc.tmp_stack_mut_ptr(),
-            num_anim_props + 1,
-        );
+        (*layer).anim_props.data = uc
+            .result_view()
+            .push_pop::<AnimProp>(uc.tmp_stack_view(), num_anim_props + 1);
         ufbxi_check!(
             uc,
             !(*layer).anim_props.data.is_null(),
@@ -8300,7 +8250,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     };
                     if texture_id >= 0 && (texture_id as usize) < (*textures).count {
                         let mat_texs: *mut TmpMaterialTexture =
-                            push::<TmpMaterialTexture>(uc.tmp_stack_mut_ptr(), num_materials);
+                            uc.tmp_stack_view()
+                                .push::<TmpMaterialTexture>(num_materials);
                         ufbxi_check!(uc, !mat_texs.is_null(), "mat_texs");
                         num_material_textures += num_materials;
                         for i in 0..num_materials {
@@ -8329,7 +8280,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         prev_texture = texture_id;
 
                         let mat_tex: *mut TmpMaterialTexture =
-                            push::<TmpMaterialTexture>(uc.tmp_stack_mut_ptr(), 1);
+                            uc.tmp_stack_view().push::<TmpMaterialTexture>(1);
                         ufbxi_check!(uc, !mat_tex.is_null(), "mat_tex");
                         (*mat_tex).material_id = material_id;
                         (*mat_tex).texture_id = texture_id;
@@ -8344,18 +8295,16 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             // duplicate the material texture flushing code twice.
             {
                 let mat_tex: *mut TmpMaterialTexture =
-                    push::<TmpMaterialTexture>(uc.tmp_stack_mut_ptr(), 1);
+                    uc.tmp_stack_view().push::<TmpMaterialTexture>(1);
                 ufbxi_check!(uc, !mat_tex.is_null(), "mat_tex");
                 (*mat_tex).material_id = -1;
                 (*mat_tex).texture_id = -1;
                 (*mat_tex).prop_name = EMPTY_STRING.0;
             }
 
-            let mat_texs: *mut TmpMaterialTexture = push_pop::<TmpMaterialTexture>(
-                uc.tmp_mut_ptr(),
-                uc.tmp_stack_mut_ptr(),
-                num_material_textures + 1,
-            );
+            let mat_texs: *mut TmpMaterialTexture = uc
+                .tmp_view()
+                .push_pop::<TmpMaterialTexture>(uc.tmp_stack_view(), num_material_textures + 1);
             ufbxi_check!(uc, !mat_texs.is_null(), "mat_texs");
             sort_tmp_material_textures(uc, mat_texs, num_material_textures)?;
 
@@ -8370,11 +8319,11 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         let mat: *mut Material = *((*mesh).materials.data as *mut *mut Material)
                             .add(prev_material as usize);
                         if !mat.is_null() && (*mat).textures.count == 0 {
-                            let texs: *mut MaterialTexture = push_pop::<MaterialTexture>(
-                                uc.result_mut_ptr(),
-                                uc.tmp_stack_mut_ptr(),
-                                num_textures_in_material,
-                            );
+                            let texs: *mut MaterialTexture =
+                                uc.result_view().push_pop::<MaterialTexture>(
+                                    uc.tmp_stack_view(),
+                                    num_textures_in_material,
+                                );
                             ufbxi_check!(uc, !texs.is_null(), "texs");
                             (*mat).textures.data = texs;
                             (*mat).textures.count = num_textures_in_material;
@@ -8401,7 +8350,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 prev_texture = mat_tex.texture_id;
                 prev_prop = mat_tex.prop_name.data;
 
-                let tex: *mut MaterialTexture = push::<MaterialTexture>(uc.tmp_stack_mut_ptr(), 1);
+                let tex: *mut MaterialTexture = uc.tmp_stack_view().push::<MaterialTexture>(1);
                 ufbxi_check!(uc, !tex.is_null(), "tex");
                 ufbx_assert!(prev_texture >= 0 && (prev_texture as usize) < (*textures).count);
                 (*tex).texture = *(*textures).data.add(prev_texture as usize);
@@ -8675,8 +8624,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
         let num_targets: usize = uc.tmp_stack_view().num_items() - tmp_base;
         (*constraint).targets.count = num_targets;
-        (*constraint).targets.data =
-            push_pop::<ConstraintTarget>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), num_targets);
+        (*constraint).targets.data = uc
+            .result_view()
+            .push_pop::<ConstraintTarget>(uc.tmp_stack_view(), num_targets);
         ufbxi_check!(
             uc,
             !(*constraint).targets.data.is_null(),
