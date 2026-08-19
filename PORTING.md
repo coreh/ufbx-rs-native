@@ -354,6 +354,52 @@ This is invisible to the public API, so it is NOT a COMPAT.md entry; public
 `Copy` ADDITIONS relative to ufbx-rust (e.g. `Prop`, `Connection`) are COMPAT
 §1 rows.
 
+## Unsafe reduction / isolation strategy
+
+The port lands C-shaped (raw pointers, `unsafe fn` everywhere) and then
+converges toward safe Rust WITHOUT changing behavior (ground rules 1-2 still
+bind). The goal is not a zero unsafe count — it is that every residual
+`unsafe` sits in a REGULAR, ISOLATED, EASY-TO-AUDIT spot:
+
+- **Consolidate same-shaped unsafe ops into one named home** — a view
+  accessor, a typed helper (`MapView::insert`, `BufView` methods), a macro
+  (`ufbxi_warnf!`). The safety argument is written ONCE, on the helper,
+  against a documented contract; call sites become safe expressions instead
+  of each re-arguing the same obligation. Scattered ad-hoc `unsafe` blocks
+  that repeat one pattern are consolidation candidates.
+- **Views replace raw-pointer navigation with borrows.** `View<T, M>`
+  (`native/view.rs`, mechanics in its rustdoc) is a `#[repr(transparent)]`
+  reinterpret-in-place handle minted from an arena/context pointer.
+  Navigation (`uc.string_pool_view().map_view()`) and field access run
+  through `&View<T>` chains carrying real borrow provenance; the raw-pointer
+  work lives inside the accessor impls, each op under a `SAFETY:` comment.
+  Accessor conventions: `field_view()` for nested views, plain
+  getters/`set_*` for leaf fields, `take_*` for ownership moves (see Copy vs
+  non-Copy), `*_mut_ptr` for addr-of parity sites.
+- **`UnsafeCell` is the aliasing model.** C threads one context pointer
+  everywhere and mutates through it; the Rust translation is interior
+  mutability — many shared `&View<T>` handles coexist and write through
+  `UnsafeCell`, instead of inventing `&mut` exclusivity claims the C aliasing
+  structure would falsify under Stacked/Tree Borrows.
+- **The `M: Mode` generic divides write from read provenance.** `Mut` stores
+  `UnsafeCell<MaybeUninit<T>>`: mintable only from write-capable
+  (context/arena-owned) pointers; setters and `get()` live here. `Const`
+  stores plain `MaybeUninit<T>`: mintable from ANY readable pointer —
+  including one derived from a public caller's `&T` — but is a frozen tag
+  that must not be held across a write through a parent pointer. Read
+  accessors are written once over `M: Mode` and serve both; a chain rooted
+  `Const` stays `Const`. Provenance roots are the contexts; public-boundary
+  roots marked do-not-anchor stay raw.
+- **Fn boundaries take borrows, not raw pointers**: `Option<&WarningsView>`
+  over nullable `*mut`, `&K` keys, `FailStr` over `*const u8` fmt. A fn stays
+  an honest `unsafe fn` when a raw-pointer PARAM is genuinely dereferenced
+  under a contract the type can't carry (printf `%s`, map key pointees) —
+  safety theater (safe signature, unchecked deref inside) is worse than a
+  declared obligation.
+- **What remains unsafe is narrow and annotated**: minimal-scope blocks, one
+  invariant per `SAFETY:` comment, stating WHICH contract discharges it (view
+  write-provenance, arena-run vouch, C-callback contract), not "this is fine".
+
 ## Semantic-traps checklist (reviewers: check EVERY item against the diff)
 
 1. **Assert side effects / gating**: three assert families with distinct cfg
