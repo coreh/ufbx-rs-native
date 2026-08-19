@@ -1149,8 +1149,8 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
     // `vertex_normal.values` is the `normals` push, whose `count` elements are
     // exactly the run `compute_normals` writes.
     unsafe {
-        finalize_mesh_material(tc.result_mut_ptr(), tc.error_mut_ptr(), mesh)?;
-        finalize_mesh(tc.result_mut_ptr(), tc.error_mut_ptr(), mesh)?;
+        finalize_mesh_material(tc.result_view(), tc.error_mut_ptr(), mesh)?;
+        finalize_mesh(tc.result_view(), tc.error_mut_ptr(), mesh)?;
 
         (*mesh).generated_normals = true;
         compute_normals(

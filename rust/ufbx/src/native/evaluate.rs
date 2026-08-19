@@ -76,7 +76,7 @@ use crate::native::api::{evaluate_baked_vec3, evaluate_transform_flags, quat_fix
 use crate::native::api::{evaluate_props_flags, ELEMENT_TYPE_SIZE};
 #[cfg(feature = "baking")]
 use crate::native::buf::{buf_clear, pop};
-use crate::native::buf::{buf_free, push, push_copy, Buf};
+use crate::native::buf::{buf_free, push_copy, Buf, BufView};
 use crate::native::cache::{load_external_files, scale_units, transform_to_axes};
 #[cfg(not(feature = "skinning-eval"))]
 use crate::native::error::ufbxi_report_err_msg;
@@ -205,8 +205,8 @@ pub(crate) fn find_cubic_bezier_t(p1: f64, p2: f64, x0: f64) -> f64 {
 pub(crate) unsafe fn evaluate_skinning(
     scene: *mut Scene,
     error: *mut Error,
-    buf_result: *mut Buf,
-    buf_tmp: *mut Buf,
+    buf_result: &BufView,
+    buf_tmp: &BufView,
     time: f64,
     load_caches: bool,
     cache_opts: *mut RawGeometryCacheDataOpts,
@@ -229,7 +229,7 @@ pub(crate) unsafe fn evaluate_skinning(
         p_mesh = p_mesh.add(1);
     }
 
-    let topo: *mut TopoEdge = push::<TopoEdge>(buf_tmp, max_skinned_indices);
+    let topo: *mut TopoEdge = buf_tmp.push::<TopoEdge>(max_skinned_indices);
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr(error) },
         !topo.is_null(),
@@ -254,7 +254,7 @@ pub(crate) unsafe fn evaluate_skinning(
         }
 
         let num_vertices: usize = (*mesh).num_vertices;
-        let mut result_pos: *mut Vec3 = push::<Vec3>(buf_result, num_vertices + 1);
+        let mut result_pos: *mut Vec3 = buf_result.push::<Vec3>(num_vertices + 1);
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr(error) },
             !result_pos.is_null(),
@@ -300,7 +300,7 @@ pub(crate) unsafe fn evaluate_skinning(
                 {
                     // TODO: Is this right at all?
                     let num_normals: usize = (*mesh).skinned_normal.values.count;
-                    let mut normal_data: *mut Vec3 = push::<Vec3>(buf_result, num_normals + 1);
+                    let mut normal_data: *mut Vec3 = buf_result.push::<Vec3>(num_normals + 1);
                     ufbxi_check_err!(
                         unsafe { crate::native::error::ErrorView::from_ptr(error) },
                         !normal_data.is_null(),
@@ -374,7 +374,7 @@ pub(crate) unsafe fn evaluate_skinning(
 
         if !cached_normals {
             let num_indices: usize = (*mesh).num_indices;
-            let normal_indices: *mut u32 = push::<u32>(buf_result, num_indices);
+            let normal_indices: *mut u32 = buf_result.push::<u32>(num_indices);
             ufbxi_check_err!(
                 unsafe { crate::native::error::ErrorView::from_ptr(error) },
                 !normal_indices.is_null(),
@@ -395,7 +395,7 @@ pub(crate) unsafe fn evaluate_skinning(
                 (*mesh).skinned_normal.unique_per_vertex = true;
             }
 
-            let mut normal_data: *mut Vec3 = push::<Vec3>(buf_result, num_normals + 1);
+            let mut normal_data: *mut Vec3 = buf_result.push::<Vec3>(num_normals + 1);
             ufbxi_check_err!(
                 unsafe { crate::native::error::ErrorView::from_ptr(error) },
                 !normal_data.is_null(),
@@ -440,8 +440,8 @@ pub(crate) unsafe fn evaluate_skinning(
 pub(crate) unsafe fn evaluate_skinning(
     scene: *mut Scene,
     error: *mut Error,
-    buf_result: *mut Buf,
-    buf_tmp: *mut Buf,
+    buf_result: &BufView,
+    buf_tmp: &BufView,
     time: f64,
     load_caches: bool,
     cache_opts: *mut RawGeometryCacheDataOpts,
@@ -838,8 +838,8 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             evaluate_skinning(
                 uc.scene_mut_ptr(),
                 uc.error_mut_ptr(),
-                uc.result_mut_ptr(),
-                uc.tmp_mut_ptr(),
+                uc.result_view(),
+                uc.tmp_view(),
                 0.0,
                 uc.opts_view().load_external_files() && uc.opts_view().evaluate_caches(),
                 &mut cache_opts,
@@ -3109,8 +3109,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         evaluate_skinning(
             ec.scene_mut_ptr(),
             ec.error_mut_ptr(),
-            ec.result_mut_ptr(),
-            ec.tmp_mut_ptr(),
+            ec.result_view(),
+            ec.tmp_view(),
             ec.time(),
             ec.opts_view().load_external_files() && ec.opts_view().evaluate_caches(),
             &mut cache_opts,

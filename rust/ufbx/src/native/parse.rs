@@ -36,7 +36,7 @@ use crate::generated::{
     RawLoadOpts, Scene, TextureFile, Transform, Vec3, Vec4,
 };
 use crate::native::allocator::{grow_array, Allocator};
-use crate::native::buf::{buf_clear, buf_free, pop, push_size_zero, push_zero, Buf};
+use crate::native::buf::{buf_clear, buf_free, pop, push_size_zero, Buf, BufView};
 use crate::native::error::{
     memchr, memcmp, strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail,
     Fail, EMPTY_CHAR,
@@ -6902,7 +6902,7 @@ pub(crate) fn begin_parse(uc: &Context) -> Result<(), Fail> {
 pub(crate) unsafe fn parse_toplevel_child_imp(
     uc: &Context,
     state: ParseState,
-    buf: *mut Buf,
+    buf: &BufView,
     p_end: *mut bool,
 ) -> Result<(), Fail> {
     if uc.from_ascii() {
@@ -6945,7 +6945,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
                 0,
                 ParseState::Root,
                 &mut end,
-                uc.tmp_mut_ptr(),
+                uc.tmp_view(),
                 false,
             )?;
         } else {
@@ -6954,7 +6954,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
                 0,
                 ParseState::Root,
                 &mut end,
-                uc.tmp_mut_ptr(),
+                uc.tmp_view(),
                 false,
             )?;
         }
@@ -7003,7 +7003,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         let state: ParseState = update_parse_state(ParseState::Root, (*node).name);
         if uc.has_next_child() {
             loop {
-                parse_toplevel_child_imp(uc, state, uc.tmp_mut_ptr(), &mut end)?;
+                parse_toplevel_child_imp(uc, state, uc.tmp_view(), &mut end)?;
                 if end {
                     break;
                 }
@@ -7033,7 +7033,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
 pub(crate) unsafe fn parse_toplevel_child(
     uc: &Context,
     p_node: *mut *mut Node,
-    tmp_buf: *mut Buf,
+    tmp_buf: Option<&BufView>,
 ) -> Result<(), Fail> {
     // Top-level node not found
     if uc.top_node().is_null() {
@@ -7043,15 +7043,14 @@ pub(crate) unsafe fn parse_toplevel_child(
 
     if uc.top_child_index() == usize::MAX {
         // Parse children on demand
-        if tmp_buf.is_null() {
+        if tmp_buf.is_none() {
             buf_clear(uc.tmp_parse_mut_ptr());
         }
         let mut end = false;
         let state: ParseState = update_parse_state(ParseState::Root, (*uc.top_node()).name);
-        let buf: *mut Buf = if !tmp_buf.is_null() {
-            tmp_buf
-        } else {
-            uc.tmp_parse_mut_ptr()
+        let buf: &BufView = match tmp_buf {
+            Some(tmp_buf) => tmp_buf,
+            None => uc.tmp_parse_view(),
         };
         parse_toplevel_child_imp(uc, state, buf, &mut end)?;
         if end {
@@ -7059,8 +7058,8 @@ pub(crate) unsafe fn parse_toplevel_child(
         } else {
             // Parse to either reused `uc->top_child` or push if retaining to `tmp_buf`.
             let mut dst: *mut Node = uc.top_child_mut_ptr();
-            if !tmp_buf.is_null() {
-                dst = push_zero::<Node>(tmp_buf, 1);
+            if let Some(tmp_buf) = tmp_buf {
+                dst = tmp_buf.push_zero::<Node>(1);
                 ufbxi_check!(uc, !dst.is_null(), "dst");
             }
 
@@ -7092,7 +7091,7 @@ pub(crate) fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
 
     let mut end: bool = false;
     // SAFETY: the `end` out-param is an unaliased local; the destination buf is
-    // `uc`'s own `tmp`, addressed through its raw-ptr getter.
+    // `uc`'s own `tmp`, reached through its view accessor.
     unsafe {
         if uc.from_ascii() {
             crate::native::parse_ascii::ascii_parse_node(
@@ -7100,7 +7099,7 @@ pub(crate) fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
                 0,
                 ParseState::Root,
                 &mut end,
-                uc.tmp_mut_ptr(),
+                uc.tmp_view(),
                 true,
             )?;
         } else {
@@ -7109,7 +7108,7 @@ pub(crate) fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
                 0,
                 ParseState::Root,
                 &mut end,
-                uc.tmp_mut_ptr(),
+                uc.tmp_view(),
                 true,
             )?;
         }

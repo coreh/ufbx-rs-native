@@ -1771,7 +1771,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         }
 
         // SAFETY: finalizes this mesh's own element into uc's result arena.
-        unsafe { finalize_mesh(uc.result_mut_ptr(), uc.error_mut_ptr(), fbx_mesh)? };
+        unsafe { finalize_mesh(uc.result_view(), uc.error_mut_ptr(), fbx_mesh)? };
 
         if uc.retain_mesh_parts() {
             // SAFETY: `fbx_mesh` is this mesh's own element; the part run is
@@ -1791,9 +1791,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
 
         if mesh.num_groups() > 1 {
             // SAFETY: updates this mesh's own element in uc's result arena.
-            unsafe {
-                update_face_groups(uc.result_mut_ptr(), uc.error_mut_ptr(), fbx_mesh, false)?
-            };
+            unsafe { update_face_groups(uc.result_view(), uc.error_mut_ptr(), fbx_mesh, false)? };
         } else if mesh.num_groups() == 1 {
             // SAFETY: `fbx_mesh` is this mesh's own element; `part` is the
             // first entry of the `face_group_parts` run pushed above, taken

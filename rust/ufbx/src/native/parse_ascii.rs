@@ -45,7 +45,7 @@ use core::ffi::c_void;
 use crate::generated::{Exporter, WarningType};
 use crate::native::allocator::ZERO_SIZE_BUFFER;
 use crate::native::buf::{
-    pop_size, push, push_copy, push_pop, push_pop_size, push_size, push_size_zero, Buf,
+    pop_size, push, push_copy, push_pop_size, push_size, push_size_zero, Buf, BufView,
 };
 use crate::native::error::{
     memchr, memcmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_check_return_msg,
@@ -478,10 +478,12 @@ pub(crate) struct AsciiSpan {
 
 // ufbx.c:9666-9708 `ufbxi_ascii_store_array`
 #[inline(never)]
-pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: *mut Buf) -> Result<(), Fail> {
+pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Result<(), Fail> {
     let ua: *mut Ascii = uc.ascii_mut_ptr();
 
-    (*ua).retain_buf = tmp_buf;
+    // The `retain_buf` field is a raw back-pointer the ascii reader stores for
+    // its own pushes; recover the pointer from the view.
+    (*ua).retain_buf = tmp_buf.get();
 
     loop {
         let buffered: usize = to_size((*ua).src_yield as isize - (*ua).src as isize);
@@ -512,7 +514,7 @@ pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: *mut Buf) -> Resul
         if (*ua).src_is_retained || uc.read_fn().is_none() {
             (*span).source = begin;
         } else {
-            (*span).source = push_copy::<u8>(tmp_buf, length, begin);
+            (*span).source = push_copy::<u8>(tmp_buf.get(), length, begin);
             ufbxi_check!(uc, !(*span).source.is_null(), "span->source");
         }
 
@@ -1346,7 +1348,7 @@ pub(crate) unsafe fn ascii_parse_node(
     depth: u32,
     parent_state: ParseState,
     p_end: *mut bool,
-    tmp_buf: *mut Buf,
+    tmp_buf: &BufView,
     recursive: bool,
 ) -> Result<(), Fail> {
     #[cfg(feature = "regression")]
@@ -1377,7 +1379,7 @@ unsafe fn ascii_parse_node_rec(
     depth: u32,
     parent_state: ParseState,
     p_end: *mut bool,
-    tmp_buf: *mut Buf,
+    tmp_buf: &BufView,
     recursive: bool,
 ) -> Result<(), Fail> {
     let ua: *mut Ascii = uc.ascii_mut_ptr();
@@ -1439,14 +1441,14 @@ unsafe fn ascii_parse_node_rec(
     if is_array_node(uc, parent_state, name, arr_info) {
         let flags: u8 = (*arr_info).flags;
         arr_type = normalize_array_type((*arr_info).type_, b'b');
-        arr_buf = tmp_buf;
+        arr_buf = tmp_buf.get();
         if (flags & ARRAY_FLAG_RESULT) != 0 {
             arr_buf = uc.result_mut_ptr();
         } else if (flags & ARRAY_FLAG_TMP_BUF) != 0 {
             arr_buf = uc.tmp_mut_ptr();
         }
 
-        let arr: *mut ValueArray = push::<ValueArray>(tmp_buf, 1);
+        let arr: *mut ValueArray = tmp_buf.push::<ValueArray>(1);
         ufbxi_check!(uc, !arr.is_null(), "arr");
         (*node).value_type_mask = ValueType::Array as u16;
         (*node).content.array = arr;
@@ -1530,13 +1532,13 @@ unsafe fn ascii_parse_node_rec(
                     let v: *mut String = uc.tmp_stack_view().push::<String>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
                     if arr_type == b'C' {
-                        let buf: *mut Buf = if uc.opts_view().retain_dom() {
-                            uc.result_mut_ptr()
+                        let buf: &BufView = if uc.opts_view().retain_dom() {
+                            uc.result_view()
                         } else {
                             tmp_buf
                         };
                         let capacity: usize = (*tok).str_len / 4 * 3 + 3;
-                        (*v).data = push::<u8>(buf, capacity);
+                        (*v).data = buf.push::<u8>(capacity);
                         ufbxi_check!(uc, !(*v).data.is_null(), "v->data");
                         decode_base64(uc, v, (*tok).str_data, (*tok).str_len, &raw mut arr_error)?;
                         ufbx_assert!((*v).length <= capacity);
@@ -1898,8 +1900,7 @@ unsafe fn ascii_parse_node_rec(
             // Deferred parsing
             if deferred_size > 0 {
                 let num_spans: usize = uc.tmp_ascii_spans_view().num_items();
-                let spans: *mut AsciiSpan =
-                    push_pop::<AsciiSpan>(tmp_buf, uc.tmp_ascii_spans_mut_ptr(), num_spans);
+                let spans: *mut AsciiSpan = tmp_buf.push_pop(uc.tmp_ascii_spans_view(), num_spans);
                 ufbxi_check!(uc, !spans.is_null(), "spans");
 
                 let mut t = core::mem::MaybeUninit::<AsciiArrayTask>::uninit(); // ufbxi_uninit
@@ -1917,7 +1918,7 @@ unsafe fn ascii_parse_node_rec(
                 let task: *mut Task =
                     thread_pool_create_task(uc.thread_pool_mut_ptr(), ascii_array_task_fn);
                 if !task.is_null() {
-                    (*task).data = push_copy::<AsciiArrayTask>(tmp_buf, 1, t) as *mut c_void;
+                    (*task).data = push_copy::<AsciiArrayTask>(tmp_buf.get(), 1, t) as *mut c_void;
                     ufbxi_check!(uc, !(*task).data.is_null(), "task->data");
                     thread_pool_run_task(uc.thread_pool_mut_ptr(), task);
                 } else {
@@ -1933,7 +1934,7 @@ unsafe fn ascii_parse_node_rec(
     } else {
         num_values = min32(num_values, MAX_NON_ARRAY_VALUES as u32);
         (*node).value_type_mask = type_mask as u16;
-        (*node).content.vals = push_copy::<Value>(tmp_buf, num_values as usize, vals);
+        (*node).content.vals = push_copy::<Value>(tmp_buf.get(), num_values as usize, vals);
         ufbxi_check!(uc, !(*node).content.vals.is_null(), "node->vals");
     }
 
@@ -1952,7 +1953,7 @@ unsafe fn ascii_parse_node_rec(
             }
 
             // Pop children from `tmp_stack` to a contiguous array
-            (*node).children = push_pop::<Node>(tmp_buf, uc.tmp_stack_mut_ptr(), num_children);
+            (*node).children = tmp_buf.push_pop::<Node>(uc.tmp_stack_view(), num_children);
             ufbxi_check!(uc, !(*node).children.is_null(), "node->children");
             (*node).num_children = num_children as u32;
         }

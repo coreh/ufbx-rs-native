@@ -221,7 +221,7 @@ use crate::native::api::{
     transform_direction, transform_position, transform_to_matrix, EMPTY_BLOB, EMPTY_STRING,
     IDENTITY_MATRIX, IDENTITY_QUAT, IDENTITY_TRANSFORM, ZERO_VEC3,
 };
-use crate::native::buf::{buf_clear, buf_free, pop, push, push_copy, push_pop, Buf};
+use crate::native::buf::{buf_clear, buf_free, pop, push_copy, BufView};
 use crate::native::error::{
     memcmp, strcmp, strlen, ufbxi_check, ufbxi_check_err, ufbxi_check_msg, ufbxi_snprintf, Fail,
     EMPTY_CHAR,
@@ -5254,12 +5254,12 @@ pub(crate) unsafe extern "C" fn ordered_texture_less_order(
 #[inline(never)]
 pub(crate) unsafe fn deduplicate_textures(
     uc: &Context,
-    dst_buf: *mut Buf,
+    dst_buf: &BufView,
     p_dst: *mut *mut OrderedTexture,
     p_dst_count: *mut usize,
     count: usize,
 ) -> Result<(), Fail> {
-    let textures: *mut OrderedTexture = push_pop(dst_buf, uc.tmp_stack_mut_ptr(), count);
+    let textures: *mut OrderedTexture = dst_buf.push_pop(uc.tmp_stack_view(), count);
     ufbxi_check!(uc, !textures.is_null(), "textures");
 
     ufbxi_check!(
@@ -5445,7 +5445,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 let mut deps: MaybeUninit<*mut OrderedTexture> = MaybeUninit::uninit();
                 deduplicate_textures(
                     uc,
-                    uc.tmp_parse_mut_ptr(),
+                    uc.tmp_parse_view(),
                     deps.as_mut_ptr(),
                     &mut num_deps,
                     num_deps,
@@ -5489,7 +5489,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                     let mut files: MaybeUninit<*mut OrderedTexture> = MaybeUninit::uninit();
                     deduplicate_textures(
                         uc,
-                        uc.tmp_parse_mut_ptr(),
+                        uc.tmp_parse_view(),
                         files.as_mut_ptr(),
                         &mut num_files,
                         num_files,
@@ -6701,7 +6701,7 @@ pub(crate) unsafe extern "C" fn material_part_usage_less(
 // ufbx.c:21558-21620 `ufbxi_finalize_mesh_material`
 #[inline(never)]
 pub(crate) unsafe fn finalize_mesh_material(
-    buf: *mut Buf,
+    buf: &BufView,
     error: *mut Error,
     mesh: *mut Mesh,
 ) -> Result<(), Fail> {
@@ -6749,7 +6749,7 @@ pub(crate) unsafe fn finalize_mesh_material(
             (*part).index = part_index;
             part_index = part_index.wrapping_add(1);
             (*part).face_indices.count = (*part).num_faces;
-            (*part).face_indices.data = push::<u32>(buf, (*part).num_faces);
+            (*part).face_indices.data = buf.push::<u32>((*part).num_faces);
             ufbxi_check_err!(
                 unsafe { crate::native::error::ErrorView::from_ptr(error) },
                 !(*part).face_indices.data.is_null(),
@@ -6776,7 +6776,7 @@ pub(crate) unsafe fn finalize_mesh_material(
         }
 
         (*mesh).material_part_usage_order.count = num_parts;
-        (*mesh).material_part_usage_order.data = push::<u32>(buf, num_parts);
+        (*mesh).material_part_usage_order.data = buf.push::<u32>(num_parts);
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr(error) },
             !(*mesh).material_part_usage_order.data.is_null(),
@@ -7732,7 +7732,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     (*mesh).face_material.count = 0;
                 }
             } else if (*mesh).materials.count > 0 {
-                finalize_mesh_material(uc.result_mut_ptr(), uc.error_mut_ptr(), mesh)?;
+                finalize_mesh_material(uc.result_view(), uc.error_mut_ptr(), mesh)?;
             }
 
             // Fetch deformers

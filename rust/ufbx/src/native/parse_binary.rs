@@ -27,7 +27,7 @@ use core::mem::size_of;
 
 use crate::generated::{InflateInput, InflateRetain};
 use crate::native::allocator::{does_overflow, grow_array, ZERO_SIZE_BUFFER};
-use crate::native::buf::{push, push_copy, push_pop, push_size, push_zero, Buf};
+use crate::native::buf::{push_copy, push_size, Buf, BufView};
 use crate::native::deflate::{inflate, inflate_init_retain};
 use crate::native::error::{
     ufbxi_check, ufbxi_check_err, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail, ufbxi_fail_err,
@@ -414,7 +414,7 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
     dst_type: u8,
     dst: *mut c_void,
     size: usize,
-    tmp_buf: *mut Buf,
+    tmp_buf: &BufView,
 ) -> Result<(), Fail> {
     if size == 0 {
         return Ok(());
@@ -448,12 +448,12 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
             (*d).length = len;
             ufbxi_check!(uc, !(*d).data.is_null(), "d->data");
             if dst_type == b'C' {
-                let buf: *mut Buf = if size == 1 || uc.opts_view().retain_dom() {
-                    uc.result_mut_ptr()
+                let buf: &BufView = if size == 1 || uc.opts_view().retain_dom() {
+                    uc.result_view()
                 } else {
                     tmp_buf
                 };
-                (*d).data = push_copy::<u8>(buf, len, (*d).data);
+                (*d).data = push_copy::<u8>(buf.get(), len, (*d).data);
                 ufbxi_check!(uc, !(*d).data.is_null(), "d->data");
             } else {
                 push_string_place_str(uc.string_pool_mut_ptr(), d, raw)?;
@@ -581,7 +581,7 @@ pub(crate) unsafe fn push_array_data(
     uc: &Context,
     info: *const ArrayInfo,
     mut size: usize,
-    tmp_buf: *mut Buf,
+    tmp_buf: &BufView,
 ) -> *mut c_void {
     let elem_size: usize = array_type_size((*info).type_);
     // C: `uint32_t flags = info->flags;` (widened from the `uint8_t` field).
@@ -592,7 +592,7 @@ pub(crate) unsafe fn push_array_data(
 
     // The array may be pushed either to the result or temporary buffer depending
     // if it's already in the right format
-    let mut arr_buf: *mut Buf = tmp_buf;
+    let mut arr_buf: *mut Buf = tmp_buf.get();
     if flags & ARRAY_FLAG_RESULT as u32 != 0 {
         arr_buf = uc.result_mut_ptr();
     } else if flags & ARRAY_FLAG_TMP_BUF as u32 != 0 {
@@ -710,7 +710,7 @@ pub(crate) unsafe fn binary_parse_node(
     depth: u32,
     parent_state: ParseState,
     p_end: *mut bool,
-    tmp_buf: *mut Buf,
+    tmp_buf: &BufView,
     recursive: bool,
 ) -> Result<(), Fail> {
     #[cfg(feature = "regression")]
@@ -738,7 +738,7 @@ unsafe fn binary_parse_node_rec(
     depth: u32,
     parent_state: ParseState,
     p_end: *mut bool,
-    tmp_buf: *mut Buf,
+    tmp_buf: &BufView,
     recursive: bool,
 ) -> Result<(), Fail> {
     // https://code.blender.org/2013/08/fbx-binary-file-format-specification
@@ -826,7 +826,7 @@ unsafe fn binary_parse_node_rec(
         // below based on `arr_info.type`.
         let dst_type: u8 = normalize_array_type((*arr_info).type_, b'c');
 
-        let arr: *mut ValueArray = push::<ValueArray>(tmp_buf, 1);
+        let arr: *mut ValueArray = tmp_buf.push::<ValueArray>(1);
         ufbxi_check!(uc, !arr.is_null(), "arr");
 
         (*node).value_type_mask = ValueType::Array as u16;
@@ -902,7 +902,7 @@ unsafe fn binary_parse_node_rec(
                 let task: *mut Task =
                     thread_pool_create_task(uc.thread_pool_mut_ptr(), deflate_task_fn);
                 if !task.is_null() {
-                    let t: *mut DeflateTask = push_zero::<DeflateTask>(tmp_buf, 1);
+                    let t: *mut DeflateTask = tmp_buf.push_zero::<DeflateTask>(1);
                     ufbxi_check!(uc, !t.is_null(), "t");
 
                     inflate_init_retain(uc.inflate_retain());
@@ -921,14 +921,14 @@ unsafe fn binary_parse_node_rec(
                         (*t).encoded_data = uc.data() as *const c_void;
                     } else {
                         let encoded_data: *mut c_void =
-                            push::<u8>(tmp_buf, encoded_size as usize) as *mut c_void;
+                            tmp_buf.push::<u8>(encoded_size as usize) as *mut c_void;
                         ufbxi_check!(uc, !encoded_data.is_null(), "encoded_data");
                         read_to(uc, encoded_data, encoded_size as usize)?;
                         (*t).encoded_data = encoded_data;
                     }
 
                     if src_type != dst_type {
-                        (*t).decoded_data = push_size(tmp_buf, src_elem_size, size as usize);
+                        (*t).decoded_data = push_size(tmp_buf.get(), src_elem_size, size as usize);
                         ufbxi_check!(uc, !(*t).decoded_data.is_null(), "t->decoded_data");
                     } else {
                         (*t).decoded_data = arr_data as *mut c_void;
@@ -1098,7 +1098,7 @@ unsafe fn binary_parse_node_rec(
     } else {
         // Parse up to UFBXI_MAX_NON_ARRAY_VALUES as plain values
         num_values = min32(num_values, MAX_NON_ARRAY_VALUES as u32);
-        let vals: *mut Value = push::<Value>(tmp_buf, num_values as usize);
+        let vals: *mut Value = tmp_buf.push::<Value>(num_values as usize);
         ufbxi_check!(uc, !vals.is_null(), "vals");
         (*node).content.vals = vals;
 
@@ -1255,8 +1255,7 @@ unsafe fn binary_parse_node_rec(
         // Pop children from `tmp_stack` to a contiguous array
         (*node).num_children = num_children;
         if num_children > 0 {
-            (*node).children =
-                push_pop::<Node>(tmp_buf, uc.tmp_stack_mut_ptr(), num_children as usize);
+            (*node).children = tmp_buf.push_pop::<Node>(uc.tmp_stack_view(), num_children as usize);
             ufbxi_check!(uc, !(*node).children.is_null(), "node->children");
         }
     } else {

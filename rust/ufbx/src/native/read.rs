@@ -113,7 +113,7 @@ use crate::native::api::{
     EMPTY_BLOB, EMPTY_STRING, IDENTITY_MATRIX, IDENTITY_TRANSFORM,
 };
 use crate::native::buf::{
-    buf_clear, pop, push, push_copy, push_copy_fast, push_pop, push_size, push_zero, Buf,
+    buf_clear, pop, push_copy, push_copy_fast, push_pop, push_size, Buf, BufView,
 };
 use crate::native::error::{
     memchr, memcmp, strcmp, strlen, strncmp, ufbxi_check, ufbxi_check_err, ufbxi_check_msg,
@@ -575,9 +575,9 @@ pub(crate) fn read_header_extension(uc: &Context) -> Result<(), Fail> {
 
     loop {
         let mut child: *mut Node = core::ptr::null_mut();
-        // SAFETY: `child` is a local out-param slot; the null `tmp_buf` selects
-        // uc's own temp buffer, as in the C call.
-        unsafe { parse_toplevel_child(uc, &mut child, core::ptr::null_mut())? };
+        // SAFETY: `child` is a local out-param slot; the `None` `tmp_buf`
+        // selects uc's own temp buffer, as in the C call.
+        unsafe { parse_toplevel_child(uc, &mut child, None)? };
         if child.is_null() {
             break;
         }
@@ -844,9 +844,9 @@ pub(crate) fn read_document(uc: &Context) -> Result<(), Fail> {
 
     loop {
         let mut child: *mut Node = core::ptr::null_mut();
-        // SAFETY: `child` is a local out-param slot; the null `tmp_buf` selects
-        // uc's own temp buffer, as in the C call.
-        unsafe { parse_toplevel_child(uc, &mut child, core::ptr::null_mut())? };
+        // SAFETY: `child` is a local out-param slot; the `None` `tmp_buf`
+        // selects uc's own temp buffer, as in the C call.
+        unsafe { parse_toplevel_child(uc, &mut child, None)? };
         if child.is_null() {
             break;
         }
@@ -884,9 +884,9 @@ static LOD_GROUP: [u8; b"LodGroup\0".len()] = *b"LodGroup\0";
 pub(crate) fn read_definitions(uc: &Context) -> Result<(), Fail> {
     loop {
         let mut object: *mut Node = core::ptr::null_mut();
-        // SAFETY: `object` is a local out-param slot; the null `tmp_buf`
+        // SAFETY: `object` is a local out-param slot; the `None` `tmp_buf`
         // selects uc's own temp buffer, as in the C call.
-        unsafe { parse_toplevel_child(uc, &mut object, core::ptr::null_mut())? };
+        unsafe { parse_toplevel_child(uc, &mut object, None)? };
         if object.is_null() {
             break;
         }
@@ -2940,7 +2940,7 @@ const SEEN_IDS_COUNT: usize = 1usize << FACE_GROUP_HASH_BITS;
 // ufbx.c:13267-13397 `ufbxi_assign_face_groups`
 #[inline(never)]
 pub(crate) unsafe fn assign_face_groups(
-    buf: *mut Buf,
+    buf: &BufView,
     error: *mut Error,
     mesh: *mut Mesh,
     p_consecutive_indices: *mut usize,
@@ -2962,7 +2962,7 @@ pub(crate) unsafe fn assign_face_groups(
         "mesh->face_group.count == num_faces"
     );
 
-    let ids: *mut u32 = push::<u32>(buf, num_faces);
+    let ids: *mut u32 = buf.push::<u32>(num_faces);
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr(error) },
         !ids.is_null(),
@@ -3027,7 +3027,7 @@ pub(crate) unsafe fn assign_face_groups(
     }
 
     // Allocate group info structs
-    let groups: *mut FaceGroup = push_zero::<FaceGroup>(buf, num_groups);
+    let groups: *mut FaceGroup = buf.push_zero::<FaceGroup>(num_groups);
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr(error) },
         !groups.is_null(),
@@ -3043,7 +3043,7 @@ pub(crate) unsafe fn assign_face_groups(
 
     let mut parts: *mut MeshPart = core::ptr::null_mut();
     if retain_parts {
-        parts = push_zero::<MeshPart>(buf, num_groups);
+        parts = buf.push_zero::<MeshPart>(num_groups);
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr(error) },
             !parts.is_null(),
@@ -3153,7 +3153,7 @@ pub(crate) unsafe fn assign_face_groups(
 // ufbx.c:13399-13432 `ufbxi_update_face_groups`
 #[inline(never)]
 pub(crate) unsafe fn update_face_groups(
-    buf: *mut Buf,
+    buf: &BufView,
     error: *mut Error,
     mesh: *mut Mesh,
     need_copy: bool,
@@ -3165,7 +3165,7 @@ pub(crate) unsafe fn update_face_groups(
     }
 
     if need_copy {
-        (*mesh).face_group_parts.data = push_zero::<MeshPart>(buf, num_groups);
+        (*mesh).face_group_parts.data = buf.push_zero::<MeshPart>(num_groups);
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr(error) },
             !(*mesh).face_group_parts.data.is_null(),
@@ -3173,7 +3173,7 @@ pub(crate) unsafe fn update_face_groups(
         );
     }
 
-    let mut face_indices: *mut u32 = push::<u32>(buf, num_faces);
+    let mut face_indices: *mut u32 = buf.push::<u32>(num_faces);
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr(error) },
         !face_indices.is_null(),
@@ -3943,7 +3943,7 @@ pub(crate) unsafe fn read_mesh(
 
     if (*mesh).face_group.count > 0 && (*mesh).face_groups.count == 0 {
         assign_face_groups(
-            uc.result_mut_ptr(),
+            uc.result_view(),
             uc.error_mut_ptr(),
             mesh,
             uc.max_consecutive_indices_mut_ptr(),
@@ -6282,9 +6282,9 @@ pub(crate) fn read_objects(uc: &Context) -> Result<(), Fail> {
 
         // C: `ufbxi_node *node;` — written by `ufbxi_parse_toplevel_child`.
         let mut node: *mut Node = core::ptr::null_mut();
-        // SAFETY: `node` is a local out-param slot; the null `tmp_buf` selects
-        // uc's own temp buffer, as in the C call.
-        unsafe { parse_toplevel_child(uc, &mut node, core::ptr::null_mut())? };
+        // SAFETY: `node` is a local out-param slot; the `None` `tmp_buf`
+        // selects uc's own temp buffer, as in the C call.
+        unsafe { parse_toplevel_child(uc, &mut node, None)? };
         if node.is_null() {
             break;
         }
@@ -6412,7 +6412,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
 
             loop {
                 let mut node: *mut Node = core::ptr::null_mut();
-                parse_toplevel_child(uc, &mut node, tmp_buf)?;
+                parse_toplevel_child(uc, &mut node, Some(uc.tmp_thread_parse_at(batch_index)))?;
                 if node.is_null() {
                     parsed_to_end = true;
                     break;
@@ -6469,9 +6469,9 @@ pub(crate) fn read_connections(uc: &Context) -> Result<(), Fail> {
     loop {
         // C: `ufbxi_node *node;` — written by `ufbxi_parse_toplevel_child`.
         let mut node: *mut Node = core::ptr::null_mut();
-        // SAFETY: `node` is a local out-param slot; the null `tmp_buf` selects
-        // uc's own temp buffer, as in the C call.
-        unsafe { parse_toplevel_child(uc, &mut node, core::ptr::null_mut())? };
+        // SAFETY: `node` is a local out-param slot; the `None` `tmp_buf`
+        // selects uc's own temp buffer, as in the C call.
+        unsafe { parse_toplevel_child(uc, &mut node, None)? };
         if node.is_null() {
             break;
         }
@@ -7423,9 +7423,9 @@ pub(crate) fn read_takes(uc: &Context) -> Result<(), Fail> {
     loop {
         // C: `ufbxi_node *node;` — written by `ufbxi_parse_toplevel_child`.
         let mut node: *mut Node = core::ptr::null_mut();
-        // SAFETY: `node` is a local out-param slot; the null `tmp_buf` selects
-        // uc's own temp buffer, as in the C call.
-        unsafe { parse_toplevel_child(uc, &mut node, core::ptr::null_mut())? };
+        // SAFETY: `node` is a local out-param slot; the `None` `tmp_buf`
+        // selects uc's own temp buffer, as in the C call.
+        unsafe { parse_toplevel_child(uc, &mut node, None)? };
         if node.is_null() {
             break;
         }
@@ -9177,7 +9177,7 @@ pub(crate) unsafe fn update_vertex_first_index(mesh: *mut Mesh) {
 // ufbx.c:16691-16765 `ufbxi_finalize_mesh`
 #[inline(never)]
 pub(crate) unsafe fn finalize_mesh(
-    buf: *mut Buf,
+    buf: &BufView,
     error: *mut Error,
     mesh: *mut Mesh,
 ) -> Result<(), Fail> {
@@ -9237,7 +9237,7 @@ pub(crate) unsafe fn finalize_mesh(
 
     if (*mesh).vertex_first_index.count == 0 {
         (*mesh).vertex_first_index.count = (*mesh).num_vertices;
-        (*mesh).vertex_first_index.data = push::<u32>(buf, (*mesh).num_vertices);
+        (*mesh).vertex_first_index.data = buf.push::<u32>((*mesh).num_vertices);
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr(error) },
             !(*mesh).vertex_first_index.data.is_null(),
@@ -9247,7 +9247,7 @@ pub(crate) unsafe fn finalize_mesh(
     }
 
     if (*mesh).uv_sets.count == 0 && (*mesh).vertex_uv.exists {
-        let uv_set: *mut UvSet = push_zero::<UvSet>(buf, 1);
+        let uv_set: *mut UvSet = buf.push_zero::<UvSet>(1);
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr(error) },
             !uv_set.is_null(),
@@ -9273,7 +9273,7 @@ pub(crate) unsafe fn finalize_mesh(
     }
 
     if (*mesh).color_sets.count == 0 && (*mesh).vertex_color.exists {
-        let color_set: *mut ColorSet = push_zero::<ColorSet>(buf, 1);
+        let color_set: *mut ColorSet = buf.push_zero::<ColorSet>(1);
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr(error) },
             !color_set.is_null(),

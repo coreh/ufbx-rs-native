@@ -2396,9 +2396,9 @@ pub(crate) unsafe fn subdivide_mesh_level(
     // Will be filled in by `ufbxi_finalize_mesh()`.
     (*result).vertex_first_index.count = 0;
 
-    finalize_mesh_material(sc.result_mut_ptr(), sc.error_mut_ptr(), result)?;
-    finalize_mesh(sc.result_mut_ptr(), sc.error_mut_ptr(), result)?;
-    update_face_groups(sc.result_mut_ptr(), sc.error_mut_ptr(), result, true)?;
+    finalize_mesh_material(sc.result_view(), sc.error_mut_ptr(), result)?;
+    finalize_mesh(sc.result_view(), sc.error_mut_ptr(), result)?;
+    update_face_groups(sc.result_view(), sc.error_mut_ptr(), result, true)?;
 
     Ok(())
 }
