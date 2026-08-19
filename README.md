@@ -62,7 +62,9 @@ We used LLMs to:
 - Produce [`extern "C"` bindings](rust/ufbx/src/capi.rs) to be consumed by the existing C public API “black-box” tests; (“white-box” C tests were ported to Rust along with the source files)
 - Apply various required fixes until all compile-time checks and all tests are passing, and the library is verified to produce byte-identical output;
 - Verify suitability as a drop-in replacement for `ufbx-rust`;
-- Iteratively reduce the number of `unsafe` calls to a minimum, while keeping the underlying behavior the same.
+- Iteratively reduce the number of `unsafe` calls to a minimum, while keeping the underlying behavior the same:
+  - Consolidate repeated unsafe operations into a few isolated, easy-to-audit spots (e.g. shared *view* types replacing raw-pointer navigation with borrow-based access);
+  - Progressively narrow the remaining `unsafe {}` blocks and flip `unsafe fn`s to safe ones as their obligations are discharged. (See [PORTING.md](PORTING.md) “Unsafe reduction / isolation strategy”)
 
 ## Why do this?
 

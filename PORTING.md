@@ -396,6 +396,11 @@ bind). The goal is not a zero unsafe count — it is that every residual
   under a contract the type can't carry (printf `%s`, map key pointees) —
   safety theater (safe signature, unchecked deref inside) is worse than a
   declared obligation.
+- **Unsafe scope shrinks progressively**: function-wide `unsafe` gives way to
+  per-cluster blocks, then per-operation blocks — and an `unsafe fn` whose
+  obligations have all been discharged (params became borrows, body ops became
+  helper calls) is flipped to a safe fn, propagating outward to its callers.
+  `unused_unsafe` after such a flip marks wraps to delete, not to keep.
 - **What remains unsafe is narrow and annotated**: minimal-scope blocks, one
   invariant per `SAFETY:` comment, stating WHICH contract discharges it (view
   write-provenance, arena-run vouch, C-callback contract), not "this is fine".
