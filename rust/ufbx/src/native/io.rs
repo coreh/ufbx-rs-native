@@ -19,10 +19,6 @@
 // (an orphaned stub that no ported call site reaches); leaner feature sets
 // legitimately strand items, so the lint is only armed for the full build.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 
@@ -358,10 +354,18 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
     let len: usize = min_sz(uc.data_size(), size);
     // C-parity: `memcpy(ptr, uc->data, len)` — `uc->data` may be NULL when
     // `len == 0` (memory input fully consumed), as in C.
-    core::ptr::copy_nonoverlapping(uc.data(), ptr, len);
-    uc.set_data(uc.data().add(len));
+    // SAFETY: `len <= uc.data_size()`, so `uc.data()` has `len` readable bytes
+    // in the buffered window, and `dst` has at least `size >= len` writable
+    // bytes (the raw-pointer contract of this `unsafe fn`); the caller's
+    // destination and `uc`'s read buffer are distinct allocations.
+    unsafe { core::ptr::copy_nonoverlapping(uc.data(), ptr, len) };
+    // SAFETY: `len <= uc.data_size()`, so the cursor stays inside the buffered
+    // read window.
+    uc.set_data(unsafe { uc.data().add(len) });
     uc.set_data_size(uc.data_size() - len);
-    ptr = ptr.add(len);
+    // SAFETY: `len` bytes of `dst` were consumed above, so `ptr + len` is at
+    // most one past the end of the caller's destination buffer.
+    ptr = unsafe { ptr.add(len) };
     size -= len;
 
     // If there's data left to copy try to read from user IO
@@ -380,8 +384,13 @@ pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) ->
         ufbxi_check!(uc, uc.read_fn().is_some(), "uc->read_fn");
 
         while size > 0 {
-            let read_result: usize =
-                (uc.read_fn().unwrap_unchecked())(uc.read_user(), ptr as *mut c_void, size);
+            // SAFETY: `read_fn` is `Some` (checked just above); it is called
+            // with its paired `read_user` per the C stream-callback contract,
+            // and `ptr`/`size` are the unconsumed tail of the caller's
+            // destination buffer.
+            let read_result: usize = unsafe {
+                (uc.read_fn().unwrap_unchecked())(uc.read_user(), ptr as *mut c_void, size)
+            };
             ufbxi_check_msg!(
                 uc,
                 read_result != usize::MAX,
@@ -503,18 +512,28 @@ pub(crate) unsafe fn begin_file_context(
     ctx: OpenFileContext,
     ator_opts: *const RawAllocatorOpts,
 ) {
-    core::ptr::write_bytes(fc.get() as *mut u8, 0, size_of::<InnerFileContext>());
+    // SAFETY: `fc.get()` addresses the `MaybeUninit<InnerFileContext>` cell the
+    // `&FileContext` borrow keeps alive, so exactly `size_of::<InnerFileContext>()`
+    // bytes are writable there (C: `memset(fc, 0, sizeof(*fc))`).
+    unsafe { core::ptr::write_bytes(fc.get() as *mut u8, 0, size_of::<InnerFileContext>()) };
     if ctx != 0 {
         fc.set_parent_ator(ctx as *mut Allocator);
-        fc.set_ator(*fc.parent_ator());
+        // SAFETY: a non-zero `OpenFileContext` is a live `*mut Allocator` handed
+        // out by `ufbx_open_file_ctx` — the contract of this `unsafe fn`.
+        fc.set_ator(unsafe { *fc.parent_ator() });
         fc.ator_view().set_error(fc.error_mut_ptr());
     } else {
-        init_ator(
-            fc.error_mut_ptr(),
-            fc.ator_mut_ptr(),
-            ator_opts,
-            b"file\0".as_ptr(),
-        );
+        // SAFETY: `error`/`ator` are `fc`'s own fields (live for the borrow) and
+        // `ator_opts` is the caller's `RawAllocatorOpts` or null, which
+        // `init_ator` accepts.
+        unsafe {
+            init_ator(
+                fc.error_mut_ptr(),
+                fc.ator_mut_ptr(),
+                ator_opts,
+                b"file\0".as_ptr(),
+            )
+        };
     }
 }
 
@@ -522,16 +541,27 @@ pub(crate) unsafe fn begin_file_context(
 #[inline(never)]
 pub(crate) unsafe fn end_file_context(fc: &FileContext, error: *mut Error, ok: bool) {
     if !fc.parent_ator().is_null() {
-        fc.ator_view().set_error((*fc.parent_ator()).error);
-        *fc.parent_ator() = fc.ator();
+        // SAFETY: a non-null `parent_ator` is the live caller-owned `Allocator`
+        // `begin_file_context` was handed (checked non-null just above); the
+        // read of its error slot and the write-back of the local copy both
+        // target that same live allocator.
+        fc.ator_view()
+            .set_error(unsafe { (*fc.parent_ator()).error });
+        unsafe { *fc.parent_ator() = fc.ator() };
     } else {
-        free_ator(fc.ator_mut_ptr());
+        // SAFETY: with no parent, `fc` owns its `ator` field, which is live for
+        // the duration of the `&FileContext` borrow.
+        unsafe { free_ator(fc.ator_mut_ptr()) };
     }
     if !error.is_null() {
         if !ok {
-            fix_error_type(fc.error_mut_ptr(), b"Failed to open file\0".as_ptr(), error);
+            // SAFETY: `error` is the caller's live `Error` slot (checked
+            // non-null above) and `fc.error_mut_ptr()` is `fc`'s own field.
+            unsafe { fix_error_type(fc.error_mut_ptr(), b"Failed to open file\0".as_ptr(), error) };
         } else {
-            clear_error(error);
+            // SAFETY: `error` is the caller's live `Error` slot, checked
+            // non-null above.
+            unsafe { clear_error(error) };
         }
     }
 }
@@ -607,7 +637,9 @@ pub(crate) unsafe fn fopen(
     if path_len < 256 - 1 {
         wpath = wpath_buf.as_mut_ptr() as *mut u16;
     } else {
-        wpath = alloc::<u16>(fc.ator_mut_ptr(), path_len + 1);
+        // SAFETY: allocating from `fc`'s own `ator` field, live for the duration
+        // of the `&FileContext` borrow.
+        wpath = unsafe { alloc::<u16>(fc.ator_mut_ptr(), path_len + 1) };
         if wpath.is_null() {
             return core::ptr::null_mut();
         }
@@ -617,66 +649,78 @@ pub(crate) unsafe fn fopen(
     // file system encoding allows them as well..
     let mut wlen: usize = 0;
     let mut i: usize = 0;
+    // SAFETY (every `*path.add(i)` and `*wpath.add(wlen)` in this loop and the
+    // terminator write that follows it): `path` has `path_len` readable bytes —
+    // the raw-pointer contract of this `unsafe fn` — and each read is guarded by
+    // `i < path_len`; `wpath` addresses the C-parity destination, the 256-unit
+    // local when `path_len < 255` and otherwise the `path_len + 1`-unit
+    // allocation made above, indexed by `wlen` exactly as C indexes
+    // `wpath[wlen++]` (ufbx.c:7011-7036).
     while i < path_len {
         let mut code: u32 = u32::MAX;
-        let c: u8 = *path.add(i);
+        let c: u8 = unsafe { *path.add(i) };
         i += 1;
         if (c & 0x80) == 0 {
             code = c as u32;
         } else if (c & 0xe0) == 0xc0 {
             code = (c & 0x1f) as u32;
             if i < path_len {
-                code = code << 6 | (*path.add(i) & 0x3f) as u32;
+                code = code << 6 | (unsafe { *path.add(i) } & 0x3f) as u32;
                 i += 1;
             }
         } else if (c & 0xf0) == 0xe0 {
             code = (c & 0x0f) as u32;
             if i < path_len {
-                code = code << 6 | (*path.add(i) & 0x3f) as u32;
+                code = code << 6 | (unsafe { *path.add(i) } & 0x3f) as u32;
                 i += 1;
             }
             if i < path_len {
-                code = code << 6 | (*path.add(i) & 0x3f) as u32;
+                code = code << 6 | (unsafe { *path.add(i) } & 0x3f) as u32;
                 i += 1;
             }
         } else if (c & 0xf8) == 0xf0 {
             code = (c & 0x07) as u32;
             if i < path_len {
-                code = code << 6 | (*path.add(i) & 0x3f) as u32;
+                code = code << 6 | (unsafe { *path.add(i) } & 0x3f) as u32;
                 i += 1;
             }
             if i < path_len {
-                code = code << 6 | (*path.add(i) & 0x3f) as u32;
+                code = code << 6 | (unsafe { *path.add(i) } & 0x3f) as u32;
                 i += 1;
             }
             if i < path_len {
-                code = code << 6 | (*path.add(i) & 0x3f) as u32;
+                code = code << 6 | (unsafe { *path.add(i) } & 0x3f) as u32;
                 i += 1;
             }
         }
         if code < 0x10000 {
-            *wpath.add(wlen) = code as u16;
+            unsafe { *wpath.add(wlen) = code as u16 };
             wlen += 1;
         } else {
             // C-parity: `code` may still be UINT32_MAX for malformed UTF-8;
             // the unsigned subtraction wraps as in C.
             code = code.wrapping_sub(0x10000);
-            *wpath.add(wlen) = 0xd800u32.wrapping_add(code >> 10) as u16;
+            unsafe { *wpath.add(wlen) = 0xd800u32.wrapping_add(code >> 10) as u16 };
             wlen += 1;
-            *wpath.add(wlen) = 0xdc00u32.wrapping_add(code & 0x3ff) as u16;
+            unsafe { *wpath.add(wlen) = 0xdc00u32.wrapping_add(code & 0x3ff) as u16 };
             wlen += 1;
         }
     }
-    *wpath.add(wlen) = 0;
+    unsafe { *wpath.add(wlen) = 0 };
 
     // C: `_wfopen_s` under `UFBXI_MSC_VER >= 1400`, `_wfopen` otherwise —
     // the compiler-version fork collapses to the plain `_wfopen` call.
-    file = libc_stdio::_wfopen(wpath, [0x72u16, 0x62u16, 0u16].as_ptr()); // L"rb"
+    // SAFETY: `wpath` is the NUL-terminated UTF-16 path just built.
+    file = unsafe { libc_stdio::_wfopen(wpath, [0x72u16, 0x62u16, 0u16].as_ptr()) }; // L"rb"
     if wpath != wpath_buf.as_mut_ptr() as *mut u16 {
-        free::<u16>(fc.ator_mut_ptr(), wpath, path_len + 1);
+        // SAFETY: reaching here `wpath` is the `path_len + 1`-unit block
+        // allocated above from this same allocator.
+        unsafe { free::<u16>(fc.ator_mut_ptr(), wpath, path_len + 1) };
     }
     if file.is_null() {
-        set_err_info(fc.error_mut_ptr(), path, path_len);
+        // SAFETY: `fc`'s own `error` field, plus the caller's `path`/`path_len`
+        // readable range per the fn contract.
+        unsafe { set_err_info(fc.error_mut_ptr(), path, path_len) };
         ufbxi_report_err_msg!(fc.error_view(), "file", "File not found");
     }
     file
@@ -699,20 +743,33 @@ pub(crate) unsafe fn fopen(
         if path_len < 256 - 1 {
             copy = copy_buf.as_mut_ptr() as *mut u8;
         } else {
-            copy = alloc::<u8>(fc.ator_mut_ptr(), path_len + 1);
+            // SAFETY: allocating from `fc`'s own `ator` field, live for the
+            // duration of the `&FileContext` borrow.
+            copy = unsafe { alloc::<u8>(fc.ator_mut_ptr(), path_len + 1) };
             if copy.is_null() {
                 return core::ptr::null_mut();
             }
         }
-        core::ptr::copy_nonoverlapping(path, copy, path_len);
-        *copy.add(path_len) = b'\0';
+        // SAFETY: `path` has `path_len` readable bytes (the raw-pointer
+        // contract of this `unsafe fn`) and `copy` holds `path_len + 1` writable
+        // bytes — either the 256-byte local (this branch requires
+        // `path_len < 255`) or the allocation just made; the two are distinct
+        // allocations, and the trailing byte is the terminator slot.
+        unsafe { core::ptr::copy_nonoverlapping(path, copy, path_len) };
+        unsafe { *copy.add(path_len) = b'\0' };
     }
-    let file: *mut c_void = libc_stdio::fopen(copy, b"rb\0".as_ptr());
+    // SAFETY: `copy` is a NUL-terminated path — either written above or the
+    // caller's own NUL-terminated `path` (`null_terminated`).
+    let file: *mut c_void = unsafe { libc_stdio::fopen(copy, b"rb\0".as_ptr()) };
     if !null_terminated && copy != copy_buf.as_mut_ptr() as *mut u8 {
-        free::<u8>(fc.ator_mut_ptr(), copy, path_len + 1);
+        // SAFETY: reaching here `copy` is the `path_len + 1` block allocated
+        // above from this same allocator.
+        unsafe { free::<u8>(fc.ator_mut_ptr(), copy, path_len + 1) };
     }
     if file.is_null() {
-        set_err_info(fc.error_mut_ptr(), path, path_len);
+        // SAFETY: `fc`'s own `error` field, plus the caller's `path`/`path_len`
+        // readable range per the fn contract.
+        unsafe { set_err_info(fc.error_mut_ptr(), path, path_len) };
         ufbxi_report_err_msg!(fc.error_view(), "file", "File not found");
     }
     file
@@ -725,21 +782,27 @@ pub(crate) unsafe fn ftell(file: *mut c_void) -> u64 {
     // the extern block for why `ftello` is limited to 64-bit unix).
     #[cfg(all(unix, target_pointer_width = "64"))]
     {
-        let result: i64 = libc_stdio::ftello(file);
+        // SAFETY: `file` is a live `FILE *` — the raw-pointer contract of this
+        // `unsafe fn`.
+        let result: i64 = unsafe { libc_stdio::ftello(file) };
         if result >= 0 {
             return result as u64;
         }
     }
     #[cfg(windows)]
     {
-        let result: i64 = libc_stdio::_ftelli64(file);
+        // SAFETY: `file` is a live `FILE *` — the raw-pointer contract of this
+        // `unsafe fn`.
+        let result: i64 = unsafe { libc_stdio::_ftelli64(file) };
         if result >= 0 {
             return result as u64;
         }
     }
     #[cfg(not(any(all(unix, target_pointer_width = "64"), windows)))]
     {
-        let result: i64 = libc_stdio::ftell(file) as i64;
+        // SAFETY: `file` is a live `FILE *` — the raw-pointer contract of this
+        // `unsafe fn`.
+        let result: i64 = unsafe { libc_stdio::ftell(file) } as i64;
         if result >= 0 {
             return result as u64;
         }
@@ -754,20 +817,26 @@ pub(crate) unsafe extern "C" fn stdio_read(
     max_size: usize,
 ) -> usize {
     let file: *mut c_void = user;
-    if libc_stdio::ferror(file) != 0 {
+    // SAFETY: `user` is the `FILE *` this callback set was installed with by
+    // `stdio_init`, and the stream contract guarantees it is still open.
+    if unsafe { libc_stdio::ferror(file) } != 0 {
         return usize::MAX;
     }
-    libc_stdio::fread(data, 1, max_size, file)
+    // SAFETY: same live `FILE *`; `data` has `max_size` writable bytes — the
+    // `ufbx_read_fn` contract the caller of this callback honors.
+    unsafe { libc_stdio::fread(data, 1, max_size, file) }
 }
 
 // ufbx.c:7095-7102 `ufbxi_stdio_skip`
 pub(crate) unsafe extern "C" fn stdio_skip(user: *mut c_void, size: usize) -> bool {
     let file: *mut c_void = user;
     ufbx_assert!(size <= MAX_SKIP_SIZE);
-    if libc_stdio::fseek(file, size as core::ffi::c_long, SEEK_CUR) != 0 {
+    // SAFETY (both calls): `user` is the `FILE *` this callback set was
+    // installed with by `stdio_init`, still open per the stream contract.
+    if unsafe { libc_stdio::fseek(file, size as core::ffi::c_long, SEEK_CUR) } != 0 {
         return false;
     }
-    if libc_stdio::ferror(file) != 0 {
+    if unsafe { libc_stdio::ferror(file) } != 0 {
         return false;
     }
     true
@@ -777,18 +846,23 @@ pub(crate) unsafe extern "C" fn stdio_skip(user: *mut c_void, size: usize) -> bo
 pub(crate) unsafe extern "C" fn stdio_size(user: *mut c_void) -> u64 {
     let file: *mut c_void = user;
     let mut result: u64 = 0;
-    let begin: u64 = ftell(file);
+    // SAFETY (every libc call below, and both `ftell` calls): `user` is the
+    // `FILE *` this callback set was installed with by `stdio_init`, still open
+    // per the stream contract. `pos` is a local `FposT` slot, sized and aligned
+    // to over-cover every supported libc's `fpos_t`, and `fsetpos` reads it back
+    // only on the `fgetpos == 0` path that initialized it.
+    let begin: u64 = unsafe { ftell(file) };
     if begin < u64::MAX {
         let mut pos = MaybeUninit::<FposT>::uninit(); // ufbxi_uninit
-        if libc_stdio::fgetpos(file, pos.as_mut_ptr()) == 0 {
-            if libc_stdio::fseek(file, 0, SEEK_END) == 0 {
-                let end: u64 = ftell(file);
+        if unsafe { libc_stdio::fgetpos(file, pos.as_mut_ptr()) } == 0 {
+            if unsafe { libc_stdio::fseek(file, 0, SEEK_END) } == 0 {
+                let end: u64 = unsafe { ftell(file) };
                 if end != u64::MAX && begin < end {
                     result = end - begin;
                 }
                 // Both `rewind()` and `fsetpos()` to reset error and EOF
-                libc_stdio::rewind(file);
-                libc_stdio::fsetpos(file, pos.as_ptr());
+                unsafe { libc_stdio::rewind(file) };
+                unsafe { libc_stdio::fsetpos(file, pos.as_ptr()) };
             }
         }
     }
@@ -798,17 +872,24 @@ pub(crate) unsafe extern "C" fn stdio_size(user: *mut c_void) -> u64 {
 // ufbx.c:7126-7130 `ufbxi_stdio_close`
 pub(crate) unsafe extern "C" fn stdio_close(user: *mut c_void) {
     let file: *mut c_void = user;
-    libc_stdio::fclose(file);
+    // SAFETY: `user` is the `FILE *` this callback set was installed with by
+    // `stdio_init`; `close_fn` is invoked once, and the stream is not used after.
+    unsafe { libc_stdio::fclose(file) };
 }
 
 // ufbx.c:7132-7139 `ufbxi_stdio_init`
 #[inline(never)]
 pub(crate) unsafe fn stdio_init(stream: *mut RawStream, file: *mut c_void, close: bool) {
-    (*stream).read_fn = Some(stdio_read);
-    (*stream).skip_fn = Some(stdio_skip);
-    (*stream).size_fn = Some(stdio_size);
-    (*stream).close_fn = if close { Some(stdio_close) } else { None };
-    (*stream).user = file;
+    // SAFETY: `stream` points at the caller's live `RawStream` slot — the
+    // raw-pointer contract of this `unsafe fn`; all five stores are scalar
+    // writes into that one struct.
+    unsafe {
+        (*stream).read_fn = Some(stdio_read);
+        (*stream).skip_fn = Some(stdio_skip);
+        (*stream).size_fn = Some(stdio_size);
+        (*stream).close_fn = if close { Some(stdio_close) } else { None };
+        (*stream).user = file;
+    }
 }
 
 // ufbx.c:7141-7147 `ufbxi_stdio_open`
@@ -820,11 +901,16 @@ pub(crate) unsafe fn stdio_open(
     path_len: usize,
     null_terminated: bool,
 ) -> bool {
-    let file: *mut c_void = fopen(fc, path, path_len, null_terminated);
+    // SAFETY: forwarding this fn's own `path`/`path_len`/`null_terminated`
+    // contract to `fopen`.
+    let file: *mut c_void = unsafe { fopen(fc, path, path_len, null_terminated) };
     if file.is_null() {
         return false;
     }
-    stdio_init(stream, file, true);
+    // SAFETY: forwarding the caller's live `RawStream` slot; `file` is the
+    // freshly opened stream, checked non-null above, and `close` transfers its
+    // ownership to the stream.
+    unsafe { stdio_init(stream, file, true) };
     true
 }
 
@@ -872,53 +958,86 @@ pub(crate) unsafe extern "C" fn memory_read(
     max_size: usize,
 ) -> usize {
     let stream = user as *mut MemoryStream;
-    let to_read: usize = min_sz((*stream).size - (*stream).position, max_size);
-    core::ptr::copy_nonoverlapping(
-        ((*stream).data as *const u8).add((*stream).position),
-        data as *mut u8,
-        to_read,
-    );
-    (*stream).position += to_read;
+    // SAFETY: `user` is the `MemoryStream` this callback set was installed with
+    // (`ufbx_open_memory`), live until `memory_close` runs.
+    let to_read: usize = min_sz(unsafe { (*stream).size - (*stream).position }, max_size);
+    // SAFETY: `data`/`size` describe the stream's readable byte range and
+    // `position + to_read <= size` by the `min_sz` above, so the source window is
+    // in bounds; `data` (the destination) has `max_size >= to_read` writable
+    // bytes per the `ufbx_read_fn` contract, and the caller's destination is a
+    // different allocation from the stream's source buffer.
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            ((*stream).data as *const u8).add((*stream).position),
+            data as *mut u8,
+            to_read,
+        )
+    };
+    // SAFETY: live `MemoryStream` as above; advancing its own cursor.
+    unsafe { (*stream).position += to_read };
     to_read
 }
 
 // ufbx.c:7215-7221 `ufbxi_memory_skip`
 pub(crate) unsafe extern "C" fn memory_skip(user: *mut c_void, size: usize) -> bool {
     let stream = user as *mut MemoryStream;
-    if (*stream).size - (*stream).position < size {
+    // SAFETY (both accesses): `user` is the `MemoryStream` this callback set was
+    // installed with (`ufbx_open_memory`), live until `memory_close` runs; the
+    // second reads and advances its own cursor.
+    if unsafe { (*stream).size - (*stream).position } < size {
         return false;
     }
-    (*stream).position += size;
+    unsafe { (*stream).position += size };
     true
 }
 
 // ufbx.c:7223-7227 `ufbxi_memory_size`
 pub(crate) unsafe extern "C" fn memory_size(user: *mut c_void) -> u64 {
     let stream = user as *mut MemoryStream;
-    (*stream).size as u64
+    // SAFETY: `user` is the `MemoryStream` this callback set was installed with
+    // (`ufbx_open_memory`), live until `memory_close` runs.
+    unsafe { (*stream).size as u64 }
 }
 
 // ufbx.c:7229-7243 `ufbxi_memory_close`
 pub(crate) unsafe extern "C" fn memory_close(user: *mut c_void) {
     let stream = user as *mut MemoryStream;
-    if (*stream).close_cb.fn_.is_some() {
-        ((*stream).close_cb.fn_.unwrap_unchecked())(
-            (*stream).close_cb.user,
-            (*stream).data as *mut c_void,
-            (*stream).size,
-        );
+    // SAFETY (every access to `*stream` below): `user` is the `MemoryStream`
+    // this callback set was installed with (`ufbx_open_memory`), live until this
+    // fn frees it — which is the last thing it does.
+    if unsafe { (*stream).close_cb.fn_.is_some() } {
+        // SAFETY: `fn_` is `Some` (checked on the line above) and is invoked with
+        // the `user` pointer stored beside it plus the stream's own
+        // `data`/`size` — the `ufbx_close_memory_cb` contract.
+        unsafe {
+            ((*stream).close_cb.fn_.unwrap_unchecked())(
+                (*stream).close_cb.user,
+                (*stream).data as *mut c_void,
+                (*stream).size,
+            )
+        };
     }
 
-    if !(*stream).parent_ator.is_null() {
-        free::<u8>(
-            (*stream).parent_ator,
-            stream as *mut u8,
-            (*stream).self_size,
-        );
+    if !unsafe { (*stream).parent_ator }.is_null() {
+        // SAFETY: a non-null `parent_ator` is the live allocator the
+        // `self_size`-byte stream block was allocated from.
+        unsafe {
+            free::<u8>(
+                (*stream).parent_ator,
+                stream as *mut u8,
+                (*stream).self_size,
+            )
+        };
     } else {
-        let mut ator: Allocator = (*stream).local_ator;
-        free::<u8>(&mut ator, stream as *mut u8, (*stream).self_size);
-        free_ator(&mut ator);
+        // SAFETY: with no parent, the stream owns `local_ator`; the stack copy
+        // keeps the allocator usable while the block holding it is released
+        // (C-parity, ufbx.c:7238-7242).
+        let mut ator: Allocator = unsafe { (*stream).local_ator };
+        // SAFETY: `ator` is that same allocator (by value) and the stream block
+        // of `self_size` bytes came from it; `free_ator` then tears down an
+        // allocator with zero live bytes.
+        unsafe { free::<u8>(&mut ator, stream as *mut u8, (*stream).self_size) };
+        unsafe { free_ator(&mut ator) };
     }
 }
 
@@ -958,9 +1077,15 @@ mod tests {
         data: *mut c_void,
         max_size: usize,
     ) -> usize {
-        let r = &mut *(user as *mut SliceReader);
+        // SAFETY: the tests install this callback with `read_user` pointing at a
+        // live `SliceReader` that outlives the read; it is the only reference to
+        // it while the callback runs.
+        let r = unsafe { &mut *(user as *mut SliceReader) };
         let n = r.chunk.min(max_size).min(r.data.len() - r.pos);
-        core::ptr::copy_nonoverlapping(r.data.as_ptr().add(r.pos), data as *mut u8, n);
+        // SAFETY: `pos + n <= data.len()` by the `min` above, so the source
+        // window is in bounds, and `data` has `max_size >= n` writable bytes per
+        // the `ufbx_read_fn` contract; source and destination are distinct.
+        unsafe { core::ptr::copy_nonoverlapping(r.data.as_ptr().add(r.pos), data as *mut u8, n) };
         r.pos += n;
         n
     }

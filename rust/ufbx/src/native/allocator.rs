@@ -15,10 +15,6 @@
 // (an orphaned stub that no ported call site reaches); leaner feature sets
 // legitimately strand items, so the lint is only armed for the full build.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::c_void;
 use core::mem::size_of;
 
@@ -62,14 +58,20 @@ pub(crate) unsafe fn ufbx_realloc(
     new_size: usize,
 ) -> *mut c_void {
     let _ = old_size; // C macro discards `old_size`
-    libc_alloc::realloc(ptr, new_size)
+
+    // SAFETY: `ptr` is null or a live libc-heap block previously returned by
+    // `ufbx_malloc`/`ufbx_realloc` — the raw-pointer contract of this `unsafe fn`.
+    unsafe { libc_alloc::realloc(ptr, new_size) }
 }
 
 // ufbx.c:383 `#define ufbx_free(ptr, old_size) free((ptr))`
 #[inline(always)]
 pub(crate) unsafe fn ufbx_free(ptr: *mut c_void, old_size: usize) {
     let _ = old_size; // C macro discards `old_size`
-    libc_alloc::free(ptr)
+
+    // SAFETY: `ptr` is a live libc-heap block previously returned by
+    // `ufbx_malloc`/`ufbx_realloc` — the raw-pointer contract of this `unsafe fn`.
+    unsafe { libc_alloc::free(ptr) }
 }
 
 // -- Allocator
@@ -195,45 +197,72 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
         core::ptr::null_mut(),
         "total <= SIZE_MAX / 2"
     );
-    if !(total < (*ator).max_size - (*ator).current_size) {
-        let a = &mut *ator;
+    // SAFETY: `ator` points at a live `Allocator` — the raw-pointer contract of
+    // this `unsafe fn`; the two size counters are read together as one snapshot.
+    if !(total < unsafe { (*ator).max_size - (*ator).current_size }) {
+        // SAFETY: same live `Allocator`; this reborrow is the only reference to
+        // it in this branch and does not outlive the branch.
+        let a = unsafe { &mut *ator };
         ufbxi_report_err_msg!(
             unsafe { crate::native::error::ErrorView::from_ptr(a.error) },
             "total <= ator->max_size - ator->current_size",
             "Memory limit exceeded"
         );
-        ufbxi_fmt_err_info!(a.error, "%s", a.name);
+        // SAFETY: `a.error` is the allocator's own error slot and `a.name` is
+        // its NUL-terminated allocator name — the `%s` printf argument
+        // contract of `fmt_err_info`.
+        unsafe { ufbxi_fmt_err_info!(a.error, "%s", a.name) };
         return core::ptr::null_mut();
     }
-    if !((*ator).num_allocs < (*ator).max_allocs) {
-        let a = &mut *ator;
+    // SAFETY: live `Allocator` per the fn contract; the two allocation counters
+    // are read together as one snapshot.
+    if !(unsafe { (*ator).num_allocs < (*ator).max_allocs }) {
+        // SAFETY: same live `Allocator`; branch-local reborrow, no other
+        // reference to it is live here.
+        let a = unsafe { &mut *ator };
         ufbxi_report_err_msg!(
             unsafe { crate::native::error::ErrorView::from_ptr(a.error) },
             "ator->num_allocs < ator->max_allocs",
             "Allocation limit exceeded"
         );
-        ufbxi_fmt_err_info!(a.error, "%s", a.name);
+        // SAFETY: `a.error` is the allocator's own error slot and `a.name` is
+        // its NUL-terminated allocator name — the `%s` printf argument
+        // contract of `fmt_err_info`.
+        unsafe { ufbxi_fmt_err_info!(a.error, "%s", a.name) };
         return core::ptr::null_mut();
     }
-    (*ator).num_allocs += 1;
+    // SAFETY: live `Allocator` per the fn contract; bumping its own counter.
+    unsafe {
+        (*ator).num_allocs += 1;
+    }
 
     let ptr: *mut c_void;
-    if let Some(alloc_fn) = (*ator).ator.allocator.alloc_fn {
-        ptr = alloc_fn((*ator).ator.allocator.user, total);
-    } else if let Some(realloc_fn) = (*ator).ator.allocator.realloc_fn {
-        ptr = realloc_fn((*ator).ator.allocator.user, core::ptr::null_mut(), 0, total);
+    // SAFETY: live `Allocator` per the fn contract; both callback-slot reads in
+    // this dispatch chain go through it.
+    if let Some(alloc_fn) = unsafe { (*ator).ator.allocator.alloc_fn } {
+        // SAFETY: `alloc_fn` is invoked with the `user` pointer stored beside it
+        // in the same `ufbx_allocator` — the user-callback pairing contract.
+        ptr = unsafe { alloc_fn((*ator).ator.allocator.user, total) };
+    } else if let Some(realloc_fn) = unsafe { (*ator).ator.allocator.realloc_fn } {
+        // SAFETY: `realloc_fn` paired with its own `user` pointer; a null old
+        // block of size 0 is the allocate form of the realloc callback.
+        ptr = unsafe { realloc_fn((*ator).ator.allocator.user, core::ptr::null_mut(), 0, total) };
     } else {
         ptr = ufbx_malloc(total);
     }
 
     if ptr.is_null() {
-        let a = &mut *ator;
+        // SAFETY: live `Allocator` per the fn contract; branch-local reborrow.
+        let a = unsafe { &mut *ator };
         ufbxi_report_err_msg!(
             unsafe { crate::native::error::ErrorView::from_ptr(a.error) },
             "ptr",
             "Out of memory"
         );
-        ufbxi_fmt_err_info!(a.error, "%s", a.name);
+        // SAFETY: `a.error` is the allocator's own error slot and `a.name` is
+        // its NUL-terminated allocator name — the `%s` printf argument
+        // contract of `fmt_err_info`.
+        unsafe { ufbxi_fmt_err_info!(a.error, "%s", a.name) };
         return core::ptr::null_mut();
     }
     ufbx_assert!(is_aligned_mask(ptr, size_align_mask(total)));
@@ -246,7 +275,11 @@ pub(crate) unsafe fn alloc_size(ator: *mut Allocator, size: usize, n: usize) -> 
     // CI gate deliberately leaves off.
     (ptr as *mut u8).expose_provenance();
 
-    (*ator).current_size += total;
+    // SAFETY: live `Allocator` per the fn contract; recording the new block's
+    // size in its own accounting.
+    unsafe {
+        (*ator).current_size += total;
+    }
 
     ptr
 }
@@ -264,10 +297,13 @@ pub(crate) unsafe fn realloc_size(
     ufbx_assert!(size > 0);
     // realloc() with zero old/new size is equivalent to alloc()/free()
     if old_n == 0 {
-        return alloc_size(ator, size, n);
+        // SAFETY: forwarding this fn's own `ator` contract to `alloc_size`.
+        return unsafe { alloc_size(ator, size, n) };
     }
     if n == 0 {
-        free_size(ator, size, old_ptr, old_n);
+        // SAFETY: forwarding this fn's `ator` contract, plus `old_ptr`/`old_n`
+        // describing a live block from this same allocator (caller obligation).
+        unsafe { free_size(ator, size, old_ptr, old_n) };
         return core::ptr::null_mut();
     }
 
@@ -276,7 +312,9 @@ pub(crate) unsafe fn realloc_size(
 
     // The old values have been checked by a previous allocate call
     ufbx_assert!(!does_overflow(old_total, size, old_n));
-    ufbx_assert!(old_total <= (*ator).current_size);
+    // SAFETY: `ator` points at a live `Allocator` — the raw-pointer contract of
+    // this `unsafe fn`.
+    ufbx_assert!(old_total <= unsafe { (*ator).current_size });
 
     ufbxi_check_return_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
@@ -293,34 +331,56 @@ pub(crate) unsafe fn realloc_size(
     );
     ufbxi_check_return_err_msg!(
         unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
-        total <= (*ator).max_size - (*ator).current_size,
+        // SAFETY: live `Allocator` per the fn contract; the two size counters
+        // are read together as one snapshot.
+        total <= unsafe { (*ator).max_size - (*ator).current_size },
         core::ptr::null_mut(),
         "Memory limit exceeded",
         "total <= ator->max_size - ator->current_size"
     );
     ufbxi_check_return_err_msg!(
         unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
-        (*ator).num_allocs < (*ator).max_allocs,
+        // SAFETY: live `Allocator` per the fn contract; the two allocation
+        // counters are read together as one snapshot.
+        unsafe { (*ator).num_allocs < (*ator).max_allocs },
         core::ptr::null_mut(),
         "Allocation limit exceeded",
         "ator->num_allocs < ator->max_allocs"
     );
-    (*ator).num_allocs += 1;
+    // SAFETY: live `Allocator` per the fn contract; bumping its own counter.
+    unsafe {
+        (*ator).num_allocs += 1;
+    }
 
     let ptr: *mut c_void;
-    if let Some(realloc_fn) = (*ator).ator.allocator.realloc_fn {
-        ptr = realloc_fn((*ator).ator.allocator.user, old_ptr, old_total, total);
-    } else if let Some(alloc_fn) = (*ator).ator.allocator.alloc_fn {
+    // SAFETY: live `Allocator` per the fn contract; every callback-slot and
+    // `user` read in this dispatch chain goes through it, and each callback is
+    // invoked with the `user` pointer stored beside it in the same
+    // `ufbx_allocator` (the user-callback pairing contract).
+    if let Some(realloc_fn) = unsafe { (*ator).ator.allocator.realloc_fn } {
+        ptr = unsafe { realloc_fn((*ator).ator.allocator.user, old_ptr, old_total, total) };
+    } else if let Some(alloc_fn) = unsafe { (*ator).ator.allocator.alloc_fn } {
         // Use user-provided alloc_fn() and free_fn()
-        ptr = alloc_fn((*ator).ator.allocator.user, total);
+        ptr = unsafe { alloc_fn((*ator).ator.allocator.user, total) };
         if !ptr.is_null() {
-            core::ptr::copy_nonoverlapping(old_ptr as *const u8, ptr as *mut u8, old_total);
+            // SAFETY: `old_ptr` holds `old_total` initialized bytes (a live
+            // block of this allocator, per the caller's `old_ptr`/`old_n`
+            // obligation), `ptr` is a distinct fresh block of `total` bytes
+            // sized to hold them (C-parity `memcpy`, ufbx.c:3725), and two
+            // separate allocations cannot overlap.
+            unsafe {
+                core::ptr::copy_nonoverlapping(old_ptr as *const u8, ptr as *mut u8, old_total)
+            };
         }
-        if let Some(free_fn) = (*ator).ator.allocator.free_fn {
-            free_fn((*ator).ator.allocator.user, old_ptr, old_total);
+        if let Some(free_fn) = unsafe { (*ator).ator.allocator.free_fn } {
+            // SAFETY: `old_ptr`/`old_total` describe the live block being
+            // replaced, allocated through this same callback set.
+            unsafe { free_fn((*ator).ator.allocator.user, old_ptr, old_total) };
         }
     } else {
-        ptr = ufbx_realloc(old_ptr, old_total, total);
+        // SAFETY: `old_ptr` is a live block from the default libc allocator
+        // (this branch is taken only when no user callbacks are installed).
+        ptr = unsafe { ufbx_realloc(old_ptr, old_total, total) };
     }
 
     ufbxi_check_return_err_msg!(
@@ -336,7 +396,9 @@ pub(crate) unsafe fn realloc_size(
     // provenance the old block's exposure does not carry over to.
     (ptr as *mut u8).expose_provenance();
 
-    let a = &mut *ator;
+    // SAFETY: live `Allocator` per the fn contract; the reborrow is the only
+    // reference to it here and is used solely for its own size accounting.
+    let a = unsafe { &mut *ator };
     a.current_size += total;
     a.current_size -= old_total;
 
@@ -356,19 +418,30 @@ pub(crate) unsafe fn free_size(ator: *mut Allocator, size: usize, ptr: *mut c_vo
 
     // The old values have been checked by a previous allocate call
     ufbx_assert!(!does_overflow(total, size, n));
-    let a = &mut *ator;
+    // SAFETY: `ator` points at a live `Allocator` — the raw-pointer contract of
+    // this `unsafe fn`; the reborrow is the only reference to it here.
+    let a = unsafe { &mut *ator };
     ufbx_assert!(total <= a.current_size);
     a.current_size -= total;
 
-    if (*ator).ator.allocator.alloc_fn.is_some() || (*ator).ator.allocator.realloc_fn.is_some() {
+    // SAFETY: live `Allocator` per the fn contract; every callback-slot and
+    // `user` read in this dispatch chain goes through it, and each callback is
+    // invoked with the `user` pointer stored beside it in the same
+    // `ufbx_allocator` (the user-callback pairing contract). `ptr`/`total`
+    // describe the live block the caller hands over for release.
+    if unsafe {
+        (*ator).ator.allocator.alloc_fn.is_some() || (*ator).ator.allocator.realloc_fn.is_some()
+    } {
         // Don't call default free() if there is an user-provided `alloc_fn()`
-        if let Some(free_fn) = (*ator).ator.allocator.free_fn {
-            free_fn((*ator).ator.allocator.user, ptr, total);
-        } else if let Some(realloc_fn) = (*ator).ator.allocator.realloc_fn {
-            realloc_fn((*ator).ator.allocator.user, ptr, total, 0);
+        if let Some(free_fn) = unsafe { (*ator).ator.allocator.free_fn } {
+            unsafe { free_fn((*ator).ator.allocator.user, ptr, total) };
+        } else if let Some(realloc_fn) = unsafe { (*ator).ator.allocator.realloc_fn } {
+            unsafe { realloc_fn((*ator).ator.allocator.user, ptr, total, 0) };
         }
     } else {
-        ufbx_free(ptr, total);
+        // SAFETY: with no user callbacks installed the block came from the
+        // default libc allocator.
+        unsafe { ufbx_free(ptr, total) };
     }
 }
 
@@ -386,7 +459,9 @@ pub(crate) unsafe fn grow_array_size(
 ) -> bool {
     #[cfg(feature = "regression")]
     {
-        let a = &mut *ator;
+        // SAFETY: `ator` points at a live `Allocator` — the raw-pointer contract
+        // of this `unsafe fn`; the reborrow is the only reference to it here.
+        let a = unsafe { &mut *ator };
         ufbxi_check_return_err_msg!(
             unsafe { crate::native::error::ErrorView::from_ptr(a.error) },
             a.num_allocs < a.max_allocs,
@@ -397,34 +472,49 @@ pub(crate) unsafe fn grow_array_size(
         a.num_allocs += 1;
     }
 
-    if n <= *p_cap {
+    // SAFETY: `p_cap` points at the caller's live `usize` capacity slot — the
+    // raw-pointer contract of this `unsafe fn`.
+    if n <= unsafe { *p_cap } {
         return true;
     }
-    let ptr: *mut c_void = *(p_ptr as *mut *mut c_void);
-    let old_n = *p_cap;
+    // SAFETY: `p_ptr` points at the caller's live `T *` slot (C: `void *p_ptr`
+    // read as `*(void**)p_ptr`), so it is readable as a `*mut c_void`.
+    let ptr: *mut c_void = unsafe { *(p_ptr as *mut *mut c_void) };
+    // SAFETY: `p_cap` as above.
+    let old_n = unsafe { *p_cap };
     if old_n >= n {
         return true;
     }
     let new_n = max_sz(old_n.wrapping_mul(2), n);
-    let new_ptr = realloc_size(ator, size, ptr, old_n, new_n);
+    // SAFETY: forwarding this fn's `ator` contract; `ptr`/`old_n` are the live
+    // block described by the caller's pointer/capacity pair.
+    let new_ptr = unsafe { realloc_size(ator, size, ptr, old_n, new_n) };
     if new_ptr.is_null() {
         return false;
     }
-    *(p_ptr as *mut *mut c_void) = new_ptr;
-    *p_cap = new_n;
+    // SAFETY: `p_ptr`/`p_cap` are the caller's live slots, writable per the fn
+    // contract, and are updated together to keep pointer and capacity in sync.
+    unsafe {
+        *(p_ptr as *mut *mut c_void) = new_ptr;
+        *p_cap = new_n;
+    }
     true
 }
 
 // ufbx.c:3789-3798 `ufbxi_free_ator`
 #[inline(never)]
 pub(crate) unsafe fn free_ator(ator: *mut Allocator) {
-    let a = &*ator;
+    // SAFETY: `ator` points at a live `Allocator` — the raw-pointer contract of
+    // this `unsafe fn`; the shared reborrow only reads its fields.
+    let a = unsafe { &*ator };
     ufbx_assert!(a.current_size == 0);
 
     let free_fn = a.ator.allocator.free_allocator_fn;
     if let Some(free_fn) = free_fn {
         let user = a.ator.allocator.user;
-        free_fn(user);
+        // SAFETY: `free_allocator_fn` is invoked with the `user` pointer stored
+        // beside it in the same `ufbx_allocator` — the callback pairing contract.
+        unsafe { free_fn(user) };
     }
 }
 
@@ -442,7 +532,8 @@ pub(crate) unsafe fn free_ator(ator: *mut Allocator) {
 // ufbx.c:3800 `ufbxi_alloc(ator, type, n)`
 #[inline(always)]
 pub(crate) unsafe fn alloc<T>(ator: *mut Allocator, n: usize) -> *mut T {
-    ufbxi_maybe_null!(alloc_size(ator, size_of::<T>(), n) as *mut T)
+    // SAFETY: forwarding this fn's `ator` contract to `alloc_size`.
+    ufbxi_maybe_null!(unsafe { alloc_size(ator, size_of::<T>(), n) } as *mut T)
 }
 
 // ufbx.c:3802 `ufbxi_realloc(ator, type, old_ptr, old_n, n)`
@@ -456,15 +547,19 @@ pub(crate) unsafe fn realloc<T>(
     old_n: usize,
     n: usize,
 ) -> *mut T {
-    ufbxi_maybe_null!(
-        realloc_size(ator, size_of::<T>(), old_ptr as *mut c_void, old_n, n) as *mut T
-    )
+    // SAFETY: forwarding this fn's `ator` contract plus the caller's
+    // `old_ptr`/`old_n` live-block obligation to `realloc_size`.
+    ufbxi_maybe_null!(unsafe {
+        realloc_size(ator, size_of::<T>(), old_ptr as *mut c_void, old_n, n)
+    } as *mut T)
 }
 
 // ufbx.c:3804 `ufbxi_free(ator, type, ptr, n)`
 #[inline(always)]
 pub(crate) unsafe fn free<T>(ator: *mut Allocator, ptr: *mut T, n: usize) {
-    free_size(ator, size_of::<T>(), ptr as *mut c_void, n)
+    // SAFETY: forwarding this fn's `ator` contract plus the caller's `ptr`/`n`
+    // live-block obligation to `free_size`.
+    unsafe { free_size(ator, size_of::<T>(), ptr as *mut c_void, n) }
 }
 
 // ufbx.c:3806 `ufbxi_grow_array(ator, p_ptr, p_cap, n)` — `sizeof(**(p_ptr))`
@@ -476,7 +571,9 @@ pub(crate) unsafe fn grow_array<T>(
     p_cap: *mut usize,
     n: usize,
 ) -> bool {
-    grow_array_size(ator, size_of::<T>(), p_ptr as *mut c_void, p_cap, n)
+    // SAFETY: forwarding this fn's `ator` contract plus the caller's live
+    // pointer/capacity slots to `grow_array_size`.
+    unsafe { grow_array_size(ator, size_of::<T>(), p_ptr as *mut c_void, p_cap, n) }
 }
 
 // ufbx.c:3808-3815 implementation-header magic values
@@ -501,15 +598,21 @@ pub(crate) unsafe fn init_ator(
     let mut zero_opts = core::mem::MaybeUninit::<RawAllocatorOpts>::uninit();
     let mut opts = opts;
     if opts.is_null() {
-        core::ptr::write_bytes(zero_opts.as_mut_ptr(), 0, 1);
+        // SAFETY: `zero_opts` is a local `MaybeUninit<RawAllocatorOpts>`, so the
+        // destination is one properly aligned, writable `RawAllocatorOpts` slot.
+        unsafe { core::ptr::write_bytes(zero_opts.as_mut_ptr(), 0, 1) };
         opts = zero_opts.as_ptr();
     }
 
     // `opts` is either passed in or `zero_opts`.
     // cppcheck-suppress uninitvar
     // C: `ator->ator = *opts` — struct assignment (memcpy; `RawAllocatorOpts` is `Copy`).
-    let a = &mut *ator;
-    let o = &*opts;
+    // SAFETY: `ator` points at a live (possibly uninitialized) `Allocator` slot
+    // this fn fills in — the raw-pointer contract of this `unsafe fn`.
+    let a = unsafe { &mut *ator };
+    // SAFETY: `opts` is either the caller's live `RawAllocatorOpts` (fn
+    // contract) or the `zero_opts` local just zero-filled above.
+    let o = unsafe { &*opts };
     a.ator = *o;
     a.error = error;
     a.max_size = if o.memory_limit != 0 {
@@ -543,8 +646,11 @@ mod tests {
 
     unsafe fn make_ator(error: *mut Error, opts: *const RawAllocatorOpts) -> Allocator {
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        init_ator(error, ator.as_mut_ptr(), opts, b"test\0".as_ptr());
-        ator.assume_init()
+        // SAFETY: `ator` is a local `Allocator` slot; `error`/`opts` carry the
+        // caller's obligation on this `unsafe fn` (`opts` may be null).
+        unsafe { init_ator(error, ator.as_mut_ptr(), opts, b"test\0".as_ptr()) };
+        // SAFETY: `init_ator` writes every field of the slot.
+        unsafe { ator.assume_init() }
     }
 
     #[test]
@@ -719,7 +825,9 @@ mod tests {
         }
         unsafe extern "C" fn my_free(_user: *mut c_void, ptr: *mut c_void, old_size: usize) {
             FREES.fetch_add(1, Ordering::SeqCst);
-            ufbx_free(ptr, old_size)
+            // SAFETY: the allocator calls `free_fn` with a block this callback
+            // set produced through `my_alloc`, i.e. a live libc-heap block.
+            unsafe { ufbx_free(ptr, old_size) }
         }
 
         unsafe {
