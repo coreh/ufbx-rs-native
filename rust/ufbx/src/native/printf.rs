@@ -18,10 +18,6 @@
 // (an orphaned stub that no ported call site reaches); leaner feature sets
 // legitimately strand items, so the lint is only armed for the full build.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use crate::native::platform::{ufbxi_dev_assert, ufbxi_unreachable};
 
 // C `va_list` replacement (PORTING.md "Printf and variadics"): one variant per
@@ -155,10 +151,15 @@ pub(crate) unsafe fn print_append(
     max_width: usize,
     str: *const u8,
 ) {
-    let buf = &mut *buf;
+    // SAFETY: `buf` is a live, writable `PrintBuffer` (fn raw-param contract);
+    // this borrow is the only access path to it for the rest of the fn.
+    let buf = unsafe { &mut *buf };
     let mut width: usize = 0;
     while width < max_width {
-        if *str.add(width) == 0 {
+        // SAFETY: `str` is readable up to its NUL or `max_width` bytes, whichever
+        // comes first (the `%s` / `%.*s` caller contract); the scan stops at the
+        // first NUL, so index `width` stays inside that run.
+        if unsafe { *str.add(width) } == 0 {
             break;
         }
         width += 1;
@@ -166,13 +167,18 @@ pub(crate) unsafe fn print_append(
     let pad = min_width.saturating_sub(width);
     for _i in 0..pad {
         if buf.pos < buf.length {
-            *buf.dst.add(buf.pos) = b' ';
+            // SAFETY: `buf.dst` addresses `buf.length` writable bytes and the
+            // guard above establishes `buf.pos < buf.length`.
+            unsafe { *buf.dst.add(buf.pos) = b' ' };
             buf.pos += 1;
         }
     }
     for i in 0..width {
         if buf.pos < buf.length {
-            *buf.dst.add(buf.pos) = *str.add(i);
+            // SAFETY: `i < width` bytes of `str` are readable per the scan above,
+            // and `buf.dst` addresses `buf.length` writable bytes with
+            // `buf.pos < buf.length` established by the guard.
+            unsafe { *buf.dst.add(buf.pos) = *str.add(i) };
             buf.pos += 1;
         }
     }
@@ -181,13 +187,19 @@ pub(crate) unsafe fn print_append(
 // ufbx.c:3307-3316 `ufbxi_print_format_int`
 // C formats backwards from one-past-the-end: `*--buffer = ...`.
 pub(crate) unsafe fn print_format_int(mut buffer: *mut u8, mut value: u64) -> *mut u8 {
-    buffer = buffer.sub(1);
-    *buffer = b'\0';
+    // SAFETY: `buffer` is one past the end of a scratch buffer with room for the
+    // terminator plus every decimal digit of `value` (callers pass the end of a
+    // 96-byte array; a `u64` needs at most 20 digits), so stepping back one byte
+    // and writing the NUL stays inside that buffer.
+    buffer = unsafe { buffer.sub(1) };
+    unsafe { *buffer = b'\0' };
     loop {
         let digit = (value % 10) as u32;
         value /= 10;
-        buffer = buffer.sub(1);
-        *buffer = b'0' + digit as u8;
+        // SAFETY: one step back per emitted digit, bounded by the digit count of
+        // `value`, stays inside the same scratch buffer.
+        buffer = unsafe { buffer.sub(1) };
+        unsafe { *buffer = b'0' + digit as u8 };
         if !(value > 0) {
             break;
         }
@@ -202,31 +214,38 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
     let mut buffer = [0u8; 96]; // ufbxi_uninit
     let mut arg_ix: usize = 0;
     let mut p = fmt;
-    while *p != 0 {
+    // SAFETY (every `*p` read and `p.add` step below): `fmt` is a NUL-terminated
+    // byte string (fn raw-param contract, macro wrappers append the NUL). Each
+    // advance happens after reading a non-NUL byte at `p` — a format directive
+    // always has at least its spec byte before the terminator — so `p` stays
+    // inside the string, at worst on its NUL. The two-byte `.`/`*` step of
+    // `%.*s` reads the byte after `.`, which the supported format subset
+    // guarantees is `*` (dev-asserted).
+    while unsafe { *p } != 0 {
         // C: `if (*p == '%' && *++p != '%')` — the increment happens only when
         // `*p == '%'`; on `%%` the else-branch then emits the second '%'.
-        if *p == b'%' && {
-            p = p.add(1);
-            *p != b'%'
+        if unsafe { *p } == b'%' && {
+            p = unsafe { p.add(1) };
+            (unsafe { *p }) != b'%'
         } {
             let mut min_width: usize = 0;
             let mut max_width: usize = usize::MAX;
-            if *p == b'*' {
-                p = p.add(1);
+            if unsafe { *p } == b'*' {
+                p = unsafe { p.add(1) };
                 min_width = va_arg(args, &mut arg_ix).as_int() as usize;
             }
-            if *p == b'.' {
-                ufbxi_dev_assert!(*p.add(1) == b'*');
-                p = p.add(2);
+            if unsafe { *p } == b'.' {
+                ufbxi_dev_assert!(unsafe { *p.add(1) } == b'*');
+                p = unsafe { p.add(2) };
                 max_width = va_arg(args, &mut arg_ix).as_int() as usize;
             }
             let mut flags: u32 = 0;
-            if *p == b'z' {
-                p = p.add(1);
+            if unsafe { *p } == b'z' {
+                p = unsafe { p.add(1) };
                 flags |= PRINT_SIZE_T;
             }
-            let spec = *p;
-            p = p.add(1);
+            let spec = unsafe { *p };
+            p = unsafe { p.add(1) };
             match spec {
                 b'u' => {
                     flags |= PRINT_UNSIGNED;
@@ -238,35 +257,53 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
             }
             if (flags & PRINT_STRING) != 0 {
                 let str = va_arg(args, &mut arg_ix).as_str();
-                print_append(buf, min_width, max_width, str);
+                // SAFETY: `buf` is the live `PrintBuffer` this fn received, and
+                // the `%s` argument points at a byte run readable to its NUL (or
+                // to `max_width` bytes) — the caller's `PrintArg::Str` contract.
+                unsafe { print_append(buf, min_width, max_width, str) };
             } else if (flags & PRINT_UNSIGNED) != 0 {
                 let value: u64 = if (flags & PRINT_SIZE_T) != 0 {
                     va_arg(args, &mut arg_ix).as_size() as u64
                 } else {
                     va_arg(args, &mut arg_ix).as_u32() as u64
                 };
-                let str = print_format_int(buffer.as_mut_ptr().add(buffer.len()), value);
-                print_append(buf, min_width, max_width, str);
+                // SAFETY: `buffer` is a 96-byte local array, so the pointer is
+                // one past its end and it holds room for the NUL plus every
+                // digit of a `u64`.
+                let str = unsafe { print_format_int(buffer.as_mut_ptr().add(buffer.len()), value) };
+                // SAFETY: `buf` is the live `PrintBuffer` this fn received, and
+                // `print_format_int` returned a NUL-terminated digit run inside
+                // `buffer`, which outlives the call.
+                unsafe { print_append(buf, min_width, max_width, str) };
             } else {
                 ufbxi_unreachable!("Bad printf format");
             }
         } else {
-            let buf = &mut *buf;
+            // SAFETY: `buf` is a live, writable `PrintBuffer` (fn raw-param
+            // contract); the borrow ends with this else-branch.
+            let buf = unsafe { &mut *buf };
             if buf.pos < buf.length {
-                *buf.dst.add(buf.pos) = *p;
+                // SAFETY: `p` addresses a byte inside the NUL-terminated `fmt`
+                // (loop condition), and `buf.dst` addresses `buf.length` writable
+                // bytes with `buf.pos < buf.length` established by the guard.
+                unsafe { *buf.dst.add(buf.pos) = *p };
                 buf.pos += 1;
             }
-            p = p.add(1);
+            p = unsafe { p.add(1) };
         }
     }
-    let buf = &mut *buf;
+    // SAFETY: `buf` is a live, writable `PrintBuffer` (fn raw-param contract).
+    let buf = unsafe { &mut *buf };
     if buf.length != 0 && !buf.dst.is_null() {
         let end = if buf.pos < buf.length {
             buf.pos
         } else {
             buf.length - 1
         };
-        *buf.dst.add(end) = b'\0';
+        // SAFETY: `buf.dst` addresses `buf.length` writable bytes (non-null and
+        // non-empty per the guard), and `end` is either `buf.pos` when that is
+        // below `buf.length` or `buf.length - 1`.
+        unsafe { *buf.dst.add(end) = b'\0' };
     }
 }
 
@@ -284,7 +321,10 @@ mod tests {
             pos: 0,
         };
         let fmt_nul: Vec<u8> = fmt.as_bytes().iter().copied().chain([0u8]).collect();
-        vprint(&mut pb, fmt_nul.as_ptr(), args);
+        // SAFETY: `pb` describes the caller's `buf` slice, `fmt_nul` is the
+        // format string with a NUL appended, and every `PrintArg::Str` in `args`
+        // is readable to its NUL per this fn's own raw-carrier contract.
+        unsafe { vprint(&mut pb, fmt_nul.as_ptr(), args) };
         let nul = buf.iter().position(|&b| b == 0).unwrap();
         (pb.pos, buf[..nul].to_vec())
     }
