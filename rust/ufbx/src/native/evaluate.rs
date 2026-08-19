@@ -76,7 +76,7 @@ use crate::native::api::{evaluate_baked_vec3, evaluate_transform_flags, quat_fix
 use crate::native::api::{evaluate_props_flags, ELEMENT_TYPE_SIZE};
 #[cfg(feature = "baking")]
 use crate::native::buf::{buf_clear, pop};
-use crate::native::buf::{buf_free, push, push_copy, push_pop, push_zero, Buf};
+use crate::native::buf::{buf_free, push, push_copy, Buf};
 use crate::native::cache::{load_external_files, scale_units, transform_to_axes};
 #[cfg(not(feature = "skinning-eval"))]
 use crate::native::error::ufbxi_report_err_msg;
@@ -487,11 +487,11 @@ pub(crate) unsafe fn fixup_opts_string(
 #[inline(never)]
 pub(crate) fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> {
     let num_elements: usize = uc.tmp_element_id_view().num_items();
-    // SAFETY: popping uc's own element-id stack into uc's own tmp buf (both
-    // through uc's raw-ptr getters); `num_elements` is that stack's own item
-    // count, so the pop is exact.
-    let element_ids: *mut u32 =
-        unsafe { push_pop::<u32>(uc.tmp_mut_ptr(), uc.tmp_element_id_mut_ptr(), num_elements) };
+    // Pops uc's element-id stack into uc's tmp buf; `num_elements` is that
+    // stack's own item count, so the pop is exact.
+    let element_ids: *mut u32 = uc
+        .tmp_view()
+        .push_pop::<u32>(uc.tmp_element_id_view(), num_elements);
     ufbxi_check!(uc, !element_ids.is_null(), "element_ids");
 
     // C: `ufbxi_for_list(ufbx_warning, warning, uc->scene.metadata.warnings)`
@@ -769,7 +769,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
     // Fake DOM root if necessary
     if uc.opts_view().retain_dom() && uc.scene_view().dom_root().is_none() {
-        let dom_root: *mut DomNode = push_zero::<DomNode>(uc.result_mut_ptr(), 1);
+        let dom_root: *mut DomNode = uc.result_view().push_zero::<DomNode>(1);
         ufbxi_check!(uc, !dom_root.is_null(), "dom_root");
         (*dom_root).name.data = EMPTY_CHAR.as_ptr();
         uc.scene_view().set_dom_root(Some(Ref::from_ptr(dom_root)));
@@ -817,8 +817,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     if ref_ptr(uc.scene_view().anim_ptr()).is_null() {
         // C: `uc->scene.anim = ufbxi_push_zero(&uc->result, ufbx_anim, 1);`
         // (NOT `ufbxi_check`ed in C — a failed allocation leaves it NULL).
-        *(uc.scene_view().anim_mut_ptr() as *mut *mut Anim) =
-            push_zero::<Anim>(uc.result_mut_ptr(), 1);
+        *(uc.scene_view().anim_mut_ptr() as *mut *mut Anim) = uc.result_view().push_zero::<Anim>(1);
     }
 
     if uc.opts_view().load_external_files() {
@@ -885,7 +884,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
     // Retain the scene, this must be the final allocation as we copy
     // `ator_result` to `ufbx_scene_imp`.
-    let imp: *mut SceneImp = push::<SceneImp>(uc.result_mut_ptr(), 1);
+    let imp: *mut SceneImp = uc.result_view().push::<SceneImp>(1);
     ufbxi_check!(uc, !imp.is_null(), "imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
@@ -2424,7 +2423,7 @@ pub(crate) unsafe fn translate_element_list(
         p_list as *mut crate::prelude::RefList<Element>;
     let count: usize = (*list).count;
     let src: *mut *mut Element = (*list).data as *mut *mut Element;
-    let dst: *mut *mut Element = push::<*mut Element>(ec.result_mut_ptr(), count);
+    let dst: *mut *mut Element = ec.result_view().push::<*mut Element>(count);
     ufbxi_check_err!(ec.error_view(), !dst.is_null(), "dst");
     (*list).data = dst as *const Ref<Element>;
     for i in 0..count {
@@ -2476,15 +2475,15 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     let num_elements: usize = ec.scene_view().elements_view().count();
 
     // C: `char *element_data = (char*)ufbxi_push(&ec->result, uint64_t, ec->scene.metadata.element_buffer_size/8);`
-    let element_data: *mut u8 = push::<u64>(
-        ec.result_mut_ptr(),
-        ec.scene_view().metadata_view().element_buffer_size() / 8,
-    ) as *mut u8;
+    let element_data: *mut u8 = ec
+        .result_view()
+        .push::<u64>(ec.scene_view().metadata_view().element_buffer_size() / 8)
+        as *mut u8;
     ufbxi_check_err!(ec.error_view(), !element_data.is_null(), "element_data");
 
     ec.scene_view()
         .elements_view()
-        .set_data(push::<*mut Element>(ec.result_mut_ptr(), num_elements) as *const Ref<Element>);
+        .set_data(ec.result_view().push::<*mut Element>(num_elements) as *const Ref<Element>);
     ufbxi_check_err!(
         ec.error_view(),
         !ec.scene_view().elements_view().data().is_null(),
@@ -2502,8 +2501,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     let by_type: *mut crate::prelude::RefList<Element> =
         ec.scene_view().unknowns_mut_ptr() as *mut crate::prelude::RefList<Element>;
     for i in 0..ELEMENT_TYPE_COUNT {
-        (*by_type.add(i)).data = push::<*mut Element>(ec.result_mut_ptr(), (*by_type.add(i)).count)
-            as *const Ref<Element>;
+        (*by_type.add(i)).data =
+            ec.result_view()
+                .push::<*mut Element>((*by_type.add(i)).count) as *const Ref<Element>;
         ufbxi_check_err!(
             ec.error_view(),
             !(*by_type.add(i)).data.is_null(),
@@ -2514,10 +2514,10 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     let num_connections: usize = ec.scene_view().connections_dst_view().count();
     ec.scene_view()
         .connections_src_view()
-        .set_data(push::<Connection>(ec.result_mut_ptr(), num_connections));
+        .set_data(ec.result_view().push::<Connection>(num_connections));
     ec.scene_view()
         .connections_dst_view()
-        .set_data(push::<Connection>(ec.result_mut_ptr(), num_connections));
+        .set_data(ec.result_view().push::<Connection>(num_connections));
     ufbxi_check_err!(
         ec.error_view(),
         !ec.scene_view().connections_src_view().data().is_null(),
@@ -2556,7 +2556,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     ec.scene_view()
         .elements_by_name_view()
-        .set_data(push::<NameElement>(ec.result_mut_ptr(), num_elements));
+        .set_data(ec.result_view().push::<NameElement>(num_elements));
     ufbxi_check_err!(
         ec.error_view(),
         !ec.scene_view().elements_by_name_view().data().is_null(),
@@ -2735,8 +2735,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_chan != p_chan_end {
         let chan: *mut BlendChannel = *p_chan;
 
-        let keys: *mut BlendKeyframe =
-            push::<BlendKeyframe>(ec.result_mut_ptr(), (*chan).keyframes.count);
+        let keys: *mut BlendKeyframe = ec
+            .result_view()
+            .push::<BlendKeyframe>((*chan).keyframes.count);
         ufbxi_check_err!(ec.error_view(), !keys.is_null(), "keys");
         for i in 0..(*chan).keyframes.count {
             // C: `keys[i] = chan->keyframes.data[i];` (struct assignment)
@@ -2790,8 +2791,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             MATERIAL_PBR_MAP_COUNT,
         );
 
-        let textures: *mut MaterialTexture =
-            push::<MaterialTexture>(ec.result_mut_ptr(), (*material).textures.count);
+        let textures: *mut MaterialTexture = ec
+            .result_view()
+            .push::<MaterialTexture>((*material).textures.count);
         ufbxi_check_err!(ec.error_view(), !textures.is_null(), "textures");
         for i in 0..(*material).textures.count {
             // C: `textures[i] = material->textures.data[i];` (struct assignment)
@@ -2815,8 +2817,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             translate_element(ec, opt_ptr(&raw const (*texture).video) as *mut c_void)
                 as *mut Video;
 
-        let layers: *mut TextureLayer =
-            push::<TextureLayer>(ec.result_mut_ptr(), (*texture).layers.count);
+        let layers: *mut TextureLayer = ec
+            .result_view()
+            .push::<TextureLayer>((*texture).layers.count);
         ufbxi_check_err!(ec.error_view(), !layers.is_null(), "layers");
         for i in 0..(*texture).layers.count {
             // C: `layers[i] = texture->layers.data[i];` (struct assignment)
@@ -2921,8 +2924,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             opt_ptr(&raw const (*constraint).ik_end_node) as *mut c_void,
         ) as *mut UfbxNode;
 
-        let targets: *mut ConstraintTarget =
-            push::<ConstraintTarget>(ec.result_mut_ptr(), (*constraint).targets.count);
+        let targets: *mut ConstraintTarget = ec
+            .result_view()
+            .push::<ConstraintTarget>((*constraint).targets.count);
         ufbxi_check_err!(ec.error_view(), !targets.is_null(), "targets");
         for i in 0..(*constraint).targets.count {
             // C: `targets[i] = constraint->targets.data[i];` (struct assignment)
@@ -2969,8 +2973,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         let layer: *mut AnimLayer = *p_anim_layer;
 
         translate_element_list(ec, &raw mut (*layer).anim_values as *mut c_void)?;
-        let props: *mut AnimProp =
-            push::<AnimProp>(ec.result_mut_ptr(), (*layer).anim_props.count + 1);
+        let props: *mut AnimProp = ec
+            .result_view()
+            .push::<AnimProp>((*layer).anim_props.count + 1);
         ufbxi_check_err!(ec.error_view(), !props.is_null(), "props");
         for i in 0..(*layer).anim_props.count {
             // C: `props[i] = layer->anim_props.data[i];` (struct assignment)
@@ -2997,7 +3002,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_pose != p_pose_end {
         let pose: *mut Pose = *p_pose;
 
-        let bones: *mut BonePose = push::<BonePose>(ec.result_mut_ptr(), (*pose).bone_poses.count);
+        let bones: *mut BonePose = ec.result_view().push::<BonePose>((*pose).bone_poses.count);
         ufbxi_check_err!(ec.error_view(), !bones.is_null(), "bones");
         for i in 0..(*pose).bone_poses.count {
             // C: `bones[i] = pose->bone_poses.data[i];` (struct assignment)
@@ -3062,7 +3067,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         anim.prop_overrides.data = over.sub(num_override);
         anim.prop_overrides.count = num_override;
 
-        let props: *mut Prop = push::<Prop>(ec.result_mut_ptr(), num_animated);
+        let props: *mut Prop = ec.result_view().push::<Prop>(num_animated);
         ufbxi_check_err!(ec.error_view(), !props.is_null(), "props");
 
         // C: `elem->props = ufbx_evaluate_props_flags(...)` — struct assignment.
@@ -3114,7 +3119,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // Retain the scene, this must be the final allocation as we copy
     // `ator_result` to `ufbx_scene_imp`
-    let imp: *mut SceneImp = push_zero::<SceneImp>(ec.result_mut_ptr(), 1);
+    let imp: *mut SceneImp = ec.result_view().push_zero::<SceneImp>(1);
     ufbxi_check_err!(ec.error_view(), !imp.is_null(), "imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
@@ -3468,7 +3473,7 @@ pub(crate) unsafe fn push_anim_string(
 ) -> Result<(), Fail> {
     let length: usize = (*str_).length;
     if length > 0 {
-        let copy: *mut u8 = push::<u8>(ac.result_mut_ptr(), length + 1);
+        let copy: *mut u8 = ac.result_view().push::<u8>(length + 1);
         ufbxi_check_err!(ac.error_view(), !copy.is_null(), "copy");
         // C: `memcpy(copy, str->data, length);`
         ptr::copy_nonoverlapping((*str_).data, copy, length);
@@ -3559,7 +3564,7 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
     unsafe {
         (*anim).layers.count = num_layers;
         (*anim).layers.data =
-            push_zero::<*mut AnimLayer>(ac.result_mut_ptr(), num_layers) as *const Ref<AnimLayer>;
+            ac.result_view().push_zero::<*mut AnimLayer>(num_layers) as *const Ref<AnimLayer>;
     }
     ufbxi_check_err!(
         ac.error_view(),
@@ -3615,12 +3620,13 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
     let prop_overrides: crate::prelude::RawList<RawPropOverrideDesc> =
         unsafe { ptr::read(ac.opts_view().prop_overrides_ptr()) };
     if prop_overrides.count > 0 {
-        // SAFETY: one destination slot per caller-supplied override, pushed
-        // onto ac's own result buf.
+        // SAFETY: `anim` is the caller's own out-parameter; the push reserves
+        // one destination slot per caller-supplied override.
         unsafe {
             (*anim).prop_overrides.count = prop_overrides.count;
-            (*anim).prop_overrides.data =
-                push_zero::<PropOverride>(ac.result_mut_ptr(), prop_overrides.count);
+            (*anim).prop_overrides.data = ac
+                .result_view()
+                .push_zero::<PropOverride>(prop_overrides.count);
         }
         ufbxi_check_err!(
             ac.error_view(),
@@ -3782,8 +3788,7 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
         }
     }
 
-    // SAFETY: pushing onto ac's own result buf through its raw-ptr getter.
-    ac.set_imp(unsafe { push::<AnimImp>(ac.result_mut_ptr(), 1) });
+    ac.set_imp(ac.result_view().push::<AnimImp>(1));
     ufbxi_check_err!(ac.error_view(), !ac.imp().is_null(), "ac->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
@@ -4970,8 +4975,9 @@ pub(crate) unsafe fn finalize_bake_times(
     }
 
     let mut num_times: usize = bc.tmp_times_view().num_items();
-    let times: *mut BakeTime =
-        push_pop::<BakeTime>(bc.tmp_prop_mut_ptr(), bc.tmp_times_mut_ptr(), num_times);
+    let times: *mut BakeTime = bc
+        .tmp_prop_view()
+        .push_pop::<BakeTime>(bc.tmp_times_view(), num_times);
     ufbxi_check_err!(bc.error_view(), !times.is_null(), "times");
 
     sort_bake_times(bc, times, num_times)?;
@@ -5493,7 +5499,7 @@ pub(crate) unsafe fn push_resampled_times(
     // C: `ufbx_baked_vec3_list keys = *p_keys;`
     let keys: List<BakedVec3> = ptr::read(p_keys);
 
-    let times: *mut BakeTime = push::<BakeTime>(bc.tmp_times_mut_ptr(), keys.count);
+    let times: *mut BakeTime = bc.tmp_times_view().push::<BakeTime>(keys.count);
     ufbxi_check_err!(bc.error_view(), !times.is_null(), "times");
     for i in 0..keys.count {
         let flags: BakedKeyFlags = (*keys.data.add(i)).flags;
@@ -5725,15 +5731,15 @@ pub(crate) unsafe fn bake_node_imp(
     let mut keys_s: List<BakedVec3> = MaybeUninit::zeroed().assume_init();
 
     keys_t.count = times_t.count;
-    keys_t.data = push::<BakedVec3>(bc.tmp_prop_mut_ptr(), keys_t.count);
+    keys_t.data = bc.tmp_prop_view().push::<BakedVec3>(keys_t.count);
     ufbxi_check_err!(bc.error_view(), !keys_t.data.is_null(), "keys_t.data");
 
     keys_r.count = times_r.count;
-    keys_r.data = push::<BakedQuat>(bc.tmp_prop_mut_ptr(), keys_r.count);
+    keys_r.data = bc.tmp_prop_view().push::<BakedQuat>(keys_r.count);
     ufbxi_check_err!(bc.error_view(), !keys_r.data.is_null(), "keys_r.data");
 
     keys_s.count = times_s.count;
-    keys_s.data = push::<BakedVec3>(bc.tmp_prop_mut_ptr(), keys_s.count);
+    keys_s.data = bc.tmp_prop_view().push::<BakedVec3>(keys_s.count);
     ufbxi_check_err!(bc.error_view(), !keys_s.data.is_null(), "keys_s.data");
 
     let keys_t_data: *mut BakedVec3 = keys_t.data as *mut BakedVec3;
@@ -5845,7 +5851,7 @@ pub(crate) unsafe fn bake_node_imp(
         }
     }
 
-    let baked_node: *mut BakedNode = push_zero::<BakedNode>(bc.tmp_nodes_mut_ptr(), 1);
+    let baked_node: *mut BakedNode = bc.tmp_nodes_view().push_zero::<BakedNode>(1);
     ufbxi_check_err!(bc.error_view(), !baked_node.is_null(), "baked_node");
 
     (*baked_node).element_id = (*node).element.element_id;
@@ -5988,7 +5994,7 @@ pub(crate) unsafe fn bake_anim_prop(
     // C: `ufbx_baked_vec3_list keys;`
     let mut keys: List<BakedVec3> = MaybeUninit::zeroed().assume_init();
     keys.count = times.count;
-    keys.data = push::<BakedVec3>(bc.tmp_prop_mut_ptr(), keys.count);
+    keys.data = bc.tmp_prop_view().push::<BakedVec3>(keys.count);
     ufbxi_check_err!(bc.error_view(), !keys.data.is_null(), "keys.data");
     let keys_data: *mut BakedVec3 = keys.data as *mut BakedVec3;
 
@@ -6012,7 +6018,7 @@ pub(crate) unsafe fn bake_anim_prop(
         (*keys_data.add(i)).flags = BakedKeyFlags::from_raw(bake_time.flags);
     }
 
-    let baked_prop: *mut BakedProp = push_zero::<BakedProp>(bc.tmp_props_mut_ptr(), 1);
+    let baked_prop: *mut BakedProp = bc.tmp_props_view().push_zero::<BakedProp>(1);
     ufbxi_check_err!(bc.error_view(), !baked_prop.is_null(), "baked_prop");
 
     (*baked_prop).name.length = strlen(prop_name);
@@ -6082,13 +6088,14 @@ pub(crate) unsafe fn bake_element(
 
     let num_props: usize = bc.tmp_props_view().num_items();
     if num_props > 0 {
-        let baked_elem: *mut BakedElement = push_zero::<BakedElement>(bc.tmp_elements_mut_ptr(), 1);
+        let baked_elem: *mut BakedElement = bc.tmp_elements_view().push_zero::<BakedElement>(1);
         ufbxi_check_err!(bc.error_view(), !baked_elem.is_null(), "baked_elem");
 
         (*baked_elem).element_id = (*element).element_id;
         (*baked_elem).props.count = num_props;
-        (*baked_elem).props.data =
-            push_pop::<BakedProp>(bc.result_mut_ptr(), bc.tmp_props_mut_ptr(), num_props);
+        (*baked_elem).props.data = bc
+            .result_view()
+            .push_pop::<BakedProp>(bc.tmp_props_view(), num_props);
         ufbxi_check_err!(
             bc.error_view(),
             !(*baked_elem).props.data.is_null(),
@@ -6135,21 +6142,24 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     let scene: *const Scene = bc.scene();
 
     if !bc.opts_view().skip_node_transforms() {
-        // SAFETY: `bc.scene()` is the live scene the bake context was built
-        // around (bc construction invariant); both arrays are pushed onto bc's
-        // own result buf, one slot per scene node, so a node's `typed_id`
-        // indexes them.
-        bc.set_baked_nodes(unsafe {
-            push_zero::<*mut BakedNode>(bc.result_mut_ptr(), (*scene).nodes.count)
-        });
+        // `bc.scene()` is the live scene the bake context was built around (bc
+        // construction invariant); both arrays hold one slot per scene node, so
+        // a node's `typed_id` indexes them.
+        // SAFETY: reading the live scene's node count through that invariant.
+        bc.set_baked_nodes(
+            bc.result_view()
+                .push_zero::<*mut BakedNode>(unsafe { (*scene).nodes.count }),
+        );
         ufbxi_check_err!(
             bc.error_view(),
             !bc.baked_nodes().is_null(),
             "bc->baked_nodes"
         );
-        bc.set_nodes_to_bake(unsafe {
-            push_zero::<bool>(bc.result_mut_ptr(), (*scene).nodes.count)
-        });
+        // SAFETY: reading the live scene's node count through the same invariant.
+        bc.set_nodes_to_bake(
+            bc.result_view()
+                .push_zero::<bool>(unsafe { (*scene).nodes.count }),
+        );
         ufbxi_check_err!(
             bc.error_view(),
             !bc.nodes_to_bake().is_null(),
@@ -6173,7 +6183,7 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
             let mut anim_prop: *mut AnimProp = (*layer).anim_props.data as *mut AnimProp;
             let anim_prop_end: *mut AnimProp = add_ptr(anim_prop, (*layer).anim_props.count);
             while anim_prop != anim_prop_end {
-                let prop: *mut BakeProp = push::<BakeProp>(bc.tmp_bake_props_mut_ptr(), 1);
+                let prop: *mut BakeProp = bc.tmp_bake_props_view().push::<BakeProp>(1);
                 ufbxi_check_err!(bc.error_view(), !prop.is_null(), "prop");
 
                 let element: *mut Element = ref_ptr(&raw const (*anim_prop).element);
@@ -6200,11 +6210,12 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     }
 
     let num_props: usize = bc.tmp_bake_props_view().num_items();
-    // SAFETY: popping bc's own bake-prop stack into bc's own tmp buf;
-    // `num_props` is that stack's own item count, so the pop is exact, and the
-    // sort is then over exactly the popped run.
-    let props: *mut BakeProp =
-        unsafe { push_pop::<BakeProp>(bc.tmp_mut_ptr(), bc.tmp_bake_props_mut_ptr(), num_props) };
+    // Pops bc's bake-prop stack into bc's tmp buf; `num_props` is that stack's
+    // own item count, so the pop is exact, and the sort is then over exactly
+    // the popped run.
+    let props: *mut BakeProp = bc
+        .tmp_view()
+        .push_pop::<BakeProp>(bc.tmp_bake_props_view(), num_props);
     ufbxi_check_err!(bc.error_view(), !props.is_null(), "props");
 
     // SAFETY: `props` is the fresh non-null `num_props`-element run just
@@ -6289,11 +6300,12 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     let num_elements: usize = bc.tmp_elements_view().num_items();
 
     bc.bake_view().nodes_view().set_count(num_nodes);
-    // SAFETY: popping bc's own node stack into bc's own result buf;
-    // `num_nodes` is that stack's own item count, so the pop is exact.
-    bc.bake_view().nodes_view().set_data(unsafe {
-        push_pop::<BakedNode>(bc.result_mut_ptr(), bc.tmp_nodes_mut_ptr(), num_nodes)
-    });
+    // Pops bc's node stack into bc's result buf; `num_nodes` is that stack's
+    // own item count, so the pop is exact.
+    bc.bake_view().nodes_view().set_data(
+        bc.result_view()
+            .push_pop::<BakedNode>(bc.tmp_nodes_view(), num_nodes),
+    );
     ufbxi_check_err!(
         bc.error_view(),
         !bc.bake_view().nodes_view().data().is_null(),
@@ -6301,11 +6313,12 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
     );
 
     bc.bake_view().elements_view().set_count(num_elements);
-    // SAFETY: popping bc's own element stack into bc's own result buf;
-    // `num_elements` is that stack's own item count, so the pop is exact.
-    bc.bake_view().elements_view().set_data(unsafe {
-        push_pop::<BakedElement>(bc.result_mut_ptr(), bc.tmp_elements_mut_ptr(), num_elements)
-    });
+    // Pops bc's element stack into bc's result buf; `num_elements` is that
+    // stack's own item count, so the pop is exact.
+    bc.bake_view().elements_view().set_data(
+        bc.result_view()
+            .push_pop::<BakedElement>(bc.tmp_elements_view(), num_elements),
+    );
     ufbxi_check_err!(
         bc.error_view(),
         !bc.bake_view().elements_view().data().is_null(),
@@ -6409,7 +6422,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     bc.set_time_min(math::INFINITY);
     bc.set_time_max(-math::INFINITY);
 
-    bc.set_imp(push::<BakedAnimImp>(bc.result_mut_ptr(), 1));
+    bc.set_imp(bc.result_view().push::<BakedAnimImp>(1));
     ufbxi_check_err!(bc.error_view(), !bc.imp().is_null(), "bc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
