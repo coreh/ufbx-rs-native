@@ -17,10 +17,6 @@
 //! - `ufbxi_arraycount` at the dev-assert sites (second half) collapses to
 //!   `.len()`.
 #![allow(dead_code, unused_macros, unused_imports)]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use crate::native::platform::{lzcnt32, lzcnt64, math, ufbxi_dev_assert, ufbxi_maybe_uninit};
 
 // ufbx.c:1351-1355
@@ -109,26 +105,35 @@ pub(crate) unsafe fn bigint_mad(
     addend: BigintAccum,
 ) {
     ufbxi_dev_assert!((multiplicand | addend) >> (BIGINT_ACCUM_BITS - 1) == 0);
-    let mut b = *bigint;
+    // SAFETY: `bigint` points to a live `Bigint` the caller owns (built via
+    // `bigint_make`/`bigint_array!` over a limb array of `capacity` limbs).
+    let mut b = unsafe { *bigint };
     let m_lo = multiplicand as BigintLimb;
     let m_hi = (multiplicand >> BIGINT_LIMB_BITS) as BigintLimb;
     let mut carry: BigintAccum = addend;
     for i in 0..b.length {
-        let limb = *b.limbs.add(i as usize) as BigintAccum;
+        // SAFETY: `i < b.length <= b.capacity`, so `limbs[i]` is a live limb of
+        // the bigint's own array.
+        let limb = unsafe { *b.limbs.add(i as usize) } as BigintAccum;
         let lo = (limb.wrapping_mul(m_lo as BigintAccum))
             .wrapping_add(carry & BIGINT_LIMB_MAX as BigintAccum);
         let hi = limb.wrapping_mul(m_hi as BigintAccum);
-        *b.limbs.add(i as usize) = lo as BigintLimb;
+        // SAFETY: same in-bounds limb `i`, written back in place.
+        unsafe { *b.limbs.add(i as usize) = lo as BigintLimb };
         carry = (carry >> 32u32).wrapping_add(lo >> 32u32).wrapping_add(hi);
     }
     while carry != 0 {
         // C: `b.limbs[b.length++] = (ufbxi_bigint_limb)carry;` — post-increment decomposed.
-        *b.limbs.add(b.length as usize) = carry as BigintLimb;
+        // SAFETY: the carry-out grows the number by one limb; callers size the
+        // limb array with headroom above `length` (the dev_assert below holds
+        // `length < capacity` after the bump), so `limbs[b.length]` is in bounds.
+        unsafe { *b.limbs.add(b.length as usize) = carry as BigintLimb };
         b.length += 1;
         ufbxi_dev_assert!(b.length < b.capacity);
         carry >>= 32u32;
     }
-    (*bigint).length = b.length;
+    // SAFETY: `bigint` is the same live bigint; writing its `length` field.
+    unsafe { (*bigint).length = b.length };
 }
 
 // ufbx.c:1404-1450 `ufbxi_bigint_div`
@@ -139,33 +144,49 @@ pub(crate) unsafe fn bigint_div(q: *mut Bigint, u: *mut Bigint, v: *mut Bigint) 
     // field chases below (`u` and `v` are only ever read in this function;
     // their limb arrays are mutated/read only through the `un`/`vn` raw
     // pointers, never through these bindings).
-    let q = &mut *q;
-    let u = &*u;
-    let v = &*v;
+    // SAFETY: `q` points to a live, caller-owned `Bigint`; reborrowed
+    // exclusively for the field chases below (its limbs are written through the
+    // raw `q.limbs` pointer).
+    let q = unsafe { &mut *q };
+    // SAFETY: `u`/`v` point to live, caller-owned `Bigint`s; reborrowed shared —
+    // their limb arrays are read/mutated only through the raw `un`/`vn` pointers.
+    let u = unsafe { &*u };
+    let v = unsafe { &*v };
     let n = v.length as i32;
     let m = u.length as i32 - n;
-    let v_hi: BigintLimb = *v.limbs.add((v.length - 1) as usize);
+    // SAFETY: the divisor is normalized nonzero (`n >= 2` per the dev_assert
+    // below), so `limbs[v.length - 1]` is `v`'s live top limb.
+    let v_hi: BigintLimb = unsafe { *v.limbs.add((v.length - 1) as usize) };
     let un = u.limbs;
     let vn = v.limbs;
     ufbxi_dev_assert!(
         n >= 2
             && m >= 1
             && v_hi >> (BIGINT_LIMB_BITS - 1) != 0
-            && *un.add((n + m - 1) as usize) >> (BIGINT_LIMB_BITS - 1) == 0
+            // SAFETY: `n + m == u.length`, so index `n + m - 1` is `u`'s top limb.
+            && unsafe { *un.add((n + m - 1) as usize) } >> (BIGINT_LIMB_BITS - 1) == 0
     );
-    *un.add((n + m) as usize) = 0;
+    // SAFETY: the algorithm uses limb `n + m` of `u` as a scratch high limb;
+    // callers size `u`'s array with a limb of headroom above its length.
+    unsafe { *un.add((n + m) as usize) = 0 };
     q.length = 0;
     // C: `for (int32_t j = m - 1; j >= 0; j--)`
     let mut j = m - 1;
     while j >= 0 {
-        let u_hi: BigintAccum = ((*un.add((n + j) as usize) as BigintAccum) << BIGINT_LIMB_BITS)
-            | *un.add((n + j - 1) as usize) as BigintAccum;
+        // SAFETY: `j` runs over `[0, m)`, so `n + j` and `n + j - 1` both index
+        // within `u`'s `n + m + 1`-limb array (top scratch limb included).
+        let u_hi: BigintAccum = ((unsafe { *un.add((n + j) as usize) } as BigintAccum)
+            << BIGINT_LIMB_BITS)
+            | unsafe { *un.add((n + j - 1) as usize) } as BigintAccum;
         let mut t: BigintAccum;
         let mut qhat: BigintAccum = u_hi / v_hi as BigintAccum;
         let mut rhat: BigintAccum = u_hi % v_hi as BigintAccum;
+        // SAFETY: `n >= 2` so `vn[n - 2]` is a live divisor limb; `j + n - 2`
+        // with `j >= 0, n >= 2` indexes within `u`'s limb array.
         while qhat >> BIGINT_LIMB_BITS != 0
-            || qhat.wrapping_mul(*vn.add((n - 2) as usize) as BigintAccum)
-                > ((rhat << BIGINT_LIMB_BITS) | *un.add((j + n - 2) as usize) as BigintAccum)
+            || qhat.wrapping_mul(unsafe { *vn.add((n - 2) as usize) } as BigintAccum)
+                > ((rhat << BIGINT_LIMB_BITS)
+                    | unsafe { *un.add((j + n - 2) as usize) } as BigintAccum)
         {
             qhat = qhat.wrapping_sub(1);
             rhat = rhat.wrapping_add(v_hi as BigintAccum);
@@ -175,30 +196,41 @@ pub(crate) unsafe fn bigint_div(q: *mut Bigint, u: *mut Bigint, v: *mut Bigint) 
         }
         let mut carry: BigintLimb = 0;
         for i in 0..n {
-            let p: BigintAccum = qhat.wrapping_mul(*vn.add(i as usize) as BigintAccum);
+            // SAFETY: `i < n == v.length`, so `vn[i]` is a live divisor limb.
+            let p: BigintAccum = qhat.wrapping_mul(unsafe { *vn.add(i as usize) } as BigintAccum);
             // C: `t = (ufbxi_bigint_accum)un[i+j] - carry - (ufbxi_bigint_limb)p;` — borrow trick, wraps.
-            t = (*un.add((i + j) as usize) as BigintAccum)
+            // SAFETY: `i < n` and `j < m`, so `i + j < n + m` indexes within `u`'s
+            // limb array; read then written back at the same index.
+            t = (unsafe { *un.add((i + j) as usize) } as BigintAccum)
                 .wrapping_sub(carry as BigintAccum)
                 .wrapping_sub((p as BigintLimb) as BigintAccum);
-            *un.add((i + j) as usize) = t as BigintLimb;
+            unsafe { *un.add((i + j) as usize) = t as BigintLimb };
             carry = ((p >> BIGINT_LIMB_BITS).wrapping_sub(t >> BIGINT_LIMB_BITS)) as BigintLimb;
         }
-        t = (*un.add((j + n) as usize) as BigintAccum).wrapping_sub(carry as BigintAccum);
-        *un.add((j + n) as usize) = t as BigintLimb;
+        // SAFETY: `j + n <= m - 1 + n < n + m + 1` indexes `u`'s top scratch limb;
+        // read then written back at that index.
+        t = (unsafe { *un.add((j + n) as usize) } as BigintAccum)
+            .wrapping_sub(carry as BigintAccum);
+        unsafe { *un.add((j + n) as usize) = t as BigintLimb };
         if t >> BIGINT_LIMB_BITS != 0 {
             qhat = qhat.wrapping_sub(1);
             carry = 0;
             for i in 0..n {
-                t = (*un.add((i + j) as usize) as BigintAccum)
-                    .wrapping_add(*vn.add(i as usize) as BigintAccum)
+                // SAFETY: `i + j < n + m` indexes within `u`, `i < n` indexes `v`.
+                t = (unsafe { *un.add((i + j) as usize) } as BigintAccum)
+                    .wrapping_add(unsafe { *vn.add(i as usize) } as BigintAccum)
                     .wrapping_add(carry as BigintAccum);
-                *un.add((i + j) as usize) = t as BigintLimb;
+                unsafe { *un.add((i + j) as usize) = t as BigintLimb };
                 carry = (t >> BIGINT_LIMB_BITS) as BigintLimb;
             }
             // C: `un[j+n] += carry;`
-            *un.add((j + n) as usize) = (*un.add((j + n) as usize)).wrapping_add(carry);
+            // SAFETY: `j + n` indexes `u`'s top scratch limb; read then written
+            // back at that index.
+            unsafe { *un.add((j + n) as usize) = (*un.add((j + n) as usize)).wrapping_add(carry) };
         }
-        *q.limbs.add(j as usize) = qhat as BigintLimb;
+        // SAFETY: `j < m <= q.capacity`, so `q.limbs[j]` is in bounds of the
+        // caller's quotient array.
+        unsafe { *q.limbs.add(j as usize) = qhat as BigintLimb };
         if qhat != 0 && q.length == 0 {
             ufbxi_dev_assert!(j + 1 < q.capacity as i32);
             q.length = (j + 1) as u32;
@@ -206,7 +238,9 @@ pub(crate) unsafe fn bigint_div(q: *mut Bigint, u: *mut Bigint, v: *mut Bigint) 
         j -= 1;
     }
     for i in 0..n {
-        if *un.add(i as usize) != 0 {
+        // SAFETY: `i < n == v.length <= u.length`, so `un[i]` is a live limb of
+        // `u` (the remainder occupies the low `n` limbs).
+        if unsafe { *un.add(i as usize) } != 0 {
             return true;
         }
     }
@@ -217,10 +251,14 @@ pub(crate) unsafe fn bigint_div(q: *mut Bigint, u: *mut Bigint, v: *mut Bigint) 
 pub(crate) unsafe fn bigint_mul_pow5(b: *mut Bigint, power: u32) {
     let mut power = power;
     while power > 27 {
-        bigint_mad(b, POW5_TAB[27], 0);
+        // SAFETY: `b` is the caller's live bigint; `bigint_mad` mutates it in
+        // place, which is this function's own contract on `b`.
+        unsafe { bigint_mad(b, POW5_TAB[27], 0) };
         power -= 27;
     }
-    bigint_mad(b, POW5_TAB[power as usize], 0);
+    // SAFETY: `power <= 27` here indexes `POW5_TAB` (28 entries); `b` is the
+    // caller's live bigint.
+    unsafe { bigint_mad(b, POW5_TAB[power as usize], 0) };
 }
 
 // ufbx.c:1460-1488 `ufbxi_bigint_shift_left`
@@ -228,7 +266,8 @@ pub(crate) unsafe fn bigint_mul_pow5(b: *mut Bigint, power: u32) {
 pub(crate) unsafe fn bigint_shift_left(bigint: *mut Bigint, amount: u32) {
     let words = amount / BIGINT_LIMB_BITS;
     let bits = amount % BIGINT_LIMB_BITS;
-    let b = *bigint;
+    // SAFETY: `bigint` points to a live, caller-owned `Bigint`.
+    let b = unsafe { *bigint };
     ufbxi_dev_assert!(b.length + words + 1 < b.capacity && b.capacity >= 4);
     let bits_down = BIGINT_LIMB_BITS - bits - 1;
     // C: `bigint->length += words + (b.limbs[b.length - 1] >> 1 >> bits_down != 0 ? 1 : 0);`
@@ -237,35 +276,56 @@ pub(crate) unsafe fn bigint_shift_left(bigint: *mut Bigint, amount: u32) {
     // here `b.length - 1` underflows (debug panic / wild index in release).
     // Unreachable from all callers (they always shift a nonzero bigint), so
     // divergence-in-the-unreachable is accepted per PORTING.md ground rule 4.
-    (*bigint).length += words
-        + if *b.limbs.add((b.length - 1) as usize) >> 1 >> bits_down != 0 {
-            1
-        } else {
-            0
-        };
-    *b.limbs.add(b.length as usize) = 0;
+    // SAFETY: `bigint` is the same live bigint whose `length` is written;
+    // callers always shift a nonzero bigint, so `b.length >= 1` and
+    // `limbs[b.length - 1]` is its live top limb.
+    unsafe {
+        (*bigint).length += words
+            + if *b.limbs.add((b.length - 1) as usize) >> 1 >> bits_down != 0 {
+                1
+            } else {
+                0
+            };
+    }
+    // SAFETY: `dev_assert` above holds `b.length + words + 1 < b.capacity`, so
+    // `limbs[b.length]` is in bounds.
+    unsafe { *b.limbs.add(b.length as usize) = 0 };
     if b.length <= 3 && words <= 3 {
-        let l0: BigintLimb = *b.limbs.add(0);
-        let l1: BigintLimb = ufbxi_maybe_uninit!(b.length >= 1, *b.limbs.add(1), !0u32);
-        let l2: BigintLimb = ufbxi_maybe_uninit!(b.length >= 2, *b.limbs.add(2), !0u32);
-        *b.limbs.add(0) = 0;
-        *b.limbs.add(1) = 0;
-        *b.limbs.add(2) = 0;
-        *b.limbs.add((words + 0) as usize) = l0 << bits;
-        *b.limbs.add((words + 1) as usize) = (l1 << bits) | (l0 >> 1 >> bits_down);
-        *b.limbs.add((words + 2) as usize) = (l2 << bits) | (l1 >> 1 >> bits_down);
-        *b.limbs.add((words + 3) as usize) = l2 >> 1 >> bits_down;
+        // SAFETY: `b.capacity >= 4` (asserted), so limbs 0..=2 are in bounds;
+        // `maybe_uninit` reads limbs 1/2 unconditionally (a limb may be
+        // uninitialized past `length`, matching the C read of the same slot).
+        let l0: BigintLimb = unsafe { *b.limbs.add(0) };
+        let l1: BigintLimb = ufbxi_maybe_uninit!(b.length >= 1, unsafe { *b.limbs.add(1) }, !0u32);
+        let l2: BigintLimb = ufbxi_maybe_uninit!(b.length >= 2, unsafe { *b.limbs.add(2) }, !0u32);
+        // SAFETY: `b.capacity >= 4`, so limbs 0..=2 are in bounds to clear.
+        unsafe { *b.limbs.add(0) = 0 };
+        unsafe { *b.limbs.add(1) = 0 };
+        unsafe { *b.limbs.add(2) = 0 };
+        // SAFETY: `words <= 3` and `b.length + words + 1 < b.capacity`, so
+        // `words + 3 <= b.length + words + 3` stays within `b.capacity` for
+        // these `words + k` writes (this branch has `b.length <= 3`).
+        unsafe { *b.limbs.add((words + 0) as usize) = l0 << bits };
+        unsafe { *b.limbs.add((words + 1) as usize) = (l1 << bits) | (l0 >> 1 >> bits_down) };
+        unsafe { *b.limbs.add((words + 2) as usize) = (l2 << bits) | (l1 >> 1 >> bits_down) };
+        unsafe { *b.limbs.add((words + 3) as usize) = l2 >> 1 >> bits_down };
     } else {
         // C: `for (uint32_t i = b.length + 1; i-- > 1; )` — body sees i from b.length down to 1.
         let mut i = b.length + 1;
         while i > 1 {
             i -= 1;
-            *b.limbs.add((i + words) as usize) = (*b.limbs.add(i as usize) << bits)
-                | (*b.limbs.add((i - 1) as usize) >> 1 >> bits_down);
+            // SAFETY: `i` ranges over `[1, b.length]`, so `i` and `i - 1` index
+            // written limbs; `i + words <= b.length + words < b.capacity` per the
+            // assert, so the destination limb is in bounds.
+            unsafe {
+                *b.limbs.add((i + words) as usize) = (*b.limbs.add(i as usize) << bits)
+                    | (*b.limbs.add((i - 1) as usize) >> 1 >> bits_down);
+            }
         }
-        *b.limbs.add(words as usize) = *b.limbs.add(0) << bits;
+        // SAFETY: `words < b.capacity` per the assert; limb 0 is in bounds.
+        unsafe { *b.limbs.add(words as usize) = *b.limbs.add(0) << bits };
         for i in 0..words {
-            *b.limbs.add(i as usize) = 0;
+            // SAFETY: `i < words < b.capacity`, so the cleared limb is in bounds.
+            unsafe { *b.limbs.add(i as usize) = 0 };
         }
     }
 }
@@ -273,7 +333,9 @@ pub(crate) unsafe fn bigint_shift_left(bigint: *mut Bigint, amount: u32) {
 // ufbx.c:1490-1492 `ufbxi_bigint_top_limb` (takes the bigint by value, as C does)
 pub(crate) unsafe fn bigint_top_limb(b: Bigint, index: u32) -> BigintLimb {
     if index < b.length {
-        *b.limbs.add((b.length - 1 - index) as usize)
+        // SAFETY: guarded by `index < b.length`, so `length - 1 - index` is in
+        // `[0, length)` and addresses a live limb of `b`'s array.
+        unsafe { *b.limbs.add((b.length - 1 - index) as usize) }
     } else {
         0
     }
@@ -294,19 +356,26 @@ pub(crate) unsafe fn bigint_extract_high(
     let mut result: u64 = 0;
     let limb_count: u32 = 64 / BIGINT_LIMB_BITS;
     for i in 0..limb_count {
-        result = (result << BIGINT_LIMB_BITS) | bigint_top_limb(b, i) as u64;
+        // SAFETY: `b` is the caller's live bigint (its `limbs` address at least
+        // `b.length` limbs); `bigint_top_limb` bounds-checks the index itself.
+        result = (result << BIGINT_LIMB_BITS) | unsafe { bigint_top_limb(b, i) } as u64;
     }
     let shift = lzcnt64(result);
     result <<= shift;
-    let lo: BigintLimb = bigint_top_limb(b, limb_count);
+    // SAFETY: `b` is the caller's live bigint; `bigint_top_limb` bounds-checks.
+    let lo: BigintLimb = unsafe { bigint_top_limb(b, limb_count) };
     if shift > 0 {
         result |= (lo >> (BIGINT_LIMB_BITS - shift)) as u64;
     }
-    *p_tail |= (lo << shift) as BigintLimb != 0;
+    // SAFETY: `p_tail` is a live `*mut bool` out-param the caller owns.
+    unsafe { *p_tail |= (lo << shift) as BigintLimb != 0 };
     for i in (limb_count + 1)..b.length {
-        *p_tail |= bigint_top_limb(b, i) != 0;
+        // SAFETY: `p_tail` is the caller's live out-param; `b` is the caller's
+        // live bigint and `bigint_top_limb` bounds-checks its index.
+        unsafe { *p_tail |= bigint_top_limb(b, i) != 0 };
     }
-    *p_exponent += (b.length * BIGINT_LIMB_BITS - shift - 1) as i32;
+    // SAFETY: `p_exponent` is a live `*mut i32` out-param the caller owns.
+    unsafe { *p_exponent += (b.length * BIGINT_LIMB_BITS - shift - 1) as i32 };
     result
 }
 
@@ -343,10 +412,14 @@ pub(crate) unsafe fn scan_ignorecase(p: *const u8, end: *const u8, fmt: &[u8]) -
         if p >= end {
             return false;
         }
-        if (*p | 0x20) != f {
+        // SAFETY: `p < end` (checked just above) and `p`/`end` bracket the
+        // caller's readable input run, so `*p` reads a live byte.
+        if (unsafe { *p } | 0x20) != f {
             return false;
         }
-        p = p.add(1);
+        // SAFETY: `p < end`, so advancing by one lands at or before `end`, the
+        // one-past-the-end of the caller's input run.
+        p = unsafe { p.add(1) };
     }
     true
 }
@@ -361,72 +434,96 @@ pub(crate) unsafe fn parse_inf_nan(
 ) -> bool {
     let mut negative = false;
     let mut p = str_;
-    let end = p.add(max_length);
-    if p != end && (*p == b'+' || *p == b'-') {
+    // SAFETY: the caller guarantees `str_` is readable for `max_length` bytes,
+    // so `str_ + max_length` is a valid one-past-the-end pointer.
+    let end = unsafe { p.add(max_length) };
+    // SAFETY: `p != end` guards the reads; `p`/`end` bound the input run, so
+    // `*p` reads a live byte and `p.add(1)` stays within `[str_, end]`.
+    if p != end && (unsafe { *p } == b'+' || unsafe { *p } == b'-') {
         // C: `negative = *p++ == '-';` — post-increment decomposed.
-        negative = *p == b'-';
-        p = p.add(1);
+        negative = unsafe { *p } == b'-';
+        p = unsafe { p.add(1) };
     }
 
     let mut top_bits: u32 = 0;
     // C: `end - p >= 3` (ptrdiff comparison).
+    // SAFETY: `end - p >= 3` guards the reads, so `*p`, `*p.add(1)` and
+    // `*p.add(2)` all address live bytes within the input run.
     if end as usize - p as usize >= 3
-        && (*p >= b'0' && *p <= b'9')
-        && *p.add(1) == b'.'
-        && *p.add(2) == b'#'
+        && (unsafe { *p } >= b'0' && unsafe { *p } <= b'9')
+        && unsafe { *p.add(1) } == b'.'
+        && unsafe { *p.add(2) } == b'#'
     {
         // Legacy MSVC 1.#NAN
-        p = p.add(3);
-        if scan_ignorecase(p, end, b"inf") {
-            p = p.add(3);
+        // SAFETY: the `>= 3` check leaves at least 3 bytes, so `p.add(3)` stays
+        // within `[str_, end]`.
+        p = unsafe { p.add(3) };
+        // SAFETY: `p`/`end` bound the input run for the scan; each matched scan
+        // guarantees 3 readable bytes, so the following `p.add(3)` is in bounds.
+        if unsafe { scan_ignorecase(p, end, b"inf") } {
+            p = unsafe { p.add(3) };
             top_bits = 0x7ff0;
-        } else if scan_ignorecase(p, end, b"nan") || scan_ignorecase(p, end, b"ind") {
-            p = p.add(3);
+        } else if unsafe { scan_ignorecase(p, end, b"nan") }
+            || unsafe { scan_ignorecase(p, end, b"ind") }
+        {
+            p = unsafe { p.add(3) };
             top_bits = 0x7ff8;
         } else {
             return false;
         }
-        while p != end && *p >= b'0' && *p <= b'9' {
-            p = p.add(1);
+        // SAFETY: `p != end` guards the read; advancing by one stays in bounds.
+        while p != end && unsafe { *p } >= b'0' && unsafe { *p } <= b'9' {
+            p = unsafe { p.add(1) };
         }
     } else {
         // Standard
-        if scan_ignorecase(p, end, b"nan") {
-            p = p.add(3);
+        // SAFETY: `p`/`end` bound the input run for the scan; a matched `nan`
+        // scan guarantees 3 readable bytes, so `p.add(3)` is in bounds.
+        if unsafe { scan_ignorecase(p, end, b"nan") } {
+            p = unsafe { p.add(3) };
             top_bits = 0x7ff8;
-            if p != end && *p == b'(' {
-                p = p.add(1);
-                while p != end && *p != b')' {
-                    let c = *p;
+            // SAFETY: `p != end` guards the read.
+            if p != end && unsafe { *p } == b'(' {
+                p = unsafe { p.add(1) };
+                // SAFETY: `p != end` guards each read; `p` stays within `[str_, end]`.
+                while p != end && unsafe { *p } != b')' {
+                    let c = unsafe { *p };
                     if !((c >= b'0' && c <= b'9')
                         || (c >= b'a' && c <= b'z')
                         || (c >= b'A' && c <= b'Z'))
                     {
                         return false;
                     }
-                    p = p.add(1);
+                    p = unsafe { p.add(1) };
                 }
                 if p == end {
                     return false;
                 }
-                p = p.add(1);
+                p = unsafe { p.add(1) };
             }
-        } else if scan_ignorecase(p, end, b"inf") {
-            p = p.add(if scan_ignorecase(p.add(3), end, b"inity") {
-                8
-            } else {
-                3
-            });
+        } else if unsafe { scan_ignorecase(p, end, b"inf") } {
+            // SAFETY: `p`/`end` bound the input run; the `inf` scan matched, so
+            // `p + 3 <= end` for the inner `p.add(3)` scan, and the outer advance
+            // of 8 (inf + inity) or 3 (inf) is over bytes those scans verified.
+            p = unsafe {
+                p.add(if scan_ignorecase(p.add(3), end, b"inity") {
+                    8
+                } else {
+                    3
+                })
+            };
             top_bits = 0x7ff0;
         }
     }
 
-    *p_end = p;
+    // SAFETY: `p_end` is a live `*mut *const u8` out-param the caller owns.
+    unsafe { *p_end = p };
     top_bits |= if negative { 0x8000 } else { 0 };
     let bits = (top_bits as u64) << 48;
     // C: `ufbxi_bit_cast(double, result, uint64_t, bits);`
     let result = f64::from_bits(bits);
-    *p_result = result;
+    // SAFETY: `p_result` is a live `*mut f64` out-param the caller owns.
+    unsafe { *p_result = result };
     true
 }
 
@@ -459,25 +556,33 @@ pub(crate) unsafe fn parse_double(
     let mut num_digits: u32 = 0;
 
     let mut p = str_;
-    let end = p.add(max_length);
-    if p != end && (*p == b'+' || *p == b'-') {
+    // SAFETY: the caller guarantees `str_` is readable for `max_length` bytes,
+    // so `str_ + max_length` is a valid one-past-the-end pointer.
+    let end = unsafe { p.add(max_length) };
+    // SAFETY: `p != end` guards the reads; `p`/`end` bound the input run.
+    if p != end && (unsafe { *p } == b'+' || unsafe { *p } == b'-') {
         // C: `negative = *p++ == '-';` — post-increment decomposed.
-        negative = *p == b'-';
-        p = p.add(1);
+        negative = unsafe { *p } == b'-';
+        p = unsafe { p.add(1) };
     }
     while p != end {
-        let c = *p;
+        // SAFETY: `p != end` (loop guard), so `*p` reads a live byte.
+        let c = unsafe { *p };
         if c >= b'0' && c <= b'9' {
             if big_mantissa.length < max_limbs {
                 digits = digits * 10 + (c - b'0') as u64;
                 num_digits += 1;
                 if num_digits >= 18 {
                     ufbxi_dev_assert!((num_digits as usize) < POW5_TAB.len());
-                    bigint_mad(
-                        &mut big_mantissa,
-                        POW5_TAB[num_digits as usize] << num_digits,
-                        digits,
-                    );
+                    // SAFETY: `big_mantissa` owns `mantissa_limbs` (42 limbs) via
+                    // `bigint_array!`, matching `bigint_mad`'s in-place contract.
+                    unsafe {
+                        bigint_mad(
+                            &mut big_mantissa,
+                            POW5_TAB[num_digits as usize] << num_digits,
+                            digits,
+                        );
+                    }
                     digits = 0;
                     num_digits = 0;
                     digits_valid = false;
@@ -489,26 +594,33 @@ pub(crate) unsafe fn parse_double(
                 // C: `dec_exponent += 1 - has_dot;` — same wrapping note.
                 dec_exponent = dec_exponent.wrapping_add(1 - has_dot);
             }
-            p = p.add(1);
+            // SAFETY: `p != end`, so advancing by one stays within `[str_, end]`.
+            p = unsafe { p.add(1) };
         } else if c == b'.' && has_dot == 0 {
             has_dot = 1; // C: `has_dot = true;`
-            p = p.add(1);
+                         // SAFETY: `p != end`, so advancing by one stays within `[str_, end]`.
+            p = unsafe { p.add(1) };
         } else {
             break;
         }
     }
-    if p != end && (*p == b'e' || *p == b'E') {
-        p = p.add(1);
+    // SAFETY: `p != end` guards the read.
+    if p != end && (unsafe { *p } == b'e' || unsafe { *p } == b'E') {
+        // SAFETY: `p != end`, so advancing by one stays within `[str_, end]`.
+        p = unsafe { p.add(1) };
         let mut exp_negative = false;
-        if p != end && (*p == b'+' || *p == b'-') {
-            exp_negative = *p == b'-';
-            p = p.add(1);
+        // SAFETY: `p != end` guards the read.
+        if p != end && (unsafe { *p } == b'+' || unsafe { *p } == b'-') {
+            exp_negative = unsafe { *p } == b'-';
+            p = unsafe { p.add(1) };
         }
         let mut exp: i32 = 0;
         while p != end {
-            let c = *p;
+            // SAFETY: `p != end` (loop guard), so `*p` reads a live byte.
+            let c = unsafe { *p };
             if c >= b'0' && c <= b'9' {
-                p = p.add(1);
+                // SAFETY: `p != end`, so advancing by one stays within `[str_, end]`.
+                p = unsafe { p.add(1) };
                 exp = exp * 10 + (c - b'0') as i32;
                 if exp >= 10000 {
                     break;
@@ -522,17 +634,21 @@ pub(crate) unsafe fn parse_double(
     }
 
     if p != end {
-        let c = *p;
+        // SAFETY: `p != end`, so `*p` reads a live byte.
+        let c = unsafe { *p };
         if c == b'#' || c == b'i' || c == b'I' || c == b'n' || c == b'N' {
             // C: `double result;` (uninitialized; written before the read).
             let mut result: f64 = 0.0;
-            if parse_inf_nan(&mut result, str_, max_length, p_end) {
+            // SAFETY: `str_`/`max_length` describe the caller's input run; `p_end`
+            // is the caller's live out-param.
+            if unsafe { parse_inf_nan(&mut result, str_, max_length, p_end) } {
                 return result;
             }
         }
     }
 
-    *p_end = p;
+    // SAFETY: `p_end` is a live `*mut *const u8` out-param the caller owns.
+    unsafe { *p_end = p };
 
     // Both power of 10 and integer are exactly representable as doubles
     // Powers of 10 are factored as 2*5, and 2^N can be always exactly represented.
@@ -552,8 +668,10 @@ pub(crate) unsafe fn parse_double(
     }
 
     if big_mantissa.length == 0 {
-        *big_mantissa.limbs.add(0) = digits as BigintLimb;
-        *big_mantissa.limbs.add(1) = (digits >> 32u32) as BigintLimb;
+        // SAFETY: `big_mantissa` owns the 42-limb `mantissa_limbs` via
+        // `bigint_array!`, so limbs 0 and 1 are in bounds to write.
+        unsafe { *big_mantissa.limbs.add(0) = digits as BigintLimb };
+        unsafe { *big_mantissa.limbs.add(1) = (digits >> 32u32) as BigintLimb };
         // C: `big_mantissa.length = (digits >> 32u) ? 2 : digits ? 1 : 0;`
         big_mantissa.length = if (digits >> 32u32) != 0 {
             2
@@ -567,11 +685,15 @@ pub(crate) unsafe fn parse_double(
         }
     } else {
         ufbxi_dev_assert!((num_digits as usize) < POW5_TAB.len());
-        bigint_mad(
-            &mut big_mantissa,
-            POW5_TAB[num_digits as usize] << num_digits,
-            digits,
-        );
+        // SAFETY: `big_mantissa` owns `mantissa_limbs`, matching `bigint_mad`'s
+        // in-place contract.
+        unsafe {
+            bigint_mad(
+                &mut big_mantissa,
+                POW5_TAB[num_digits as usize] << num_digits,
+                digits,
+            );
+        }
     }
 
     let mut enc_sign_shift: u32 = 63;
@@ -606,33 +728,47 @@ pub(crate) unsafe fn parse_double(
             let mantissa_zeros: u64 = (lzcnt64(digits) - 1) as u64;
             let divisor_bits: u64 = pow5_value << divisor_zeros;
             let mantissa_bits: u64 = digits << mantissa_zeros;
-            *big_divisor.limbs.add(0) = divisor_bits as BigintLimb;
-            *big_divisor.limbs.add(1) = (divisor_bits >> 32u32) as BigintLimb;
+            // SAFETY: `big_divisor` owns the 42-limb `divisor_limbs`, so limbs 0
+            // and 1 are in bounds to write.
+            unsafe { *big_divisor.limbs.add(0) = divisor_bits as BigintLimb };
+            unsafe { *big_divisor.limbs.add(1) = (divisor_bits >> 32u32) as BigintLimb };
             big_divisor.length = 2;
-            *big_mantissa.limbs.add(0) = 0;
-            *big_mantissa.limbs.add(1) = 0;
-            *big_mantissa.limbs.add(2) = mantissa_bits as BigintLimb;
-            *big_mantissa.limbs.add(3) = (mantissa_bits >> 32u32) as BigintLimb;
+            // SAFETY: `big_mantissa` owns the 42-limb `mantissa_limbs`, so limbs
+            // 0..=3 are in bounds to write.
+            unsafe { *big_mantissa.limbs.add(0) = 0 };
+            unsafe { *big_mantissa.limbs.add(1) = 0 };
+            unsafe { *big_mantissa.limbs.add(2) = mantissa_bits as BigintLimb };
+            unsafe { *big_mantissa.limbs.add(3) = (mantissa_bits >> 32u32) as BigintLimb };
             big_mantissa.length = 4;
             exponent += divisor_zeros as i32 - mantissa_zeros as i32 - 64;
         } else {
-            *big_divisor.limbs.add(0) = pow5_value as BigintLimb;
-            *big_divisor.limbs.add(1) = (pow5_value >> 32u32) as BigintLimb;
+            // SAFETY: `big_divisor` owns `divisor_limbs`, so limbs 0 and 1 are in
+            // bounds to write.
+            unsafe { *big_divisor.limbs.add(0) = pow5_value as BigintLimb };
+            unsafe { *big_divisor.limbs.add(1) = (pow5_value >> 32u32) as BigintLimb };
             big_divisor.length = if (pow5_value >> 32u32) != 0 { 2 } else { 1 };
             if pow5 > 0 {
-                bigint_mul_pow5(&mut big_divisor, pow5);
+                // SAFETY: `big_divisor` owns `divisor_limbs`, matching
+                // `bigint_mul_pow5`'s in-place contract.
+                unsafe { bigint_mul_pow5(&mut big_divisor, pow5) };
             }
 
+            // SAFETY: `big_divisor.length >= 1`, so `limbs[length - 1]` is its
+            // live top limb.
             let mut divisor_zeros: u32 =
-                lzcnt32(*big_divisor.limbs.add((big_divisor.length - 1) as usize));
+                lzcnt32(unsafe { *big_divisor.limbs.add((big_divisor.length - 1) as usize) });
             if big_divisor.length == 1 {
                 divisor_zeros += BIGINT_LIMB_BITS;
             }
-            bigint_shift_left(&mut big_divisor, divisor_zeros);
+            // SAFETY: `big_divisor` owns `divisor_limbs`, matching
+            // `bigint_shift_left`'s in-place contract.
+            unsafe { bigint_shift_left(&mut big_divisor, divisor_zeros) };
             let divisor_bits: u32 = big_divisor.length * BIGINT_LIMB_BITS;
 
+            // SAFETY: `big_mantissa.length >= 1` here, so `limbs[length - 1]` is
+            // its live top limb.
             let mantissa_zeros: u32 =
-                lzcnt32(*big_mantissa.limbs.add((big_mantissa.length - 1) as usize));
+                lzcnt32(unsafe { *big_mantissa.limbs.add((big_mantissa.length - 1) as usize) });
             let mantissa_bits: u32 = big_mantissa.length * BIGINT_LIMB_BITS - mantissa_zeros;
             let mantissa_min_bits: u32 = divisor_bits + enc_mantissa_bits + 2;
             let mut mantissa_shift: u32 = mantissa_min_bits.saturating_sub(mantissa_bits);
@@ -645,12 +781,18 @@ pub(crate) unsafe fn parse_double(
                     0
                 };
             if mantissa_shift > 0 {
-                bigint_shift_left(&mut big_mantissa, mantissa_shift);
+                // SAFETY: `big_mantissa` owns `mantissa_limbs`, matching
+                // `bigint_shift_left`'s in-place contract.
+                unsafe { bigint_shift_left(&mut big_mantissa, mantissa_shift) };
             }
             exponent += divisor_zeros as i32 - mantissa_shift as i32;
         }
 
-        tail = bigint_div(&mut big_quotient, &mut big_mantissa, &mut big_divisor);
+        // SAFETY: `big_quotient`/`big_mantissa`/`big_divisor` own the three
+        // distinct 42-limb arrays; `big_divisor` was normalized (top-limb high
+        // bit set) and `big_mantissa` shifted so its top limb is clear, meeting
+        // `bigint_div`'s preconditions.
+        tail = unsafe { bigint_div(&mut big_quotient, &mut big_mantissa, &mut big_divisor) };
         big_mantissa = big_quotient;
     } else if dec_exponent > 0 {
         // C: `dec_exponent + (int32_t)(big_mantissa.length - 1) * 9 >= 310`
@@ -663,10 +805,15 @@ pub(crate) unsafe fn parse_double(
         }
 
         exponent += dec_exponent;
-        bigint_mul_pow5(&mut big_mantissa, dec_exponent as u32);
+        // SAFETY: `big_mantissa` owns `mantissa_limbs`, matching
+        // `bigint_mul_pow5`'s in-place contract.
+        unsafe { bigint_mul_pow5(&mut big_mantissa, dec_exponent as u32) };
     }
 
-    let mut mantissa: u64 = bigint_extract_high(big_mantissa, &mut exponent, &mut tail);
+    // SAFETY: `big_mantissa` is a live bigint with a nonzero top limb (mad/div
+    // maintain `length` at the top nonzero limb); `exponent`/`tail` are live
+    // local out-params.
+    let mut mantissa: u64 = unsafe { bigint_extract_high(big_mantissa, &mut exponent, &mut tail) };
     let sign_bit: u64 = (if negative { 1u64 } else { 0u64 }) << enc_sign_shift;
 
     let mut mantissa_shift: u32 = 64 - enc_mantissa_bits;
@@ -734,14 +881,19 @@ pub(crate) fn parse_double_init_flags() -> u32 {
 #[inline(always)]
 pub(crate) unsafe fn parse_int64(str_: *const u8, end: *mut *const u8) -> i64 {
     let mut abs_val: u64 = 0;
-    let negative = *str_ == b'-';
-    let positive = *str_ == b'+';
+    // SAFETY: the caller passes a NUL-terminated token buffer, so `str_[0]` is a
+    // live byte.
+    let negative = unsafe { *str_ } == b'-';
+    let positive = unsafe { *str_ } == b'+';
 
     // C: `size_t init_len = (negative | positive) ? 1 : 0;` — non-short-circuit.
     let init_len: usize = if negative | positive { 1 } else { 0 };
     let mut len = init_len;
     while len < 30 {
-        let c = *str_.add(len);
+        // SAFETY: the caller guarantees at least `len < 30` readable bytes past
+        // the number (the scan stops at the NUL terminator), so `str_[len]` is
+        // a live byte.
+        let c = unsafe { *str_.add(len) };
         if !(c >= b'0' && c <= b'9') {
             break;
         }
@@ -751,12 +903,15 @@ pub(crate) unsafe fn parse_int64(str_: *const u8, end: *mut *const u8) -> i64 {
         len += 1;
     }
     if len == 30 || len == init_len {
-        *end = core::ptr::null();
+        // SAFETY: `end` is a live `*mut *const u8` out-param the caller owns.
+        unsafe { *end = core::ptr::null() };
         return 0;
     }
 
     // TODO: Wrap/clamp?
-    *end = str_.add(len);
+    // SAFETY: `end` is the caller's live out-param; `len` bytes were scanned as
+    // readable, so `str_ + len` is a valid one-past-the-digits pointer.
+    unsafe { *end = str_.add(len) };
     // C: `negative ? (int64_t)(0 - abs_val) : (int64_t)abs_val;` — the
     // canonical `0u64.wrapping_sub` site (PORTING.md integer table, ufbx.c:1827).
     if negative {
@@ -774,7 +929,9 @@ pub(crate) unsafe fn parse_uint32_radix(str_: *const u8, radix: u32) -> u32 {
     let mut value: u32 = 0;
     let mut p = str_;
     loop {
-        let c = *p;
+        // SAFETY: the caller passes a NUL-terminated buffer, so `*p` reads a live
+        // byte; the loop breaks at the first non-digit (the NUL included).
+        let c = unsafe { *p };
         if c >= b'0' && c <= b'9' {
             // C: `value = value * radix + (uint32_t)(c - '0');` — unsigned, wraps.
             value = value.wrapping_mul(radix).wrapping_add((c - b'0') as u32);
@@ -792,7 +949,10 @@ pub(crate) unsafe fn parse_uint32_radix(str_: *const u8, radix: u32) -> u32 {
         } else {
             break;
         }
-        p = p.add(1);
+        // SAFETY: `p` addresses a digit within the caller's NUL-terminated buffer
+        // (the NUL would have broken the loop above), so advancing by one stays
+        // within the buffer.
+        p = unsafe { p.add(1) };
     }
     value
 }
@@ -807,25 +967,31 @@ mod tests {
     // test/unit_tests.c:363-384 `ufbxt_bigint_div_word`
     unsafe fn bigint_div_word(b: *mut Bigint, divisor: BigintLimb) -> BigintLimb {
         // Local exclusive borrow for the repeated `b->x` field chases below.
-        let b = &mut *b;
+        // SAFETY: the caller passes a live, owned `Bigint`; reborrowed exclusively
+        // (its limbs are read/written through the raw `b.limbs` pointer).
+        let b = unsafe { &mut *b };
         let mut new_length: u32 = 0;
         let mut accum: BigintAccum = 0;
         // C: `for (uint32_t i = b->length; i-- > 0; )`
         let mut i = b.length;
         while i > 0 {
             i -= 1;
-            accum = (accum << BIGINT_LIMB_BITS) | *b.limbs.add(i as usize) as BigintAccum;
+            // SAFETY: `i < b.length <= b.capacity`, so `limbs[i]` is a live limb.
+            accum =
+                (accum << BIGINT_LIMB_BITS) | unsafe { *b.limbs.add(i as usize) } as BigintAccum;
             if accum >= divisor as BigintAccum {
                 let quot: BigintAccum = accum / divisor as BigintAccum;
                 let rem: BigintAccum = accum % divisor as BigintAccum;
 
-                *b.limbs.add(i as usize) = quot as BigintLimb;
+                // SAFETY: same in-bounds limb `i`, written back in place.
+                unsafe { *b.limbs.add(i as usize) = quot as BigintLimb };
                 if quot > 0 && new_length == 0 {
                     new_length = i + 1;
                 }
                 accum = rem;
             } else {
-                *b.limbs.add(i as usize) = 0;
+                // SAFETY: same in-bounds limb `i`, cleared in place.
+                unsafe { *b.limbs.add(i as usize) = 0 };
             }
         }
         b.length = new_length;
@@ -841,7 +1007,8 @@ mod tests {
             s = &s[2..];
         }
 
-        (*b).length = 0;
+        // SAFETY: the caller passes a live, owned `Bigint`; writing its `length`.
+        unsafe { (*b).length = 0 };
         for &c in s {
             let mut digit: BigintLimb = BIGINT_LIMB_MAX;
             if c >= b'0' && c <= b'9' {
@@ -851,18 +1018,25 @@ mod tests {
             }
 
             assert!(digit < radix);
-            bigint_mad(b, radix as BigintAccum, digit as BigintAccum);
+            // SAFETY: `b` is the caller's live bigint, matching `bigint_mad`'s
+            // in-place contract; the test arrays give ample capacity headroom.
+            unsafe { bigint_mad(b, radix as BigintAccum, digit as BigintAccum) };
         }
     }
 
     // test/unit_tests.c:408-426 `ufbxt_bigint_format`
     unsafe fn bigint_format(bi: Bigint, radix: BigintLimb) -> String {
         let mut limbs = [0 as BigintLimb; 64];
-        core::ptr::copy_nonoverlapping(
-            bi.limbs as *const BigintLimb,
-            limbs.as_mut_ptr(),
-            bi.length as usize,
-        );
+        // SAFETY: `bi` is a live bigint whose `limbs` address `bi.length` limbs;
+        // `limbs` is a distinct 64-limb local, and callers keep `bi.length <= 64`,
+        // so the copy stays within both.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                bi.limbs as *const BigintLimb,
+                limbs.as_mut_ptr(),
+                bi.length as usize,
+            );
+        }
         let mut b = Bigint {
             limbs: limbs.as_mut_ptr(),
             capacity: 64,
@@ -876,7 +1050,9 @@ mod tests {
         pos -= 1;
         buffer[pos] = 0; // '\0'
         loop {
-            let digit = bigint_div_word(&mut b, radix);
+            // SAFETY: `b` owns the 64-limb `limbs` array above, matching
+            // `bigint_div_word`'s in-place contract.
+            let digit = unsafe { bigint_div_word(&mut b, radix) };
             assert!(digit < radix);
             pos -= 1;
             buffer[pos] = digits[digit as usize];
@@ -897,7 +1073,8 @@ mod tests {
             expected = &expected[2..];
         }
 
-        let parsed = bigint_format(bi, radix);
+        // SAFETY: `bi` is a live bigint, matching `bigint_format`'s contract.
+        let parsed = unsafe { bigint_format(bi, radix) };
         assert_eq!(
             parsed, expected,
             "ufbxt_check_bigint() fail: got {}, expected {}",
@@ -906,7 +1083,9 @@ mod tests {
 
         // Leading zero is not allowed
         if bi.length > 0 {
-            assert!(*bi.limbs.add((bi.length - 1) as usize) != 0);
+            // SAFETY: guarded by `bi.length > 0`, so `limbs[length - 1]` is a live
+            // top limb of `bi`.
+            assert!(unsafe { *bi.limbs.add((bi.length - 1) as usize) } != 0);
         }
     }
 
@@ -915,13 +1094,20 @@ mod tests {
         // Local exclusive/shared borrows for the repeated `dst->x` / `src->x`
         // field chases below (the copied limbs themselves still move through
         // the raw `limbs` pointers, matching the C `memcpy`).
-        let dst = &mut *dst;
-        let src = &*src;
-        core::ptr::copy_nonoverlapping(
-            src.limbs as *const BigintLimb,
-            dst.limbs,
-            src.length as usize,
-        );
+        // SAFETY: `dst`/`src` point to live, owned `Bigint`s; reborrowed for the
+        // field chases (their limbs move through the raw `limbs` pointers).
+        let dst = unsafe { &mut *dst };
+        let src = unsafe { &*src };
+        // SAFETY: `src.limbs` addresses `src.length` limbs and `dst.limbs` has
+        // capacity for them (the dev_assert below holds `capacity > length`); the
+        // two limb arrays are distinct.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                src.limbs as *const BigintLimb,
+                dst.limbs,
+                src.length as usize,
+            );
+        }
         dst.length = src.length;
         ufbxi_dev_assert!(dst.capacity > src.length);
     }
@@ -1074,13 +1260,22 @@ mod tests {
     // test/unit_tests.c:580-588 `ufbxt_bigint_shift_right1`
     unsafe fn bigint_shift_right1(b: *mut Bigint) {
         // Local exclusive borrow for the repeated `b->x` field chases below.
-        let b = &mut *b;
+        // SAFETY: the caller passes a live, owned `Bigint`; reborrowed exclusively
+        // (its limbs move through the raw `b.limbs` pointer).
+        let b = unsafe { &mut *b };
         let length = b.length;
-        *b.limbs.add(length as usize) = 0;
+        // SAFETY: the test bigints have 64-limb capacity and `length < 64`, so
+        // `limbs[length]` is in bounds to clear.
+        unsafe { *b.limbs.add(length as usize) = 0 };
         for i in 0..length {
-            *b.limbs.add(i as usize) = (*b.limbs.add(i as usize) >> 1)
-                | (*b.limbs.add((i + 1) as usize) << (BIGINT_LIMB_BITS - 1));
-            if *b.limbs.add(i as usize) != 0 {
+            // SAFETY: `i < length`, and `limbs[length]` was just cleared, so `i`
+            // and `i + 1` both index in-bounds limbs; read then written in place.
+            unsafe {
+                *b.limbs.add(i as usize) = (*b.limbs.add(i as usize) >> 1)
+                    | (*b.limbs.add((i + 1) as usize) << (BIGINT_LIMB_BITS - 1));
+            }
+            // SAFETY: `i < length` indexes an in-bounds limb.
+            if unsafe { *b.limbs.add(i as usize) } != 0 {
                 b.length = i + 1;
             }
         }
