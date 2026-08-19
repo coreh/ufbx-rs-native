@@ -20,10 +20,6 @@
 //!
 //! Phase 1: no consumers yet (`ufbxi_context` arrives with the parse units).
 #![allow(dead_code, non_upper_case_globals)]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::c_void;
 use core::ptr;
 
@@ -133,14 +129,20 @@ pub(crate) struct SanitizedString {
 // ufbx.c:4918-4921 `ufbxi_str_equal`
 #[inline(always)]
 pub(crate) unsafe fn str_equal(a: String, b: String) -> bool {
-    a.length == b.length && memcmp(a.data, b.data, a.length) == 0
+    // SAFETY: the caller vouches `a`/`b` are valid `String` runs; `a.data`/`b.data`
+    // are each readable for their own `length`, and the compare is reached only
+    // when the lengths are equal, so `a.length` bytes are readable from both.
+    a.length == b.length && unsafe { memcmp(a.data, b.data, a.length) } == 0
 }
 
 // ufbx.c:4923-4929 `ufbxi_str_less`
 #[inline(always)]
 pub(crate) unsafe fn str_less(a: String, b: String) -> bool {
     let len = min_sz(a.length, b.length);
-    let cmp = memcmp(a.data, b.data, len);
+    // SAFETY: the caller vouches `a`/`b` are valid `String` runs; `len` is the
+    // shorter of the two lengths, so `len` bytes are readable from both `a.data`
+    // and `b.data`.
+    let cmp = unsafe { memcmp(a.data, b.data, len) };
     if cmp != 0 {
         return cmp < 0;
     }
@@ -151,7 +153,10 @@ pub(crate) unsafe fn str_less(a: String, b: String) -> bool {
 #[inline(always)]
 pub(crate) unsafe fn str_cmp(a: String, b: String) -> i32 {
     let len = min_sz(a.length, b.length);
-    let cmp = memcmp(a.data, b.data, len);
+    // SAFETY: the caller vouches `a`/`b` are valid `String` runs; `len` is the
+    // shorter of the two lengths, so `len` bytes are readable from both `a.data`
+    // and `b.data`.
+    let cmp = unsafe { memcmp(a.data, b.data, len) };
     if cmp != 0 {
         return cmp;
     }
@@ -164,7 +169,9 @@ pub(crate) unsafe fn str_cmp(a: String, b: String) -> i32 {
 // ufbx.c:4940-4944 `ufbxi_str_c`
 #[inline(always)]
 pub(crate) unsafe fn str_c(str_: *const u8) -> String {
-    String::new_c(str_, strlen(str_))
+    // SAFETY: the caller vouches `str_` points at a NUL-terminated C string, the
+    // precondition `strlen` requires.
+    String::new_c(str_, unsafe { strlen(str_) })
 }
 
 // ufbx.c:4946-4958 `ufbxi_get_concat_key`
@@ -174,24 +181,33 @@ pub(crate) unsafe fn get_concat_key(parts: *const String, num_parts: usize) -> u
     let mut shift: u32 = 32;
     // C: `ufbxi_for(const ufbx_string, part, parts, num_parts)`
     let mut part = parts;
-    let part_end = parts.add(num_parts);
+    // SAFETY: the caller vouches `parts` addresses `num_parts` `String`s, so the
+    // one-past-the-end pointer is in bounds of that same allocation.
+    let part_end = unsafe { parts.add(num_parts) };
     while part != part_end {
-        let length = if (*part).length != usize::MAX {
-            (*part).length
+        // SAFETY: `part` walks `[parts, part_end)`, so it addresses a live
+        // `String`; when its length is the C-string sentinel, `strlen` reads the
+        // NUL-terminated run `part->data` points at.
+        let length = if unsafe { (*part).length } != usize::MAX {
+            unsafe { (*part).length }
         } else {
-            strlen((*part).data)
+            unsafe { strlen((*part).data) }
         };
         let mut i: usize = 0;
         while i < length {
             shift -= 8;
             // C: `key |= (uint32_t)(uint8_t)part->data[i] << shift;`
-            key |= (*(*part).data.add(i) as u32) << shift;
+            // SAFETY: `part` addresses a live `String` and `i < length`, its
+            // number of readable bytes at `part->data`.
+            key |= (unsafe { *(*part).data.add(i) } as u32) << shift;
             if shift == 0 {
                 return key;
             }
             i += 1;
         }
-        part = part.add(1);
+        // SAFETY: `part` is in `[parts, part_end)`, so advancing by one lands at
+        // or before the one-past-the-end `part_end`.
+        part = unsafe { part.add(1) };
     }
     key
 }
@@ -203,20 +219,33 @@ pub(crate) unsafe fn concat_str_cmp(
     parts: *const String,
     num_parts: usize,
 ) -> i32 {
-    let mut ptr_ = (*ref_).data;
-    let end = ptr_.add((*ref_).length);
+    // SAFETY: the caller vouches `ref_` addresses a valid `String`.
+    let mut ptr_ = unsafe { (*ref_).data };
+    // SAFETY: `ref_->data` is readable for `ref_->length` bytes, so this is its
+    // one-past-the-end pointer within the same run.
+    let end = unsafe { ptr_.add((*ref_).length) };
     // C: `ufbxi_for(const ufbx_string, part, parts, num_parts)`
     let mut part = parts;
-    let part_end = parts.add(num_parts);
+    // SAFETY: the caller vouches `parts` addresses `num_parts` `String`s, so the
+    // one-past-the-end pointer is in bounds of that same allocation.
+    let part_end = unsafe { parts.add(num_parts) };
     while part != part_end {
-        let length = if (*part).length != usize::MAX {
-            (*part).length
+        // SAFETY: `part` walks `[parts, part_end)`, so it addresses a live
+        // `String`; when its length is the C-string sentinel, `strlen` reads the
+        // NUL-terminated run `part->data` points at.
+        let length = if unsafe { (*part).length } != usize::MAX {
+            unsafe { (*part).length }
         } else {
-            strlen((*part).data)
+            unsafe { strlen((*part).data) }
         };
-        let to_cmp = min_sz(to_size(end.offset_from(ptr_)), length);
+        // SAFETY: `ptr_` and `end` bracket the same `ref_->data` run — `ptr_`
+        // only advances toward `end` below — so they are two pointers into one
+        // object, which is what `offset_from` requires.
+        let to_cmp = min_sz(to_size(unsafe { end.offset_from(ptr_) }), length);
         let cmp = if to_cmp > 0 {
-            memcmp(ptr_, (*part).data, to_cmp)
+            // SAFETY: `to_cmp <= end - ptr_` readable bytes at `ptr_` and
+            // `to_cmp <= length`, the bytes readable at `part->data`.
+            unsafe { memcmp(ptr_, (*part).data, to_cmp) }
         } else {
             0
         };
@@ -226,8 +255,12 @@ pub(crate) unsafe fn concat_str_cmp(
         if to_cmp != length {
             return -1;
         }
-        ptr_ = ptr_.add(length);
-        part = part.add(1);
+        // SAFETY: this point is reached only when `to_cmp == length`, so
+        // `length <= end - ptr_` and the advance stays at or before `end`.
+        ptr_ = unsafe { ptr_.add(length) };
+        // SAFETY: `part` is in `[parts, part_end)`, so advancing by one lands at
+        // or before the one-past-the-end `part_end`.
+        part = unsafe { part.add(1) };
     }
     if ptr_ == end {
         0
@@ -239,18 +272,27 @@ pub(crate) unsafe fn concat_str_cmp(
 // ufbx.c:4974-4977 `ufbxi_starts_with`
 #[inline(always)]
 pub(crate) unsafe fn starts_with(str_: String, prefix: String) -> bool {
-    str_.length >= prefix.length && memcmp(str_.data, prefix.data, prefix.length) == 0
+    // SAFETY: the caller vouches `str_`/`prefix` are valid `String` runs; the
+    // compare is reached only when `str_.length >= prefix.length`, so
+    // `prefix.length` bytes are readable from both `str_.data` and `prefix.data`.
+    str_.length >= prefix.length && unsafe { memcmp(str_.data, prefix.data, prefix.length) } == 0
 }
 
 // ufbx.c:4979-4982 `ufbxi_ends_with`
 #[inline(always)]
 pub(crate) unsafe fn ends_with(str_: String, suffix: String) -> bool {
+    // SAFETY: the caller vouches `str_`/`suffix` are valid `String` runs; the
+    // compare is reached only when `str_.length >= suffix.length`, so
+    // `str_.length - suffix.length` is in bounds of `str_.data` and the trailing
+    // `suffix.length` bytes are readable from both there and `suffix.data`.
     str_.length >= suffix.length
-        && memcmp(
-            str_.data.add(str_.length - suffix.length),
-            suffix.data,
-            suffix.length,
-        ) == 0
+        && unsafe {
+            memcmp(
+                str_.data.add(str_.length - suffix.length),
+                suffix.data,
+                suffix.length,
+            )
+        } == 0
 }
 
 // ufbx.c:4984-4993 `ufbxi_remove_prefix_len`
@@ -261,9 +303,17 @@ pub(crate) unsafe fn remove_prefix_len(
     prefix_len: usize,
 ) -> bool {
     let prefix_str = String::new_c(prefix, prefix_len);
-    if starts_with(*str_, prefix_str) {
-        (*str_).data = (*str_).data.add(prefix_len);
-        (*str_).length -= prefix_len;
+    // SAFETY: the caller vouches `str_` addresses a valid `String` and `prefix`
+    // is readable for `prefix_len` bytes; `*str_` and `prefix_str` are the two
+    // valid `String` runs `starts_with` requires.
+    if unsafe { starts_with(*str_, prefix_str) } {
+        // SAFETY: `starts_with` just confirmed `str_->length >= prefix_len`, so
+        // `str_->data + prefix_len` stays within the run and the shortened
+        // length is non-negative.
+        unsafe {
+            (*str_).data = (*str_).data.add(prefix_len);
+            (*str_).length -= prefix_len;
+        }
         return true;
     }
     false
@@ -277,8 +327,13 @@ pub(crate) unsafe fn remove_suffix_len(
     suffix_len: usize,
 ) -> bool {
     let suffix_str = String::new_c(suffix, suffix_len);
-    if ends_with(*str_, suffix_str) {
-        (*str_).length -= suffix_len;
+    // SAFETY: the caller vouches `str_` addresses a valid `String` and `suffix`
+    // is readable for `suffix_len` bytes; `*str_` and `suffix_str` are the two
+    // valid `String` runs `ends_with` requires.
+    if unsafe { ends_with(*str_, suffix_str) } {
+        // SAFETY: `ends_with` just confirmed `str_->length >= suffix_len`, so
+        // the shortened length is non-negative.
+        unsafe { (*str_).length -= suffix_len };
         return true;
     }
     false
@@ -287,13 +342,18 @@ pub(crate) unsafe fn remove_suffix_len(
 // ufbx.c:5005-5008 `ufbxi_remove_prefix_str`
 #[inline(always)]
 pub(crate) unsafe fn remove_prefix_str(str_: *mut String, prefix: String) -> bool {
-    remove_prefix_len(str_, prefix.data, prefix.length)
+    // SAFETY: the caller's `str_` contract is forwarded unchanged, and `prefix`
+    // is a valid `String` whose `data`/`length` describe one readable run.
+    unsafe { remove_prefix_len(str_, prefix.data, prefix.length) }
 }
 
 // ufbx.c:5010-5013 `ufbxi_remove_suffix_c`
 #[inline(always)]
 pub(crate) unsafe fn remove_suffix_c(str_: *mut String, suffix: *const u8) -> bool {
-    remove_suffix_len(str_, suffix, strlen(suffix))
+    // SAFETY: the caller's `str_` contract is forwarded unchanged, and `suffix`
+    // points at a NUL-terminated C string, so `strlen` reads its run and the
+    // same run is readable for the length it returns.
+    unsafe { remove_suffix_len(str_, suffix, strlen(suffix)) }
 }
 
 // ufbx.c:5015-5020 `ufbxi_map_cmp_string`
@@ -305,7 +365,9 @@ pub(crate) unsafe extern "C" fn map_cmp_string(
     let _ = user; // (void)user
     let a = va as *const String;
     let b = vb as *const String;
-    str_cmp(*a, *b)
+    // SAFETY: the map comparator contract gives `va`/`vb` as pointers to the
+    // live `String` keys being compared, so `*a`/`*b` read valid `String` runs.
+    unsafe { str_cmp(*a, *b) }
 }
 
 // ufbx.c:5022-5026 `ufbxi_safe_string`
@@ -326,35 +388,52 @@ pub(crate) fn safe_string(data: *const u8, length: usize) -> String {
 
 // ufbx.c:5028-5032 `ufbxi_string_pool_temp_free`
 pub(crate) unsafe fn string_pool_temp_free(pool: *mut StringPool) {
-    free::<u8>((*pool).map.ator, (*pool).temp_str, (*pool).temp_cap);
-    map_free(&mut (*pool).map);
+    // SAFETY: the caller vouches `pool` addresses a live `StringPool`; its
+    // `temp_str`/`temp_cap` are the buffer/capacity pair allocated through its
+    // own `map.ator`, which is the pairing `free` requires.
+    unsafe { free::<u8>((*pool).map.ator, (*pool).temp_str, (*pool).temp_cap) };
+    // SAFETY: `&mut (*pool).map` addresses the pool's own live `Map`, uniquely
+    // borrowed here for its last use before the pool is discarded.
+    unsafe { map_free(&mut (*pool).map) };
 }
 
 // ufbx.c:5034-5064 `ufbxi_add_replacement_char`
 // C: `ufbxi_nodiscard static size_t` — infallible, plain return value.
 pub(crate) unsafe fn add_replacement_char(pool: *mut StringPool, dst: *mut u8, c: u8) -> usize {
-    match (*pool).error_handling {
+    // SAFETY: the caller vouches `pool` addresses a live `StringPool`.
+    match unsafe { (*pool).error_handling } {
         UnicodeErrorHandling::ReplacementCharacter => {
-            *dst.add(0) = 0xefu8;
-            *dst.add(1) = 0xbfu8;
-            *dst.add(2) = 0xbdu8;
+            // SAFETY: the caller vouches `dst` has room for the up-to-3-byte
+            // replacement this arm writes (`sanitize_string` keeps >= 16 free
+            // bytes at `dst`).
+            unsafe {
+                *dst.add(0) = 0xefu8;
+                *dst.add(1) = 0xbfu8;
+                *dst.add(2) = 0xbdu8;
+            }
             3
         }
 
         UnicodeErrorHandling::Underscore => {
-            *dst.add(0) = b'_';
+            // SAFETY: the caller vouches `dst` has room for the single byte this
+            // arm writes.
+            unsafe { *dst.add(0) = b'_' };
             1
         }
 
         UnicodeErrorHandling::QuestionMark => {
-            *dst.add(0) = b'?';
+            // SAFETY: the caller vouches `dst` has room for the single byte this
+            // arm writes.
+            unsafe { *dst.add(0) = b'?' };
             1
         }
 
         UnicodeErrorHandling::Remove => 0,
 
         UnicodeErrorHandling::UnsafeIgnore => {
-            *dst.add(0) = c;
+            // SAFETY: the caller vouches `dst` has room for the single byte this
+            // arm writes.
+            unsafe { *dst.add(0) = c };
             1
         }
 
@@ -379,7 +458,8 @@ pub(crate) unsafe fn sanitize_string(
     ufbx_assert!(valid_length < length);
     ufbxi_check_err_msg!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        (*pool).error_handling != UnicodeErrorHandling::AbortLoading,
+        // SAFETY: the caller vouches `pool` addresses a live `StringPool`.
+        unsafe { (*pool).error_handling } != UnicodeErrorHandling::AbortLoading,
         "Invalid UTF-8",
         "pool->error_handling != UFBX_UNICODE_ERROR_HANDLING_ABORT_LOADING"
     );
@@ -409,17 +489,30 @@ pub(crate) unsafe fn sanitize_string(
         );
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-            grow_array::<u8>(
-                (*pool).map.ator,
-                &mut (*pool).temp_str,
-                &mut (*pool).temp_cap,
-                length * 2 + 64
-            ),
+            // SAFETY: the growth targets are the pool's own `temp_str`/`temp_cap`
+            // buffer pair, grown through the pool's own `map.ator` — the pairing
+            // `grow_array` requires. The verbatim C condition text follows, so
+            // wrapping does not perturb the recorded error string.
+            unsafe {
+                grow_array::<u8>(
+                    (*pool).map.ator,
+                    &mut (*pool).temp_str,
+                    &mut (*pool).temp_cap,
+                    length * 2 + 64
+                )
+            },
             "ufbxi_grow_array_size((pool->map.ator), sizeof(**(&pool->temp_str)), (&pool->temp_str), (&pool->temp_cap), (length * 2 + 64))"
         );
-        ptr::copy_nonoverlapping(str_, (*pool).temp_str, length);
-        *(*pool).temp_str.add(length) = b'\0';
-        ptr::copy_nonoverlapping(str_, (*pool).temp_str.add(length + 1), index);
+        // SAFETY: `temp_str` was just grown to `length * 2 + 64` bytes, so it is
+        // writable for `length` copied bytes, the trailing NUL at `[length]`, and
+        // the `index <= length` bytes copied at `[length + 1]`; `str_` is the
+        // caller's source, readable for `length` bytes and distinct from the
+        // freshly grown temp buffer.
+        unsafe {
+            ptr::copy_nonoverlapping(str_, (*pool).temp_str, length);
+            *(*pool).temp_str.add(length) = b'\0';
+            ptr::copy_nonoverlapping(str_, (*pool).temp_str.add(length + 1), index);
+        }
         dst_len += length + 1;
     } else {
         // Copy the initial valid part
@@ -430,86 +523,124 @@ pub(crate) unsafe fn sanitize_string(
         );
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-            grow_array::<u8>(
-                (*pool).map.ator,
-                &mut (*pool).temp_str,
-                &mut (*pool).temp_cap,
-                length + 64
-            ),
-            "ufbxi_grow_array_size((pool->map.ator), sizeof(**(&pool->temp_str)), (&pool->temp_str), (&pool->temp_cap), (length + 64))"
-        );
-        ptr::copy_nonoverlapping(str_, (*pool).temp_str, index);
-    }
-
-    let mut dst = (*pool).temp_str;
-    while index < length {
-        let c = *str_.add(index);
-        let left = length - index;
-
-        // Not optimal but not the worst thing ever
-        if (*pool).temp_cap - dst_len < 16 {
-            ufbxi_check_err!(
-                unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+            // SAFETY: the growth targets are the pool's own `temp_str`/`temp_cap`
+            // buffer pair, grown through the pool's own `map.ator` — the pairing
+            // `grow_array` requires. The verbatim C condition text follows, so
+            // wrapping does not perturb the recorded error string.
+            unsafe {
                 grow_array::<u8>(
                     (*pool).map.ator,
                     &mut (*pool).temp_str,
                     &mut (*pool).temp_cap,
-                    dst_len + 16
-                ),
+                    length + 64
+                )
+            },
+            "ufbxi_grow_array_size((pool->map.ator), sizeof(**(&pool->temp_str)), (&pool->temp_str), (&pool->temp_cap), (length + 64))"
+        );
+        // SAFETY: `temp_str` was just grown to `length + 64` bytes, so it is
+        // writable for the `index <= length` copied bytes; `str_` is the caller's
+        // source, readable for `index` bytes and distinct from the temp buffer.
+        unsafe { ptr::copy_nonoverlapping(str_, (*pool).temp_str, index) };
+    }
+
+    // SAFETY: `temp_str` was grown by the branch above, so it addresses the pool's
+    // live temp buffer.
+    let mut dst = unsafe { (*pool).temp_str };
+    while index < length {
+        // SAFETY: `index < length`, the caller's count of readable bytes at `str_`.
+        let c = unsafe { *str_.add(index) };
+        let left = length - index;
+
+        // Not optimal but not the worst thing ever
+        // SAFETY: the caller vouches `pool` addresses a live `StringPool`.
+        if unsafe { (*pool).temp_cap } - dst_len < 16 {
+            ufbxi_check_err!(
+                unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
+                // SAFETY: the growth targets are the pool's own
+                // `temp_str`/`temp_cap` buffer pair, grown through the pool's own
+                // `map.ator` — the pairing `grow_array` requires. The verbatim C
+                // condition text follows, so wrapping does not perturb the
+                // recorded error string.
+                unsafe {
+                    grow_array::<u8>(
+                        (*pool).map.ator,
+                        &mut (*pool).temp_str,
+                        &mut (*pool).temp_cap,
+                        dst_len + 16
+                    )
+                },
                 "ufbxi_grow_array_size((pool->map.ator), sizeof(**(&pool->temp_str)), (&pool->temp_str), (&pool->temp_cap), (dst_len + 16))"
             );
-            dst = (*pool).temp_str;
+            // SAFETY: `temp_str` was just re-grown, so it addresses the pool's
+            // live temp buffer.
+            dst = unsafe { (*pool).temp_str };
         }
 
         if (c & 0x80) == 0 {
             if c != 0 {
-                *dst.add(dst_len) = c;
+                // SAFETY: the block above guarantees >= 16 free bytes at
+                // `dst[dst_len]`, room for this 1-byte write.
+                unsafe { *dst.add(dst_len) = c };
                 dst_len += 1;
                 index += 1;
                 continue;
             }
         } else if (c & 0xe0) == 0xc0 && left >= 2 {
-            let t0 = *str_.add(index + 1);
+            // SAFETY: `left >= 2` means `index + 1 < length`, in bounds of `str_`.
+            let t0 = unsafe { *str_.add(index + 1) };
             let code = (c as u32) << 8 | (t0 as u32) << 0;
             if (code & 0xc0) == 0x80 && code >= 0xc280 {
-                *dst.add(dst_len + 0) = c;
-                *dst.add(dst_len + 1) = t0;
+                // SAFETY: >= 16 free bytes at `dst[dst_len]`, room for 2 bytes.
+                unsafe {
+                    *dst.add(dst_len + 0) = c;
+                    *dst.add(dst_len + 1) = t0;
+                }
                 dst_len += 2;
                 index += 2;
                 continue;
             }
         } else if (c & 0xf0) == 0xe0 && left >= 3 {
-            let t0 = *str_.add(index + 1);
-            let t1 = *str_.add(index + 2);
+            // SAFETY: `left >= 3` means `index + 2 < length`, in bounds of `str_`.
+            let t0 = unsafe { *str_.add(index + 1) };
+            let t1 = unsafe { *str_.add(index + 2) };
             let code = (c as u32) << 16 | (t0 as u32) << 8 | (t1 as u32);
             if (code & 0xc0c0) == 0x8080
                 && code >= 0xe0a080
                 && (code < 0xeda080 || code >= 0xee8080)
             {
-                *dst.add(dst_len + 0) = c;
-                *dst.add(dst_len + 1) = t0;
-                *dst.add(dst_len + 2) = t1;
+                // SAFETY: >= 16 free bytes at `dst[dst_len]`, room for 3 bytes.
+                unsafe {
+                    *dst.add(dst_len + 0) = c;
+                    *dst.add(dst_len + 1) = t0;
+                    *dst.add(dst_len + 2) = t1;
+                }
                 dst_len += 3;
                 index += 3;
                 continue;
             }
         } else if (c & 0xf8) == 0xf0 && left >= 4 {
-            let t0 = *str_.add(index + 1);
-            let t1 = *str_.add(index + 2);
-            let t2 = *str_.add(index + 3);
+            // SAFETY: `left >= 4` means `index + 3 < length`, in bounds of `str_`.
+            let t0 = unsafe { *str_.add(index + 1) };
+            let t1 = unsafe { *str_.add(index + 2) };
+            let t2 = unsafe { *str_.add(index + 3) };
             let code = (c as u32) << 24 | (t0 as u32) << 16 | (t1 as u32) << 8 | (t2 as u32);
             if (code & 0xc0c0c0) == 0x808080 && code >= 0xf0908080u32 && code <= 0xf48fbfbfu32 {
-                *dst.add(dst_len + 0) = c;
-                *dst.add(dst_len + 1) = t0;
-                *dst.add(dst_len + 2) = t1;
-                *dst.add(dst_len + 3) = t2;
+                // SAFETY: >= 16 free bytes at `dst[dst_len]`, room for 4 bytes.
+                unsafe {
+                    *dst.add(dst_len + 0) = c;
+                    *dst.add(dst_len + 1) = t0;
+                    *dst.add(dst_len + 2) = t1;
+                    *dst.add(dst_len + 3) = t2;
+                }
                 dst_len += 4;
                 index += 4;
                 continue;
             }
         }
 
-        dst_len += add_replacement_char(pool, dst.add(dst_len), c);
+        // SAFETY: `pool` is live and `dst[dst_len]` has >= 16 free bytes, room for
+        // the up-to-3-byte replacement `add_replacement_char` writes.
+        dst_len += unsafe { add_replacement_char(pool, dst.add(dst_len), c) };
         index += 1;
     }
 
@@ -522,7 +653,9 @@ pub(crate) unsafe fn sanitize_string(
         length <= u32::MAX as usize,
         "length <= UINT32_MAX"
     );
-    (*sanitized).raw_data = (*pool).temp_str;
+    // SAFETY: the caller vouches `sanitized` addresses a live `SanitizedString`
+    // and `pool` a live `StringPool`.
+    unsafe { (*sanitized).raw_data = (*pool).temp_str };
     if push_both {
         // Reserve `UINT32_MAX` for invalid UTF-8 without sanitization
         let utf8_length = dst_len - (length + 1);
@@ -531,16 +664,22 @@ pub(crate) unsafe fn sanitize_string(
             utf8_length < u32::MAX as usize,
             "utf8_length < UINT32_MAX"
         );
-        (*sanitized).raw_length = length as u32;
-        (*sanitized).utf8_length = utf8_length as u32;
+        // SAFETY: `sanitized` addresses a live `SanitizedString`.
+        unsafe {
+            (*sanitized).raw_length = length as u32;
+            (*sanitized).utf8_length = utf8_length as u32;
+        }
     } else {
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
             dst_len <= u32::MAX as usize,
             "dst_len <= UINT32_MAX"
         );
-        (*sanitized).raw_length = dst_len as u32;
-        (*sanitized).utf8_length = 0;
+        // SAFETY: `sanitized` addresses a live `SanitizedString`.
+        unsafe {
+            (*sanitized).raw_length = dst_len as u32;
+            (*sanitized).utf8_length = 0;
+        }
     }
 
     Ok(())
@@ -556,7 +695,9 @@ pub(crate) unsafe fn push_sanitized_string(
     mut hash: u32,
     raw: bool,
 ) -> Result<(), Fail> {
-    ufbxi_regression_assert!(hash == hash_string(str_, length));
+    // SAFETY: the caller vouches `str_` is readable for `length` bytes, the run
+    // `hash_string` hashes.
+    ufbxi_regression_assert!(hash == unsafe { hash_string(str_, length) });
 
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
@@ -565,44 +706,63 @@ pub(crate) unsafe fn push_sanitized_string(
     );
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        StringPoolView::from_ptr(pool)
+        // SAFETY: the caller vouches `pool` addresses a live `StringPool`, so
+        // `from_ptr` reinterprets a live pool and `(*pool).initial_size` reads it.
+        unsafe { StringPoolView::from_ptr(pool) }
             .map_view()
-            .grow::<String>((*pool).initial_size),
+            .grow::<String>(unsafe { (*pool).initial_size }),
         "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
     );
 
     let mut total_data: *const u8 = str_;
     let mut total_length: usize = length;
 
-    (*sanitized).raw_length = length as u32;
-    (*sanitized).utf8_length = 0;
+    // SAFETY: the caller vouches `sanitized` addresses a live `SanitizedString`.
+    unsafe {
+        (*sanitized).raw_length = length as u32;
+        (*sanitized).utf8_length = 0;
+    }
 
     if !raw {
-        let valid_length = utf8_valid_length(str_, length);
+        // SAFETY: `str_` is readable for `length` bytes.
+        let valid_length = unsafe { utf8_valid_length(str_, length) };
         if valid_length != length {
             // C: `ufbxi_check_err(pool->error, ufbxi_sanitize_string(...))` — `?`
             // per PORTING.md error threading.
-            sanitize_string(pool, sanitized, str_, length, valid_length, true)?;
-            total_data = (*sanitized).raw_data;
+            // SAFETY: `pool`/`sanitized` are live, `str_` is readable for
+            // `length` bytes, and `valid_length < length` (just checked), the
+            // precondition `sanitize_string` asserts.
+            unsafe { sanitize_string(pool, sanitized, str_, length, valid_length, true) }?;
+            // SAFETY: `sanitized` is live; `sanitize_string` wrote its fields.
+            total_data = unsafe { (*sanitized).raw_data };
             // C-parity: `sanitized->raw_length + sanitized->utf8_length + 1` is
             // computed in uint32_t (wraps) before widening to size_t.
-            total_length = (*sanitized)
-                .raw_length
-                .wrapping_add((*sanitized).utf8_length)
-                .wrapping_add(1) as usize;
-            hash = hash_string(str_, length);
+            // SAFETY: `sanitized` is live with the fields just written.
+            total_length = unsafe {
+                (*sanitized)
+                    .raw_length
+                    .wrapping_add((*sanitized).utf8_length)
+                    .wrapping_add(1)
+            } as usize;
+            // SAFETY: `str_` is readable for `length` bytes.
+            hash = unsafe { hash_string(str_, length) };
         }
     }
 
     let ref_ = String::new_c(total_data, total_length);
 
-    let entry: *mut String = StringPoolView::from_ptr(pool)
+    // SAFETY: the caller vouches `pool` addresses a live `StringPool`, which
+    // `from_ptr` reinterprets in place.
+    let entry: *mut String = unsafe { StringPoolView::from_ptr(pool) }
         .map_view()
         .find::<String, _>(hash, &ref_);
     if !entry.is_null() {
-        (*sanitized).raw_data = (*entry).data;
+        // SAFETY: `entry` is a non-null map slot addressing a live `String`, and
+        // `sanitized` is live.
+        unsafe { (*sanitized).raw_data = (*entry).data };
     } else {
-        let entry = StringPoolView::from_ptr(pool)
+        // SAFETY: `pool` addresses a live `StringPool`, reinterpreted in place.
+        let entry = unsafe { StringPoolView::from_ptr(pool) }
             .map_view()
             .insert::<String, _>(hash, &ref_);
         ufbxi_check_err!(
@@ -610,8 +770,10 @@ pub(crate) unsafe fn push_sanitized_string(
             !entry.is_null(),
             "entry"
         );
-        (*entry).length = total_length;
-        let dst: *mut u8 = StringPoolView::from_ptr(pool)
+        // SAFETY: `entry` is the just-inserted non-null map slot.
+        unsafe { (*entry).length = total_length };
+        // SAFETY: `pool` addresses a live `StringPool`, reinterpreted in place.
+        let dst: *mut u8 = unsafe { StringPoolView::from_ptr(pool) }
             .buf_view()
             .push::<u8>(total_length + 1);
         ufbxi_check_err!(
@@ -619,10 +781,19 @@ pub(crate) unsafe fn push_sanitized_string(
             !dst.is_null(),
             "dst"
         );
-        ptr::copy_nonoverlapping(total_data, dst, total_length);
-        *dst.add(total_length) = b'\0';
-        (*entry).data = dst;
-        (*sanitized).raw_data = dst;
+        // SAFETY: `dst` is a non-null run of `total_length + 1` bytes just pushed
+        // onto the pool's arena, so it is writable for the `total_length` copied
+        // bytes plus the trailing NUL; `total_data` is readable for
+        // `total_length` bytes and is a distinct object from the fresh arena run.
+        unsafe {
+            ptr::copy_nonoverlapping(total_data, dst, total_length);
+            *dst.add(total_length) = b'\0';
+        }
+        // SAFETY: `entry` is the live inserted slot and `sanitized` is live.
+        unsafe {
+            (*entry).data = dst;
+            (*sanitized).raw_data = dst;
+        }
     }
 
     Ok(())
@@ -645,21 +816,27 @@ pub(crate) unsafe fn push_string_imp(
 
     ufbxi_check_return_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        StringPoolView::from_ptr(pool)
+        // SAFETY: the caller vouches `pool` addresses a live `StringPool`, so
+        // `from_ptr` reinterprets a live pool and `(*pool).initial_size` reads it.
+        unsafe { StringPoolView::from_ptr(pool) }
             .map_view()
-            .grow::<String>((*pool).initial_size),
+            .grow::<String>(unsafe { (*pool).initial_size }),
         ptr::null(),
         "ufbxi_map_grow_size((&pool->map), sizeof(ufbx_string), (pool->initial_size))"
     );
 
     let mut hash: u32;
     if raw {
-        hash = hash_string(str_, length);
+        // SAFETY: the caller vouches `str_` is readable for `length` bytes.
+        hash = unsafe { hash_string(str_, length) };
     } else {
         let mut non_ascii = false;
-        hash = hash_string_check_ascii(str_, length, &mut non_ascii);
+        // SAFETY: `str_` is readable for `length` bytes and `non_ascii` is an
+        // unaliased local out-param.
+        hash = unsafe { hash_string_check_ascii(str_, length, &mut non_ascii) };
         if non_ascii {
-            let valid_length = utf8_valid_length(str_, length);
+            // SAFETY: `str_` is readable for `length` bytes.
+            let valid_length = unsafe { utf8_valid_length(str_, length) };
             if valid_length < length {
                 // C: `ufbxi_sanitized_string sanitized;` (written in full by
                 // `ufbxi_sanitize_string` before any read).
@@ -669,27 +846,42 @@ pub(crate) unsafe fn push_string_imp(
                     utf8_length: 0,
                 };
                 // C: `ufbxi_check_return_err(pool->error, ufbxi_sanitize_string(...), NULL);`
-                if sanitize_string(pool, &mut sanitized, str_, length, valid_length, false).is_err()
+                // SAFETY: `pool` is live, `&mut sanitized` is a live local,
+                // `str_` is readable for `length` bytes, and `valid_length <
+                // length` (just checked), the precondition `sanitize_string`
+                // asserts.
+                if unsafe {
+                    sanitize_string(pool, &mut sanitized, str_, length, valid_length, false)
+                }
+                .is_err()
                 {
                     return ptr::null();
                 }
                 str_ = sanitized.raw_data;
                 length = sanitized.raw_length as usize;
-                hash = hash_string(str_, length);
-                *p_out_length = length;
+                // SAFETY: `str_`/`length` are the sanitized run just produced,
+                // readable for `length` bytes.
+                hash = unsafe { hash_string(str_, length) };
+                // SAFETY: the caller vouches `p_out_length` addresses a live
+                // `usize` out-param.
+                unsafe { *p_out_length = length };
             }
         }
     }
 
     let ref_ = String::new_c(str_, length);
 
-    let entry: *mut String = StringPoolView::from_ptr(pool)
+    // SAFETY: the caller vouches `pool` addresses a live `StringPool`, which
+    // `from_ptr` reinterprets in place.
+    let entry: *mut String = unsafe { StringPoolView::from_ptr(pool) }
         .map_view()
         .find::<String, _>(hash, &ref_);
     if !entry.is_null() {
-        return (*entry).data;
+        // SAFETY: `entry` is a non-null map slot addressing a live `String`.
+        return unsafe { (*entry).data };
     }
-    let entry = StringPoolView::from_ptr(pool)
+    // SAFETY: `pool` addresses a live `StringPool`, reinterpreted in place.
+    let entry = unsafe { StringPoolView::from_ptr(pool) }
         .map_view()
         .insert::<String, _>(hash, &ref_);
     ufbxi_check_return_err!(
@@ -698,9 +890,11 @@ pub(crate) unsafe fn push_string_imp(
         ptr::null(),
         "entry"
     );
-    (*entry).length = length;
+    // SAFETY: `entry` is the just-inserted non-null map slot.
+    unsafe { (*entry).length = length };
     if copy {
-        let dst: *mut u8 = StringPoolView::from_ptr(pool)
+        // SAFETY: `pool` addresses a live `StringPool`, reinterpreted in place.
+        let dst: *mut u8 = unsafe { StringPoolView::from_ptr(pool) }
             .buf_view()
             .push::<u8>(length + 1);
         ufbxi_check_return_err!(
@@ -709,13 +903,22 @@ pub(crate) unsafe fn push_string_imp(
             ptr::null(),
             "dst"
         );
-        ptr::copy_nonoverlapping(str_, dst, length);
-        *dst.add(length) = b'\0';
-        (*entry).data = dst;
+        // SAFETY: `dst` is a non-null run of `length + 1` bytes just pushed onto
+        // the pool's arena, so it is writable for the `length` copied bytes plus
+        // the trailing NUL; `str_` is readable for `length` bytes and distinct
+        // from the fresh arena run.
+        unsafe {
+            ptr::copy_nonoverlapping(str_, dst, length);
+            *dst.add(length) = b'\0';
+        }
+        // SAFETY: `entry` is the live inserted slot.
+        unsafe { (*entry).data = dst };
     } else {
-        (*entry).data = str_;
+        // SAFETY: `entry` is the live inserted slot.
+        unsafe { (*entry).data = str_ };
     }
-    (*entry).data
+    // SAFETY: `entry` is the live inserted slot.
+    unsafe { (*entry).data }
 }
 
 // ufbx.c:5255-5258 `ufbxi_push_string`
@@ -727,7 +930,9 @@ pub(crate) unsafe fn push_string(
     p_out_length: *mut usize,
     raw: bool,
 ) -> *const u8 {
-    push_string_imp(pool, str_, length, p_out_length, true, raw)
+    // SAFETY: the caller's `pool`/`str_`/`length`/`p_out_length` contract is
+    // forwarded unchanged to `push_string_imp`.
+    unsafe { push_string_imp(pool, str_, length, p_out_length, true, raw) }
 }
 
 // ufbx.c:5260-5269 `ufbxi_push_string_place`
@@ -738,20 +943,24 @@ pub(crate) unsafe fn push_string_place(
     p_length: *mut usize,
     raw: bool,
 ) -> Result<(), Fail> {
-    let mut str_ = *p_str;
-    let length = *p_length;
+    // SAFETY: the caller vouches `p_str`/`p_length` address live out-params.
+    let mut str_ = unsafe { *p_str };
+    let length = unsafe { *p_length };
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
         !str_.is_null() || length == 0,
         "str || length == 0"
     );
-    str_ = push_string(pool, str_, length, p_length, raw);
+    // SAFETY: `pool` is live; `str_`/`length` were just checked to describe a
+    // valid run (non-null unless empty), and `p_length` is the live out-param.
+    str_ = unsafe { push_string(pool, str_, length, p_length, raw) };
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
         !str_.is_null(),
         "str"
     );
-    *p_str = str_;
+    // SAFETY: `p_str` is the caller's live out-param.
+    unsafe { *p_str = str_ };
     Ok(())
 }
 
@@ -767,7 +976,10 @@ pub(crate) unsafe fn push_string_place_str(
         !p_str.is_null(),
         "p_str"
     );
-    push_string_place(pool, &mut (*p_str).data, &mut (*p_str).length, raw)
+    // SAFETY: `pool` is live; `p_str` was just checked non-null and addresses a
+    // live `String`, so `&mut (*p_str).data`/`.length` are its own field
+    // out-params.
+    unsafe { push_string_place(pool, &mut (*p_str).data, &mut (*p_str).length, raw) }
 }
 
 // ufbx.c:5277-5286 `ufbxi_push_string_place_blob`
@@ -777,20 +989,27 @@ pub(crate) unsafe fn push_string_place_blob(
     p_blob: *mut Blob,
     raw: bool,
 ) -> Result<(), Fail> {
-    if (*p_blob).size == 0 {
-        (*p_blob).data = ptr::null();
+    // SAFETY: the caller vouches `p_blob` addresses a live `Blob`.
+    if unsafe { (*p_blob).size } == 0 {
+        // SAFETY: `p_blob` addresses a live `Blob`.
+        unsafe { (*p_blob).data = ptr::null() };
         return Ok(());
     }
-    (*p_blob).data = push_string(
-        pool,
-        (*p_blob).data,
-        (*p_blob).size,
-        &mut (*p_blob).size,
-        raw,
-    );
+    // SAFETY: `pool` is live; `p_blob` is a live `Blob` whose `data`/`size`
+    // describe its run, and `&mut (*p_blob).size` is its own field out-param.
+    unsafe {
+        (*p_blob).data = push_string(
+            pool,
+            (*p_blob).data,
+            (*p_blob).size,
+            &mut (*p_blob).size,
+            raw,
+        );
+    }
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
-        !(*p_blob).data.is_null(),
+        // SAFETY: `p_blob` addresses a live `Blob`.
+        !unsafe { (*p_blob).data }.is_null(),
         "p_blob->data"
     );
     Ok(())
@@ -1597,13 +1816,15 @@ pub(crate) fn distsq2(a: Vec2, b: Vec2) -> Real {
 // ufbx.c:5972-5974 `ufbxi_slow_normalize3`
 #[inline(never)]
 pub(crate) unsafe fn slow_normalize3(a: *const Vec3) -> Vec3 {
-    normalize3(*a)
+    // SAFETY: the caller vouches `a` addresses a live `Vec3`.
+    normalize3(unsafe { *a })
 }
 
 // ufbx.c:5976-5978 `ufbxi_slow_normalized_cross3`
 #[inline(never)]
 pub(crate) unsafe fn slow_normalized_cross3(a: *const Vec3, b: *const Vec3) -> Vec3 {
-    normalize3(cross3(*a, *b))
+    // SAFETY: the caller vouches `a`/`b` address live `Vec3`s.
+    normalize3(cross3(unsafe { *a }, unsafe { *b }))
 }
 
 // CONTINUATION POINT: `// -- String pool` (ufbx.c:4895-5286) and
@@ -1696,7 +1917,9 @@ mod tests {
     }
 
     unsafe fn bytes<'a>(ptr_: *const u8, len: usize) -> &'a [u8] {
-        core::slice::from_raw_parts(ptr_, len)
+        // SAFETY: the caller vouches `ptr_` is readable for `len` bytes and that
+        // the borrowed run outlives the returned slice.
+        unsafe { core::slice::from_raw_parts(ptr_, len) }
     }
 
     #[test]
