@@ -12,10 +12,6 @@
 // legitimately strand items, so the lint is only armed for the full build.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 #![cfg(feature = "geometry-cache")]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::{c_void, CStr};
 
 use crate::generated::Error;
@@ -160,6 +156,8 @@ impl XmlContext {
 
     #[inline(always)]
     pub(crate) fn data_size(&self) -> usize {
+        // SAFETY: `size_of_val` only needs the place's type; the `data` array is
+        // a field of the context this handle owns.
         unsafe { core::mem::size_of_val(&(*self.get()).data) }
     }
 
@@ -168,20 +166,30 @@ impl XmlContext {
     /// struct assignment; the source field still holds the stale bits (no
     /// `Drop`), so the caller must overwrite it or treat it as moved-from.
     pub(crate) fn take_result(&self) -> crate::native::buf::Buf {
+        // SAFETY: the `result` field is live, initialized context storage; the
+        // bitwise read moves the `Buf` out, leaving stale bits behind (no
+        // `Drop`), which the doc comment above makes the caller's obligation.
         unsafe { core::ptr::read(&raw const (*self.get()).result) }
     }
 
     // `data` (`[u8; 4096]`) — whole-array raw-ptr getters (read/write buffer base).
     #[inline(always)]
     pub(crate) fn data_ptr(&self) -> *const u8 {
+        // SAFETY: `&raw mut` computes the array's base address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
         unsafe { (&raw mut (*self.get()).data) as *const u8 }
     }
     #[inline(always)]
     pub(crate) fn data_mut_ptr(&self) -> *mut u8 {
+        // SAFETY: `&raw mut` computes the array's base address with the cell's
+        // provenance without forming a reference; no aliasing assertion.
         unsafe { (&raw mut (*self.get()).data) as *mut u8 }
     }
     #[inline(always)]
     pub(crate) fn data_at(&self, i: usize) -> &crate::prelude::ScalarView<u8> {
+        // SAFETY: the indexing panics unless `i` is inside the `data` array, so
+        // the reinterpreted element cell lies in context-owned interior-mutable
+        // storage; the borrow of `self` anchors its lifetime.
         unsafe { &*(&raw mut (*self.get()).data[i] as *mut crate::prelude::ScalarView<u8>) }
     }
 
@@ -510,12 +518,17 @@ pub(crate) unsafe fn xml_skip_until_string(
     xc.set_tok_len(0);
     let mut match_len: usize = 0;
     let mut ix: usize = 0;
-    let suffix_len: usize = crate::native::error::strlen(suffix);
+    // SAFETY: `suffix` is a NUL-terminated string (every call site passes a
+    // byte-string literal), which is `strlen`'s raw-param contract.
+    let suffix_len: usize = unsafe { crate::native::error::strlen(suffix) };
     let mut buf: [u8; 16] = [0; 16];
     let wrap_mask: usize = buf.len() - 1;
     ufbx_assert!(suffix_len < buf.len());
     loop {
-        let c: u8 = *xc.pos();
+        // SAFETY: `pos` points at a readable byte of the refill buffer — the
+        // parser keeps it inside `[data, pos_end)`, and the NUL sentinel
+        // `xml_refill` appends terminates the loop before it runs past.
+        let c: u8 = unsafe { *xc.pos() };
         ufbxi_check_err_msg!(xc.error_view(), c != 0, "Truncated file");
         xml_advance(xc);
         if ix >= suffix_len {
@@ -529,8 +542,10 @@ pub(crate) unsafe fn xml_skip_until_string(
         while match_len < suffix_len {
             // C-parity: `ix - suffix_len + match_len` wraps while the ring
             // buffer is still filling; the mask makes the wrapped value valid.
+            // SAFETY: `match_len < suffix_len`, so the offset stays inside the
+            // NUL-terminated `suffix` string.
             if buf[ix.wrapping_sub(suffix_len).wrapping_add(match_len) & wrap_mask]
-                != *suffix.add(match_len)
+                != unsafe { *suffix.add(match_len) }
             {
                 break;
             }
@@ -543,9 +558,18 @@ pub(crate) unsafe fn xml_skip_until_string(
 
     xml_push_token_char(xc, b'\0')?;
     if !dst.is_null() {
-        (*dst).length = xc.tok_len() - 1;
-        (*dst).data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok());
-        ufbxi_check_err!(xc.error_view(), !(*dst).data.is_null(), "dst->data");
+        // SAFETY: `dst` is non-null per the check and points at a caller-owned
+        // `String` slot (fn raw-param contract).
+        unsafe { (*dst).length = xc.tok_len() - 1 };
+        // SAFETY: `dst` as above; `push_copy` copies `tok_len` bytes out of xc's
+        // own token buffer, which holds exactly that many, into xc's result buf.
+        unsafe { (*dst).data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok()) };
+        ufbxi_check_err!(
+            xc.error_view(),
+            // SAFETY: reading the pointer field just stored through `dst`.
+            !unsafe { (*dst).data }.is_null(),
+            "dst->data"
+        );
     }
 
     Ok(())
@@ -561,13 +585,18 @@ pub(crate) unsafe fn xml_read_until(
 ) -> Result<(), Fail> {
     xc.set_tok_len(0);
     loop {
-        let mut c: u8 = *xc.pos();
+        // SAFETY: `pos` points at a readable byte of the refill buffer — the
+        // parser keeps it inside `[data, pos_end)`, and the NUL sentinel
+        // `xml_refill` appends stops the walk before it runs past.
+        let mut c: u8 = unsafe { *xc.pos() };
 
         if c == b'&' {
             let entity_begin: usize = xc.tok_len();
             loop {
                 xml_advance(xc);
-                c = *xc.pos();
+                // SAFETY: same buffer invariant; `xml_advance` refills when the
+                // read position reaches the end.
+                c = unsafe { *xc.pos() };
                 ufbxi_check_err!(xc.error_view(), c != b'\0', "c != '\\0'");
                 if c == b';' {
                     break;
@@ -577,17 +606,32 @@ pub(crate) unsafe fn xml_read_until(
             xml_advance(xc);
             xml_push_token_char(xc, b'\0')?;
 
-            let entity: *mut u8 = xc.tok().add(entity_begin);
+            // SAFETY: `entity_begin` is a token length captured before the
+            // entity was pushed, so it is at most the current `tok_len` and the
+            // offset stays inside the token allocation.
+            let entity: *mut u8 = unsafe { xc.tok().add(entity_begin) };
             xc.set_tok_len(entity_begin);
 
-            if *entity.add(0) == b'#' {
+            // SAFETY: `entity` points at the entity text just pushed, which the
+            // `'\0'` push above terminates, so byte 0 is readable.
+            if unsafe { *entity.add(0) } == b'#' {
                 // C: `unsigned long code` — 64-bit on the oracle targets; the
                 // value always comes from `ufbxi_parse_uint32_radix`.
                 let mut code: u64 = 0;
-                if *entity.add(1) == b'x' {
-                    code = crate::native::float_parse::parse_uint32_radix(entity.add(2), 16) as u64;
+                // SAFETY: byte 0 is `'#'`, so byte 1 is still inside the
+                // NUL-terminated entity text (worst case it is the terminator).
+                if unsafe { *entity.add(1) } == b'x' {
+                    // SAFETY: `"#x"` precedes it, so the offset addresses the
+                    // remaining NUL-terminated digits `parse_uint32_radix` scans.
+                    code = unsafe {
+                        crate::native::float_parse::parse_uint32_radix(entity.add(2), 16)
+                    } as u64;
                 } else {
-                    code = crate::native::float_parse::parse_uint32_radix(entity.add(1), 10) as u64;
+                    // SAFETY: `'#'` precedes it, so the offset addresses the
+                    // remaining NUL-terminated digits `parse_uint32_radix` scans.
+                    code = unsafe {
+                        crate::native::float_parse::parse_uint32_radix(entity.add(1), 10)
+                    } as u64;
                 }
 
                 let mut bytes: [u8; 5] = [0; 5];
@@ -608,21 +652,27 @@ pub(crate) unsafe fn xml_read_until(
                 }
                 // C: `for (char *b = bytes; *b; b++)`
                 let mut b: *mut u8 = bytes.as_mut_ptr();
-                while *b != 0 {
-                    xml_push_token_char(xc, *b)?;
-                    b = b.add(1);
+                // SAFETY (walk and reads): `bytes` is a 5-byte local whose last
+                // element stays zero — the encoder above fills at most four —
+                // so the NUL walk stops inside the array.
+                while unsafe { *b } != 0 {
+                    xml_push_token_char(xc, unsafe { *b })?;
+                    b = unsafe { b.add(1) };
                 }
             } else {
                 let mut ch: u8 = b'\0';
-                if strcmp(entity, b"lt\0".as_ptr()) == 0 {
+                // SAFETY (all five compares): `entity` is the NUL-terminated
+                // entity text pushed above and each literal is a NUL-terminated
+                // `'static` run, which is `strcmp`'s raw-param contract.
+                if unsafe { strcmp(entity, b"lt\0".as_ptr()) } == 0 {
                     ch = b'<';
-                } else if strcmp(entity, b"quot\0".as_ptr()) == 0 {
+                } else if unsafe { strcmp(entity, b"quot\0".as_ptr()) } == 0 {
                     ch = b'"';
-                } else if strcmp(entity, b"amp\0".as_ptr()) == 0 {
+                } else if unsafe { strcmp(entity, b"amp\0".as_ptr()) } == 0 {
                     ch = b'&';
-                } else if strcmp(entity, b"apos\0".as_ptr()) == 0 {
+                } else if unsafe { strcmp(entity, b"apos\0".as_ptr()) } == 0 {
                     ch = b'\'';
-                } else if strcmp(entity, b"gt\0".as_ptr()) == 0 {
+                } else if unsafe { strcmp(entity, b"gt\0".as_ptr()) } == 0 {
                     ch = b'>';
                 }
                 if ch != 0 {
@@ -641,9 +691,18 @@ pub(crate) unsafe fn xml_read_until(
 
     xml_push_token_char(xc, b'\0')?;
     if !dst.is_null() {
-        (*dst).length = xc.tok_len() - 1;
-        (*dst).data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok());
-        ufbxi_check_err!(xc.error_view(), !(*dst).data.is_null(), "dst->data");
+        // SAFETY: `dst` is non-null per the check and points at a caller-owned
+        // `String` slot (fn raw-param contract).
+        unsafe { (*dst).length = xc.tok_len() - 1 };
+        // SAFETY: `dst` as above; `push_copy` copies `tok_len` bytes out of xc's
+        // own token buffer, which holds exactly that many, into xc's result buf.
+        unsafe { (*dst).data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok()) };
+        ufbxi_check_err!(
+            xc.error_view(),
+            // SAFETY: reading the pointer field just stored through `dst`.
+            !unsafe { (*dst).data }.is_null(),
+            "dst->data"
+        );
     }
 
     Ok(())
@@ -671,12 +730,18 @@ pub(crate) unsafe fn xml_parse_tag(
             ufbx_assert!((d.get() as usize) < MAX_XML_DEPTH + 1);
             d.set(d.get() + 1);
         });
-        let ret = xml_parse_tag_rec(xc, depth, p_closing, opening);
+        // SAFETY: `p_closing` and `opening` are forwarded unchanged, so this
+        // fn's raw-param contract is exactly the callee's.
+        let ret = unsafe { xml_parse_tag_rec(xc, depth, p_closing, opening) };
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
         return ret;
     }
+    // SAFETY: `p_closing` and `opening` are forwarded unchanged, so this fn's
+    // raw-param contract is exactly the callee's.
     #[cfg(not(feature = "regression"))]
-    xml_parse_tag_rec(xc, depth, p_closing, opening)
+    unsafe {
+        xml_parse_tag_rec(xc, depth, p_closing, opening)
+    }
 }
 
 // ufbx.c:7469-7584 `ufbxi_xml_parse_tag` body (the `_rec` half of the
@@ -696,18 +761,30 @@ unsafe fn xml_parse_tag_rec(
     );
 
     if !xml_accept(xc, b'<') {
-        if *xc.pos() == b'\0' {
-            *p_closing = true;
+        // SAFETY: `pos` points at a readable byte of the refill buffer (parser
+        // invariant: it stays inside `[data, pos_end)`).
+        if unsafe { *xc.pos() } == b'\0' {
+            // SAFETY: `p_closing` is the caller's live `bool` out-param (fn
+            // raw-param contract).
+            unsafe { *p_closing = true };
         } else {
-            xml_read_until(
-                xc,
-                core::ptr::null_mut(),
-                XML_CTYPE_TAG_START | XML_CTYPE_END_OF_FILE,
-            )?;
+            // SAFETY: a null `dst` is the "discard the token" sentinel the
+            // callee checks for.
+            unsafe {
+                xml_read_until(
+                    xc,
+                    core::ptr::null_mut(),
+                    XML_CTYPE_TAG_START | XML_CTYPE_END_OF_FILE,
+                )?
+            };
             let mut has_text: bool = false;
             let mut i: usize = 0;
             while i < xc.tok_len() {
-                if (XML_CTYPE[*xc.tok().add(i) as usize] as u32 & XML_CTYPE_WHITESPACE) == 0 {
+                // SAFETY: `i < tok_len <= tok_cap`, so the offset addresses a
+                // byte the token buffer holds.
+                if (XML_CTYPE[unsafe { *xc.tok().add(i) } as usize] as u32 & XML_CTYPE_WHITESPACE)
+                    == 0
+                {
                     has_text = true;
                     break;
                 }
@@ -717,13 +794,21 @@ unsafe fn xml_parse_tag_rec(
             if has_text {
                 let tag: *mut XmlTag = xc.tmp_stack_view().push_zero(1);
                 ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
-                (*tag).name.data = EMPTY_CHAR.as_ptr();
+                // SAFETY (this store and the two below): `tag` is the fresh,
+                // checked-non-null single-element push above, so writing its
+                // fields writes xc's own tmp-stack allocation; `EMPTY_CHAR` is a
+                // NUL-terminated `'static` run, and `push_copy` copies the
+                // `tok_len` bytes the token buffer holds into xc's result buf.
+                unsafe { (*tag).name.data = EMPTY_CHAR.as_ptr() };
 
-                (*tag).text.length = xc.tok_len() - 1;
-                (*tag).text.data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok());
+                unsafe { (*tag).text.length = xc.tok_len() - 1 };
+                unsafe {
+                    (*tag).text.data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok())
+                };
                 ufbxi_check_err!(
                     xc.error_view(),
-                    !(*tag).text.data.is_null(),
+                    // SAFETY: reading the pointer field just stored in `tag`.
+                    !unsafe { (*tag).text.data }.is_null(),
                     "tag->text.data"
                 );
             }
@@ -732,52 +817,79 @@ unsafe fn xml_parse_tag_rec(
     }
 
     if xml_accept(xc, b'/') {
-        xml_read_until(xc, core::ptr::null_mut(), XML_CTYPE_NAME_END)?;
+        // SAFETY: a null `dst` is the "discard the token" sentinel the callee
+        // checks for.
+        unsafe { xml_read_until(xc, core::ptr::null_mut(), XML_CTYPE_NAME_END)? };
         ufbxi_check_err!(
             xc.error_view(),
-            !opening.is_null() && strcmp(xc.tok(), opening) == 0,
+            // SAFETY: `strcmp` runs only once `opening` is known non-null, and
+            // both it and xc's token buffer are NUL-terminated (the token by the
+            // `'\0'` `xml_read_until` pushes), which is `strcmp`'s contract.
+            !opening.is_null() && unsafe { strcmp(xc.tok(), opening) } == 0,
             "opening && !strcmp(xc->tok, opening)"
         );
         xml_skip_while(xc, XML_CTYPE_WHITESPACE);
         if !xml_accept(xc, b'>') {
             return Err(Fail);
         }
-        *p_closing = true;
+        // SAFETY: `p_closing` is the caller's live `bool` out-param (fn
+        // raw-param contract).
+        unsafe { *p_closing = true };
         return Ok(());
     } else if xml_accept(xc, b'!') {
         if xml_accept(xc, b'[') {
             // C: `for (const char *ch = "CDATA["; *ch; ch++)`
             let mut ch: *const u8 = b"CDATA[\0".as_ptr();
-            while *ch != 0 {
-                if !xml_accept(xc, *ch) {
+            // SAFETY (walk and reads): `ch` walks a NUL-terminated `'static`
+            // literal and the loop stops at its terminator, so every read and
+            // the bump stay inside it.
+            while unsafe { *ch } != 0 {
+                if !xml_accept(xc, unsafe { *ch }) {
                     return Err(Fail);
                 }
-                ch = ch.add(1);
+                ch = unsafe { ch.add(1) };
             }
 
             let tag: *mut XmlTag = xc.tmp_stack_view().push_zero(1);
             ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
-            xml_skip_until_string(xc, &mut (*tag).text, b"]]>\0".as_ptr())?;
-            (*tag).name.data = EMPTY_CHAR.as_ptr();
+            // SAFETY: `tag` is the fresh, checked-non-null push above, so
+            // `&raw mut` on its `text` field addresses xc's own tmp-stack
+            // allocation; the suffix is a NUL-terminated `'static` literal.
+            unsafe { xml_skip_until_string(xc, &raw mut (*tag).text, b"]]>\0".as_ptr())? };
+            // SAFETY: writing the same fresh push; `EMPTY_CHAR` is a
+            // NUL-terminated `'static` run.
+            unsafe { (*tag).name.data = EMPTY_CHAR.as_ptr() };
         } else if xml_accept(xc, b'-') {
             if !xml_accept(xc, b'-') {
                 return Err(Fail);
             }
-            xml_skip_until_string(xc, core::ptr::null_mut(), b"-->\0".as_ptr())?;
+            // SAFETY: a null `dst` is the "discard the token" sentinel the
+            // callee checks for; the suffix is a NUL-terminated `'static`
+            // literal.
+            unsafe { xml_skip_until_string(xc, core::ptr::null_mut(), b"-->\0".as_ptr())? };
         } else {
             // TODO: !DOCTYPE
-            xml_skip_until_string(xc, core::ptr::null_mut(), b">\0".as_ptr())?;
+            // SAFETY: a null `dst` is the "discard the token" sentinel the
+            // callee checks for; the suffix is a NUL-terminated `'static`
+            // literal.
+            unsafe { xml_skip_until_string(xc, core::ptr::null_mut(), b">\0".as_ptr())? };
         }
         return Ok(());
     } else if xml_accept(xc, b'?') {
-        xml_skip_until_string(xc, core::ptr::null_mut(), b"?>\0".as_ptr())?;
+        // SAFETY: a null `dst` is the "discard the token" sentinel the callee
+        // checks for; the suffix is a NUL-terminated `'static` literal.
+        unsafe { xml_skip_until_string(xc, core::ptr::null_mut(), b"?>\0".as_ptr())? };
         return Ok(());
     }
 
     let tag: *mut XmlTag = xc.tmp_stack_view().push_zero(1);
     ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
-    xml_read_until(xc, &mut (*tag).name, XML_CTYPE_NAME_END)?;
-    (*tag).text.data = EMPTY_CHAR.as_ptr();
+    // SAFETY: `tag` is the fresh, checked-non-null push above, so `&raw mut` on
+    // its `name` field addresses xc's own tmp-stack allocation.
+    unsafe { xml_read_until(xc, &raw mut (*tag).name, XML_CTYPE_NAME_END)? };
+    // SAFETY: writing the same fresh push; `EMPTY_CHAR` is a NUL-terminated
+    // `'static` run.
+    unsafe { (*tag).text.data = EMPTY_CHAR.as_ptr() };
 
     let mut has_children: bool = false;
 
@@ -795,7 +907,10 @@ unsafe fn xml_parse_tag_rec(
         } else {
             let attrib: *mut XmlAttrib = xc.tmp_stack_view().push_zero(1);
             ufbxi_check_err!(xc.error_view(), !attrib.is_null(), "attrib");
-            xml_read_until(xc, &mut (*attrib).name, XML_CTYPE_NAME_END)?;
+            // SAFETY: `attrib` is the fresh, checked-non-null push above, so
+            // `&raw mut` on its `name` field addresses xc's own tmp-stack
+            // allocation.
+            unsafe { xml_read_until(xc, &raw mut (*attrib).name, XML_CTYPE_NAME_END)? };
             xml_skip_while(xc, XML_CTYPE_WHITESPACE);
             if !xml_accept(xc, b'=') {
                 return Err(Fail);
@@ -809,31 +924,54 @@ unsafe fn xml_parse_tag_rec(
             } else {
                 ufbxi_fail_err!(xc.error_view(), "Bad attrib value");
             }
-            xml_read_until(xc, &mut (*attrib).value, quote_ctype)?;
+            // SAFETY: `attrib` is still that fresh push, so `&raw mut` on its
+            // `value` field addresses xc's own tmp-stack allocation.
+            unsafe { xml_read_until(xc, &raw mut (*attrib).value, quote_ctype)? };
             xml_advance(xc);
             num_attribs += 1;
         }
     }
 
-    (*tag).num_attribs = num_attribs;
-    (*tag).attribs = xc.result_view().push_pop(xc.tmp_stack_view(), num_attribs);
-    ufbxi_check_err!(xc.error_view(), !(*tag).attribs.is_null(), "tag->attribs");
+    // SAFETY (both stores): `tag` is the fresh, checked-non-null push above;
+    // `push_pop` moves exactly the `num_attribs` attribs this loop stacked on
+    // xc's tmp stack into xc's result buf.
+    unsafe { (*tag).num_attribs = num_attribs };
+    unsafe { (*tag).attribs = xc.result_view().push_pop(xc.tmp_stack_view(), num_attribs) };
+    ufbxi_check_err!(
+        xc.error_view(),
+        // SAFETY: reading the pointer field just stored in `tag`.
+        !unsafe { (*tag).attribs }.is_null(),
+        "tag->attribs"
+    );
 
     if has_children {
         let children_begin: usize = xc.tmp_stack_view().num_items();
         loop {
             let mut closing: bool = false;
-            xml_parse_tag(xc, depth + 1, &mut closing, (*tag).name.data)?;
+            // SAFETY: `closing` is an unaliased local out-param; `tag`'s `name`
+            // is the NUL-terminated arena string the callee compares the
+            // closing tag against.
+            unsafe { xml_parse_tag(xc, depth + 1, &mut closing, (*tag).name.data)? };
             if closing {
                 break;
             }
         }
 
-        (*tag).num_children = xc.tmp_stack_view().num_items() - children_begin;
-        (*tag).children = xc
-            .result_view()
-            .push_pop(xc.tmp_stack_view(), (*tag).num_children);
-        ufbxi_check_err!(xc.error_view(), !(*tag).children.is_null(), "tag->children");
+        // SAFETY (both stores): `tag` is that same fresh push; `push_pop` moves
+        // exactly the `num_children` tags the loop stacked on xc's tmp stack
+        // into xc's result buf.
+        unsafe { (*tag).num_children = xc.tmp_stack_view().num_items() - children_begin };
+        unsafe {
+            (*tag).children = xc
+                .result_view()
+                .push_pop(xc.tmp_stack_view(), (*tag).num_children)
+        };
+        ufbxi_check_err!(
+            xc.error_view(),
+            // SAFETY: reading the pointer field just stored in `tag`.
+            !unsafe { (*tag).children }.is_null(),
+            "tag->children"
+        );
     }
 
     Ok(())
@@ -905,34 +1043,49 @@ pub(crate) struct XmlLoadOpts {
 pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut XmlDocument {
     // C: `ufbxi_xml_context xc = { UFBX_ERROR_NONE };` — the aggregate
     // initializer zeroes the whole (4 KiB) context.
-    let xc: XmlContext = core::mem::zeroed();
-    xc.set_ator((*opts).ator);
-    xc.set_read_fn((*opts).read_fn);
-    xc.set_read_user((*opts).read_user);
+    // SAFETY: `XmlContext` wraps `MaybeUninit`, and all-zero is the state the C
+    // aggregate initializer leaves the context in (every field is a scalar,
+    // pointer, POD array or zeroable `Buf`).
+    let xc: XmlContext = unsafe { core::mem::zeroed() };
+    // SAFETY (all three reads): `opts` points at a live `XmlLoadOpts` the
+    // caller owns for the duration of the call (fn raw-param contract).
+    xc.set_ator(unsafe { (*opts).ator });
+    xc.set_read_fn(unsafe { (*opts).read_fn });
+    xc.set_read_user(unsafe { (*opts).read_user });
 
     xc.tmp_stack_view().set_ator(xc.ator());
     xc.result_view().set_ator(xc.ator());
 
     xc.result_view().set_unordered(true);
 
-    if (*opts).prefix_length > 0 {
-        xc.set_pos((*opts).prefix);
-        xc.set_pos_end((*opts).prefix.add((*opts).prefix_length));
+    // SAFETY: reading a scalar field of the live `opts`.
+    if unsafe { (*opts).prefix_length } > 0 {
+        // SAFETY: `opts` is live; `prefix`/`prefix_length` describe one caller-
+        // owned run, so the offset forms an in-range one-past-the-end pointer.
+        xc.set_pos(unsafe { (*opts).prefix });
+        xc.set_pos_end(unsafe { (*opts).prefix.add((*opts).prefix_length) });
     } else {
         xml_refill(&xc);
     }
 
     let ok = xml_parse_root(&xc).is_ok();
 
-    buf_free(xc.tmp_stack_mut_ptr());
-    free::<u8>(xc.ator(), xc.tok(), xc.tok_cap());
+    // SAFETY: both are xc's own state — the tmp stack buf it owns, and the
+    // token run grown from `xc.ator()` to exactly `tok_cap` bytes.
+    unsafe { buf_free(xc.tmp_stack_mut_ptr()) };
+    unsafe { free::<u8>(xc.ator(), xc.tok(), xc.tok_cap()) };
 
     if ok {
         xc.doc()
     } else {
-        buf_free(xc.result_mut_ptr());
+        // SAFETY: the result buf is xc's own owned state; on the failure path
+        // nothing was handed out of it.
+        unsafe { buf_free(xc.result_mut_ptr()) };
         if !error.is_null() {
-            core::ptr::write(error, core::ptr::read(xc.error_mut_ptr()));
+            // SAFETY: `error` is the caller's live, writable `Error` slot
+            // (checked non-null); the source is xc's own error field, copied
+            // bitwise as C does with struct assignment.
+            unsafe { core::ptr::write(error, core::ptr::read(xc.error_mut_ptr())) };
         }
 
         core::ptr::null_mut()
@@ -944,8 +1097,12 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
 pub(crate) unsafe fn free_xml(doc: *mut XmlDocument) {
     // Move the buf to the stack before freeing: `doc` itself is allocated from
     // this very buffer (C copies by struct assignment; `Buf` is not `Copy`).
-    let mut buf: Buf = core::ptr::read(&raw const (*doc).buf);
-    buf_free(&mut buf);
+    // SAFETY: `doc` is a live document `load_xml` returned (fn raw-param
+    // contract); the bitwise read moves the owning `Buf` to the stack, and the
+    // stale field dies with the storage this call frees.
+    let mut buf: Buf = unsafe { core::ptr::read(&raw const (*doc).buf) };
+    // SAFETY: `buf` is that live stack copy, the sole owner of the chunk list.
+    unsafe { buf_free(&mut buf) };
 }
 
 // ufbx.c:7662-7670 `ufbxi_xml_find_child`
