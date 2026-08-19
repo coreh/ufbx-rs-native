@@ -13,10 +13,6 @@
 // (an orphaned stub that no ported call site reaches); leaner feature sets
 // legitimately strand items, so the lint is only armed for the full build.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::c_void;
 use core::mem::size_of;
 
@@ -81,7 +77,11 @@ const _: () = assert!(size_of::<BufPadding>() <= 16);
 // without reading through it) — not sound to expose as a safe fn.
 #[inline(always)]
 pub(crate) unsafe fn chunk_data(chunk: *mut BufChunk) -> *mut u8 {
-    (chunk as *mut u8).add(size_of::<BufChunk>())
+    // SAFETY: this fn's contract is that `chunk` addresses a live `BufChunk`
+    // whose backing allocation is `sizeof(BufChunk) + size` bytes; offsetting by
+    // the header size lands at the start of the flexible `data` array (one past
+    // the header, in the same allocation — the very start of `data`).
+    unsafe { (chunk as *mut u8).add(size_of::<BufChunk>()) }
 }
 
 // ufbx.c:3853-3870 `ufbxi_buf`
@@ -223,35 +223,51 @@ pub(crate) struct BufState {
 // ufbx.c:3878-4020 `ufbxi_push_size_new_block`
 #[inline(never)]
 pub(crate) unsafe fn push_size_new_block(b: *mut Buf, size: usize) -> *mut c_void {
-    let huge = size >= (*(*b).ator).huge_size;
+    // SAFETY: `b` addresses a live, initialized `Buf` (this fn's raw-pointer
+    // contract) and `(*b).ator` is its live stored allocator back-pointer;
+    // reading `huge_size` off that allocator.
+    let huge = size >= unsafe { (*(*b).ator).huge_size };
 
     // Use the second chunk "list" for huge unordered chunks.
     // The state of these chunks is not tracked by `ufbxi_buf.pos/size`.
-    let list_ix: u32 = ((*b).unordered as u32) & (huge as u32);
+    // SAFETY: `b` is the live `Buf`; reading its `unordered` flag.
+    let list_ix: u32 = (unsafe { (*b).unordered } as u32) & (huge as u32);
 
-    let mut chunk = (*b).chunks[list_ix as usize];
+    // SAFETY: `b` is the live `Buf`; reading the head of the selected chunk list.
+    let mut chunk = unsafe { (*b).chunks[list_ix as usize] };
     if !chunk.is_null() {
+        // SAFETY (every `(*b)`/`(*chunk)`/`(*next)`/`(*best_chunk)` access in
+        // this reuse-scan block, and the `chunk_data` calls): `b` is the live
+        // `Buf`, `chunk` is non-null (checked above) and every pointer walked
+        // here — `chunk`, `next`, `best_chunk` — is a live `BufChunk` of `b`'s
+        // `root`-linked list reached through its own `->next` links, each
+        // allocated from `(*b).ator` with `sizeof(BufChunk) + size` bytes so
+        // `chunk_data` stays in-bounds.
         if list_ix == 0 {
             // Store the final position for the retired chunk and scan free
             // chunks in case we find one the allocation fits in.
-            (*b).pushed_size += (*b).pos;
-            (*chunk).pushed_pos = (*b).pos;
-            let mut next = (*chunk).next;
-            while !next.is_null() {
-                ufbx_assert!((*next).magic == BUF_CHUNK_IMP_MAGIC as usize);
-                chunk = next;
-                ufbx_assert!((*b).unordered || (*chunk).pushed_pos == 0);
-                (*chunk).pushed_pos = 0;
-                if size <= (*chunk).size {
-                    (*b).chunks[0] = chunk;
-                    // C-parity: C truncates through `(uint32_t)size` here (ufbx.c:3901).
-                    (*b).pos = size as u32 as usize;
-                    (*b).size = (*chunk).size;
-                    return chunk_data(chunk) as *mut c_void;
-                }
-                next = (*chunk).next;
+            unsafe {
+                (*b).pushed_size += (*b).pos;
+                (*chunk).pushed_pos = (*b).pos;
             }
-        } else if (*b).clearable {
+            let mut next = unsafe { (*chunk).next };
+            while !next.is_null() {
+                ufbx_assert!(unsafe { (*next).magic } == BUF_CHUNK_IMP_MAGIC as usize);
+                chunk = next;
+                ufbx_assert!(unsafe { (*b).unordered } || unsafe { (*chunk).pushed_pos } == 0);
+                unsafe { (*chunk).pushed_pos = 0 };
+                if size <= unsafe { (*chunk).size } {
+                    unsafe {
+                        (*b).chunks[0] = chunk;
+                        // C-parity: C truncates through `(uint32_t)size` here (ufbx.c:3901).
+                        (*b).pos = size as u32 as usize;
+                        (*b).size = (*chunk).size;
+                    }
+                    return unsafe { chunk_data(chunk) } as *mut c_void;
+                }
+                next = unsafe { (*chunk).next };
+            }
+        } else if unsafe { (*b).clearable } {
             // Keep track of the `UFBXI_HUGE_MAX_SCAN` largest chunks and
             // retain them. Overflowing chunks are freed in `ufbxi_buf_clear()`
             let align_mask = size_align_mask(size);
@@ -267,14 +283,14 @@ pub(crate) unsafe fn push_size_new_block(b: *mut Buf, size: usize) -> *mut c_voi
             // Unreachable chunks in the tail are freed in `ufbxi_buf_clear()`.
             let mut i = 0usize;
             while !next.is_null() && i < HUGE_MAX_SCAN {
-                ufbx_assert!((*next).magic == BUF_CHUNK_IMP_MAGIC as usize);
-                if (*next).size < size {
+                ufbx_assert!(unsafe { (*next).magic } == BUF_CHUNK_IMP_MAGIC as usize);
+                if unsafe { (*next).size } < size {
                     break;
                 }
                 chunk = next;
 
                 // Try to reuse chunks using a best-fit strategy.
-                let pos = align_to_mask((*chunk).pushed_pos, align_mask);
+                let pos = align_to_mask(unsafe { (*chunk).pushed_pos }, align_mask);
                 // C-parity: unsigned wrap when `pos > chunk->size` (over-aligned
                 // position past the chunk end) would yield a huge `space`, making
                 // the `size <= space` check below PASS — identical to C
@@ -282,7 +298,7 @@ pub(crate) unsafe fn push_size_new_block(b: *mut Buf, size: usize) -> *mut c_voi
                 // 16-aligned and `align_mask <= 15`, so `pos <= chunk->size`
                 // always. Do NOT "fix" this with checked_sub in the
                 // unsafe-reduction phase — that would diverge from C.
-                let space = (*chunk).size.wrapping_sub(pos);
+                let space = unsafe { (*chunk).size }.wrapping_sub(pos);
                 if size <= space {
                     if space < best_space {
                         best_chunk = chunk;
@@ -290,16 +306,18 @@ pub(crate) unsafe fn push_size_new_block(b: *mut Buf, size: usize) -> *mut c_voi
                     }
                 }
 
-                next = (*chunk).next;
+                next = unsafe { (*chunk).next };
                 i += 1;
             }
 
             // Early return if we found a slot.
             if !best_chunk.is_null() {
-                let pos = align_to_mask((*best_chunk).pushed_pos, align_mask);
-                (*best_chunk).pushed_pos = pos + size;
-                (*b).pushed_size += size;
-                return chunk_data(best_chunk).add(pos) as *mut c_void;
+                let pos = align_to_mask(unsafe { (*best_chunk).pushed_pos }, align_mask);
+                unsafe {
+                    (*best_chunk).pushed_pos = pos + size;
+                    (*b).pushed_size += size;
+                }
+                return unsafe { chunk_data(best_chunk).add(pos) } as *mut c_void;
             }
         }
     }
@@ -311,24 +329,27 @@ pub(crate) unsafe fn push_size_new_block(b: *mut Buf, size: usize) -> *mut c_voi
 
     // If `size` is larger than `huge_size` don't grow `next_size` geometrically,
     // but use a dedicated allocation.
+    // SAFETY (this if/else): `chunk` is either null or a live `BufChunk` of
+    // `b`'s list; `(*b).ator` is the buf's live allocator. Reads of
+    // `(*chunk).next_size` are guarded by `!chunk.is_null()`.
     if huge {
         next_size = if !chunk.is_null() {
-            (*chunk).next_size
+            unsafe { (*chunk).next_size }
         } else {
             4096
         };
-        if next_size > (*(*b).ator).chunk_max {
-            next_size = (*(*b).ator).chunk_max;
+        if next_size > unsafe { (*(*b).ator).chunk_max } {
+            next_size = unsafe { (*(*b).ator).chunk_max };
         }
         chunk_size = size;
     } else {
         next_size = if !chunk.is_null() {
-            (*chunk).next_size.wrapping_mul(2)
+            unsafe { (*chunk).next_size }.wrapping_mul(2)
         } else {
             4096
         };
-        if next_size > (*(*b).ator).chunk_max {
-            next_size = (*(*b).ator).chunk_max;
+        if next_size > unsafe { (*(*b).ator).chunk_max } {
+            next_size = unsafe { (*(*b).ator).chunk_max };
         }
         // C-parity: unsigned wrap if `next_size < sizeof(ufbxi_buf_chunk)`
         // (tiny user-provided `max_chunk_size`); the `< size` fix-up below and
@@ -342,64 +363,84 @@ pub(crate) unsafe fn push_size_new_block(b: *mut Buf, size: usize) -> *mut c_voi
     // Align chunk sizes to 16 bytes
     chunk_size = align_to_mask(chunk_size, 0xf);
 
-    let new_chunk =
-        alloc_size((*b).ator, 1, size_of::<BufChunk>().wrapping_add(chunk_size)) as *mut BufChunk;
+    // SAFETY: `(*b).ator` is the buf's live allocator; `alloc_size` is its own
+    // `unsafe fn` contract (allocate `sizeof(BufChunk) + chunk_size` bytes).
+    let new_chunk = unsafe {
+        alloc_size((*b).ator, 1, size_of::<BufChunk>().wrapping_add(chunk_size)) as *mut BufChunk
+    };
     if new_chunk.is_null() {
         return core::ptr::null_mut();
     }
 
-    (*new_chunk).prev = chunk;
-    (*new_chunk).size = chunk_size;
-    (*new_chunk).next_size = next_size;
-    (*new_chunk).magic = BUF_CHUNK_IMP_MAGIC as usize;
-    (*new_chunk).padding_pos = 0;
-    (*new_chunk).pushed_pos = 0;
+    // SAFETY: `new_chunk` is the freshly allocated live `BufChunk` (checked
+    // non-null above) with `sizeof(BufChunk) + chunk_size` writable bytes;
+    // initializing its header fields. `chunk` is the prior link, null or live.
+    unsafe {
+        (*new_chunk).prev = chunk;
+        (*new_chunk).size = chunk_size;
+        (*new_chunk).next_size = next_size;
+        (*new_chunk).magic = BUF_CHUNK_IMP_MAGIC as usize;
+        (*new_chunk).padding_pos = 0;
+        (*new_chunk).pushed_pos = 0;
+    }
 
     // Link the chunk to the list and set it as the active one
+    // SAFETY (this if/else and the `list_ix` block below): `new_chunk` is the
+    // live new chunk; `chunk`/`next`/`root` are null or live `BufChunk`s of
+    // `b`'s list, and `b` is the live `Buf`. All accesses read/write header
+    // fields of these live chunks or `b`'s own fields.
     if !chunk.is_null() {
-        let next = (*chunk).next;
+        let next = unsafe { (*chunk).next };
         if !next.is_null() {
-            (*next).prev = new_chunk;
+            unsafe { (*next).prev = new_chunk };
         }
-        (*new_chunk).next = next;
-        (*chunk).next = new_chunk;
-        (*new_chunk).root = (*chunk).root;
+        unsafe {
+            (*new_chunk).next = next;
+            (*chunk).next = new_chunk;
+            (*new_chunk).root = (*chunk).root;
+        }
     } else {
-        (*new_chunk).next = core::ptr::null_mut();
-        (*new_chunk).root = new_chunk;
+        unsafe {
+            (*new_chunk).next = core::ptr::null_mut();
+            (*new_chunk).root = new_chunk;
+        }
     }
 
     if list_ix == 0 {
-        (*b).chunks[0] = new_chunk;
-        (*b).pos = size;
-        (*b).size = chunk_size;
+        unsafe {
+            (*b).chunks[0] = new_chunk;
+            (*b).pos = size;
+            (*b).size = chunk_size;
+        }
     } else {
-        let root = (*b).chunks[1];
-        (*b).pushed_size += size;
+        let root = unsafe { (*b).chunks[1] };
+        unsafe { (*b).pushed_size += size };
         if root.is_null() {
-            (*b).chunks[1] = new_chunk;
-        } else if (*root).size < chunk_size {
+            unsafe { (*b).chunks[1] = new_chunk };
+        } else if unsafe { (*root).size } < chunk_size {
             // Swap root and self if necessary, we should have bailed out
             // in the search loop in the first iteration so `new_chunk` should
             // directly follow `root`.
             // HACK: This ends up with `chunks[1]` entries having inconsistent
             // `ufbxi_buf_chunk.root` pointers but other code only reads `chunks[1].root`
             // TODO: Move roots out of the chunks?
-            ufbx_assert!((*root).next == new_chunk);
-            ufbx_assert!((*new_chunk).prev == root);
-            if !(*new_chunk).next.is_null() {
-                (*(*new_chunk).next).prev = root;
+            ufbx_assert!(unsafe { (*root).next } == new_chunk);
+            ufbx_assert!(unsafe { (*new_chunk).prev } == root);
+            if !unsafe { (*new_chunk).next }.is_null() {
+                unsafe { (*(*new_chunk).next).prev = root };
             }
-            (*root).next = (*new_chunk).next;
-            (*new_chunk).next = root;
-            (*new_chunk).prev = core::ptr::null_mut();
-            (*new_chunk).root = new_chunk;
-            (*b).chunks[1] = new_chunk;
+            unsafe {
+                (*root).next = (*new_chunk).next;
+                (*new_chunk).next = root;
+                (*new_chunk).prev = core::ptr::null_mut();
+                (*new_chunk).root = new_chunk;
+                (*b).chunks[1] = new_chunk;
+            }
         }
-        (*new_chunk).pushed_pos = size;
+        unsafe { (*new_chunk).pushed_pos = size };
     }
 
-    chunk_data(new_chunk) as *mut c_void
+    (unsafe { chunk_data(new_chunk) }) as *mut c_void
 }
 
 // ufbx.c:4022-4072 `ufbxi_push_size`
@@ -418,45 +459,66 @@ pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_voi
 
     #[cfg(feature = "regression")]
     {
-        let ator = (*b).ator;
+        // SAFETY: `b` addresses a live `Buf` (this fn's raw-pointer contract);
+        // reading its live stored allocator back-pointer.
+        let ator = unsafe { (*b).ator };
         ufbxi_check_return_err_msg!(
             unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
-            (*ator).num_allocs < (*ator).max_allocs,
+            // SAFETY: `ator` is the buf's live allocator; reading its alloc
+            // counters.
+            unsafe { (*ator).num_allocs < (*ator).max_allocs },
             core::ptr::null_mut(),
             "Allocation limit exceeded",
             "ator->num_allocs < ator->max_allocs"
         );
-        (*ator).num_allocs += 1;
+        // SAFETY: `ator` is the buf's live allocator; bumping its alloc count.
+        unsafe { (*ator).num_allocs += 1 };
     }
 
     // C-parity: size_t add wraps in C; keep wrapping semantics (checklist #2).
-    (*b).num_items = (*b).num_items.wrapping_add(n);
+    // SAFETY: `b` is the live `Buf`; updating its item count.
+    unsafe { (*b).num_items = (*b).num_items.wrapping_add(n) };
 
     // Align to the natural alignment based on the size
     let align_mask = size_align_mask(size);
-    let pos = align_to_mask((*b).pos, align_mask);
+    // SAFETY: `b` is the live `Buf`; reading its current push position.
+    let pos = align_to_mask(unsafe { (*b).pos }, align_mask);
 
-    if !(*b).unordered && pos != (*b).pos {
+    // SAFETY: `b` is the live `Buf`; reading its `unordered` flag and position.
+    if !unsafe { (*b).unordered } && pos != unsafe { (*b).pos } {
         // Alignment mismatch in an unordered block. Align to 16 bytes to guarantee
         // sufficient alignment for anything afterwards and mark the padding.
         // If we overflow the current block we don't need to care as the block
         // boundaries are not contiguous.
-        let pos = align_to_mask((*b).pos, 0xf);
+        // SAFETY: `b` is the live `Buf`; reading its current position.
+        let pos = align_to_mask(unsafe { (*b).pos }, 0xf);
         // C-parity: `b->size - pos` (ufbx.c:4051) wraps if the 16-aligned
         // position passed the chunk end, yielding a huge value that would make
         // the `<=` check PASS — identical to C. Unreachable in practice: chunk
         // sizes are 16-aligned, so `pos <= b->size` always. Do NOT replace with
         // checked_sub-then-bail in the unsafe-reduction phase.
-        if total < usize::MAX - 16 && total + 16 <= (*b).size.wrapping_sub(pos) {
-            let chunk = (*b).chunks[0];
-            let padding = chunk_data(chunk).add(pos) as *mut BufPadding;
-            (*padding).original_pos = (*b).pos;
-            (*padding).prev_padding = (*chunk).padding_pos;
-            (*chunk).padding_pos = pos + 16 + 1;
-            (*b).pos = pos + 16 + total;
-            (padding as *mut u8).add(16) as *mut c_void
+        // SAFETY: `b` is the live `Buf`; reading its current chunk size.
+        if total < usize::MAX - 16 && total + 16 <= unsafe { (*b).size }.wrapping_sub(pos) {
+            // SAFETY: `b` is the live `Buf`; `chunks[0]` is its live active
+            // chunk (the alignment path runs with a chunk present), so
+            // `chunk_data(chunk).add(pos)` lands inside its `data` array — `pos`
+            // is 16-aligned and `pos + 16 + total <= b.size` by the check above.
+            // `padding` addresses that in-bounds region, written as a
+            // `BufPadding` record, then `+16` skips past it to the returned
+            // block.
+            let chunk = unsafe { (*b).chunks[0] };
+            let padding = unsafe { chunk_data(chunk).add(pos) } as *mut BufPadding;
+            unsafe {
+                (*padding).original_pos = (*b).pos;
+                (*padding).prev_padding = (*chunk).padding_pos;
+                (*chunk).padding_pos = pos + 16 + 1;
+                (*b).pos = pos + 16 + total;
+            }
+            (unsafe { (padding as *mut u8).add(16) }) as *mut c_void
         } else {
-            push_size_new_block(b, total)
+            // SAFETY: forwarding this fn's live-`Buf` contract to
+            // `push_size_new_block`.
+            unsafe { push_size_new_block(b, total) }
         }
     } else {
         // Try to push to the current block. Allocate a new block
@@ -467,11 +529,18 @@ pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_voi
         // sizes are 16-aligned and `align_mask <= 15`, so `pos <= b->size`
         // always. Do NOT replace with checked_sub-then-bail in the
         // unsafe-reduction phase.
-        if total <= (*b).size.wrapping_sub(pos) {
-            (*b).pos = pos + total;
-            chunk_data((*b).chunks[0]).add(pos) as *mut c_void
+        // SAFETY: `b` is the live `Buf`; reading its current chunk size.
+        if total <= unsafe { (*b).size }.wrapping_sub(pos) {
+            // SAFETY: `b` is the live `Buf`; advancing its position and
+            // returning a pointer inside `chunks[0]`'s `data` array — `total`
+            // fits before `b.size` by the check above, so `pos + total` stays
+            // in-bounds.
+            unsafe { (*b).pos = pos + total };
+            (unsafe { chunk_data((*b).chunks[0]).add(pos) }) as *mut c_void
         } else {
-            push_size_new_block(b, total)
+            // SAFETY: forwarding this fn's live-`Buf` contract to
+            // `push_size_new_block`.
+            unsafe { push_size_new_block(b, total) }
         }
     }
 }
@@ -488,22 +557,29 @@ pub(crate) unsafe fn push_size_fast(b: *mut Buf, size: usize, n: usize) -> *mut 
 
     #[cfg(feature = "regression")]
     {
-        let ator = (*b).ator;
+        // SAFETY: `b` addresses a live `Buf` (this fn's raw-pointer contract);
+        // reading its live stored allocator back-pointer.
+        let ator = unsafe { (*b).ator };
         ufbxi_check_return_err_msg!(
             unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
-            (*ator).num_allocs < (*ator).max_allocs,
+            // SAFETY: `ator` is the buf's live allocator; reading its alloc
+            // counters.
+            unsafe { (*ator).num_allocs < (*ator).max_allocs },
             core::ptr::null_mut(),
             "Allocation limit exceeded",
             "ator->num_allocs < ator->max_allocs"
         );
-        (*ator).num_allocs += 1;
+        // SAFETY: `ator` is the buf's live allocator; bumping its alloc count.
+        unsafe { (*ator).num_allocs += 1 };
     }
 
     // C-parity: size_t add wraps in C; keep wrapping semantics (checklist #2).
-    (*b).num_items = (*b).num_items.wrapping_add(n);
+    // SAFETY: `b` is the live `Buf`; updating its item count.
+    unsafe { (*b).num_items = (*b).num_items.wrapping_add(n) };
 
     // Homogeneous arrays should always be aligned
-    let pos = (*b).pos;
+    // SAFETY: `b` is the live `Buf`; reading its current push position.
+    let pos = unsafe { (*b).pos };
     ufbxi_regression_assert!((pos & size_align_mask(size)) == 0);
 
     // Try to push to the current block. Allocate a new block
@@ -511,20 +587,29 @@ pub(crate) unsafe fn push_size_fast(b: *mut Buf, size: usize, n: usize) -> *mut 
     // C-parity: `b->size - pos` unsigned arithmetic as in `ufbxi_push_size`
     // (see the comment there: a wrap would make the `<=` check PASS, as in C;
     // unreachable since `pos <= b->size` always holds).
-    if total <= (*b).size.wrapping_sub(pos) {
-        (*b).pos = pos + total;
-        chunk_data((*b).chunks[0]).add(pos) as *mut c_void
+    // SAFETY: `b` is the live `Buf`; reading its current chunk size.
+    if total <= unsafe { (*b).size }.wrapping_sub(pos) {
+        // SAFETY: `b` is the live `Buf`; advancing its position and returning a
+        // pointer inside `chunks[0]`'s `data` array — `total` fits before
+        // `b.size` by the check above, so `pos + total` stays in-bounds.
+        unsafe { (*b).pos = pos + total };
+        (unsafe { chunk_data((*b).chunks[0]).add(pos) }) as *mut c_void
     } else {
-        push_size_new_block(b, total)
+        // SAFETY: forwarding this fn's live-`Buf` contract to
+        // `push_size_new_block`.
+        unsafe { push_size_new_block(b, total) }
     }
 }
 
 // ufbx.c:4107-4112 `ufbxi_push_size_zero`
 #[inline(never)]
 pub(crate) unsafe fn push_size_zero(b: *mut Buf, size: usize, n: usize) -> *mut c_void {
-    let ptr = push_size(b, size, n);
+    // SAFETY: forwarding this fn's live-`Buf` contract to `push_size`.
+    let ptr = unsafe { push_size(b, size, n) };
     if !ptr.is_null() {
-        core::ptr::write_bytes(ptr as *mut u8, 0, size.wrapping_mul(n));
+        // SAFETY: on a non-null return `push_size` handed back a region of at
+        // least `size * n` writable bytes (its allocation size); zeroing it.
+        unsafe { core::ptr::write_bytes(ptr as *mut u8, 0, size.wrapping_mul(n)) };
     }
     ptr
 }
@@ -545,9 +630,16 @@ pub(crate) unsafe fn push_size_copy(
     }
 
     ufbx_assert!(!data.is_null());
-    let ptr = push_size(b, size, n);
+    // SAFETY: forwarding this fn's live-`Buf` contract to `push_size`.
+    let ptr = unsafe { push_size(b, size, n) };
     if !ptr.is_null() {
-        core::ptr::copy_nonoverlapping(data as *const u8, ptr as *mut u8, size.wrapping_mul(n));
+        // SAFETY: on a non-null return `push_size` handed back a fresh region of
+        // `size * n` writable bytes, and `data` is the caller's readable source
+        // of the same `size * n` bytes (non-null, asserted above; C:
+        // `memcpy(ptr, data, size*n)`); the two regions are distinct.
+        unsafe {
+            core::ptr::copy_nonoverlapping(data as *const u8, ptr as *mut u8, size.wrapping_mul(n))
+        };
     }
     ptr
 }
@@ -568,9 +660,16 @@ pub(crate) unsafe fn push_size_copy_fast(
     }
 
     ufbx_assert!(!data.is_null());
-    let ptr = push_size_fast(b, size, n);
+    // SAFETY: forwarding this fn's live-`Buf` contract to `push_size_fast`.
+    let ptr = unsafe { push_size_fast(b, size, n) };
     if !ptr.is_null() {
-        core::ptr::copy_nonoverlapping(data as *const u8, ptr as *mut u8, size.wrapping_mul(n));
+        // SAFETY: on a non-null return `push_size_fast` handed back a fresh
+        // region of `size * n` writable bytes, and `data` is the caller's
+        // readable source of the same `size * n` bytes (non-null, asserted
+        // above; C: `memcpy(ptr, data, size*n)`); the two regions are distinct.
+        unsafe {
+            core::ptr::copy_nonoverlapping(data as *const u8, ptr as *mut u8, size.wrapping_mul(n))
+        };
     }
     ptr
 }
@@ -578,48 +677,69 @@ pub(crate) unsafe fn push_size_copy_fast(
 // ufbx.c:4138-4171 `ufbxi_buf_free_unused`
 #[inline(never)]
 pub(crate) unsafe fn buf_free_unused(b: *mut Buf) {
-    ufbx_assert!(!(*b).unordered);
+    // SAFETY: `b` addresses a live `Buf` (this fn's raw-pointer contract);
+    // reading its `unordered` flag and `chunks[0]` head.
+    ufbx_assert!(!unsafe { (*b).unordered });
 
-    let chunk = (*b).chunks[0];
+    // SAFETY: `b` is the live `Buf`; reading its active chunk.
+    let chunk = unsafe { (*b).chunks[0] };
     if chunk.is_null() {
         return;
     }
 
-    let mut next = (*chunk).next;
+    // SAFETY (every `(*b)`/`(*chunk)`/`(*next)`/`(*to_free)` access in this
+    // free-forward loop): `b` is the live `Buf`, `chunk` is its non-null active
+    // chunk (checked above), and each `next`/`to_free` is a live `BufChunk` of
+    // `b`'s forward `->next` chain, allocated from `(*b).ator` with
+    // `sizeof(BufChunk) + size` bytes — the size passed to `free_size`.
+    let mut next = unsafe { (*chunk).next };
     while !next.is_null() {
         let to_free = next;
-        next = (*next).next;
-        ufbx_assert!((*to_free).magic == BUF_CHUNK_IMP_MAGIC as usize);
-        (*to_free).magic = 0;
-        free_size(
-            (*b).ator,
-            1,
-            to_free as *mut c_void,
-            size_of::<BufChunk>() + (*to_free).size,
-        );
+        next = unsafe { (*next).next };
+        ufbx_assert!(unsafe { (*to_free).magic } == BUF_CHUNK_IMP_MAGIC as usize);
+        unsafe { (*to_free).magic = 0 };
+        unsafe {
+            free_size(
+                (*b).ator,
+                1,
+                to_free as *mut c_void,
+                size_of::<BufChunk>() + (*to_free).size,
+            );
+        }
     }
-    (*chunk).next = core::ptr::null_mut();
+    // SAFETY: `chunk` is `b`'s live active chunk; unlinking its freed tail.
+    unsafe { (*chunk).next = core::ptr::null_mut() };
 
+    // SAFETY (every `(*b)`/`(*chunk)`/`(*prev)` access in this rewind loop): `b`
+    // is the live `Buf` and each `chunk`/`prev` is a live `BufChunk` of `b`'s
+    // backward `->prev` chain, allocated from `(*b).ator` with
+    // `sizeof(BufChunk) + size` bytes — the size passed to `free_size`.
     let mut chunk = chunk;
-    while (*b).pos == 0 && !chunk.is_null() {
-        let prev = (*chunk).prev;
-        ufbx_assert!((*chunk).magic == BUF_CHUNK_IMP_MAGIC as usize);
-        (*chunk).magic = 0;
-        free_size(
-            (*b).ator,
-            1,
-            chunk as *mut c_void,
-            size_of::<BufChunk>() + (*chunk).size,
-        );
+    while unsafe { (*b).pos } == 0 && !chunk.is_null() {
+        let prev = unsafe { (*chunk).prev };
+        ufbx_assert!(unsafe { (*chunk).magic } == BUF_CHUNK_IMP_MAGIC as usize);
+        unsafe { (*chunk).magic = 0 };
+        unsafe {
+            free_size(
+                (*b).ator,
+                1,
+                chunk as *mut c_void,
+                size_of::<BufChunk>() + (*chunk).size,
+            );
+        }
         chunk = prev;
-        (*b).chunks[0] = prev;
+        unsafe { (*b).chunks[0] = prev };
         if !prev.is_null() {
-            (*prev).next = core::ptr::null_mut();
-            (*b).pos = (*prev).pushed_pos;
-            (*b).size = (*prev).size;
+            unsafe {
+                (*prev).next = core::ptr::null_mut();
+                (*b).pos = (*prev).pushed_pos;
+                (*b).size = (*prev).size;
+            }
         } else {
-            (*b).pos = 0;
-            (*b).size = 0;
+            unsafe {
+                (*b).pos = 0;
+                (*b).size = 0;
+            }
         }
     }
 }
@@ -627,12 +747,15 @@ pub(crate) unsafe fn buf_free_unused(b: *mut Buf) {
 // ufbx.c:4173-4260 `ufbxi_pop_size`
 #[inline(never)]
 pub(crate) unsafe fn pop_size(b: *mut Buf, size: usize, n: usize, dst: *mut c_void, peek: bool) {
-    ufbx_assert!(!(*b).unordered);
+    // SAFETY: `b` addresses a live `Buf` (this fn's raw-pointer contract);
+    // reading its `unordered` flag and `num_items`.
+    ufbx_assert!(!unsafe { (*b).unordered });
     ufbx_assert!(size > 0);
-    ufbx_assert!((*b).num_items >= n);
+    ufbx_assert!(unsafe { (*b).num_items } >= n);
     if !peek {
         // C-parity: size_t sub wraps in C; keep wrapping semantics (checklist #2).
-        (*b).num_items = (*b).num_items.wrapping_sub(n);
+        // SAFETY: `b` is the live `Buf`; decrementing its item count.
+        unsafe { (*b).num_items = (*b).num_items.wrapping_sub(n) };
     }
 
     let mut ptr = dst as *mut u8;
@@ -642,49 +765,69 @@ pub(crate) unsafe fn pop_size(b: *mut Buf, size: usize, n: usize, dst: *mut c_vo
     ufbx_assert!(!does_overflow(bytes_left, size, n));
 
     if !ptr.is_null() {
-        ptr = ptr.add(bytes_left);
-        let mut pos = (*b).pos;
-        let mut chunk = (*b).chunks[0];
+        // SAFETY: `dst` is the caller's destination for `size * n == bytes_left`
+        // bytes (the pop contract); advancing to its one-past-the-end so the
+        // chunk walk can fill it back-to-front.
+        ptr = unsafe { ptr.add(bytes_left) };
+        // SAFETY (every access in this copying pop loop): `b` is the live `Buf`;
+        // `chunk` starts at its active `chunks[0]` and walks the `->prev` chain,
+        // each a live `BufChunk` whose `data` array holds `pushed_pos`/`pos`
+        // valid bytes; `chunk_data(chunk).add(pos)` reads inside that array, and
+        // `ptr` retreats within the caller's `bytes_left`-byte destination as
+        // bytes are consumed, so each `copy_nonoverlapping` stays in bounds of
+        // two distinct objects. Over-pop dereferencing a null `chunk->prev`
+        // matches C, guarded only by the `num_items` assert above.
+        let mut pos = unsafe { (*b).pos };
+        let mut chunk = unsafe { (*b).chunks[0] };
         loop {
             if bytes_left <= pos {
                 // Rest of the data is in this single chunk
                 pos -= bytes_left;
                 if !peek {
-                    (*b).pos = pos;
+                    unsafe { (*b).pos = pos };
                 }
-                ptr = ptr.sub(bytes_left);
+                ptr = unsafe { ptr.sub(bytes_left) };
                 if bytes_left > 0 {
-                    core::ptr::copy_nonoverlapping(chunk_data(chunk).add(pos), ptr, bytes_left);
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(chunk_data(chunk).add(pos), ptr, bytes_left);
+                    }
                 }
                 break;
             } else {
                 // Pop the whole chunk
-                ptr = ptr.sub(pos);
+                ptr = unsafe { ptr.sub(pos) };
                 bytes_left -= pos;
-                core::ptr::copy_nonoverlapping(chunk_data(chunk), ptr, pos);
+                unsafe { core::ptr::copy_nonoverlapping(chunk_data(chunk), ptr, pos) };
                 // C-parity: on over-pop `chunk->prev` may be NULL and C
                 // dereferences it (crash), guarded only by the num_items
                 // assert above — do not add a null check here.
                 if !peek {
-                    (*chunk).pushed_pos = 0;
-                    chunk = (*chunk).prev;
-                    (*b).chunks[0] = chunk;
-                    (*b).size = (*chunk).size;
+                    unsafe {
+                        (*chunk).pushed_pos = 0;
+                        chunk = (*chunk).prev;
+                        (*b).chunks[0] = chunk;
+                        (*b).size = (*chunk).size;
+                    }
                 } else {
-                    chunk = (*chunk).prev;
+                    chunk = unsafe { (*chunk).prev };
                 }
-                pos = (*chunk).pushed_pos;
+                pos = unsafe { (*chunk).pushed_pos };
             }
         }
     } else {
-        let mut pos = (*b).pos;
-        let mut chunk = (*b).chunks[0];
+        // SAFETY (every access in this discarding pop loop): `b` is the live
+        // `Buf`; `chunk` starts at its active `chunks[0]` and walks the `->prev`
+        // chain of live `BufChunk`s. No data is copied (null `dst`). Over-pop
+        // dereferencing a null `chunk->prev` matches C, guarded only by the
+        // `num_items` assert above.
+        let mut pos = unsafe { (*b).pos };
+        let mut chunk = unsafe { (*b).chunks[0] };
         loop {
             if bytes_left <= pos {
                 // Rest of the data is in this single chunk
                 pos -= bytes_left;
                 if !peek {
-                    (*b).pos = pos;
+                    unsafe { (*b).pos = pos };
                 }
                 break;
             } else {
@@ -694,36 +837,52 @@ pub(crate) unsafe fn pop_size(b: *mut Buf, size: usize, n: usize, dst: *mut c_vo
                 // dereferences it (crash), guarded only by the num_items
                 // assert above — do not add a null check here.
                 if !peek {
-                    (*chunk).pushed_pos = 0;
-                    chunk = (*chunk).prev;
-                    (*b).chunks[0] = chunk;
-                    (*b).size = (*chunk).size;
+                    unsafe {
+                        (*chunk).pushed_pos = 0;
+                        chunk = (*chunk).prev;
+                        (*b).chunks[0] = chunk;
+                        (*b).size = (*chunk).size;
+                    }
                 } else {
-                    chunk = (*chunk).prev;
+                    chunk = unsafe { (*chunk).prev };
                 }
-                pos = (*chunk).pushed_pos;
+                pos = unsafe { (*chunk).pushed_pos };
             }
         }
     }
 
     if !peek {
         // Check if we need to rewind past some alignment padding
-        let chunk = (*b).chunks[0];
+        // SAFETY: `b` is the live `Buf`; reading its active chunk.
+        let chunk = unsafe { (*b).chunks[0] };
         if !chunk.is_null() {
-            let pos = (*b).pos;
-            let padding_pos = (*chunk).padding_pos;
+            // SAFETY: `b` is the live `Buf` and `chunk` is its non-null active
+            // `BufChunk`; reading the current position and padding offset.
+            let pos = unsafe { (*b).pos };
+            let padding_pos = unsafe { (*chunk).padding_pos };
             if pos < padding_pos {
                 ufbx_assert!(pos + 1 == padding_pos);
-                let padding = chunk_data(chunk).add(padding_pos - 1 - 16) as *mut BufPadding;
-                (*b).pos = (*padding).original_pos;
-                (*chunk).padding_pos = (*padding).prev_padding;
+                // SAFETY: `padding_pos - 1` marks where a 16-byte `BufPadding`
+                // record was written inside `chunk`'s `data` array (see
+                // `push_size`), so `chunk_data(chunk).add(padding_pos - 1 - 16)`
+                // addresses that in-bounds record; reading its saved fields and
+                // writing them back into `b`/`chunk`.
+                let padding =
+                    unsafe { chunk_data(chunk).add(padding_pos - 1 - 16) } as *mut BufPadding;
+                unsafe {
+                    (*b).pos = (*padding).original_pos;
+                    (*chunk).padding_pos = (*padding).prev_padding;
+                }
             }
         }
 
         // Immediately free popped items if all the allocations are huge
         // as it means we want to have dedicated allocations for each push.
-        if (*(*b).ator).huge_size <= 1 {
-            buf_free_unused(b);
+        // SAFETY: `b` is the live `Buf` and `(*b).ator` its live allocator;
+        // reading `huge_size`, then forwarding the live-`Buf` contract to
+        // `buf_free_unused`.
+        if unsafe { (*(*b).ator).huge_size } <= 1 {
+            unsafe { buf_free_unused(b) };
         }
     }
 }
@@ -736,11 +895,16 @@ pub(crate) unsafe fn push_pop_size(
     size: usize,
     n: usize,
 ) -> *mut c_void {
-    let data = push_size(dst, size, n);
+    // SAFETY: `dst`/`src` are live `Buf`s (this fn's raw-pointer contract);
+    // forwarding to `push_size`.
+    let data = unsafe { push_size(dst, size, n) };
     if data.is_null() {
         return core::ptr::null_mut();
     }
-    pop_size(src, size, n, data, false);
+    // SAFETY: `src` is a live `Buf`; on a non-null return `data` is the
+    // `size * n`-byte region `push_size` just allocated in `dst`, the writable
+    // destination `pop_size` copies the popped items into.
+    unsafe { pop_size(src, size, n, data, false) };
     data
 }
 
@@ -752,11 +916,16 @@ pub(crate) unsafe fn push_peek_size(
     size: usize,
     n: usize,
 ) -> *mut c_void {
-    let data = push_size(dst, size, n);
+    // SAFETY: `dst`/`src` are live `Buf`s (this fn's raw-pointer contract);
+    // forwarding to `push_size`.
+    let data = unsafe { push_size(dst, size, n) };
     if data.is_null() {
         return core::ptr::null_mut();
     }
-    pop_size(src, size, n, data, true);
+    // SAFETY: `src` is a live `Buf`; on a non-null return `data` is the
+    // `size * n`-byte region `push_size` just allocated in `dst`, the writable
+    // destination `pop_size` copies the peeked items into.
+    unsafe { pop_size(src, size, n, data, true) };
     data
 }
 
@@ -764,80 +933,112 @@ pub(crate) unsafe fn push_peek_size(
 #[inline(never)]
 pub(crate) unsafe fn buf_free(buf: *mut Buf) {
     // C: `ufbxi_nounroll` — optimizer pragma, no Rust analogue (platform.rs).
+    // SAFETY (every `(*buf)`/`(*chunk)` access in this loop): `buf` addresses a
+    // live `Buf` (this fn's raw-pointer contract); each `chunks[i]` head and the
+    // chunks walked from its `->root` via `->next` are live `BufChunk`s
+    // allocated from `(*buf).ator` with `sizeof(BufChunk) + size` bytes — the
+    // size passed to `free_size`.
     for i in 0..2usize {
-        let mut chunk = (*buf).chunks[i];
+        let mut chunk = unsafe { (*buf).chunks[i] };
         if !chunk.is_null() {
-            chunk = (*chunk).root;
+            chunk = unsafe { (*chunk).root };
             while !chunk.is_null() {
-                let next = (*chunk).next;
-                ufbx_assert!((*chunk).magic == BUF_CHUNK_IMP_MAGIC as usize);
-                (*chunk).magic = 0;
-                free_size(
-                    (*buf).ator,
-                    1,
-                    chunk as *mut c_void,
-                    size_of::<BufChunk>() + (*chunk).size,
-                );
+                let next = unsafe { (*chunk).next };
+                ufbx_assert!(unsafe { (*chunk).magic } == BUF_CHUNK_IMP_MAGIC as usize);
+                unsafe { (*chunk).magic = 0 };
+                unsafe {
+                    free_size(
+                        (*buf).ator,
+                        1,
+                        chunk as *mut c_void,
+                        size_of::<BufChunk>() + (*chunk).size,
+                    );
+                }
                 chunk = next;
             }
         }
-        (*buf).chunks[i] = core::ptr::null_mut();
+        unsafe { (*buf).chunks[i] = core::ptr::null_mut() };
     }
-    (*buf).pos = 0;
-    (*buf).size = 0;
-    (*buf).num_items = 0;
+    // SAFETY: `buf` is the live `Buf`; resetting its inline state fields.
+    unsafe {
+        (*buf).pos = 0;
+        (*buf).size = 0;
+        (*buf).num_items = 0;
+    }
 }
 
 // ufbx.c:4299-4344 `ufbxi_buf_clear`
 #[inline(never)]
 pub(crate) unsafe fn buf_clear(buf: *mut Buf) {
     // Only unordered or clearable buffers can be cleared
-    ufbx_assert!(!(*buf).unordered || (*buf).clearable);
+    // SAFETY: `buf` addresses a live `Buf` (this fn's raw-pointer contract);
+    // reading its `unordered`/`clearable` flags.
+    ufbx_assert!(!unsafe { (*buf).unordered } || unsafe { (*buf).clearable });
 
     // Free the memory if using ASAN
-    if (*(*buf).ator).huge_size <= 1 {
-        buf_free(buf);
+    // SAFETY: `buf` is the live `Buf` and `(*buf).ator` its live allocator;
+    // reading `huge_size`, then forwarding the live-`Buf` contract to `buf_free`.
+    if unsafe { (*(*buf).ator).huge_size } <= 1 {
+        unsafe { buf_free(buf) };
         return;
     }
 
     // Reset the non-huge chunks as `chunk->next` is always free.
-    let chunk = (*buf).chunks[0];
+    // SAFETY: `buf` is the live `Buf`; `chunks[0]` and its `->root` are live
+    // `BufChunk`s of the ordered list. Resetting the buf to its root chunk.
+    let chunk = unsafe { (*buf).chunks[0] };
     if !chunk.is_null() {
-        let root = (*chunk).root;
-        (*buf).chunks[0] = root;
-        (*buf).pos = 0;
-        (*buf).size = (*root).size;
+        let root = unsafe { (*chunk).root };
+        unsafe {
+            (*buf).chunks[0] = root;
+            (*buf).pos = 0;
+            (*buf).size = (*root).size;
+        }
     }
-    (*buf).num_items = 0;
-    (*buf).pushed_size = 0;
+    // SAFETY: `buf` is the live `Buf`; resetting its item/pushed counters.
+    unsafe {
+        (*buf).num_items = 0;
+        (*buf).pushed_size = 0;
+    }
 
     // Huge chunks are always sorted by descending size and
     // `chunks[1]` points to the largest one.
-    let huge = (*buf).chunks[1];
+    // SAFETY: `buf` is the live `Buf`; reading the huge-list head.
+    let huge = unsafe { (*buf).chunks[1] };
     if !huge.is_null() {
         // Reset the first N ones that are tracked.
+        // SAFETY (this reset loop): each `huge` walked is a live `BufChunk` of
+        // `buf`'s huge `->next` chain; clearing its `pushed_pos`.
         let mut huge = huge;
         let mut i = 0usize;
         while !huge.is_null() && i < HUGE_MAX_SCAN {
-            (*huge).pushed_pos = 0;
-            huge = (*huge).next;
+            unsafe { (*huge).pushed_pos = 0 };
+            huge = unsafe { (*huge).next };
             i += 1;
         }
 
         // Got unreachable tail that should be freed: Unlink from the last
         // tracked chunk and free the rest.
         if !huge.is_null() {
-            (*(*huge).prev).next = core::ptr::null_mut();
+            // SAFETY: `huge` is non-null here only because the reset loop ran
+            // the full `HUGE_MAX_SCAN` iterations, so its `->prev` is the last
+            // tracked live `BufChunk` (non-null); unlinking the tail from it.
+            unsafe { (*(*huge).prev).next = core::ptr::null_mut() };
+            // SAFETY (this free loop): each `huge` is a live `BufChunk` of the
+            // unreachable `->next` tail, allocated from `(*buf).ator` with
+            // `sizeof(BufChunk) + size` bytes — the size passed to `free_size`.
             while !huge.is_null() {
-                let next = (*huge).next;
-                ufbx_assert!((*huge).magic == BUF_CHUNK_IMP_MAGIC as usize);
-                (*huge).magic = 0;
-                free_size(
-                    (*buf).ator,
-                    1,
-                    huge as *mut c_void,
-                    size_of::<BufChunk>() + (*huge).size,
-                );
+                let next = unsafe { (*huge).next };
+                ufbx_assert!(unsafe { (*huge).magic } == BUF_CHUNK_IMP_MAGIC as usize);
+                unsafe { (*huge).magic = 0 };
+                unsafe {
+                    free_size(
+                        (*buf).ator,
+                        1,
+                        huge as *mut c_void,
+                        size_of::<BufChunk>() + (*huge).size,
+                    );
+                }
                 huge = next;
             }
         }
@@ -852,39 +1053,48 @@ pub(crate) unsafe fn buf_clear(buf: *mut Buf) {
 // ufbx.c:4346 `#define ufbxi_push(b, type, n)`
 #[inline(always)]
 pub(crate) unsafe fn push<T>(b: *mut Buf, n: usize) -> *mut T {
-    push_size(b, size_of::<T>(), n) as *mut T
+    // SAFETY: forwarding this fn's live-`Buf` contract to `push_size`.
+    (unsafe { push_size(b, size_of::<T>(), n) }) as *mut T
 }
 
 // ufbx.c:4347 `#define ufbxi_push_zero(b, type, n)`
 #[inline(always)]
 pub(crate) unsafe fn push_zero<T>(b: *mut Buf, n: usize) -> *mut T {
-    push_size_zero(b, size_of::<T>(), n) as *mut T
+    // SAFETY: forwarding this fn's live-`Buf` contract to `push_size_zero`.
+    (unsafe { push_size_zero(b, size_of::<T>(), n) }) as *mut T
 }
 
 // ufbx.c:4348 `#define ufbxi_push_copy(b, type, n, data)`
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn push_copy<T>(b: *mut Buf, n: usize, data: *const T) -> *mut T {
-    push_size_copy(b, size_of::<T>(), n, data as *const c_void) as *mut T
+    // SAFETY: forwarding this fn's live-`Buf` and readable-`data` contract to
+    // `push_size_copy`.
+    (unsafe { push_size_copy(b, size_of::<T>(), n, data as *const c_void) }) as *mut T
 }
 
 // ufbx.c:4349 `#define ufbxi_push_copy_fast(b, type, n, data)`
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn push_copy_fast<T>(b: *mut Buf, n: usize, data: *const T) -> *mut T {
-    push_size_copy_fast(b, size_of::<T>(), n, data as *const c_void) as *mut T
+    // SAFETY: forwarding this fn's live-`Buf` and readable-`data` contract to
+    // `push_size_copy_fast`.
+    (unsafe { push_size_copy_fast(b, size_of::<T>(), n, data as *const c_void) }) as *mut T
 }
 
 // ufbx.c:4350 `#define ufbxi_push_fast(b, type, n)`
 #[inline(always)]
 pub(crate) unsafe fn push_fast<T>(b: *mut Buf, n: usize) -> *mut T {
-    push_size_fast(b, size_of::<T>(), n) as *mut T
+    // SAFETY: forwarding this fn's live-`Buf` contract to `push_size_fast`.
+    (unsafe { push_size_fast(b, size_of::<T>(), n) }) as *mut T
 }
 
 // ufbx.c:4351 `#define ufbxi_pop(b, type, n, dst)`
 #[inline(always)]
 pub(crate) unsafe fn pop<T>(b: *mut Buf, n: usize, dst: *mut T) {
-    pop_size(b, size_of::<T>(), n, dst as *mut c_void, false)
+    // SAFETY: forwarding this fn's live-`Buf` and writable-`dst` contract to
+    // `pop_size`.
+    unsafe { pop_size(b, size_of::<T>(), n, dst as *mut c_void, false) }
 }
 
 // ufbx.c:4352 `#define ufbxi_peek(b, type, n, dst)`
@@ -893,19 +1103,25 @@ pub(crate) unsafe fn pop<T>(b: *mut Buf, n: usize, dst: *mut T) {
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) unsafe fn peek<T>(b: *mut Buf, n: usize, dst: *mut T) {
-    pop_size(b, size_of::<T>(), n, dst as *mut c_void, true)
+    // SAFETY: forwarding this fn's live-`Buf` and writable-`dst` contract to
+    // `pop_size`.
+    unsafe { pop_size(b, size_of::<T>(), n, dst as *mut c_void, true) }
 }
 
 // ufbx.c:4353 `#define ufbxi_push_pop(dst, src, type, n)`
 #[inline(always)]
 pub(crate) unsafe fn push_pop<T>(dst: *mut Buf, src: *mut Buf, n: usize) -> *mut T {
-    push_pop_size(dst, src, size_of::<T>(), n) as *mut T
+    // SAFETY: forwarding this fn's live-`Buf` contract for `dst`/`src` to
+    // `push_pop_size`.
+    (unsafe { push_pop_size(dst, src, size_of::<T>(), n) }) as *mut T
 }
 
 // ufbx.c:4354 `#define ufbxi_push_peek(dst, src, type, n)`
 #[inline(always)]
 pub(crate) unsafe fn push_peek<T>(dst: *mut Buf, src: *mut Buf, n: usize) -> *mut T {
-    push_peek_size(dst, src, size_of::<T>(), n) as *mut T
+    // SAFETY: forwarding this fn's live-`Buf` contract for `dst`/`src` to
+    // `push_peek_size`.
+    (unsafe { push_peek_size(dst, src, size_of::<T>(), n) }) as *mut T
 }
 
 // CONTINUATION POINT: `// -- Memory buffer` section complete (ufbx.c:3817-4354).
