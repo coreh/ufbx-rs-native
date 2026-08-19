@@ -796,7 +796,7 @@ unsafe fn binary_parse_node_rec(
 
     // Push the parsed node into the `tmp_stack` buffer, the nodes will be popped by
     // calling code after its done parsing all of it's children.
-    let node: *mut Node = push_zero::<Node>(uc.tmp_stack_mut_ptr(), 1);
+    let node: *mut Node = uc.tmp_stack_view().push_zero::<Node>(1);
     ufbxi_check!(uc, !node.is_null(), "node");
 
     // Parse and intern the name to the string pool.

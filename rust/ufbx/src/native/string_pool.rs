@@ -26,7 +26,7 @@ use core::ptr;
 
 use crate::generated::{Error, UnicodeErrorHandling, Vec2, Vec3, WarningType};
 use crate::native::allocator::{free, grow_array};
-use crate::native::buf::{self, Buf};
+use crate::native::buf::Buf;
 use crate::native::error::{
     memcmp, strlen, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_check_return_err,
     utf8_valid_length, Fail, EMPTY_CHAR,
@@ -608,7 +608,9 @@ pub(crate) unsafe fn push_sanitized_string(
             "entry"
         );
         (*entry).length = total_length;
-        let dst: *mut u8 = buf::push::<u8>(&mut (*pool).buf, total_length + 1);
+        let dst: *mut u8 = StringPoolView::from_ptr(pool)
+            .buf_view()
+            .push::<u8>(total_length + 1);
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
             !dst.is_null(),
@@ -695,7 +697,9 @@ pub(crate) unsafe fn push_string_imp(
     );
     (*entry).length = length;
     if copy {
-        let dst: *mut u8 = buf::push::<u8>(&mut (*pool).buf, length + 1);
+        let dst: *mut u8 = StringPoolView::from_ptr(pool)
+            .buf_view()
+            .push::<u8>(length + 1);
         ufbxi_check_return_err!(
             unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
             !dst.is_null(),

@@ -40,7 +40,7 @@ use crate::native::api::{
     compute_normals, evaluate_nurbs_curve, evaluate_nurbs_surface, init_ref, ZERO_VEC2, ZERO_VEC3,
 };
 #[cfg(feature = "tessellation")]
-use crate::native::buf::{push, push_zero, Buf};
+use crate::native::buf::Buf;
 #[cfg(feature = "tessellation")]
 use crate::native::error::Fail;
 #[cfg(feature = "tessellation")]
@@ -594,15 +594,12 @@ pub(crate) fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> Result<
         "num_indices <= INT32_MAX"
     );
 
-    // SAFETY: three pushes onto tc's own result buf through its raw-ptr
-    // getter; the counts were just overflow-checked above.
-    let (indices, vertices, segments): (*mut u32, *mut Vec3, *mut LineSegment) = unsafe {
-        (
-            push::<u32>(tc.result_mut_ptr(), num_indices),
-            push::<Vec3>(tc.result_mut_ptr(), num_vertices),
-            push::<LineSegment>(tc.result_mut_ptr(), 1),
-        )
-    };
+    // The counts were just overflow-checked above.
+    let (indices, vertices, segments): (*mut u32, *mut Vec3, *mut LineSegment) = (
+        tc.result_view().push::<u32>(num_indices),
+        tc.result_view().push::<Vec3>(num_vertices),
+        tc.result_view().push::<LineSegment>(1),
+    );
     ufbxi_check_err!(
         tc.error_view(),
         !indices.is_null() && !vertices.is_null() && !segments.is_null(),
@@ -668,8 +665,7 @@ pub(crate) fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> Result<
 
     line.from_tessellated_nurbs = true;
 
-    // SAFETY: pushing onto tc's own result buf through its raw-ptr getter.
-    tc.set_imp(unsafe { push::<LineCurveImp>(tc.result_mut_ptr(), 1) });
+    tc.set_imp(tc.result_view().push::<LineCurveImp>(1));
     ufbxi_check_err!(tc.error_view(), !tc.imp().is_null(), "tc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
@@ -804,24 +800,21 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
         "num_indices <= INT32_MAX"
     );
 
-    // SAFETY: pushes onto tc's own tmp and result bufs through their raw-ptr
-    // getters; the counts were just overflow-checked above.
-    let position_ix: *mut u32 = unsafe { push::<u32>(tc.tmp_mut_ptr(), num_indices) };
+    // The counts were just overflow-checked above.
+    let position_ix: *mut u32 = tc.tmp_view().push::<u32>(num_indices);
     let (mut positions, mut normals, mut uvs, mut tangents, mut bitangents): (
         *mut Vec3,
         *mut Vec3,
         *mut Vec2,
         *mut Vec3,
         *mut Vec3,
-    ) = unsafe {
-        (
-            push::<Vec3>(tc.result_mut_ptr(), num_indices + 1),
-            push::<Vec3>(tc.result_mut_ptr(), num_indices + 1),
-            push::<Vec2>(tc.result_mut_ptr(), num_indices + 1),
-            push::<Vec3>(tc.result_mut_ptr(), num_indices + 1),
-            push::<Vec3>(tc.result_mut_ptr(), num_indices + 1),
-        )
-    };
+    ) = (
+        tc.result_view().push::<Vec3>(num_indices + 1),
+        tc.result_view().push::<Vec3>(num_indices + 1),
+        tc.result_view().push::<Vec2>(num_indices + 1),
+        tc.result_view().push::<Vec3>(num_indices + 1),
+        tc.result_view().push::<Vec3>(num_indices + 1),
+    );
     ufbxi_check_err!(
         tc.error_view(),
         !position_ix.is_null() && !uvs.is_null() && !tangents.is_null() && !bitangents.is_null(),
@@ -985,15 +978,11 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
         }
     }
 
-    // SAFETY: three pushes onto tc's own result buf through its raw-ptr
-    // getter.
-    let (faces, vertex_ix, attrib_ix): (*mut Face, *mut u32, *mut u32) = unsafe {
-        (
-            push::<Face>(tc.result_mut_ptr(), num_faces),
-            push::<u32>(tc.result_mut_ptr(), num_faces.wrapping_mul(4)),
-            push::<u32>(tc.result_mut_ptr(), num_faces.wrapping_mul(4)),
-        )
-    };
+    let (faces, vertex_ix, attrib_ix): (*mut Face, *mut u32, *mut u32) = (
+        tc.result_view().push::<Face>(num_faces),
+        tc.result_view().push::<u32>(num_faces.wrapping_mul(4)),
+        tc.result_view().push::<u32>(num_faces.wrapping_mul(4)),
+    );
     ufbxi_check_err!(
         tc.error_view(),
         !faces.is_null() && !vertex_ix.is_null() && !attrib_ix.is_null(),
@@ -1119,11 +1108,9 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
     // SAFETY: reading the live surface's material ref (tc construction
     // invariant).
     if !unsafe { opt_ptr(&(*surface).material) }.is_null() {
-        // SAFETY: `mesh` is tc's own mesh slot; the push goes onto tc's own
-        // result buf through its raw-ptr getter.
+        // SAFETY: `mesh` is tc's own mesh slot.
         unsafe {
-            (*mesh).face_material.data =
-                push_zero::<u32>(tc.result_mut_ptr(), num_faces) as *const u32;
+            (*mesh).face_material.data = tc.result_view().push_zero::<u32>(num_faces) as *const u32;
         }
         ufbxi_check_err!(
             tc.error_view(),
@@ -1131,8 +1118,7 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
             "mesh->face_material.data"
         );
 
-        // SAFETY: pushing onto tc's own result buf.
-        let mat: *mut *mut Material = unsafe { push_zero::<*mut Material>(tc.result_mut_ptr(), 1) };
+        let mat: *mut *mut Material = tc.result_view().push_zero::<*mut Material>(1);
         ufbxi_check_err!(tc.error_view(), !mat.is_null(), "mat");
 
         // SAFETY: `mat` is the fresh non-null single-element push just
@@ -1145,12 +1131,11 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
     }
 
     if !tc.opts_view().skip_mesh_parts() {
-        // SAFETY: `mesh` is tc's own mesh slot; the push goes onto tc's own
-        // result buf.
+        // SAFETY: `mesh` is tc's own mesh slot.
         unsafe {
             (*mesh).material_parts.count = 1;
             (*mesh).material_parts.data =
-                push_zero::<MeshPart>(tc.result_mut_ptr(), 1) as *const MeshPart;
+                tc.result_view().push_zero::<MeshPart>(1) as *const MeshPart;
         }
         ufbxi_check_err!(
             tc.error_view(),
@@ -1194,8 +1179,7 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
         }
     }
 
-    // SAFETY: pushing onto tc's own result buf through its raw-ptr getter.
-    tc.set_imp(unsafe { push::<MeshImp>(tc.result_mut_ptr(), 1) });
+    tc.set_imp(tc.result_view().push::<MeshImp>(1));
     ufbxi_check_err!(tc.error_view(), !tc.imp().is_null(), "tc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a

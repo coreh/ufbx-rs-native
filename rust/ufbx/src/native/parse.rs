@@ -36,9 +36,7 @@ use crate::generated::{
     RawLoadOpts, Scene, TextureFile, Transform, Vec3, Vec4,
 };
 use crate::native::allocator::{grow_array, Allocator};
-use crate::native::buf::{
-    buf_clear, buf_free, pop, push_copy, push_pop, push_size_zero, push_zero, Buf,
-};
+use crate::native::buf::{buf_clear, buf_free, pop, push_size_zero, push_zero, Buf};
 use crate::native::error::{
     memchr, memcmp, strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail,
     Fail, EMPTY_CHAR,
@@ -6166,11 +6164,11 @@ unsafe fn retain_dom_node_rec(
     node: *mut Node,
     p_dom_node: *mut *mut DomNode,
 ) -> Result<(), Fail> {
-    let dst: *mut DomNode = push_zero(uc.result_mut_ptr(), 1);
+    let dst: *mut DomNode = uc.result_view().push_zero(1);
     ufbxi_check!(uc, !dst.is_null(), "dst");
     ufbxi_check!(
         uc,
-        !push_copy::<*mut DomNode>(uc.tmp_dom_nodes_mut_ptr(), 1, &dst).is_null(),
+        !uc.tmp_dom_nodes_view().push_copy_ref(&dst).is_null(),
         "((ufbx_dom_node**)ufbxi_push_size_copy((&uc->tmp_dom_nodes), sizeof(ufbx_dom_node*), (1), (&dst)))"
     );
 
@@ -6208,7 +6206,7 @@ unsafe fn retain_dom_node_rec(
 
     if (*node).value_type_mask == ValueType::Array as u16 {
         let arr = (*node).content.array;
-        let val: *mut DomValue = push_zero(uc.result_mut_ptr(), 1);
+        let val: *mut DomValue = uc.result_view().push_zero(1);
         ufbxi_check!(uc, !val.is_null(), "val");
 
         (*dst).values.data = val;
@@ -6242,7 +6240,7 @@ unsafe fn retain_dom_node_rec(
             if mask == 0 {
                 break;
             }
-            let val: *mut DomValue = push_zero(uc.tmp_stack_mut_ptr(), 1);
+            let val: *mut DomValue = uc.tmp_stack_view().push_zero(1);
             ufbxi_check!(uc, !val.is_null(), "val");
             (*val).value_str.data = EMPTY_CHAR.as_ptr();
 
@@ -6276,7 +6274,9 @@ unsafe fn retain_dom_node_rec(
         }
 
         (*dst).values.count = ix;
-        (*dst).values.data = push_pop::<DomValue>(uc.result_mut_ptr(), uc.tmp_stack_mut_ptr(), ix);
+        (*dst).values.data = uc
+            .result_view()
+            .push_pop::<DomValue>(uc.tmp_stack_view(), ix);
         ufbxi_check!(uc, !(*dst).values.data.is_null(), "dst->values.data");
     }
 
@@ -6291,11 +6291,10 @@ unsafe fn retain_dom_node_rec(
         }
 
         (*dst).children.count = (*node).num_children as usize;
-        (*dst).children.data = push_pop::<*mut DomNode>(
-            uc.result_mut_ptr(),
-            uc.tmp_dom_nodes_mut_ptr(),
-            (*node).num_children as usize,
-        ) as *const Ref<DomNode>;
+        (*dst).children.data = uc
+            .result_view()
+            .push_pop::<*mut DomNode>(uc.tmp_dom_nodes_view(), (*node).num_children as usize)
+            as *const Ref<DomNode>;
         ufbxi_check!(uc, !(*dst).children.data.is_null(), "dst->children.data");
     }
 
@@ -6306,11 +6305,9 @@ unsafe fn retain_dom_node_rec(
 #[inline(never)]
 pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<(), Fail> {
     if uc.dom_parse_num_children() > 0 {
-        let children: *mut *mut DomNode = push_pop(
-            uc.result_mut_ptr(),
-            uc.tmp_dom_nodes_mut_ptr(),
-            uc.dom_parse_num_children(),
-        );
+        let children: *mut *mut DomNode = uc
+            .result_view()
+            .push_pop(uc.tmp_dom_nodes_view(), uc.dom_parse_num_children());
         ufbxi_check!(uc, !children.is_null(), "children");
         (*uc.dom_parse_toplevel()).children.data = children as *const Ref<DomNode>;
         (*uc.dom_parse_toplevel()).children.count = uc.dom_parse_num_children();
@@ -6324,14 +6321,12 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
 
         // Called with NULL argument to finish retaining DOM, collect the final nodes to `ufbx_scene`.
         let num_top_nodes = uc.tmp_dom_nodes_view().num_items();
-        let nodes: *mut *mut DomNode = push_pop(
-            uc.result_mut_ptr(),
-            uc.tmp_dom_nodes_mut_ptr(),
-            num_top_nodes,
-        );
+        let nodes: *mut *mut DomNode = uc
+            .result_view()
+            .push_pop(uc.tmp_dom_nodes_view(), num_top_nodes);
         ufbxi_check!(uc, !nodes.is_null(), "nodes");
 
-        let dom_root: *mut DomNode = push_zero(uc.result_mut_ptr(), 1);
+        let dom_root: *mut DomNode = uc.result_view().push_zero(1);
         ufbxi_check!(uc, !dom_root.is_null(), "dom_root");
 
         (*dom_root).name.data = EMPTY_CHAR.as_ptr();
@@ -7017,11 +7012,9 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         }
 
         (*node).num_children = num_children;
-        (*node).children = push_pop::<Node>(
-            uc.tmp_mut_ptr(),
-            uc.tmp_stack_mut_ptr(),
-            num_children as usize,
-        );
+        (*node).children = uc
+            .tmp_view()
+            .push_pop::<Node>(uc.tmp_stack_view(), num_children as usize);
         ufbxi_check!(uc, !(*node).children.is_null(), "node->children");
 
         if uc.opts_view().retain_dom() {

@@ -17,7 +17,7 @@ use core::ffi::{c_void, CStr};
 
 use crate::generated::Error;
 use crate::native::allocator::{free, grow_array, Allocator};
-use crate::native::buf::{buf_free, push, push_copy, push_pop, push_zero, Buf};
+use crate::native::buf::{buf_free, push_copy, Buf};
 use crate::native::error::{
     strcmp, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_fail_err, Fail, EMPTY_CHAR,
 };
@@ -712,7 +712,7 @@ unsafe fn xml_parse_tag_rec(
             }
 
             if has_text {
-                let tag: *mut XmlTag = push_zero(xc.tmp_stack_mut_ptr(), 1);
+                let tag: *mut XmlTag = xc.tmp_stack_view().push_zero(1);
                 ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
                 (*tag).name.data = EMPTY_CHAR.as_ptr();
 
@@ -752,7 +752,7 @@ unsafe fn xml_parse_tag_rec(
                 ch = ch.add(1);
             }
 
-            let tag: *mut XmlTag = push_zero(xc.tmp_stack_mut_ptr(), 1);
+            let tag: *mut XmlTag = xc.tmp_stack_view().push_zero(1);
             ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
             xml_skip_until_string(xc, &mut (*tag).text, b"]]>\0".as_ptr())?;
             (*tag).name.data = EMPTY_CHAR.as_ptr();
@@ -771,7 +771,7 @@ unsafe fn xml_parse_tag_rec(
         return Ok(());
     }
 
-    let tag: *mut XmlTag = push_zero(xc.tmp_stack_mut_ptr(), 1);
+    let tag: *mut XmlTag = xc.tmp_stack_view().push_zero(1);
     ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
     xml_read_until(xc, &mut (*tag).name, XML_CTYPE_NAME_END)?;
     (*tag).text.data = EMPTY_CHAR.as_ptr();
@@ -790,7 +790,7 @@ unsafe fn xml_parse_tag_rec(
             has_children = true;
             break;
         } else {
-            let attrib: *mut XmlAttrib = push_zero(xc.tmp_stack_mut_ptr(), 1);
+            let attrib: *mut XmlAttrib = xc.tmp_stack_view().push_zero(1);
             ufbxi_check_err!(xc.error_view(), !attrib.is_null(), "attrib");
             xml_read_until(xc, &mut (*attrib).name, XML_CTYPE_NAME_END)?;
             xml_skip_while(xc, XML_CTYPE_WHITESPACE);
@@ -813,7 +813,7 @@ unsafe fn xml_parse_tag_rec(
     }
 
     (*tag).num_attribs = num_attribs;
-    (*tag).attribs = push_pop(xc.result_mut_ptr(), xc.tmp_stack_mut_ptr(), num_attribs);
+    (*tag).attribs = xc.result_view().push_pop(xc.tmp_stack_view(), num_attribs);
     ufbxi_check_err!(xc.error_view(), !(*tag).attribs.is_null(), "tag->attribs");
 
     if has_children {
@@ -827,11 +827,9 @@ unsafe fn xml_parse_tag_rec(
         }
 
         (*tag).num_children = xc.tmp_stack_view().num_items() - children_begin;
-        (*tag).children = push_pop(
-            xc.result_mut_ptr(),
-            xc.tmp_stack_mut_ptr(),
-            (*tag).num_children,
-        );
+        (*tag).children = xc
+            .result_view()
+            .push_pop(xc.tmp_stack_view(), (*tag).num_children);
         ufbxi_check_err!(xc.error_view(), !(*tag).children.is_null(), "tag->children");
     }
 
@@ -841,9 +839,7 @@ unsafe fn xml_parse_tag_rec(
 // ufbx.c:7586-7610 `ufbxi_xml_parse_root`
 #[inline(never)]
 pub(crate) fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
-    // SAFETY: pushing onto xc's own result buf through its raw-ptr getter (xc
-    // construction invariant).
-    let tag: *mut XmlTag = unsafe { push_zero(xc.result_mut_ptr(), 1) };
+    let tag: *mut XmlTag = xc.result_view().push_zero(1);
     ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
     // SAFETY: `tag` is a fresh non-null single-element push, so writing its
     // fields is writing our own allocation; `EMPTY_CHAR` is a `'static` run.
@@ -863,17 +859,14 @@ pub(crate) fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
         }
     }
 
-    // SAFETY: `tag` is still our fresh push; `push_pop` moves exactly the
-    // `num_items` tags this parse stacked on xc's own tmp stack into xc's own
-    // result buf, and `doc` is likewise a fresh single-element push whose
-    // fields we fill before any reader sees it.
+    // SAFETY: `tag` is still our fresh push, so writing its fields is writing
+    // our own allocation. `push_pop` moves exactly the `num_items` tags this
+    // parse stacked on xc's tmp stack into xc's result buf.
     unsafe {
         (*tag).num_children = xc.tmp_stack_view().num_items();
-        (*tag).children = push_pop(
-            xc.result_mut_ptr(),
-            xc.tmp_stack_mut_ptr(),
-            (*tag).num_children,
-        );
+        (*tag).children = xc
+            .result_view()
+            .push_pop(xc.tmp_stack_view(), (*tag).num_children);
     }
     ufbxi_check_err!(
         xc.error_view(),
@@ -881,10 +874,11 @@ pub(crate) fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
         "tag->children"
     );
 
-    xc.set_doc(unsafe { push(xc.result_mut_ptr(), 1) });
+    xc.set_doc(xc.result_view().push(1));
     ufbxi_check_err!(xc.error_view(), !xc.doc().is_null(), "xc->doc");
 
-    // SAFETY: `xc.doc()` was just checked non-null and is our fresh push.
+    // SAFETY: `xc.doc()` was just checked non-null and is our fresh push, whose
+    // fields we fill before any reader sees it.
     unsafe {
         (*xc.doc()).root = tag;
         (*xc.doc()).buf = xc.take_result();
