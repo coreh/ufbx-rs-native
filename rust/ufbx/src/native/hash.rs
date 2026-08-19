@@ -230,8 +230,9 @@ pub(crate) struct AaNode {
 // pointer in C; `Option` here only so a zero-initialized map (C callers memset
 // the containing context) is representable — call sites use
 // `unwrap_unchecked`, matching C's unchecked indirect call.
+// NOT `Copy`/`Clone`: owns its allocations (`items`/`entries`, freed by
+// `map_free`) — see PORTING.md "Copy vs non-Copy structs".
 #[repr(C)]
-#[derive(Clone, Copy)]
 pub(crate) struct Map {
     pub ator: *mut Allocator,
     pub data_size: usize,

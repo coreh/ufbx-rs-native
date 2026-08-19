@@ -108,8 +108,9 @@ impl View<XmlAttrib> {
 }
 
 // ufbx.c:7269-7272 `ufbxi_xml_document`
+// NOT `Copy`/`Clone`: embeds the owning `Buf` the whole document is allocated
+// from — see PORTING.md "Copy vs non-Copy structs".
 #[repr(C)]
-#[derive(Clone, Copy)]
 pub(crate) struct XmlDocument {
     pub root: *mut XmlTag,
     pub buf: Buf,
@@ -160,8 +161,11 @@ impl XmlContext {
     }
 
     #[inline(always)]
-    pub(crate) fn result(&self) -> crate::native::buf::Buf {
-        unsafe { (*self.get()).result }
+    /// Moves the field out by bitwise read (`ptr::read`). C does this as plain
+    /// struct assignment; the source field still holds the stale bits (no
+    /// `Drop`), so the caller must overwrite it or treat it as moved-from.
+    pub(crate) fn take_result(&self) -> crate::native::buf::Buf {
+        unsafe { core::ptr::read(&raw const (*self.get()).result) }
     }
 
     // `data` (`[u8; 4096]`) — whole-array raw-ptr getters (read/write buffer base).
@@ -883,7 +887,7 @@ pub(crate) fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
     // SAFETY: `xc.doc()` was just checked non-null and is our fresh push.
     unsafe {
         (*xc.doc()).root = tag;
-        (*xc.doc()).buf = xc.result();
+        (*xc.doc()).buf = xc.take_result();
     }
 
     Ok(())
@@ -941,7 +945,9 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
 // ufbx.c:7656-7660 `ufbxi_free_xml`
 #[inline(never)]
 pub(crate) unsafe fn free_xml(doc: *mut XmlDocument) {
-    let mut buf: Buf = (*doc).buf;
+    // Move the buf to the stack before freeing: `doc` itself is allocated from
+    // this very buffer (C copies by struct assignment; `Buf` is not `Copy`).
+    let mut buf: Buf = core::ptr::read(&raw const (*doc).buf);
     buf_free(&mut buf);
 }
 

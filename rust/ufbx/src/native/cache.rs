@@ -388,8 +388,11 @@ impl CacheContext {
     }
 
     #[inline(always)]
-    pub(crate) fn result(&self) -> crate::native::buf::Buf {
-        unsafe { (*self.get()).result }
+    /// Moves the field out by bitwise read (`ptr::read`). C does this as plain
+    /// struct assignment; the source field still holds the stale bits (no
+    /// `Drop`), so the caller must overwrite it or treat it as moved-from.
+    pub(crate) fn take_result(&self) -> crate::native::buf::Buf {
+        unsafe { core::ptr::read(&raw const (*self.get()).result) }
     }
 
     #[inline(always)]
@@ -593,8 +596,11 @@ impl CacheContext {
         }
     }
     #[inline(always)]
-    pub(crate) fn string_pool(&self) -> StringPool {
-        unsafe { (*self.get()).string_pool }
+    /// Moves the field out by bitwise read (`ptr::read`). C does this as plain
+    /// struct assignment; the source field still holds the stale bits (no
+    /// `Drop`), so the caller must overwrite it or treat it as moved-from.
+    pub(crate) fn take_string_pool(&self) -> StringPool {
+        unsafe { core::ptr::read(&raw const (*self.get()).string_pool) }
     }
     #[inline(always)]
     pub(crate) fn set_string_pool(&self, string_pool: StringPool) {
@@ -2081,9 +2087,9 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     (*cc.imp()).magic = CACHE_IMP_MAGIC;
     (*cc.imp()).owned_by_scene = cc.owned_by_scene();
     (*cc.imp()).refcount.ator = cc.ator_result();
-    (*cc.imp()).refcount.buf = cc.result();
+    (*cc.imp()).refcount.buf = cc.take_result();
     (*cc.imp()).refcount.buf.ator = &raw mut (*cc.imp()).refcount.ator;
-    (*cc.imp()).string_buf = cc.string_pool_view().buf();
+    (*cc.imp()).string_buf = cc.string_pool_view().take_buf();
     (*cc.imp()).string_buf.ator = &raw mut (*cc.imp()).refcount.ator;
 
     Ok(())
@@ -2298,8 +2304,8 @@ pub(crate) unsafe fn load_external_cache(
 
     // Temporarily "borrow" allocators for the geometry cache
     cc.set_ator_tmp(uc.ator_tmp_mut_ptr());
-    cc.set_string_pool(uc.string_pool());
-    cc.set_result(uc.result());
+    cc.set_string_pool(uc.take_string_pool());
+    cc.set_result(uc.take_result());
 
     cc.opts_view().set_mirror_axis(uc.mirror_axis());
     cc.opts_view().set_use_scale_factor(true);
@@ -2315,8 +2321,8 @@ pub(crate) unsafe fn load_external_cache(
     }
 
     // Return the "borrowed" allocators
-    uc.set_string_pool(cc.string_pool());
-    uc.set_result(cc.result());
+    uc.set_string_pool(cc.take_string_pool());
+    uc.set_result(cc.take_result());
 
     if cache.is_null() {
         if cc.error_view().type_() == ErrorType::FileNotFound {

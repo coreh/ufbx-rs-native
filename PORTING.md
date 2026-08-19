@@ -319,6 +319,41 @@ oracle output.
   `UFBXI_IS_REGRESSION` runtime-visible (1027). Hardcoding release constants
   silently defeats the regression test group.
 
+### Copy vs non-Copy internal structs
+
+C copies any struct with `=`; Rust makes `Copy` an opt-in, and we use that as
+a design signal. The criterion is OWNERSHIP, not size:
+
+- **Derive `Clone, Copy`** when the struct is pure data — every field is a
+  scalar, a raw pointer used as a borrow (points at state owned elsewhere), or
+  a nested Copy struct. Examples: `BufChunk` (header describing storage, freed
+  via its allocator, never by-value), `BufState`, `Prop`, `Connection`.
+- **Derive NEITHER** when the struct (transitively) OWNS heap state that some
+  teardown path frees — an implicit by-value copy would alias ownership and
+  set up a double-free. Examples: `Buf` (owns its chunk lists, freed by
+  `buf_free`/`free_all_chunks`), `Map` (owns `items`/`entries`, freed by
+  `map_free`), and everything embedding them (`Warnings`, `StringPool`,
+  `XmlDocument`). Mark the struct with a `// NOT Copy/Clone:` comment naming
+  the owned state.
+
+Where C genuinely copies an owning struct by value, the port makes the move
+explicit instead of replicating `=`:
+
+- **Ownership transfer** (result buf → `Refcount`, uc ↔ cc shuttling): a
+  `take_*()` view method backed by `ptr::read`, documented as moving out; the
+  source field keeps stale bits (no `Drop` impls on these types) and must be
+  overwritten or left untouched.
+- **Stack copy before freeing self-referential storage** (`free_xml`,
+  `release_ref`): inline `ptr::read` with a comment.
+
+`.clone()` never appears for these types: C has no deep-copy of owning
+structs, so a `Clone` impl would have nothing legitimate to implement — every
+duplication is either a borrow (take a view/pointer) or a move (`ptr::read`).
+
+This is invisible to the public API, so it is NOT a COMPAT.md entry; public
+`Copy` ADDITIONS relative to ufbx-rust (e.g. `Prop`, `Connection`) are COMPAT
+§1 rows.
+
 ## Semantic-traps checklist (reviewers: check EVERY item against the diff)
 
 1. **Assert side effects / gating**: three assert families with distinct cfg
@@ -362,7 +397,8 @@ oracle output.
     with C's synchronization assumptions; **`volatile` reads (strtod probe) →
     `ptr::read_volatile`**.
 15. **Struct copy semantics**: C assignment is memcpy; derive `Clone, Copy` on
-    internal `#[repr(C)]` structs so `=` stays memcpy-like.
+    internal `#[repr(C)]` structs so `=` stays memcpy-like — EXCEPT structs
+    that own heap state (see "Copy vs non-Copy internal structs").
 16. **Non-returning error macro**: `ufbxi_report_err_msg` records and CONTINUES
     — never translate to an early return.
 17. **Union discipline**: overlays stay unions (see table); both-member reads

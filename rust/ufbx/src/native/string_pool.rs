@@ -47,8 +47,9 @@ use crate::prelude::{Blob, Real, String};
 // canonical pointers for said strings so we can compare them by address.
 
 // ufbx.c:4901-4910 `ufbxi_string_pool`
+// NOT `Copy`/`Clone`: embeds an owning `Buf` and `Map` — see PORTING.md
+// "Copy vs non-Copy structs".
 #[repr(C)]
-#[derive(Clone, Copy)]
 pub(crate) struct StringPool {
     pub error: *mut Error,
     pub buf: Buf,            // < Buffer for the actual string data
@@ -68,8 +69,11 @@ pub(crate) type StringPoolView = crate::native::view::View<StringPool>;
 
 impl StringPoolView {
     #[inline(always)]
-    pub(crate) fn buf(&self) -> Buf {
-        unsafe { (*self.get()).buf }
+    /// Moves the field out by bitwise read (`ptr::read`). C does this as plain
+    /// struct assignment; the source field still holds the stale bits (no
+    /// `Drop`), so the caller must overwrite it or treat it as moved-from.
+    pub(crate) fn take_buf(&self) -> Buf {
+        unsafe { core::ptr::read(&raw const (*self.get()).buf) }
     }
     #[inline(always)]
     pub(crate) fn buf_view(&self) -> &crate::native::buf::BufView {

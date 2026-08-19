@@ -340,8 +340,11 @@ impl SubdivideContext {
     }
 
     #[inline(always)]
-    pub(crate) fn result(&self) -> crate::native::buf::Buf {
-        unsafe { (*self.get()).result }
+    /// Moves the field out by bitwise read (`ptr::read`). C does this as plain
+    /// struct assignment; the source field still holds the stale bits (no
+    /// `Drop`), so the caller must overwrite it or treat it as moved-from.
+    pub(crate) fn take_result(&self) -> crate::native::buf::Buf {
+        unsafe { core::ptr::read(&raw const (*self.get()).result) }
     }
 
     #[inline(always)]
@@ -2460,7 +2463,7 @@ pub(crate) fn subdivide_mesh_imp(
 
             buf_free(sc.source_mut_ptr());
             buf_free(sc.tmp_mut_ptr());
-            sc.set_source(sc.result());
+            sc.set_source(sc.take_result());
             core::ptr::write_bytes(sc.result_mut_ptr() as *mut u8, 0, size_of::<Buf>());
         }
         i += 1;
@@ -2619,7 +2622,7 @@ pub(crate) fn subdivide_mesh_imp(
         // C: `sc->imp->mesh = sc->dst_mesh;` — struct assignment (memcpy).
         core::ptr::copy_nonoverlapping(sc.dst_mesh_mut_ptr(), &raw mut (*sc.imp()).mesh, 1);
         (*sc.imp()).refcount.ator = sc.ator_result();
-        (*sc.imp()).refcount.buf = sc.result();
+        (*sc.imp()).refcount.buf = sc.take_result();
         (*sc.imp()).mesh.subdivision_evaluated = true;
     }
 

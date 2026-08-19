@@ -44,8 +44,9 @@ const _: () = {
 };
 
 // ufbx.c:4824-4831 `ufbxi_warnings`
+// NOT `Copy`/`Clone`: embeds an owning `Buf` (`tmp_stack`) — see PORTING.md
+// "Copy vs non-Copy structs".
 #[repr(C)]
-#[derive(Clone, Copy)]
 pub(crate) struct Warnings {
     pub error: *mut Error,
     pub result: *mut Buf,

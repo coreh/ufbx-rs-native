@@ -82,8 +82,12 @@ pub(crate) unsafe fn chunk_data(chunk: *mut BufChunk) -> *mut u8 {
 }
 
 // ufbx.c:3853-3870 `ufbxi_buf`
+// NOT `Copy`/`Clone`: a `Buf` owns its chunk lists (freed via `free_all_chunks`
+// / `buf_free`), so a by-value copy aliases ownership — a latent double-free.
+// C copies the struct freely; the ported sites that genuinely move one
+// (ownership transfer into a `Refcount`, `release_ref` stack copies) use
+// explicit `ptr::read`. See PORTING.md "Copy vs non-Copy structs".
 #[repr(C)]
-#[derive(Clone, Copy)]
 pub(crate) struct Buf {
     pub ator: *mut Allocator,
 

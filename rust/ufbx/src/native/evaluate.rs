@@ -902,9 +902,9 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
 
     // Copy retained buffers and translate the allocator struct to the one
     // contained within `ufbxi_scene_imp`
-    (*imp).refcount.buf = uc.result();
+    (*imp).refcount.buf = uc.take_result();
     (*imp).refcount.buf.ator = &raw mut (*imp).refcount.ator;
-    (*imp).string_buf = uc.string_pool_view().buf();
+    (*imp).string_buf = uc.string_pool_view().take_buf();
     (*imp).string_buf.ator = &raw mut (*imp).refcount.ator;
 
     (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
@@ -2167,8 +2167,11 @@ impl EvalContext {
     }
 
     #[inline(always)]
-    pub(crate) fn result(&self) -> crate::native::buf::Buf {
-        unsafe { (*self.get()).result }
+    /// Moves the field out by bitwise read (`ptr::read`). C does this as plain
+    /// struct assignment; the source field still holds the stale bits (no
+    /// `Drop`), so the caller must overwrite it or treat it as moved-from.
+    pub(crate) fn take_result(&self) -> crate::native::buf::Buf {
+        unsafe { core::ptr::read(&raw const (*self.get()).result) }
     }
 
     #[inline(always)]
@@ -3133,7 +3136,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // Copy retained buffers and translate the allocator struct to the one
     // contained within `ufbxi_scene_imp`
-    (*imp).refcount.buf = ec.result();
+    (*imp).refcount.buf = ec.take_result();
     (*imp).refcount.buf.ator = &raw mut (*imp).refcount.ator;
 
     (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
@@ -3319,8 +3322,11 @@ impl CreateAnimContext {
     }
 
     #[inline(always)]
-    pub(crate) fn result(&self) -> crate::native::buf::Buf {
-        unsafe { (*self.get()).result }
+    /// Moves the field out by bitwise read (`ptr::read`). C does this as plain
+    /// struct assignment; the source field still holds the stale bits (no
+    /// `Drop`), so the caller must overwrite it or treat it as moved-from.
+    pub(crate) fn take_result(&self) -> crate::native::buf::Buf {
+        unsafe { core::ptr::read(&raw const (*self.get()).result) }
     }
 
     #[inline(always)]
@@ -3800,7 +3806,7 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
         // C: `ac->imp->anim = ac->anim;` (struct assignment)
         ptr::copy_nonoverlapping(ac.anim_mut_ptr(), &raw mut (*ac.imp()).anim, 1);
         (*ac.imp()).refcount.ator = ac.ator_result();
-        (*ac.imp()).refcount.buf = ac.result();
+        (*ac.imp()).refcount.buf = ac.take_result();
     }
 
     Ok(())
@@ -4220,8 +4226,11 @@ impl BakeContext {
     }
 
     #[inline(always)]
-    pub(crate) fn result(&self) -> crate::native::buf::Buf {
-        unsafe { (*self.get()).result }
+    /// Moves the field out by bitwise read (`ptr::read`). C does this as plain
+    /// struct assignment; the source field still holds the stale bits (no
+    /// `Drop`), so the caller must overwrite it or treat it as moved-from.
+    pub(crate) fn take_result(&self) -> crate::native::buf::Buf {
+        unsafe { core::ptr::read(&raw const (*self.get()).result) }
     }
 
     #[inline(always)]
@@ -6433,7 +6442,7 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     // C: `bc->imp->bake = bc->bake;` (struct assignment)
     ptr::copy_nonoverlapping(bc.bake_mut_ptr(), &raw mut (*bc.imp()).bake, 1);
     (*bc.imp()).refcount.ator = bc.ator_result();
-    (*bc.imp()).refcount.buf = bc.result();
+    (*bc.imp()).refcount.buf = bc.take_result();
 
     Ok(())
 }

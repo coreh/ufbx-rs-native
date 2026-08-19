@@ -2641,8 +2641,11 @@ impl Context {
     }
 
     #[inline(always)]
-    pub(crate) fn result(&self) -> crate::native::buf::Buf {
-        unsafe { (*self.get()).result }
+    /// Moves the field out by bitwise read (`ptr::read`). C does this as plain
+    /// struct assignment; the source field still holds the stale bits (no
+    /// `Drop`), so the caller must overwrite it or treat it as moved-from.
+    pub(crate) fn take_result(&self) -> crate::native::buf::Buf {
+        unsafe { core::ptr::read(&raw const (*self.get()).result) }
     }
 
     #[inline(always)]
@@ -3259,8 +3262,11 @@ impl Context {
         }
     }
     #[inline(always)]
-    pub(crate) fn string_pool(&self) -> StringPool {
-        unsafe { (*self.get()).string_pool }
+    /// Moves the field out by bitwise read (`ptr::read`). C does this as plain
+    /// struct assignment; the source field still holds the stale bits (no
+    /// `Drop`), so the caller must overwrite it or treat it as moved-from.
+    pub(crate) fn take_string_pool(&self) -> StringPool {
+        unsafe { core::ptr::read(&raw const (*self.get()).string_pool) }
     }
     #[inline(always)]
     pub(crate) fn set_string_pool(&self, string_pool: StringPool) {

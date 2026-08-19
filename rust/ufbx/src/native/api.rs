@@ -211,7 +211,9 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         // the stack since the `ufbxi_refcount` that contains it is allocated
         // from the same result buffer!
         let mut ator: Allocator = (*refcount).ator;
-        let mut buf: Buf = (*refcount).buf;
+        // `Buf` is not `Copy`; this stack copy is the deliberate ownership move
+        // the comment above describes (`ptr::read` = C struct assignment).
+        let mut buf: Buf = core::ptr::read(&raw const (*refcount).buf);
         buf.ator = &raw mut ator;
         buf_free(&mut buf);
         free_ator(&mut ator);
