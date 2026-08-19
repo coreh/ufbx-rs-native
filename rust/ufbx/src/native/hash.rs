@@ -6,10 +6,6 @@
 //!
 //! Phase 1: not all items have consumers yet.
 #![allow(dead_code, unused_macros, unused_imports)]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::c_void;
 use core::mem::size_of;
 
@@ -36,27 +32,37 @@ pub(crate) unsafe fn hash_string(mut str_: *const u8, mut length: usize) -> u32 
     let seed = 0x9e3779b9u32;
     if length >= 4 {
         loop {
-            let word = read_u32(str_);
+            // SAFETY: loop invariant — `length >= 4` on entry (guard above and
+            // the `length -= 4` re-check), so 4 bytes are readable at `str_`,
+            // which stays within the caller's `length`-byte run.
+            let word = unsafe { read_u32(str_) };
             hash = ((hash << 5 | hash >> 27) ^ word).wrapping_mul(seed);
-            str_ = str_.add(4);
+            // SAFETY: this arm entered with `length >= 4`, so advancing `str_`
+            // by 4 lands at or before the one-past-the-end of the run.
+            str_ = unsafe { str_.add(4) };
             length -= 4;
             if !(length >= 4) {
                 break;
             }
         }
 
-        let word = read_u32(str_.add(length).sub(4));
+        // SAFETY: `str_ + length` is the run's tail; stepping back 4 bytes
+        // reads the last full word, wholly within the caller's run.
+        let word = unsafe { read_u32(str_.add(length).sub(4)) };
         hash = ((hash << 5 | hash >> 27) ^ word).wrapping_mul(seed);
     } else {
         let mut word = 0u32;
         if length >= 1 {
-            word |= (*str_.add(0) as u32) << 0;
+            // SAFETY: `length >= 1`, so byte 0 of the run is readable.
+            word |= (unsafe { *str_.add(0) } as u32) << 0;
         }
         if length >= 2 {
-            word |= (*str_.add(1) as u32) << 8;
+            // SAFETY: `length >= 2`, so byte 1 of the run is readable.
+            word |= (unsafe { *str_.add(1) } as u32) << 8;
         }
         if length >= 3 {
-            word |= (*str_.add(2) as u32) << 16;
+            // SAFETY: `length >= 3`, so byte 2 of the run is readable.
+            word |= (unsafe { *str_.add(2) } as u32) << 16;
         }
         hash = ((hash << 5 | hash >> 27) ^ word).wrapping_mul(seed);
     }
@@ -83,19 +89,26 @@ pub(crate) unsafe fn hash_string_check_ascii(
     let seed = 0x9e3779b9u32;
     if length >= 4 {
         loop {
-            let word = read_u32(str_);
+            // SAFETY: loop invariant — `length >= 4` on entry (guard above and
+            // the `length -= 4` re-check), so 4 bytes are readable at `str_`,
+            // which stays within the caller's `length`-byte run.
+            let word = unsafe { read_u32(str_) };
             ascii_mask |= word;
             zero_mask |= 0x80808080u32.wrapping_sub(word);
 
             hash = ((hash << 5 | hash >> 27) ^ word).wrapping_mul(seed);
-            str_ = str_.add(4);
+            // SAFETY: this arm entered with `length >= 4`, so advancing `str_`
+            // by 4 lands at or before the one-past-the-end of the run.
+            str_ = unsafe { str_.add(4) };
             length -= 4;
             if !(length >= 4) {
                 break;
             }
         }
 
-        let word = read_u32(str_.add(length).sub(4));
+        // SAFETY: `str_ + length` is the run's tail; stepping back 4 bytes
+        // reads the last full word, wholly within the caller's run.
+        let word = unsafe { read_u32(str_.add(length).sub(4)) };
         ascii_mask |= word;
         zero_mask |= 0x80808080u32.wrapping_sub(word);
 
@@ -103,13 +116,16 @@ pub(crate) unsafe fn hash_string_check_ascii(
     } else {
         let mut word = 0u32;
         if length >= 1 {
-            word |= (*str_.add(0) as u32) << 0;
+            // SAFETY: `length >= 1`, so byte 0 of the run is readable.
+            word |= (unsafe { *str_.add(0) } as u32) << 0;
         }
         if length >= 2 {
-            word |= (*str_.add(1) as u32) << 8;
+            // SAFETY: `length >= 2`, so byte 1 of the run is readable.
+            word |= (unsafe { *str_.add(1) } as u32) << 8;
         }
         if length >= 3 {
-            word |= (*str_.add(2) as u32) << 16;
+            // SAFETY: `length >= 3`, so byte 2 of the run is readable.
+            word |= (unsafe { *str_.add(2) } as u32) << 16;
         }
 
         ascii_mask |= word;
@@ -125,7 +141,9 @@ pub(crate) unsafe fn hash_string_check_ascii(
 
     // If any character has high bit set or is zero we're not ASCII
     if ((ascii_mask | zero_mask) & 0x80808080u32) != 0 {
-        *p_non_ascii = true;
+        // SAFETY: caller contract — `p_non_ascii` points at a live, writable
+        // `bool`.
+        unsafe { *p_non_ascii = true };
     }
 
     hash ^= hash >> 16;
@@ -312,7 +330,8 @@ pub(crate) unsafe fn map_init(
     cmp_fn: CmpFn,
     cmp_user: *mut c_void,
 ) {
-    (*map).ator = ator;
+    // SAFETY: caller contract — `map` points at a live, writable `Map`.
+    unsafe { (*map).ator = ator };
     #[cfg(feature = "regression")]
     {
         // HACK: Maps contain pointers that are not stable between runs, in regression
@@ -323,46 +342,76 @@ pub(crate) unsafe fn map_init(
         {
             let regression_ator = ufbx_malloc(size_of::<Allocator>()) as *mut Allocator;
             ufbx_assert!(!regression_ator.is_null());
-            core::ptr::write_bytes(regression_ator as *mut u8, 0, size_of::<Allocator>());
-            (*regression_ator).name = b"regression\0".as_ptr();
-            (*regression_ator).error = (*ator).error;
-            (*regression_ator).huge_size = (*ator).huge_size;
-            (*regression_ator).max_size = usize::MAX;
-            (*regression_ator).max_allocs = usize::MAX;
-            (*regression_ator).chunk_max = 0x1000000;
-            (*map).aa_buf.ator = regression_ator;
+            // SAFETY: `ufbx_malloc` returned a non-null (asserted above) block of
+            // `size_of::<Allocator>()` bytes, so zeroing that many bytes is in
+            // bounds and writable.
+            unsafe {
+                core::ptr::write_bytes(regression_ator as *mut u8, 0, size_of::<Allocator>())
+            };
+            // SAFETY: `regression_ator` is the freshly allocated, zeroed
+            // `Allocator` just proven non-null; `ator` is the caller's live
+            // allocator being read from.
+            unsafe {
+                (*regression_ator).name = b"regression\0".as_ptr();
+                (*regression_ator).error = (*ator).error;
+                (*regression_ator).huge_size = (*ator).huge_size;
+                (*regression_ator).max_size = usize::MAX;
+                (*regression_ator).max_allocs = usize::MAX;
+                (*regression_ator).chunk_max = 0x1000000;
+                (*map).aa_buf.ator = regression_ator;
+            }
         }
     }
     #[cfg(not(feature = "regression"))]
     {
-        (*map).aa_buf.ator = ator;
+        // SAFETY: caller contract — `map` points at a live, writable `Map`.
+        unsafe { (*map).aa_buf.ator = ator };
     }
-    (*map).cmp_fn = Some(cmp_fn);
-    (*map).cmp_user = cmp_user;
+    // SAFETY: caller contract — `map` points at a live, writable `Map`.
+    unsafe {
+        (*map).cmp_fn = Some(cmp_fn);
+        (*map).cmp_user = cmp_user;
+    }
 }
 
 // ufbx.c:4421-4441 `ufbxi_map_free`
 #[inline(never)]
 pub(crate) unsafe fn map_free(map: *mut Map) {
     #[cfg(feature = "regression")]
-    let regression_ator: *mut Allocator = (*map).aa_buf.ator;
+    // SAFETY: caller contract — `map` points at a live `Map`.
+    let regression_ator: *mut Allocator = unsafe { (*map).aa_buf.ator };
 
-    buf_free(&mut (*map).aa_buf);
-    free::<u8>((*map).ator, (*map).entries as *mut u8, (*map).data_size);
-    (*map).entries = core::ptr::null_mut();
-    (*map).items = core::ptr::null_mut();
-    (*map).aa_root = core::ptr::null_mut();
-    // C: `map->mask = map->capacity = map->size = 0;` — decomposed, C
-    // assignment order (rightmost first).
-    (*map).size = 0;
-    (*map).capacity = 0;
-    (*map).mask = 0;
+    // SAFETY: `&mut (*map).aa_buf` borrows the map's own AA-tree buffer, freed
+    // through the allocator it was allocated from; `map` is the caller's live
+    // `Map`.
+    unsafe { buf_free(&mut (*map).aa_buf) };
+    // SAFETY: `entries` is the combined entry/item block `map_grow_size_imp`
+    // allocated from `map`'s own allocator with byte length `data_size` (0/null
+    // for a never-grown map, which `free` tolerates).
+    unsafe { free::<u8>((*map).ator, (*map).entries as *mut u8, (*map).data_size) };
+    // SAFETY: caller contract — `map` points at a live, writable `Map`; the
+    // field resets below match C's `map_free` teardown.
+    unsafe {
+        (*map).entries = core::ptr::null_mut();
+        (*map).items = core::ptr::null_mut();
+        (*map).aa_root = core::ptr::null_mut();
+        // C: `map->mask = map->capacity = map->size = 0;` — decomposed, C
+        // assignment order (rightmost first).
+        (*map).size = 0;
+        (*map).capacity = 0;
+        (*map).mask = 0;
+    }
 
     #[cfg(feature = "regression")]
     {
         if !regression_ator.is_null() {
-            free_ator(regression_ator);
-            ufbx_free(regression_ator as *mut c_void, size_of::<Allocator>());
+            // SAFETY: `regression_ator` is the private allocator `map_init`
+            // installed under regression, non-null here; freeing then releasing
+            // its own backing block matches `map_init`'s `ufbx_malloc`.
+            unsafe {
+                free_ator(regression_ator);
+                ufbx_free(regression_ator as *mut c_void, size_of::<Allocator>());
+            }
         }
     }
 }
@@ -390,13 +439,19 @@ pub(crate) unsafe fn aa_tree_insert(
             ufbx_assert!(depth.get() < 59);
             depth.set(depth.get() + 1);
         });
-        let ret = aa_tree_insert_rec(map, node, value, index, item_size);
+        // SAFETY: forwards this fn's pointer contract (live `map`, valid tree
+        // `node`, `value`/`item_size` matching the map's element type) to the
+        // recursive body.
+        let ret = unsafe { aa_tree_insert_rec(map, node, value, index, item_size) };
         UFBXI_RECURSION_DEPTH.with(|depth| depth.set(depth.get() - 1));
         ret
     }
     #[cfg(not(feature = "regression"))]
     {
-        aa_tree_insert_rec(map, node, value, index, item_size)
+        // SAFETY: forwards this fn's pointer contract (live `map`, valid tree
+        // `node`, `value`/`item_size` matching the map's element type) to the
+        // recursive body.
+        unsafe { aa_tree_insert_rec(map, node, value, index, item_size) }
     }
 }
 
@@ -411,42 +466,75 @@ unsafe fn aa_tree_insert_rec(
 ) -> *mut AaNode {
     let mut node = node;
     if node.is_null() {
-        let new_node = push::<AaNode>(&mut (*map).aa_buf, 1);
+        // SAFETY: `&mut (*map).aa_buf` borrows the map's own AA-tree buffer
+        // (live `map` per caller contract); `push` allocates one `AaNode`.
+        let new_node = unsafe { push::<AaNode>(&mut (*map).aa_buf, 1) };
         if new_node.is_null() {
             return core::ptr::null_mut();
         }
-        (*new_node).left = core::ptr::null_mut();
-        (*new_node).right = core::ptr::null_mut();
-        (*new_node).level = 1;
-        (*new_node).index = index;
+        // SAFETY: `new_node` is the freshly pushed `AaNode`, just proven
+        // non-null, so its fields are writable.
+        unsafe {
+            (*new_node).left = core::ptr::null_mut();
+            (*new_node).right = core::ptr::null_mut();
+            (*new_node).level = 1;
+            (*new_node).index = index;
+        }
         return new_node;
     }
 
-    let entry = ((*map).items as *mut u8).add((*node).index as usize * item_size) as *mut c_void;
+    // SAFETY: `node` is a valid tree node (caller/recursion contract); its
+    // `index` addresses one of the map's `items`, whose element stride is the
+    // matching `item_size`, so the computed `entry` lands inside `items`.
+    let entry =
+        unsafe { ((*map).items as *mut u8).add((*node).index as usize * item_size) as *mut c_void };
     // C-parity: C calls through the raw `cmp_fn` pointer without a null check.
-    let cmp = ((*map).cmp_fn.unwrap_unchecked())((*map).cmp_user, value, entry);
+    // SAFETY: `map.cmp_fn` is the non-null comparator installed by `map_init`;
+    // calling it with the map's `cmp_user` and the two same-key-discipline
+    // pointers `value`/`entry` is the C-callback contract.
+    let cmp = unsafe { ((*map).cmp_fn.unwrap_unchecked())((*map).cmp_user, value, entry) };
     if cmp < 0 {
-        (*node).left = aa_tree_insert(map, (*node).left, value, index, item_size);
+        // SAFETY: `node` is a valid tree node; its `left` child link is a valid
+        // tree pointer (possibly null, which `aa_tree_insert` handles).
+        unsafe { (*node).left = aa_tree_insert(map, (*node).left, value, index, item_size) };
     } else if cmp >= 0 {
-        (*node).right = aa_tree_insert(map, (*node).right, value, index, item_size);
+        // SAFETY: `node` is a valid tree node; its `right` child link is a valid
+        // tree pointer (possibly null, which `aa_tree_insert` handles).
+        unsafe { (*node).right = aa_tree_insert(map, (*node).right, value, index, item_size) };
     }
 
-    if !(*node).left.is_null() && (*(*node).left).level == (*node).level {
-        let left = (*node).left;
-        (*node).left = (*left).right;
-        (*left).right = node;
-        node = left;
+    // SAFETY: `node` and its non-null `left` child are valid tree nodes, so
+    // their `level` fields are readable.
+    if unsafe { !(*node).left.is_null() && (*(*node).left).level == (*node).level } {
+        // SAFETY: `node` and its (non-null, per the guard) `left` child are
+        // valid tree nodes; the skew rotation only re-links their child
+        // pointers.
+        unsafe {
+            let left = (*node).left;
+            (*node).left = (*left).right;
+            (*left).right = node;
+            node = left;
+        }
     }
 
-    if !(*node).right.is_null()
-        && !(*(*node).right).right.is_null()
-        && (*(*(*node).right).right).level == (*node).level
-    {
-        let right = (*node).right;
-        (*node).right = (*right).left;
-        (*right).left = node;
-        (*right).level += 1;
-        node = right;
+    // SAFETY: `node`, its non-null `right` child, and that child's non-null
+    // `right` grandchild are valid tree nodes, so their `level` fields are
+    // readable.
+    if unsafe {
+        !(*node).right.is_null()
+            && !(*(*node).right).right.is_null()
+            && (*(*(*node).right).right).level == (*node).level
+    } {
+        // SAFETY: `node` and its (non-null, per the guard) `right` child are
+        // valid tree nodes; the split rotation re-links their child pointers
+        // and bumps the promoted node's `level`.
+        unsafe {
+            let right = (*node).right;
+            (*node).right = (*right).left;
+            (*right).left = node;
+            (*right).level += 1;
+            node = right;
+        }
     }
 
     node
@@ -459,16 +547,28 @@ pub(crate) unsafe fn aa_tree_find(
     value: *const c_void,
     item_size: usize,
 ) -> *mut c_void {
-    let mut node = (*map).aa_root;
+    // SAFETY: caller contract — `map` points at a live `Map`.
+    let mut node = unsafe { (*map).aa_root };
     while !node.is_null() {
-        let entry =
-            ((*map).items as *mut u8).add((*node).index as usize * item_size) as *mut c_void;
+        // SAFETY: `node` is non-null (loop guard) and a valid tree node; its
+        // `index` addresses one of the map's `items`, whose element stride is
+        // the matching `item_size`, so `entry` lands inside `items`.
+        let entry = unsafe {
+            ((*map).items as *mut u8).add((*node).index as usize * item_size) as *mut c_void
+        };
         // C-parity: C calls through the raw `cmp_fn` pointer without a null check.
-        let cmp = ((*map).cmp_fn.unwrap_unchecked())((*map).cmp_user, value, entry);
+        // SAFETY: `map.cmp_fn` is the non-null comparator installed by
+        // `map_init`; calling it with `cmp_user` and the two same-key-discipline
+        // pointers `value`/`entry` is the C-callback contract.
+        let cmp = unsafe { ((*map).cmp_fn.unwrap_unchecked())((*map).cmp_user, value, entry) };
         if cmp < 0 {
-            node = (*node).left;
+            // SAFETY: `node` is a valid tree node; its `left` link is a valid
+            // (possibly null) tree pointer.
+            node = unsafe { (*node).left };
         } else if cmp > 0 {
-            node = (*node).right;
+            // SAFETY: `node` is a valid tree node; its `right` link is a valid
+            // (possibly null) tree pointer.
+            node = unsafe { (*node).right };
         } else {
             return entry;
         }
@@ -484,11 +584,14 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
 
     // Find the lowest power of two size that fits `min_size` within `load_factor`
     // C: `map->mask + 1` — uint32 arithmetic, then widened to size_t.
-    let mut num_entries = (*map).mask.wrapping_add(1) as usize;
+    // SAFETY: caller contract — `map` points at a live `Map`.
+    let mut num_entries = unsafe { (*map).mask }.wrapping_add(1) as usize;
     let mut new_size = (num_entries as f64 * load_factor) as usize;
     let mut min_size = min_size;
-    if min_size < (*map).capacity.wrapping_add(1) as usize {
-        min_size = (*map).capacity.wrapping_add(1) as usize;
+    // SAFETY: caller contract — `map` points at a live `Map`.
+    if min_size < unsafe { (*map).capacity }.wrapping_add(1) as usize {
+        // SAFETY: caller contract — `map` points at a live `Map`.
+        min_size = unsafe { (*map).capacity }.wrapping_add(1) as usize;
     }
     while new_size < min_size {
         num_entries = num_entries.wrapping_mul(2);
@@ -513,7 +616,9 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
     );
     let data_size = alloc_size + new_size * item_size;
 
-    let data = alloc::<u8>((*map).ator, data_size);
+    // SAFETY: `map.ator` is the map's own allocator (live `map` per caller
+    // contract), the pairing `alloc` requires for a `data_size`-byte block.
+    let data = unsafe { alloc::<u8>((*map).ator, data_size) };
     ufbxi_check_return_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*(*map).ator).error) },
         !data.is_null(),
@@ -522,25 +627,41 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
     );
 
     // Copy the previous user items over
-    let old_entries = (*map).entries;
+    // SAFETY: caller contract — `map` points at a live `Map`.
+    let old_entries = unsafe { (*map).entries };
     let new_entries = data as *mut u64;
-    let new_items = data.add(alloc_size) as *mut c_void;
-    if (*map).size > 0 {
-        core::ptr::copy_nonoverlapping(
-            (*map).items as *const u8,
-            new_items as *mut u8,
-            item_size * (*map).size as usize,
-        );
+    // SAFETY: `alloc_size` bytes at the front of the just-allocated `data_size`
+    // block hold the entries; `data + alloc_size` is the in-bounds start of the
+    // item region.
+    let new_items = unsafe { data.add(alloc_size) } as *mut c_void;
+    // SAFETY: caller contract — `map` points at a live `Map`.
+    if unsafe { (*map).size } > 0 {
+        // SAFETY: the old `items` region holds `size` live elements of
+        // `item_size` bytes each; the new item region was just allocated with
+        // room for `new_size >= size` such elements, and the two blocks are
+        // distinct allocations.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                (*map).items as *const u8,
+                new_items as *mut u8,
+                item_size * (*map).size as usize,
+            );
+        }
     }
 
     // Re-hash the entries
-    let old_mask = (*map).mask;
+    // SAFETY: caller contract — `map` points at a live `Map`.
+    let old_mask = unsafe { (*map).mask };
     let new_mask = (num_entries as u32).wrapping_sub(1);
-    core::ptr::write_bytes(new_entries, 0, num_entries);
+    // SAFETY: `new_entries` is the `alloc_size`-byte entry region, room for
+    // `num_entries` `u64`s, so zeroing that many is in bounds.
+    unsafe { core::ptr::write_bytes(new_entries, 0, num_entries) };
     if old_mask != 0 {
         for i in 0..=old_mask {
             let mut entry: u64;
-            let mut new_entry = *old_entries.add(i as usize);
+            // SAFETY: `i <= old_mask`, and the old entry table held
+            // `old_mask + 1` `u64` slots, so slot `i` is in bounds.
+            let mut new_entry = unsafe { *old_entries.add(i as usize) };
             if new_entry == 0 {
                 continue;
             }
@@ -555,30 +676,46 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
             // `new_element` if it has a shorter scan distance (Robin Hood).
             let mut scan: u32 = 1;
             loop {
-                entry = *new_entries.add(slot as usize);
+                // SAFETY: `slot` is masked with `new_mask`, so it indexes one of
+                // the `new_mask + 1` (= `num_entries`) `u64` slots in the new
+                // entry table.
+                entry = unsafe { *new_entries.add(slot as usize) };
                 if entry == 0 {
                     break;
                 }
                 let entry_scan = (entry & new_mask as u64) as u32;
                 if entry_scan < scan {
-                    *new_entries.add(slot as usize) = new_entry.wrapping_add(scan as u64);
+                    // SAFETY: `slot & new_mask` is in bounds of the new entry
+                    // table, as above.
+                    unsafe {
+                        *new_entries.add(slot as usize) = new_entry.wrapping_add(scan as u64)
+                    };
                     new_entry = entry & !(new_mask as u64);
                     scan = entry_scan;
                 }
                 scan = scan.wrapping_add(1);
                 slot = slot.wrapping_add(1) & new_mask;
             }
-            *new_entries.add(slot as usize) = new_entry.wrapping_add(scan as u64);
+            // SAFETY: `slot & new_mask` is in bounds of the new entry table.
+            unsafe { *new_entries.add(slot as usize) = new_entry.wrapping_add(scan as u64) };
         }
     }
 
     // And finally free the previous allocation
-    free::<u8>((*map).ator, old_entries as *mut u8, (*map).data_size);
-    (*map).items = new_items;
-    (*map).data_size = data_size;
-    (*map).entries = new_entries;
-    (*map).mask = new_mask;
-    (*map).capacity = new_size as u32;
+    // SAFETY: `old_entries` is the map's previous combined block of
+    // `(*map).data_size` bytes, allocated from `map`'s own allocator — the
+    // pairing `free` requires (0/null for a never-grown map, which `free`
+    // tolerates).
+    unsafe { free::<u8>((*map).ator, old_entries as *mut u8, (*map).data_size) };
+    // SAFETY: caller contract — `map` points at a live, writable `Map`; these
+    // installs publish the freshly built table.
+    unsafe {
+        (*map).items = new_items;
+        (*map).data_size = data_size;
+        (*map).entries = new_entries;
+        (*map).mask = new_mask;
+        (*map).capacity = new_size as u32;
+    }
 
     true
 }
@@ -588,21 +725,27 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
 pub(crate) unsafe fn map_grow_size(map: *mut Map, size: usize, min_size: usize) -> bool {
     #[cfg(feature = "regression")]
     {
-        let ator = (*map).ator;
+        // SAFETY: caller contract — `map` points at a live `Map`.
+        let ator = unsafe { (*map).ator };
         ufbxi_check_return_err_msg!(
             unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
-            (*ator).num_allocs < (*ator).max_allocs,
+            // SAFETY: `ator` is the map's own live allocator, just read above.
+            unsafe { (*ator).num_allocs < (*ator).max_allocs },
             false,
             "Allocation limit exceeded",
             "ator->num_allocs < ator->max_allocs"
         );
-        (*ator).num_allocs += 1;
+        // SAFETY: `ator` is the map's own live, writable allocator.
+        unsafe { (*ator).num_allocs += 1 };
     }
 
-    if (*map).size < (*map).capacity && (*map).capacity as usize >= min_size {
+    // SAFETY: caller contract — `map` points at a live `Map`.
+    if unsafe { (*map).size < (*map).capacity && (*map).capacity as usize >= min_size } {
         return true;
     }
-    map_grow_size_imp(map, size, min_size)
+    // SAFETY: forwards this fn's contract (live `map`, `size` matching the
+    // map's element type) to the growth implementation.
+    unsafe { map_grow_size_imp(map, size, min_size) }
 }
 
 // ufbx.c:4590-4617 `ufbxi_map_find_size`
@@ -613,8 +756,10 @@ pub(crate) unsafe fn map_find_size(
     hash: u32,
     value: *const c_void,
 ) -> *mut c_void {
-    let entries = (*map).entries;
-    let mask = (*map).mask;
+    // SAFETY: caller contract — `map` points at a live `Map`.
+    let entries = unsafe { (*map).entries };
+    // SAFETY: caller contract — `map` points at a live `Map`.
+    let mask = unsafe { (*map).mask };
     let mut scan: u32 = 0;
 
     let ref_ = hash & !mask;
@@ -626,19 +771,34 @@ pub(crate) unsafe fn map_find_size(
     // an element that has lower scan distance than our search (Robin Hood).
     // The encoding guarantees that zero slots also terminate with the same test.
     loop {
-        let entry = *entries.add((hash.wrapping_add(scan) & mask) as usize);
+        // SAFETY: `mask != 0` here, and the entry table (non-null once `mask`
+        // is set) holds `mask + 1` `u64` slots; masking the index with `mask`
+        // keeps it in bounds.
+        let entry = unsafe { *entries.add((hash.wrapping_add(scan) & mask) as usize) };
         scan = scan.wrapping_add(1);
         if entry as u32 == ref_.wrapping_add(scan) {
             let index = (entry >> 32u32) as u32;
-            let data = ((*map).items as *mut u8).add(size * index as usize) as *mut c_void;
+            // SAFETY: a stored entry's `index` addresses one of the map's
+            // `items`, whose element stride is the matching `size`, so `data`
+            // lands inside `items`.
+            let data =
+                unsafe { ((*map).items as *mut u8).add(size * index as usize) as *mut c_void };
             // C-parity: C calls through the raw `cmp_fn` pointer without a null check.
-            let cmp = ((*map).cmp_fn.unwrap_unchecked())((*map).cmp_user, value, data);
+            // SAFETY: `map.cmp_fn` is the non-null comparator installed by
+            // `map_init`; calling it with `cmp_user` and the two
+            // same-key-discipline pointers `value`/`data` is the C-callback
+            // contract.
+            let cmp = unsafe { ((*map).cmp_fn.unwrap_unchecked())((*map).cmp_user, value, data) };
             if cmp == 0 {
                 return data;
             }
         } else if (entry & mask as u64) < scan as u64 {
-            if !(*map).aa_root.is_null() {
-                return aa_tree_find(map, value, size);
+            // SAFETY: caller contract — `map` points at a live `Map`.
+            if unsafe { !(*map).aa_root.is_null() } {
+                // SAFETY: forwards this fn's contract (live `map`, `value`
+                // key-compatible, `size` the element stride) to the AA-tree
+                // fallback lookup.
+                return unsafe { aa_tree_find(map, value, size) };
             } else {
                 return core::ptr::null_mut();
             }
@@ -654,18 +814,27 @@ pub(crate) unsafe fn map_insert_size(
     hash: u32,
     value: *const c_void,
 ) -> *mut c_void {
-    if !map_grow_size(map, size, 64) {
+    // SAFETY: forwards this fn's contract (live `map`, `size` the element
+    // stride) to the growth routine.
+    if !unsafe { map_grow_size(map, size, 64) } {
         return core::ptr::null_mut();
     }
 
-    ufbxi_regression_assert!(map_find_size(map, size, hash, value).is_null());
+    // SAFETY (regression only): forwards this fn's contract to the find used by
+    // the duplicate-insert assertion; under non-regression the tokens are
+    // dropped unexpanded.
+    ufbxi_regression_assert!(unsafe { map_find_size(map, size, hash, value) }.is_null());
 
     // C: `uint32_t index = map->size++;`
-    let index = (*map).size;
-    (*map).size = (*map).size.wrapping_add(1);
+    // SAFETY: caller contract — `map` points at a live, writable `Map`.
+    let index = unsafe { (*map).size };
+    // SAFETY: caller contract — `map` points at a live, writable `Map`.
+    unsafe { (*map).size = (*map).size.wrapping_add(1) };
 
-    let entries = (*map).entries;
-    let mask = (*map).mask;
+    // SAFETY: caller contract — `map` points at a live `Map`.
+    let entries = unsafe { (*map).entries };
+    // SAFETY: caller contract — `map` points at a live `Map`.
+    let mask = unsafe { (*map).mask };
 
     // Scan forward until we find an empty slot, potentially swapping
     // `new_element` if it has a shorter scan distance (Robin Hood).
@@ -674,13 +843,17 @@ pub(crate) unsafe fn map_insert_size(
     let mut new_entry = (index as u64) << 32u32 | (hash & !mask) as u64;
     let mut scan: u32 = 1;
     loop {
-        entry = *entries.add(slot as usize);
+        // SAFETY: `map_grow_size` above ensured a non-null entry table of
+        // `mask + 1` `u64` slots; `slot` is masked with `mask`, so it is in
+        // bounds.
+        entry = unsafe { *entries.add(slot as usize) };
         if entry == 0 {
             break;
         }
         let entry_scan = (entry & mask as u64) as u32;
         if entry_scan < scan {
-            *entries.add(slot as usize) = new_entry.wrapping_add(scan as u64);
+            // SAFETY: `slot & mask` is in bounds of the entry table, as above.
+            unsafe { *entries.add(slot as usize) = new_entry.wrapping_add(scan as u64) };
             new_entry = entry & !(mask as u64);
             scan = entry_scan;
         }
@@ -692,15 +865,30 @@ pub(crate) unsafe fn map_insert_size(
             let new_value = if new_index == index {
                 value
             } else {
-                ((*map).items as *const u8).add(size * new_index as usize) as *const c_void
+                // SAFETY: `new_index` is a live element index (< `map.size`), so
+                // `items + size * new_index` addresses that element inside the
+                // items region.
+                unsafe {
+                    ((*map).items as *const u8).add(size * new_index as usize) as *const c_void
+                }
             };
-            (*map).aa_root = aa_tree_insert(map, (*map).aa_root, new_value, new_index, size);
-            return ((*map).items as *mut u8).add(size * index as usize) as *mut c_void;
+            // SAFETY: `map.aa_root` is the map's own (possibly null) AA-tree
+            // root, live `map`; `aa_tree_insert` re-roots the overflow tree with
+            // `new_value`/`size` of the map's element discipline.
+            unsafe {
+                (*map).aa_root = aa_tree_insert(map, (*map).aa_root, new_value, new_index, size);
+            }
+            // SAFETY: `index` is this insertion's freshly claimed element slot
+            // (< `map.size`), inside the items region.
+            return unsafe { ((*map).items as *mut u8).add(size * index as usize) as *mut c_void };
         }
     }
-    *entries.add(slot as usize) = new_entry.wrapping_add(scan as u64);
+    // SAFETY: `slot & mask` is in bounds of the entry table.
+    unsafe { *entries.add(slot as usize) = new_entry.wrapping_add(scan as u64) };
 
-    ((*map).items as *mut u8).add(size * index as usize) as *mut c_void
+    // SAFETY: `index` is this insertion's freshly claimed element slot
+    // (< `map.size`), inside the items region.
+    unsafe { ((*map).items as *mut u8).add(size * index as usize) as *mut c_void }
 }
 
 // -- Typed wrappers (ufbx.c:4657-4659)
@@ -708,7 +896,9 @@ pub(crate) unsafe fn map_insert_size(
 // ufbx.c:4657 `ufbxi_map_grow(map, type, min_size)`
 #[inline(always)]
 pub(crate) unsafe fn map_grow<T>(map: *mut Map, min_size: usize) -> bool {
-    map_grow_size(map, size_of::<T>(), min_size)
+    // SAFETY: forwards this fn's contract (live `map`) to the size-generic
+    // routine with `T`'s size as the element stride.
+    unsafe { map_grow_size(map, size_of::<T>(), min_size) }
 }
 
 // ufbx.c:4658 `ufbxi_map_find(map, type, hash, value)`
@@ -717,14 +907,19 @@ pub(crate) unsafe fn map_grow<T>(map: *mut Map, min_size: usize) -> bool {
 // with ufbxi_fbx_id_entry at ufbx.c:12310), so `value` is *const c_void here.
 #[inline(always)]
 pub(crate) unsafe fn map_find<T>(map: *mut Map, hash: u32, value: *const c_void) -> *mut T {
-    ufbxi_maybe_null!(map_find_size(map, size_of::<T>(), hash, value) as *mut T)
+    // SAFETY: forwards this fn's contract (live `map`, `value` a key of the
+    // map's discipline) to the size-generic find with `T`'s size as the stride.
+    ufbxi_maybe_null!(unsafe { map_find_size(map, size_of::<T>(), hash, value) } as *mut T)
 }
 
 // ufbx.c:4659 `ufbxi_map_insert(map, type, hash, value)`
 // C-parity: `value` is untyped in the C macro (see map_find above).
 #[inline(always)]
 pub(crate) unsafe fn map_insert<T>(map: *mut Map, hash: u32, value: *const c_void) -> *mut T {
-    ufbxi_maybe_null!(map_insert_size(map, size_of::<T>(), hash, value) as *mut T)
+    // SAFETY: forwards this fn's contract (live `map`, `value` a key of the
+    // map's discipline) to the size-generic insert with `T`'s size as the
+    // stride.
+    ufbxi_maybe_null!(unsafe { map_insert_size(map, size_of::<T>(), hash, value) } as *mut T)
 }
 
 // ufbx.c:4661-4668 `ufbxi_map_cmp_uint64`
@@ -734,8 +929,11 @@ pub(crate) unsafe extern "C" fn map_cmp_uint64(
     vb: *const c_void,
 ) -> i32 {
     let _ = user; // (void)user
-    let a = *(va as *const u64);
-    let b = *(vb as *const u64);
+                  // SAFETY: C-callback contract — the map compares `u64` keys, so `va`/`vb`
+                  // each address a live `u64`.
+    let a = unsafe { *(va as *const u64) };
+    // SAFETY: as above, for `vb`.
+    let b = unsafe { *(vb as *const u64) };
     if a < b {
         return -1;
     }
@@ -752,8 +950,11 @@ pub(crate) unsafe extern "C" fn map_cmp_const_char_ptr(
     vb: *const c_void,
 ) -> i32 {
     let _ = user; // (void)user
-    let a = *(va as *const *const u8);
-    let b = *(vb as *const *const u8);
+                  // SAFETY: C-callback contract — the map compares `const char *` keys, so
+                  // `va`/`vb` each address a live `*const u8`.
+    let a = unsafe { *(va as *const *const u8) };
+    // SAFETY: as above, for `vb`.
+    let b = unsafe { *(vb as *const *const u8) };
     if a < b {
         return -1;
     }
@@ -770,8 +971,11 @@ pub(crate) unsafe extern "C" fn map_cmp_uintptr(
     vb: *const c_void,
 ) -> i32 {
     let _ = user; // (void)user
-    let a = *(va as *const usize);
-    let b = *(vb as *const usize);
+                  // SAFETY: C-callback contract — the map compares `uintptr_t` keys, so
+                  // `va`/`vb` each address a live `usize`.
+    let a = unsafe { *(va as *const usize) };
+    // SAFETY: as above, for `vb`.
+    let b = unsafe { *(vb as *const usize) };
     if a < b {
         return -1;
     }
@@ -791,8 +995,11 @@ pub(crate) unsafe extern "C" fn map_cmp_ptr_id(
     vb: *const c_void,
 ) -> i32 {
     let _ = user; // (void)user
-    let a = *(va as *const PtrId);
-    let b = *(vb as *const PtrId);
+                  // SAFETY: C-callback contract — the map compares `ufbxi_ptr_id` keys, so
+                  // `va`/`vb` each address a live `PtrId`.
+    let a = unsafe { *(va as *const PtrId) };
+    // SAFETY: as above, for `vb`.
+    let b = unsafe { *(vb as *const PtrId) };
     if a.id != b.id {
         return if a.id < b.id { -1 } else { 1 };
     }
@@ -923,20 +1130,30 @@ mod tests {
     unsafe fn make_map(ator: *mut Allocator, cmp_fn: CmpFn) -> Map {
         // C maps live inside zero-initialized contexts; `ufbxi_map_init` only
         // sets the fields it names.
-        let mut map = MaybeUninit::<Map>::zeroed().assume_init();
-        map_init(&mut map, ator, cmp_fn, core::ptr::null_mut());
+        // SAFETY: an all-zero bit pattern is a valid `Map` (raw pointers null,
+        // integers zero, `Option<CmpFn>` None).
+        let mut map = unsafe { MaybeUninit::<Map>::zeroed().assume_init() };
+        // SAFETY: `&mut map` is a live, writable `Map`; `ator` is the caller's
+        // allocator to install.
+        unsafe { map_init(&mut map, ator, cmp_fn, core::ptr::null_mut()) };
         map
     }
 
     unsafe fn make_test_ator(err: *mut Error) -> Allocator {
         let mut ator = MaybeUninit::<Allocator>::zeroed();
-        init_ator(
-            err,
-            ator.as_mut_ptr(),
-            core::ptr::null(),
-            b"test\0".as_ptr(),
-        );
-        ator.assume_init()
+        // SAFETY: `ator.as_mut_ptr()` is a live, writable `Allocator` slot;
+        // `err` is the caller's live error sink.
+        unsafe {
+            init_ator(
+                err,
+                ator.as_mut_ptr(),
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
+        }
+        // SAFETY: `init_ator` fully initialized the allocator over the zeroed
+        // storage.
+        unsafe { ator.assume_init() }
     }
 
     #[test]
