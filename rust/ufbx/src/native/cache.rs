@@ -11,10 +11,6 @@
 //! The XML parser this section drives lives in `native::xml`
 //! (`UFBXI_FEATURE_XML`, derived from the geometry-cache feature).
 #![allow(dead_code, unused_imports)]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::c_void;
 use core::mem::{size_of, size_of_val, MaybeUninit};
 
@@ -880,19 +876,34 @@ pub(crate) unsafe fn cache_read(
     allow_eof: bool,
 ) -> Result<(), Fail> {
     let mut dst: *mut c_void = dst;
-    let buffered: usize = min_sz(to_size(cc.pos_end().offset_from(cc.pos())), size);
-    core::ptr::copy_nonoverlapping(cc.pos(), dst as *mut u8, buffered);
-    cc.set_pos(cc.pos().add(buffered));
+    // SAFETY: `pos` and `pos_end` bracket the same read buffer — `pos_end` is
+    // derived from `pos`'s allocation and never precedes it — so they are two
+    // pointers into one object, which is what `offset_from` requires.
+    let buffered: usize = min_sz(to_size(unsafe { cc.pos_end().offset_from(cc.pos()) }), size);
+    // SAFETY: `buffered` is bounded by `pos_end - pos` readable bytes and by
+    // `size`, the caller's guarantee of writable bytes at `dst`; the read
+    // buffer and the caller's destination are distinct objects.
+    unsafe { core::ptr::copy_nonoverlapping(cc.pos(), dst as *mut u8, buffered) };
+    // SAFETY: `buffered <= pos_end - pos`, so the advanced `pos` lands at or
+    // before the one-past-the-end `pos_end`.
+    cc.set_pos(unsafe { cc.pos().add(buffered) });
     size -= buffered;
     cc.set_file_offset(cc.file_offset().wrapping_add(buffered as u64));
     if size == 0 {
         return Ok(());
     }
-    dst = (dst as *mut u8).add(buffered) as *mut c_void;
+    // SAFETY: `buffered` bytes of the caller's `size`-byte destination are
+    // consumed, so `dst + buffered` is at most one past its end.
+    dst = unsafe { (dst as *mut u8).add(buffered) } as *mut c_void;
 
     if size >= cc.buffer_size() {
-        let num_read: usize =
-            (cc.stream_view().read_fn().unwrap_unchecked())(cc.stream_view().user(), dst, size);
+        // SAFETY: the stream's `read_fn` is non-null for the whole lifetime of
+        // an opened `cc.stream` (C: every `ufbx_stream` handed to the cache
+        // reader has one); calling it is the C-callback contract, with `dst`
+        // writable for the `size` bytes the caller guarantees.
+        let num_read: usize = unsafe {
+            (cc.stream_view().read_fn().unwrap_unchecked())(cc.stream_view().user(), dst, size)
+        };
         ufbxi_check_err_msg!(
             cc.error_view(),
             num_read <= size,
@@ -909,13 +920,20 @@ pub(crate) unsafe fn cache_read(
         }
         cc.set_file_offset(cc.file_offset().wrapping_add(num_read as u64));
         size -= num_read;
-        dst = (dst as *mut u8).add(num_read) as *mut c_void;
+        // SAFETY: `num_read <= size` (checked just above), so the advance stays
+        // within the caller's `size`-byte destination.
+        dst = unsafe { (dst as *mut u8).add(num_read) } as *mut c_void;
     } else {
-        let num_read: usize = (cc.stream_view().read_fn().unwrap_unchecked())(
-            cc.stream_view().user(),
-            cc.buffer_mut_ptr() as *mut c_void,
-            cc.buffer_size(),
-        );
+        // SAFETY: the stream's `read_fn` is non-null for the whole lifetime of
+        // an opened `cc.stream`; the destination is `cc`'s own buffer, read
+        // with exactly its own `buffer_size`.
+        let num_read: usize = unsafe {
+            (cc.stream_view().read_fn().unwrap_unchecked())(
+                cc.stream_view().user(),
+                cc.buffer_mut_ptr() as *mut c_void,
+                cc.buffer_size(),
+            )
+        };
         ufbxi_check_err_msg!(
             cc.error_view(),
             num_read <= cc.buffer_size(),
@@ -931,19 +949,30 @@ pub(crate) unsafe fn cache_read(
             );
         }
         cc.set_pos(cc.buffer_ptr());
-        cc.set_pos_end(cc.buffer_ptr().add(cc.buffer_size()));
+        // SAFETY: `buffer_size` is the length of `cc`'s own buffer, so this is
+        // its one-past-the-end pointer.
+        cc.set_pos_end(unsafe { cc.buffer_ptr().add(cc.buffer_size()) });
 
-        core::ptr::copy_nonoverlapping(cc.pos(), dst as *mut u8, size);
-        cc.set_pos(cc.pos().add(size));
+        // SAFETY: this arm runs with `size < cc.buffer_size()`, so `size` bytes
+        // are readable from the freshly refilled buffer at `pos` and writable
+        // at `dst` (the caller's remaining destination); buffer and
+        // destination are distinct objects.
+        unsafe { core::ptr::copy_nonoverlapping(cc.pos(), dst as *mut u8, size) };
+        // SAFETY: `size < cc.buffer_size()`, so the advanced `pos` stays inside
+        // the buffer `pos_end` bounds.
+        cc.set_pos(unsafe { cc.pos().add(size) });
         cc.set_file_offset(cc.file_offset().wrapping_add(size as u64));
 
         let num_written: usize = min_sz(size, num_read);
         size -= num_written;
-        dst = (dst as *mut u8).add(num_written) as *mut c_void;
+        // SAFETY: `num_written <= size`, the caller's remaining writable bytes.
+        dst = unsafe { (dst as *mut u8).add(num_written) } as *mut c_void;
     }
 
     if size > 0 {
-        core::ptr::write_bytes(dst as *mut u8, 0, size);
+        // SAFETY: `size` tracks the caller's still-unwritten destination bytes,
+        // every advance of `dst` above having been subtracted from it.
+        unsafe { core::ptr::write_bytes(dst as *mut u8, 0, size) };
     }
 
     Ok(())
@@ -1362,7 +1391,11 @@ pub(crate) unsafe extern "C" fn tmp_channel_less(
     let _ = user;
     let a: *const CacheTmpChannel = va as *const CacheTmpChannel;
     let b: *const CacheTmpChannel = vb as *const CacheTmpChannel;
-    str_less((*a).name, (*b).name)
+    // SAFETY: the sort's comparator contract is that `va`/`vb` address live
+    // elements of the array being sorted, which `cache_sort_tmp_channels`
+    // instantiates with `CacheTmpChannel`; `str_less` in turn requires two
+    // valid `String` runs, which those elements' `name` fields are.
+    unsafe { str_less((*a).name, (*b).name) }
 }
 
 // ufbx.c:24301-24306 `ufbxi_cache_sort_tmp_channels`
@@ -1373,25 +1406,37 @@ pub(crate) unsafe fn cache_sort_tmp_channels(
     channels: *mut CacheTmpChannel,
     count: usize,
 ) -> Result<(), Fail> {
+    // SAFETY: the growth targets are `cc`'s own `tmp_arr` pointer/size pair,
+    // grown through `cc`'s own temp allocator — the pairing `grow_array`
+    // requires. The verbatim C condition text is supplied, so wrapping the
+    // condition does not perturb the recorded error string.
     ufbxi_check_err!(
         cc.error_view(),
-        grow_array::<u8>(
-            cc.ator_tmp(),
-            cc.tmp_arr_mut_ptr(),
-            cc.tmp_arr_size_mut_ptr(),
-            count * size_of::<CacheTmpChannel>()
-        ),
+        unsafe {
+            grow_array::<u8>(
+                cc.ator_tmp(),
+                cc.tmp_arr_mut_ptr(),
+                cc.tmp_arr_size_mut_ptr(),
+                count * size_of::<CacheTmpChannel>()
+            )
+        },
         "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->tmp_arr)), (&cc->tmp_arr), (&cc->tmp_arr_size), (count * sizeof(ufbxi_cache_tmp_channel)))"
     );
-    stable_sort(
-        size_of::<CacheTmpChannel>(),
-        16,
-        channels as *mut c_void,
-        cc.tmp_arr() as *mut c_void,
-        count,
-        tmp_channel_less,
-        core::ptr::null_mut(),
-    );
+    // SAFETY: the caller's contract is that `channels` addresses `count` live
+    // `CacheTmpChannel`s; the scratch buffer is `cc.tmp_arr`, just grown to
+    // `count * size_of::<CacheTmpChannel>()` bytes, and the element size /
+    // comparator match that type.
+    unsafe {
+        stable_sort(
+            size_of::<CacheTmpChannel>(),
+            16,
+            channels as *mut c_void,
+            cc.tmp_arr() as *mut c_void,
+            count,
+            tmp_channel_less,
+            core::ptr::null_mut(),
+        );
+    }
     Ok(())
 }
 
@@ -1603,18 +1648,29 @@ pub(crate) fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
 #[inline(never)]
 pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Result<(), Fail> {
     cc.set_stream_filename(filename);
-    push_string_place_str(
-        cc.string_pool_mut_ptr(),
-        cc.stream_filename_mut_ptr(),
-        false,
-    )?;
+    // SAFETY: both pointers address `cc`'s own fields — the string pool it
+    // owns and the `stream_filename` just stored — so they are live and
+    // properly aligned for the in-place interning `push_string_place_str` does.
+    unsafe {
+        push_string_place_str(
+            cc.string_pool_mut_ptr(),
+            cc.stream_filename_mut_ptr(),
+            false,
+        )?;
+    }
 
     // Assume all files have at least 16 bytes of header
-    let magic_len: usize = (cc.stream_view().read_fn().unwrap_unchecked())(
-        cc.stream_view().user(),
-        cc.buffer_mut_ptr() as *mut c_void,
-        16,
-    );
+    // SAFETY: the stream's `read_fn` is non-null for the whole lifetime of an
+    // opened `cc.stream` (the caller opened it before calling); the
+    // destination is `cc`'s own buffer, which is larger than the 16-byte
+    // header read here.
+    let magic_len: usize = unsafe {
+        (cc.stream_view().read_fn().unwrap_unchecked())(
+            cc.stream_view().user(),
+            cc.buffer_mut_ptr() as *mut c_void,
+            16,
+        )
+    };
     ufbxi_check_err_msg!(
         cc.error_view(),
         magic_len <= 16,
@@ -1628,14 +1684,19 @@ pub(crate) unsafe fn cache_load_file(cc: &CacheContext, filename: String) -> Res
         "magic_len == 16"
     );
     cc.set_pos(cc.buffer_ptr());
-    cc.set_pos_end(cc.buffer_ptr().add(16));
+    // SAFETY: `cc`'s buffer is larger than the 16-byte header, so this is an
+    // interior pointer of that buffer.
+    cc.set_pos_end(unsafe { cc.buffer_ptr().add(16) });
 
     cc.set_file_offset(0);
 
-    if crate::native::error::memcmp(cc.buffer_ptr(), b"POINTCACHE2".as_ptr(), 11) == 0 {
+    // SAFETY (all three): the checks above established that the read filled 16
+    // bytes of `cc`'s buffer, so the 11 and 4 byte compares are in bounds; the
+    // right-hand operands are byte literals at least that long.
+    if unsafe { crate::native::error::memcmp(cc.buffer_ptr(), b"POINTCACHE2".as_ptr(), 11) } == 0 {
         cache_load_pc2(cc)?;
-    } else if crate::native::error::memcmp(cc.buffer_ptr(), b"FOR4".as_ptr(), 4) == 0
-        || crate::native::error::memcmp(cc.buffer_ptr(), b"FOR8".as_ptr(), 4) == 0
+    } else if unsafe { crate::native::error::memcmp(cc.buffer_ptr(), b"FOR4".as_ptr(), 4) } == 0
+        || unsafe { crate::native::error::memcmp(cc.buffer_ptr(), b"FOR8".as_ptr(), 4) } == 0
     {
         cache_load_mc(cc)?;
     } else {
@@ -1654,25 +1715,41 @@ pub(crate) unsafe fn cache_try_open_file(
     original_filename: *const crate::prelude::Blob,
     p_found: *mut bool,
 ) -> Result<(), Fail> {
-    core::ptr::write_bytes(cc.stream_mut_ptr(), 0, 1);
-    ufbxi_regression_assert!(strlen(filename.data) == filename.length);
-    if !open_file(
-        cc.open_file_cb_ptr(),
-        cc.stream_mut_ptr(),
-        filename.data,
-        filename.length,
-        original_filename,
-        cc.ator_tmp(),
-        OpenFileType::GeometryCache,
-    ) {
+    // SAFETY: `stream_mut_ptr` addresses `cc`'s own `RawStream` field, so one
+    // `RawStream` worth of bytes is writable there.
+    unsafe { core::ptr::write_bytes(cc.stream_mut_ptr(), 0, 1) };
+    // SAFETY: `filename` is an interned pool string, NUL-terminated by the
+    // string pool — the contract `strlen` walks to.
+    ufbxi_regression_assert!(unsafe { strlen(filename.data) } == filename.length);
+    // SAFETY: the callback and stream pointers address `cc`'s own fields;
+    // `filename.data`/`.length` are a live pool string run, `original_filename`
+    // is the caller's `Blob` pointer, and the allocator is `cc`'s own temp one.
+    if !unsafe {
+        open_file(
+            cc.open_file_cb_ptr(),
+            cc.stream_mut_ptr(),
+            filename.data,
+            filename.length,
+            original_filename,
+            cc.ator_tmp(),
+            OpenFileType::GeometryCache,
+        )
+    } {
         return Ok(());
     }
 
-    let ok = cache_load_file(cc, filename);
-    *p_found = true;
+    // SAFETY: `open_file` returned true, so `cc.stream` is an opened stream —
+    // what `cache_load_file` requires to read its header.
+    let ok = unsafe { cache_load_file(cc, filename) };
+    // SAFETY: the caller's contract is that `p_found` points at a writable
+    // `bool` out-param.
+    unsafe { *p_found = true };
 
     if let Some(close_fn) = cc.stream_view().close_fn() {
-        close_fn(cc.stream_view().user());
+        // SAFETY: the C-callback contract — `close_fn` came from the stream
+        // `open_file` opened above, and is invoked once with that stream's own
+        // `user` pointer.
+        unsafe { close_fn(cc.stream_view().user()) };
     }
 
     ok
@@ -1834,12 +1911,17 @@ pub(crate) unsafe extern "C" fn cmp_cache_frame_less(
     let _ = user;
     let a: *const CacheFrame = va as *const CacheFrame;
     let b: *const CacheFrame = vb as *const CacheFrame;
-    if (*a).channel.data != (*b).channel.data {
+    // SAFETY (every deref of `a`/`b` below): the sort's comparator contract is
+    // that `va`/`vb` address live elements of the array being sorted, which
+    // `cache_sort_frames` instantiates with `CacheFrame`. The `str_equal` /
+    // `str_less` calls in turn require valid `String` runs, which those
+    // elements' interned `channel` fields are.
+    if unsafe { (*a).channel.data != (*b).channel.data } {
         // Channel names should be interned
-        ufbxi_regression_assert!(!str_equal((*a).channel, (*b).channel));
-        return str_less((*a).channel, (*b).channel);
+        ufbxi_regression_assert!(unsafe { !str_equal((*a).channel, (*b).channel) });
+        return unsafe { str_less((*a).channel, (*b).channel) };
     }
-    (*a).time < (*b).time
+    unsafe { (*a).time < (*b).time }
 }
 
 // ufbx.c:24554-24559 `ufbxi_cache_sort_frames`
@@ -1850,25 +1932,37 @@ pub(crate) unsafe fn cache_sort_frames(
     frames: *mut CacheFrame,
     count: usize,
 ) -> Result<(), Fail> {
+    // SAFETY: the growth targets are `cc`'s own `tmp_arr` pointer/size pair,
+    // grown through `cc`'s own temp allocator — the pairing `grow_array`
+    // requires. The verbatim C condition text is supplied, so wrapping the
+    // condition does not perturb the recorded error string.
     ufbxi_check_err!(
         cc.error_view(),
-        grow_array::<u8>(
-            cc.ator_tmp(),
-            cc.tmp_arr_mut_ptr(),
-            cc.tmp_arr_size_mut_ptr(),
-            count * size_of::<CacheFrame>()
-        ),
+        unsafe {
+            grow_array::<u8>(
+                cc.ator_tmp(),
+                cc.tmp_arr_mut_ptr(),
+                cc.tmp_arr_size_mut_ptr(),
+                count * size_of::<CacheFrame>()
+            )
+        },
         "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->tmp_arr)), (&cc->tmp_arr), (&cc->tmp_arr_size), (count * sizeof(ufbx_cache_frame)))"
     );
-    stable_sort(
-        size_of::<CacheFrame>(),
-        16,
-        frames as *mut c_void,
-        cc.tmp_arr() as *mut c_void,
-        count,
-        cmp_cache_frame_less,
-        core::ptr::null_mut(),
-    );
+    // SAFETY: the caller's contract is that `frames` addresses `count` live
+    // `CacheFrame`s; the scratch buffer is `cc.tmp_arr`, just grown to
+    // `count * size_of::<CacheFrame>()` bytes, and the element size /
+    // comparator match that type.
+    unsafe {
+        stable_sort(
+            size_of::<CacheFrame>(),
+            16,
+            frames as *mut c_void,
+            cc.tmp_arr() as *mut c_void,
+            count,
+            cmp_cache_frame_less,
+            core::ptr::null_mut(),
+        );
+    }
     Ok(())
 }
 
@@ -2029,15 +2123,24 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     // Make sure the filename we pass to `open_file_fn()` is NULL-terminated
     let filename_data: *mut u8 = cc.tmp_view().push(filename.length + 1);
     ufbxi_check_err!(cc.error_view(), !filename_data.is_null(), "filename_data");
-    core::ptr::copy_nonoverlapping(filename.data, filename_data, filename.length);
-    *filename_data.add(filename.length) = b'\0';
+    // SAFETY: `filename_data` is a fresh non-null `length + 1` byte arena
+    // allocation (checked above), distinct from the caller's `filename` run of
+    // `length` readable bytes.
+    unsafe { core::ptr::copy_nonoverlapping(filename.data, filename_data, filename.length) };
+    // SAFETY: the allocation is `length + 1` bytes, so index `length` is its
+    // last writable byte.
+    unsafe { *filename_data.add(filename.length) = b'\0' };
     let filename_copy: String = String::new_c(filename_data, filename.length);
 
     // TODO: NULL termination!
     let mut found: bool = false;
-    cache_try_open_file(cc, filename_copy, core::ptr::null(), &mut found)?;
+    // SAFETY: `filename_copy` is the NUL-terminated arena copy built just
+    // above, and `&mut found` is a live local out-param.
+    unsafe { cache_try_open_file(cc, filename_copy, core::ptr::null(), &mut found)? };
     if !found {
-        set_err_info(cc.error_mut_ptr(), filename.data, filename.length);
+        // SAFETY: `error_mut_ptr` addresses `cc`'s own `Error` field, and
+        // `filename.data`/`.length` is the caller's live string run.
+        unsafe { set_err_info(cc.error_mut_ptr(), filename.data, filename.length) };
         ufbxi_fail_err_msg!(cc.error_view(), "open_file_fn()", "File not found");
     }
 
@@ -2057,11 +2160,16 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
         "cc->cache.frames.data"
     );
 
-    cache_sort_frames(
-        cc,
-        cc.cache_view().frames_view().data() as *mut CacheFrame,
-        cc.cache_view().frames_view().count(),
-    )?;
+    // SAFETY: the frames run was just pushed into the result buf and checked
+    // non-null, and `count` is the item count that push used — so the pointer
+    // addresses exactly `count` live `CacheFrame`s.
+    unsafe {
+        cache_sort_frames(
+            cc,
+            cc.cache_view().frames_view().data() as *mut CacheFrame,
+            cc.cache_view().frames_view().count(),
+        )?;
+    }
     cache_setup_channels(cc)?;
 
     // Must be last allocation!
@@ -2072,20 +2180,29 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     // (possibly narrowed) public `&GeometryCache` pointer via exposed provenance.
     (cc.imp() as *mut u8).expose_provenance();
 
-    init_ref(
-        &mut (*cc.imp()).refcount,
-        CACHE_IMP_MAGIC,
-        core::ptr::null_mut(),
-    );
+    // SAFETY (this and every `(*cc.imp())` projection below): `cc.imp()` is the
+    // non-null single-element result-buf allocation pushed and checked just
+    // above; it is the last allocation, so nothing else aliases it while these
+    // header fields are stamped.
+    unsafe {
+        init_ref(
+            &mut (*cc.imp()).refcount,
+            CACHE_IMP_MAGIC,
+            core::ptr::null_mut(),
+        );
+    }
 
-    core::ptr::write(&mut (*cc.imp()).cache, core::ptr::read(cc.cache_mut_ptr()));
-    (*cc.imp()).magic = CACHE_IMP_MAGIC;
-    (*cc.imp()).owned_by_scene = cc.owned_by_scene();
-    (*cc.imp()).refcount.ator = cc.ator_result();
-    (*cc.imp()).refcount.buf = cc.take_result();
-    (*cc.imp()).refcount.buf.ator = &raw mut (*cc.imp()).refcount.ator;
-    (*cc.imp()).string_buf = cc.string_pool_view().take_buf();
-    (*cc.imp()).string_buf.ator = &raw mut (*cc.imp()).refcount.ator;
+    // SAFETY: `cache_mut_ptr` addresses `cc`'s own `GeometryCache` field; the
+    // read moves it into the fresh `imp` slot, and `cc.cache` is not read again
+    // (PORTING.md "Copy vs non-Copy internal structs": an explicit move).
+    unsafe { core::ptr::write(&mut (*cc.imp()).cache, core::ptr::read(cc.cache_mut_ptr())) };
+    unsafe { (*cc.imp()).magic = CACHE_IMP_MAGIC };
+    unsafe { (*cc.imp()).owned_by_scene = cc.owned_by_scene() };
+    unsafe { (*cc.imp()).refcount.ator = cc.ator_result() };
+    unsafe { (*cc.imp()).refcount.buf = cc.take_result() };
+    unsafe { (*cc.imp()).refcount.buf.ator = &raw mut (*cc.imp()).refcount.ator };
+    unsafe { (*cc.imp()).string_buf = cc.string_pool_view().take_buf() };
+    unsafe { (*cc.imp()).string_buf.ator = &raw mut (*cc.imp()).refcount.ator };
 
     Ok(())
 }
@@ -2094,28 +2211,46 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut GeometryCache {
-    let ok = cache_load_imp(cc, filename).is_ok();
+    // SAFETY: `cc` is the initialized cache context the caller set up, which is
+    // what `cache_load_imp` requires; `filename` is forwarded unchanged.
+    let ok = unsafe { cache_load_imp(cc, filename).is_ok() };
 
-    buf_free(cc.tmp_mut_ptr());
-    buf_free(cc.tmp_stack_mut_ptr());
-    free::<u8>(cc.ator_tmp(), cc.name_buf(), cc.name_cap());
-    free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size());
+    // SAFETY (this teardown group): every pointer addresses one of `cc`'s own
+    // fields, each paired with the allocator that produced it — the temp bufs
+    // and the `name_buf`/`tmp_arr` runs with `cc.ator_tmp`. Each is freed once,
+    // and the context is not used for allocation afterwards.
+    unsafe { buf_free(cc.tmp_mut_ptr()) };
+    unsafe { buf_free(cc.tmp_stack_mut_ptr()) };
+    unsafe { free::<u8>(cc.ator_tmp(), cc.name_buf(), cc.name_cap()) };
+    unsafe { free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size()) };
     if !cc.owned_by_scene() {
-        string_pool_temp_free(cc.string_pool_mut_ptr());
-        free_ator(cc.ator_tmp());
+        // SAFETY: the temp allocator and its string pool belong to `cc` alone
+        // when the cache is not owned by a scene, so freeing them here is the
+        // single release of that state.
+        unsafe { string_pool_temp_free(cc.string_pool_mut_ptr()) };
+        unsafe { free_ator(cc.ator_tmp()) };
     }
 
     if ok {
-        &raw mut (*cc.imp()).cache
+        // SAFETY: a successful `cache_load_imp` stamped `cc.imp` with a
+        // non-null result-buf allocation whose `cache` field it initialized.
+        unsafe { &raw mut (*cc.imp()).cache }
     } else {
-        fix_error_type(
-            cc.error_mut_ptr(),
-            b"Failed to load geometry cache\0".as_ptr(),
-            core::ptr::null_mut(),
-        );
+        // SAFETY: `error_mut_ptr` addresses `cc`'s own live `Error` field, and
+        // the default description is a NUL-terminated byte literal.
+        unsafe {
+            fix_error_type(
+                cc.error_mut_ptr(),
+                b"Failed to load geometry cache\0".as_ptr(),
+                core::ptr::null_mut(),
+            );
+        }
         if !cc.owned_by_scene() {
-            buf_free(cc.string_pool_view().buf_mut_ptr());
-            free_ator(cc.ator_result_mut_ptr());
+            // SAFETY: on the failure path the result buf never reached an
+            // `imp`, so `cc` still owns the string-pool buf and the result
+            // allocator — both its own fields, freed exactly once here.
+            unsafe { buf_free(cc.string_pool_view().buf_mut_ptr()) };
+            unsafe { free_ator(cc.ator_result_mut_ptr()) };
         }
         core::ptr::null_mut()
     }
@@ -2131,39 +2266,61 @@ pub(crate) unsafe fn load_geometry_cache(
 ) -> *mut GeometryCache {
     // C: `ufbx_geometry_cache_opts opts; // ufbxi_uninit`
     let opts: RawGeometryCacheOpts = if !user_opts.is_null() {
-        core::ptr::read(user_opts)
+        // SAFETY: `user_opts` is non-null and the caller's contract is that it
+        // points at a readable, initialized options struct; the read copies it
+        // and leaves the caller's copy intact (the struct is plain data).
+        unsafe { core::ptr::read(user_opts) }
     } else {
-        core::mem::zeroed()
+        // SAFETY: `RawGeometryCacheOpts` is plain data whose all-zero bit
+        // pattern is the C `= { 0 }` default.
+        unsafe { core::mem::zeroed() }
     };
 
     // C: `ufbxi_cache_context cc = { UFBX_ERROR_NONE };` / `ufbxi_allocator ator_tmp = { 0 };`
-    let cc: CacheContext = core::mem::zeroed();
-    let mut ator_tmp: Allocator = core::mem::zeroed();
-    init_ator(
-        cc.error_mut_ptr(),
-        &mut ator_tmp,
-        &opts.temp_allocator,
-        b"temp\0".as_ptr(),
-    );
-    init_ator(
-        cc.error_mut_ptr(),
-        cc.ator_result_mut_ptr(),
-        &opts.result_allocator,
-        b"result\0".as_ptr(),
-    );
+    // SAFETY: both are plain-data structs whose all-zero bit pattern is the C
+    // zero-initializer these lines port.
+    let cc: CacheContext = unsafe { core::mem::zeroed() };
+    let mut ator_tmp: Allocator = unsafe { core::mem::zeroed() };
+    // SAFETY (both calls): the error pointer addresses `cc`'s own `Error`
+    // field, the allocators are the zeroed locals/fields being initialized
+    // here, the opts references are live, and the names are NUL-terminated
+    // byte literals.
+    unsafe {
+        init_ator(
+            cc.error_mut_ptr(),
+            &mut ator_tmp,
+            &opts.temp_allocator,
+            b"temp\0".as_ptr(),
+        );
+    }
+    unsafe {
+        init_ator(
+            cc.error_mut_ptr(),
+            cc.ator_result_mut_ptr(),
+            &opts.result_allocator,
+            b"result\0".as_ptr(),
+        );
+    }
     cc.set_ator_tmp(&mut ator_tmp);
 
-    cc.set_opts(core::ptr::read(&opts));
+    // SAFETY: `&opts` is a live local; the read copies this plain-data struct,
+    // which stays valid to use afterwards.
+    cc.set_opts(unsafe { core::ptr::read(&opts) });
 
     cc.set_open_file_cb(opts.open_file_cb);
 
     cc.string_pool_view().set_error(cc.error_mut_ptr());
-    map_init(
-        cc.string_pool_view().map_mut_ptr(),
-        cc.ator_tmp(),
-        map_cmp_string,
-        core::ptr::null_mut(),
-    );
+    // SAFETY: the map addressed is `cc`'s own string-pool map, paired with
+    // `cc`'s temp allocator (initialized above) — the pairing `map_init`
+    // requires; `map_cmp_string` is the comparator for its string keys.
+    unsafe {
+        map_init(
+            cc.string_pool_view().map_mut_ptr(),
+            cc.ator_tmp(),
+            map_cmp_string,
+            core::ptr::null_mut(),
+        );
+    }
     cc.string_pool_view()
         .buf_view()
         .set_ator(cc.ator_result_mut_ptr());
@@ -2177,12 +2334,20 @@ pub(crate) unsafe fn load_geometry_cache(
         30.0
     });
 
-    let cache: *mut GeometryCache = cache_load(&cc, filename);
+    // SAFETY: `cc` is fully initialized above (allocators, string pool, opts) —
+    // the state `cache_load` consumes.
+    let cache: *mut GeometryCache = unsafe { cache_load(&cc, filename) };
     if !p_error.is_null() {
         if !cache.is_null() {
-            clear_error(p_error);
+            // SAFETY: `p_error` is non-null and the caller's contract is that
+            // it points at a writable `Error` out-param.
+            unsafe { clear_error(p_error) };
         } else {
-            core::ptr::write(p_error, core::ptr::read(cc.error_mut_ptr()));
+            // SAFETY: same writable-out-param contract for `p_error`;
+            // `error_mut_ptr` addresses `cc`'s own live `Error`, and the two
+            // are distinct objects. `Error` is plain data, so the read leaves
+            // `cc`'s copy usable.
+            unsafe { core::ptr::write(p_error, core::ptr::read(cc.error_mut_ptr())) };
         }
     }
     cache
@@ -2192,8 +2357,11 @@ pub(crate) unsafe fn load_geometry_cache(
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn free_geometry_cache_imp(imp: *mut GeometryCacheImp) {
-    ufbx_assert!((*imp).magic == CACHE_IMP_MAGIC);
-    buf_free(&mut (*imp).string_buf);
+    // SAFETY (both ops): the caller's contract is that `imp` points at a live
+    // `GeometryCacheImp` — the magic read then confirms it is one of ours, and
+    // `string_buf` is that header's own buf, freed once as the cache dies.
+    ufbx_assert!(unsafe { (*imp).magic } == CACHE_IMP_MAGIC);
+    unsafe { buf_free(&mut (*imp).string_buf) };
 }
 
 // ufbx.c:24765-24769 `ufbxi_geometry_cache_imp` (`#else` branch — feature disabled)
@@ -2219,8 +2387,13 @@ pub(crate) unsafe fn load_geometry_cache(
     // C: `filename`/`user_opts` are unreferenced in the `#else` arm.
     let _ = (filename, user_opts);
     if !p_error.is_null() {
-        core::ptr::write_bytes(p_error as *mut u8, 0, size_of::<Error>());
-        ufbxi_fmt_err_info!(p_error, "UFBX_ENABLE_GEOMETRY_CACHE");
+        // SAFETY: `p_error` is non-null and the caller's contract is that it
+        // points at a writable `Error` out-param, so exactly
+        // `size_of::<Error>()` bytes are writable there.
+        unsafe { core::ptr::write_bytes(p_error as *mut u8, 0, size_of::<Error>()) };
+        // SAFETY: `p_error` is the non-null writable `Error` out-param
+        // zero-filled just above, and the format string is a literal.
+        unsafe { ufbxi_fmt_err_info!(p_error, "UFBX_ENABLE_GEOMETRY_CACHE") };
         ufbxi_report_err_msg!(
             unsafe { crate::native::error::ErrorView::from_ptr(p_error) },
             "UFBXI_FEATURE_GEOMETRY_CACHE",
@@ -2270,15 +2443,20 @@ pub(crate) unsafe extern "C" fn less_external_file(
     let _ = user;
     let a: *const ExternalFile = va as *const ExternalFile;
     let b: *const ExternalFile = vb as *const ExternalFile;
-    if (*a).type_ != (*b).type_ {
-        return (*a).type_ < (*b).type_;
+    // SAFETY (every deref of `a`/`b` below): the sort's comparator contract is
+    // that `va`/`vb` address live elements of the array being sorted, which the
+    // external-file sort instantiates with `ExternalFile`. `str_cmp` in turn
+    // requires two valid `String` runs, which those elements' interned
+    // `filename` fields are.
+    if unsafe { (*a).type_ != (*b).type_ } {
+        return unsafe { (*a).type_ < (*b).type_ };
     }
-    let cmp: i32 = str_cmp((*a).filename, (*b).filename);
+    let cmp: i32 = unsafe { str_cmp((*a).filename, (*b).filename) };
     if cmp != 0 {
         return cmp < 0;
     }
-    if (*a).index != (*b).index {
-        return (*a).index < (*b).index;
+    if unsafe { (*a).index != (*b).index } {
+        return unsafe { (*a).index < (*b).index };
     }
     false
 }
@@ -2291,7 +2469,9 @@ pub(crate) unsafe fn load_external_cache(
     file: *mut ExternalFile,
 ) -> Result<(), Fail> {
     // C: `ufbxi_cache_context cc = { UFBX_ERROR_NONE };`
-    let cc: CacheContext = core::mem::zeroed();
+    // SAFETY: `CacheContext` is plain data whose all-zero bit pattern is the C
+    // zero-initializer this line ports.
+    let cc: CacheContext = unsafe { core::mem::zeroed() };
     cc.set_owned_by_scene(true);
 
     cc.set_open_file_cb(uc.opts_view().open_file_cb());
@@ -2307,11 +2487,18 @@ pub(crate) unsafe fn load_external_cache(
     cc.opts_view()
         .set_scale_factor(uc.scene_view().metadata_view().geometry_scale());
 
-    let mut cache: *mut GeometryCache = cache_load(&cc, (*file).filename);
+    // SAFETY: `cc` is initialized above with the borrowed allocators and string
+    // pool `cache_load` consumes; the caller's contract is that `file` points
+    // at a live `ExternalFile`, whose `filename` is an interned pool string.
+    let mut cache: *mut GeometryCache = unsafe { cache_load(&cc, (*file).filename) };
     if cache.is_null() {
         if cc.error_view().type_() == ErrorType::FileNotFound {
-            core::ptr::write_bytes(cc.error_mut_ptr(), 0, 1);
-            cache = cache_load(&cc, (*file).absolute_filename);
+            // SAFETY: `error_mut_ptr` addresses `cc`'s own `Error` field, so
+            // one `Error` worth of bytes is writable there.
+            unsafe { core::ptr::write_bytes(cc.error_mut_ptr(), 0, 1) };
+            // SAFETY: same live-`ExternalFile` and initialized-`cc` argument as
+            // the first attempt; the error was just cleared for the retry.
+            cache = unsafe { cache_load(&cc, (*file).absolute_filename) };
         }
     }
 
@@ -2322,14 +2509,21 @@ pub(crate) unsafe fn load_external_cache(
     if cache.is_null() {
         if cc.error_view().type_() == ErrorType::FileNotFound {
             if uc.opts_view().ignore_missing_external_files() {
+                // SAFETY: the caller's contract is that `file` points at a live
+                // `ExternalFile`, whose `filename` is a NUL-terminated interned
+                // pool string — what the `%s` conversion reads. The verbatim C
+                // condition text is supplied, so wrapping the condition does
+                // not perturb the recorded error string.
                 ufbxi_check!(
                     uc,
-                    ufbxi_warnf!(
-                        uc,
-                        WarningType::MissingExternalFile,
-                        "Failed to open geometry cache: %s",
-                        (*file).filename.data
-                    )
+                    unsafe {
+                        ufbxi_warnf!(
+                            uc,
+                            WarningType::MissingExternalFile,
+                            "Failed to open geometry cache: %s",
+                            (*file).filename.data
+                        )
+                    }
                     .is_ok(),
                     "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_MISSING_EXTERNAL_FILE, ~0u, \"Failed to open geometry cache: %s\", file->filename.data)"
                 );
@@ -2339,17 +2533,24 @@ pub(crate) unsafe fn load_external_cache(
                 cc.error_view()
                     .description_view()
                     .set_data(b"External file not found\0".as_ptr());
+                // SAFETY: the `strlen` argument is a NUL-terminated byte
+                // literal.
                 cc.error_view()
                     .description_view()
-                    .set_length(strlen(b"External file not found\0".as_ptr()));
+                    .set_length(unsafe { strlen(b"External file not found\0".as_ptr()) });
             }
         }
 
-        core::ptr::write(uc.error_mut_ptr(), core::ptr::read(cc.error_mut_ptr()));
+        // SAFETY: both pointers address their context's own `Error` field —
+        // distinct objects — and `Error` is plain data, so the read leaves
+        // `cc`'s copy usable (it is not read again).
+        unsafe { core::ptr::write(uc.error_mut_ptr(), core::ptr::read(cc.error_mut_ptr())) };
         return Err(Fail);
     }
 
-    (*file).data = cache as *mut c_void;
+    // SAFETY: the caller's contract is that `file` points at a live, writable
+    // `ExternalFile`.
+    unsafe { (*file).data = cache as *mut c_void };
     Ok(())
 }
 
@@ -2363,6 +2564,8 @@ pub(crate) fn load_external_cache(uc: &Context, file: *mut ExternalFile) -> Resu
         return Ok(());
     }
 
+    // SAFETY: `uc.error_mut_ptr()` addresses the context's own live `Error`,
+    // unaliased here, and the format string is a literal.
     unsafe { ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_GEOMETRY_CACHE") };
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_GEOMETRY_CACHE", "Feature disabled");
 }
@@ -2376,23 +2579,29 @@ pub(crate) unsafe fn find_external_file(
     name: *const u8,
 ) -> *mut ExternalFile {
     let mut ix: usize = usize::MAX;
-    macro_lower_bound_eq::<ExternalFile>(
-        32,
-        &mut ix,
-        files,
-        0,
-        num_files,
-        |a: *const ExternalFile| {
-            if type_ != (*a).type_ {
-                type_ < (*a).type_
-            } else {
-                crate::native::error::strcmp((*a).filename.data, name) < 0
-            }
-        },
-        |a: *const ExternalFile| (*a).type_ == type_ && (*a).filename.data == name,
-    );
+    // SAFETY (every deref in the two predicates): the search hands each
+    // predicate a pointer to an element of the `files` run, so the deref is in
+    // bounds; `strcmp` compares that element's NUL-terminated interned
+    // filename against the caller's NUL-terminated `name`.
+    let less = |a: *const ExternalFile| {
+        if type_ != unsafe { (*a).type_ } {
+            type_ < unsafe { (*a).type_ }
+        } else {
+            unsafe { crate::native::error::strcmp((*a).filename.data, name) < 0 }
+        }
+    };
+    let equal =
+        |a: *const ExternalFile| unsafe { (*a).type_ == type_ && (*a).filename.data == name };
+    // SAFETY: the caller's contract is that `files` addresses `num_files` live
+    // `ExternalFile`s sorted by the same key the predicates test — what the
+    // binary search requires.
+    unsafe {
+        macro_lower_bound_eq::<ExternalFile>(32, &mut ix, files, 0, num_files, less, equal);
+    }
     if ix != usize::MAX {
-        files.add(ix)
+        // SAFETY: `ix < num_files` whenever the search set it, so this is an
+        // element of the caller's run.
+        unsafe { files.add(ix) }
     } else {
         core::ptr::null_mut()
     }

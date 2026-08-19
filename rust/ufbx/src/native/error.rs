@@ -42,10 +42,6 @@
 //!
 //! Phase 1: most items have no consumers yet.
 #![allow(dead_code, unused_macros, unused_imports)]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use crate::generated::{Error, ErrorFrame, ErrorType, Panic};
 use crate::native::platform::{min_sz, ufbx_assert, ufbxi_ignore};
 use crate::native::printf::{vprint, PrintArg, PrintBuffer};
@@ -114,7 +110,10 @@ const _: () = {
 
 pub(crate) unsafe fn strlen(str_: *const u8) -> usize {
     let mut n: usize = 0;
-    while *str_.add(n) != 0 {
+    // SAFETY: the caller's contract is that `str_` points at a NUL-terminated
+    // run, so every byte up to and including the terminator is readable; the
+    // loop stops at that terminator and never advances past it.
+    while unsafe { *str_.add(n) } != 0 {
         n += 1;
     }
     n
@@ -125,8 +124,12 @@ pub(crate) unsafe fn strlen(str_: *const u8) -> usize {
 pub(crate) unsafe fn strcmp(a: *const u8, b: *const u8) -> i32 {
     let mut i: usize = 0;
     loop {
-        let ca = *a.add(i);
-        let cb = *b.add(i);
+        // SAFETY: the caller's contract is that both `a` and `b` are
+        // NUL-terminated; the loop exits at the first NUL, so index `i` stays
+        // within both runs.
+        let ca = unsafe { *a.add(i) };
+        // SAFETY: same NUL-terminated contract, on `b`.
+        let cb = unsafe { *b.add(i) };
         if ca != cb || ca == 0 {
             return ca as i32 - cb as i32;
         }
@@ -139,8 +142,11 @@ pub(crate) unsafe fn strcmp(a: *const u8, b: *const u8) -> i32 {
 pub(crate) unsafe fn memcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
     let mut i: usize = 0;
     while i < n {
-        let ca = *a.add(i);
-        let cb = *b.add(i);
+        // SAFETY: the caller's contract is that `a` and `b` each address at
+        // least `n` readable bytes, and the loop condition holds `i < n`.
+        let ca = unsafe { *a.add(i) };
+        // SAFETY: same `n`-byte contract, on `b`.
+        let cb = unsafe { *b.add(i) };
         if ca != cb {
             return ca as i32 - cb as i32;
         }
@@ -154,8 +160,11 @@ pub(crate) unsafe fn memcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
 pub(crate) unsafe fn memchr(s: *const u8, c: u8, n: usize) -> *const u8 {
     let mut i: usize = 0;
     while i < n {
-        if *s.add(i) == c {
-            return s.add(i);
+        // SAFETY: the caller's contract is that `s` addresses at least `n`
+        // readable bytes, and the loop condition holds `i < n`.
+        if unsafe { *s.add(i) } == c {
+            // SAFETY: same `n`-byte contract; `i < n` keeps the offset in range.
+            return unsafe { s.add(i) };
         }
         i += 1;
     }
@@ -168,8 +177,12 @@ pub(crate) unsafe fn memchr(s: *const u8, c: u8, n: usize) -> *const u8 {
 pub(crate) unsafe fn strncmp(a: *const u8, b: *const u8, n: usize) -> i32 {
     let mut i: usize = 0;
     while i < n {
-        let ca = *a.add(i);
-        let cb = *b.add(i);
+        // SAFETY: the caller's contract is that `a` and `b` are readable for
+        // `n` bytes or up to a NUL, whichever comes first; `i < n` holds here
+        // and the loop exits at the first NUL.
+        let ca = unsafe { *a.add(i) };
+        // SAFETY: same bounded/NUL-terminated contract, on `b`.
+        let cb = unsafe { *b.add(i) };
         if ca != cb || ca == 0 {
             return ca as i32 - cb as i32;
         }
@@ -195,19 +208,27 @@ pub(crate) fn set_user_panic_handler(f: fn(&str)) {
 pub(crate) unsafe fn panic_handler(message: *const u8) {
     let user = USER_PANIC_HANDLER.load(core::sync::atomic::Ordering::Acquire);
     if user != 0 {
-        let f: fn(&str) = core::mem::transmute(user);
-        let bytes = core::slice::from_raw_parts(message, strlen(message));
+        // SAFETY: the stored value is nonzero, and `set_user_panic_handler` is
+        // the only writer — it stores a `fn(&str)` cast to `usize`.
+        let f: fn(&str) = unsafe { core::mem::transmute(user) };
+        // SAFETY: the caller's contract is that `message` is NUL-terminated, so
+        // `strlen` reads in bounds and the run it measures is readable.
+        let bytes = unsafe { core::slice::from_raw_parts(message, strlen(message)) };
         f(&std::string::String::from_utf8_lossy(bytes));
         return;
     }
-    default_panic_handler(message)
+    // SAFETY: `message` carries this fn's own NUL-terminated contract, which is
+    // exactly what `default_panic_handler` requires of its parameter.
+    unsafe { default_panic_handler(message) }
 }
 
 unsafe fn default_panic_handler(message: *const u8) {
     // C: fprintf(stderr, "ufbx panic: %s\n", message);
     // (slice use is confined to the stderr IO boundary)
     use std::io::Write;
-    let bytes = core::slice::from_raw_parts(message, strlen(message));
+    // SAFETY: the caller's contract is that `message` is NUL-terminated, so
+    // `strlen` reads in bounds and the run it measures is readable.
+    let bytes = unsafe { core::slice::from_raw_parts(message, strlen(message)) };
     let mut stderr = std::io::stderr().lock();
     let _ = stderr.write_all(b"ufbx panic: ");
     let _ = stderr.write_all(bytes);
@@ -231,7 +252,10 @@ pub(crate) unsafe fn vsnprintf(
         length: buf_size,
         pos: 0,
     };
-    vprint(&mut buffer, fmt, args);
+    // SAFETY: `buffer` describes the caller's `buf`/`buf_size` pair verbatim,
+    // and `fmt` carries this fn's NUL-terminated format-string contract — the
+    // two obligations `vprint` states.
+    unsafe { vprint(&mut buffer, fmt, args) };
     // C-parity: `buf_size - 1` — callers never pass buf_size == 0 (wrapping
     // matches the C unsigned underflow if one ever did).
     min_sz(buffer.pos, buf_size.wrapping_sub(1)) as i32
@@ -247,7 +271,10 @@ pub(crate) unsafe fn snprintf(
     fmt: *const u8,
     args: &[PrintArg],
 ) -> i32 {
-    vsnprintf(buf, buf_size, fmt, args)
+    // SAFETY: the parameters are forwarded unchanged, so this fn's own
+    // contract (writable `buf` of `buf_size`, NUL-terminated `fmt`) is exactly
+    // what `vsnprintf` requires.
+    unsafe { vsnprintf(buf, buf_size, fmt, args) }
 }
 
 // Call-site wrapper building the `&[PrintArg]` argument pack
@@ -365,17 +392,27 @@ pub(crate) unsafe fn fail_imp_err(
 ) -> i32 {
     let mut cond: *const u8 = fail_str_ptr(cond);
     let func: *const u8 = fail_str_ptr(func);
-    let err = &mut *err;
-    if !cond.is_null() && *cond == b'$' {
+    // SAFETY: the caller's contract is that `err` points at a live, initialized
+    // `Error` that no other borrow aliases for the duration of this call.
+    let err = unsafe { &mut *err };
+    // SAFETY: `cond` is non-null on the right of the `&&`, and it comes from a
+    // `FailStr` — a NUL-terminated 'static run — so the first byte is readable.
+    if !cond.is_null() && unsafe { *cond } == b'$' {
         if err.description.data.is_null() {
-            err.description.data = cond.add(1);
-            err.description.length = strlen(err.description.data);
+            // SAFETY: the leading byte read above is `'$'`, so the FailStr run
+            // holds at least one more byte (its NUL), and `strlen` then walks
+            // that same NUL-terminated run.
+            err.description.data = unsafe { cond.add(1) };
+            err.description.length = unsafe { strlen(err.description.data) };
         }
 
         #[cfg(feature = "error-stack")]
         {
             // Skip the description part if adding to a stack
-            cond = cond.add(strlen(cond) + 1);
+            // SAFETY: a `'$'`-prefixed FailStr is the packed `$desc\0cond\0`
+            // form, so the byte after the description's NUL — the offset
+            // `strlen(cond) + 1` lands on — is still inside the same run.
+            cond = unsafe { cond.add(strlen(cond) + 1) };
         }
     }
 
@@ -389,11 +426,18 @@ pub(crate) unsafe fn fail_imp_err(
             // C: `&err->stack[err->stack_size++]` — decomposed.
             let frame: *mut ErrorFrame = &mut err.stack[err.stack_size as usize];
             err.stack_size += 1;
-            (*frame).description.data = cond;
-            (*frame).description.length = strlen(cond);
-            (*frame).function.data = func;
-            (*frame).function.length = strlen(func);
-            (*frame).source_line = line;
+            // SAFETY (all five writes): `frame` is the address of
+            // `err.stack[..]` at the index the check above bounded by
+            // ERROR_STACK_MAX_DEPTH, so it points at a live `ErrorFrame` inside
+            // the `Error` borrowed as `err`.
+            // SAFETY (both `strlen` calls): `cond` and `func` are non-null
+            // (asserted above) and come from `FailStr` carriers, whose
+            // invariant is a NUL-terminated 'static run.
+            unsafe { (*frame).description.data = cond };
+            unsafe { (*frame).description.length = strlen(cond) };
+            unsafe { (*frame).function.data = func };
+            unsafe { (*frame).function.length = strlen(func) };
+            unsafe { (*frame).source_line = line };
         }
     }
     #[cfg(not(feature = "error-stack"))]
@@ -427,7 +471,9 @@ pub(crate) fn fail_err(
 pub(crate) unsafe fn utf8_valid_length(str_: *const u8, length: usize) -> usize {
     let mut index: usize = 0;
     while index < length {
-        let c: u8 = *str_.add(index);
+        // SAFETY: the caller's contract is that `str_` is readable for
+        // `length` bytes, and the loop condition holds `index < length`.
+        let c: u8 = unsafe { *str_.add(index) };
         let left = length - index;
 
         if (c & 0x80) == 0 {
@@ -436,15 +482,19 @@ pub(crate) unsafe fn utf8_valid_length(str_: *const u8, length: usize) -> usize 
                 continue;
             }
         } else if (c & 0xe0) == 0xc0 && left >= 2 {
-            let t0: u8 = *str_.add(index + 1);
+            // SAFETY: `left >= 2` means `index + 1 < length`, inside the
+            // `length` bytes the caller guarantees readable.
+            let t0: u8 = unsafe { *str_.add(index + 1) };
             let code: u32 = (c as u32) << 8 | t0 as u32;
             if (code & 0xc0) == 0x80 && code >= 0xc280 {
                 index += 2;
                 continue;
             }
         } else if (c & 0xf0) == 0xe0 && left >= 3 {
-            let t0: u8 = *str_.add(index + 1);
-            let t1: u8 = *str_.add(index + 2);
+            // SAFETY: `left >= 3` means `index + 2 < length`, inside the
+            // `length` bytes the caller guarantees readable.
+            let t0: u8 = unsafe { *str_.add(index + 1) };
+            let t1: u8 = unsafe { *str_.add(index + 2) };
             let code: u32 = (c as u32) << 16 | (t0 as u32) << 8 | t1 as u32;
             if (code & 0xc0c0) == 0x8080
                 && code >= 0xe0a080
@@ -454,9 +504,11 @@ pub(crate) unsafe fn utf8_valid_length(str_: *const u8, length: usize) -> usize 
                 continue;
             }
         } else if (c & 0xf8) == 0xf0 && left >= 4 {
-            let t0: u8 = *str_.add(index + 1);
-            let t1: u8 = *str_.add(index + 2);
-            let t2: u8 = *str_.add(index + 3);
+            // SAFETY: `left >= 4` means `index + 3 < length`, inside the
+            // `length` bytes the caller guarantees readable.
+            let t0: u8 = unsafe { *str_.add(index + 1) };
+            let t1: u8 = unsafe { *str_.add(index + 2) };
+            let t2: u8 = unsafe { *str_.add(index + 3) };
             let code: u32 = (c as u32) << 24 | (t0 as u32) << 16 | (t1 as u32) << 8 | t2 as u32;
             if (code & 0xc0c0c0) == 0x808080 && code >= 0xf0908080u32 && code <= 0xf48fbfbfu32 {
                 index += 4;
@@ -479,11 +531,17 @@ pub(crate) unsafe fn clean_string_utf8(str_: *mut u8, length: usize) {
         // C-parity: C passes the FULL `length` (not `length - pos`) as the
         // scan bound here; a terminating NUL at `str_[length]` (guaranteed by
         // both callers) is what keeps the scan in bounds.
-        pos += utf8_valid_length(str_.add(pos) as *const u8, length);
+        // SAFETY: `pos <= length` on every iteration (the loop breaks at
+        // equality), so `str_.add(pos)` stays inside the caller's buffer; the
+        // full-`length` scan bound is in-bounds because both callers guarantee
+        // a terminating NUL at `str_[length]`, per the C-parity note above.
+        pos += unsafe { utf8_valid_length(str_.add(pos) as *const u8, length) };
         if pos == length {
             break;
         }
-        *str_.add(pos) = b'?';
+        // SAFETY: `pos != length` here and `pos <= length`, so `pos < length` —
+        // a writable byte of the caller's buffer.
+        unsafe { *str_.add(pos) = b'?' };
         pos += 1;
     }
 }
@@ -495,16 +553,29 @@ pub(crate) unsafe fn set_err_info(err: *mut Error, data: *const u8, mut length: 
         return;
     }
 
-    let err = &mut *err;
+    // SAFETY: `err` is non-null (checked above) and the caller's contract is
+    // that it points at a live, unaliased `Error`.
+    let err = unsafe { &mut *err };
     if length == usize::MAX {
-        length = strlen(data);
+        // SAFETY: `usize::MAX` is C's `SIZE_MAX` sentinel meaning "measure it",
+        // which callers only pass for a NUL-terminated `data`.
+        length = unsafe { strlen(data) };
     }
     let info = err.info_buf.data.as_mut_ptr() as *mut u8;
     let to_copy = min_sz(ERROR_INFO_LENGTH - 1, length);
-    core::ptr::copy_nonoverlapping(data, info, to_copy);
-    *info.add(to_copy) = b'\0';
+    // SAFETY: `to_copy <= length`, so the source run is readable per the
+    // caller's `data`/`length` contract; `info` is the error's own
+    // ERROR_INFO_LENGTH buffer and `to_copy <= ERROR_INFO_LENGTH - 1`. The two
+    // buffers are distinct objects, so the copy is non-overlapping.
+    unsafe { core::ptr::copy_nonoverlapping(data, info, to_copy) };
+    // SAFETY: `to_copy <= ERROR_INFO_LENGTH - 1`, so this NUL lands on the last
+    // byte of the info buffer at worst.
+    unsafe { *info.add(to_copy) = b'\0' };
     err.info_length = to_copy;
-    clean_string_utf8(info, err.info_length);
+    // SAFETY: `info` is writable for `info_length` bytes with the terminating
+    // NUL written just above at `info[info_length]` — the scan bound
+    // `clean_string_utf8` needs.
+    unsafe { clean_string_utf8(info, err.info_length) };
 }
 
 // ufbx.c:3510-3519 `ufbxi_fmt_err_info` (variadic entry point — see
@@ -516,10 +587,17 @@ pub(crate) unsafe fn fmt_err_info(err: *mut Error, fmt: *const u8, args: &[Print
         return;
     }
 
-    let err = &mut *err;
+    // SAFETY: `err` is non-null (checked above) and the caller's contract is
+    // that it points at a live, unaliased `Error`.
+    let err = unsafe { &mut *err };
     let info = err.info_buf.data.as_mut_ptr() as *mut u8;
-    err.info_length = vsnprintf(info, ERROR_INFO_LENGTH, fmt, args) as usize;
-    clean_string_utf8(info, err.info_length);
+    // SAFETY: `info` is the error's own buffer, exactly ERROR_INFO_LENGTH
+    // bytes; `fmt` carries this fn's NUL-terminated format-string contract.
+    err.info_length = unsafe { vsnprintf(info, ERROR_INFO_LENGTH, fmt, args) } as usize;
+    // SAFETY: `vsnprintf` returns at most `ERROR_INFO_LENGTH - 1` and
+    // NUL-terminates at that length, so `info` is writable for `info_length`
+    // bytes with the terminator `clean_string_utf8` scans to.
+    unsafe { clean_string_utf8(info, err.info_length) };
 }
 
 // Call-site wrapper building the `&[PrintArg]` argument pack.
@@ -538,12 +616,16 @@ pub(crate) unsafe fn clear_error(err: *mut Error) {
         return;
     }
 
-    let err = &mut *err;
+    // SAFETY: `err` is non-null (checked above) and the caller's contract is
+    // that it points at a live, unaliased `Error`.
+    let err = unsafe { &mut *err };
     err.type_ = ErrorType::None;
     err.description.data = EMPTY_CHAR.as_ptr();
     err.description.length = 0;
     err.stack_size = 0;
-    *(err.info_buf.data.as_mut_ptr() as *mut u8) = b'\0';
+    // SAFETY: writing the first byte of the error's own info buffer, which is
+    // ERROR_INFO_LENGTH (>= 1) bytes long.
+    unsafe { *(err.info_buf.data.as_mut_ptr() as *mut u8) = b'\0' };
     err.info_length = 0;
 }
 
@@ -656,7 +738,9 @@ pub(crate) use ufbxi_fail_err_no_msg;
 #[cfg(not(feature = "error-stack"))]
 #[inline(never)]
 pub(crate) unsafe fn fail_imp_err_no_stack(err: *mut Error) -> i32 {
-    fail_imp_err(err, None, None, 0)
+    // SAFETY: `err` is forwarded unchanged, so this fn's own live-`Error`
+    // contract is exactly what `fail_imp_err` requires of it.
+    unsafe { fail_imp_err(err, None, None, 0) }
 }
 
 // Safe wrapper over `fail_imp_err_no_stack` taking an anchored `&ErrorView`.
@@ -1065,60 +1149,72 @@ pub(crate) unsafe fn fix_error_type(
     default_desc: *const u8,
     p_error: *mut Error,
 ) {
-    let error = &mut *error;
+    // SAFETY: the caller's contract is that `error` points at a live,
+    // unaliased `Error` (the entry points pass their own context error).
+    let error = unsafe { &mut *error };
     let mut desc = error.description.data;
     if desc.is_null() {
         desc = default_desc;
     }
     error.type_ = ErrorType::Unknown;
-    if strcmp(desc, b"Out of memory\0".as_ptr()) == 0 {
+    // SAFETY (every `strcmp` in the ladder below, and the `strlen` after it):
+    // `desc` is either the recorded description — always a NUL-terminated
+    // 'static literal from a `FailStr` — or the caller's `default_desc`, whose
+    // contract is likewise a NUL-terminated string; the right-hand operands are
+    // NUL-terminated byte literals.
+    if unsafe { strcmp(desc, b"Out of memory\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::OutOfMemory;
-    } else if strcmp(desc, b"Memory limit exceeded\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Memory limit exceeded\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::MemoryLimit;
-    } else if strcmp(desc, b"Allocation limit exceeded\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Allocation limit exceeded\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::AllocationLimit;
-    } else if strcmp(desc, b"Truncated file\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Truncated file\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::TruncatedFile;
-    } else if strcmp(desc, b"IO error\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"IO error\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::Io;
-    } else if strcmp(desc, b"Cancelled\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Cancelled\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::Cancelled;
-    } else if strcmp(desc, b"Unrecognized file format\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Unrecognized file format\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::UnrecognizedFileFormat;
-    } else if strcmp(desc, b"File not found\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"File not found\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::FileNotFound;
-    } else if strcmp(desc, b"Empty file\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Empty file\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::EmptyFile;
-    } else if strcmp(desc, b"External file not found\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"External file not found\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::ExternalFileNotFound;
-    } else if strcmp(desc, b"Uninitialized options\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Uninitialized options\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::UninitializedOptions;
-    } else if strcmp(desc, b"Zero vertex size\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Zero vertex size\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::ZeroVertexSize;
-    } else if strcmp(desc, b"Truncated vertex stream\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Truncated vertex stream\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::TruncatedVertexStream;
-    } else if strcmp(desc, b"Invalid UTF-8\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Invalid UTF-8\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::InvalidUtf8;
-    } else if strcmp(desc, b"Feature disabled\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Feature disabled\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::FeatureDisabled;
-    } else if strcmp(desc, b"Bad NURBS geometry\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Bad NURBS geometry\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::BadNurbs;
-    } else if strcmp(desc, b"Bad index\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Bad index\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::BadIndex;
-    } else if strcmp(desc, b"Node depth limit exceeded\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Node depth limit exceeded\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::NodeDepthLimit;
-    } else if strcmp(desc, b"Threaded ASCII parse error\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Threaded ASCII parse error\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::ThreadedAsciiParse;
-    } else if strcmp(desc, b"Unsafe options\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Unsafe options\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::UnsafeOptions;
-    } else if strcmp(desc, b"Duplicate override\0".as_ptr()) == 0 {
+    } else if unsafe { strcmp(desc, b"Duplicate override\0".as_ptr()) } == 0 {
         error.type_ = ErrorType::DuplicateOverride;
     }
     error.description.data = desc;
-    error.description.length = strlen(desc);
+    error.description.length = unsafe { strlen(desc) };
     if !p_error.is_null() {
         // memcpy(p_error, error, sizeof(ufbx_error));
-        core::ptr::copy_nonoverlapping(error as *const Error, p_error, 1);
+        // SAFETY: `p_error` is non-null and the caller's contract is that it
+        // points at a writable `Error`; `error` is the live `Error` borrowed
+        // above, and the two are distinct objects at every call site (the
+        // context error vs. the user's out-param), so the copy is
+        // non-overlapping.
+        unsafe { core::ptr::copy_nonoverlapping(error as *const Error, p_error, 1) };
     }
 }
 
@@ -1129,11 +1225,17 @@ pub(crate) unsafe fn fix_error_type(
 #[inline(never)]
 pub(crate) unsafe fn uninitialized_options(p_error: *mut Error) -> *mut core::ffi::c_void {
     if !p_error.is_null() {
-        core::ptr::write_bytes(p_error as *mut u8, 0, core::mem::size_of::<Error>());
-        let p_error = &mut *p_error;
+        // SAFETY: `p_error` is non-null (checked above) and the caller's
+        // contract is that it points at a writable `Error`, so exactly
+        // `size_of::<Error>()` bytes are writable there.
+        unsafe { core::ptr::write_bytes(p_error as *mut u8, 0, core::mem::size_of::<Error>()) };
+        // SAFETY: same live-`Error` contract; the zero-fill above leaves every
+        // field of this POD struct initialized.
+        let p_error = unsafe { &mut *p_error };
         p_error.type_ = ErrorType::UninitializedOptions;
         p_error.description.data = b"Uninitialized options\0".as_ptr();
-        p_error.description.length = strlen(b"Uninitialized options\0".as_ptr());
+        // SAFETY: the argument is a NUL-terminated byte literal.
+        p_error.description.length = unsafe { strlen(b"Uninitialized options\0".as_ptr()) };
     }
     core::ptr::null_mut()
 }
@@ -1220,31 +1322,34 @@ mod tests {
 
     #[test]
     fn test_snprintf_macro() {
-        unsafe {
-            let mut buf = [0u8; 32];
-            let len = ufbxi_snprintf!(
+        let mut buf = [0u8; 32];
+        // SAFETY: `buf.as_mut_ptr()`/`buf.len()` describe the local array
+        // exactly, and the `%s` argument is a NUL-terminated byte literal.
+        let len = unsafe {
+            ufbxi_snprintf!(
                 buf.as_mut_ptr(),
                 buf.len(),
                 "Frame%uTick%u.%s",
                 12u32,
                 7u32,
                 b"pc2\0".as_ptr()
-            );
-            assert_eq!(len, 16);
-            assert_eq!(&buf[..len as usize], b"Frame12Tick7.pc2");
-            assert_eq!(buf[len as usize], 0);
-        }
+            )
+        };
+        assert_eq!(len, 16);
+        assert_eq!(&buf[..len as usize], b"Frame12Tick7.pc2");
+        assert_eq!(buf[len as usize], 0);
     }
 
     #[test]
     fn test_snprintf_truncation_length() {
-        unsafe {
-            let mut buf = [0xAAu8; 8];
-            let len = ufbxi_snprintf!(buf.as_mut_ptr(), buf.len(), "%s", b"0123456789\0".as_ptr());
-            // pos saturates at length (8); returned min(pos, size - 1) = 7.
-            assert_eq!(len, 7);
-            assert_eq!(&buf[..8], b"0123456\0");
-        }
+        let mut buf = [0xAAu8; 8];
+        // SAFETY: `buf.as_mut_ptr()`/`buf.len()` describe the local array
+        // exactly, and the `%s` argument is a NUL-terminated byte literal.
+        let len =
+            unsafe { ufbxi_snprintf!(buf.as_mut_ptr(), buf.len(), "%s", b"0123456789\0".as_ptr()) };
+        // pos saturates at length (8); returned min(pos, size - 1) = 7.
+        assert_eq!(len, 7);
+        assert_eq!(&buf[..8], b"0123456\0");
     }
 
     fn checked_fn(err: *mut Error, ok: bool, hits: &mut u32) -> Result<u32, Fail> {
