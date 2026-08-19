@@ -221,9 +221,7 @@ use crate::native::api::{
     transform_direction, transform_position, transform_to_matrix, EMPTY_BLOB, EMPTY_STRING,
     IDENTITY_MATRIX, IDENTITY_QUAT, IDENTITY_TRANSFORM, ZERO_VEC3,
 };
-use crate::native::buf::{
-    buf_clear, buf_free, pop, push, push_copy, push_peek, push_pop, push_zero, Buf,
-};
+use crate::native::buf::{buf_clear, buf_free, pop, push, push_copy, push_pop, push_zero, Buf};
 use crate::native::error::{
     memcmp, strcmp, strlen, ufbxi_check, ufbxi_check_err, ufbxi_check_msg, ufbxi_snprintf, Fail,
     EMPTY_CHAR,
@@ -443,14 +441,9 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     ufbxi_check!(uc, !elements.is_null(), "elements");
 
     let num_connections: usize = uc.tmp_connections_view().num_items();
-    // SAFETY: same tmp_parse push contract as above.
-    let tmp_connections: *mut TmpConnection = unsafe {
-        push_peek::<TmpConnection>(
-            uc.tmp_parse_mut_ptr(),
-            uc.tmp_connections_mut_ptr(),
-            num_connections,
-        )
-    };
+    let tmp_connections: *mut TmpConnection = uc
+        .tmp_parse_view()
+        .push_peek::<TmpConnection>(uc.tmp_connections_view(), num_connections);
     ufbxi_check!(uc, !tmp_connections.is_null(), "tmp_connections");
 
     // SAFETY: same tmp_parse push contract as above.

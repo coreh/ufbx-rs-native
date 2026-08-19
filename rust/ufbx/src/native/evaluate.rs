@@ -75,7 +75,7 @@ use crate::native::api::{evaluate_baked_vec3, evaluate_transform_flags, quat_fix
 #[cfg(feature = "scene-eval")]
 use crate::native::api::{evaluate_props_flags, ELEMENT_TYPE_SIZE};
 #[cfg(feature = "baking")]
-use crate::native::buf::{buf_clear, pop, push_fast};
+use crate::native::buf::{buf_clear, pop};
 use crate::native::buf::{buf_free, push, push_copy, push_pop, push_zero, Buf};
 use crate::native::cache::{load_external_files, scale_units, transform_to_axes};
 #[cfg(not(feature = "skinning-eval"))]
@@ -4739,8 +4739,7 @@ pub(crate) fn cmp_bake_time(a: BakeTime, b: BakeTime) -> i32 {
 #[inline(always)]
 #[must_use]
 pub(crate) fn bake_push_time(bc: &BakeContext, time: f64, flags: u32) -> bool {
-    // SAFETY: `tmp_times_mut_ptr()` is a valid buffer by construction.
-    let p_key: *mut BakeTime = unsafe { push_fast::<BakeTime>(bc.tmp_times_mut_ptr(), 1) };
+    let p_key: *mut BakeTime = bc.tmp_times_view().push_fast::<BakeTime>(1);
     if p_key.is_null() {
         return false;
     }

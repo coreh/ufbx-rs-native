@@ -28,7 +28,7 @@ use crate::native::api::{
     coordinate_axes_valid, init_ref, matrix_determinant, matrix_mul, matrix_to_transform,
     transform_to_matrix, EMPTY_STRING,
 };
-use crate::native::buf::{buf_free, push, push_pop, push_zero, Buf};
+use crate::native::buf::{buf_free, Buf};
 use crate::native::error::{
     clear_error, fix_error_type, set_err_info, strlen, ufbxi_check, ufbxi_check_err,
     ufbxi_check_err_msg, ufbxi_fail_err, ufbxi_fail_err_msg, ufbxi_fail_msg, ufbxi_fmt_err_info,
@@ -1234,8 +1234,7 @@ pub(crate) fn cache_load_mc(cc: &CacheContext) -> Result<(), Fail> {
         }
 
         if format != CacheDataFormat::Unknown {
-            // SAFETY: pushing onto cc's own tmp stack through its raw-ptr getter.
-            let frame: *mut CacheFrame = unsafe { push_zero(cc.tmp_stack_mut_ptr(), 1) };
+            let frame: *mut CacheFrame = cc.tmp_stack_view().push_zero(1);
             ufbxi_check_err!(cc.error_view(), !frame.is_null(), "frame");
 
             let elem_size: u32 = CACHE_DATA_FORMAT_SIZE[format as u32 as usize] as u32;
@@ -1299,9 +1298,7 @@ pub(crate) fn cache_load_pc2(cc: &CacheContext) -> Result<(), Fail> {
 
     let _ = version;
 
-    // SAFETY: pushing onto cc's own tmp stack through its raw-ptr getter.
-    let frames: *mut CacheFrame =
-        unsafe { push_zero(cc.tmp_stack_mut_ptr(), num_samples as usize) };
+    let frames: *mut CacheFrame = cc.tmp_stack_view().push_zero(num_samples as usize);
     ufbxi_check_err!(cc.error_view(), !frames.is_null(), "frames");
 
     let total_points: u64 = num_points as u64 * num_samples as u64;
@@ -1423,8 +1420,7 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
             if unsafe { crate::native::error::strcmp(tag.name_data(), b"extra\0".as_ptr()) } != 0 {
                 continue;
             }
-            // SAFETY: pushing onto cc's own tmp stack through its raw-ptr getter.
-            let extra: *mut String = unsafe { push(cc.tmp_stack_mut_ptr(), 1) };
+            let extra: *mut String = cc.tmp_stack_view().push(1);
             ufbxi_check_err!(cc.error_view(), !extra.is_null(), "extra");
             // C: `tag->children[0].text` — `num_children == 1` guarantees the child.
             // SAFETY: `extra` is the fresh non-null push result; the child is the
@@ -1437,11 +1433,12 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
             num_extra += 1;
         }
         cc.cache_view().extra_info_view().set_count(num_extra);
-        // SAFETY: popping the `num_extra` strings pushed above from cc's own
-        // tmp stack into cc's own result buffer (both via raw-ptr getters).
-        cc.cache_view().extra_info_view().set_data(unsafe {
-            push_pop::<String>(cc.result_mut_ptr(), cc.tmp_stack_mut_ptr(), num_extra)
-        });
+        // Pops the `num_extra` strings pushed above from cc's tmp stack into
+        // cc's result buffer.
+        cc.cache_view().extra_info_view().set_data(
+            cc.result_view()
+                .push_pop::<String>(cc.tmp_stack_view(), num_extra),
+        );
         ufbxi_check_err!(
             cc.error_view(),
             !cc.cache_view().extra_info_view().data().is_null(),
@@ -1496,8 +1493,7 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
         }
 
         if let Some(tag_channels) = tag_channels {
-            // SAFETY: pushing onto cc's own tmp buffer through its raw-ptr getter.
-            cc.set_channels(unsafe { push_zero(cc.tmp_mut_ptr(), tag_channels.num_children()) });
+            cc.set_channels(cc.tmp_view().push_zero(tag_channels.num_children()));
             ufbxi_check_err!(cc.error_view(), !cc.channels().is_null(), "cc->channels");
 
             // C: `ufbxi_for(ufbxi_xml_tag, tag, tag_channels->children, tag_channels->num_children)`
@@ -1696,8 +1692,7 @@ pub(crate) fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
 
     // Ensure worst case space for `path/filenameFrame123Tick456.mcx`
     let name_buf_len: usize = cc.xml_filename_view().length() + 64;
-    // SAFETY: pushing onto cc's own tmp buffer through its raw-ptr getter.
-    let name_buf: *mut u8 = unsafe { push(cc.tmp_mut_ptr(), name_buf_len) };
+    let name_buf: *mut u8 = cc.tmp_view().push(name_buf_len);
     ufbxi_check_err!(cc.error_view(), !name_buf.is_null(), "name_buf");
 
     // Find the prefix before `.xml`
@@ -1932,8 +1927,7 @@ pub(crate) fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
             (frame, end)
         };
 
-        // SAFETY: pushing onto cc's own tmp stack through its raw-ptr getter.
-        let chan: *mut CacheChannel = unsafe { push_zero(cc.tmp_stack_mut_ptr(), 1) };
+        let chan: *mut CacheChannel = cc.tmp_stack_view().push_zero(1);
         ufbxi_check_err!(cc.error_view(), !chan.is_null(), "chan");
 
         // SAFETY: `chan` is the fresh non-null push result; `tmp_chan` walks
@@ -1999,11 +1993,12 @@ pub(crate) fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
         begin = end;
     }
 
-    // SAFETY: popping the `num_channels` channels pushed above from cc's own
-    // tmp stack into cc's own result buffer (both via raw-ptr getters).
-    cc.cache_view().channels_view().set_data(unsafe {
-        push_pop::<CacheChannel>(cc.result_mut_ptr(), cc.tmp_stack_mut_ptr(), num_channels)
-    });
+    // Pops the `num_channels` channels pushed above from cc's tmp stack into
+    // cc's result buffer.
+    cc.cache_view().channels_view().set_data(
+        cc.result_view()
+            .push_pop::<CacheChannel>(cc.tmp_stack_view(), num_channels),
+    );
     ufbxi_check_err!(
         cc.error_view(),
         !cc.cache_view().channels_view().data().is_null(),
@@ -2029,7 +2024,7 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     }
 
     // Make sure the filename we pass to `open_file_fn()` is NULL-terminated
-    let filename_data: *mut u8 = push(cc.tmp_mut_ptr(), filename.length + 1);
+    let filename_data: *mut u8 = cc.tmp_view().push(filename.length + 1);
     ufbxi_check_err!(cc.error_view(), !filename_data.is_null(), "filename_data");
     core::ptr::copy_nonoverlapping(filename.data, filename_data, filename.length);
     *filename_data.add(filename.length) = b'\0';
@@ -2049,13 +2044,10 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
 
     let num_frames: usize = cc.tmp_stack_view().num_items();
     cc.cache_view().frames_view().set_count(num_frames);
-    cc.cache_view()
-        .frames_view()
-        .set_data(push_pop::<CacheFrame>(
-            cc.result_mut_ptr(),
-            cc.tmp_stack_mut_ptr(),
-            num_frames,
-        ));
+    cc.cache_view().frames_view().set_data(
+        cc.result_view()
+            .push_pop::<CacheFrame>(cc.tmp_stack_view(), num_frames),
+    );
     ufbxi_check_err!(
         cc.error_view(),
         !cc.cache_view().frames_view().data().is_null(),
@@ -2070,7 +2062,7 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     cache_setup_channels(cc)?;
 
     // Must be last allocation!
-    cc.set_imp(push(cc.result_mut_ptr(), 1));
+    cc.set_imp(cc.result_view().push(1));
     ufbxi_check_err!(cc.error_view(), !cc.imp().is_null(), "cc->imp");
 
     // Expose the wide allocation so `get_imp` can recover this header from a
@@ -2421,7 +2413,7 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
         while p_cache != p_cache_end {
             let cache: *mut CacheFile = *p_cache;
             if (*cache).filename.length > 0 {
-                let file: *mut ExternalFile = push_zero(uc.tmp_stack_mut_ptr(), 1);
+                let file: *mut ExternalFile = uc.tmp_stack_view().push_zero(1);
                 ufbxi_check!(uc, !file.is_null(), "file");
                 // C: `file->index = num_files++;`
                 (*file).index = num_files;
@@ -2435,12 +2427,12 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
     }
 
     // Sort and load the external files
-    // SAFETY: pops the `num_files` entries pushed above from uc's own tmp
-    // stack into uc's own tmp buffer, then sorts that fresh non-null run
-    // in place with the matching element size.
-    let files: *mut ExternalFile =
-        unsafe { push_pop(uc.tmp_mut_ptr(), uc.tmp_stack_mut_ptr(), num_files) };
+    // Pops the `num_files` entries pushed above from uc's tmp stack into
+    // uc's own tmp buffer.
+    let files: *mut ExternalFile = uc.tmp_view().push_pop(uc.tmp_stack_view(), num_files);
     ufbxi_check!(uc, !files.is_null(), "files");
+    // SAFETY: sorts the fresh non-null run in place with the matching
+    // element size.
     unsafe {
         unstable_sort(
             files as *mut c_void,

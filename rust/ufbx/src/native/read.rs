@@ -1340,7 +1340,7 @@ pub(crate) unsafe fn push_element_size(
 
     ufbxi_check_return!(
         uc,
-        !push_copy_fast::<*mut Element>(uc.tmp_element_ptrs_mut_ptr(), 1, &elem).is_null(),
+        !uc.tmp_element_ptrs_view().push_copy_fast_ref(&elem).is_null(),
         core::ptr::null_mut(),
         "((ufbx_element**)ufbxi_push_size_copy_fast((&uc->tmp_element_ptrs), sizeof(ufbx_element*), (1), (&elem)))"
     );
@@ -6437,7 +6437,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 }
                 ufbxi_check!(
                     uc,
-                    !push_copy::<*mut Node>(uc.tmp_stack_mut_ptr(), 1, &node).is_null(),
+                    !uc.tmp_stack_view().push_copy_ref(&node).is_null(),
                     // C-parity: verbatim post-expansion `#cond` text (see the C11
                     // 6.10.3.1 note in `sort_shader_prop_bindings`).
                     "((ufbxi_node**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbxi_node*), (1), (&node)))"
@@ -8126,7 +8126,7 @@ pub(crate) unsafe fn read_legacy_material(
     (*material).shading_model_name = EMPTY_STRING.0;
     (*material).element.props.props.count = num_props;
     (*material).element.props.props.data =
-        push_copy::<Prop>(uc.result_mut_ptr(), num_props, tmp_props.as_ptr());
+        uc.result_view().push_copy_slice(&tmp_props[..num_props]);
     ufbxi_check!(
         uc,
         !(*material).element.props.props.data.is_null(),

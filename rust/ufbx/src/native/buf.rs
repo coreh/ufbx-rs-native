@@ -112,6 +112,74 @@ pub(crate) struct Buf {
 // copy 88 bytes and drop write-backs). Getters + setters for the accessed subfields.
 pub(crate) type BufView = crate::native::view::View<Buf>;
 
+// Safe typed push family (mirrors `MapView::grow/find/insert`). The safety
+// argument, written once for every method below:
+//
+// - `self.get()` yields a write-provenance `*mut Buf` (view invariant: a
+//   `BufView` is minted only over a live, initialized `Buf` embedded in
+//   context/arena-owned memory).
+// - `(*b).ator` is the buf's stored allocator back-pointer into the same
+//   context (construction invariant — the same standing as `Map`'s stored
+//   `ator` in `MapView`'s methods).
+// - The push/pop imps write only the buf header and chunk memory they
+//   allocate/own; they dereference no caller pointers except where a method
+//   takes `&T`/`&[T]`, which carries the validity in the type.
+//
+// Allocation failure returns null — the caller's `ufbxi_check` pattern is
+// unchanged. The returned region is uninitialized (`push`), zeroed
+// (`push_zero`), or copied-from-src; DEREFERENCING the returned pointer is the
+// caller's obligation, under its own narrow `unsafe`.
+impl BufView {
+    #[inline(always)]
+    #[must_use]
+    pub(crate) fn push<T>(&self, n: usize) -> *mut T {
+        unsafe { push::<T>(self.get(), n) }
+    }
+    #[inline(always)]
+    #[must_use]
+    pub(crate) fn push_fast<T>(&self, n: usize) -> *mut T {
+        unsafe { push_fast::<T>(self.get(), n) }
+    }
+    #[inline(always)]
+    #[must_use]
+    pub(crate) fn push_zero<T>(&self, n: usize) -> *mut T {
+        unsafe { push_zero::<T>(self.get(), n) }
+    }
+    // Copy-in from a borrow. Raw-pointer sources (arena runs reached by
+    // pointer arithmetic) stay on the free `unsafe fn push_copy` —
+    // pointer-carrying-param rule.
+    #[inline(always)]
+    #[must_use]
+    pub(crate) fn push_copy_ref<T>(&self, src: &T) -> *mut T {
+        unsafe { push_copy::<T>(self.get(), 1, src) }
+    }
+    #[inline(always)]
+    #[must_use]
+    pub(crate) fn push_copy_slice<T>(&self, src: &[T]) -> *mut T {
+        unsafe { push_copy::<T>(self.get(), src.len(), src.as_ptr()) }
+    }
+    #[inline(always)]
+    #[must_use]
+    pub(crate) fn push_copy_fast_ref<T>(&self, src: &T) -> *mut T {
+        unsafe { push_copy_fast::<T>(self.get(), 1, src) }
+    }
+    // Two-buf transfer: pop `n` items off the top of `src` and push them onto
+    // `self`. The bufs must be distinct (C call sites always pair
+    // result ← tmp_stack); same-buf transfer would interleave header updates.
+    #[inline(always)]
+    #[must_use]
+    pub(crate) fn push_pop<T>(&self, src: &BufView, n: usize) -> *mut T {
+        debug_assert!(!core::ptr::eq(self, src));
+        unsafe { push_pop::<T>(self.get(), src.get(), n) }
+    }
+    #[inline(always)]
+    #[must_use]
+    pub(crate) fn push_peek<T>(&self, src: &BufView, n: usize) -> *mut T {
+        debug_assert!(!core::ptr::eq(self, src));
+        unsafe { push_peek::<T>(self.get(), src.get(), n) }
+    }
+}
+
 impl BufView {
     #[inline(always)]
     pub(crate) fn set_ator(&self, ator: *mut Allocator) {
