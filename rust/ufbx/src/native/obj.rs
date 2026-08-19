@@ -40,7 +40,7 @@ use crate::native::allocator::{free, grow_array};
 #[cfg(feature = "obj")]
 use crate::native::api::EMPTY_STRING;
 #[cfg(feature = "obj")]
-use crate::native::buf::{buf_free, pop, push, push_copy, push_fast, push_pop, push_zero, Buf};
+use crate::native::buf::{buf_free, pop, push_copy, BufView};
 use crate::native::error::Fail;
 #[cfg(feature = "obj")]
 use crate::native::error::{
@@ -212,7 +212,9 @@ pub(crate) unsafe fn obj_pop_props(
     // C: `ufbx_prop_list props; // ufbxi_uninit`
     let mut props: List<Prop> = core::mem::zeroed(); // ufbxi_uninit
     props.count = count;
-    props.data = push_pop::<Prop>(uc.result_mut_ptr(), uc.obj().tmp_props_mut_ptr(), count);
+    props.data = uc
+        .result_view()
+        .push_pop::<Prop>(uc.obj().tmp_props_view(), count);
     ufbxi_check!(uc, !props.data.is_null(), "props.data");
 
     // C: `ufbxi_for_list(ufbx_prop, prop, props)`
@@ -249,9 +251,7 @@ pub(crate) unsafe fn obj_pop_props(
 #[cfg(feature = "obj")]
 #[inline(never)]
 pub(crate) fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
-    // SAFETY: pushing onto the obj parser's own `tmp_meshes` arena through its
-    // raw-ptr getter (`uc.obj()` construction invariant).
-    let mesh: *mut ObjMesh = unsafe { push_zero::<ObjMesh>(uc.obj().tmp_meshes_mut_ptr(), 1) };
+    let mesh: *mut ObjMesh = uc.obj().tmp_meshes_view().push_zero::<ObjMesh>(1);
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
     uc.obj().set_mesh(mesh);
     // SAFETY: `mesh` is the fresh non-null push result above; anchoring it as a
@@ -307,17 +307,13 @@ pub(crate) fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
 
     ufbxi_check!(
         uc,
-        // SAFETY: copies the fresh node element's own `element_id` field onto
-        // uc's `tmp_node_ids` arena (uc construction invariant); `fbx_node` is
-        // non-null past the check above.
-        !unsafe {
-            push_copy::<u32>(
-                uc.tmp_node_ids_mut_ptr(),
-                1,
-                &(*(*mesh).fbx_node).element.element_id,
-            )
-        }
-        .is_null(),
+        // Copies the fresh node element's own `element_id` field onto uc's
+        // `tmp_node_ids` arena.
+        // SAFETY: `fbx_node` is non-null past the check above, so borrowing its
+        // `element_id` field is valid.
+        !uc.tmp_node_ids_view()
+            .push_copy_ref(unsafe { &(*(*mesh).fbx_node).element.element_id })
+            .is_null(),
         "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&mesh->fbx_node->element_id)))"
     );
 
@@ -356,15 +352,11 @@ pub(crate) fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
     unsafe { obj_pop_props(uc, &mut (*fbx_mesh).element.props.props, num_props)? };
 
     let num_groups: usize = uc.obj().tmp_face_group_infos_view().num_items();
-    // SAFETY: pops the obj parser's own `tmp_face_group_infos` arena into uc's
-    // result arena through their raw-ptr getters.
-    let groups: *mut FaceGroup = unsafe {
-        push_pop::<FaceGroup>(
-            uc.result_mut_ptr(),
-            uc.obj().tmp_face_group_infos_mut_ptr(),
-            num_groups,
-        )
-    };
+    // Pops the obj parser's own `tmp_face_group_infos` arena into uc's result
+    // arena.
+    let groups: *mut FaceGroup = uc
+        .result_view()
+        .push_pop::<FaceGroup>(uc.obj().tmp_face_group_infos_view(), num_groups);
     ufbxi_check!(uc, !groups.is_null(), "groups");
 
     // SAFETY: `fbx_mesh` as above; `groups` is the fresh non-null `num_groups`
@@ -443,12 +435,13 @@ pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
         unsafe { setup_root_node(uc, root) };
         ufbxi_check!(
             uc,
-            // SAFETY: copies `root`'s own `element_id` field onto uc's
-            // `tmp_node_ids` arena.
-            !unsafe {
-                push_copy::<u32>(uc.tmp_node_ids_mut_ptr(), 1, &(*root).element.element_id)
-            }
-            .is_null(),
+            // Copies `root`'s own `element_id` field onto uc's `tmp_node_ids`
+            // arena.
+            // SAFETY: `root` is the fresh non-null element push result, so
+            // borrowing its `element_id` field is valid.
+            !uc.tmp_node_ids_view()
+                .push_copy_ref(unsafe { &(*root).element.element_id })
+                .is_null(),
             "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&root->element.element_id)))"
         );
     }
@@ -572,8 +565,7 @@ pub(crate) fn obj_read_line(uc: &Context) -> Result<(), Fail> {
     }
 
     if uc.obj().eof() {
-        // SAFETY: pushes onto uc's own tmp arena through its raw-ptr getter.
-        let new_data: *mut u8 = unsafe { push::<u8>(uc.tmp_mut_ptr(), line_len + 1) };
+        let new_data: *mut u8 = uc.tmp_view().push::<u8>(line_len + 1);
         ufbxi_check!(uc, !new_data.is_null(), "new_data");
         // SAFETY: `new_data` is the fresh non-null `line_len + 1` byte run,
         // disjoint from the `line_len`-byte source line still in the read
@@ -753,7 +745,7 @@ pub(crate) fn obj_parse_vertex(uc: &Context, attrib: ObjAttrib, offset: usize) -
         return Ok(());
     }
 
-    let dst: *mut Buf = uc.obj().tmp_vertices_mut_ptr(attrib as usize);
+    let dst: &BufView = uc.obj().tmp_vertices_at(attrib as usize);
     let num_values: usize = OBJ_ATTRIB_STRIDE[attrib as usize] as usize;
     uc.obj()
         .vertex_count_at(attrib as usize)
@@ -772,9 +764,7 @@ pub(crate) fn obj_parse_vertex(uc: &Context, attrib: ObjAttrib, offset: usize) -
     );
 
     let parse_flags: u32 = uc.double_parse_flags();
-    // SAFETY: pushes `num_values` reals onto the attribute's own tmp vertex
-    // arena (obj-context construction invariant).
-    let vals: *mut Real = unsafe { push_fast::<Real>(dst, num_values) };
+    let vals: *mut Real = dst.push_fast::<Real>(num_values);
     ufbxi_check!(uc, !vals.is_null(), "vals");
     for i in 0..read_values {
         // SAFETY: `offset + read_values <= num_tokens` (checked above), so
@@ -859,7 +849,10 @@ pub(crate) unsafe fn obj_parse_index(
     let fast_indices: *mut ObjFastIndices = uc.obj().fast_indices_mut_ptr(attrib as usize);
     if (*fast_indices).num_left == 0 {
         let num_push: usize = 128;
-        let dst: *mut u64 = push::<u64>(uc.obj().tmp_indices_mut_ptr(attrib as usize), num_push);
+        let dst: *mut u64 = uc
+            .obj()
+            .tmp_indices_at(attrib as usize)
+            .push::<u64>(num_push);
         ufbxi_check!(uc, !dst.is_null(), "dst");
         uc.obj().fast_indices_at(attrib as usize).set_indices(dst);
         uc.obj()
@@ -1025,8 +1018,10 @@ pub(crate) fn obj_parse_indices(
                 (*entry).mesh_id = mesh_id;
                 (*entry).local_id = id;
 
-                let group: *mut FaceGroup =
-                    push_zero::<FaceGroup>(uc.obj().tmp_face_group_infos_mut_ptr(), 1);
+                let group: *mut FaceGroup = uc
+                    .obj()
+                    .tmp_face_group_infos_view()
+                    .push_zero::<FaceGroup>(1);
                 ufbxi_check!(uc, !group.is_null(), "group");
                 (*group).id = 0;
                 (*group).name = name;
@@ -1039,9 +1034,11 @@ pub(crate) fn obj_parse_indices(
             uc.obj().set_has_face_group(true);
             ufbxi_check!(
                 uc,
-                // SAFETY: zero-fills one face-group slot per already-recorded
-                // face on the obj parser's own `tmp_face_group` arena.
-                !unsafe { push_zero::<u32>(uc.obj().tmp_face_group_mut_ptr(), uc.obj().tmp_faces_view().num_items()) }
+                // Zero-fills one face-group slot per already-recorded face on
+                // the obj parser's own `tmp_face_group` arena.
+                !uc.obj()
+                    .tmp_face_group_view()
+                    .push_zero::<u32>(uc.obj().tmp_faces_view().num_items())
                     .is_null(),
                 "((uint32_t*)ufbxi_push_size_zero((&uc->obj.tmp_face_group), sizeof(uint32_t), (uc->obj.tmp_faces.num_items)))"
             );
@@ -1057,8 +1054,7 @@ pub(crate) fn obj_parse_indices(
         "UINT32_MAX - mesh->num_indices >= num_indices"
     );
 
-    // SAFETY: pushes one face onto the obj parser's own `tmp_faces` arena.
-    let face: *mut Face = unsafe { push_fast::<Face>(uc.obj().tmp_faces_mut_ptr(), 1) };
+    let face: *mut Face = uc.obj().tmp_faces_view().push_fast::<Face>(1);
     ufbxi_check!(uc, !face.is_null(), "face");
 
     // SAFETY: `face` is the fresh non-null push result.
@@ -1070,28 +1066,20 @@ pub(crate) fn obj_parse_indices(
     mesh.set_num_faces(mesh.num_faces() + 1);
     mesh.set_num_indices(mesh.num_indices() + num_indices);
 
-    // SAFETY: pushes one entry onto the obj parser's own `tmp_face_material`
-    // arena.
-    let p_face_mat: *mut u32 = unsafe { push_fast::<u32>(uc.obj().tmp_face_material_mut_ptr(), 1) };
+    let p_face_mat: *mut u32 = uc.obj().tmp_face_material_view().push_fast::<u32>(1);
     ufbxi_check!(uc, !p_face_mat.is_null(), "p_face_mat");
     // SAFETY: fresh push result, non-null past the check.
     unsafe { *p_face_mat = uc.obj().face_material() };
 
     if uc.obj().has_face_smoothing() {
-        // SAFETY: pushes one entry onto the obj parser's own
-        // `tmp_face_smoothing` arena.
-        let p_face_smooth: *mut bool =
-            unsafe { push_fast::<bool>(uc.obj().tmp_face_smoothing_mut_ptr(), 1) };
+        let p_face_smooth: *mut bool = uc.obj().tmp_face_smoothing_view().push_fast::<bool>(1);
         ufbxi_check!(uc, !p_face_smooth.is_null(), "p_face_smooth");
         // SAFETY: fresh push result, non-null past the check.
         unsafe { *p_face_smooth = uc.obj().face_smoothing() };
     }
 
     if uc.obj().has_face_group() {
-        // SAFETY: pushes one entry onto the obj parser's own `tmp_face_group`
-        // arena.
-        let p_face_group: *mut u32 =
-            unsafe { push_fast::<u32>(uc.obj().tmp_face_group_mut_ptr(), 1) };
+        let p_face_group: *mut u32 = uc.obj().tmp_face_group_view().push_fast::<u32>(1);
         ufbxi_check!(uc, !p_face_group.is_null(), "p_face_group");
         // SAFETY: fresh push result, non-null past the check.
         unsafe { *p_face_group = uc.obj().face_group() };
@@ -1192,19 +1180,20 @@ pub(crate) fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
         // C: `for (size_t i = 0; i + 8 <= mrgb.length; i += 8)`
         let mut i: usize = 0;
         while i + 8 <= mrgb.length {
-            // SAFETY: pushes one RGBA quad and its validity flag onto the obj
-            // parser's own color arenas, then fills those fresh non-null runs
-            // exactly; the loop condition keeps the 8 hex digits read at
-            // `mrgb.data + i` inside the token's own span.
+            let p_rgba: *mut Real = uc
+                .obj()
+                .tmp_vertices_at(ObjAttrib::Color as usize)
+                .push::<Real>(4);
+            let p_valid: *mut bool = uc.obj().tmp_color_valid_view().push::<bool>(1);
+            ufbxi_check!(
+                uc,
+                !p_rgba.is_null() && !p_valid.is_null(),
+                "p_rgba && p_valid"
+            );
+            // SAFETY: fills the fresh non-null runs pushed above exactly; the
+            // loop condition keeps the 8 hex digits read at `mrgb.data + i`
+            // inside the token's own span.
             unsafe {
-                let p_rgba: *mut Real =
-                    push::<Real>(uc.obj().tmp_vertices_mut_ptr(ObjAttrib::Color as usize), 4);
-                let p_valid: *mut bool = push::<bool>(uc.obj().tmp_color_valid_mut_ptr(), 1);
-                ufbxi_check!(
-                    uc,
-                    !p_rgba.is_null() && !p_valid.is_null(),
-                    "p_rgba && p_valid"
-                );
                 *p_valid = true;
 
                 let hex: u32 = parse_hex(mrgb.data.add(i), 8);
@@ -1349,7 +1338,7 @@ pub(crate) unsafe fn obj_pop_vertices(
 
     let count: usize =
         uc.obj().tmp_vertices_at(attrib as usize).num_items() - (min_index as usize) * stride;
-    let mut data: *mut Real = push::<Real>(uc.result_mut_ptr(), count + 4);
+    let mut data: *mut Real = uc.result_view().push::<Real>(count + 4);
     ufbxi_check!(uc, !data.is_null(), "data");
 
     *data.add(0) = 0.0f32 as Real;
@@ -1410,7 +1399,7 @@ pub(crate) unsafe fn obj_setup_attrib(
         tmp_indices,
     );
 
-    let dst_indices: *mut u32 = push::<u32>(uc.result_mut_ptr(), num_indices);
+    let dst_indices: *mut u32 = uc.result_view().push::<u32>(num_indices);
     ufbxi_check!(uc, !dst_indices.is_null(), "dst_indices");
 
     (*dst).exists = true;
@@ -1451,22 +1440,22 @@ pub(crate) fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result<(), Fa
         let num_pad: usize = num_vertices - num_colors;
         ufbxi_check!(
             uc,
-            // SAFETY: zero-fills the padding quads on the obj parser's own
-            // color vertex arena.
-            !unsafe {
-                push_zero::<Real>(
-                    uc.obj().tmp_vertices_mut_ptr(ObjAttrib::Color as usize),
-                    num_pad * 4
-                )
-            }
-            .is_null(),
+            // Zero-fills the padding quads on the obj parser's own color
+            // vertex arena.
+            !uc.obj()
+                .tmp_vertices_at(ObjAttrib::Color as usize)
+                .push_zero::<Real>(num_pad * 4)
+                .is_null(),
             "((ufbx_real*)ufbxi_push_size_zero((&uc->obj.tmp_vertices[UFBXI_OBJ_ATTRIB_COLOR]), sizeof(ufbx_real), (num_pad * 4)))"
         );
         ufbxi_check!(
             uc,
-            // SAFETY: matching validity flags on the obj parser's own
-            // `tmp_color_valid` arena.
-            !unsafe { push_zero::<bool>(uc.obj().tmp_color_valid_mut_ptr(), num_pad) }.is_null(),
+            // Matching validity flags on the obj parser's own `tmp_color_valid`
+            // arena.
+            !uc.obj()
+                .tmp_color_valid_view()
+                .push_zero::<bool>(num_pad)
+                .is_null(),
             "((bool*)ufbxi_push_size_zero((&uc->obj.tmp_color_valid), sizeof(bool), (num_pad)))"
         );
         uc.obj()
@@ -1482,10 +1471,11 @@ pub(crate) fn obj_pad_colors(uc: &Context, num_vertices: usize) -> Result<(), Fa
 #[inline(never)]
 pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
     let num_meshes: usize = uc.obj().tmp_meshes_view().num_items();
-    // SAFETY: moves the obj parser's whole `tmp_meshes` run (its own item
-    // count) onto uc's tmp arena.
-    let meshes: *mut ObjMesh =
-        unsafe { push_pop::<ObjMesh>(uc.tmp_mut_ptr(), uc.obj().tmp_meshes_mut_ptr(), num_meshes) };
+    // Moves the obj parser's whole `tmp_meshes` run (its own item count) onto
+    // uc's tmp arena.
+    let meshes: *mut ObjMesh = uc
+        .tmp_view()
+        .push_pop::<ObjMesh>(uc.obj().tmp_meshes_view(), num_meshes);
     ufbxi_check!(uc, !meshes.is_null(), "meshes");
 
     if uc.obj().has_vertex_color() {
@@ -1538,8 +1528,8 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         }
     }
 
-    // SAFETY: scratch run for the widest mesh, pushed onto uc's own tmp arena.
-    let tmp_indices: *mut u64 = unsafe { push::<u64>(uc.tmp_mut_ptr(), max_indices) };
+    // Scratch run for the widest mesh, pushed onto uc's own tmp arena.
+    let tmp_indices: *mut u64 = uc.tmp_view().push::<u64>(max_indices);
     ufbxi_check!(uc, !tmp_indices.is_null(), "tmp_indices");
 
     // C: `ufbxi_nounroll for (uint32_t attrib = 0; attrib < UFBXI_OBJ_NUM_ATTRIBS; attrib++)`
@@ -1552,8 +1542,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         unsafe { obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, 0)? };
     }
     if uc.obj().has_vertex_color() && non_disjoint[ObjAttrib::Position as usize] {
-        // SAFETY: as above for the color attribute; the `color_valid` pop moves
-        // one flag per popped color quad off the obj parser's own arena.
+        // SAFETY: as above for the color attribute.
         unsafe {
             obj_pop_vertices(
                 uc,
@@ -1561,12 +1550,13 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 ObjAttrib::Color as u32,
                 0,
             )?;
-            color_valid = push_pop::<bool>(
-                uc.tmp_mut_ptr(),
-                uc.obj().tmp_color_valid_mut_ptr(),
-                vertices[ObjAttrib::Color as usize].count / 4,
-            );
         }
+        // The `color_valid` pop moves one flag per popped color quad off the
+        // obj parser's own arena.
+        color_valid = uc.tmp_view().push_pop::<bool>(
+            uc.obj().tmp_color_valid_view(),
+            vertices[ObjAttrib::Color as usize].count / 4,
+        );
         ufbxi_check!(uc, !color_valid.is_null(), "color_valid");
     }
 
@@ -1598,9 +1588,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             if uc.obj().has_vertex_color() && !non_disjoint[ObjAttrib::Position as usize] {
                 let min_ix: u64 = mesh.vertex_range_min(ObjAttrib::Position as usize);
                 ufbxi_check!(uc, min_ix < u64::MAX, "min_ix < UINT64_MAX");
-                // SAFETY: as above for the color attribute; the `color_valid`
-                // pop moves one flag per popped color quad off the obj
-                // parser's own arena.
+                // SAFETY: as above for the color attribute.
                 unsafe {
                     obj_pop_vertices(
                         uc,
@@ -1608,12 +1596,13 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                         ObjAttrib::Color as u32,
                         min_ix,
                     )?;
-                    color_valid = push_pop::<bool>(
-                        uc.tmp_mut_ptr(),
-                        uc.obj().tmp_color_valid_mut_ptr(),
-                        vertices[ObjAttrib::Color as usize].count / 4,
-                    );
                 }
+                // The `color_valid` pop moves one flag per popped color quad
+                // off the obj parser's own arena.
+                color_valid = uc.tmp_view().push_pop::<bool>(
+                    uc.obj().tmp_color_valid_view(),
+                    vertices[ObjAttrib::Color as usize].count / 4,
+                );
                 ufbxi_check!(uc, !color_valid.is_null(), "color_valid");
             }
 
@@ -1625,13 +1614,12 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 (*fbx_mesh).faces.count = num_faces;
                 (*fbx_mesh).face_material.count = num_faces;
 
-                (*fbx_mesh).faces.data =
-                    push_pop::<Face>(uc.result_mut_ptr(), uc.obj().tmp_faces_mut_ptr(), num_faces);
-                (*fbx_mesh).face_material.data = push_pop::<u32>(
-                    uc.result_mut_ptr(),
-                    uc.obj().tmp_face_material_mut_ptr(),
-                    num_faces,
-                );
+                (*fbx_mesh).faces.data = uc
+                    .result_view()
+                    .push_pop::<Face>(uc.obj().tmp_faces_view(), num_faces);
+                (*fbx_mesh).face_material.data = uc
+                    .result_view()
+                    .push_pop::<u32>(uc.obj().tmp_face_material_view(), num_faces);
 
                 ufbxi_check!(
                     uc,
@@ -1646,11 +1634,9 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
 
                 if uc.obj().has_face_smoothing() {
                     (*fbx_mesh).face_smoothing.count = num_faces;
-                    (*fbx_mesh).face_smoothing.data = push_pop::<bool>(
-                        uc.result_mut_ptr(),
-                        uc.obj().tmp_face_smoothing_mut_ptr(),
-                        num_faces,
-                    );
+                    (*fbx_mesh).face_smoothing.data = uc
+                        .result_view()
+                        .push_pop::<bool>(uc.obj().tmp_face_smoothing_view(), num_faces);
                     ufbxi_check!(
                         uc,
                         !(*fbx_mesh).face_smoothing.data.is_null(),
@@ -1661,11 +1647,9 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 if uc.obj().has_face_group() {
                     if mesh.num_groups() > 1 {
                         (*fbx_mesh).face_group.count = num_faces;
-                        (*fbx_mesh).face_group.data = push_pop::<u32>(
-                            uc.result_mut_ptr(),
-                            uc.obj().tmp_face_group_mut_ptr(),
-                            num_faces,
-                        );
+                        (*fbx_mesh).face_group.data = uc
+                            .result_view()
+                            .push_pop::<u32>(uc.obj().tmp_face_group_view(), num_faces);
                         ufbxi_check!(
                             uc,
                             !(*fbx_mesh).face_group.data.is_null(),
@@ -1794,8 +1778,9 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
             // freshly zero-pushed onto uc's result arena, checked below.
             unsafe {
                 (*fbx_mesh).face_group_parts.count = mesh.num_groups() as usize;
-                (*fbx_mesh).face_group_parts.data =
-                    push_zero::<MeshPart>(uc.result_mut_ptr(), mesh.num_groups() as usize);
+                (*fbx_mesh).face_group_parts.data = uc
+                    .result_view()
+                    .push_zero::<MeshPart>(mesh.num_groups() as usize);
                 ufbxi_check!(
                     uc,
                     !(*fbx_mesh).face_group_parts.data.is_null(),
@@ -1876,10 +1861,7 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
                             == num_vertices - 1
                     );
                     obj_parse_vertex(uc, ObjAttrib::Color, 4)?;
-                    // SAFETY: pushes one flag onto the obj parser's own
-                    // `tmp_color_valid` arena.
-                    let valid: *mut bool =
-                        unsafe { push::<bool>(uc.obj().tmp_color_valid_mut_ptr(), 1) };
+                    let valid: *mut bool = uc.obj().tmp_color_valid_view().push::<bool>(1);
                     ufbxi_check!(uc, !valid.is_null(), "valid");
                     // SAFETY: fresh push result, non-null past the check.
                     unsafe { *valid = true };
@@ -1910,16 +1892,13 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
                 {
                     ufbxi_check!(
                         uc,
-                        // SAFETY: zero-fills one smoothing flag per
-                        // already-recorded face on the obj parser's own
-                        // `tmp_face_smoothing` arena.
-                        !unsafe {
-                            push_zero::<bool>(
-                                uc.obj().tmp_face_smoothing_mut_ptr(),
-                                uc.obj().tmp_faces_view().num_items()
-                            )
-                        }
-                        .is_null(),
+                        // Zero-fills one smoothing flag per already-recorded
+                        // face on the obj parser's own `tmp_face_smoothing`
+                        // arena.
+                        !uc.obj()
+                            .tmp_face_smoothing_view()
+                            .push_zero::<bool>(uc.obj().tmp_faces_view().num_items())
+                            .is_null(),
                         "((bool*)ufbxi_push_size_zero((&uc->obj.tmp_face_smoothing), sizeof(bool), (uc->obj.tmp_faces.num_items)))"
                     );
                 }
@@ -2035,7 +2014,7 @@ pub(crate) unsafe fn obj_parse_prop(
         return Ok(());
     }
 
-    let prop: *mut Prop = push_zero::<Prop>(uc.obj().tmp_props_mut_ptr(), 1);
+    let prop: *mut Prop = uc.obj().tmp_props_view().push_zero::<Prop>(1);
     ufbxi_check!(uc, !prop.is_null(), "prop");
     (*prop).name = name;
 
