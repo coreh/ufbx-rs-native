@@ -112,9 +112,7 @@ use crate::native::api::{
     find_int as api_find_int, find_prop as api_find_prop, find_prop_len, transform_to_matrix,
     EMPTY_BLOB, EMPTY_STRING, IDENTITY_MATRIX, IDENTITY_TRANSFORM,
 };
-use crate::native::buf::{
-    buf_clear, pop, push_copy, push_copy_fast, push_pop, push_size, Buf, BufView,
-};
+use crate::native::buf::{buf_clear, pop, push_copy, push_copy_fast, push_size, BufView};
 use crate::native::error::{
     memchr, memcmp, strcmp, strlen, strncmp, ufbxi_check, ufbxi_check_err, ufbxi_check_msg,
     ufbxi_check_return, ufbxi_fail, ufbxi_fail_msg, ufbxi_fmt_err_info, Fail, EMPTY_CHAR,
@@ -6361,10 +6359,10 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             (*batch).num_nodes = 0;
         }
 
-        let tmp_buf: *mut Buf = uc.tmp_thread_parse_mut_ptr(batch_index);
+        let tmp_buf: &BufView = uc.tmp_thread_parse_at(batch_index);
 
         // ASCII data may be in `tmp_buf`, so copy it to safety in case
-        if uc.ascii_view().src_buf() == tmp_buf {
+        if uc.ascii_view().src_buf() == tmp_buf.get() {
             let ua: *mut Ascii = uc.ascii_mut_ptr();
             let size: usize = to_size((*ua).src_end.offset_from((*ua).src));
             if uc.read_buffer_size() < size {
@@ -6397,7 +6395,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             uc.set_data((*ua).src);
         }
 
-        buf_clear(tmp_buf);
+        buf_clear(tmp_buf.get());
 
         if !parsed_to_end {
             let mut num_nodes: usize = 0;
@@ -6412,7 +6410,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
 
             loop {
                 let mut node: *mut Node = core::ptr::null_mut();
-                parse_toplevel_child(uc, &mut node, Some(uc.tmp_thread_parse_at(batch_index)))?;
+                parse_toplevel_child(uc, &mut node, Some(tmp_buf))?;
                 if node.is_null() {
                     parsed_to_end = true;
                     break;
@@ -6431,14 +6429,14 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                     break;
                 }
 
-                let memory_used: usize = (*tmp_buf).pushed_size + (*tmp_buf).pos;
+                let memory_used: usize = (*tmp_buf.get()).pushed_size + (*tmp_buf.get()).pos;
                 if memory_used >= max_memory {
                     break;
                 }
             }
 
             (*batch).num_nodes = num_nodes;
-            (*batch).nodes = push_pop::<*mut Node>(tmp_buf, uc.tmp_stack_mut_ptr(), num_nodes);
+            (*batch).nodes = tmp_buf.push_pop::<*mut Node>(uc.tmp_stack_view(), num_nodes);
             ufbxi_check!(uc, !(*batch).nodes.is_null(), "batch->nodes");
             (*batch).task_index = (*uc.get()).thread_pool.start_index;
         }
