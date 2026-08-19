@@ -28,10 +28,6 @@
 // (an orphaned stub that no ported call site reaches); leaner feature sets
 // legitimately strand items, so the lint is only armed for the full build.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 #[cfg(feature = "obj")]
 use crate::generated::{
     ElementType, Face, FaceGroup, Material, Mesh, MeshPart, Node as UfbxNode, OpenFileType, Prop,
@@ -213,7 +209,9 @@ pub(crate) unsafe fn obj_pop_props(
     count: usize,
 ) -> Result<(), Fail> {
     // C: `ufbx_prop_list props; // ufbxi_uninit`
-    let mut props: List<Prop> = core::mem::zeroed(); // ufbxi_uninit
+    // SAFETY: `List<Prop>` is plain C data whose all-zero bit pattern is the
+    // valid `{ 0 }` initializer.
+    let mut props: List<Prop> = unsafe { core::mem::zeroed() }; // ufbxi_uninit
     props.count = count;
     props.data = uc
         .result_view()
@@ -223,30 +221,49 @@ pub(crate) unsafe fn obj_pop_props(
     // C: `ufbxi_for_list(ufbx_prop, prop, props)`
     let mut prop: *mut Prop = props.data as *mut Prop;
     let prop_end = add_ptr(prop, props.count);
+    // Every deref in this loop rests on one invariant: `prop` walks
+    // `props.data .. props.data + count`, the fresh non-null run popped above,
+    // so it addresses a live `Prop` whose own `name` span `get_name_key` reads.
     while prop != prop_end {
-        (*prop)._internal_key = get_name_key((*prop).name.data, (*prop).name.length);
-        if (*prop).value_str.length == 0 {
-            (*prop).value_str.data = EMPTY_CHAR.as_ptr();
+        // SAFETY: as stated above the loop.
+        unsafe { (*prop)._internal_key = get_name_key((*prop).name.data, (*prop).name.length) };
+        // SAFETY: as stated above the loop.
+        unsafe {
+            if (*prop).value_str.length == 0 {
+                (*prop).value_str.data = EMPTY_CHAR.as_ptr();
+            }
         }
-        if (*prop).value_int == 0 {
-            // C: `prop->value_real` — the first `ufbx_real` of the value union
-            // (`value_vec4.x` in the generated struct).
-            (*prop).value_int = f64_to_i64((*prop).value_vec4.x as f64);
+        // SAFETY: as stated above the loop.
+        unsafe {
+            if (*prop).value_int == 0 {
+                // C: `prop->value_real` — the first `ufbx_real` of the value
+                // union (`value_vec4.x` in the generated struct).
+                (*prop).value_int = f64_to_i64((*prop).value_vec4.x as f64);
+            }
         }
-        if (*prop).value_blob.size == 0 && (*prop).value_str.length > 0 {
-            (*prop).value_blob.data = (*prop).value_str.data;
-            (*prop).value_blob.size = (*prop).value_str.length;
+        // SAFETY: as stated above the loop.
+        unsafe {
+            if (*prop).value_blob.size == 0 && (*prop).value_str.length > 0 {
+                (*prop).value_blob.data = (*prop).value_str.data;
+                (*prop).value_blob.size = (*prop).value_str.length;
+            }
         }
-        prop = prop.add(1);
+        // SAFETY: the walk stops at `prop_end`, one past the run's last item.
+        prop = unsafe { prop.add(1) };
     }
 
     if props.count > 1 {
-        sort_properties(uc, props.data as *mut Prop, props.count)?;
-        deduplicate_properties(&mut props);
+        // SAFETY: `props.data` is the fresh non-null run and `props.count` the
+        // item count it was popped with.
+        unsafe { sort_properties(uc, props.data as *mut Prop, props.count)? };
+        // SAFETY: `props` is an unaliased local descriptor of the run just
+        // sorted, which the dedup compacts in place.
+        unsafe { deduplicate_properties(&mut props) };
     }
 
     // C: `*dst = props;`
-    core::ptr::write(dst, props);
+    // SAFETY: caller contract — `dst` is a writable `List<Prop>` out-param.
+    unsafe { core::ptr::write(dst, props) };
     Ok(())
 }
 
@@ -809,20 +826,38 @@ pub(crate) unsafe fn obj_parse_index(
     s: *mut String,
     attrib: u32,
 ) -> Result<(), Fail> {
-    let mut ptr: *const u8 = (*s).data;
-    let end: *const u8 = ptr.add((*s).length);
+    // SAFETY: caller contract — `s` is a live `String` holding a token span
+    // (possibly empty) that lies within the line window `obj_tokenize` scanned,
+    // so `data .. data + length` is readable and so is the byte *at* `end`:
+    // `obj_tokenize` terminates every token on a delimiter byte inside that
+    // window (in the worst case the '\n' sentinel `obj_read_line` appends), and
+    // the `'/'` rebasing below only shrinks a span from the front, keeping the
+    // same `end`. `ptr`/`end` bracket the span.
+    let mut ptr: *const u8 = unsafe { (*s).data };
+    // SAFETY: as above; one past the span's last byte, still within the window.
+    let end: *const u8 = unsafe { ptr.add((*s).length) };
 
     let mut negative: bool = false;
-    if *ptr == b'-' {
+    // SAFETY: `ptr` is either inside the span or equal to `end`; both are
+    // readable per the window invariant above. (Callers do reach here with an
+    // empty span: `obj_parse_faces` runs all `OBJ_NUM_ATTRIBS` attributes over
+    // one token that this function rebases in place, so a position-only token
+    // like "3" is exhausted after the first attribute.) The byte at `end` is a
+    // delimiter, never `'-'`, so the advance below stays within the span.
+    if unsafe { *ptr } == b'-' {
         negative = true;
-        ptr = ptr.add(1);
+        // SAFETY: the byte just read is `'-'`, so it is a span byte rather than
+        // the delimiter at `end`; advancing lands at most on `end`.
+        ptr = unsafe { ptr.add(1) };
     }
 
     // As .obj indices are never zero we can detect missing indices
     // by simply not writing to it.
     let mut index: u64 = 0;
     while ptr != end {
-        let c: u8 = *ptr;
+        // SAFETY: `ptr != end` (loop condition), so it rests on a byte of the
+        // token span.
+        let c: u8 = unsafe { *ptr };
         if c >= b'0' && c <= b'9' {
             ufbxi_check!(
                 uc,
@@ -831,10 +866,12 @@ pub(crate) unsafe fn obj_parse_index(
             );
             index = index * 10 + (c as i32 - b'0' as i32) as u64;
         } else if c == b'/' {
-            ptr = ptr.add(1);
+            // SAFETY: `ptr != end` here, so advancing lands at most on `end`.
+            ptr = unsafe { ptr.add(1) };
             break;
         }
-        ptr = ptr.add(1);
+        // SAFETY: `ptr != end` here, so advancing lands at most on `end`.
+        ptr = unsafe { ptr.add(1) };
     }
 
     if negative {
@@ -850,7 +887,9 @@ pub(crate) unsafe fn obj_parse_index(
     }
 
     let fast_indices: *mut ObjFastIndices = uc.obj().fast_indices_mut_ptr(attrib as usize);
-    if (*fast_indices).num_left == 0 {
+    // SAFETY: `fast_indices` is the obj context's own per-attribute writer
+    // state, taken through its raw-ptr getter.
+    if unsafe { (*fast_indices).num_left } == 0 {
         let num_push: usize = 128;
         let dst: *mut u64 = uc
             .obj()
@@ -864,9 +903,15 @@ pub(crate) unsafe fn obj_parse_index(
     }
 
     // C: `*fast_indices->indices++ = index;`
-    *(*fast_indices).indices = index;
-    (*fast_indices).indices = (*fast_indices).indices.add(1);
-    (*fast_indices).num_left -= 1;
+    // SAFETY: the writer state is the obj context's own (as above), and its
+    // `indices` cursor has `num_left > 0` slots of the reserved `tmp_indices`
+    // run ahead of it — the refill above restores that when it hits zero — so
+    // the store and the one-slot advance stay inside that run.
+    unsafe { *(*fast_indices).indices = index };
+    // SAFETY: as above.
+    unsafe { (*fast_indices).indices = (*fast_indices).indices.add(1) };
+    // SAFETY: the writer state is the obj context's own; `num_left > 0` here.
+    unsafe { (*fast_indices).num_left -= 1 };
 
     if index != u64::MAX {
         let a: usize = attrib as usize;
@@ -874,8 +919,12 @@ pub(crate) unsafe fn obj_parse_index(
         mesh.set_vertex_range_max(a, max64(mesh.vertex_range_max(a), index));
     }
 
-    (*s).data = ptr;
-    (*s).length = to_size(end as isize - ptr as isize);
+    // SAFETY: `s` is the caller's live `String` (contract above); `ptr` rests
+    // inside its own span at or before `end`, so the rebased span is a suffix
+    // of the original.
+    unsafe { (*s).data = ptr };
+    // SAFETY: as above.
+    unsafe { (*s).length = to_size(end as isize - ptr as isize) };
 
     Ok(())
 }
@@ -1129,7 +1178,9 @@ pub(crate) unsafe fn parse_hex(digits: *const u8, length: usize) -> u32 {
         // C: `char c = digits[i];` — `char` is signed on the oracle targets
         // (PORTING.md char-value rule). Every range tested below is entirely
         // below 0x80, so bytes >= 0x80 fall through to `v = 0` either way.
-        let c: i8 = *(digits.add(i) as *const i8);
+        // SAFETY: caller contract — `digits` addresses `length` readable bytes,
+        // and `i < length`.
+        let c: i8 = unsafe { *(digits.add(i) as *const i8) };
         let mut v: u32 = 0;
         if c >= b'0' as i8 && c <= b'9' as i8 {
             v = (c as i32 - b'0' as i32) as u32;
@@ -1344,16 +1395,26 @@ pub(crate) unsafe fn obj_pop_vertices(
     let mut data: *mut Real = uc.result_view().push::<Real>(count + 4);
     ufbxi_check!(uc, !data.is_null(), "data");
 
-    *data.add(0) = 0.0f32 as Real;
-    *data.add(1) = 0.0f32 as Real;
-    *data.add(2) = 0.0f32 as Real;
-    *data.add(3) = 0.0f32 as Real;
-    data = data.add(4);
+    // SAFETY: `data` is the fresh non-null `count + 4` element run, so its
+    // first four slots are the padding quad written here.
+    unsafe {
+        *data.add(0) = 0.0f32 as Real;
+        *data.add(1) = 0.0f32 as Real;
+        *data.add(2) = 0.0f32 as Real;
+        *data.add(3) = 0.0f32 as Real;
+    }
+    // SAFETY: as above — the run holds `count` more elements past the quad.
+    data = unsafe { data.add(4) };
 
-    pop::<Real>(uc.obj().tmp_vertices_mut_ptr(attrib as usize), count, data);
+    // SAFETY: pops `count` items off this attribute's own `tmp_vertices` arena
+    // (`count` is that arena's item count above `min_index`, computed above)
+    // into the `count`-element tail of the fresh run.
+    unsafe { pop::<Real>(uc.obj().tmp_vertices_mut_ptr(attrib as usize), count, data) };
 
-    (*dst).data = data;
-    (*dst).count = count;
+    // SAFETY: caller contract — `dst` is a writable `List<Real>` out-param.
+    unsafe { (*dst).data = data };
+    // SAFETY: as above.
+    unsafe { (*dst).count = count };
     Ok(())
 }
 
@@ -1371,7 +1432,9 @@ pub(crate) unsafe fn obj_setup_attrib(
     required: bool,
 ) -> Result<(), Fail> {
     // C: `ufbx_real_list data = *p_data;`
-    let data: List<Real> = core::ptr::read(p_data);
+    // SAFETY: caller contract — `p_data` is a readable `List<Real>` (a plain
+    // Copy descriptor, so reading it out leaves the source valid).
+    let data: List<Real> = unsafe { core::ptr::read(p_data) };
 
     let num_indices: usize = mesh.num_indices();
     let stride: usize = OBJ_ATTRIB_STRIDE[attrib as usize] as usize;
@@ -1386,44 +1449,64 @@ pub(crate) unsafe fn obj_setup_attrib(
         );
 
         // Pop indices without copying if the attribute is not used
-        pop::<u64>(
-            uc.obj().tmp_indices_mut_ptr(attrib as usize),
-            num_indices,
-            core::ptr::null_mut(),
-        );
+        // SAFETY: discards this mesh's `num_indices` entries from the
+        // attribute's own `tmp_indices` arena; a null destination drops them.
+        unsafe {
+            pop::<u64>(
+                uc.obj().tmp_indices_mut_ptr(attrib as usize),
+                num_indices,
+                core::ptr::null_mut(),
+            );
+        }
         return Ok(());
     }
 
     let min_index: u64 = if non_disjoint { 0 } else { mesh_min_ix };
 
-    pop::<u64>(
-        uc.obj().tmp_indices_mut_ptr(attrib as usize),
-        num_indices,
-        tmp_indices,
-    );
+    // SAFETY: pops this mesh's `num_indices` entries off the attribute's own
+    // `tmp_indices` arena into `tmp_indices`, the caller-supplied scratch run
+    // sized for the widest mesh.
+    unsafe {
+        pop::<u64>(
+            uc.obj().tmp_indices_mut_ptr(attrib as usize),
+            num_indices,
+            tmp_indices,
+        );
+    }
 
     let dst_indices: *mut u32 = uc.result_view().push::<u32>(num_indices);
     ufbxi_check!(uc, !dst_indices.is_null(), "dst_indices");
 
-    (*dst).exists = true;
+    // SAFETY: caller contract — `dst` is a writable `VertexAttrib` out-param;
+    // `data` is the value run the caller popped for this attribute and
+    // `dst_indices` the fresh non-null `num_indices` run pushed above.
+    unsafe {
+        (*dst).exists = true;
 
-    (*dst).values.data = data.data as *mut c_void;
-    (*dst).values.count = num_values;
+        (*dst).values.data = data.data as *mut c_void;
+        (*dst).values.count = num_values;
 
-    (*dst).indices.data = dst_indices;
-    (*dst).indices.count = num_indices;
+        (*dst).indices.data = dst_indices;
+        (*dst).indices.count = num_indices;
+    }
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < num_indices; i++)`
     for i in 0..num_indices {
-        let mut ix: u64 = *tmp_indices.add(i);
+        // SAFETY: `i < num_indices`, the item count both the scratch run
+        // (filled by the pop above) and the fresh `dst_indices` run were sized
+        // for.
+        let mut ix: u64 = unsafe { *tmp_indices.add(i) };
         if ix != u64::MAX {
             ix = ix.wrapping_sub(min_index);
             ufbxi_check!(uc, ix < u32::MAX as u64, "ix < UINT32_MAX");
         }
         if ix < num_values as u64 {
-            *dst_indices.add(i) = ix as u32;
+            // SAFETY: `i < num_indices` bounds the fresh run, as above.
+            unsafe { *dst_indices.add(i) = ix as u32 };
         } else {
-            fix_index(uc, dst_indices.add(i), ix as u32, num_values)?;
+            // SAFETY: as above — the slot handed to the fixer is `dst_indices`
+            // element `i`.
+            unsafe { fix_index(uc, dst_indices.add(i), ix as u32, num_values)? };
         }
     }
 
@@ -2010,41 +2093,58 @@ pub(crate) unsafe fn obj_parse_prop(
 ) -> Result<(), Fail> {
     if start >= uc.obj().num_tokens() {
         if !p_next.is_null() {
-            *p_next = start;
+            // SAFETY: caller contract — a non-null `p_next` is a writable
+            // `usize` out-param.
+            unsafe { *p_next = start };
         }
         return Ok(());
     }
 
     let prop: *mut Prop = uc.obj().tmp_props_view().push_zero::<Prop>(1);
     ufbxi_check!(uc, !prop.is_null(), "prop");
-    (*prop).name = name;
+    // SAFETY: `prop` is the fresh non-null zeroed push result, so every write
+    // through it below lands in the obj parser's own `tmp_props` arena.
+    unsafe { (*prop).name = name };
 
-    push_string_place_str(uc.string_pool_mut_ptr(), &mut (*prop).name, false)?;
+    // SAFETY: interns the prop's own `name` field into uc's string pool, both
+    // taken through their raw-ptr getters.
+    unsafe { push_string_place_str(uc.string_pool_mut_ptr(), &mut (*prop).name, false)? };
 
     let mut flags: u32 = PropFlags::VALUE_STR.raw();
 
     // C-parity: `prop->value_real_arr[]` is the `ufbx_prop` value union's
     // 4-real view (ufbx.h); the generated struct keeps only the `value_vec4`
     // member (PORTING.md union table).
-    let value_real_arr: *mut Real = &mut (*prop).value_vec4 as *mut Vec4 as *mut Real;
+    // SAFETY: `prop` is the fresh push result (as above); the reinterpreted
+    // `value_vec4` field is four contiguous `Real`s.
+    let value_real_arr: *mut Real = unsafe { &mut (*prop).value_vec4 as *mut Vec4 as *mut Real };
 
     let mut num_reals: usize = 0;
     while num_reals < 4 {
         if start + num_reals >= uc.obj().num_tokens() {
             break;
         }
-        let tok: String = *uc.obj().tokens().add(start + num_reals);
+        // SAFETY: `start + num_reals < num_tokens` (guard above), so it indexes
+        // the tokenizer's stored token run.
+        let tok: String = unsafe { *uc.obj().tokens().add(start + num_reals) };
 
         // C: `char *end; // ufbxi_uninit`
         let mut end: *const u8 = core::ptr::null(); // ufbxi_uninit
-        let val: f64 = parse_double(tok.data, tok.length, &mut end, uc.double_parse_flags());
-        if end != tok.data.add(tok.length) {
+                                                    // SAFETY: `tok.data .. + length` is that token's own span and `end` is
+                                                    // an unaliased local out-param.
+        let val: f64 =
+            unsafe { parse_double(tok.data, tok.length, &mut end, uc.double_parse_flags()) };
+        // SAFETY: one past the same token span.
+        if end != unsafe { tok.data.add(tok.length) } {
             break;
         }
 
-        *value_real_arr.add(num_reals) = val as Real;
+        // SAFETY: `num_reals < 4` (loop condition) bounds the four-`Real` view
+        // of the prop's own `value_vec4`.
+        unsafe { *value_real_arr.add(num_reals) = val as Real };
         if num_reals == 0 {
-            (*prop).value_int = f64_to_i64(val);
+            // SAFETY: `prop` is the fresh push result (as above).
+            unsafe { (*prop).value_int = f64_to_i64(val) };
             flags |= PropFlags::VALUE_INT.raw();
         }
 
@@ -2054,10 +2154,15 @@ pub(crate) unsafe fn obj_parse_prop(
     let mut num_args: usize = 0;
     if !include_rest {
         while start + num_args < uc.obj().num_tokens() - 1 {
-            if r#match(
-                uc.obj().tokens().add(start + num_args),
-                b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr(),
-            ) {
+            // SAFETY: `start + num_args < num_tokens - 1` (loop condition), so
+            // it indexes the stored token run; the pattern literal is
+            // NUL-terminated.
+            if unsafe {
+                r#match(
+                    uc.obj().tokens().add(start + num_args),
+                    b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr(),
+                )
+            } {
                 break;
             }
             num_args += 1;
@@ -2074,36 +2179,58 @@ pub(crate) unsafe fn obj_parse_prop(
                 start + num_args - 1
             },
         );
-        (*prop).value_str = span;
-        (*prop).value_blob.data = span.data;
-        (*prop).value_blob.size = span.length;
+        // SAFETY: `prop` is the fresh push result (as above); `span` is the
+        // token span `obj_span_token` returned for the same token run.
+        unsafe {
+            (*prop).value_str = span;
+            (*prop).value_blob.data = span.data;
+            (*prop).value_blob.size = span.length;
+        }
 
-        push_string_place_str(uc.string_pool_mut_ptr(), &mut (*prop).value_str, false)?;
-        push_string_place_blob(uc.string_pool_mut_ptr(), &mut (*prop).value_blob, true)?;
+        // SAFETY: interns the prop's own value fields into uc's string pool,
+        // both taken through their raw-ptr getters.
+        unsafe {
+            push_string_place_str(uc.string_pool_mut_ptr(), &mut (*prop).value_str, false)?;
+            push_string_place_blob(uc.string_pool_mut_ptr(), &mut (*prop).value_blob, true)?;
+        }
     } else {
-        (*prop).value_str.data = EMPTY_CHAR.as_ptr();
+        // SAFETY: `prop` is the fresh push result (as above).
+        unsafe { (*prop).value_str.data = EMPTY_CHAR.as_ptr() };
     }
 
     if num_reals > 0 {
         flags = PropFlags::VALUE_REAL.raw() << (num_reals - 1);
     } else {
-        if strcmp((*prop).value_str.data, b"on\0".as_ptr()) == 0 {
-            (*prop).value_int = 1;
-            // C: `prop->value_real = 1.0f;` — the first `ufbx_real` of the
-            // value union (`value_vec4.x` in the generated struct).
-            (*prop).value_vec4.x = 1.0f32 as Real;
+        // SAFETY: `prop` is the fresh push result (as above); its `value_str`
+        // is either an interned pool string or `EMPTY_CHAR`, NUL-terminated
+        // either way, as are the two literals.
+        if unsafe { strcmp((*prop).value_str.data, b"on\0".as_ptr()) } == 0 {
+            // SAFETY: `prop` is the fresh push result (as above).
+            unsafe {
+                (*prop).value_int = 1;
+                // C: `prop->value_real = 1.0f;` — the first `ufbx_real` of the
+                // value union (`value_vec4.x` in the generated struct).
+                (*prop).value_vec4.x = 1.0f32 as Real;
+            }
             flags |= PropFlags::VALUE_INT.raw();
-        } else if strcmp((*prop).value_str.data, b"off\0".as_ptr()) == 0 {
-            (*prop).value_int = 0;
-            (*prop).value_vec4.x = 0.0f32 as Real;
+        // SAFETY: as for the `"on"` comparison above.
+        } else if unsafe { strcmp((*prop).value_str.data, b"off\0".as_ptr()) } == 0 {
+            // SAFETY: `prop` is the fresh push result (as above).
+            unsafe {
+                (*prop).value_int = 0;
+                (*prop).value_vec4.x = 0.0f32 as Real;
+            }
             flags |= PropFlags::VALUE_INT.raw();
         }
     }
 
-    (*prop).flags = PropFlags::from_raw(flags);
+    // SAFETY: `prop` is the fresh push result (as above).
+    unsafe { (*prop).flags = PropFlags::from_raw(flags) };
 
     if !p_next.is_null() {
-        *p_next = start + num_args;
+        // SAFETY: caller contract — a non-null `p_next` is a writable `usize`
+        // out-param.
+        unsafe { *p_next = start + num_args };
     }
 
     Ok(())

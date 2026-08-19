@@ -61,10 +61,6 @@
 //!
 //! Phase 1: most items have no consumers yet.
 #![allow(dead_code, unused_macros, unused_imports)]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::c_void;
 use core::mem::size_of;
 use core::mem::MaybeUninit;
@@ -225,28 +221,34 @@ const _: () = assert!(align_of::<AtomicCounter>() == align_of::<usize>());
 // C-parity: a plain (non-atomic) store — init runs before the counter is shared.
 #[inline(always)]
 pub(crate) unsafe fn atomic_counter_init(ptr: *mut AtomicCounter) {
-    ptr.write(AtomicCounter::new(0));
+    // SAFETY: `ptr` is the caller's writable, aligned counter storage.
+    unsafe { ptr.write(AtomicCounter::new(0)) };
 }
 
 // ufbx.c:644 `#define ufbxi_atomic_counter_free(ptr) (*(ptr) = 0)`
 // C-parity: plain store — free runs after the last owner is done sharing it.
 #[inline(always)]
 pub(crate) unsafe fn atomic_counter_free(ptr: *mut AtomicCounter) {
-    ptr.write(AtomicCounter::new(0));
+    // SAFETY: `ptr` is the caller's writable, aligned counter storage.
+    unsafe { ptr.write(AtomicCounter::new(0)) };
 }
 
 // ufbx.c:645 `#define ufbxi_atomic_counter_inc(ptr) __sync_fetch_and_add((ptr), 1)`
 // Returns the PREVIOUS value.
 #[inline(always)]
 pub(crate) unsafe fn atomic_counter_inc(ptr: *mut AtomicCounter) -> usize {
-    (*ptr).fetch_add(1, core::sync::atomic::Ordering::SeqCst)
+    // SAFETY: `ptr` points at a live, initialized counter (caller contract);
+    // the RMW itself is race-free through the atomic.
+    unsafe { (*ptr).fetch_add(1, core::sync::atomic::Ordering::SeqCst) }
 }
 
 // ufbx.c:646 `#define ufbxi_atomic_counter_dec(ptr) __sync_fetch_and_sub((ptr), 1)`
 // Returns the PREVIOUS value.
 #[inline(always)]
 pub(crate) unsafe fn atomic_counter_dec(ptr: *mut AtomicCounter) -> usize {
-    (*ptr).fetch_sub(1, core::sync::atomic::Ordering::SeqCst)
+    // SAFETY: `ptr` points at a live, initialized counter (caller contract);
+    // the RMW itself is race-free through the atomic.
+    unsafe { (*ptr).fetch_sub(1, core::sync::atomic::Ordering::SeqCst) }
 }
 
 // ufbx.c:647 `#define ufbxi_atomic_counter_load(ptr) __sync_fetch_and_add((ptr), 0)`
@@ -254,7 +256,9 @@ pub(crate) unsafe fn atomic_counter_dec(ptr: *mut AtomicCounter) -> usize {
 // (PORTING.md "Atomics / refcount"), not a plain `load`.
 #[inline(always)]
 pub(crate) unsafe fn atomic_counter_load(ptr: *mut AtomicCounter) -> usize {
-    (*ptr).fetch_add(0, core::sync::atomic::Ordering::SeqCst)
+    // SAFETY: `ptr` points at a live, initialized counter (caller contract);
+    // the RMW itself is race-free through the atomic.
+    unsafe { (*ptr).fetch_add(0, core::sync::atomic::Ordering::SeqCst) }
 }
 
 // -- Configuration constants with regression overrides
@@ -382,8 +386,13 @@ const _: () = assert!(SOURCE_VERSION / 1000 == HEADER_VERSION / 1000);
 // consumed downstream.
 #[inline(always)]
 pub(crate) unsafe fn copy_16_bytes(dst: *mut u8, src: *const u8) {
-    let t = (src as *const MaybeUninit<[u8; 16]>).read_unaligned();
-    (dst as *mut MaybeUninit<[u8; 16]>).write_unaligned(t);
+    // SAFETY: caller contract — `src` has 16 readable bytes (possibly partly
+    // uninitialized, which `MaybeUninit` tolerates) and `dst` 16 writable ones;
+    // no alignment is required by the unaligned accessors, and load-then-store
+    // is well defined when the two ranges overlap.
+    let t = unsafe { (src as *const MaybeUninit<[u8; 16]>).read_unaligned() };
+    // SAFETY: as above, for the store half.
+    unsafe { (dst as *mut MaybeUninit<[u8; 16]>).write_unaligned(t) };
 }
 
 // -- Large fast integer
@@ -461,7 +470,8 @@ pub(crate) fn is_aligned_mask<T>(ptr: *const T, mask: usize) -> bool {
 // ufbx.c:745 `#define ufbxi_read_u8(ptr) (*(const uint8_t*)(ptr))`
 #[inline(always)]
 pub(crate) unsafe fn read_u8(ptr: *const u8) -> u8 {
-    *ptr
+    // SAFETY: caller contract — `ptr` has 1 readable byte.
+    unsafe { *ptr }
 }
 
 // ufbx.c:791-836 `ufbxi_read_u16`
@@ -470,55 +480,73 @@ pub(crate) unsafe fn read_u8(ptr: *const u8) -> u8 {
 // (PORTING.md "Byte order"); correct on big-endian targets too.
 #[inline(always)]
 pub(crate) unsafe fn read_u16(ptr: *const u8) -> u16 {
-    u16::from_le_bytes((ptr as *const [u8; 2]).read_unaligned())
+    // SAFETY: caller contract — `ptr` has 2 readable bytes; the unaligned
+    // read imposes no alignment requirement.
+    unsafe { u16::from_le_bytes((ptr as *const [u8; 2]).read_unaligned()) }
 }
 
 // ufbx.c:791-830 `ufbxi_read_u32`
 #[inline(always)]
 pub(crate) unsafe fn read_u32(ptr: *const u8) -> u32 {
-    u32::from_le_bytes((ptr as *const [u8; 4]).read_unaligned())
+    // SAFETY: caller contract — `ptr` has 4 readable bytes; the unaligned
+    // read imposes no alignment requirement.
+    unsafe { u32::from_le_bytes((ptr as *const [u8; 4]).read_unaligned()) }
 }
 
 // ufbx.c:791-830 `ufbxi_read_u64`
 #[inline(always)]
 pub(crate) unsafe fn read_u64(ptr: *const u8) -> u64 {
-    u64::from_le_bytes((ptr as *const [u8; 8]).read_unaligned())
+    // SAFETY: caller contract — `ptr` has 8 readable bytes; the unaligned
+    // read imposes no alignment requirement.
+    unsafe { u64::from_le_bytes((ptr as *const [u8; 8]).read_unaligned()) }
 }
 
 // ufbx.c:791-830 `ufbxi_read_f32` (u32 read + bit copy, ufbx.c:824-829)
 #[inline(always)]
 pub(crate) unsafe fn read_f32(ptr: *const u8) -> f32 {
-    f32::from_bits(read_u32(ptr))
+    // SAFETY: forwards the caller's `4 readable bytes at ptr` contract to
+    // `read_u32`.
+    unsafe { f32::from_bits(read_u32(ptr)) }
 }
 
 // ufbx.c:791-830 `ufbxi_read_f64` (u64 read + bit copy, ufbx.c:824-829)
 #[inline(always)]
 pub(crate) unsafe fn read_f64(ptr: *const u8) -> f64 {
-    f64::from_bits(read_u64(ptr))
+    // SAFETY: forwards the caller's `8 readable bytes at ptr` contract to
+    // `read_u64`.
+    unsafe { f64::from_bits(read_u64(ptr)) }
 }
 
 // ufbx.c:838 `#define ufbxi_read_i8(ptr) (int8_t)(ufbxi_read_u8(ptr))`
 #[inline(always)]
 pub(crate) unsafe fn read_i8(ptr: *const u8) -> i8 {
-    read_u8(ptr) as i8
+    // SAFETY: forwards the caller's `1 readable byte at ptr` contract to
+    // `read_u8`.
+    unsafe { read_u8(ptr) as i8 }
 }
 
 // ufbx.c:839 `ufbxi_read_i16`
 #[inline(always)]
 pub(crate) unsafe fn read_i16(ptr: *const u8) -> i16 {
-    read_u16(ptr) as i16
+    // SAFETY: forwards the caller's `2 readable bytes at ptr` contract to
+    // `read_u16`.
+    unsafe { read_u16(ptr) as i16 }
 }
 
 // ufbx.c:840 `ufbxi_read_i32`
 #[inline(always)]
 pub(crate) unsafe fn read_i32(ptr: *const u8) -> i32 {
-    read_u32(ptr) as i32
+    // SAFETY: forwards the caller's `4 readable bytes at ptr` contract to
+    // `read_u32`.
+    unsafe { read_u32(ptr) as i32 }
 }
 
 // ufbx.c:841 `ufbxi_read_i64`
 #[inline(always)]
 pub(crate) unsafe fn read_i64(ptr: *const u8) -> i64 {
-    read_u64(ptr) as i64
+    // SAFETY: forwards the caller's `8 readable bytes at ptr` contract to
+    // `read_u64`.
+    unsafe { read_u64(ptr) as i64 }
 }
 
 // ufbx.c:843-854 sizeof static asserts — fixed-width types make most of these
@@ -559,10 +587,15 @@ pub(crate) unsafe fn swap(a: *mut u8, b: *mut u8, size: usize) {
     let mut tmp = core::mem::MaybeUninit::<SwapScratch>::uninit();
     ufbxi_dev_assert!(size % 4 == 0 && (a as usize) % 4 == 0 && (b as usize) % 4 == 0);
     ufbxi_dev_assert!(size <= size_of::<SwapScratch>());
-    let tmp_data = (*tmp.as_mut_ptr()).data.as_mut_ptr();
-    core::ptr::copy_nonoverlapping(a as *const u8, tmp_data, size);
-    core::ptr::copy_nonoverlapping(b as *const u8, a, size);
-    core::ptr::copy_nonoverlapping(tmp_data as *const u8, b, size);
+    // SAFETY: `tmp` is a live local `MaybeUninit<SwapScratch>`, so projecting
+    // its `data` array yields a writable `[u8; 256]` base pointer.
+    let tmp_data = unsafe { (*tmp.as_mut_ptr()).data.as_mut_ptr() };
+    // SAFETY (all three): caller contract — `a` and `b` are disjoint regions of
+    // `size` readable+writable bytes, and `size <= size_of::<SwapScratch>()`
+    // (dev-asserted above) bounds every copy into the scratch array.
+    unsafe { core::ptr::copy_nonoverlapping(a as *const u8, tmp_data, size) };
+    unsafe { core::ptr::copy_nonoverlapping(b as *const u8, a, size) };
+    unsafe { core::ptr::copy_nonoverlapping(tmp_data as *const u8, b, size) };
 }
 
 // -- Utility (ufbx.c:1082-1348)
@@ -757,6 +790,10 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
     size: usize,
     mut cmp_lambda: impl FnMut(*const T, *const T) -> bool,
 ) {
+    // Caller contract for every pointer op below: `data` and `tmp` each address
+    // `size` writable, aligned, initialized `T`s in one allocation each, and the
+    // two runs are disjoint. `src`/`dst` are those two bases (swapped between
+    // merge passes), and every index used below is `< size`.
     let mut src: *mut T = tmp;
     let data: *mut T = data;
     let mut dst: *mut T = data;
@@ -771,17 +808,24 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
         let mut i = base + 1;
         while i < i_end {
             let mut j = i;
-            *src = *dst.add(i); // mi_src[0] = mi_dst[mi_i];
+            // SAFETY: run contract; `i < i_end <= size`, and `src` is the base
+            // element of the scratch run.
+            unsafe { *src = *dst.add(i) }; // mi_src[0] = mi_dst[mi_i];
             while j != base {
-                let a: *const T = &*src;
-                let b: *const T = dst.add(j - 1);
+                // SAFETY: `src` is the scratch base element written just above.
+                let a: *const T = unsafe { &*src };
+                // SAFETY: run contract; `base < j <= i < size`, so `j - 1 < size`.
+                let b: *const T = unsafe { dst.add(j - 1) };
                 if !cmp_lambda(a, b) {
                     break;
                 }
-                *dst.add(j) = *dst.add(j - 1);
+                // SAFETY: run contract; `base < j <= i < size` bounds both ends.
+                unsafe { *dst.add(j) = *dst.add(j - 1) };
                 j -= 1;
             }
-            *dst.add(j) = *src;
+            // SAFETY: run contract; `base <= j <= i < size`, and `src` holds the
+            // element lifted out at the top of this iteration.
+            unsafe { *dst.add(j) = *src };
             i += 1;
         }
         base += block_size;
@@ -804,24 +848,34 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
             }
             // C: `(mi_i < mi_i_end) & (mi_j < mi_j_end)` — non-short-circuit.
             while (i < i_end) & (j < j_end) {
-                let a: *const T = src.add(j);
-                let b: *const T = src.add(i);
+                // SAFETY (both): run contract; `j < j_end <= size` and
+                // `i < i_end <= size` are the loop condition.
+                let a: *const T = unsafe { src.add(j) };
+                let b: *const T = unsafe { src.add(i) };
                 if cmp_lambda(a, b) {
-                    *dst.add(k) = *a;
+                    // SAFETY: run contract; `k < size` (it advances once per
+                    // consumed source element of this merge pair), and `a` is
+                    // the in-bounds source pointer above.
+                    unsafe { *dst.add(k) = *a };
                     j += 1;
                 } else {
-                    *dst.add(k) = *b;
+                    // SAFETY: as above, for `b`.
+                    unsafe { *dst.add(k) = *b };
                     i += 1;
                 }
                 k += 1;
             }
             while i < i_end {
-                *dst.add(k) = *src.add(i);
+                // SAFETY: run contract; `i < i_end <= size` is the loop
+                // condition and `k < size` as above.
+                unsafe { *dst.add(k) = *src.add(i) };
                 k += 1;
                 i += 1;
             }
             while j < j_end {
-                *dst.add(k) = *src.add(j);
+                // SAFETY: run contract; `j < j_end <= size` is the loop
+                // condition and `k < size` as above.
+                unsafe { *dst.add(k) = *src.add(j) };
                 k += 1;
                 j += 1;
             }
@@ -831,7 +885,9 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
     }
     // Copy the result to `m_data` if we ended up in `m_tmp`
     if dst != data {
-        core::ptr::copy_nonoverlapping(dst as *const T, data, size);
+        // SAFETY: run contract — both runs hold `size` elements and are
+        // disjoint (`dst` is the `tmp` base here, per the guard).
+        unsafe { core::ptr::copy_nonoverlapping(dst as *const T, data, size) };
     }
 }
 
@@ -856,7 +912,9 @@ pub(crate) unsafe fn macro_lower_bound_eq<T>(
     // Binary search until we get down to `m_linear_size` elements
     while hi - lo > linear_size {
         let mid = lo + (hi - lo) / 2;
-        let a: *const T = data.add(mid);
+        // SAFETY: caller contract — `data` addresses `size` readable `T`s;
+        // `mid < hi <= size` since `hi - lo > linear_size >= 2` here.
+        let a: *const T = unsafe { data.add(mid) };
         if cmp_lambda(a) {
             lo = mid + 1;
         } else {
@@ -865,9 +923,13 @@ pub(crate) unsafe fn macro_lower_bound_eq<T>(
     }
     // Linearly scan until we find the edge
     while lo < hi {
-        let a: *const T = data.add(lo);
+        // SAFETY: caller contract as above; `lo < hi <= size` is the loop
+        // condition.
+        let a: *const T = unsafe { data.add(lo) };
         if eq_lambda(a) {
-            *result_ptr = lo;
+            // SAFETY: caller contract — `result_ptr` is a writable `usize`
+            // out-param.
+            unsafe { *result_ptr = lo };
             break;
         }
         lo += 1;
@@ -892,7 +954,9 @@ pub(crate) unsafe fn macro_upper_bound_eq<T>(
     // Linearly scan with galloping
     let mut step = 1usize;
     while step < 100 && hi - lo > step {
-        let a: *const T = data.add(lo + step);
+        // SAFETY: caller contract — `data` addresses `size` readable `T`s;
+        // `hi - lo > step` (loop condition) gives `lo + step < hi <= size`.
+        let a: *const T = unsafe { data.add(lo + step) };
         if !eq_lambda(a) {
             hi = lo + step;
             break;
@@ -903,7 +967,9 @@ pub(crate) unsafe fn macro_upper_bound_eq<T>(
     // Binary search until we get down to `m_linear_size` elements
     while hi - lo > linear_size {
         let mid = lo + (hi - lo) / 2;
-        let a: *const T = data.add(mid);
+        // SAFETY: caller contract — `data` addresses `size` readable `T`s;
+        // `mid < hi <= size` since `hi - lo > linear_size >= 2` here.
+        let a: *const T = unsafe { data.add(mid) };
         if eq_lambda(a) {
             lo = mid + 1;
         } else {
@@ -912,13 +978,16 @@ pub(crate) unsafe fn macro_upper_bound_eq<T>(
     }
     // Linearly scan until we find the edge
     while lo < hi {
-        let a: *const T = data.add(lo);
+        // SAFETY: caller contract as above; `lo < hi <= size` is the loop
+        // condition.
+        let a: *const T = unsafe { data.add(lo) };
         if !eq_lambda(a) {
             break;
         }
         lo += 1;
     }
-    *result_ptr = lo;
+    // SAFETY: caller contract — `result_ptr` is a writable `usize` out-param.
+    unsafe { *result_ptr = lo };
 }
 
 // ufbx.c:1231 `typedef bool ufbxi_less_fn(void *user, const void *a, const void *b);`
@@ -945,6 +1014,11 @@ pub(crate) unsafe fn stable_sort(
     // ignores it under UFBX_DEBUG_BINARY_SEARCH/UFBX_REGRESSION).
     let _ = linear_size;
 
+    // Caller contract for every pointer op below: `in_data` and `in_tmp` each
+    // address `size * stride` writable bytes in one allocation each, the two
+    // runs are disjoint, and `less_fn` accepts element pointers into either run
+    // paired with `less_user`. `src`/`dst` are those two bases (swapped between
+    // merge passes), and every index used below is `< size`.
     let mut src: *mut u8 = in_tmp as *mut u8;
     let data: *mut u8 = in_data as *mut u8;
     let mut dst: *mut u8 = data;
@@ -962,39 +1036,62 @@ pub(crate) unsafe fn stable_sort(
             // C: { char *a = dst + i*stride, *b = dst + (i-1)*stride;
             //      if (!less_fn(less_user, a, b)) continue; }
             {
-                let a = dst.add(i * stride);
-                let b = dst.add((i - 1) * stride);
-                if !less_fn(less_user, a as *const c_void, b as *const c_void) {
+                // SAFETY: run contract; `base < i < i_end <= size` bounds both
+                // elements.
+                let a = unsafe { dst.add(i * stride) };
+                let b = unsafe { dst.add((i - 1) * stride) };
+                // SAFETY: `a`/`b` are element pointers into the run `less_fn`
+                // was handed with `less_user`.
+                if !unsafe { less_fn(less_user, a as *const c_void, b as *const c_void) } {
                     i += 1;
                     continue;
                 }
             }
 
             let mut j = i - 1;
+            // SAFETY: run contract; `i < size` and `src` is the disjoint
+            // scratch base, whose first `stride` bytes hold the lifted element.
             // memcpy(src, dst + i * stride, stride);
-            core::ptr::copy_nonoverlapping(dst.add(i * stride) as *const u8, src, stride);
+            unsafe {
+                core::ptr::copy_nonoverlapping(dst.add(i * stride) as *const u8, src, stride)
+            };
+            // SAFETY: run contract; `j = i - 1 < i < size`, and the two element
+            // slots are distinct, so the copy ranges do not overlap.
             // memcpy(dst + i * stride, dst + j * stride, stride);
-            core::ptr::copy_nonoverlapping(
-                dst.add(j * stride) as *const u8,
-                dst.add(i * stride),
-                stride,
-            );
-            while j != base {
-                let a = src as *const c_void;
-                let b = dst.add((j - 1) * stride);
-                if !less_fn(less_user, a, b as *const c_void) {
-                    break;
-                }
-                // memcpy(dst + j * stride, dst + (j - 1) * stride, stride);
+            unsafe {
                 core::ptr::copy_nonoverlapping(
-                    dst.add((j - 1) * stride) as *const u8,
-                    dst.add(j * stride),
+                    dst.add(j * stride) as *const u8,
+                    dst.add(i * stride),
                     stride,
                 );
+            }
+            while j != base {
+                let a = src as *const c_void;
+                // SAFETY: run contract; `base < j < size`, so `j - 1 < size`.
+                let b = unsafe { dst.add((j - 1) * stride) };
+                // SAFETY: `a` is the scratch element and `b` an element of the
+                // run `less_fn` was handed with `less_user`.
+                if !unsafe { less_fn(less_user, a, b as *const c_void) } {
+                    break;
+                }
+                // SAFETY: run contract; `base < j < size` bounds both distinct
+                // (hence non-overlapping) element slots.
+                // memcpy(dst + j * stride, dst + (j - 1) * stride, stride);
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        dst.add((j - 1) * stride) as *const u8,
+                        dst.add(j * stride),
+                        stride,
+                    );
+                }
                 j -= 1;
             }
+            // SAFETY: run contract; `base <= j < size`, and `src` is the
+            // disjoint scratch holding the lifted element.
             // memcpy(dst + j * stride, src, stride);
-            core::ptr::copy_nonoverlapping(src as *const u8, dst.add(j * stride), stride);
+            unsafe {
+                core::ptr::copy_nonoverlapping(src as *const u8, dst.add(j * stride), stride)
+            };
             i += 1;
         }
         base += block_size;
@@ -1017,13 +1114,25 @@ pub(crate) unsafe fn stable_sort(
             }
             // C: `(i < i_end) & (j < j_end)` — non-short-circuit.
             while (i < i_end) & (j < j_end) {
-                let a = src.add(j * stride);
-                let b = src.add(i * stride);
-                if less_fn(less_user, a as *const c_void, b as *const c_void) {
-                    core::ptr::copy_nonoverlapping(a as *const u8, dst.add(k * stride), stride);
+                // SAFETY (both): run contract; `j < j_end <= size` and
+                // `i < i_end <= size` are the loop condition.
+                let a = unsafe { src.add(j * stride) };
+                let b = unsafe { src.add(i * stride) };
+                // SAFETY: `a`/`b` are element pointers into the run `less_fn`
+                // was handed with `less_user`.
+                if unsafe { less_fn(less_user, a as *const c_void, b as *const c_void) } {
+                    // SAFETY: run contract; `k < size` (it advances once per
+                    // consumed source element of this merge pair), and `src`
+                    // and `dst` are the two disjoint runs.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(a as *const u8, dst.add(k * stride), stride)
+                    };
                     j += 1;
                 } else {
-                    core::ptr::copy_nonoverlapping(b as *const u8, dst.add(k * stride), stride);
+                    // SAFETY: as above, for `b`.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(b as *const u8, dst.add(k * stride), stride)
+                    };
                     i += 1;
                 }
                 k += 1;
@@ -1031,18 +1140,28 @@ pub(crate) unsafe fn stable_sort(
 
             // Bulk-memcpy merge tails (the macro variant uses element loops):
             // memcpy(dst + k * stride, src + i * stride, (i_end - i) * stride);
-            core::ptr::copy_nonoverlapping(
-                src.add(i * stride) as *const u8,
-                dst.add(k * stride),
-                (i_end - i) * stride,
-            );
-            if j < j_end {
-                // memcpy(dst + (k + (i_end - i)) * stride, src + j * stride, (j_end - j) * stride);
+            // SAFETY: run contract; the tail spans `i .. i_end <= size` in
+            // `src` and lands at `k .. k + (i_end - i) <= size` in the disjoint
+            // `dst`.
+            unsafe {
                 core::ptr::copy_nonoverlapping(
-                    src.add(j * stride) as *const u8,
-                    dst.add((k + (i_end - i)) * stride),
-                    (j_end - j) * stride,
+                    src.add(i * stride) as *const u8,
+                    dst.add(k * stride),
+                    (i_end - i) * stride,
                 );
+            }
+            if j < j_end {
+                // SAFETY: run contract; the tail spans `j .. j_end <= size` in
+                // `src` and lands after the previous tail, still within `size`
+                // elements of the disjoint `dst`.
+                // memcpy(dst + (k + (i_end - i)) * stride, src + j * stride, (j_end - j) * stride);
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        src.add(j * stride) as *const u8,
+                        dst.add((k + (i_end - i)) * stride),
+                        (j_end - j) * stride,
+                    );
+                }
             }
             base += block_size * 2;
         }
@@ -1050,7 +1169,9 @@ pub(crate) unsafe fn stable_sort(
     }
     // Copy the result to `data` if we ended up in `tmp`
     if dst != data {
-        core::ptr::copy_nonoverlapping(dst as *const u8, data, size * stride);
+        // SAFETY: run contract — both runs span `size * stride` bytes and are
+        // disjoint (`dst` is the `tmp` base here, per the guard).
+        unsafe { core::ptr::copy_nonoverlapping(dst as *const u8, data, size * stride) };
     }
 }
 
@@ -1068,6 +1189,10 @@ pub(crate) unsafe fn unstable_sort(
         return;
     }
 
+    // Caller contract for every pointer op below: `in_data` addresses
+    // `size * stride` writable bytes in one allocation, `stride` is the element
+    // size, and `less_fn` accepts element pointers into that run paired with
+    // `less_user`. Every index below is `<= end < size`.
     let data = in_data as *mut u8;
     let mut start = (size - 1) >> 1;
     let mut end = size - 1;
@@ -1079,35 +1204,49 @@ pub(crate) unsafe fn unstable_sort(
             if !(child <= end) {
                 break;
             }
-            let mut next = if less_fn(
-                less_user,
-                data.add(child * stride) as *const c_void,
-                data.add(root * stride) as *const c_void,
-            ) {
+            // SAFETY: run contract; `child <= end < size` (guard above) and
+            // `root <= child`, so both element pointers are in bounds.
+            let mut next = if unsafe {
+                less_fn(
+                    less_user,
+                    data.add(child * stride) as *const c_void,
+                    data.add(root * stride) as *const c_void,
+                )
+            } {
                 root
             } else {
                 child
             };
+            // SAFETY: run contract; `next` is `root` or `child`, both
+            // `<= end < size`, and `child < end` (short-circuited first) gives
+            // `child + 1 <= end < size`.
             if child < end
-                && less_fn(
-                    less_user,
-                    data.add(next * stride) as *const c_void,
-                    data.add((child + 1) * stride) as *const c_void,
-                )
+                && unsafe {
+                    less_fn(
+                        less_user,
+                        data.add(next * stride) as *const c_void,
+                        data.add((child + 1) * stride) as *const c_void,
+                    )
+                }
             {
                 next = child + 1;
             }
             if next == root {
                 break;
             }
-            swap(data.add(root * stride), data.add(next * stride), stride);
+            // SAFETY: run contract; `root` and `next` are distinct indices
+            // `<= end < size`, so the two `stride`-byte element slots `swap`
+            // exchanges are in bounds and disjoint.
+            unsafe { swap(data.add(root * stride), data.add(next * stride), stride) };
             root = next;
         }
 
         if start > 0 {
             start -= 1;
         } else if end > 0 {
-            swap(data.add(end * stride), data, stride);
+            // SAFETY: run contract; `end > 0` here, so element `end` is in
+            // bounds and disjoint from element 0.
+            unsafe { swap(data.add(end * stride), data, stride) };
             end -= 1;
         } else {
             break;
@@ -1818,8 +1957,10 @@ mod utility_tests {
         va: *const c_void,
         vb: *const c_void,
     ) -> bool {
-        let a = *(va as *const u32);
-        let b = *(vb as *const u32);
+        // SAFETY: `LessFn` contract — the sorts pass element pointers into the
+        // `u32` run this comparator is registered for.
+        let a = unsafe { *(va as *const u32) };
+        let b = unsafe { *(vb as *const u32) };
         a < b
     }
 
@@ -1829,8 +1970,10 @@ mod utility_tests {
         va: *const c_void,
         vb: *const c_void,
     ) -> bool {
-        let a = *(va as *const UintPair);
-        let b = *(vb as *const UintPair);
+        // SAFETY: `LessFn` contract — the sorts pass element pointers into the
+        // `UintPair` run this comparator is registered for.
+        let a = unsafe { *(va as *const UintPair) };
+        let b = unsafe { *(vb as *const UintPair) };
         a.a < b.a
     }
 
@@ -1840,8 +1983,10 @@ mod utility_tests {
         va: *const c_void,
         vb: *const c_void,
     ) -> bool {
-        let a = *(va as *const UintPair);
-        let b = *(vb as *const UintPair);
+        // SAFETY: `LessFn` contract — the sorts pass element pointers into the
+        // `UintPair` run this comparator is registered for.
+        let a = unsafe { *(va as *const UintPair) };
+        let b = unsafe { *(vb as *const UintPair) };
         a.b < b.b
     }
 
@@ -1851,9 +1996,13 @@ mod utility_tests {
         va: *const c_void,
         vb: *const c_void,
     ) -> bool {
-        let a = *(va as *const *const c_char);
-        let b = *(vb as *const *const c_char);
-        libc::strcmp(a, b) < 0
+        // SAFETY: `LessFn` contract — the sorts pass element pointers into the
+        // `*const c_char` run this comparator is registered for.
+        let a = unsafe { *(va as *const *const c_char) };
+        let b = unsafe { *(vb as *const *const c_char) };
+        // SAFETY: both elements are `CString` pointers owned by the caller, so
+        // each is NUL-terminated.
+        unsafe { libc::strcmp(a, b) < 0 }
     }
 
     // test/unit_tests.c:56-72 `sort_uints`
