@@ -7334,9 +7334,8 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
 
         if !entry.is_null() {
             // SAFETY: a non-null entry holds a live element of uc's own
-            // scene, so its `props` run may be filled from the local
-            // `tmp_props` array — the `num_props` copied were written into it
-            // above.
+            // scene, so its `stack` element may be dereferenced and its
+            // `props` run filled.
             unsafe {
                 let stack: *mut AnimStack = (*entry).stack;
                 if (*stack).element.props.props.count == 0 {
@@ -7373,9 +7372,7 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     };
     ufbxi_check!(uc, !stack.is_null(), "stack");
 
-    // SAFETY: `stack` is the fresh non-null element checked above; the copy
-    // source is the local `tmp_props` array, into which `num_props` entries
-    // were written, and the destination buffer is uc's own result arena.
+    // SAFETY: `stack` is the fresh non-null element checked above.
     unsafe {
         (*stack).element.props.props.count = num_props as usize;
         (*stack).element.props.props.data = uc
