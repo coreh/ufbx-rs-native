@@ -17,7 +17,10 @@
 //! - `ufbxi_arraycount` at the dev-assert sites (second half) collapses to
 //!   `.len()`.
 #![allow(dead_code, unused_macros, unused_imports)]
-
+// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
+// file still has whole-body-implicit unsafe fns; remove this allow once every
+// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::native::platform::{lzcnt32, lzcnt64, math, ufbxi_dev_assert, ufbxi_maybe_uninit};
 
 // ufbx.c:1351-1355

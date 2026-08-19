@@ -48,7 +48,15 @@
 #![allow(clippy::needless_late_init)]
 // `for i in 0..n` mirrors C index loops that also index raw pointers / a second array (not iterable).
 #![allow(clippy::needless_range_loop)]
+// Unsafe-reduction ratchet (PORTING.md "Unsafe reduction / isolation strategy"):
+// every op inside an `unsafe fn` must sit in an explicit narrow `unsafe {}`
+// block. Files not yet converted carry a file-level allow; a cleaned file
+// deletes its allow, and new code is gated from the start.
+#![warn(unsafe_op_in_unsafe_fn)]
 
+// Generated code keeps C-shaped implicit unsafe fn bodies; the generator owns
+// its emission style (NEVER hand-edit generated.rs — see PORTING.md rule 0).
+#[allow(unsafe_op_in_unsafe_fn)]
 pub mod generated;
 pub mod prelude;
 

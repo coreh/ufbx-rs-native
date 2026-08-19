@@ -100,7 +100,9 @@ pub(crate) unsafe fn opt_warnings_view<'a>(ws: *mut Warnings) -> Option<&'a Warn
     if ws.is_null() {
         None
     } else {
-        Some(WarningsView::from_ptr(ws))
+        // SAFETY: non-null `ws` is a live context-owned `Warnings` reached
+        // through a write-capable pointer (fn raw-param contract).
+        Some(unsafe { WarningsView::from_ptr(ws) })
     }
 }
 
@@ -255,20 +257,33 @@ pub(crate) unsafe fn pop_warnings(
     warnings: *mut List<Warning>,
     p_has_warning: *mut bool,
 ) -> Result<(), Fail> {
-    (*warnings).count = (*ws).tmp_stack.num_items;
-    (*warnings).data =
-        buf::push_pop::<Warning>((*ws).result, &mut (*ws).tmp_stack, (*warnings).count);
+    // SAFETY: `ws` is uc's live warnings state and `warnings` the caller's
+    // out-list (fn raw-param contract); the pop drains ws's own tmp_stack
+    // into ws's stored result buffer.
+    unsafe {
+        (*warnings).count = (*ws).tmp_stack.num_items;
+        (*warnings).data =
+            buf::push_pop::<Warning>((*ws).result, &mut (*ws).tmp_stack, (*warnings).count);
+    }
     ufbxi_check_err!(
+        // SAFETY: `(*ws).error` is the context's live error slot (fn
+        // raw-param contract).
         unsafe { crate::native::error::ErrorView::from_ptr((*ws).error) },
-        !(*warnings).data.is_null(),
+        // SAFETY: reading back the freshly written `data` field.
+        unsafe { !(*warnings).data.is_null() },
         "warnings->data"
     );
     // C: `ufbxi_for_list(ufbx_warning, warning, *warnings)` (ufbx.c:1098)
-    let mut warning = (*warnings).data as *mut Warning;
-    let warning_end = crate::native::platform::add_ptr(warning, (*warnings).count);
-    while warning != warning_end {
-        *p_has_warning.add((*warning).type_ as usize) = true;
-        warning = warning.add(1);
+    // SAFETY: walks the fresh non-null `count`-long run popped above;
+    // `p_has_warning` is the caller's WARNING_TYPE_COUNT-long flag array
+    // indexed by the warning's own in-range `type_` (fn raw-param contract).
+    unsafe {
+        let mut warning = (*warnings).data as *mut Warning;
+        let warning_end = crate::native::platform::add_ptr(warning, (*warnings).count);
+        while warning != warning_end {
+            *p_has_warning.add((*warning).type_ as usize) = true;
+            warning = warning.add(1);
+        }
     }
     Ok(())
 }
@@ -322,22 +337,29 @@ mod tests {
     // mutably reborrowed (on the `ator` field) for as long as the wired
     // pointers are used.
     unsafe fn wire_fixture(fx: *mut Fixture) {
-        let ator = &raw mut (*fx).ator;
-        init_ator(
-            &raw mut (*fx).err,
-            ator,
-            core::ptr::null(),
-            b"test\0".as_ptr(),
-        );
-        (*fx).result = make_buf(ator);
+        // SAFETY: all derived pointers are siblings of the caller-vouched
+        // `fx` tag (fn contract above).
+        unsafe {
+            let ator = &raw mut (*fx).ator;
+            init_ator(
+                &raw mut (*fx).err,
+                ator,
+                core::ptr::null(),
+                b"test\0".as_ptr(),
+            );
+            (*fx).result = make_buf(ator);
+        }
     }
 
     // SAFETY (caller): same base-pointer discipline as `wire_fixture`.
     unsafe fn make_warnings(fx: *mut Fixture) -> Warnings {
+        // SAFETY: `&raw mut` field projections through the caller-vouched
+        // `fx` tag never read the pointee; `make_buf` only stores the
+        // `fx`-derived ator pointer.
         Warnings {
-            error: &raw mut (*fx).err,
-            result: &raw mut (*fx).result,
-            tmp_stack: make_buf(&raw mut (*fx).ator),
+            error: unsafe { &raw mut (*fx).err },
+            result: unsafe { &raw mut (*fx).result },
+            tmp_stack: unsafe { make_buf(&raw mut (*fx).ator) },
             deferred_element_id_plus_one: 0,
             prev_warnings: [[core::ptr::null_mut(); 2]; WARNING_TYPE_COUNT],
         }
@@ -372,7 +394,9 @@ mod tests {
     }
 
     unsafe fn warning_slice<'a>(list: &List<Warning>) -> &'a [Warning] {
-        core::slice::from_raw_parts(list.data, list.count)
+        // SAFETY: caller passes a list freshly popped by `pop_warnings`, whose
+        // run stays live in the fixture's result buf for `'a`.
+        unsafe { core::slice::from_raw_parts(list.data, list.count) }
     }
 
     fn desc(w: &Warning) -> &str {

@@ -1,6 +1,10 @@
 // The `ToRaw` trait converts a Rust-side options/callback value into its raw
 // C-ABI representation; its methods are spelled `to_raw(&self)` / `to_raw_mut(&mut
 // self)` — non-consuming conversions that build (and may arena-allocate) an owned
+// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
+// file still has whole-body-implicit unsafe fns; remove this allow once every
+// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
+#![allow(unsafe_op_in_unsafe_fn)]
 // raw value, so `to_*` per Rust convention.
 use crate::generated::format_error;
 use crate::generated::{

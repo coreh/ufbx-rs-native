@@ -42,7 +42,10 @@
 //!
 //! Phase 1: most items have no consumers yet.
 #![allow(dead_code, unused_macros, unused_imports)]
-
+// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
+// file still has whole-body-implicit unsafe fns; remove this allow once every
+// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
+#![allow(unsafe_op_in_unsafe_fn)]
 use crate::generated::{Error, ErrorFrame, ErrorType, Panic};
 use crate::native::platform::{min_sz, ufbx_assert, ufbxi_ignore};
 use crate::native::printf::{vprint, PrintArg, PrintBuffer};

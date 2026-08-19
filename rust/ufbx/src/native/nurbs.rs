@@ -76,15 +76,18 @@ pub(crate) unsafe fn nurbs_weight(
     degree: usize,
     u: Real,
 ) -> Real {
-    let knots: &List<Real> = &*knots;
+    // SAFETY: caller passes a live, valid knot list (fn raw-param contract).
+    let knots: &List<Real> = unsafe { &*knots };
     if knot >= knots.count {
         return 0.0f32 as Real;
     }
     if knots.count - knot < degree {
         return 0.0f32 as Real;
     }
-    let prev_u: Real = *knots.data.add(knot);
-    let next_u: Real = *knots.data.add(knot + degree);
+    // SAFETY: both indices are within the knot run per the count/degree
+    // early-outs above (same bounds discipline as the C code).
+    let prev_u: Real = unsafe { *knots.data.add(knot) };
+    let next_u: Real = unsafe { *knots.data.add(knot + degree) };
     if prev_u >= next_u {
         return 0.0f32 as Real;
     }
@@ -100,15 +103,18 @@ pub(crate) unsafe fn nurbs_weight(
 // ufbx.c:27782-27789 `ufbxi_nurbs_deriv`
 #[inline(always)]
 pub(crate) unsafe fn nurbs_deriv(knots: *const List<Real>, knot: usize, degree: usize) -> Real {
-    let knots: &List<Real> = &*knots;
+    // SAFETY: caller passes a live, valid knot list (fn raw-param contract).
+    let knots: &List<Real> = unsafe { &*knots };
     if knot >= knots.count {
         return 0.0f32 as Real;
     }
     if knots.count - knot < degree {
         return 0.0f32 as Real;
     }
-    let prev_u: Real = *knots.data.add(knot);
-    let next_u: Real = *knots.data.add(knot + degree);
+    // SAFETY: both indices are within the knot run per the count/degree
+    // early-outs above (same bounds discipline as the C code).
+    let prev_u: Real = unsafe { *knots.data.add(knot) };
+    let next_u: Real = unsafe { *knots.data.add(knot + degree) };
     if prev_u >= next_u {
         return 0.0f32 as Real;
     }

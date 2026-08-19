@@ -20,7 +20,10 @@
 //!
 //! Phase 1: no consumers yet (`ufbxi_context` arrives with the parse units).
 #![allow(dead_code, non_upper_case_globals)]
-
+// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
+// file still has whole-body-implicit unsafe fns; remove this allow once every
+// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
+#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::c_void;
 use core::ptr;
 

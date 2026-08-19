@@ -21,7 +21,10 @@
 // (an orphaned stub that no ported call site reaches); leaner feature sets
 // legitimately strand items, so the lint is only armed for the full build.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
-
+// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
+// file still has whole-body-implicit unsafe fns; remove this allow once every
+// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
+#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 use core::ptr;

@@ -96,7 +96,9 @@ impl<T, M: Mode> View<T, M> {
     /// so mode-generic fns can propagate their caller's `M`.
     #[inline(always)]
     pub(crate) unsafe fn mint<'a>(ptr: *mut T) -> &'a Self {
-        &*(ptr as *const Self)
+        // SAFETY: caller vouches for liveness and `M`-adequate provenance
+        // (fn contract above); `View` is `repr(transparent)` over the storage.
+        unsafe { &*(ptr as *const Self) }
     }
 }
 
@@ -122,7 +124,9 @@ impl<T> View<T, Mut> {
     /// may be active while the returned view is used.
     #[inline(always)]
     pub(crate) unsafe fn from_ptr<'a>(ptr: *mut T) -> &'a Self {
-        &*(ptr as *const Self)
+        // SAFETY: caller vouches for liveness and write-capable provenance
+        // (fn contract above); `View` is `repr(transparent)` over the storage.
+        unsafe { &*(ptr as *const Self) }
     }
 }
 
@@ -137,7 +141,9 @@ impl<T> View<T, Const> {
     /// (SharedReadOnly) tag.
     #[inline(always)]
     pub(crate) unsafe fn from_ptr<'a>(ptr: *const T) -> &'a Self {
-        &*(ptr as *const Self)
+        // SAFETY: caller vouches for liveness and the no-parent-writes freeze
+        // (fn contract above); `View` is `repr(transparent)` over the storage.
+        unsafe { &*(ptr as *const Self) }
     }
 }
 

@@ -3,8 +3,13 @@
 //! is additionally exported with C linkage so the upstream C test suite can
 //! link the crate as a drop-in ufbx.c replacement.
 #![cfg_attr(not(feature = "c-abi"), allow(dead_code))] // without exports, shims outside the safe API's call set are intentionally unreferenced
-#![allow(non_upper_case_globals)] // statics carry their C names verbatim
+#![allow(non_upper_case_globals)]
+// statics carry their C names verbatim
 
+// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
+// file still has whole-body-implicit unsafe fns; remove this allow once every
+// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
+#![allow(unsafe_op_in_unsafe_fn)]
 // ufbx.c:878 `ufbx_abi_data_def const uint32_t ufbx_source_version = UFBX_SOURCE_VERSION;`
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub static ufbx_source_version: u32 = crate::native::platform::SOURCE_VERSION;
