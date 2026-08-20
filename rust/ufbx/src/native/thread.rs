@@ -110,8 +110,11 @@ pub(crate) unsafe fn thread_pool_update_finished(pool: *mut ThreadPool, max_inde
         // SAFETY: the wait index is reduced modulo `num_tasks`, so it addresses
         // inside the `tasks` run allocated with that many entries.
         let task: *mut TaskImp = unsafe { p.tasks.add((p.wait_index % p.num_tasks) as usize) };
-        // SAFETY (both reads): `task` addresses a ring entry the pool owns, and
-        // its `error` field is a plain pointer written by the task callback.
+        // SAFETY (both reads): `task` addresses an in-bounds ring entry, and the
+        // sole caller `thread_pool_wait_imp` reaches this only once `wait_fn`
+        // has returned for every index below `max_index`, so the executing
+        // thread's write to `task.error` (null, or the failure string
+        // `thread_pool_execute` stored) happened-before these reads.
         if !p.failed && !unsafe { (*task).task.error }.is_null() {
             p.failed = true;
             p.error_desc = unsafe { (*task).task.error };
@@ -269,7 +272,9 @@ pub(crate) unsafe fn thread_pool_init(
 // ufbx.c:6107-6122 `ufbxi_thread_pool_free`
 #[inline(never)]
 pub(crate) unsafe fn thread_pool_free(pool: *mut ThreadPool) {
-    // SAFETY: `pool` is a live initialized thread pool (fn raw-param contract).
+    // SAFETY: `pool` is the caller's live (at minimum zero-initialized) pool
+    // storage — `free_temp` also reaches this for a pool whose init bailed at
+    // the `run_fn`/`wait_fn` check, which reads `enabled == false` and returns.
     if !unsafe { (*pool).enabled } {
         return;
     }
@@ -295,9 +300,12 @@ pub(crate) unsafe fn thread_pool_free(pool: *mut ThreadPool) {
         }
     }
 
-    // SAFETY: `pool` is live; `tasks` is the run `thread_pool_init` allocated
-    // from `ator` with exactly `num_tasks` entries, so this frees it with the
-    // matching allocator and count.
+    // SAFETY: `pool` is live; on a completed init `tasks` is the `num_tasks`-entry
+    // run `thread_pool_init` allocated from `ator`, so this frees it with the
+    // matching allocator and count. If init failed earlier `tasks` is null: with
+    // `num_tasks == 0` (`init_fn` failure) `free_size` early-returns, and with
+    // `num_tasks != 0` (task-run allocation failure) it stops at its non-null
+    // assert — C-parity with ufbx.c:6121; no memory is accessed either way.
     let p = unsafe { &*pool };
     unsafe { free::<TaskImp>(p.ator, p.tasks, p.num_tasks as usize) };
 }
