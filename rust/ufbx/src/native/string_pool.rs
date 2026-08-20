@@ -388,9 +388,10 @@ pub(crate) fn safe_string(data: *const u8, length: usize) -> String {
 
 // ufbx.c:5028-5032 `ufbxi_string_pool_temp_free`
 pub(crate) unsafe fn string_pool_temp_free(pool: *mut StringPool) {
-    // SAFETY: the caller vouches `pool` addresses a live `StringPool`; its
-    // `temp_str`/`temp_cap` are the buffer/capacity pair allocated through its
-    // own `map.ator`, which is the pairing `free` requires.
+    // SAFETY: the caller vouches `pool` addresses a live `StringPool`;
+    // `temp_str`/`temp_cap` are either the null/0 never-allocated pair (`free`
+    // no-ops on count 0) or the buffer/capacity pair grown through the pool's own
+    // `map.ator`, the pairing `free` requires.
     unsafe { free::<u8>((*pool).map.ator, (*pool).temp_str, (*pool).temp_cap) };
     // SAFETY: `&mut (*pool).map` addresses the pool's own live `Map`, uniquely
     // borrowed here for its last use before the pool is discarded.
@@ -503,11 +504,12 @@ pub(crate) unsafe fn sanitize_string(
             },
             "ufbxi_grow_array_size((pool->map.ator), sizeof(**(&pool->temp_str)), (&pool->temp_str), (&pool->temp_cap), (length * 2 + 64))"
         );
-        // SAFETY: `temp_str` was just grown to `length * 2 + 64` bytes, so it is
-        // writable for `length` copied bytes, the trailing NUL at `[length]`, and
-        // the `index <= length` bytes copied at `[length + 1]`; `str_` is the
-        // caller's source, readable for `length` bytes and distinct from the
-        // freshly grown temp buffer.
+        // SAFETY: `grow_array` just ensured `temp_cap >= length * 2 + 64`, so
+        // `temp_str` is writable for the `length` copied bytes, the trailing NUL
+        // at `[length]`, and the `index <= length` bytes copied at `[length + 1]`;
+        // `str_` is the caller's source, readable for `length` bytes and, per the
+        // caller contract, never points into the pool's temp buffer, so the copies
+        // do not overlap.
         unsafe {
             ptr::copy_nonoverlapping(str_, (*pool).temp_str, length);
             *(*pool).temp_str.add(length) = b'\0';
@@ -537,9 +539,10 @@ pub(crate) unsafe fn sanitize_string(
             },
             "ufbxi_grow_array_size((pool->map.ator), sizeof(**(&pool->temp_str)), (&pool->temp_str), (&pool->temp_cap), (length + 64))"
         );
-        // SAFETY: `temp_str` was just grown to `length + 64` bytes, so it is
-        // writable for the `index <= length` copied bytes; `str_` is the caller's
-        // source, readable for `index` bytes and distinct from the temp buffer.
+        // SAFETY: `grow_array` just ensured `temp_cap >= length + 64`, so
+        // `temp_str` is writable for the `index <= length` copied bytes; `str_` is
+        // the caller's source, readable for `index` bytes and, per the caller
+        // contract, never points into the pool's temp buffer.
         unsafe { ptr::copy_nonoverlapping(str_, (*pool).temp_str, index) };
     }
 
@@ -943,7 +946,8 @@ pub(crate) unsafe fn push_string_place(
     p_length: *mut usize,
     raw: bool,
 ) -> Result<(), Fail> {
-    // SAFETY: the caller vouches `p_str`/`p_length` address live out-params.
+    // SAFETY: the caller vouches `p_str`/`p_length` address live, initialized
+    // in-out slots holding the string to intern.
     let mut str_ = unsafe { *p_str };
     let length = unsafe { *p_length };
     ufbxi_check_err!(
@@ -951,8 +955,10 @@ pub(crate) unsafe fn push_string_place(
         !str_.is_null() || length == 0,
         "str || length == 0"
     );
-    // SAFETY: `pool` is live; `str_`/`length` were just checked to describe a
-    // valid run (non-null unless empty), and `p_length` is the live out-param.
+    // SAFETY: `pool` is live; the caller vouches `*p_str`/`*p_length` describe a
+    // run readable for `length` bytes (the check above additionally rejects a null
+    // `str_` with nonzero length), and `p_length` is the caller's live in-out
+    // length slot.
     str_ = unsafe { push_string(pool, str_, length, p_length, raw) };
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*pool).error) },
