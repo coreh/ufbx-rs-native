@@ -37,8 +37,9 @@ pub(crate) unsafe fn hash_string(mut str_: *const u8, mut length: usize) -> u32 
             // which stays within the caller's `length`-byte run.
             let word = unsafe { read_u32(str_) };
             hash = ((hash << 5 | hash >> 27) ^ word).wrapping_mul(seed);
-            // SAFETY: this arm entered with `length >= 4`, so advancing `str_`
-            // by 4 lands at or before the one-past-the-end of the run.
+            // SAFETY: loop invariant — `length >= 4` this iteration (guard
+            // above and the `length -= 4` re-check), so `str_ + 4` lands at or
+            // before the one-past-the-end of the caller's `length`-byte run.
             str_ = unsafe { str_.add(4) };
             length -= 4;
             if !(length >= 4) {
@@ -97,8 +98,9 @@ pub(crate) unsafe fn hash_string_check_ascii(
             zero_mask |= 0x80808080u32.wrapping_sub(word);
 
             hash = ((hash << 5 | hash >> 27) ^ word).wrapping_mul(seed);
-            // SAFETY: this arm entered with `length >= 4`, so advancing `str_`
-            // by 4 lands at or before the one-past-the-end of the run.
+            // SAFETY: loop invariant — `length >= 4` this iteration (guard
+            // above and the `length -= 4` re-check), so `str_ + 4` lands at or
+            // before the one-past-the-end of the caller's `length`-byte run.
             str_ = unsafe { str_.add(4) };
             length -= 4;
             if !(length >= 4) {
@@ -1151,8 +1153,9 @@ mod tests {
                 b"test\0".as_ptr(),
             );
         }
-        // SAFETY: `init_ator` fully initialized the allocator over the zeroed
-        // storage.
+        // SAFETY: `init_ator` wrote every config field; `current_size` and
+        // `num_allocs` hold valid zeroes from the `zeroed()` storage, so the
+        // whole `Allocator` is initialized.
         unsafe { ator.assume_init() }
     }
 
