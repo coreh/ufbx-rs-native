@@ -108,12 +108,16 @@ pub(crate) unsafe fn generate_indices(
     let mut fail = false;
 
     // C: `ufbxi_allocator ator = { 0 };`
-    // SAFETY: all-zero bits are a valid `Allocator` — the struct is scalars and
-    // raw pointers (null when zeroed), matching the C zero-initializer.
+    // SAFETY: all-zero bits are a valid `Allocator` — scalars, raw pointers
+    // (null when zeroed), and the `Option<fn>` callbacks of the nested
+    // `RawAllocatorOpts` (`None` when zeroed, via the null-fn niche), matching
+    // the C zero-initializer.
     let mut ator: Allocator = unsafe { MaybeUninit::<Allocator>::zeroed().assume_init() };
-    // SAFETY: `error` is the caller's error slot (nullable, checked inside),
-    // `allocator` the caller's options pointer, and the name literal carries its
-    // NUL; `&mut ator` addresses the zeroed allocator above.
+    // SAFETY: `error` is non-null — the sole caller (`api::generate_indices`)
+    // substitutes a local error slot for null, and `init_ator` stores it
+    // unchecked — `allocator` is the caller's options pointer (nullable,
+    // `init_ator` substitutes zeroed opts for null), the name literal carries
+    // its NUL, and `&mut ator` addresses the zeroed allocator above.
     unsafe { init_ator(error, &mut ator, allocator, c"allocator") };
 
     let mut local_streams = MaybeUninit::<[VertexStream; LOCAL_STREAMS_COUNT]>::uninit(); // ufbxi_uninit
@@ -198,8 +202,10 @@ pub(crate) unsafe fn generate_indices(
     }
 
     // C: `ufbxi_map map = { 0 };`
-    // SAFETY: all-zero bits are a valid `Map` — scalars and raw pointers (null
-    // when zeroed), matching the C zero-initializer.
+    // SAFETY: all-zero bits are a valid `Map` — scalars, raw pointers (null when
+    // zeroed), the `bool`s of the nested `Buf` (`false`), and `cmp_fn`
+    // (`Option<CmpFn>`, `None` when zeroed via the null-fn niche), matching the
+    // C zero-initializer.
     let mut map: Map = unsafe { MaybeUninit::<Map>::zeroed().assume_init() };
     // SAFETY: `&mut map` addresses the zeroed map, `&mut ator` the initialized
     // allocator, and the user pointer addresses `packed_size`, a local that
@@ -251,7 +257,8 @@ pub(crate) unsafe fn generate_indices(
             }
 
             // SAFETY: `packed_vertex` addresses `packed_size` readable bytes,
-            // filled by the stream loop above.
+            // all initialized — zeroed by the `write_bytes` above, with the
+            // stream loop overwriting the non-padding ranges each iteration.
             let hash: u32 = unsafe { hash_string(packed_vertex, packed_size) };
             // SAFETY: `&mut map` addresses the initialized map, whose item size
             // is the `packed_size` it was grown with, and the key addresses
@@ -323,8 +330,10 @@ pub(crate) unsafe fn generate_indices(
         // SAFETY: `error` is the caller's error slot (nullable, checked inside).
         unsafe { clear_error(error) };
     } else {
-        // SAFETY: `error` is the caller's error slot (nullable, checked inside)
-        // and the description literal carries its NUL.
+        // SAFETY: `error` is non-null and points at a live `Error` — the sole
+        // caller (`api::generate_indices`) substitutes a local error slot for
+        // null, and `fix_error_type` dereferences it unchecked; the description
+        // literal carries its NUL.
         unsafe {
             fix_error_type(
                 error,
