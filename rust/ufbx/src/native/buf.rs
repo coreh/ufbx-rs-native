@@ -237,12 +237,14 @@ pub(crate) unsafe fn push_size_new_block(b: *mut Buf, size: usize) -> *mut c_voi
     let mut chunk = unsafe { (*b).chunks[list_ix as usize] };
     if !chunk.is_null() {
         // SAFETY (every `(*b)`/`(*chunk)`/`(*next)`/`(*best_chunk)` access in
-        // this reuse-scan block, and the `chunk_data` calls): `b` is the live
-        // `Buf`, `chunk` is non-null (checked above) and every pointer walked
-        // here — `chunk`, `next`, `best_chunk` — is a live `BufChunk` of `b`'s
-        // `root`-linked list reached through its own `->next` links, each
-        // allocated from `(*b).ator` with `sizeof(BufChunk) + size` bytes so
-        // `chunk_data` stays in-bounds.
+        // this reuse-scan block, incl. the `chunk_data(...).add(pos)` early
+        // return): `b` is the live `Buf`; `chunk`/`next`/`best_chunk` are live
+        // `BufChunk`s of the selected `chunks[list_ix]` list, walked through
+        // their own `->next` links (for `list_ix == 1` the swap HACK leaves the
+        // list's `->root` pointers inconsistent, so only `->next` is relied on
+        // here). Each is backed by `sizeof(BufChunk) + chunk->size` bytes; the
+        // best-fit check (`size <= space`) established `pos + size <=
+        // best_chunk->size`, keeping the early-return `.add(pos)` in-bounds.
         if list_ix == 0 {
             // Store the final position for the retired chunk and scan free
             // chunks in case we find one the allocation fits in.
@@ -500,7 +502,8 @@ pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_voi
         // SAFETY: `b` is the live `Buf`; reading its current chunk size.
         if total < usize::MAX - 16 && total + 16 <= unsafe { (*b).size }.wrapping_sub(pos) {
             // SAFETY: `b` is the live `Buf`; `chunks[0]` is its live active
-            // chunk (the alignment path runs with a chunk present), so
+            // chunk (`pos != b.pos` means `b.pos` is unaligned hence nonzero,
+            // so a prior push installed `chunks[0]`), so
             // `chunk_data(chunk).add(pos)` lands inside its `data` array — `pos`
             // is 16-aligned and `pos + 16 + total <= b.size` by the check above.
             // `padding` addresses that in-bounds region, written as a
@@ -531,10 +534,11 @@ pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_voi
         // unsafe-reduction phase.
         // SAFETY: `b` is the live `Buf`; reading its current chunk size.
         if total <= unsafe { (*b).size }.wrapping_sub(pos) {
-            // SAFETY: `b` is the live `Buf`; advancing its position and
-            // returning a pointer inside `chunks[0]`'s `data` array — `total`
-            // fits before `b.size` by the check above, so `pos + total` stays
-            // in-bounds.
+            // SAFETY: `b` is the live `Buf`; `total >= 1` (size > 0, n > 0) and
+            // the check above force `b.size >= 1`, so `chunks[0]` is the live
+            // active chunk (`b.size == chunks[0]->size`, 0 only when null), and
+            // `pos + total <= b.size` keeps the returned pointer in-bounds of
+            // its `data` array.
             unsafe { (*b).pos = pos + total };
             (unsafe { chunk_data((*b).chunks[0]).add(pos) }) as *mut c_void
         } else {
@@ -589,9 +593,11 @@ pub(crate) unsafe fn push_size_fast(b: *mut Buf, size: usize, n: usize) -> *mut 
     // unreachable since `pos <= b->size` always holds).
     // SAFETY: `b` is the live `Buf`; reading its current chunk size.
     if total <= unsafe { (*b).size }.wrapping_sub(pos) {
-        // SAFETY: `b` is the live `Buf`; advancing its position and returning a
-        // pointer inside `chunks[0]`'s `data` array — `total` fits before
-        // `b.size` by the check above, so `pos + total` stays in-bounds.
+        // SAFETY: `b` is the live `Buf`; `total >= 1` (size > 0, n > 0) and the
+        // check above force `b.size >= 1`, so `chunks[0]` is the live active
+        // chunk (`b.size == chunks[0]->size`, 0 only when null), and `pos +
+        // total <= b.size` keeps the returned pointer in-bounds of its `data`
+        // array.
         unsafe { (*b).pos = pos + total };
         (unsafe { chunk_data((*b).chunks[0]).add(pos) }) as *mut c_void
     } else {
@@ -862,11 +868,13 @@ pub(crate) unsafe fn pop_size(b: *mut Buf, size: usize, n: usize, dst: *mut c_vo
             let padding_pos = unsafe { (*chunk).padding_pos };
             if pos < padding_pos {
                 ufbx_assert!(pos + 1 == padding_pos);
-                // SAFETY: `padding_pos - 1` marks where a 16-byte `BufPadding`
-                // record was written inside `chunk`'s `data` array (see
-                // `push_size`), so `chunk_data(chunk).add(padding_pos - 1 - 16)`
-                // addresses that in-bounds record; reading its saved fields and
-                // writing them back into `b`/`chunk`.
+                // SAFETY: `padding_pos - 1` is one past the END of the 16-byte
+                // `BufPadding` record `push_size` wrote (it set `padding_pos =
+                // pos + 16 + 1` with the record at `pos`), so
+                // `chunk_data(chunk).add(padding_pos - 1 - 16)` addresses the
+                // record's in-bounds start inside `chunk`'s `data` array;
+                // reading its saved fields and writing them back into
+                // `b`/`chunk`.
                 let padding =
                     unsafe { chunk_data(chunk).add(padding_pos - 1 - 16) } as *mut BufPadding;
                 unsafe {
@@ -901,9 +909,10 @@ pub(crate) unsafe fn push_pop_size(
     if data.is_null() {
         return core::ptr::null_mut();
     }
-    // SAFETY: `src` is a live `Buf`; on a non-null return `data` is the
-    // `size * n`-byte region `push_size` just allocated in `dst`, the writable
-    // destination `pop_size` copies the popped items into.
+    // SAFETY: `src` is a live `Buf`; `data` is non-null and valid as
+    // `pop_size`'s destination for `size * n` bytes — the fresh region
+    // `push_size` allocated in `dst`, or, when `n == 0`, the static
+    // `ZERO_SIZE_BUFFER` into which `pop_size` writes zero bytes.
     unsafe { pop_size(src, size, n, data, false) };
     data
 }
@@ -922,9 +931,10 @@ pub(crate) unsafe fn push_peek_size(
     if data.is_null() {
         return core::ptr::null_mut();
     }
-    // SAFETY: `src` is a live `Buf`; on a non-null return `data` is the
-    // `size * n`-byte region `push_size` just allocated in `dst`, the writable
-    // destination `pop_size` copies the peeked items into.
+    // SAFETY: `src` is a live `Buf`; `data` is non-null and valid as
+    // `pop_size`'s destination for `size * n` bytes — the fresh region
+    // `push_size` allocated in `dst`, or, when `n == 0`, the static
+    // `ZERO_SIZE_BUFFER` into which `pop_size` writes zero bytes.
     unsafe { pop_size(src, size, n, data, true) };
     data
 }
@@ -985,7 +995,7 @@ pub(crate) unsafe fn buf_clear(buf: *mut Buf) {
 
     // Reset the non-huge chunks as `chunk->next` is always free.
     // SAFETY: `buf` is the live `Buf`; `chunks[0]` and its `->root` are live
-    // `BufChunk`s of the ordered list. Resetting the buf to its root chunk.
+    // `BufChunk`s of the non-huge list. Resetting the buf to its root chunk.
     let chunk = unsafe { (*buf).chunks[0] };
     if !chunk.is_null() {
         let root = unsafe { (*chunk).root };
