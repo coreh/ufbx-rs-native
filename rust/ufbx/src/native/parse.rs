@@ -26,10 +26,6 @@
 // (an orphaned stub that no ported call site reaches); leaner feature sets
 // legitimately strand items, so the lint is only armed for the full build.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::c_void;
 use core::mem::size_of;
 
@@ -3297,7 +3293,12 @@ impl Context {
     // SAFETY: `ptr` must be non-null and point to a live context allocation.
     #[inline(always)]
     pub(crate) unsafe fn from_ptr<'a>(ptr: *mut InnerContext) -> &'a Context {
-        &*(ptr as *const Context)
+        // SAFETY: `ptr` is non-null and points to a live context allocation (fn
+        // contract); `Context` is `repr(transparent)` over
+        // `UnsafeCell<MaybeUninit<InnerContext>>`, which is layout-identical to
+        // `InnerContext`, so the cast-and-deref reinterprets that live allocation
+        // in place.
+        unsafe { &*(ptr as *const Context) }
     }
 
     // `base64_table` — scalar value accessor.
@@ -4567,7 +4568,10 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         b'_' => true,
         b'I' => {
             if type_ == ValueType::Number {
-                *(v as *mut i32) = (*vals.add(ix)).num.i as i32;
+                // SAFETY: `ix < MAX_NON_ARRAY_VALUES` bounds `vals.add(ix)` inside
+                // the node's value array; `type_ == Number` selects the `num` union
+                // arm; `v` is the caller-supplied `*mut i32` for fmt `'I'`.
+                unsafe { *(v as *mut i32) = (*vals.add(ix)).num.i as i32 };
                 true
             } else {
                 false
@@ -4575,7 +4579,8 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'L' => {
             if type_ == ValueType::Number {
-                *(v as *mut i64) = (*vals.add(ix)).num.i;
+                // SAFETY: as `'I'`, with `v` the caller's `*mut i64` for fmt `'L'`.
+                unsafe { *(v as *mut i64) = (*vals.add(ix)).num.i };
                 true
             } else {
                 false
@@ -4583,7 +4588,8 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'F' => {
             if type_ == ValueType::Number {
-                *(v as *mut f32) = (*vals.add(ix)).num.f as f32;
+                // SAFETY: as `'I'`, with `v` the caller's `*mut f32` for fmt `'F'`.
+                unsafe { *(v as *mut f32) = (*vals.add(ix)).num.f as f32 };
                 true
             } else {
                 false
@@ -4591,7 +4597,8 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'D' => {
             if type_ == ValueType::Number {
-                *(v as *mut f64) = (*vals.add(ix)).num.f;
+                // SAFETY: as `'I'`, with `v` the caller's `*mut f64` for fmt `'D'`.
+                unsafe { *(v as *mut f64) = (*vals.add(ix)).num.f };
                 true
             } else {
                 false
@@ -4599,7 +4606,8 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'R' => {
             if type_ == ValueType::Number {
-                *(v as *mut Real) = (*vals.add(ix)).num.f as Real;
+                // SAFETY: as `'I'`, with `v` the caller's `*mut Real` for fmt `'R'`.
+                unsafe { *(v as *mut Real) = (*vals.add(ix)).num.f as Real };
                 true
             } else {
                 false
@@ -4607,7 +4615,8 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'B' => {
             if type_ == ValueType::Number {
-                *(v as *mut bool) = (*vals.add(ix)).num.i != 0;
+                // SAFETY: as `'I'`, with `v` the caller's `*mut bool` for fmt `'B'`.
+                unsafe { *(v as *mut bool) = (*vals.add(ix)).num.i != 0 };
                 true
             } else {
                 false
@@ -4615,10 +4624,13 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'Z' => {
             if type_ == ValueType::Number {
-                if (*vals.add(ix)).num.i < 0 {
+                // SAFETY: `ix` bounds `vals.add(ix)` in the value array and
+                // `type_ == Number` selects the `num` arm.
+                if unsafe { (*vals.add(ix)).num.i } < 0 {
                     return false;
                 }
-                *(v as *mut usize) = (*vals.add(ix)).num.i as usize;
+                // SAFETY: as above, with `v` the caller's `*mut usize` for fmt `'Z'`.
+                unsafe { *(v as *mut usize) = (*vals.add(ix)).num.i as usize };
                 true
             } else {
                 false
@@ -4626,17 +4638,27 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'S' => {
             if type_ == ValueType::String {
-                let src: SanitizedString = (*vals.add(ix)).s;
+                // SAFETY: `ix` bounds `vals.add(ix)` in the value array;
+                // `type_ == String` selects the `s` union arm.
+                let src: SanitizedString = unsafe { (*vals.add(ix)).s };
                 let dst: *mut String = v as *mut String;
                 if src.utf8_length > 0 {
                     if src.utf8_length == u32::MAX {
                         return false;
                     }
-                    (*dst).data = src.raw_data.add(src.raw_length as usize + 1);
-                    (*dst).length = src.utf8_length as usize;
+                    // SAFETY: `dst` is the caller's `*mut String` for fmt `'S'`;
+                    // `src.raw_data` points to a raw span with the sanitized UTF-8
+                    // string stored just past `raw_length + 1`.
+                    unsafe {
+                        (*dst).data = src.raw_data.add(src.raw_length as usize + 1);
+                        (*dst).length = src.utf8_length as usize;
+                    }
                 } else {
-                    (*dst).data = src.raw_data;
-                    (*dst).length = src.raw_length as usize;
+                    // SAFETY: `dst` is the caller's `*mut String` for fmt `'S'`.
+                    unsafe {
+                        (*dst).data = src.raw_data;
+                        (*dst).length = src.raw_length as usize;
+                    }
                 }
                 true
             } else {
@@ -4645,10 +4667,14 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b's' => {
             if type_ == ValueType::String {
-                let src: SanitizedString = (*vals.add(ix)).s;
+                // SAFETY: `ix` bounds `vals.add(ix)`; `type_ == String` selects `s`.
+                let src: SanitizedString = unsafe { (*vals.add(ix)).s };
                 let dst: *mut String = v as *mut String;
-                (*dst).data = src.raw_data;
-                (*dst).length = src.raw_length as usize;
+                // SAFETY: `dst` is the caller's `*mut String` for fmt `'s'`.
+                unsafe {
+                    (*dst).data = src.raw_data;
+                    (*dst).length = src.raw_length as usize;
+                }
                 true
             } else {
                 false
@@ -4656,15 +4682,19 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'C' => {
             if type_ == ValueType::String {
-                let src: SanitizedString = (*vals.add(ix)).s;
+                // SAFETY: `ix` bounds `vals.add(ix)`; `type_ == String` selects `s`.
+                let src: SanitizedString = unsafe { (*vals.add(ix)).s };
                 let dst: *mut *const u8 = v as *mut *const u8;
                 if src.utf8_length > 0 {
                     if src.utf8_length == u32::MAX {
                         return false;
                     }
-                    *dst = src.raw_data.add(src.raw_length as usize + 1);
+                    // SAFETY: `dst` is the caller's `*mut *const u8` for fmt `'C'`;
+                    // the sanitized string sits just past `raw_length + 1`.
+                    unsafe { *dst = src.raw_data.add(src.raw_length as usize + 1) };
                 } else {
-                    *dst = src.raw_data;
+                    // SAFETY: `dst` is the caller's `*mut *const u8` for fmt `'C'`.
+                    unsafe { *dst = src.raw_data };
                 }
                 true
             } else {
@@ -4673,9 +4703,11 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'c' => {
             if type_ == ValueType::String {
-                let src: SanitizedString = (*vals.add(ix)).s;
+                // SAFETY: `ix` bounds `vals.add(ix)`; `type_ == String` selects `s`.
+                let src: SanitizedString = unsafe { (*vals.add(ix)).s };
                 let dst: *mut *const u8 = v as *mut *const u8;
-                *dst = src.raw_data;
+                // SAFETY: `dst` is the caller's `*mut *const u8` for fmt `'c'`.
+                unsafe { *dst = src.raw_data };
                 true
             } else {
                 false
@@ -4683,10 +4715,14 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'b' => {
             if type_ == ValueType::String {
-                let src: SanitizedString = (*vals.add(ix)).s;
+                // SAFETY: `ix` bounds `vals.add(ix)`; `type_ == String` selects `s`.
+                let src: SanitizedString = unsafe { (*vals.add(ix)).s };
                 let dst: *mut Blob = v as *mut Blob;
-                (*dst).data = src.raw_data;
-                (*dst).size = src.raw_length as usize;
+                // SAFETY: `dst` is the caller's `*mut Blob` for fmt `'b'`.
+                unsafe {
+                    (*dst).data = src.raw_data;
+                    (*dst).size = src.raw_length as usize;
+                }
                 true
             } else {
                 false
@@ -4723,7 +4759,9 @@ pub(crate) fn get_array(node: &NodeView, fmt: u8) -> *mut ValueArray {
 #[inline(always)]
 #[must_use]
 pub(crate) unsafe fn get_val1(node: &NodeView, fmt: *const u8, v0: *mut c_void) -> bool {
-    if !get_val_at(node, 0, *fmt.add(0), v0) {
+    // SAFETY: `fmt` points to a format string with at least one byte, and `v0`
+    // is the caller's out-pointer matching `fmt[0]` — `get_val_at`'s contract.
+    if !unsafe { get_val_at(node, 0, *fmt.add(0), v0) } {
         return false;
     }
     true
@@ -4738,10 +4776,13 @@ pub(crate) unsafe fn get_val2(
     v0: *mut c_void,
     v1: *mut c_void,
 ) -> bool {
-    if !get_val_at(node, 0, *fmt.add(0), v0) {
+    // SAFETY: `fmt` holds at least 2 bytes and `v0`/`v1` are the caller's
+    // out-pointers matching `fmt[0]`/`fmt[1]` — `get_val_at`'s contract.
+    if !unsafe { get_val_at(node, 0, *fmt.add(0), v0) } {
         return false;
     }
-    if !get_val_at(node, 1, *fmt.add(1), v1) {
+    // SAFETY: as above, for index 1.
+    if !unsafe { get_val_at(node, 1, *fmt.add(1), v1) } {
         return false;
     }
     true
@@ -4757,13 +4798,17 @@ pub(crate) unsafe fn get_val3(
     v1: *mut c_void,
     v2: *mut c_void,
 ) -> bool {
-    if !get_val_at(node, 0, *fmt.add(0), v0) {
+    // SAFETY: `fmt` holds at least 3 bytes and `v0`/`v1`/`v2` are the caller's
+    // out-pointers matching `fmt[0..3]` — `get_val_at`'s contract.
+    if !unsafe { get_val_at(node, 0, *fmt.add(0), v0) } {
         return false;
     }
-    if !get_val_at(node, 1, *fmt.add(1), v1) {
+    // SAFETY: as above, for index 1.
+    if !unsafe { get_val_at(node, 1, *fmt.add(1), v1) } {
         return false;
     }
-    if !get_val_at(node, 2, *fmt.add(2), v2) {
+    // SAFETY: as above, for index 2.
+    if !unsafe { get_val_at(node, 2, *fmt.add(2), v2) } {
         return false;
     }
     true
@@ -4780,16 +4825,21 @@ pub(crate) unsafe fn get_val4(
     v2: *mut c_void,
     v3: *mut c_void,
 ) -> bool {
-    if !get_val_at(node, 0, *fmt.add(0), v0) {
+    // SAFETY: `fmt` holds at least 4 bytes and `v0..v3` are the caller's
+    // out-pointers matching `fmt[0..4]` — `get_val_at`'s contract.
+    if !unsafe { get_val_at(node, 0, *fmt.add(0), v0) } {
         return false;
     }
-    if !get_val_at(node, 1, *fmt.add(1), v1) {
+    // SAFETY: as above, for index 1.
+    if !unsafe { get_val_at(node, 1, *fmt.add(1), v1) } {
         return false;
     }
-    if !get_val_at(node, 2, *fmt.add(2), v2) {
+    // SAFETY: as above, for index 2.
+    if !unsafe { get_val_at(node, 2, *fmt.add(2), v2) } {
         return false;
     }
-    if !get_val_at(node, 3, *fmt.add(3), v3) {
+    // SAFETY: as above, for index 3.
+    if !unsafe { get_val_at(node, 3, *fmt.add(3), v3) } {
         return false;
     }
     true
@@ -4807,19 +4857,25 @@ pub(crate) unsafe fn get_val5(
     v3: *mut c_void,
     v4: *mut c_void,
 ) -> bool {
-    if !get_val_at(node, 0, *fmt.add(0), v0) {
+    // SAFETY: `fmt` holds at least 5 bytes and `v0..v4` are the caller's
+    // out-pointers matching `fmt[0..5]` — `get_val_at`'s contract.
+    if !unsafe { get_val_at(node, 0, *fmt.add(0), v0) } {
         return false;
     }
-    if !get_val_at(node, 1, *fmt.add(1), v1) {
+    // SAFETY: as above, for index 1.
+    if !unsafe { get_val_at(node, 1, *fmt.add(1), v1) } {
         return false;
     }
-    if !get_val_at(node, 2, *fmt.add(2), v2) {
+    // SAFETY: as above, for index 2.
+    if !unsafe { get_val_at(node, 2, *fmt.add(2), v2) } {
         return false;
     }
-    if !get_val_at(node, 3, *fmt.add(3), v3) {
+    // SAFETY: as above, for index 3.
+    if !unsafe { get_val_at(node, 3, *fmt.add(3), v3) } {
         return false;
     }
-    if !get_val_at(node, 4, *fmt.add(4), v4) {
+    // SAFETY: as above, for index 4.
+    if !unsafe { get_val_at(node, 4, *fmt.add(4), v4) } {
         return false;
     }
     true
@@ -4838,7 +4894,9 @@ pub(crate) unsafe fn find_val1(
         Some(child) => child,
         None => return false,
     };
-    if !get_val_at(child, 0, *fmt.add(0), v0) {
+    // SAFETY: `fmt` holds at least one byte and `v0` is the caller's out-pointer
+    // matching `fmt[0]` — `get_val_at`'s contract.
+    if !unsafe { get_val_at(child, 0, *fmt.add(0), v0) } {
         return false;
     }
     true
@@ -4858,10 +4916,13 @@ pub(crate) unsafe fn find_val2(
         Some(child) => child,
         None => return false,
     };
-    if !get_val_at(child, 0, *fmt.add(0), v0) {
+    // SAFETY: `fmt` holds at least 2 bytes and `v0`/`v1` are the caller's
+    // out-pointers matching `fmt[0]`/`fmt[1]` — `get_val_at`'s contract.
+    if !unsafe { get_val_at(child, 0, *fmt.add(0), v0) } {
         return false;
     }
-    if !get_val_at(child, 1, *fmt.add(1), v1) {
+    // SAFETY: as above, for index 1.
+    if !unsafe { get_val_at(child, 1, *fmt.add(1), v1) } {
         return false;
     }
     true
@@ -4886,17 +4947,23 @@ pub(crate) unsafe fn find_child_strcmp<'a>(
     node: &'a NodeView,
     name: *const u8,
 ) -> Option<&'a NodeView> {
-    let leading: u8 = *name.add(0);
+    // SAFETY: `name` points to a NUL-terminated C string (fn contract), so its
+    // leading byte is readable.
+    let leading: u8 = unsafe { *name.add(0) };
     // C: `ufbxi_for(ufbxi_node, c, node->children, node->num_children)`
     // SAFETY: `children`/`num_children` describe a contiguous arena run (built via
     // `push_pop`), valid and stable for `node`'s lifetime `'a`.
     let children: SliceViewIter<'a, Node> =
         unsafe { SliceViewIter::from_raw_parts(node.children(), node.num_children() as usize) };
     for c in children {
-        if *c.name().add(0) != leading {
+        // SAFETY: `c.name()` is a NUL-terminated interned name; its leading byte
+        // is readable.
+        if unsafe { *c.name().add(0) } != leading {
             continue;
         }
-        if strcmp(c.name(), name) == 0 {
+        // SAFETY: both `c.name()` and `name` are NUL-terminated C strings, which
+        // is `strcmp`'s contract.
+        if unsafe { strcmp(c.name(), name) } == 0 {
             return Some(c);
         }
     }
@@ -5083,19 +5150,24 @@ pub(crate) unsafe fn update_parse_state(parent: ParseState, name: *const u8) -> 
             if name == sp::Model.as_ptr() {
                 return ParseState::LegacyModel;
             }
-            if strcmp(name, b"References\0".as_ptr()) == 0 {
+            // SAFETY: `name` is a NUL-terminated interned parser name and the
+            // literal is NUL-terminated — `strcmp`'s contract.
+            if unsafe { strcmp(name, b"References\0".as_ptr()) } == 0 {
                 return ParseState::References;
             }
-            if strcmp(name, b"Relations\0".as_ptr()) == 0 {
+            // SAFETY: as above.
+            if unsafe { strcmp(name, b"Relations\0".as_ptr()) } == 0 {
                 return ParseState::Relations;
             }
             if name == sp::Media.as_ptr() {
                 return ParseState::LegacyMedia;
             }
-            if strcmp(name, b"Switcher\0".as_ptr()) == 0 {
+            // SAFETY: as above.
+            if unsafe { strcmp(name, b"Switcher\0".as_ptr()) } == 0 {
                 return ParseState::LegacySwitcher;
             }
-            if strcmp(name, b"SceneGenericPersistence\0".as_ptr()) == 0 {
+            // SAFETY: as above.
+            if unsafe { strcmp(name, b"SceneGenericPersistence\0".as_ptr()) } == 0 {
                 return ParseState::LegacyScenePersistence;
             }
         }
@@ -5156,7 +5228,9 @@ pub(crate) unsafe fn update_parse_state(parent: ParseState, name: *const u8) -> 
         }
 
         ParseState::Model | ParseState::Geometry => {
-            if *name == b'L' {
+            // SAFETY: `name` is a NUL-terminated interned parser name; its
+            // leading byte is readable.
+            if unsafe { *name } == b'L' {
                 if name == sp::LayerElementNormal.as_ptr() {
                     return ParseState::LayerElementNormal;
                 }
@@ -5193,7 +5267,9 @@ pub(crate) unsafe fn update_parse_state(parent: ParseState, name: *const u8) -> 
                 if name == sp::LayerElementMaterial.as_ptr() {
                     return ParseState::LayerElementMaterial;
                 }
-                if strncmp(name, b"LayerElement\0".as_ptr(), 12) == 0 {
+                // SAFETY: `name` is a NUL-terminated interned parser name and the
+                // literal has at least 12 bytes — `strncmp`'s contract.
+                if unsafe { strncmp(name, b"LayerElement\0".as_ptr(), 12) } == 0 {
                     return ParseState::LayerElementOther;
                 }
             }
@@ -5203,7 +5279,9 @@ pub(crate) unsafe fn update_parse_state(parent: ParseState, name: *const u8) -> 
         }
 
         ParseState::Deformer => {
-            if strcmp(name, b"AssociateModel\0".as_ptr()) == 0 {
+            // SAFETY: `name` is a NUL-terminated interned parser name and the
+            // literal is NUL-terminated — `strcmp`'s contract.
+            if unsafe { strcmp(name, b"AssociateModel\0".as_ptr()) } == 0 {
                 return ParseState::AssociateModel;
             }
         }
@@ -5281,161 +5359,167 @@ pub(crate) unsafe fn is_array_node(
     name: *const u8,
     info: *mut ArrayInfo,
 ) -> bool {
-    (*info).flags = 0;
+    // Sole raw pointer to `*info` in this function: local exclusive borrow for
+    // the whole body in place of repeated `info.field` derefs.
+    // SAFETY: the caller passes `info` pointing at a valid, uniquely owned
+    // `ArrayInfo` out-param for the duration of this call.
+    let info = unsafe { &mut *info };
+
+    info.flags = 0;
 
     // Retain all arrays if user wants the DOM representation
     if uc.opts_view().retain_dom() {
-        (*info).flags |= ARRAY_FLAG_RESULT;
+        info.flags |= ARRAY_FLAG_RESULT;
     }
 
     match parent {
         ParseState::Thumbnail => {
             if name == sp::ImageData.as_ptr() {
-                (*info).type_ = b'c';
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.type_ = b'c';
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
         }
 
         ParseState::Geometry | ParseState::Model => {
             if name == sp::Vertices.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::PolygonVertexIndex.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Edges.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
                 return true;
             } else if name == sp::Indexes.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Points.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::KnotVector.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::KnotVectorU.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::KnotVectorV.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::PointsIndex.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Normals.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
         }
 
         ParseState::LegacyModel => {
             if name == sp::Vertices.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::Normals.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::Materials.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::PolygonVertexIndex.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Children.as_ptr() {
-                (*info).type_ = b's';
+                info.type_ = b's';
                 return true;
             }
         }
 
         ParseState::AnimationCurve => {
             if name == sp::KeyTime.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_animation() {
+                info.type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'l'
                 };
                 return true;
             } else if name == sp::KeyValueFloat.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_animation() {
+                info.type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'r'
                 };
                 return true;
             } else if name == sp::KeyAttrFlags.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_animation() {
+                info.type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'i'
@@ -5444,20 +5528,20 @@ pub(crate) unsafe fn is_array_node(
             } else if name == sp::KeyAttrDataFloat.as_ptr() {
                 // The float data in a keyframe attribute array is represented as integers
                 // in versions >= 7200 as some of the elements aren't actually floats (!)
-                (*info).type_ = if uc.from_ascii() && uc.version() >= 7200 {
+                info.type_ = if uc.from_ascii() && uc.version() >= 7200 {
                     b'i'
                 } else {
                     b'f'
                 };
                 if uc.opts_view().ignore_animation() {
-                    (*info).type_ = b'-';
+                    info.type_ = b'-';
                 }
                 if uc.from_ascii() && uc.version() < 7200 {
-                    (*info).flags |= ARRAY_FLAG_ACCURATE_F32;
+                    info.flags |= ARRAY_FLAG_ACCURATE_F32;
                 }
                 return true;
             } else if name == sp::KeyAttrRefCount.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_animation() {
+                info.type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'i'
@@ -5467,11 +5551,13 @@ pub(crate) unsafe fn is_array_node(
         }
 
         ParseState::Texture => {
-            if strcmp(name, b"ModelUVTranslation\0".as_ptr()) == 0
-                || strcmp(name, b"ModelUVScaling\0".as_ptr()) == 0
-                || strcmp(name, b"Cropping\0".as_ptr()) == 0
+            // SAFETY: `name` is a NUL-terminated interned parser name and each
+            // literal is NUL-terminated — `strcmp`'s contract.
+            if unsafe { strcmp(name, b"ModelUVTranslation\0".as_ptr()) } == 0
+                || unsafe { strcmp(name, b"ModelUVScaling\0".as_ptr()) } == 0
+                || unsafe { strcmp(name, b"Cropping\0".as_ptr()) } == 0
             {
-                (*info).type_ = if uc.opts_view().retain_dom() {
+                info.type_ = if uc.opts_view().retain_dom() {
                     b'r'
                 } else {
                     b'-'
@@ -5482,7 +5568,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::Video => {
             if name == sp::Content.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_embedded() {
+                info.type_ = if uc.opts_view().ignore_embedded() {
                     b'-'
                 } else {
                     b'C'
@@ -5493,254 +5579,254 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LayeredTexture => {
             if name == sp::BlendModes.as_ptr() {
-                (*info).type_ = b'i';
-                (*info).flags |= ARRAY_FLAG_TMP_BUF;
+                info.type_ = b'i';
+                info.flags |= ARRAY_FLAG_TMP_BUF;
                 return true;
             } else if name == sp::Alphas.as_ptr() {
-                (*info).type_ = b'r';
-                (*info).flags |= ARRAY_FLAG_TMP_BUF;
+                info.type_ = b'r';
+                info.flags |= ARRAY_FLAG_TMP_BUF;
                 return true;
             }
         }
 
         ParseState::SelectionNode => {
             if name == sp::VertexIndexArray.as_ptr() {
-                (*info).type_ = b'i';
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.type_ = b'i';
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::EdgeIndexArray.as_ptr() {
-                (*info).type_ = b'i';
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.type_ = b'i';
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::PolygonIndexArray.as_ptr() {
-                (*info).type_ = b'i';
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.type_ = b'i';
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
         }
 
         ParseState::LayerElementNormal => {
             if name == sp::Normals.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::NormalsIndex.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::NormalsW.as_ptr() {
-                (*info).type_ = if uc.retain_vertex_w() { b'r' } else { b'-' };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.type_ = if uc.retain_vertex_w() { b'r' } else { b'-' };
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
         }
 
         ParseState::LayerElementBinormal => {
             if name == sp::Binormals.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::BinormalsIndex.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::BinormalsW.as_ptr() {
-                (*info).type_ = if uc.retain_vertex_w() { b'r' } else { b'-' };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.type_ = if uc.retain_vertex_w() { b'r' } else { b'-' };
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
         }
 
         ParseState::LayerElementTangent => {
             if name == sp::Tangents.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::TangentsIndex.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::TangentsW.as_ptr() {
-                (*info).type_ = if uc.retain_vertex_w() { b'r' } else { b'-' };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.type_ = if uc.retain_vertex_w() { b'r' } else { b'-' };
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
         }
 
         ParseState::LayerElementUv => {
             if name == sp::UV.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::UVIndex.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
         }
 
         ParseState::LayerElementColor => {
             if name == sp::Colors.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::ColorIndex.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
         }
 
         ParseState::LayerElementVertexCrease => {
             if name == sp::VertexCrease.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::VertexCreaseIndex.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
         }
 
         ParseState::LayerElementEdgeCrease => {
             if name == sp::EdgeCrease.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
         }
 
         ParseState::LayerElementSmoothing => {
             if name == sp::Smoothing.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'b'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
         }
 
         ParseState::LayerElementVisibility => {
             if name == sp::Visibility.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'b'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
         }
 
         ParseState::LayerElementPolygonGroup => {
             if name == sp::PolygonGroup.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
         }
 
         ParseState::LayerElementHole => {
             if name == sp::Hole.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'b'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
         }
 
         ParseState::LayerElementMaterial => {
             if name == sp::Materials.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
         }
 
         ParseState::LayerElementOther => {
             if name == sp::TextureId.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags |= ARRAY_FLAG_TMP_BUF;
+                info.flags |= ARRAY_FLAG_TMP_BUF;
                 return true;
             } else if name == sp::UV.as_ptr() {
-                (*info).type_ = if uc.opts_view().retain_dom() {
+                info.type_ = if uc.opts_view().retain_dom() {
                     b'r'
                 } else {
                     b'-'
                 };
                 return true;
             } else if name == sp::UVIndex.as_ptr() {
-                (*info).type_ = if uc.opts_view().retain_dom() {
+                info.type_ = if uc.opts_view().retain_dom() {
                     b'i'
                 } else {
                     b'-'
@@ -5751,95 +5837,97 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::GeometryUvInfo => {
             if name == sp::TextureUV.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             } else if name == sp::TextureUVVerticeIndex.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
         }
 
         ParseState::Shape => {
             if name == sp::Indexes.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
             if name == sp::Vertices.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
             if name == sp::Normals.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
+                info.flags = ARRAY_FLAG_RESULT | ARRAY_FLAG_PAD_BEGIN;
                 return true;
             }
         }
 
         ParseState::Deformer => {
             if name == sp::Transform.as_ptr() {
-                (*info).type_ = b'r';
+                info.type_ = b'r';
                 return true;
             } else if name == sp::TransformLink.as_ptr() {
-                (*info).type_ = b'r';
+                info.type_ = b'r';
                 return true;
             } else if name == sp::Indexes.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Weights.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::BlendWeights.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::FullWeights.as_ptr() {
-                (*info).type_ = b'r';
-                (*info).flags |= if uc.blender_full_weights() {
+                info.type_ = b'r';
+                info.flags |= if uc.blender_full_weights() {
                     ARRAY_FLAG_RESULT
                 } else {
                     ARRAY_FLAG_TMP_BUF
                 };
                 return true;
-            } else if strcmp(name, b"TransformAssociateModel\0".as_ptr()) == 0 {
-                (*info).type_ = if uc.opts_view().retain_dom() {
+            // SAFETY: `name` is a NUL-terminated interned parser name and the
+            // literal is NUL-terminated — `strcmp`'s contract.
+            } else if unsafe { strcmp(name, b"TransformAssociateModel\0".as_ptr()) } == 0 {
+                info.type_ = if uc.opts_view().retain_dom() {
                     b'r'
                 } else {
                     b'-'
@@ -5850,7 +5938,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::AssociateModel => {
             if name == sp::Transform.as_ptr() {
-                (*info).type_ = if uc.opts_view().retain_dom() {
+                info.type_ = if uc.opts_view().retain_dom() {
                     b'r'
                 } else {
                     b'-'
@@ -5861,40 +5949,40 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::LegacyLink => {
             if name == sp::Transform.as_ptr() {
-                (*info).type_ = b'r';
+                info.type_ = b'r';
                 return true;
             } else if name == sp::TransformLink.as_ptr() {
-                (*info).type_ = b'r';
+                info.type_ = b'r';
                 return true;
             } else if name == sp::Indexes.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'i'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             } else if name == sp::Weights.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_geometry() {
+                info.type_ = if uc.opts_view().ignore_geometry() {
                     b'-'
                 } else {
                     b'r'
                 };
-                (*info).flags = ARRAY_FLAG_RESULT;
+                info.flags = ARRAY_FLAG_RESULT;
                 return true;
             }
         }
 
         ParseState::PoseNode => {
             if name == sp::Matrix.as_ptr() {
-                (*info).type_ = b'r';
+                info.type_ = b'r';
                 return true;
             }
         }
 
         ParseState::Channel => {
             if name == sp::Key.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_animation() {
+                info.type_ = if uc.opts_view().ignore_animation() {
                     b'-'
                 } else {
                     b'd'
@@ -5905,7 +5993,7 @@ pub(crate) unsafe fn is_array_node(
 
         ParseState::Audio => {
             if name == sp::Content.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_embedded() {
+                info.type_ = if uc.opts_view().ignore_embedded() {
                     b'-'
                 } else {
                     b'C'
@@ -5916,7 +6004,7 @@ pub(crate) unsafe fn is_array_node(
 
         _ => {
             if name == sp::BinaryData.as_ptr() {
-                (*info).type_ = if uc.opts_view().ignore_embedded() {
+                info.type_ = if uc.opts_view().ignore_embedded() {
                     b'-'
                 } else {
                     b'C'
@@ -5944,7 +6032,9 @@ pub(crate) unsafe fn is_raw_string(
             if name == sp::Model.as_ptr() {
                 return true;
             }
-            if strcmp(name, b"FileId\0".as_ptr()) == 0 {
+            // SAFETY: `name` is a NUL-terminated interned parser name and the
+            // literal is NUL-terminated — `strcmp`'s contract.
+            if unsafe { strcmp(name, b"FileId\0".as_ptr()) } == 0 {
                 return true;
             }
         }
@@ -5981,7 +6071,9 @@ pub(crate) unsafe fn is_raw_string(
         }
 
         ParseState::Texture => {
-            if strcmp(name, b"TextureName\0".as_ptr()) == 0 {
+            // SAFETY: `name` is a NUL-terminated interned parser name and the
+            // literal is NUL-terminated — `strcmp`'s contract.
+            if unsafe { strcmp(name, b"TextureName\0".as_ptr()) } == 0 {
                 return true;
             }
             if name == sp::Media.as_ptr() {
@@ -6029,7 +6121,9 @@ pub(crate) unsafe fn is_raw_string(
         }
 
         ParseState::Collection => {
-            if strcmp(name, b"Member\0".as_ptr()) == 0 {
+            // SAFETY: `name` is a NUL-terminated interned parser name and the
+            // literal is NUL-terminated — `strcmp`'s contract.
+            if unsafe { strcmp(name, b"Member\0".as_ptr()) } == 0 {
                 return true;
             }
         }
@@ -6053,7 +6147,9 @@ pub(crate) unsafe fn is_raw_string(
         }
 
         ParseState::LegacySwitcher => {
-            if strcmp(name, b"CameraIndexName\0".as_ptr()) == 0 {
+            // SAFETY: `name` is a NUL-terminated interned parser name and the
+            // literal is NUL-terminated — `strcmp`'s contract.
+            if unsafe { strcmp(name, b"CameraIndexName\0".as_ptr()) } == 0 {
                 return true;
             }
         }
@@ -6065,7 +6161,9 @@ pub(crate) unsafe fn is_raw_string(
         }
 
         ParseState::Reference => {
-            if strcmp(name, b"Object\0".as_ptr()) == 0 {
+            // SAFETY: `name` is a NUL-terminated interned parser name and the
+            // literal is NUL-terminated — `strcmp`'s contract.
+            if unsafe { strcmp(name, b"Object\0".as_ptr()) } == 0 {
                 return true;
             }
         }
@@ -6151,13 +6249,17 @@ pub(crate) unsafe fn retain_dom_node(
             ufbx_assert!(d.get() < MAX_NODE_DEPTH + 1);
             d.set(d.get() + 1);
         });
-        let ret = retain_dom_node_rec(uc, node, p_dom_node);
+        // SAFETY: forwards the caller's `node`/`p_dom_node` validity contract to
+        // the recursive body unchanged.
+        let ret = unsafe { retain_dom_node_rec(uc, node, p_dom_node) };
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
         ret
     }
     #[cfg(not(feature = "regression"))]
     {
-        retain_dom_node_rec(uc, node, p_dom_node)
+        // SAFETY: forwards the caller's `node`/`p_dom_node` validity contract to
+        // the recursive body unchanged.
+        unsafe { retain_dom_node_rec(uc, node, p_dom_node) }
     }
 }
 
@@ -6176,11 +6278,17 @@ unsafe fn retain_dom_node_rec(
     );
 
     if !p_dom_node.is_null() {
-        *p_dom_node = dst;
+        // SAFETY: `p_dom_node` is non-null (just checked) and points at the
+        // caller's `*mut DomNode` out-slot (fn contract).
+        unsafe { *p_dom_node = dst };
     }
 
-    (*dst).name.data = (*node).name;
-    (*dst).name.length = (*node).name_len as usize;
+    // SAFETY: `dst` is the freshly pushed result `DomNode` and `node` is the
+    // valid parse node (fn contract); copy its name span across.
+    unsafe {
+        (*dst).name.data = (*node).name;
+        (*dst).name.length = (*node).name_len as usize;
+    }
 
     {
         let mapping = DomMapping {
@@ -6188,117 +6296,182 @@ unsafe fn retain_dom_node_rec(
             dom_node: core::ptr::null_mut(),
         };
         let hash = hash_uptr(mapping.node_ptr);
-        let mut result: *mut DomMapping = map_find(
-            uc.dom_node_map_mut_ptr(),
-            hash,
-            &mapping as *const DomMapping as *const c_void,
-        );
-        if result.is_null() {
-            result = map_insert(
+        // SAFETY: looking up in `uc`'s own `dom_node_map` through its raw-ptr
+        // getter, with `mapping` a live local of the map's item type.
+        let mut result: *mut DomMapping = unsafe {
+            map_find(
                 uc.dom_node_map_mut_ptr(),
                 hash,
                 &mapping as *const DomMapping as *const c_void,
-            );
+            )
+        };
+        if result.is_null() {
+            // SAFETY: as above; inserts a new entry keyed by `mapping`.
+            result = unsafe {
+                map_insert(
+                    uc.dom_node_map_mut_ptr(),
+                    hash,
+                    &mapping as *const DomMapping as *const c_void,
+                )
+            };
             ufbxi_check!(uc, !result.is_null(), "result");
         }
-        (*result).node_ptr = node as usize;
-        (*result).dom_node = dst;
+        // SAFETY: `result` is a non-null entry owned by `uc`'s `dom_node_map`.
+        unsafe {
+            (*result).node_ptr = node as usize;
+            (*result).dom_node = dst;
+        }
     }
 
-    sp::push_string_place_str(uc.string_pool_mut_ptr(), &mut (*dst).name, false)?;
+    // SAFETY: `dst` is the live result `DomNode`; `&mut (*dst).name` addresses
+    // its name field, and `string_pool_mut_ptr` yields `uc`'s own pool pointer —
+    // `push_string_place_str`'s contract.
+    unsafe { sp::push_string_place_str(uc.string_pool_mut_ptr(), &mut (*dst).name, false)? };
 
-    if (*node).value_type_mask == ValueType::Array as u16 {
-        let arr = (*node).content.array;
+    // SAFETY: `node` is the valid parse node; reading its `value_type_mask`
+    // scalar field.
+    if unsafe { (*node).value_type_mask } == ValueType::Array as u16 {
+        // SAFETY: `value_type_mask == Array` selects the `array` arm of `node`'s
+        // `content` union (PORTING.md "Unions").
+        let arr = unsafe { (*node).content.array };
         let val: *mut DomValue = uc.result_view().push_zero(1);
         ufbxi_check!(uc, !val.is_null(), "val");
 
-        (*dst).values.data = val;
-        (*dst).values.count = 1;
+        // SAFETY: `dst` is the live result `DomNode`; `val` is the freshly pushed
+        // `DomValue`, and `arr` the node's array descriptor.
+        unsafe {
+            (*dst).values.data = val;
+            (*dst).values.count = 1;
 
-        let elem_size = array_type_size((*arr).type_);
-        (*val).value_str.data = EMPTY_CHAR.as_ptr();
-        (*val).value_blob.data = (*arr).data as *const u8;
-        (*val).value_blob.size = (*arr).size.wrapping_mul(elem_size);
-        // C: `val->value_float = (double)(val->value_int = (int64_t)arr->size);`
-        (*val).value_int = (*arr).size as i64;
-        (*val).value_float = (*val).value_int as f64;
+            let elem_size = array_type_size((*arr).type_);
+            (*val).value_str.data = EMPTY_CHAR.as_ptr();
+            (*val).value_blob.data = (*arr).data as *const u8;
+            (*val).value_blob.size = (*arr).size.wrapping_mul(elem_size);
+            // C: `val->value_float = (double)(val->value_int = (int64_t)arr->size);`
+            (*val).value_int = (*arr).size as i64;
+            (*val).value_float = (*val).value_int as f64;
+        }
 
-        match (*arr).type_ {
-            b'c' => (*val).type_ = DomValueType::Blob,
-            b'b' => (*val).type_ = DomValueType::Blob,
-            b'i' => (*val).type_ = DomValueType::ArrayI32,
-            b'l' => (*val).type_ = DomValueType::ArrayI64,
-            b'f' => (*val).type_ = DomValueType::ArrayF32,
-            b'd' => (*val).type_ = DomValueType::ArrayF64,
-            b's' => (*val).type_ = DomValueType::ArrayBlob,
-            b'C' => (*val).type_ = DomValueType::ArrayBlob,
-            b'-' => (*val).type_ = DomValueType::ArrayIgnored,
+        // SAFETY: reads `arr`'s `type_` byte and writes `val`'s `type_`, both live.
+        match unsafe { (*arr).type_ } {
+            b'c' => unsafe { (*val).type_ = DomValueType::Blob },
+            b'b' => unsafe { (*val).type_ = DomValueType::Blob },
+            b'i' => unsafe { (*val).type_ = DomValueType::ArrayI32 },
+            b'l' => unsafe { (*val).type_ = DomValueType::ArrayI64 },
+            b'f' => unsafe { (*val).type_ = DomValueType::ArrayF32 },
+            b'd' => unsafe { (*val).type_ = DomValueType::ArrayF64 },
+            b's' => unsafe { (*val).type_ = DomValueType::ArrayBlob },
+            b'C' => unsafe { (*val).type_ = DomValueType::ArrayBlob },
+            b'-' => unsafe { (*val).type_ = DomValueType::ArrayIgnored },
             _ => ufbxi_fail!(uc, "Bad array type"),
         }
     } else {
         let mut ix: usize = 0;
         while ix < MAX_NON_ARRAY_VALUES {
             // `as i32` mirrors C's promotion of the `uint16_t` mask to `int`.
-            let mask = ((((*node).value_type_mask as i32) >> (2 * ix)) & 0x3) as u32;
+            // SAFETY: `node` is the valid parse node; reading its scalar
+            // `value_type_mask`.
+            let mask = ((((unsafe { (*node).value_type_mask }) as i32) >> (2 * ix)) & 0x3) as u32;
             if mask == 0 {
                 break;
             }
             let val: *mut DomValue = uc.tmp_stack_view().push_zero(1);
             ufbxi_check!(uc, !val.is_null(), "val");
-            (*val).value_str.data = EMPTY_CHAR.as_ptr();
+            // SAFETY: `val` is the freshly pushed `DomValue`.
+            unsafe { (*val).value_str.data = EMPTY_CHAR.as_ptr() };
 
             if mask == ValueType::String as u32 {
-                (*val).type_ = DomValueType::String;
+                // SAFETY: `val` is the freshly pushed `DomValue`.
+                unsafe { (*val).type_ = DomValueType::String };
                 // Bridge the raw parse-tree `node` to a view for the `get_val_at`
                 // extractor (this fn keeps the raw node for its owned derefs).
-                ufbxi_ignore!(get_val_at(
-                    NodeView::from_ptr(node),
-                    ix,
-                    b'S',
-                    &mut (*val).value_str as *mut String as *mut c_void
-                ));
-                ufbxi_ignore!(get_val_at(
-                    NodeView::from_ptr(node),
-                    ix,
-                    b'b',
-                    &mut (*val).value_blob as *mut Blob as *mut c_void
-                ));
+                // SAFETY: `node` is a valid parse node, so `NodeView::from_ptr`
+                // reinterprets it in place; `ix < MAX_NON_ARRAY_VALUES` and the
+                // out-pointer addresses `val`'s `value_str` field for fmt `'S'`.
+                ufbxi_ignore!(unsafe {
+                    get_val_at(
+                        NodeView::from_ptr(node),
+                        ix,
+                        b'S',
+                        &mut (*val).value_str as *mut String as *mut c_void,
+                    )
+                });
+                // SAFETY: as above, with the out-pointer addressing `val`'s
+                // `value_blob` field for fmt `'b'`.
+                ufbxi_ignore!(unsafe {
+                    get_val_at(
+                        NodeView::from_ptr(node),
+                        ix,
+                        b'b',
+                        &mut (*val).value_blob as *mut Blob as *mut c_void,
+                    )
+                });
             } else {
                 ufbx_assert!(mask == ValueType::Number as u32);
-                (*val).type_ = DomValueType::Number;
                 // `node->vals[ix]` reads the `vals` arm of the `ufbxi_node`
                 // union (PORTING.md "Unions"); both `i` and `f` of the
                 // `ufbxi_value` overlay are read, as in C.
-                (*val).value_int = (*(*node).content.vals.add(ix)).num.i;
-                (*val).value_float = (*(*node).content.vals.add(ix)).num.f;
+                // SAFETY: `val` is the freshly pushed `DomValue`; `mask == Number`
+                // selects the `vals` arm and `ix < MAX_NON_ARRAY_VALUES` bounds
+                // `vals.add(ix)` inside `node`'s value array.
+                unsafe {
+                    (*val).type_ = DomValueType::Number;
+                    (*val).value_int = (*(*node).content.vals.add(ix)).num.i;
+                    (*val).value_float = (*(*node).content.vals.add(ix)).num.f;
+                }
             }
 
             ix += 1;
         }
 
-        (*dst).values.count = ix;
-        (*dst).values.data = uc
+        // SAFETY: `dst` is the live result `DomNode`.
+        unsafe { (*dst).values.count = ix };
+        let values_data = uc
             .result_view()
             .push_pop::<DomValue>(uc.tmp_stack_view(), ix);
-        ufbxi_check!(uc, !(*dst).values.data.is_null(), "dst->values.data");
+        // SAFETY: `dst` is the live result `DomNode`.
+        unsafe { (*dst).values.data = values_data };
+        // SAFETY: `dst` is the live result `DomNode`; reading back its
+        // `values.data` pointer.
+        ufbxi_check!(
+            uc,
+            !unsafe { (*dst).values.data }.is_null(),
+            "dst->values.data"
+        );
     }
 
-    if (*node).num_children > 0 {
+    // SAFETY: `node` is the valid parse node; reading its scalar `num_children`.
+    if unsafe { (*node).num_children } > 0 {
         // ufbxi_for(ufbxi_node, child, node->children, node->num_children)
-        let mut child = (*node).children;
-        let child_end =
-            crate::native::platform::add_ptr((*node).children, (*node).num_children as usize);
+        // SAFETY: `node` is valid; `children`/`num_children` describe a
+        // contiguous run of child nodes, so `child_end` is one-past-the-end.
+        let mut child = unsafe { (*node).children };
+        let child_end = unsafe {
+            crate::native::platform::add_ptr((*node).children, (*node).num_children as usize)
+        };
         while child != child_end {
-            retain_dom_node(uc, child, core::ptr::null_mut())?;
-            child = child.add(1);
+            // SAFETY: `child` walks the child run, each a valid parse node.
+            unsafe { retain_dom_node(uc, child, core::ptr::null_mut())? };
+            // SAFETY: `child` is before `child_end` within the run, so `add(1)`
+            // stays in bounds (up to one-past-the-end).
+            child = unsafe { child.add(1) };
         }
 
-        (*dst).children.count = (*node).num_children as usize;
-        (*dst).children.data = uc
+        // SAFETY: `dst` is the live result `DomNode`; `node` is valid.
+        unsafe { (*dst).children.count = (*node).num_children as usize };
+        let children_data = uc
             .result_view()
-            .push_pop::<*mut DomNode>(uc.tmp_dom_nodes_view(), (*node).num_children as usize)
-            as *const Ref<DomNode>;
-        ufbxi_check!(uc, !(*dst).children.data.is_null(), "dst->children.data");
+            .push_pop::<*mut DomNode>(uc.tmp_dom_nodes_view(), unsafe { (*node).num_children }
+                as usize) as *const Ref<DomNode>;
+        // SAFETY: `dst` is the live result `DomNode`.
+        unsafe { (*dst).children.data = children_data };
+        // SAFETY: `dst` is the live result `DomNode`; reading back its
+        // `children.data` pointer.
+        ufbxi_check!(
+            uc,
+            !unsafe { (*dst).children.data }.is_null(),
+            "dst->children.data"
+        );
     }
 
     Ok(())
@@ -6312,13 +6485,20 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
             .result_view()
             .push_pop(uc.tmp_dom_nodes_view(), uc.dom_parse_num_children());
         ufbxi_check!(uc, !children.is_null(), "children");
-        (*uc.dom_parse_toplevel()).children.data = children as *const Ref<DomNode>;
-        (*uc.dom_parse_toplevel()).children.count = uc.dom_parse_num_children();
+        // SAFETY: `dom_parse_toplevel()` yields `uc`'s live top-level `DomNode`
+        // pointer (non-null while `dom_parse_num_children > 0`); writing its
+        // `children` span.
+        unsafe {
+            (*uc.dom_parse_toplevel()).children.data = children as *const Ref<DomNode>;
+            (*uc.dom_parse_toplevel()).children.count = uc.dom_parse_num_children();
+        }
         uc.set_dom_parse_num_children(0);
     }
 
     if !node.is_null() {
-        retain_dom_node(uc, node, uc.dom_parse_toplevel_mut_ptr())?;
+        // SAFETY: `node` is non-null (just checked); `dom_parse_toplevel_mut_ptr`
+        // is `uc`'s own out-slot — `retain_dom_node`'s contract.
+        unsafe { retain_dom_node(uc, node, uc.dom_parse_toplevel_mut_ptr())? };
     } else {
         uc.set_dom_parse_toplevel(core::ptr::null_mut());
 
@@ -6332,11 +6512,17 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
         let dom_root: *mut DomNode = uc.result_view().push_zero(1);
         ufbxi_check!(uc, !dom_root.is_null(), "dom_root");
 
-        (*dom_root).name.data = EMPTY_CHAR.as_ptr();
-        (*dom_root).children.data = nodes as *const Ref<DomNode>;
-        (*dom_root).children.count = num_top_nodes;
+        // SAFETY: `dom_root` is the freshly pushed result `DomNode`.
+        unsafe {
+            (*dom_root).name.data = EMPTY_CHAR.as_ptr();
+            (*dom_root).children.data = nodes as *const Ref<DomNode>;
+            (*dom_root).children.count = num_top_nodes;
+        }
 
-        uc.scene_view().set_dom_root(Some(Ref::from_ptr(dom_root)));
+        // SAFETY: `dom_root` is a live result `DomNode`, so `Ref::from_ptr`
+        // adopts it as a retained reference.
+        uc.scene_view()
+            .set_dom_root(Some(unsafe { Ref::from_ptr(dom_root) }));
     }
 
     Ok(())
@@ -6346,7 +6532,9 @@ pub(crate) unsafe fn retain_toplevel(uc: &Context, node: *mut Node) -> Result<()
 #[inline(never)]
 pub(crate) unsafe fn retain_toplevel_child(uc: &Context, child: *mut Node) -> Result<(), Fail> {
     ufbx_assert!(!uc.dom_parse_toplevel().is_null());
-    retain_dom_node(uc, child, core::ptr::null_mut())?;
+    // SAFETY: `child` is a valid parse node (fn contract); a null out-pointer is
+    // accepted by `retain_dom_node`.
+    unsafe { retain_dom_node(uc, child, core::ptr::null_mut())? };
     uc.set_dom_parse_num_children(uc.dom_parse_num_children().wrapping_add(1));
 
     Ok(())
@@ -6357,28 +6545,49 @@ pub(crate) unsafe fn retain_toplevel_child(uc: &Context, child: *mut Node) -> Re
 // ufbx.c:10857-10879 `ufbxi_next_line`
 #[inline(never)]
 pub(crate) unsafe fn next_line(line: *mut String, buf: *mut String, skip_space: bool) -> bool {
-    if (*buf).length == 0 {
+    // SAFETY: `buf` is a valid `*mut String` (fn contract); reading its length.
+    if unsafe { (*buf).length } == 0 {
         return false;
     }
-    let newline: *const u8 = memchr((*buf).data, b'\n', (*buf).length);
+    // SAFETY: `buf` is valid; its `data`/`length` describe a readable byte span,
+    // which is `memchr`'s contract.
+    let newline: *const u8 = unsafe { memchr((*buf).data, b'\n', (*buf).length) };
     let length: usize = if !newline.is_null() {
-        to_size(newline as isize - (*buf).data as isize) + 1
+        // SAFETY: `newline` points inside `buf`'s span, so the byte offset from
+        // `buf.data` is non-negative and in range.
+        unsafe { to_size(newline as isize - (*buf).data as isize) + 1 }
     } else {
-        (*buf).length
+        // SAFETY: `buf` is valid; reading its length.
+        unsafe { (*buf).length }
     };
 
-    (*line).data = (*buf).data;
-    (*line).length = length;
-    (*buf).data = (*buf).data.add(length);
-    (*buf).length -= length;
+    // SAFETY: `line` and `buf` are valid; point `line` at `buf`'s current span
+    // and advance `buf` by `length` (<= its remaining length, per the memchr
+    // result above), keeping `buf.data`/`buf.length` a valid span.
+    unsafe {
+        (*line).data = (*buf).data;
+        (*line).length = length;
+        (*buf).data = (*buf).data.add(length);
+        (*buf).length -= length;
+    }
 
     if skip_space {
-        while (*line).length > 0 && is_space(*(*line).data) {
-            (*line).data = (*line).data.add(1);
-            (*line).length -= 1;
+        // SAFETY: `line` spans a valid byte range; the `length > 0` guard keeps
+        // `*line.data` inside it, and advancing `data`/shrinking `length`
+        // preserves the span.
+        while unsafe { (*line).length } > 0 && is_space(unsafe { *(*line).data }) {
+            unsafe {
+                (*line).data = (*line).data.add(1);
+                (*line).length -= 1;
+            }
         }
-        while (*line).length > 0 && is_space(*(*line).data.add((*line).length - 1)) {
-            (*line).length -= 1;
+        // SAFETY: `line` spans a valid byte range; `length > 0` keeps the
+        // trailing byte `data.add(length - 1)` inside it.
+        while unsafe { (*line).length } > 0
+            && is_space(unsafe { *(*line).data.add((*line).length - 1) })
+        {
+            // SAFETY: `line` is valid; shrinking its length.
+            unsafe { (*line).length -= 1 };
         }
     }
 
@@ -6401,12 +6610,18 @@ pub(crate) unsafe fn match_skip(fmt: *const u8, alternation: bool) -> *const u8 
             ufbx_assert!(d.get() < 4);
             d.set(d.get() + 1);
         });
-        let ret = match_skip_rec(fmt, alternation);
+        // SAFETY: forwards the caller's `fmt` validity contract to the recursive
+        // body unchanged.
+        let ret = unsafe { match_skip_rec(fmt, alternation) };
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
         return ret;
     }
     #[cfg(not(feature = "regression"))]
-    match_skip_rec(fmt, alternation)
+    // SAFETY: forwards the caller's `fmt` validity contract to the recursive
+    // body unchanged.
+    unsafe {
+        match_skip_rec(fmt, alternation)
+    }
 }
 
 // ufbx.c:10885-10914 `ufbxi_match_skip` body (the `_rec` half of the
@@ -6416,34 +6631,49 @@ unsafe fn match_skip_rec(mut fmt: *const u8, alternation: bool) -> *const u8 {
     loop {
         // C-parity: `char c = *fmt++;` — C `char` is signed on the oracle
         // targets (PORTING.md char-value rule).
-        let mut c: i8 = *(fmt as *const i8);
-        fmt = fmt.add(1);
+        // SAFETY: `fmt` walks a NUL-terminated match-pattern string (fn contract);
+        // reading the current byte, then advancing one within it.
+        let mut c: i8 = unsafe { *(fmt as *const i8) };
+        fmt = unsafe { fmt.add(1) };
         match c as u8 {
             b'(' => {
-                fmt = match_skip(fmt, false).add(1);
+                // SAFETY: `fmt` points inside the pattern; `match_skip` returns a
+                // pointer at the matching `)`, past which one byte is valid.
+                fmt = unsafe { match_skip(fmt, false).add(1) };
             }
             b'\\' => {
-                fmt = fmt.add(1);
+                // SAFETY: `\` is followed by an escaped byte within the pattern.
+                fmt = unsafe { fmt.add(1) };
             }
             b'[' => {
-                c = *(fmt as *const i8);
+                // SAFETY: `fmt` points inside the pattern; the class is
+                // `]`-terminated, so each read/advance stays within it.
+                c = unsafe { *(fmt as *const i8) };
                 while c != b']' as i8 {
-                    c = *(fmt as *const i8);
-                    fmt = fmt.add(1);
+                    // SAFETY: as above; reading the class byte and advancing.
+                    c = unsafe { *(fmt as *const i8) };
+                    fmt = unsafe { fmt.add(1) };
                     if c == b'\\' as i8 {
-                        c = *(fmt as *const i8);
-                        fmt = fmt.add(1);
+                        // SAFETY: `\` is followed by an escaped byte in the class.
+                        c = unsafe { *(fmt as *const i8) };
+                        fmt = unsafe { fmt.add(1) };
                     }
                 }
-                fmt = fmt.add(1);
+                // SAFETY: step past the terminating `]`, which is inside the
+                // NUL-terminated pattern.
+                fmt = unsafe { fmt.add(1) };
             }
             b'|' => {
                 if alternation {
-                    return fmt.offset(-1);
+                    // SAFETY: `fmt` was advanced past the `|`, so stepping back one
+                    // lands on it, still inside the pattern.
+                    return unsafe { fmt.offset(-1) };
                 }
             }
             b')' | b'\0' => {
-                return fmt.offset(-1);
+                // SAFETY: `fmt` was advanced past the `)`/NUL, so stepping back one
+                // lands on it, still inside the pattern.
+                return unsafe { fmt.offset(-1) };
             }
             _ => {}
         }
@@ -6469,21 +6699,29 @@ pub(crate) unsafe fn match_imp(
             ufbx_assert!(d.get() < 4);
             d.set(d.get() + 1);
         });
-        let ret = match_imp_rec(p_str, end, p_fmt);
+        // SAFETY: forwards the caller's `p_str`/`end`/`p_fmt` validity contract to
+        // the recursive body unchanged.
+        let ret = unsafe { match_imp_rec(p_str, end, p_fmt) };
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
         return ret;
     }
     #[cfg(not(feature = "regression"))]
-    match_imp_rec(p_str, end, p_fmt)
+    // SAFETY: forwards the caller's `p_str`/`end`/`p_fmt` validity contract to the
+    // recursive body unchanged.
+    unsafe {
+        match_imp_rec(p_str, end, p_fmt)
+    }
 }
 
 // ufbx.c:10920-11084 `ufbxi_match_imp` body (the `_rec` half of the
 // `ufbxi_recursive_function` body; see the wrapper above)
 #[inline(never)]
 unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *const u8) -> bool {
-    let str_original_begin: *const u8 = *p_str;
+    // SAFETY: `p_str`/`p_fmt` are valid pointers to the caller's `str`/`fmt`
+    // cursors (fn contract); read the current cursor values.
+    let str_original_begin: *const u8 = unsafe { *p_str };
     let mut str_: *const u8 = str_original_begin;
-    let mut fmt_begin: *const u8 = *p_fmt;
+    let mut fmt_begin: *const u8 = unsafe { *p_fmt };
     let mut fmt: *const u8 = fmt_begin;
     let mut case_insensitive: bool = false;
 
@@ -6491,16 +6729,28 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
     loop {
         // C-parity: `char c = *fmt++;` — signed `char` (PORTING.md char-value
         // rule); every literal compared against it is ASCII.
-        let mut c: i8 = *(fmt as *const i8);
-        fmt = fmt.add(1);
+        // SAFETY: `fmt` walks a NUL-terminated match pattern; read the current
+        // byte, then advance one within it.
+        let mut c: i8 = unsafe { *(fmt as *const i8) };
+        fmt = unsafe { fmt.add(1) };
         if c == 0 {
-            *p_str = str_;
-            *p_fmt = fmt.offset(-1);
+            // SAFETY: `p_str`/`p_fmt` are valid out-cursors; store the matched
+            // `str_` and rewind `fmt` onto the NUL byte just consumed.
+            unsafe {
+                *p_str = str_;
+                *p_fmt = fmt.offset(-1);
+            }
             return true;
         }
 
         let str_begin: *const u8 = str_;
-        let mut ref_: i8 = if str_ != end { *(str_ as *const i8) } else { 0 };
+        // SAFETY: when `str_ != end`, `str_` addresses a live input byte within
+        // `[str_original_begin, end)`; otherwise it is not dereferenced.
+        let mut ref_: i8 = if str_ != end {
+            unsafe { *(str_ as *const i8) }
+        } else {
+            0
+        };
 
         if case_insensitive {
             if ref_ >= b'A' as i8 && ref_ <= b'Z' as i8 {
@@ -6513,8 +6763,10 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
         match c as u8 {
             b'\\' => {
                 let mut macro_: *const u8 = core::ptr::null();
-                c = *(fmt as *const i8);
-                fmt = fmt.add(1);
+                // SAFETY: `\` is followed by an escape byte within the pattern;
+                // read it and advance one.
+                c = unsafe { *(fmt as *const i8) };
+                fmt = unsafe { fmt.add(1) };
                 match c as u8 {
                     b'd' => {
                         macro_ = b"[0-9]\0".as_ptr();
@@ -6525,13 +6777,17 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
                     b's' => {
                         if is_space(ref_ as u8) {
                             ok = true;
-                            str_ = str_.add(1);
+                            // SAFETY: consumes the matched input byte; `str_ < end`
+                            // held (a space `ref_` is only read while in range).
+                            str_ = unsafe { str_.add(1) };
                         }
                     }
                     b'S' => {
                         if !is_space(ref_ as u8) {
                             ok = true;
-                            str_ = str_.add(1);
+                            // SAFETY: consumes the matched input byte, mirroring
+                            // C's `str++` within the matcher's input span.
+                            str_ = unsafe { str_.add(1) };
                         }
                     }
                     b'c' | b'C' => {
@@ -6541,78 +6797,105 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
                     _ => {
                         if ref_ == c {
                             ok = true;
-                            str_ = str_.add(1);
+                            // SAFETY: `ref_ == c != 0`, so `str_ < end` held; consume
+                            // the matched input byte.
+                            str_ = unsafe { str_.add(1) };
                         }
                     }
                 }
                 if !macro_.is_null() {
-                    ok = match_imp(&mut str_, end, &mut macro_);
+                    // SAFETY: `str_`/`macro_` are valid cursors into the input and
+                    // a NUL-terminated sub-pattern — `match_imp`'s contract.
+                    ok = unsafe { match_imp(&mut str_, end, &mut macro_) };
                 }
             }
 
             b'[' => {
-                while *(fmt.add(0) as *const i8) != b']' as i8 {
-                    if *(fmt.add(0) as *const i8) == b'\\' as i8 {
-                        if ref_ == *(fmt.add(1) as *const i8) {
+                // SAFETY: the class body is `]`-terminated within the pattern, so
+                // every `fmt.add(k)` read below stays inside it.
+                while unsafe { *(fmt.add(0) as *const i8) } != b']' as i8 {
+                    if unsafe { *(fmt.add(0) as *const i8) } == b'\\' as i8 {
+                        // SAFETY: an escaped class member has a following byte.
+                        if ref_ == unsafe { *(fmt.add(1) as *const i8) } {
                             ok = true;
                         }
-                        fmt = fmt.add(2);
-                    } else if *(fmt.add(1) as *const i8) == b'-' as i8 {
-                        if ref_ >= *(fmt.add(0) as *const i8) && ref_ <= *(fmt.add(2) as *const i8)
+                        fmt = unsafe { fmt.add(2) };
+                    } else if unsafe { *(fmt.add(1) as *const i8) } == b'-' as i8 {
+                        // SAFETY: a range `a-b` has three bytes within the class.
+                        if ref_ >= unsafe { *(fmt.add(0) as *const i8) }
+                            && ref_ <= unsafe { *(fmt.add(2) as *const i8) }
                         {
                             ok = true;
                         }
-                        fmt = fmt.add(3);
+                        fmt = unsafe { fmt.add(3) };
                     } else {
-                        if ref_ == *(fmt.add(0) as *const i8) {
+                        // SAFETY: a single class member byte is within the class.
+                        if ref_ == unsafe { *(fmt.add(0) as *const i8) } {
                             ok = true;
                         }
-                        fmt = fmt.add(1);
+                        fmt = unsafe { fmt.add(1) };
                     }
                 }
-                fmt = fmt.add(1);
+                // SAFETY: step past the terminating `]`, inside the pattern.
+                fmt = unsafe { fmt.add(1) };
                 if ok {
-                    str_ = str_.add(1);
+                    // SAFETY: a class match implies `ref_` was a real input byte,
+                    // so `str_ < end`; consume it.
+                    str_ = unsafe { str_.add(1) };
                 }
             }
 
             b'(' => {
-                if match_imp(&mut str_, end, &mut fmt) {
+                // SAFETY: `str_`/`fmt` are valid cursors into the input and the
+                // NUL-terminated pattern — `match_imp`'s contract.
+                if unsafe { match_imp(&mut str_, end, &mut fmt) } {
                     ok = true;
                 }
             }
 
             b'|' => {
-                fmt = match_skip(fmt, false);
+                // SAFETY: `fmt` points inside the pattern; `match_skip` skips to
+                // the alternation/group end within it.
+                fmt = unsafe { match_skip(fmt, false) };
                 ok = true;
             }
 
             b')' => {
-                *p_str = str_;
-                *p_fmt = fmt;
+                // SAFETY: `p_str`/`p_fmt` are valid out-cursors; store the matched
+                // position at the group close.
+                unsafe {
+                    *p_str = str_;
+                    *p_fmt = fmt;
+                }
                 return true;
             }
 
             b'.' => {
                 if ref_ != 0 {
                     ok = true;
-                    str_ = str_.add(1);
+                    // SAFETY: `ref_ != 0` implies `str_ < end`; consume the byte.
+                    str_ = unsafe { str_.add(1) };
                 }
             }
 
             _ => {
                 if c == ref_ {
-                    str_ = str_.add(1);
+                    // SAFETY: `c == ref_ != 0` (c was checked non-zero above), so
+                    // `str_ < end`; consume the matched byte.
+                    str_ = unsafe { str_.add(1) };
                     ok = true;
                 }
             }
         }
 
         let mut did_fail: bool = false;
-        c = *(fmt as *const i8);
+        // SAFETY: `fmt` points inside the NUL-terminated pattern; read the
+        // trailing quantifier byte.
+        c = unsafe { *(fmt as *const i8) };
         match c as u8 {
             b'*' => {
-                fmt = fmt.add(1);
+                // SAFETY: consume the `*` quantifier byte within the pattern.
+                fmt = unsafe { fmt.add(1) };
                 if ok {
                     fmt = fmt_begin;
                     count += 1;
@@ -6620,7 +6903,8 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
                 }
             }
             b'+' => {
-                fmt = fmt.add(1);
+                // SAFETY: consume the `+` quantifier byte within the pattern.
+                fmt = unsafe { fmt.add(1) };
                 if ok {
                     fmt = fmt_begin;
                     count += 1;
@@ -6630,7 +6914,8 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
                 }
             }
             b'?' => {
-                fmt = fmt.add(1);
+                // SAFETY: consume the `?` quantifier byte within the pattern.
+                fmt = unsafe { fmt.add(1) };
             }
             _ => {
                 did_fail = !ok;
@@ -6638,12 +6923,18 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
         }
 
         if did_fail {
-            fmt = match_skip(fmt, true);
-            if *fmt == b'|' {
-                fmt = fmt.add(1);
+            // SAFETY: `fmt` points inside the pattern; `match_skip` skips to the
+            // next alternation.
+            fmt = unsafe { match_skip(fmt, true) };
+            // SAFETY: `fmt` addresses a byte within the NUL-terminated pattern.
+            if unsafe { *fmt } == b'|' {
+                // SAFETY: step past the `|`, inside the pattern.
+                fmt = unsafe { fmt.add(1) };
                 str_ = str_original_begin;
             } else {
-                *p_fmt = match_skip(fmt, false).add(1);
+                // SAFETY: `p_fmt` is a valid out-cursor; `match_skip` returns a
+                // pointer at the group close, past which one byte is valid.
+                unsafe { *p_fmt = match_skip(fmt, false).add(1) };
                 return false;
             }
         } else {
@@ -6660,10 +6951,14 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
 // ufbx.c:11086-11094 `ufbxi_match`
 #[inline(never)]
 pub(crate) unsafe fn r#match(str_: *const String, fmt: *const u8) -> bool {
-    let mut ptr: *const u8 = (*str_).data;
-    let end: *const u8 = (*str_).data.add((*str_).length);
+    // SAFETY: `str_` is a valid `*const String` (fn contract); read its `data`
+    // pointer and derive `end` from `data + length`, one past its byte span.
+    let mut ptr: *const u8 = unsafe { (*str_).data };
+    let end: *const u8 = unsafe { (*str_).data.add((*str_).length) };
     let mut fmt: *const u8 = fmt;
-    if match_imp(&mut ptr, end, &mut fmt) {
+    // SAFETY: `ptr`/`end` bound the string's byte span and `fmt` is a
+    // NUL-terminated pattern — `match_imp`'s contract.
+    if unsafe { match_imp(&mut ptr, end, &mut fmt) } {
         ptr == end
     } else {
         false
@@ -6679,33 +6974,52 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
     let mut buf: String = String::new_c(data, size);
 
     if format == FileFormat::Fbx {
-        if size >= BINARY_MAGIC_SIZE && memcmp(data, BINARY_MAGIC.as_ptr(), BINARY_MAGIC_SIZE) == 0
+        // SAFETY: guarded by `size >= BINARY_MAGIC_SIZE`, so `data` and the
+        // literal both span at least `BINARY_MAGIC_SIZE` bytes — `memcmp`'s
+        // contract.
+        if size >= BINARY_MAGIC_SIZE
+            && unsafe { memcmp(data, BINARY_MAGIC.as_ptr(), BINARY_MAGIC_SIZE) } == 0
         {
             return true;
         }
 
-        while next_line(&mut line, &mut buf, true) {
-            if r#match(
-                &line,
-                b";\\s*FBX\\s*\\d+\\.\\d+\\.\\d+\\s*project\\s+file\0".as_ptr(),
-            ) {
+        // SAFETY: `line`/`buf` are valid local `String`s and `buf` spans
+        // `[data, data+size)` — `next_line`'s contract.
+        while unsafe { next_line(&mut line, &mut buf, true) } {
+            // SAFETY: `line` is a valid `String` and the pattern is NUL-terminated
+            // — `r#match`'s contract.
+            if unsafe {
+                r#match(
+                    &line,
+                    b";\\s*FBX\\s*\\d+\\.\\d+\\.\\d+\\s*project\\s+file\0".as_ptr(),
+                )
+            } {
                 return true;
             }
-            if r#match(&line, b"FBXHeaderExtension:.*\0".as_ptr()) {
+            // SAFETY: as above.
+            if unsafe { r#match(&line, b"FBXHeaderExtension:.*\0".as_ptr()) } {
                 return true;
             }
         }
     } else if format == FileFormat::Obj {
-        while next_line(&mut line, &mut buf, true) {
+        // SAFETY: `line`/`buf` are valid local `String`s and `buf` spans
+        // `[data, data+size)` — `next_line`'s contract.
+        while unsafe { next_line(&mut line, &mut buf, true) } {
             let pattern: *const u8 = b"(vn?\\s+\\F|vt)\\s+\\F\\s+\\F.*|f\\s+[\\-/0-9]+\\s+[\\-/0-9]+\\s*[\\-/0-9]+.*|(usemtl|mtllib)\\s+\\S.*\0".as_ptr();
-            if r#match(&line, pattern) {
+            // SAFETY: `line` is a valid `String` and `pattern` is NUL-terminated —
+            // `r#match`'s contract.
+            if unsafe { r#match(&line, pattern) } {
                 return true;
             }
         }
     } else if format == FileFormat::Mtl {
-        while next_line(&mut line, &mut buf, true) {
+        // SAFETY: `line`/`buf` are valid local `String`s and `buf` spans
+        // `[data, data+size)` — `next_line`'s contract.
+        while unsafe { next_line(&mut line, &mut buf, true) } {
             let pattern: *const u8 = b"newmtl\\s+\\S.*\0".as_ptr();
-            if r#match(&line, pattern) {
+            // SAFETY: `line` is a valid `String` and `pattern` is NUL-terminated —
+            // `r#match`'s contract.
+            if unsafe { r#match(&line, pattern) } {
                 return true;
             }
         }
@@ -6909,9 +7223,12 @@ pub(crate) unsafe fn parse_toplevel_child_imp(
     p_end: *mut bool,
 ) -> Result<(), Fail> {
     if uc.from_ascii() {
-        crate::native::parse_ascii::ascii_parse_node(uc, 0, state, p_end, buf, true)?;
+        // SAFETY: `p_end` is the caller's valid `*mut bool` out-flag — the node
+        // parsers' contract.
+        unsafe { crate::native::parse_ascii::ascii_parse_node(uc, 0, state, p_end, buf, true)? };
     } else {
-        crate::native::parse_binary::binary_parse_node(uc, 0, state, p_end, buf, true)?;
+        // SAFETY: as above.
+        unsafe { crate::native::parse_binary::binary_parse_node(uc, 0, state, p_end, buf, true)? };
     }
 
     Ok(())
@@ -6924,12 +7241,16 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
     let mut node: *mut Node = uc.top_nodes();
     let node_end: *mut Node = add_ptr(node, uc.top_nodes_len());
     while node != node_end {
-        if (*node).name == name {
+        // SAFETY: `node` walks `[top_nodes, top_nodes + top_nodes_len)`, a
+        // contiguous run of valid `Node`s; read its `name` field.
+        if unsafe { (*node).name } == name {
             uc.set_top_node(node);
             uc.set_top_child_index(0);
             return Ok(());
         }
-        node = node.add(1);
+        // SAFETY: `node` is before `node_end` within the run, so `add(1)` stays
+        // in bounds (up to one-past-the-end).
+        node = unsafe { node.add(1) };
     }
 
     // Reached end and not found in cache
@@ -6943,23 +7264,30 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         // Parse the next top-level node
         let mut end: bool = false;
         if uc.from_ascii() {
-            crate::native::parse_ascii::ascii_parse_node(
-                uc,
-                0,
-                ParseState::Root,
-                &mut end,
-                uc.tmp_view(),
-                false,
-            )?;
+            // SAFETY: `&mut end` is a valid `*mut bool` out-flag — the node
+            // parsers' contract.
+            unsafe {
+                crate::native::parse_ascii::ascii_parse_node(
+                    uc,
+                    0,
+                    ParseState::Root,
+                    &mut end,
+                    uc.tmp_view(),
+                    false,
+                )?
+            };
         } else {
-            crate::native::parse_binary::binary_parse_node(
-                uc,
-                0,
-                ParseState::Root,
-                &mut end,
-                uc.tmp_view(),
-                false,
-            )?;
+            // SAFETY: as above.
+            unsafe {
+                crate::native::parse_binary::binary_parse_node(
+                    uc,
+                    0,
+                    ParseState::Root,
+                    &mut end,
+                    uc.tmp_view(),
+                    false,
+                )?
+            };
         }
 
         // Top-level node not found
@@ -6968,11 +7296,15 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             uc.set_top_child_index(0);
             uc.set_parsed_to_end(true);
             if uc.opts_view().retain_dom() {
-                retain_toplevel(uc, core::ptr::null_mut())?;
+                // SAFETY: a null `node` tells `retain_toplevel` to finalize the
+                // DOM — an accepted argument.
+                unsafe { retain_toplevel(uc, core::ptr::null_mut())? };
             }
 
             // Not needed anymore
-            buf_free(uc.tmp_parse_mut_ptr());
+            // SAFETY: `tmp_parse_mut_ptr` is `uc`'s own `tmp_parse` buffer
+            // pointer — `buf_free`'s contract.
+            unsafe { buf_free(uc.tmp_parse_mut_ptr()) };
 
             return Ok(());
         }
@@ -6980,22 +7312,32 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         uc.set_top_nodes_len(uc.top_nodes_len() + 1);
         ufbxi_check!(
             uc,
-            grow_array(
-                uc.ator_tmp_mut_ptr(),
-                uc.top_nodes_mut_ptr(),
-                uc.top_nodes_cap_mut_ptr(),
-                uc.top_nodes_len()
-            ),
+            // SAFETY: grows `uc`'s own paired `top_nodes`/`top_nodes_cap` growth
+            // state through its temp allocator (uc construction invariant).
+            unsafe {
+                grow_array(
+                    uc.ator_tmp_mut_ptr(),
+                    uc.top_nodes_mut_ptr(),
+                    uc.top_nodes_cap_mut_ptr(),
+                    uc.top_nodes_len()
+                )
+            },
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->top_nodes)), (&uc->top_nodes), (&uc->top_nodes_cap), (uc->top_nodes_len))"
         );
-        let node: *mut Node = uc.top_nodes().add(uc.top_nodes_len() - 1);
-        pop::<Node>(uc.tmp_stack_mut_ptr(), 1, node);
+        // SAFETY: `top_nodes_len >= 1` (just incremented), so `top_nodes_len - 1`
+        // indexes the just-grown array's last slot.
+        let node: *mut Node = unsafe { uc.top_nodes().add(uc.top_nodes_len() - 1) };
+        // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own stack buffer and `node` is a
+        // live slot receiving the popped `Node` — `pop`'s contract.
+        unsafe { pop::<Node>(uc.tmp_stack_mut_ptr(), 1, node) };
         if uc.opts_view().retain_dom() {
-            retain_toplevel(uc, node)?;
+            // SAFETY: `node` is a live top-node slot.
+            unsafe { retain_toplevel(uc, node)? };
         }
 
         // Return if we parsed the right one
-        if (*node).name == name {
+        // SAFETY: `node` is a live top-node slot; read its `name` field.
+        if unsafe { (*node).name } == name {
             uc.set_top_node(node);
             uc.set_top_child_index(usize::MAX);
             return Ok(());
@@ -7003,10 +7345,14 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
 
         // If not we need to parse all the children of the node for later
         let mut num_children: u32 = 0;
-        let state: ParseState = update_parse_state(ParseState::Root, (*node).name);
+        // SAFETY: `node` is a live top-node slot; `name` is its NUL-terminated
+        // interned name — `update_parse_state`'s contract.
+        let state: ParseState = unsafe { update_parse_state(ParseState::Root, (*node).name) };
         if uc.has_next_child() {
             loop {
-                parse_toplevel_child_imp(uc, state, uc.tmp_view(), &mut end)?;
+                // SAFETY: `&mut end` is a valid `*mut bool` out-flag — the child
+                // parser's contract.
+                unsafe { parse_toplevel_child_imp(uc, state, uc.tmp_view(), &mut end)? };
                 if end {
                     break;
                 }
@@ -7014,17 +7360,23 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
             }
         }
 
-        (*node).num_children = num_children;
-        (*node).children = uc
-            .tmp_view()
-            .push_pop::<Node>(uc.tmp_stack_view(), num_children as usize);
-        ufbxi_check!(uc, !(*node).children.is_null(), "node->children");
+        // SAFETY: `node` is a live top-node slot; write its child span.
+        unsafe {
+            (*node).num_children = num_children;
+            (*node).children = uc
+                .tmp_view()
+                .push_pop::<Node>(uc.tmp_stack_view(), num_children as usize);
+        }
+        // SAFETY: `node` is a live top-node slot; read back its `children` pointer.
+        ufbxi_check!(uc, !unsafe { (*node).children }.is_null(), "node->children");
 
         if uc.opts_view().retain_dom() {
             // C: `for (size_t i = 0; i < num_children; i++)`
             let mut i: usize = 0;
             while i < num_children as usize {
-                retain_toplevel_child(uc, (*node).children.add(i))?;
+                // SAFETY: `node` is live; `i < num_children` bounds
+                // `children.add(i)` inside the just-populated child run.
+                unsafe { retain_toplevel_child(uc, (*node).children.add(i))? };
                 i += 1;
             }
         }
@@ -7040,24 +7392,33 @@ pub(crate) unsafe fn parse_toplevel_child(
 ) -> Result<(), Fail> {
     // Top-level node not found
     if uc.top_node().is_null() {
-        *p_node = core::ptr::null_mut();
+        // SAFETY: `p_node` is the caller's valid `*mut *mut Node` out-slot.
+        unsafe { *p_node = core::ptr::null_mut() };
         return Ok(());
     }
 
     if uc.top_child_index() == usize::MAX {
         // Parse children on demand
         if tmp_buf.is_none() {
-            buf_clear(uc.tmp_parse_mut_ptr());
+            // SAFETY: `tmp_parse_mut_ptr` is `uc`'s own `tmp_parse` buffer —
+            // `buf_clear`'s contract.
+            unsafe { buf_clear(uc.tmp_parse_mut_ptr()) };
         }
         let mut end = false;
-        let state: ParseState = update_parse_state(ParseState::Root, (*uc.top_node()).name);
+        // SAFETY: `top_node()` is non-null (checked above); read its NUL-terminated
+        // interned `name` — `update_parse_state`'s contract.
+        let state: ParseState =
+            unsafe { update_parse_state(ParseState::Root, (*uc.top_node()).name) };
         let buf: &BufView = match tmp_buf {
             Some(tmp_buf) => tmp_buf,
             None => uc.tmp_parse_view(),
         };
-        parse_toplevel_child_imp(uc, state, buf, &mut end)?;
+        // SAFETY: `&mut end` is a valid `*mut bool` out-flag — the child parser's
+        // contract.
+        unsafe { parse_toplevel_child_imp(uc, state, buf, &mut end)? };
         if end {
-            *p_node = core::ptr::null_mut();
+            // SAFETY: `p_node` is the caller's valid out-slot.
+            unsafe { *p_node = core::ptr::null_mut() };
         } else {
             // Parse to either reused `uc->top_child` or push if retaining to `tmp_buf`.
             let mut dst: *mut Node = uc.top_child_mut_ptr();
@@ -7066,21 +7427,31 @@ pub(crate) unsafe fn parse_toplevel_child(
                 ufbxi_check!(uc, !dst.is_null(), "dst");
             }
 
-            pop::<Node>(uc.tmp_stack_mut_ptr(), 1, dst);
-            *p_node = dst;
+            // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own stack buffer and `dst` a
+            // live `Node` slot receiving the popped node — `pop`'s contract.
+            unsafe { pop::<Node>(uc.tmp_stack_mut_ptr(), 1, dst) };
+            // SAFETY: `p_node` is the caller's valid out-slot.
+            unsafe { *p_node = dst };
 
             if uc.opts_view().retain_dom() {
-                retain_toplevel_child(uc, dst)?;
+                // SAFETY: `dst` is the freshly popped live `Node`.
+                unsafe { retain_toplevel_child(uc, dst)? };
             }
         }
     } else {
         // Iterate already parsed nodes
         let child_index = uc.top_child_index();
-        if child_index == (*uc.top_node()).num_children as usize {
-            *p_node = core::ptr::null_mut();
+        // SAFETY: `top_node()` is non-null (checked above); read its
+        // `num_children` field.
+        if child_index == unsafe { (*uc.top_node()).num_children } as usize {
+            // SAFETY: `p_node` is the caller's valid out-slot.
+            unsafe { *p_node = core::ptr::null_mut() };
         } else {
             uc.set_top_child_index(uc.top_child_index().wrapping_add(1));
-            *p_node = (*uc.top_node()).children.add(child_index);
+            // SAFETY: `top_node()` is non-null; `child_index < num_children`
+            // bounds `children.add(child_index)` inside its child run; `p_node`
+            // is the caller's valid out-slot.
+            unsafe { *p_node = (*uc.top_node()).children.add(child_index) };
         }
     }
 
@@ -7334,13 +7705,19 @@ pub(crate) unsafe fn get_prop_type(uc: &Context, name: *const u8) -> PropType {
     // C takes the address of the parameter itself (`&name`) as the map key.
     let name: *const u8 = name;
     let hash = crate::native::hash::hash_ptr!(name);
-    let entry: *mut PropTypeName = map_find(
-        uc.prop_type_map_mut_ptr(),
-        hash,
-        &name as *const *const u8 as *const c_void,
-    );
+    // SAFETY: looking up in `uc`'s own `prop_type_map` through its raw-ptr
+    // getter, with `&name` a live local holding the key pointer value.
+    let entry: *mut PropTypeName = unsafe {
+        map_find(
+            uc.prop_type_map_mut_ptr(),
+            hash,
+            &name as *const *const u8 as *const c_void,
+        )
+    };
     if !entry.is_null() {
-        return (*entry).type_;
+        // SAFETY: `entry` is a non-null entry owned by `uc`'s `prop_type_map`;
+        // read its `type_` field.
+        return unsafe { (*entry).type_ };
     }
     PropType::Unknown
 }
@@ -7359,8 +7736,11 @@ pub(crate) unsafe fn find_prop_with_key<'a, M: Mode>(
         let mut end: usize = cur.props_count();
         while end - begin >= 16 {
             let mid: usize = (begin + end) >> 1;
-            let p: *const Prop = prop_data.add(mid);
-            if (*p)._internal_key < key {
+            // SAFETY: `mid < end <= props_count`, so `prop_data.add(mid)` indexes a
+            // live `Prop` in `cur`'s run.
+            let p: *const Prop = unsafe { prop_data.add(mid) };
+            // SAFETY: `p` addresses a live `Prop`; read its `_internal_key`.
+            if unsafe { (*p)._internal_key } < key {
                 begin = mid + 1;
             } else {
                 end = mid;
@@ -7369,14 +7749,22 @@ pub(crate) unsafe fn find_prop_with_key<'a, M: Mode>(
 
         end = cur.props_count();
         while begin < end {
-            let p: *const Prop = prop_data.add(begin);
-            if (*p)._internal_key > key {
+            // SAFETY: `begin < end <= props_count`, so `prop_data.add(begin)`
+            // indexes a live `Prop` in `cur`'s run.
+            let p: *const Prop = unsafe { prop_data.add(begin) };
+            // SAFETY: `p` addresses a live `Prop`; read its `_internal_key`.
+            if unsafe { (*p)._internal_key } > key {
                 break;
             }
-            if (*p).name.data == name && ((*p).flags.raw() & PropFlags::NO_VALUE.raw()) == 0 {
+            // SAFETY: `p` addresses a live `Prop`; read its `name.data` and `flags`.
+            if unsafe { (*p).name.data } == name
+                && (unsafe { (*p).flags.raw() } & PropFlags::NO_VALUE.raw()) == 0
+            {
                 // Mode-generic mint from the STORED run pointer (`props_data()`
                 // value read) — adequate provenance for either mode.
-                return Some(View::<Prop, M>::mint(p as *mut Prop));
+                // SAFETY: `p` addresses a live `Prop` in `cur`'s run, so minting a
+                // `View<Prop, M>` over it reinterprets it in place.
+                return Some(unsafe { View::<Prop, M>::mint(p as *mut Prop) });
             }
             begin += 1;
         }
@@ -7404,11 +7792,16 @@ pub(crate) unsafe fn find_prop<M: Mode>(
     props: &View<Props, M>,
     name: *const u8,
 ) -> Option<&View<Prop, M>> {
-    let key = (*name.add(0) as u32) << 24
-        | (*name.add(1) as u32) << 16
-        | (*name.add(2) as u32) << 8
-        | (*name.add(3) as u32);
-    find_prop_with_key(props, name, key)
+    // SAFETY: all call sites pass an interned `ufbxi_*` name of at least 4 bytes
+    // (see fn comment), so `name.add(0..=3)` read live bytes.
+    let key = unsafe {
+        (*name.add(0) as u32) << 24
+            | (*name.add(1) as u32) << 16
+            | (*name.add(2) as u32) << 8
+            | (*name.add(3) as u32)
+    };
+    // SAFETY: `name` is the same interned name; forward it to the keyed lookup.
+    unsafe { find_prop_with_key(props, name, key) }
 }
 
 // ufbx.c:11520-11528 `ufbxi_find_real`
@@ -7418,7 +7811,9 @@ pub(crate) unsafe fn find_real<M: Mode>(
     name: *const u8,
     def: Real,
 ) -> Real {
-    match find_prop(props, name) {
+    // SAFETY: `name` is an interned name of at least 4 bytes — `find_prop`'s
+    // contract.
+    match unsafe { find_prop(props, name) } {
         // C-parity: `prop->value_real` is the `ufbx_prop` value union's first
         // real; the generated struct keeps only `value_vec4` (same mapping as
         // `find_vec3` below).
@@ -7436,7 +7831,9 @@ pub(crate) unsafe fn find_vec3<M: Mode>(
     def_y: Real,
     def_z: Real,
 ) -> Vec3 {
-    match find_prop(props, name) {
+    // SAFETY: `name` is an interned name of at least 4 bytes — `find_prop`'s
+    // contract.
+    match unsafe { find_prop(props, name) } {
         // C-parity: `prop->value_vec3` is the `ufbx_prop` value union's 3-real
         // view; the generated struct keeps only `value_vec4` (see
         // `native::read::read_property`).
@@ -7452,7 +7849,9 @@ pub(crate) unsafe fn find_vec3<M: Mode>(
 // ufbx.c:11541-11549 `ufbxi_find_int`
 #[inline(always)]
 pub(crate) unsafe fn find_int<M: Mode>(props: &View<Props, M>, name: *const u8, def: i64) -> i64 {
-    match find_prop(props, name) {
+    // SAFETY: `name` is an interned name of at least 4 bytes — `find_prop`'s
+    // contract.
+    match unsafe { find_prop(props, name) } {
         Some(prop) => prop.value_int(),
         None => def,
     }
@@ -7468,7 +7867,9 @@ pub(crate) unsafe fn find_enum<M: Mode>(
     def: i64,
     max_value: i64,
 ) -> i64 {
-    match find_prop(props, name) {
+    // SAFETY: `name` is an interned name of at least 4 bytes — `find_prop`'s
+    // contract.
+    match unsafe { find_prop(props, name) } {
         Some(prop) => {
             let value: i64 = prop.value_int();
             if value >= 0 && value <= max_value {
@@ -7489,7 +7890,10 @@ pub(crate) unsafe fn find_enum<M: Mode>(
 #[inline(never)]
 pub(crate) unsafe fn matrix_all_zero(matrix: *const Matrix) -> bool {
     for i in 0..12 {
-        if *(matrix as *const Real).add(i) != 0.0 {
+        // SAFETY: `matrix` points to a valid `Matrix` whose `m00`..`m23` reals are
+        // laid out contiguously (fn comment), so `(matrix as *const Real).add(i)`
+        // for `i in 0..12` reads a live element.
+        if unsafe { *(matrix as *const Real).add(i) } != 0.0 {
             return false;
         }
     }
@@ -7547,9 +7951,11 @@ pub(crate) fn is_quat_equal(a: Quat, b: Quat) -> bool {
 pub(crate) unsafe fn is_transform_identity(t: *const Transform) -> bool {
     // C: `(bool)((int)ufbxi_is_vec3_zero(..) & (int)ufbxi_is_quat_identity(..)
     // & (int)ufbxi_is_vec3_one(..))` — a non-short-circuiting bitwise `&`.
-    ((is_vec3_zero((*t).translation) as i32)
-        & (is_quat_identity((*t).rotation) as i32)
-        & (is_vec3_one((*t).scale) as i32))
+    // SAFETY: `t` points to a valid `Transform` (fn contract); read its
+    // `translation`/`rotation`/`scale` fields by value.
+    ((is_vec3_zero(unsafe { (*t).translation }) as i32)
+        & (is_quat_identity(unsafe { (*t).rotation }) as i32)
+        & (is_vec3_one(unsafe { (*t).scale }) as i32))
         != 0
 }
 
@@ -7558,15 +7964,19 @@ pub(crate) unsafe fn is_transform_identity(t: *const Transform) -> bool {
 pub(crate) unsafe fn get_name_key(name: *const u8, len: usize) -> u32 {
     let mut key: u32 = 0;
     if len >= 4 {
-        key = (*name.add(0) as u32) << 24
-            | (*name.add(1) as u32) << 16
-            | (*name.add(2) as u32) << 8
-            | (*name.add(3) as u32);
+        // SAFETY: `len >= 4`, so `name.add(0..=3)` read live bytes of `name`.
+        key = unsafe {
+            (*name.add(0) as u32) << 24
+                | (*name.add(1) as u32) << 16
+                | (*name.add(2) as u32) << 8
+                | (*name.add(3) as u32)
+        };
     } else {
         for i in 0..4usize {
             key <<= 8;
             if i < len {
-                key |= *name.add(i) as u32;
+                // SAFETY: `i < len`, so `name.add(i)` reads a live byte of `name`.
+                key |= unsafe { *name.add(i) } as u32;
             }
         }
     }
@@ -7576,19 +7986,24 @@ pub(crate) unsafe fn get_name_key(name: *const u8, len: usize) -> u32 {
 // ufbx.c:11624-11631 `ufbxi_get_name_key_c`
 #[inline(always)]
 pub(crate) unsafe fn get_name_key_c(name: *const u8) -> u32 {
-    if *name.add(0) == b'\0' {
+    // SAFETY: `name` is a NUL-terminated C string (fn contract); each `name.add`
+    // below is reached only after the preceding bytes are confirmed non-NUL, so
+    // it addresses a live byte within the string.
+    if unsafe { *name.add(0) } == b'\0' {
         return 0;
     }
-    if *name.add(1) == b'\0' {
-        return (*name.add(0) as u32) << 24;
+    if unsafe { *name.add(1) } == b'\0' {
+        return unsafe { (*name.add(0) as u32) << 24 };
     }
-    if *name.add(2) == b'\0' {
-        return (*name.add(0) as u32) << 24 | (*name.add(1) as u32) << 16;
+    if unsafe { *name.add(2) } == b'\0' {
+        return unsafe { (*name.add(0) as u32) << 24 | (*name.add(1) as u32) << 16 };
     }
-    (*name.add(0) as u32) << 24
-        | (*name.add(1) as u32) << 16
-        | (*name.add(2) as u32) << 8
-        | (*name.add(3) as u32)
+    unsafe {
+        (*name.add(0) as u32) << 24
+            | (*name.add(1) as u32) << 16
+            | (*name.add(2) as u32) << 8
+            | (*name.add(3) as u32)
+    }
 }
 
 // ufbx.c:11633-11643 `ufbxi_name_key_less`
@@ -7601,16 +8016,22 @@ pub(crate) unsafe fn name_key_less(
     name_len: usize,
     key: u32,
 ) -> bool {
-    if (*prop)._internal_key < key {
+    // SAFETY: `prop` points to a valid `Prop` (fn contract); read its
+    // `_internal_key`.
+    if unsafe { (*prop)._internal_key } < key {
         return true;
     }
-    if (*prop)._internal_key > key {
+    // SAFETY: as above.
+    if unsafe { (*prop)._internal_key } > key {
         return false;
     }
 
-    let prop_len: usize = (*prop).name.length;
+    // SAFETY: `prop` is valid; read its `name.length`.
+    let prop_len: usize = unsafe { (*prop).name.length };
     let len: usize = min_sz(prop_len, name_len);
-    let cmp: i32 = memcmp((*prop).name.data, data, len);
+    // SAFETY: `prop.name.data` spans `prop_len` bytes and `data` spans `name_len`;
+    // `len` is their min, so both reads stay in bounds — `memcmp`'s contract.
+    let cmp: i32 = unsafe { memcmp((*prop).name.data, data, len) };
     if cmp != 0 {
         return cmp < 0;
     }
