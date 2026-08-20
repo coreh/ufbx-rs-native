@@ -221,7 +221,8 @@ const _: () = assert!(align_of::<AtomicCounter>() == align_of::<usize>());
 // C-parity: a plain (non-atomic) store — init runs before the counter is shared.
 #[inline(always)]
 pub(crate) unsafe fn atomic_counter_init(ptr: *mut AtomicCounter) {
-    // SAFETY: `ptr` is the caller's writable, aligned counter storage.
+    // SAFETY: `ptr` is the caller's writable, aligned counter storage, not yet
+    // shared with any other thread (C-parity plain store).
     unsafe { ptr.write(AtomicCounter::new(0)) };
 }
 
@@ -229,7 +230,9 @@ pub(crate) unsafe fn atomic_counter_init(ptr: *mut AtomicCounter) {
 // C-parity: plain store — free runs after the last owner is done sharing it.
 #[inline(always)]
 pub(crate) unsafe fn atomic_counter_free(ptr: *mut AtomicCounter) {
-    // SAFETY: `ptr` is the caller's writable, aligned counter storage.
+    // SAFETY: `ptr` is the caller's writable, aligned counter storage, held
+    // exclusively by the last owner and shared with no other thread (C-parity
+    // plain store).
     unsafe { ptr.write(AtomicCounter::new(0)) };
 }
 
@@ -790,10 +793,13 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
     size: usize,
     mut cmp_lambda: impl FnMut(*const T, *const T) -> bool,
 ) {
-    // Caller contract for every pointer op below: `data` and `tmp` each address
-    // `size` writable, aligned, initialized `T`s in one allocation each, and the
-    // two runs are disjoint. `src`/`dst` are those two bases (swapped between
-    // merge passes), and every index used below is `< size`.
+    // Caller contract for every pointer op below: `data` addresses `size`
+    // writable, aligned, initialized `T`s; `tmp` addresses `size` writable,
+    // aligned `T`s (scratch — every slot is read only after this fn writes it,
+    // matching ufbx.c:1141 "at least the same size and alignment as `m_data`");
+    // the two runs are disjoint, one allocation each. `src`/`dst` are those two
+    // bases (swapped between merge passes), and every index used below is
+    // `< size`.
     let mut src: *mut T = tmp;
     let data: *mut T = data;
     let mut dst: *mut T = data;
@@ -912,8 +918,9 @@ pub(crate) unsafe fn macro_lower_bound_eq<T>(
     // Binary search until we get down to `m_linear_size` elements
     while hi - lo > linear_size {
         let mid = lo + (hi - lo) / 2;
-        // SAFETY: caller contract — `data` addresses `size` readable `T`s;
-        // `mid < hi <= size` since `hi - lo > linear_size >= 2` here.
+        // SAFETY: caller contract — `data` addresses `size` readable `T`s and
+        // `begin <= size`; `lo <= hi <= size` is preserved by both updates, so
+        // `hi - lo > linear_size >= 2` here gives `mid < hi <= size`.
         let a: *const T = unsafe { data.add(mid) };
         if cmp_lambda(a) {
             lo = mid + 1;
@@ -954,8 +961,9 @@ pub(crate) unsafe fn macro_upper_bound_eq<T>(
     // Linearly scan with galloping
     let mut step = 1usize;
     while step < 100 && hi - lo > step {
-        // SAFETY: caller contract — `data` addresses `size` readable `T`s;
-        // `hi - lo > step` (loop condition) gives `lo + step < hi <= size`.
+        // SAFETY: caller contract — `data` addresses `size` readable `T`s and
+        // `begin <= size`; with `lo <= hi <= size`, `hi - lo > step` (loop
+        // condition) gives `lo + step < hi <= size`.
         let a: *const T = unsafe { data.add(lo + step) };
         if !eq_lambda(a) {
             hi = lo + step;
@@ -967,8 +975,9 @@ pub(crate) unsafe fn macro_upper_bound_eq<T>(
     // Binary search until we get down to `m_linear_size` elements
     while hi - lo > linear_size {
         let mid = lo + (hi - lo) / 2;
-        // SAFETY: caller contract — `data` addresses `size` readable `T`s;
-        // `mid < hi <= size` since `hi - lo > linear_size >= 2` here.
+        // SAFETY: caller contract — `data` addresses `size` readable `T`s and
+        // `begin <= size`; `lo <= hi <= size` is preserved by both updates, so
+        // `hi - lo > linear_size >= 2` here gives `mid < hi <= size`.
         let a: *const T = unsafe { data.add(mid) };
         if eq_lambda(a) {
             lo = mid + 1;
@@ -1049,8 +1058,9 @@ pub(crate) unsafe fn stable_sort(
             }
 
             let mut j = i - 1;
-            // SAFETY: run contract; `i < size` and `src` is the disjoint
-            // scratch base, whose first `stride` bytes hold the lifted element.
+            // SAFETY: run contract; `i < size`, and `src` is the disjoint
+            // scratch base with at least `stride` writable bytes — this copy
+            // lifts element `i` into it.
             // memcpy(src, dst + i * stride, stride);
             unsafe {
                 core::ptr::copy_nonoverlapping(dst.add(i * stride) as *const u8, src, stride)
@@ -1191,8 +1201,10 @@ pub(crate) unsafe fn unstable_sort(
 
     // Caller contract for every pointer op below: `in_data` addresses
     // `size * stride` writable bytes in one allocation, `stride` is the element
-    // size, and `less_fn` accepts element pointers into that run paired with
-    // `less_user`. Every index below is `<= end < size`.
+    // size and is `<= size_of::<SwapScratch>()` (the `ufbxi_swap` scratch bound,
+    // ufbx.c:1312, dev-asserted but not checked in release), and `less_fn`
+    // accepts element pointers into that run paired with `less_user`. Every
+    // index below is `<= end < size`.
     let data = in_data as *mut u8;
     let mut start = (size - 1) >> 1;
     let mut end = size - 1;
@@ -1236,7 +1248,9 @@ pub(crate) unsafe fn unstable_sort(
             }
             // SAFETY: run contract; `root` and `next` are distinct indices
             // `<= end < size`, so the two `stride`-byte element slots `swap`
-            // exchanges are in bounds and disjoint.
+            // exchanges are in bounds and disjoint, and the contract's
+            // `stride <= size_of::<SwapScratch>()` satisfies `swap`'s scratch
+            // bound.
             unsafe { swap(data.add(root * stride), data.add(next * stride), stride) };
             root = next;
         }
@@ -1245,7 +1259,9 @@ pub(crate) unsafe fn unstable_sort(
             start -= 1;
         } else if end > 0 {
             // SAFETY: run contract; `end > 0` here, so element `end` is in
-            // bounds and disjoint from element 0.
+            // bounds and disjoint from element 0, and the contract's
+            // `stride <= size_of::<SwapScratch>()` satisfies `swap`'s scratch
+            // bound.
             unsafe { swap(data.add(end * stride), data, stride) };
             end -= 1;
         } else {
