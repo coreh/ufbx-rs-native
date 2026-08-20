@@ -411,9 +411,10 @@ pub(crate) unsafe fn ascii_push_token_char(
         );
     }
 
-    // SAFETY: the grow above guarantees `str_len < str_cap`, so `str_data +
-    // str_len` is a writable slot inside `token`'s string buffer, and `str_len`
-    // is incremented within its now-larger capacity.
+    // SAFETY: the guard/grow above leaves `str_len < str_cap` (the grow runs
+    // only when the two are equal, and requests at least `str_len + 1`), so
+    // `str_data + str_len` is a writable slot inside `token`'s string buffer
+    // and the increment stays within capacity.
     unsafe {
         *(*token).str_data.add((*token).str_len) = c;
         (*token).str_len += 1;
@@ -453,10 +454,11 @@ pub(crate) unsafe fn ascii_push_token_string(
         );
     }
 
-    // SAFETY: the grow above guarantees `str_len + length < str_cap`, so the
-    // `length`-byte copy lands inside `token`'s string buffer starting at
-    // `str_data + str_len`; `data` is the caller's readable source run of
-    // `length` bytes.
+    // SAFETY: the guard/grow above guarantees `str_len + length <= str_cap`
+    // (the grow requests exactly that many bytes, so the capacity can land on
+    // it), so the `length`-byte copy lands inside `token`'s string buffer
+    // starting at `str_data + str_len`; `data` is the caller's readable source
+    // run of `length` bytes.
     unsafe {
         core::ptr::copy_nonoverlapping(data, (*token).str_data.add((*token).str_len), length);
         (*token).str_len += length;
@@ -792,9 +794,12 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
         c = ascii_next(uc);
         while c != b'"' {
             // Optimized string parsing for non-special characters
-            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src + 1` stays
-            // at or before `src_yield` when the compared inequality holds, and the
-            // `src`/`src_yield` reads bracket the readable source window.
+            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; the
+            // `src`/`src_yield` reads are of its live cursors. When the peek/next
+            // that produced `c` left a readable byte, `src < src_yield <= src_end`
+            // holds, so `src + 1` is at most the source window's one-past-the-end;
+            // on the exhausted-source path the cursors are equal and the
+            // comparison rejects the fast run before any byte is read.
             if unsafe { (*ua).src.add(1) < (*ua).src_yield } {
                 // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its
                 // `src`/`src_yield` cursors delimiting the readable window.
@@ -1109,9 +1114,10 @@ pub(crate) unsafe fn ascii_array_task_parse_floats(
     let mut src_begin: *const u8 = src;
 
     while src != src_end {
-        // SAFETY: the caller's parse run `[src, src_end)` ends at a comma or
-        // `src_end` sentinel that halts this space scan before it passes the end,
-        // so each deref/advance reads a byte inside the run.
+        // SAFETY: both callers guarantee the run's final byte `*(src_end - 1)` is
+        // a `','` (imp's buffer appends one when it leaves the value state; its
+        // span path cuts `parse_end` just past one), a non-space that halts this
+        // scan and every deref strictly before `src_end`.
         while unsafe { is_space(*src) } {
             src = unsafe { src.add(1) };
         }
@@ -1133,7 +1139,8 @@ pub(crate) unsafe fn ascii_array_task_parse_floats(
         }
         src = num_end;
 
-        // SAFETY: as the first scan — the run's comma/`src_end` sentinel halts it.
+        // SAFETY: as the first scan — the run's trailing `','` halts it strictly
+        // before `src_end`.
         while unsafe { is_space(*src) } {
             src = unsafe { src.add(1) };
         }
@@ -1205,9 +1212,10 @@ pub(crate) unsafe fn ascii_array_task_parse_ints(
     let mut src_begin: *const u8 = src;
 
     while src != src_end {
-        // SAFETY: the caller's parse run `[src, src_end)` ends at a comma or
-        // `src_end` sentinel that halts this space scan before it passes the end,
-        // so each deref/advance reads a byte inside the run.
+        // SAFETY: both callers guarantee the run's final byte `*(src_end - 1)` is
+        // a `','` (imp's buffer appends one when it leaves the value state; its
+        // span path cuts `parse_end` just past one), a non-space non-digit that
+        // halts this scan and `parse_int64` strictly before `src_end`.
         while unsafe { is_space(*src) } {
             src = unsafe { src.add(1) };
         }
@@ -1219,7 +1227,8 @@ pub(crate) unsafe fn ascii_array_task_parse_ints(
             return core::ptr::null();
         }
 
-        // SAFETY: as the first scan — the run's comma/`src_end` sentinel halts it.
+        // SAFETY: as the first scan — the run's trailing `','` halts it strictly
+        // before `src_end`.
         while unsafe { is_space(*src) } {
             src = unsafe { src.add(1) };
         }
