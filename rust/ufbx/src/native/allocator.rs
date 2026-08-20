@@ -363,11 +363,15 @@ pub(crate) unsafe fn realloc_size(
         // Use user-provided alloc_fn() and free_fn()
         ptr = unsafe { alloc_fn((*ator).ator.allocator.user, total) };
         if !ptr.is_null() {
-            // SAFETY: `old_ptr` holds `old_total` initialized bytes (a live
+            // SAFETY: `old_ptr` is valid for reads of `old_total` bytes (a live
             // block of this allocator, per the caller's `old_ptr`/`old_n`
-            // obligation), `ptr` is a distinct fresh block of `total` bytes
-            // sized to hold them (C-parity `memcpy`, ufbx.c:3725), and two
-            // separate allocations cannot overlap.
+            // obligation); `copy_nonoverlapping` is an untyped copy, so a
+            // partially-initialized old block is fine. `ptr` is a distinct
+            // fresh writable block of `total` bytes, with `total >= old_total`
+            // because the only live caller (`grow_array_size`) never shrinks —
+            // a shrinking call through this branch would copy past the new
+            // block, mirroring the same latent assumption of the C-parity
+            // `memcpy` (ufbx.c:3725). Two live allocations cannot overlap.
             unsafe {
                 core::ptr::copy_nonoverlapping(old_ptr as *const u8, ptr as *mut u8, old_total)
             };
@@ -486,8 +490,10 @@ pub(crate) unsafe fn grow_array_size(
         return true;
     }
     let new_n = max_sz(old_n.wrapping_mul(2), n);
-    // SAFETY: forwarding this fn's `ator` contract; `ptr`/`old_n` are the live
-    // block described by the caller's pointer/capacity pair.
+    // SAFETY: forwarding this fn's `ator` contract; `ptr`/`old_n` are the
+    // caller's pointer/capacity pair — either a live block of this allocator or
+    // `(null, 0)` for a fresh array, which `realloc_size` routes to plain
+    // allocation without reading `ptr`.
     let new_ptr = unsafe { realloc_size(ator, size, ptr, old_n, new_n) };
     if new_ptr.is_null() {
         return false;
@@ -651,7 +657,10 @@ mod tests {
         // SAFETY: `ator` is a local `Allocator` slot; `error`/`opts` carry the
         // caller's obligation on this `unsafe fn` (`opts` may be null).
         unsafe { init_ator(error, ator.as_mut_ptr(), opts, c"test") };
-        // SAFETY: `init_ator` writes every field of the slot.
+        // SAFETY: the slot is zero-initialized above and `init_ator` writes
+        // every remaining field (`current_size`/`num_allocs` stay 0, matching
+        // the memset of the containing C context), so all fields are
+        // initialized.
         unsafe { ator.assume_init() }
     }
 
