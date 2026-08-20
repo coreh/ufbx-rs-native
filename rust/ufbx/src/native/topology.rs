@@ -891,8 +891,9 @@ pub(crate) unsafe fn triangulate_ngon(
     // Collect all the reflex corners for intersection testing.
     let mut num_kd_indices: u32 = 0;
     {
-        // SAFETY: `num_indices - 1 < face.num_indices` is a valid corner index
-        // for `ngon_project`.
+        // SAFETY: `face.num_indices - 1 < face.num_indices` (non-zero:
+        // `face.num_indices > 4` asserted above) is a valid corner index for
+        // `ngon_project`.
         let mut a: Vec2 = unsafe { ngon_project(nc, face.num_indices.wrapping_sub(1)) };
         // SAFETY: `0` is a valid corner index for `ngon_project`.
         let mut b: Vec2 = unsafe { ngon_project(nc, 0) };
