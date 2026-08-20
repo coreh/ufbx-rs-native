@@ -4671,9 +4671,10 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         b'_' => true,
         b'I' => {
             if type_ == ValueType::Number {
-                // SAFETY: `ix < MAX_NON_ARRAY_VALUES` bounds `vals.add(ix)` inside
-                // the node's value array; `type_ == Number` selects the `num` union
-                // arm; `v` is the caller-supplied `*mut i32` for fmt `'I'`.
+                // SAFETY: `type_ == Number` means the value-type mask bit for `ix`
+                // is set, which the parsers do only for `ix < num_values`, so
+                // `vals.add(ix)` is inside the node's value array and `num` is the
+                // stored union arm; `v` is the caller's `*mut i32` for fmt `'I'`.
                 unsafe { *(v as *mut i32) = (*vals.add(ix)).num.i as i32 };
                 true
             } else {
@@ -4727,8 +4728,8 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'Z' => {
             if type_ == ValueType::Number {
-                // SAFETY: `ix` bounds `vals.add(ix)` in the value array and
-                // `type_ == Number` selects the `num` arm.
+                // SAFETY: as `'I'` — the `Number` tag at `ix` implies
+                // `ix < num_values`, bounding `vals.add(ix)`, and selects `num`.
                 if unsafe { (*vals.add(ix)).num.i } < 0 {
                     return false;
                 }
@@ -4741,8 +4742,9 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'S' => {
             if type_ == ValueType::String {
-                // SAFETY: `ix` bounds `vals.add(ix)` in the value array;
-                // `type_ == String` selects the `s` union arm.
+                // SAFETY: as `'I'` — the `String` tag at `ix` implies
+                // `ix < num_values`, bounding `vals.add(ix)`, and selects the `s`
+                // union arm.
                 let src: SanitizedString = unsafe { (*vals.add(ix)).s };
                 let dst: *mut String = v as *mut String;
                 if src.utf8_length > 0 {
@@ -4750,8 +4752,9 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
                         return false;
                     }
                     // SAFETY: `dst` is the caller's `*mut String` for fmt `'S'`;
-                    // `src.raw_data` points to a raw span with the sanitized UTF-8
-                    // string stored just past `raw_length + 1`.
+                    // per `SanitizedString`'s layout invariant, the sanitized UTF-8
+                    // copy is stored at `raw_data + raw_length + 1` when
+                    // `utf8_length > 0`, which the guard above establishes.
                     unsafe {
                         (*dst).data = src.raw_data.add(src.raw_length as usize + 1);
                         (*dst).length = src.utf8_length as usize;
@@ -4770,7 +4773,8 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b's' => {
             if type_ == ValueType::String {
-                // SAFETY: `ix` bounds `vals.add(ix)`; `type_ == String` selects `s`.
+                // SAFETY: as `'I'` — the `String` tag at `ix` implies
+                // `ix < num_values`, bounding `vals.add(ix)`, and selects `s`.
                 let src: SanitizedString = unsafe { (*vals.add(ix)).s };
                 let dst: *mut String = v as *mut String;
                 // SAFETY: `dst` is the caller's `*mut String` for fmt `'s'`.
@@ -4785,7 +4789,8 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'C' => {
             if type_ == ValueType::String {
-                // SAFETY: `ix` bounds `vals.add(ix)`; `type_ == String` selects `s`.
+                // SAFETY: as `'I'` — the `String` tag at `ix` implies
+                // `ix < num_values`, bounding `vals.add(ix)`, and selects `s`.
                 let src: SanitizedString = unsafe { (*vals.add(ix)).s };
                 let dst: *mut *const u8 = v as *mut *const u8;
                 if src.utf8_length > 0 {
@@ -4806,7 +4811,8 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'c' => {
             if type_ == ValueType::String {
-                // SAFETY: `ix` bounds `vals.add(ix)`; `type_ == String` selects `s`.
+                // SAFETY: as `'I'` — the `String` tag at `ix` implies
+                // `ix < num_values`, bounding `vals.add(ix)`, and selects `s`.
                 let src: SanitizedString = unsafe { (*vals.add(ix)).s };
                 let dst: *mut *const u8 = v as *mut *const u8;
                 // SAFETY: `dst` is the caller's `*mut *const u8` for fmt `'c'`.
@@ -4818,7 +4824,8 @@ pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_v
         }
         b'b' => {
             if type_ == ValueType::String {
-                // SAFETY: `ix` bounds `vals.add(ix)`; `type_ == String` selects `s`.
+                // SAFETY: as `'I'` — the `String` tag at `ix` implies
+                // `ix < num_values`, bounding `vals.add(ix)`, and selects `s`.
                 let src: SanitizedString = unsafe { (*vals.add(ix)).s };
                 let dst: *mut Blob = v as *mut Blob;
                 // SAFETY: `dst` is the caller's `*mut Blob` for fmt `'b'`.
@@ -5464,8 +5471,10 @@ pub(crate) unsafe fn is_array_node(
 ) -> bool {
     // Sole raw pointer to `*info` in this function: local exclusive borrow for
     // the whole body in place of repeated `info.field` derefs.
-    // SAFETY: the caller passes `info` pointing at a valid, uniquely owned
-    // `ArrayInfo` out-param for the duration of this call.
+    // SAFETY: the caller passes `info` addressing live, uniquely owned, writable
+    // `ArrayInfo` storage for the duration of this call — both parsers hand over
+    // a local `MaybeUninit<ArrayInfo>`, so the storage may be uninitialized; the
+    // body only writes its fields before reading any of them.
     let info = unsafe { &mut *info };
 
     info.flags = 0;
@@ -6515,8 +6524,9 @@ unsafe fn retain_dom_node_rec(
                 // union (PORTING.md "Unions"); both `i` and `f` of the
                 // `ufbxi_value` overlay are read, as in C.
                 // SAFETY: `val` is the freshly pushed `DomValue`; `mask == Number`
-                // selects the `vals` arm and `ix < MAX_NON_ARRAY_VALUES` bounds
-                // `vals.add(ix)` inside `node`'s value array.
+                // means the value-type mask bit for `ix` is set, which the parsers
+                // do only for `ix < num_values`, so `vals.add(ix)` is inside
+                // `node`'s value array and `vals`/`num` are the stored union arms.
                 unsafe {
                     (*val).type_ = DomValueType::Number;
                     (*val).value_int = (*(*node).content.vals.add(ix)).num.i;
@@ -6762,8 +6772,13 @@ unsafe fn match_skip_rec(mut fmt: *const u8, alternation: bool) -> *const u8 {
                         fmt = unsafe { fmt.add(1) };
                     }
                 }
-                // SAFETY: step past the terminating `]`, which is inside the
-                // NUL-terminated pattern.
+                // C-parity trailing `fmt++`: the scan loop above advances past the
+                // `]` before it exits (only an empty class leaves `fmt` on the `]`
+                // itself), so this steps over the class's quantifier rather than
+                // the `]`.
+                // SAFETY: the compile-time patterns are well formed and quantify
+                // every class, so `fmt` sits at most on the pattern's NUL here and
+                // the step lands within the NUL-terminated pattern allocation.
                 fmt = unsafe { fmt.add(1) };
             }
             b'|' => {
@@ -6888,8 +6903,11 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
                     b'S' => {
                         if !is_space(ref_ as u8) {
                             ok = true;
-                            // SAFETY: consumes the matched input byte, mirroring
-                            // C's `str++` within the matcher's input span.
+                            // SAFETY: `str_ < end` here — every pattern places
+                            // `\S` after a matched `\s+` and `next_line(.., true)`
+                            // trims trailing spaces, so `ref_` is a real input
+                            // byte rather than the synthetic 0; consume it,
+                            // mirroring C's `str++`.
                             str_ = unsafe { str_.add(1) };
                         }
                     }
@@ -6900,8 +6918,10 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
                     _ => {
                         if ref_ == c {
                             ok = true;
-                            // SAFETY: `ref_ == c != 0`, so `str_ < end` held; consume
-                            // the matched input byte.
+                            // SAFETY: `ref_ == c`, and the escaped pattern byte `c`
+                            // is non-NUL (the compile-time patterns never end on a
+                            // `\` nor escape a NUL), so `ref_ != 0` implies
+                            // `str_ < end`; consume the matched input byte.
                             str_ = unsafe { str_.add(1) };
                         }
                     }
