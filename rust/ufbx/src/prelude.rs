@@ -826,14 +826,10 @@ unsafe extern "C" fn system_free(_user: *mut c_void, ptr: *mut c_void, size: usi
 }
 
 unsafe extern "C" fn allocator_imp_alloc(user: *mut c_void, size: usize) -> *mut c_void {
-    // SAFETY: `user` is the box leaked by `Allocator::to_raw_mut` as the
-    // allocator's `user` pointer, and ufbx hands it back unchanged for the
-    // duration of this callback. NOTE: `to_raw_mut` matches `Allocator::Box(b)`
-    // through `&mut self`, so what it leaks is a `Box<&mut Box<dyn
-    // AllocatorInterface>>` — a one-word `&mut` pointee — while the cast below
-    // asserts a two-word `Box<dyn AllocatorInterface>` at that address. Fix the
-    // leak site to move the `Box<dyn _>` by value (as `Stream::to_raw_mut`
-    // does) before this comment can be made true.
+    // SAFETY: `user` is the `Box<Box<dyn AllocatorInterface>>` leaked by value
+    // in `Allocator::to_raw_mut`, handed back unchanged by ufbx, and live until
+    // the `free_allocator` callback reclaims it; the reborrow of the inner box
+    // is unique for the duration of this callback.
     let ator: &mut Box<dyn AllocatorInterface> =
         unsafe { &mut *(user as *mut Box<dyn AllocatorInterface>) };
     let layout = Layout::from_size_align(size, 8).unwrap();
@@ -846,14 +842,10 @@ unsafe extern "C" fn allocator_imp_realloc(
     old_size: usize,
     new_size: usize,
 ) -> *mut c_void {
-    // SAFETY: `user` is the box leaked by `Allocator::to_raw_mut` as the
-    // allocator's `user` pointer, and ufbx hands it back unchanged for the
-    // duration of this callback. NOTE: `to_raw_mut` matches `Allocator::Box(b)`
-    // through `&mut self`, so what it leaks is a `Box<&mut Box<dyn
-    // AllocatorInterface>>` — a one-word `&mut` pointee — while the cast below
-    // asserts a two-word `Box<dyn AllocatorInterface>` at that address. Fix the
-    // leak site to move the `Box<dyn _>` by value (as `Stream::to_raw_mut`
-    // does) before this comment can be made true.
+    // SAFETY: `user` is the `Box<Box<dyn AllocatorInterface>>` leaked by value
+    // in `Allocator::to_raw_mut`, handed back unchanged by ufbx, and live until
+    // the `free_allocator` callback reclaims it; the reborrow of the inner box
+    // is unique for the duration of this callback.
     let ator: &mut Box<dyn AllocatorInterface> =
         unsafe { &mut *(user as *mut Box<dyn AllocatorInterface>) };
     let old_layout = Layout::from_size_align(old_size, 8).unwrap();
@@ -862,14 +854,10 @@ unsafe extern "C" fn allocator_imp_realloc(
 }
 
 unsafe extern "C" fn allocator_imp_free(user: *mut c_void, ptr: *mut c_void, size: usize) {
-    // SAFETY: `user` is the box leaked by `Allocator::to_raw_mut` as the
-    // allocator's `user` pointer, and ufbx hands it back unchanged for the
-    // duration of this callback. NOTE: `to_raw_mut` matches `Allocator::Box(b)`
-    // through `&mut self`, so what it leaks is a `Box<&mut Box<dyn
-    // AllocatorInterface>>` — a one-word `&mut` pointee — while the cast below
-    // asserts a two-word `Box<dyn AllocatorInterface>` at that address. Fix the
-    // leak site to move the `Box<dyn _>` by value (as `Stream::to_raw_mut`
-    // does) before this comment can be made true.
+    // SAFETY: `user` is the `Box<Box<dyn AllocatorInterface>>` leaked by value
+    // in `Allocator::to_raw_mut`, handed back unchanged by ufbx, and live until
+    // the `free_allocator` callback reclaims it; the reborrow of the inner box
+    // is unique for the duration of this callback.
     let ator: &mut Box<dyn AllocatorInterface> =
         unsafe { &mut *(user as *mut Box<dyn AllocatorInterface>) };
     let layout = Layout::from_size_align(size, 8).unwrap();
@@ -877,14 +865,10 @@ unsafe extern "C" fn allocator_imp_free(user: *mut c_void, ptr: *mut c_void, siz
 }
 
 unsafe extern "C" fn allocator_imp_box_free_allocator(user: *mut c_void) {
-    // SAFETY: `user` is the box leaked in `Allocator::to_raw_mut` and ufbx calls
-    // this `free_allocator` callback exactly once, so reclaiming ownership with
-    // `Box::from_raw` frees it exactly once. NOTE: the leaked box is a
-    // `Box<&mut Box<dyn AllocatorInterface>>`, so reclaiming it at `*mut
-    // Box<dyn AllocatorInterface>` mismatches both type and layout (a 16-byte
-    // layout deallocated against an 8-byte allocation, dropping a `Box<dyn _>`
-    // read out of a slot holding a `&mut`). Fix the leak site before this
-    // reclaim is sound.
+    // SAFETY: `user` is the `Box<Box<dyn AllocatorInterface>>` leaked by value
+    // in `Allocator::to_raw_mut`, and ufbx calls this `free_allocator` callback
+    // exactly once, so `Box::from_raw` at that same type reclaims ownership and
+    // frees it exactly once.
     let mut ator = unsafe { Box::from_raw(user as *mut Box<dyn AllocatorInterface>) };
     ator.free_allocator()
 }
@@ -935,15 +919,24 @@ impl Allocator {
     }
     pub(crate) fn to_raw_mut(&mut self) -> RawAllocator {
         match self {
-            Allocator::Box(b) => RawAllocator {
-                alloc_fn: Some(allocator_imp_alloc),
-                realloc_fn: Some(allocator_imp_realloc),
-                free_fn: Some(allocator_imp_free),
-                free_allocator_fn: Some(allocator_imp_box_free_allocator),
-                user: Box::into_raw(Box::new(b)) as *mut _,
-            },
+            Allocator::Box(_) => {
+                // Take the box out BY VALUE so `user` points to the two-word fat
+                // `Box<dyn AllocatorInterface>` the `allocator_imp_*` callbacks
+                // cast it to; binding it through `&mut self` would leak a
+                // one-word `&mut` pointee instead.
+                let Allocator::Box(b) = mem::take(self) else {
+                    unreachable!()
+                };
+                RawAllocator {
+                    alloc_fn: Some(allocator_imp_alloc),
+                    realloc_fn: Some(allocator_imp_realloc),
+                    free_fn: Some(allocator_imp_free),
+                    free_allocator_fn: Some(allocator_imp_box_free_allocator),
+                    user: Box::into_raw(Box::new(b)) as *mut _,
+                }
+            }
             Allocator::Raw(raw) => raw.take(),
-            _ => Self::to_raw(self),
+            _ => self.to_raw(),
         }
     }
 }

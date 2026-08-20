@@ -115,6 +115,45 @@ fn load_cube_ascii() {
     assert!(load_and_walk("maya_cube_7500_ascii.fbx").is_finite());
 }
 
+/// A user-supplied boxed allocator drives every temp/result allocation through
+/// the `allocator_imp_*` C-ABI callbacks, whose `user` pointer is the
+/// `Box<Box<dyn AllocatorInterface>>` leaked by `Allocator::to_raw_mut`. This
+/// covers the by-value leak: matching the variant through `&mut self` instead
+/// leaks a one-word `&mut` pointee that the callbacks reinterpret as a
+/// two-word fat box (out-of-bounds read, garbage vtable).
+#[test]
+fn load_with_boxed_allocator() {
+    use std::alloc::{GlobalAlloc, Layout, System};
+
+    struct CountingAllocator {
+        allocs: usize,
+    }
+    impl ufbx::AllocatorInterface for CountingAllocator {
+        fn alloc(&mut self, layout: Layout) -> *mut u8 {
+            self.allocs += 1;
+            // SAFETY: ufbx requests non-zero sizes, satisfying `alloc`.
+            unsafe { System.alloc(layout) }
+        }
+        fn realloc(&mut self, ptr: *mut u8, old_layout: Layout, new_layout: Layout) -> *mut u8 {
+            self.allocs += 1;
+            // SAFETY: `ptr` came from this allocator with `old_layout`.
+            unsafe { System.realloc(ptr, old_layout, new_layout.size()) }
+        }
+        fn free(&mut self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: `ptr` came from this allocator with `layout`.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+
+    let data = read_data("maya_cube_7500_binary.fbx");
+    let mut opts = LoadOpts::default();
+    opts.temp_allocator.allocator = ufbx::Allocator::Box(Box::new(CountingAllocator { allocs: 0 }));
+    opts.result_allocator.allocator =
+        ufbx::Allocator::Box(Box::new(CountingAllocator { allocs: 0 }));
+    let scene = ufbx::load_memory(&data, opts).expect("boxed-allocator load should succeed");
+    assert!(walk(&scene).is_finite());
+}
+
 #[test]
 fn load_obj() {
     assert!(load_and_walk("blender_279_default.obj").is_finite());
