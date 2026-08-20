@@ -1,10 +1,6 @@
 // The `ToRaw` trait converts a Rust-side options/callback value into its raw
 // C-ABI representation; its methods are spelled `to_raw(&self)` / `to_raw_mut(&mut
 // self)` — non-consuming conversions that build (and may arena-allocate) an owned
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 // raw value, so `to_*` per Rust convention.
 use crate::generated::format_error;
 use crate::generated::{
@@ -66,7 +62,10 @@ impl<T> List<T> {
         }
     }
     pub(crate) unsafe fn as_static_ref(&self) -> &'static [T] {
-        slice_from_ptr(self.data, self.count)
+        // SAFETY: the caller vouches `data`/`count` describe a live `T` run for
+        // `'static` (a context/arena-owned list); `slice_from_ptr` treats a
+        // zero `count` as the empty slice, never dereferencing a dangling `data`.
+        unsafe { slice_from_ptr(self.data, self.count) }
     }
 }
 
@@ -111,7 +110,10 @@ pub struct RefList<T> {
 impl<T> RefList<T> {
     #[allow(dead_code)]
     pub(crate) unsafe fn as_static_ref(&self) -> &'static [Ref<T>] {
-        slice_from_ptr(self.data, self.count)
+        // SAFETY: the caller vouches `data`/`count` describe a live `Ref<T>` run
+        // for `'static` (a context/arena-owned list); `slice_from_ptr` maps a
+        // zero `count` to the empty slice, never dereferencing a dangling `data`.
+        unsafe { slice_from_ptr(self.data, self.count) }
     }
 }
 
@@ -168,7 +170,10 @@ impl<T> Ref<T> {
     // pointer is null-checked by the surrounding `ufbxi_check` first.
     pub(crate) unsafe fn from_ptr(ptr: *mut T) -> Ref<T> {
         Ref {
-            ptr: NonNull::new_unchecked(ptr),
+            // SAFETY: the caller vouches `ptr` is non-null — it is a
+            // result-buffer pointer null-checked by the surrounding
+            // `ufbxi_check` before this call (see the impl comment above).
+            ptr: unsafe { NonNull::new_unchecked(ptr) },
             _marker: PhantomData,
         }
     }
@@ -562,7 +567,11 @@ impl String {
     }
 
     pub(crate) unsafe fn as_static_ref(&self) -> &'static str {
-        str::from_utf8_unchecked(slice_from_ptr(self.data, self.length))
+        // SAFETY: the caller vouches `data`/`length` describe a live, interned
+        // UTF-8 run for `'static`; `slice_from_ptr` maps a zero `length` to the
+        // empty slice, and interned strings are validated UTF-8 so the
+        // `from_utf8_unchecked` invariant holds.
+        unsafe { str::from_utf8_unchecked(slice_from_ptr(self.data, self.length)) }
     }
 }
 
@@ -636,7 +645,10 @@ impl Blob {
 
 unsafe fn slice_from_ptr<'a, T>(data: *const T, len: usize) -> &'a [T] {
     if len > 0 {
-        slice::from_raw_parts(data, len)
+        // SAFETY: `len > 0` here, so the caller's contract that `data` points at
+        // `len` live `T` values for `'a` supplies a valid, aligned run; the
+        // empty branch never touches `data`.
+        unsafe { slice::from_raw_parts(data, len) }
     } else {
         &[]
     }
@@ -644,7 +656,10 @@ unsafe fn slice_from_ptr<'a, T>(data: *const T, len: usize) -> &'a [T] {
 
 unsafe fn slice_from_ptr_mut<'a, T>(data: *mut T, len: usize) -> &'a mut [T] {
     if len > 0 {
-        slice::from_raw_parts_mut(data, len)
+        // SAFETY: `len > 0` here, so the caller's contract that `data` points at
+        // `len` live `T` values exclusively borrowable for `'a` supplies a
+        // valid, aligned run; the empty branch never touches `data`.
+        unsafe { slice::from_raw_parts_mut(data, len) }
     } else {
         &mut []
     }
@@ -747,7 +762,10 @@ pub enum Stream {
 
 unsafe extern "C" fn global_alloc(_user: *mut c_void, size: usize) -> *mut c_void {
     let layout = Layout::from_size_align(size, 8).unwrap();
-    alloc::alloc(layout) as *mut _
+    // SAFETY: `layout` carries the fixed valid alignment 8; ufbx's allocator
+    // layer drives this C-ABI callback with the non-zero `size` it wants, so
+    // the `GlobalAlloc::alloc` non-zero-size precondition holds.
+    unsafe { alloc::alloc(layout) as *mut _ }
 }
 
 unsafe extern "C" fn global_realloc(
@@ -757,17 +775,27 @@ unsafe extern "C" fn global_realloc(
     new_size: usize,
 ) -> *mut c_void {
     let old_layout = Layout::from_size_align(old_size, 8).unwrap();
-    alloc::realloc(ptr as *mut _, old_layout, new_size) as *mut _
+    // SAFETY: `ptr` was returned by `global_alloc`/`global_realloc` for a block
+    // described by `old_layout` (same fixed alignment 8, matching `old_size`),
+    // and `new_size` is the non-zero size ufbx requests; discharges the
+    // `GlobalAlloc::realloc` contract.
+    unsafe { alloc::realloc(ptr as *mut _, old_layout, new_size) as *mut _ }
 }
 
 unsafe extern "C" fn global_free(_user: *mut c_void, ptr: *mut c_void, size: usize) {
     let layout = Layout::from_size_align(size, 8).unwrap();
-    alloc::dealloc(ptr as *mut _, layout)
+    // SAFETY: `ptr` was returned by `global_alloc`/`global_realloc` for a block
+    // described by `layout` (fixed alignment 8, matching the recorded `size`);
+    // discharges the `GlobalAlloc::dealloc` contract.
+    unsafe { alloc::dealloc(ptr as *mut _, layout) }
 }
 
 unsafe extern "C" fn system_alloc(_user: *mut c_void, size: usize) -> *mut c_void {
     let layout = Layout::from_size_align(size, 8).unwrap();
-    System.alloc(layout) as *mut _
+    // SAFETY: `layout` carries the fixed valid alignment 8; ufbx's allocator
+    // layer drives this C-ABI callback with the non-zero `size` it wants, so
+    // the `GlobalAlloc::alloc` non-zero-size precondition holds.
+    unsafe { System.alloc(layout) as *mut _ }
 }
 
 unsafe extern "C" fn system_realloc(
@@ -777,16 +805,27 @@ unsafe extern "C" fn system_realloc(
     new_size: usize,
 ) -> *mut c_void {
     let old_layout = Layout::from_size_align(old_size, 8).unwrap();
-    System.realloc(ptr as *mut _, old_layout, new_size) as *mut _
+    // SAFETY: `ptr` was returned by `system_alloc`/`system_realloc` for a block
+    // described by `old_layout` (same fixed alignment 8, matching `old_size`),
+    // and `new_size` is the non-zero size ufbx requests; discharges the
+    // `GlobalAlloc::realloc` contract.
+    unsafe { System.realloc(ptr as *mut _, old_layout, new_size) as *mut _ }
 }
 
 unsafe extern "C" fn system_free(_user: *mut c_void, ptr: *mut c_void, size: usize) {
     let layout = Layout::from_size_align(size, 8).unwrap();
-    System.dealloc(ptr as *mut _, layout)
+    // SAFETY: `ptr` was returned by `system_alloc`/`system_realloc` for a block
+    // described by `layout` (fixed alignment 8, matching the recorded `size`);
+    // discharges the `GlobalAlloc::dealloc` contract.
+    unsafe { System.dealloc(ptr as *mut _, layout) }
 }
 
 unsafe extern "C" fn allocator_imp_alloc(user: *mut c_void, size: usize) -> *mut c_void {
-    let ator: &mut Box<dyn AllocatorInterface> = &mut *(user as *mut Box<dyn AllocatorInterface>);
+    // SAFETY: `user` is the `Box<dyn AllocatorInterface>` handed to ufbx as the
+    // allocator's `user` pointer (see `Allocator::to_raw_mut`); it stays live
+    // and exclusively owned for the duration of this callback.
+    let ator: &mut Box<dyn AllocatorInterface> =
+        unsafe { &mut *(user as *mut Box<dyn AllocatorInterface>) };
     let layout = Layout::from_size_align(size, 8).unwrap();
     ator.alloc(layout) as *mut _
 }
@@ -797,20 +836,31 @@ unsafe extern "C" fn allocator_imp_realloc(
     old_size: usize,
     new_size: usize,
 ) -> *mut c_void {
-    let ator: &mut Box<dyn AllocatorInterface> = &mut *(user as *mut Box<dyn AllocatorInterface>);
+    // SAFETY: `user` is the `Box<dyn AllocatorInterface>` handed to ufbx as the
+    // allocator's `user` pointer (see `Allocator::to_raw_mut`); it stays live
+    // and exclusively owned for the duration of this callback.
+    let ator: &mut Box<dyn AllocatorInterface> =
+        unsafe { &mut *(user as *mut Box<dyn AllocatorInterface>) };
     let old_layout = Layout::from_size_align(old_size, 8).unwrap();
     let new_layout = Layout::from_size_align(new_size, 8).unwrap();
     ator.realloc(ptr as *mut _, old_layout, new_layout) as *mut _
 }
 
 unsafe extern "C" fn allocator_imp_free(user: *mut c_void, ptr: *mut c_void, size: usize) {
-    let ator: &mut Box<dyn AllocatorInterface> = &mut *(user as *mut Box<dyn AllocatorInterface>);
+    // SAFETY: `user` is the `Box<dyn AllocatorInterface>` handed to ufbx as the
+    // allocator's `user` pointer (see `Allocator::to_raw_mut`); it stays live
+    // and exclusively owned for the duration of this callback.
+    let ator: &mut Box<dyn AllocatorInterface> =
+        unsafe { &mut *(user as *mut Box<dyn AllocatorInterface>) };
     let layout = Layout::from_size_align(size, 8).unwrap();
     ator.free(ptr as *mut _, layout)
 }
 
 unsafe extern "C" fn allocator_imp_box_free_allocator(user: *mut c_void) {
-    let mut ator = Box::from_raw(user as *mut Box<dyn AllocatorInterface>);
+    // SAFETY: `user` is the `Box<dyn AllocatorInterface>` leaked in
+    // `Allocator::to_raw_mut`; ufbx calls this `free_allocator` callback once,
+    // so reclaiming ownership with `Box::from_raw` frees it exactly once.
+    let mut ator = unsafe { Box::from_raw(user as *mut Box<dyn AllocatorInterface>) };
     ator.free_allocator()
 }
 
@@ -945,33 +995,50 @@ impl<'a> ToRaw for [VertexStream<'a>] {
 }
 
 unsafe extern "C" fn stream_read_read(user: *mut c_void, buf: *mut c_void, size: usize) -> usize {
-    let imp = &mut *(user as *mut Box<dyn Read>);
-    imp.read(slice_from_ptr_mut(buf as *mut u8, size))
+    // SAFETY: `user` is the `Box<dyn Read>` stored as the stream's `user`
+    // pointer (see `Stream::to_raw_mut`); live and exclusively owned here.
+    let imp = unsafe { &mut *(user as *mut Box<dyn Read>) };
+    // SAFETY: ufbx's read callback contract makes `buf` a writable run of
+    // `size` bytes for this call.
+    imp.read(unsafe { slice_from_ptr_mut(buf as *mut u8, size) })
         .unwrap_or(usize::MAX)
 }
 
 unsafe extern "C" fn stream_read_close(user: *mut c_void) {
-    let _ = Box::from_raw(user as *mut Box<dyn Read>);
+    // SAFETY: `user` is the `Box<dyn Read>` leaked in `Stream::to_raw_mut`;
+    // ufbx calls `close` once, so reclaiming ownership frees it exactly once.
+    let _ = unsafe { Box::from_raw(user as *mut Box<dyn Read>) };
 }
 
 unsafe extern "C" fn stream_imp_read(user: *mut c_void, buf: *mut c_void, size: usize) -> usize {
-    let imp = &mut *(user as *mut Box<dyn StreamInterface>);
-    imp.read(slice_from_ptr_mut(buf as *mut u8, size))
+    // SAFETY: `user` is the `Box<dyn StreamInterface>` stored as the stream's
+    // `user` pointer (see `Stream::to_raw_mut`); live and exclusively owned here.
+    let imp = unsafe { &mut *(user as *mut Box<dyn StreamInterface>) };
+    // SAFETY: ufbx's read callback contract makes `buf` a writable run of
+    // `size` bytes for this call.
+    imp.read(unsafe { slice_from_ptr_mut(buf as *mut u8, size) })
         .unwrap_or(usize::MAX)
 }
 
 unsafe extern "C" fn stream_imp_skip(user: *mut c_void, size: usize) -> bool {
-    let imp = &mut *(user as *mut Box<dyn StreamInterface>);
+    // SAFETY: `user` is the `Box<dyn StreamInterface>` stored as the stream's
+    // `user` pointer (see `Stream::to_raw_mut`); live and exclusively owned here.
+    let imp = unsafe { &mut *(user as *mut Box<dyn StreamInterface>) };
     imp.skip(size)
 }
 
 unsafe extern "C" fn stream_imp_size(user: *mut c_void) -> u64 {
-    let imp = &mut *(user as *mut Box<dyn StreamInterface>);
+    // SAFETY: `user` is the `Box<dyn StreamInterface>` stored as the stream's
+    // `user` pointer (see `Stream::to_raw_mut`); live and exclusively owned here.
+    let imp = unsafe { &mut *(user as *mut Box<dyn StreamInterface>) };
     imp.size()
 }
 
 unsafe extern "C" fn stream_imp_box_close(user: *mut c_void) {
-    let mut imp = Box::from_raw(user as *mut Box<dyn StreamInterface>);
+    // SAFETY: `user` is the `Box<dyn StreamInterface>` leaked in
+    // `Stream::to_raw_mut`; ufbx calls `close` once, so reclaiming ownership
+    // frees it exactly once.
+    let mut imp = unsafe { Box::from_raw(user as *mut Box<dyn StreamInterface>) };
     imp.close()
 }
 
@@ -1051,8 +1118,11 @@ pub unsafe extern "C" fn call_progress_cb<F>(
 where
     F: FnMut(&Progress) -> ProgressResult,
 {
-    let func: &mut F = &mut *(user as *mut F);
-    RawEnum::<ProgressResult>::from_raw((func)(&*progress) as u32)
+    // SAFETY: `user` is the `&mut F` closure ufbx was given as the progress
+    // callback's user pointer; live and exclusively borrowable for this call.
+    let func: &mut F = unsafe { &mut *(user as *mut F) };
+    // SAFETY: ufbx passes a valid `*const Progress` for the duration of the call.
+    RawEnum::<ProgressResult>::from_raw((func)(unsafe { &*progress }) as u32)
 }
 
 pub unsafe extern "C" fn call_open_file_cb<F>(
@@ -1065,19 +1135,27 @@ pub unsafe extern "C" fn call_open_file_cb<F>(
 where
     F: FnMut(&str, &OpenFileInfo) -> Option<Stream>,
 {
-    let func: &mut F = &mut *(user as *mut F);
+    // SAFETY: `user` is the `&mut F` closure ufbx was given as the open-file
+    // callback's user pointer; live and exclusively borrowable for this call.
+    let func: &mut F = unsafe { &mut *(user as *mut F) };
 
-    let path_str = match str::from_utf8(slice_from_ptr(path, path_len)) {
+    // SAFETY: ufbx's open-file contract makes `path`/`path_len` a readable byte
+    // run for this call.
+    let path_str = match str::from_utf8(unsafe { slice_from_ptr(path, path_len) }) {
         Ok(path_str) => path_str,
         Err(_) => return false,
     };
 
-    let mut stream = match (func)(path_str, &*info) {
+    // SAFETY: ufbx passes a valid `*const OpenFileInfo` for the duration of the call.
+    let mut stream = match (func)(path_str, unsafe { &*info }) {
         Some(stream) => stream,
         None => return false,
     };
 
-    *dst = stream.to_raw_mut();
+    // SAFETY: ufbx passes a valid, writable `*mut RawStream` destination.
+    unsafe {
+        *dst = stream.to_raw_mut();
+    }
     true
 }
 
@@ -1088,7 +1166,10 @@ pub unsafe extern "C" fn call_close_memory_cb<F>(
 ) where
     F: FnMut(*mut c_void, usize),
 {
-    let func: &mut F = &mut *(user as *mut F);
+    // SAFETY: `user` is the `&mut F` closure ufbx was given as the
+    // close-memory callback's user pointer; live and exclusively borrowable
+    // for this call.
+    let func: &mut F = unsafe { &mut *(user as *mut F) };
     (func)(data, data_size)
 }
 
