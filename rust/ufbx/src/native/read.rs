@@ -574,18 +574,10 @@ pub(crate) fn read_header_extension(uc: &Context) -> Result<(), Fail> {
     let mut tc_definition: i32 = 0;
     let mut header_version: i32 = 0;
 
-    loop {
-        let mut child: *mut Node = core::ptr::null_mut();
-        // SAFETY: `child` is a local out-param slot; the `None` `tmp_buf`
-        // selects uc's own temp buffer, as in the C call.
-        unsafe { parse_toplevel_child(uc, &mut child, None)? };
-        if child.is_null() {
-            break;
-        }
-        // Bridge the raw parse-tree node into a view for the navigation below.
-        // SAFETY: `child` is the non-null node just parsed into uc's arena.
-        let child: &NodeView = unsafe { NodeView::from_ptr(child) };
-
+    // C: `ufbxi_node *child;` — the `None` `tmp_buf` selects uc's own temp buffer,
+    // as in the C call; the C `for(;;) { ...; if (!child) break; ... }` loop reads
+    // as a `while let` over the `None` end signal.
+    while let Some(child) = parse_toplevel_child(uc, None)? {
         if child.name() == sp::Creator.as_ptr() {
             // SAFETY: `child` is a parse-tree NodeView; the out-param is uc's
             // own metadata `creator` string slot, reached through its views.
@@ -843,18 +835,10 @@ pub(crate) fn match_exporter(uc: &Context) -> Result<(), Fail> {
 pub(crate) fn read_document(uc: &Context) -> Result<(), Fail> {
     let mut found_root_id = false;
 
-    loop {
-        let mut child: *mut Node = core::ptr::null_mut();
-        // SAFETY: `child` is a local out-param slot; the `None` `tmp_buf`
-        // selects uc's own temp buffer, as in the C call.
-        unsafe { parse_toplevel_child(uc, &mut child, None)? };
-        if child.is_null() {
-            break;
-        }
-        // Bridge the raw parse-tree node into a view for the navigation below.
-        // SAFETY: `child` is the non-null node just parsed into uc's arena.
-        let child: &NodeView = unsafe { NodeView::from_ptr(child) };
-
+    // C: `ufbxi_node *child;` — the `None` `tmp_buf` selects uc's own temp buffer,
+    // as in the C call; the C `for(;;) { ...; if (!child) break; ... }` loop reads
+    // as a `while let` over the `None` end signal.
+    while let Some(child) = parse_toplevel_child(uc, None)? {
         if child.name() == sp::Document.as_ptr() && !found_root_id {
             // Post-7000: Try to find the first document node and root ID.
             // TODO: Multiple documents / roots?
@@ -883,18 +867,10 @@ static LOD_GROUP: [u8; b"LodGroup\0".len()] = *b"LodGroup\0";
 // ufbx.c:12151-12193 `ufbxi_read_definitions`
 #[inline(never)]
 pub(crate) fn read_definitions(uc: &Context) -> Result<(), Fail> {
-    loop {
-        let mut object: *mut Node = core::ptr::null_mut();
-        // SAFETY: `object` is a local out-param slot; the `None` `tmp_buf`
-        // selects uc's own temp buffer, as in the C call.
-        unsafe { parse_toplevel_child(uc, &mut object, None)? };
-        if object.is_null() {
-            break;
-        }
-        // Bridge the raw parse-tree node into a view for the navigation below.
-        // SAFETY: `object` is the non-null node just parsed into uc's arena.
-        let object: &NodeView = unsafe { NodeView::from_ptr(object) };
-
+    // C: `ufbxi_node *object;` — the `None` `tmp_buf` selects uc's own temp buffer,
+    // as in the C call; the C `for(;;) { ...; if (!object) break; ... }` loop reads
+    // as a `while let` over the `None` end signal.
+    while let Some(object) = parse_toplevel_child(uc, None)? {
         if object.name() != sp::ObjectType.as_ptr() {
             continue;
         }
@@ -6281,17 +6257,11 @@ pub(crate) fn read_objects(uc: &Context) -> Result<(), Fail> {
         uc.warnings_view()
             .set_deferred_element_id_plus_one(uc.tmp_element_id_view().num_items() as u32);
 
-        // C: `ufbxi_node *node;` — written by `ufbxi_parse_toplevel_child`.
-        let mut node: *mut Node = core::ptr::null_mut();
-        // SAFETY: `node` is a local out-param slot; the `None` `tmp_buf`
-        // selects uc's own temp buffer, as in the C call.
-        unsafe { parse_toplevel_child(uc, &mut node, None)? };
-        if node.is_null() {
+        // C: `ufbxi_node *node;` — the `None` `tmp_buf` selects uc's own temp
+        // buffer, as in the C call; `None` is the C `node == NULL` end signal.
+        let Some(node) = parse_toplevel_child(uc, None)? else {
             break;
-        }
-        // Bridge the raw parse-tree node into a view for `read_object`.
-        // SAFETY: `node` is the non-null node just parsed into uc's arena.
-        let node: &NodeView = unsafe { NodeView::from_ptr(node) };
+        };
 
         read_object(uc, node)?;
 
@@ -6412,12 +6382,14 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 uc.opts_view().thread_opts_view().memory_limit() / THREAD_GROUP_COUNT;
 
             loop {
-                let mut node: *mut Node = core::ptr::null_mut();
-                parse_toplevel_child(uc, &mut node, Some(tmp_buf))?;
-                if node.is_null() {
+                // C: `ufbxi_node *node;` — `None` is the C `node == NULL` end
+                // signal. The batch array stores raw node pointers, so the
+                // returned view is unwrapped back to one right away.
+                let Some(node) = parse_toplevel_child(uc, Some(tmp_buf))? else {
                     parsed_to_end = true;
                     break;
-                }
+                };
+                let node: *mut Node = node.get();
                 ufbxi_check!(
                     uc,
                     !uc.tmp_stack_view().push_copy_ref(&node).is_null(),
@@ -6467,19 +6439,10 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
 #[inline(never)]
 pub(crate) fn read_connections(uc: &Context) -> Result<(), Fail> {
     // Read the connections to the list first
-    loop {
-        // C: `ufbxi_node *node;` — written by `ufbxi_parse_toplevel_child`.
-        let mut node: *mut Node = core::ptr::null_mut();
-        // SAFETY: `node` is a local out-param slot; the `None` `tmp_buf`
-        // selects uc's own temp buffer, as in the C call.
-        unsafe { parse_toplevel_child(uc, &mut node, None)? };
-        if node.is_null() {
-            break;
-        }
-        // Bridge the raw parse-tree node into a view for the navigation below.
-        // SAFETY: `node` is the non-null node just parsed into uc's arena.
-        let node: &NodeView = unsafe { NodeView::from_ptr(node) };
-
+    // C: `ufbxi_node *node;` — the `None` `tmp_buf` selects uc's own temp buffer,
+    // as in the C call; the C `for(;;) { ...; if (!node) break; ... }` loop reads
+    // as a `while let` over the `None` end signal.
+    while let Some(node) = parse_toplevel_child(uc, None)? {
         // C: `char *type;` — written by the `ufbxi_get_val1` guards below.
         let mut type_: *const u8 = core::ptr::null();
 
@@ -7421,19 +7384,10 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
 // ufbx.c:15751-15764 `ufbxi_read_takes`
 #[inline(never)]
 pub(crate) fn read_takes(uc: &Context) -> Result<(), Fail> {
-    loop {
-        // C: `ufbxi_node *node;` — written by `ufbxi_parse_toplevel_child`.
-        let mut node: *mut Node = core::ptr::null_mut();
-        // SAFETY: `node` is a local out-param slot; the `None` `tmp_buf`
-        // selects uc's own temp buffer, as in the C call.
-        unsafe { parse_toplevel_child(uc, &mut node, None)? };
-        if node.is_null() {
-            break;
-        }
-        // Bridge the raw parse-tree node into a view for the navigation below.
-        // SAFETY: `node` is the non-null node just parsed into uc's arena.
-        let node: &NodeView = unsafe { NodeView::from_ptr(node) };
-
+    // C: `ufbxi_node *node;` — the `None` `tmp_buf` selects uc's own temp buffer,
+    // as in the C call; the C `for(;;) { ...; if (!node) break; ... }` loop reads
+    // as a `while let` over the `None` end signal.
+    while let Some(node) = parse_toplevel_child(uc, None)? {
         if node.name() == sp::Take.as_ptr() {
             read_take(uc, node)?;
         }

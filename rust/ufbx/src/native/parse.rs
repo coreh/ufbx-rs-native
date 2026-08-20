@@ -7319,22 +7319,28 @@ pub(crate) fn begin_parse(uc: &Context) -> Result<(), Fail> {
 }
 
 // ufbx.c:11242-11251 `ufbxi_parse_toplevel_child_imp`
-pub(crate) unsafe fn parse_toplevel_child_imp(
+//
+// Rust-port: the C `bool *p_end` out-flag is RETURNED (`Ok(true)` == C
+// `*p_end = true`, "no more children"), so the out-flag slot is a local here and
+// no caller needs a raw pointer to reach it.
+pub(crate) fn parse_toplevel_child_imp(
     uc: &Context,
     state: ParseState,
     buf: &BufView,
-    p_end: *mut bool,
-) -> Result<(), Fail> {
+) -> Result<bool, Fail> {
+    let mut end: bool = false;
     if uc.from_ascii() {
-        // SAFETY: `p_end` is the caller's valid `*mut bool` out-flag — the node
-        // parsers' contract.
-        unsafe { crate::native::parse_ascii::ascii_parse_node(uc, 0, state, p_end, buf, true)? };
+        // SAFETY: `&mut end` is an unaliased local `bool` slot — a valid
+        // `*mut bool` out-flag, the node parsers' contract.
+        unsafe { crate::native::parse_ascii::ascii_parse_node(uc, 0, state, &mut end, buf, true)? };
     } else {
         // SAFETY: as above.
-        unsafe { crate::native::parse_binary::binary_parse_node(uc, 0, state, p_end, buf, true)? };
+        unsafe {
+            crate::native::parse_binary::binary_parse_node(uc, 0, state, &mut end, buf, true)?
+        };
     }
 
-    Ok(())
+    Ok(end)
 }
 
 // ufbx.c:11253-11330 `ufbxi_parse_toplevel`
@@ -7453,10 +7459,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         let state: ParseState = unsafe { update_parse_state(ParseState::Root, (*node).name) };
         if uc.has_next_child() {
             loop {
-                // SAFETY: `&mut end` is a valid `*mut bool` out-flag — the child
-                // parser's contract.
-                unsafe { parse_toplevel_child_imp(uc, state, uc.tmp_view(), &mut end)? };
-                if end {
+                if parse_toplevel_child_imp(uc, state, uc.tmp_view())? {
                     break;
                 }
                 num_children += 1;
@@ -7487,18 +7490,23 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
 }
 
 // ufbx.c:11332-11377 `ufbxi_parse_toplevel_child`
+//
+// Rust-port: the C `ufbxi_node **p_node` out-param is RETURNED as
+// `Option<&NodeView>` — `None` is the C `*p_node = NULL` end-of-children signal
+// that every call site loops on. The returned view borrows `uc`, the same
+// lifetime anchoring `top_node_view()` and the `find_child` family use: the node
+// lives either in uc's own `top_child` slot, in its `tmp_parse` buffer, or in
+// the caller-supplied `tmp_buf` (itself uc-owned arena memory), all of which
+// outlive the borrow.
 #[inline(never)]
-pub(crate) unsafe fn parse_toplevel_child(
-    uc: &Context,
-    p_node: *mut *mut Node,
-    tmp_buf: Option<&BufView>,
-) -> Result<(), Fail> {
+pub(crate) fn parse_toplevel_child<'a>(
+    uc: &'a Context,
+    tmp_buf: Option<&'a BufView>,
+) -> Result<Option<&'a NodeView>, Fail> {
     // Top-level node not found
-    if uc.top_node().is_null() {
-        // SAFETY: `p_node` is the caller's valid `*mut *mut Node` out-slot.
-        unsafe { *p_node = core::ptr::null_mut() };
-        return Ok(());
-    }
+    let Some(top_node) = uc.top_node_view() else {
+        return Ok(None);
+    };
 
     if uc.top_child_index() == usize::MAX {
         // Parse children on demand
@@ -7507,21 +7515,16 @@ pub(crate) unsafe fn parse_toplevel_child(
             // `buf_clear`'s contract.
             unsafe { buf_clear(uc.tmp_parse_mut_ptr()) };
         }
-        let mut end = false;
-        // SAFETY: `top_node()` is non-null (checked above); read its NUL-terminated
-        // interned `name` — `update_parse_state`'s contract.
-        let state: ParseState =
-            unsafe { update_parse_state(ParseState::Root, (*uc.top_node()).name) };
+        // SAFETY: `top_node`'s `name` is its pooled NUL-terminated interned name
+        // — `update_parse_state`'s contract.
+        let state: ParseState = unsafe { update_parse_state(ParseState::Root, top_node.name()) };
         let buf: &BufView = match tmp_buf {
             Some(tmp_buf) => tmp_buf,
             None => uc.tmp_parse_view(),
         };
-        // SAFETY: `&mut end` is a valid `*mut bool` out-flag — the child parser's
-        // contract.
-        unsafe { parse_toplevel_child_imp(uc, state, buf, &mut end)? };
+        let end: bool = parse_toplevel_child_imp(uc, state, buf)?;
         if end {
-            // SAFETY: `p_node` is the caller's valid out-slot.
-            unsafe { *p_node = core::ptr::null_mut() };
+            Ok(None)
         } else {
             // Parse to either reused `uc->top_child` or push if retaining to `tmp_buf`.
             let mut dst: *mut Node = uc.top_child_mut_ptr();
@@ -7533,32 +7536,31 @@ pub(crate) unsafe fn parse_toplevel_child(
             // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own stack buffer and `dst` a
             // live `Node` slot receiving the popped node — `pop`'s contract.
             unsafe { pop::<Node>(uc.tmp_stack_mut_ptr(), 1, dst) };
-            // SAFETY: `p_node` is the caller's valid out-slot.
-            unsafe { *p_node = dst };
 
             if uc.opts_view().retain_dom() {
                 // SAFETY: `dst` is the freshly popped live `Node`.
                 unsafe { retain_toplevel_child(uc, dst)? };
             }
+
+            // SAFETY: `dst` is the just-popped live `Node`, held either in uc's
+            // own `top_child` field or in a `tmp_buf` push — uc-owned arena
+            // memory, valid and unmoved for the borrow of `uc`.
+            Ok(Some(unsafe { NodeView::from_ptr(dst) }))
         }
     } else {
         // Iterate already parsed nodes
         let child_index = uc.top_child_index();
-        // SAFETY: `top_node()` is non-null (checked above); read its
-        // `num_children` field.
-        if child_index == unsafe { (*uc.top_node()).num_children } as usize {
-            // SAFETY: `p_node` is the caller's valid out-slot.
-            unsafe { *p_node = core::ptr::null_mut() };
+        if child_index == top_node.num_children() as usize {
+            Ok(None)
         } else {
-            uc.set_top_child_index(uc.top_child_index().wrapping_add(1));
-            // SAFETY: `top_node()` is non-null; `child_index < num_children`
-            // bounds `children.add(child_index)` inside its child run; `p_node`
-            // is the caller's valid out-slot.
-            unsafe { *p_node = (*uc.top_node()).children.add(child_index) };
+            uc.set_top_child_index(child_index.wrapping_add(1));
+            // SAFETY: `child_index < num_children`, so `children.add(child_index)`
+            // stays inside `top_node`'s contiguous child run in uc's arena, valid
+            // and unmoved for the borrow of `uc`.
+            let child = unsafe { NodeView::from_ptr(top_node.children().add(child_index)) };
+            Ok(Some(child))
         }
     }
-
-    Ok(())
 }
 
 // ufbx.c:11379-11407 `ufbxi_parse_legacy_toplevel`
