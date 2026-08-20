@@ -1597,21 +1597,21 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
 ) -> Result<(), Fail> {
     let geo_translation: Vec3 = find_vec3(
         PropsView::from_ptr(&raw mut (*node).element.props),
-        sp::GeometricTranslation.as_ptr(),
+        &sp::GeometricTranslation,
         0.0,
         0.0,
         0.0,
     );
     let geo_rotation: Vec3 = find_vec3(
         PropsView::from_ptr(&raw mut (*node).element.props),
-        sp::GeometricRotation.as_ptr(),
+        &sp::GeometricRotation,
         0.0,
         0.0,
         0.0,
     );
     let geo_scaling: Vec3 = find_vec3(
         PropsView::from_ptr(&raw mut (*node).element.props),
-        sp::GeometricScaling.as_ptr(),
+        &sp::GeometricScaling,
         1.0,
         1.0,
         1.0,
@@ -1680,17 +1680,16 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
 // ufbx.c:12548-12551 `ufbxi_scale_helper_prop`
 #[repr(C)]
 pub(crate) struct ScaleHelperProp {
-    pub name: *const u8,
+    // C: `const char *name` — a borrow of the interned `ufbxi_*` static, which
+    // `ufbxi_find_prop` matches by ADDRESS.
+    pub name: &'static [u8],
     pub default_value: Vec3,
 }
-// The table below is immutable and its `name` pointers reference immutable
-// statics, so sharing is sound (precedent: `native::api::EmptyString`).
-unsafe impl Sync for ScaleHelperProp {}
 
 // ufbx.c:12553-12558 `ufbxi_scale_helper_props`
 static SCALE_HELPER_PROPS: [ScaleHelperProp; 4] = [
     ScaleHelperProp {
-        name: sp::GeometricRotation.as_ptr(),
+        name: &sp::GeometricRotation,
         default_value: Vec3 {
             x: 0.0,
             y: 0.0,
@@ -1698,7 +1697,7 @@ static SCALE_HELPER_PROPS: [ScaleHelperProp; 4] = [
         },
     },
     ScaleHelperProp {
-        name: sp::GeometricScaling.as_ptr(),
+        name: &sp::GeometricScaling,
         default_value: Vec3 {
             x: 1.0,
             y: 1.0,
@@ -1706,7 +1705,7 @@ static SCALE_HELPER_PROPS: [ScaleHelperProp; 4] = [
         },
     },
     ScaleHelperProp {
-        name: sp::GeometricTranslation.as_ptr(),
+        name: &sp::GeometricTranslation,
         default_value: Vec3 {
             x: 0.0,
             y: 0.0,
@@ -1714,7 +1713,7 @@ static SCALE_HELPER_PROPS: [ScaleHelperProp; 4] = [
         },
     },
     ScaleHelperProp {
-        name: sp::Lcl_Scaling.as_ptr(),
+        name: &sp::Lcl_Scaling,
         default_value: Vec3 {
             x: 1.0,
             y: 1.0,
@@ -1821,7 +1820,7 @@ pub(crate) unsafe fn read_model(
 
     let inherit_type: i64 = find_int(
         PropsView::from_ptr(&raw mut (*elem_node).element.props),
-        sp::InheritType.as_ptr(),
+        &sp::InheritType,
         -1,
     );
     match inherit_type {

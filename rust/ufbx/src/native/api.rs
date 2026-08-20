@@ -1653,7 +1653,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
     // carries read-only provenance (Miri SB; sweep test TODO(provenance)).
     let order: RotationOrder = core::mem::transmute::<u32, RotationOrder>(find_enum(
         View::<Props, Const>::from_ptr(&raw const props),
-        sp::RotationOrder.as_ptr(),
+        &sp::RotationOrder,
         RotationOrder::Xyz as i64,
         RotationOrder::Spheric as i64,
     ) as u32);
@@ -1734,7 +1734,7 @@ pub(crate) unsafe fn evaluate_blend_weight_flags(
     // Const view: same read-only defaults-chain provenance as above.
     ufbxi_find_real(
         View::<Props, Const>::from_ptr(&raw const props),
-        sp::DeformPercent.as_ptr(),
+        &sp::DeformPercent,
         (*channel).weight * (100.0 as Real),
     ) * (0.01 as Real)
 }

@@ -504,7 +504,7 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     // SAFETY: `i < num_elements` indexes the `elements` run popped above; each
     // element is reached through an arena-anchored view and its `typed_id` indexes
     // the matching per-type side table (`pre_nodes` / `pre_anim_values`) pushed
-    // above; the props lookups use NUL-terminated static names.
+    // above.
     unsafe {
         for i in 0..num_elements as usize {
             let element_view: &'a ElementView = ElementView::from_ptr(*elements.add(i));
@@ -514,13 +514,8 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             if (*element).type_ == ElementType::Node {
                 let pre_node: *mut PreNode = pre_nodes.add(id as usize);
                 (*pre_node).has_constant_scale = true;
-                (*pre_node).constant_scale = find_vec3(
-                    element_view.props_view(),
-                    sp::Lcl_Scaling.as_ptr(),
-                    1.0,
-                    1.0,
-                    1.0,
-                );
+                (*pre_node).constant_scale =
+                    find_vec3(element_view.props_view(), &sp::Lcl_Scaling, 1.0, 1.0, 1.0);
                 (*pre_node).element_id = (*element).element_id;
                 (*pre_node).first_child = !0u32;
                 (*pre_node).next_child = !0u32;
@@ -532,24 +527,24 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 let pre_value: *mut PreAnimValue = pre_anim_values.add(id as usize);
                 (*pre_value).has_constant_value = true;
                 (*pre_value).constant_value.x =
-                    find_real(element_view.props_view(), sp::X.as_ptr(), math::NAN as Real);
+                    find_real(element_view.props_view(), &sp::X, math::NAN as Real);
                 (*pre_value).constant_value.x = find_real(
                     element_view.props_view(),
-                    sp::d_X.as_ptr(),
+                    &sp::d_X,
                     (*pre_value).constant_value.x,
                 );
                 (*pre_value).constant_value.y =
-                    find_real(element_view.props_view(), sp::Y.as_ptr(), math::NAN as Real);
+                    find_real(element_view.props_view(), &sp::Y, math::NAN as Real);
                 (*pre_value).constant_value.y = find_real(
                     element_view.props_view(),
-                    sp::d_Y.as_ptr(),
+                    &sp::d_Y,
                     (*pre_value).constant_value.y,
                 );
                 (*pre_value).constant_value.z =
-                    find_real(element_view.props_view(), sp::Z.as_ptr(), math::NAN as Real);
+                    find_real(element_view.props_view(), &sp::Z, math::NAN as Real);
                 (*pre_value).constant_value.z = find_real(
                     element_view.props_view(),
-                    sp::d_Z.as_ptr(),
+                    &sp::d_Z,
                     (*pre_value).constant_value.z,
                 );
             }
@@ -756,9 +751,9 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
     // SAFETY: `i < num_nodes` indexes the `pre_nodes` run pushed above; each
     // `element_id` is an index into the `num_elements`-entry `elements` run, and
-    // the node it selects is reached through an arena-anchored view whose props
-    // are looked up with NUL-terminated static names; the child walk follows the
-    // `first_child`/`next_child` links built above, which are either `~0u32` or
+    // the node it selects is reached through an arena-anchored view; the child
+    // walk follows the `first_child`/`next_child` links built above, which are
+    // either `~0u32` or
     // indices `< num_nodes`.
     unsafe {
         if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot
@@ -770,27 +765,12 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     NodeView::from_ptr(*elements.add((*pre_node).element_id as usize) as *mut Node);
                 let node: *mut Node = node_view.get();
 
-                let rotation_pivot: Vec3 = find_vec3(
-                    node_view.props_view(),
-                    sp::RotationPivot.as_ptr(),
-                    0.0,
-                    0.0,
-                    0.0,
-                );
-                let scaling_pivot: Vec3 = find_vec3(
-                    node_view.props_view(),
-                    sp::ScalingPivot.as_ptr(),
-                    0.0,
-                    0.0,
-                    0.0,
-                );
-                let scaling_offset: Vec3 = find_vec3(
-                    node_view.props_view(),
-                    sp::ScalingOffset.as_ptr(),
-                    0.0,
-                    0.0,
-                    0.0,
-                );
+                let rotation_pivot: Vec3 =
+                    find_vec3(node_view.props_view(), &sp::RotationPivot, 0.0, 0.0, 0.0);
+                let scaling_pivot: Vec3 =
+                    find_vec3(node_view.props_view(), &sp::ScalingPivot, 0.0, 0.0, 0.0);
+                let scaling_offset: Vec3 =
+                    find_vec3(node_view.props_view(), &sp::ScalingOffset, 0.0, 0.0, 0.0);
 
                 let mut should_modify_pivot: bool = false;
                 if uc.opts_view().pivot_handling() == PivotHandling::AdjustToPivot {
@@ -848,7 +828,7 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     {
                         let mut geometric_translation: Vec3 = find_vec3(
                             node_view.props_view(),
-                            sp::GeometricTranslation.as_ptr(),
+                            &sp::GeometricTranslation,
                             0.0,
                             0.0,
                             0.0,
@@ -912,13 +892,8 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             //
                             // We need to be careful when doing this in case any component of Z is 0. Fortunately,
                             // the above holds for all `Z != 0`, it will just result in non-zero translation in the parent.
-                            let initial_scale: Vec3 = find_vec3(
-                                node_view.props_view(),
-                                sp::Lcl_Scaling.as_ptr(),
-                                1.0,
-                                1.0,
-                                1.0,
-                            );
+                            let initial_scale: Vec3 =
+                                find_vec3(node_view.props_view(), &sp::Lcl_Scaling, 1.0, 1.0, 1.0);
                             let scaled_offset: Vec3 =
                                 sub3(add3(scaling_offset, scaling_pivot), rotation_pivot);
                             // C: `ufbx_vec3 unscaled_offset;` — all three components
@@ -1790,7 +1765,10 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
                         if (*elem).props.defaults.is_some() {
                             def_prop = match find_prop_with_key(
                                 PropsView::from_ptr(opt_ptr(&(*elem).props.defaults)),
-                                name.data,
+                                // `find_prop_with_key` matches on the interned
+                                // run's ADDRESS, so the borrow must be over
+                                // `name`'s own bytes.
+                                core::slice::from_raw_parts(name.data, name.length),
                                 key,
                             ) {
                                 Some(prop) => prop.get(),
@@ -2588,13 +2566,13 @@ pub(crate) unsafe fn fetch_texture_layers(
                 blend_mode: BlendMode::Translucent,
                 alpha: 0.0,
             };
-            layer.alpha = find_real(texture_view.props_view(), sp::Texture_alpha.as_ptr(), 1.0);
+            layer.alpha = find_real(texture_view.props_view(), &sp::Texture_alpha, 1.0);
             // C: `(ufbx_blend_mode)ufbxi_find_enum(...)` — `ufbxi_find_enum`
             // clamps the result to `[0, UFBX_BLEND_OVERLAY]`, every value of
             // which is a valid `ufbx_blend_mode`.
             layer.blend_mode = core::mem::transmute::<u32, BlendMode>(find_enum(
                 texture_view.props_view(),
-                sp::BlendMode.as_ptr(),
+                &sp::BlendMode,
                 BlendMode::Replace as i64,
                 BlendMode::Overlay as i64,
             ) as u32);
@@ -6191,8 +6169,7 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
         let mut defaults: *mut Props = ptr::null_mut();
         // SAFETY: walks the stored `nodes` element-pointer run of the uc-owned scene
         // (`count` entries); `set_own_prop_vec3_uniform` receives a `&raw mut` of that
-        // node's own props (or the null-checked shared `defaults` table) and a
-        // NUL-terminated static name.
+        // node's own props (or the null-checked shared `defaults` table).
         unsafe {
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
             let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
@@ -7952,7 +7929,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             (*layer)._max_element_id = max_id;
         }
 
-        match find_int(layer_view.props_view(), sp::BlendMode.as_ptr(), 0) {
+        match find_int(layer_view.props_view(), &sp::BlendMode, 0) {
             0 => {
                 // Additive
                 (*layer).blended = true;
@@ -7975,8 +7952,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
         }
 
-        let weight_prop: *mut Prop = find_prop(layer_view.props_view(), sp::Weight.as_ptr())
-            .map_or(ptr::null_mut(), PropView::get);
+        let weight_prop: *mut Prop =
+            find_prop(layer_view.props_view(), &sp::Weight).map_or(ptr::null_mut(), PropView::get);
         if !weight_prop.is_null() {
             // C-parity: `prop->value_real` is the `ufbx_prop` value union's
             // first real; the generated struct keeps only `value_vec4`.
@@ -7995,16 +7972,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             (*layer).weight = 1.0f32 as Real;
             (*layer).weight_is_animated = false;
         }
-        (*layer).compose_rotation = find_int(
-            layer_view.props_view(),
-            sp::RotationAccumulationMode.as_ptr(),
-            0,
-        ) == 0;
-        (*layer).compose_scale = find_int(
-            layer_view.props_view(),
-            sp::ScaleAccumulationMode.as_ptr(),
-            0,
-        ) == 0;
+        (*layer).compose_rotation =
+            find_int(layer_view.props_view(), &sp::RotationAccumulationMode, 0) == 0;
+        (*layer).compose_scale =
+            find_int(layer_view.props_view(), &sp::ScaleAccumulationMode, 0) == 0;
 
         // Add a dummy NULL element animated prop at the end so we can iterate
         // animated props without worrying about boundary conditions..
@@ -8040,36 +8011,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let value: *mut AnimValue = value_view.get();
 
         // TODO: Search for things like d|Visibility with a constructed name
-        (*value).default_value.x = find_real(
-            value_view.props_view(),
-            sp::X.as_ptr(),
-            (*value).default_value.x,
-        );
-        (*value).default_value.x = find_real(
-            value_view.props_view(),
-            sp::d_X.as_ptr(),
-            (*value).default_value.x,
-        );
-        (*value).default_value.y = find_real(
-            value_view.props_view(),
-            sp::Y.as_ptr(),
-            (*value).default_value.y,
-        );
-        (*value).default_value.y = find_real(
-            value_view.props_view(),
-            sp::d_Y.as_ptr(),
-            (*value).default_value.y,
-        );
-        (*value).default_value.z = find_real(
-            value_view.props_view(),
-            sp::Z.as_ptr(),
-            (*value).default_value.z,
-        );
-        (*value).default_value.z = find_real(
-            value_view.props_view(),
-            sp::d_Z.as_ptr(),
-            (*value).default_value.z,
-        );
+        (*value).default_value.x =
+            find_real(value_view.props_view(), &sp::X, (*value).default_value.x);
+        (*value).default_value.x =
+            find_real(value_view.props_view(), &sp::d_X, (*value).default_value.x);
+        (*value).default_value.y =
+            find_real(value_view.props_view(), &sp::Y, (*value).default_value.y);
+        (*value).default_value.y =
+            find_real(value_view.props_view(), &sp::d_Y, (*value).default_value.y);
+        (*value).default_value.z =
+            find_real(value_view.props_view(), &sp::Z, (*value).default_value.z);
+        (*value).default_value.z =
+            find_real(value_view.props_view(), &sp::d_Z, (*value).default_value.z);
 
         // C: `ufbxi_for_list(ufbx_connection, conn, value->element.connections_dst)`
         let mut conn: *mut Connection = (*value).element.connections_dst.data as *mut Connection;
@@ -8400,8 +8353,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let extra: *mut TextureExtra =
             get_element_extra(uc, (*texture).element.element_id) as *mut TextureExtra;
 
-        let uv_set: *mut Prop = find_prop(texture_view.props_view(), sp::UVSet.as_ptr())
-            .map_or(ptr::null_mut(), PropView::get);
+        let uv_set: *mut Prop =
+            find_prop(texture_view.props_view(), &sp::UVSet).map_or(ptr::null_mut(), PropView::get);
         if !uv_set.is_null() {
             (*texture).uv_set = (*uv_set).value_str;
         } else {
@@ -8922,9 +8875,9 @@ pub(crate) unsafe fn mirror_rotation(p_quat: *mut Quat, axis: MirrorAxis) {
 // (forward-declared at ufbx.c:21070-21071 for `ufbxi_modify_geometry`)
 #[inline(never)]
 pub(crate) unsafe fn get_geometry_transform(props: &PropsView, node: *mut Node) -> Transform {
-    let translation: Vec3 = find_vec3(props, sp::GeometricTranslation.as_ptr(), 0.0, 0.0, 0.0);
-    let rotation: Vec3 = find_vec3(props, sp::GeometricRotation.as_ptr(), 0.0, 0.0, 0.0);
-    let scaling: Vec3 = find_vec3(props, sp::GeometricScaling.as_ptr(), 1.0, 1.0, 1.0);
+    let translation: Vec3 = find_vec3(props, &sp::GeometricTranslation, 0.0, 0.0, 0.0);
+    let rotation: Vec3 = find_vec3(props, &sp::GeometricRotation, 0.0, 0.0, 0.0);
+    let scaling: Vec3 = find_vec3(props, &sp::GeometricScaling, 1.0, 1.0, 1.0);
 
     // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
     let mut t: Transform = Transform {
@@ -8976,9 +8929,9 @@ pub(crate) unsafe fn get_rotation<M: Mode>(
     order: RotationOrder,
     node: *const Node,
 ) -> Quat {
-    let rotation: Vec3 = find_vec3(props, sp::Lcl_Rotation.as_ptr(), 0.0, 0.0, 0.0);
-    let pre_rotation: Vec3 = find_vec3(props, sp::PreRotation.as_ptr(), 0.0, 0.0, 0.0);
-    let post_rotation: Vec3 = find_vec3(props, sp::PostRotation.as_ptr(), 0.0, 0.0, 0.0);
+    let rotation: Vec3 = find_vec3(props, &sp::Lcl_Rotation, 0.0, 0.0, 0.0);
+    let pre_rotation: Vec3 = find_vec3(props, &sp::PreRotation, 0.0, 0.0, 0.0);
+    let post_rotation: Vec3 = find_vec3(props, &sp::PostRotation, 0.0, 0.0, 0.0);
 
     // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
     let mut t: Transform = Transform {
@@ -9029,7 +8982,7 @@ pub(crate) unsafe fn get_rotation<M: Mode>(
 // `ufbxi_regression_assert` at ufbx.c:22902.
 #[inline(never)]
 pub(crate) unsafe fn get_scale<M: Mode>(props: &View<Props, M>, node: *const Node) -> Vec3 {
-    let scaling: Vec3 = find_vec3(props, sp::Lcl_Scaling.as_ptr(), 1.0, 1.0, 1.0);
+    let scaling: Vec3 = find_vec3(props, &sp::Lcl_Scaling, 1.0, 1.0, 1.0);
 
     // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
     let mut t: Transform = Transform {
@@ -9072,17 +9025,17 @@ pub(crate) unsafe fn get_transform<M: Mode>(
     node: *const Node,
     translation_scale: *const Vec3,
 ) -> Transform {
-    let scale_pivot: Vec3 = find_vec3(props, sp::ScalingPivot.as_ptr(), 0.0, 0.0, 0.0);
-    let rot_pivot: Vec3 = find_vec3(props, sp::RotationPivot.as_ptr(), 0.0, 0.0, 0.0);
-    let scale_offset: Vec3 = find_vec3(props, sp::ScalingOffset.as_ptr(), 0.0, 0.0, 0.0);
-    let rot_offset: Vec3 = find_vec3(props, sp::RotationOffset.as_ptr(), 0.0, 0.0, 0.0);
+    let scale_pivot: Vec3 = find_vec3(props, &sp::ScalingPivot, 0.0, 0.0, 0.0);
+    let rot_pivot: Vec3 = find_vec3(props, &sp::RotationPivot, 0.0, 0.0, 0.0);
+    let scale_offset: Vec3 = find_vec3(props, &sp::ScalingOffset, 0.0, 0.0, 0.0);
+    let rot_offset: Vec3 = find_vec3(props, &sp::RotationOffset, 0.0, 0.0, 0.0);
 
-    let mut translation: Vec3 = find_vec3(props, sp::Lcl_Translation.as_ptr(), 0.0, 0.0, 0.0);
-    let rotation: Vec3 = find_vec3(props, sp::Lcl_Rotation.as_ptr(), 0.0, 0.0, 0.0);
-    let scaling: Vec3 = find_vec3(props, sp::Lcl_Scaling.as_ptr(), 1.0, 1.0, 1.0);
+    let mut translation: Vec3 = find_vec3(props, &sp::Lcl_Translation, 0.0, 0.0, 0.0);
+    let rotation: Vec3 = find_vec3(props, &sp::Lcl_Rotation, 0.0, 0.0, 0.0);
+    let scaling: Vec3 = find_vec3(props, &sp::Lcl_Scaling, 1.0, 1.0, 1.0);
 
-    let pre_rotation: Vec3 = find_vec3(props, sp::PreRotation.as_ptr(), 0.0, 0.0, 0.0);
-    let post_rotation: Vec3 = find_vec3(props, sp::PostRotation.as_ptr(), 0.0, 0.0, 0.0);
+    let pre_rotation: Vec3 = find_vec3(props, &sp::PreRotation, 0.0, 0.0, 0.0);
+    let post_rotation: Vec3 = find_vec3(props, &sp::PostRotation, 0.0, 0.0, 0.0);
 
     // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
     let mut t: Transform = Transform {
@@ -9163,18 +9116,13 @@ pub(crate) unsafe fn get_transform<M: Mode>(
 // ufbx.c:22907-22936 `ufbxi_get_texture_transform`
 #[inline(never)]
 pub(crate) fn get_texture_transform(props: &PropsView) -> Transform {
-    // SAFETY: `props` is a constructed props view; every `name` is a
-    // NUL-terminated static string constant, which is the property-lookup
-    // contract.
-    let (scale_pivot, rot_pivot, translation, rotation, scaling) = unsafe {
-        (
-            find_vec3(props, sp::TextureScalingPivot.as_ptr(), 0.0, 0.0, 0.0),
-            find_vec3(props, sp::TextureRotationPivot.as_ptr(), 0.0, 0.0, 0.0),
-            find_vec3(props, sp::Translation.as_ptr(), 0.0, 0.0, 0.0),
-            find_vec3(props, sp::Rotation.as_ptr(), 0.0, 0.0, 0.0),
-            find_vec3(props, sp::Scaling.as_ptr(), 1.0, 1.0, 1.0),
-        )
-    };
+    let (scale_pivot, rot_pivot, translation, rotation, scaling) = (
+        find_vec3(props, &sp::TextureScalingPivot, 0.0, 0.0, 0.0),
+        find_vec3(props, &sp::TextureRotationPivot, 0.0, 0.0, 0.0),
+        find_vec3(props, &sp::Translation, 0.0, 0.0, 0.0),
+        find_vec3(props, &sp::Rotation, 0.0, 0.0, 0.0),
+        find_vec3(props, &sp::Scaling, 1.0, 1.0, 1.0),
+    );
 
     // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
     let mut t: Transform = Transform {
@@ -9206,8 +9154,7 @@ pub(crate) fn get_texture_transform(props: &PropsView) -> Transform {
 
     add_translate(&mut t, translation);
 
-    // SAFETY: props-view lookup with a NUL-terminated static name, as above.
-    if unsafe { find_int(props, sp::UVSwap.as_ptr(), 0) } != 0 {
+    if find_int(props, &sp::UVSwap, 0) != 0 {
         let swap_scale: Vec3 = Vec3 {
             x: -1.0,
             y: 0.0,
@@ -9228,17 +9175,12 @@ pub(crate) fn get_texture_transform(props: &PropsView) -> Transform {
 // ufbx.c:22938-22953 `ufbxi_get_constraint_transform`
 #[inline(never)]
 pub(crate) fn get_constraint_transform(props: &PropsView) -> Transform {
-    // SAFETY: `props` is a constructed props view; every `name` is a
-    // NUL-terminated static string constant, which is the property-lookup
-    // contract.
-    let (translation, rotation, rotation_offset, scaling) = unsafe {
-        (
-            find_vec3(props, sp::Translation.as_ptr(), 0.0, 0.0, 0.0),
-            find_vec3(props, sp::Rotation.as_ptr(), 0.0, 0.0, 0.0),
-            find_vec3(props, sp::RotationOffset.as_ptr(), 0.0, 0.0, 0.0),
-            find_vec3(props, sp::Scaling.as_ptr(), 1.0, 1.0, 1.0),
-        )
-    };
+    let (translation, rotation, rotation_offset, scaling) = (
+        find_vec3(props, &sp::Translation, 0.0, 0.0, 0.0),
+        find_vec3(props, &sp::Rotation, 0.0, 0.0, 0.0),
+        find_vec3(props, &sp::RotationOffset, 0.0, 0.0, 0.0),
+        find_vec3(props, &sp::Scaling, 1.0, 1.0, 1.0),
+    );
 
     // C: `ufbx_transform t = { { 0,0,0 }, { 0,0,0,1 }, { 1,1,1 }};`
     let mut t: Transform = Transform {
@@ -9281,26 +9223,16 @@ pub(crate) unsafe fn update_node(
     // a valid `ufbx_rotation_order`.
     (*node).rotation_order = core::mem::transmute::<u32, RotationOrder>(find_enum(
         node_view.props_view(),
-        sp::RotationOrder.as_ptr(),
+        &sp::RotationOrder,
         RotationOrder::Xyz as i64,
         RotationOrder::Spheric as i64,
     ) as u32);
-    (*node).euler_rotation = find_vec3(
-        node_view.props_view(),
-        sp::Lcl_Rotation.as_ptr(),
-        0.0,
-        0.0,
-        0.0,
-    );
+    (*node).euler_rotation = find_vec3(node_view.props_view(), &sp::Lcl_Rotation, 0.0, 0.0, 0.0);
 
     if !(*node).is_root {
-        let rotation_active: bool =
-            find_int(node_view.props_view(), sp::RotationActive.as_ptr(), 1) != 0;
-        let rotation_limit_only: bool = find_int(
-            node_view.props_view(),
-            sp::RotationSpaceForLimitOnly.as_ptr(),
-            0,
-        ) != 0;
+        let rotation_active: bool = find_int(node_view.props_view(), &sp::RotationActive, 1) != 0;
+        let rotation_limit_only: bool =
+            find_int(node_view.props_view(), &sp::RotationSpaceForLimitOnly, 0) != 0;
         (*node).use_rotation_space = rotation_active && !rotation_limit_only;
 
         let mut transform_scale: *const Vec3 = ptr::null();
@@ -9410,7 +9342,7 @@ pub(crate) unsafe fn update_node(
         (*node).has_geometry_transform = false;
     }
 
-    (*node).visible = find_int(node_view.props_view(), sp::Visibility.as_ptr(), 1) != 0;
+    (*node).visible = find_int(node_view.props_view(), &sp::Visibility, 1) != 0;
 }
 
 // ufbx.c:23044-23062 `ufbxi_update_light`
@@ -9420,57 +9352,53 @@ pub(crate) fn update_light(light_view: &LightView) {
     // NOTE: FBX seems to store intensities 100x of what's specified in at least
     // Maya and Blender, should there be a quirks mode to not do this for specific
     // exporters. Does the FBX SDK do this transparently as well?
-    // SAFETY: `light` is the light view's own storage and every lookup reads that
-    // same view's props with a NUL-terminated static name; `ufbxi_find_enum`
-    // clamps each result to the `[0, LAST]` range passed, so the transmutes are
-    // of in-range discriminants.
+    // SAFETY: `light` is the light view's own storage; `ufbxi_find_enum` clamps
+    // each result to the `[0, LAST]` range passed, so the transmutes are of
+    // in-range discriminants.
     unsafe {
-        (*light).intensity = find_real(
-            light_view.props_view(),
-            sp::Intensity.as_ptr(),
-            100.0 as Real,
-        ) / (100.0 as Real);
+        (*light).intensity =
+            find_real(light_view.props_view(), &sp::Intensity, 100.0 as Real) / (100.0 as Real);
 
-        (*light).color = find_vec3(light_view.props_view(), sp::Color.as_ptr(), 1.0, 1.0, 1.0);
+        (*light).color = find_vec3(light_view.props_view(), &sp::Color, 1.0, 1.0, 1.0);
         // C: `(ufbx_light_type)ufbxi_find_enum(...)` etc — `ufbxi_find_enum` clamps
         // each result to its enum's `[0, LAST]` range.
         (*light).type_ = core::mem::transmute::<u32, LightType>(find_enum(
             light_view.props_view(),
-            sp::LightType.as_ptr(),
+            &sp::LightType,
             0,
             LightType::Volume as i64,
         ) as u32);
         (*light).decay = core::mem::transmute::<u32, LightDecay>(find_enum(
             light_view.props_view(),
-            sp::DecayType.as_ptr(),
+            &sp::DecayType,
             LightDecay::None as i64,
             LightDecay::Cubic as i64,
         ) as u32);
         (*light).area_shape = core::mem::transmute::<u32, LightAreaShape>(find_enum(
             light_view.props_view(),
-            sp::AreaLightShape.as_ptr(),
+            &sp::AreaLightShape,
             0,
             LightAreaShape::Sphere as i64,
         ) as u32);
-        (*light).inner_angle = find_real(light_view.props_view(), sp::HotSpot.as_ptr(), 0.0);
+        (*light).inner_angle = find_real(light_view.props_view(), &sp::HotSpot, 0.0);
         (*light).inner_angle = find_real(
             light_view.props_view(),
-            sp::InnerAngle.as_ptr(),
+            &sp::InnerAngle,
             (*light).inner_angle,
         );
-        (*light).outer_angle = find_real(light_view.props_view(), sp::Cone_angle.as_ptr(), 0.0);
+        (*light).outer_angle = find_real(light_view.props_view(), &sp::Cone_angle, 0.0);
         (*light).outer_angle = find_real(
             light_view.props_view(),
-            sp::ConeAngle.as_ptr(),
+            &sp::ConeAngle,
             (*light).outer_angle,
         );
         (*light).outer_angle = find_real(
             light_view.props_view(),
-            sp::OuterAngle.as_ptr(),
+            &sp::OuterAngle,
             (*light).outer_angle,
         );
-        (*light).cast_light = find_int(light_view.props_view(), sp::CastLight.as_ptr(), 1) != 0;
-        (*light).cast_shadows = find_int(light_view.props_view(), sp::CastShadows.as_ptr(), 0) != 0;
+        (*light).cast_light = find_int(light_view.props_view(), &sp::CastLight, 1) != 0;
+        (*light).cast_shadows = find_int(light_view.props_view(), &sp::CastShadows, 0) != 0;
     }
 }
 
@@ -9566,55 +9494,51 @@ pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a Ca
     // `ufbxi_update_light` above).
     (*camera).projection_mode = core::mem::transmute::<u32, ProjectionMode>(find_enum(
         camera_view.props_view(),
-        sp::CameraProjectionType.as_ptr(),
+        &sp::CameraProjectionType,
         0,
         ProjectionMode::Orthographic as i64,
     ) as u32);
     (*camera).aspect_mode = core::mem::transmute::<u32, AspectMode>(find_enum(
         camera_view.props_view(),
-        sp::AspectRatioMode.as_ptr(),
+        &sp::AspectRatioMode,
         0,
         AspectMode::FixedHeight as i64,
     ) as u32);
     (*camera).aperture_mode = core::mem::transmute::<u32, ApertureMode>(find_enum(
         camera_view.props_view(),
-        sp::ApertureMode.as_ptr(),
+        &sp::ApertureMode,
         ApertureMode::Vertical as i64,
         ApertureMode::FocalLength as i64,
     ) as u32);
     (*camera).aperture_format = core::mem::transmute::<u32, ApertureFormat>(find_enum(
         camera_view.props_view(),
-        sp::ApertureFormat.as_ptr(),
+        &sp::ApertureFormat,
         ApertureFormat::Custom as i64,
         ApertureFormat::Imax as i64,
     ) as u32);
     (*camera).gate_fit = core::mem::transmute::<u32, GateFit>(find_enum(
         camera_view.props_view(),
-        sp::GateFit.as_ptr(),
+        &sp::GateFit,
         0,
         GateFit::Stretch as i64,
     ) as u32);
 
-    (*camera).near_plane = find_real(camera_view.props_view(), sp::NearPlane.as_ptr(), 0.0);
-    (*camera).far_plane = find_real(camera_view.props_view(), sp::FarPlane.as_ptr(), 0.0);
+    (*camera).near_plane = find_real(camera_view.props_view(), &sp::NearPlane, 0.0);
+    (*camera).far_plane = find_real(camera_view.props_view(), &sp::FarPlane, 0.0);
 
     // Search both W/H and Width/Height but prefer the latter
-    let mut aspect_x: Real = find_real(camera_view.props_view(), sp::AspectW.as_ptr(), 0.0);
-    let mut aspect_y: Real = find_real(camera_view.props_view(), sp::AspectH.as_ptr(), 0.0);
-    aspect_x = find_real(camera_view.props_view(), sp::AspectWidth.as_ptr(), aspect_x);
-    aspect_y = find_real(
-        camera_view.props_view(),
-        sp::AspectHeight.as_ptr(),
-        aspect_y,
-    );
+    let mut aspect_x: Real = find_real(camera_view.props_view(), &sp::AspectW, 0.0);
+    let mut aspect_y: Real = find_real(camera_view.props_view(), &sp::AspectH, 0.0);
+    aspect_x = find_real(camera_view.props_view(), &sp::AspectWidth, aspect_x);
+    aspect_y = find_real(camera_view.props_view(), &sp::AspectHeight, aspect_y);
 
-    let fov: Real = find_real(camera_view.props_view(), sp::FieldOfView.as_ptr(), 0.0);
-    let fov_x: Real = find_real(camera_view.props_view(), sp::FieldOfViewX.as_ptr(), 0.0);
-    let fov_y: Real = find_real(camera_view.props_view(), sp::FieldOfViewY.as_ptr(), 0.0);
+    let fov: Real = find_real(camera_view.props_view(), &sp::FieldOfView, 0.0);
+    let fov_x: Real = find_real(camera_view.props_view(), &sp::FieldOfViewX, 0.0);
+    let fov_y: Real = find_real(camera_view.props_view(), &sp::FieldOfViewY, 0.0);
 
-    let focal_length: Real = find_real(camera_view.props_view(), sp::FocalLength.as_ptr(), 0.0);
+    let focal_length: Real = find_real(camera_view.props_view(), &sp::FocalLength, 0.0);
     let mut ortho_extent: Real = (*scene).metadata.ortho_size_unit
-        * find_real(camera_view.props_view(), sp::OrthoZoom.as_ptr(), 1.0);
+        * find_real(camera_view.props_view(), &sp::OrthoZoom, 1.0);
 
     let format: ApertureFormatInfo = APERTURE_FORMATS[(*camera).aperture_format as usize];
     let mut film_size: Vec2 = Vec2 {
@@ -9627,19 +9551,11 @@ pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a Ca
         1.0
     };
 
-    film_size.x = find_real(
-        camera_view.props_view(),
-        sp::FilmWidth.as_ptr(),
-        film_size.x,
-    );
-    film_size.y = find_real(
-        camera_view.props_view(),
-        sp::FilmHeight.as_ptr(),
-        film_size.y,
-    );
+    film_size.x = find_real(camera_view.props_view(), &sp::FilmWidth, film_size.x);
+    film_size.y = find_real(camera_view.props_view(), &sp::FilmHeight, film_size.y);
     squeeze_ratio = find_real(
         camera_view.props_view(),
-        sp::FilmSqueezeRatio.as_ptr(),
+        &sp::FilmSqueezeRatio,
         squeeze_ratio,
     );
 
@@ -9816,15 +9732,13 @@ pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a Ca
 pub(crate) fn update_bone<'a>(scene: &'a SceneView, bone_view: &'a BoneView) {
     let scene: *mut Scene = scene.get();
     let bone: *mut Bone = bone_view.get();
-    // SAFETY: `scene` and `bone` are the storage of the views passed in, and the
-    // lookups read the bone view's own props with NUL-terminated static names.
+    // SAFETY: `scene` and `bone` are the storage of the views passed in.
     unsafe {
         let unit: Real = (*scene).metadata.bone_prop_size_unit;
 
-        (*bone).radius = find_real(bone_view.props_view(), sp::Size.as_ptr(), unit) / unit;
+        (*bone).radius = find_real(bone_view.props_view(), &sp::Size, unit) / unit;
         if (*scene).metadata.bone_prop_limb_length_relative {
-            (*bone).relative_length =
-                find_real(bone_view.props_view(), sp::LimbLength.as_ptr(), 1.0);
+            (*bone).relative_length = find_real(bone_view.props_view(), &sp::LimbLength, 1.0);
         } else {
             (*bone).relative_length = 1.0;
         }
@@ -9835,10 +9749,9 @@ pub(crate) fn update_bone<'a>(scene: &'a SceneView, bone_view: &'a BoneView) {
 #[inline(never)]
 pub(crate) fn update_line_curve(line_view: &LineCurveView) {
     let line: *mut LineCurve = line_view.get();
-    // SAFETY: `line` is the line-curve view's own storage; the lookup reads that
-    // same view's props with a NUL-terminated static name.
+    // SAFETY: `line` is the line-curve view's own storage.
     unsafe {
-        (*line).color = find_vec3(line_view.props_view(), sp::Color.as_ptr(), 1.0, 1.0, 1.0);
+        (*line).color = find_vec3(line_view.props_view(), &sp::Color, 1.0, 1.0, 1.0);
     }
 }
 
@@ -9885,10 +9798,8 @@ pub(crate) unsafe fn update_skin_cluster(cluster: *mut SkinCluster) {
 #[inline(never)]
 pub(crate) fn update_blend_channel(channel_view: &BlendChannelView) {
     let channel: *mut BlendChannel = channel_view.get();
-    // SAFETY: props-view lookup with a NUL-terminated static name.
-    let weight: Real = unsafe {
-        find_real(channel_view.props_view(), sp::DeformPercent.as_ptr(), 0.0) * (0.01 as Real)
-    };
+    let weight: Real =
+        find_real(channel_view.props_view(), &sp::DeformPercent, 0.0) * (0.01 as Real);
     // SAFETY: `channel` is the blend-channel view's own storage.
     unsafe { (*channel).weight = weight };
 
@@ -9995,13 +9906,13 @@ pub(crate) fn update_texture(texture_view: &TextureView) {
         // C: `(ufbx_wrap_mode)ufbxi_find_enum(...)` — clamped to `[0, LAST]`.
         (*texture).wrap_u = core::mem::transmute::<u32, WrapMode>(find_enum(
             texture_view.props_view(),
-            sp::WrapModeU.as_ptr(),
+            &sp::WrapModeU,
             0,
             WrapMode::Clamp as i64,
         ) as u32);
         (*texture).wrap_v = core::mem::transmute::<u32, WrapMode>(find_enum(
             texture_view.props_view(),
-            sp::WrapModeV.as_ptr(),
+            &sp::WrapModeV,
             0,
             WrapMode::Clamp as i64,
         ) as u32);
@@ -10025,18 +9936,14 @@ pub(crate) fn update_anim_stack<'a>(scene: &'a SceneView, stack_view: &'a AnimSt
     // C: `ufbx_prop *begin, *end;` — both are assigned before any read.
     let mut begin: *mut Prop;
     let mut end: *mut Prop;
-    // SAFETY: props-view lookups with NUL-terminated static names.
-    unsafe {
-        begin = find_prop(stack_view.props_view(), sp::LocalStart.as_ptr())
+    begin =
+        find_prop(stack_view.props_view(), &sp::LocalStart).map_or(ptr::null_mut(), PropView::get);
+    end = find_prop(stack_view.props_view(), &sp::LocalStop).map_or(ptr::null_mut(), PropView::get);
+    if begin.is_null() || end.is_null() {
+        begin = find_prop(stack_view.props_view(), &sp::ReferenceStart)
             .map_or(ptr::null_mut(), PropView::get);
-        end = find_prop(stack_view.props_view(), sp::LocalStop.as_ptr())
+        end = find_prop(stack_view.props_view(), &sp::ReferenceStop)
             .map_or(ptr::null_mut(), PropView::get);
-        if begin.is_null() || end.is_null() {
-            begin = find_prop(stack_view.props_view(), sp::ReferenceStart.as_ptr())
-                .map_or(ptr::null_mut(), PropView::get);
-            end = find_prop(stack_view.props_view(), sp::ReferenceStop.as_ptr())
-                .map_or(ptr::null_mut(), PropView::get);
-        }
     }
 
     // SAFETY: `begin`/`end` are null-checked before the derefs; `scene`, `stack`
@@ -10058,16 +9965,15 @@ pub(crate) fn update_anim_stack<'a>(scene: &'a SceneView, stack_view: &'a AnimSt
 #[inline(never)]
 pub(crate) fn update_display_layer(layer_view: &DisplayLayerView) {
     let layer: *mut DisplayLayer = layer_view.get();
-    // SAFETY: `layer` is the display-layer view's own storage and every lookup
-    // reads that same view's props with a NUL-terminated static name.
+    // SAFETY: `layer` is the display-layer view's own storage.
     unsafe {
-        (*layer).visible = find_int(layer_view.props_view(), sp::Show.as_ptr(), 1) != 0;
-        (*layer).frozen = find_int(layer_view.props_view(), sp::Freeze.as_ptr(), 1) != 0;
+        (*layer).visible = find_int(layer_view.props_view(), &sp::Show, 1) != 0;
+        (*layer).frozen = find_int(layer_view.props_view(), &sp::Freeze, 1) != 0;
         // C-parity: `0.8f` is a `float` literal widened to `ufbx_real` (double) —
         // NOT the decimal value 0.8 (PORTING.md "Floats").
         (*layer).ui_color = find_vec3(
             layer_view.props_view(),
-            sp::Color.as_ptr(),
+            &sp::Color,
             0.8f32 as Real,
             0.8f32 as Real,
             0.8f32 as Real,
@@ -10122,8 +10028,7 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
         (*constraint).transform_offset = get_constraint_transform(props);
 
         // C: `ufbxi_find_real` — the internal 4-byte-key lookup, NOT `ufbx_find_real`.
-        (*constraint).weight =
-            find_real(props, sp::Weight.as_ptr(), 100.0 as Real) / (100.0 as Real);
+        (*constraint).weight = find_real(props, &sp::Weight, 100.0 as Real) / (100.0 as Real);
     }
 
     // SAFETY: walks the constraint's own `targets` run (`count` entries); `node`
@@ -10487,11 +10392,7 @@ pub(crate) unsafe fn update_initial_clusters(scene: *mut Scene) {
 
 // ufbx.c:23621-23632 `ufbxi_find_axis`
 #[inline(never)]
-pub(crate) unsafe fn find_axis(
-    props: &PropsView,
-    axis_name: *const u8,
-    sign_name: *const u8,
-) -> CoordinateAxis {
+pub(crate) fn find_axis(props: &PropsView, axis_name: &[u8], sign_name: &[u8]) -> CoordinateAxis {
     let axis: i64 = find_int(props, axis_name, 3);
     let sign: i64 = find_int(props, sign_name, 2);
 
@@ -10698,9 +10599,8 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
 
     // SAFETY: walks the scene's stored `nodes` element-pointer run (uc-owned arena,
     // `count` entries) and writes each node's own adjust fields; `opt_ptr`
-    // results are null-checked before every deref, `parent` is another node of
-    // that same arena (hence the `&'a NodeView` anchor), and the props lookup
-    // uses a NUL-terminated static name.
+    // results are null-checked before every deref, and `parent` is another node
+    // of that same arena (hence the `&'a NodeView` anchor).
     unsafe {
         // C: `ufbxi_for_ptr_list(ufbx_node, p_node, scene->nodes)`
         let mut p_node: *mut *mut Node = (*scene).nodes.data as *mut *mut Node;
@@ -10750,13 +10650,8 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
                     // annotation: `parent` lives in the same uc arena, so its props
                     // table is provably `<= uc` with no free-lifetime bridge.
                     let parent_view: &'a NodeView = NodeView::from_ptr(parent);
-                    let scale: Vec3 = find_vec3(
-                        parent_view.props_view(),
-                        sp::Lcl_Scaling.as_ptr(),
-                        1.0,
-                        1.0,
-                        1.0,
-                    );
+                    let scale: Vec3 =
+                        find_vec3(parent_view.props_view(), &sp::Lcl_Scaling, 1.0, 1.0, 1.0);
                     let mut size: Real = scale.x;
                     // C: `ufbx_fabs(scale.y - 1.0f) < ufbx_fabs(size - 1.0f)` — real
                     // subtractions, promoted to double at the `fabs` calls, compared
@@ -11026,35 +10921,30 @@ pub(crate) unsafe fn round_if_near(targets: *const Real, num_targets: usize, val
 #[inline(never)]
 pub(crate) fn update_scene_settings(settings_view: &SceneSettingsView) {
     let settings: *mut SceneSettings = settings_view.get();
-    // SAFETY: `settings` is the settings view's own storage and every lookup
-    // below reads that same view's props with a NUL-terminated static name;
-    // `round_if_near` scans the static `POW10_TARGETS` with its own length.
+    // SAFETY: `settings` is the settings view's own storage; `round_if_near`
+    // scans the static `POW10_TARGETS` with its own length.
     unsafe {
         let unit_scale_factor: Real = find_real(
             settings_view.props_view(),
-            sp::UnitScaleFactor.as_ptr(),
+            &sp::UnitScaleFactor,
             1.0 as Real,
         );
         let original_unit_scale_factor: Real = find_real(
             settings_view.props_view(),
-            sp::OriginalUnitScaleFactor.as_ptr(),
+            &sp::OriginalUnitScaleFactor,
             unit_scale_factor,
         );
 
-        (*settings).axes.up = find_axis(
-            settings_view.props_view(),
-            sp::UpAxis.as_ptr(),
-            sp::UpAxisSign.as_ptr(),
-        );
+        (*settings).axes.up = find_axis(settings_view.props_view(), &sp::UpAxis, &sp::UpAxisSign);
         (*settings).axes.front = find_axis(
             settings_view.props_view(),
-            sp::FrontAxis.as_ptr(),
-            sp::FrontAxisSign.as_ptr(),
+            &sp::FrontAxis,
+            &sp::FrontAxisSign,
         );
         (*settings).axes.right = find_axis(
             settings_view.props_view(),
-            sp::CoordAxis.as_ptr(),
-            sp::CoordAxisSign.as_ptr(),
+            &sp::CoordAxis,
+            &sp::CoordAxisSign,
         );
         (*settings).unit_meters = round_if_near(
             POW10_TARGETS.as_ptr(),
@@ -11070,30 +10960,23 @@ pub(crate) fn update_scene_settings(settings_view: &SceneSettingsView) {
         // result promotes on assignment.
         (*settings).frames_per_second = find_real(
             settings_view.props_view(),
-            sp::CustomFrameRate.as_ptr(),
+            &sp::CustomFrameRate,
             24.0 as Real,
         ) as f64;
-        (*settings).ambient_color = find_vec3(
-            settings_view.props_view(),
-            sp::AmbientColor.as_ptr(),
-            0.0,
-            0.0,
-            0.0,
-        );
+        (*settings).ambient_color =
+            find_vec3(settings_view.props_view(), &sp::AmbientColor, 0.0, 0.0, 0.0);
         (*settings).original_axis_up = find_axis(
             settings_view.props_view(),
-            sp::OriginalUpAxis.as_ptr(),
-            sp::OriginalUpAxisSign.as_ptr(),
+            &sp::OriginalUpAxis,
+            &sp::OriginalUpAxisSign,
         );
     }
 
-    // SAFETY: props-view lookup with a NUL-terminated static name; the returned
-    // prop pointer is null-checked before the deref, and `settings` is the
-    // view's own storage.
+    // SAFETY: the returned prop pointer is null-checked before the deref, and
+    // `settings` is the view's own storage.
     unsafe {
-        let default_camera: *mut Prop =
-            find_prop(settings_view.props_view(), sp::DefaultCamera.as_ptr())
-                .map_or(ptr::null_mut(), PropView::get);
+        let default_camera: *mut Prop = find_prop(settings_view.props_view(), &sp::DefaultCamera)
+            .map_or(ptr::null_mut(), PropView::get);
         if !default_camera.is_null() {
             (*settings).default_camera = (*default_camera).value_str;
         } else {
@@ -11111,19 +10994,19 @@ pub(crate) fn update_scene_settings(settings_view: &SceneSettingsView) {
         // `ufbxi_update_camera` above).
         (*settings).time_mode = core::mem::transmute::<u32, TimeMode>(find_enum(
             settings_view.props_view(),
-            sp::TimeMode.as_ptr(),
+            &sp::TimeMode,
             TimeMode::E24Fps as i64,
             TimeMode::E5994Fps as i64,
         ) as u32);
         (*settings).time_protocol = core::mem::transmute::<u32, TimeProtocol>(find_enum(
             settings_view.props_view(),
-            sp::TimeProtocol.as_ptr(),
+            &sp::TimeProtocol,
             TimeProtocol::Default as i64,
             TimeProtocol::Default as i64,
         ) as u32);
         (*settings).snap_mode = core::mem::transmute::<u32, SnapMode>(find_enum(
             settings_view.props_view(),
-            sp::SnapOnFrameMode.as_ptr(),
+            &sp::SnapOnFrameMode,
             SnapMode::None as i64,
             SnapMode::SnapAndPlay as i64,
         ) as u32);

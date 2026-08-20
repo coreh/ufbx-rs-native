@@ -5540,8 +5540,13 @@ pub(crate) unsafe fn bake_node_imp(
 
     for i in 0..COMPLEX_TRANSLATION_PROPS.0.len() {
         let name: *const u8 = COMPLEX_TRANSLATION_PROPS.0[i];
-        let prop: Option<&PropView> =
-            find_prop(PropsView::from_ptr(&raw mut (*node).element.props), name);
+        // `find_prop` matches on the interned run's ADDRESS, so borrow `name`'s
+        // own bytes: the table entries are NUL-terminated `sp::*` statics.
+        let name_bytes: &[u8] = core::slice::from_raw_parts(name, strlen(name));
+        let prop: Option<&PropView> = find_prop(
+            PropsView::from_ptr(&raw mut (*node).element.props),
+            name_bytes,
+        );
         // C: `prop->value_vec3` — the `ufbx_prop` value union's 3-real view
         // over `value_vec4`.
         if prop.is_some_and(|prop| !is_vec3_zero(prop.value_vec3())) {
