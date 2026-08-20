@@ -828,16 +828,21 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
             let vx: u32 = unsafe { (*src.weights.add(weight_ix)).index };
             ufbxi_dev_assert!((vx as usize) < sc.src_mesh_view().num_vertices());
 
-            // SAFETY: the dev-assert above bounds `vx` below the vertex count,
-            // and `vertex_weights` (`tmp_vertex_weights`) is sized to hold one
-            // `Real` per source vertex, so `.add(vx)` stays in-bounds.
+            // SAFETY: `vx` is `< num_vertices` by loaded-data consistency —
+            // the same invariant upstream relies on for both the
+            // source-vertex path (where `vx` is a vertex index) and the skin
+            // path (where it is a cluster index), dev-asserted above in
+            // dev/regression builds. `vertex_weights` (`tmp_vertex_weights`)
+            // holds one `Real` per source vertex, so `.add(vx)` is in-bounds.
             let prev: Real = unsafe { *vertex_weights.add(vx as usize) };
-            // SAFETY: as above; in-bounds write to the per-vertex accumulator.
+            // SAFETY: as above; in-bounds write to the accumulator slot.
             unsafe { *vertex_weights.add(vx as usize) = prev + weight };
             if prev == 0.0 {
-                // SAFETY: at most one entry is pushed per distinct vertex, so
-                // `num_weights` stays below the vertex count that sizes
-                // `tmp_weights`, keeping `.add(num_weights)` in-bounds.
+                // SAFETY: at most one entry is pushed per distinct index, and
+                // the distinct indices of each path (source vertices or skin
+                // clusters) are bounded by the corresponding count folded into
+                // the `max_weights` sizing of `tmp_weights`, keeping
+                // `.add(num_weights)` in-bounds.
                 unsafe { (*tmp_weights.add(num_weights)).index = vx };
                 num_weights += 1;
             }
@@ -852,10 +857,10 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
         // SAFETY: `i < num_weights` and `tmp_weights` holds `num_weights` live
         // entries populated above, so `.add(i)` is in-bounds.
         let vx: u32 = unsafe { (*tmp_weights.add(i)).index };
-        // SAFETY: `.add(i)` is in-bounds (as above); `vx` was recorded above as a
-        // valid vertex index, so `vertex_weights.add(vx)` is in-bounds.
+        // SAFETY: `.add(i)` is in-bounds (as above); `vx` was recorded above as
+        // an index `< num_vertices`, so `vertex_weights.add(vx)` is in-bounds.
         unsafe { (*tmp_weights.add(i)).weight = *vertex_weights.add(vx as usize) };
-        // SAFETY: `vx` is a valid vertex index, so `.add(vx)` is in-bounds; the
+        // SAFETY: `vx` is `< num_vertices`, so `.add(vx)` is in-bounds; the
         // accumulator is reset to zero for reuse.
         unsafe { *vertex_weights.add(vx as usize) = 0.0 };
         i += 1;
@@ -964,18 +969,19 @@ pub(crate) unsafe fn is_edge_split(
         }
         // SAFETY: as above.
         let stride: usize = unsafe { (*input).stride };
-        // SAFETY: `input.values` is a byte-addressed attribute buffer with
-        // `stride` bytes per vertex; `a0` is an in-range vertex index, so the
-        // `.add(a0*stride)` byte offset stays within the buffer.
+        // SAFETY: `input.values` is a byte-addressed attribute buffer holding
+        // `stride` bytes per value; `a0` comes from `input.indices`, which maps
+        // corners to indices into that value array (not to mesh vertices), so
+        // the `.add(a0*stride)` byte offset stays within the buffer.
         let da0: *const u8 =
             unsafe { ((*input).values as *const u8).add((a0 as usize).wrapping_mul(stride)) };
-        // SAFETY: as above with vertex index `a1`.
+        // SAFETY: as above with value index `a1`.
         let da1: *const u8 =
             unsafe { ((*input).values as *const u8).add((a1 as usize).wrapping_mul(stride)) };
-        // SAFETY: as above with vertex index `b0`.
+        // SAFETY: as above with value index `b0`.
         let db0: *const u8 =
             unsafe { ((*input).values as *const u8).add((b0 as usize).wrapping_mul(stride)) };
-        // SAFETY: as above with vertex index `b1`.
+        // SAFETY: as above with value index `b1`.
         let db1: *const u8 =
             unsafe { ((*input).values as *const u8).add((b1 as usize).wrapping_mul(stride)) };
         // SAFETY: `da0`/`db0` and `da1`/`db1` each point to `stride` live bytes
@@ -1010,8 +1016,10 @@ pub(crate) unsafe fn edge_crease(
         && unsafe { (*topo.add(index as usize)).edge } != NO_INDEX
     {
         // SAFETY: the guard proved `edge_crease` data is non-null and this
-        // corner's `.edge` is a valid edge index, in range for the edge-crease
-        // array, so the `.add(edge)` read is in-bounds.
+        // corner's `.edge != NO_INDEX`; a non-sentinel `.edge` is an in-range
+        // edge index by topology/mesh consistency (`compute_topology` fills
+        // `.edge` from the source mesh's edge list, and `edge_crease` spans
+        // `num_edges`), so the `.add(edge)` read is in-bounds.
         return unsafe {
             *mesh
                 .edge_crease_view()
@@ -1177,8 +1185,8 @@ pub(crate) unsafe fn subdivide_layer(
             // SAFETY: `inputs` was grown to hold at least `max_face_triangles+2`
             // and `>= 32` entries, so `ci < face.num_indices` indexes a live
             // slot; `input.values`/`input.indices` are live, and `indices[ix]`
-            // is an in-range vertex whose `stride`-sized attribute the byte
-            // offset addresses.
+            // is an in-range index into the value array whose `stride`-sized
+            // entry the byte offset addresses.
             unsafe {
                 (*inputs.add(ci as usize)).data = ((*input).values as *const u8)
                     .add((*(*input).indices.add(ix as usize) as usize).wrapping_mul(stride))
@@ -1237,9 +1245,10 @@ pub(crate) unsafe fn subdivide_layer(
         } else if unsafe { (*topo.add(ix as usize)).edge } != NO_INDEX
             && !unsafe { (*mesh).edge_crease.data }.is_null()
         {
-            // SAFETY: the guard proved this corner's `.edge` is a valid edge
-            // index and `edge_crease.data` is non-null, so the `.add(edge)` read
-            // is in-bounds of the live edge-crease array.
+            // SAFETY: the guard proved this corner's `.edge != NO_INDEX` and
+            // `edge_crease.data` is non-null; a non-sentinel `.edge` is an
+            // in-range edge index by topology/mesh consistency (`edge_crease`
+            // spans `num_edges`), so the `.add(edge)` read is in-bounds.
             crease = unsafe {
                 *(*mesh)
                     .edge_crease
@@ -1251,13 +1260,14 @@ pub(crate) unsafe fn subdivide_layer(
             crease = 1.0;
         }
 
-        // SAFETY: `input` is live; `indices[ix]` is an in-range vertex whose
-        // `stride`-sized attribute the byte offset into `values` addresses.
+        // SAFETY: `input` is live; `indices[ix]` is an in-range index into the
+        // value array whose `stride`-sized entry the byte offset into `values`
+        // addresses.
         let v0: *const u8 = unsafe {
             ((*input).values as *const u8)
                 .add((*(*input).indices.add(ix as usize) as usize).wrapping_mul(stride))
         };
-        // SAFETY: as above, using this corner's `.next` sibling corner's vertex.
+        // SAFETY: as above, using this corner's `.next` sibling corner's value.
         let v1: *const u8 = unsafe {
             ((*input).values as *const u8).add(
                 (*(*input).indices.add((*topo.add(ix as usize)).next as usize) as usize)
@@ -1391,9 +1401,14 @@ pub(crate) unsafe fn subdivide_layer(
 
             let value_index: u32 = num_vertex_values as u32;
             num_vertex_values += 1;
-            // SAFETY: `num_vertex_values` stays `<= num_indices` (asserted after
-            // this loop), so `value_index*stride` is within the vertex segment
-            // of `values` that `vertex_values` heads.
+            // SAFETY: every completed iteration claims a fresh corner through
+            // the runtime-checked `vertex_indices[..] == NO_INDEX` guard below,
+            // so `value_index` is at most the claimed-corner count and stays
+            // `<= num_indices`; `value_index*stride` therefore addresses at
+            // worst one-past the vertex segment of `values` that
+            // `vertex_values` heads, and this iteration's own claim (which
+            // errors out otherwise) makes it strictly in-bounds before `dst` is
+            // written through.
             let dst: *mut u8 =
                 unsafe { vertex_values.add((value_index as usize).wrapping_mul(stride)) };
 
@@ -1424,8 +1439,9 @@ pub(crate) unsafe fn subdivide_layer(
             non_manifold |=
                 unsafe { (*topo.add(start_prev as usize)).flags }.has_any(TopoFlags::NON_MANIFOLD);
 
-            // SAFETY: `input` live; `indices[start]` is an in-range vertex whose
-            // `stride`-sized attribute the byte offset addresses.
+            // SAFETY: `input` live; `indices[start]` is an in-range index into
+            // the value array whose `stride`-sized entry the byte offset
+            // addresses.
             let v0: *const u8 = unsafe {
                 ((*input).values as *const u8)
                     .add((*(*input).indices.add(start as usize) as usize).wrapping_mul(stride))
@@ -1573,8 +1589,13 @@ pub(crate) unsafe fn subdivide_layer(
                         // `sc->inputs` after this grow (unlike the paired grow
                         // below) — the stale pointer is written through
                         // verbatim.
-                        // SAFETY: the grow above ensured `inputs` holds at least
-                        // `num_inputs + 1` slots, so slot `num_inputs` is live.
+                        // SAFETY: the grow above sized `sc`'s array to at least
+                        // `num_inputs + 1` slots, but this write goes through
+                        // the pre-grow `inputs` local, so slot `num_inputs` is
+                        // live only when the grow did not reallocate
+                        // (`inputs_cap == num_inputs` on entry is reachable,
+                        // making the pointer stale) — the upstream
+                        // stale-pointer write is mirrored verbatim.
                         unsafe { (*inputs.add(num_inputs)).data = f0 as *const c_void };
                         start = NO_INDEX;
                         num_inputs += 1;
@@ -1613,9 +1634,10 @@ pub(crate) unsafe fn subdivide_layer(
                         );
                         inputs = sc.inputs();
 
-                        // SAFETY: `input`/`topo` live; `cur`'s `.next` sibling
-                        // corner's vertex is in-range, addressing its
-                        // `stride`-sized attribute in `values`.
+                        // SAFETY: `input`/`topo` live; the index `indices` holds
+                        // for `cur`'s `.next` sibling corner is in range for
+                        // the value array, addressing its `stride`-sized entry
+                        // in `values`.
                         let e0: *const u8 = unsafe {
                             ((*input).values as *const u8).add(
                                 (*(*input)
@@ -1792,8 +1814,9 @@ pub(crate) unsafe fn subdivide_layer(
             num_vertex_values += 1;
             // SAFETY: `old_ix` is an in-range slot of `vertex_indices`.
             unsafe { *vertex_indices.add(old_ix) = ix };
-            // SAFETY: `input` live; `indices[old_ix]` is an in-range vertex whose
-            // `stride`-sized attribute the byte offset into `values` addresses.
+            // SAFETY: `input` live; `indices[old_ix]` is an in-range index into
+            // the value array whose `stride`-sized entry the byte offset into
+            // `values` addresses.
             let src: *const u8 = unsafe {
                 ((*input).values as *const u8)
                     .add((*(*input).indices.add(old_ix) as usize).wrapping_mul(stride))
@@ -2041,8 +2064,10 @@ pub(crate) unsafe fn init_skin_weights(
     while i < num_vertices {
         // SAFETY: `skin` points to a live `SkinDeformer` (fn contract).
         ufbxi_dev_assert!(i < unsafe { (*skin).vertices.count });
-        // SAFETY: the dev-assert bounds `i` below `skin.vertices.count`, so
-        // `.add(i)` is a live element, copied out by value.
+        // SAFETY: `skin.vertices.count >= num_vertices` by loaded-scene
+        // consistency — a mesh's skin deformer carries an entry per vertex,
+        // the assumption ufbx.c makes too — so `.add(i)` is a live element,
+        // copied out by value; dev-asserted in dev/regression builds.
         let vertex: SkinVertex = unsafe { *(*skin).vertices.data.add(i) };
         let num_weights: usize = min_sz(sc.max_vertex_weights(), vertex.num_weights as usize);
 
@@ -2169,11 +2194,14 @@ pub(crate) unsafe fn subdivide_weights(
             "(size_t)UINT32_MAX - weight_offset >= ws.num_weights"
         );
 
-        // SAFETY: `dst_ranges` is a fresh `num_vertices`-element push and `vi` is
-        // in range; `dst_weights` was pushed with `total_weights` slots and the
-        // check above keeps `weight_offset + ws.num_weights` within it, so the
-        // copy of `ws.num_weights` from this vertex's `ws.weights` run is in-bounds
-        // and the two buffers are distinct allocations (non-overlapping).
+        // SAFETY: `dst_ranges` is a fresh `num_vertices`-element push and `vi`
+        // is in range; `sc.total_weights()` is the summer-accumulated sum of
+        // every output value's `num_weights`, so `weight_offset +
+        // ws.num_weights` stays within the `total_weights`-slot `dst_weights`
+        // push and the copy of `ws.num_weights` from this vertex's
+        // `ws.weights` run is in-bounds. The two pushes are distinct
+        // allocations (non-overlapping). The check above is only a `u32`
+        // overflow guard for `weight_begin`.
         unsafe {
             (*dst_ranges.add(vi)).weight_begin = weight_offset as u32;
             (*dst_ranges.add(vi)).num_weights = ws.num_weights as u32;
