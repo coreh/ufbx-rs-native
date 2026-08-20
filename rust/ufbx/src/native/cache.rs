@@ -1744,12 +1744,15 @@ pub(crate) unsafe fn cache_try_open_file(
     // SAFETY: `stream_mut_ptr` addresses `cc`'s own `RawStream` field, so one
     // `RawStream` worth of bytes is writable there.
     unsafe { core::ptr::write_bytes(cc.stream_mut_ptr(), 0, 1) };
-    // SAFETY: `filename` is an interned pool string, NUL-terminated by the
-    // string pool — the contract `strlen` walks to.
+    // SAFETY: `filename.data` is a NUL-terminated buffer at every caller —
+    // either the `ufbxi_snprintf!`-formatted `name_buf` of
+    // `cache_load_frame_files` or the explicitly NUL-terminated arena copy from
+    // `cache_load_imp` — so `strlen` stops within `length` bytes.
     ufbxi_regression_assert!(unsafe { strlen(filename.data) } == filename.length);
     // SAFETY: the callback and stream pointers address `cc`'s own fields;
-    // `filename.data`/`.length` are a live pool string run, `original_filename`
-    // is the caller's `Blob` pointer, and the allocator is `cc`'s own temp one.
+    // `filename.data`/`.length` is a live, NUL-terminated caller buffer (the
+    // formatted `name_buf` or the arena copy), `original_filename` is the
+    // caller's `Blob` pointer, and the allocator is `cc`'s own temp one.
     if !unsafe {
         open_file(
             cc.open_file_cb_ptr(),
