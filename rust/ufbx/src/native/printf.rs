@@ -284,8 +284,9 @@ pub(crate) unsafe fn vprint(buf: *mut PrintBuffer, fmt: *const u8, args: &[Print
             let buf = unsafe { &mut *buf };
             if buf.pos < buf.length {
                 // SAFETY: `p` addresses a byte inside the NUL-terminated `fmt`
-                // (loop condition), and `buf.dst` addresses `buf.length` writable
-                // bytes with `buf.pos < buf.length` established by the guard.
+                // (loop condition, or the second '%' just read on the `%%`
+                // path), and `buf.dst` addresses `buf.length` writable bytes
+                // with `buf.pos < buf.length` established by the guard.
                 unsafe { *buf.dst.add(buf.pos) = *p };
                 buf.pos += 1;
             }
@@ -323,7 +324,8 @@ mod tests {
         let fmt_nul: Vec<u8> = fmt.as_bytes().iter().copied().chain([0u8]).collect();
         // SAFETY: `pb` describes the caller's `buf` slice, `fmt_nul` is the
         // format string with a NUL appended, and every `PrintArg::Str` in `args`
-        // is readable to its NUL per this fn's own raw-carrier contract.
+        // is readable to its NUL or to its `%.*s` precision per this fn's own
+        // raw-carrier contract.
         unsafe { vprint(&mut pb, fmt_nul.as_ptr(), args) };
         let nul = buf.iter().position(|&b| b == 0).unwrap();
         (pb.pos, buf[..nul].to_vec())
