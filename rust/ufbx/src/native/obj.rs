@@ -2642,7 +2642,6 @@ pub(crate) fn mtl_load(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:18049-18053 `ufbxi_obj_load` (`#else` branch — feature disabled)
 #[cfg(not(feature = "obj"))]
 #[inline(always)]
-#[must_use]
 pub(crate) fn obj_load(uc: &Context) -> Result<(), Fail> {
     unsafe { ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_FORMAT_OBJ") };
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_FORMAT_OBJ", "Feature disabled");
@@ -2651,7 +2650,6 @@ pub(crate) fn obj_load(uc: &Context) -> Result<(), Fail> {
 // ufbx.c:18055-18059 `ufbxi_mtl_load` (`#else` branch — feature disabled)
 #[cfg(not(feature = "obj"))]
 #[inline(always)]
-#[must_use]
 pub(crate) fn mtl_load(uc: &Context) -> Result<(), Fail> {
     unsafe { ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_FORMAT_OBJ") };
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_FORMAT_OBJ", "Feature disabled");

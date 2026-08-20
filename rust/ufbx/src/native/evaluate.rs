@@ -439,7 +439,6 @@ pub(crate) unsafe fn evaluate_skinning(
 // `Err(Fail)`.
 #[cfg(not(feature = "skinning-eval"))]
 #[inline(never)]
-#[must_use]
 pub(crate) unsafe fn evaluate_skinning(
     scene: *mut Scene,
     error: *mut Error,
