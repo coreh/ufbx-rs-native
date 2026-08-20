@@ -469,8 +469,9 @@ impl FileContext {
     // error-form check macros through the SAFE `fail_err`/`fail_err_no_stack`.
     #[inline(always)]
     pub(crate) fn error_view(&self) -> &crate::native::error::ErrorView {
-        // SAFETY: the context-owned `error` field is interior-mutable arena memory;
-        // `&raw mut` keeps write provenance (never `&T`); borrow of `self` anchors `'a <= self`.
+        // SAFETY: the context-owned `error` field lives in `fc`'s `UnsafeCell`
+        // (interior-mutable); `&raw mut` keeps write provenance (never `&T`);
+        // borrow of `self` anchors `'a <= self`.
         unsafe { crate::native::error::ErrorView::from_ptr(&raw mut (*self.get()).error) }
     }
 
@@ -492,7 +493,8 @@ impl FileContext {
     // `parent_ator` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn parent_ator(&self) -> *mut Allocator {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut Allocator` are valid.
+        // SAFETY: reading a scalar field zero-initialized by `begin_file_context`,
+        // which runs before any accessor; all bit patterns of `*mut Allocator` are valid.
         unsafe { (*self.get()).parent_ator }
     }
 
@@ -518,8 +520,10 @@ pub(crate) unsafe fn begin_file_context(
     unsafe { core::ptr::write_bytes(fc.get() as *mut u8, 0, size_of::<InnerFileContext>()) };
     if ctx != 0 {
         fc.set_parent_ator(ctx as *mut Allocator);
-        // SAFETY: a non-zero `OpenFileContext` is a live `*mut Allocator` handed
-        // out by `ufbx_open_file_ctx` — the contract of this `unsafe fn`.
+        // SAFETY: a non-zero `OpenFileContext` is the live `*mut Allocator` the
+        // library minted for the open-file callback (`ufbx_open_file_info.context`)
+        // and that flowed back in through `ufbx_open_file_ctx`/`ufbx_open_memory_ctx`
+        // — the contract of this `unsafe fn`.
         fc.set_ator(unsafe { *fc.parent_ator() });
         fc.ator_view().set_error(fc.error_mut_ptr());
     } else {
