@@ -39,10 +39,6 @@
 // (an orphaned stub that no ported call site reaches); leaner feature sets
 // legitimately strand items, so the lint is only armed for the full build.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::c_void;
 
 use crate::generated::{Exporter, WarningType};
@@ -393,22 +389,35 @@ pub(crate) unsafe fn ascii_push_token_char(
     c: u8,
 ) -> Result<(), Fail> {
     // Grow the string data buffer if necessary
-    if (*token).str_len == (*token).str_cap {
-        let len: usize = max_sz((*token).str_len + 1, 256);
+    // SAFETY: `token` points to a valid, live `AsciiToken` (caller contract).
+    if unsafe { (*token).str_len == (*token).str_cap } {
+        // SAFETY: as above — reads `token`'s own `str_len` field.
+        let len: usize = max_sz(unsafe { (*token).str_len } + 1, 256);
         ufbxi_check!(
             uc,
-            crate::native::allocator::grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
-                &raw mut (*token).str_data,
-                &raw mut (*token).str_cap,
-                len
-            ),
+            // SAFETY: `token`'s own paired `str_data`/`str_cap` growth state is
+            // grown through `uc`'s temp allocator (uc construction invariant);
+            // the `&raw mut` projections address `token`'s fields without forming
+            // references.
+            unsafe {
+                crate::native::allocator::grow_array::<u8>(
+                    uc.ator_tmp_mut_ptr(),
+                    &raw mut (*token).str_data,
+                    &raw mut (*token).str_cap,
+                    len
+                )
+            },
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&token->str_data)), (&token->str_data), (&token->str_cap), (len))"
         );
     }
 
-    *(*token).str_data.add((*token).str_len) = c;
-    (*token).str_len += 1;
+    // SAFETY: the grow above guarantees `str_len < str_cap`, so `str_data +
+    // str_len` is a writable slot inside `token`'s string buffer, and `str_len`
+    // is incremented within its now-larger capacity.
+    unsafe {
+        *(*token).str_data.add((*token).str_len) = c;
+        (*token).str_len += 1;
+    }
 
     Ok(())
 }
@@ -422,22 +431,36 @@ pub(crate) unsafe fn ascii_push_token_string(
     length: usize,
 ) -> Result<(), Fail> {
     // Grow the string data buffer if necessary
-    if (*token).str_len + length >= (*token).str_cap {
-        let len: usize = max_sz((*token).str_len + length, 256);
+    // SAFETY: `token` points to a valid, live `AsciiToken` (caller contract).
+    if unsafe { (*token).str_len + length >= (*token).str_cap } {
+        // SAFETY: as above — reads `token`'s own `str_len` field.
+        let len: usize = max_sz(unsafe { (*token).str_len } + length, 256);
         ufbxi_check!(
             uc,
-            crate::native::allocator::grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
-                &raw mut (*token).str_data,
-                &raw mut (*token).str_cap,
-                len
-            ),
+            // SAFETY: `token`'s own paired `str_data`/`str_cap` growth state is
+            // grown through `uc`'s temp allocator (uc construction invariant);
+            // the `&raw mut` projections address `token`'s fields without forming
+            // references.
+            unsafe {
+                crate::native::allocator::grow_array::<u8>(
+                    uc.ator_tmp_mut_ptr(),
+                    &raw mut (*token).str_data,
+                    &raw mut (*token).str_cap,
+                    len
+                )
+            },
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&token->str_data)), (&token->str_data), (&token->str_cap), (len))"
         );
     }
 
-    core::ptr::copy_nonoverlapping(data, (*token).str_data.add((*token).str_len), length);
-    (*token).str_len += length;
+    // SAFETY: the grow above guarantees `str_len + length < str_cap`, so the
+    // `length`-byte copy lands inside `token`'s string buffer starting at
+    // `str_data + str_len`; `data` is the caller's readable source run of
+    // `length` bytes.
+    unsafe {
+        core::ptr::copy_nonoverlapping(data, (*token).str_data.add((*token).str_len), length);
+        (*token).str_len += length;
+    }
 
     Ok(())
 }
@@ -486,25 +509,41 @@ pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Resul
 
     // The `retain_buf` field is a raw back-pointer the ascii reader stores for
     // its own pushes; recover the pointer from the view.
-    (*ua).retain_buf = tmp_buf.get();
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
+    // this writes its `retain_buf` field in place.
+    unsafe {
+        (*ua).retain_buf = tmp_buf.get();
+    }
 
     loop {
-        let buffered: usize = to_size((*ua).src_yield as isize - (*ua).src as isize);
+        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src`/`src_yield`
+        // bracket the readable source window (`src <= src_yield`).
+        let buffered: usize = to_size(unsafe { (*ua).src_yield as isize - (*ua).src as isize });
         if buffered == 0 {
             let c: u8 = ascii_yield(uc);
             ufbxi_check!(uc, c != b'\0', "c != '\\0'");
             continue;
         }
 
-        let begin: *const u8 = (*ua).src;
+        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src`
+        // cursor, which points inside the source window.
+        let begin: *const u8 = unsafe { (*ua).src };
         let end: *const u8;
-        let match_: *const u8 = memchr(begin, b'}', buffered);
+        // SAFETY: `begin` is the live `src` cursor and `buffered` is the readable
+        // `src..src_yield` run, so `memchr` scans in-bounds bytes.
+        let match_: *const u8 = unsafe { memchr(begin, b'}', buffered) };
         if !match_.is_null() {
             end = match_;
         } else {
-            end = begin.add(buffered);
+            // SAFETY: `buffered` is the length of the readable `begin` run, so
+            // `begin + buffered` is its one-past-the-end (== `src_yield`).
+            end = unsafe { begin.add(buffered) };
         }
-        (*ua).src = end;
+        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `end` lands in
+        // `[begin, src_yield]`, still within the source window.
+        unsafe {
+            (*ua).src = end;
+        }
 
         let mut length: usize = to_size(end as isize - begin as isize);
         let span: *mut AsciiSpan = uc.tmp_ascii_spans_view().push::<AsciiSpan>(1);
@@ -513,12 +552,28 @@ pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Resul
         if !match_.is_null() {
             length += 1;
         }
-        (*span).length = length;
-        if (*ua).src_is_retained || uc.read_fn().is_none() {
-            (*span).source = begin;
+        // SAFETY: `span` is the freshly pushed `AsciiSpan` slot checked non-null
+        // above; writes its own `length` field.
+        unsafe {
+            (*span).length = length;
+        }
+        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its
+        // `src_is_retained` flag.
+        if unsafe { (*ua).src_is_retained } || uc.read_fn().is_none() {
+            // SAFETY: `span` is the live pushed slot; `begin` points into the
+            // retained/inline source window, kept alive for the span's lifetime.
+            unsafe {
+                (*span).source = begin;
+            }
         } else {
-            (*span).source = push_copy::<u8>(tmp_buf.get(), length, begin);
-            ufbxi_check!(uc, !(*span).source.is_null(), "span->source");
+            // SAFETY: `span` is the live pushed slot; `begin` is readable for
+            // `length` bytes (the `src` run just scanned) and `tmp_buf` is a live
+            // buf, so `push_copy` copies that run into a fresh slot.
+            unsafe {
+                (*span).source = push_copy::<u8>(tmp_buf.get(), length, begin);
+            }
+            // SAFETY: `span` is the live pushed slot; reads back its `source`.
+            ufbxi_check!(uc, !unsafe { (*span).source }.is_null(), "span->source");
         }
 
         if !match_.is_null() {
@@ -526,7 +581,11 @@ pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Resul
         }
     }
 
-    (*ua).retain_buf = core::ptr::null_mut();
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; clears its
+    // `retain_buf` back-pointer.
+    unsafe {
+        (*ua).retain_buf = core::ptr::null_mut();
+    }
 
     Ok(())
 }
@@ -544,18 +603,29 @@ pub(crate) unsafe fn ascii_try_ignore_string(uc: &Context, token: *mut AsciiToke
     let ua: *mut Ascii = uc.ascii_mut_ptr();
 
     let c: u8 = ascii_skip_whitespace(uc);
-    (*token).str_len = 0;
+    // SAFETY: `token` points to a valid, live `AsciiToken` (caller contract).
+    unsafe {
+        (*token).str_len = 0;
+    }
 
     if c == b'"' {
         // Replace `prev_token` with `token` but swap the buffers so `token` uses
         // the now-unused string buffer of the old `prev_token`.
-        let swap_data: *mut u8 = (*ua).prev_token.str_data;
-        let swap_cap: usize = (*ua).prev_token.str_cap;
-        (*ua).prev_token = (*ua).token;
-        (*ua).token.str_data = swap_data;
-        (*ua).token.str_cap = swap_cap;
+        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via
+        // `ascii_mut_ptr`); these read and rewrite its `token`/`prev_token`
+        // fields in place.
+        unsafe {
+            let swap_data: *mut u8 = (*ua).prev_token.str_data;
+            let swap_cap: usize = (*ua).prev_token.str_cap;
+            (*ua).prev_token = (*ua).token;
+            (*ua).token.str_data = swap_data;
+            (*ua).token.str_cap = swap_cap;
+        }
 
-        (*token).type_ = ASCII_STRING;
+        // SAFETY: `token` points to a valid, live `AsciiToken` (caller contract).
+        unsafe {
+            (*token).type_ = ASCII_STRING;
+        }
         // Skip opening quote
         ascii_next(uc);
         ufbxi_check_return!(
@@ -579,17 +649,27 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
 
     // Replace `prev_token` with `token` but swap the buffers so `token` uses
     // the now-unused string buffer of the old `prev_token`.
-    let swap_data: *mut u8 = (*ua).prev_token.str_data;
-    let swap_cap: usize = (*ua).prev_token.str_cap;
-    (*ua).prev_token = (*ua).token;
-    (*ua).token.str_data = swap_data;
-    (*ua).token.str_cap = swap_cap;
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
+    // these read and rewrite its `token`/`prev_token` fields in place.
+    unsafe {
+        let swap_data: *mut u8 = (*ua).prev_token.str_data;
+        let swap_cap: usize = (*ua).prev_token.str_cap;
+        (*ua).prev_token = (*ua).token;
+        (*ua).token.str_data = swap_data;
+        (*ua).token.str_cap = swap_cap;
+    }
 
     let mut c: u8 = ascii_skip_whitespace(uc);
-    (*token).str_len = 0;
+    // SAFETY: `token` points to a valid, live `AsciiToken` (caller contract).
+    unsafe {
+        (*token).str_len = 0;
+    }
 
     if (c >= b'A' && c <= b'Z') || (c >= b'a' && c <= b'z') || c == b'_' {
-        (*token).type_ = ASCII_BARE_WORD;
+        // SAFETY: `token` is the caller's valid, live `AsciiToken` out-param.
+        unsafe {
+            (*token).type_ = ASCII_BARE_WORD;
+        }
         while (c >= b'A' && c <= b'Z')
             || (c >= b'a' && c <= b'z')
             || (c >= b'0' && c <= b'9')
@@ -598,21 +678,30 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
             || c == b'('
             || c == b')'
         {
-            ascii_push_token_char(uc, token, c)?;
+            // SAFETY: `token` is the caller's valid, live `AsciiToken`; the byte
+            // push appends to its own string buffer.
+            unsafe { ascii_push_token_char(uc, token, c) }?;
             c = ascii_next(uc);
         }
 
         // Skip whitespace to find if there's a following ':'
         c = ascii_skip_whitespace(uc);
         if c == b':' {
-            (*token).value.name_len = (*token).str_len;
-            (*token).type_ = ASCII_NAME;
+            // SAFETY: `token` is the caller's valid, live `AsciiToken`; writes its
+            // own `value.name_len` (union) and `type_` fields from its `str_len`.
+            unsafe {
+                (*token).value.name_len = (*token).str_len;
+                (*token).type_ = ASCII_NAME;
+            }
             ascii_next(uc);
         }
     } else if (c >= b'0' && c <= b'9') || c == b'-' || c == b'+' || c == b'.' {
-        (*token).type_ = ASCII_INT;
-
-        (*token).negative = c == b'-';
+        // SAFETY: `token` is the caller's valid, live `AsciiToken`; writes its
+        // own `type_` and `negative` fields.
+        unsafe {
+            (*token).type_ = ASCII_INT;
+            (*token).negative = c == b'-';
+        }
         while (c >= b'0' && c <= b'9')
             || c == b'-'
             || c == b'+'
@@ -621,9 +710,14 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
             || c == b'E'
         {
             if c == b'.' || c == b'e' || c == b'E' {
-                (*token).type_ = ASCII_FLOAT;
+                // SAFETY: `token` is the caller's valid, live `AsciiToken`.
+                unsafe {
+                    (*token).type_ = ASCII_FLOAT;
+                }
             }
-            ascii_push_token_char(uc, token, c)?;
+            // SAFETY: `token` is the caller's valid, live `AsciiToken`; the byte
+            // push appends to its own string buffer.
+            unsafe { ascii_push_token_char(uc, token, c) }?;
             c = ascii_next(uc);
         }
 
@@ -636,60 +730,108 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
             || c == b')'
         {
             nan_like = true;
-            ascii_push_token_char(uc, token, c)?;
+            // SAFETY: `token` is the caller's valid, live `AsciiToken`; the byte
+            // push appends to its own string buffer.
+            unsafe { ascii_push_token_char(uc, token, c) }?;
             c = ascii_next(uc);
         }
-        ascii_push_token_char(uc, token, b'\0')?;
+        // SAFETY: as above — appends the NUL terminator to `token`'s buffer.
+        unsafe { ascii_push_token_char(uc, token, b'\0') }?;
         if nan_like {
-            (*token).type_ = ASCII_FLOAT;
+            // SAFETY: `token` is the caller's valid, live `AsciiToken`.
+            unsafe {
+                (*token).type_ = ASCII_FLOAT;
+            }
         }
 
         let mut end: *const u8 = core::ptr::null();
-        if (*token).type_ == ASCII_INT {
-            (*token).value.i64_ = parse_int64((*token).str_data, &raw mut end);
+        // SAFETY: `token` is the caller's valid, live `AsciiToken`; reads its
+        // `type_` field.
+        if unsafe { (*token).type_ } == ASCII_INT {
+            // SAFETY: `token->str_data` is its NUL-terminated number buffer just
+            // filled above; `parse_int64` scans it and stores its end in `end`,
+            // and the write targets `token`'s own `value.i64_` union member.
+            unsafe {
+                (*token).value.i64_ = parse_int64((*token).str_data, &raw mut end);
+            }
             ufbxi_check!(
                 uc,
-                end == (*token).str_data.add((*token).str_len - 1),
+                // SAFETY: `token`'s buffer holds `str_len` bytes (the digits plus
+                // the trailing NUL), so `str_data + str_len - 1` is the NUL slot
+                // `parse_int64` stops at.
+                end == unsafe { (*token).str_data.add((*token).str_len - 1) },
                 "end == token->str_data + token->str_len - 1"
             );
-        } else if (*token).type_ == ASCII_FLOAT {
+        } else if unsafe { (*token).type_ } == ASCII_FLOAT {
             let mut flags: u32 = uc.double_parse_flags();
-            if (*ua).parse_as_f32 {
+            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its
+            // `parse_as_f32` flag.
+            if unsafe { (*ua).parse_as_f32 } {
                 flags = PARSE_DOUBLE_AS_BINARY32;
             }
-            (*token).value.f64_ =
-                parse_double((*token).str_data, (*token).str_len, &raw mut end, flags);
+            // SAFETY: `token->str_data`/`str_len` describe its NUL-terminated
+            // number buffer; `parse_double` scans it and stores its end in `end`,
+            // and the write targets `token`'s own `value.f64_` union member.
+            unsafe {
+                (*token).value.f64_ =
+                    parse_double((*token).str_data, (*token).str_len, &raw mut end, flags);
+            }
             ufbxi_check!(
                 uc,
-                end == (*token).str_data.add((*token).str_len - 1),
+                // SAFETY: as in the int branch — `str_data + str_len - 1` is the
+                // trailing-NUL slot within `token`'s buffer.
+                end == unsafe { (*token).str_data.add((*token).str_len - 1) },
                 "end == token->str_data + token->str_len - 1"
             );
         }
     } else if c == b'"' {
-        (*token).type_ = ASCII_STRING;
+        // SAFETY: `token` is the caller's valid, live `AsciiToken`.
+        unsafe {
+            (*token).type_ = ASCII_STRING;
+        }
         c = ascii_next(uc);
         while c != b'"' {
             // Optimized string parsing for non-special characters
-            if (*ua).src.add(1) < (*ua).src_yield {
-                let begin: *const u8 = (*ua).src;
-                let mut end: *const u8 = (*ua).src_yield;
-                let quot: *const u8 = memchr(begin, b'"', to_size(end as isize - begin as isize));
+            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src + 1` stays
+            // at or before `src_yield` when the compared inequality holds, and the
+            // `src`/`src_yield` reads bracket the readable source window.
+            if unsafe { (*ua).src.add(1) < (*ua).src_yield } {
+                // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its
+                // `src`/`src_yield` cursors delimiting the readable window.
+                let begin: *const u8 = unsafe { (*ua).src };
+                let mut end: *const u8 = unsafe { (*ua).src_yield };
+                // SAFETY: `[begin, end)` is a sub-run of the readable source
+                // window, so `memchr` scans in-bounds bytes.
+                let quot: *const u8 =
+                    unsafe { memchr(begin, b'"', to_size(end as isize - begin as isize)) };
                 if !quot.is_null() {
                     end = quot;
                 }
-                let esc: *const u8 = memchr(begin, b'&', to_size(end as isize - begin as isize));
+                // SAFETY: `end` only shrank toward `begin`, so `[begin, end)`
+                // remains a readable sub-run for `memchr` to scan.
+                let esc: *const u8 =
+                    unsafe { memchr(begin, b'&', to_size(end as isize - begin as isize)) };
                 if !esc.is_null() {
                     end = esc;
                 }
 
                 if begin < end {
-                    ascii_push_token_string(
-                        uc,
-                        token,
-                        begin,
-                        to_size(end as isize - begin as isize),
-                    )?;
-                    (*ua).src = end;
+                    // SAFETY: `token` is the caller's valid, live `AsciiToken`;
+                    // `[begin, end)` is a readable run of the source window, copied
+                    // into `token`'s string buffer.
+                    unsafe {
+                        ascii_push_token_string(
+                            uc,
+                            token,
+                            begin,
+                            to_size(end as isize - begin as isize),
+                        )
+                    }?;
+                    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `end`
+                    // lands inside the readable window, a valid `src` cursor.
+                    unsafe {
+                        (*ua).src = end;
+                    }
                     c = ascii_peek(uc);
                     continue;
                 }
@@ -726,25 +868,39 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
 
                 let mut step: usize = 1;
 
-                ufbxi_dev_assert!(!entity.is_null() && *entity != 0);
+                // SAFETY: `entity` addresses a static NUL-terminated entity
+                // literal (assigned in every match arm), so its first byte is
+                // readable.
+                ufbxi_dev_assert!(!entity.is_null() && unsafe { *entity } != 0);
                 // `entity` is a NULL terminated string longer than a single character
                 // cppcheck-suppress arrayIndexOutOfBounds
-                while *entity.add(step) != 0 {
-                    if c != *entity.add(step) {
+                // SAFETY: `entity` addresses a static NUL-terminated entity
+                // literal; `step` never passes its terminating NUL (the loop stops
+                // at the first `0`), so `entity + step` is a readable byte.
+                while unsafe { *entity.add(step) } != 0 {
+                    // SAFETY: as above — `step` still indexes a byte before the NUL.
+                    if c != unsafe { *entity.add(step) } {
                         break;
                     }
                     c = ascii_next(uc);
                     step += 1;
                 }
 
-                if *entity.add(step) == b'\0' {
+                // SAFETY: `entity` addresses a static NUL-terminated entity
+                // literal; the loop left `step` at or before its terminating NUL,
+                // so `entity + step` is readable.
+                if unsafe { *entity.add(step) } == b'\0' {
                     // Full match: Push the replacement character
-                    ascii_push_token_char(uc, token, replacement)?;
+                    // SAFETY: `token` is the caller's valid, live `AsciiToken`.
+                    unsafe { ascii_push_token_char(uc, token, replacement) }?;
                 } else {
                     // Partial match: Push the prefix we have skipped already
                     let mut i: usize = 0;
                     while i < step {
-                        ascii_push_token_char(uc, token, *entity.add(i))?;
+                        // SAFETY: `token` is the caller's valid, live `AsciiToken`;
+                        // `i < step` indexes a matched prefix byte of the entity
+                        // literal, before its terminating NUL.
+                        unsafe { ascii_push_token_char(uc, token, *entity.add(i)) }?;
                         i += 1;
                     }
                 }
@@ -752,7 +908,9 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
             }
 
             ufbxi_check!(uc, c != b'\0', "c != '\\0'");
-            ascii_push_token_char(uc, token, c)?;
+            // SAFETY: `token` is the caller's valid, live `AsciiToken`; the byte
+            // push appends to its own string buffer.
+            unsafe { ascii_push_token_char(uc, token, c) }?;
             c = ascii_next(uc);
         }
         // Skip closing quote
@@ -761,13 +919,20 @@ pub(crate) unsafe fn ascii_next_token(uc: &Context, token: *mut AsciiToken) -> R
         // Check if the next character is ':', in some legacy FBX files we have names with
         // spaces, like `"Transport Tool Settings": { ... }`
         if next == b':' {
-            (*token).value.name_len = (*token).str_len;
-            (*token).type_ = ASCII_NAME;
+            // SAFETY: `token` is the caller's valid, live `AsciiToken`; writes its
+            // own `value.name_len` (union) and `type_` fields from its `str_len`.
+            unsafe {
+                (*token).value.name_len = (*token).str_len;
+                (*token).type_ = ASCII_NAME;
+            }
             ascii_next(uc);
         }
     } else {
         // Single character token
-        (*token).type_ = c;
+        // SAFETY: `token` is the caller's valid, live `AsciiToken`.
+        unsafe {
+            (*token).type_ = c;
+        }
         ascii_next(uc);
     }
 
@@ -807,34 +972,48 @@ pub(crate) unsafe fn ascii_read_int_array(
     p_num_read: *mut usize,
 ) -> Result<(), Fail> {
     let ua: *mut Ascii = uc.ascii_mut_ptr();
-    if (*ua).parse_as_f32 {
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
+    // reads its `parse_as_f32` flag.
+    if unsafe { (*ua).parse_as_f32 } {
         return Ok(());
     }
     let initial_items: usize = uc.tmp_stack_view().num_items();
 
     let mut val: i64;
-    if (*ua).token.type_ == ASCII_INT {
-        val = (*ua).token.value.i64_;
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its current
+    // token's `type_`, and its `value.i64_` union member holds the parsed int
+    // whenever the type is `ASCII_INT`.
+    if unsafe { (*ua).token.type_ } == ASCII_INT {
+        val = unsafe { (*ua).token.value.i64_ };
     } else {
         return Ok(());
     }
 
-    let mut src: *const u8 = (*ua).src;
-    let end: *const u8 = (*ua).src_yield;
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src` cursor
+    // and `src_yield` window end.
+    let mut src: *const u8 = unsafe { (*ua).src };
+    let end: *const u8 = unsafe { (*ua).src_yield };
     let mut src_scan: *const u8 = src;
 
     loop {
         // Skip '\s*,\s*' between array elements. If we don't find a comma after an element
         // don't push it as we can't be 100% certain whether it's a part of the array.
-        while src_scan != end && is_space(*src_scan) {
-            src_scan = src_scan.add(1);
+        // SAFETY: the `src_scan != end` guard short-circuits before the deref, so
+        // `src_scan` addresses a byte inside `[src, src_yield)`; the advance then
+        // lands at or before `end`.
+        while src_scan != end && unsafe { is_space(*src_scan) } {
+            src_scan = unsafe { src_scan.add(1) };
         }
-        if src_scan == end || *src_scan != b',' {
+        // SAFETY: as above — `src_scan != end` guards the deref.
+        if src_scan == end || unsafe { *src_scan } != b',' {
             break;
         }
-        src_scan = src_scan.add(1);
-        while src_scan != end && is_space(*src_scan) {
-            src_scan = src_scan.add(1);
+        // SAFETY: reached only when `src_scan != end`, so `+1` lands at or before
+        // `end` within the source window.
+        src_scan = unsafe { src_scan.add(1) };
+        // SAFETY: as the first scan — guarded deref, advance stays within window.
+        while src_scan != end && unsafe { is_space(*src_scan) } {
+            src_scan = unsafe { src_scan.add(1) };
         }
 
         // Found comma, commit to the position and push the previous value to the array
@@ -842,11 +1021,17 @@ pub(crate) unsafe fn ascii_read_int_array(
         if type_ == b'i' {
             let v: *mut i32 = uc.tmp_stack_view().push_fast::<i32>(1);
             ufbxi_check!(uc, !v.is_null(), "v");
-            *v = val as i32;
+            // SAFETY: `v` is the freshly pushed, non-null `i32` slot.
+            unsafe {
+                *v = val as i32;
+            }
         } else if type_ == b'l' {
             let v: *mut i64 = uc.tmp_stack_view().push_fast::<i64>(1);
             ufbxi_check!(uc, !v.is_null(), "v");
-            *v = val;
+            // SAFETY: `v` is the freshly pushed, non-null `i64` slot.
+            unsafe {
+                *v = val;
+            }
         }
 
         // Try to parse the next value, we don't commit this until we find a comma after it above.
@@ -855,19 +1040,30 @@ pub(crate) unsafe fn ascii_read_int_array(
             break;
         }
 
-        val = parse_int64(src_scan, &raw mut src_scan);
+        // SAFETY: `left >= 32` bytes are readable at `src_scan` inside the source
+        // window; `parse_int64` scans them and stores its end back into `src_scan`.
+        val = unsafe { parse_int64(src_scan, &raw mut src_scan) };
         if src_scan.is_null() {
             break;
         }
     }
 
     // Resume conventional parsing if we moved `src`.
-    if src != (*ua).src {
-        (*ua).src = src;
-        ascii_next_token(uc, &raw mut (*ua).token)?;
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src` cursor.
+    if src != unsafe { (*ua).src } {
+        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src` was derived
+        // from its window and stays inside it, a valid cursor to store back. The
+        // `&raw mut` projects its own `token` field, retokenized in place.
+        unsafe {
+            (*ua).src = src;
+            ascii_next_token(uc, &raw mut (*ua).token)?;
+        }
     }
 
-    *p_num_read = uc.tmp_stack_view().num_items() - initial_items;
+    // SAFETY: `p_num_read` is the caller's valid out-param.
+    unsafe {
+        *p_num_read = uc.tmp_stack_view().num_items() - initial_items;
+    }
     Ok(())
 }
 
@@ -892,14 +1088,20 @@ pub(crate) unsafe fn ascii_array_task_parse_floats(
     parse_flags: u32,
 ) -> *const u8 {
     let mut src: *const u8 = src;
-    let mut offset: usize = (*t).offset;
-    let mut dst_float: *mut f32 = if (*t).arr_type == b'f' {
-        add_ptr((*t).arr_data as *mut f32, offset)
+    // SAFETY: `t` points to a valid, live `AsciiArrayTask` (caller contract);
+    // reads its `offset` field.
+    let mut offset: usize = unsafe { (*t).offset };
+    // SAFETY: `t` is a valid, live `AsciiArrayTask`; when its type is `'f'`,
+    // `arr_data` is the base of the `f32` destination array and `offset` is the
+    // count already written, so `add_ptr` addresses its next slot.
+    let mut dst_float: *mut f32 = if unsafe { (*t).arr_type } == b'f' {
+        add_ptr(unsafe { (*t).arr_data } as *mut f32, offset)
     } else {
         core::ptr::null_mut()
     };
-    let mut dst_double: *mut f64 = if (*t).arr_type == b'd' {
-        add_ptr((*t).arr_data as *mut f64, offset)
+    // SAFETY: as above, for the `'d'` (f64) destination array.
+    let mut dst_double: *mut f64 = if unsafe { (*t).arr_type } == b'd' {
+        add_ptr(unsafe { (*t).arr_data } as *mut f64, offset)
     } else {
         core::ptr::null_mut()
     };
@@ -907,46 +1109,70 @@ pub(crate) unsafe fn ascii_array_task_parse_floats(
     let mut src_begin: *const u8 = src;
 
     while src != src_end {
-        while is_space(*src) {
-            src = src.add(1);
+        // SAFETY: the caller's parse run `[src, src_end)` ends at a comma or
+        // `src_end` sentinel that halts this space scan before it passes the end,
+        // so each deref/advance reads a byte inside the run.
+        while unsafe { is_space(*src) } {
+            src = unsafe { src.add(1) };
         }
 
         // Try to parse the next value, we don't commit this until we find a comma after it above.
         let mut num_end: *const u8 = core::ptr::null();
-        let val: f64 = parse_double(
-            src,
-            to_size(src_end as isize - src as isize),
-            &raw mut num_end,
-            parse_flags,
-        );
+        // SAFETY: `[src, src_end)` is the caller's readable parse run; `parse_double`
+        // scans at most `src_end - src` bytes and stores its end into `num_end`.
+        let val: f64 = unsafe {
+            parse_double(
+                src,
+                to_size(src_end as isize - src as isize),
+                &raw mut num_end,
+                parse_flags,
+            )
+        };
         if num_end.is_null() {
             return src_begin;
         }
         src = num_end;
 
-        while is_space(*src) {
-            src = src.add(1);
+        // SAFETY: as the first scan — the run's comma/`src_end` sentinel halts it.
+        while unsafe { is_space(*src) } {
+            src = unsafe { src.add(1) };
         }
-        if *src != b',' {
+        // SAFETY: `src` rests on a non-space byte within the parse run.
+        if unsafe { *src } != b',' {
             break;
         }
-        src = src.add(1);
+        // SAFETY: `src` addresses the just-read comma, a byte before `src_end`,
+        // so `+1` stays at or before the run end.
+        src = unsafe { src.add(1) };
         src_begin = src;
 
-        if offset >= (*t).arr_size {
+        // SAFETY: `t` is a valid, live `AsciiArrayTask`; reads its `arr_size`.
+        if offset >= unsafe { (*t).arr_size } {
             return core::ptr::null();
         }
         if !dst_double.is_null() {
-            *dst_double = val;
-            dst_double = dst_double.add(1);
+            // SAFETY: `offset < arr_size` (checked above), so `dst_double` (base +
+            // offset) is a live slot of the `f64` destination array; advance stays
+            // within it.
+            unsafe {
+                *dst_double = val;
+                dst_double = dst_double.add(1);
+            }
         } else {
-            *dst_float = val as f32;
-            dst_float = dst_float.add(1);
+            // SAFETY: `offset < arr_size`, so `dst_float` is a live slot of the
+            // `f32` destination array; advance stays within it.
+            unsafe {
+                *dst_float = val as f32;
+                dst_float = dst_float.add(1);
+            }
         }
         offset += 1;
     }
 
-    (*t).offset = offset;
+    // SAFETY: `t` is a valid, live `AsciiArrayTask`; writes back its `offset`.
+    unsafe {
+        (*t).offset = offset;
+    }
     src_begin
 }
 
@@ -958,14 +1184,20 @@ pub(crate) unsafe fn ascii_array_task_parse_ints(
     src_end: *const u8,
 ) -> *const u8 {
     let mut src: *const u8 = src;
-    let mut offset: usize = (*t).offset;
-    let mut dst32: *mut i32 = if (*t).arr_type == b'i' {
-        add_ptr((*t).arr_data as *mut i32, offset)
+    // SAFETY: `t` points to a valid, live `AsciiArrayTask` (caller contract);
+    // reads its `offset` field.
+    let mut offset: usize = unsafe { (*t).offset };
+    // SAFETY: `t` is a valid, live `AsciiArrayTask`; when its type is `'i'`,
+    // `arr_data` is the base of the `i32` destination array and `offset` is the
+    // count already written, so `add_ptr` addresses its next slot.
+    let mut dst32: *mut i32 = if unsafe { (*t).arr_type } == b'i' {
+        add_ptr(unsafe { (*t).arr_data } as *mut i32, offset)
     } else {
         core::ptr::null_mut()
     };
-    let mut dst64: *mut i64 = if (*t).arr_type == b'l' {
-        add_ptr((*t).arr_data as *mut i64, offset)
+    // SAFETY: as above, for the `'l'` (i64) destination array.
+    let mut dst64: *mut i64 = if unsafe { (*t).arr_type } == b'l' {
+        add_ptr(unsafe { (*t).arr_data } as *mut i64, offset)
     } else {
         core::ptr::null_mut()
     };
@@ -973,38 +1205,60 @@ pub(crate) unsafe fn ascii_array_task_parse_ints(
     let mut src_begin: *const u8 = src;
 
     while src != src_end {
-        while is_space(*src) {
-            src = src.add(1);
+        // SAFETY: the caller's parse run `[src, src_end)` ends at a comma or
+        // `src_end` sentinel that halts this space scan before it passes the end,
+        // so each deref/advance reads a byte inside the run.
+        while unsafe { is_space(*src) } {
+            src = unsafe { src.add(1) };
         }
 
-        let val: i64 = parse_int64(src, &raw mut src);
+        // SAFETY: `src` points inside the caller's readable parse run; `parse_int64`
+        // scans the run and stores its end back into `src`.
+        let val: i64 = unsafe { parse_int64(src, &raw mut src) };
         if src.is_null() {
             return core::ptr::null();
         }
 
-        while is_space(*src) {
-            src = src.add(1);
+        // SAFETY: as the first scan — the run's comma/`src_end` sentinel halts it.
+        while unsafe { is_space(*src) } {
+            src = unsafe { src.add(1) };
         }
-        if *src != b',' {
+        // SAFETY: `src` rests on a non-space byte within the parse run.
+        if unsafe { *src } != b',' {
             break;
         }
-        src = src.add(1);
+        // SAFETY: `src` addresses the just-read comma, a byte before `src_end`,
+        // so `+1` stays at or before the run end.
+        src = unsafe { src.add(1) };
         src_begin = src;
 
-        if offset >= (*t).arr_size {
+        // SAFETY: `t` is a valid, live `AsciiArrayTask`; reads its `arr_size`.
+        if offset >= unsafe { (*t).arr_size } {
             return core::ptr::null();
         }
         if !dst32.is_null() {
-            *dst32 = val as i32;
-            dst32 = dst32.add(1);
+            // SAFETY: `offset < arr_size` (checked above), so `dst32` (base +
+            // offset) is a live slot of the `i32` destination array; advance stays
+            // within it.
+            unsafe {
+                *dst32 = val as i32;
+                dst32 = dst32.add(1);
+            }
         } else {
-            *dst64 = val;
-            dst64 = dst64.add(1);
+            // SAFETY: `offset < arr_size`, so `dst64` is a live slot of the `i64`
+            // destination array; advance stays within it.
+            unsafe {
+                *dst64 = val;
+                dst64 = dst64.add(1);
+            }
         }
         offset += 1;
     }
 
-    (*t).offset = offset;
+    // SAFETY: `t` is a valid, live `AsciiArrayTask`; writes back its `offset`.
+    unsafe {
+        (*t).offset = offset;
+    }
     src_begin
 }
 
@@ -1015,11 +1269,17 @@ pub(crate) unsafe fn ascii_array_task_parse(
     src: *const u8,
     src_end: *const u8,
 ) -> *const u8 {
-    if (*t).arr_type == b'f' || (*t).arr_type == b'd' {
+    // SAFETY: `t` points to a valid, live `AsciiArrayTask` (caller contract);
+    // reads its `arr_type` field.
+    if unsafe { (*t).arr_type } == b'f' || unsafe { (*t).arr_type } == b'd' {
         let flags: u32 = parse_double_init_flags();
-        ascii_array_task_parse_floats(t, src, src_end, flags)
+        // SAFETY: forwards the caller's `t` validity and `[src, src_end)` parse
+        // run to the float worker.
+        unsafe { ascii_array_task_parse_floats(t, src, src_end, flags) }
     } else {
-        ascii_array_task_parse_ints(t, src, src_end)
+        // SAFETY: forwards the caller's `t` validity and `[src, src_end)` parse
+        // run to the int worker.
+        unsafe { ascii_array_task_parse_ints(t, src, src_end) }
     }
 }
 
@@ -1046,17 +1306,27 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
 
     let mut state: AsciiScanState = AsciiScanState::Whitespace;
     // C: `ufbxi_for(const ufbxi_ascii_span, span, t->spans, t->num_spans)`
-    let mut span: *const AsciiSpan = (*t).spans;
-    let span_end: *const AsciiSpan = add_ptr((*t).spans as *mut AsciiSpan, (*t).num_spans);
+    // SAFETY: `t` points to a valid, live `AsciiArrayTask` (caller contract);
+    // `spans`/`num_spans` describe its span array, so the base and the
+    // one-past-the-end pointer are in bounds of that array.
+    let mut span: *const AsciiSpan = unsafe { (*t).spans };
+    let span_end: *const AsciiSpan = add_ptr(unsafe { (*t).spans } as *mut AsciiSpan, unsafe {
+        (*t).num_spans
+    });
     while span != span_end {
-        let mut src: *const u8 = (*span).source;
-        let end: *const u8 = src.add((*span).length);
+        // SAFETY: `span` walks `[spans, span_end)`, so it addresses a live
+        // `AsciiSpan`; `source`/`length` describe its readable byte run, so
+        // `source + length` is that run's one-past-the-end.
+        let mut src: *const u8 = unsafe { (*span).source };
+        let end: *const u8 = unsafe { src.add((*span).length) };
 
         while src != end {
             // State machine for skipping whitespace and comments, potentially
             // between multiple spans.
             while src != end {
-                let c: u8 = *src;
+                // SAFETY: the enclosing `src != end` guard means `src` addresses a
+                // byte inside the span's `[source, source+length)` run.
+                let c: u8 = unsafe { *src };
                 if state == AsciiScanState::Value {
                     if buffer_len >= core::mem::size_of_val(&buffer) - 1 {
                         return false;
@@ -1071,19 +1341,23 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
                         state = AsciiScanState::Comma;
                         buffer[buffer_len] = b',';
                         buffer_len += 1;
-                        src = src.add(1);
+                        // SAFETY: reached with `src != end`, so `+1` lands at or
+                        // before the span run end.
+                        src = unsafe { src.add(1) };
                         break;
                     } else {
                         buffer_value = true;
                         buffer[buffer_len] = c;
                         buffer_len += 1;
-                        src = src.add(1);
+                        // SAFETY: reached with `src != end`, so `+1` stays in run.
+                        src = unsafe { src.add(1) };
                     }
                 } else if state == AsciiScanState::Whitespace {
                     if c == b';' {
                         state = AsciiScanState::Comment;
                     } else if is_space(c) {
-                        src = src.add(1);
+                        // SAFETY: reached with `src != end`, so `+1` stays in run.
+                        src = unsafe { src.add(1) };
                     } else {
                         state = AsciiScanState::Value;
                     }
@@ -1091,7 +1365,8 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
                     if c == b'\n' {
                         state = AsciiScanState::Whitespace;
                     } else {
-                        src = src.add(1);
+                        // SAFETY: reached with `src != end`, so `+1` stays in run.
+                        src = unsafe { src.add(1) };
                     }
                 } else if state == AsciiScanState::Comma {
                     state = AsciiScanState::Whitespace;
@@ -1101,8 +1376,12 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
             if state == AsciiScanState::Comma {
                 // Parse a value from the buffer
                 if buffer_value {
-                    let buffer_end: *const u8 =
-                        ascii_array_task_parse(t, buffer.as_ptr(), buffer.as_ptr().add(buffer_len));
+                    // SAFETY: forwards `t` validity; `buffer.as_ptr()` and
+                    // `+ buffer_len` bracket the local `buffer`'s written prefix
+                    // (`buffer_len <= 127`), a readable parse run.
+                    let buffer_end: *const u8 = unsafe {
+                        ascii_array_task_parse(t, buffer.as_ptr(), buffer.as_ptr().add(buffer_len))
+                    };
                     if buffer_end.is_null() || buffer_end == buffer.as_ptr() {
                         return false;
                     }
@@ -1113,13 +1392,19 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
                 if src != end {
                     let mut parse_end: *const u8 = end;
                     while parse_end > src {
-                        if *parse_end.sub(1) == b',' {
+                        // SAFETY: `parse_end > src >= source`, so `parse_end - 1`
+                        // addresses a byte inside the span run.
+                        if unsafe { *parse_end.sub(1) } == b',' {
                             break;
                         }
-                        parse_end = parse_end.sub(1);
+                        // SAFETY: as above — `parse_end - 1` stays at or after
+                        // `src` within the run.
+                        parse_end = unsafe { parse_end.sub(1) };
                     }
                     if src < parse_end {
-                        src = ascii_array_task_parse(t, src, parse_end);
+                        // SAFETY: forwards `t` validity; `[src, parse_end)` is a
+                        // sub-run of the span's readable bytes.
+                        src = unsafe { ascii_array_task_parse(t, src, parse_end) };
                         if src.is_null() {
                             return false;
                         }
@@ -1131,10 +1416,13 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
             }
         }
 
-        span = span.add(1);
+        // SAFETY: `span` is in `[spans, span_end)`, so `+1` lands at or before
+        // the one-past-the-end `span_end`.
+        span = unsafe { span.add(1) };
     }
 
-    if (*t).offset != (*t).arr_size {
+    // SAFETY: `t` is a valid, live `AsciiArrayTask`; reads its `offset`/`arr_size`.
+    if unsafe { (*t).offset != (*t).arr_size } {
         return false;
     }
 
@@ -1146,9 +1434,16 @@ pub(crate) unsafe fn ascii_array_task_imp(t: *mut AsciiArrayTask) -> bool {
 // `ufbxi_ascii_parse_node` (ufbx.c:10653-10659).
 #[inline(never)]
 pub(crate) unsafe extern "C" fn ascii_array_task_fn(task: *mut Task) -> bool {
-    let t: *mut AsciiArrayTask = (*task).data as *mut AsciiArrayTask;
-    if !ascii_array_task_imp(t) {
-        (*task).error = b"Threaded ASCII parse error\0".as_ptr();
+    // SAFETY: `task` points to a valid, live `Task` (thread-pool contract); its
+    // `data` field is the `AsciiArrayTask` this entry point was created with.
+    let t: *mut AsciiArrayTask = unsafe { (*task).data } as *mut AsciiArrayTask;
+    // SAFETY: `t` is the task's own live `AsciiArrayTask` payload.
+    if !unsafe { ascii_array_task_imp(t) } {
+        // SAFETY: `task` points to a valid, live `Task`; writes its `error` field
+        // to a static string literal.
+        unsafe {
+            (*task).error = b"Threaded ASCII parse error\0".as_ptr();
+        }
         return false;
     }
     true
@@ -1162,26 +1457,33 @@ pub(crate) unsafe fn ascii_read_float_array(
     p_num_read: *mut usize,
 ) -> Result<(), Fail> {
     let ua: *mut Ascii = uc.ascii_mut_ptr();
-    if (*ua).parse_as_f32 {
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
+    // reads its `parse_as_f32` flag.
+    if unsafe { (*ua).parse_as_f32 } {
         return Ok(());
     }
 
     let mut val: f64;
-    if (*ua).token.type_ == ASCII_FLOAT {
-        val = (*ua).token.value.f64_;
-    } else if (*ua).token.type_ == ASCII_INT {
-        let fsign: f64 = if (*ua).token.value.i64_ == 0 && (*ua).token.negative {
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its current
+    // token. For an `ASCII_FLOAT` token the `value.f64_` union member is live;
+    // for `ASCII_INT` the `value.i64_` member and `negative` flag are.
+    if unsafe { (*ua).token.type_ } == ASCII_FLOAT {
+        val = unsafe { (*ua).token.value.f64_ };
+    } else if unsafe { (*ua).token.type_ } == ASCII_INT {
+        let fsign: f64 = if unsafe { (*ua).token.value.i64_ == 0 && (*ua).token.negative } {
             -1.0
         } else {
             1.0
         };
-        val = (*ua).token.value.i64_ as f64 * fsign;
+        val = unsafe { (*ua).token.value.i64_ } as f64 * fsign;
     } else {
         return Ok(());
     }
 
-    let mut src: *const u8 = (*ua).src;
-    let end: *const u8 = (*ua).src_yield;
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src` cursor
+    // and `src_yield` window end.
+    let mut src: *const u8 = unsafe { (*ua).src };
+    let end: *const u8 = unsafe { (*ua).src_yield };
 
     let parse_flags: u32 = uc.double_parse_flags();
 
@@ -1190,15 +1492,22 @@ pub(crate) unsafe fn ascii_read_float_array(
     loop {
         // Skip '\s*,\s*' between array elements. If we don't find a comma after an element
         // don't push it as we can't be 100% certain whether it's a part of the array.
-        while src_scan != end && is_space(*src_scan) {
-            src_scan = src_scan.add(1);
+        // SAFETY: the `src_scan != end` guard short-circuits before the deref, so
+        // `src_scan` addresses a byte inside `[src, src_yield)`; the advance then
+        // lands at or before `end`.
+        while src_scan != end && unsafe { is_space(*src_scan) } {
+            src_scan = unsafe { src_scan.add(1) };
         }
-        if src_scan == end || *src_scan != b',' {
+        // SAFETY: as above — `src_scan != end` guards the deref.
+        if src_scan == end || unsafe { *src_scan } != b',' {
             break;
         }
-        src_scan = src_scan.add(1);
-        while src_scan != end && is_space(*src_scan) {
-            src_scan = src_scan.add(1);
+        // SAFETY: reached only when `src_scan != end`, so `+1` lands at or before
+        // `end` within the source window.
+        src_scan = unsafe { src_scan.add(1) };
+        // SAFETY: as the first scan — guarded deref, advance stays within window.
+        while src_scan != end && unsafe { is_space(*src_scan) } {
+            src_scan = unsafe { src_scan.add(1) };
         }
 
         // Found comma, commit to the position and push the previous value to the array
@@ -1206,17 +1515,25 @@ pub(crate) unsafe fn ascii_read_float_array(
         if type_ == b'd' {
             let v: *mut f64 = uc.tmp_stack_view().push_fast::<f64>(1);
             ufbxi_check!(uc, !v.is_null(), "v");
-            *v = val;
+            // SAFETY: `v` is the freshly pushed, non-null `f64` slot.
+            unsafe {
+                *v = val;
+            }
         } else if type_ == b'f' {
             let v: *mut f32 = uc.tmp_stack_view().push_fast::<f32>(1);
             ufbxi_check!(uc, !v.is_null(), "v");
-            *v = val as f32;
+            // SAFETY: `v` is the freshly pushed, non-null `f32` slot.
+            unsafe {
+                *v = val as f32;
+            }
         }
 
         // Try to parse the next value, we don't commit this until we find a comma after it above.
         let mut num_end: *const u8 = core::ptr::null();
         let left: usize = to_size(end as isize - src_scan as isize);
-        val = parse_double(src_scan, left, &raw mut num_end, parse_flags);
+        // SAFETY: `left` is the readable `src_scan..src_yield` run; `parse_double`
+        // scans at most that many bytes and stores its end into `num_end`.
+        val = unsafe { parse_double(src_scan, left, &raw mut num_end, parse_flags) };
         if num_end.is_null() || num_end == src_scan || num_end >= end {
             break;
         }
@@ -1225,12 +1542,21 @@ pub(crate) unsafe fn ascii_read_float_array(
     }
 
     // Resume conventional parsing if we moved `src`.
-    if src != (*ua).src {
-        (*ua).src = src;
-        ascii_next_token(uc, &raw mut (*ua).token)?;
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its `src` cursor.
+    if src != unsafe { (*ua).src } {
+        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `src` stays inside
+        // its window, a valid cursor to store back. The `&raw mut` projects its
+        // own `token` field, retokenized in place.
+        unsafe {
+            (*ua).src = src;
+            ascii_next_token(uc, &raw mut (*ua).token)?;
+        }
     }
 
-    *p_num_read = uc.tmp_stack_view().num_items() - initial_items;
+    // SAFETY: `p_num_read` is the caller's valid out-param.
+    unsafe {
+        *p_num_read = uc.tmp_stack_view().num_items() - initial_items;
+    }
     Ok(())
 }
 
@@ -1287,31 +1613,48 @@ pub(crate) unsafe fn decode_base64(
     let mut error_mask: u32 = 0;
     let mut pad_error: u32 = 0;
 
-    let mut p: *mut u8 = (*p_result).data as *mut u8;
+    // SAFETY: `p_result` is the caller's valid `String` out-param; its `data`
+    // field is the freshly pushed output buffer sized for the decode.
+    let mut p: *mut u8 = unsafe { (*p_result).data } as *mut u8;
     let mut i: usize = 0;
     while i + 4 <= src_length {
-        let a: u32 = *table.add(*src.add(i + 0) as usize) as u32;
-        let b: u32 = *table.add(*src.add(i + 1) as usize) as u32;
-        let c: u32 = *table.add(*src.add(i + 2) as usize) as u32;
-        let d: u32 = *table.add(*src.add(i + 3) as usize) as u32;
+        // SAFETY: `i + 4 <= src_length`, so `src + i + 0..3` are readable source
+        // bytes; each byte value is `< 256`, in bounds for the 256-entry `table`.
+        let a: u32 = unsafe { *table.add(*src.add(i + 0) as usize) as u32 };
+        // SAFETY: as above.
+        let b: u32 = unsafe { *table.add(*src.add(i + 1) as usize) as u32 };
+        // SAFETY: as above.
+        let c: u32 = unsafe { *table.add(*src.add(i + 2) as usize) as u32 };
+        // SAFETY: as above.
+        let d: u32 = unsafe { *table.add(*src.add(i + 3) as usize) as u32 };
         pad_error = error_mask;
         error_mask |= a | b | c | d;
 
-        *p.add(0) = (a << 2 | b >> 4) as u8;
-        *p.add(1) = (b << 4 | c >> 2) as u8;
-        *p.add(2) = (c << 6 | d) as u8;
-        p = p.add(3);
+        // SAFETY: the output buffer holds 3 bytes per 4 input bytes; this
+        // iteration writes 3 and advances `p` by 3, staying within its capacity.
+        unsafe {
+            *p.add(0) = (a << 2 | b >> 4) as u8;
+            *p.add(1) = (b << 4 | c >> 2) as u8;
+            *p.add(2) = (c << 6 | d) as u8;
+            p = p.add(3);
+        }
 
         i += 4;
     }
 
     if src_length >= 4 {
-        let end: *const u8 = src.add(src_length - 4);
+        // SAFETY: `src_length >= 4`, so `src + src_length - 4` addresses the last
+        // 4-byte input group, all readable.
+        let end: *const u8 = unsafe { src.add(src_length - 4) };
         let mut padding: u32 = 0;
-        padding |= if *end.add(0) == b'=' { 0x8 } else { 0x0 };
-        padding |= if *end.add(1) == b'=' { 0x4 } else { 0x0 };
-        padding |= if *end.add(2) == b'=' { 0x2 } else { 0x0 };
-        padding |= if *end.add(3) == b'=' { 0x1 } else { 0x0 };
+        // SAFETY: `end` is the last input group's base, so `end + 0..3` are the
+        // four readable trailing bytes.
+        unsafe {
+            padding |= if *end.add(0) == b'=' { 0x8 } else { 0x0 };
+            padding |= if *end.add(1) == b'=' { 0x4 } else { 0x0 };
+            padding |= if *end.add(2) == b'=' { 0x2 } else { 0x0 };
+            padding |= if *end.add(3) == b'=' { 0x1 } else { 0x0 };
+        }
         if padding <= 0x1 {
             p = sub_ptr(p, padding as usize); // "xxx=" or "xxxx"
         } else if padding == 0x3 {
@@ -1321,7 +1664,10 @@ pub(crate) unsafe fn decode_base64(
         }
     }
 
-    if ((error_mask & 0x80) != 0 || (pad_error & 0x40) != 0 || src_length % 4 != 0) && !*p_failed {
+    // SAFETY: `p_failed` is the caller's valid `bool` out-param.
+    if ((error_mask & 0x80) != 0 || (pad_error & 0x40) != 0 || src_length % 4 != 0)
+        && !unsafe { *p_failed }
+    {
         ufbxi_check!(
             uc,
             ufbxi_warnf!(
@@ -1332,10 +1678,18 @@ pub(crate) unsafe fn decode_base64(
             .is_ok(),
             "ufbxi_warnf(UFBX_WARNING_BAD_BASE64_CONTENT, \"Ignored bad base64 embedded content\")"
         );
-        *p_failed = true;
+        // SAFETY: `p_failed` is the caller's valid `bool` out-param.
+        unsafe {
+            *p_failed = true;
+        }
     }
 
-    (*p_result).length = to_size(p as isize - (*p_result).data as isize);
+    // SAFETY: `p_result` is the caller's valid `String` out-param; `p` advanced
+    // from `p_result->data` within the output buffer, so their difference is the
+    // decoded byte count, stored back into its `length`.
+    unsafe {
+        (*p_result).length = to_size(p as isize - (*p_result).data as isize);
+    }
     Ok(())
 }
 
@@ -1363,13 +1717,18 @@ pub(crate) unsafe fn ascii_parse_node(
             ufbx_assert!(d.get() < MAX_NODE_DEPTH + 1);
             d.set(d.get() + 1);
         });
-        let ret = ascii_parse_node_rec(uc, depth, parent_state, p_end, tmp_buf, recursive);
+        // SAFETY: forwards the caller's `p_end`/`tmp_buf` validity contract to the
+        // recursive body unchanged.
+        let ret =
+            unsafe { ascii_parse_node_rec(uc, depth, parent_state, p_end, tmp_buf, recursive) };
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
         ret
     }
     #[cfg(not(feature = "regression"))]
     {
-        ascii_parse_node_rec(uc, depth, parent_state, p_end, tmp_buf, recursive)
+        // SAFETY: forwards the caller's `p_end`/`tmp_buf` validity contract to the
+        // recursive body unchanged.
+        unsafe { ascii_parse_node_rec(uc, depth, parent_state, p_end, tmp_buf, recursive) }
     }
 }
 
@@ -1387,21 +1746,35 @@ unsafe fn ascii_parse_node_rec(
 ) -> Result<(), Fail> {
     let ua: *mut Ascii = uc.ascii_mut_ptr();
 
-    if (*ua).token.type_ == b'}' {
-        ascii_next_token(uc, &raw mut (*ua).token)?;
-        *p_end = true;
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
+    // reads its current token's `type_`.
+    if unsafe { (*ua).token.type_ } == b'}' {
+        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; the `&raw mut`
+        // projects its own `token` field, retokenized in place.
+        unsafe {
+            ascii_next_token(uc, &raw mut (*ua).token)?;
+        }
+        // SAFETY: `p_end` is the caller's valid out-param.
+        unsafe {
+            *p_end = true;
+        }
         return Ok(());
     }
 
-    if (*ua).token.type_ == ASCII_END {
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its token type.
+    if unsafe { (*ua).token.type_ } == ASCII_END {
         ufbxi_check_msg!(uc, depth == 0, "Truncated file");
-        *p_end = true;
+        // SAFETY: `p_end` is the caller's valid out-param.
+        unsafe {
+            *p_end = true;
+        }
         return Ok(());
     }
 
     // Parse the name eg. "Node:" token and intern the name
     ufbxi_check!(uc, depth < MAX_NODE_DEPTH, "depth < UFBXI_MAX_NODE_DEPTH");
-    if !uc.sure_fbx() && depth == 0 && (*ua).token.type_ != ASCII_NAME {
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its token type.
+    if !uc.sure_fbx() && depth == 0 && unsafe { (*ua).token.type_ } != ASCII_NAME {
         ufbxi_fail_msg!(uc, "Expected a 'Name:' token", "Not an FBX file");
     }
     ufbxi_check!(
@@ -1409,23 +1782,33 @@ unsafe fn ascii_parse_node_rec(
         ascii_accept(uc, ASCII_NAME),
         "ufbxi_ascii_accept(uc, UFBXI_ASCII_NAME)"
     );
-    let name_len: usize = (*ua).prev_token.value.name_len;
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; the accepted name token
+    // moved to `prev_token`, whose `value.name_len` union member is live.
+    let name_len: usize = unsafe { (*ua).prev_token.value.name_len };
     ufbxi_check!(uc, name_len <= 0xff, "name_len <= 0xff");
-    let name: *const u8 = push_string(
-        uc.string_pool_mut_ptr(),
-        (*ua).prev_token.str_data,
-        (*ua).prev_token.str_len,
-        core::ptr::null_mut(),
-        true,
-    );
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; `prev_token.str_data`
+    // holds `str_len` readable name bytes, interned via `uc`'s own string pool.
+    let name: *const u8 = unsafe {
+        push_string(
+            uc.string_pool_mut_ptr(),
+            (*ua).prev_token.str_data,
+            (*ua).prev_token.str_len,
+            core::ptr::null_mut(),
+            true,
+        )
+    };
     ufbxi_check!(uc, !name.is_null(), "name");
 
     // Push the parsed node into the `tmp_stack` buffer, the nodes will be popped by
     // calling code after its done parsing all of it's children.
     let node: *mut Node = uc.tmp_stack_view().push_zero::<Node>(1);
     ufbxi_check!(uc, !node.is_null(), "node");
-    (*node).name = name;
-    (*node).name_len = name_len as u8;
+    // SAFETY: `node` is the freshly pushed, non-null `Node` slot; writes its own
+    // `name`/`name_len` fields.
+    unsafe {
+        (*node).name = name;
+        (*node).name_len = name_len as u8;
+    }
 
     let mut in_ascii_array: bool = false;
 
@@ -1441,9 +1824,14 @@ unsafe fn ascii_parse_node_rec(
     // treated as an array.
     let mut arr_info = core::mem::MaybeUninit::<ArrayInfo>::uninit();
     let arr_info: *mut ArrayInfo = arr_info.as_mut_ptr();
-    if is_array_node(uc, parent_state, name, arr_info) {
-        let flags: u8 = (*arr_info).flags;
-        arr_type = normalize_array_type((*arr_info).type_, b'b');
+    // SAFETY: `arr_info` is the local `MaybeUninit<ArrayInfo>`'s address, which
+    // `is_array_node` fully initializes before returning `true`; `name` is the
+    // interned node name.
+    if unsafe { is_array_node(uc, parent_state, name, arr_info) } {
+        // SAFETY: `is_array_node` returned `true`, so `arr_info` is initialized;
+        // reads its `flags` and `type_` fields.
+        let flags: u8 = unsafe { (*arr_info).flags };
+        arr_type = normalize_array_type(unsafe { (*arr_info).type_ }, b'b');
         arr_buf = tmp_buf.get();
         if (flags & ARRAY_FLAG_RESULT) != 0 {
             arr_buf = uc.result_mut_ptr();
@@ -1453,15 +1841,23 @@ unsafe fn ascii_parse_node_rec(
 
         let arr: *mut ValueArray = tmp_buf.push::<ValueArray>(1);
         ufbxi_check!(uc, !arr.is_null(), "arr");
-        (*node).value_type_mask = ValueType::Array as u16;
-        (*node).content.array = arr;
-        (*arr).type_ = arr_type;
+        // SAFETY: `node` is the live pushed `Node` slot and `arr` the live pushed
+        // `ValueArray`; writes `node`'s value-type/array fields and `arr`'s type.
+        unsafe {
+            (*node).value_type_mask = ValueType::Array as u16;
+            (*node).content.array = arr;
+            (*arr).type_ = arr_type;
+        }
 
         // Parse array values using strtof() if the array destination is 32-bit float
         // since KeyAttrDataFloat packs integer data (!) into floating point values so we
         // should try to be as exact as possible.
-        if ((*arr_info).flags & ARRAY_FLAG_ACCURATE_F32) != 0 {
-            (*ua).parse_as_f32 = true;
+        // SAFETY: `arr_info` is initialized (see above); reads its `flags`.
+        if (unsafe { (*arr_info).flags } & ARRAY_FLAG_ACCURATE_F32) != 0 {
+            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; sets its flag.
+            unsafe {
+                (*ua).parse_as_f32 = true;
+            }
         }
 
         arr_elem_size = array_type_size(arr_type);
@@ -1471,7 +1867,8 @@ unsafe fn ascii_parse_node_rec(
             // in fast parsing functions.
             ufbxi_check!(
                 uc,
-                !push_size_zero(uc.tmp_stack_mut_ptr(), 8, 1).is_null(),
+                // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own live temp-stack buf.
+                !unsafe { push_size_zero(uc.tmp_stack_mut_ptr(), 8, 1) }.is_null(),
                 "ufbxi_push_size_zero(&uc->tmp_stack, 8, 1)"
             );
 
@@ -1479,7 +1876,8 @@ unsafe fn ascii_parse_node_rec(
             if (flags & ARRAY_FLAG_PAD_BEGIN) != 0 {
                 ufbxi_check!(
                     uc,
-                    !push_size_zero(uc.tmp_stack_mut_ptr(), arr_elem_size, 4).is_null(),
+                    // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own live temp-stack buf.
+                    !unsafe { push_size_zero(uc.tmp_stack_mut_ptr(), arr_elem_size, 4) }.is_null(),
                     "ufbxi_push_size_zero(&uc->tmp_stack, arr_elem_size, 4)"
                 );
                 num_values += 4;
@@ -1488,19 +1886,31 @@ unsafe fn ascii_parse_node_rec(
     }
 
     // Some fields in ASCII may have leading commas eg. `Content: , "base64-string"`
-    if (*ua).token.type_ == b',' {
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its token type.
+    if unsafe { (*ua).token.type_ } == b',' {
         // HACK: If we are parsing an "array" that should be ignored, ie. `Content` when
         // `opts.ignore_embedded == true` try to skip the next token string if possible.
         if arr_type == b'-' {
-            if !ascii_try_ignore_string(uc, &raw mut (*ua).token) {
-                ascii_next_token(uc, &raw mut (*ua).token)?;
+            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; the `&raw mut`
+            // projects its own `token` field as the ignore/retokenize out-param.
+            if !unsafe { ascii_try_ignore_string(uc, &raw mut (*ua).token) } {
+                // SAFETY: as above — retokenizes `ua`'s own `token` in place.
+                unsafe {
+                    ascii_next_token(uc, &raw mut (*ua).token)?;
+                }
             }
         } else {
-            ascii_next_token(uc, &raw mut (*ua).token)?;
+            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; retokenizes its
+            // own `token` in place.
+            unsafe {
+                ascii_next_token(uc, &raw mut (*ua).token)?;
+            }
         }
     }
 
-    let parse_state: ParseState = update_parse_state(parent_state, (*node).name);
+    // SAFETY: `node` is the live pushed `Node` slot; reads its interned `name`
+    // pointer, which `update_parse_state` matches against known node names.
+    let parse_state: ParseState = unsafe { update_parse_state(parent_state, (*node).name) };
     // C: `ufbxi_value vals[UFBXI_MAX_NON_ARRAY_VALUES];` — left uninitialized;
     // only the `[0, num_values)` prefix written in the loop below is ever read
     // (by the `ufbxi_push_copy` at the end).
@@ -1511,14 +1921,23 @@ unsafe fn ascii_parse_node_rec(
 
     // NOTE: Infinite loop to allow skipping the comma parsing via `continue`.
     loop {
-        let tok: *mut AsciiToken = &raw mut (*ua).prev_token;
+        // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; the `&raw mut`
+        // projects the address of its own `prev_token` field without a reference.
+        let tok: *mut AsciiToken = unsafe { &raw mut (*ua).prev_token };
 
         if arr_type != 0 {
             let mut num_read: usize = 0;
             if arr_type == b'f' || arr_type == b'd' {
-                ascii_read_float_array(uc, arr_type, &raw mut num_read)?;
+                // SAFETY: `num_read` is a local out-param; the reader writes the
+                // count of pushed elements into it.
+                unsafe {
+                    ascii_read_float_array(uc, arr_type, &raw mut num_read)?;
+                }
             } else if arr_type == b'i' || arr_type == b'l' {
-                ascii_read_int_array(uc, arr_type, &raw mut num_read)?;
+                // SAFETY: as above.
+                unsafe {
+                    ascii_read_int_array(uc, arr_type, &raw mut num_read)?;
+                }
             }
             ufbxi_check!(
                 uc,
@@ -1540,15 +1959,39 @@ unsafe fn ascii_parse_node_rec(
                         } else {
                             tmp_buf
                         };
-                        let capacity: usize = (*tok).str_len / 4 * 3 + 3;
-                        (*v).data = buf.push::<u8>(capacity);
-                        ufbxi_check!(uc, !(*v).data.is_null(), "v->data");
-                        decode_base64(uc, v, (*tok).str_data, (*tok).str_len, &raw mut arr_error)?;
-                        ufbx_assert!((*v).length <= capacity);
+                        // SAFETY: `tok` addresses `ua`'s live `prev_token`; reads
+                        // its `str_len`.
+                        let capacity: usize = unsafe { (*tok).str_len } / 4 * 3 + 3;
+                        // SAFETY: `v` is the freshly pushed, non-null `String` slot;
+                        // writes its `data` to the freshly pushed output buffer.
+                        unsafe {
+                            (*v).data = buf.push::<u8>(capacity);
+                        }
+                        // SAFETY: `v` is the live pushed slot; reads back its `data`.
+                        ufbxi_check!(uc, !unsafe { (*v).data }.is_null(), "v->data");
+                        // SAFETY: `v` is the live pushed slot (the base64 out-param);
+                        // `tok`'s `str_data`/`str_len` are its readable base64 bytes;
+                        // `arr_error` is a local flag out-param.
+                        unsafe {
+                            decode_base64(
+                                uc,
+                                v,
+                                (*tok).str_data,
+                                (*tok).str_len,
+                                &raw mut arr_error,
+                            )?;
+                        }
+                        // SAFETY: `v` is the live pushed slot; reads back its length.
+                        ufbx_assert!(unsafe { (*v).length } <= capacity);
                     } else {
-                        (*v).data = (*tok).str_data;
-                        (*v).length = (*tok).str_len;
-                        push_string_place_str(uc.string_pool_mut_ptr(), v, raw)?;
+                        // SAFETY: `v` is the freshly pushed, non-null `String` slot;
+                        // writes its `data`/`length` from `tok`'s live `prev_token`
+                        // string, then interns it through `uc`'s own string pool.
+                        unsafe {
+                            (*v).data = (*tok).str_data;
+                            (*v).length = (*tok).str_len;
+                            push_string_place_str(uc.string_pool_mut_ptr(), v, raw)?;
+                        }
                     }
                 } else {
                     // Ignore strings in non-string arrays, decrement `num_values` as it will be
@@ -1557,37 +2000,60 @@ unsafe fn ascii_parse_node_rec(
                 }
             } else if (num_values as usize) < MAX_NON_ARRAY_VALUES {
                 type_mask |= (ValueType::String as u32) << (num_values * 2);
-                let v: *mut Value = vals.add(num_values as usize);
+                // SAFETY: `num_values < MAX_NON_ARRAY_VALUES` (branch guard), so
+                // `vals + num_values` is a live slot of the local `vals` array.
+                let v: *mut Value = unsafe { vals.add(num_values as usize) };
 
-                let str_: *const u8 = (*tok).str_data;
-                let length: usize = (*tok).str_len;
+                // SAFETY: `tok` addresses `ua`'s live `prev_token`; reads its
+                // `str_data`/`str_len`.
+                let str_: *const u8 = unsafe { (*tok).str_data };
+                let length: usize = unsafe { (*tok).str_len };
                 ufbxi_check!(uc, !str_.is_null(), "str");
 
                 if length == 0 {
-                    (*v).s.raw_data = EMPTY_CHAR.as_ptr();
-                    (*v).s.raw_length = 0;
-                    (*v).s.utf8_length = 0;
+                    // SAFETY: `v` is a live `vals` slot; writes its `s` string
+                    // union member to the shared empty-string sentinel.
+                    unsafe {
+                        (*v).s.raw_data = EMPTY_CHAR.as_ptr();
+                        (*v).s.raw_length = 0;
+                        (*v).s.utf8_length = 0;
+                    }
                 } else {
                     let mut non_ascii: bool = false;
-                    let hash: u32 = hash_string_check_ascii(str_, length, &raw mut non_ascii);
-                    let raw: bool =
-                        !non_ascii || is_raw_string(uc, parent_state, name, num_values as usize);
-                    push_sanitized_string(
-                        uc.string_pool_mut_ptr(),
-                        &raw mut (*v).s,
-                        str_,
-                        length,
-                        hash,
-                        raw,
-                    )?;
+                    // SAFETY: `str_` is readable for `length` bytes (the token
+                    // string); `non_ascii` is a local out-param.
+                    let hash: u32 =
+                        unsafe { hash_string_check_ascii(str_, length, &raw mut non_ascii) };
+                    // SAFETY: `name` is the interned node name; `is_raw_string`
+                    // matches it against known raw-string node fields.
+                    let raw: bool = !non_ascii
+                        || unsafe { is_raw_string(uc, parent_state, name, num_values as usize) };
+                    // SAFETY: `v` is a live `vals` slot; `&raw mut (*v).s` projects
+                    // its own `s` field as the sanitize out-param; `str_`/`length`
+                    // are the readable token string interned via `uc`'s string pool.
+                    unsafe {
+                        push_sanitized_string(
+                            uc.string_pool_mut_ptr(),
+                            &raw mut (*v).s,
+                            str_,
+                            length,
+                            hash,
+                            raw,
+                        )?;
+                    }
                     if non_ascii && raw {
-                        (*v).s.utf8_length = u32::MAX;
+                        // SAFETY: `v` is a live `vals` slot; writes its `s.utf8_length`.
+                        unsafe {
+                            (*v).s.utf8_length = u32::MAX;
+                        }
                     }
                 }
             }
         } else if ascii_accept(uc, ASCII_INT) {
-            let val: i64 = (*tok).value.i64_;
-            let fsign: Real = if val == 0 && (*tok).negative {
+            // SAFETY: `tok` addresses `ua`'s live `prev_token`; the accepted int
+            // token's `value.i64_` union member and `negative` flag are live.
+            let val: i64 = unsafe { (*tok).value.i64_ };
+            let fsign: Real = if val == 0 && unsafe { (*tok).negative } {
                 -1.0f32 as Real
             } else {
                 1.0f32 as Real
@@ -1596,56 +2062,85 @@ unsafe fn ascii_parse_node_rec(
             match arr_type {
                 0 => {
                     // Parse version from comment if there was no magic comment
-                    if !(*ua).found_version
+                    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads
+                    // its `found_version` flag.
+                    if !unsafe { (*ua).found_version }
                         && parse_state == ParseState::FbxVersion
                         && num_values == 0
                     {
                         if val >= 6000 && val <= 10000 {
-                            (*ua).found_version = true;
+                            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context;
+                            // sets its `found_version` flag.
+                            unsafe {
+                                (*ua).found_version = true;
+                            }
                             uc.set_version(val as u32);
                         }
                     }
 
                     if (num_values as usize) < MAX_NON_ARRAY_VALUES {
                         type_mask |= (ValueType::Number as u32) << (num_values * 2);
-                        let v: *mut Value = vals.add(num_values as usize);
+                        // SAFETY: `num_values < MAX_NON_ARRAY_VALUES`, so
+                        // `vals + num_values` is a live slot of the local array.
+                        let v: *mut Value = unsafe { vals.add(num_values as usize) };
                         // False positive: `v->f` and `v->i` do not overlap in the union.
                         // cppcheck-suppress overlappingWriteUnion
                         // C: `v->f = (double)(v->i = val) * (double)fsign;`
-                        (*v).num.i = val;
-                        (*v).num.f = (*v).num.i as f64 * fsign as f64;
+                        // SAFETY: `v` is a live `vals` slot; writes its `num` union.
+                        unsafe {
+                            (*v).num.i = val;
+                            (*v).num.f = (*v).num.i as f64 * fsign as f64;
+                        }
                     }
                 }
 
                 b'b' => {
                     let v: *mut bool = uc.tmp_stack_view().push::<bool>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val != 0;
+                    // SAFETY: `v` is the freshly pushed, non-null `bool` slot.
+                    unsafe {
+                        *v = val != 0;
+                    }
                 }
                 b'c' => {
                     let v: *mut u8 = uc.tmp_stack_view().push::<u8>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val as u8;
+                    // SAFETY: `v` is the freshly pushed, non-null `u8` slot.
+                    unsafe {
+                        *v = val as u8;
+                    }
                 }
                 b'i' => {
                     let v: *mut i32 = uc.tmp_stack_view().push::<i32>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val as i32;
+                    // SAFETY: `v` is the freshly pushed, non-null `i32` slot.
+                    unsafe {
+                        *v = val as i32;
+                    }
                 }
                 b'l' => {
                     let v: *mut i64 = uc.tmp_stack_view().push::<i64>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val;
+                    // SAFETY: `v` is the freshly pushed, non-null `i64` slot.
+                    unsafe {
+                        *v = val;
+                    }
                 }
                 b'f' => {
                     let v: *mut f32 = uc.tmp_stack_view().push::<f32>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val as f32 * fsign as f32;
+                    // SAFETY: `v` is the freshly pushed, non-null `f32` slot.
+                    unsafe {
+                        *v = val as f32 * fsign as f32;
+                    }
                 }
                 b'd' => {
                     let v: *mut f64 = uc.tmp_stack_view().push::<f64>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val as f64 * fsign as f64;
+                    // SAFETY: `v` is the freshly pushed, non-null `f64` slot.
+                    unsafe {
+                        *v = val as f64 * fsign as f64;
+                    }
                 }
                 b'-' => {
                     num_values = num_values.wrapping_sub(1);
@@ -1654,25 +2149,35 @@ unsafe fn ascii_parse_node_rec(
                 _ => ufbxi_fail!(uc, "Bad array dst type"),
             }
         } else if ascii_accept(uc, ASCII_FLOAT) {
-            let val: f64 = (*tok).value.f64_;
+            // SAFETY: `tok` addresses `ua`'s live `prev_token`; the accepted float
+            // token's `value.f64_` union member is live.
+            let val: f64 = unsafe { (*tok).value.f64_ };
 
             match arr_type {
                 0 => {
                     if (num_values as usize) < MAX_NON_ARRAY_VALUES {
                         type_mask |= (ValueType::Number as u32) << (num_values * 2);
-                        let v: *mut Value = vals.add(num_values as usize);
+                        // SAFETY: `num_values < MAX_NON_ARRAY_VALUES`, so
+                        // `vals + num_values` is a live slot of the local array.
+                        let v: *mut Value = unsafe { vals.add(num_values as usize) };
                         // False positive: `v->f` and `v->i` do not overlap in the union.
                         // cppcheck-suppress overlappingWriteUnion
                         // C: `v->i = ufbxi_f64_to_i64(v->f = val);`
-                        (*v).num.f = val;
-                        (*v).num.i = f64_to_i64((*v).num.f);
+                        // SAFETY: `v` is a live `vals` slot; writes its `num` union.
+                        unsafe {
+                            (*v).num.f = val;
+                            (*v).num.i = f64_to_i64((*v).num.f);
+                        }
                     }
                 }
 
                 b'b' => {
                     let v: *mut bool = uc.tmp_stack_view().push::<bool>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val != 0.0;
+                    // SAFETY: `v` is the freshly pushed, non-null `bool` slot.
+                    unsafe {
+                        *v = val != 0.0;
+                    }
                 }
                 b'c' => {
                     let v: *mut u8 = uc.tmp_stack_view().push::<u8>(1);
@@ -1682,27 +2187,42 @@ unsafe fn ascii_parse_node_rec(
                     // `as` (saturating) per the PORTING.md bare-float-cast row — known,
                     // accepted divergence, same choice as the `ufbxi_cast_u8` appliers in
                     // parse_binary.rs.
-                    *v = val as u8;
+                    // SAFETY: `v` is the freshly pushed, non-null `u8` slot.
+                    unsafe {
+                        *v = val as u8;
+                    }
                 }
                 b'i' => {
                     let v: *mut i32 = uc.tmp_stack_view().push::<i32>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = f64_to_i32(val);
+                    // SAFETY: `v` is the freshly pushed, non-null `i32` slot.
+                    unsafe {
+                        *v = f64_to_i32(val);
+                    }
                 }
                 b'l' => {
                     let v: *mut i64 = uc.tmp_stack_view().push::<i64>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = f64_to_i64(val);
+                    // SAFETY: `v` is the freshly pushed, non-null `i64` slot.
+                    unsafe {
+                        *v = f64_to_i64(val);
+                    }
                 }
                 b'f' => {
                     let v: *mut f32 = uc.tmp_stack_view().push::<f32>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val as f32;
+                    // SAFETY: `v` is the freshly pushed, non-null `f32` slot.
+                    unsafe {
+                        *v = val as f32;
+                    }
                 }
                 b'd' => {
                     let v: *mut f64 = uc.tmp_stack_view().push::<f64>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val;
+                    // SAFETY: `v` is the freshly pushed, non-null `f64` slot.
+                    unsafe {
+                        *v = val;
+                    }
                 }
                 b'-' => {
                     num_values = num_values.wrapping_sub(1);
@@ -1713,23 +2233,36 @@ unsafe fn ascii_parse_node_rec(
         } else if ascii_accept(uc, ASCII_BARE_WORD) {
             let mut val: i64 = 0;
             let mut val_f: f64 = 0.0;
-            if (*tok).str_len >= 1 {
+            // SAFETY: `tok` addresses `ua`'s live `prev_token`; reads its `str_len`.
+            if unsafe { (*tok).str_len } >= 1 {
                 // C-parity: `tok->str_data` is `char *` and the oracle targets make
                 // C `char` signed, so a byte >= 0x80 converts to a NEGATIVE `int64_t`
                 // here (PORTING.md "`char` (value, where signedness is observable)").
-                val = *((*tok).str_data as *const i8) as i64;
+                // SAFETY: `str_len >= 1`, so `tok->str_data`'s first byte is readable
+                // and reinterpreted as a signed `i8`.
+                val = unsafe { *((*tok).str_data as *const i8) } as i64;
                 val_f = val as f64;
-                if (*tok).str_len > 1 && (*tok).str_len < 64 {
+                // SAFETY: `tok` addresses `ua`'s live `prev_token`; reads its `str_len`.
+                if unsafe { (*tok).str_len } > 1 && unsafe { (*tok).str_len } < 64 {
                     // Try to parse the bare word as NAN/INF
                     let mut str_data = core::mem::MaybeUninit::<[u8; 64]>::uninit(); // ufbxi_uninit
                     let str_data: *mut u8 = str_data.as_mut_ptr() as *mut u8;
-                    let str_len: usize = (*tok).str_len;
-                    core::ptr::copy_nonoverlapping((*tok).str_data, str_data, str_len);
-                    *str_data.add(str_len) = b'\0';
+                    // SAFETY: `tok` addresses `ua`'s live `prev_token`; reads its `str_len`.
+                    let str_len: usize = unsafe { (*tok).str_len };
+                    // SAFETY: `str_len < 64`, so copying `str_len` bytes from
+                    // `tok->str_data` into the 64-byte local `str_data` fits, and
+                    // writing the NUL at index `str_len` (< 64) stays in bounds.
+                    unsafe {
+                        core::ptr::copy_nonoverlapping((*tok).str_data, str_data, str_len);
+                        *str_data.add(str_len) = b'\0';
+                    }
                     let mut inf_nan: f64 = 0.0;
                     let mut end: *const u8 = core::ptr::null();
-                    if parse_inf_nan(&raw mut inf_nan, str_data, str_len, &raw mut end)
-                        && end == str_data.add(str_len)
+                    // SAFETY: `str_data` holds `str_len` bytes plus a trailing NUL;
+                    // `parse_inf_nan` scans it and stores its end into `end`, and
+                    // `str_data + str_len` is the NUL slot within the local buffer.
+                    if unsafe { parse_inf_nan(&raw mut inf_nan, str_data, str_len, &raw mut end) }
+                        && end == unsafe { str_data.add(str_len) }
                     {
                         val = 0;
                         val_f = inf_nan;
@@ -1741,43 +2274,66 @@ unsafe fn ascii_parse_node_rec(
                 0 => {
                     if (num_values as usize) < MAX_NON_ARRAY_VALUES {
                         type_mask |= (ValueType::Number as u32) << (num_values * 2);
-                        let v: *mut Value = vals.add(num_values as usize);
+                        // SAFETY: `num_values < MAX_NON_ARRAY_VALUES`, so
+                        // `vals + num_values` is a live slot of the local array.
+                        let v: *mut Value = unsafe { vals.add(num_values as usize) };
                         // False positive: `v->f` and `v->i` do not overlap in the union.
                         // cppcheck-suppress overlappingWriteUnion
-                        (*v).num.i = val;
-                        (*v).num.f = val_f;
+                        // SAFETY: `v` is a live `vals` slot; writes its `num` union.
+                        unsafe {
+                            (*v).num.i = val;
+                            (*v).num.f = val_f;
+                        }
                     }
                 }
 
                 b'b' => {
                     let v: *mut bool = uc.tmp_stack_view().push::<bool>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val != 0;
+                    // SAFETY: `v` is the freshly pushed, non-null `bool` slot.
+                    unsafe {
+                        *v = val != 0;
+                    }
                 }
                 b'c' => {
                     let v: *mut u8 = uc.tmp_stack_view().push::<u8>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val as u8;
+                    // SAFETY: `v` is the freshly pushed, non-null `u8` slot.
+                    unsafe {
+                        *v = val as u8;
+                    }
                 }
                 b'i' => {
                     let v: *mut i32 = uc.tmp_stack_view().push::<i32>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val as i32;
+                    // SAFETY: `v` is the freshly pushed, non-null `i32` slot.
+                    unsafe {
+                        *v = val as i32;
+                    }
                 }
                 b'l' => {
                     let v: *mut i64 = uc.tmp_stack_view().push::<i64>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val;
+                    // SAFETY: `v` is the freshly pushed, non-null `i64` slot.
+                    unsafe {
+                        *v = val;
+                    }
                 }
                 b'f' => {
                     let v: *mut f32 = uc.tmp_stack_view().push::<f32>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val_f as f32;
+                    // SAFETY: `v` is the freshly pushed, non-null `f32` slot.
+                    unsafe {
+                        *v = val_f as f32;
+                    }
                 }
                 b'd' => {
                     let v: *mut f64 = uc.tmp_stack_view().push::<f64>(1);
                     ufbxi_check!(uc, !v.is_null(), "v");
-                    *v = val_f;
+                    // SAFETY: `v` is the freshly pushed, non-null `f64` slot.
+                    unsafe {
+                        *v = val_f;
+                    }
                 }
                 b'-' => {
                     num_values = num_values.wrapping_sub(1);
@@ -1793,7 +2349,9 @@ unsafe fn ascii_parse_node_rec(
                 ascii_accept(uc, ASCII_INT),
                 "ufbxi_ascii_accept(uc, UFBXI_ASCII_INT)"
             );
-            let count: i64 = (*ua).prev_token.value.i64_;
+            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; the accepted int
+            // count moved to `prev_token`, whose `value.i64_` union member is live.
+            let count: i64 = unsafe { (*ua).prev_token.value.i64_ };
 
             if ascii_accept(uc, b'{') {
                 ufbxi_check!(
@@ -1808,7 +2366,9 @@ unsafe fn ascii_parse_node_rec(
                     ascii_skip_until(uc, b'}')?;
                 } else if uc.parse_threaded()
                     && !uc.opts_view().force_single_thread_ascii_parsing()
-                    && !(*ua).parse_as_f32
+                    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; reads its
+                    // `parse_as_f32` flag.
+                    && !unsafe { (*ua).parse_as_f32 }
                     && (arr_type == b'i'
                         || arr_type == b'l'
                         || arr_type == b'f'
@@ -1817,7 +2377,11 @@ unsafe fn ascii_parse_node_rec(
                     // Don't bother with small arrays due to fixed overhead
                     if count >= MIN_THREADED_ASCII_VALUES as i64 && count <= u32::MAX as i64 {
                         deferred_size = (count as u32).wrapping_sub(1);
-                        ascii_store_array(uc, tmp_buf)?;
+                        // SAFETY: `tmp_buf` is the caller's live scratch buf where
+                        // the array's source spans are parked.
+                        unsafe {
+                            ascii_store_array(uc, tmp_buf)?;
+                        }
                     }
                 }
             }
@@ -1843,62 +2407,104 @@ unsafe fn ascii_parse_node_rec(
         ufbxi_check!(uc, ascii_accept(uc, b'}'), "ufbxi_ascii_accept(uc, '}')");
     }
 
-    (*ua).parse_as_f32 = false;
+    // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; clears its flag.
+    unsafe {
+        (*ua).parse_as_f32 = false;
+    }
 
     if arr_type != 0 {
         if arr_type == b'-' {
-            (*(*node).content.array).data = core::ptr::null_mut();
-            (*(*node).content.array).size = 0;
+            // SAFETY: this node was tagged an array above, so `node`'s live
+            // `content.array` union member points at the pushed `ValueArray`;
+            // writes its `data`/`size` fields to the empty state.
+            unsafe {
+                (*(*node).content.array).data = core::ptr::null_mut();
+                (*(*node).content.array).size = 0;
+            }
         } else {
             let mut arr_data: *mut c_void = core::ptr::null_mut();
 
             if deferred_size > 0 {
-                arr_data = push_size(
-                    arr_buf,
-                    arr_elem_size,
-                    num_values.wrapping_add(deferred_size) as usize,
-                );
+                // SAFETY: `arr_buf` is a live buf (tmp/result/tmp_stack) chosen
+                // above; reserves `num_values + deferred_size` elements of
+                // `arr_elem_size` bytes.
+                arr_data = unsafe {
+                    push_size(
+                        arr_buf,
+                        arr_elem_size,
+                        num_values.wrapping_add(deferred_size) as usize,
+                    )
+                };
                 // Pop any previously pushed values
                 if num_values > 0 {
+                    // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own live temp stack; it
+                    // holds `num_values` pushed elements, popped into the front of
+                    // the just-reserved `arr_data` run.
+                    unsafe {
+                        pop_size(
+                            uc.tmp_stack_mut_ptr(),
+                            arr_elem_size,
+                            num_values as usize,
+                            arr_data,
+                            false,
+                        );
+                    }
+                }
+            } else if arr_error {
+                // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own live temp stack holding
+                // `num_values` pushed elements, discarded here (null destination).
+                unsafe {
                     pop_size(
                         uc.tmp_stack_mut_ptr(),
                         arr_elem_size,
                         num_values as usize,
-                        arr_data,
+                        core::ptr::null_mut(),
                         false,
                     );
                 }
-            } else if arr_error {
-                pop_size(
-                    uc.tmp_stack_mut_ptr(),
-                    arr_elem_size,
-                    num_values as usize,
-                    core::ptr::null_mut(),
-                    false,
-                );
                 num_values = 0;
                 arr_data = ZERO_SIZE_BUFFER.as_ptr() as *mut c_void;
             } else {
-                arr_data = push_pop_size(
-                    arr_buf,
-                    uc.tmp_stack_mut_ptr(),
-                    arr_elem_size,
-                    num_values as usize,
-                );
+                // SAFETY: `arr_buf` and `uc`'s temp stack are live bufs; moves the
+                // `num_values` pushed elements from the stack into `arr_buf`.
+                arr_data = unsafe {
+                    push_pop_size(
+                        arr_buf,
+                        uc.tmp_stack_mut_ptr(),
+                        arr_elem_size,
+                        num_values as usize,
+                    )
+                };
             }
             ufbxi_check!(uc, !arr_data.is_null(), "arr_data");
-            if ((*arr_info).flags & ARRAY_FLAG_PAD_BEGIN) != 0 {
-                (*(*node).content.array).data =
-                    (arr_data as *mut u8).add(4usize.wrapping_mul(arr_elem_size)) as *mut c_void;
-                (*(*node).content.array).size =
-                    num_values.wrapping_add(deferred_size).wrapping_sub(4) as usize;
+            // SAFETY: `arr_info` is initialized (array node); reads its `flags`.
+            if (unsafe { (*arr_info).flags } & ARRAY_FLAG_PAD_BEGIN) != 0 {
+                // SAFETY: `node`'s live `content.array` points at the pushed
+                // `ValueArray`; `arr_data` has the 4-element pad prefix, so skipping
+                // `4 * arr_elem_size` bytes yields the real data start, and the size
+                // drops those 4 pad elements.
+                unsafe {
+                    (*(*node).content.array).data = (arr_data as *mut u8)
+                        .add(4usize.wrapping_mul(arr_elem_size))
+                        as *mut c_void;
+                    (*(*node).content.array).size =
+                        num_values.wrapping_add(deferred_size).wrapping_sub(4) as usize;
+                }
             } else {
-                (*(*node).content.array).data = arr_data;
-                (*(*node).content.array).size = num_values.wrapping_add(deferred_size) as usize;
+                // SAFETY: `node`'s live `content.array` points at the pushed
+                // `ValueArray`; writes its `data`/`size` for the un-padded case.
+                unsafe {
+                    (*(*node).content.array).data = arr_data;
+                    (*(*node).content.array).size = num_values.wrapping_add(deferred_size) as usize;
+                }
             }
 
             // Pop alignment helper
-            pop_size(uc.tmp_stack_mut_ptr(), 8, 1, core::ptr::null_mut(), false);
+            // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own live temp stack; pops the
+            // single 8-byte alignment element pushed at array setup.
+            unsafe {
+                pop_size(uc.tmp_stack_mut_ptr(), 8, 1, core::ptr::null_mut(), false);
+            }
 
             // Deferred parsing
             if deferred_size > 0 {
@@ -1908,26 +2514,46 @@ unsafe fn ascii_parse_node_rec(
 
                 let mut t = core::mem::MaybeUninit::<AsciiArrayTask>::uninit(); // ufbxi_uninit
                 let t: *mut AsciiArrayTask = t.as_mut_ptr();
-                (*t).arr_data = (arr_data as *mut u8)
-                    .add((num_values as usize).wrapping_mul(arr_elem_size))
-                    as *mut c_void;
-                (*t).arr_type = arr_type;
-                (*t).arr_size = deferred_size as usize;
-                (*t).num_spans = num_spans;
-                (*t).spans = spans;
-                (*t).offset = 0;
+                // SAFETY: `t` is the local `MaybeUninit<AsciiArrayTask>`'s address;
+                // all its fields are written here. `arr_data` (base of the reserved
+                // run) advanced by `num_values * arr_elem_size` bytes points at the
+                // deferred region the worker fills.
+                unsafe {
+                    (*t).arr_data = (arr_data as *mut u8)
+                        .add((num_values as usize).wrapping_mul(arr_elem_size))
+                        as *mut c_void;
+                    (*t).arr_type = arr_type;
+                    (*t).arr_size = deferred_size as usize;
+                    (*t).num_spans = num_spans;
+                    (*t).spans = spans;
+                    (*t).offset = 0;
+                }
 
                 // TODO: Split these further
-                let task: *mut Task =
-                    thread_pool_create_task(uc.thread_pool_mut_ptr(), ascii_array_task_fn);
+                // SAFETY: `thread_pool_mut_ptr` is `uc`'s own live thread pool.
+                let task: *mut Task = unsafe {
+                    thread_pool_create_task(uc.thread_pool_mut_ptr(), ascii_array_task_fn)
+                };
                 if !task.is_null() {
-                    (*task).data = push_copy::<AsciiArrayTask>(tmp_buf.get(), 1, t) as *mut c_void;
-                    ufbxi_check!(uc, !(*task).data.is_null(), "task->data");
-                    thread_pool_run_task(uc.thread_pool_mut_ptr(), task);
+                    // SAFETY: `task` is the live created task; `t` is the fully
+                    // initialized local task, copied into `tmp_buf` (a live buf) and
+                    // stored as the task's `data`.
+                    unsafe {
+                        (*task).data =
+                            push_copy::<AsciiArrayTask>(tmp_buf.get(), 1, t) as *mut c_void;
+                    }
+                    // SAFETY: `task` is the live created task; reads back its `data`.
+                    ufbxi_check!(uc, !unsafe { (*task).data }.is_null(), "task->data");
+                    // SAFETY: `thread_pool_mut_ptr` is `uc`'s own live thread pool;
+                    // `task` is the populated task to enqueue.
+                    unsafe {
+                        thread_pool_run_task(uc.thread_pool_mut_ptr(), task);
+                    }
                 } else {
                     ufbxi_check_msg!(
                         uc,
-                        ascii_array_task_imp(t),
+                        // SAFETY: `t` is the fully initialized local task, run inline.
+                        unsafe { ascii_array_task_imp(t) },
                         "Threaded ASCII parse error",
                         "ufbxi_ascii_array_task_imp(&t)"
                     );
@@ -1936,9 +2562,15 @@ unsafe fn ascii_parse_node_rec(
         }
     } else {
         num_values = min32(num_values, MAX_NON_ARRAY_VALUES as u32);
-        (*node).value_type_mask = type_mask as u16;
-        (*node).content.vals = push_copy::<Value>(tmp_buf.get(), num_values as usize, vals);
-        ufbxi_check!(uc, !(*node).content.vals.is_null(), "node->vals");
+        // SAFETY: `node` is the live pushed `Node` slot; writes its value-type mask
+        // and copies the `num_values` written `vals` entries into `tmp_buf` (a live
+        // buf) as its `content.vals`.
+        unsafe {
+            (*node).value_type_mask = type_mask as u16;
+            (*node).content.vals = push_copy::<Value>(tmp_buf.get(), num_values as usize, vals);
+        }
+        // SAFETY: `node` is the live pushed slot; reads back its `content.vals`.
+        ufbxi_check!(uc, !unsafe { (*node).content.vals }.is_null(), "node->vals");
     }
 
     // Recursively parse the children of this node. Update the parse state
@@ -1948,7 +2580,11 @@ unsafe fn ascii_parse_node_rec(
             let mut num_children: usize = 0;
             loop {
                 let mut end: bool = false;
-                ascii_parse_node(uc, depth + 1, parse_state, &raw mut end, tmp_buf, recursive)?;
+                // SAFETY: `end` is a local out-param; `tmp_buf` is the caller's live
+                // scratch buf forwarded to the child parse.
+                unsafe {
+                    ascii_parse_node(uc, depth + 1, parse_state, &raw mut end, tmp_buf, recursive)?;
+                }
                 if end {
                     break;
                 }
@@ -1956,9 +2592,17 @@ unsafe fn ascii_parse_node_rec(
             }
 
             // Pop children from `tmp_stack` to a contiguous array
-            (*node).children = tmp_buf.push_pop::<Node>(uc.tmp_stack_view(), num_children);
-            ufbxi_check!(uc, !(*node).children.is_null(), "node->children");
-            (*node).num_children = num_children as u32;
+            // SAFETY: `node` is the live pushed `Node` slot; moves its `num_children`
+            // parsed children from the temp stack into `tmp_buf` as its `children`.
+            unsafe {
+                (*node).children = tmp_buf.push_pop::<Node>(uc.tmp_stack_view(), num_children);
+            }
+            // SAFETY: `node` is the live pushed slot; reads back its `children`.
+            ufbxi_check!(uc, !unsafe { (*node).children }.is_null(), "node->children");
+            // SAFETY: `node` is the live pushed slot; writes its `num_children`.
+            unsafe {
+                (*node).num_children = num_children as u32;
+            }
         }
 
         uc.set_has_next_child(true);
