@@ -170,9 +170,10 @@ impl<T> Ref<T> {
     // pointer is null-checked by the surrounding `ufbxi_check` first.
     pub(crate) unsafe fn from_ptr(ptr: *mut T) -> Ref<T> {
         Ref {
-            // SAFETY: the caller vouches `ptr` is non-null — it is a
-            // result-buffer pointer null-checked by the surrounding
-            // `ufbxi_check` before this call (see the impl comment above).
+            // SAFETY: the caller vouches `ptr` is non-null — typically a
+            // result-buffer pointer guarded by a preceding `ufbxi_check`, or a
+            // pointer read back out of an existing `NonNull`-backed `Ref` (see
+            // the impl comment above).
             ptr: unsafe { NonNull::new_unchecked(ptr) },
             _marker: PhantomData,
         }
@@ -484,12 +485,16 @@ pub(crate) type RawListView<T> = crate::native::view::View<RawList<T>>;
 impl<T> RawListView<T> {
     #[inline(always)]
     pub(crate) fn count(&self) -> usize {
-        // SAFETY: reading a POD `usize` leaf.
+        // SAFETY: `View`s are minted only from pointers into live arena memory
+        // (view.rs mint contract), so `self.get()` is dereferenceable; `count`
+        // is a POD leaf, so no value validity beyond it is asserted.
         unsafe { (*self.get()).count }
     }
     #[inline(always)]
     pub(crate) fn data(&self) -> *const T {
-        // SAFETY: reading a POD pointer leaf.
+        // SAFETY: `View`s are minted only from pointers into live arena memory
+        // (view.rs mint contract), so `self.get()` is dereferenceable; `data`
+        // is a POD leaf, so no value validity beyond it is asserted.
         unsafe { (*self.get()).data }
     }
 }
@@ -821,9 +826,14 @@ unsafe extern "C" fn system_free(_user: *mut c_void, ptr: *mut c_void, size: usi
 }
 
 unsafe extern "C" fn allocator_imp_alloc(user: *mut c_void, size: usize) -> *mut c_void {
-    // SAFETY: `user` is the `Box<dyn AllocatorInterface>` handed to ufbx as the
-    // allocator's `user` pointer (see `Allocator::to_raw_mut`); it stays live
-    // and exclusively owned for the duration of this callback.
+    // SAFETY: `user` is the box leaked by `Allocator::to_raw_mut` as the
+    // allocator's `user` pointer, and ufbx hands it back unchanged for the
+    // duration of this callback. NOTE: `to_raw_mut` matches `Allocator::Box(b)`
+    // through `&mut self`, so what it leaks is a `Box<&mut Box<dyn
+    // AllocatorInterface>>` — a one-word `&mut` pointee — while the cast below
+    // asserts a two-word `Box<dyn AllocatorInterface>` at that address. Fix the
+    // leak site to move the `Box<dyn _>` by value (as `Stream::to_raw_mut`
+    // does) before this comment can be made true.
     let ator: &mut Box<dyn AllocatorInterface> =
         unsafe { &mut *(user as *mut Box<dyn AllocatorInterface>) };
     let layout = Layout::from_size_align(size, 8).unwrap();
@@ -836,9 +846,14 @@ unsafe extern "C" fn allocator_imp_realloc(
     old_size: usize,
     new_size: usize,
 ) -> *mut c_void {
-    // SAFETY: `user` is the `Box<dyn AllocatorInterface>` handed to ufbx as the
-    // allocator's `user` pointer (see `Allocator::to_raw_mut`); it stays live
-    // and exclusively owned for the duration of this callback.
+    // SAFETY: `user` is the box leaked by `Allocator::to_raw_mut` as the
+    // allocator's `user` pointer, and ufbx hands it back unchanged for the
+    // duration of this callback. NOTE: `to_raw_mut` matches `Allocator::Box(b)`
+    // through `&mut self`, so what it leaks is a `Box<&mut Box<dyn
+    // AllocatorInterface>>` — a one-word `&mut` pointee — while the cast below
+    // asserts a two-word `Box<dyn AllocatorInterface>` at that address. Fix the
+    // leak site to move the `Box<dyn _>` by value (as `Stream::to_raw_mut`
+    // does) before this comment can be made true.
     let ator: &mut Box<dyn AllocatorInterface> =
         unsafe { &mut *(user as *mut Box<dyn AllocatorInterface>) };
     let old_layout = Layout::from_size_align(old_size, 8).unwrap();
@@ -847,9 +862,14 @@ unsafe extern "C" fn allocator_imp_realloc(
 }
 
 unsafe extern "C" fn allocator_imp_free(user: *mut c_void, ptr: *mut c_void, size: usize) {
-    // SAFETY: `user` is the `Box<dyn AllocatorInterface>` handed to ufbx as the
-    // allocator's `user` pointer (see `Allocator::to_raw_mut`); it stays live
-    // and exclusively owned for the duration of this callback.
+    // SAFETY: `user` is the box leaked by `Allocator::to_raw_mut` as the
+    // allocator's `user` pointer, and ufbx hands it back unchanged for the
+    // duration of this callback. NOTE: `to_raw_mut` matches `Allocator::Box(b)`
+    // through `&mut self`, so what it leaks is a `Box<&mut Box<dyn
+    // AllocatorInterface>>` — a one-word `&mut` pointee — while the cast below
+    // asserts a two-word `Box<dyn AllocatorInterface>` at that address. Fix the
+    // leak site to move the `Box<dyn _>` by value (as `Stream::to_raw_mut`
+    // does) before this comment can be made true.
     let ator: &mut Box<dyn AllocatorInterface> =
         unsafe { &mut *(user as *mut Box<dyn AllocatorInterface>) };
     let layout = Layout::from_size_align(size, 8).unwrap();
@@ -857,9 +877,14 @@ unsafe extern "C" fn allocator_imp_free(user: *mut c_void, ptr: *mut c_void, siz
 }
 
 unsafe extern "C" fn allocator_imp_box_free_allocator(user: *mut c_void) {
-    // SAFETY: `user` is the `Box<dyn AllocatorInterface>` leaked in
-    // `Allocator::to_raw_mut`; ufbx calls this `free_allocator` callback once,
-    // so reclaiming ownership with `Box::from_raw` frees it exactly once.
+    // SAFETY: `user` is the box leaked in `Allocator::to_raw_mut` and ufbx calls
+    // this `free_allocator` callback exactly once, so reclaiming ownership with
+    // `Box::from_raw` frees it exactly once. NOTE: the leaked box is a
+    // `Box<&mut Box<dyn AllocatorInterface>>`, so reclaiming it at `*mut
+    // Box<dyn AllocatorInterface>` mismatches both type and layout (a 16-byte
+    // layout deallocated against an 8-byte allocation, dropping a `Box<dyn _>`
+    // read out of a slot holding a `&mut`). Fix the leak site before this
+    // reclaim is sound.
     let mut ator = unsafe { Box::from_raw(user as *mut Box<dyn AllocatorInterface>) };
     ator.free_allocator()
 }
@@ -999,7 +1024,11 @@ unsafe extern "C" fn stream_read_read(user: *mut c_void, buf: *mut c_void, size:
     // pointer (see `Stream::to_raw_mut`); live and exclusively owned here.
     let imp = unsafe { &mut *(user as *mut Box<dyn Read>) };
     // SAFETY: ufbx's read callback contract makes `buf` a writable run of
-    // `size` bytes for this call.
+    // `size` bytes for this call. Read destinations are freshly allocated and
+    // never written (e.g. the cache reader's own buffer, or a `MaybeUninit`
+    // local in `io`), so materializing a `&mut [u8]` over them rests on `u8`
+    // having no invalid bit patterns — the C contract promises writability,
+    // not initialization.
     imp.read(unsafe { slice_from_ptr_mut(buf as *mut u8, size) })
         .unwrap_or(usize::MAX)
 }
@@ -1015,7 +1044,11 @@ unsafe extern "C" fn stream_imp_read(user: *mut c_void, buf: *mut c_void, size: 
     // `user` pointer (see `Stream::to_raw_mut`); live and exclusively owned here.
     let imp = unsafe { &mut *(user as *mut Box<dyn StreamInterface>) };
     // SAFETY: ufbx's read callback contract makes `buf` a writable run of
-    // `size` bytes for this call.
+    // `size` bytes for this call. Read destinations are freshly allocated and
+    // never written (e.g. the cache reader's own buffer, or a `MaybeUninit`
+    // local in `io`), so materializing a `&mut [u8]` over them rests on `u8`
+    // having no invalid bit patterns — the C contract promises writability,
+    // not initialization.
     imp.read(unsafe { slice_from_ptr_mut(buf as *mut u8, size) })
         .unwrap_or(usize::MAX)
 }
