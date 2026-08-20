@@ -578,13 +578,13 @@ pub(crate) fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> Result<
             tc.error_mut_ptr(),
             tc.ator_tmp_mut_ptr(),
             tc.opts_view().temp_allocator_ptr(),
-            b"temp\0".as_ptr(),
+            c"temp",
         );
         init_ator(
             tc.error_mut_ptr(),
             tc.ator_result_mut_ptr(),
             tc.opts_view().result_allocator_ptr(),
-            b"result\0".as_ptr(),
+            c"result",
         );
     }
 
@@ -757,13 +757,13 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
             tc.error_mut_ptr(),
             tc.ator_tmp_mut_ptr(),
             tc.opts_view().temp_allocator_ptr(),
-            b"temp\0".as_ptr(),
+            c"temp",
         );
         init_ator(
             tc.error_mut_ptr(),
             tc.ator_result_mut_ptr(),
             tc.opts_view().result_allocator_ptr(),
-            b"result\0".as_ptr(),
+            c"result",
         );
     }
 

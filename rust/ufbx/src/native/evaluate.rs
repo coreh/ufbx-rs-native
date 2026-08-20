@@ -1059,13 +1059,13 @@ pub(crate) unsafe fn load(
         uc.error_mut_ptr(),
         uc.ator_tmp_mut_ptr(),
         uc.opts_view().temp_allocator_ptr(),
-        b"temp\0".as_ptr(),
+        c"temp",
     );
     init_ator(
         uc.error_mut_ptr(),
         uc.ator_result_mut_ptr(),
         uc.opts_view().result_allocator_ptr(),
-        b"result\0".as_ptr(),
+        c"result",
     );
 
     if uc.opts_view().read_buffer_size() == 0 {
@@ -3203,13 +3203,13 @@ pub(crate) unsafe fn evaluate_scene(
         ec.error_mut_ptr(),
         ec.ator_tmp_mut_ptr(),
         ec.opts_view().temp_allocator_ptr(),
-        b"temp\0".as_ptr(),
+        c"temp",
     );
     init_ator(
         ec.error_mut_ptr(),
         ec.ator_result_mut_ptr(),
         ec.opts_view().result_allocator_ptr(),
-        b"result\0".as_ptr(),
+        c"result",
     );
 
     ec.result_view().set_ator(ec.ator_result_mut_ptr());
@@ -3548,7 +3548,7 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
             ac.error_mut_ptr(),
             ac.ator_result_mut_ptr(),
             ac.opts_view().result_allocator_ptr(),
-            b"result\0".as_ptr(),
+            c"result",
         );
     }
     ac.result_view().set_unordered(true);
@@ -6391,13 +6391,13 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
         bc.error_mut_ptr(),
         bc.ator_tmp_mut_ptr(),
         bc.opts_view().temp_allocator_ptr(),
-        b"temp\0".as_ptr(),
+        c"temp",
     );
     init_ator(
         bc.error_mut_ptr(),
         bc.ator_result_mut_ptr(),
         bc.opts_view().result_allocator_ptr(),
-        b"result\0".as_ptr(),
+        c"result",
     );
 
     bc.result_view().set_unordered(true);

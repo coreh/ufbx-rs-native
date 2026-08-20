@@ -3132,13 +3132,13 @@ pub(crate) fn subdivide_mesh_imp(
             sc.error_mut_ptr(),
             sc.ator_tmp_mut_ptr(),
             &sc.opts_view().temp_allocator(),
-            b"temp\0".as_ptr(),
+            c"temp",
         );
         init_ator(
             sc.error_mut_ptr(),
             sc.ator_result_mut_ptr(),
             &sc.opts_view().result_allocator(),
-            b"result\0".as_ptr(),
+            c"result",
         );
     }
 

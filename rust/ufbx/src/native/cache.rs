@@ -2314,7 +2314,7 @@ pub(crate) unsafe fn load_geometry_cache(
             cc.error_mut_ptr(),
             &mut ator_tmp,
             &opts.temp_allocator,
-            b"temp\0".as_ptr(),
+            c"temp",
         );
     }
     unsafe {
@@ -2322,7 +2322,7 @@ pub(crate) unsafe fn load_geometry_cache(
             cc.error_mut_ptr(),
             cc.ator_result_mut_ptr(),
             &opts.result_allocator,
-            b"result\0".as_ptr(),
+            c"result",
         );
     }
     cc.set_ator_tmp(&mut ator_tmp);

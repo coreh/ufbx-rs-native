@@ -1146,12 +1146,7 @@ mod tests {
         // SAFETY: `ator.as_mut_ptr()` is a live, writable `Allocator` slot;
         // `err` is the caller's live error sink.
         unsafe {
-            init_ator(
-                err,
-                ator.as_mut_ptr(),
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(err, ator.as_mut_ptr(), core::ptr::null(), c"test");
         }
         // SAFETY: `init_ator` wrote every config field; `current_size` and
         // `num_allocs` hold valid zeroes from the `zeroed()` storage, so the

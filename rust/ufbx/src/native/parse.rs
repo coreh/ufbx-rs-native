@@ -8657,12 +8657,7 @@ mod tests {
         let mut uc: std::boxed::Box<InnerContext> =
             unsafe { std::boxed::Box::new_zeroed().assume_init() };
         unsafe {
-            init_ator(
-                &mut uc.error,
-                &mut uc.ator_tmp,
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&mut uc.error, &mut uc.ator_tmp, core::ptr::null(), c"test");
             uc.tmp.ator = &raw mut uc.ator_tmp;
 
             let uc_ptr: &Context = Context::from_ptr(&raw mut *uc);
@@ -8725,17 +8720,12 @@ mod tests {
         let mut uc: std::boxed::Box<InnerContext> =
             unsafe { std::boxed::Box::new_zeroed().assume_init() };
         unsafe {
-            init_ator(
-                &mut uc.error,
-                &mut uc.ator_tmp,
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&mut uc.error, &mut uc.ator_tmp, core::ptr::null(), c"test");
             init_ator(
                 &mut uc.error,
                 &mut uc.ator_result,
                 core::ptr::null(),
-                b"test\0".as_ptr(),
+                c"test",
             );
             let ator_tmp: *mut Allocator = &mut uc.ator_tmp;
             uc.result.ator = &raw mut uc.ator_result;

@@ -341,12 +341,7 @@ mod tests {
         // `fx` tag (fn contract above).
         unsafe {
             let ator = &raw mut (*fx).ator;
-            init_ator(
-                &raw mut (*fx).err,
-                ator,
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&raw mut (*fx).err, ator, core::ptr::null(), c"test");
             (*fx).result = make_buf(ator);
         }
     }

@@ -6099,7 +6099,7 @@ mod tests {
     unsafe fn make_imp(error: *mut Error, parent: *mut Refcount) -> *mut MeshImp {
         let mut ator = core::mem::MaybeUninit::<Allocator>::zeroed().assume_init();
         let opts = RawAllocatorOpts::default();
-        init_ator(error, &mut ator, &opts, b"test\0".as_ptr());
+        init_ator(error, &mut ator, &opts, c"test");
 
         let mut buf = core::mem::MaybeUninit::<Buf>::zeroed().assume_init();
         buf.ator = &raw mut ator;
@@ -6645,7 +6645,7 @@ mod tests {
             let mut error = Error::default();
             let mut ator = core::mem::MaybeUninit::<Allocator>::zeroed().assume_init();
             let opts = RawAllocatorOpts::default();
-            init_ator(&mut error, &mut ator, &opts, b"test\0".as_ptr());
+            init_ator(&mut error, &mut ator, &opts, c"test");
             let mut buf = core::mem::MaybeUninit::<Buf>::zeroed().assume_init();
             buf.ator = &raw mut ator;
             let imp = push_size(&mut buf, size_of::<SceneImp>(), 1) as *mut SceneImp;
@@ -6685,7 +6685,7 @@ mod tests {
     unsafe fn make_typed_imp<T>(error: *mut Error, magic: u32) -> *mut T {
         let mut ator = core::mem::MaybeUninit::<Allocator>::zeroed().assume_init();
         let opts = RawAllocatorOpts::default();
-        init_ator(error, &mut ator, &opts, b"test\0".as_ptr());
+        init_ator(error, &mut ator, &opts, c"test");
 
         let mut buf = core::mem::MaybeUninit::<Buf>::zeroed().assume_init();
         buf.ator = &raw mut ator;

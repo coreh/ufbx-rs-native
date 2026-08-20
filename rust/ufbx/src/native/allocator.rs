@@ -15,7 +15,7 @@
 // (an orphaned stub that no ported call site reaches); leaner feature sets
 // legitimately strand items, so the lint is only armed for the full build.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
-use core::ffi::c_void;
+use core::ffi::{c_void, CStr};
 use core::mem::size_of;
 
 use crate::generated::{Error, RawAllocatorOpts};
@@ -592,7 +592,7 @@ pub(crate) unsafe fn init_ator(
     error: *mut Error,
     ator: *mut Allocator,
     opts: *const RawAllocatorOpts,
-    name: *const u8,
+    name: &'static CStr,
 ) {
     // C: `ufbx_allocator_opts zero_opts;` + `memset` in the null branch only.
     let mut zero_opts = core::mem::MaybeUninit::<RawAllocatorOpts>::uninit();
@@ -635,7 +635,9 @@ pub(crate) unsafe fn init_ator(
     } else {
         0x1000000
     };
-    a.name = name;
+    // The `%s` reads in `alloc_size`/`realloc_size` walk to the literal's
+    // terminating NUL, which `&'static CStr` guarantees by construction.
+    a.name = name.as_ptr().cast::<u8>();
 }
 
 #[cfg(test)]
@@ -648,7 +650,7 @@ mod tests {
         let mut ator = MaybeUninit::<Allocator>::zeroed();
         // SAFETY: `ator` is a local `Allocator` slot; `error`/`opts` carry the
         // caller's obligation on this `unsafe fn` (`opts` may be null).
-        unsafe { init_ator(error, ator.as_mut_ptr(), opts, b"test\0".as_ptr()) };
+        unsafe { init_ator(error, ator.as_mut_ptr(), opts, c"test") };
         // SAFETY: `init_ator` writes every field of the slot.
         unsafe { ator.assume_init() }
     }

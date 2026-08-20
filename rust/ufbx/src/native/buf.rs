@@ -1198,12 +1198,7 @@ mod tests {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            init_ator(
-                &mut err,
-                ator.as_mut_ptr(),
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
         }
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
@@ -1244,12 +1239,7 @@ mod tests {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            init_ator(
-                &mut err,
-                ator.as_mut_ptr(),
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
         }
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
@@ -1276,12 +1266,7 @@ mod tests {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            init_ator(
-                &mut err,
-                ator.as_mut_ptr(),
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
         }
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, true, false);
@@ -1305,12 +1290,7 @@ mod tests {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            init_ator(
-                &mut err,
-                ator.as_mut_ptr(),
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
         }
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
@@ -1342,12 +1322,7 @@ mod tests {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            init_ator(
-                &mut err,
-                ator.as_mut_ptr(),
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
         }
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
@@ -1406,12 +1381,7 @@ mod tests {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            init_ator(
-                &mut err,
-                ator.as_mut_ptr(),
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
         }
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
@@ -1441,12 +1411,7 @@ mod tests {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            init_ator(
-                &mut err,
-                ator.as_mut_ptr(),
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
         }
         let ator = ator.as_mut_ptr();
         let mut stack = make_buf(ator, false, false);
@@ -1486,12 +1451,7 @@ mod tests {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            init_ator(
-                &mut err,
-                ator.as_mut_ptr(),
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
         }
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, false, false);
@@ -1527,12 +1487,7 @@ mod tests {
         let mut err = Error::default();
         let mut ator = MaybeUninit::<Allocator>::zeroed();
         unsafe {
-            init_ator(
-                &mut err,
-                ator.as_mut_ptr(),
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&mut err, ator.as_mut_ptr(), core::ptr::null(), c"test");
         }
         let ator = ator.as_mut_ptr();
         let mut buf = make_buf(ator, true, true);

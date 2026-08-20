@@ -526,14 +526,7 @@ pub(crate) unsafe fn begin_file_context(
         // SAFETY: `error`/`ator` are `fc`'s own fields (live for the borrow) and
         // `ator_opts` is the caller's `RawAllocatorOpts` or null, which
         // `init_ator` accepts.
-        unsafe {
-            init_ator(
-                fc.error_mut_ptr(),
-                fc.ator_mut_ptr(),
-                ator_opts,
-                b"file\0".as_ptr(),
-            )
-        };
+        unsafe { init_ator(fc.error_mut_ptr(), fc.ator_mut_ptr(), ator_opts, c"file") };
     }
 }
 
@@ -1061,7 +1054,7 @@ mod tests {
                 uc.error_mut_ptr(),
                 uc.ator_tmp_mut_ptr(),
                 core::ptr::null(),
-                b"tmp\0".as_ptr(),
+                c"tmp",
             );
         }
     }

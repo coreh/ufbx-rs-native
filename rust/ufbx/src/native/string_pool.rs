@@ -1870,12 +1870,7 @@ mod tests {
         // SAFETY: the allocator is initialized from the fixture's own `err`
         // and a `'static` NUL-terminated name literal.
         unsafe {
-            init_ator(
-                &mut fx.err,
-                &mut fx.ator,
-                core::ptr::null(),
-                b"test\0".as_ptr(),
-            );
+            init_ator(&mut fx.err, &mut fx.ator, core::ptr::null(), c"test");
         }
         let ator = &mut fx.ator as *mut Allocator;
         fx.pool.error = &mut fx.err;

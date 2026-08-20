@@ -114,7 +114,7 @@ pub(crate) unsafe fn generate_indices(
     // SAFETY: `error` is the caller's error slot (nullable, checked inside),
     // `allocator` the caller's options pointer, and the name literal carries its
     // NUL; `&mut ator` addresses the zeroed allocator above.
-    unsafe { init_ator(error, &mut ator, allocator, b"allocator\0".as_ptr()) };
+    unsafe { init_ator(error, &mut ator, allocator, c"allocator") };
 
     let mut local_streams = MaybeUninit::<[VertexStream; LOCAL_STREAMS_COUNT]>::uninit(); // ufbxi_uninit
     let mut local_packed_vertex = MaybeUninit::<[u64; LOCAL_PACKED_VERTEX_COUNT]>::uninit(); // ufbxi_uninit
