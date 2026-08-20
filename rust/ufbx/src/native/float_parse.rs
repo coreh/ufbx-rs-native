@@ -207,8 +207,9 @@ pub(crate) unsafe fn bigint_div(q: *mut Bigint, u: *mut Bigint, v: *mut Bigint) 
             unsafe { *un.add((i + j) as usize) = t as BigintLimb };
             carry = ((p >> BIGINT_LIMB_BITS).wrapping_sub(t >> BIGINT_LIMB_BITS)) as BigintLimb;
         }
-        // SAFETY: `j + n <= m - 1 + n < n + m + 1` indexes `u`'s top scratch limb;
-        // read then written back at that index.
+        // SAFETY: `j + n <= m - 1 + n = u.length - 1`, so this indexes the live
+        // limb of `u` just above the current n-limb window; read then written
+        // back at that index.
         t = (unsafe { *un.add((j + n) as usize) } as BigintAccum)
             .wrapping_sub(carry as BigintAccum);
         unsafe { *un.add((j + n) as usize) = t as BigintLimb };
@@ -224,8 +225,8 @@ pub(crate) unsafe fn bigint_div(q: *mut Bigint, u: *mut Bigint, v: *mut Bigint) 
                 carry = (t >> BIGINT_LIMB_BITS) as BigintLimb;
             }
             // C: `un[j+n] += carry;`
-            // SAFETY: `j + n` indexes `u`'s top scratch limb; read then written
-            // back at that index.
+            // SAFETY: `j + n < n + m == u.length` indexes the live limb of `u`
+            // above the current window; read then written back at that index.
             unsafe { *un.add((j + n) as usize) = (*un.add((j + n) as usize)).wrapping_add(carry) };
         }
         // SAFETY: `j < m <= q.capacity`, so `q.limbs[j]` is in bounds of the
@@ -291,9 +292,10 @@ pub(crate) unsafe fn bigint_shift_left(bigint: *mut Bigint, amount: u32) {
     // `limbs[b.length]` is in bounds.
     unsafe { *b.limbs.add(b.length as usize) = 0 };
     if b.length <= 3 && words <= 3 {
-        // SAFETY: `b.capacity >= 4` (asserted), so limbs 0..=2 are in bounds;
-        // `maybe_uninit` reads limbs 1/2 unconditionally (a limb may be
-        // uninitialized past `length`, matching the C read of the same slot).
+        // SAFETY: `b.capacity >= 4` (asserted) keeps limbs 0..=2 in bounds, and
+        // every caller's limb array is zero-initialized (unlike C's uninit
+        // arrays), so the unconditional reads past `length` see initialized
+        // memory; `maybe_uninit` marks the C-uninit slots.
         let l0: BigintLimb = unsafe { *b.limbs.add(0) };
         let l1: BigintLimb = ufbxi_maybe_uninit!(b.length >= 1, unsafe { *b.limbs.add(1) }, !0u32);
         let l2: BigintLimb = ufbxi_maybe_uninit!(b.length >= 2, unsafe { *b.limbs.add(2) }, !0u32);
@@ -301,9 +303,10 @@ pub(crate) unsafe fn bigint_shift_left(bigint: *mut Bigint, amount: u32) {
         unsafe { *b.limbs.add(0) = 0 };
         unsafe { *b.limbs.add(1) = 0 };
         unsafe { *b.limbs.add(2) = 0 };
-        // SAFETY: `words <= 3` and `b.length + words + 1 < b.capacity`, so
-        // `words + 3 <= b.length + words + 3` stays within `b.capacity` for
-        // these `words + k` writes (this branch has `b.length <= 3`).
+        // SAFETY: `words <= 3` in this branch and every caller's limb array has
+        // at least 7 limbs (42 in `parse_double`, 64 in the tests), so writes at
+        // `words + 0..=words + 3` are in bounds; for `b.length >= 2` the assert
+        // `b.length + words + 1 < b.capacity` bounds them directly.
         unsafe { *b.limbs.add((words + 0) as usize) = l0 << bits };
         unsafe { *b.limbs.add((words + 1) as usize) = (l1 << bits) | (l0 >> 1 >> bits_down) };
         unsafe { *b.limbs.add((words + 2) as usize) = (l2 << bits) | (l1 >> 1 >> bits_down) };
@@ -890,9 +893,9 @@ pub(crate) unsafe fn parse_int64(str_: *const u8, end: *mut *const u8) -> i64 {
     let init_len: usize = if negative | positive { 1 } else { 0 };
     let mut len = init_len;
     while len < 30 {
-        // SAFETY: the caller guarantees at least `len < 30` readable bytes past
-        // the number (the scan stops at the NUL terminator), so `str_[len]` is
-        // a live byte.
+        // SAFETY: the caller passes a NUL-terminated token buffer and the loop
+        // breaks at the first non-digit (the NUL at the latest), so `str_[len]`
+        // never reads past the terminator.
         let c = unsafe { *str_.add(len) };
         if !(c >= b'0' && c <= b'9') {
             break;
