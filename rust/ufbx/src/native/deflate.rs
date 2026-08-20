@@ -345,13 +345,18 @@ impl DeflateContext {
     // `out_end` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn out_end(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        // SAFETY: `self.get()` targets the allocation behind `&self`, and every
+        // `DeflateContext` is zero-initialized at creation (`mem::zeroed` in
+        // `inflate`) so the field is initialized; all bit patterns of the
+        // `*mut u8` scalar are valid.
         unsafe { (*self.get()).out_end }
     }
 
     #[inline(always)]
     pub(crate) fn set_out_end(&self, out_end: *mut u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
+        // SAFETY: `self.get()` targets the allocation behind `&self` (zero-
+        // initialized at creation via `mem::zeroed` in `inflate`); storing a
+        // scalar cannot violate validity.
         unsafe {
             (*self.get()).out_end = out_end;
         }
@@ -360,13 +365,18 @@ impl DeflateContext {
     // `out_ptr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn out_ptr(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        // SAFETY: `self.get()` targets the allocation behind `&self`, and every
+        // `DeflateContext` is zero-initialized at creation (`mem::zeroed` in
+        // `inflate`) so the field is initialized; all bit patterns of the
+        // `*mut u8` scalar are valid.
         unsafe { (*self.get()).out_ptr }
     }
 
     #[inline(always)]
     pub(crate) fn set_out_ptr(&self, out_ptr: *mut u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
+        // SAFETY: `self.get()` targets the allocation behind `&self` (zero-
+        // initialized at creation via `mem::zeroed` in `inflate`); storing a
+        // scalar cannot violate validity.
         unsafe {
             (*self.get()).out_ptr = out_ptr;
         }
@@ -375,13 +385,18 @@ impl DeflateContext {
     // `out_begin` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn out_begin(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
+        // SAFETY: `self.get()` targets the allocation behind `&self`, and every
+        // `DeflateContext` is zero-initialized at creation (`mem::zeroed` in
+        // `inflate`) so the field is initialized; all bit patterns of the
+        // `*mut u8` scalar are valid.
         unsafe { (*self.get()).out_begin }
     }
 
     #[inline(always)]
     pub(crate) fn set_out_begin(&self, out_begin: *mut u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
+        // SAFETY: `self.get()` targets the allocation behind `&self` (zero-
+        // initialized at creation via `mem::zeroed` in `inflate`); storing a
+        // scalar cannot violate validity.
         unsafe {
             (*self.get()).out_begin = out_begin;
         }
@@ -390,13 +405,18 @@ impl DeflateContext {
     // `fast_bits` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn fast_bits(&self) -> u32 {
-        // SAFETY: reading a scalar field; all bit patterns of `u32` are valid.
+        // SAFETY: `self.get()` targets the allocation behind `&self`, and every
+        // `DeflateContext` is zero-initialized at creation (`mem::zeroed` in
+        // `inflate`) so the field is initialized; all bit patterns of the `u32`
+        // scalar are valid.
         unsafe { (*self.get()).fast_bits }
     }
 
     #[inline(always)]
     pub(crate) fn set_fast_bits(&self, fast_bits: u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
+        // SAFETY: `self.get()` targets the allocation behind `&self` (zero-
+        // initialized at creation via `mem::zeroed` in `inflate`); storing a
+        // scalar cannot violate validity.
         unsafe {
             (*self.get()).fast_bits = fast_bits;
         }
@@ -492,9 +512,10 @@ pub(crate) unsafe fn bit_chunk_refill(s: &BitStreamView, ptr: *const u8) -> *con
         left = 64;
     }
 
-    // SAFETY: field reads/writes through the live `s.get()` pointer; `buffer`
-    // holds `left == 64` valid bytes here, so `buffer + (left - 8)` and `buffer
-    // + left` are in-bounds one-past positions.
+    // SAFETY: field reads/writes through the live `s.get()` pointer;
+    // `64 <= left <= buffer_size` here (padded up to 64, and the read capped at
+    // `buffer_size - left`), so `buffer + (left - 8)` and `buffer + left` are
+    // in-bounds one-past positions.
     unsafe {
         (*s.get()).chunk_begin = (*s.get()).buffer;
         (*s.get()).chunk_ptr = (*s.get()).buffer;
@@ -1773,8 +1794,10 @@ pub(crate) unsafe fn inflate_block_slow(
             let min_dist = if length < 16 { length } else { 16 };
             if distance >= min_dist {
                 // SAFETY: `out_space >= length + 16` gives 16 bytes of slack at
-                // `dst`, and `distance >= min_dist` keeps `src` a non-overlapping
-                // (per 16-byte step) earlier region of the same buffer.
+                // `dst`; `copy_16_bytes` is an overlap-tolerant load-then-store,
+                // and `distance >= min_dist` guarantees the first `length` bytes
+                // — the only ones relied upon — copy correctly even when
+                // `distance < 16` lets the 16-byte windows overlap.
                 unsafe { copy_16_bytes(dst, src) };
                 while length > 16 {
                     // SAFETY: `length > 16` bytes remain and the 16-byte slack
@@ -1859,9 +1882,10 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
 
     let mut out_ptr = dc.out_ptr();
     let out_begin: *mut u8 = dc.out_begin();
-    // SAFETY: the asserts above guarantee at least `INFLATE_FAST_MIN_OUT`
-    // writable bytes between `out_ptr` and `out_end`, so backing `out_end` up by
-    // that count stays within the buffer.
+    // SAFETY: the caller's contract (checked for real by `inflate`'s
+    // `fast_viable` guard; the dev asserts above only re-state it) gives at
+    // least `INFLATE_FAST_MIN_OUT` writable bytes between `out_ptr` and
+    // `out_end`, so backing `out_end` up by that count stays within the buffer.
     let out_end: *mut u8 = unsafe { dc.out_end().sub(INFLATE_FAST_MIN_OUT) };
 
     let tree_lit_length: *const HuffTree = trees.lit_length();
@@ -1870,9 +1894,10 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
     let mut bits = dc.stream_view().bits();
     let mut left = dc.stream_view().left();
     let mut data = dc.stream_view().chunk_ptr();
-    // SAFETY: the assert above guarantees at least `INFLATE_FAST_MIN_IN` bytes
-    // between `chunk_ptr` and `chunk_yield`, so backing `chunk_yield` up by that
-    // count stays within the chunk.
+    // SAFETY: the caller's contract (checked for real at the call site in
+    // `inflate`; the dev assert above only re-states it) gives at least
+    // `INFLATE_FAST_MIN_IN` bytes between `chunk_ptr` and `chunk_yield`, so
+    // backing `chunk_yield` up by that count stays within the chunk.
     let data_end: *const u8 = unsafe { dc.stream_view().chunk_yield().sub(INFLATE_FAST_MIN_IN) };
 
     let mut sym01_bits: u64;
@@ -2087,9 +2112,10 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
             return -12;
         }
 
-        // SAFETY: `src_space >= 0` gives `distance <= out_ptr - out_begin` and
-        // `dst_space >= 0` gives `length` bytes of writable room (plus the
-        // `INFLATE_FAST_MIN_OUT` slack), so `out_ptr - distance` and `out_ptr +
+        // SAFETY: `src_space >= 0` gives `distance <= out_ptr - out_begin`, and
+        // `dst_space >= 0` gives exactly `length` bytes of room up to the real
+        // buffer end (the `INFLATE_FAST_MIN_OUT` backed out of `out_end` is
+        // folded back into `dst_space`), so `out_ptr - distance` and `out_ptr +
         // length` land inside the output buffer.
         let mut src: *const u8 = unsafe { out_ptr.sub(distance as usize) };
         let mut dst = out_ptr;
@@ -2100,9 +2126,11 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
 
         let min_dist = if length < 16 { length } else { 16 };
         if distance >= min_dist as u32 && dst_space >= 16 {
-            // SAFETY: `dst_space >= 16` gives 16 bytes of slack at `dst`, and
-            // `distance >= min_dist` keeps `src` a non-overlapping (per 16-byte
-            // step) earlier region of the same buffer.
+            // SAFETY: `dst_space >= 16` gives 16 bytes of slack at `dst`;
+            // `copy_16_bytes` is an overlap-tolerant load-then-store, and
+            // `distance >= min_dist` guarantees the first `length` bytes — the
+            // only ones relied upon — copy correctly even when `distance < 16`
+            // lets the 16-byte windows overlap.
             unsafe { copy_16_bytes(dst, src) };
             while length > 16 {
                 // SAFETY: `length > 16` bytes remain and the 16-byte slack keeps
@@ -2365,8 +2393,13 @@ pub(crate) unsafe fn inflate(
                         >= INFLATE_FAST_MIN_OUT as isize;
 
                 // `ufbxi_inflate_block_fast()` needs a bit more upfront setup, see asserts on top of the function
-                // SAFETY: `chunk_yield`/`chunk_ptr` are positions in the same
-                // chunk, so `offset_from` is in bounds.
+                // SAFETY: `chunk_ptr` is in the current chunk; `chunk_yield` is
+                // too EXCEPT in the C-parity wrapped `progress_interval` case
+                // (progress cb + hint >= `usize::MAX`, see `bit_stream_init`),
+                // where it is `ptr - 1` and may sit one below the chunk — the
+                // same-allocation precondition of `offset_from` is inherited
+                // from C's raw pointer subtraction, not independently
+                // established here.
                 if fast_viable
                     && unsafe {
                         dc.stream_view()
