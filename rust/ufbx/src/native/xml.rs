@@ -1071,7 +1071,8 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     let ok = xml_parse_root(&xc).is_ok();
 
     // SAFETY: both are xc's own state — the tmp stack buf it owns, and the
-    // token run grown from `xc.ator()` to exactly `tok_cap` bytes.
+    // token run either grown from `xc.ator()` to exactly `tok_cap` bytes or
+    // still `(null, 0)`, which `free` ignores.
     unsafe { buf_free(xc.tmp_stack_mut_ptr()) };
     unsafe { free::<u8>(xc.ator(), xc.tok(), xc.tok_cap()) };
 
