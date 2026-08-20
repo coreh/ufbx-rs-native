@@ -6813,6 +6813,27 @@ pub(crate) struct AnimImp {
 
 const _: () = assert!(core::mem::offset_of!(AnimImp, anim) == size_of::<Refcount>());
 
+// SAFETY: `#[repr(C)]` with `refcount` leading, `ANIM_IMP_MAGIC` is the magic
+// `ufbxi_get_imp(ufbxi_anim_imp, ...)` users check, and `parts` projects the
+// three named fields of the passed `imp`.
+unsafe impl crate::native::parse::ImpHeader for AnimImp {
+    type Payload = Anim;
+    const MAGIC: u32 = crate::native::allocator::ANIM_IMP_MAGIC;
+
+    #[inline(always)]
+    unsafe fn parts(imp: *mut Self) -> (*mut Refcount, *mut Self::Payload, *mut u32) {
+        // SAFETY: the caller vouches `imp` addresses a live `AnimImp`, so these
+        // field projections stay inside that allocation.
+        unsafe {
+            (
+                &raw mut (*imp).refcount,
+                &raw mut (*imp).anim,
+                &raw mut (*imp).magic,
+            )
+        }
+    }
+}
+
 // ufbx.c:21628-21638 `ufbxi_push_anim`
 #[inline(never)]
 pub(crate) unsafe fn push_anim(

@@ -58,7 +58,7 @@ use crate::generated::{BlendDeformer, CacheDeformer, Mesh, SkinDeformer};
 #[cfg(feature = "skinning-eval")]
 use crate::generated::{CacheChannel, CacheInterpretation, Matrix, TopoEdge};
 use crate::native::allocator::{
-    free, free_ator, init_ator, Allocator, ANIM_IMP_MAGIC, SCENE_IMP_MAGIC, ZERO_SIZE_BUFFER,
+    free, free_ator, init_ator, Allocator, SCENE_IMP_MAGIC, ZERO_SIZE_BUFFER,
 };
 #[cfg(feature = "baking")]
 use crate::native::allocator::{grow_array, BAKED_ANIM_IMP_MAGIC};
@@ -94,8 +94,8 @@ use crate::native::hash::{
 };
 use crate::native::obj::{mtl_load, obj_free, obj_load};
 use crate::native::parse::{
-    begin_parse, determine_format, get_imp, get_name_key, get_name_key_c, load_maps, load_strings,
-    Context, Node, Refcount, SceneImp, ELEMENT_TYPE_COUNT, MIN_FILE_FORMAT_LOOKAHEAD,
+    begin_parse, determine_format, finish_imp, get_imp, get_name_key, get_name_key_c, load_maps,
+    load_strings, Context, Node, Refcount, SceneImp, ELEMENT_TYPE_COUNT, MIN_FILE_FORMAT_LOOKAHEAD,
 };
 #[cfg(feature = "baking")]
 use crate::native::parse::{find_prop, is_vec3_zero, PropView, PropsView};
@@ -3793,27 +3793,23 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
     ac.set_imp(ac.result_view().push::<AnimImp>(1));
     ufbxi_check_err!(ac.error_view(), !ac.imp().is_null(), "ac->imp");
 
-    // Expose the wide allocation so `get_imp` can recover this header from a
-    // (possibly narrowed) public `&Anim` pointer via exposed provenance.
-    (ac.imp() as *mut u8).expose_provenance();
-
-    // SAFETY: `ac.imp()` is the fresh non-null push just checked; the parent
-    // refcount is the `SceneImp` behind the scene this anim was created for,
-    // which owns it for the duration of this call, and `ac.anim_mut_ptr()` is
-    // a distinct allocation from the pushed imp, so the copy is
-    // non-overlapping.
+    // C: `ufbxi_init_ref(...)` / `ac->imp->magic = ...` / `ac->imp->anim =
+    // ac->anim` / `ac->imp->refcount.ator = ac->ator_result` /
+    // `ac->imp->refcount.buf = ac->result` — the shared imp-finalization group.
+    //
+    // SAFETY: `ac.imp()` is the fresh non-null push just checked and the last
+    // allocation of `ac->result`; the parent refcount is the `SceneImp` behind
+    // the scene this anim was created for, which owns it for the duration of
+    // this call; and `ac.anim_mut_ptr()` is ac's own `Anim` slot, a distinct
+    // allocation from the pushed imp.
     unsafe {
-        init_ref(
-            &raw mut (*ac.imp()).refcount,
-            ANIM_IMP_MAGIC,
+        finish_imp(
+            ac.imp(),
             &raw mut (*get_imp::<SceneImp>(scene as *mut Scene as *mut c_void)).refcount,
+            ac.anim_mut_ptr(),
+            ac.ator_result(),
+            ac.take_result(),
         );
-
-        (*ac.imp()).magic = ANIM_IMP_MAGIC;
-        // C: `ac->imp->anim = ac->anim;` (struct assignment)
-        ptr::copy_nonoverlapping(ac.anim_mut_ptr(), &raw mut (*ac.imp()).anim, 1);
-        (*ac.imp()).refcount.ator = ac.ator_result();
-        (*ac.imp()).refcount.buf = ac.take_result();
     }
 
     Ok(())

@@ -348,6 +348,109 @@ pub(crate) struct MeshImp {
 // ufbx.c:6250 `ufbx_static_assert(mesh_imp_offset, offsetof(ufbxi_mesh_imp, mesh) == sizeof(ufbxi_refcount));`
 const _: () = assert!(core::mem::offset_of!(MeshImp, mesh) == size_of::<Refcount>());
 
+// Rust-side consolidation of the `ufbxi_*_imp` finalization idiom — no single
+// C counterpart, but every imp creation site in ufbx.c closes with the same
+// statement group, eg. ufbx.c:27871-27877 (`ufbxi_finalize_line_curve`):
+//
+//     ufbxi_init_ref(&tc->imp->refcount, UFBXI_LINE_CURVE_IMP_MAGIC, parent);
+//     tc->imp->magic = UFBXI_LINE_CURVE_IMP_MAGIC;
+//     tc->imp->curve = tc->line;
+//     tc->imp->refcount.ator = tc->ator_result;
+//     tc->imp->refcount.buf = tc->result;
+//
+// `ImpHeader` pins the `#[repr(C)]` header-then-payload-then-magic layout those
+// imp structs share — the same layout the `offset_of` asserts pin for
+// `ufbxi_get_imp` — so `finish_imp` can write that group once, with one safety
+// argument, instead of five raw-pointer writes per site.
+//
+// # Safety
+//
+// Implementors are `#[repr(C)]` structs whose leading field is the `Refcount`
+// header, whose `MAGIC` is the `UFBXI_*_IMP_MAGIC` that `ufbxi_get_imp` users
+// check, and whose `parts` returns exactly the `(refcount, payload, magic)`
+// field projections of the passed `imp` (so a pointer valid for the imp is
+// valid for all three).
+pub(crate) unsafe trait ImpHeader: Sized {
+    // The public struct the header wraps (C: `imp->scene`, `imp->mesh`, ...).
+    type Payload;
+    // C: the value stamped into both `imp->magic` and the refcount type magic.
+    const MAGIC: u32;
+
+    // The three fields `finish_imp` writes, in one projection.
+    //
+    // # Safety
+    //
+    // `imp` addresses a live (possibly uninitialized) `Self`.
+    unsafe fn parts(imp: *mut Self) -> (*mut Refcount, *mut Self::Payload, *mut u32);
+}
+
+// SAFETY: `#[repr(C)]` with `refcount` leading, `MESH_IMP_MAGIC` is the magic
+// `ufbxi_get_imp(ufbxi_mesh_imp, ...)` users check, and `parts` projects the
+// three named fields of the passed `imp`.
+unsafe impl ImpHeader for MeshImp {
+    type Payload = crate::generated::Mesh;
+    const MAGIC: u32 = crate::native::allocator::MESH_IMP_MAGIC;
+
+    #[inline(always)]
+    unsafe fn parts(imp: *mut Self) -> (*mut Refcount, *mut Self::Payload, *mut u32) {
+        // SAFETY: the caller vouches `imp` addresses a live `MeshImp`, so these
+        // field projections stay inside that allocation.
+        unsafe {
+            (
+                &raw mut (*imp).refcount,
+                &raw mut (*imp).mesh,
+                &raw mut (*imp).magic,
+            )
+        }
+    }
+}
+
+// The shared tail of every `ufbxi_*_imp` creation site: stamp the refcount
+// header, the magic and the payload into the freshly pushed imp, then hand the
+// result arena (`ator` + `buf`) over to the refcount that owns it from here on.
+//
+// # Safety
+//
+// - `imp` addresses a live, writable `T` — an unread push from the result buf
+//   qualifies; the `T` must be the LAST allocation of `buf`'s arena (C's
+//   "must be the final allocation" rule), and none of its fields may be read
+//   before this call.
+// - `parent` is null or a live `Refcount` that outlives the new imp; it is
+//   retained here (C: `ufbxi_init_ref`).
+// - `payload` addresses a readable `T::Payload` in an allocation distinct from
+//   `imp` (the context's own payload slot). Its value is MOVED bitwise into the
+//   imp, so the caller must not use the source value afterwards.
+#[inline(always)]
+pub(crate) unsafe fn finish_imp<T: ImpHeader>(
+    imp: *mut T,
+    parent: *mut Refcount,
+    payload: *mut T::Payload,
+    ator: Allocator,
+    buf: Buf,
+) {
+    // Expose the wide allocation so `get_imp` can recover this header from a
+    // (possibly narrowed) public payload pointer via exposed provenance.
+    (imp as *mut u8).expose_provenance();
+
+    // SAFETY: `imp` addresses a live `T` by this fn's contract.
+    let (refcount, imp_payload, magic) = unsafe { T::parts(imp) };
+    // SAFETY: `refcount` is the imp's own header field, writable by this fn's
+    // contract; `parent` is null or live per the same contract.
+    unsafe { crate::native::api::init_ref(refcount, T::MAGIC, parent) };
+    // SAFETY: the imp's own `magic` field, writable by this fn's contract.
+    unsafe { *magic = T::MAGIC };
+    // SAFETY: the contract vouches that `payload` is a readable `T::Payload` in
+    // a distinct allocation from `imp`, so the copy is non-overlapping and the
+    // destination is the imp's own payload field.
+    unsafe { core::ptr::copy_nonoverlapping(payload, imp_payload, 1) };
+    // SAFETY: `ator`/`buf` fields of the header initialized just above; the
+    // moved-in `Buf` replaces the push's uninitialized bytes (`Buf` has no
+    // `Drop`, so no stale value is dropped).
+    unsafe { (*refcount).ator = ator };
+    // SAFETY: as above — the header's own `buf` field.
+    unsafe { (*refcount).buf = buf };
+}
+
 // ufbx.c:6252-6272 `ufbxi_ascii_token`
 #[repr(C)]
 #[derive(Clone, Copy)]

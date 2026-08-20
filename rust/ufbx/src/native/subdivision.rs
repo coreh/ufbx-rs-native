@@ -20,10 +20,10 @@ use crate::generated::{Error, Mesh, RawSubdivideOpts};
 #[cfg(feature = "subdivision")]
 use crate::generated::{Vec2, Vec3, Vec4};
 #[cfg(feature = "subdivision")]
-use crate::native::allocator::{free, free_ator, grow_array, init_ator, Allocator, MESH_IMP_MAGIC};
+use crate::native::allocator::{free, free_ator, grow_array, init_ator, Allocator};
 #[cfg(feature = "subdivision")]
 use crate::native::api::{
-    compute_normals, compute_topology, generate_normal_mapping, get_vertex_real, init_ref,
+    compute_normals, compute_topology, generate_normal_mapping, get_vertex_real,
     topo_next_vertex_edge, topo_prev_vertex_edge, ZERO_VEC3,
 };
 #[cfg(feature = "subdivision")]
@@ -35,7 +35,7 @@ use crate::native::error::{
 #[cfg(not(feature = "subdivision"))]
 use crate::native::error::{ufbxi_fmt_err_info, ufbxi_report_err_msg};
 #[cfg(feature = "subdivision")]
-use crate::native::parse::{get_imp, MeshImp, Refcount, SceneImp};
+use crate::native::parse::{finish_imp, get_imp, MeshImp, Refcount, SceneImp};
 #[cfg(feature = "subdivision")]
 use crate::native::platform::{
     max_sz, min_sz, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable, unstable_sort, NO_INDEX,
@@ -3297,10 +3297,6 @@ pub(crate) fn subdivide_mesh_imp(
     sc.set_imp(sc.result_view().push::<MeshImp>(1));
     ufbxi_check_err!(sc.error_view(), !sc.imp().is_null(), "sc->imp");
 
-    // Expose the wide allocation so `get_imp` can recover this header from a
-    // (possibly narrowed) public `&Mesh` pointer via exposed provenance.
-    (sc.imp() as *mut u8).expose_provenance();
-
     // SAFETY: `subdivide_mesh_level` always installs a `SubdivisionResult` on
     // the destination mesh (the `result_sub` push there), so this ref is
     // non-null and points into sc's own result arena.
@@ -3312,20 +3308,28 @@ pub(crate) fn subdivide_mesh_imp(
         (*dst_sub).temp_allocs = sc.ator_tmp_view().num_allocs();
     }
 
-    // SAFETY: `sc.imp()` is the fresh non-null push just checked, so filling
-    // its header writes our own allocation; `parent` is the live owner picked
-    // above; `sc.dst_mesh_mut_ptr()` is a distinct allocation from the pushed
-    // imp, so the copy is non-overlapping.
+    // C: `ufbxi_init_ref(...)` / `sc->imp->magic = ...` / `sc->imp->mesh =
+    // sc->dst_mesh` / `sc->imp->refcount.ator = sc->ator_result` /
+    // `sc->imp->refcount.buf = sc->result` — the shared imp-finalization group.
+    //
+    // SAFETY: `sc.imp()` is the fresh non-null push just checked and the last
+    // allocation of `sc->result`, so filling its header writes our own
+    // allocation; `parent` is the live owner picked above; and
+    // `sc.dst_mesh_mut_ptr()` is sc's own `Mesh` slot, a distinct allocation
+    // from the pushed imp.
     unsafe {
-        init_ref(&mut (*sc.imp()).refcount, MESH_IMP_MAGIC, parent);
-
-        (*sc.imp()).magic = MESH_IMP_MAGIC;
-        // C: `sc->imp->mesh = sc->dst_mesh;` — struct assignment (memcpy).
-        core::ptr::copy_nonoverlapping(sc.dst_mesh_mut_ptr(), &raw mut (*sc.imp()).mesh, 1);
-        (*sc.imp()).refcount.ator = sc.ator_result();
-        (*sc.imp()).refcount.buf = sc.take_result();
-        (*sc.imp()).mesh.subdivision_evaluated = true;
+        finish_imp(
+            sc.imp(),
+            parent,
+            sc.dst_mesh_mut_ptr(),
+            sc.ator_result(),
+            sc.take_result(),
+        );
     }
+
+    // SAFETY: the imp header is fully initialized just above, so its `mesh`
+    // payload is a live `Mesh` this call owns.
+    unsafe { (*sc.imp()).mesh.subdivision_evaluated = true };
 
     Ok(())
 }

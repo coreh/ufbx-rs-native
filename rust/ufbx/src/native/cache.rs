@@ -24,7 +24,7 @@ use crate::native::allocator::{
     free, free_ator, grow_array, init_ator, Allocator, CACHE_IMP_MAGIC,
 };
 use crate::native::api::{
-    coordinate_axes_valid, init_ref, matrix_determinant, matrix_mul, matrix_to_transform,
+    coordinate_axes_valid, matrix_determinant, matrix_mul, matrix_to_transform,
     transform_to_matrix, EMPTY_STRING,
 };
 use crate::native::buf::{buf_free, Buf};
@@ -34,7 +34,9 @@ use crate::native::error::{
     ufbxi_report_err_msg, ufbxi_snprintf, Fail, EMPTY_CHAR,
 };
 use crate::native::hash::map_init;
-use crate::native::parse::{is_transform_identity, r#match, Context, InnerContext, Refcount};
+use crate::native::parse::{
+    finish_imp, is_transform_identity, r#match, Context, InnerContext, Refcount,
+};
 use crate::native::platform::{
     add_ptr, macro_lower_bound_eq, min32, min64, min_sz, read_f32, read_u32, stable_sort, to_size,
     ufbx_assert, ufbxi_dev_assert, ufbxi_regression_assert, unstable_sort, MAX_SKIP_SIZE,
@@ -72,6 +74,30 @@ pub(crate) struct GeometryCacheImp {
 #[cfg(feature = "geometry-cache")]
 const _: () =
     assert!(core::mem::offset_of!(GeometryCacheImp, cache) == core::mem::size_of::<Refcount>());
+
+// SAFETY: `#[repr(C)]` with `refcount` leading, `CACHE_IMP_MAGIC` is the magic
+// `ufbxi_get_imp(ufbxi_geometry_cache_imp, ...)` users check, and `parts`
+// projects the three named fields of the passed `imp`. The extra
+// `owned_by_scene` / `string_buf` fields trail the shared header and are
+// stamped by the call site.
+#[cfg(feature = "geometry-cache")]
+unsafe impl crate::native::parse::ImpHeader for GeometryCacheImp {
+    type Payload = crate::generated::GeometryCache;
+    const MAGIC: u32 = CACHE_IMP_MAGIC;
+
+    #[inline(always)]
+    unsafe fn parts(imp: *mut Self) -> (*mut Refcount, *mut Self::Payload, *mut u32) {
+        // SAFETY: the caller vouches `imp` addresses a live `GeometryCacheImp`,
+        // so these field projections stay inside that allocation.
+        unsafe {
+            (
+                &raw mut (*imp).refcount,
+                &raw mut (*imp).cache,
+                &raw mut (*imp).magic,
+            )
+        }
+    }
+}
 
 // ufbx.c:23961-23970 `ufbxi_cache_tmp_channel`
 #[cfg(feature = "geometry-cache")]
@@ -2176,30 +2202,28 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     cc.set_imp(cc.result_view().push(1));
     ufbxi_check_err!(cc.error_view(), !cc.imp().is_null(), "cc->imp");
 
-    // Expose the wide allocation so `get_imp` can recover this header from a
-    // (possibly narrowed) public `&GeometryCache` pointer via exposed provenance.
-    (cc.imp() as *mut u8).expose_provenance();
-
+    // C: `ufbxi_init_ref(...)` / `cc->imp->cache = cc->cache` /
+    // `cc->imp->magic = ...` / `cc->imp->refcount.ator = cc->ator_result` /
+    // `cc->imp->refcount.buf = cc->result` — the shared imp-finalization group.
+    //
     // SAFETY (this and every `(*cc.imp())` projection below): `cc.imp()` is the
     // non-null single-element result-buf allocation pushed and checked just
     // above; it is the last allocation, so nothing else aliases it while these
-    // header fields are stamped.
+    // header fields are stamped. `cache_mut_ptr` addresses `cc`'s own
+    // `GeometryCache` field — a distinct allocation — and the helper moves it
+    // into the fresh `imp` slot; `cc.cache` is not read again (PORTING.md
+    // "Copy vs non-Copy internal structs": an explicit move).
     unsafe {
-        init_ref(
-            &mut (*cc.imp()).refcount,
-            CACHE_IMP_MAGIC,
+        finish_imp(
+            cc.imp(),
             core::ptr::null_mut(),
+            cc.cache_mut_ptr(),
+            cc.ator_result(),
+            cc.take_result(),
         );
     }
 
-    // SAFETY: `cache_mut_ptr` addresses `cc`'s own `GeometryCache` field; the
-    // read moves it into the fresh `imp` slot, and `cc.cache` is not read again
-    // (PORTING.md "Copy vs non-Copy internal structs": an explicit move).
-    unsafe { core::ptr::write(&mut (*cc.imp()).cache, core::ptr::read(cc.cache_mut_ptr())) };
-    unsafe { (*cc.imp()).magic = CACHE_IMP_MAGIC };
     unsafe { (*cc.imp()).owned_by_scene = cc.owned_by_scene() };
-    unsafe { (*cc.imp()).refcount.ator = cc.ator_result() };
-    unsafe { (*cc.imp()).refcount.buf = cc.take_result() };
     unsafe { (*cc.imp()).refcount.buf.ator = &raw mut (*cc.imp()).refcount.ator };
     unsafe { (*cc.imp()).string_buf = cc.string_pool_view().take_buf() };
     unsafe { (*cc.imp()).string_buf.ator = &raw mut (*cc.imp()).refcount.ator };

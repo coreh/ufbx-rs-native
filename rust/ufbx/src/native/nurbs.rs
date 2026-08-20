@@ -32,12 +32,10 @@ use crate::generated::{
     NurbsTopology, RawTessellateCurveOpts, RawTessellateSurfaceOpts, Vec2, Vec3,
 };
 #[cfg(feature = "tessellation")]
-use crate::native::allocator::{
-    does_overflow, init_ator, Allocator, LINE_CURVE_IMP_MAGIC, MESH_IMP_MAGIC,
-};
+use crate::native::allocator::{does_overflow, init_ator, Allocator, LINE_CURVE_IMP_MAGIC};
 #[cfg(feature = "tessellation")]
 use crate::native::api::{
-    compute_normals, evaluate_nurbs_curve, evaluate_nurbs_surface, init_ref, ZERO_VEC2, ZERO_VEC3,
+    compute_normals, evaluate_nurbs_curve, evaluate_nurbs_surface, ZERO_VEC2, ZERO_VEC3,
 };
 #[cfg(feature = "tessellation")]
 use crate::native::buf::Buf;
@@ -49,7 +47,7 @@ use crate::native::error::{ufbxi_check_err, ufbxi_check_err_msg, EMPTY_CHAR};
 use crate::native::hash::Map;
 use crate::native::parse::Refcount;
 #[cfg(feature = "tessellation")]
-use crate::native::parse::{get_imp, MeshImp, SceneImp};
+use crate::native::parse::{finish_imp, get_imp, ImpHeader, MeshImp, SceneImp};
 #[cfg(feature = "tessellation")]
 use crate::native::platform::{add_ptr, ufbx_assert};
 #[cfg(feature = "tessellation")]
@@ -133,6 +131,28 @@ pub(crate) struct LineCurveImp {
 
 // ufbx.c:27797 `ufbx_static_assert(line_curve_imp_offset, offsetof(ufbxi_line_curve_imp, curve) == sizeof(ufbxi_refcount));`
 const _: () = assert!(core::mem::offset_of!(LineCurveImp, curve) == size_of::<Refcount>());
+
+// SAFETY: `#[repr(C)]` with `refcount` leading, `LINE_CURVE_IMP_MAGIC` is the
+// magic `ufbxi_get_imp(ufbxi_line_curve_imp, ...)` users check, and `parts`
+// projects the three named fields of the passed `imp`.
+#[cfg(feature = "tessellation")]
+unsafe impl ImpHeader for LineCurveImp {
+    type Payload = LineCurve;
+    const MAGIC: u32 = LINE_CURVE_IMP_MAGIC;
+
+    #[inline(always)]
+    unsafe fn parts(imp: *mut Self) -> (*mut Refcount, *mut Self::Payload, *mut u32) {
+        // SAFETY: the caller vouches `imp` addresses a live `LineCurveImp`, so
+        // these field projections stay inside that allocation.
+        unsafe {
+            (
+                &raw mut (*imp).refcount,
+                &raw mut (*imp).curve,
+                &raw mut (*imp).magic,
+            )
+        }
+    }
+}
 
 // ufbx.c:27799 `#if UFBXI_FEATURE_TESSELLATION`
 
@@ -674,28 +694,25 @@ pub(crate) fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> Result<
     tc.set_imp(tc.result_view().push::<LineCurveImp>(1));
     ufbxi_check_err!(tc.error_view(), !tc.imp().is_null(), "tc->imp");
 
-    // Expose the wide allocation so `get_imp` can recover this header from a
-    // (possibly narrowed) public `&LineCurve` pointer via exposed provenance.
-    (tc.imp() as *mut u8).expose_provenance();
-
-    // SAFETY: `tc.imp()` is the fresh non-null push just checked above, so
-    // filling its header is writing our own allocation; the parent refcount
-    // comes from the scene the input curve belongs to, which owns that curve
-    // for the duration of this call, and `tc.line_mut_ptr()` is tc's own
-    // `LineCurve` slot — a distinct allocation from the freshly pushed imp,
-    // so the copy is non-overlapping.
+    // C: `ufbxi_init_ref(...)` / `tc->imp->magic = ...` / `tc->imp->curve =
+    // tc->line` / `tc->imp->refcount.ator = tc->ator_result` /
+    // `tc->imp->refcount.buf = tc->result` — the shared imp-finalization group.
+    //
+    // SAFETY: `tc.imp()` is the fresh non-null push just checked above and the
+    // last allocation of `tc->result`, so filling its header is writing our own
+    // allocation; the parent refcount comes from the scene the input curve
+    // belongs to, which owns that curve for the duration of this call; and
+    // `tc.line_mut_ptr()` is tc's own `LineCurve` slot — a distinct allocation
+    // from the freshly pushed imp.
     unsafe {
-        init_ref(
-            &mut (*tc.imp()).refcount,
-            LINE_CURVE_IMP_MAGIC,
-            &mut (*get_imp::<SceneImp>(ref_ptr(&(*curve).element.scene) as *mut c_void)).refcount,
+        finish_imp(
+            tc.imp(),
+            &raw mut (*get_imp::<SceneImp>(ref_ptr(&(*curve).element.scene) as *mut c_void))
+                .refcount,
+            tc.line_mut_ptr(),
+            tc.ator_result(),
+            tc.take_result(),
         );
-
-        (*tc.imp()).magic = LINE_CURVE_IMP_MAGIC;
-        // C: `tc->imp->curve = tc->line` — struct assignment (memcpy).
-        core::ptr::copy_nonoverlapping(tc.line_mut_ptr(), &mut (*tc.imp()).curve, 1);
-        (*tc.imp()).refcount.ator = tc.ator_result();
-        (*tc.imp()).refcount.buf = tc.take_result();
     }
 
     Ok(())
@@ -1188,29 +1205,29 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
     tc.set_imp(tc.result_view().push::<MeshImp>(1));
     ufbxi_check_err!(tc.error_view(), !tc.imp().is_null(), "tc->imp");
 
-    // Expose the wide allocation so `get_imp` can recover this header from a
-    // (possibly narrowed) public `&Mesh` pointer via exposed provenance.
-    (tc.imp() as *mut u8).expose_provenance();
-
-    // SAFETY: `tc.imp()` is the fresh non-null push just checked, so filling
-    // its header writes our own allocation; the parent refcount comes from the
-    // scene owning the input surface for the duration of this call, and
-    // `tc.mesh_mut_ptr()` is a distinct allocation from the pushed imp, so the
-    // copy is non-overlapping.
+    // C: `ufbxi_init_ref(...)` / `tc->imp->magic = ...` / `tc->imp->mesh =
+    // tc->mesh` / `tc->imp->refcount.ator = tc->ator_result` /
+    // `tc->imp->refcount.buf = tc->result` — the shared imp-finalization group.
+    //
+    // SAFETY: `tc.imp()` is the fresh non-null push just checked and the last
+    // allocation of `tc->result`, so filling its header writes our own
+    // allocation; the parent refcount comes from the scene owning the input
+    // surface for the duration of this call; and `tc.mesh_mut_ptr()` is tc's own
+    // `Mesh` slot, a distinct allocation from the pushed imp.
     unsafe {
-        init_ref(
-            &mut (*tc.imp()).refcount,
-            MESH_IMP_MAGIC,
-            &mut (*get_imp::<SceneImp>(ref_ptr(&(*surface).element.scene) as *mut c_void)).refcount,
+        finish_imp(
+            tc.imp(),
+            &raw mut (*get_imp::<SceneImp>(ref_ptr(&(*surface).element.scene) as *mut c_void))
+                .refcount,
+            tc.mesh_mut_ptr(),
+            tc.ator_result(),
+            tc.take_result(),
         );
-
-        (*tc.imp()).magic = MESH_IMP_MAGIC;
-        // C: `tc->imp->mesh = tc->mesh` — struct assignment (memcpy).
-        core::ptr::copy_nonoverlapping(tc.mesh_mut_ptr(), &mut (*tc.imp()).mesh, 1);
-        (*tc.imp()).refcount.ator = tc.ator_result();
-        (*tc.imp()).refcount.buf = tc.take_result();
-        (*tc.imp()).mesh.subdivision_evaluated = true;
     }
+
+    // SAFETY: the imp header is fully initialized just above, so its `mesh`
+    // payload is a live `Mesh` this call owns.
+    unsafe { (*tc.imp()).mesh.subdivision_evaluated = true };
 
     Ok(())
 }
