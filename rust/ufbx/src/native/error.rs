@@ -1292,7 +1292,9 @@ pub(crate) type ErrorView = crate::native::view::View<Error>;
 impl ErrorView {
     #[inline(always)]
     pub(crate) fn type_(&self) -> crate::generated::ErrorType {
-        // SAFETY: reading the error-type enum — same assertion the direct read makes.
+        // SAFETY: an `ErrorView` is only minted from a pointer to a live,
+        // initialized `Error` in stable context/allocator storage (the
+        // view-minting invariant), so `self.get()` is valid to read.
         unsafe { (*self.get()).type_ }
     }
     #[inline(always)]
@@ -1303,7 +1305,10 @@ impl ErrorView {
     }
     #[inline(always)]
     pub(crate) fn description_view(&self) -> &crate::prelude::StringView {
-        // SAFETY: reinterpret the `description: String` field in place as a view.
+        // SAFETY: `View` is `#[repr(transparent)]` over its storage, so the
+        // field pointer reinterprets in place as a `StringView`; the field sits
+        // inside the live `Error` this view was minted from, keeping the derived
+        // `&StringView` valid for the lifetime of `&self`.
         unsafe { &*(&raw mut (*self.get()).description as *mut crate::prelude::StringView) }
     }
 }
