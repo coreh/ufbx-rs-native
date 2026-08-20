@@ -645,9 +645,11 @@ pub(crate) fn obj_tokenize(uc: &Context) -> Result<(), Fail> {
         // Skip whitespace
         loop {
             // SAFETY: the stored line window always ends in a '\n' sentinel
-            // (`obj_read_line` appends one at EOF), and the scan stops there,
-            // so every byte read stays inside the window; the continuation
-            // lookahead only steps forward while `p < end - 1`.
+            // (`obj_read_line` appends one at EOF) and the scan stops there; a
+            // '\\' or '\r' therefore sits at least one byte before that
+            // sentinel, so both continuation-lookahead reads (`ptr + 1`, and
+            // `+ 2` past a '\r') stay inside the window. The `p < end - 1`
+            // test only gates accepting the continuation, not the reads.
             unsafe {
                 c = *ptr;
                 if c == b' ' || c == b'\t' || c == b'\r' {
@@ -827,11 +829,13 @@ pub(crate) unsafe fn obj_parse_index(
     attrib: u32,
 ) -> Result<(), Fail> {
     // SAFETY: caller contract — `s` is a live `String` holding a token span
-    // (possibly empty) that lies within the line window `obj_tokenize` scanned,
-    // so `data .. data + length` is readable and so is the byte *at* `end`:
-    // `obj_tokenize` terminates every token on a delimiter byte inside that
-    // window (in the worst case the '\n' sentinel `obj_read_line` appends), and
-    // the `'/'` rebasing below only shrinks a span from the front, keeping the
+    // (possibly empty) at token index >= 1 within the line window
+    // `obj_tokenize` scanned, so `data .. data + length` is readable and so is
+    // the byte *at* `end`: `obj_tokenize` terminates every non-'#' token on a
+    // delimiter byte inside that window (in the worst case the '\n' sentinel
+    // `obj_read_line` appends), and a '#' token — the one kind that ends on an
+    // arbitrary byte — is only ever produced at index 0, so none reaches here.
+    // The `'/'` rebasing below only shrinks a span from the front, keeping the
     // same `end`. `ptr`/`end` bracket the span.
     let mut ptr: *const u8 = unsafe { (*s).data };
     // SAFETY: as above; one past the span's last byte, still within the window.
@@ -1795,9 +1799,13 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 // SAFETY: `fbx_mesh` is this mesh's own element; both index
                 // walks run over `data .. data + count` of a list this
                 // function just populated (the position indices, then the
-                // fresh `push_copy` of them), and `color_valid` is indexed
-                // only after the index is checked against the value count it
-                // was popped for.
+                // fresh `push_copy` of them). `color_valid` holds at least
+                // `max_index` flags for the first walk (colors are padded to
+                // the position vertex count before popping and both pops share
+                // the same `min_ix`, so its flag run is at least as long as
+                // the popped position vertex run) and exactly `num_values`
+                // flags for the second, so every guarded `color_valid` read is
+                // in bounds.
                 unsafe {
                     let mut has_color: bool = false;
                     let mut all_valid: bool = true;
