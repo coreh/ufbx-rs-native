@@ -9655,7 +9655,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 // See HACK(consecutive-faces) in `ufbxi_read_mesh()`.
                 if mesh.material_parts().count > 0 {
                     // SAFETY: the count is above zero, so element `0` of the mesh's
-                    // material-part run is live.
+                    // material-part run is live; the run was pushed into uc's
+                    // result arena above (write-capable provenance for `Mut`).
                     let part: &View<MeshPart> = unsafe {
                         View::<MeshPart>::from_ptr(
                             (mesh.material_parts().data as *mut MeshPart).add(0),

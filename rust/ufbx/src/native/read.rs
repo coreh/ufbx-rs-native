@@ -4121,10 +4121,11 @@ pub(crate) unsafe fn read_mesh(
     // element struct for `ElementType::Mesh`.
     let mesh: *mut Mesh = unsafe { push_element::<Mesh>(uc, info, ElementType::Mesh) };
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
-    // SAFETY: `mesh` is the fresh non-null element just pushed into uc's result
-    // arena — reached through `*mut` (write-capable provenance for `Mut`) and
-    // live for the borrow; the fields accessed below are initialized at each use
-    // site, as this function fills them in.
+    // SAFETY: `mesh` is the fresh non-null element just pushed into uc's
+    // `tmp_elements` arena (elements live there until finalize copies them into
+    // the result arena) — reached through `*mut` (write-capable provenance for
+    // `Mut`) and live for the borrow; the fields accessed below are initialized
+    // at each use site, as this function fills them in.
     let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
 
     // In up to version 7100 FBX files blend shapes are contained within the same geometry node
@@ -10809,10 +10810,11 @@ pub(crate) unsafe fn read_legacy_mesh(
     // element struct for `ElementType::Mesh`.
     let mesh: *mut Mesh = unsafe { push_element::<Mesh>(uc, info, ElementType::Mesh) };
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
-    // SAFETY: `mesh` is the fresh non-null element just pushed into uc's result
-    // arena — reached through `*mut` (write-capable provenance for `Mut`) and
-    // live for the borrow; the fields accessed below are initialized at each use
-    // site, as this function fills them in.
+    // SAFETY: `mesh` is the fresh non-null element just pushed into uc's
+    // `tmp_elements` arena (elements live there until finalize copies them into
+    // the result arena) — reached through `*mut` (write-capable provenance for
+    // `Mut`) and live for the borrow; the fields accessed below are initialized
+    // at each use site, as this function fills them in.
     let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
 
     // SAFETY: `info` is the caller's live `ufbxi_element_info`.
