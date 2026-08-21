@@ -31,30 +31,13 @@ use crate::native::platform::{macro_lower_bound_eq, ufbx_assert, unstable_sort, 
 use crate::native::platform::{math, max_real, min_real, stable_sort, ufbxi_ignore, KD_FAST_DEPTH};
 #[cfg(feature = "triangulation")]
 use crate::native::string_pool::{distsq2, dot3, length3, mul3, slow_normalized_cross3};
+use crate::native::view::{Const, View};
 #[cfg(feature = "triangulation")]
 use crate::prelude::as_f64;
 #[cfg(feature = "triangulation")]
 use crate::prelude::Real;
 use core::ffi::c_void;
 use core::mem::size_of;
-
-/// `Const` view over `mesh.vertex_normal` for the checked vertex reads: `mesh`
-/// is an arena pointer, and the accessor family only reads.
-///
-/// # Safety
-/// `mesh` must point to a valid, live `Mesh` (the callers' existing contract).
-unsafe fn vertex_normal_view<'a>(
-    mesh: *const Mesh,
-) -> &'a crate::native::view::View<crate::generated::VertexVec3, crate::native::view::Const> {
-    // SAFETY: `mesh` points to a valid, live `Mesh` (fn contract); `&raw const`
-    // projects the `vertex_normal` field address without forming a reference,
-    // and `from_ptr` mints a `Const` read-only view from that readable address.
-    unsafe {
-        crate::native::view::View::<crate::generated::VertexVec3, crate::native::view::Const>::from_ptr(
-            &raw const (*mesh).vertex_normal,
-        )
-    }
-}
 
 // -- KD tree (ufbx.c:28245-28470, `#if UFBXI_FEATURE_KD`)
 
@@ -1231,15 +1214,19 @@ pub(crate) unsafe extern "C" fn topo_less_index_index(
 // ufbx.c:28707-28784 `ufbxi_compute_topology`
 #[inline(never)]
 pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge) {
-    // SAFETY: `mesh` points to a valid, live `Mesh` (caller contract).
-    let num_indices: usize = unsafe { (*mesh).num_indices };
+    // SAFETY: `mesh` points to a valid, live `Mesh` (caller contract). It comes
+    // from the public entry points, so it may derive from a caller's `&Mesh` —
+    // `Const` is the only sound mode for it. The freeze the `Const` tag demands
+    // holds: this fn only READS the mesh (every write targets `topo`), so no
+    // parent pointer writes the viewed bytes while the view is live.
+    let mesh = unsafe { View::<Mesh, Const>::from_ptr(mesh) };
+    let num_indices: usize = mesh.num_indices();
 
     // Temporarily use `prev` and `next` for vertices
     let mut fi: u32 = 0;
-    // SAFETY: `mesh` is live (caller contract).
-    while (fi as usize) < unsafe { (*mesh).num_faces } {
+    while (fi as usize) < mesh.num_faces() {
         // SAFETY: `fi < num_faces`, so `faces.data[fi]` is a live face.
-        let face: Face = unsafe { *(*mesh).faces.data.add(fi as usize) };
+        let face: Face = unsafe { *mesh.faces().data.add(fi as usize) };
         let mut pi: u32 = 0;
         while pi < face.num_indices {
             // SAFETY: `topo` addresses `num_indices` live `TopoEdge`s and
@@ -1250,16 +1237,16 @@ pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge) {
             // SAFETY: `index_begin + pi` is a live `vertex_indices` slot for the
             // face (as above); `mesh` owns that array.
             let mut va: u32 = unsafe {
-                *(*mesh)
-                    .vertex_indices
+                *mesh
+                    .vertex_indices()
                     .data
                     .add(face.index_begin.wrapping_add(pi) as usize)
             };
             // SAFETY: `ni < face.num_indices`, so `index_begin + ni` is a live
             // `vertex_indices` slot for the face.
             let mut vb: u32 = unsafe {
-                *(*mesh)
-                    .vertex_indices
+                *mesh
+                    .vertex_indices()
                     .data
                     .add(face.index_begin.wrapping_add(ni) as usize)
             };
@@ -1294,18 +1281,16 @@ pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge) {
         );
     }
 
-    // SAFETY: `mesh` is live (caller contract).
-    if !unsafe { (*mesh).edges.data.is_null() } {
+    if !mesh.edges().data.is_null() {
         let mut ei: u32 = 0;
-        // SAFETY: `mesh` is live (caller contract).
-        while (ei as usize) < unsafe { (*mesh).num_edges } {
+        while (ei as usize) < mesh.num_edges() {
             // SAFETY: `ei < num_edges`, so `edges.data[ei]` is a live edge.
-            let edge: Edge = unsafe { *(*mesh).edges.data.add(ei as usize) };
+            let edge: Edge = unsafe { *mesh.edges().data.add(ei as usize) };
             // SAFETY: `edge.a`/`edge.b` index the mesh's own `vertex_indices`
             // array, live for a mesh whose `edges` are populated.
-            let mut va: u32 = unsafe { *(*mesh).vertex_indices.data.add(edge.a as usize) };
+            let mut va: u32 = unsafe { *mesh.vertex_indices().data.add(edge.a as usize) };
             // SAFETY: as above, for `edge.b`.
-            let mut vb: u32 = unsafe { *(*mesh).vertex_indices.data.add(edge.b as usize) };
+            let mut vb: u32 = unsafe { *mesh.vertex_indices().data.add(edge.b as usize) };
             if vb < va {
                 std::mem::swap(&mut va, &mut vb);
             }
@@ -1403,10 +1388,9 @@ pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge) {
 
     // Fix `prev` and `next` to the actual index values
     let mut fi: u32 = 0;
-    // SAFETY: `mesh` is live (caller contract).
-    while (fi as usize) < unsafe { (*mesh).num_faces } {
+    while (fi as usize) < mesh.num_faces() {
         // SAFETY: `fi < num_faces`, so `faces.data[fi]` is a live face.
-        let face: Face = unsafe { *(*mesh).faces.data.add(fi as usize) };
+        let face: Face = unsafe { *mesh.faces().data.add(fi as usize) };
         let mut i: u32 = 0;
         while i < face.num_indices {
             // SAFETY: `index_begin + i < num_indices` for a valid face, so the
@@ -1438,26 +1422,30 @@ pub(crate) unsafe fn is_edge_smooth(
     // C: `ufbxi_ignore(num_topo);`
     let _ = num_topo;
     ufbx_assert!((index as usize) < num_topo);
-    // SAFETY: `mesh` points to a valid, live `Mesh` (caller contract).
-    if !unsafe { (*mesh).edge_smoothing.data.is_null() } {
+    // SAFETY: `mesh` points to a valid, live `Mesh` (caller contract). It comes
+    // from the public entry points, so it may derive from a caller's `&Mesh` —
+    // `Const` is the only sound mode for it. The freeze the `Const` tag demands
+    // holds: this fn only READS the mesh, so no parent pointer writes the viewed
+    // bytes while the view is live.
+    let mesh = unsafe { View::<Mesh, Const>::from_ptr(mesh) };
+    if !mesh.edge_smoothing().data.is_null() {
         // SAFETY: `index < num_topo` (asserted), so `topo.add(index)` is a live
         // `TopoEdge`.
         let edge: u32 = unsafe { (*topo.add(index as usize)).edge };
         // SAFETY: this branch has non-null `edge_smoothing`, which holds one
         // entry per edge; `edge` (guarded `!= NO_INDEX`) is a valid edge index.
-        if edge != NO_INDEX && unsafe { *(*mesh).edge_smoothing.data.add(edge as usize) } {
+        if edge != NO_INDEX && unsafe { *mesh.edge_smoothing().data.add(edge as usize) } {
             return true;
         }
     }
 
-    // SAFETY: `mesh` is live (caller contract).
-    if !unsafe { (*mesh).face_smoothing.data.is_null() } {
+    if !mesh.face_smoothing().data.is_null() {
         // SAFETY: `index < num_topo`, so `topo.add(index)` is a live `TopoEdge`
         // whose `face` is a valid index into the non-null per-face
         // `face_smoothing` array.
         if unsafe {
-            *(*mesh)
-                .face_smoothing
+            *mesh
+                .face_smoothing()
                 .data
                 .add((*topo.add(index as usize)).face as usize)
         } {
@@ -1470,8 +1458,8 @@ pub(crate) unsafe fn is_edge_smooth(
             // `topo.add(twin)` is live and its `face` indexes the non-null
             // per-face `face_smoothing` array.
             if unsafe {
-                *(*mesh)
-                    .face_smoothing
+                *mesh
+                    .face_smoothing()
                     .data
                     .add((*topo.add(twin as usize)).face as usize)
             } {
@@ -1480,35 +1468,30 @@ pub(crate) unsafe fn is_edge_smooth(
         }
     }
 
-    // SAFETY: `mesh` is live (caller contract).
-    if unsafe {
-        (*mesh).edge_smoothing.data.is_null()
-            && (*mesh).face_smoothing.data.is_null()
-            && (*mesh).vertex_normal.exists
-    } {
+    if mesh.edge_smoothing().data.is_null()
+        && mesh.face_smoothing().data.is_null()
+        && mesh.vertex_normal().exists()
+    {
         // SAFETY: `index < num_topo`, so `topo.add(index)` is a live `TopoEdge`.
         let twin: u32 = unsafe { (*topo.add(index as usize)).twin };
-        // SAFETY: `mesh` is live (caller contract).
-        if twin != NO_INDEX && unsafe { (*mesh).vertex_normal.exists } {
+        if twin != NO_INDEX && mesh.vertex_normal().exists() {
             ufbx_assert!((twin as usize) < num_topo);
-            // SAFETY: `vertex_normal_view` forwards the caller's `mesh` liveness;
-            // `index < num_topo` is a valid vertex-attribute index.
-            let a0: Vec3 = get_vertex_vec3(unsafe { vertex_normal_view(mesh) }, index as usize);
-            // SAFETY: `vertex_normal_view` forwards `mesh` liveness; `index <
-            // num_topo` so `topo.add(index).next` is a valid attribute index.
-            let a1: Vec3 = get_vertex_vec3(unsafe { vertex_normal_view(mesh) }, unsafe {
-                (*topo.add(index as usize)).next
-            }
-                as usize);
-            // SAFETY: `vertex_normal_view` forwards `mesh` liveness; `twin <
-            // num_topo` (asserted) so `topo.add(twin).next` is a valid index.
-            let b0: Vec3 = get_vertex_vec3(unsafe { vertex_normal_view(mesh) }, unsafe {
-                (*topo.add(twin as usize)).next
-            }
-                as usize);
-            // SAFETY: `vertex_normal_view` forwards `mesh` liveness; `twin <
-            // num_topo` is a valid attribute index.
-            let b1: Vec3 = get_vertex_vec3(unsafe { vertex_normal_view(mesh) }, twin as usize);
+            let a0: Vec3 = get_vertex_vec3(mesh.vertex_normal(), index as usize);
+            // SAFETY: `index < num_topo`, so `topo.add(index)` is a live
+            // `TopoEdge`; its `next` is the attribute index being read.
+            let a1: Vec3 =
+                get_vertex_vec3(
+                    mesh.vertex_normal(),
+                    unsafe { (*topo.add(index as usize)).next } as usize,
+                );
+            // SAFETY: `twin < num_topo` (asserted), so `topo.add(twin)` is a live
+            // `TopoEdge`; its `next` is the attribute index being read.
+            let b0: Vec3 =
+                get_vertex_vec3(
+                    mesh.vertex_normal(),
+                    unsafe { (*topo.add(twin as usize)).next } as usize,
+                );
+            let b1: Vec3 = get_vertex_vec3(mesh.vertex_normal(), twin as usize);
             if a0.x == b0.x && a0.y == b0.y && a0.z == b0.z {
                 return true;
             }
