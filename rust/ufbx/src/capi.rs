@@ -6,10 +6,6 @@
 #![allow(non_upper_case_globals)]
 // statics carry their C names verbatim
 
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 // ufbx.c:878 `ufbx_abi_data_def const uint32_t ufbx_source_version = UFBX_SOURCE_VERSION;`
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub static ufbx_source_version: u32 = crate::native::platform::SOURCE_VERSION;
@@ -39,7 +35,10 @@ pub unsafe extern "C" fn ufbx_inflate(
     input: *const crate::generated::InflateInput,
     retain: *mut crate::generated::InflateRetain,
 ) -> isize {
-    crate::native::deflate::inflate(dst, dst_size, input, retain)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::deflate::inflate(dst, dst_size, input, retain) }
 }
 
 // ufbx.c:30339-30404 `ufbx_abi_data_def` globals (`ufbx_empty_string`,
@@ -66,7 +65,10 @@ pub unsafe extern "C" fn ufbx_open_file(
     opts: *const crate::generated::RawOpenFileOpts,
     error: *mut crate::generated::Error,
 ) -> bool {
-    crate::native::api::open_file(stream, path, path_len, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::open_file(stream, path, path_len, opts, error) }
 }
 
 // ufbx.c:30417-30435 `ufbx_open_file_ctx` (impl: native/api.rs `open_file_ctx`)
@@ -79,7 +81,10 @@ pub unsafe extern "C" fn ufbx_open_file_ctx(
     opts: *const crate::generated::RawOpenFileOpts,
     error: *mut crate::generated::Error,
 ) -> bool {
-    crate::native::api::open_file_ctx(stream, ctx, path, path_len, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::open_file_ctx(stream, ctx, path, path_len, opts, error) }
 }
 
 // ufbx.c:30437-30440 `ufbx_open_memory` (impl: native/api.rs `open_memory`)
@@ -91,7 +96,10 @@ pub unsafe extern "C" fn ufbx_open_memory(
     opts: *const crate::generated::RawOpenMemoryOpts,
     error: *mut crate::generated::Error,
 ) -> bool {
-    crate::native::api::open_memory(stream, data, data_size, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::open_memory(stream, data, data_size, opts, error) }
 }
 
 // ufbx.c:30442-30495 `ufbx_open_memory_ctx` (impl: native/api.rs `open_memory_ctx`)
@@ -104,7 +112,10 @@ pub unsafe extern "C" fn ufbx_open_memory_ctx(
     opts: *const crate::generated::RawOpenMemoryOpts,
     error: *mut crate::generated::Error,
 ) -> bool {
-    crate::native::api::open_memory_ctx(stream, ctx, data, data_size, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::open_memory_ctx(stream, ctx, data, data_size, opts, error) }
 }
 
 // ufbx.c:30497-30500 `ufbx_is_thread_safe` (impl: native/api.rs `is_thread_safe`)
@@ -121,7 +132,10 @@ pub unsafe extern "C" fn ufbx_load_memory(
     opts: *const crate::generated::RawLoadOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Scene {
-    crate::native::api::load_memory(data, size, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::load_memory(data, size, opts, error) }
 }
 
 // ufbx.c:30513-30516 `ufbx_load_file` (impl: native/api.rs `load_file`)
@@ -131,7 +145,10 @@ pub unsafe extern "C" fn ufbx_load_file(
     opts: *const crate::generated::RawLoadOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Scene {
-    crate::native::api::load_file(filename, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::load_file(filename, opts, error) }
 }
 
 // ufbx.c:30518-30527 `ufbx_load_file_len` (impl: native/api.rs `load_file_len`)
@@ -142,7 +159,10 @@ pub unsafe extern "C" fn ufbx_load_file_len(
     opts: *const crate::generated::RawLoadOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Scene {
-    crate::native::api::load_file_len(filename, filename_len, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::load_file_len(filename, filename_len, opts, error) }
 }
 
 // ufbx.c:30529-30532 `ufbx_load_stdio` (impl: native/api.rs `load_stdio`)
@@ -152,7 +172,10 @@ pub unsafe extern "C" fn ufbx_load_stdio(
     opts: *const crate::generated::RawLoadOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Scene {
-    crate::native::api::load_stdio(file_void, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::load_stdio(file_void, opts, error) }
 }
 
 // ufbx.c:30534-30554 `ufbx_load_stdio_prefix` (impl: native/api.rs `load_stdio_prefix`)
@@ -164,7 +187,10 @@ pub unsafe extern "C" fn ufbx_load_stdio_prefix(
     opts: *const crate::generated::RawLoadOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Scene {
-    crate::native::api::load_stdio_prefix(file_void, prefix, prefix_size, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::load_stdio_prefix(file_void, prefix, prefix_size, opts, error) }
 }
 
 // ufbx.c:30556-30559 `ufbx_load_stream` (impl: native/api.rs `load_stream`)
@@ -174,7 +200,10 @@ pub unsafe extern "C" fn ufbx_load_stream(
     opts: *const crate::generated::RawLoadOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Scene {
-    crate::native::api::load_stream(stream, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::load_stream(stream, opts, error) }
 }
 
 // ufbx.c:30561-30576 `ufbx_load_stream_prefix` (impl: native/api.rs `load_stream_prefix`)
@@ -186,19 +215,28 @@ pub unsafe extern "C" fn ufbx_load_stream_prefix(
     opts: *const crate::generated::RawLoadOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Scene {
-    crate::native::api::load_stream_prefix(stream, prefix, prefix_size, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::load_stream_prefix(stream, prefix, prefix_size, opts, error) }
 }
 
 // ufbx.c:30578-30586 `ufbx_free_scene` (impl: native/api.rs `free_scene`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_free_scene(scene: *mut crate::generated::Scene) {
-    crate::native::api::free_scene(scene)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::free_scene(scene) }
 }
 
 // ufbx.c:30588-30596 `ufbx_retain_scene` (impl: native/api.rs `retain_scene`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_retain_scene(scene: *mut crate::generated::Scene) {
-    crate::native::api::retain_scene(scene)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::retain_scene(scene) }
 }
 
 // ufbx.c:30598-30633 `ufbx_format_error` (impl: native/api.rs `format_error`)
@@ -208,7 +246,10 @@ pub unsafe extern "C" fn ufbx_format_error(
     dst_size: usize,
     error: *const crate::generated::Error,
 ) -> usize {
-    crate::native::api::format_error(dst, dst_size, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::format_error(dst, dst_size, error) }
 }
 
 // ufbx.c:30635-30650 `ufbx_find_prop_len` (impl: native/api.rs `find_prop_len`)
@@ -225,13 +266,19 @@ pub unsafe extern "C" fn ufbx_find_prop_len(
     if props.is_null() {
         return core::ptr::null_mut();
     }
-    match crate::native::api::find_prop_len(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    match unsafe {
+        crate::native::api::find_prop_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
         name,
         name_len,
-    ) {
+    )
+    } {
         Some(prop) => prop.as_ptr() as *mut crate::generated::Prop,
         None => core::ptr::null_mut(),
     }
@@ -248,7 +295,12 @@ pub unsafe extern "C" fn ufbx_find_real_len(
     if props.is_null() {
         return def;
     }
-    crate::native::api::find_real_len(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::find_real_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
@@ -256,6 +308,7 @@ pub unsafe extern "C" fn ufbx_find_real_len(
         name_len,
         def,
     )
+    }
 }
 
 // ufbx.c:30662-30670 `ufbx_find_vec3_len` (impl: native/api.rs `find_vec3_len`)
@@ -269,7 +322,12 @@ pub unsafe extern "C" fn ufbx_find_vec3_len(
     if props.is_null() {
         return def;
     }
-    crate::native::api::find_vec3_len(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::find_vec3_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
@@ -277,6 +335,7 @@ pub unsafe extern "C" fn ufbx_find_vec3_len(
         name_len,
         def,
     )
+    }
 }
 
 // ufbx.c:30672-30680 `ufbx_find_int_len` (impl: native/api.rs `find_int_len`)
@@ -290,7 +349,12 @@ pub unsafe extern "C" fn ufbx_find_int_len(
     if props.is_null() {
         return def;
     }
-    crate::native::api::find_int_len(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::find_int_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
@@ -298,6 +362,7 @@ pub unsafe extern "C" fn ufbx_find_int_len(
         name_len,
         def,
     )
+    }
 }
 
 // ufbx.c:30682-30690 `ufbx_find_bool_len` (impl: native/api.rs `find_bool_len`)
@@ -311,7 +376,12 @@ pub unsafe extern "C" fn ufbx_find_bool_len(
     if props.is_null() {
         return def;
     }
-    crate::native::api::find_bool_len(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::find_bool_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
@@ -319,6 +389,7 @@ pub unsafe extern "C" fn ufbx_find_bool_len(
         name_len,
         def,
     )
+    }
 }
 
 // ufbx.c:30692-30700 `ufbx_find_string_len` (impl: native/api.rs `find_string_len`)
@@ -332,7 +403,12 @@ pub unsafe extern "C" fn ufbx_find_string_len(
     if props.is_null() {
         return def;
     }
-    crate::native::api::find_string_len(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::find_string_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
@@ -340,6 +416,7 @@ pub unsafe extern "C" fn ufbx_find_string_len(
         name_len,
         def,
     )
+    }
 }
 
 // ufbx.c:30702-30710 `ufbx_find_blob_len` (impl: native/api.rs `find_blob_len`)
@@ -353,7 +430,12 @@ pub unsafe extern "C" fn ufbx_find_blob_len(
     if props.is_null() {
         return def;
     }
-    crate::native::api::find_blob_len(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::find_blob_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
@@ -361,6 +443,7 @@ pub unsafe extern "C" fn ufbx_find_blob_len(
         name_len,
         def,
     )
+    }
 }
 
 // ufbx.c:30712-30728 `ufbx_find_prop_concat` (impl: native/api.rs `find_prop_concat`)
@@ -373,13 +456,19 @@ pub unsafe extern "C" fn ufbx_find_prop_concat(
     if props.is_null() {
         return core::ptr::null_mut();
     }
-    match crate::native::api::find_prop_concat(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    match unsafe {
+        crate::native::api::find_prop_concat(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
         parts,
         num_parts,
-    ) {
+    )
+    } {
         Some(prop) => prop.as_ptr() as *mut crate::generated::Prop,
         None => core::ptr::null_mut(),
     }
@@ -393,7 +482,10 @@ pub unsafe extern "C" fn ufbx_find_element_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::Element {
-    crate::native::api::find_element_len(scene, type_, name, name_len)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_element_len(scene, type_, name, name_len) }
 }
 
 // ufbx.c:30743-30748 `ufbx_get_prop_element` (impl: native/api.rs `get_prop_element`)
@@ -403,7 +495,10 @@ pub unsafe extern "C" fn ufbx_get_prop_element(
     prop: *const crate::generated::Prop,
     type_: crate::generated::ElementType,
 ) -> *mut crate::generated::Element {
-    crate::native::api::get_prop_element(element, prop, type_)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::get_prop_element(element, prop, type_) }
 }
 
 // ufbx.c:30750-30757 `ufbx_find_prop_element_len` (impl: native/api.rs `find_prop_element_len`)
@@ -414,7 +509,10 @@ pub unsafe extern "C" fn ufbx_find_prop_element_len(
     name_len: usize,
     type_: crate::generated::ElementType,
 ) -> *mut crate::generated::Element {
-    crate::native::api::find_prop_element_len(element, name, name_len, type_)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_prop_element_len(element, name, name_len, type_) }
 }
 
 // ufbx.c:30760-30763 `ufbx_find_node_len` (impl: native/api.rs `find_node_len`)
@@ -424,7 +522,10 @@ pub unsafe extern "C" fn ufbx_find_node_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::Node {
-    crate::native::api::find_node_len(scene, name, name_len)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_node_len(scene, name, name_len) }
 }
 
 // ufbx.c:30765-30768 `ufbx_find_anim_stack_len` (impl: native/api.rs `find_anim_stack_len`)
@@ -434,7 +535,10 @@ pub unsafe extern "C" fn ufbx_find_anim_stack_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::AnimStack {
-    crate::native::api::find_anim_stack_len(scene, name, name_len)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_anim_stack_len(scene, name, name_len) }
 }
 
 // ufbx.c:30770-30773 `ufbx_find_material_len` (impl: native/api.rs `find_material_len`)
@@ -444,7 +548,10 @@ pub unsafe extern "C" fn ufbx_find_material_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::Material {
-    crate::native::api::find_material_len(scene, name, name_len)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_material_len(scene, name, name_len) }
 }
 
 // ufbx.c:30775-30790 `ufbx_find_anim_prop_len` (impl: native/api.rs `find_anim_prop_len`)
@@ -455,7 +562,10 @@ pub unsafe extern "C" fn ufbx_find_anim_prop_len(
     prop: *const u8,
     prop_len: usize,
 ) -> *mut crate::generated::AnimProp {
-    crate::native::api::find_anim_prop_len(layer, element, prop, prop_len)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_anim_prop_len(layer, element, prop, prop_len) }
 }
 
 // ufbx.c:30792-30812 `ufbx_find_anim_props` (impl: native/api.rs `find_anim_props`)
@@ -464,7 +574,10 @@ pub unsafe extern "C" fn ufbx_find_anim_props(
     layer: *const crate::generated::AnimLayer,
     element: *const crate::generated::Element,
 ) -> crate::prelude::List<crate::generated::AnimProp> {
-    crate::native::api::find_anim_props(layer, element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_anim_props(layer, element) }
 }
 
 // ufbx.c:30814-30825 `ufbx_get_compatible_matrix_for_normals`
@@ -473,7 +586,10 @@ pub unsafe extern "C" fn ufbx_find_anim_props(
 pub unsafe extern "C" fn ufbx_get_compatible_matrix_for_normals(
     node: *const crate::generated::Node,
 ) -> crate::generated::Matrix {
-    crate::native::api::get_compatible_matrix_for_normals(node)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::get_compatible_matrix_for_normals(node) }
 }
 
 // ufbx.c:30827-30830 `ufbx_evaluate_curve` (impl: native/api.rs `evaluate_curve`)
@@ -483,7 +599,10 @@ pub unsafe extern "C" fn ufbx_evaluate_curve(
     time: f64,
     default_value: crate::prelude::Real,
 ) -> crate::prelude::Real {
-    crate::native::api::evaluate_curve(curve, time, default_value)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_curve(curve, time, default_value) }
 }
 
 // ufbx.c:30832-30914 `ufbx_evaluate_curve_flags` (impl: native/api.rs
@@ -495,7 +614,10 @@ pub unsafe extern "C" fn ufbx_evaluate_curve_flags(
     default_value: crate::prelude::Real,
     flags: u32,
 ) -> crate::prelude::Real {
-    crate::native::api::evaluate_curve_flags(curve, time, default_value, flags)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_curve_flags(curve, time, default_value, flags) }
 }
 
 // ufbx.c:30916-30919 `ufbx_evaluate_anim_value_real` (impl: native/api.rs
@@ -505,7 +627,10 @@ pub unsafe extern "C" fn ufbx_evaluate_anim_value_real(
     anim_value: *const crate::generated::AnimValue,
     time: f64,
 ) -> crate::prelude::Real {
-    crate::native::api::evaluate_anim_value_real(anim_value, time)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_anim_value_real(anim_value, time) }
 }
 
 // ufbx.c:30921-30924 `ufbx_evaluate_anim_value_vec3` (impl: native/api.rs
@@ -515,7 +640,10 @@ pub unsafe extern "C" fn ufbx_evaluate_anim_value_vec3(
     anim_value: *const crate::generated::AnimValue,
     time: f64,
 ) -> crate::generated::Vec3 {
-    crate::native::api::evaluate_anim_value_vec3(anim_value, time)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_anim_value_vec3(anim_value, time) }
 }
 
 // ufbx.c:30926-30935 `ufbx_evaluate_anim_value_real_flags` (impl: native/api.rs
@@ -526,7 +654,10 @@ pub unsafe extern "C" fn ufbx_evaluate_anim_value_real_flags(
     time: f64,
     flags: u32,
 ) -> crate::prelude::Real {
-    crate::native::api::evaluate_anim_value_real_flags(anim_value, time, flags)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_anim_value_real_flags(anim_value, time, flags) }
 }
 
 // ufbx.c:30937-30949 `ufbx_evaluate_anim_value_vec3_flags` (impl: native/api.rs
@@ -537,7 +668,10 @@ pub unsafe extern "C" fn ufbx_evaluate_anim_value_vec3_flags(
     time: f64,
     flags: u32,
 ) -> crate::generated::Vec3 {
-    crate::native::api::evaluate_anim_value_vec3_flags(anim_value, time, flags)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_anim_value_vec3_flags(anim_value, time, flags) }
 }
 
 // ufbx.c:30951-30954 `ufbx_evaluate_prop_len` (impl: native/api.rs
@@ -550,7 +684,10 @@ pub unsafe extern "C" fn ufbx_evaluate_prop_len(
     name_len: usize,
     time: f64,
 ) -> crate::generated::Prop {
-    crate::native::api::evaluate_prop_len(anim, element, name, name_len, time)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_prop_len(anim, element, name, name_len, time) }
 }
 
 // ufbx.c:30956-30989 `ufbx_evaluate_prop_flags_len` (impl: native/api.rs
@@ -564,7 +701,12 @@ pub unsafe extern "C" fn ufbx_evaluate_prop_flags_len(
     time: f64,
     flags: u32,
 ) -> crate::generated::Prop {
-    crate::native::api::evaluate_prop_flags_len(anim, element, name, name_len, time, flags)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe {
+        crate::native::api::evaluate_prop_flags_len(anim, element, name, name_len, time, flags)
+    }
 }
 
 // ufbx.c:30991-30994 `ufbx_evaluate_props` (impl: native/api.rs `evaluate_props`)
@@ -576,7 +718,10 @@ pub unsafe extern "C" fn ufbx_evaluate_props(
     buffer: *mut crate::generated::Prop,
     buffer_size: usize,
 ) -> crate::generated::Props {
-    crate::native::api::evaluate_props(anim, element, time, buffer, buffer_size)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_props(anim, element, time, buffer, buffer_size) }
 }
 
 // ufbx.c:30996-31023 `ufbx_evaluate_props_flags` (impl: native/api.rs
@@ -590,7 +735,12 @@ pub unsafe extern "C" fn ufbx_evaluate_props_flags(
     buffer_size: usize,
     flags: u32,
 ) -> crate::generated::Props {
-    crate::native::api::evaluate_props_flags(anim, element, time, buffer, buffer_size, flags)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe {
+        crate::native::api::evaluate_props_flags(anim, element, time, buffer, buffer_size, flags)
+    }
 }
 
 // ufbx.c:31025-31028 `ufbx_evaluate_transform` (impl: native/api.rs
@@ -601,7 +751,10 @@ pub unsafe extern "C" fn ufbx_evaluate_transform(
     node: *const crate::generated::Node,
     time: f64,
 ) -> crate::generated::Transform {
-    crate::native::api::evaluate_transform(anim, node, time)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_transform(anim, node, time) }
 }
 
 // ufbx.c:31062-31160 `ufbx_evaluate_transform_flags` (impl: native/api.rs
@@ -613,7 +766,10 @@ pub unsafe extern "C" fn ufbx_evaluate_transform_flags(
     time: f64,
     flags: u32,
 ) -> crate::generated::Transform {
-    crate::native::api::evaluate_transform_flags(anim, node, time, flags)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_transform_flags(anim, node, time, flags) }
 }
 
 // ufbx.c:31162-31165 `ufbx_evaluate_blend_weight` (impl: native/api.rs
@@ -624,7 +780,10 @@ pub unsafe extern "C" fn ufbx_evaluate_blend_weight(
     channel: *const crate::generated::BlendChannel,
     time: f64,
 ) -> crate::prelude::Real {
-    crate::native::api::evaluate_blend_weight(anim, channel, time)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_blend_weight(anim, channel, time) }
 }
 
 // ufbx.c:31167-31176 `ufbx_evaluate_blend_weight_flags` (impl: native/api.rs
@@ -636,7 +795,10 @@ pub unsafe extern "C" fn ufbx_evaluate_blend_weight_flags(
     time: f64,
     flags: u32,
 ) -> crate::prelude::Real {
-    crate::native::api::evaluate_blend_weight_flags(anim, channel, time, flags)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_blend_weight_flags(anim, channel, time, flags) }
 }
 
 // ufbx.c:31178-31192 `ufbx_evaluate_scene` (impl: native/api.rs
@@ -650,7 +812,10 @@ pub unsafe extern "C" fn ufbx_evaluate_scene(
     opts: *const crate::generated::RawEvaluateOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Scene {
-    crate::native::api::evaluate_scene(scene, anim, time, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_scene(scene, anim, time, opts, error) }
 }
 
 // ufbx.c:31194-31218 `ufbx_create_anim` (impl: native/api.rs `create_anim`)
@@ -660,19 +825,28 @@ pub unsafe extern "C" fn ufbx_create_anim(
     opts: *const crate::generated::RawAnimOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Anim {
-    crate::native::api::create_anim(scene, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::create_anim(scene, opts, error) }
 }
 
 // ufbx.c:31220-31229 `ufbx_free_anim` (impl: native/api.rs `free_anim`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_free_anim(anim: *mut crate::generated::Anim) {
-    crate::native::api::free_anim(anim)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::free_anim(anim) }
 }
 
 // ufbx.c:31231-31240 `ufbx_retain_anim` (impl: native/api.rs `retain_anim`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_retain_anim(anim: *mut crate::generated::Anim) {
-    crate::native::api::retain_anim(anim)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::retain_anim(anim) }
 }
 
 // ufbx.c:31242-31289 `ufbx_bake_anim` (impl: native/api.rs `bake_anim` — a
@@ -684,21 +858,30 @@ pub unsafe extern "C" fn ufbx_bake_anim(
     opts: *const crate::generated::RawBakeOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::BakedAnim {
-    crate::native::api::bake_anim(scene, anim, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::bake_anim(scene, anim, opts, error) }
 }
 
 // ufbx.c:31291-31299 `ufbx_retain_baked_anim` (impl: native/api.rs
 // `retain_baked_anim`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_retain_baked_anim(bake: *mut crate::generated::BakedAnim) {
-    crate::native::api::retain_baked_anim(bake)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::retain_baked_anim(bake) }
 }
 
 // ufbx.c:31301-31309 `ufbx_free_baked_anim` (impl: native/api.rs
 // `free_baked_anim`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_free_baked_anim(bake: *mut crate::generated::BakedAnim) {
-    crate::native::api::free_baked_anim(bake)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::free_baked_anim(bake) }
 }
 
 // ufbx.c:31312-31318 `ufbx_find_baked_node_by_typed_id`
@@ -710,7 +893,12 @@ pub unsafe extern "C" fn ufbx_find_baked_node_by_typed_id(
 ) -> *mut crate::generated::BakedNode {
     match crate::native::api::find_baked_node_by_typed_id(
         // C-parity: no null check on `bake` (mirrors the unchecked C deref).
-        crate::native::view::View::<crate::generated::BakedAnim, crate::native::view::Const>::from_ptr(bake),
+        // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+        // read-only `View<_, Const>`, sound for any readable provenance, over a
+        // pointee the caller owns per this `unsafe fn`'s contract.
+        unsafe {
+            crate::native::view::View::<crate::generated::BakedAnim, crate::native::view::Const>::from_ptr(bake)
+        },
         typed_id,
     ) {
         Some(node) => node.as_ptr() as *mut crate::generated::BakedNode,
@@ -728,18 +916,28 @@ pub unsafe extern "C" fn ufbx_find_baked_node(
         if bake.is_null() {
             None
         } else {
-            Some(crate::native::view::View::<
+            // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+            // read-only `View<_, Const>`, sound for any readable provenance, over a
+            // pointee the caller owns per this `unsafe fn`'s contract.
+            Some(unsafe {
+                crate::native::view::View::<
                 crate::generated::BakedAnim,
                 crate::native::view::Const,
-            >::from_ptr(bake))
+            >::from_ptr(bake)
+            })
         },
         if node.is_null() {
             None
         } else {
-            Some(crate::native::view::View::<
+            // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+            // read-only `View<_, Const>`, sound for any readable provenance, over a
+            // pointee the caller owns per this `unsafe fn`'s contract.
+            Some(unsafe {
+                crate::native::view::View::<
                 crate::generated::Node,
                 crate::native::view::Const,
-            >::from_ptr(node))
+            >::from_ptr(node)
+            })
         },
     ) {
         Some(baked) => baked.as_ptr() as *mut crate::generated::BakedNode,
@@ -756,7 +954,12 @@ pub unsafe extern "C" fn ufbx_find_baked_element_by_element_id(
 ) -> *mut crate::generated::BakedElement {
     match crate::native::api::find_baked_element_by_element_id(
         // C-parity: no null check on `bake` (mirrors the unchecked C deref).
-        crate::native::view::View::<crate::generated::BakedAnim, crate::native::view::Const>::from_ptr(bake),
+        // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+        // read-only `View<_, Const>`, sound for any readable provenance, over a
+        // pointee the caller owns per this `unsafe fn`'s contract.
+        unsafe {
+            crate::native::view::View::<crate::generated::BakedAnim, crate::native::view::Const>::from_ptr(bake)
+        },
         element_id,
     ) {
         Some(elem) => elem.as_ptr() as *mut crate::generated::BakedElement,
@@ -774,18 +977,28 @@ pub unsafe extern "C" fn ufbx_find_baked_element(
         if bake.is_null() {
             None
         } else {
-            Some(crate::native::view::View::<
+            // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+            // read-only `View<_, Const>`, sound for any readable provenance, over a
+            // pointee the caller owns per this `unsafe fn`'s contract.
+            Some(unsafe {
+                crate::native::view::View::<
                 crate::generated::BakedAnim,
                 crate::native::view::Const,
-            >::from_ptr(bake))
+            >::from_ptr(bake)
+            })
         },
         if element.is_null() {
             None
         } else {
-            Some(crate::native::view::View::<
+            // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+            // read-only `View<_, Const>`, sound for any readable provenance, over a
+            // pointee the caller owns per this `unsafe fn`'s contract.
+            Some(unsafe {
+                crate::native::view::View::<
                 crate::generated::Element,
                 crate::native::view::Const,
-            >::from_ptr(element))
+            >::from_ptr(element)
+            })
         },
     ) {
         Some(elem) => elem.as_ptr() as *mut crate::generated::BakedElement,
@@ -799,7 +1012,10 @@ pub unsafe extern "C" fn ufbx_evaluate_baked_vec3(
     keyframes: crate::prelude::List<crate::generated::BakedVec3>,
     time: f64,
 ) -> crate::generated::Vec3 {
-    crate::native::api::evaluate_baked_vec3(keyframes, time)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_baked_vec3(keyframes, time) }
 }
 
 // ufbx.c:31372-31403 `ufbx_evaluate_baked_quat` (impl: native/api.rs `evaluate_baked_quat`)
@@ -808,7 +1024,10 @@ pub unsafe extern "C" fn ufbx_evaluate_baked_quat(
     keyframes: crate::prelude::List<crate::generated::BakedQuat>,
     time: f64,
 ) -> crate::generated::Quat {
-    crate::native::api::evaluate_baked_quat(keyframes, time)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_baked_quat(keyframes, time) }
 }
 
 // ufbx.c:31405-31412 `ufbx_get_bone_pose` (impl: native/api.rs `get_bone_pose`)
@@ -817,7 +1036,10 @@ pub unsafe extern "C" fn ufbx_get_bone_pose(
     pose: *const crate::generated::Pose,
     node: *const crate::generated::Node,
 ) -> *mut crate::generated::BonePose {
-    crate::native::api::get_bone_pose(pose, node)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::get_bone_pose(pose, node) }
 }
 
 // ufbx.c:31414-31423 `ufbx_find_prop_texture_len` (impl: native/api.rs `find_prop_texture_len`)
@@ -827,7 +1049,10 @@ pub unsafe extern "C" fn ufbx_find_prop_texture_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::Texture {
-    crate::native::api::find_prop_texture_len(material, name, name_len)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_prop_texture_len(material, name, name_len) }
 }
 
 // ufbx.c:31425-31432 `ufbx_find_shader_prop_len` (impl: native/api.rs `find_shader_prop_len`)
@@ -837,7 +1062,10 @@ pub unsafe extern "C" fn ufbx_find_shader_prop_len(
     name: *const u8,
     name_len: usize,
 ) -> crate::prelude::String {
-    crate::native::api::find_shader_prop_len(shader, name, name_len)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_shader_prop_len(shader, name, name_len) }
 }
 
 // ufbx.c:31434-31461 `ufbx_find_shader_prop_bindings_len`
@@ -848,7 +1076,10 @@ pub unsafe extern "C" fn ufbx_find_shader_prop_bindings_len(
     name: *const u8,
     name_len: usize,
 ) -> crate::prelude::List<crate::generated::ShaderPropBinding> {
-    crate::native::api::find_shader_prop_bindings_len(shader, name, name_len)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_shader_prop_bindings_len(shader, name, name_len) }
 }
 
 // ufbx.c:31463-31476 `ufbx_find_shader_texture_input_len`
@@ -859,7 +1090,10 @@ pub unsafe extern "C" fn ufbx_find_shader_texture_input_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::ShaderTextureInput {
-    crate::native::api::find_shader_texture_input_len(shader, name, name_len)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_shader_texture_input_len(shader, name, name_len) }
 }
 
 // ufbx.c:31478-31490 `ufbx_coordinate_axes_valid` (impl: native/api.rs `coordinate_axes_valid`)
@@ -952,7 +1186,10 @@ pub unsafe extern "C" fn ufbx_matrix_mul(
     a: *const crate::generated::Matrix,
     b: *const crate::generated::Matrix,
 ) -> crate::generated::Matrix {
-    crate::native::api::matrix_mul(a, b)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::matrix_mul(a, b) }
 }
 
 // ufbx.c:31749-31754 `ufbx_matrix_determinant` (impl: native/api.rs `matrix_determinant`)
@@ -960,7 +1197,10 @@ pub unsafe extern "C" fn ufbx_matrix_mul(
 pub unsafe extern "C" fn ufbx_matrix_determinant(
     m: *const crate::generated::Matrix,
 ) -> crate::prelude::Real {
-    crate::native::api::matrix_determinant(m)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::matrix_determinant(m) }
 }
 
 // ufbx.c:31756-31782 `ufbx_matrix_invert` (impl: native/api.rs `matrix_invert`)
@@ -968,7 +1208,10 @@ pub unsafe extern "C" fn ufbx_matrix_determinant(
 pub unsafe extern "C" fn ufbx_matrix_invert(
     m: *const crate::generated::Matrix,
 ) -> crate::generated::Matrix {
-    crate::native::api::matrix_invert(m)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::matrix_invert(m) }
 }
 
 // ufbx.c:31784-31802 `ufbx_matrix_for_normals` (impl: native/api.rs `matrix_for_normals`)
@@ -976,7 +1219,10 @@ pub unsafe extern "C" fn ufbx_matrix_invert(
 pub unsafe extern "C" fn ufbx_matrix_for_normals(
     m: *const crate::generated::Matrix,
 ) -> crate::generated::Matrix {
-    crate::native::api::matrix_for_normals(m)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::matrix_for_normals(m) }
 }
 
 // ufbx.c:31804-31814 `ufbx_transform_position` (impl: native/api.rs `transform_position`)
@@ -985,7 +1231,10 @@ pub unsafe extern "C" fn ufbx_transform_position(
     m: *const crate::generated::Matrix,
     v: crate::generated::Vec3,
 ) -> crate::generated::Vec3 {
-    crate::native::api::transform_position(m, v)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::transform_position(m, v) }
 }
 
 // ufbx.c:31816-31826 `ufbx_transform_direction` (impl: native/api.rs `transform_direction`)
@@ -994,7 +1243,10 @@ pub unsafe extern "C" fn ufbx_transform_direction(
     m: *const crate::generated::Matrix,
     v: crate::generated::Vec3,
 ) -> crate::generated::Vec3 {
-    crate::native::api::transform_direction(m, v)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::transform_direction(m, v) }
 }
 
 // ufbx.c:31828-31852 `ufbx_transform_to_matrix` (impl: native/api.rs `transform_to_matrix`)
@@ -1002,7 +1254,10 @@ pub unsafe extern "C" fn ufbx_transform_direction(
 pub unsafe extern "C" fn ufbx_transform_to_matrix(
     t: *const crate::generated::Transform,
 ) -> crate::generated::Matrix {
-    crate::native::api::transform_to_matrix(t)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::transform_to_matrix(t) }
 }
 
 // ufbx.c:31854-31926 `ufbx_matrix_to_transform` (impl: native/api.rs `matrix_to_transform`)
@@ -1010,7 +1265,10 @@ pub unsafe extern "C" fn ufbx_transform_to_matrix(
 pub unsafe extern "C" fn ufbx_matrix_to_transform(
     m: *const crate::generated::Matrix,
 ) -> crate::generated::Transform {
-    crate::native::api::matrix_to_transform(m)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::matrix_to_transform(m) }
 }
 
 // ufbx.c:31928-32018 `ufbx_catch_get_skin_vertex_matrix`
@@ -1023,12 +1281,18 @@ pub unsafe extern "C" fn ufbx_catch_get_skin_vertex_matrix(
     vertex: usize,
     fallback: *const crate::generated::Matrix,
 ) -> crate::generated::Matrix {
-    crate::native::api::catch_get_skin_vertex_matrix(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::catch_get_skin_vertex_matrix(
         panic.as_mut(),
         crate::native::view::View::<crate::generated::SkinDeformer, crate::native::view::Const>::from_ptr(skin),
         vertex,
         fallback,
     )
+    }
 }
 
 // ufbx.c:32020-32033 `ufbx_get_blend_shape_offset_index`
@@ -1038,7 +1302,10 @@ pub unsafe extern "C" fn ufbx_get_blend_shape_offset_index(
     shape: *const crate::generated::BlendShape,
     vertex: usize,
 ) -> u32 {
-    crate::native::api::get_blend_shape_offset_index(shape, vertex)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::get_blend_shape_offset_index(shape, vertex) }
 }
 
 // ufbx.c:32035-32040 `ufbx_get_blend_shape_vertex_offset`
@@ -1048,7 +1315,10 @@ pub unsafe extern "C" fn ufbx_get_blend_shape_vertex_offset(
     shape: *const crate::generated::BlendShape,
     vertex: usize,
 ) -> crate::generated::Vec3 {
-    crate::native::api::get_blend_shape_vertex_offset(shape, vertex)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::get_blend_shape_vertex_offset(shape, vertex) }
 }
 
 // ufbx.c:32042-32060 `ufbx_get_blend_vertex_offset`
@@ -1058,7 +1328,10 @@ pub unsafe extern "C" fn ufbx_get_blend_vertex_offset(
     blend: *const crate::generated::BlendDeformer,
     vertex: usize,
 ) -> crate::generated::Vec3 {
-    crate::native::api::get_blend_vertex_offset(blend, vertex)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::get_blend_vertex_offset(blend, vertex) }
 }
 
 // ufbx.c:32062-32081 `ufbx_add_blend_shape_vertex_offsets`
@@ -1070,7 +1343,12 @@ pub unsafe extern "C" fn ufbx_add_blend_shape_vertex_offsets(
     num_vertices: usize,
     weight: crate::prelude::Real,
 ) {
-    crate::native::api::add_blend_shape_vertex_offsets(shape, vertices, num_vertices, weight)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe {
+        crate::native::api::add_blend_shape_vertex_offsets(shape, vertices, num_vertices, weight)
+    }
 }
 
 // ufbx.c:32083-32095 `ufbx_add_blend_vertex_offsets`
@@ -1082,7 +1360,10 @@ pub unsafe extern "C" fn ufbx_add_blend_vertex_offsets(
     num_vertices: usize,
     weight: crate::prelude::Real,
 ) {
-    crate::native::api::add_blend_vertex_offsets(blend, vertices, num_vertices, weight)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::add_blend_vertex_offsets(blend, vertices, num_vertices, weight) }
 }
 
 // ufbx.c:32097-32166 `ufbx_evaluate_nurbs_basis` (impl: native/api.rs
@@ -1096,14 +1377,19 @@ pub unsafe extern "C" fn ufbx_evaluate_nurbs_basis(
     derivatives: *mut crate::prelude::Real,
     num_derivatives: usize,
 ) -> usize {
-    crate::native::api::evaluate_nurbs_basis(
-        basis,
-        u,
-        weights,
-        num_weights,
-        derivatives,
-        num_derivatives,
-    )
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe {
+        crate::native::api::evaluate_nurbs_basis(
+            basis,
+            u,
+            weights,
+            num_weights,
+            derivatives,
+            num_derivatives,
+        )
+    }
 }
 
 // ufbx.c:32168-32212 `ufbx_evaluate_nurbs_curve` (impl: native/api.rs
@@ -1113,7 +1399,10 @@ pub unsafe extern "C" fn ufbx_evaluate_nurbs_curve(
     curve: *const crate::generated::NurbsCurve,
     u: crate::prelude::Real,
 ) -> crate::generated::CurvePoint {
-    crate::native::api::evaluate_nurbs_curve(curve, u)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_nurbs_curve(curve, u) }
 }
 
 // ufbx.c:32214-32280 `ufbx_evaluate_nurbs_surface` (impl: native/api.rs
@@ -1124,7 +1413,10 @@ pub unsafe extern "C" fn ufbx_evaluate_nurbs_surface(
     u: crate::prelude::Real,
     v: crate::prelude::Real,
 ) -> crate::generated::SurfacePoint {
-    crate::native::api::evaluate_nurbs_surface(surface, u, v)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_nurbs_surface(surface, u, v) }
 }
 
 // ufbx.c:32282-32318 `ufbx_tessellate_nurbs_curve` (impl: native/api.rs
@@ -1136,7 +1428,10 @@ pub unsafe extern "C" fn ufbx_tessellate_nurbs_curve(
     opts: *const crate::generated::RawTessellateCurveOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::LineCurve {
-    crate::native::api::tessellate_nurbs_curve(curve, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::tessellate_nurbs_curve(curve, opts, error) }
 }
 
 // ufbx.c:32320-32357 `ufbx_tessellate_nurbs_surface` (impl: native/api.rs
@@ -1147,21 +1442,30 @@ pub unsafe extern "C" fn ufbx_tessellate_nurbs_surface(
     opts: *const crate::generated::RawTessellateSurfaceOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Mesh {
-    crate::native::api::tessellate_nurbs_surface(surface, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::tessellate_nurbs_surface(surface, opts, error) }
 }
 
 // ufbx.c:32359-32368 `ufbx_free_line_curve` (impl: native/api.rs
 // `free_line_curve`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_free_line_curve(line_curve: *mut crate::generated::LineCurve) {
-    crate::native::api::free_line_curve(line_curve)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::free_line_curve(line_curve) }
 }
 
 // ufbx.c:32370-32379 `ufbx_retain_line_curve` (impl: native/api.rs
 // `retain_line_curve`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_retain_line_curve(line_curve: *mut crate::generated::LineCurve) {
-    crate::native::api::retain_line_curve(line_curve)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::retain_line_curve(line_curve) }
 }
 
 // ufbx.c:32381-32390 `ufbx_find_face_index` (impl: native/api.rs
@@ -1171,7 +1475,10 @@ pub unsafe extern "C" fn ufbx_find_face_index(
     mesh: *mut crate::generated::Mesh,
     index: usize,
 ) -> u32 {
-    crate::native::api::find_face_index(mesh, index)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_face_index(mesh, index) }
 }
 
 // ufbx.c:32392-32475 `ufbx_catch_triangulate_face` (impl: native/api.rs
@@ -1185,7 +1492,12 @@ pub unsafe extern "C" fn ufbx_catch_triangulate_face(
     mesh: *const crate::generated::Mesh,
     face: crate::generated::Face,
 ) -> u32 {
-    crate::native::api::catch_triangulate_face(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::catch_triangulate_face(
         panic.as_mut(),
         indices,
         num_indices,
@@ -1194,6 +1506,7 @@ pub unsafe extern "C" fn ufbx_catch_triangulate_face(
         ),
         face,
     )
+    }
 }
 
 // ufbx.c:32477-32482 `ufbx_catch_compute_topology` (impl: native/api.rs
@@ -1205,7 +1518,12 @@ pub unsafe extern "C" fn ufbx_catch_compute_topology(
     indices: *mut crate::generated::TopoEdge,
     num_indices: usize,
 ) {
-    crate::native::api::catch_compute_topology(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::catch_compute_topology(
         panic.as_mut(),
         crate::native::view::View::<crate::generated::Mesh, crate::native::view::Const>::from_ptr(
             mesh,
@@ -1213,6 +1531,7 @@ pub unsafe extern "C" fn ufbx_catch_compute_topology(
         indices,
         num_indices,
     )
+    }
 }
 
 // ufbx.c:32484-32492 `ufbx_catch_topo_next_vertex_edge` (impl: native/api.rs
@@ -1224,7 +1543,12 @@ pub unsafe extern "C" fn ufbx_catch_topo_next_vertex_edge(
     num_topo: usize,
     index: u32,
 ) -> u32 {
-    crate::native::api::catch_topo_next_vertex_edge(panic.as_mut(), topo, num_topo, index)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe {
+        crate::native::api::catch_topo_next_vertex_edge(panic.as_mut(), topo, num_topo, index)
+    }
 }
 
 // ufbx.c:32494-32499 `ufbx_catch_topo_prev_vertex_edge` (impl: native/api.rs
@@ -1236,7 +1560,12 @@ pub unsafe extern "C" fn ufbx_catch_topo_prev_vertex_edge(
     num_topo: usize,
     index: u32,
 ) -> u32 {
-    crate::native::api::catch_topo_prev_vertex_edge(panic.as_mut(), topo, num_topo, index)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe {
+        crate::native::api::catch_topo_prev_vertex_edge(panic.as_mut(), topo, num_topo, index)
+    }
 }
 
 // ufbx.c:32501-32532 `ufbx_catch_get_weighted_face_normal` (impl: native/api.rs
@@ -1248,8 +1577,16 @@ pub unsafe extern "C" fn ufbx_catch_get_weighted_face_normal(
     face: crate::generated::Face,
 ) -> crate::generated::Vec3 {
     crate::native::api::catch_get_weighted_face_normal(
-        panic.as_mut(),
-        crate::native::view::View::<crate::generated::VertexVec3, crate::native::view::Const>::from_ptr(positions),
+        // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+        // own raw-pointer contract and are forwarded unchanged to the native impl,
+        // whose contract is identical.
+        unsafe { panic.as_mut() },
+        // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+        // read-only `View<_, Const>`, sound for any readable provenance, over a
+        // pointee the caller owns per this `unsafe fn`'s contract.
+        unsafe {
+            crate::native::view::View::<crate::generated::VertexVec3, crate::native::view::Const>::from_ptr(positions)
+        },
         face,
     )
 }
@@ -1266,7 +1603,12 @@ pub unsafe extern "C" fn ufbx_catch_generate_normal_mapping(
     num_normal_indices: usize,
     assume_smooth: bool,
 ) -> usize {
-    crate::native::api::catch_generate_normal_mapping(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::catch_generate_normal_mapping(
         panic.as_mut(),
         crate::native::view::View::<crate::generated::Mesh, crate::native::view::Const>::from_ptr(
             mesh,
@@ -1277,6 +1619,7 @@ pub unsafe extern "C" fn ufbx_catch_generate_normal_mapping(
         num_normal_indices,
         assume_smooth,
     )
+    }
 }
 
 // ufbx.c:32580-32583 `ufbx_generate_normal_mapping` (impl: native/api.rs
@@ -1290,14 +1633,19 @@ pub unsafe extern "C" fn ufbx_generate_normal_mapping(
     num_normal_indices: usize,
     assume_smooth: bool,
 ) -> usize {
-    crate::native::api::generate_normal_mapping(
-        mesh,
-        topo,
-        num_topo,
-        normal_indices,
-        num_normal_indices,
-        assume_smooth,
-    )
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe {
+        crate::native::api::generate_normal_mapping(
+            mesh,
+            topo,
+            num_topo,
+            normal_indices,
+            num_normal_indices,
+            assume_smooth,
+        )
+    }
 }
 
 // ufbx.c:32585-32612 `ufbx_catch_compute_normals` (impl: native/api.rs
@@ -1312,7 +1660,12 @@ pub unsafe extern "C" fn ufbx_catch_compute_normals(
     normals: *mut crate::generated::Vec3,
     num_normals: usize,
 ) {
-    crate::native::api::catch_compute_normals(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::catch_compute_normals(
         panic.as_mut(),
         crate::native::view::View::<crate::generated::Mesh, crate::native::view::Const>::from_ptr(mesh),
         crate::native::view::View::<crate::generated::VertexVec3, crate::native::view::Const>::from_ptr(positions),
@@ -1321,6 +1674,7 @@ pub unsafe extern "C" fn ufbx_catch_compute_normals(
         normals,
         num_normals,
     )
+    }
 }
 
 // ufbx.c:32614-32617 `ufbx_compute_normals` (impl: native/api.rs
@@ -1334,14 +1688,19 @@ pub unsafe extern "C" fn ufbx_compute_normals(
     normals: *mut crate::generated::Vec3,
     num_normals: usize,
 ) {
-    crate::native::api::compute_normals(
-        mesh,
-        positions,
-        normal_indices,
-        num_normal_indices,
-        normals,
-        num_normals,
-    )
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe {
+        crate::native::api::compute_normals(
+            mesh,
+            positions,
+            normal_indices,
+            num_normal_indices,
+            normals,
+            num_normals,
+        )
+    }
 }
 
 // ufbx.c:32619-32625 `ufbx_subdivide_mesh` (impl: native/api.rs
@@ -1354,19 +1713,28 @@ pub unsafe extern "C" fn ufbx_subdivide_mesh(
     opts: *const crate::generated::RawSubdivideOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Mesh {
-    crate::native::api::subdivide_mesh(mesh, level, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::subdivide_mesh(mesh, level, opts, error) }
 }
 
 // ufbx.c:32627-32636 `ufbx_free_mesh` (impl: native/api.rs `free_mesh`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_free_mesh(mesh: *mut crate::generated::Mesh) {
-    crate::native::api::free_mesh(mesh)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::free_mesh(mesh) }
 }
 
 // ufbx.c:32638-32647 `ufbx_retain_mesh` (impl: native/api.rs `retain_mesh`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_retain_mesh(mesh: *mut crate::generated::Mesh) {
-    crate::native::api::retain_mesh(mesh)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::retain_mesh(mesh) }
 }
 
 // ufbx.c:32649-32655 `ufbx_load_geometry_cache` (impl: native/api.rs
@@ -1377,7 +1745,10 @@ pub unsafe extern "C" fn ufbx_load_geometry_cache(
     opts: *const crate::generated::RawGeometryCacheOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::GeometryCache {
-    crate::native::api::load_geometry_cache(filename, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::load_geometry_cache(filename, opts, error) }
 }
 
 // ufbx.c:32657-32664 `ufbx_load_geometry_cache_len` (impl: native/api.rs
@@ -1389,21 +1760,30 @@ pub unsafe extern "C" fn ufbx_load_geometry_cache_len(
     opts: *const crate::generated::RawGeometryCacheOpts,
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::GeometryCache {
-    crate::native::api::load_geometry_cache_len(filename, filename_len, opts, error)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::load_geometry_cache_len(filename, filename_len, opts, error) }
 }
 
 // ufbx.c:32666-32675 `ufbx_free_geometry_cache` (impl: native/api.rs
 // `free_geometry_cache`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_free_geometry_cache(cache: *mut crate::generated::GeometryCache) {
-    crate::native::api::free_geometry_cache(cache)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::free_geometry_cache(cache) }
 }
 
 // ufbx.c:32677-32686 `ufbx_retain_geometry_cache` (impl: native/api.rs
 // `retain_geometry_cache`)
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_retain_geometry_cache(cache: *mut crate::generated::GeometryCache) {
-    crate::native::api::retain_geometry_cache(cache)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::retain_geometry_cache(cache) }
 }
 
 // ufbx.c:32696-32859 `ufbx_read_geometry_cache_real` (impl: native/api.rs
@@ -1416,7 +1796,10 @@ pub unsafe extern "C" fn ufbx_read_geometry_cache_real(
     num_data: usize,
     opts: *const crate::generated::RawGeometryCacheDataOpts,
 ) -> usize {
-    crate::native::api::read_geometry_cache_real(frame, data, num_data, opts)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::read_geometry_cache_real(frame, data, num_data, opts) }
 }
 
 // ufbx.c:32861-32931 `ufbx_sample_geometry_cache_real` (impl: native/api.rs
@@ -1429,7 +1812,10 @@ pub unsafe extern "C" fn ufbx_sample_geometry_cache_real(
     num_data: usize,
     opts: *const crate::generated::RawGeometryCacheDataOpts,
 ) -> usize {
-    crate::native::api::sample_geometry_cache_real(channel, time, data, num_data, opts)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::sample_geometry_cache_real(channel, time, data, num_data, opts) }
 }
 
 // ufbx.c:32933-32943 `ufbx_read_geometry_cache_vec3` (impl: native/api.rs
@@ -1441,7 +1827,10 @@ pub unsafe extern "C" fn ufbx_read_geometry_cache_vec3(
     num_data: usize,
     opts: *const crate::generated::RawGeometryCacheDataOpts,
 ) -> usize {
-    crate::native::api::read_geometry_cache_vec3(frame, data, num_data, opts)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::read_geometry_cache_vec3(frame, data, num_data, opts) }
 }
 
 // ufbx.c:32945-32955 `ufbx_sample_geometry_cache_vec3` (impl: native/api.rs
@@ -1454,7 +1843,10 @@ pub unsafe extern "C" fn ufbx_sample_geometry_cache_vec3(
     num_data: usize,
     opts: *const crate::generated::RawGeometryCacheDataOpts,
 ) -> usize {
-    crate::native::api::sample_geometry_cache_vec3(channel, time, data, num_data, opts)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::sample_geometry_cache_vec3(channel, time, data, num_data, opts) }
 }
 
 // ufbx.c:32957-32964 `ufbx_dom_find_len` (impl: native/api.rs `dom_find_len`)
@@ -1466,7 +1858,13 @@ pub unsafe extern "C" fn ufbx_dom_find_len(
 ) -> *mut crate::generated::DomNode {
     // C-ABI root: mirror C's unchecked `parent` deref — mint a read-only view
     // (legal for any readable provenance) and map the correlated result to raw.
-    match crate::native::api::dom_find_len(crate::native::view::View::<crate::generated::DomNode, crate::native::view::Const>::from_ptr(parent), name, name_len) {
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    match unsafe {
+        crate::native::api::dom_find_len(crate::native::view::View::<crate::generated::DomNode, crate::native::view::Const>::from_ptr(parent), name, name_len)
+    } {
         Some(node) => node.as_ptr() as *mut crate::generated::DomNode,
         None => core::ptr::null_mut(),
     }
@@ -1483,14 +1881,19 @@ pub unsafe extern "C" fn ufbx_generate_indices(
     allocator: *const crate::generated::RawAllocatorOpts,
     error: *mut crate::generated::Error,
 ) -> usize {
-    crate::native::api::generate_indices(
-        streams,
-        num_streams,
-        indices,
-        num_indices,
-        allocator,
-        error,
-    )
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe {
+        crate::native::api::generate_indices(
+            streams,
+            num_streams,
+            indices,
+            num_indices,
+            allocator,
+            error,
+        )
+    }
 }
 
 // ufbx.c:32976-32979 `ufbx_thread_pool_run_task` (impl: native/api.rs
@@ -1500,7 +1903,10 @@ pub unsafe extern "C" fn ufbx_thread_pool_run_task(
     ctx: crate::prelude::ThreadPoolContext,
     index: u32,
 ) {
-    crate::native::api::thread_pool_run_task(ctx, index)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::thread_pool_run_task(ctx, index) }
 }
 
 // ufbx.c:32981-32985 `ufbx_thread_pool_set_user_ptr` (impl: native/api.rs
@@ -1510,7 +1916,10 @@ pub unsafe extern "C" fn ufbx_thread_pool_set_user_ptr(
     ctx: crate::prelude::ThreadPoolContext,
     user_ptr: *mut core::ffi::c_void,
 ) {
-    crate::native::api::thread_pool_set_user_ptr(ctx, user_ptr)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::thread_pool_set_user_ptr(ctx, user_ptr) }
 }
 
 // ufbx.c:32987-32991 `ufbx_thread_pool_get_user_ptr` (impl: native/api.rs
@@ -1519,7 +1928,10 @@ pub unsafe extern "C" fn ufbx_thread_pool_set_user_ptr(
 pub unsafe extern "C" fn ufbx_thread_pool_get_user_ptr(
     ctx: crate::prelude::ThreadPoolContext,
 ) -> *mut core::ffi::c_void {
-    crate::native::api::thread_pool_get_user_ptr(ctx)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::thread_pool_get_user_ptr(ctx) }
 }
 
 // ufbx.c:32993-32999 `ufbx_catch_get_vertex_real` (impl: native/api.rs
@@ -1530,7 +1942,19 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_real(
     v: *const crate::generated::VertexReal,
     index: usize,
 ) -> crate::prelude::Real {
-    crate::native::api::catch_get_vertex_real(panic.as_mut(), crate::native::view::View::<crate::generated::VertexReal, crate::native::view::Const>::from_ptr(v), index)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+    // read-only `View<_, Const>`, sound for any readable provenance, over a
+    // pointee the caller owns per this `unsafe fn`'s contract.
+    crate::native::api::catch_get_vertex_real(
+        unsafe { panic.as_mut() },
+        unsafe {
+            crate::native::view::View::<crate::generated::VertexReal, crate::native::view::Const>::from_ptr(v)
+        },
+        index,
+    )
 }
 
 // ufbx.c:33001-33007 `ufbx_catch_get_vertex_vec2` (impl: native/api.rs
@@ -1541,7 +1965,19 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_vec2(
     v: *const crate::generated::VertexVec2,
     index: usize,
 ) -> crate::generated::Vec2 {
-    crate::native::api::catch_get_vertex_vec2(panic.as_mut(), crate::native::view::View::<crate::generated::VertexVec2, crate::native::view::Const>::from_ptr(v), index)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+    // read-only `View<_, Const>`, sound for any readable provenance, over a
+    // pointee the caller owns per this `unsafe fn`'s contract.
+    crate::native::api::catch_get_vertex_vec2(
+        unsafe { panic.as_mut() },
+        unsafe {
+            crate::native::view::View::<crate::generated::VertexVec2, crate::native::view::Const>::from_ptr(v)
+        },
+        index,
+    )
 }
 
 // ufbx.c:33009-33015 `ufbx_catch_get_vertex_vec3` (impl: native/api.rs
@@ -1552,7 +1988,19 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_vec3(
     v: *const crate::generated::VertexVec3,
     index: usize,
 ) -> crate::generated::Vec3 {
-    crate::native::api::catch_get_vertex_vec3(panic.as_mut(), crate::native::view::View::<crate::generated::VertexVec3, crate::native::view::Const>::from_ptr(v), index)
+    // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+    // read-only `View<_, Const>`, sound for any readable provenance, over a
+    // pointee the caller owns per this `unsafe fn`'s contract.
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    crate::native::api::catch_get_vertex_vec3(
+        unsafe { panic.as_mut() },
+        unsafe {
+            crate::native::view::View::<crate::generated::VertexVec3, crate::native::view::Const>::from_ptr(v)
+        },
+        index,
+    )
 }
 
 // ufbx.c:33017-33023 `ufbx_catch_get_vertex_vec4` (impl: native/api.rs
@@ -1563,7 +2011,19 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_vec4(
     v: *const crate::generated::VertexVec4,
     index: usize,
 ) -> crate::generated::Vec4 {
-    crate::native::api::catch_get_vertex_vec4(panic.as_mut(), crate::native::view::View::<crate::generated::VertexVec4, crate::native::view::Const>::from_ptr(v), index)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+    // read-only `View<_, Const>`, sound for any readable provenance, over a
+    // pointee the caller owns per this `unsafe fn`'s contract.
+    crate::native::api::catch_get_vertex_vec4(
+        unsafe { panic.as_mut() },
+        unsafe {
+            crate::native::view::View::<crate::generated::VertexVec4, crate::native::view::Const>::from_ptr(v)
+        },
+        index,
+    )
 }
 
 // ufbx.c:33025-33032 `ufbx_catch_get_vertex_w_vec3` (impl: native/api.rs
@@ -1574,7 +2034,19 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_w_vec3(
     v: *const crate::generated::VertexVec3,
     index: usize,
 ) -> crate::prelude::Real {
-    crate::native::api::catch_get_vertex_w_vec3(panic.as_mut(), crate::native::view::View::<crate::generated::VertexVec3, crate::native::view::Const>::from_ptr(v), index)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+    // read-only `View<_, Const>`, sound for any readable provenance, over a
+    // pointee the caller owns per this `unsafe fn`'s contract.
+    crate::native::api::catch_get_vertex_w_vec3(
+        unsafe { panic.as_mut() },
+        unsafe {
+            crate::native::view::View::<crate::generated::VertexVec3, crate::native::view::Const>::from_ptr(v)
+        },
+        index,
+    )
 }
 
 // ufbx.c:33034-33075 `ufbx_as_*` (impls: native/api.rs `as_*`)
@@ -1582,253 +2054,379 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_w_vec3(
 pub unsafe extern "C" fn ufbx_as_unknown(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Unknown {
-    crate::native::api::as_unknown(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_unknown(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_node(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Node {
-    crate::native::api::as_node(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_node(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_mesh(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Mesh {
-    crate::native::api::as_mesh(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_mesh(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_light(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Light {
-    crate::native::api::as_light(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_light(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_camera(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Camera {
-    crate::native::api::as_camera(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_camera(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_bone(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Bone {
-    crate::native::api::as_bone(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_bone(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_empty(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Empty {
-    crate::native::api::as_empty(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_empty(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_line_curve(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::LineCurve {
-    crate::native::api::as_line_curve(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_line_curve(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_nurbs_curve(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::NurbsCurve {
-    crate::native::api::as_nurbs_curve(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_nurbs_curve(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_nurbs_surface(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::NurbsSurface {
-    crate::native::api::as_nurbs_surface(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_nurbs_surface(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_nurbs_trim_surface(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::NurbsTrimSurface {
-    crate::native::api::as_nurbs_trim_surface(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_nurbs_trim_surface(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_nurbs_trim_boundary(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::NurbsTrimBoundary {
-    crate::native::api::as_nurbs_trim_boundary(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_nurbs_trim_boundary(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_procedural_geometry(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::ProceduralGeometry {
-    crate::native::api::as_procedural_geometry(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_procedural_geometry(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_stereo_camera(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::StereoCamera {
-    crate::native::api::as_stereo_camera(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_stereo_camera(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_camera_switcher(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::CameraSwitcher {
-    crate::native::api::as_camera_switcher(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_camera_switcher(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_marker(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Marker {
-    crate::native::api::as_marker(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_marker(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_lod_group(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::LodGroup {
-    crate::native::api::as_lod_group(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_lod_group(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_skin_deformer(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::SkinDeformer {
-    crate::native::api::as_skin_deformer(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_skin_deformer(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_skin_cluster(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::SkinCluster {
-    crate::native::api::as_skin_cluster(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_skin_cluster(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_blend_deformer(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::BlendDeformer {
-    crate::native::api::as_blend_deformer(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_blend_deformer(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_blend_channel(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::BlendChannel {
-    crate::native::api::as_blend_channel(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_blend_channel(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_blend_shape(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::BlendShape {
-    crate::native::api::as_blend_shape(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_blend_shape(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_cache_deformer(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::CacheDeformer {
-    crate::native::api::as_cache_deformer(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_cache_deformer(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_cache_file(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::CacheFile {
-    crate::native::api::as_cache_file(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_cache_file(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_material(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Material {
-    crate::native::api::as_material(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_material(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_texture(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Texture {
-    crate::native::api::as_texture(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_texture(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_video(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Video {
-    crate::native::api::as_video(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_video(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_shader(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Shader {
-    crate::native::api::as_shader(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_shader(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_shader_binding(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::ShaderBinding {
-    crate::native::api::as_shader_binding(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_shader_binding(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_anim_stack(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::AnimStack {
-    crate::native::api::as_anim_stack(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_anim_stack(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_anim_layer(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::AnimLayer {
-    crate::native::api::as_anim_layer(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_anim_layer(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_anim_value(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::AnimValue {
-    crate::native::api::as_anim_value(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_anim_value(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_anim_curve(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::AnimCurve {
-    crate::native::api::as_anim_curve(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_anim_curve(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_display_layer(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::DisplayLayer {
-    crate::native::api::as_display_layer(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_display_layer(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_selection_set(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::SelectionSet {
-    crate::native::api::as_selection_set(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_selection_set(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_selection_node(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::SelectionNode {
-    crate::native::api::as_selection_node(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_selection_node(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_character(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Character {
-    crate::native::api::as_character(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_character(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_constraint(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Constraint {
-    crate::native::api::as_constraint(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_constraint(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_audio_layer(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::AudioLayer {
-    crate::native::api::as_audio_layer(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_audio_layer(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_audio_clip(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::AudioClip {
-    crate::native::api::as_audio_clip(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_audio_clip(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_pose(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::Pose {
-    crate::native::api::as_pose(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_pose(element) }
 }
 #[cfg_attr(feature = "c-abi", no_mangle)]
 pub unsafe extern "C" fn ufbx_as_metadata_object(
     element: *const crate::generated::Element,
 ) -> *mut crate::generated::MetadataObject {
-    crate::native::api::as_metadata_object(element)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::as_metadata_object(element) }
 }
 
 // ufbx.c:33077-33081 `ufbx_dom_is_array` (impl: native/api.rs `dom_is_array`)
@@ -1837,10 +2435,15 @@ pub unsafe extern "C" fn ufbx_dom_is_array(node: *const crate::generated::DomNod
     crate::native::api::dom_is_array(if node.is_null() {
         None
     } else {
-        Some(crate::native::view::View::<
+        // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+        // read-only `View<_, Const>`, sound for any readable provenance, over a
+        // pointee the caller owns per this `unsafe fn`'s contract.
+        Some(unsafe {
+            crate::native::view::View::<
             crate::generated::DomNode,
             crate::native::view::Const,
-        >::from_ptr(node))
+        >::from_ptr(node)
+        })
     })
 }
 // ufbx.c:33082-33084 `ufbx_dom_array_size` (impl: native/api.rs `dom_array_size`)
@@ -1849,10 +2452,15 @@ pub unsafe extern "C" fn ufbx_dom_array_size(node: *const crate::generated::DomN
     crate::native::api::dom_array_size(if node.is_null() {
         None
     } else {
-        Some(crate::native::view::View::<
+        // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+        // read-only `View<_, Const>`, sound for any readable provenance, over a
+        // pointee the caller owns per this `unsafe fn`'s contract.
+        Some(unsafe {
+            crate::native::view::View::<
             crate::generated::DomNode,
             crate::native::view::Const,
-        >::from_ptr(node))
+        >::from_ptr(node)
+        })
     })
 }
 // ufbx.c:33085-33093 `ufbx_dom_as_int32_list` (impl: native/api.rs `dom_as_int32_list`)
@@ -1863,10 +2471,15 @@ pub unsafe extern "C" fn ufbx_dom_as_int32_list(
     crate::native::api::dom_as_int32_list(if node.is_null() {
         None
     } else {
-        Some(crate::native::view::View::<
+        // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+        // read-only `View<_, Const>`, sound for any readable provenance, over a
+        // pointee the caller owns per this `unsafe fn`'s contract.
+        Some(unsafe {
+            crate::native::view::View::<
             crate::generated::DomNode,
             crate::native::view::Const,
-        >::from_ptr(node))
+        >::from_ptr(node)
+        })
     })
 }
 // ufbx.c:33094-33102 `ufbx_dom_as_int64_list` (impl: native/api.rs `dom_as_int64_list`)
@@ -1877,10 +2490,15 @@ pub unsafe extern "C" fn ufbx_dom_as_int64_list(
     crate::native::api::dom_as_int64_list(if node.is_null() {
         None
     } else {
-        Some(crate::native::view::View::<
+        // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+        // read-only `View<_, Const>`, sound for any readable provenance, over a
+        // pointee the caller owns per this `unsafe fn`'s contract.
+        Some(unsafe {
+            crate::native::view::View::<
             crate::generated::DomNode,
             crate::native::view::Const,
-        >::from_ptr(node))
+        >::from_ptr(node)
+        })
     })
 }
 // ufbx.c:33103-33111 `ufbx_dom_as_float_list` (impl: native/api.rs `dom_as_float_list`)
@@ -1891,10 +2509,15 @@ pub unsafe extern "C" fn ufbx_dom_as_float_list(
     crate::native::api::dom_as_float_list(if node.is_null() {
         None
     } else {
-        Some(crate::native::view::View::<
+        // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+        // read-only `View<_, Const>`, sound for any readable provenance, over a
+        // pointee the caller owns per this `unsafe fn`'s contract.
+        Some(unsafe {
+            crate::native::view::View::<
             crate::generated::DomNode,
             crate::native::view::Const,
-        >::from_ptr(node))
+        >::from_ptr(node)
+        })
     })
 }
 // ufbx.c:33112-33120 `ufbx_dom_as_double_list` (impl: native/api.rs `dom_as_double_list`)
@@ -1905,10 +2528,15 @@ pub unsafe extern "C" fn ufbx_dom_as_double_list(
     crate::native::api::dom_as_double_list(if node.is_null() {
         None
     } else {
-        Some(crate::native::view::View::<
+        // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+        // read-only `View<_, Const>`, sound for any readable provenance, over a
+        // pointee the caller owns per this `unsafe fn`'s contract.
+        Some(unsafe {
+            crate::native::view::View::<
             crate::generated::DomNode,
             crate::native::view::Const,
-        >::from_ptr(node))
+        >::from_ptr(node)
+        })
     })
 }
 // ufbx.c:33121-33129 `ufbx_dom_as_real_list` (impl: native/api.rs `dom_as_real_list`)
@@ -1919,10 +2547,15 @@ pub unsafe extern "C" fn ufbx_dom_as_real_list(
     crate::native::api::dom_as_real_list(if node.is_null() {
         None
     } else {
-        Some(crate::native::view::View::<
+        // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+        // read-only `View<_, Const>`, sound for any readable provenance, over a
+        // pointee the caller owns per this `unsafe fn`'s contract.
+        Some(unsafe {
+            crate::native::view::View::<
             crate::generated::DomNode,
             crate::native::view::Const,
-        >::from_ptr(node))
+        >::from_ptr(node)
+        })
     })
 }
 // ufbx.c:33130-33138 `ufbx_dom_as_blob_list` (impl: native/api.rs `dom_as_blob_list`)
@@ -1933,10 +2566,15 @@ pub unsafe extern "C" fn ufbx_dom_as_blob_list(
     crate::native::api::dom_as_blob_list(if node.is_null() {
         None
     } else {
-        Some(crate::native::view::View::<
+        // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
+        // read-only `View<_, Const>`, sound for any readable provenance, over a
+        // pointee the caller owns per this `unsafe fn`'s contract.
+        Some(unsafe {
+            crate::native::view::View::<
             crate::generated::DomNode,
             crate::native::view::Const,
-        >::from_ptr(node))
+        >::from_ptr(node)
+        })
     })
 }
 
@@ -1952,12 +2590,18 @@ pub unsafe extern "C" fn ufbx_find_prop(
     if props.is_null() {
         return core::ptr::null_mut();
     }
-    match crate::native::api::find_prop(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    match unsafe {
+        crate::native::api::find_prop(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
         name,
-    ) {
+    )
+    } {
         Some(prop) => prop.as_ptr() as *mut crate::generated::Prop,
         None => core::ptr::null_mut(),
     }
@@ -1973,13 +2617,19 @@ pub unsafe extern "C" fn ufbx_find_real(
     if props.is_null() {
         return def;
     }
-    crate::native::api::find_real(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::find_real(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
         name,
         def,
     )
+    }
 }
 
 // ufbx.c:33144 `ufbx_find_vec3` (impl: native/api.rs `find_vec3`)
@@ -1992,13 +2642,19 @@ pub unsafe extern "C" fn ufbx_find_vec3(
     if props.is_null() {
         return def;
     }
-    crate::native::api::find_vec3(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::find_vec3(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
         name,
         def,
     )
+    }
 }
 
 // ufbx.c:33145 `ufbx_find_int` (impl: native/api.rs `find_int`)
@@ -2011,13 +2667,19 @@ pub unsafe extern "C" fn ufbx_find_int(
     if props.is_null() {
         return def;
     }
-    crate::native::api::find_int(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::find_int(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
         name,
         def,
     )
+    }
 }
 
 // ufbx.c:33146 `ufbx_find_bool` (impl: native/api.rs `find_bool`)
@@ -2030,13 +2692,19 @@ pub unsafe extern "C" fn ufbx_find_bool(
     if props.is_null() {
         return def;
     }
-    crate::native::api::find_bool(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::find_bool(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
         name,
         def,
     )
+    }
 }
 
 // ufbx.c:33147 `ufbx_find_string` (impl: native/api.rs `find_string`)
@@ -2049,13 +2717,19 @@ pub unsafe extern "C" fn ufbx_find_string(
     if props.is_null() {
         return def;
     }
-    crate::native::api::find_string(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::find_string(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
         name,
         def,
     )
+    }
 }
 
 // ufbx.c:33148 `ufbx_find_blob` (impl: native/api.rs `find_blob`)
@@ -2068,13 +2742,19 @@ pub unsafe extern "C" fn ufbx_find_blob(
     if props.is_null() {
         return def;
     }
-    crate::native::api::find_blob(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    unsafe {
+        crate::native::api::find_blob(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
         name,
         def,
     )
+    }
 }
 
 // ufbx.c:33149 `ufbx_find_prop_element` (impl: native/api.rs `find_prop_element`)
@@ -2084,7 +2764,10 @@ pub unsafe extern "C" fn ufbx_find_prop_element(
     name: *const u8,
     type_: crate::generated::ElementType,
 ) -> *mut crate::generated::Element {
-    crate::native::api::find_prop_element(element, name, type_)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_prop_element(element, name, type_) }
 }
 
 // ufbx.c:33150 `ufbx_find_element` (impl: native/api.rs `find_element`)
@@ -2094,7 +2777,10 @@ pub unsafe extern "C" fn ufbx_find_element(
     type_: crate::generated::ElementType,
     name: *const u8,
 ) -> *mut crate::generated::Element {
-    crate::native::api::find_element(scene, type_, name)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_element(scene, type_, name) }
 }
 
 // ufbx.c:33151 `ufbx_find_node` (impl: native/api.rs `find_node`)
@@ -2103,7 +2789,10 @@ pub unsafe extern "C" fn ufbx_find_node(
     scene: *const crate::generated::Scene,
     name: *const u8,
 ) -> *mut crate::generated::Node {
-    crate::native::api::find_node(scene, name)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_node(scene, name) }
 }
 
 // ufbx.c:33152 `ufbx_find_anim_stack` (impl: native/api.rs `find_anim_stack`)
@@ -2112,7 +2801,10 @@ pub unsafe extern "C" fn ufbx_find_anim_stack(
     scene: *const crate::generated::Scene,
     name: *const u8,
 ) -> *mut crate::generated::AnimStack {
-    crate::native::api::find_anim_stack(scene, name)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_anim_stack(scene, name) }
 }
 
 // ufbx.c:33153 `ufbx_find_material` (impl: native/api.rs `find_material`)
@@ -2121,7 +2813,10 @@ pub unsafe extern "C" fn ufbx_find_material(
     scene: *const crate::generated::Scene,
     name: *const u8,
 ) -> *mut crate::generated::Material {
-    crate::native::api::find_material(scene, name)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_material(scene, name) }
 }
 
 // ufbx.c:33154 `ufbx_find_anim_prop` (impl: native/api.rs `find_anim_prop`)
@@ -2131,7 +2826,10 @@ pub unsafe extern "C" fn ufbx_find_anim_prop(
     element: *const crate::generated::Element,
     prop: *const u8,
 ) -> *mut crate::generated::AnimProp {
-    crate::native::api::find_anim_prop(layer, element, prop)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_anim_prop(layer, element, prop) }
 }
 
 // ufbx.c:33155 `ufbx_evaluate_prop` (impl: native/api.rs `evaluate_prop`)
@@ -2142,7 +2840,10 @@ pub unsafe extern "C" fn ufbx_evaluate_prop(
     name: *const u8,
     time: f64,
 ) -> crate::generated::Prop {
-    crate::native::api::evaluate_prop(anim, element, name, time)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_prop(anim, element, name, time) }
 }
 
 // ufbx.c:33156 `ufbx_evaluate_prop_flags` (impl: native/api.rs
@@ -2155,7 +2856,10 @@ pub unsafe extern "C" fn ufbx_evaluate_prop_flags(
     time: f64,
     flags: u32,
 ) -> crate::generated::Prop {
-    crate::native::api::evaluate_prop_flags(anim, element, name, time, flags)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::evaluate_prop_flags(anim, element, name, time, flags) }
 }
 
 // ufbx.c:33157 `ufbx_find_prop_texture` (impl: native/api.rs `find_prop_texture`)
@@ -2164,7 +2868,10 @@ pub unsafe extern "C" fn ufbx_find_prop_texture(
     material: *const crate::generated::Material,
     name: *const u8,
 ) -> *mut crate::generated::Texture {
-    crate::native::api::find_prop_texture(material, name)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_prop_texture(material, name) }
 }
 
 // ufbx.c:33158 `ufbx_find_shader_prop` (impl: native/api.rs `find_shader_prop`)
@@ -2173,7 +2880,10 @@ pub unsafe extern "C" fn ufbx_find_shader_prop(
     shader: *const crate::generated::Shader,
     name: *const u8,
 ) -> crate::prelude::String {
-    crate::native::api::find_shader_prop(shader, name)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_shader_prop(shader, name) }
 }
 
 // ufbx.c:33159 `ufbx_find_shader_prop_bindings`
@@ -2183,7 +2893,10 @@ pub unsafe extern "C" fn ufbx_find_shader_prop_bindings(
     shader: *const crate::generated::Shader,
     name: *const u8,
 ) -> crate::prelude::List<crate::generated::ShaderPropBinding> {
-    crate::native::api::find_shader_prop_bindings(shader, name)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_shader_prop_bindings(shader, name) }
 }
 
 // ufbx.c:33160 `ufbx_find_shader_texture_input`
@@ -2193,7 +2906,10 @@ pub unsafe extern "C" fn ufbx_find_shader_texture_input(
     shader: *const crate::generated::ShaderTexture,
     name: *const u8,
 ) -> *mut crate::generated::ShaderTextureInput {
-    crate::native::api::find_shader_texture_input(shader, name)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::find_shader_texture_input(shader, name) }
 }
 
 // ufbx.c:33161 `ufbx_dom_find` (impl: native/api.rs `dom_find`)
@@ -2204,12 +2920,18 @@ pub unsafe extern "C" fn ufbx_dom_find(
 ) -> *mut crate::generated::DomNode {
     // Same shape as `ufbx_dom_find_len`: unchecked `parent` (C parity),
     // read-only view in, correlated view out, mapped back to raw.
-    match crate::native::api::dom_find(
+    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
+    // `View<_, Const>` (sound for any readable provenance) and the remaining
+    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
+    // impl unchanged.
+    match unsafe {
+        crate::native::api::dom_find(
         crate::native::view::View::<crate::generated::DomNode, crate::native::view::Const>::from_ptr(
             parent,
         ),
         name,
-    ) {
+    )
+    } {
         Some(node) => node.as_ptr() as *mut crate::generated::DomNode,
         None => core::ptr::null_mut(),
     }
@@ -2228,7 +2950,10 @@ pub unsafe extern "C" fn ufbx_triangulate_face(
     mesh: *const crate::generated::Mesh,
     face: crate::generated::Face,
 ) -> u32 {
-    crate::native::api::triangulate_face(indices, num_indices, mesh, face)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::triangulate_face(indices, num_indices, mesh, face) }
 }
 
 // ufbx.c:33168-33170 `ufbx_compute_topology` (impl: native/api.rs
@@ -2239,7 +2964,10 @@ pub unsafe extern "C" fn ufbx_compute_topology(
     topo: *mut crate::generated::TopoEdge,
     num_topo: usize,
 ) {
-    crate::native::api::compute_topology(mesh, topo, num_topo)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::compute_topology(mesh, topo, num_topo) }
 }
 
 // ufbx.c:33171-33173 `ufbx_topo_next_vertex_edge` (impl: native/api.rs
@@ -2250,7 +2978,10 @@ pub unsafe extern "C" fn ufbx_topo_next_vertex_edge(
     num_topo: usize,
     index: u32,
 ) -> u32 {
-    crate::native::api::topo_next_vertex_edge(topo, num_topo, index)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::topo_next_vertex_edge(topo, num_topo, index) }
 }
 
 // ufbx.c:33174-33176 `ufbx_topo_prev_vertex_edge` (impl: native/api.rs
@@ -2261,7 +2992,10 @@ pub unsafe extern "C" fn ufbx_topo_prev_vertex_edge(
     num_topo: usize,
     index: u32,
 ) -> u32 {
-    crate::native::api::topo_prev_vertex_edge(topo, num_topo, index)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::topo_prev_vertex_edge(topo, num_topo, index) }
 }
 
 // ufbx.c:33177-33179 `ufbx_get_weighted_face_normal` (impl: native/api.rs
@@ -2271,5 +3005,8 @@ pub unsafe extern "C" fn ufbx_get_weighted_face_normal(
     positions: *const crate::generated::VertexVec3,
     face: crate::generated::Face,
 ) -> crate::generated::Vec3 {
-    crate::native::api::get_weighted_face_normal(positions, face)
+    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
+    // own raw-pointer contract and are forwarded unchanged to the native impl,
+    // whose contract is identical.
+    unsafe { crate::native::api::get_weighted_face_normal(positions, face) }
 }
