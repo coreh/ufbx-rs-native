@@ -49,7 +49,9 @@ use crate::native::scene_process::finalize_mesh_material;
 #[cfg(feature = "subdivision")]
 use crate::native::string_pool::slow_normalize3;
 #[cfg(feature = "subdivision")]
-use crate::prelude::Real;
+use crate::native::view::{Const, SliceViewIter, View};
+#[cfg(feature = "subdivision")]
+use crate::prelude::{ListView, Real};
 #[cfg(feature = "subdivision")]
 use core::ffi::c_void;
 #[cfg(feature = "subdivision")]
@@ -1031,20 +1033,18 @@ pub(crate) unsafe fn subdivide_layer(
     // SAFETY: `input` points to a live `SubdivideLayerInput` (fn contract).
     let boundary: SubdivisionBoundary = unsafe { (*input).boundary };
 
-    let mesh: *const Mesh = sc.src_mesh_mut_ptr();
+    let mesh: &MeshView = sc.src_mesh_view();
     let topo: *const TopoEdge = sc.topo();
     let num_topo: usize = sc.num_topo();
 
-    // SAFETY: `mesh` is `sc`'s live source `Mesh` (from `src_mesh_mut_ptr`).
-    let edge_indices: *mut u32 = sc.result_view().push::<u32>(unsafe { (*mesh).num_indices });
+    let edge_indices: *mut u32 = sc.result_view().push::<u32>(mesh.num_indices());
     ufbxi_check_err!(sc.error_view(), !edge_indices.is_null(), "edge_indices");
 
     let mut num_edge_values: usize = 0;
     // C: `for (uint32_t ix = 0; ix < (uint32_t)mesh->num_indices; ix++)` — the
     // bound is truncated to `uint32_t` here (unlike the edge-point loop below).
     let mut ix: u32 = 0;
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    while ix < unsafe { (*mesh).num_indices } as u32 {
+    while ix < mesh.num_indices() as u32 {
         // SAFETY: `ix < num_indices`, so it is a valid corner index into `topo`,
         // which holds one live `TopoEdge` per index of the source mesh.
         let twin: u32 = unsafe { (*topo.add(ix as usize)).twin };
@@ -1063,10 +1063,9 @@ pub(crate) unsafe fn subdivide_layer(
 
     // SAFETY: `input` points to a live `SubdivideLayerInput`.
     let stride: usize = unsafe { (*input).stride };
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
     let num_initial_values: usize = num_edge_values
-        .wrapping_add(unsafe { (*mesh).num_faces })
-        .wrapping_add(unsafe { (*mesh).num_indices });
+        .wrapping_add(mesh.num_faces())
+        .wrapping_add(mesh.num_indices());
     // SAFETY: `tmp_mut_ptr()` is `sc`'s own live scratch `Buf`, the push contract.
     let values: *mut u8 =
         unsafe { push_size(sc.tmp_mut_ptr(), stride, num_initial_values) } as *mut u8;
@@ -1074,20 +1073,18 @@ pub(crate) unsafe fn subdivide_layer(
 
     let face_values: *mut u8 = values;
     // SAFETY: `values` is a `num_initial_values`-element `stride`-sized buffer
-    // laid out faces|edges|vertices; `mesh` is live so `num_faces*stride` and
+    // laid out faces|edges|vertices, so `num_faces*stride` and
     // `num_edge_values*stride` are the intended in-range segment offsets.
-    let edge_values: *mut u8 = unsafe { face_values.add((*mesh).num_faces.wrapping_mul(stride)) };
+    let edge_values: *mut u8 = unsafe { face_values.add(mesh.num_faces().wrapping_mul(stride)) };
     // SAFETY: as above; the vertex segment begins after the edge segment.
     let vertex_values: *mut u8 = unsafe { edge_values.add(num_edge_values.wrapping_mul(stride)) };
 
     let mut num_vertex_values: usize = 0;
 
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    let vertex_indices: *mut u32 = sc.result_view().push::<u32>(unsafe { (*mesh).num_indices });
+    let vertex_indices: *mut u32 = sc.result_view().push::<u32>(mesh.num_indices());
     ufbxi_check_err!(sc.error_view(), !vertex_indices.is_null(), "vertex_indices");
 
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    let min_inputs: usize = max_sz(32, unsafe { (*mesh).max_face_triangles }.wrapping_add(2));
+    let min_inputs: usize = max_sz(32, mesh.max_face_triangles().wrapping_add(2));
     ufbxi_check_err!(
         sc.error_view(),
         // SAFETY: the three `*_mut_ptr` accessors return `sc`'s own live
@@ -1150,8 +1147,7 @@ pub(crate) unsafe fn subdivide_layer(
     // Mark unused indices as `UFBX_NO_INDEX` so we can patch non-manifold
     // C: `ufbxi_nounroll for (size_t i = 0; i < mesh->num_indices; i++)`
     let mut i: usize = 0;
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    while i < unsafe { (*mesh).num_indices } {
+    while i < mesh.num_indices() {
         // SAFETY: `i < num_indices`, an in-range slot of the `num_indices`-sized
         // `vertex_indices` push.
         unsafe { *vertex_indices.add(i) = NO_INDEX };
@@ -1160,10 +1156,9 @@ pub(crate) unsafe fn subdivide_layer(
 
     // Face points
     let mut fi: usize = 0;
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    while fi < unsafe { (*mesh).num_faces } {
+    while fi < mesh.num_faces() {
         // SAFETY: `fi < num_faces`, in range for the live `faces` array.
-        let face: Face = unsafe { *(*mesh).faces.data.add(fi) };
+        let face: Face = unsafe { *mesh.faces().data.add(fi) };
         // SAFETY: `fi < num_faces`, so `fi*stride` is within the `num_faces`
         // face-value segment at the head of `values`.
         let dst: *mut u8 = unsafe { face_values.add(fi.wrapping_mul(stride)) };
@@ -1208,8 +1203,7 @@ pub(crate) unsafe fn subdivide_layer(
     // C: `for (uint32_t ix = 0; ix < mesh->num_indices; ix++)` — `ix` is
     // promoted to `size_t` for the comparison here (no truncation).
     let mut ix: u32 = 0;
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    while (ix as usize) < unsafe { (*mesh).num_indices } {
+    while (ix as usize) < mesh.num_indices() {
         // SAFETY: `ix < num_indices` indexes the live `edge_indices` array;
         // the stored edge-value index times `stride` stays within the edge
         // segment of `values` that `edge_values` heads.
@@ -1231,17 +1225,17 @@ pub(crate) unsafe fn subdivide_layer(
         let mut crease: Real = 0.0;
         if split || twin == NO_INDEX {
             crease = 1.0;
-        // SAFETY: `topo.add(ix)` is in-bounds; `mesh` is `sc`'s live source mesh.
+        // SAFETY: `topo.add(ix)` is in-bounds.
         } else if unsafe { (*topo.add(ix as usize)).edge } != NO_INDEX
-            && !unsafe { (*mesh).edge_crease.data }.is_null()
+            && !mesh.edge_crease().data.is_null()
         {
             // SAFETY: the guard proved this corner's `.edge != NO_INDEX` and
             // `edge_crease.data` is non-null; a non-sentinel `.edge` is an
             // in-range edge index by topology/mesh consistency (`edge_crease`
             // spans `num_edges`), so the `.add(edge)` read is in-bounds.
             crease = unsafe {
-                *(*mesh)
-                    .edge_crease
+                *mesh
+                    .edge_crease()
                     .data
                     .add((*topo.add(ix as usize)).edge as usize)
             } * (10.0 as Real);
@@ -1351,10 +1345,9 @@ pub(crate) unsafe fn subdivide_layer(
 
     // Vertex points
     let mut vi: usize = 0;
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    while vi < unsafe { (*mesh).num_vertices } {
+    while vi < mesh.num_vertices() {
         // SAFETY: `vi < num_vertices` indexes the live `vertex_first_index` array.
-        let mut original_start: u32 = unsafe { *(*mesh).vertex_first_index.data.add(vi) };
+        let mut original_start: u32 = unsafe { *mesh.vertex_first_index().data.add(vi) };
         if original_start == NO_INDEX {
             vi += 1;
             continue;
@@ -1480,18 +1473,15 @@ pub(crate) unsafe fn subdivide_layer(
                 end_edge != NO_INDEX && unsafe { is_edge_split(input, topo, end_edge) };
 
             // Either of the first two edges may be creased
-            // SAFETY: `topo` live; `start` is an in-range corner index; the mesh
-            // view is `sc`'s live source mesh.
-            let start_crease: Real =
-                unsafe { edge_crease(sc.src_mesh_view(), start_split, topo, start) };
+            // SAFETY: `topo` live; `start` is an in-range corner index.
+            let start_crease: Real = unsafe { edge_crease(mesh, start_split, topo, start) };
             if start_crease > 0.0 {
                 total_crease += start_crease;
                 crease_input_indices[num_crease] = 1;
                 num_crease += 1;
             }
             // SAFETY: as above, using `start_prev` as the in-range corner index.
-            let prev_crease: Real =
-                unsafe { edge_crease(sc.src_mesh_view(), prev_split, topo, start_prev) };
+            let prev_crease: Real = unsafe { edge_crease(mesh, prev_split, topo, start_prev) };
             if prev_crease > 0.0 {
                 total_crease += prev_crease;
                 crease_input_indices[num_crease] = 2;
@@ -1594,10 +1584,8 @@ pub(crate) unsafe fn subdivide_layer(
 
                     // Add the edge crease, this also handles boundaries as they
                     // have an implicit crease of 1.0 using `ufbxi_edge_crease()`
-                    // SAFETY: `topo` live; `cur` is an in-range corner; the mesh
-                    // view is `sc`'s live source mesh.
-                    let cur_crease: Real =
-                        unsafe { edge_crease(sc.src_mesh_view(), split, topo, cur) };
+                    // SAFETY: `topo` live; `cur` is an in-range corner.
+                    let cur_crease: Real = unsafe { edge_crease(mesh, split, topo, cur) };
                     if cur_crease > 0.0 {
                         total_crease += cur_crease;
                         if num_crease < 2 {
@@ -1730,20 +1718,8 @@ pub(crate) unsafe fn subdivide_layer(
                 }
             }
 
-            // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-            if unsafe { (*mesh).vertex_crease.exists } {
-                let mut v: Real = get_vertex_real(
-                    // SAFETY: `mesh` is `sc`'s live source mesh, so `&raw const`
-                    // projects its live `vertex_crease` field; `from_ptr` mints a
-                    // `Const` read-only view over that readable address.
-                    unsafe {
-                        crate::native::view::View::<
-                            crate::generated::VertexReal,
-                            crate::native::view::Const,
-                        >::from_ptr(&raw const (*mesh).vertex_crease)
-                    },
-                    original_start as usize,
-                );
+            if mesh.vertex_crease().exists() {
+                let mut v: Real = get_vertex_real(mesh.vertex_crease(), original_start as usize);
                 v *= 10.0 as Real;
                 if v > 0.0 {
                     if v > 1.0 {
@@ -1795,8 +1771,7 @@ pub(crate) unsafe fn subdivide_layer(
 
     // Copy non-manifold vertex values as-is
     let mut old_ix: usize = 0;
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    while old_ix < unsafe { (*mesh).num_indices } {
+    while old_ix < mesh.num_indices() {
         // SAFETY: `old_ix < num_indices` is an in-range slot of `vertex_indices`.
         let mut ix: u32 = unsafe { *vertex_indices.add(old_ix) };
         if ix == NO_INDEX {
@@ -1831,11 +1806,9 @@ pub(crate) unsafe fn subdivide_layer(
         old_ix += 1;
     }
 
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    ufbx_assert!(num_vertex_values <= unsafe { (*mesh).num_indices });
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
+    ufbx_assert!(num_vertex_values <= mesh.num_indices());
     let num_values: usize = num_edge_values
-        .wrapping_add(unsafe { (*mesh).num_faces })
+        .wrapping_add(mesh.num_faces())
         .wrapping_add(num_vertex_values);
     // SAFETY: `result_mut_ptr()` is `sc`'s own live result `Buf`, the push contract.
     let mut new_values: *mut u8 =
@@ -1862,20 +1835,17 @@ pub(crate) unsafe fn subdivide_layer(
 
     // SAFETY: `input` points to a live `SubdivideLayerInput`.
     if !unsafe { (*input).ignore_indices } {
-        // SAFETY: `mesh` is `sc`'s live source `Mesh`.
         let new_indices: *mut u32 = sc
             .result_view()
-            .push::<u32>(unsafe { (*mesh).num_indices }.wrapping_mul(4));
+            .push::<u32>(mesh.num_indices().wrapping_mul(4));
         ufbxi_check_err!(sc.error_view(), !new_indices.is_null(), "new_indices");
 
         let face_start: u32 = 0;
-        // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-        let edge_start: u32 = face_start.wrapping_add(unsafe { (*mesh).num_faces } as u32);
+        let edge_start: u32 = face_start.wrapping_add(mesh.num_faces() as u32);
         let vert_start: u32 = edge_start.wrapping_add(num_edge_values as u32);
         let mut p_ix: *mut u32 = new_indices;
         let mut ix: usize = 0;
-        // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-        while ix < unsafe { (*mesh).num_indices } {
+        while ix < mesh.num_indices() {
             // SAFETY: the loop runs `num_indices` iterations advancing `p_ix` by 4
             // each time over the `num_indices*4`-element `new_indices` push, so
             // `p_ix.add(0..=3)` stay in-bounds; `ix < num_indices` indexes the
@@ -1891,10 +1861,10 @@ pub(crate) unsafe fn subdivide_layer(
             }
             ix += 1;
         }
-        // SAFETY: `output` points to a live `SubdivideLayerOutput`; `mesh` live.
+        // SAFETY: `output` points to a live `SubdivideLayerOutput`.
         unsafe {
             (*output).indices = new_indices;
-            (*output).num_indices = (*mesh).num_indices.wrapping_mul(4);
+            (*output).num_indices = mesh.num_indices().wrapping_mul(4);
         }
     } else {
         // SAFETY: `output` points to a live `SubdivideLayerOutput`.
@@ -2300,8 +2270,8 @@ pub(crate) unsafe fn subdivide_vertex_crease(
 }
 
 // ufbx.c:29631-29925 `ufbxi_subdivide_mesh_level`
-// Stays `unsafe fn`: the body is raw end-to-end and, beyond the context
-// invariant, it rests on index contracts carried by the *source mesh data*
+// Stays `unsafe fn`: the mesh fields run through `MeshView`, but the residual
+// pointer arithmetic rests on index contracts carried by the *source mesh data*
 // rather than anything checkable here — `topo[edge.a]`, `faces[topo[..].face]`
 // and the per-face `face_material/smoothing/group/hole` writes at
 // `index_offset + ci` are all only in bounds because the input mesh is
@@ -2312,121 +2282,115 @@ pub(crate) unsafe fn subdivide_vertex_crease(
 pub(crate) unsafe fn subdivide_mesh_level(
     sc: &SubdivideContext,
 ) -> Result<(), crate::native::error::Fail> {
-    let mesh: *const Mesh = sc.src_mesh_mut_ptr();
-    let result: *mut Mesh = sc.dst_mesh_mut_ptr();
+    let mesh: &MeshView = sc.src_mesh_view();
+    let result: &MeshView = sc.dst_mesh_view();
 
     // C: `*result = *mesh;` — struct assignment (memcpy).
-    // SAFETY: `mesh`/`result` are `sc`'s own distinct source/destination `Mesh`
-    // slots, so the one-element copy is non-overlapping.
-    unsafe { core::ptr::copy_nonoverlapping(mesh, result, 1) };
+    // SAFETY: `mesh`/`result` view `sc`'s own distinct source/destination `Mesh`
+    // slots, so the one-element copy between their own pointers is
+    // non-overlapping.
+    unsafe { core::ptr::copy_nonoverlapping(mesh.as_ptr(), result.get(), 1) };
 
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    let topo: *mut TopoEdge = sc
-        .tmp_view()
-        .push::<TopoEdge>(unsafe { (*mesh).num_indices });
+    let topo: *mut TopoEdge = sc.tmp_view().push::<TopoEdge>(mesh.num_indices());
     ufbxi_check_err!(sc.error_view(), !topo.is_null(), "topo");
     // SAFETY: `topo` is the fresh non-null `num_indices`-element push just
     // checked, and `compute_topology` is handed exactly that mesh and count.
-    unsafe { compute_topology(mesh, topo, (*mesh).num_indices) };
+    unsafe { compute_topology(mesh.as_ptr(), topo, mesh.num_indices()) };
     sc.set_topo(topo);
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    sc.set_num_topo(unsafe { (*mesh).num_indices });
+    sc.set_num_topo(mesh.num_indices());
 
-    // SAFETY: `result` is `sc`'s live destination `Mesh`; `&mut (*result).field`
-    // projects its live `vertex_position` field, reinterpreted as the attribute
+    // SAFETY: `vertex_position_raw()` addresses `result`'s own live
+    // `vertex_position` field, reinterpreted as the attribute
     // `subdivide_attrib` subdivides in place.
     unsafe {
         subdivide_attrib(
             sc,
-            (&mut (*result).vertex_position) as *mut VertexVec3 as *mut VertexAttrib,
+            result.vertex_position_raw() as *mut VertexAttrib,
             sc.opts_view().boundary(),
             false,
         )
     }?;
 
-    // SAFETY: `result` is `sc`'s live destination `Mesh`; each `&mut (*result).x`
-    // projects a live vertex-attribute field, zeroed in place to its own size
-    // (all-zero is a valid empty `VertexVec*`).
+    // SAFETY: each `*_raw()` addresses a live vertex-attribute field of
+    // `result`, zeroed in place to its own size (all-zero is a valid empty
+    // `VertexVec*`).
     unsafe {
         core::ptr::write_bytes(
-            &mut (*result).vertex_uv as *mut _ as *mut u8,
+            result.vertex_uv_raw() as *mut u8,
             0,
             size_of::<crate::generated::VertexVec2>(),
         );
         core::ptr::write_bytes(
-            &mut (*result).vertex_tangent as *mut _ as *mut u8,
+            result.vertex_tangent_raw() as *mut u8,
             0,
             size_of::<VertexVec3>(),
         );
         core::ptr::write_bytes(
-            &mut (*result).vertex_bitangent as *mut _ as *mut u8,
+            result.vertex_bitangent_raw() as *mut u8,
             0,
             size_of::<VertexVec3>(),
         );
         core::ptr::write_bytes(
-            &mut (*result).vertex_color as *mut _ as *mut u8,
+            result.vertex_color_raw() as *mut u8,
             0,
             size_of::<crate::generated::VertexVec4>(),
         );
     }
 
-    // SAFETY: `result` is live; `uv_sets.data`/`.count` describe its live UV-set
-    // array, copied into `sc`'s result arena via `push_copy`.
-    unsafe {
-        (*result).uv_sets.data = push_copy::<UvSet>(
-            sc.result_mut_ptr(),
-            (*result).uv_sets.count,
-            (*result).uv_sets.data,
-        );
-    }
+    // One `ListView` mint per set list, serving the copy below, the
+    // `ufbxi_for_list` walk and the `[0]` reads.
+    // SAFETY: `uv_sets_raw()`/`color_sets_raw()` address `result`'s own live
+    // list fields, carrying the context's write-capable provenance.
+    let uv_sets: &ListView<UvSet> = unsafe { ListView::from_ptr(result.uv_sets_raw()) };
+    // SAFETY: as above.
+    let color_sets: &ListView<ColorSet> = unsafe { ListView::from_ptr(result.color_sets_raw()) };
+
+    // SAFETY: `uv_sets` describes `result`'s live UV-set array, copied into
+    // `sc`'s result arena via `push_copy`.
+    uv_sets.set_data(unsafe {
+        push_copy::<UvSet>(sc.result_mut_ptr(), uv_sets.count(), uv_sets.data())
+    });
     ufbxi_check_err!(
         sc.error_view(),
-        // SAFETY: `result` is live.
-        !unsafe { (*result).uv_sets.data }.is_null(),
+        !uv_sets.data().is_null(),
         "result->uv_sets.data"
     );
 
-    // SAFETY: `result` is live; `color_sets.data`/`.count` describe its live
-    // color-set array, copied into `sc`'s result arena via `push_copy`.
-    unsafe {
-        (*result).color_sets.data = push_copy::<ColorSet>(
-            sc.result_mut_ptr(),
-            (*result).color_sets.count,
-            (*result).color_sets.data,
-        );
-    }
+    // SAFETY: `color_sets` describes `result`'s live color-set array, copied
+    // into `sc`'s result arena via `push_copy`.
+    color_sets.set_data(unsafe {
+        push_copy::<ColorSet>(sc.result_mut_ptr(), color_sets.count(), color_sets.data())
+    });
     ufbxi_check_err!(
         sc.error_view(),
-        // SAFETY: `result` is live.
-        !unsafe { (*result).color_sets.data }.is_null(),
+        !color_sets.data().is_null(),
         "result->color_sets.data"
     );
 
     // C: `ufbxi_for_list(ufbx_uv_set, set, result->uv_sets)`
     {
-        // SAFETY: `result` is live; `uv_sets.data`/`.count` describe the live
-        // UV-set array just pushed, so `set..set_end` spans exactly its elements.
-        let mut set: *mut UvSet = unsafe { (*result).uv_sets.data as *mut UvSet };
-        let set_end: *mut UvSet = unsafe { set.add((*result).uv_sets.count) };
-        while set != set_end {
-            // SAFETY: `set` is an in-range live `UvSet`; `&mut (*set).field`
-            // projects its attribute field, subdivided in place.
+        // SAFETY: `uv_sets` describes the contiguous run just copied into `sc`'s
+        // result arena, live and unmoved for this call.
+        let sets = unsafe {
+            SliceViewIter::<UvSet>::from_raw_parts(uv_sets.data() as *mut UvSet, uv_sets.count())
+        };
+        for set in sets {
+            // SAFETY: `vertex_uv_raw()` addresses this live `UvSet`'s own
+            // attribute field, subdivided in place.
             unsafe {
                 subdivide_attrib(
                     sc,
-                    (&mut (*set).vertex_uv) as *mut crate::generated::VertexVec2
-                        as *mut VertexAttrib,
+                    set.vertex_uv_raw() as *mut VertexAttrib,
                     sc.opts_view().uv_boundary(),
                     true,
                 )
             }?;
             if sc.opts_view().interpolate_tangents() {
-                // SAFETY: `set` is an in-range live `UvSet`; `&mut (*set).field`
-                // projects its tangent attribute, subdivided in place.
+                // SAFETY: as above, for this set's tangent attribute.
                 unsafe {
                     subdivide_attrib(
                         sc,
-                        (&mut (*set).vertex_tangent) as *mut VertexVec3 as *mut VertexAttrib,
+                        set.vertex_tangent_raw() as *mut VertexAttrib,
                         sc.opts_view().uv_boundary(),
                         true,
                     )
@@ -2435,109 +2399,103 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 unsafe {
                     subdivide_attrib(
                         sc,
-                        (&mut (*set).vertex_bitangent) as *mut VertexVec3 as *mut VertexAttrib,
+                        set.vertex_bitangent_raw() as *mut VertexAttrib,
                         sc.opts_view().uv_boundary(),
                         true,
                     )
                 }?;
             } else {
-                // SAFETY: `set` is live; each `&mut (*set).field` projects a live
-                // attribute zeroed in place to its own size.
+                // SAFETY: each `*_raw()` addresses a live attribute field of this
+                // set, zeroed in place to its own size.
                 unsafe {
                     core::ptr::write_bytes(
-                        &mut (*set).vertex_tangent as *mut _ as *mut u8,
+                        set.vertex_tangent_raw() as *mut u8,
                         0,
                         size_of::<VertexVec3>(),
                     );
                     core::ptr::write_bytes(
-                        &mut (*set).vertex_bitangent as *mut _ as *mut u8,
+                        set.vertex_bitangent_raw() as *mut u8,
                         0,
                         size_of::<VertexVec3>(),
                     );
                 }
             }
-            // SAFETY: `set != set_end`, so advancing by one stays within the array.
-            set = unsafe { set.add(1) };
         }
     }
 
     // C: `ufbxi_for_list(ufbx_color_set, set, result->color_sets)`
     {
-        // SAFETY: `result` is live; `color_sets.data`/`.count` describe the live
-        // color-set array, so `set..set_end` spans exactly its elements.
-        let mut set: *mut ColorSet = unsafe { (*result).color_sets.data as *mut ColorSet };
-        let set_end: *mut ColorSet = unsafe { set.add((*result).color_sets.count) };
-        while set != set_end {
-            // SAFETY: `set` is an in-range live `ColorSet`; `&mut (*set).field`
-            // projects its color attribute, subdivided in place.
+        // SAFETY: `color_sets` describes the contiguous run just copied into
+        // `sc`'s result arena, live and unmoved for this call.
+        let sets = unsafe {
+            SliceViewIter::<ColorSet>::from_raw_parts(
+                color_sets.data() as *mut ColorSet,
+                color_sets.count(),
+            )
+        };
+        for set in sets {
+            // SAFETY: `vertex_color_raw()` addresses this live `ColorSet`'s own
+            // attribute field, subdivided in place.
             unsafe {
                 subdivide_attrib(
                     sc,
-                    (&mut (*set).vertex_color) as *mut crate::generated::VertexVec4
-                        as *mut VertexAttrib,
+                    set.vertex_color_raw() as *mut VertexAttrib,
                     sc.opts_view().uv_boundary(),
                     true,
                 )
             }?;
-            // SAFETY: `set != set_end`, so advancing by one stays within the array.
-            set = unsafe { set.add(1) };
         }
     }
 
-    // SAFETY: `result` is live.
-    if unsafe { (*result).uv_sets.count } > 0 {
+    if uv_sets.count() > 0 {
         // C: struct assignments from `uv_sets.data[0]`.
-        // SAFETY: the count is > 0, so `uv_sets.data.add(0)` is a live element;
-        // each destination `&mut (*result).field` is a distinct live field of the
-        // same mesh, so every one-element copy is non-overlapping.
+        // SAFETY: the count is > 0, so element 0 of the run is live; each
+        // destination `*_raw()` is a distinct live field of `result`, so every
+        // one-element copy is non-overlapping.
         unsafe {
+            let set0: &View<UvSet> = View::<UvSet>::from_ptr(uv_sets.data() as *mut UvSet);
+            core::ptr::copy_nonoverlapping(set0.vertex_uv_raw(), result.vertex_uv_raw(), 1);
             core::ptr::copy_nonoverlapping(
-                &(*(*result).uv_sets.data.add(0)).vertex_uv,
-                &mut (*result).vertex_uv,
+                set0.vertex_bitangent_raw(),
+                result.vertex_bitangent_raw(),
                 1,
             );
             core::ptr::copy_nonoverlapping(
-                &(*(*result).uv_sets.data.add(0)).vertex_bitangent,
-                &mut (*result).vertex_bitangent,
-                1,
-            );
-            core::ptr::copy_nonoverlapping(
-                &(*(*result).uv_sets.data.add(0)).vertex_tangent,
-                &mut (*result).vertex_tangent,
+                set0.vertex_tangent_raw(),
+                result.vertex_tangent_raw(),
                 1,
             );
         }
     }
-    // SAFETY: `result` is live.
-    if unsafe { (*result).color_sets.count } > 0 {
-        // SAFETY: the count is > 0, so `color_sets.data.add(0)` is a live element;
-        // the destination is a distinct live field, so the copy is non-overlapping.
+    if color_sets.count() > 0 {
+        // SAFETY: the count is > 0, so element 0 of the run is live; the
+        // destination is a distinct live field of `result`, so the copy is
+        // non-overlapping.
         unsafe {
-            core::ptr::copy_nonoverlapping(
-                &(*(*result).color_sets.data.add(0)).vertex_color,
-                &mut (*result).vertex_color,
-                1,
-            );
+            let set0: &View<ColorSet> =
+                View::<ColorSet>::from_ptr(color_sets.data() as *mut ColorSet);
+            core::ptr::copy_nonoverlapping(set0.vertex_color_raw(), result.vertex_color_raw(), 1);
         }
     }
 
     if sc.opts_view().interpolate_normals() && !sc.opts_view().ignore_normals() {
-        // SAFETY: `result` is live; `&mut (*result).vertex_normal` projects its
-        // normal attribute, subdivided in place.
+        // SAFETY: `vertex_normal_raw()` addresses `result`'s own live normal
+        // attribute, subdivided in place.
         unsafe {
             subdivide_attrib(
                 sc,
-                (&mut (*result).vertex_normal) as *mut VertexVec3 as *mut VertexAttrib,
+                result.vertex_normal_raw() as *mut VertexAttrib,
                 sc.opts_view().boundary(),
                 true,
             )
         }?;
         // C: `ufbxi_for_list(ufbx_vec3, normal, result->vertex_normal.values)`
         {
-            // SAFETY: `result` is live; `vertex_normal.values.data`/`.count`
-            // describe the live normal array, so `normal..normal_end` spans it.
-            let mut normal: *mut Vec3 = unsafe { (*result).vertex_normal.values.data as *mut Vec3 };
-            let normal_end: *mut Vec3 = unsafe { normal.add((*result).vertex_normal.values.count) };
+            let values = result.vertex_normal().values();
+            // SAFETY: `values.data`/`.count` describe the live normal array, so
+            // `normal..normal_end` spans it.
+            let mut normal: *mut Vec3 = values.data as *mut Vec3;
+            let normal_end: *mut Vec3 = unsafe { normal.add(values.count) };
             while normal != normal_end {
                 // SAFETY: `normal` is an in-range live `Vec3`; `slow_normalize3`
                 // reads it and the result is stored back in place.
@@ -2546,35 +2504,33 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 normal = unsafe { normal.add(1) };
             }
         }
-        // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-        if unsafe { (*mesh).skinned_normal.values.data == (*mesh).vertex_normal.values.data } {
-            // SAFETY: `result` is live; `vertex_normal`/`skinned_normal` are two
-            // distinct fields, so the one-element copy is non-overlapping.
+        if mesh.skinned_normal().values().data == mesh.vertex_normal().values().data {
+            // SAFETY: `vertex_normal`/`skinned_normal` are two distinct live
+            // fields of `result`, so the one-element copy is non-overlapping.
             unsafe {
                 core::ptr::copy_nonoverlapping(
-                    &(*result).vertex_normal,
-                    &mut (*result).skinned_normal,
+                    result.vertex_normal_raw(),
+                    result.skinned_normal_raw(),
                     1,
                 );
             }
         } else {
-            // SAFETY: `result` is live; `&mut (*result).skinned_normal` projects
-            // its skinned-normal attribute, subdivided in place.
+            // SAFETY: `skinned_normal_raw()` addresses `result`'s own live
+            // skinned-normal attribute, subdivided in place.
             unsafe {
                 subdivide_attrib(
                     sc,
-                    (&mut (*result).skinned_normal) as *mut VertexVec3 as *mut VertexAttrib,
+                    result.skinned_normal_raw() as *mut VertexAttrib,
                     sc.opts_view().boundary(),
                     true,
                 )
             }?;
             // C: `ufbxi_for_list(ufbx_vec3, normal, result->skinned_normal.values)`
-            // SAFETY: `result` is live; `skinned_normal.values.data`/`.count`
-            // describe the live array, so `normal..normal_end` spans it.
-            let mut normal: *mut Vec3 =
-                unsafe { (*result).skinned_normal.values.data as *mut Vec3 };
-            let normal_end: *mut Vec3 =
-                unsafe { normal.add((*result).skinned_normal.values.count) };
+            let values = result.skinned_normal().values();
+            // SAFETY: `values.data`/`.count` describe the live array, so
+            // `normal..normal_end` spans it.
+            let mut normal: *mut Vec3 = values.data as *mut Vec3;
+            let normal_end: *mut Vec3 = unsafe { normal.add(values.count) };
             while normal != normal_end {
                 // SAFETY: `normal` is an in-range live `Vec3`, normalized in place.
                 unsafe { *normal = slow_normalize3(normal) };
@@ -2584,33 +2540,35 @@ pub(crate) unsafe fn subdivide_mesh_level(
         }
     }
 
-    // SAFETY: `result` is `sc`'s live destination `Mesh`.
-    if unsafe { (*result).vertex_crease.exists } {
-        // SAFETY: `result`/`mesh` are live; `&mut (*result).vertex_crease` and
-        // `&(*mesh).vertex_crease` project their respective live crease fields.
+    if result.vertex_crease().exists() {
+        // SAFETY: `vertex_crease_raw()` addresses `result`'s own live crease
+        // field, and `mesh.vertex_crease()` views the source mesh's.
         unsafe {
-            subdivide_vertex_crease(sc, &mut (*result).vertex_crease, &(*mesh).vertex_crease)
+            subdivide_vertex_crease(
+                sc,
+                result.vertex_crease_raw(),
+                mesh.vertex_crease().as_ptr(),
+            )
         }?;
     }
 
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    if unsafe { (*mesh).skinned_position.values.data == (*mesh).vertex_position.values.data } {
-        // SAFETY: `result` is live; `vertex_position`/`skinned_position` are two
-        // distinct fields, so the one-element copy is non-overlapping.
+    if mesh.skinned_position().values().data == mesh.vertex_position().values().data {
+        // SAFETY: `vertex_position`/`skinned_position` are two distinct live
+        // fields of `result`, so the one-element copy is non-overlapping.
         unsafe {
             core::ptr::copy_nonoverlapping(
-                &(*result).vertex_position,
-                &mut (*result).skinned_position,
+                result.vertex_position_raw(),
+                result.skinned_position_raw(),
                 1,
             );
         }
     } else {
-        // SAFETY: `result` is live; `&mut (*result).skinned_position` projects its
+        // SAFETY: `skinned_position_raw()` addresses `result`'s own live
         // skinned-position attribute, subdivided in place.
         unsafe {
             subdivide_attrib(
                 sc,
-                (&mut (*result).skinned_position) as *mut VertexVec3 as *mut VertexAttrib,
+                result.skinned_position_raw() as *mut VertexAttrib,
                 sc.opts_view().boundary(),
                 false,
             )
@@ -2619,23 +2577,21 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
     let result_sub: *mut SubdivisionResult = sc.result_view().push_zero::<SubdivisionResult>(1);
     ufbxi_check_err!(sc.error_view(), !result_sub.is_null(), "result_sub");
-    // SAFETY: `result` is live; `result_sub` is the fresh non-null push above,
-    // wrapped into an optional ref stored into the destination mesh.
-    unsafe { (*result).subdivision_result = opt_ref(result_sub) };
+    // SAFETY: `result_sub` is the fresh non-null push above, wrapped into an
+    // optional ref stored into the destination mesh.
+    result.set_subdivision_result(unsafe { opt_ref(result_sub) });
 
     if sc.opts_view().evaluate_source_vertices() || sc.opts_view().evaluate_skin_weights() {
-        // SAFETY: `mesh` is live; `&(*mesh).subdivision_result` projects its live
+        // SAFETY: `subdivision_result_ptr()` addresses `mesh`'s own live
         // optional-ref field, from which `opt_ptr` reads the raw pointer (or null).
-        let mesh_sub: *mut SubdivisionResult = unsafe { opt_ptr(&(*mesh).subdivision_result) };
+        let mesh_sub: *mut SubdivisionResult = unsafe { opt_ptr(mesh.subdivision_result_ptr()) };
 
         let mut skin: *mut SkinDeformer = core::ptr::null_mut();
         if sc.opts_view().evaluate_skin_weights() {
-            // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-            if unsafe { (*mesh).skin_deformers.count } > 0 {
+            if mesh.skin_deformers().count > 0 {
                 ufbxi_check_err!(
                     sc.error_view(),
-                    // SAFETY: `mesh` is live.
-                    sc.opts_view().skin_deformer_index() < unsafe { (*mesh).skin_deformers.count },
+                    sc.opts_view().skin_deformer_index() < mesh.skin_deformers().count,
                     "sc->opts.skin_deformer_index < mesh->skin_deformers.count"
                 );
                 // SAFETY: the check above bounds `skin_deformer_index` below
@@ -2643,8 +2599,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 // ref `ref_ptr` unwraps to a raw pointer.
                 skin = unsafe {
                     ref_ptr(
-                        (*mesh)
-                            .skin_deformers
+                        mesh.skin_deformers()
                             .data
                             .add(sc.opts_view().skin_deformer_index()),
                     )
@@ -2654,19 +2609,14 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
         let mut max_weights: usize = 0;
         if sc.opts_view().evaluate_source_vertices() {
-            // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-            max_weights = max_sz(max_weights, unsafe { (*mesh).num_vertices });
+            max_weights = max_sz(max_weights, mesh.num_vertices());
         }
         if !skin.is_null() {
             // SAFETY: `skin` is the non-null live deformer resolved above.
             max_weights = max_sz(max_weights, unsafe { (*skin).clusters.count });
         }
 
-        // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-        sc.set_tmp_vertex_weights(
-            sc.tmp_view()
-                .push_zero::<Real>(unsafe { (*mesh).num_vertices }),
-        );
+        sc.set_tmp_vertex_weights(sc.tmp_view().push_zero::<Real>(mesh.num_vertices()));
         sc.set_tmp_weights(sc.tmp_view().push::<SubdivisionWeight>(max_weights));
         ufbxi_check_err!(
             sc.error_view(),
@@ -2695,8 +2645,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
                     )
                 };
             } else {
-                // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-                weights = init_source_vertex_weights(sc, unsafe { (*mesh).num_vertices });
+                weights = init_source_vertex_weights(sc, mesh.num_vertices());
             }
 
             // SAFETY: `result_sub` is the live zeroed push above; `&mut
@@ -2734,8 +2683,8 @@ pub(crate) unsafe fn subdivide_mesh_level(
                     )
                 };
             } else {
-                // SAFETY: `mesh` is live; `skin` is the non-null live deformer.
-                weights = unsafe { init_skin_weights(sc, (*mesh).num_vertices, skin) };
+                // SAFETY: `skin` is the non-null live deformer resolved above.
+                weights = unsafe { init_skin_weights(sc, mesh.num_vertices(), skin) };
             }
 
             // SAFETY: `result_sub` is the live zeroed push; `&mut
@@ -2751,119 +2700,112 @@ pub(crate) unsafe fn subdivide_mesh_level(
         }
     }
 
-    // SAFETY: `result`/`mesh` are `sc`'s live destination/source meshes; each
-    // read and each `&(*result).field` write targets a live field, and the
-    // quad-subdivision counts derive from the source `num_indices`.
-    unsafe {
-        (*result).num_vertices = (*result).vertex_position.values.count;
-        (*result).num_indices = (*mesh).num_indices.wrapping_mul(4);
-        (*result).num_faces = (*mesh).num_indices;
-        (*result).num_triangles = (*mesh).num_indices.wrapping_mul(2);
+    // The quad-subdivision counts derive from the source `num_indices`.
+    result.set_num_vertices(result.vertex_position().values().count);
+    result.set_num_indices(mesh.num_indices().wrapping_mul(4));
+    result.set_num_faces(mesh.num_indices());
+    result.set_num_triangles(mesh.num_indices().wrapping_mul(2));
 
-        (*result).vertex_indices.data = (*result).vertex_position.indices.data;
-        (*result).vertex_indices.count = (*result).num_indices;
-        (*result).vertices.data = (*result).vertex_position.values.data;
-        (*result).vertices.count = (*result).num_vertices;
+    let vertex_indices: &ListView<u32> = result.vertex_indices_view();
+    vertex_indices.set_data(result.vertex_position().indices().data);
+    vertex_indices.set_count(result.num_indices());
+    // SAFETY: `vertices_raw()` addresses `result`'s own live `vertices` list
+    // field, carrying the context's write-capable provenance.
+    let vertices: &ListView<Vec3> = unsafe { ListView::from_ptr(result.vertices_raw()) };
+    vertices.set_data(result.vertex_position().values().data);
+    vertices.set_count(result.num_vertices());
 
-        (*result).faces.count = (*result).num_faces;
-        (*result).faces.data = sc.result_view().push::<Face>((*result).num_faces);
-    }
+    // SAFETY: `faces_raw()` addresses `result`'s own live `faces` list field,
+    // carrying the context's write-capable provenance.
+    let faces: &ListView<Face> = unsafe { ListView::from_ptr(result.faces_raw()) };
+    faces.set_count(result.num_faces());
+    faces.set_data(sc.result_view().push::<Face>(result.num_faces()));
     ufbxi_check_err!(
         sc.error_view(),
-        // SAFETY: `result` is live.
-        !unsafe { (*result).faces.data }.is_null(),
+        !faces.data().is_null(),
         "result->faces.data"
     );
 
     let mut i: usize = 0;
-    // SAFETY: `result` is live.
-    while i < unsafe { (*result).num_faces } {
-        // SAFETY: `i < num_faces`, so `faces.data.add(i)` is a live slot of the
-        // freshly pushed `num_faces`-element face array.
-        unsafe {
-            (*((*result).faces.data as *mut Face).add(i)).index_begin = i.wrapping_mul(4) as u32;
-            (*((*result).faces.data as *mut Face).add(i)).num_indices = 4;
-        }
+    while i < result.num_faces() {
+        // SAFETY: `i < num_faces`, so `faces.data().add(i)` is a live slot of the
+        // freshly pushed `num_faces`-element face array; one mint serves both
+        // field writes.
+        let face: &View<Face> =
+            unsafe { View::<Face>::from_ptr((faces.data() as *mut Face).add(i)) };
+        face.set_index_begin(i.wrapping_mul(4) as u32);
+        face.set_num_indices(4);
         i += 1;
     }
 
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    if !unsafe { (*mesh).edges.data }.is_null() {
-        // SAFETY: `result`/`mesh` are live; each write targets a live `result`
-        // field and the pushed `edges.data` is a `num_edges`-element array.
-        unsafe {
-            (*result).num_edges = (*mesh)
-                .num_edges
+    if !mesh.edges().data.is_null() {
+        // One `ListView` mint per result edge list, serving the pushes below and
+        // the per-edge/per-face fill loops.
+        // SAFETY: each `*_raw()` addresses one of `result`'s own live list
+        // fields, carrying the context's write-capable provenance.
+        let edges: &ListView<Edge> = unsafe { ListView::from_ptr(result.edges_raw()) };
+        let edge_crease: &ListView<Real> = result.edge_crease_view();
+        // SAFETY: as above.
+        let edge_smoothing: &ListView<bool> =
+            unsafe { ListView::from_ptr(result.edge_smoothing_raw()) };
+        // SAFETY: as above.
+        let edge_visibility: &ListView<bool> =
+            unsafe { ListView::from_ptr(result.edge_visibility_raw()) };
+
+        result.set_num_edges(
+            mesh.num_edges()
                 .wrapping_mul(2)
-                .wrapping_add((*result).num_faces);
-            (*result).edges.count = (*result).num_edges;
-            (*result).edges.data = sc.result_view().push::<Edge>((*result).num_edges);
-        }
+                .wrapping_add(result.num_faces()),
+        );
+        edges.set_count(result.num_edges());
+        edges.set_data(sc.result_view().push::<Edge>(result.num_edges()));
         ufbxi_check_err!(
             sc.error_view(),
-            // SAFETY: `result` is live.
-            !unsafe { (*result).edges.data }.is_null(),
+            !edges.data().is_null(),
             "result->edges.data"
         );
 
-        // SAFETY: `mesh` is live.
-        if !unsafe { (*mesh).edge_crease.data }.is_null() {
-            // SAFETY: `result` is live; the pushed `edge_crease.data` is a
-            // `num_edges`-element array.
-            unsafe {
-                (*result).edge_crease.count = (*result).num_edges;
-                (*result).edge_crease.data = sc.result_view().push::<Real>((*result).num_edges);
-            }
+        if !mesh.edge_crease().data.is_null() {
+            edge_crease.set_count(result.num_edges());
+            edge_crease.set_data(sc.result_view().push::<Real>(result.num_edges()));
             ufbxi_check_err!(
                 sc.error_view(),
-                // SAFETY: `result` is live.
-                !unsafe { (*result).edge_crease.data }.is_null(),
+                !edge_crease.data().is_null(),
                 "result->edge_crease.data"
             );
         }
-        // SAFETY: `mesh` is live.
-        if !unsafe { (*mesh).edge_smoothing.data }.is_null() {
-            // SAFETY: `result` is live; the pushed array holds `num_edges` bools.
-            unsafe {
-                (*result).edge_smoothing.count = (*result).num_edges;
-                (*result).edge_smoothing.data = sc.result_view().push::<bool>((*result).num_edges);
-            }
+        if !mesh.edge_smoothing().data.is_null() {
+            edge_smoothing.set_count(result.num_edges());
+            edge_smoothing.set_data(sc.result_view().push::<bool>(result.num_edges()));
             ufbxi_check_err!(
                 sc.error_view(),
-                // SAFETY: `result` is live.
-                !unsafe { (*result).edge_smoothing.data }.is_null(),
+                !edge_smoothing.data().is_null(),
                 "result->edge_smoothing.data"
             );
         }
-        // SAFETY: `mesh` is live.
-        if !unsafe { (*mesh).edge_visibility.data }.is_null() {
-            // SAFETY: `result` is live; the pushed array holds `num_edges` bools.
-            unsafe {
-                (*result).edge_visibility.count = (*result).num_edges;
-                (*result).edge_visibility.data = sc.result_view().push::<bool>((*result).num_edges);
-            }
+        if !mesh.edge_visibility().data.is_null() {
+            edge_visibility.set_count(result.num_edges());
+            edge_visibility.set_data(sc.result_view().push::<bool>(result.num_edges()));
             ufbxi_check_err!(
                 sc.error_view(),
-                // SAFETY: `result` is live.
-                !unsafe { (*result).edge_visibility.data }.is_null(),
+                !edge_visibility.data().is_null(),
                 "result->edge_visibility.data"
             );
         }
 
         let mut di: usize = 0;
         let mut i: usize = 0;
-        // SAFETY: `mesh` is live.
-        while i < unsafe { (*mesh).num_edges } {
+        while i < mesh.num_edges() {
             // SAFETY: `i < num_edges` indexes the live source `edges` array;
             // `edge.a` is an in-range corner (source-mesh consistency), so
             // `topo.add(edge.a)` is live and its `.face` indexes the live `faces`
             // array; the two `di`/`di+1` targets sit within the `num_edges`-sized
             // (2 per source edge) result `edges` push.
-            let edge: Edge = unsafe { *(*mesh).edges.data.add(i) };
+            let edge: Edge = unsafe { *mesh.edges().data.add(i) };
             // SAFETY: as above; `edge.a` is an in-range corner into `topo`.
             let face_ix: u32 = unsafe { (*topo.add(edge.a as usize)).face };
             // SAFETY: `face_ix` is an in-range face index into the live `faces`.
-            let face: Face = unsafe { *(*mesh).faces.data.add(face_ix as usize) };
+            let face: Face = unsafe { *mesh.faces().data.add(face_ix as usize) };
             let offset: u32 = edge.a.wrapping_sub(face.index_begin);
             let next: u32 = (offset.wrapping_add(1)) % face.num_indices;
 
@@ -2871,18 +2813,21 @@ pub(crate) unsafe fn subdivide_mesh_level(
             let b: u32 = (face.index_begin.wrapping_add(next)).wrapping_mul(4);
 
             // SAFETY: `di`/`di+1` are within the result `edges` array (2 written
-            // per source edge, `num_edges` total capacity).
-            unsafe {
-                (*((*result).edges.data as *mut Edge).add(di + 0)).a = a;
-                (*((*result).edges.data as *mut Edge).add(di + 0)).b = a.wrapping_add(1);
-                (*((*result).edges.data as *mut Edge).add(di + 1)).a = b.wrapping_add(3);
-                (*((*result).edges.data as *mut Edge).add(di + 1)).b = b;
-            }
+            // per source edge, `num_edges` total capacity); one mint per element
+            // serves both of its field writes.
+            let e0: &View<Edge> =
+                unsafe { View::<Edge>::from_ptr((edges.data() as *mut Edge).add(di + 0)) };
+            // SAFETY: as above.
+            let e1: &View<Edge> =
+                unsafe { View::<Edge>::from_ptr((edges.data() as *mut Edge).add(di + 1)) };
+            e0.set_a(a);
+            e0.set_b(a.wrapping_add(1));
+            e1.set_a(b.wrapping_add(3));
+            e1.set_b(b);
 
-            // SAFETY: `mesh` is live.
-            if !unsafe { (*mesh).edge_crease.data }.is_null() {
+            if !mesh.edge_crease().data.is_null() {
                 // SAFETY: `i < num_edges` indexes the live source crease array.
-                let mut crease: Real = unsafe { *(*mesh).edge_crease.data.add(i) };
+                let mut crease: Real = unsafe { *mesh.edge_crease().data.add(i) };
                 // C: `0.999f` is a `float` literal; `(ufbx_real)0.1` is not.
                 if crease < 0.999f32 as Real {
                     crease -= 0.1 as Real;
@@ -2893,32 +2838,30 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 // SAFETY: `di`/`di+1` are in-range slots of the `num_edges`-sized
                 // result crease array pushed above.
                 unsafe {
-                    *((*result).edge_crease.data as *mut Real).add(di + 0) = crease;
-                    *((*result).edge_crease.data as *mut Real).add(di + 1) = crease;
+                    *(edge_crease.data() as *mut Real).add(di + 0) = crease;
+                    *(edge_crease.data() as *mut Real).add(di + 1) = crease;
                 }
             }
 
-            // SAFETY: `mesh` is live.
-            if !unsafe { (*mesh).edge_smoothing.data }.is_null() {
+            if !mesh.edge_smoothing().data.is_null() {
                 // SAFETY: `i` indexes the live source array; `di`/`di+1` are
                 // in-range result slots.
                 unsafe {
-                    *((*result).edge_smoothing.data as *mut bool).add(di + 0) =
-                        *(*mesh).edge_smoothing.data.add(i);
-                    *((*result).edge_smoothing.data as *mut bool).add(di + 1) =
-                        *(*mesh).edge_smoothing.data.add(i);
+                    *(edge_smoothing.data() as *mut bool).add(di + 0) =
+                        *mesh.edge_smoothing().data.add(i);
+                    *(edge_smoothing.data() as *mut bool).add(di + 1) =
+                        *mesh.edge_smoothing().data.add(i);
                 }
             }
 
-            // SAFETY: `mesh` is live.
-            if !unsafe { (*mesh).edge_visibility.data }.is_null() {
+            if !mesh.edge_visibility().data.is_null() {
                 // SAFETY: `i` indexes the live source array; `di`/`di+1` are
                 // in-range result slots.
                 unsafe {
-                    *((*result).edge_visibility.data as *mut bool).add(di + 0) =
-                        *(*mesh).edge_visibility.data.add(i);
-                    *((*result).edge_visibility.data as *mut bool).add(di + 1) =
-                        *(*mesh).edge_visibility.data.add(i);
+                    *(edge_visibility.data() as *mut bool).add(di + 0) =
+                        *mesh.edge_visibility().data.add(i);
+                    *(edge_visibility.data() as *mut bool).add(di + 1) =
+                        *mesh.edge_visibility().data.add(i);
                 }
             }
 
@@ -2927,34 +2870,29 @@ pub(crate) unsafe fn subdivide_mesh_level(
         }
 
         let mut fi: usize = 0;
-        // SAFETY: `result` is live.
-        while fi < unsafe { (*result).num_faces } {
+        while fi < result.num_faces() {
             // SAFETY: `di` continues past the `2*num_edges` per-edge writes with
             // one slot per face, staying within the `num_edges` result `edges`
-            // capacity (`= 2*num_edges + num_faces`).
-            unsafe {
-                (*((*result).edges.data as *mut Edge).add(di)).a =
-                    fi.wrapping_mul(4).wrapping_add(1) as u32;
-                (*((*result).edges.data as *mut Edge).add(di)).b =
-                    fi.wrapping_mul(4).wrapping_add(2) as u32;
-            }
+            // capacity (`= 2*num_edges + num_faces`); one mint serves both field
+            // writes.
+            let e: &View<Edge> =
+                unsafe { View::<Edge>::from_ptr((edges.data() as *mut Edge).add(di)) };
+            e.set_a(fi.wrapping_mul(4).wrapping_add(1) as u32);
+            e.set_b(fi.wrapping_mul(4).wrapping_add(2) as u32);
 
-            // SAFETY: `result` is live.
-            if !unsafe { (*result).edge_crease.data }.is_null() {
+            if !edge_crease.data().is_null() {
                 // SAFETY: `di` is an in-range slot of the result crease array.
-                unsafe { *((*result).edge_crease.data as *mut Real).add(di) = 0.0 };
+                unsafe { *(edge_crease.data() as *mut Real).add(di) = 0.0 };
             }
 
-            // SAFETY: `result` is live.
-            if !unsafe { (*result).edge_smoothing.data }.is_null() {
+            if !edge_smoothing.data().is_null() {
                 // SAFETY: `di` is an in-range slot of the result smoothing array.
-                unsafe { *((*result).edge_smoothing.data as *mut bool).add(di + 0) = true };
+                unsafe { *(edge_smoothing.data() as *mut bool).add(di + 0) = true };
             }
 
-            // SAFETY: `result` is live.
-            if !unsafe { (*result).edge_visibility.data }.is_null() {
+            if !edge_visibility.data().is_null() {
                 // SAFETY: `di` is an in-range slot of the result visibility array.
-                unsafe { *((*result).edge_visibility.data as *mut bool).add(di + 0) = false };
+                unsafe { *(edge_visibility.data() as *mut bool).add(di + 0) = false };
             }
 
             di += 1;
@@ -2962,146 +2900,129 @@ pub(crate) unsafe fn subdivide_mesh_level(
         }
     }
 
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    if !unsafe { (*mesh).face_material.data }.is_null() {
-        // SAFETY: `result` is live; the pushed array holds `num_faces` `u32`s.
-        unsafe {
-            (*result).face_material.count = (*result).num_faces;
-            (*result).face_material.data = sc.result_view().push::<u32>((*result).num_faces);
-        }
+    // One `ListView` mint per result face list, serving the pushes below and the
+    // per-face fill loop.
+    // SAFETY: each `*_raw()` addresses one of `result`'s own live list fields,
+    // carrying the context's write-capable provenance.
+    let face_material: &ListView<u32> = unsafe { ListView::from_ptr(result.face_material_raw()) };
+    // SAFETY: as above.
+    let face_smoothing: &ListView<bool> =
+        unsafe { ListView::from_ptr(result.face_smoothing_raw()) };
+    // SAFETY: as above.
+    let face_group: &ListView<u32> = unsafe { ListView::from_ptr(result.face_group_raw()) };
+    // SAFETY: as above.
+    let face_hole: &ListView<bool> = unsafe { ListView::from_ptr(result.face_hole_raw()) };
+
+    if !mesh.face_material().data.is_null() {
+        face_material.set_count(result.num_faces());
+        face_material.set_data(sc.result_view().push::<u32>(result.num_faces()));
         ufbxi_check_err!(
             sc.error_view(),
-            // SAFETY: `result` is live.
-            !unsafe { (*result).face_material.data }.is_null(),
+            !face_material.data().is_null(),
             "result->face_material.data"
         );
     }
-    // SAFETY: `mesh` is live.
-    if !unsafe { (*mesh).face_smoothing.data }.is_null() {
-        // SAFETY: `result` is live; the pushed array holds `num_faces` bools.
-        unsafe {
-            (*result).face_smoothing.count = (*result).num_faces;
-            (*result).face_smoothing.data = sc.result_view().push::<bool>((*result).num_faces);
-        }
+    if !mesh.face_smoothing().data.is_null() {
+        face_smoothing.set_count(result.num_faces());
+        face_smoothing.set_data(sc.result_view().push::<bool>(result.num_faces()));
         ufbxi_check_err!(
             sc.error_view(),
-            // SAFETY: `result` is live.
-            !unsafe { (*result).face_smoothing.data }.is_null(),
+            !face_smoothing.data().is_null(),
             "result->face_smoothing.data"
         );
     }
-    // SAFETY: `mesh` is live.
-    if !unsafe { (*mesh).face_group.data }.is_null() {
-        // SAFETY: `result` is live; the pushed array holds `num_faces` `u32`s.
-        unsafe {
-            (*result).face_group.count = (*result).num_faces;
-            (*result).face_group.data = sc.result_view().push::<u32>((*result).num_faces);
-        }
+    if !mesh.face_group().data.is_null() {
+        face_group.set_count(result.num_faces());
+        face_group.set_data(sc.result_view().push::<u32>(result.num_faces()));
         ufbxi_check_err!(
             sc.error_view(),
-            // SAFETY: `result` is live.
-            !unsafe { (*result).face_group.data }.is_null(),
+            !face_group.data().is_null(),
             "result->face_group.data"
         );
     }
-    // SAFETY: `mesh` is live.
-    if !unsafe { (*mesh).face_hole.data }.is_null() {
-        // SAFETY: `result` is live; the pushed array holds `num_faces` bools.
-        unsafe {
-            (*result).face_hole.count = (*result).num_faces;
-            (*result).face_hole.data = sc.result_view().push::<bool>((*result).num_faces);
-        }
+    if !mesh.face_hole().data.is_null() {
+        face_hole.set_count(result.num_faces());
+        face_hole.set_data(sc.result_view().push::<bool>(result.num_faces()));
         ufbxi_check_err!(
             sc.error_view(),
-            // SAFETY: `result` is live.
-            !unsafe { (*result).face_hole.data }.is_null(),
+            !face_hole.data().is_null(),
             "result->face_hole.data"
         );
     }
 
-    // SAFETY: `result` is live.
-    if unsafe { (*result).material_parts.count } > 0 {
-        // SAFETY: `result` is live; the pushed array holds `material_parts.count`
-        // zeroed `MeshPart`s.
-        unsafe {
-            (*result).material_parts.data = sc
-                .result_view()
-                .push_zero::<MeshPart>((*result).material_parts.count);
-        }
+    if result.material_parts().count > 0 {
+        // SAFETY: `material_parts_raw()` addresses `result`'s own live list
+        // field, carrying the context's write-capable provenance.
+        let material_parts: &ListView<MeshPart> =
+            unsafe { ListView::from_ptr(result.material_parts_raw()) };
+        material_parts.set_data(
+            sc.result_view()
+                .push_zero::<MeshPart>(material_parts.count()),
+        );
         // C-parity: upstream checks `result->materials.data` here
         // (ufbx.c:29882), not the freshly pushed `material_parts.data`.
         ufbxi_check_err!(
             sc.error_view(),
-            // SAFETY: `result` is live.
-            !unsafe { (*result).materials.data }.is_null(),
+            !result.materials().data.is_null(),
             "result->materials.data"
         );
     }
 
     let mut index_offset: usize = 0;
     let mut i: usize = 0;
-    // SAFETY: `mesh` is `sc`'s live source `Mesh`.
-    while i < unsafe { (*mesh).num_faces } {
+    while i < mesh.num_faces() {
         // SAFETY: `i < num_faces` indexes the live source `faces` array.
-        let face: Face = unsafe { *(*mesh).faces.data.add(i) };
+        let face: Face = unsafe { *mesh.faces().data.add(i) };
 
         let mut mat: u32 = 0;
-        // SAFETY: `mesh` is live.
-        if !unsafe { (*mesh).face_material.data }.is_null() {
+        if !mesh.face_material().data.is_null() {
             // SAFETY: `i` indexes the live source `face_material` array.
-            mat = unsafe { *(*mesh).face_material.data.add(i) };
+            mat = unsafe { *mesh.face_material().data.add(i) };
             let mut ci: usize = 0;
             while ci < face.num_indices as usize {
                 // SAFETY: `index_offset + ci` addresses this face's contiguous
                 // run within the `num_faces`-slot result array (face index ranges
                 // tile the total, source-mesh consistency).
                 unsafe {
-                    *((*result).face_material.data as *mut u32)
-                        .add(index_offset.wrapping_add(ci)) = mat;
+                    *(face_material.data() as *mut u32).add(index_offset.wrapping_add(ci)) = mat;
                 }
                 ci += 1;
             }
         }
         // C: `mat` is otherwise unused (assigned and read only in the branch).
         let _ = mat;
-        // SAFETY: `mesh` is live.
-        if !unsafe { (*mesh).face_smoothing.data }.is_null() {
+        if !mesh.face_smoothing().data.is_null() {
             // SAFETY: `i` indexes the live source `face_smoothing` array.
-            let flag: bool = unsafe { *(*mesh).face_smoothing.data.add(i) };
+            let flag: bool = unsafe { *mesh.face_smoothing().data.add(i) };
             let mut ci: usize = 0;
             while ci < face.num_indices as usize {
                 // SAFETY: `index_offset + ci` is within this face's result run.
                 unsafe {
-                    *((*result).face_smoothing.data as *mut bool)
-                        .add(index_offset.wrapping_add(ci)) = flag;
+                    *(face_smoothing.data() as *mut bool).add(index_offset.wrapping_add(ci)) = flag;
                 }
                 ci += 1;
             }
         }
-        // SAFETY: `mesh` is live.
-        if !unsafe { (*mesh).face_group.data }.is_null() {
+        if !mesh.face_group().data.is_null() {
             // SAFETY: `i` indexes the live source `face_group` array.
-            let group: u32 = unsafe { *(*mesh).face_group.data.add(i) };
+            let group: u32 = unsafe { *mesh.face_group().data.add(i) };
             let mut ci: usize = 0;
             while ci < face.num_indices as usize {
                 // SAFETY: `index_offset + ci` is within this face's result run.
                 unsafe {
-                    *((*result).face_group.data as *mut u32).add(index_offset.wrapping_add(ci)) =
-                        group;
+                    *(face_group.data() as *mut u32).add(index_offset.wrapping_add(ci)) = group;
                 }
                 ci += 1;
             }
         }
-        // SAFETY: `mesh` is live.
-        if !unsafe { (*mesh).face_hole.data }.is_null() {
+        if !mesh.face_hole().data.is_null() {
             // SAFETY: `i` indexes the live source `face_hole` array.
-            let flag: bool = unsafe { *(*mesh).face_hole.data.add(i) };
+            let flag: bool = unsafe { *mesh.face_hole().data.add(i) };
             let mut ci: usize = 0;
             while ci < face.num_indices as usize {
                 // SAFETY: `index_offset + ci` is within this face's result run.
                 unsafe {
-                    *((*result).face_hole.data as *mut bool).add(index_offset.wrapping_add(ci)) =
-                        flag;
+                    *(face_hole.data() as *mut bool).add(index_offset.wrapping_add(ci)) = flag;
                 }
                 ci += 1;
             }
@@ -3111,16 +3032,18 @@ pub(crate) unsafe fn subdivide_mesh_level(
     }
 
     // Will be filled in by `ufbxi_finalize_mesh()`.
-    // SAFETY: `result` is `sc`'s live destination `Mesh`.
-    unsafe { (*result).vertex_first_index.count = 0 };
+    // SAFETY: `vertex_first_index_raw()` addresses `result`'s own live list
+    // field; a lone count store, left raw rather than minting a view for it.
+    unsafe { (*result.vertex_first_index_raw()).count = 0 };
 
-    // SAFETY: `result` is `sc`'s live destination mesh and `error_mut_ptr()` is
-    // `sc`'s own live error slot, the finalize contract.
-    unsafe { finalize_mesh_material(sc.result_view(), sc.error_mut_ptr(), result) }?;
+    // SAFETY: `result.get()` is this view's own pointer to `sc`'s live
+    // destination mesh and `error_mut_ptr()` is `sc`'s own live error slot, the
+    // finalize contract.
+    unsafe { finalize_mesh_material(sc.result_view(), sc.error_mut_ptr(), result.get()) }?;
     // SAFETY: as above.
-    unsafe { finalize_mesh(sc.result_view(), sc.error_mut_ptr(), result) }?;
+    unsafe { finalize_mesh(sc.result_view(), sc.error_mut_ptr(), result.get()) }?;
     // SAFETY: as above.
-    unsafe { update_face_groups(sc.result_view(), sc.error_mut_ptr(), result, true) }?;
+    unsafe { update_face_groups(sc.result_view(), sc.error_mut_ptr(), result.get(), true) }?;
 
     Ok(())
 }
@@ -3198,30 +3121,26 @@ pub(crate) fn subdivide_mesh_imp(
         buf_free(sc.tmp_mut_ptr());
     }
 
-    let mesh: *mut Mesh = sc.dst_mesh_mut_ptr();
+    let mesh: &MeshView = sc.dst_mesh_view();
 
     // Subdivision always results in a mesh that consists only of quads
-    // SAFETY: `mesh` is sc's own destination `Mesh` slot, filled by the levels
-    // above.
-    unsafe {
-        (*mesh).max_face_triangles = 2;
-        (*mesh).num_empty_faces = 0;
-        (*mesh).num_point_faces = 0;
-        (*mesh).num_line_faces = 0;
-    }
+    mesh.set_max_face_triangles(2);
+    mesh.set_num_empty_faces(0);
+    mesh.set_num_point_faces(0);
+    mesh.set_num_line_faces(0);
 
     if !sc.opts_view().interpolate_normals() {
-        // SAFETY: zeroing two `VertexVec3` fields of sc's own mesh slot in
-        // place; all-zero is a valid `VertexVec3` (null data, zero counts,
-        // `false` flags).
+        // SAFETY: each `*_raw()` addresses a live `VertexVec3` field of sc's own
+        // mesh slot, zeroed in place; all-zero is a valid `VertexVec3` (null
+        // data, zero counts, `false` flags).
         unsafe {
             core::ptr::write_bytes(
-                &mut (*mesh).vertex_normal as *mut _ as *mut u8,
+                mesh.vertex_normal_raw() as *mut u8,
                 0,
                 size_of::<VertexVec3>(),
             );
             core::ptr::write_bytes(
-                &mut (*mesh).skinned_normal as *mut _ as *mut u8,
+                mesh.skinned_normal_raw() as *mut u8,
                 0,
                 size_of::<VertexVec3>(),
             );
@@ -3229,18 +3148,14 @@ pub(crate) fn subdivide_mesh_imp(
     }
 
     if !sc.opts_view().interpolate_normals() && !sc.opts_view().ignore_normals() {
-        // SAFETY: reading the index count of sc's own mesh slot.
-        let topo: *mut TopoEdge = sc
-            .tmp_view()
-            .push::<TopoEdge>(unsafe { (*mesh).num_indices });
+        let topo: *mut TopoEdge = sc.tmp_view().push::<TopoEdge>(mesh.num_indices());
         ufbxi_check_err!(sc.error_view(), !topo.is_null(), "topo");
         // SAFETY: `topo` is the fresh non-null `num_indices`-element push just
         // checked, and `compute_topology` is handed exactly that mesh and that
         // `num_indices`-element run.
-        unsafe { compute_topology(mesh, topo, (*mesh).num_indices) };
+        unsafe { compute_topology(mesh.as_ptr(), topo, mesh.num_indices()) };
 
-        // SAFETY: reading the index count of sc's own mesh slot.
-        let normal_indices: *mut u32 = sc.result_view().push::<u32>(unsafe { (*mesh).num_indices });
+        let normal_indices: *mut u32 = sc.result_view().push::<u32>(mesh.num_indices());
         ufbxi_check_err!(sc.error_view(), !normal_indices.is_null(), "normal_indices");
 
         // SAFETY: `topo` and `normal_indices` are the fresh non-null
@@ -3248,17 +3163,16 @@ pub(crate) fn subdivide_mesh_imp(
         // are that same `num_indices`.
         let num_normals: usize = unsafe {
             generate_normal_mapping(
-                mesh,
+                mesh.as_ptr(),
                 topo,
-                (*mesh).num_indices,
+                mesh.num_indices(),
                 normal_indices,
-                (*mesh).num_indices,
+                mesh.num_indices(),
                 true,
             )
         };
-        if num_normals == unsafe { (*mesh).num_vertices } {
-            // SAFETY: writing a flag of sc's own mesh slot.
-            unsafe { (*mesh).skinned_normal.unique_per_vertex = true };
+        if num_normals == mesh.num_vertices() {
+            mesh.skinned_normal().set_unique_per_vertex(true);
         }
 
         let mut normal_data: *mut Vec3 = sc.result_view().push::<Vec3>(num_normals.wrapping_add(1));
@@ -3267,39 +3181,47 @@ pub(crate) fn subdivide_mesh_imp(
         // exists and one past it is in bounds; `compute_normals` then fills
         // exactly the remaining `num_normals` through `normal_indices`, and
         // the mapping above guarantees those indices are `< num_normals`.
-        // Finally `vertex_normal` and `skinned_normal` are distinct fields of
-        // the same mesh, so the copy is non-overlapping.
         unsafe {
             *normal_data.add(0) = ZERO_VEC3;
             normal_data = normal_data.add(1);
 
             compute_normals(
-                mesh,
-                &(*mesh).skinned_position,
+                mesh.as_ptr(),
+                mesh.skinned_position().as_ptr(),
                 normal_indices,
-                (*mesh).num_indices,
+                mesh.num_indices(),
                 normal_data,
                 num_normals,
             );
+        }
 
-            (*mesh).generated_normals = true;
-            (*mesh).vertex_normal.exists = true;
-            (*mesh).vertex_normal.values.data = normal_data;
-            (*mesh).vertex_normal.values.count = num_normals;
-            (*mesh).vertex_normal.indices.data = normal_indices;
-            (*mesh).vertex_normal.indices.count = (*mesh).num_indices;
+        mesh.set_generated_normals(true);
+        mesh.vertex_normal().set_exists(true);
+        mesh.vertex_normal().values_view().set_data(normal_data);
+        mesh.vertex_normal().values_view().set_count(num_normals);
+        mesh.vertex_normal().indices_view().set_data(normal_indices);
+        mesh.vertex_normal()
+            .indices_view()
+            .set_count(mesh.num_indices());
 
-            core::ptr::copy_nonoverlapping(&(*mesh).vertex_normal, &mut (*mesh).skinned_normal, 1);
+        // SAFETY: `vertex_normal` and `skinned_normal` are distinct live fields
+        // of the same mesh, so the copy is non-overlapping.
+        unsafe {
+            core::ptr::copy_nonoverlapping(mesh.vertex_normal_raw(), mesh.skinned_normal_raw(), 1);
         }
     }
 
-    // SAFETY: `sc.src_mesh_ptr()` is sc's own source mesh; when it is an
-    // evaluated tessellated-NURBS mesh its wide allocation is a `MeshImp`,
-    // otherwise it belongs to a scene whose `SceneImp` owns it — the same
-    // discrimination `get_imp` expects, and either parent outlives this call.
+    // SAFETY: `src_mesh_ptr` is the mesh handed to `ufbx_subdivide_mesh`, live
+    // for the call by the public-API contract; `Const` because that pointer
+    // traces to a public `*const Mesh` parameter, and nothing writes those bytes
+    // while the view is held.
+    let src_mesh: &View<Mesh, Const> = unsafe { View::<Mesh, Const>::from_ptr(sc.src_mesh_ptr()) };
+    // SAFETY: when the source is an evaluated tessellated-NURBS mesh its wide
+    // allocation is a `MeshImp`, otherwise it belongs to a scene whose
+    // `SceneImp` owns it — the same discrimination `get_imp` expects, and either
+    // parent outlives this call.
     let parent: *mut Refcount = unsafe {
-        if (*sc.src_mesh_ptr()).subdivision_evaluated && (*sc.src_mesh_ptr()).from_tessellated_nurbs
-        {
+        if src_mesh.subdivision_evaluated() && src_mesh.from_tessellated_nurbs() {
             let imp: *mut MeshImp = get_imp(sc.src_mesh_ptr() as *mut c_void);
             &mut (*imp).refcount
         } else {
@@ -3309,8 +3231,9 @@ pub(crate) fn subdivide_mesh_imp(
         }
     };
 
-    // SAFETY: patching sc's own destination mesh in place.
-    unsafe { patch_mesh_reals(mesh) };
+    // SAFETY: patching sc's own destination mesh in place, through this view's
+    // own pointer.
+    unsafe { patch_mesh_reals(mesh.get()) };
 
     sc.set_imp(sc.result_view().push::<MeshImp>(1));
     ufbxi_check_err!(sc.error_view(), !sc.imp().is_null(), "sc->imp");
@@ -3319,7 +3242,7 @@ pub(crate) fn subdivide_mesh_imp(
     // the destination mesh (the `result_sub` push there), so this ref is
     // non-null and points into sc's own result arena.
     unsafe {
-        let dst_sub: *mut SubdivisionResult = opt_ptr(sc.dst_mesh_view().subdivision_result_ptr());
+        let dst_sub: *mut SubdivisionResult = opt_ptr(mesh.subdivision_result_ptr());
         (*dst_sub).result_memory_used = sc.ator_result_view().current_size();
         (*dst_sub).temp_memory_used = sc.ator_tmp_view().current_size();
         (*dst_sub).result_allocs = sc.ator_result_view().num_allocs();
@@ -3332,14 +3255,13 @@ pub(crate) fn subdivide_mesh_imp(
     //
     // SAFETY: `sc.imp()` is the fresh non-null push just checked and the last
     // allocation of `sc->result`, so filling its header writes our own
-    // allocation; `parent` is the live owner picked above; and
-    // `sc.dst_mesh_mut_ptr()` is sc's own `Mesh` slot, a distinct allocation
-    // from the pushed imp.
+    // allocation; `parent` is the live owner picked above; and `mesh.get()`
+    // addresses sc's own `Mesh` slot, a distinct allocation from the pushed imp.
     unsafe {
         finish_imp(
             sc.imp(),
             parent,
-            sc.dst_mesh_mut_ptr(),
+            mesh.get(),
             sc.ator_result(),
             sc.take_result(),
         );
