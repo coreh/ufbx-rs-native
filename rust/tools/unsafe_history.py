@@ -13,8 +13,8 @@ Counting rules:
   * `//` line comments are stripped before counting, so SAFETY prose that
     mentions `unsafe { }` is not counted. Block comments are not handled
     (the codebase convention is `//`).
-  * Generated files are excluded by default (they would swamp the
-    hand-written trend); pass --include-generated to count them too.
+  * Generated files (generated.rs, generated_views.rs) are counted by
+    default; pass --exclude-generated to plot only the hand-written trend.
 
 Usage:
   python3 rust/tools/unsafe_history.py                # CSV + SVG next to repo root
@@ -136,11 +136,11 @@ def main():
     ap.add_argument("--branch", default="HEAD")
     ap.add_argument("--pathspec", default="rust/ufbx/src", help="tree prefix to count")
     ap.add_argument("--step", type=int, default=1, help="sample every Nth commit")
-    ap.add_argument("--include-generated", action="store_true")
+    ap.add_argument("--exclude-generated", action="store_true")
     ap.add_argument("-o", "--out", default="unsafe_history", help="output basename")
     args = ap.parse_args()
     repo = os.path.realpath(args.repo)
-    exclude = () if args.include_generated else DEFAULT_EXCLUDE
+    exclude = DEFAULT_EXCLUDE if args.exclude_generated else ()
 
     revs = git(
         repo, "rev-list", "--first-parent", "--reverse",
@@ -166,7 +166,7 @@ def main():
         for r in rows:
             f.write(",".join(map(str, r)) + "\n")
 
-    suffix = "" if args.include_generated else " (generated files excluded)"
+    suffix = " (generated files excluded)" if args.exclude_generated else ""
     svg_path = args.out + ".svg"
     svg_chart(rows, svg_path, f"unsafe markers in {args.pathspec}{suffix}")
     print(f"wrote {csv_path} and {svg_path} ({len(rows)} samples)")
