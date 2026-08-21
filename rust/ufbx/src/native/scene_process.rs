@@ -185,10 +185,6 @@
 // (an orphaned stub that no ported call site reaches); leaner feature sets
 // legitimately strand items, so the lint is only armed for the full build.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
-// Ratchet allow (PORTING.md "Unsafe reduction / isolation strategy"): this
-// file still has whole-body-implicit unsafe fns; remove this allow once every
-// op inside its unsafe fns sits in a narrow annotated `unsafe {}` block.
-#![allow(unsafe_op_in_unsafe_fn)]
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 use core::ptr;
@@ -1137,14 +1133,20 @@ pub(crate) fn find_element_by_fbx_id(uc: &Context, fbx_id: u64) -> *mut Element 
 // ufbx.c:18556-18562 `ufbxi_cmp_name_element_less`
 #[inline(always)]
 pub(crate) unsafe fn cmp_name_element_less(a: *const NameElement, b: *const NameElement) -> bool {
-    if (*a)._internal_key != (*b)._internal_key {
-        return (*a)._internal_key < (*b)._internal_key;
+    // SAFETY: `a` and `b` point to live, initialized `NameElement`s — the two
+    // elements the sort hands its comparator (fn contract).
+    if unsafe { (*a)._internal_key != (*b)._internal_key } {
+        // SAFETY: as above.
+        return unsafe { (*a)._internal_key < (*b)._internal_key };
     }
-    let cmp: i32 = strcmp((*a).name.data, (*b).name.data);
+    // SAFETY: as above; `name.data` of an interned `ufbx_string` is a
+    // NUL-terminated C string, which is what `strcmp` walks.
+    let cmp: i32 = unsafe { strcmp((*a).name.data, (*b).name.data) };
     if cmp != 0 {
         return cmp < 0;
     }
-    ((*a).type_ as u32) < (*b).type_ as u32
+    // SAFETY: as above.
+    unsafe { ((*a).type_ as u32) < (*b).type_ as u32 }
 }
 
 // ufbx.c:18564-18570 `ufbxi_cmp_name_element_less_ref`
@@ -1155,23 +1157,34 @@ pub(crate) unsafe fn cmp_name_element_less_ref(
     type_: ElementType,
     key: u32,
 ) -> bool {
-    if (*a)._internal_key != key {
-        return (*a)._internal_key < key;
+    // SAFETY: `a` points to a live, initialized `NameElement` — the array
+    // element the bounded search is probing (fn contract).
+    if unsafe { (*a)._internal_key } != key {
+        // SAFETY: as above.
+        return unsafe { (*a)._internal_key } < key;
     }
-    let cmp: i32 = str_cmp((*a).name, name);
+    // SAFETY: as above; `str_cmp` compares two `ufbx_string`s by their
+    // `data`/`length` spans, both of which are interned string-pool spans.
+    let cmp: i32 = unsafe { str_cmp((*a).name, name) };
     if cmp != 0 {
         return cmp < 0;
     }
-    ((*a).type_ as u32) < type_ as u32
+    // SAFETY: as above.
+    unsafe { ((*a).type_ as u32) < type_ as u32 }
 }
 
 // ufbx.c:18572-18576 `ufbxi_cmp_prop_less_ref`
 #[inline(always)]
 pub(crate) unsafe fn cmp_prop_less_ref(a: *const Prop, name: String, key: u32) -> bool {
-    if (*a)._internal_key != key {
-        return (*a)._internal_key < key;
+    // SAFETY: `a` points to a live, initialized `Prop` — the array element the
+    // bounded search is probing (fn contract).
+    if unsafe { (*a)._internal_key } != key {
+        // SAFETY: as above.
+        return unsafe { (*a)._internal_key } < key;
     }
-    str_less((*a).name, name)
+    // SAFETY: as above; `str_less` compares the two `ufbx_string` spans, both
+    // interned string-pool spans.
+    unsafe { str_less((*a).name, name) }
 }
 
 // ufbx.c:18578-18582 `ufbxi_cmp_prop_less_concat`
@@ -1182,10 +1195,15 @@ pub(crate) unsafe fn cmp_prop_less_concat(
     num_parts: usize,
     key: u32,
 ) -> bool {
-    if (*a)._internal_key != key {
-        return (*a)._internal_key < key;
+    // SAFETY: `a` points to a live, initialized `Prop` — the array element the
+    // bounded search is probing (fn contract).
+    if unsafe { (*a)._internal_key } != key {
+        // SAFETY: as above.
+        return unsafe { (*a)._internal_key } < key;
     }
-    concat_str_cmp(&(*a).name, parts, num_parts) < 0
+    // SAFETY: as above; `parts` addresses `num_parts` initialized `ufbx_string`s
+    // (fn contract), which is what `concat_str_cmp` walks.
+    unsafe { concat_str_cmp(&(*a).name, parts, num_parts) < 0 }
 }
 
 // ufbx.c:18584-18590 `ufbxi_sort_name_elements`
@@ -1197,50 +1215,76 @@ pub(crate) unsafe fn sort_name_elements(
 ) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        grow_array::<u8>(
-            uc.ator_tmp_mut_ptr(),
-            uc.tmp_arr_mut_ptr(),
-            uc.tmp_arr_size_mut_ptr(),
-            count.wrapping_mul(size_of::<NameElement>()),
-        ),
+        // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
+        // `tmp_arr`/`tmp_arr_size` slots that pair with it.
+        unsafe {
+            grow_array::<u8>(
+                uc.ator_tmp_mut_ptr(),
+                uc.tmp_arr_mut_ptr(),
+                uc.tmp_arr_size_mut_ptr(),
+                count.wrapping_mul(size_of::<NameElement>()),
+            )
+        },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_name_element)))"
     );
-    macro_stable_sort::<NameElement>(
-        32,
-        name_elems,
-        uc.tmp_arr() as *mut NameElement,
-        count,
-        |a, b| cmp_name_element_less(a, b),
-    );
+    // SAFETY: `name_elems` addresses `count` initialized `NameElement`s (fn
+    // contract) and `tmp_arr` was just grown to `count * size_of::<NameElement>()`
+    // bytes, so the two disjoint runs `macro_stable_sort` needs are in place; it
+    // hands the comparator pointers to live elements of those runs.
+    unsafe {
+        macro_stable_sort::<NameElement>(
+            32,
+            name_elems,
+            uc.tmp_arr() as *mut NameElement,
+            count,
+            |a, b| cmp_name_element_less(a, b),
+        )
+    };
     Ok(())
 }
 
 // ufbx.c:18592-18610 `ufbxi_cmp_node_less`
 #[inline(never)]
 pub(crate) unsafe fn cmp_node_less(a: *mut Node, b: *mut Node) -> bool {
-    if (*a).node_depth != (*b).node_depth {
-        return (*a).node_depth < (*b).node_depth;
+    // SAFETY: `a` and `b` point to live, initialized `Node`s — the two nodes the
+    // sort hands its comparator (fn contract).
+    if unsafe { (*a).node_depth != (*b).node_depth } {
+        // SAFETY: as above.
+        return unsafe { (*a).node_depth < (*b).node_depth };
     }
-    let a_parent: *mut Node = opt_ptr(&(*a).parent);
-    let b_parent: *mut Node = opt_ptr(&(*b).parent);
+    // SAFETY: as above; `parent` is a live `Ref<Node>` field of that node, which
+    // `opt_ptr` reads as a nullable pointer.
+    let a_parent: *mut Node = unsafe { opt_ptr(&(*a).parent) };
+    // SAFETY: as above, for `b`.
+    let b_parent: *mut Node = unsafe { opt_ptr(&(*b).parent) };
     if !a_parent.is_null() && !b_parent.is_null() {
-        let a_pid: u32 = (*a_parent).element.element_id;
-        let b_pid: u32 = (*b_parent).element.element_id;
+        // SAFETY: `a_parent` is non-null (checked) and a `parent` link points at
+        // a live scene `Node`.
+        let a_pid: u32 = unsafe { (*a_parent).element.element_id };
+        // SAFETY: as above, for `b_parent`.
+        let b_pid: u32 = unsafe { (*b_parent).element.element_id };
         if a_pid != b_pid {
             return a_pid < b_pid;
         }
     } else {
         ufbx_assert!(a_parent.is_null() && b_parent.is_null());
     }
-    if (*a).is_geometry_transform_helper != (*b).is_geometry_transform_helper {
+    // SAFETY: `a` and `b` point to live, initialized `Node`s (fn contract).
+    if unsafe { (*a).is_geometry_transform_helper != (*b).is_geometry_transform_helper } {
         // Sort geometry transform helpers always before rest of the children.
-        return (*a).is_geometry_transform_helper as u32 > (*b).is_geometry_transform_helper as u32;
+        // SAFETY: as above.
+        return unsafe {
+            (*a).is_geometry_transform_helper as u32 > (*b).is_geometry_transform_helper as u32
+        };
     }
-    if (*a).is_scale_helper != (*b).is_scale_helper {
+    // SAFETY: as above.
+    if unsafe { (*a).is_scale_helper != (*b).is_scale_helper } {
         // Sort scale helpers after geometry transform helpers.
-        return (*a).is_scale_helper as u32 > (*b).is_scale_helper as u32;
+        // SAFETY: as above.
+        return unsafe { (*a).is_scale_helper as u32 > (*b).is_scale_helper as u32 };
     }
-    (*a).element.element_id < (*b).element.element_id
+    // SAFETY: as above.
+    unsafe { (*a).element.element_id < (*b).element.element_id }
 }
 
 // ufbx.c:18612-18618 `ufbxi_sort_node_ptrs`
@@ -1252,17 +1296,28 @@ pub(crate) unsafe fn sort_node_ptrs(
 ) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        grow_array::<u8>(
-            uc.ator_tmp_mut_ptr(),
-            uc.tmp_arr_mut_ptr(),
-            uc.tmp_arr_size_mut_ptr(),
-            count.wrapping_mul(size_of::<*mut Node>()),
-        ),
+        // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
+        // `tmp_arr`/`tmp_arr_size` slots that pair with it.
+        unsafe {
+            grow_array::<u8>(
+                uc.ator_tmp_mut_ptr(),
+                uc.tmp_arr_mut_ptr(),
+                uc.tmp_arr_size_mut_ptr(),
+                count.wrapping_mul(size_of::<*mut Node>()),
+            )
+        },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_node*)))"
     );
-    macro_stable_sort::<*mut Node>(32, nodes, uc.tmp_arr() as *mut *mut Node, count, |a, b| {
-        cmp_node_less(*a, *b)
-    });
+    // SAFETY: `nodes` addresses `count` initialized node pointers (fn contract)
+    // and `tmp_arr` was just grown to `count * size_of::<*mut Node>()` bytes, so
+    // the two disjoint runs `macro_stable_sort` needs are in place; the
+    // comparator receives pointers into those runs, each holding a live `Node`
+    // pointer.
+    unsafe {
+        macro_stable_sort::<*mut Node>(32, nodes, uc.tmp_arr() as *mut *mut Node, count, |a, b| {
+            cmp_node_less(*a, *b)
+        })
+    };
     Ok(())
 }
 
@@ -1275,13 +1330,20 @@ pub(crate) unsafe fn cmp_tmp_material_texture_less(
     a: *const TmpMaterialTexture,
     b: *const TmpMaterialTexture,
 ) -> bool {
-    if (*a).material_id != (*b).material_id {
-        return (*a).material_id < (*b).material_id;
+    // SAFETY: `a` and `b` point to live, initialized `TmpMaterialTexture`s — the
+    // two records the sort hands its comparator (fn contract).
+    if unsafe { (*a).material_id != (*b).material_id } {
+        // SAFETY: as above.
+        return unsafe { (*a).material_id < (*b).material_id };
     }
-    if (*a).texture_id != (*b).texture_id {
-        return (*a).texture_id < (*b).texture_id;
+    // SAFETY: as above.
+    if unsafe { (*a).texture_id != (*b).texture_id } {
+        // SAFETY: as above.
+        return unsafe { (*a).texture_id < (*b).texture_id };
     }
-    str_less((*a).prop_name, (*b).prop_name)
+    // SAFETY: as above; both `prop_name`s are interned string-pool spans, which
+    // is what `str_less` compares.
+    unsafe { str_less((*a).prop_name, (*b).prop_name) }
 }
 
 // ufbx.c:18627-18633 `ufbxi_sort_tmp_material_textures`
@@ -1293,21 +1355,32 @@ pub(crate) unsafe fn sort_tmp_material_textures(
 ) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        grow_array::<u8>(
-            uc.ator_tmp_mut_ptr(),
-            uc.tmp_arr_mut_ptr(),
-            uc.tmp_arr_size_mut_ptr(),
-            count.wrapping_mul(size_of::<TmpMaterialTexture>()),
-        ),
+        // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
+        // `tmp_arr`/`tmp_arr_size` slots that pair with it.
+        unsafe {
+            grow_array::<u8>(
+                uc.ator_tmp_mut_ptr(),
+                uc.tmp_arr_mut_ptr(),
+                uc.tmp_arr_size_mut_ptr(),
+                count.wrapping_mul(size_of::<TmpMaterialTexture>()),
+            )
+        },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_tmp_material_texture)))"
     );
-    macro_stable_sort::<TmpMaterialTexture>(
-        32,
-        mat_texs,
-        uc.tmp_arr() as *mut TmpMaterialTexture,
-        count,
-        |a, b| cmp_tmp_material_texture_less(a, b),
-    );
+    // SAFETY: `mat_texs` addresses `count` initialized `TmpMaterialTexture`s (fn
+    // contract) and `tmp_arr` was just grown to
+    // `count * size_of::<TmpMaterialTexture>()` bytes, so the two disjoint runs
+    // `macro_stable_sort` needs are in place; it hands the comparator pointers to
+    // live elements of those runs.
+    unsafe {
+        macro_stable_sort::<TmpMaterialTexture>(
+            32,
+            mat_texs,
+            uc.tmp_arr() as *mut TmpMaterialTexture,
+            count,
+            |a, b| cmp_tmp_material_texture_less(a, b),
+        )
+    };
     Ok(())
 }
 
@@ -1326,20 +1399,33 @@ pub(crate) unsafe fn cmp_connection_less(
     // C-parity: `(&a->src)[index]` / `(&a->src_prop)[index]` index across the
     // two adjacent element pointers and the two adjacent strings of
     // `ufbx_connection`, which the static assert above pins as unpadded.
-    let a_src: *const Ref<Element> = &raw const (*a).src;
-    let b_src: *const Ref<Element> = &raw const (*b).src;
-    let a_elem: *mut Element = ref_ptr(a_src.add(index));
-    let b_elem: *mut Element = ref_ptr(b_src.add(index));
+    // SAFETY: `a` and `b` point to live, initialized `Connection`s — the two
+    // records the sort hands its comparator (fn contract).
+    let a_src: *const Ref<Element> = unsafe { &raw const (*a).src };
+    // SAFETY: as above, for `b`.
+    let b_src: *const Ref<Element> = unsafe { &raw const (*b).src };
+    // SAFETY: `index` is 0 or 1 (the two adjacent `src`/`dst` element refs of one
+    // unpadded `ufbx_connection`, per the static assert above), so the offset
+    // stays inside `*a`, and the ref it names holds a live scene element.
+    let a_elem: *mut Element = unsafe { ref_ptr(a_src.add(index)) };
+    // SAFETY: as above, for `b`.
+    let b_elem: *mut Element = unsafe { ref_ptr(b_src.add(index)) };
     if a_elem != b_elem {
         return a_elem < b_elem;
     }
-    let a_prop: *const String = &raw const (*a).src_prop;
-    let b_prop: *const String = &raw const (*b).src_prop;
-    let mut cmp: i32 = strcmp((*a_prop.add(index)).data, (*b_prop.add(index)).data);
+    // SAFETY: `a` points to a live, initialized `Connection` (fn contract).
+    let a_prop: *const String = unsafe { &raw const (*a).src_prop };
+    // SAFETY: as above, for `b`.
+    let b_prop: *const String = unsafe { &raw const (*b).src_prop };
+    // SAFETY: `index` is 0 or 1, so both offsets stay inside the two adjacent
+    // `src_prop`/`dst_prop` strings of their connection; each is an interned
+    // string-pool span, hence NUL-terminated for `strcmp`.
+    let mut cmp: i32 = unsafe { strcmp((*a_prop.add(index)).data, (*b_prop.add(index)).data) };
     if cmp != 0 {
         return cmp < 0;
     }
-    cmp = strcmp((*a_prop.add(index ^ 1)).data, (*b_prop.add(index ^ 1)).data);
+    // SAFETY: as above, with `index ^ 1` naming the other of the two strings.
+    cmp = unsafe { strcmp((*a_prop.add(index ^ 1)).data, (*b_prop.add(index ^ 1)).data) };
     cmp < 0
 }
 
@@ -1353,21 +1439,32 @@ pub(crate) unsafe fn sort_connections(
 ) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        grow_array::<u8>(
-            uc.ator_tmp_mut_ptr(),
-            uc.tmp_arr_mut_ptr(),
-            uc.tmp_arr_size_mut_ptr(),
-            count.wrapping_mul(size_of::<Connection>()),
-        ),
+        // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
+        // `tmp_arr`/`tmp_arr_size` slots that pair with it.
+        unsafe {
+            grow_array::<u8>(
+                uc.ator_tmp_mut_ptr(),
+                uc.tmp_arr_mut_ptr(),
+                uc.tmp_arr_size_mut_ptr(),
+                count.wrapping_mul(size_of::<Connection>()),
+            )
+        },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_connection)))"
     );
-    macro_stable_sort::<Connection>(
-        32,
-        connections,
-        uc.tmp_arr() as *mut Connection,
-        count,
-        |a, b| cmp_connection_less(a as *mut Connection, b as *mut Connection, index),
-    );
+    // SAFETY: `connections` addresses `count` initialized `Connection`s (fn
+    // contract) and `tmp_arr` was just grown to `count * size_of::<Connection>()`
+    // bytes, so the two disjoint runs `macro_stable_sort` needs are in place; it
+    // hands the comparator pointers to live elements of those runs, and `index`
+    // is the caller's 0-or-1 field selector.
+    unsafe {
+        macro_stable_sort::<Connection>(
+            32,
+            connections,
+            uc.tmp_arr() as *mut Connection,
+            count,
+            |a, b| cmp_connection_less(a as *mut Connection, b as *mut Connection, index),
+        )
+    };
     Ok(())
 }
 
@@ -2026,33 +2123,47 @@ pub(crate) unsafe fn find_dst_connections(
         prop = EMPTY_CHAR.as_ptr();
     }
 
-    let mut begin: usize = (*element).connections_dst.count;
+    // SAFETY: `element` points to a live scene element (fn contract).
+    let mut begin: usize = unsafe { (*element).connections_dst.count };
     let mut end: usize = begin;
 
-    macro_lower_bound_eq(
-        32,
-        &mut begin,
-        (*element).connections_dst.data,
-        0,
-        (*element).connections_dst.count,
-        |a| strcmp((*a).dst_prop.data, prop) < 0,
-        |a| (*a).dst_prop.data == prop && (*a).src_prop.length == 0,
-    );
+    // SAFETY: `connections_dst` is that element's own `data`/`count` span of
+    // initialized `Connection`s, so the search range `0..count` is in bounds and
+    // every probe pointer the two closures receive addresses a live connection
+    // whose `dst_prop`/`src_prop` are interned (NUL-terminated) spans.
+    unsafe {
+        macro_lower_bound_eq(
+            32,
+            &mut begin,
+            (*element).connections_dst.data,
+            0,
+            (*element).connections_dst.count,
+            |a| strcmp((*a).dst_prop.data, prop) < 0,
+            |a| (*a).dst_prop.data == prop && (*a).src_prop.length == 0,
+        )
+    };
 
-    macro_upper_bound_eq(
-        32,
-        &mut end,
-        (*element).connections_dst.data,
-        begin,
-        (*element).connections_dst.count,
-        |a| (*a).dst_prop.data == prop && (*a).src_prop.length == 0,
-    );
+    // SAFETY: as above, with `begin <= count` the lower bound just produced.
+    unsafe {
+        macro_upper_bound_eq(
+            32,
+            &mut end,
+            (*element).connections_dst.data,
+            begin,
+            (*element).connections_dst.count,
+            |a| (*a).dst_prop.data == prop && (*a).src_prop.length == 0,
+        )
+    };
 
     // C: `ufbx_connection_list result = { element->connections_dst.data + begin, end - begin };`
     // `List<T>` carries a private `PhantomData` marker, so the C aggregate
     // initializer becomes a zeroed value with both public fields written.
-    let mut result: List<Connection> = MaybeUninit::zeroed().assume_init();
-    result.data = (*element).connections_dst.data.add(begin);
+    // SAFETY: `List<Connection>` is a raw pointer, a `usize` and a zero-sized
+    // `PhantomData`, so the all-zero bit pattern is a valid (null, empty) value.
+    let mut result: List<Connection> = unsafe { MaybeUninit::zeroed().assume_init() };
+    // SAFETY: `begin <= count` (it is a bound within `0..count`), so the offset
+    // lands at or one past the end of the element's connection span.
+    result.data = unsafe { (*element).connections_dst.data.add(begin) };
     result.count = end - begin;
     result
 }
@@ -2069,31 +2180,45 @@ pub(crate) unsafe fn find_src_connections(
         prop = EMPTY_CHAR.as_ptr();
     }
 
-    let mut begin: usize = (*element).connections_src.count;
+    // SAFETY: `element` points to a live scene element (fn contract).
+    let mut begin: usize = unsafe { (*element).connections_src.count };
     let mut end: usize = begin;
 
-    macro_lower_bound_eq(
-        32,
-        &mut begin,
-        (*element).connections_src.data,
-        0,
-        (*element).connections_src.count,
-        |a| strcmp((*a).src_prop.data, prop) < 0,
-        |a| (*a).src_prop.data == prop && (*a).dst_prop.length == 0,
-    );
+    // SAFETY: `connections_src` is that element's own `data`/`count` span of
+    // initialized `Connection`s, so the search range `0..count` is in bounds and
+    // every probe pointer the two closures receive addresses a live connection
+    // whose `src_prop`/`dst_prop` are interned (NUL-terminated) spans.
+    unsafe {
+        macro_lower_bound_eq(
+            32,
+            &mut begin,
+            (*element).connections_src.data,
+            0,
+            (*element).connections_src.count,
+            |a| strcmp((*a).src_prop.data, prop) < 0,
+            |a| (*a).src_prop.data == prop && (*a).dst_prop.length == 0,
+        )
+    };
 
-    macro_upper_bound_eq(
-        32,
-        &mut end,
-        (*element).connections_src.data,
-        begin,
-        (*element).connections_src.count,
-        |a| (*a).src_prop.data == prop && (*a).dst_prop.length == 0,
-    );
+    // SAFETY: as above, with `begin <= count` the lower bound just produced.
+    unsafe {
+        macro_upper_bound_eq(
+            32,
+            &mut end,
+            (*element).connections_src.data,
+            begin,
+            (*element).connections_src.count,
+            |a| (*a).src_prop.data == prop && (*a).dst_prop.length == 0,
+        )
+    };
 
     // C: `ufbx_connection_list result = { element->connections_src.data + begin, end - begin };`
-    let mut result: List<Connection> = MaybeUninit::zeroed().assume_init();
-    result.data = (*element).connections_src.data.add(begin);
+    // SAFETY: `List<Connection>` is a raw pointer, a `usize` and a zero-sized
+    // `PhantomData`, so the all-zero bit pattern is a valid (null, empty) value.
+    let mut result: List<Connection> = unsafe { MaybeUninit::zeroed().assume_init() };
+    // SAFETY: `begin <= count` (it is a bound within `0..count`), so the offset
+    // lands at or one past the end of the element's connection span.
+    result.data = unsafe { (*element).connections_src.data.add(begin) };
     result.count = end - begin;
     result
 }
@@ -2104,16 +2229,26 @@ pub(crate) unsafe fn get_element_node(element: *mut Element) -> *mut Element {
     if element.is_null() {
         return ptr::null_mut();
     }
-    if (*element).type_ == ElementType::Node {
+    // SAFETY: `element` is non-null (checked) and points to a live scene element
+    // (fn contract).
+    if unsafe { (*element).type_ } == ElementType::Node {
         let node: *mut Node = element as *mut Node;
-        if (*node).is_geometry_transform_helper {
-            return opt_ptr(&(*node).parent) as *mut Element;
+        // SAFETY: `type_ == Node` (checked) means the element is the `element`
+        // prefix of a live `ufbx_node`, so the cast pointer is a valid `Node`.
+        if unsafe { (*node).is_geometry_transform_helper } {
+            // SAFETY: as above; `parent` is a live `Ref<Node>` field of that node,
+            // which `opt_ptr` reads as a nullable pointer.
+            return unsafe { opt_ptr(&(*node).parent) } as *mut Element;
         }
         ptr::null_mut()
     } else {
         // C: `return element->instances.count > 0 ? &element->instances.data[0]->element : NULL;`
-        if (*element).instances.count > 0 {
-            &raw mut (*ref_ptr((*element).instances.data)).element
+        // SAFETY: `element` points to a live scene element (fn contract).
+        if unsafe { (*element).instances.count } > 0 {
+            // SAFETY: `instances.count > 0` (checked), so `instances.data` points
+            // at a live `Ref<Node>` whose referent is a live node; taking the
+            // address of its `element` prefix does not read the node.
+            unsafe { &raw mut (*ref_ptr((*element).instances.data)).element }
         } else {
             ptr::null_mut()
         }
@@ -2135,41 +2270,62 @@ pub(crate) unsafe fn fetch_dst_elements(
     let mut num_elements: usize = 0;
 
     loop {
-        let conns: List<Connection> = find_dst_connections(element, prop);
+        // SAFETY: `element` is a live scene element — the caller's on the first
+        // pass, `get_element_node`'s non-null result after that.
+        let conns: List<Connection> = unsafe { find_dst_connections(element, prop) };
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)` — indexed here
         // because the body `continue`s (the C `for` advances the iterator in
         // its increment clause).
         for conn_ix in 0..conns.count {
-            let conn: *mut Connection = (conns.data as *mut Connection).add(conn_ix);
-            if (*ref_ptr(&(*conn).src)).type_ == src_type {
+            // SAFETY: `conn_ix < conns.count` and `conns` is a `data`/`count` span
+            // of live connections carved out of the element's connection array.
+            let conn: *mut Connection = unsafe { (conns.data as *mut Connection).add(conn_ix) };
+            // SAFETY: `conn` points to a live `Connection` whose `src` ref names a
+            // live scene element.
+            if unsafe { (*ref_ptr(&(*conn).src)).type_ } == src_type {
                 if ignore_duplicates {
-                    let element_id: u32 = (*ref_ptr(&(*conn).src)).element_id;
-                    if *uc.tmp_element_flag().add(element_id as usize) != 0 {
+                    // SAFETY: as above.
+                    let element_id: u32 = unsafe { (*ref_ptr(&(*conn).src)).element_id };
+                    // SAFETY: `tmp_element_flag` is a byte per scene element and
+                    // `element_id` indexes the scene's element array.
+                    if unsafe { *uc.tmp_element_flag().add(element_id as usize) } != 0 {
                         ufbxi_check!(
                             uc,
-                            ufbxi_warnf_tag!(
-                                uc,
-                                WarningType::DuplicateConnection,
-                                element_id,
-                                "Duplicate connection to %u",
-                                (*element).element_id
-                            )
+                            // SAFETY: `element` is a live scene element, and
+                            // `ufbxi_warnf_tag!` formats the `%u` from the `u32`
+                            // read here.
+                            unsafe {
+                                ufbxi_warnf_tag!(
+                                    uc,
+                                    WarningType::DuplicateConnection,
+                                    element_id,
+                                    "Duplicate connection to %u",
+                                    (*element).element_id
+                                )
+                            }
                             .is_ok(),
                             "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_DUPLICATE_CONNECTION, (element_id), \"Duplicate connection to %u\", element->element_id)"
                         );
                         continue;
                     }
-                    *uc.tmp_element_flag().add(element_id as usize) = 1;
+                    // SAFETY: as the read above — `element_id` indexes the
+                    // per-element flag byte array.
+                    unsafe { *uc.tmp_element_flag().add(element_id as usize) = 1 };
                 }
                 let p_elem: *mut *mut Element = uc.tmp_stack_view().push(1);
                 ufbxi_check!(uc, !p_elem.is_null(), "p_elem");
-                *p_elem = ref_ptr(&(*conn).src);
+                // SAFETY: `p_elem` is non-null (checked) and addresses the slot
+                // just pushed on `tmp_stack`; `conn` points to a live `Connection`
+                // whose `src` ref names a live scene element.
+                unsafe { *p_elem = ref_ptr(&(*conn).src) };
                 num_elements += 1;
             }
         }
 
         if !(search_node && {
-            element = get_element_node(element);
+            // SAFETY: `element` is a live scene element (see the `find_dst_connections`
+            // call above).
+            element = unsafe { get_element_node(element) };
             !element.is_null()
         }) {
             break;
@@ -2177,20 +2333,34 @@ pub(crate) unsafe fn fetch_dst_elements(
     }
 
     let list: *mut RefList<Element> = p_dst_list as *mut RefList<Element>;
-    (*list).data = uc
-        .result_view()
-        .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
-        as *const Ref<Element>;
-    (*list).count = num_elements;
-    ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
+    // SAFETY: `p_dst_list` is the caller's out-list, which every call site passes
+    // as a `ufbx_*_list` of element refs (C: the `void*` out-parameter of
+    // `ufbxi_fetch_dst_elements`).
+    unsafe {
+        (*list).data = uc
+            .result_view()
+            .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
+            as *const Ref<Element>
+    };
+    // SAFETY: as above.
+    unsafe { (*list).count = num_elements };
+    // SAFETY: as above.
+    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     if ignore_duplicates {
         // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, *list)`
-        let mut p_elem: *mut *mut Element = (*list).data as *mut *mut Element;
-        let p_elem_end: *mut *mut Element = add_ptr(p_elem, (*list).count);
+        // SAFETY: as above.
+        let mut p_elem: *mut *mut Element = unsafe { (*list).data } as *mut *mut Element;
+        // SAFETY: `list` holds the `count`-element run just popped into `result`,
+        // so the one-past-the-end pointer is in range.
+        let p_elem_end: *mut *mut Element = unsafe { add_ptr(p_elem, (*list).count) };
         while p_elem != p_elem_end {
-            *uc.tmp_element_flag().add((**p_elem).element_id as usize) = 0;
-            p_elem = p_elem.add(1);
+            // SAFETY: `p_elem` is inside that run and holds a live element
+            // pointer, whose `element_id` indexes the per-element flag bytes.
+            unsafe { *uc.tmp_element_flag().add((**p_elem).element_id as usize) = 0 };
+            // SAFETY: `p_elem != p_elem_end`, so the advance lands at or before
+            // the one-past-the-end pointer.
+            p_elem = unsafe { p_elem.add(1) };
         }
     }
 
@@ -2212,40 +2382,61 @@ pub(crate) unsafe fn fetch_src_elements(
     let mut num_elements: usize = 0;
 
     loop {
-        let conns: List<Connection> = find_src_connections(element, prop);
+        // SAFETY: `element` is a live scene element — the caller's on the first
+        // pass, `get_element_node`'s non-null result after that.
+        let conns: List<Connection> = unsafe { find_src_connections(element, prop) };
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)` — indexed here
         // because the body `continue`s.
         for conn_ix in 0..conns.count {
-            let conn: *mut Connection = (conns.data as *mut Connection).add(conn_ix);
-            if (*ref_ptr(&(*conn).dst)).type_ == dst_type {
+            // SAFETY: `conn_ix < conns.count` and `conns` is a `data`/`count` span
+            // of live connections carved out of the element's connection array.
+            let conn: *mut Connection = unsafe { (conns.data as *mut Connection).add(conn_ix) };
+            // SAFETY: `conn` points to a live `Connection` whose `dst` ref names a
+            // live scene element.
+            if unsafe { (*ref_ptr(&(*conn).dst)).type_ } == dst_type {
                 if ignore_duplicates {
-                    let element_id: u32 = (*ref_ptr(&(*conn).dst)).element_id;
-                    if *uc.tmp_element_flag().add(element_id as usize) != 0 {
+                    // SAFETY: as above.
+                    let element_id: u32 = unsafe { (*ref_ptr(&(*conn).dst)).element_id };
+                    // SAFETY: `tmp_element_flag` is a byte per scene element and
+                    // `element_id` indexes the scene's element array.
+                    if unsafe { *uc.tmp_element_flag().add(element_id as usize) } != 0 {
                         ufbxi_check!(
                             uc,
-                            ufbxi_warnf_tag!(
-                                uc,
-                                WarningType::DuplicateConnection,
-                                element_id,
-                                "Duplicate connection to %u",
-                                (*element).element_id
-                            )
+                            // SAFETY: `element` is a live scene element, and
+                            // `ufbxi_warnf_tag!` formats the `%u` from the `u32`
+                            // read here.
+                            unsafe {
+                                ufbxi_warnf_tag!(
+                                    uc,
+                                    WarningType::DuplicateConnection,
+                                    element_id,
+                                    "Duplicate connection to %u",
+                                    (*element).element_id
+                                )
+                            }
                             .is_ok(),
                             "ufbxi_warnf_imp(&uc->warnings, UFBX_WARNING_DUPLICATE_CONNECTION, (element_id), \"Duplicate connection to %u\", element->element_id)"
                         );
                         continue;
                     }
-                    *uc.tmp_element_flag().add(element_id as usize) = 1;
+                    // SAFETY: as the read above — `element_id` indexes the
+                    // per-element flag byte array.
+                    unsafe { *uc.tmp_element_flag().add(element_id as usize) = 1 };
                 }
                 let p_elem: *mut *mut Element = uc.tmp_stack_view().push(1);
                 ufbxi_check!(uc, !p_elem.is_null(), "p_elem");
-                *p_elem = ref_ptr(&(*conn).dst);
+                // SAFETY: `p_elem` is non-null (checked) and addresses the slot
+                // just pushed on `tmp_stack`; `conn` points to a live `Connection`
+                // whose `dst` ref names a live scene element.
+                unsafe { *p_elem = ref_ptr(&(*conn).dst) };
                 num_elements += 1;
             }
         }
 
         if !(search_node && {
-            element = get_element_node(element);
+            // SAFETY: `element` is a live scene element (see the `find_src_connections`
+            // call above).
+            element = unsafe { get_element_node(element) };
             !element.is_null()
         }) {
             break;
@@ -2253,20 +2444,34 @@ pub(crate) unsafe fn fetch_src_elements(
     }
 
     let list: *mut RefList<Element> = p_dst_list as *mut RefList<Element>;
-    (*list).data = uc
-        .result_view()
-        .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
-        as *const Ref<Element>;
-    (*list).count = num_elements;
-    ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
+    // SAFETY: `p_dst_list` is the caller's out-list, which every call site passes
+    // as a `ufbx_*_list` of element refs (C: the `void*` out-parameter of
+    // `ufbxi_fetch_src_elements`).
+    unsafe {
+        (*list).data = uc
+            .result_view()
+            .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
+            as *const Ref<Element>
+    };
+    // SAFETY: as above.
+    unsafe { (*list).count = num_elements };
+    // SAFETY: as above.
+    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     if ignore_duplicates {
         // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, *list)`
-        let mut p_elem: *mut *mut Element = (*list).data as *mut *mut Element;
-        let p_elem_end: *mut *mut Element = add_ptr(p_elem, (*list).count);
+        // SAFETY: as above.
+        let mut p_elem: *mut *mut Element = unsafe { (*list).data } as *mut *mut Element;
+        // SAFETY: `list` holds the `count`-element run just popped into `result`,
+        // so the one-past-the-end pointer is in range.
+        let p_elem_end: *mut *mut Element = unsafe { add_ptr(p_elem, (*list).count) };
         while p_elem != p_elem_end {
-            *uc.tmp_element_flag().add((**p_elem).element_id as usize) = 0;
-            p_elem = p_elem.add(1);
+            // SAFETY: `p_elem` is inside that run and holds a live element
+            // pointer, whose `element_id` indexes the per-element flag bytes.
+            unsafe { *uc.tmp_element_flag().add((**p_elem).element_id as usize) = 0 };
+            // SAFETY: `p_elem != p_elem_end`, so the advance lands at or before
+            // the one-past-the-end pointer.
+            p_elem = unsafe { p_elem.add(1) };
         }
     }
 
@@ -2285,19 +2490,27 @@ pub(crate) unsafe fn fetch_dst_element(
     let mut element: *mut Element = element;
 
     loop {
-        let conns: List<Connection> = find_dst_connections(element, prop);
+        // SAFETY: `element` is a live scene element — the caller's on the first
+        // pass, `get_element_node`'s non-null result after that.
+        let conns: List<Connection> = unsafe { find_dst_connections(element, prop) };
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
         let mut conn: *mut Connection = conns.data as *mut Connection;
         let conn_end: *mut Connection = add_ptr(conn, conns.count);
         while conn != conn_end {
-            if (*ref_ptr(&(*conn).src)).type_ == src_type {
-                return ref_ptr(&(*conn).src);
+            // SAFETY: `conn` is inside that span and its `src` ref names a live
+            // scene element.
+            if unsafe { (*ref_ptr(&(*conn).src)).type_ } == src_type {
+                // SAFETY: as above.
+                return unsafe { ref_ptr(&(*conn).src) };
             }
-            conn = conn.add(1);
+            // SAFETY: `conn != conn_end`, so the advance lands at or before the
+            // one-past-the-end pointer.
+            conn = unsafe { conn.add(1) };
         }
 
         if !(search_node && {
-            element = get_element_node(element);
+            // SAFETY: `element` is a live scene element (see above).
+            element = unsafe { get_element_node(element) };
             !element.is_null()
         }) {
             break;
@@ -2319,19 +2532,27 @@ pub(crate) unsafe fn fetch_src_element(
     let mut element: *mut Element = element;
 
     loop {
-        let conns: List<Connection> = find_src_connections(element, prop);
+        // SAFETY: `element` is a live scene element — the caller's on the first
+        // pass, `get_element_node`'s non-null result after that.
+        let conns: List<Connection> = unsafe { find_src_connections(element, prop) };
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
         let mut conn: *mut Connection = conns.data as *mut Connection;
         let conn_end: *mut Connection = add_ptr(conn, conns.count);
         while conn != conn_end {
-            if (*ref_ptr(&(*conn).dst)).type_ == dst_type {
-                return ref_ptr(&(*conn).dst);
+            // SAFETY: `conn` is inside that span and its `dst` ref names a live
+            // scene element.
+            if unsafe { (*ref_ptr(&(*conn).dst)).type_ } == dst_type {
+                // SAFETY: as above.
+                return unsafe { ref_ptr(&(*conn).dst) };
             }
-            conn = conn.add(1);
+            // SAFETY: `conn != conn_end`, so the advance lands at or before the
+            // one-past-the-end pointer.
+            conn = unsafe { conn.add(1) };
         }
 
         if !(search_node && {
-            element = get_element_node(element);
+            // SAFETY: `element` is a live scene element (see above).
+            element = unsafe { get_element_node(element) };
             !element.is_null()
         }) {
             break;
@@ -2355,36 +2576,54 @@ pub(crate) unsafe fn fetch_textures(
     loop {
         // C: `ufbxi_for_list(ufbx_connection, conn, element->connections_dst)`
         // — indexed here because the body `continue`s.
-        for conn_ix in 0..(*element).connections_dst.count {
+        // SAFETY: `element` is a live scene element — the caller's on the first
+        // pass, `get_element_node`'s non-null result after that.
+        for conn_ix in 0..(unsafe { (*element).connections_dst.count }) {
+            // SAFETY: `conn_ix` is bounded by that element's own `connections_dst`
+            // count, so the offset stays inside its connection array.
             let conn: *mut Connection =
-                ((*element).connections_dst.data as *mut Connection).add(conn_ix);
-            if (*conn).src_prop.length > 0 {
+                unsafe { ((*element).connections_dst.data as *mut Connection).add(conn_ix) };
+            // SAFETY: `conn` points to a live `Connection`.
+            if unsafe { (*conn).src_prop.length } > 0 {
                 continue;
             }
-            if (*ref_ptr(&(*conn).src)).type_ == ElementType::Texture {
+            // SAFETY: as above; the `src` ref names a live scene element.
+            if unsafe { (*ref_ptr(&(*conn).src)).type_ } == ElementType::Texture {
                 let tex: *mut MaterialTexture = uc.tmp_stack_view().push(1);
                 ufbxi_check!(uc, !tex.is_null(), "tex");
                 // C: `tex->shader_prop = tex->material_prop = conn->dst_prop;`
-                (*tex).material_prop = (*conn).dst_prop;
-                (*tex).shader_prop = (*tex).material_prop;
-                (*tex).texture = Ref::from_ptr(ref_ptr(&(*conn).src) as *mut Texture);
+                // SAFETY: `tex` is non-null (checked) and addresses the
+                // `MaterialTexture` slot just pushed on `tmp_stack`; `conn` points
+                // to a live `Connection`.
+                unsafe { (*tex).material_prop = (*conn).dst_prop };
+                // SAFETY: as above.
+                unsafe { (*tex).shader_prop = (*tex).material_prop };
+                // SAFETY: as above; `src` has `type_ == Texture` (checked), so it
+                // names a live `ufbx_texture`.
+                unsafe { (*tex).texture = Ref::from_ptr(ref_ptr(&(*conn).src) as *mut Texture) };
                 num_textures += 1;
             }
         }
 
         if !(search_node && {
-            element = get_element_node(element);
+            // SAFETY: `element` is a live scene element (see above).
+            element = unsafe { get_element_node(element) };
             !element.is_null()
         }) {
             break;
         }
     }
 
-    (*list).data = uc
-        .result_view()
-        .push_pop::<MaterialTexture>(uc.tmp_stack_view(), num_textures);
-    (*list).count = num_textures;
-    ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
+    // SAFETY: `list` is the caller's out-list (fn contract).
+    unsafe {
+        (*list).data = uc
+            .result_view()
+            .push_pop::<MaterialTexture>(uc.tmp_stack_view(), num_textures)
+    };
+    // SAFETY: as above.
+    unsafe { (*list).count = num_textures };
+    // SAFETY: as above.
+    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
 }
@@ -2401,13 +2640,19 @@ pub(crate) unsafe fn fetch_mesh_materials(
     let mut num_materials: usize = 0;
 
     loop {
-        let conns: List<Connection> = find_dst_connections(element, ptr::null());
+        // SAFETY: `element` is a live scene element — the caller's on the first
+        // pass, `get_element_node`'s non-null result after that.
+        let conns: List<Connection> = unsafe { find_dst_connections(element, ptr::null()) };
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
         let mut conn: *mut Connection = conns.data as *mut Connection;
         let conn_end: *mut Connection = add_ptr(conn, conns.count);
         while conn != conn_end {
-            if (*ref_ptr(&(*conn).src)).type_ == ElementType::Material {
-                let mat: *mut Material = ref_ptr(&(*conn).src) as *mut Material;
+            // SAFETY: `conn` is inside that span and its `src` ref names a live
+            // scene element.
+            if unsafe { (*ref_ptr(&(*conn).src)).type_ } == ElementType::Material {
+                // SAFETY: as above, with `type_ == Material` (checked) making the
+                // referent a live `ufbx_material`.
+                let mat: *mut Material = unsafe { ref_ptr(&(*conn).src) } as *mut Material;
                 ufbxi_check!(
                     uc,
                     !uc.tmp_stack_view().push_copy_ref(&mat).is_null(),
@@ -2415,7 +2660,9 @@ pub(crate) unsafe fn fetch_mesh_materials(
                 );
                 num_materials += 1;
             }
-            conn = conn.add(1);
+            // SAFETY: `conn != conn_end`, so the advance lands at or before the
+            // one-past-the-end pointer.
+            conn = unsafe { conn.add(1) };
         }
 
         if num_materials > 0 {
@@ -2423,19 +2670,25 @@ pub(crate) unsafe fn fetch_mesh_materials(
         }
 
         if !(search_node && {
-            element = get_element_node(element);
+            // SAFETY: `element` is a live scene element (see above).
+            element = unsafe { get_element_node(element) };
             !element.is_null()
         }) {
             break;
         }
     }
 
-    (*list).data = uc
-        .result_view()
-        .push_pop::<*mut Material>(uc.tmp_stack_view(), num_materials)
-        as *const Ref<Material>;
-    (*list).count = num_materials;
-    ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
+    // SAFETY: `list` is the caller's out-list (fn contract).
+    unsafe {
+        (*list).data = uc
+            .result_view()
+            .push_pop::<*mut Material>(uc.tmp_stack_view(), num_materials)
+            as *const Ref<Material>
+    };
+    // SAFETY: as above.
+    unsafe { (*list).count = num_materials };
+    // SAFETY: as above.
+    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
 }
@@ -2454,24 +2707,36 @@ pub(crate) unsafe fn fetch_deformers(
     loop {
         // C: `ufbxi_for_list(ufbx_connection, conn, element->connections_dst)`
         // — indexed here because the body `continue`s.
-        for conn_ix in 0..(*element).connections_dst.count {
+        // SAFETY: `element` is a live scene element — the caller's on the first
+        // pass, `get_element_node`'s non-null result after that.
+        for conn_ix in 0..(unsafe { (*element).connections_dst.count }) {
+            // SAFETY: `conn_ix` is bounded by that element's own `connections_dst`
+            // count, so the offset stays inside its connection array.
             let conn: *mut Connection =
-                ((*element).connections_dst.data as *mut Connection).add(conn_ix);
-            if (*conn).src_prop.length > 0 {
+                unsafe { ((*element).connections_dst.data as *mut Connection).add(conn_ix) };
+            // SAFETY: `conn` points to a live `Connection`.
+            if unsafe { (*conn).src_prop.length } > 0 {
                 continue;
             }
-            let type_: ElementType = (*ref_ptr(&(*conn).src)).type_;
+            // SAFETY: as above; the `src` ref names a live scene element.
+            let type_: ElementType = unsafe { (*ref_ptr(&(*conn).src)).type_ };
             if type_ == ElementType::SkinDeformer
                 || type_ == ElementType::BlendDeformer
                 || type_ == ElementType::CacheDeformer
             {
                 ufbxi_check!(
                     uc,
-                    !push_copy::<*mut Element>(
-                        uc.tmp_stack_mut_ptr(),
-                        1,
-                        &(*conn).src as *const Ref<Element> as *const *mut Element,
-                    )
+                    // SAFETY: `tmp_stack_mut_ptr()` is `uc`'s own live buffer, and
+                    // the source is the address of `conn`'s `src` ref — one live,
+                    // pointer-sized value, reinterpreted as the `*mut Element` it
+                    // holds.
+                    !unsafe {
+                        push_copy::<*mut Element>(
+                            uc.tmp_stack_mut_ptr(),
+                            1,
+                            &(*conn).src as *const Ref<Element> as *const *mut Element,
+                        )
+                    }
                     .is_null(),
                     "((ufbx_element**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_element*), (1), (&conn->src)))"
                 );
@@ -2480,19 +2745,25 @@ pub(crate) unsafe fn fetch_deformers(
         }
 
         if !(search_node && {
-            element = get_element_node(element);
+            // SAFETY: `element` is a live scene element (see above).
+            element = unsafe { get_element_node(element) };
             !element.is_null()
         }) {
             break;
         }
     }
 
-    (*list).data = uc
-        .result_view()
-        .push_pop::<*mut Element>(uc.tmp_stack_view(), num_deformers)
-        as *const Ref<Element>;
-    (*list).count = num_deformers;
-    ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
+    // SAFETY: `list` is the caller's out-list (fn contract).
+    unsafe {
+        (*list).data = uc
+            .result_view()
+            .push_pop::<*mut Element>(uc.tmp_stack_view(), num_deformers)
+            as *const Ref<Element>
+    };
+    // SAFETY: as above.
+    unsafe { (*list).count = num_deformers };
+    // SAFETY: as above.
+    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
 }
@@ -2506,16 +2777,21 @@ pub(crate) unsafe fn fetch_blend_keyframes(
 ) -> Result<(), Fail> {
     let mut num_keyframes: usize = 0;
 
-    let conns: List<Connection> = find_dst_connections(element, ptr::null());
+    // SAFETY: `element` points to a live scene element (fn contract).
+    let conns: List<Connection> = unsafe { find_dst_connections(element, ptr::null()) };
     // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
     let mut conn: *mut Connection = conns.data as *mut Connection;
     let conn_end: *mut Connection = add_ptr(conn, conns.count);
     while conn != conn_end {
-        if (*ref_ptr(&(*conn).src)).type_ == ElementType::BlendShape {
+        // SAFETY: `conn` is inside that span and its `src` ref names a live scene
+        // element.
+        if unsafe { (*ref_ptr(&(*conn).src)).type_ } == ElementType::BlendShape {
             // C: `ufbx_blend_keyframe key = { (ufbx_blend_shape*)conn->src };`
             // — the remaining fields are zero-initialized.
             let key = BlendKeyframe {
-                shape: Ref::from_ptr(ref_ptr(&(*conn).src) as *mut BlendShape),
+                // SAFETY: as above, with `type_ == BlendShape` (checked) making the
+                // referent a live `ufbx_blend_shape`.
+                shape: unsafe { Ref::from_ptr(ref_ptr(&(*conn).src) as *mut BlendShape) },
                 target_weight: 0.0,
                 effective_weight: 0.0,
             };
@@ -2526,14 +2802,21 @@ pub(crate) unsafe fn fetch_blend_keyframes(
             );
             num_keyframes += 1;
         }
-        conn = conn.add(1);
+        // SAFETY: `conn != conn_end`, so the advance lands at or before the
+        // one-past-the-end pointer.
+        conn = unsafe { conn.add(1) };
     }
 
-    (*list).data = uc
-        .result_view()
-        .push_pop::<BlendKeyframe>(uc.tmp_stack_view(), num_keyframes);
-    (*list).count = num_keyframes;
-    ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
+    // SAFETY: `list` is the caller's out-list (fn contract).
+    unsafe {
+        (*list).data = uc
+            .result_view()
+            .push_pop::<BlendKeyframe>(uc.tmp_stack_view(), num_keyframes)
+    };
+    // SAFETY: as above.
+    unsafe { (*list).count = num_keyframes };
+    // SAFETY: as above.
+    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
 }
@@ -2547,22 +2830,29 @@ pub(crate) unsafe fn fetch_texture_layers(
 ) -> Result<(), Fail> {
     let mut num_layers: usize = 0;
 
-    let conns: List<Connection> = find_dst_connections(element, ptr::null());
+    // SAFETY: `element` points to a live scene element (fn contract).
+    let conns: List<Connection> = unsafe { find_dst_connections(element, ptr::null()) };
     // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
     let mut conn: *mut Connection = conns.data as *mut Connection;
     let conn_end: *mut Connection = add_ptr(conn, conns.count);
     while conn != conn_end {
-        if (*ref_ptr(&(*conn).src)).type_ == ElementType::Texture {
+        // SAFETY: `conn` is inside the connection span and its `src` ref names a
+        // live scene element.
+        if unsafe { (*ref_ptr(&(*conn).src)).type_ } == ElementType::Texture {
             // The layer's source texture is an arena element reached through the
             // connection (write provenance), so its view anchors the property
             // lookups exactly like the typed element views in `finalize_scene`.
+            // SAFETY: as above, with `type_ == Texture` (checked) making the
+            // referent a live, context-owned `ufbx_texture` — a write-capable
+            // pointer, which is what minting a `TextureView` requires.
             let texture_view: &TextureView =
-                TextureView::from_ptr(ref_ptr(&(*conn).src) as *mut Texture);
+                unsafe { TextureView::from_ptr(ref_ptr(&(*conn).src) as *mut Texture) };
             let texture: *mut Texture = texture_view.get();
             // C: `ufbx_texture_layer layer = { texture };` — the remaining
             // fields are zero-initialized (`UFBX_BLEND_TRANSLUCENT` == 0).
             let mut layer = TextureLayer {
-                texture: Ref::from_ptr(texture),
+                // SAFETY: `texture` is that same live `ufbx_texture`.
+                texture: unsafe { Ref::from_ptr(texture) },
                 blend_mode: BlendMode::Translucent,
                 alpha: 0.0,
             };
@@ -2570,12 +2860,17 @@ pub(crate) unsafe fn fetch_texture_layers(
             // C: `(ufbx_blend_mode)ufbxi_find_enum(...)` — `ufbxi_find_enum`
             // clamps the result to `[0, UFBX_BLEND_OVERLAY]`, every value of
             // which is a valid `ufbx_blend_mode`.
-            layer.blend_mode = core::mem::transmute::<u32, BlendMode>(find_enum(
-                texture_view.props_view(),
-                &sp::BlendMode,
-                BlendMode::Replace as i64,
-                BlendMode::Overlay as i64,
-            ) as u32);
+            // SAFETY: the clamp bounds passed here are `BlendMode::Replace` and
+            // `BlendMode::Overlay`, so the result is one of the contiguous
+            // `ufbx_blend_mode` discriminants.
+            layer.blend_mode = unsafe {
+                core::mem::transmute::<u32, BlendMode>(find_enum(
+                    texture_view.props_view(),
+                    &sp::BlendMode,
+                    BlendMode::Replace as i64,
+                    BlendMode::Overlay as i64,
+                ) as u32)
+            };
             ufbxi_check!(
                 uc,
                 !uc.tmp_stack_view().push_copy_ref(&layer).is_null(),
@@ -2583,14 +2878,21 @@ pub(crate) unsafe fn fetch_texture_layers(
             );
             num_layers += 1;
         }
-        conn = conn.add(1);
+        // SAFETY: `conn != conn_end`, so the advance lands at or before the
+        // one-past-the-end pointer.
+        conn = unsafe { conn.add(1) };
     }
 
-    (*list).data = uc
-        .result_view()
-        .push_pop::<TextureLayer>(uc.tmp_stack_view(), num_layers);
-    (*list).count = num_layers;
-    ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
+    // SAFETY: `list` is the caller's out-list (fn contract).
+    unsafe {
+        (*list).data = uc
+            .result_view()
+            .push_pop::<TextureLayer>(uc.tmp_stack_view(), num_layers)
+    };
+    // SAFETY: as above.
+    unsafe { (*list).count = num_layers };
+    // SAFETY: as above.
+    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
 }
@@ -2598,11 +2900,15 @@ pub(crate) unsafe fn fetch_texture_layers(
 // ufbx.c:19264-19269 `ufbxi_prop_connection_less`
 #[inline(always)]
 pub(crate) unsafe fn prop_connection_less(a: *const Connection, prop: *const u8) -> bool {
-    let cmp: i32 = strcmp((*a).dst_prop.data, prop);
+    // SAFETY: `a` points to a live `Connection` whose `dst_prop` is an interned
+    // (NUL-terminated) span, and `prop` is a NUL-terminated C string — both fn
+    // contracts, and what `strcmp` walks.
+    let cmp: i32 = unsafe { strcmp((*a).dst_prop.data, prop) };
     if cmp != 0 {
         return cmp < 0;
     }
-    (*a).src_prop.length == 0
+    // SAFETY: `a` points to a live `Connection` (fn contract).
+    unsafe { (*a).src_prop.length == 0 }
 }
 
 // ufbx.c:19271-19283 `ufbxi_find_prop_connection`
@@ -2619,18 +2925,26 @@ pub(crate) unsafe fn find_prop_connection(
 
     let mut index: usize = usize::MAX;
 
-    macro_lower_bound_eq(
-        32,
-        &mut index,
-        (*element).connections_dst.data,
-        0,
-        (*element).connections_dst.count,
-        |a| prop_connection_less(a, prop),
-        |a| (*a).dst_prop.data == prop && (*a).src_prop.length > 0,
-    );
+    // SAFETY: `element` points to a live scene element (fn contract), and its
+    // `connections_dst` is that element's own `data`/`count` span of initialized
+    // `Connection`s, so the search range `0..count` is in bounds and every probe
+    // pointer the two closures receive addresses a live connection.
+    unsafe {
+        macro_lower_bound_eq(
+            32,
+            &mut index,
+            (*element).connections_dst.data,
+            0,
+            (*element).connections_dst.count,
+            |a| prop_connection_less(a, prop),
+            |a| (*a).dst_prop.data == prop && (*a).src_prop.length > 0,
+        )
+    };
 
     if index < usize::MAX {
-        (*element).connections_dst.data.add(index) as *mut Connection
+        // SAFETY: `index` is a hit position within `0..connections_dst.count`, so
+        // the offset stays inside the element's connection array.
+        unsafe { (*element).connections_dst.data.add(index) as *mut Connection }
     } else {
         ptr::null_mut()
     }
@@ -2639,25 +2953,41 @@ pub(crate) unsafe fn find_prop_connection(
 // ufbx.c:19285-19292 `ufbxi_patch_index_pointer`
 #[inline(always)]
 pub(crate) unsafe fn patch_index_pointer(uc: &Context, p_index: *mut *mut u32) {
-    if std::ptr::eq(*p_index, SENTINEL_INDEX_ZERO.as_ptr()) {
-        *p_index = uc.zero_indices();
-    } else if std::ptr::eq(*p_index, SENTINEL_INDEX_CONSECUTIVE.as_ptr()) {
-        *p_index = uc.consecutive_indices();
+    // SAFETY: `p_index` points to a live index-pointer slot of a scene attribute
+    // (fn contract).
+    if std::ptr::eq(unsafe { *p_index }, SENTINEL_INDEX_ZERO.as_ptr()) {
+        // SAFETY: as above.
+        unsafe { *p_index = uc.zero_indices() };
+    } else if std::ptr::eq(
+        // SAFETY: as above.
+        unsafe { *p_index },
+        SENTINEL_INDEX_CONSECUTIVE.as_ptr(),
+    ) {
+        // SAFETY: as above.
+        unsafe { *p_index = uc.consecutive_indices() };
     }
 }
 
 // ufbx.c:19294-19299 `ufbxi_cmp_anim_prop_less`
 #[must_use]
 pub(crate) unsafe fn cmp_anim_prop_less(a: *const AnimProp, b: *const AnimProp) -> bool {
-    let a_element: *mut Element = ref_ptr(&(*a).element);
-    let b_element: *mut Element = ref_ptr(&(*b).element);
+    // SAFETY: `a` and `b` point to live, initialized `AnimProp`s — the two
+    // records the sort hands its comparator (fn contract) — and each `element`
+    // ref names a live scene element.
+    let a_element: *mut Element = unsafe { ref_ptr(&(*a).element) };
+    // SAFETY: as above, for `b`.
+    let b_element: *mut Element = unsafe { ref_ptr(&(*b).element) };
     if a_element != b_element {
         return a_element < b_element;
     }
-    if (*a)._internal_key != (*b)._internal_key {
-        return (*a)._internal_key < (*b)._internal_key;
+    // SAFETY: as above.
+    if unsafe { (*a)._internal_key != (*b)._internal_key } {
+        // SAFETY: as above.
+        return unsafe { (*a)._internal_key < (*b)._internal_key };
     }
-    str_less((*a).prop_name, (*b).prop_name)
+    // SAFETY: as above; both `prop_name`s are interned string-pool spans, which
+    // is what `str_less` compares.
+    unsafe { str_less((*a).prop_name, (*b).prop_name) }
 }
 
 // ufbx.c:19301-19306 `ufbxi_sort_anim_props`
@@ -2669,17 +2999,27 @@ pub(crate) unsafe fn sort_anim_props(
 ) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        grow_array::<u8>(
-            uc.ator_tmp_mut_ptr(),
-            uc.tmp_arr_mut_ptr(),
-            uc.tmp_arr_size_mut_ptr(),
-            count.wrapping_mul(size_of::<AnimProp>()),
-        ),
+        // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
+        // `tmp_arr`/`tmp_arr_size` slots that pair with it.
+        unsafe {
+            grow_array::<u8>(
+                uc.ator_tmp_mut_ptr(),
+                uc.tmp_arr_mut_ptr(),
+                uc.tmp_arr_size_mut_ptr(),
+                count.wrapping_mul(size_of::<AnimProp>()),
+            )
+        },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_anim_prop)))"
     );
-    macro_stable_sort::<AnimProp>(32, aprops, uc.tmp_arr() as *mut AnimProp, count, |a, b| {
-        cmp_anim_prop_less(a, b)
-    });
+    // SAFETY: `aprops` addresses `count` initialized `AnimProp`s (fn contract)
+    // and `tmp_arr` was just grown to `count * size_of::<AnimProp>()` bytes, so
+    // the two disjoint runs `macro_stable_sort` needs are in place; it hands the
+    // comparator pointers to live elements of those runs.
+    unsafe {
+        macro_stable_sort::<AnimProp>(32, aprops, uc.tmp_arr() as *mut AnimProp, count, |a, b| {
+            cmp_anim_prop_less(a, b)
+        })
+    };
     Ok(())
 }
 
@@ -2693,7 +3033,10 @@ pub(crate) unsafe extern "C" fn material_texture_less(
     ufbxi_ignore!(user);
     let a: *const MaterialTexture = va as *const MaterialTexture;
     let b: *const MaterialTexture = vb as *const MaterialTexture;
-    str_less((*a).material_prop, (*b).material_prop)
+    // SAFETY: `va`/`vb` are the two `ufbx_material_texture` elements the sort
+    // hands this C-callback comparator (the sort is instantiated over that type),
+    // and both `material_prop`s are interned string-pool spans.
+    unsafe { str_less((*a).material_prop, (*b).material_prop) }
 }
 
 // ufbx.c:19315-19320 `ufbxi_sort_material_textures`
@@ -2705,23 +3048,34 @@ pub(crate) unsafe fn sort_material_textures(
 ) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        grow_array::<u8>(
-            uc.ator_tmp_mut_ptr(),
-            uc.tmp_arr_mut_ptr(),
-            uc.tmp_arr_size_mut_ptr(),
-            count.wrapping_mul(size_of::<MaterialTexture>()),
-        ),
+        // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
+        // `tmp_arr`/`tmp_arr_size` slots that pair with it.
+        unsafe {
+            grow_array::<u8>(
+                uc.ator_tmp_mut_ptr(),
+                uc.tmp_arr_mut_ptr(),
+                uc.tmp_arr_size_mut_ptr(),
+                count.wrapping_mul(size_of::<MaterialTexture>()),
+            )
+        },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_material_texture)))"
     );
-    stable_sort(
-        size_of::<MaterialTexture>(),
-        32,
-        textures as *mut c_void,
-        uc.tmp_arr() as *mut c_void,
-        count,
-        material_texture_less,
-        ptr::null_mut(),
-    );
+    // SAFETY: `textures` addresses `count` initialized `MaterialTexture`s (fn
+    // contract) and `tmp_arr` was just grown to
+    // `count * size_of::<MaterialTexture>()` bytes, so both runs hold `count`
+    // items of the element size passed here; `material_texture_less` is the
+    // matching comparator and ignores its `user` argument.
+    unsafe {
+        stable_sort(
+            size_of::<MaterialTexture>(),
+            32,
+            textures as *mut c_void,
+            uc.tmp_arr() as *mut c_void,
+            count,
+            material_texture_less,
+            ptr::null_mut(),
+        )
+    };
     Ok(())
 }
 
@@ -2735,7 +3089,12 @@ pub(crate) unsafe extern "C" fn bone_pose_less(
     ufbxi_ignore!(user);
     let a: *const BonePose = va as *const BonePose;
     let b: *const BonePose = vb as *const BonePose;
-    (*ref_ptr(&(*a).bone_node)).element.typed_id < (*ref_ptr(&(*b).bone_node)).element.typed_id
+    // SAFETY: `va`/`vb` are the two `ufbx_bone_pose` elements the sort hands this
+    // C-callback comparator (the sort is instantiated over that type), and each
+    // `bone_node` ref names a live scene node.
+    unsafe {
+        (*ref_ptr(&(*a).bone_node)).element.typed_id < (*ref_ptr(&(*b).bone_node)).element.typed_id
+    }
 }
 
 // ufbx.c:19329-19335 `ufbxi_find_anim_prop_start`
@@ -2746,17 +3105,26 @@ pub(crate) unsafe fn find_anim_prop_start(
     element: *const Element,
 ) -> *mut AnimProp {
     let mut index: usize = usize::MAX;
-    macro_lower_bound_eq(
-        16,
-        &mut index,
-        (*layer).anim_props.data,
-        0,
-        (*layer).anim_props.count,
-        |a| (ref_ptr(&(*a).element) as *const Element) < element,
-        |a| std::ptr::eq(ref_ptr(&(*a).element), element),
-    );
+    // SAFETY: `layer` points to a live `ufbx_anim_layer` (fn contract) whose
+    // `anim_props` is its own `data`/`count` span of initialized `AnimProp`s, so
+    // the search range `0..count` is in bounds and every probe pointer the two
+    // closures receive addresses a live anim prop whose `element` ref names a live
+    // scene element.
+    unsafe {
+        macro_lower_bound_eq(
+            16,
+            &mut index,
+            (*layer).anim_props.data,
+            0,
+            (*layer).anim_props.count,
+            |a| (ref_ptr(&(*a).element) as *const Element) < element,
+            |a| std::ptr::eq(ref_ptr(&(*a).element), element),
+        )
+    };
     if index != usize::MAX {
-        (*layer).anim_props.data.add(index) as *mut AnimProp
+        // SAFETY: `index` is a hit position within `0..anim_props.count`, so the
+        // offset stays inside the layer's anim-prop array.
+        unsafe { (*layer).anim_props.data.add(index) as *mut AnimProp }
     } else {
         ptr::null_mut()
     }
@@ -2765,26 +3133,37 @@ pub(crate) unsafe fn find_anim_prop_start(
 // ufbx.c:19337-19343 `ufbxi_sort_bone_poses`
 #[inline(never)]
 pub(crate) unsafe fn sort_bone_poses(uc: &Context, pose: *mut Pose) -> Result<(), Fail> {
-    let count: usize = (*pose).bone_poses.count;
+    // SAFETY: `pose` points to a live `ufbx_pose` (fn contract).
+    let count: usize = unsafe { (*pose).bone_poses.count };
     ufbxi_check!(
         uc,
-        grow_array::<u8>(
-            uc.ator_tmp_mut_ptr(),
-            uc.tmp_arr_mut_ptr(),
-            uc.tmp_arr_size_mut_ptr(),
-            (*pose).bone_poses.count.wrapping_mul(size_of::<BonePose>()),
-        ),
+        // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
+        // `tmp_arr`/`tmp_arr_size` slots that pair with it; `pose` is live.
+        unsafe {
+            grow_array::<u8>(
+                uc.ator_tmp_mut_ptr(),
+                uc.tmp_arr_mut_ptr(),
+                uc.tmp_arr_size_mut_ptr(),
+                (*pose).bone_poses.count.wrapping_mul(size_of::<BonePose>()),
+            )
+        },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (pose->bone_poses.count * sizeof(ufbx_bone_pose)))"
     );
-    stable_sort(
-        size_of::<BonePose>(),
-        16,
-        (*pose).bone_poses.data as *mut c_void,
-        uc.tmp_arr() as *mut c_void,
-        count,
-        bone_pose_less,
-        ptr::null_mut(),
-    );
+    // SAFETY: `bone_poses` is the pose's own `count`-element array and `tmp_arr`
+    // was just grown to `count * size_of::<BonePose>()` bytes, so both runs hold
+    // `count` items of the element size passed here; `bone_pose_less` is the
+    // matching comparator and ignores its `user` argument.
+    unsafe {
+        stable_sort(
+            size_of::<BonePose>(),
+            16,
+            (*pose).bone_poses.data as *mut c_void,
+            uc.tmp_arr() as *mut c_void,
+            count,
+            bone_pose_less,
+            ptr::null_mut(),
+        )
+    };
     Ok(())
 }
 
@@ -2793,26 +3172,41 @@ pub(crate) unsafe fn sort_bone_poses(uc: &Context, pose: *mut Pose) -> Result<()
 pub(crate) unsafe fn sort_skin_weights(uc: &Context, skin: *mut SkinDeformer) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        grow_array::<u8>(
-            uc.ator_tmp_mut_ptr(),
-            uc.tmp_arr_mut_ptr(),
-            uc.tmp_arr_size_mut_ptr(),
-            (*skin)
-                .max_weights_per_vertex
-                .wrapping_mul(size_of::<SkinWeight>()),
-        ),
+        // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
+        // `tmp_arr`/`tmp_arr_size` slots that pair with it; `skin` points to a
+        // live `ufbx_skin_deformer` (fn contract).
+        unsafe {
+            grow_array::<u8>(
+                uc.ator_tmp_mut_ptr(),
+                uc.tmp_arr_mut_ptr(),
+                uc.tmp_arr_size_mut_ptr(),
+                (*skin)
+                    .max_weights_per_vertex
+                    .wrapping_mul(size_of::<SkinWeight>()),
+            )
+        },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (skin->max_weights_per_vertex * sizeof(ufbx_skin_weight)))"
     );
 
-    for i in 0..(*skin).vertices.count {
-        let v: SkinVertex = *(*skin).vertices.data.add(i);
-        macro_stable_sort::<SkinWeight>(
-            32,
-            ((*skin).weights.data as *mut SkinWeight).add(v.weight_begin as usize),
-            uc.tmp_arr() as *mut SkinWeight,
-            v.num_weights as usize,
-            |a, b| (*a).weight > (*b).weight,
-        );
+    // SAFETY: `skin` points to a live `ufbx_skin_deformer` (fn contract).
+    for i in 0..(unsafe { (*skin).vertices.count }) {
+        // SAFETY: `i < vertices.count`, so the offset stays inside the deformer's
+        // own vertex array.
+        let v: SkinVertex = unsafe { *(*skin).vertices.data.add(i) };
+        // SAFETY: a `SkinVertex` describes the half-open range
+        // `weight_begin .. weight_begin + num_weights` of the deformer's `weights`
+        // array, so the run sorted here is in bounds; `num_weights` is at most
+        // `max_weights_per_vertex`, the count `tmp_arr` was just grown for, so the
+        // scratch run is large enough and disjoint from `weights`.
+        unsafe {
+            macro_stable_sort::<SkinWeight>(
+                32,
+                ((*skin).weights.data as *mut SkinWeight).add(v.weight_begin as usize),
+                uc.tmp_arr() as *mut SkinWeight,
+                v.num_weights as usize,
+                |a, b| (*a).weight > (*b).weight,
+            )
+        };
     }
 
     Ok(())
@@ -2828,7 +3222,9 @@ pub(crate) unsafe extern "C" fn blend_keyframe_less(
     ufbxi_ignore!(user);
     let a: *const BlendKeyframe = va as *const BlendKeyframe;
     let b: *const BlendKeyframe = vb as *const BlendKeyframe;
-    (*a).target_weight < (*b).target_weight
+    // SAFETY: `va`/`vb` are the two `ufbx_blend_keyframe` elements the sort hands
+    // this C-callback comparator (the sort is instantiated over that type).
+    unsafe { (*a).target_weight < (*b).target_weight }
 }
 
 // ufbx.c:19365-19370 `ufbxi_sort_blend_keyframes`
@@ -2840,23 +3236,34 @@ pub(crate) unsafe fn sort_blend_keyframes(
 ) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        grow_array::<u8>(
-            uc.ator_tmp_mut_ptr(),
-            uc.tmp_arr_mut_ptr(),
-            uc.tmp_arr_size_mut_ptr(),
-            count.wrapping_mul(size_of::<BlendKeyframe>()),
-        ),
+        // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
+        // `tmp_arr`/`tmp_arr_size` slots that pair with it.
+        unsafe {
+            grow_array::<u8>(
+                uc.ator_tmp_mut_ptr(),
+                uc.tmp_arr_mut_ptr(),
+                uc.tmp_arr_size_mut_ptr(),
+                count.wrapping_mul(size_of::<BlendKeyframe>()),
+            )
+        },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbx_blend_keyframe)))"
     );
-    stable_sort(
-        size_of::<BlendKeyframe>(),
-        32,
-        keyframes as *mut c_void,
-        uc.tmp_arr() as *mut c_void,
-        count,
-        blend_keyframe_less,
-        ptr::null_mut(),
-    );
+    // SAFETY: `keyframes` addresses `count` initialized `BlendKeyframe`s (fn
+    // contract) and `tmp_arr` was just grown to
+    // `count * size_of::<BlendKeyframe>()` bytes, so both runs hold `count` items
+    // of the element size passed here; `blend_keyframe_less` is the matching
+    // comparator and ignores its `user` argument.
+    unsafe {
+        stable_sort(
+            size_of::<BlendKeyframe>(),
+            32,
+            keyframes as *mut c_void,
+            uc.tmp_arr() as *mut c_void,
+            count,
+            blend_keyframe_less,
+            ptr::null_mut(),
+        )
+    };
     Ok(())
 }
 
@@ -2868,31 +3275,49 @@ pub(crate) type MatTransformFn = unsafe extern "C" fn(a: *mut Vec4);
 
 // ufbx.c:19376 `ufbxi_mat_transform_invert_x`
 pub(crate) unsafe extern "C" fn mat_transform_invert_x(v: *mut Vec4) {
-    (*v).x = 1.0 - (*v).x;
+    // SAFETY: `v` is the live `ufbx_vec4` the mapping walker hands its transform
+    // callback (C: `ufbxi_mat_transform_fn` is always called on `&map->value_vec4`).
+    unsafe { (*v).x = 1.0 - (*v).x };
 }
 // ufbx.c:19377 `ufbxi_mat_transform_unknown_shininess`
 // C-parity: `ufbx_sqrt` takes/returns `double`, so the product and the
 // subtraction are evaluated in `double` regardless of `ufbx_real`'s width; the
 // `(ufbx_real)0.1` cast happens before the widening back to `double`.
 pub(crate) unsafe extern "C" fn mat_transform_unknown_shininess(v: *mut Vec4) {
-    if (*v).x >= 0.0 {
-        (*v).x = (1.0f64 - math::sqrt(as_f64!((*v).x)) * as_f64!(0.1f64 as Real)) as Real;
+    // SAFETY: `v` is the live `ufbx_vec4` the mapping walker hands its transform
+    // callback (C: `ufbxi_mat_transform_fn` is always called on `&map->value_vec4`).
+    if unsafe { (*v).x } >= 0.0 {
+        // SAFETY: as above.
+        unsafe {
+            (*v).x = (1.0f64 - math::sqrt(as_f64!((*v).x)) * as_f64!(0.1f64 as Real)) as Real
+        };
     }
-    if !((*v).x >= 0.0) {
-        (*v).x = 0.0;
+    // SAFETY: as above.
+    if !(unsafe { (*v).x } >= 0.0) {
+        // SAFETY: as above.
+        unsafe { (*v).x = 0.0 };
     }
 }
 // ufbx.c:19378 `ufbxi_mat_transform_blender_opacity`
 pub(crate) unsafe extern "C" fn mat_transform_blender_opacity(v: *mut Vec4) {
-    (*v).x = 1.0 - (*v).x;
+    // SAFETY: `v` is the live `ufbx_vec4` the mapping walker hands its transform
+    // callback (C: `ufbxi_mat_transform_fn` is always called on `&map->value_vec4`).
+    unsafe { (*v).x = 1.0 - (*v).x };
 }
 // ufbx.c:19379 `ufbxi_mat_transform_blender_shininess`
 pub(crate) unsafe extern "C" fn mat_transform_blender_shininess(v: *mut Vec4) {
-    if (*v).x >= 0.0 {
-        (*v).x = (1.0f64 - math::sqrt(as_f64!((*v).x)) * as_f64!(0.1f64 as Real)) as Real;
+    // SAFETY: `v` is the live `ufbx_vec4` the mapping walker hands its transform
+    // callback (C: `ufbxi_mat_transform_fn` is always called on `&map->value_vec4`).
+    if unsafe { (*v).x } >= 0.0 {
+        // SAFETY: as above.
+        unsafe {
+            (*v).x = (1.0f64 - math::sqrt(as_f64!((*v).x)) * as_f64!(0.1f64 as Real)) as Real
+        };
     }
-    if !((*v).x >= 0.0) {
-        (*v).x = 0.0;
+    // SAFETY: as above.
+    if !(unsafe { (*v).x } >= 0.0) {
+        // SAFETY: as above.
+        unsafe { (*v).x = 0.0 };
     }
 }
 
@@ -3717,7 +4142,10 @@ pub(crate) unsafe fn fetch_mapping_maps(
     let mapping_end: *const ShaderMapping = mappings.wrapping_add(count);
     while mapping != mapping_end {
         // C: `ufbx_string prop_name = { mapping->prop, mapping->prop_len };`
-        let mut prop_name: String = String::new_c((*mapping).prop, (*mapping).prop_len as usize);
+        // SAFETY: `mapping` walks `mappings[0..count]`, the caller's table of
+        // `count` initialized `ShaderMapping` entries.
+        let mut prop_name: String =
+            unsafe { String::new_c((*mapping).prop, (*mapping).prop_len as usize) };
         if prefix.length > 0 || prefix2.length > 0 || suffix.length > 0 {
             // C: `sizeof(combined_name)` — the array is `char[512]`.
             if prop_name.length + prefix.length + prefix2.length + suffix.length
@@ -3726,161 +4154,261 @@ pub(crate) unsafe fn fetch_mapping_maps(
                 let mut dst: *mut u8 = combined_name;
 
                 if prefix.length > 0 {
-                    ptr::copy_nonoverlapping(prefix.data, dst, prefix.length);
-                    dst = dst.add(prefix.length);
+                    // SAFETY: the four lengths sum to at most 512 (checked), so
+                    // `dst` has room for `prefix.length` more bytes in the 512-byte
+                    // `combined_name` storage; `prefix` is a caller-supplied
+                    // `ufbx_string` readable for its own `length`, and the storage
+                    // is a distinct local.
+                    unsafe { ptr::copy_nonoverlapping(prefix.data, dst, prefix.length) };
+                    // SAFETY: as above — the advance stays within the 512 bytes.
+                    dst = unsafe { dst.add(prefix.length) };
                 }
                 if prefix2.length > 0 {
-                    ptr::copy_nonoverlapping(prefix2.data, dst, prefix2.length);
-                    dst = dst.add(prefix2.length);
+                    // SAFETY: as the `prefix` copy, with the running total still
+                    // bounded by the 512-byte check.
+                    unsafe { ptr::copy_nonoverlapping(prefix2.data, dst, prefix2.length) };
+                    // SAFETY: as above.
+                    dst = unsafe { dst.add(prefix2.length) };
                 }
                 if prop_name.length > 0 {
-                    ptr::copy_nonoverlapping(prop_name.data, dst, prop_name.length);
-                    dst = dst.add(prop_name.length);
+                    // SAFETY: as above; `prop_name` still points at the mapping
+                    // table's own `prop` bytes, readable for `prop_name.length`.
+                    unsafe { ptr::copy_nonoverlapping(prop_name.data, dst, prop_name.length) };
+                    // SAFETY: as above.
+                    dst = unsafe { dst.add(prop_name.length) };
                 }
                 if suffix.length > 0 {
-                    ptr::copy_nonoverlapping(suffix.data, dst, suffix.length);
-                    dst = dst.add(suffix.length);
+                    // SAFETY: as the `prefix` copy, with the running total still
+                    // bounded by the 512-byte check.
+                    unsafe { ptr::copy_nonoverlapping(suffix.data, dst, suffix.length) };
+                    // SAFETY: as above.
+                    dst = unsafe { dst.add(suffix.length) };
                 }
 
                 prop_name.data = combined_name;
-                prop_name.length = to_size(dst.offset_from(combined_name));
+                // SAFETY: `dst` was derived from `combined_name` by the advances
+                // above, so both are pointers into that one 512-byte storage.
+                prop_name.length = to_size(unsafe { dst.offset_from(combined_name) });
             }
         }
 
+        // SAFETY: `shader` is the caller's shader pointer (nullable, which
+        // `find_shader_prop_bindings_len` handles) and `prop_name` is a
+        // `data`/`length` span readable for its length — either the mapping
+        // table's `prop` bytes or the `combined_name` prefix just written.
         let mut bindings: List<ShaderPropBinding> =
-            find_shader_prop_bindings_len(shader, prop_name.data, prop_name.length);
+            unsafe { find_shader_prop_bindings_len(shader, prop_name.data, prop_name.length) };
         if bindings.count == 0 {
-            (*identity_binding).material_prop = prop_name;
-            (*identity_binding).shader_prop = EMPTY_STRING.0;
+            // SAFETY: `identity_binding` addresses this function's own aligned
+            // `ShaderPropBinding` storage; both members are written here before
+            // its address is handed to `bindings`.
+            unsafe { (*identity_binding).material_prop = prop_name };
+            // SAFETY: as above.
+            unsafe { (*identity_binding).shader_prop = EMPTY_STRING.0 };
             bindings.data = identity_binding;
             bindings.count = 1;
         }
 
-        let mapping_flags: u32 = (*mapping).flags as u32;
+        // SAFETY: `mapping` walks the caller's `count`-entry mapping table.
+        let mapping_flags: u32 = unsafe { (*mapping).flags as u32 };
         // C: `ufbxi_for_list(ufbx_shader_prop_binding, binding, bindings)`
         let mut binding: *const ShaderPropBinding = bindings.data;
         let binding_end: *const ShaderPropBinding = bindings.data.wrapping_add(bindings.count);
         while binding != binding_end {
-            let name: String = (*binding).material_prop;
+            // SAFETY: `binding` walks `bindings`, either the shader's own binding
+            // span or the single `identity_binding` written just above.
+            let name: String = unsafe { (*binding).material_prop };
 
             // Read-only `Const` view: `update_material` is reachable from the
             // public anim-eval path where `material` can derive from a caller's
             // read-only `&Material`; every access through `prop` below is a read.
-            let prop: *const Prop = find_prop_len(
-                View::<Props, Const>::from_ptr(&raw const (*material).element.props),
-                name.data,
-                name.length,
-            )
+            // SAFETY: `material` points to a live `ufbx_material` (fn contract), so
+            // the address of its `element.props` is a readable `ufbx_props` — all a
+            // `Const` view requires — and `name` is a `data`/`length` span readable
+            // for its length.
+            let prop: *const Prop = unsafe {
+                find_prop_len(
+                    View::<Props, Const>::from_ptr(&raw const (*material).element.props),
+                    name.data,
+                    name.length,
+                )
+            }
             .map_or(ptr::null(), View::as_ptr);
             if (flags & MAPPING_FETCH_FEATURE) != 0 {
-                let feature: *mut MaterialFeatureInfo = features.add((*mapping).index as usize);
-                if !prop.is_null() && (*prop).type_ != PropType::Reference {
-                    (*feature).enabled = (*prop).value_int != 0;
-                    (*feature).is_explicit = true;
+                // SAFETY: with `MAPPING_FETCH_FEATURE` the caller's `features`
+                // array is indexed by `mapping->index`, which the mapping tables
+                // keep within the material's feature count.
+                let feature: *mut MaterialFeatureInfo =
+                    unsafe { features.add((*mapping).index as usize) };
+                // SAFETY: `prop` is non-null (checked) and points to a live `Prop`
+                // of the material's property list.
+                if !prop.is_null() && unsafe { (*prop).type_ } != PropType::Reference {
+                    // SAFETY: `feature` is in bounds (see above) and `prop` is live.
+                    unsafe { (*feature).enabled = (*prop).value_int != 0 };
+                    // SAFETY: as above.
+                    unsafe { (*feature).is_explicit = true };
                     if (mapping_flags & SHADER_FEATURE_IF_AROUND_1 as u32) != 0 {
                         // C-parity: `prop->value_real` is the `ufbx_prop` value
                         // union's first real (`value_vec4.x` here).
-                        (*feature).enabled = (*prop).value_vec4.x >= 0.5f32 as Real
-                            && (*prop).value_vec4.x <= 1.5f32 as Real;
+                        // SAFETY: as above.
+                        unsafe {
+                            (*feature).enabled = (*prop).value_vec4.x >= 0.5f32 as Real
+                                && (*prop).value_vec4.x <= 1.5f32 as Real
+                        };
                     }
                     if (mapping_flags & SHADER_FEATURE_INVERTED as u32) != 0 {
-                        (*feature).enabled = !(*feature).enabled;
+                        // SAFETY: as above.
+                        unsafe { (*feature).enabled = !(*feature).enabled };
                     }
                     if (mapping_flags & SHADER_FEATURE_IF_EXISTS as u32) != 0 {
-                        (*feature).enabled = true;
+                        // SAFETY: as above.
+                        unsafe { (*feature).enabled = true };
                     }
                 }
                 if (mapping_flags & SHADER_FEATURE_IF_TEXTURE as u32) != 0 {
+                    // SAFETY: `material` points to a live `ufbx_material` and
+                    // `name` is a `data`/`length` span readable for its length.
                     let texture: *mut Texture =
-                        find_prop_texture_len(material, name.data, name.length);
+                        unsafe { find_prop_texture_len(material, name.data, name.length) };
                     if !texture.is_null() {
-                        (*feature).enabled = true;
+                        // SAFETY: `feature` is in bounds (see above).
+                        unsafe { (*feature).enabled = true };
                     }
                 }
-                binding = binding.add(1);
+                // SAFETY: `binding != binding_end`, so the advance lands at or
+                // before the one-past-the-end pointer of the binding span.
+                binding = unsafe { binding.add(1) };
                 continue;
             }
 
-            let map: *mut MaterialMap = maps.add((*mapping).index as usize);
+            // SAFETY: the caller's `maps` array is indexed by `mapping->index`,
+            // which the mapping tables keep within the material's map count.
+            let map: *mut MaterialMap = unsafe { maps.add((*mapping).index as usize) };
 
             if (flags & MAPPING_FETCH_VALUE) != 0 {
-                if !prop.is_null() && (*prop).type_ != PropType::Reference {
-                    if ((*mapping).flags & SHADER_MAPPING_MULTIPLY_VALUE) != 0 {
-                        (*map).value_vec4.x *= (*prop).value_vec4.x;
+                // SAFETY: `prop` is non-null (checked) and points to a live `Prop`
+                // of the material's property list.
+                if !prop.is_null() && unsafe { (*prop).type_ } != PropType::Reference {
+                    // SAFETY: `mapping` walks the caller's `count`-entry table.
+                    if unsafe { (*mapping).flags & SHADER_MAPPING_MULTIPLY_VALUE } != 0 {
+                        // SAFETY: `map` is in bounds (see above) and `prop` is live.
+                        unsafe { (*map).value_vec4.x *= (*prop).value_vec4.x };
                         // C: `ufbxi_f64_to_i64(map->value_vec4.x)` — the real
                         // argument promotes to double at the call.
-                        (*map).value_int = f64_to_i64(as_f64!((*map).value_vec4.x));
+                        // SAFETY: `map` is in bounds (see above).
+                        unsafe { (*map).value_int = f64_to_i64(as_f64!((*map).value_vec4.x)) };
                     } else {
-                        (*map).value_vec4 = (*prop).value_vec4;
-                        (*map).value_int = (*prop).value_int;
+                        // SAFETY: `map` is in bounds (see above) and `prop` is live.
+                        unsafe { (*map).value_vec4 = (*prop).value_vec4 };
+                        // SAFETY: as above.
+                        unsafe { (*map).value_int = (*prop).value_int };
                     }
-                    (*map).has_value = true;
-                    if (*mapping).transform != 0 {
-                        let transform_fn: MatTransformFn =
-                            MAT_TRANSFORM_FNS[(*mapping).transform as usize].unwrap_unchecked();
-                        transform_fn(&mut (*map).value_vec4);
+                    // SAFETY: `map` is in bounds (see above).
+                    unsafe { (*map).has_value = true };
+                    // SAFETY: `mapping` walks the caller's `count`-entry table.
+                    if unsafe { (*mapping).transform } != 0 {
+                        // SAFETY: `mapping->transform` is a `MatTransform`
+                        // discriminant below `MatTransform::Count`, and
+                        // `MAT_TRANSFORM_FNS` holds a `Some` at every index above
+                        // the identity slot 0, which the `!= 0` test excludes.
+                        let transform_fn: MatTransformFn = unsafe {
+                            MAT_TRANSFORM_FNS[(*mapping).transform as usize].unwrap_unchecked()
+                        };
+                        // SAFETY: `map` is in bounds (see above), so the argument is
+                        // the live `value_vec4` those callbacks are contracted to
+                        // take.
+                        unsafe { transform_fn(&mut (*map).value_vec4) };
                     }
 
-                    let prop_flags: u32 = (*prop).flags.raw();
-                    if ((*mapping).flags & SHADER_MAPPING_DEFAULT_W_1) != 0
+                    // SAFETY: `prop` points to a live `Prop` (see above).
+                    let prop_flags: u32 = unsafe { (*prop).flags.raw() };
+                    // SAFETY: `mapping` walks the caller's `count`-entry table.
+                    if unsafe { (*mapping).flags & SHADER_MAPPING_DEFAULT_W_1 } != 0
                         && (prop_flags & PropFlags::VALUE_VEC4.raw()) == 0
                     {
-                        (*map).value_vec4.w = 1.0f32 as Real;
+                        // SAFETY: `map` is in bounds (see above).
+                        unsafe { (*map).value_vec4.w = 1.0f32 as Real };
                     }
-                    if ((*mapping).flags & SHADER_MAPPING_WIDEN_TO_RGB) != 0
+                    // SAFETY: `mapping` walks the caller's `count`-entry table.
+                    if unsafe { (*mapping).flags & SHADER_MAPPING_WIDEN_TO_RGB } != 0
                         && (prop_flags & PropFlags::VALUE_REAL.raw()) != 0
                     {
                         // C-parity: `map->value_vec3` is the `ufbx_material_map`
                         // value union's 3-real view; the generated struct keeps
                         // only `value_vec4`, whose x/y/z overlay it exactly.
-                        (*map).value_vec4.y = (*map).value_vec4.x;
-                        (*map).value_vec4.z = (*map).value_vec4.x;
+                        // SAFETY: `map` is in bounds (see above).
+                        unsafe { (*map).value_vec4.y = (*map).value_vec4.x };
+                        // SAFETY: as above.
+                        unsafe { (*map).value_vec4.z = (*map).value_vec4.x };
                     }
                     if (prop_flags & PropFlags::VALUE_REAL.raw()) != 0 {
-                        (*map).value_components = 1;
+                        // SAFETY: `map` is in bounds (see above).
+                        unsafe { (*map).value_components = 1 };
                     } else if (prop_flags & PropFlags::VALUE_VEC2.raw()) != 0 {
-                        (*map).value_components = 2;
+                        // SAFETY: as above.
+                        unsafe { (*map).value_components = 2 };
                     } else if (prop_flags & PropFlags::VALUE_VEC3.raw()) != 0 {
-                        (*map).value_components = 3;
+                        // SAFETY: as above.
+                        unsafe { (*map).value_components = 3 };
                     } else if (prop_flags & PropFlags::VALUE_VEC4.raw()) != 0 {
-                        (*map).value_components = 4;
+                        // SAFETY: as above.
+                        unsafe { (*map).value_components = 4 };
                     } else {
-                        (*map).value_components = 0;
+                        // SAFETY: as above.
+                        unsafe { (*map).value_components = 0 };
                     }
                 }
             }
 
             if (flags & MAPPING_FETCH_TEXTURE) != 0 {
-                let texture: *mut Texture = find_prop_texture_len(material, name.data, name.length);
+                // SAFETY: `material` points to a live `ufbx_material` and `name` is
+                // a `data`/`length` span readable for its length.
+                let texture: *mut Texture =
+                    unsafe { find_prop_texture_len(material, name.data, name.length) };
                 if !texture.is_null() {
-                    (*map).texture = opt_ref(texture);
-                    (*map).texture_enabled = true;
+                    // SAFETY: `map` is in bounds (see above) and `texture` is a
+                    // non-null (checked) live `ufbx_texture`.
+                    unsafe { (*map).texture = opt_ref(texture) };
+                    // SAFETY: `map` is in bounds (see above).
+                    unsafe { (*map).texture_enabled = true };
                 }
             }
 
             if (flags & MAPPING_FETCH_TEXTURE_ENABLED) != 0 {
                 if !prop.is_null() {
-                    (*map).texture_enabled = (*prop).value_int != 0;
+                    // SAFETY: `map` is in bounds (see above) and `prop` is a
+                    // non-null (checked) live `Prop`.
+                    unsafe { (*map).texture_enabled = (*prop).value_int != 0 };
                 }
             }
-            binding = binding.add(1);
+            // SAFETY: `binding != binding_end`, so the advance lands at or before
+            // the one-past-the-end pointer of the binding span.
+            binding = unsafe { binding.add(1) };
         }
-        mapping = mapping.add(1);
+        // SAFETY: `mapping != mapping_end`, so the advance lands at or before the
+        // one-past-the-end pointer of the caller's mapping table.
+        mapping = unsafe { mapping.add(1) };
     }
 }
 
 // ufbx.c:20096-20107 `ufbxi_update_factor`
 #[inline(never)]
 pub(crate) unsafe fn update_factor(factor_map: *mut MaterialMap, color_map: *mut MaterialMap) {
-    if !(*factor_map).has_value {
-        if (*color_map).has_value && !is_vec4_zero((*color_map).value_vec4) {
+    // SAFETY: `factor_map` points to a live `ufbx_material_map` (fn contract).
+    if !unsafe { (*factor_map).has_value } {
+        // SAFETY: `color_map` likewise points to a live `ufbx_material_map`.
+        if unsafe { (*color_map).has_value && !is_vec4_zero((*color_map).value_vec4) } {
             // C-parity: `factor_map->value_real` is the value union's first
             // real (`value_vec4.x` in the generated struct).
-            (*factor_map).value_vec4.x = 1.0f32 as Real;
-            (*factor_map).value_int = 1;
+            // SAFETY: `factor_map` is live (see above).
+            unsafe { (*factor_map).value_vec4.x = 1.0f32 as Real };
+            // SAFETY: as above.
+            unsafe { (*factor_map).value_int = 1 };
         } else {
-            (*factor_map).value_vec4.x = 0.0f32 as Real;
-            (*factor_map).value_int = 0;
+            // SAFETY: as above.
+            unsafe { (*factor_map).value_vec4.x = 0.0f32 as Real };
+            // SAFETY: as above.
+            unsafe { (*factor_map).value_int = 0 };
         }
     }
 }
@@ -3938,75 +4466,131 @@ const _: () = assert!(
 pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
     ufbxi_ignore!(scene);
 
-    let shader: *mut Shader = opt_ptr(&(*material).shader);
-    ufbx_assert!(((*material).shader_type as u32) < SHADER_TYPE_COUNT as u32);
+    // SAFETY: `material` points to a live, initialized `ufbx_material` — the
+    // scene element the finalize pass is filling in (fn contract); `shader` is
+    // a live `Ref<Shader>` field of it, which `opt_ptr` reads as a nullable
+    // pointer.
+    let shader: *mut Shader = unsafe { opt_ptr(&(*material).shader) };
+    // SAFETY: as above.
+    ufbx_assert!(unsafe { ((*material).shader_type as u32) < SHADER_TYPE_COUNT as u32 });
 
     // C-parity: `ufbx_material_fbx_maps` / `_pbr_maps` / `ufbx_material_features`
     // are unions of a named-member struct and a flat array; the generator keeps
     // only the named struct, so the array view is recovered by casting the
     // whole aggregate (identical layout, PORTING.md "Unions").
-    ptr::write_bytes(
-        &raw mut (*material).fbx as *mut u8,
-        0,
-        size_of::<MaterialFbxMaps>(),
-    );
-    ptr::write_bytes(
-        &raw mut (*material).pbr as *mut u8,
-        0,
-        size_of::<MaterialPbrMaps>(),
-    );
-    ptr::write_bytes(
-        &raw mut (*material).features as *mut u8,
-        0,
-        size_of::<MaterialFeatures>(),
-    );
+    // SAFETY: `material` is live (see above), so `&raw mut (*material).fbx`
+    // addresses its own `fbx` field; the zero-fill spans exactly that field's
+    // `size_of::<MaterialFbxMaps>()` bytes.
+    unsafe {
+        ptr::write_bytes(
+            &raw mut (*material).fbx as *mut u8,
+            0,
+            size_of::<MaterialFbxMaps>(),
+        )
+    };
+    // SAFETY: as above, for the `pbr` field and its own size.
+    unsafe {
+        ptr::write_bytes(
+            &raw mut (*material).pbr as *mut u8,
+            0,
+            size_of::<MaterialPbrMaps>(),
+        )
+    };
+    // SAFETY: as above, for the `features` field and its own size.
+    unsafe {
+        ptr::write_bytes(
+            &raw mut (*material).features as *mut u8,
+            0,
+            size_of::<MaterialFeatures>(),
+        )
+    };
 
     // These array views stay live for the rest of the function (the glossiness
     // remap loop below writes through `pbr_maps`/`feature_infos`), so every
     // other access to `material` in this body must be a raw place projection or
     // a `&raw mut` — never a `&mut`, which would retag and invalidate them.
-    let fbx_maps: *mut MaterialMap = &raw mut (*material).fbx as *mut MaterialMap;
-    let pbr_maps: *mut MaterialMap = &raw mut (*material).pbr as *mut MaterialMap;
+    // SAFETY: `material` is live (see above); each projection addresses its own
+    // field, and the const asserts above pin that field's layout to a flat
+    // `MaterialMap` / `MaterialFeatureInfo` array of the matching count.
+    let fbx_maps: *mut MaterialMap = unsafe { &raw mut (*material).fbx as *mut MaterialMap };
+    // SAFETY: as above.
+    let pbr_maps: *mut MaterialMap = unsafe { &raw mut (*material).pbr as *mut MaterialMap };
+    // SAFETY: as above.
     let feature_infos: *mut MaterialFeatureInfo =
-        &raw mut (*material).features as *mut MaterialFeatureInfo;
+        unsafe { &raw mut (*material).features as *mut MaterialFeatureInfo };
 
     let mut base_mapping: *const ShaderMapping = BASE_FBX_MAPPING.as_ptr();
     let mut num_base_mapping: usize = BASE_FBX_MAPPING.len();
 
-    if (*scene).metadata.file_format == FileFormat::Obj
-        || (*scene).metadata.file_format == FileFormat::Mtl
+    // SAFETY: `scene` points to the live, initialized `ufbx_scene` being
+    // finalized (fn contract), so its `metadata` is readable.
+    if unsafe { (*scene).metadata.file_format } == FileFormat::Obj
+        // SAFETY: as above.
+        || unsafe { (*scene).metadata.file_format } == FileFormat::Mtl
     {
         base_mapping = OBJ_FBX_MAPPING.as_ptr();
         num_base_mapping = OBJ_FBX_MAPPING.len();
     }
 
-    fetch_mapping_maps(
-        material,
-        fbx_maps,
-        ptr::null_mut(),
-        ptr::null_mut(),
-        base_mapping,
-        num_base_mapping,
-        EMPTY_STRING.0,
-        EMPTY_STRING.0,
-        EMPTY_STRING.0,
-        MAPPING_FETCH_VALUE | MAPPING_FETCH_TEXTURE,
-    );
+    // SAFETY: `material` is live, `fbx_maps` addresses its `fbx` field viewed as
+    // `MATERIAL_FBX_MAP_COUNT` maps, and `base_mapping`/`num_base_mapping`
+    // describe one of the two static mapping tables.
+    unsafe {
+        fetch_mapping_maps(
+            material,
+            fbx_maps,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            base_mapping,
+            num_base_mapping,
+            EMPTY_STRING.0,
+            EMPTY_STRING.0,
+            EMPTY_STRING.0,
+            MAPPING_FETCH_VALUE | MAPPING_FETCH_TEXTURE,
+        )
+    };
 
-    let list: ShaderMappingList = SHADER_PBR_MAPPINGS[(*material).shader_type as usize];
+    // SAFETY: `material` is live; the assert above bounds `shader_type` by
+    // `SHADER_TYPE_COUNT`, the length of `SHADER_PBR_MAPPINGS`.
+    let list: ShaderMappingList = SHADER_PBR_MAPPINGS[unsafe { (*material).shader_type } as usize];
 
     for i in 0..MATERIAL_FEATURE_COUNT {
         if (list.default_features & (1u32 << i)) != 0 {
-            (*feature_infos.add(i as usize)).enabled = true;
+            // SAFETY: `i < MATERIAL_FEATURE_COUNT` bounds the offset inside the
+            // `features` array view.
+            unsafe { (*feature_infos.add(i as usize)).enabled = true };
         }
     }
 
     let mut prefix: String = EMPTY_STRING.0;
     if shader.is_null() {
-        prefix = (*material).shader_prop_prefix;
+        // SAFETY: `material` is live (see above).
+        prefix = unsafe { (*material).shader_prop_prefix };
     }
 
     if list.texture_prefix.length > 0 || list.texture_suffix.length > 0 {
+        // SAFETY: `material` is live, `pbr_maps` addresses its `pbr` field viewed
+        // as `MATERIAL_PBR_MAP_COUNT` maps, `shader` is null or a live
+        // `ufbx_shader`, and `list.data`/`list.count` describe the static PBR
+        // mapping table selected above.
+        unsafe {
+            fetch_mapping_maps(
+                material,
+                pbr_maps,
+                ptr::null_mut(),
+                shader,
+                list.data,
+                list.count,
+                prefix,
+                list.texture_prefix,
+                list.texture_suffix,
+                MAPPING_FETCH_TEXTURE,
+            )
+        };
+    }
+
+    // SAFETY: as the previous `fetch_mapping_maps` call.
+    unsafe {
         fetch_mapping_maps(
             material,
             pbr_maps,
@@ -4015,112 +4599,152 @@ pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
             list.data,
             list.count,
             prefix,
-            list.texture_prefix,
-            list.texture_suffix,
-            MAPPING_FETCH_TEXTURE,
-        );
-    }
-
-    fetch_mapping_maps(
-        material,
-        pbr_maps,
-        ptr::null_mut(),
-        shader,
-        list.data,
-        list.count,
-        prefix,
-        EMPTY_STRING.0,
-        EMPTY_STRING.0,
-        MAPPING_FETCH_VALUE | MAPPING_FETCH_TEXTURE,
-    );
+            EMPTY_STRING.0,
+            EMPTY_STRING.0,
+            MAPPING_FETCH_VALUE | MAPPING_FETCH_TEXTURE,
+        )
+    };
 
     if list.texture_enabled_prefix.length > 0 || list.texture_enabled_suffix.length > 0 {
-        fetch_mapping_maps(
-            material,
-            pbr_maps,
-            ptr::null_mut(),
-            shader,
-            list.data,
-            list.count,
-            prefix,
-            list.texture_enabled_prefix,
-            list.texture_enabled_suffix,
-            MAPPING_FETCH_TEXTURE_ENABLED,
-        );
+        // SAFETY: as the previous `fetch_mapping_maps` call.
+        unsafe {
+            fetch_mapping_maps(
+                material,
+                pbr_maps,
+                ptr::null_mut(),
+                shader,
+                list.data,
+                list.count,
+                prefix,
+                list.texture_enabled_prefix,
+                list.texture_enabled_suffix,
+                MAPPING_FETCH_TEXTURE_ENABLED,
+            )
+        };
     }
 
-    fetch_mapping_maps(
-        material,
-        ptr::null_mut(),
-        feature_infos,
-        shader,
-        list.features,
-        list.feature_count,
-        prefix,
-        EMPTY_STRING.0,
-        EMPTY_STRING.0,
-        MAPPING_FETCH_FEATURE,
-    );
+    // SAFETY: `material` is live, `feature_infos` addresses its `features` field
+    // viewed as `MATERIAL_FEATURE_COUNT` infos, and `list.features` /
+    // `list.feature_count` describe the static feature-mapping table.
+    unsafe {
+        fetch_mapping_maps(
+            material,
+            ptr::null_mut(),
+            feature_infos,
+            shader,
+            list.features,
+            list.feature_count,
+            prefix,
+            EMPTY_STRING.0,
+            EMPTY_STRING.0,
+            MAPPING_FETCH_FEATURE,
+        )
+    };
 
-    update_factor(
-        &raw mut (*material).fbx.diffuse_factor,
-        &raw mut (*material).fbx.diffuse_color,
-    );
-    update_factor(
-        &raw mut (*material).fbx.specular_factor,
-        &raw mut (*material).fbx.specular_color,
-    );
-    update_factor(
-        &raw mut (*material).fbx.reflection_factor,
-        &raw mut (*material).fbx.reflection_color,
-    );
-    update_factor(
-        &raw mut (*material).fbx.transparency_factor,
-        &raw mut (*material).fbx.transparency_color,
-    );
-    update_factor(
-        &raw mut (*material).fbx.emission_factor,
-        &raw mut (*material).fbx.emission_color,
-    );
-    update_factor(
-        &raw mut (*material).fbx.ambient_factor,
-        &raw mut (*material).fbx.ambient_color,
-    );
+    // SAFETY: `material` is live, so each `&raw mut` projection addresses one of
+    // its own `ufbx_material_map` members, which is what `update_factor` reads
+    // and writes.
+    unsafe {
+        update_factor(
+            &raw mut (*material).fbx.diffuse_factor,
+            &raw mut (*material).fbx.diffuse_color,
+        )
+    };
+    // SAFETY: as above.
+    unsafe {
+        update_factor(
+            &raw mut (*material).fbx.specular_factor,
+            &raw mut (*material).fbx.specular_color,
+        )
+    };
+    // SAFETY: as above.
+    unsafe {
+        update_factor(
+            &raw mut (*material).fbx.reflection_factor,
+            &raw mut (*material).fbx.reflection_color,
+        )
+    };
+    // SAFETY: as above.
+    unsafe {
+        update_factor(
+            &raw mut (*material).fbx.transparency_factor,
+            &raw mut (*material).fbx.transparency_color,
+        )
+    };
+    // SAFETY: as above.
+    unsafe {
+        update_factor(
+            &raw mut (*material).fbx.emission_factor,
+            &raw mut (*material).fbx.emission_color,
+        )
+    };
+    // SAFETY: as above.
+    unsafe {
+        update_factor(
+            &raw mut (*material).fbx.ambient_factor,
+            &raw mut (*material).fbx.ambient_color,
+        )
+    };
 
-    update_factor(
-        &raw mut (*material).pbr.base_factor,
-        &raw mut (*material).pbr.base_color,
-    );
-    update_factor(
-        &raw mut (*material).pbr.specular_factor,
-        &raw mut (*material).pbr.specular_color,
-    );
-    update_factor(
-        &raw mut (*material).pbr.emission_factor,
-        &raw mut (*material).pbr.emission_color,
-    );
-    update_factor(
-        &raw mut (*material).pbr.sheen_factor,
-        &raw mut (*material).pbr.sheen_color,
-    );
-    update_factor(
-        &raw mut (*material).pbr.thin_film_factor,
-        &raw mut (*material).pbr.thin_film_thickness,
-    );
-    update_factor(
-        &raw mut (*material).pbr.transmission_factor,
-        &raw mut (*material).pbr.transmission_color,
-    );
+    // SAFETY: as above, for the `pbr` members.
+    unsafe {
+        update_factor(
+            &raw mut (*material).pbr.base_factor,
+            &raw mut (*material).pbr.base_color,
+        )
+    };
+    // SAFETY: as above.
+    unsafe {
+        update_factor(
+            &raw mut (*material).pbr.specular_factor,
+            &raw mut (*material).pbr.specular_color,
+        )
+    };
+    // SAFETY: as above.
+    unsafe {
+        update_factor(
+            &raw mut (*material).pbr.emission_factor,
+            &raw mut (*material).pbr.emission_color,
+        )
+    };
+    // SAFETY: as above.
+    unsafe {
+        update_factor(
+            &raw mut (*material).pbr.sheen_factor,
+            &raw mut (*material).pbr.sheen_color,
+        )
+    };
+    // SAFETY: as above.
+    unsafe {
+        update_factor(
+            &raw mut (*material).pbr.thin_film_factor,
+            &raw mut (*material).pbr.thin_film_thickness,
+        )
+    };
+    // SAFETY: as above.
+    unsafe {
+        update_factor(
+            &raw mut (*material).pbr.transmission_factor,
+            &raw mut (*material).pbr.transmission_color,
+        )
+    };
 
     // Patch transmission roughness if only extra roughness is defined
-    if !(*material).pbr.transmission_roughness.has_value
-        && (*material).pbr.roughness.has_value
-        && (*material).pbr.transmission_extra_roughness.has_value
+    // SAFETY: `material` is live and the zero-fill above initialized every `pbr`
+    // map, so each `has_value` flag is readable.
+    if unsafe { !(*material).pbr.transmission_roughness.has_value }
+        // SAFETY: as above.
+        && unsafe { (*material).pbr.roughness.has_value }
+        // SAFETY: as above.
+        && unsafe { (*material).pbr.transmission_extra_roughness.has_value }
     {
         // C-parity: `.value_real` is the value union's first real.
-        (*material).pbr.transmission_roughness.value_vec4.x =
-            (*material).pbr.roughness.value_vec4.x
-                + (*material).pbr.transmission_extra_roughness.value_vec4.x;
+        // SAFETY: as above; the three maps are members of the live `material`.
+        unsafe {
+            (*material).pbr.transmission_roughness.value_vec4.x =
+                (*material).pbr.roughness.value_vec4.x
+                    + (*material).pbr.transmission_extra_roughness.value_vec4.x
+        };
     }
 
     // Map roughness to glossiness and vice versa
@@ -4130,23 +4754,43 @@ pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
         .as_ptr()
         .wrapping_add(GLOSSINESS_REMAPS.len());
     while remap != remap_end {
-        let roughness: *mut MaterialMap = pbr_maps.add((*remap).roughness_map as usize);
-        let glossiness: *mut MaterialMap = pbr_maps.add((*remap).glossiness_map as usize);
-        if (*feature_infos.add((*remap).feature as usize)).enabled {
+        // SAFETY: `remap != remap_end`, so it addresses a live entry of the
+        // static `GLOSSINESS_REMAPS` table; its `roughness_map` is a
+        // `ufbx_material_pbr_map` discriminant, bounded by
+        // `MATERIAL_PBR_MAP_COUNT`, the length of the `pbr_maps` array view.
+        let roughness: *mut MaterialMap = unsafe { pbr_maps.add((*remap).roughness_map as usize) };
+        // SAFETY: as above, for `glossiness_map`.
+        let glossiness: *mut MaterialMap =
+            unsafe { pbr_maps.add((*remap).glossiness_map as usize) };
+        // SAFETY: as above; `feature` is a `ufbx_material_feature` discriminant,
+        // bounded by `MATERIAL_FEATURE_COUNT`, the length of the `feature_infos`
+        // array view.
+        if unsafe { (*feature_infos.add((*remap).feature as usize)).enabled } {
             // C: `*glossiness = *roughness;` — struct assignment is a memcpy
             // (PORTING.md checklist #15); `ufbx_material_map` is not `Copy` in
             // the generated bindings, so the copy is spelled out.
-            ptr::copy_nonoverlapping(roughness, glossiness, 1);
-            ptr::write_bytes(roughness as *mut u8, 0, size_of::<MaterialMap>());
-            if (*glossiness).has_value {
-                (*roughness).value_vec4.x = 1.0f32 as Real - (*glossiness).value_vec4.x;
+            // SAFETY: `roughness` and `glossiness` address distinct entries of
+            // the `pbr_maps` view (the remap table never pairs a map with
+            // itself), both initialized by the zero-fill and fetch above.
+            unsafe { ptr::copy_nonoverlapping(roughness, glossiness, 1) };
+            // SAFETY: `roughness` addresses one live `MaterialMap`, whose size
+            // the fill spans exactly.
+            unsafe { ptr::write_bytes(roughness as *mut u8, 0, size_of::<MaterialMap>()) };
+            // SAFETY: `glossiness` addresses a live, initialized `MaterialMap`.
+            if unsafe { (*glossiness).has_value } {
+                // SAFETY: both maps are live entries of the `pbr_maps` view.
+                unsafe { (*roughness).value_vec4.x = 1.0f32 as Real - (*glossiness).value_vec4.x };
             }
         } else {
-            if (*roughness).has_value {
-                (*glossiness).value_vec4.x = 1.0f32 as Real - (*roughness).value_vec4.x;
+            // SAFETY: `roughness` addresses a live, initialized `MaterialMap`.
+            if unsafe { (*roughness).has_value } {
+                // SAFETY: both maps are live entries of the `pbr_maps` view.
+                unsafe { (*glossiness).value_vec4.x = 1.0f32 as Real - (*roughness).value_vec4.x };
             }
         }
-        remap = remap.add(1);
+        // SAFETY: `remap != remap_end`, so the advance lands at or before the
+        // one-past-the-end pointer of `GLOSSINESS_REMAPS`.
+        remap = unsafe { remap.add(1) };
     }
 }
 
@@ -4202,15 +4846,28 @@ pub(crate) unsafe fn add_constraint_prop(
         .as_ptr()
         .wrapping_add(CONSTRAINT_PROPS.len());
     while cprop != cprop_end {
-        if strcmp((*cprop).name, prop) != 0 {
-            cprop = cprop.add(1);
+        // SAFETY: `cprop != cprop_end`, so it addresses a live entry of the
+        // static `CONSTRAINT_PROPS` table whose `name` is a NUL-terminated
+        // literal; `prop` is a NUL-terminated C string (fn contract) — both are
+        // what `strcmp` walks.
+        if unsafe { strcmp((*cprop).name, prop) } != 0 {
+            // SAFETY: `cprop != cprop_end`, so the advance lands at or before the
+            // one-past-the-end pointer of `CONSTRAINT_PROPS`.
+            cprop = unsafe { cprop.add(1) };
             continue;
         }
-        match (*cprop).type_ {
-            ConstraintPropType::Node => (*constraint).node = opt_ref(node),
-            ConstraintPropType::IkEffector => (*constraint).ik_effector = opt_ref(node),
-            ConstraintPropType::IkEndNode => (*constraint).ik_end_node = opt_ref(node),
-            ConstraintPropType::AimUp => (*constraint).aim_up_node = opt_ref(node),
+        // SAFETY: `cprop` addresses a live table entry (see above).
+        match unsafe { (*cprop).type_ } {
+            // SAFETY: `constraint` points to a live `ufbx_constraint` and `node`
+            // to a live `ufbx_node` or NULL (fn contract), which is exactly what
+            // `opt_ref` turns into an optional reference.
+            ConstraintPropType::Node => unsafe { (*constraint).node = opt_ref(node) },
+            // SAFETY: as above.
+            ConstraintPropType::IkEffector => unsafe { (*constraint).ik_effector = opt_ref(node) },
+            // SAFETY: as above.
+            ConstraintPropType::IkEndNode => unsafe { (*constraint).ik_end_node = opt_ref(node) },
+            // SAFETY: as above.
+            ConstraintPropType::AimUp => unsafe { (*constraint).aim_up_node = opt_ref(node) },
             ConstraintPropType::Target => {
                 let target: *mut ConstraintTarget = uc.tmp_stack_view().push_zero(1);
                 ufbxi_check!(uc, !target.is_null(), "target");
@@ -4218,9 +4875,14 @@ pub(crate) unsafe fn add_constraint_prop(
                 // `ufbx_node*`; the sole caller (ufbx.c:22576/22580) passes a
                 // connection endpoint it already checked is a
                 // `UFBX_ELEMENT_NODE`, so `node` is never NULL here.
-                (*target).node = Ref::from_ptr(node);
-                (*target).weight = 1.0f32 as Real;
-                (*target).transform = IDENTITY_TRANSFORM;
+                // SAFETY: `target` is the fresh non-null one-element push above,
+                // and `node` is the live, non-NULL `ufbx_node` the caller
+                // resolved from that connection.
+                unsafe { (*target).node = Ref::from_ptr(node) };
+                // SAFETY: `target` is the fresh non-null push above.
+                unsafe { (*target).weight = 1.0f32 as Real };
+                // SAFETY: as above.
+                unsafe { (*target).transform = IDENTITY_TRANSFORM };
             }
             // C `default:` (ufbx.c:20260-20261) — unreachable in Rust because
             // the match above is exhaustive over the enum, but kept for diff
@@ -4231,7 +4893,9 @@ pub(crate) unsafe fn add_constraint_prop(
                 ufbxi_unreachable!("Unexpected constraint prop");
             }
         }
-        cprop = cprop.add(1);
+        // SAFETY: `cprop != cprop_end`, so the advance lands at or before the
+        // one-past-the-end pointer of `CONSTRAINT_PROPS`.
+        cprop = unsafe { cprop.add(1) };
     }
 
     Ok(())
@@ -4243,24 +4907,41 @@ pub(crate) unsafe fn finalize_nurbs_basis(
     uc: &Context,
     basis: *mut NurbsBasis,
 ) -> Result<(), Fail> {
-    if (*basis).topology == NurbsTopology::Closed {
-        (*basis).num_wrap_control_points = 1;
-    } else if (*basis).topology == NurbsTopology::Periodic {
-        (*basis).num_wrap_control_points = (*basis).order.wrapping_sub(1) as usize;
+    // SAFETY: `basis` points to a live, initialized `ufbx_nurbs_basis` — the
+    // curve/surface basis being finalized (fn contract).
+    if unsafe { (*basis).topology } == NurbsTopology::Closed {
+        // SAFETY: as above.
+        unsafe { (*basis).num_wrap_control_points = 1 };
+    // SAFETY: as above.
+    } else if unsafe { (*basis).topology } == NurbsTopology::Periodic {
+        // SAFETY: as above.
+        unsafe { (*basis).num_wrap_control_points = (*basis).order.wrapping_sub(1) as usize };
     } else {
-        (*basis).num_wrap_control_points = 0;
+        // SAFETY: as above.
+        unsafe { (*basis).num_wrap_control_points = 0 };
     }
 
-    if (*basis).order > 1 {
-        let degree: usize = ((*basis).order - 1) as usize;
+    // SAFETY: as above.
+    if unsafe { (*basis).order } > 1 {
+        // SAFETY: as above; `order > 1`, so the subtraction does not underflow.
+        let degree: usize = unsafe { ((*basis).order - 1) as usize };
         // C: `ufbx_real_list knots = basis->knot_vector;` — `List<T>` is not
         // `Copy` in the bindings, so the value copy is spelled out.
-        let mut knots: List<Real> = MaybeUninit::zeroed().assume_init();
-        knots.data = (*basis).knot_vector.data;
-        knots.count = (*basis).knot_vector.count;
+        // SAFETY: `List<Real>` is a `data`/`count` pair of plain pointer and
+        // integer fields, for which the all-zero bit pattern is valid.
+        let mut knots: List<Real> = unsafe { MaybeUninit::zeroed().assume_init() };
+        // SAFETY: `basis` is live (see above).
+        knots.data = unsafe { (*basis).knot_vector.data };
+        // SAFETY: as above.
+        knots.count = unsafe { (*basis).knot_vector.count };
         if knots.count > 2 * degree {
-            (*basis).t_min = *knots.data.add(degree);
-            (*basis).t_max = *knots.data.add(knots.count - degree - 1);
+            // SAFETY: `knots` is the basis' own knot-vector span of `count`
+            // initialized reals and `degree < count`, so the read is in bounds;
+            // `basis` is live.
+            unsafe { (*basis).t_min = *knots.data.add(degree) };
+            // SAFETY: as above; `count > 2 * degree` makes
+            // `count - degree - 1 < count`.
+            unsafe { (*basis).t_max = *knots.data.add(knots.count - degree - 1) };
 
             let max_spans: usize = knots.count - 2 * degree;
             let spans: *mut Real = uc.result_view().push(max_spans);
@@ -4269,20 +4950,31 @@ pub(crate) unsafe fn finalize_nurbs_basis(
             let mut prev: Real = -math::INFINITY as Real;
             let mut num_spans: usize = 0;
             for i in 0..max_spans {
-                let t: Real = *knots.data.add(degree + i);
+                // SAFETY: `i < max_spans = count - 2 * degree`, so
+                // `degree + i < count` bounds the read inside the knot span.
+                let t: Real = unsafe { *knots.data.add(degree + i) };
                 if t != prev {
-                    *spans.add(num_spans) = t;
+                    // SAFETY: `num_spans <= i < max_spans`, the length of the
+                    // fresh non-null `spans` push above.
+                    unsafe { *spans.add(num_spans) = t };
                     num_spans += 1;
                     prev = t;
                 }
             }
 
-            (*basis).spans.data = spans;
-            (*basis).spans.count = num_spans;
-            (*basis).valid = true;
+            // SAFETY: `basis` is live; `spans` is the push above, holding
+            // `num_spans` initialized reals.
+            unsafe { (*basis).spans.data = spans };
+            // SAFETY: as above.
+            unsafe { (*basis).spans.count = num_spans };
+            // SAFETY: as above.
+            unsafe { (*basis).valid = true };
             for i in 1..knots.count {
-                if *knots.data.add(i - 1) > *knots.data.add(i) {
-                    (*basis).valid = false;
+                // SAFETY: `1 <= i < count` bounds both reads inside the knot
+                // span of `count` initialized reals.
+                if unsafe { *knots.data.add(i - 1) > *knots.data.add(i) } {
+                    // SAFETY: `basis` is live (see above).
+                    unsafe { (*basis).valid = false };
                     break;
                 }
             }
@@ -4418,9 +5110,12 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
 // ufbx.c:20363-20403 `ufbxi_generate_normals`
 #[inline(never)]
 pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(), Fail> {
-    let num_indices: usize = (*mesh).num_indices;
+    // SAFETY: `mesh` points to a live, initialized `ufbx_mesh` — the mesh being
+    // finalized (fn contract).
+    let num_indices: usize = unsafe { (*mesh).num_indices };
 
-    (*mesh).generated_normals = true;
+    // SAFETY: as above.
+    unsafe { (*mesh).generated_normals = true };
 
     let topo: *mut TopoEdge = uc.tmp_stack_view().push::<TopoEdge>(num_indices);
     ufbxi_check!(uc, !topo.is_null(), "topo");
@@ -4428,47 +5123,79 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(
     let normal_indices: *mut u32 = uc.result_view().push::<u32>(num_indices);
     ufbxi_check!(uc, !normal_indices.is_null(), "normal_indices");
 
-    compute_topology(mesh, topo, num_indices);
-    let num_normals: usize =
-        generate_normal_mapping(mesh, topo, num_indices, normal_indices, num_indices, false);
+    // SAFETY: `mesh` is live and `topo` is the fresh non-null `num_indices`-edge
+    // push above, which is the output run `compute_topology` fills.
+    unsafe { compute_topology(mesh, topo, num_indices) };
+    // SAFETY: `mesh` is live, `topo` holds the `num_indices` edges just
+    // computed, and `normal_indices` is the fresh non-null `num_indices`-element
+    // push that receives the mapping.
+    let num_normals: usize = unsafe {
+        generate_normal_mapping(mesh, topo, num_indices, normal_indices, num_indices, false)
+    };
 
-    if num_normals == (*mesh).num_vertices {
-        (*mesh).vertex_normal.unique_per_vertex = true;
+    // SAFETY: `mesh` is live (see above).
+    if num_normals == unsafe { (*mesh).num_vertices } {
+        // SAFETY: as above.
+        unsafe { (*mesh).vertex_normal.unique_per_vertex = true };
     }
 
     let mut normal_data: *mut Vec3 = uc.result_view().push::<Vec3>(num_normals + 1);
     ufbxi_check!(uc, !normal_data.is_null(), "normal_data");
 
     // C: `normal_data[0] = ufbx_zero_vec3; normal_data++;`
-    *normal_data = ZERO_VEC3;
-    normal_data = normal_data.add(1);
+    // SAFETY: `normal_data` is the fresh non-null `num_normals + 1`-element push
+    // above, so element `0` exists.
+    unsafe { *normal_data = ZERO_VEC3 };
+    // SAFETY: the push holds `num_normals + 1 >= 1` elements, so advancing by one
+    // stays inside it.
+    normal_data = unsafe { normal_data.add(1) };
 
-    compute_normals(
-        mesh,
-        &raw const (*mesh).vertex_position,
-        normal_indices,
-        num_indices,
-        normal_data,
-        num_normals,
-    );
+    // SAFETY: `mesh` is live, so `&raw const (*mesh).vertex_position` addresses
+    // its own vertex-position attribute; `normal_indices` holds `num_indices`
+    // mapping entries and `normal_data` the `num_normals` accumulator slots the
+    // push reserved past the zero element.
+    unsafe {
+        compute_normals(
+            mesh,
+            &raw const (*mesh).vertex_position,
+            normal_indices,
+            num_indices,
+            normal_data,
+            num_normals,
+        )
+    };
 
-    (*mesh).vertex_normal.exists = true;
-    (*mesh).vertex_normal.values.data = normal_data as *const Vec3;
-    (*mesh).vertex_normal.values.count = num_normals;
-    (*mesh).vertex_normal.indices.data = normal_indices as *const u32;
-    (*mesh).vertex_normal.indices.count = num_indices;
-    (*mesh).vertex_normal.value_reals = 3;
+    // SAFETY: `mesh` is live; the two runs stored here are the result-arena
+    // pushes above, which outlive the scene.
+    unsafe { (*mesh).vertex_normal.exists = true };
+    // SAFETY: as above.
+    unsafe { (*mesh).vertex_normal.values.data = normal_data as *const Vec3 };
+    // SAFETY: as above.
+    unsafe { (*mesh).vertex_normal.values.count = num_normals };
+    // SAFETY: as above.
+    unsafe { (*mesh).vertex_normal.indices.data = normal_indices as *const u32 };
+    // SAFETY: as above.
+    unsafe { (*mesh).vertex_normal.indices.count = num_indices };
+    // SAFETY: as above.
+    unsafe { (*mesh).vertex_normal.value_reals = 3 };
 
     // C: `mesh->skinned_normal = mesh->vertex_normal;` — struct assignment
     // (memcpy); `VertexVec3` is not `Copy` in the generated bindings, so the
     // copy is spelled as a byte-identical `copy_nonoverlapping`.
-    ptr::copy_nonoverlapping(
-        &raw const (*mesh).vertex_normal,
-        &raw mut (*mesh).skinned_normal,
-        1,
-    );
+    // SAFETY: `mesh` is live, so both projections address its own distinct
+    // `vertex_normal` / `skinned_normal` fields; `vertex_normal` was fully
+    // written just above.
+    unsafe {
+        ptr::copy_nonoverlapping(
+            &raw const (*mesh).vertex_normal,
+            &raw mut (*mesh).skinned_normal,
+            1,
+        )
+    };
 
-    pop::<TopoEdge>(uc.tmp_stack_mut_ptr(), num_indices, ptr::null_mut());
+    // SAFETY: `tmp_stack` is `uc`'s own live buffer and the `num_indices`
+    // `TopoEdge`s pushed above are still its topmost entries.
+    unsafe { pop::<TopoEdge>(uc.tmp_stack_mut_ptr(), num_indices, ptr::null_mut()) };
 
     Ok(())
 }
@@ -4481,22 +5208,35 @@ pub(crate) unsafe fn push_prop_prefix(
     mut prefix: String,
 ) -> Result<(), Fail> {
     let mut stack_size: usize = 0;
-    if prefix.length > 0 && *prefix.data.add(prefix.length - 1) != b'|' {
+    // SAFETY: `prefix` is a `ufbx_string` whose `data` addresses `length`
+    // readable bytes (fn contract); the `length > 0` guard short-circuits ahead
+    // of the read, so `length - 1` is an in-bounds index.
+    if prefix.length > 0 && unsafe { *prefix.data.add(prefix.length - 1) } != b'|' {
         stack_size = prefix.length + 1;
         let copy: *mut u8 = uc.tmp_stack_view().push(stack_size);
         ufbxi_check!(uc, !copy.is_null(), "copy");
-        ptr::copy_nonoverlapping(prefix.data, copy, prefix.length);
-        *copy.add(prefix.length) = b'|';
+        // SAFETY: `copy` is the fresh non-null `prefix.length + 1`-byte push,
+        // disjoint from the caller's `prefix.data` span of `length` bytes.
+        unsafe { ptr::copy_nonoverlapping(prefix.data, copy, prefix.length) };
+        // SAFETY: the push holds `prefix.length + 1` bytes, so index
+        // `prefix.length` is its last one.
+        unsafe { *copy.add(prefix.length) = b'|' };
 
         prefix.data = copy;
         prefix.length += 1;
     }
 
-    sp::push_string_place_str(uc.string_pool_mut_ptr(), &mut prefix, false)?;
-    *dst = prefix;
+    // SAFETY: `string_pool_mut_ptr` is `uc`'s own live string pool, and `prefix`
+    // is a local whose `data`/`length` span is either the caller's or the
+    // `tmp_stack` copy above — both readable for `length` bytes.
+    unsafe { sp::push_string_place_str(uc.string_pool_mut_ptr(), &mut prefix, false)? };
+    // SAFETY: `dst` points to a writable `ufbx_string` slot (fn contract).
+    unsafe { *dst = prefix };
 
     if stack_size > 0 {
-        pop::<u8>(uc.tmp_stack_mut_ptr(), stack_size, ptr::null_mut());
+        // SAFETY: `stack_size > 0` only when the push above ran, so those bytes
+        // are still `tmp_stack`'s topmost entries.
+        unsafe { pop::<u8>(uc.tmp_stack_mut_ptr(), stack_size, ptr::null_mut()) };
     }
 
     Ok(())
@@ -4516,13 +5256,21 @@ pub(crate) unsafe fn shader_texture_find_prefix(
     let suffixes: *mut String = suffixes_storage.as_mut_ptr() as *mut String;
     let mut num_suffixes: usize = 0;
 
-    *suffixes.add(num_suffixes) = sp::str_c(b" Parameters/Connections\0".as_ptr());
+    // SAFETY: `num_suffixes` is `0` here, in bounds of the 3-entry local array;
+    // the literal is NUL-terminated, which is what `str_c` measures.
+    unsafe { *suffixes.add(num_suffixes) = sp::str_c(b" Parameters/Connections\0".as_ptr()) };
     num_suffixes += 1;
-    if (*shader).shader_name.length > 0 {
-        *suffixes.add(num_suffixes) = (*shader).shader_name;
+    // SAFETY: `shader` points to a live, initialized `ufbx_shader_texture` — the
+    // texture's shader record being filled in (fn contract).
+    if unsafe { (*shader).shader_name.length } > 0 {
+        // SAFETY: `num_suffixes` is `1` here, in bounds of the 3-entry local
+        // array; `shader` is live (see above).
+        unsafe { *suffixes.add(num_suffixes) = (*shader).shader_name };
         num_suffixes += 1;
     }
-    *suffixes.add(num_suffixes) = sp::str_c(b"3dsMax|parameters\0".as_ptr());
+    // SAFETY: `num_suffixes` is at most `2` here, in bounds of the 3-entry local
+    // array; the literal is NUL-terminated, which is what `str_c` measures.
+    unsafe { *suffixes.add(num_suffixes) = sp::str_c(b"3dsMax|parameters\0".as_ptr()) };
     num_suffixes += 1;
 
     // C: `ufbx_assert(num_suffixes <= ufbxi_arraycount(suffixes));`
@@ -4532,23 +5280,42 @@ pub(crate) unsafe fn shader_texture_find_prefix(
     let mut p_suffix: *mut String = suffixes;
     let p_suffix_end: *mut String = add_ptr(p_suffix, num_suffixes);
     while p_suffix != p_suffix_end {
-        let suffix: String = *p_suffix;
+        // SAFETY: `p_suffix != p_suffix_end`, so it addresses one of the
+        // `num_suffixes` entries written above.
+        let suffix: String = unsafe { *p_suffix };
 
         // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
-        let mut prop: *mut Prop = (*texture).element.props.props.data as *mut Prop;
-        let prop_end: *mut Prop = add_ptr(prop, (*texture).element.props.props.count);
+        // SAFETY: `texture` points to a live, initialized `ufbx_texture` (fn
+        // contract), so its own prop list is readable.
+        let mut prop: *mut Prop = unsafe { (*texture).element.props.props.data as *mut Prop };
+        // SAFETY: as above; `data`/`count` describe one arena run.
+        let prop_end: *mut Prop = add_ptr(prop, unsafe { (*texture).element.props.props.count });
         while prop != prop_end {
-            if (*prop).type_ != PropType::Compound {
-                prop = prop.add(1);
+            // SAFETY: `prop != prop_end`, so it addresses a live, initialized
+            // entry of the texture's prop run.
+            if unsafe { (*prop).type_ } != PropType::Compound {
+                // SAFETY: `prop != prop_end`, so the advance lands at or before
+                // the run's one-past-the-end pointer.
+                prop = unsafe { prop.add(1) };
                 continue;
             }
-            if sp::ends_with((*prop).name, suffix) {
-                push_prop_prefix(uc, &mut (*shader).prop_prefix, (*prop).name)?;
+            // SAFETY: `prop` addresses a live entry (see above); its `name` and
+            // `suffix` are both `ufbx_string` spans, which is what `ends_with`
+            // compares.
+            if unsafe { sp::ends_with((*prop).name, suffix) } {
+                // SAFETY: `shader` is live, so `&mut (*shader).prop_prefix`
+                // addresses its own string slot; `(*prop).name` is a live
+                // interned span.
+                unsafe { push_prop_prefix(uc, &mut (*shader).prop_prefix, (*prop).name)? };
                 return Ok(());
             }
-            prop = prop.add(1);
+            // SAFETY: `prop != prop_end`, so the advance lands at or before the
+            // run's one-past-the-end pointer.
+            prop = unsafe { prop.add(1) };
         }
-        p_suffix = p_suffix.add(1);
+        // SAFETY: `p_suffix != p_suffix_end`, so the advance lands at or before
+        // the one-past-the-end pointer of the written suffix prefix.
+        p_suffix = unsafe { p_suffix.add(1) };
     }
 
     // Pre-7000 files don't have explicit Compound properties, so let's look for
@@ -4556,32 +5323,53 @@ pub(crate) unsafe fn shader_texture_find_prefix(
     let mut p_suffix: *mut String = suffixes;
     let p_suffix_end: *mut String = add_ptr(p_suffix, num_suffixes);
     while p_suffix != p_suffix_end {
-        let suffix: String = *p_suffix;
+        // SAFETY: `p_suffix != p_suffix_end`, so it addresses one of the
+        // `num_suffixes` entries written above.
+        let suffix: String = unsafe { *p_suffix };
 
         // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
-        let mut prop: *mut Prop = (*texture).element.props.props.data as *mut Prop;
-        let prop_end: *mut Prop = add_ptr(prop, (*texture).element.props.props.count);
+        // SAFETY: `texture` points to a live, initialized `ufbx_texture` (fn
+        // contract), so its own prop list is readable.
+        let mut prop: *mut Prop = unsafe { (*texture).element.props.props.data as *mut Prop };
+        // SAFETY: as above; `data`/`count` describe one arena run.
+        let prop_end: *mut Prop = add_ptr(prop, unsafe { (*texture).element.props.props.count });
         while prop != prop_end {
-            let mut name: String = (*prop).name;
+            // SAFETY: `prop != prop_end`, so it addresses a live, initialized
+            // entry of the texture's prop run.
+            let mut name: String = unsafe { (*prop).name };
             while name.length > 0 {
-                if *name.data.add(name.length - 1) == b'|' {
+                // SAFETY: `name` is the prop's interned span of `length`
+                // readable bytes, and the loop guard makes `length - 1` an
+                // in-bounds index; the loop only ever shrinks `length`.
+                if unsafe { *name.data.add(name.length - 1) } == b'|' {
                     break;
                 }
                 name.length -= 1;
             }
             if name.length <= 1 {
-                prop = prop.add(1);
+                // SAFETY: `prop != prop_end`, so the advance lands at or before
+                // the run's one-past-the-end pointer.
+                prop = unsafe { prop.add(1) };
                 continue;
             }
             name.length -= 1;
 
-            if sp::ends_with(name, suffix) {
-                push_prop_prefix(uc, &mut (*shader).prop_prefix, name)?;
+            // SAFETY: `name` is a prefix of the prop's interned span and
+            // `suffix` a live `ufbx_string`, which is what `ends_with` compares.
+            if unsafe { sp::ends_with(name, suffix) } {
+                // SAFETY: `shader` is live (see above), so
+                // `&mut (*shader).prop_prefix` addresses its own string slot;
+                // `name` spans readable interned bytes.
+                unsafe { push_prop_prefix(uc, &mut (*shader).prop_prefix, name)? };
                 return Ok(());
             }
-            prop = prop.add(1);
+            // SAFETY: `prop != prop_end`, so the advance lands at or before the
+            // run's one-past-the-end pointer.
+            prop = unsafe { prop.add(1) };
         }
-        p_suffix = p_suffix.add(1);
+        // SAFETY: `p_suffix != p_suffix_end`, so the advance lands at or before
+        // the one-past-the-end pointer of the written suffix prefix.
+        p_suffix = unsafe { p_suffix.add(1) };
     }
 
     Ok(())
@@ -4617,72 +5405,138 @@ static FILE_SHADERS: [FileShader; 6] = [
 pub(crate) unsafe fn update_shader_texture(texture_view: &TextureView, shader: *mut ShaderTexture) {
     let texture: *mut Texture = texture_view.get();
     // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
-    let mut input: *mut ShaderTextureInput = (*shader).inputs.data as *mut ShaderTextureInput;
-    let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
+    // SAFETY: `shader` points to a live, initialized `ufbx_shader_texture` — the
+    // texture's shader record (fn contract), so its own input list is readable.
+    let mut input: *mut ShaderTextureInput =
+        unsafe { (*shader).inputs.data as *mut ShaderTextureInput };
+    // SAFETY: as above; `data`/`count` describe one arena run.
+    let input_end: *mut ShaderTextureInput = add_ptr(input, unsafe { (*shader).inputs.count });
     while input != input_end {
         // C: `ufbx_prop *prop = input->prop;`
-        let mut prop: *mut Prop = opt_ptr(&(*input).prop);
+        // SAFETY: `input != input_end`, so it addresses a live, initialized entry
+        // of the shader's input run; `prop` is a live `Ref<Prop>` field of it,
+        // which `opt_ptr` reads as a nullable pointer.
+        let mut prop: *mut Prop = unsafe { opt_ptr(&(*input).prop) };
         if !prop.is_null() {
-            prop = find_prop_len(
-                texture_view.props_view(),
-                (*prop).name.data,
-                (*prop).name.length,
-            )
+            // SAFETY: `prop` is non-null (checked) and points to a live `ufbx_prop`
+            // of this texture's own prop list, so its `name` span is readable.
+            prop = unsafe {
+                find_prop_len(
+                    texture_view.props_view(),
+                    (*prop).name.data,
+                    (*prop).name.length,
+                )
+            }
             .map_or(ptr::null_mut(), PropView::get);
-            (*input).prop = opt_ref(prop);
-            (*input).value_vec4 = (*prop).value_vec4;
-            (*input).value_int = (*prop).value_int;
-            (*input).value_str = (*prop).value_str;
-            (*input).value_blob = (*prop).value_blob;
-            (*input).texture = opt_ref(get_prop_element(
-                &(*texture).element,
-                opt_ptr(&(*input).prop),
-                ElementType::Texture,
-            ) as *mut Texture);
+            // SAFETY: `input` addresses a live entry; `prop` is null or a live
+            // prop of the texture's list, which is what `opt_ref` wraps.
+            unsafe { (*input).prop = opt_ref(prop) };
+            // C-parity: the re-lookup keys on the name of a prop that came from
+            // this same prop list, so it always resolves (ufbx.c:20502-20506
+            // dereferences it unconditionally).
+            // SAFETY: `prop` resolves to that same live `ufbx_prop`, and `input`
+            // addresses a live entry of the input run.
+            unsafe { (*input).value_vec4 = (*prop).value_vec4 };
+            // SAFETY: as above.
+            unsafe { (*input).value_int = (*prop).value_int };
+            // SAFETY: as above.
+            unsafe { (*input).value_str = (*prop).value_str };
+            // SAFETY: as above.
+            unsafe { (*input).value_blob = (*prop).value_blob };
+            // SAFETY: `texture` is the texture view's own live storage, so
+            // `&(*texture).element` borrows its element header; `input.prop` was
+            // just set to that live prop, and `opt_ref` wraps the nullable
+            // element the lookup returns.
+            unsafe {
+                (*input).texture = opt_ref(get_prop_element(
+                    &(*texture).element,
+                    opt_ptr(&(*input).prop),
+                    ElementType::Texture,
+                ) as *mut Texture)
+            };
         }
 
-        prop = opt_ptr(&(*input).texture_prop);
+        // SAFETY: `input` addresses a live entry (see above); `texture_prop` is a
+        // live `Ref<Prop>` field of it.
+        prop = unsafe { opt_ptr(&(*input).texture_prop) };
         if !prop.is_null() {
-            prop = find_prop_len(
-                texture_view.props_view(),
-                (*prop).name.data,
-                (*prop).name.length,
-            )
+            // SAFETY: `prop` is non-null (checked) and points to a live `ufbx_prop`
+            // of this texture's own prop list, so its `name` span is readable.
+            prop = unsafe {
+                find_prop_len(
+                    texture_view.props_view(),
+                    (*prop).name.data,
+                    (*prop).name.length,
+                )
+            }
             .map_or(ptr::null_mut(), PropView::get);
-            (*input).texture_prop = opt_ref(prop);
-            let tex: *mut Texture =
-                get_prop_element(&(*texture).element, prop, ElementType::Texture) as *mut Texture;
+            // SAFETY: `input` addresses a live entry; `prop` is null or a live
+            // prop of the texture's list.
+            unsafe { (*input).texture_prop = opt_ref(prop) };
+            // SAFETY: `texture` is the view's own live storage, so
+            // `&(*texture).element` borrows its element header; `prop` is null or
+            // a live prop of that element's list.
+            let tex: *mut Texture = unsafe {
+                get_prop_element(&(*texture).element, prop, ElementType::Texture) as *mut Texture
+            };
             if !tex.is_null() {
-                (*input).texture = opt_ref(tex);
+                // SAFETY: `input` addresses a live entry and `tex` is a non-null
+                // (checked) live `ufbx_texture`.
+                unsafe { (*input).texture = opt_ref(tex) };
             }
         }
 
-        (*input).texture_enabled = !opt_ptr(&(*input).texture).is_null();
-        prop = opt_ptr(&(*input).texture_enabled_prop);
+        // SAFETY: `input` addresses a live entry; `texture` is a live
+        // `Ref<Texture>` field of it, which `opt_ptr` reads as a nullable
+        // pointer.
+        unsafe { (*input).texture_enabled = !opt_ptr(&(*input).texture).is_null() };
+        // SAFETY: as above, for the `texture_enabled_prop` field.
+        prop = unsafe { opt_ptr(&(*input).texture_enabled_prop) };
         if !prop.is_null() {
-            prop = find_prop_len(
-                texture_view.props_view(),
-                (*prop).name.data,
-                (*prop).name.length,
-            )
+            // SAFETY: `prop` is non-null (checked) and points to a live `ufbx_prop`
+            // of this texture's own prop list, so its `name` span is readable.
+            prop = unsafe {
+                find_prop_len(
+                    texture_view.props_view(),
+                    (*prop).name.data,
+                    (*prop).name.length,
+                )
+            }
             .map_or(ptr::null_mut(), PropView::get);
-            (*input).texture_enabled_prop = opt_ref(prop);
-            (*input).texture_enabled = (*prop).value_int != 0;
+            // SAFETY: `input` addresses a live entry; `prop` is null or a live
+            // prop of the texture's list.
+            unsafe { (*input).texture_enabled_prop = opt_ref(prop) };
+            // C-parity: the re-lookup keys on the name of a prop from this same
+            // list, so it always resolves (ufbx.c:20519-20520 dereferences it
+            // unconditionally).
+            // SAFETY: `prop` resolves to that same live `ufbx_prop`.
+            unsafe { (*input).texture_enabled = (*prop).value_int != 0 };
         }
-        input = input.add(1);
+        // SAFETY: `input != input_end`, so the advance lands at or before the
+        // input run's one-past-the-end pointer.
+        input = unsafe { input.add(1) };
     }
 
-    if (*shader).type_ == ShaderTextureType::SelectOutput {
+    // SAFETY: `shader` is live (see above).
+    if unsafe { (*shader).type_ } == ShaderTextureType::SelectOutput {
+        // SAFETY: `shader` is live and the literal is NUL-terminated, which is
+        // what the by-name lookup walks.
         let map: *mut ShaderTextureInput =
-            find_shader_texture_input(shader, b"sourceMap\0".as_ptr());
+            unsafe { find_shader_texture_input(shader, b"sourceMap\0".as_ptr()) };
+        // SAFETY: as above.
         let index: *mut ShaderTextureInput =
-            find_shader_texture_input(shader, b"outputChannelIndex\0".as_ptr());
+            unsafe { find_shader_texture_input(shader, b"outputChannelIndex\0".as_ptr()) };
         if !index.is_null() {
-            (*shader).main_texture_output_index = (*index).value_int;
+            // SAFETY: `index` is non-null (checked) and addresses a live entry of
+            // the shader's input run; `shader` is live.
+            unsafe { (*shader).main_texture_output_index = (*index).value_int };
         }
         if !map.is_null() {
-            (*shader).main_texture = (*map).texture;
-            (*map).texture_output_index = (*shader).main_texture_output_index;
+            // SAFETY: `map` is non-null (checked) and addresses a live entry of
+            // the shader's input run; `shader` is live.
+            unsafe { (*shader).main_texture = (*map).texture };
+            // SAFETY: as above.
+            unsafe { (*map).texture_output_index = (*shader).main_texture_output_index };
         }
     }
 }
@@ -4973,120 +5827,216 @@ pub(crate) fn finalize_shader_texture<'a>(
 #[inline(never)]
 pub(crate) unsafe fn propagate_main_textures(scene: *mut Scene) {
     // We need to do at least 2^(N-1) passes for N shader textures
-    let mut mask: usize = (*scene).metadata.num_shader_textures;
+    // SAFETY: `scene` points to the live, initialized `ufbx_scene` being
+    // finalized (fn contract), so its `metadata` is readable.
+    let mut mask: usize = unsafe { (*scene).metadata.num_shader_textures };
     while mask != 0 {
         mask >>= 1;
 
         // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, scene->textures)`
-        let mut p_texture: *mut *mut Texture = (*scene).textures.data as *mut *mut Texture;
-        let p_texture_end: *mut *mut Texture = add_ptr(p_texture, (*scene).textures.count);
+        // SAFETY: `scene` is live, so its own texture pointer list is readable.
+        let mut p_texture: *mut *mut Texture =
+            unsafe { (*scene).textures.data as *mut *mut Texture };
+        // SAFETY: as above; `data`/`count` describe one arena run.
+        let p_texture_end: *mut *mut Texture =
+            add_ptr(p_texture, unsafe { (*scene).textures.count });
         while p_texture != p_texture_end {
-            let texture: *mut Texture = *p_texture;
-            let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
+            // SAFETY: `p_texture != p_texture_end`, so it addresses a live slot of
+            // the scene's texture pointer run.
+            let texture: *mut Texture = unsafe { *p_texture };
+            // SAFETY: the run holds non-null pointers to live scene textures;
+            // `shader` is a live `Ref<ShaderTexture>` field of one.
+            let shader: *mut ShaderTexture = unsafe { opt_ptr(&(*texture).shader) };
             if shader.is_null() {
-                p_texture = p_texture.add(1);
+                // SAFETY: `p_texture != p_texture_end`, so the advance lands at or
+                // before the run's one-past-the-end pointer.
+                p_texture = unsafe { p_texture.add(1) };
                 continue;
             }
 
-            let main_tex: *mut Texture = opt_ptr(&(*shader).main_texture);
-            if main_tex.is_null() || (*shader).main_texture_output_index != 0 {
-                p_texture = p_texture.add(1);
+            // SAFETY: `shader` is non-null (checked) and points to a live
+            // `ufbx_shader_texture` owned by that texture.
+            let main_tex: *mut Texture = unsafe { opt_ptr(&(*shader).main_texture) };
+            // SAFETY: as above.
+            if main_tex.is_null() || unsafe { (*shader).main_texture_output_index } != 0 {
+                // SAFETY: `p_texture != p_texture_end` (see above).
+                p_texture = unsafe { p_texture.add(1) };
                 continue;
             }
 
-            let main_shader: *mut ShaderTexture = opt_ptr(&(*main_tex).shader);
-            if main_shader.is_null() || opt_ptr(&(*main_shader).main_texture).is_null() {
-                p_texture = p_texture.add(1);
+            // SAFETY: `main_tex` is non-null (checked) and points to a live scene
+            // texture.
+            let main_shader: *mut ShaderTexture = unsafe { opt_ptr(&(*main_tex).shader) };
+            // SAFETY: `main_shader` is non-null on the right of the `||`
+            // short-circuit and points to a live `ufbx_shader_texture`.
+            if main_shader.is_null() || unsafe { opt_ptr(&(*main_shader).main_texture) }.is_null() {
+                // SAFETY: `p_texture != p_texture_end` (see above).
+                p_texture = unsafe { p_texture.add(1) };
                 continue;
             }
 
-            (*shader).main_texture = (*main_shader).main_texture;
-            (*shader).main_texture_output_index = (*main_shader).main_texture_output_index;
+            // SAFETY: `shader` and `main_shader` are both non-null (checked) and
+            // point to live `ufbx_shader_texture`s.
+            unsafe { (*shader).main_texture = (*main_shader).main_texture };
+            // SAFETY: as above.
+            unsafe {
+                (*shader).main_texture_output_index = (*main_shader).main_texture_output_index
+            };
 
-            p_texture = p_texture.add(1);
+            // SAFETY: `p_texture != p_texture_end` (see above).
+            p_texture = unsafe { p_texture.add(1) };
         }
     }
 
     // Remove cyclic main textures
     // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, scene->textures)`
-    let mut p_texture: *mut *mut Texture = (*scene).textures.data as *mut *mut Texture;
-    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, (*scene).textures.count);
+    // SAFETY: `scene` is live (see above), so its own texture pointer list is
+    // readable.
+    let mut p_texture: *mut *mut Texture = unsafe { (*scene).textures.data as *mut *mut Texture };
+    // SAFETY: as above; `data`/`count` describe one arena run.
+    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, unsafe { (*scene).textures.count });
     while p_texture != p_texture_end {
-        let texture: *mut Texture = *p_texture;
-        let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
+        // SAFETY: `p_texture != p_texture_end`, so it addresses a live slot of the
+        // scene's texture pointer run.
+        let texture: *mut Texture = unsafe { *p_texture };
+        // SAFETY: the run holds non-null pointers to live scene textures.
+        let shader: *mut ShaderTexture = unsafe { opt_ptr(&(*texture).shader) };
+        // SAFETY: on the right of each `||` short-circuit `shader` is non-null and
+        // points to a live `ufbx_shader_texture`.
         if shader.is_null()
-            || opt_ptr(&(*shader).main_texture).is_null()
-            || (*shader).main_texture_output_index != 0
+            || unsafe { opt_ptr(&(*shader).main_texture) }.is_null()
+            || unsafe { (*shader).main_texture_output_index } != 0
         {
-            p_texture = p_texture.add(1);
+            // SAFETY: `p_texture != p_texture_end`, so the advance lands at or
+            // before the run's one-past-the-end pointer.
+            p_texture = unsafe { p_texture.add(1) };
             continue;
         }
-        let main_tex: *mut Texture = opt_ptr(&(*shader).main_texture);
+        // SAFETY: `shader` is non-null (the guard above returned early otherwise).
+        let main_tex: *mut Texture = unsafe { opt_ptr(&(*shader).main_texture) };
+        // SAFETY: on the right of each `&&` short-circuit `main_tex` is non-null
+        // and points to a live scene texture, and the inner `opt_ptr` of its
+        // `shader` field is non-null and points to a live `ufbx_shader_texture`.
         if !main_tex.is_null()
-            && !opt_ptr(&(*main_tex).shader).is_null()
-            && !opt_ptr(&(*opt_ptr(&(*main_tex).shader)).main_texture).is_null()
+            && !unsafe { opt_ptr(&(*main_tex).shader) }.is_null()
+            && !unsafe { opt_ptr(&(*opt_ptr(&(*main_tex).shader)).main_texture) }.is_null()
         {
             // Should have been propagated to `texture`
-            (*shader).main_texture = None;
+            // SAFETY: `shader` is non-null and points to a live
+            // `ufbx_shader_texture`.
+            unsafe { (*shader).main_texture = None };
         }
-        p_texture = p_texture.add(1);
+        // SAFETY: `p_texture != p_texture_end` (see above).
+        p_texture = unsafe { p_texture.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, scene->textures)`
-    let mut p_texture: *mut *mut Texture = (*scene).textures.data as *mut *mut Texture;
-    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, (*scene).textures.count);
+    // SAFETY: `scene` is live (see above), so its own texture pointer list is
+    // readable.
+    let mut p_texture: *mut *mut Texture = unsafe { (*scene).textures.data as *mut *mut Texture };
+    // SAFETY: as above; `data`/`count` describe one arena run.
+    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, unsafe { (*scene).textures.count });
     while p_texture != p_texture_end {
-        let texture: *mut Texture = *p_texture;
-        let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
+        // SAFETY: `p_texture != p_texture_end`, so it addresses a live slot of the
+        // scene's texture pointer run.
+        let texture: *mut Texture = unsafe { *p_texture };
+        // SAFETY: the run holds non-null pointers to live scene textures.
+        let shader: *mut ShaderTexture = unsafe { opt_ptr(&(*texture).shader) };
         if shader.is_null() {
-            p_texture = p_texture.add(1);
+            // SAFETY: `p_texture != p_texture_end`, so the advance lands at or
+            // before the run's one-past-the-end pointer.
+            p_texture = unsafe { p_texture.add(1) };
             continue;
         }
 
         // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
-        let mut input: *mut ShaderTextureInput = (*shader).inputs.data as *mut ShaderTextureInput;
-        let input_end: *mut ShaderTextureInput = add_ptr(input, (*shader).inputs.count);
+        // SAFETY: `shader` is non-null (checked) and points to a live
+        // `ufbx_shader_texture`, so its own input list is readable.
+        let mut input: *mut ShaderTextureInput =
+            unsafe { (*shader).inputs.data as *mut ShaderTextureInput };
+        // SAFETY: as above; `data`/`count` describe one arena run.
+        let input_end: *mut ShaderTextureInput = add_ptr(input, unsafe { (*shader).inputs.count });
         while input != input_end {
-            let input_texture: *mut Texture = opt_ptr(&(*input).texture);
-            if input_texture.is_null() || opt_ptr(&(*input_texture).shader).is_null() {
-                input = input.add(1);
+            // SAFETY: `input != input_end`, so it addresses a live, initialized
+            // entry of the shader's input run.
+            let input_texture: *mut Texture = unsafe { opt_ptr(&(*input).texture) };
+            // SAFETY: on the right of the `||` short-circuit `input_texture` is
+            // non-null and points to a live scene texture.
+            if input_texture.is_null() || unsafe { opt_ptr(&(*input_texture).shader) }.is_null() {
+                // SAFETY: `input != input_end`, so the advance lands at or before
+                // the input run's one-past-the-end pointer.
+                input = unsafe { input.add(1) };
                 continue;
             }
-            let input_shader: *mut ShaderTexture = opt_ptr(&(*input_texture).shader);
-            if !opt_ptr(&(*input_shader).main_texture).is_null() {
-                (*input).texture = (*input_shader).main_texture;
-                (*input).texture_output_index = (*input_shader).main_texture_output_index;
+            // SAFETY: `input_texture` is non-null (the guard above continued
+            // otherwise) and points to a live scene texture.
+            let input_shader: *mut ShaderTexture = unsafe { opt_ptr(&(*input_texture).shader) };
+            // SAFETY: `input_shader` is non-null (the same guard proved its
+            // `opt_ptr` non-null) and points to a live `ufbx_shader_texture`.
+            if !unsafe { opt_ptr(&(*input_shader).main_texture) }.is_null() {
+                // SAFETY: `input` addresses a live entry and `input_shader` a live
+                // `ufbx_shader_texture`.
+                unsafe { (*input).texture = (*input_shader).main_texture };
+                // SAFETY: as above.
+                unsafe {
+                    (*input).texture_output_index = (*input_shader).main_texture_output_index
+                };
             }
-            input = input.add(1);
+            // SAFETY: `input != input_end` (see above).
+            input = unsafe { input.add(1) };
         }
 
-        p_texture = p_texture.add(1);
+        // SAFETY: `p_texture != p_texture_end` (see above).
+        p_texture = unsafe { p_texture.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_material, p_material, scene->materials)`
-    let mut p_material: *mut *mut Material = (*scene).materials.data as *mut *mut Material;
-    let p_material_end: *mut *mut Material = add_ptr(p_material, (*scene).materials.count);
+    // SAFETY: `scene` is live (see above), so its own material pointer list is
+    // readable.
+    let mut p_material: *mut *mut Material =
+        unsafe { (*scene).materials.data as *mut *mut Material };
+    // SAFETY: as above; `data`/`count` describe one arena run.
+    let p_material_end: *mut *mut Material =
+        add_ptr(p_material, unsafe { (*scene).materials.count });
     while p_material != p_material_end {
-        let material: *mut Material = *p_material;
+        // SAFETY: `p_material != p_material_end`, so it addresses a live slot of
+        // the scene's material pointer run.
+        let material: *mut Material = unsafe { *p_material };
 
         // C: `ufbxi_for_list(ufbx_material_texture, tex, material->textures)`
-        let mut tex: *mut MaterialTexture = (*material).textures.data as *mut MaterialTexture;
-        let tex_end: *mut MaterialTexture = add_ptr(tex, (*material).textures.count);
+        // SAFETY: the run holds non-null pointers to live scene materials, so the
+        // material's own texture list is readable.
+        let mut tex: *mut MaterialTexture =
+            unsafe { (*material).textures.data as *mut MaterialTexture };
+        // SAFETY: as above; `data`/`count` describe one arena run.
+        let tex_end: *mut MaterialTexture = add_ptr(tex, unsafe { (*material).textures.count });
         while tex != tex_end {
-            let shader: *mut ShaderTexture = opt_ptr(&(*ref_ptr(&(*tex).texture)).shader);
+            // SAFETY: `tex != tex_end`, so it addresses a live, initialized entry
+            // of the material's texture run; `ufbx_material_texture.texture` is
+            // non-nullable, so `ref_ptr` resolves it to a live scene texture.
+            let shader: *mut ShaderTexture =
+                unsafe { opt_ptr(&(*ref_ptr(&(*tex).texture)).shader) };
+            // SAFETY: on the right of each `&&` short-circuit `shader` is non-null
+            // and points to a live `ufbx_shader_texture`.
             if !shader.is_null()
-                && !opt_ptr(&(*shader).main_texture).is_null()
-                && (*shader).main_texture_output_index == 0
+                && !unsafe { opt_ptr(&(*shader).main_texture) }.is_null()
+                && unsafe { (*shader).main_texture_output_index } == 0
             {
                 // C: `tex->texture = shader->main_texture;` — `main_texture` is
                 // null-checked non-NULL just above, so the non-nullable
                 // `ufbx_material_texture.texture` stays valid.
-                (*tex).texture = Ref::from_ptr(opt_ptr(&(*shader).main_texture));
+                // SAFETY: `tex` addresses a live entry and `shader`'s
+                // `main_texture` resolves to a non-null live scene texture.
+                unsafe { (*tex).texture = Ref::from_ptr(opt_ptr(&(*shader).main_texture)) };
             }
-            tex = tex.add(1);
+            // SAFETY: `tex != tex_end`, so the advance lands at or before the
+            // texture run's one-past-the-end pointer.
+            tex = unsafe { tex.add(1) };
         }
 
-        p_material = p_material.add(1);
+        // SAFETY: `p_material != p_material_end`, so the advance lands at or
+        // before the material run's one-past-the-end pointer.
+        p_material = unsafe { p_material.add(1) };
     }
 }
 
@@ -5102,71 +6052,111 @@ macro_rules! patch_empty {
 // ufbx.c:20757-20800 `ufbxi_insert_texture_file`
 #[inline(never)]
 pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) -> Result<(), Fail> {
-    (*texture).file_index = NO_INDEX;
+    // SAFETY: `texture` points to a live, initialized `ufbx_texture` — the
+    // texture being registered with the file table (fn contract).
+    unsafe { (*texture).file_index = NO_INDEX };
 
     let mut key: *const u8 = ptr::null();
 
     // HACK: Even the raw entries have a null terminator so we can offset the
     // pointer by one for relative filenames. This guarantees that an overlapping
     // absolute and relative filenames will get separate textures.
-    if (*texture).raw_absolute_filename.size > 0 {
-        key = (*texture).raw_absolute_filename.data;
-    } else if (*texture).raw_relative_filename.size > 0 {
-        key = (*texture).raw_relative_filename.data.add(1);
+    // SAFETY: `texture` is live (see above).
+    if unsafe { (*texture).raw_absolute_filename.size } > 0 {
+        // SAFETY: as above.
+        key = unsafe { (*texture).raw_absolute_filename.data };
+    // SAFETY: as above.
+    } else if unsafe { (*texture).raw_relative_filename.size } > 0 {
+        // SAFETY: as above; the raw blob spans `size` bytes plus the NUL the
+        // string pool appends, so offsetting by one stays inside its allocation.
+        key = unsafe { (*texture).raw_relative_filename.data.add(1) };
     }
 
     if key.is_null() {
         return Ok(());
     }
     let hash: u32 = hash_ptr!(key);
-    let mut entry: *mut TextureFileEntry = map_find(
-        uc.texture_file_map_mut_ptr(),
-        hash,
-        &key as *const *const u8 as *const c_void,
-    );
-    if entry.is_null() {
-        entry = map_insert(
+    // SAFETY: `texture_file_map_mut_ptr` is `uc`'s own live map, whose comparator
+    // reads the probe value as the `*const u8` key that `&key` addresses.
+    let mut entry: *mut TextureFileEntry = unsafe {
+        map_find(
             uc.texture_file_map_mut_ptr(),
             hash,
             &key as *const *const u8 as *const c_void,
-        );
+        )
+    };
+    if entry.is_null() {
+        // SAFETY: as the `map_find` above.
+        entry = unsafe {
+            map_insert(
+                uc.texture_file_map_mut_ptr(),
+                hash,
+                &key as *const *const u8 as *const c_void,
+            )
+        };
         ufbxi_check!(uc, !entry.is_null(), "entry");
 
         let file: *mut TextureFile = uc.tmp_view().push_zero(1);
         ufbxi_check!(uc, !file.is_null(), "file");
 
-        (*file).index = uc.texture_file_map_view().size() - 1;
+        // SAFETY: `file` is the fresh non-null one-element push above; the insert
+        // grew the map, so its size is at least one.
+        unsafe { (*file).index = uc.texture_file_map_view().size() - 1 };
 
-        (*entry).key = key;
-        (*entry).file = file;
+        // SAFETY: `entry` is the fresh non-null map slot above, and `file` the
+        // fresh push, which lives in `uc`'s `tmp` arena for the rest of the read.
+        unsafe { (*entry).key = key };
+        // SAFETY: as above.
+        unsafe { (*entry).file = file };
     }
 
-    let file: *mut TextureFile = (*entry).file;
-    (*texture).file_index = (*file).index;
-    (*texture).has_file = true;
-    patch_empty!((*file).filename, length, (*texture).filename);
-    patch_empty!(
-        (*file).relative_filename,
-        length,
-        (*texture).relative_filename
-    );
-    patch_empty!(
-        (*file).absolute_filename,
-        length,
-        (*texture).absolute_filename
-    );
-    patch_empty!((*file).raw_filename, size, (*texture).raw_filename);
-    patch_empty!(
-        (*file).raw_relative_filename,
-        size,
-        (*texture).raw_relative_filename
-    );
-    patch_empty!(
-        (*file).raw_absolute_filename,
-        size,
-        (*texture).raw_absolute_filename
-    );
-    patch_empty!((*file).content, size, (*texture).content);
+    // SAFETY: `entry` is non-null — either the hit from `map_find` or the freshly
+    // filled insert above — and points to a live `TextureFileEntry`.
+    let file: *mut TextureFile = unsafe { (*entry).file };
+    // SAFETY: `file` is that entry's `TextureFile`, pushed on `uc`'s `tmp` arena;
+    // `texture` is live.
+    unsafe { (*texture).file_index = (*file).index };
+    // SAFETY: `texture` is live (see above).
+    unsafe { (*texture).has_file = true };
+    // SAFETY: `file` and `texture` are both live (see above), so the macro's
+    // `(*file)` / `(*texture)` field projections address their own members.
+    unsafe { patch_empty!((*file).filename, length, (*texture).filename) };
+    // SAFETY: as above.
+    unsafe {
+        patch_empty!(
+            (*file).relative_filename,
+            length,
+            (*texture).relative_filename
+        )
+    };
+    // SAFETY: as above.
+    unsafe {
+        patch_empty!(
+            (*file).absolute_filename,
+            length,
+            (*texture).absolute_filename
+        )
+    };
+    // SAFETY: as above.
+    unsafe { patch_empty!((*file).raw_filename, size, (*texture).raw_filename) };
+    // SAFETY: as above.
+    unsafe {
+        patch_empty!(
+            (*file).raw_relative_filename,
+            size,
+            (*texture).raw_relative_filename
+        )
+    };
+    // SAFETY: as above.
+    unsafe {
+        patch_empty!(
+            (*file).raw_absolute_filename,
+            size,
+            (*texture).raw_absolute_filename
+        )
+    };
+    // SAFETY: as above.
+    unsafe { patch_empty!((*file).content, size, (*texture).content) };
 
     Ok(())
 }
@@ -5215,7 +6205,10 @@ pub(crate) unsafe extern "C" fn ordered_texture_less_texture(
     ufbxi_ignore!(user);
     let a: *const OrderedTexture = va as *const OrderedTexture;
     let b: *const OrderedTexture = vb as *const OrderedTexture;
-    (*a).texture < (*b).texture
+    // SAFETY: the sort hands its comparator two pointers to live, initialized
+    // elements of the `OrderedTexture` run it was given (C-callback contract),
+    // which is what `va`/`vb` are cast back to.
+    unsafe { (*a).texture < (*b).texture }
 }
 
 // ufbx.c:20831-20836 `ufbxi_ordered_texture_less_order`
@@ -5228,7 +6221,10 @@ pub(crate) unsafe extern "C" fn ordered_texture_less_order(
     ufbxi_ignore!(user);
     let a: *const OrderedTexture = va as *const OrderedTexture;
     let b: *const OrderedTexture = vb as *const OrderedTexture;
-    (*a).order < (*b).order
+    // SAFETY: the sort hands its comparator two pointers to live, initialized
+    // elements of the `OrderedTexture` run it was given (C-callback contract),
+    // which is what `va`/`vb` are cast back to.
+    unsafe { (*a).order < (*b).order }
 }
 
 // ufbx.c:20838-20867 `ufbxi_deduplicate_textures`
@@ -5245,51 +6241,75 @@ pub(crate) unsafe fn deduplicate_textures(
 
     ufbxi_check!(
         uc,
-        grow_array::<u8>(
-            uc.ator_tmp_mut_ptr(),
-            uc.tmp_arr_mut_ptr(),
-            uc.tmp_arr_size_mut_ptr(),
-            count.wrapping_mul(size_of::<OrderedTexture>()),
-        ),
+        // SAFETY: the three pointers are `uc`'s own live `ator_tmp` and the
+        // `tmp_arr`/`tmp_arr_size` slots that pair with it.
+        unsafe {
+            grow_array::<u8>(
+                uc.ator_tmp_mut_ptr(),
+                uc.tmp_arr_mut_ptr(),
+                uc.tmp_arr_size_mut_ptr(),
+                count.wrapping_mul(size_of::<OrderedTexture>()),
+            )
+        },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_ordered_texture)))"
     );
 
-    stable_sort(
-        size_of::<OrderedTexture>(),
-        16,
-        textures as *mut c_void,
-        uc.tmp_arr() as *mut c_void,
-        count,
-        ordered_texture_less_texture,
-        ptr::null_mut(),
-    );
+    // SAFETY: `textures` is the fresh non-null `count`-element run popped above
+    // and `tmp_arr` was just grown to `count * size_of::<OrderedTexture>()`
+    // bytes, so the two disjoint runs the sort needs are in place; the comparator
+    // matches the element size passed alongside.
+    unsafe {
+        stable_sort(
+            size_of::<OrderedTexture>(),
+            16,
+            textures as *mut c_void,
+            uc.tmp_arr() as *mut c_void,
+            count,
+            ordered_texture_less_texture,
+            ptr::null_mut(),
+        )
+    };
 
     // Remove adjacent duplicates
     let mut dst_ix: usize = 0;
     for src_ix in 0..count {
-        if src_ix > 0 && (*textures.add(src_ix - 1)).texture == (*textures.add(src_ix)).texture {
+        // SAFETY: `src_ix < count` and the `src_ix > 0` guard short-circuits ahead
+        // of the reads, so both indices are in bounds of the `count`-element
+        // `textures` run.
+        if src_ix > 0
+            && unsafe { (*textures.add(src_ix - 1)).texture == (*textures.add(src_ix)).texture }
+        {
             continue;
         } else {
             if src_ix != dst_ix {
-                *textures.add(dst_ix) = *textures.add(src_ix);
+                // SAFETY: `dst_ix <= src_ix < count`, so both indices are in
+                // bounds of the `textures` run.
+                unsafe { *textures.add(dst_ix) = *textures.add(src_ix) };
             }
             dst_ix += 1;
         }
     }
 
     let new_count: usize = dst_ix;
-    stable_sort(
-        size_of::<OrderedTexture>(),
-        16,
-        textures as *mut c_void,
-        uc.tmp_arr() as *mut c_void,
-        new_count,
-        ordered_texture_less_order,
-        ptr::null_mut(),
-    );
+    // SAFETY: `new_count <= count`, so the run and the `tmp_arr` scratch grown
+    // above both cover the sort; the comparator matches the element size.
+    unsafe {
+        stable_sort(
+            size_of::<OrderedTexture>(),
+            16,
+            textures as *mut c_void,
+            uc.tmp_arr() as *mut c_void,
+            new_count,
+            ordered_texture_less_order,
+            ptr::null_mut(),
+        )
+    };
 
-    *p_dst_count = new_count;
-    *p_dst = textures;
+    // SAFETY: `p_dst_count` and `p_dst` are the caller's out-parameter slots (fn
+    // contract).
+    unsafe { *p_dst_count = new_count };
+    // SAFETY: as above; `textures` is the arena run that outlives the caller.
+    unsafe { *p_dst = textures };
 
     Ok(())
 }
@@ -5583,9 +6603,15 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn get_geometry_transform_node(element: *mut Element) -> *mut Node {
-    if (*element).instances.count == 1 {
-        let node: *mut Node = ref_ptr((*element).instances.data.add(0));
-        if (*node).has_geometry_transform {
+    // SAFETY: `element` points to a live, initialized `ufbx_element` — the
+    // attribute whose instances are being inspected (fn contract).
+    if unsafe { (*element).instances.count } == 1 {
+        // SAFETY: `count == 1`, so index `0` is in bounds of the element's own
+        // instance run; its entries are non-nullable node references, which
+        // `ref_ptr` resolves to a live scene `Node`.
+        let node: *mut Node = unsafe { ref_ptr((*element).instances.data.add(0)) };
+        // SAFETY: `node` is that live scene node.
+        if unsafe { (*node).has_geometry_transform } {
             return node;
         }
     }
@@ -5597,7 +6623,10 @@ pub(crate) unsafe fn get_geometry_transform_node(element: *mut Element) -> *mut 
 pub(crate) unsafe fn mirror_vec3_list(v_list: *const c_void, axis: MirrorAxis, stride: usize) {
     let mut stride: usize = stride;
     let list: *const VoidList = v_list as *const VoidList;
-    if axis == MirrorAxis::None || list.is_null() || (*list).count == 0 {
+    // SAFETY: `v_list` is null or points to a live `ufbx_*_list` header — a
+    // `data`/`count` pair over `count` `ufbx_vec3`-shaped elements spaced by
+    // `stride` (fn contract); the null check short-circuits ahead of the read.
+    if axis == MirrorAxis::None || list.is_null() || unsafe { (*list).count } == 0 {
         return;
     }
     if stride == 0 {
@@ -5607,12 +6636,16 @@ pub(crate) unsafe fn mirror_vec3_list(v_list: *const c_void, axis: MirrorAxis, s
     // C: `(char*)list->data + (size_t)((int)axis - 1) * sizeof(ufbx_real)` —
     // the enum is narrowed to `int` before the subtraction, and `axis` is
     // 1..=3 here because `UFBX_MIRROR_AXIS_NONE` returned above.
-    let mut p: *mut u8 = ((*list).data as *mut u8)
+    // SAFETY: `list` is non-null (checked) and its header is live (see above).
+    let mut p: *mut u8 = unsafe { (*list).data as *mut u8 }
         .wrapping_add(((axis as i32 - 1) as usize).wrapping_mul(size_of::<Real>()));
-    let end: *mut u8 = p.wrapping_add((*list).count.wrapping_mul(stride));
+    // SAFETY: as above.
+    let end: *mut u8 = p.wrapping_add(unsafe { (*list).count }.wrapping_mul(stride));
     while p != end {
         let v: *mut Real = p as *mut Real;
-        *v = -*v;
+        // SAFETY: `p` walks the `count` strided elements of the list; `axis` is
+        // 1..=3, so the component offset stays inside each element's three reals.
+        unsafe { *v = -*v };
         p = p.wrapping_add(stride);
     }
 }
@@ -5622,20 +6655,29 @@ pub(crate) unsafe fn mirror_vec3_list(v_list: *const c_void, axis: MirrorAxis, s
 pub(crate) unsafe fn scale_vec3_list(v_list: *const c_void, scale: Real, stride: usize) {
     let mut stride: usize = stride;
     let list: *const VoidList = v_list as *const VoidList;
-    if list.is_null() || (*list).count == 0 {
+    // SAFETY: `v_list` is null or points to a live `ufbx_*_list` header — a
+    // `data`/`count` pair over `count` `ufbx_vec3`-shaped elements spaced by
+    // `stride` (fn contract); the null check short-circuits ahead of the read.
+    if list.is_null() || unsafe { (*list).count } == 0 {
         return;
     }
     if stride == 0 {
         stride = size_of::<Vec3>();
     }
 
-    let mut p: *mut u8 = (*list).data as *mut u8;
-    let end: *mut u8 = p.wrapping_add((*list).count.wrapping_mul(stride));
+    // SAFETY: `list` is non-null (checked) and its header is live (see above).
+    let mut p: *mut u8 = unsafe { (*list).data as *mut u8 };
+    // SAFETY: as above.
+    let end: *mut u8 = p.wrapping_add(unsafe { (*list).count }.wrapping_mul(stride));
     while p != end {
         let v: *mut Vec3 = p as *mut Vec3;
-        (*v).x *= scale;
-        (*v).y *= scale;
-        (*v).z *= scale;
+        // SAFETY: `p` walks the `count` strided elements of the list, each a live
+        // `ufbx_vec3`.
+        unsafe { (*v).x *= scale };
+        // SAFETY: as above.
+        unsafe { (*v).y *= scale };
+        // SAFETY: as above.
+        unsafe { (*v).z *= scale };
         p = p.wrapping_add(stride);
     }
 }
@@ -5649,18 +6691,25 @@ pub(crate) unsafe fn transform_vec3_list(
 ) {
     let mut stride: usize = stride;
     let list: *const VoidList = v_list as *const VoidList;
-    if list.is_null() || (*list).count == 0 {
+    // SAFETY: `v_list` is null or points to a live `ufbx_*_list` header — a
+    // `data`/`count` pair over `count` `ufbx_vec3`-shaped elements spaced by
+    // `stride` (fn contract); the null check short-circuits ahead of the read.
+    if list.is_null() || unsafe { (*list).count } == 0 {
         return;
     }
     if stride == 0 {
         stride = size_of::<Vec3>();
     }
 
-    let mut p: *mut u8 = (*list).data as *mut u8;
-    let end: *mut u8 = p.wrapping_add((*list).count.wrapping_mul(stride));
+    // SAFETY: `list` is non-null (checked) and its header is live (see above).
+    let mut p: *mut u8 = unsafe { (*list).data as *mut u8 };
+    // SAFETY: as above.
+    let end: *mut u8 = p.wrapping_add(unsafe { (*list).count }.wrapping_mul(stride));
     while p != end {
         let v: *mut Vec3 = p as *mut Vec3;
-        *v = transform_position(matrix, *v);
+        // SAFETY: `p` walks the `count` strided elements of the list, each a live
+        // `ufbx_vec3`; `matrix` points to a live `ufbx_matrix` (fn contract).
+        unsafe { *v = transform_position(matrix, *v) };
         p = p.wrapping_add(stride);
     }
 }
@@ -5670,11 +6719,18 @@ pub(crate) unsafe fn transform_vec3_list(
 pub(crate) unsafe fn normalize_vec3_list(list: *const List<Vec3>) {
     // C: `ufbxi_nounroll ufbxi_for_list(ufbx_vec3, normal, *list)` — the
     // no-unroll pragma is optimizer-only and has no Rust analogue.
-    let mut normal: *mut Vec3 = (*list).data as *mut Vec3;
-    let normal_end: *mut Vec3 = add_ptr(normal, (*list).count);
+    // SAFETY: `list` points to a live `ufbx_vec3_list` header whose
+    // `data`/`count` describe one run of initialized vectors (fn contract).
+    let mut normal: *mut Vec3 = unsafe { (*list).data as *mut Vec3 };
+    // SAFETY: as above.
+    let normal_end: *mut Vec3 = add_ptr(normal, unsafe { (*list).count });
     while normal != normal_end {
-        *normal = normalize3(*normal);
-        normal = normal.add(1);
+        // SAFETY: `normal != normal_end`, so it addresses a live element of that
+        // run.
+        unsafe { *normal = normalize3(*normal) };
+        // SAFETY: as above, so the advance lands at or before the run's
+        // one-past-the-end pointer.
+        normal = unsafe { normal.add(1) };
     }
 }
 
@@ -5696,48 +6752,82 @@ pub(crate) unsafe fn flip_attrib_winding(
     is_position: bool,
 ) -> Result<(), Fail> {
     // All zero, no flipping needed
-    if (*indices).data == uc.zero_indices() || (*indices).count == 0 {
+    // SAFETY: `indices` points to a live `ufbx_uint32_list` header — one of the
+    // mesh's own attribute index lists (fn contract).
+    if unsafe { (*indices).data } == uc.zero_indices() || unsafe { (*indices).count } == 0 {
         return Ok(());
     }
 
-    if (*indices).data == (*mesh).vertex_position.indices.data && !is_position {
+    // SAFETY: `indices` is live (see above); `mesh` points to the live,
+    // initialized `ufbx_mesh` that owns it (fn contract).
+    if unsafe { (*indices).data == (*mesh).vertex_position.indices.data } && !is_position {
         // Sharing indices with vertex position, already flipped.
         return Ok(());
-    } else if (*indices).data == uc.consecutive_indices() {
+    // SAFETY: `indices` is live (see above).
+    } else if unsafe { (*indices).data } == uc.consecutive_indices() {
         // Need to duplicate consecutive indices, but we can cache the per mesh.
         if !uc.tmp_mesh_consecutive_indices().is_null() {
-            (*indices).data = uc.tmp_mesh_consecutive_indices();
+            // SAFETY: `indices` is live; the cached run is `uc`'s own result-arena
+            // copy of the consecutive indices for this mesh.
+            unsafe { (*indices).data = uc.tmp_mesh_consecutive_indices() };
             return Ok(());
         }
-        (*indices).data = push_copy::<u32>(uc.result_mut_ptr(), (*indices).count, (*indices).data);
-        ufbxi_check!(uc, !(*indices).data.is_null(), "indices->data");
-        uc.set_tmp_mesh_consecutive_indices((*indices).data as *mut u32);
+        // SAFETY: `result_mut_ptr` is `uc`'s own live result buffer, and
+        // `(*indices).data`/`count` describe the consecutive-index run being
+        // copied.
+        unsafe {
+            (*indices).data =
+                push_copy::<u32>(uc.result_mut_ptr(), (*indices).count, (*indices).data)
+        };
+        // SAFETY: `indices` is live (see above).
+        ufbxi_check!(uc, !unsafe { (*indices).data }.is_null(), "indices->data");
+        // SAFETY: as above; the push is the fresh non-null result-arena run.
+        uc.set_tmp_mesh_consecutive_indices(unsafe { (*indices).data } as *mut u32);
     }
 
-    let data: *mut u32 = (*indices).data as *mut u32;
+    // SAFETY: `indices` is live and its `data` is a writable run of `count`
+    // indices — either the mesh's own or the result-arena copy pushed above.
+    let data: *mut u32 = unsafe { (*indices).data as *mut u32 };
     // C: `ufbxi_for_list(ufbx_face, face, mesh->faces)`
-    let mut face: *mut Face = (*mesh).faces.data as *mut Face;
-    let face_end: *mut Face = add_ptr(face, (*mesh).faces.count);
+    // SAFETY: `mesh` is live (see above), so its own face list is readable.
+    let mut face: *mut Face = unsafe { (*mesh).faces.data as *mut Face };
+    // SAFETY: as above; `data`/`count` describe one arena run.
+    let face_end: *mut Face = add_ptr(face, unsafe { (*mesh).faces.count });
     while face != face_end {
-        if (*face).num_indices == 0 {
-            face = face.add(1);
+        // SAFETY: `face != face_end`, so it addresses a live, initialized entry of
+        // the mesh's face run.
+        if unsafe { (*face).num_indices } == 0 {
+            // SAFETY: `face != face_end`, so the advance lands at or before the
+            // run's one-past-the-end pointer.
+            face = unsafe { face.add(1) };
             continue;
         }
         // C: both sums are `unsigned int` arithmetic (wrapping) before the
         // widening to `size_t`.
-        let mut begin: usize = (*face).index_begin.wrapping_add(1) as usize;
-        let mut end: usize = (*face)
-            .index_begin
-            .wrapping_add((*face).num_indices)
-            .wrapping_sub(1) as usize;
+        // SAFETY: `face` addresses a live entry (see above).
+        let mut begin: usize = unsafe { (*face).index_begin }.wrapping_add(1) as usize;
+        // SAFETY: as above.
+        let mut end: usize = unsafe {
+            (*face)
+                .index_begin
+                .wrapping_add((*face).num_indices)
+                .wrapping_sub(1)
+        } as usize;
         while begin < end {
-            let tmp: u32 = *data.add(begin);
-            *data.add(begin) = *data.add(end);
-            *data.add(end) = tmp;
+            // SAFETY: every face's `[index_begin, index_begin + num_indices)` span
+            // lies inside the mesh's `num_indices` attribute indices, which is the
+            // length of the `data` run; `begin < end` keeps both inside that span.
+            let tmp: u32 = unsafe { *data.add(begin) };
+            // SAFETY: as above.
+            unsafe { *data.add(begin) = *data.add(end) };
+            // SAFETY: as above.
+            unsafe { *data.add(end) = tmp };
             begin += 1;
             end -= 1;
         }
-        face = face.add(1);
+        // SAFETY: `face != face_end`, so the advance lands at or before the run's
+        // one-past-the-end pointer.
+        face = unsafe { face.add(1) };
     }
 
     Ok(())
@@ -5747,106 +6837,192 @@ pub(crate) unsafe fn flip_attrib_winding(
 #[inline(never)]
 pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), Fail> {
     uc.set_tmp_mesh_consecutive_indices(ptr::null_mut());
-    flip_attrib_winding(uc, mesh, &raw mut (*mesh).vertex_position.indices, true)?;
-    flip_attrib_winding(uc, mesh, &raw mut (*mesh).vertex_normal.indices, false)?;
-    flip_attrib_winding(uc, mesh, &raw mut (*mesh).vertex_crease.indices, false)?;
-    if (*mesh).uv_sets.count > 0 {
+    // SAFETY: `mesh` points to the live, initialized `ufbx_mesh` being flipped
+    // (fn contract), so `&raw mut (*mesh).vertex_position.indices` addresses its
+    // own attribute index-list header.
+    unsafe { flip_attrib_winding(uc, mesh, &raw mut (*mesh).vertex_position.indices, true) }?;
+    // SAFETY: as above, for the mesh's own `vertex_normal` index list.
+    unsafe { flip_attrib_winding(uc, mesh, &raw mut (*mesh).vertex_normal.indices, false) }?;
+    // SAFETY: as above, for the mesh's own `vertex_crease` index list.
+    unsafe { flip_attrib_winding(uc, mesh, &raw mut (*mesh).vertex_crease.indices, false) }?;
+    // SAFETY: `mesh` is live (see above).
+    if unsafe { (*mesh).uv_sets.count } > 0 {
         // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
-        let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
-        let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
+        // SAFETY: as above; the mesh's own UV-set list is readable.
+        let mut set: *mut UvSet = unsafe { (*mesh).uv_sets.data } as *mut UvSet;
+        // SAFETY: as above; `data`/`count` describe one arena run.
+        let set_end: *mut UvSet = add_ptr(set, unsafe { (*mesh).uv_sets.count });
         while set != set_end {
-            flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_uv.indices, false)?;
-            flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_tangent.indices, false)?;
-            flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_bitangent.indices, false)?;
-            set = set.add(1);
+            // SAFETY: `set != set_end`, so it addresses a live, initialized entry
+            // of the mesh's UV-set run, and `mesh` owns it.
+            unsafe { flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_uv.indices, false) }?;
+            // SAFETY: as above, for this set's `vertex_tangent` index list.
+            unsafe {
+                flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_tangent.indices, false)
+            }?;
+            // SAFETY: as above, for this set's `vertex_bitangent` index list.
+            unsafe {
+                flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_bitangent.indices, false)
+            }?;
+            // SAFETY: `set != set_end`, so the advance lands at or before the
+            // run's one-past-the-end pointer.
+            set = unsafe { set.add(1) };
         }
         // C: struct assignment (memcpy) of the vertex-attribute headers; the
         // `Vertex*` structs are not `Copy` in the generated bindings, so the
         // copy is spelled as a byte-identical `copy_nonoverlapping`.
-        ptr::copy_nonoverlapping(
-            &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_uv,
-            &raw mut (*mesh).vertex_uv,
-            1,
-        );
-        ptr::copy_nonoverlapping(
-            &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_bitangent,
-            &raw mut (*mesh).vertex_bitangent,
-            1,
-        );
-        ptr::copy_nonoverlapping(
-            &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_tangent,
-            &raw mut (*mesh).vertex_tangent,
-            1,
-        );
+        // SAFETY: `uv_sets.count > 0`, so element `0` of the mesh's UV-set run is
+        // live and initialized; the destination is the mesh's own `vertex_uv`
+        // header, a distinct field of the same type.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_uv,
+                &raw mut (*mesh).vertex_uv,
+                1,
+            )
+        };
+        // SAFETY: as above, for the `vertex_bitangent` headers.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_bitangent,
+                &raw mut (*mesh).vertex_bitangent,
+                1,
+            )
+        };
+        // SAFETY: as above, for the `vertex_tangent` headers.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_tangent,
+                &raw mut (*mesh).vertex_tangent,
+                1,
+            )
+        };
     }
-    if (*mesh).color_sets.count > 0 {
+    // SAFETY: `mesh` is live (see above).
+    if unsafe { (*mesh).color_sets.count } > 0 {
         // C: `ufbxi_for_list(ufbx_color_set, set, mesh->color_sets)`
-        let mut set: *mut ColorSet = (*mesh).color_sets.data as *mut ColorSet;
-        let set_end: *mut ColorSet = add_ptr(set, (*mesh).color_sets.count);
+        // SAFETY: as above; the mesh's own color-set list is readable.
+        let mut set: *mut ColorSet = unsafe { (*mesh).color_sets.data } as *mut ColorSet;
+        // SAFETY: as above; `data`/`count` describe one arena run.
+        let set_end: *mut ColorSet = add_ptr(set, unsafe { (*mesh).color_sets.count });
         while set != set_end {
-            flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_color.indices, false)?;
-            set = set.add(1);
+            // SAFETY: `set != set_end`, so it addresses a live, initialized entry
+            // of the mesh's color-set run, and `mesh` owns it.
+            unsafe { flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_color.indices, false) }?;
+            // SAFETY: `set != set_end`, so the advance lands at or before the
+            // run's one-past-the-end pointer.
+            set = unsafe { set.add(1) };
         }
-        ptr::copy_nonoverlapping(
-            &raw const (*((*mesh).color_sets.data as *mut ColorSet).add(0)).vertex_color,
-            &raw mut (*mesh).vertex_color,
-            1,
-        );
+        // SAFETY: `color_sets.count > 0`, so element `0` of the mesh's color-set
+        // run is live and initialized; the destination is the mesh's own
+        // `vertex_color` header, a distinct field of the same type.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                &raw const (*((*mesh).color_sets.data as *mut ColorSet).add(0)).vertex_color,
+                &raw mut (*mesh).vertex_color,
+                1,
+            )
+        };
     }
-    flip_attrib_winding(uc, mesh, &raw mut (*mesh).skinned_position.indices, false)?;
-    if (*mesh).skinned_normal.indices.data != (*mesh).vertex_normal.indices.data {
-        flip_attrib_winding(uc, mesh, &raw mut (*mesh).skinned_normal.indices, false)?;
+    // SAFETY: `mesh` is live (see above), so `&raw mut` addresses its own
+    // `skinned_position` index-list header.
+    unsafe { flip_attrib_winding(uc, mesh, &raw mut (*mesh).skinned_position.indices, false) }?;
+    // SAFETY: `mesh` is live (see above).
+    if unsafe { (*mesh).skinned_normal.indices.data != (*mesh).vertex_normal.indices.data } {
+        // SAFETY: as above, for the mesh's own `skinned_normal` index list.
+        unsafe { flip_attrib_winding(uc, mesh, &raw mut (*mesh).skinned_normal.indices, false) }?;
     }
 
-    update_vertex_first_index(mesh);
+    // SAFETY: `mesh` is live and initialized (fn contract).
+    unsafe { update_vertex_first_index(mesh) };
 
     // Mapping from old index values to flipped ones, reserve index -1
     // (aka `UFBX_NO_INDEX`) for itself.
-    if (*mesh).edges.count > 0 {
+    // SAFETY: `mesh` is live (see above).
+    if unsafe { (*mesh).edges.count } > 0 {
         ufbxi_check!(
             uc,
-            grow_array::<u8>(
-                uc.ator_tmp_mut_ptr(),
-                uc.tmp_arr_mut_ptr(),
-                uc.tmp_arr_size_mut_ptr(),
-                (*mesh).num_indices.wrapping_add(1).wrapping_mul(size_of::<u32>()),
-            ),
+            // SAFETY: the three `uc` accessors hand out `uc`'s own tmp allocator
+            // and tmp-array header, and `mesh` is live so its `num_indices` is
+            // readable.
+            unsafe {
+                grow_array::<u8>(
+                    uc.ator_tmp_mut_ptr(),
+                    uc.tmp_arr_mut_ptr(),
+                    uc.tmp_arr_size_mut_ptr(),
+                    (*mesh).num_indices.wrapping_add(1).wrapping_mul(size_of::<u32>()),
+                )
+            },
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), ((mesh->num_indices + 1) * sizeof(uint32_t)))"
         );
-        let index_mapping: *mut u32 = (uc.tmp_arr() as *mut u32).add(1);
-        *index_mapping.offset(-1) = NO_INDEX;
+        // SAFETY: the grow above made `uc`'s tmp array at least
+        // `(num_indices + 1) * size_of::<u32>()` bytes, so offsetting one `u32`
+        // in stays inside that allocation.
+        let index_mapping: *mut u32 = unsafe { (uc.tmp_arr() as *mut u32).add(1) };
+        // SAFETY: `index_mapping` is offset one `u32` into the grown tmp array,
+        // so index `-1` is that array's first element.
+        unsafe { *index_mapping.offset(-1) = NO_INDEX };
         // C: `ufbxi_for_list(ufbx_face, face, mesh->faces)`
-        let mut face: *mut Face = (*mesh).faces.data as *mut Face;
-        let face_end: *mut Face = add_ptr(face, (*mesh).faces.count);
+        // SAFETY: `mesh` is live (see above), so its own face list is readable.
+        let mut face: *mut Face = unsafe { (*mesh).faces.data } as *mut Face;
+        // SAFETY: as above; `data`/`count` describe one arena run.
+        let face_end: *mut Face = add_ptr(face, unsafe { (*mesh).faces.count });
         while face != face_end {
-            if (*face).num_indices == 0 {
-                face = face.add(1);
+            // SAFETY: `face != face_end`, so it addresses a live, initialized entry
+            // of the mesh's face run.
+            if unsafe { (*face).num_indices } == 0 {
+                // SAFETY: `face != face_end`, so the advance lands at or before the
+                // run's one-past-the-end pointer.
+                face = unsafe { face.add(1) };
                 continue;
             }
-            let begin: u32 = (*face).index_begin;
-            let count: u32 = (*face).num_indices.wrapping_sub(1);
-            *index_mapping.add(begin as usize) = begin;
+            // SAFETY: `face` addresses a live entry (see above).
+            let begin: u32 = unsafe { (*face).index_begin };
+            // SAFETY: as above.
+            let count: u32 = unsafe { (*face).num_indices }.wrapping_sub(1);
+            // SAFETY: every face's `[index_begin, index_begin + num_indices)` span
+            // lies inside the mesh's `num_indices` indices, and the tmp array holds
+            // `num_indices + 1` `u32`s starting one slot before `index_mapping`.
+            unsafe { *index_mapping.add(begin as usize) = begin };
             let mut i: u32 = 0;
             while i < count {
-                *index_mapping.add(begin.wrapping_add(1).wrapping_add(i) as usize) =
-                    begin.wrapping_add(count).wrapping_sub(i);
+                // SAFETY: as above; `i < count = num_indices - 1` keeps
+                // `begin + 1 + i` inside the face's own index span.
+                unsafe {
+                    *index_mapping.add(begin.wrapping_add(1).wrapping_add(i) as usize) =
+                        begin.wrapping_add(count).wrapping_sub(i)
+                };
                 i += 1;
             }
-            face = face.add(1);
+            // SAFETY: `face != face_end`, so the advance lands at or before the
+            // run's one-past-the-end pointer.
+            face = unsafe { face.add(1) };
         }
 
         // C: `ufbxi_for_list(ufbx_edge, p_edge, mesh->edges)`
-        let mut p_edge: *mut Edge = (*mesh).edges.data as *mut Edge;
-        let p_edge_end: *mut Edge = add_ptr(p_edge, (*mesh).edges.count);
+        // SAFETY: `mesh` is live (see above), so its own edge list is readable.
+        let mut p_edge: *mut Edge = unsafe { (*mesh).edges.data } as *mut Edge;
+        // SAFETY: as above; `data`/`count` describe one arena run.
+        let p_edge_end: *mut Edge = add_ptr(p_edge, unsafe { (*mesh).edges.count });
         while p_edge != p_edge_end {
             // C-parity: the `(int32_t)` casts are load-bearing — a
             // `UFBX_NO_INDEX` endpoint indexes `index_mapping[-1]`, the slot
             // reserved above.
-            let a: u32 = *index_mapping.offset((*p_edge).a as i32 as isize);
-            let b: u32 = *index_mapping.offset((*p_edge).b as i32 as isize);
-            (*p_edge).a = b;
-            (*p_edge).b = a;
-            p_edge = p_edge.add(1);
+            // SAFETY: `p_edge != p_edge_end`, so it addresses a live, initialized
+            // entry of the mesh's edge run; every edge endpoint is either an index
+            // below `num_indices` or `UFBX_NO_INDEX`, which the `(int32_t)` cast
+            // turns into the reserved slot at offset `-1` — both inside the
+            // `num_indices + 1` `u32`s of the grown tmp array.
+            let a: u32 = unsafe { *index_mapping.offset((*p_edge).a as i32 as isize) };
+            // SAFETY: as above, for the `b` endpoint.
+            let b: u32 = unsafe { *index_mapping.offset((*p_edge).b as i32 as isize) };
+            // SAFETY: `p_edge` addresses a live entry (see above).
+            unsafe { (*p_edge).a = b };
+            // SAFETY: as above.
+            unsafe { (*p_edge).b = a };
+            // SAFETY: `p_edge != p_edge_end`, so the advance lands at or before the
+            // run's one-past-the-end pointer.
+            p_edge = unsafe { p_edge.add(1) };
         }
     }
 
@@ -6259,7 +7435,9 @@ pub(crate) fn postprocess_scene(uc: &Context) {
 pub(crate) unsafe fn next_path_segment(data: *const u8, begin: usize, length: usize) -> usize {
     let mut i: usize = begin;
     while i < length {
-        if *data.add(i) == b'/' || *data.add(i) == b'\\' {
+        // SAFETY: `data` addresses `length` readable bytes (fn contract) and
+        // `i < length` keeps the offset inside that run.
+        if unsafe { *data.add(i) } == b'/' || unsafe { *data.add(i) } == b'\\' {
             return i;
         }
         i += 1;
@@ -6276,22 +7454,33 @@ pub(crate) unsafe fn absolute_to_relative_path(
     p_src: *const Strblob,
     raw: bool,
 ) -> Result<(), Fail> {
-    let rel: *const u8 = strblob_data(p_rel, raw);
-    let src: *const u8 = strblob_data(p_src, raw);
-    let mut rel_length: usize = strblob_length(p_rel, raw);
-    let src_length: usize = strblob_length(p_src, raw);
+    // SAFETY: `p_rel` points to a live, initialized `ufbx_strblob` (fn contract),
+    // so the `raw`-selected member's data pointer is readable.
+    let rel: *const u8 = unsafe { strblob_data(p_rel, raw) };
+    // SAFETY: as above, for `p_src`.
+    let src: *const u8 = unsafe { strblob_data(p_src, raw) };
+    // SAFETY: as above; the length comes from the same strblob member.
+    let mut rel_length: usize = unsafe { strblob_length(p_rel, raw) };
+    // SAFETY: as above, for `p_src`.
+    let src_length: usize = unsafe { strblob_length(p_src, raw) };
 
     if rel_length == 0 || src_length == 0 {
         return Ok(());
     }
 
     // Absolute paths must start with the same character (either drive or '/')
-    if *rel.add(0) != *src.add(0) {
+    // SAFETY: `rel`/`src` address `rel_length`/`src_length` readable bytes, and
+    // both lengths are non-zero here, so byte `0` of each is inside its run.
+    if unsafe { *rel.add(0) != *src.add(0) } {
         return Ok(());
     }
 
     // Find the last directory of the path we want to be relative to
-    while rel_length > 0 && (*rel.add(rel_length - 1) != b'/' && *rel.add(rel_length - 1) != b'\\')
+    // SAFETY: `rel` addresses `rel_length` readable bytes — the strblob's own
+    // string — and the loop only reads while `rel_length > 0`, so
+    // `rel_length - 1` indexes inside that run.
+    while rel_length > 0
+        && unsafe { *rel.add(rel_length - 1) != b'/' && *rel.add(rel_length - 1) != b'\\' }
     {
         rel_length -= 1;
     }
@@ -6299,18 +7488,24 @@ pub(crate) unsafe fn absolute_to_relative_path(
     if rel_length == 0 {
         return Ok(());
     }
-    let separator: u8 = *rel.add(rel_length - 1);
+    // SAFETY: `rel_length > 0` and it only shrank from the strblob's own length,
+    // so `rel_length - 1` indexes inside the `rel` run.
+    let separator: u8 = unsafe { *rel.add(rel_length - 1) };
 
     let max_length: usize = rel_length.wrapping_mul(2).wrapping_add(src_length);
 
     ufbxi_check!(
         uc,
-        grow_array::<u8>(
-            uc.ator_tmp_mut_ptr(),
-            uc.tmp_arr_mut_ptr(),
-            uc.tmp_arr_size_mut_ptr(),
-            max_length,
-        ),
+        // SAFETY: the three `uc` accessors hand out `uc`'s own tmp allocator and
+        // tmp-array header.
+        unsafe {
+            grow_array::<u8>(
+                uc.ator_tmp_mut_ptr(),
+                uc.tmp_arr_mut_ptr(),
+                uc.tmp_arr_size_mut_ptr(),
+                max_length,
+            )
+        },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (max_length))"
     );
     let tmp: *mut u8 = uc.tmp_arr();
@@ -6319,10 +7514,18 @@ pub(crate) unsafe fn absolute_to_relative_path(
     let mut rel_begin: usize = 0;
     let mut src_begin: usize = 0;
     while rel_begin < rel_length && src_begin < src_length {
-        let rel_end: usize = next_path_segment(rel, rel_begin, rel_length);
-        let src_end: usize = next_path_segment(src, src_begin, src_length);
+        // SAFETY: `rel` addresses `rel_length` readable bytes and
+        // `rel_begin < rel_length`.
+        let rel_end: usize = unsafe { next_path_segment(rel, rel_begin, rel_length) };
+        // SAFETY: `src` addresses `src_length` readable bytes and
+        // `src_begin < src_length`.
+        let src_end: usize = unsafe { next_path_segment(src, src_begin, src_length) };
         if rel_end != src_end
-            || memcmp(rel.add(rel_begin), src.add(src_begin), src_end - src_begin) != 0
+            // SAFETY: `next_path_segment` returns an index in
+            // `[begin, length]`, so `[rel_begin, src_end)` and
+            // `[src_begin, src_end)` — equal-length spans, since
+            // `rel_end == src_end` here — stay inside the two runs.
+            || unsafe { memcmp(rel.add(rel_begin), src.add(src_begin), src_end - src_begin) } != 0
         {
             break;
         }
@@ -6331,25 +7534,51 @@ pub(crate) unsafe fn absolute_to_relative_path(
     }
 
     while rel_begin < rel_length {
-        let rel_end: usize = next_path_segment(rel, rel_begin, rel_length);
-        *tmp.add(tmp_length) = b'.';
+        // SAFETY: `rel` addresses `rel_length` readable bytes and
+        // `rel_begin < rel_length`.
+        let rel_end: usize = unsafe { next_path_segment(rel, rel_begin, rel_length) };
+        // SAFETY: `tmp` is the grown tmp array of `max_length == 2 * rel_length
+        // + src_length` bytes. Each iteration writes three bytes and advances
+        // `rel_begin` past one `rel` segment plus its separator, so as long as
+        // every remaining segment is non-empty the stride is at least two and
+        // this loop emits at most `1.5 * (rel_length - rel_begin)` bytes, which
+        // together with the `src_length - src_begin` bytes the copy loop below
+        // writes stays inside `max_length`. A run of consecutive separators in
+        // `rel` shortens that stride to one and is the only shape this sizing
+        // does not cover; the port keeps the C sizing (ufbx.c:21405-21411)
+        // rather than diverging, and the `ufbx_assert!` after the loops reports
+        // the overrun in debug builds.
+        unsafe { *tmp.add(tmp_length) = b'.' };
         tmp_length += 1;
-        *tmp.add(tmp_length) = b'.';
+        // SAFETY: as above.
+        unsafe { *tmp.add(tmp_length) = b'.' };
         tmp_length += 1;
-        *tmp.add(tmp_length) = separator;
+        // SAFETY: as above.
+        unsafe { *tmp.add(tmp_length) = separator };
         tmp_length += 1;
         rel_begin = rel_end + 1;
     }
 
     while src_begin < src_length {
-        let src_end: usize = next_path_segment(src, src_begin, src_length);
+        // SAFETY: `src` addresses `src_length` readable bytes and
+        // `src_begin < src_length`.
+        let src_end: usize = unsafe { next_path_segment(src, src_begin, src_length) };
         let len: usize = src_end - src_begin;
 
-        ptr::copy_nonoverlapping(src.add(src_begin), tmp.add(tmp_length), len);
+        // SAFETY: `[src_begin, src_end)` lies inside the `src` run; `tmp` is the
+        // grown tmp array of `max_length` bytes and the copied segments plus
+        // their separators total exactly `src_length - src_begin` bytes on top
+        // of the `..`-prefix written above, so the same accounting as that loop
+        // applies — it fits in `max_length` for every `rel` without a run of
+        // consecutive separators; the tmp array is a distinct allocation from
+        // the interned `src` string.
+        unsafe { ptr::copy_nonoverlapping(src.add(src_begin), tmp.add(tmp_length), len) };
         tmp_length += len;
 
         if src_end < src_length {
-            *tmp.add(tmp_length) = separator;
+            // SAFETY: as above — the separator is the byte accounted for the
+            // segment that follows.
+            unsafe { *tmp.add(tmp_length) = separator };
             tmp_length += 1;
         }
 
@@ -6360,16 +7589,22 @@ pub(crate) unsafe fn absolute_to_relative_path(
 
     // C-parity: `raw` is hardcoded `true` here, independent of the `raw`
     // parameter that selected the source/destination strblob members.
-    let dst: *const u8 = sp::push_string(
-        uc.string_pool_mut_ptr(),
-        tmp,
-        tmp_length,
-        ptr::null_mut(),
-        true,
-    );
+    // SAFETY: `string_pool_mut_ptr` hands out `uc`'s own live string pool, and
+    // `tmp`/`tmp_length` describe the bytes just written into the tmp array.
+    let dst: *const u8 = unsafe {
+        sp::push_string(
+            uc.string_pool_mut_ptr(),
+            tmp,
+            tmp_length,
+            ptr::null_mut(),
+            true,
+        )
+    };
     ufbxi_check!(uc, !dst.is_null(), "dst");
 
-    strblob_set(p_dst, dst, tmp_length, raw);
+    // SAFETY: `p_dst` points to a live `ufbx_strblob` to write (fn contract), and
+    // `dst`/`tmp_length` describe the string just interned in `uc`'s pool.
+    unsafe { strblob_set(p_dst, dst, tmp_length, raw) };
 
     Ok(())
 }
@@ -6383,23 +7618,33 @@ pub(crate) unsafe fn resolve_filenames(
     relative_filename: *mut Strblob,
     raw: bool,
 ) -> Result<(), Fail> {
-    if strblob_length(relative_filename, raw) == 0 {
+    // SAFETY: `relative_filename` points to a live `ufbx_strblob` — the element
+    // field being resolved (fn contract).
+    if unsafe { strblob_length(relative_filename, raw) } == 0 {
         let original_file_path: *const Strblob = if raw {
             uc.scene_view().metadata_view().raw_original_file_path_ptr() as *const Strblob
         } else {
             uc.scene_view().metadata_view().original_file_path_ptr() as *const Strblob
         };
 
-        absolute_to_relative_path(
-            uc,
-            relative_filename,
-            original_file_path,
-            absolute_filename,
-            raw,
-        )?;
+        // SAFETY: `relative_filename`/`absolute_filename` are live strblobs of the
+        // element being resolved (fn contract), and `original_file_path` addresses
+        // the scene metadata's own path field, which the accessors above hand out
+        // as a `Strblob`-shaped view of the matching `raw`-ness.
+        unsafe {
+            absolute_to_relative_path(
+                uc,
+                relative_filename,
+                original_file_path,
+                absolute_filename,
+                raw,
+            )
+        }?;
     }
 
-    resolve_relative_filename(uc, filename, relative_filename, raw)?;
+    // SAFETY: `filename`/`relative_filename` are live strblobs of the element
+    // being resolved (fn contract).
+    unsafe { resolve_relative_filename(uc, filename, relative_filename, raw) }?;
 
     Ok(())
 }
@@ -6414,7 +7659,10 @@ pub(crate) unsafe extern "C" fn file_content_less(
     ufbxi_ignore!(user);
     let a: *const FileContent = va as *const FileContent;
     let b: *const FileContent = vb as *const FileContent;
-    str_less((*a).absolute_filename, (*b).absolute_filename)
+    // SAFETY: as the sort comparator for a `ufbxi_file_content` array, `va`/`vb`
+    // address live, initialized elements of it (`stable_sort` contract), and both
+    // `absolute_filename`s are interned pool strings.
+    unsafe { str_less((*a).absolute_filename, (*b).absolute_filename) }
 }
 
 // ufbx.c:21459-21464 `ufbxi_sort_file_contents`
@@ -6426,23 +7674,33 @@ pub(crate) unsafe fn sort_file_contents(
 ) -> Result<(), Fail> {
     ufbxi_check!(
         uc,
-        grow_array::<u8>(
-            uc.ator_tmp_mut_ptr(),
-            uc.tmp_arr_mut_ptr(),
-            uc.tmp_arr_size_mut_ptr(),
-            count.wrapping_mul(size_of::<FileContent>()),
-        ),
+        // SAFETY: the three `uc` accessors hand out `uc`'s own tmp allocator and
+        // tmp-array header.
+        unsafe {
+            grow_array::<u8>(
+                uc.ator_tmp_mut_ptr(),
+                uc.tmp_arr_mut_ptr(),
+                uc.tmp_arr_size_mut_ptr(),
+                count.wrapping_mul(size_of::<FileContent>()),
+            )
+        },
         "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), (count * sizeof(ufbxi_file_content)))"
     );
-    stable_sort(
-        size_of::<FileContent>(),
-        32,
-        content as *mut c_void,
-        uc.tmp_arr() as *mut c_void,
-        count,
-        file_content_less,
-        ptr::null_mut(),
-    );
+    // SAFETY: `content` addresses `count` live, initialized `ufbxi_file_content`s
+    // (fn contract) and the grow above sized `uc`'s tmp array to hold `count` of
+    // them as the sort's scratch buffer; `file_content_less` is the matching
+    // comparator and takes no user data.
+    unsafe {
+        stable_sort(
+            size_of::<FileContent>(),
+            32,
+            content as *mut c_void,
+            uc.tmp_arr() as *mut c_void,
+            count,
+            file_content_less,
+            ptr::null_mut(),
+        )
+    };
     Ok(())
 }
 
@@ -6453,41 +7711,68 @@ pub(crate) unsafe fn push_file_content(
     p_filename: *mut String,
     p_data: *mut Blob,
 ) -> Result<(), Fail> {
-    if (*p_data).size == 0 || (*p_filename).length == 0 {
+    // SAFETY: `p_data`/`p_filename` point to the live, initialized `ufbx_blob` /
+    // `ufbx_string` fields of the element being collected (fn contract).
+    if unsafe { (*p_data).size } == 0 || unsafe { (*p_filename).length } == 0 {
         return Ok(());
     }
     let content: *mut FileContent = uc.tmp_stack_view().push::<FileContent>(1);
     ufbxi_check!(uc, !content.is_null(), "content");
 
-    (*content).absolute_filename = *p_filename;
-    (*content).content = *p_data;
+    // SAFETY: `content` is the non-null one-element push just made into `uc`'s tmp
+    // stack, so it addresses writable storage for one `ufbxi_file_content`;
+    // `p_filename` is live (see above).
+    unsafe { (*content).absolute_filename = *p_filename };
+    // SAFETY: as above, with `p_data` live.
+    unsafe { (*content).content = *p_data };
     Ok(())
 }
 
 // ufbx.c:21476-21487 `ufbxi_fetch_file_content`
 #[inline(never)]
 pub(crate) unsafe fn fetch_file_content(uc: &Context, p_filename: *mut String, p_data: *mut Blob) {
-    if (*p_data).size > 0 {
+    // SAFETY: `p_data` points to the live, initialized `ufbx_blob` field being
+    // filled in (fn contract).
+    if unsafe { (*p_data).size } > 0 {
         return;
     }
-    let filename: String = *p_filename;
+    // SAFETY: `p_filename` points to the live, initialized `ufbx_string` field of
+    // the same element (fn contract).
+    let filename: String = unsafe { *p_filename };
     let mut index: usize = usize::MAX;
     // C: `ufbxi_macro_lower_bound_eq(ufbxi_file_content, 8, &index,
     // uc->file_content, 0, uc->num_file_content, ...)` — does NOT write
     // `index` on a miss, hence the `SIZE_MAX` pre-initialization above.
-    macro_lower_bound_eq(
-        8,
-        &mut index,
-        uc.file_content() as *const FileContent,
-        0,
-        uc.num_file_content(),
-        |a| str_less((*a).absolute_filename, filename),
-        // C-parity: the equality lambda compares interned string POINTERS, not
-        // the bytes.
-        |a| (*a).absolute_filename.data == filename.data,
-    );
+    let cmp_lambda = |a: *const FileContent| {
+        // SAFETY: `macro_lower_bound_eq` only passes pointers to live, initialized
+        // elements of the run it was handed; both `absolute_filename`s are
+        // interned pool strings.
+        unsafe { str_less((*a).absolute_filename, filename) }
+    };
+    // C-parity: the equality lambda compares interned string POINTERS, not the
+    // bytes.
+    let eq_lambda = |a: *const FileContent| {
+        // SAFETY: as `cmp_lambda`.
+        (unsafe { (*a).absolute_filename.data }) == filename.data
+    };
+    // SAFETY: `uc.file_content()`/`num_file_content()` are `uc`'s own sorted
+    // file-content run and its length, and `&mut index` is a live local.
+    unsafe {
+        macro_lower_bound_eq(
+            8,
+            &mut index,
+            uc.file_content() as *const FileContent,
+            0,
+            uc.num_file_content(),
+            cmp_lambda,
+            eq_lambda,
+        )
+    };
     if index != usize::MAX {
-        *p_data = (*uc.file_content().add(index)).content;
+        // SAFETY: `index != SIZE_MAX` means the search wrote a hit, which is an
+        // index below `num_file_content`, so the offset lands on a live element of
+        // `uc`'s file-content run; `p_data` is live (see above).
+        unsafe { *p_data = (*uc.file_content().add(index)).content };
     }
 }
 
@@ -6637,22 +7922,33 @@ pub(crate) unsafe fn validate_indices(
     max_index: usize,
 ) -> Result<(), Fail> {
     if max_index == 0 && uc.opts_view().index_error_handling() == IndexErrorHandling::Clamp {
-        (*indices).data = ptr::null_mut();
-        (*indices).count = 0;
+        // SAFETY: `indices` points to a live `ufbx_uint32_list` header — the
+        // attribute index list being validated (fn contract).
+        unsafe { (*indices).data = ptr::null_mut() };
+        // SAFETY: as above.
+        unsafe { (*indices).count = 0 };
         return Ok(());
     }
 
     // C: `ufbxi_nounroll ufbxi_for_list(uint32_t, p_ix, *indices)` — the
     // no-unroll pragma is optimizer-only and has no Rust analogue.
-    let mut p_ix: *mut u32 = (*indices).data as *mut u32;
-    let p_ix_end: *mut u32 = add_ptr(p_ix, (*indices).count);
+    // SAFETY: `indices` is live (see above), so its own list header is readable.
+    let mut p_ix: *mut u32 = unsafe { (*indices).data } as *mut u32;
+    // SAFETY: as above; `data`/`count` describe one arena run.
+    let p_ix_end: *mut u32 = add_ptr(p_ix, unsafe { (*indices).count });
     while p_ix != p_ix_end {
-        let ix: u32 = *p_ix;
+        // SAFETY: `p_ix != p_ix_end`, so it addresses a live, initialized entry of
+        // the index run.
+        let ix: u32 = unsafe { *p_ix };
         // C: `ix >= max_index` — `ix` is promoted to `size_t` for the compare.
         if ix as usize >= max_index {
-            fix_index(uc, p_ix, ix, max_index)?;
+            // SAFETY: `p_ix` addresses a live, writable entry of the index run
+            // (see above), and `ix` is the value just read from it.
+            unsafe { fix_index(uc, p_ix, ix, max_index) }?;
         }
-        p_ix = p_ix.add(1);
+        // SAFETY: `p_ix != p_ix_end`, so the advance lands at or before the run's
+        // one-past-the-end pointer.
+        p_ix = unsafe { p_ix.add(1) };
     }
 
     Ok(())
@@ -6665,17 +7961,30 @@ pub(crate) unsafe extern "C" fn material_part_usage_less(
     vb: *const c_void,
 ) -> bool {
     let parts: *mut MeshPart = user as *mut MeshPart;
-    let a: u32 = *(va as *const u32);
-    let b: u32 = *(vb as *const u32);
-    let pa: *mut MeshPart = parts.add(a as usize);
-    let pb: *mut MeshPart = parts.add(b as usize);
-    if (*pa).face_indices.count == 0 || (*pb).face_indices.count == 0 {
-        if (*pa).face_indices.count == (*pb).face_indices.count {
+    // SAFETY: as the comparator for the mesh's material-part usage order, `va`/`vb`
+    // address live, initialized `u32` elements of that order array
+    // (`unstable_sort` contract).
+    let a: u32 = unsafe { *(va as *const u32) };
+    // SAFETY: as above.
+    let b: u32 = unsafe { *(vb as *const u32) };
+    // SAFETY: `user` is the mesh's own `material_parts` run, passed as the sort's
+    // user data, and the order array holds exactly the indices `0..num_parts` of
+    // that run.
+    let pa: *mut MeshPart = unsafe { parts.add(a as usize) };
+    // SAFETY: as above.
+    let pb: *mut MeshPart = unsafe { parts.add(b as usize) };
+    // SAFETY: `pa`/`pb` address live, initialized parts of the run (see above).
+    if unsafe { (*pa).face_indices.count == 0 || (*pb).face_indices.count == 0 } {
+        // SAFETY: as above.
+        if unsafe { (*pa).face_indices.count == (*pb).face_indices.count } {
             return a < b;
         }
-        return (*pa).face_indices.count > (*pb).face_indices.count;
+        // SAFETY: as above.
+        return unsafe { (*pa).face_indices.count > (*pb).face_indices.count };
     }
-    *(*pa).face_indices.data.add(0) < *(*pb).face_indices.data.add(0)
+    // SAFETY: `pa`/`pb` are live parts and neither `face_indices` run is empty
+    // (checked above), so element `0` of each is live and initialized.
+    unsafe { *(*pa).face_indices.data.add(0) < *(*pb).face_indices.data.add(0) }
 }
 
 // ufbx.c:21558-21620 `ufbxi_finalize_mesh_material`
@@ -6685,35 +7994,56 @@ pub(crate) unsafe fn finalize_mesh_material(
     error: *mut Error,
     mesh: *mut Mesh,
 ) -> Result<(), Fail> {
-    let num_materials: usize = (*mesh).materials.count;
-    let num_parts: usize = (*mesh).material_parts.count;
-    let num_faces: usize = (*mesh).faces.count;
+    // SAFETY: `mesh` points to the live, initialized `ufbx_mesh` being finalized
+    // (fn contract), so its own list headers are readable.
+    let num_materials: usize = unsafe { (*mesh).materials.count };
+    // SAFETY: as above.
+    let num_parts: usize = unsafe { (*mesh).material_parts.count };
+    // SAFETY: as above.
+    let num_faces: usize = unsafe { (*mesh).faces.count };
 
-    let parts: *mut MeshPart = (*mesh).material_parts.data as *mut MeshPart;
+    // SAFETY: as above.
+    let parts: *mut MeshPart = unsafe { (*mesh).material_parts.data } as *mut MeshPart;
     ufbx_assert!(
         parts.is_null()
-            || ((*mesh).material_parts.count == num_materials)
-            || ((*mesh).material_parts.count == 1 && num_materials == 0)
+            // SAFETY: as above.
+            || (unsafe { (*mesh).material_parts.count } == num_materials)
+            // SAFETY: as above.
+            || (unsafe { (*mesh).material_parts.count } == 1 && num_materials == 0)
     );
 
-    let face_material: *mut u32 = (*mesh).face_material.data as *mut u32;
+    // SAFETY: as above.
+    let face_material: *mut u32 = unsafe { (*mesh).face_material.data } as *mut u32;
 
     // Count the number of faces and triangles per material
     // C: `ufbxi_nounroll for (size_t i = 0; i < num_faces; i++)`
     for i in 0..num_faces {
-        let face: Face = *(*mesh).faces.data.add(i);
+        // SAFETY: `mesh` is live and `num_faces` is the length of its own face
+        // run, so `i < num_faces` addresses a live, initialized face.
+        let face: Face = unsafe { *(*mesh).faces.data.add(i) };
         let mut mat_ix: u32 = 0;
 
         if !face_material.is_null() {
-            mat_ix = *face_material.add(i);
+            // SAFETY: a non-null `face_material` run is per-face, so it holds
+            // `num_faces` writable `u32`s and `i < num_faces` stays inside it.
+            mat_ix = unsafe { *face_material.add(i) };
             if mat_ix as usize >= num_materials {
-                *face_material.add(i) = 0;
+                // SAFETY: as above.
+                unsafe { *face_material.add(i) = 0 };
                 mat_ix = 0;
             }
         }
 
         if !parts.is_null() {
-            mesh_part_add_face(parts.add(mat_ix as usize), face.num_indices);
+            // SAFETY: the assert above pins a non-null `parts` run to
+            // `material_parts.count` entries, with `count == num_materials` or
+            // `count == 1` when `num_materials == 0`, and `mat_ix` was clamped
+            // to `0` unless it is below `num_materials`, so the write lands
+            // inside the run for every `count > 0`. `material_parts` is
+            // allocated with `max(num_materials, 1)` entries, so the remaining
+            // `count == num_materials == 0` shape the assert also admits does
+            // not occur.
+            unsafe { mesh_part_add_face(parts.add(mat_ix as usize), face.num_indices) };
         }
     }
 
@@ -6726,52 +8056,83 @@ pub(crate) unsafe fn finalize_mesh_material(
         let part_end: *mut MeshPart = add_ptr(part, num_parts);
         while part != part_end {
             // C: `part->index = part_index++;` — assigns the pre-increment value.
-            (*part).index = part_index;
+            // SAFETY: `part != part_end`, so it addresses a live, initialized entry
+            // of the mesh's `num_parts`-long material-part run.
+            unsafe { (*part).index = part_index };
             part_index = part_index.wrapping_add(1);
-            (*part).face_indices.count = (*part).num_faces;
-            (*part).face_indices.data = buf.push::<u32>((*part).num_faces);
+            // SAFETY: as above.
+            unsafe { (*part).face_indices.count = (*part).num_faces };
+            // SAFETY: as above; `buf` is the result buffer the finalized lists are
+            // pushed into.
+            unsafe { (*part).face_indices.data = buf.push::<u32>((*part).num_faces) };
             ufbxi_check_err!(
                 unsafe { crate::native::error::ErrorView::from_ptr(error) },
-                !(*part).face_indices.data.is_null(),
+                // SAFETY: `part` addresses a live entry (see above).
+                !unsafe { (*part).face_indices.data }.is_null(),
                 "part->face_indices.data"
             );
-            (*part).num_faces = 0;
-            part = part.add(1);
+            // SAFETY: as above.
+            unsafe { (*part).num_faces = 0 };
+            // SAFETY: `part != part_end`, so the advance lands at or before the
+            // run's one-past-the-end pointer.
+            part = unsafe { part.add(1) };
         }
 
         // Fetch the per-material face indices
         // C: `ufbxi_nounroll for (size_t i = 0; i < num_faces; i++)`
         for i in 0..num_faces {
             let mat_ix: u32 = if !face_material.is_null() {
-                *face_material.add(i)
+                // SAFETY: a non-null `face_material` run is per-face, so it holds
+                // `num_faces` `u32`s and `i < num_faces` stays inside it.
+                unsafe { *face_material.add(i) }
             } else {
                 0
             };
             if (mat_ix as usize) < num_parts {
-                let part: *mut MeshPart = parts.add(mat_ix as usize);
+                // SAFETY: `mat_ix < num_parts`, the length of the non-null `parts`
+                // run.
+                let part: *mut MeshPart = unsafe { parts.add(mat_ix as usize) };
                 // C: `part->face_indices.data[part->num_faces++] = (uint32_t)i;`
-                *((*part).face_indices.data as *mut u32).add((*part).num_faces) = i as u32;
-                (*part).num_faces = (*part).num_faces.wrapping_add(1);
+                // SAFETY: `part` addresses a live entry (see above); its
+                // `face_indices` run was pushed with the part's counted face total
+                // and `num_faces` was reset to `0`, so it counts the faces filled
+                // in so far and stays below that total.
+                unsafe {
+                    *((*part).face_indices.data as *mut u32).add((*part).num_faces) = i as u32
+                };
+                // SAFETY: `part` addresses a live entry (see above).
+                unsafe { (*part).num_faces = (*part).num_faces.wrapping_add(1) };
             }
         }
 
-        (*mesh).material_part_usage_order.count = num_parts;
-        (*mesh).material_part_usage_order.data = buf.push::<u32>(num_parts);
+        // SAFETY: `mesh` is live and initialized (fn contract).
+        unsafe { (*mesh).material_part_usage_order.count = num_parts };
+        // SAFETY: as above; `buf` is the result buffer the finalized lists are
+        // pushed into.
+        unsafe { (*mesh).material_part_usage_order.data = buf.push::<u32>(num_parts) };
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr(error) },
-            !(*mesh).material_part_usage_order.data.is_null(),
+            // SAFETY: `mesh` is live (see above).
+            !unsafe { (*mesh).material_part_usage_order.data }.is_null(),
             "mesh->material_part_usage_order.data"
         );
         for i in 0..num_parts {
-            *((*mesh).material_part_usage_order.data as *mut u32).add(i) = i as u32;
+            // SAFETY: the non-null usage-order run was pushed with `num_parts`
+            // `u32`s, so `i < num_parts` stays inside it.
+            unsafe { *((*mesh).material_part_usage_order.data as *mut u32).add(i) = i as u32 };
         }
-        unstable_sort(
-            (*mesh).material_part_usage_order.data as *mut c_void,
-            num_parts,
-            size_of::<u32>(),
-            material_part_usage_less,
-            parts as *mut c_void,
-        );
+        // SAFETY: the usage-order run holds `num_parts` `u32`s (see above),
+        // `material_part_usage_less` is the matching comparator, and it reads its
+        // user data as the `num_parts`-long `parts` run passed here.
+        unsafe {
+            unstable_sort(
+                (*mesh).material_part_usage_order.data as *mut c_void,
+                num_parts,
+                size_of::<u32>(),
+                material_part_usage_less,
+                parts as *mut c_void,
+            )
+        };
     }
 
     Ok(())
@@ -6822,10 +8183,15 @@ pub(crate) unsafe fn push_anim(
     let anim: *mut Anim = uc.result_view().push_zero::<Anim>(1);
     ufbxi_check!(uc, !anim.is_null(), "anim");
 
-    (*anim).layers.data = layers as *const Ref<AnimLayer>;
-    (*anim).layers.count = num_layers;
+    // SAFETY: `anim` is the non-null one-element zeroed push just made into `uc`'s
+    // result buffer, so it addresses writable storage for one `ufbx_anim`;
+    // `layers`/`num_layers` describe the caller's layer-pointer run (fn contract).
+    unsafe { (*anim).layers.data = layers as *const Ref<AnimLayer> };
+    // SAFETY: as above.
+    unsafe { (*anim).layers.count = num_layers };
 
-    *p_anim = anim;
+    // SAFETY: `p_anim` points to a live, writable `ufbx_anim*` slot (fn contract).
+    unsafe { *p_anim = anim };
     Ok(())
 }
 
@@ -6867,48 +8233,79 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let element_offsets: *mut usize = uc
         .tmp_view()
         .push_pop::<usize>(uc.tmp_element_offsets_view(), num_element_offsets);
-    buf_free(uc.tmp_element_offsets_mut_ptr());
+    // SAFETY: `tmp_element_offsets_mut_ptr` hands out `uc`'s own live element-
+    // offset buffer.
+    unsafe { buf_free(uc.tmp_element_offsets_mut_ptr()) };
     ufbxi_check!(uc, !element_offsets.is_null(), "element_offsets");
     for i in 0..num_elements {
-        let element: *mut Element = element_data.add(*element_offsets.add(i)) as *mut Element;
+        // SAFETY: `element_offsets` is the non-null run popped above, holding one
+        // byte offset per element, so `i < num_elements` indexes it; each offset
+        // addresses that element's header inside the `element_data` blob, which was
+        // popped with `tmp_element_byte_offset()` bytes.
+        let element: *mut Element =
+            unsafe { element_data.add(*element_offsets.add(i)) } as *mut Element;
 
-        if (*element).type_ == ElementType::Node {
+        // SAFETY: `element` addresses a live, initialized `ufbx_element` header in
+        // the element blob (see above).
+        if unsafe { (*element).type_ } == ElementType::Node {
             let node: *mut Node = element as *mut Node;
-            if !opt_ptr(&(*node).scale_helper).is_null() {
+            // SAFETY: `type_ == Node`, so `element` heads a live `ufbx_node`, and
+            // `&raw`-free `&(*node).scale_helper` addresses its own field.
+            if !unsafe { opt_ptr(&(*node).scale_helper) }.is_null() {
+                // SAFETY: `node` is live (see above).
                 let extra: *mut NodeExtra =
-                    get_element_extra(uc, (*node).element.element_id) as *mut NodeExtra;
+                    get_element_extra(uc, unsafe { (*node).element.element_id }) as *mut NodeExtra;
                 ufbx_assert!(!extra.is_null());
-                (*node).scale_helper = opt_ref(
-                    element_data.add(*element_offsets.add((*extra).scale_helper_id as usize))
-                        as *mut Node,
-                );
+                // SAFETY: `extra` is the non-null per-element extra just fetched, so
+                // its `scale_helper_id` is readable; that id is an element index
+                // below `num_elements`, so it indexes `element_offsets` and the
+                // resulting byte offset addresses that element inside the blob;
+                // `node` is live, so the assignment targets its own field.
+                unsafe {
+                    (*node).scale_helper = opt_ref(
+                        element_data.add(*element_offsets.add((*extra).scale_helper_id as usize))
+                            as *mut Node,
+                    )
+                };
             }
         }
 
-        *(uc.scene_view().elements_view().data() as *mut *mut Element).add(i) = element;
+        // SAFETY: the scene's element array was pushed with `num_elements` slots
+        // and checked non-null above, so `i < num_elements` stays inside it.
+        unsafe { *(uc.scene_view().elements_view().data() as *mut *mut Element).add(i) = element };
     }
 
     uc.scene_view().elements_view().set_count(num_elements);
-    buf_free(uc.tmp_element_offsets_mut_ptr());
-    buf_free(uc.tmp_elements_mut_ptr());
+    // SAFETY: the two accessors hand out `uc`'s own live element-offset and
+    // element buffers.
+    unsafe { buf_free(uc.tmp_element_offsets_mut_ptr()) };
+    // SAFETY: as above.
+    unsafe { buf_free(uc.tmp_elements_mut_ptr()) };
 
     uc.set_tmp_element_flag(uc.tmp_view().push_zero::<u8>(num_elements));
     ufbxi_check!(uc, !uc.tmp_element_flag().is_null(), "uc->tmp_element_flag");
 
     uc.scene_view()
         .metadata_view()
-        .set_original_file_path(find_string(
-            PropsView::from_ptr(uc.scene_view().metadata_view().scene_props_ptr() as *mut Props),
-            b"DocumentUrl\0".as_ptr(),
-            EMPTY_STRING.0,
-        ));
+        // SAFETY: `scene_props_ptr` addresses the scene metadata's own live
+        // `ufbx_props`, and the name is a NUL-terminated literal.
+        .set_original_file_path(unsafe {
+            find_string(
+                PropsView::from_ptr(uc.scene_view().metadata_view().scene_props_ptr() as *mut Props),
+                b"DocumentUrl\0".as_ptr(),
+                EMPTY_STRING.0,
+            )
+        });
     uc.scene_view()
         .metadata_view()
-        .set_raw_original_file_path(find_blob(
-            PropsView::from_ptr(uc.scene_view().metadata_view().scene_props_ptr() as *mut Props),
-            b"DocumentUrl\0".as_ptr(),
-            EMPTY_BLOB.0,
-        ));
+        // SAFETY: as above.
+        .set_raw_original_file_path(unsafe {
+            find_blob(
+                PropsView::from_ptr(uc.scene_view().metadata_view().scene_props_ptr() as *mut Props),
+                b"DocumentUrl\0".as_ptr(),
+                EMPTY_BLOB.0,
+            )
+        });
 
     // Resolve and add the connections to elements
     resolve_connections(uc)?;
@@ -6920,26 +8317,49 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let typed_offsets: *mut usize = uc
             .tmp_view()
             .push_pop::<usize>(uc.tmp_typed_element_offsets_at(type_), num_typed);
-        buf_free(uc.tmp_typed_element_offsets_mut_ptr(type_));
+        // SAFETY: the accessor hands out `uc`'s own live typed-element-offset
+        // buffer for `type_`.
+        unsafe { buf_free(uc.tmp_typed_element_offsets_mut_ptr(type_)) };
         ufbxi_check!(uc, !typed_offsets.is_null(), "typed_offsets");
 
         // C indexes `uc->scene.elements_by_type[type]`, the `ufbx_element_list`
         // array view of the `ufbx_scene` per-type list union (ufbx.h:4015); the
         // generated struct keeps only the named branch, whose first member
         // (`unknowns`) is the array base.
+        // SAFETY: `unknowns_mut_ptr` addresses the first of the scene's
+        // `ELEMENT_TYPE_COUNT` per-type list members, which share one flat layout,
+        // and `type_ < ELEMENT_TYPE_COUNT`.
         let typed_elems: *mut RefList<Element> =
-            (uc.scene_view().unknowns_mut_ptr() as *mut RefList<Element>).add(type_);
-        (*typed_elems).count = num_typed;
-        (*typed_elems).data =
-            uc.result_view().push::<*mut Element>(num_typed) as *const Ref<Element>;
-        ufbxi_check!(uc, !(*typed_elems).data.is_null(), "typed_elems->data");
+            unsafe { (uc.scene_view().unknowns_mut_ptr() as *mut RefList<Element>).add(type_) };
+        // SAFETY: `typed_elems` addresses the scene's own per-type list (see
+        // above).
+        unsafe { (*typed_elems).count = num_typed };
+        // SAFETY: as above; `result_view()` is `uc`'s own result buffer.
+        unsafe {
+            (*typed_elems).data =
+                uc.result_view().push::<*mut Element>(num_typed) as *const Ref<Element>
+        };
+        // SAFETY: as above.
+        ufbxi_check!(
+            uc,
+            !unsafe { (*typed_elems).data }.is_null(),
+            "typed_elems->data"
+        );
 
         for i in 0..num_typed {
-            *((*typed_elems).data as *mut *mut Element).add(i) =
-                element_data.add(*typed_offsets.add(i)) as *mut Element;
+            // SAFETY: the run just pushed into `typed_elems.data` is non-null and
+            // `num_typed` slots long; `typed_offsets` is the non-null run popped
+            // above with one byte offset per typed element, each addressing that
+            // element's header inside the `element_data` blob.
+            unsafe {
+                *((*typed_elems).data as *mut *mut Element).add(i) =
+                    element_data.add(*typed_offsets.add(i)) as *mut Element
+            };
         }
 
-        buf_free(uc.tmp_typed_element_offsets_mut_ptr(type_));
+        // SAFETY: the accessor hands out `uc`'s own live typed-element-offset
+        // buffer for `type_`.
+        unsafe { buf_free(uc.tmp_typed_element_offsets_mut_ptr(type_)) };
     }
 
     // Create named elements
@@ -6956,67 +8376,110 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     );
 
     for i in 0..num_elements {
+        // SAFETY: the scene's element array holds `num_elements` live element
+        // pointers (filled in above), so `i < num_elements` indexes it.
         let elem: *mut Element =
-            *(uc.scene_view().elements_view().data() as *mut *mut Element).add(i);
+            unsafe { *(uc.scene_view().elements_view().data() as *mut *mut Element).add(i) };
+        // SAFETY: the `elements_by_name` run was pushed with `num_elements` slots
+        // and checked non-null above.
         let name_elem: *mut NameElement =
-            (uc.scene_view().elements_by_name_view().data() as *mut NameElement).add(i);
+            unsafe { (uc.scene_view().elements_by_name_view().data() as *mut NameElement).add(i) };
 
-        (*name_elem).name = (*elem).name;
-        (*name_elem).type_ = (*elem).type_;
-        (*name_elem)._internal_key = get_name_key((*elem).name.data, (*elem).name.length);
-        (*name_elem).element = Ref::from_ptr(elem);
+        // SAFETY: `name_elem` addresses a slot of that run and `elem` a live
+        // element header (both above).
+        unsafe { (*name_elem).name = (*elem).name };
+        // SAFETY: as above.
+        unsafe { (*name_elem).type_ = (*elem).type_ };
+        // SAFETY: as above; `elem`'s name is an interned pool string, so
+        // `name.data` addresses `name.length` readable bytes.
+        unsafe {
+            (*name_elem)._internal_key = get_name_key((*elem).name.data, (*elem).name.length)
+        };
+        // SAFETY: as above; `elem` is non-null, being a live element header.
+        unsafe { (*name_elem).element = Ref::from_ptr(elem) };
     }
 
-    sort_name_elements(
-        uc,
-        uc.scene_view().elements_by_name_view().data() as *mut NameElement,
-        num_elements,
-    )?;
+    // SAFETY: the `elements_by_name` run is non-null and `num_elements` entries
+    // long, all initialized by the loop above.
+    unsafe {
+        sort_name_elements(
+            uc,
+            uc.scene_view().elements_by_name_view().data() as *mut NameElement,
+            num_elements,
+        )
+    }?;
 
     // Setup node children arrays and attribute pointers/lists
     // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
     let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
     let p_node_end: *mut *mut Node = add_ptr(p_node, uc.scene_view().nodes_view().count());
     while p_node != p_node_end {
-        let node: *mut Node = *p_node;
-        let parent: *mut Node = opt_ptr(&(*node).parent);
+        // SAFETY: `p_node != p_node_end`, so it addresses a live, initialized slot
+        // of the scene's node-pointer run.
+        let node: *mut Node = unsafe { *p_node };
+        // SAFETY: `node` is a live `ufbx_node` of the scene (see above), so
+        // `&(*node).parent` addresses its own field.
+        let parent: *mut Node = unsafe { opt_ptr(&(*node).parent) };
         if !parent.is_null() {
-            (*parent).children.count += 1;
-            if (*parent).children.data.is_null() {
-                (*parent).children.data = p_node as *const Ref<Node>;
+            // SAFETY: a non-null `parent` is another live `ufbx_node` of the same
+            // scene.
+            unsafe { (*parent).children.count += 1 };
+            // SAFETY: as above.
+            if unsafe { (*parent).children.data }.is_null() {
+                // SAFETY: as above; `linearize_nodes` ordered the node-pointer run
+                // so each parent's children are contiguous, and `p_node` is the
+                // first of them.
+                unsafe { (*parent).children.data = p_node as *const Ref<Node> };
             }
 
-            if (*node).is_geometry_transform_helper {
-                (*parent).geometry_transform_helper = opt_ref(node);
+            // SAFETY: `node` is live (see above).
+            if unsafe { (*node).is_geometry_transform_helper } {
+                // SAFETY: `parent` is live (see above); `node` is non-null.
+                unsafe { (*parent).geometry_transform_helper = opt_ref(node) };
             }
 
             // Force top-level nodes to have `UFBX_INHERIT_MODE_NORMAL` to make unit scaling work.
-            if (*parent).is_root
+            // SAFETY: `parent` is live (see above).
+            if unsafe { (*parent).is_root }
                 && uc.opts_view().space_conversion() == SpaceConversion::TransformRoot
                 && uc.opts_view().inherit_mode_handling() == InheritModeHandling::Preserve
             {
-                (*node).original_inherit_mode = InheritMode::Normal;
-                (*node).inherit_mode = InheritMode::Normal;
+                // SAFETY: `node` is live (see above).
+                unsafe { (*node).original_inherit_mode = InheritMode::Normal };
+                // SAFETY: as above.
+                unsafe { (*node).inherit_mode = InheritMode::Normal };
             }
 
             // RrSs nodes inherit scale from their parent, Rrs ignore the scale of
             // their _immediate_ parent, potentially multiple if chained.
-            if (*node).original_inherit_mode == InheritMode::ComponentwiseScale {
-                (*node).inherit_scale_node = opt_ref(parent);
-            } else if (*node).original_inherit_mode == InheritMode::IgnoreParentScale {
-                (*node).inherit_scale_node = (*parent).inherit_scale_node;
+            // SAFETY: `node` is live (see above).
+            if unsafe { (*node).original_inherit_mode } == InheritMode::ComponentwiseScale {
+                // SAFETY: `node` is live and `parent` is non-null (see above).
+                unsafe { (*node).inherit_scale_node = opt_ref(parent) };
+            // SAFETY: `node` is live (see above).
+            } else if unsafe { (*node).original_inherit_mode } == InheritMode::IgnoreParentScale {
+                // SAFETY: `node` and `parent` are both live (see above).
+                unsafe { (*node).inherit_scale_node = (*parent).inherit_scale_node };
             }
         }
 
-        let conns: List<Connection> = find_dst_connections(&mut (*node).element, ptr::null());
+        // SAFETY: `node` is live (see above), so `&mut (*node).element` addresses
+        // its own element header.
+        let conns: List<Connection> =
+            unsafe { find_dst_connections(&mut (*node).element, ptr::null()) };
 
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)` — indexed here
         // because the body `continue`s (the C `for` advances in its increment
         // clause).
         for conn_ix in 0..conns.count {
-            let conn: *mut Connection = (conns.data as *mut Connection).add(conn_ix);
-            let elem: *mut Element = ref_ptr(&(*conn).src);
-            let type_: ElementType = (*elem).type_;
+            // SAFETY: `conns` is the connection run `find_dst_connections` returned
+            // for this node, so `conn_ix < conns.count` indexes it.
+            let conn: *mut Connection = unsafe { (conns.data as *mut Connection).add(conn_ix) };
+            // SAFETY: `conn` addresses a live, initialized connection (see above),
+            // whose `src` is a non-null element pointer.
+            let elem: *mut Element = unsafe { ref_ptr(&(*conn).src) };
+            // SAFETY: `elem` is a live element of the scene (see above).
+            let type_: ElementType = unsafe { (*elem).type_ };
             if !(type_ as u32 >= ELEMENT_TYPE_FIRST_ATTRIB
                 && type_ as u32 <= ELEMENT_TYPE_LAST_ATTRIB)
             {
@@ -7025,20 +8488,29 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
             // C: `size_t index = node->all_attribs.count++;` — the
             // pre-increment value.
-            let index: usize = (*node).all_attribs.count;
-            (*node).all_attribs.count += 1;
+            // SAFETY: `node` is live (see above).
+            let index: usize = unsafe { (*node).all_attribs.count };
+            // SAFETY: as above.
+            unsafe { (*node).all_attribs.count += 1 };
             if index == 0 {
-                (*node).attrib = opt_ref(elem);
-                (*node).attrib_type = type_;
+                // SAFETY: `node` is live and `elem` is non-null (see above).
+                unsafe { (*node).attrib = opt_ref(elem) };
+                // SAFETY: `node` is live (see above).
+                unsafe { (*node).attrib_type = type_ };
             } else {
                 if index == 1 {
                     ufbxi_check!(
                         uc,
-                        !push_copy::<*mut Element>(
-                            uc.tmp_stack_mut_ptr(),
-                            1,
-                            &raw const (*node).attrib as *const *mut Element
-                        )
+                        // SAFETY: `tmp_stack_mut_ptr` hands out `uc`'s own live tmp
+                        // stack, and `&raw const (*node).attrib` addresses the live
+                        // node's own single element-pointer field.
+                        !unsafe {
+                            push_copy::<*mut Element>(
+                                uc.tmp_stack_mut_ptr(),
+                                1,
+                                &raw const (*node).attrib as *const *mut Element,
+                            )
+                        }
                         .is_null(),
                         "((ufbx_element**)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_element*), (1), (&node->attrib)))"
                     );
@@ -7050,39 +8522,61 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 );
             }
 
-            match (*elem).type_ {
-                ElementType::Mesh => (*node).mesh = opt_ref(elem as *mut Mesh),
-                ElementType::Light => (*node).light = opt_ref(elem as *mut Light),
-                ElementType::Camera => (*node).camera = opt_ref(elem as *mut Camera),
-                ElementType::Bone => (*node).bone = opt_ref(elem as *mut Bone),
+            // SAFETY: `elem` is a live element of the scene (see above).
+            match unsafe { (*elem).type_ } {
+                // SAFETY: the arm pins `elem`'s type, so it heads a live element of
+                // that type, and `node` is live.
+                ElementType::Mesh => unsafe { (*node).mesh = opt_ref(elem as *mut Mesh) },
+                // SAFETY: as above.
+                ElementType::Light => unsafe { (*node).light = opt_ref(elem as *mut Light) },
+                // SAFETY: as above.
+                ElementType::Camera => unsafe { (*node).camera = opt_ref(elem as *mut Camera) },
+                // SAFETY: as above.
+                ElementType::Bone => unsafe { (*node).bone = opt_ref(elem as *mut Bone) },
                 _ => { /* No shorthand */ }
             }
         }
 
-        if (*node).all_attribs.count > 1 {
-            (*node).all_attribs.data = uc
-                .result_view()
-                .push_pop::<*mut Element>(uc.tmp_stack_view(), (*node).all_attribs.count)
-                as *const Ref<Element>;
+        // SAFETY: `node` is live (see above).
+        if unsafe { (*node).all_attribs.count } > 1 {
+            // SAFETY: as above; the attribute pointers were pushed onto `uc`'s tmp
+            // stack by the loop above, `all_attribs.count` of them, and are popped
+            // into `uc`'s own result buffer here.
+            unsafe {
+                (*node).all_attribs.data = uc
+                    .result_view()
+                    .push_pop::<*mut Element>(uc.tmp_stack_view(), (*node).all_attribs.count)
+                    as *const Ref<Element>
+            };
             ufbxi_check!(
                 uc,
-                !(*node).all_attribs.data.is_null(),
+                // SAFETY: `node` is live (see above).
+                !unsafe { (*node).all_attribs.data }.is_null(),
                 "node->all_attribs.data"
             );
-        } else if (*node).all_attribs.count == 1 {
-            (*node).all_attribs.data = &raw const (*node).attrib as *const Ref<Element>;
+        // SAFETY: `node` is live (see above).
+        } else if unsafe { (*node).all_attribs.count } == 1 {
+            // SAFETY: as above, so `&raw const (*node).attrib` addresses the node's
+            // own single element-pointer field — the one attribute.
+            unsafe { (*node).all_attribs.data = &raw const (*node).attrib as *const Ref<Element> };
         }
 
-        fetch_dst_elements(
-            uc,
-            &raw mut (*node).materials as *mut c_void,
-            &mut (*node).element,
-            false,
-            false,
-            ptr::null(),
-            ElementType::Material,
-        )?;
-        p_node = p_node.add(1);
+        // SAFETY: `node` is live (see above), so the projections address its own
+        // `materials` list header and element header.
+        unsafe {
+            fetch_dst_elements(
+                uc,
+                &raw mut (*node).materials as *mut c_void,
+                &mut (*node).element,
+                false,
+                false,
+                ptr::null(),
+                ElementType::Material,
+            )
+        }?;
+        // SAFETY: `p_node != p_node_end`, so the advance lands at or before the
+        // run's one-past-the-end pointer.
+        p_node = unsafe { p_node.add(1) };
     }
 
     // Resolve bind pose bones that don't use the normal connection system
@@ -7090,55 +8584,98 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let mut p_pose: *mut *mut Pose = uc.scene_view().poses_view().data() as *mut *mut Pose;
     let p_pose_end: *mut *mut Pose = add_ptr(p_pose, uc.scene_view().poses_view().count());
     while p_pose != p_pose_end {
-        let pose: *mut Pose = *p_pose;
+        // SAFETY: `p_pose != p_pose_end`, so it addresses a live, initialized slot
+        // of the scene's pose-pointer run.
+        let pose: *mut Pose = unsafe { *p_pose };
 
         // HACK: Transport `ufbxi_tmp_bone_pose` array through the `ufbx_bone_pose` pointer
-        let num_bones: usize = (*pose).bone_poses.count;
-        let tmp_poses: *mut TmpBonePose = (*pose).bone_poses.data as *mut TmpBonePose;
-        (*pose).bone_poses.data = uc.result_view().push::<BonePose>(num_bones);
+        // SAFETY: `pose` is a live `ufbx_pose` of the scene (see above).
+        let num_bones: usize = unsafe { (*pose).bone_poses.count };
+        // SAFETY: as above; the parse pass stashed the `num_bones`-long tmp bone
+        // pose run in this field, as the comment above records.
+        let tmp_poses: *mut TmpBonePose = unsafe { (*pose).bone_poses.data } as *mut TmpBonePose;
+        // SAFETY: `pose` is live (see above); `result_view()` is `uc`'s own result
+        // buffer.
+        unsafe { (*pose).bone_poses.data = uc.result_view().push::<BonePose>(num_bones) };
         ufbxi_check!(
             uc,
-            !(*pose).bone_poses.data.is_null(),
+            // SAFETY: `pose` is live (see above).
+            !unsafe { (*pose).bone_poses.data }.is_null(),
             "pose->bone_poses.data"
         );
 
         // Filter only found bones
-        (*pose).bone_poses.count = 0;
+        // SAFETY: `pose` is live (see above).
+        unsafe { (*pose).bone_poses.count = 0 };
         for i in 0..num_bones {
-            let elem: *mut Element = find_element_by_fbx_id(uc, (*tmp_poses.add(i)).bone_fbx_id);
-            if elem.is_null() || (*elem).type_ != ElementType::Node {
+            // SAFETY: `tmp_poses` addresses `num_bones` live, initialized tmp bone
+            // poses (see above) and `i < num_bones`.
+            let elem: *mut Element =
+                find_element_by_fbx_id(uc, unsafe { (*tmp_poses.add(i)).bone_fbx_id });
+            // SAFETY: a non-null `elem` is a live element of the scene.
+            if elem.is_null() || unsafe { (*elem).type_ } != ElementType::Node {
                 continue;
             }
 
             let node: *mut Node = elem as *mut Node;
             // C: `&pose->bone_poses.data[pose->bone_poses.count++]`
+            // SAFETY: `pose` is live; the `bone_poses` run was pushed with
+            // `num_bones` entries and `bone_poses.count` counts the bones filled in
+            // so far, one per loop iteration, so it stays below `num_bones`.
             let bone: *mut BonePose =
-                ((*pose).bone_poses.data as *mut BonePose).add((*pose).bone_poses.count);
-            (*pose).bone_poses.count += 1;
-            (*bone).bone_node = Ref::from_ptr(node);
-            (*bone).bone_to_world = (*tmp_poses.add(i)).bone_to_world;
+                unsafe { ((*pose).bone_poses.data as *mut BonePose).add((*pose).bone_poses.count) };
+            // SAFETY: `pose` is live (see above).
+            unsafe { (*pose).bone_poses.count += 1 };
+            // SAFETY: `bone` addresses a slot of that run (see above) and `node` is
+            // the non-null element checked above.
+            unsafe { (*bone).bone_node = Ref::from_ptr(node) };
+            // SAFETY: as above; `i < num_bones` indexes the tmp bone pose run.
+            unsafe { (*bone).bone_to_world = (*tmp_poses.add(i)).bone_to_world };
 
-            if (*pose).is_bind_pose {
-                if opt_ptr(&(*node).bind_pose).is_null() {
-                    (*node).bind_pose = opt_ref(pose);
+            // SAFETY: `pose` is live (see above).
+            if unsafe { (*pose).is_bind_pose } {
+                // SAFETY: `type_ == Node`, so `node` heads a live `ufbx_node` and
+                // `&(*node).bind_pose` addresses its own field.
+                if unsafe { opt_ptr(&(*node).bind_pose) }.is_null() {
+                    // SAFETY: `node` is live (see above) and `pose` is non-null.
+                    unsafe { (*node).bind_pose = opt_ref(pose) };
                 }
 
-                let node_conns: List<Connection> = find_src_connections(elem, ptr::null());
+                // SAFETY: `elem` is a live element of the scene (see above).
+                let node_conns: List<Connection> =
+                    unsafe { find_src_connections(elem, ptr::null()) };
                 // C: `ufbxi_for_list(ufbx_connection, conn, node_conns)`
                 for conn_ix in 0..node_conns.count {
-                    let conn: *mut Connection = (node_conns.data as *mut Connection).add(conn_ix);
-                    if (*ref_ptr(&(*conn).dst)).type_ != ElementType::SkinCluster {
+                    // SAFETY: `node_conns` is the connection run
+                    // `find_src_connections` returned for this element, so
+                    // `conn_ix < node_conns.count` indexes it.
+                    let conn: *mut Connection =
+                        unsafe { (node_conns.data as *mut Connection).add(conn_ix) };
+                    // SAFETY: `conn` addresses a live, initialized connection (see
+                    // above), whose `dst` is a non-null live element pointer.
+                    if unsafe { (*ref_ptr(&(*conn).dst)).type_ } != ElementType::SkinCluster {
                         continue;
                     }
-                    let cluster: *mut SkinCluster = ref_ptr(&(*conn).dst) as *mut SkinCluster;
-                    if matrix_all_zero(&(*cluster).bind_to_world) {
-                        (*cluster).bind_to_world = (*bone).bone_to_world;
+                    // SAFETY: as above, and the check pins the destination's type,
+                    // so it heads a live `ufbx_skin_cluster`.
+                    let cluster: *mut SkinCluster =
+                        unsafe { ref_ptr(&(*conn).dst) } as *mut SkinCluster;
+                    // SAFETY: `cluster` is live (see above), so `&(*cluster).
+                    // bind_to_world` addresses its own field.
+                    if unsafe { matrix_all_zero(&(*cluster).bind_to_world) } {
+                        // SAFETY: `cluster` is live and `bone` addresses a slot of
+                        // the pose's own bone run (both above).
+                        unsafe { (*cluster).bind_to_world = (*bone).bone_to_world };
                     }
                 }
             }
         }
-        sort_bone_poses(uc, pose)?;
-        p_pose = p_pose.add(1);
+        // SAFETY: `pose` is a live `ufbx_pose` whose `bone_poses` run holds its
+        // `count` initialized entries (see above).
+        unsafe { sort_bone_poses(uc, pose) }?;
+        // SAFETY: `p_pose != p_pose_end`, so the advance lands at or before the
+        // run's one-past-the-end pointer.
+        p_pose = unsafe { p_pose.add(1) };
     }
 
     // Fetch pointers that may break elements
@@ -7147,23 +8684,38 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     // C: `for (int type = UFBX_ELEMENT_TYPE_FIRST_ATTRIB; type <= UFBX_ELEMENT_TYPE_LAST_ATTRIB; type++)`
     let mut attrib_type: u32 = ELEMENT_TYPE_FIRST_ATTRIB;
     while attrib_type <= ELEMENT_TYPE_LAST_ATTRIB {
-        let typed_elems: *mut RefList<Element> =
-            (uc.scene_view().unknowns_mut_ptr() as *mut RefList<Element>).add(attrib_type as usize);
+        // SAFETY: `unknowns_mut_ptr` addresses the first of the scene's
+        // `ELEMENT_TYPE_COUNT` per-type list members, which share one flat layout,
+        // and `attrib_type <= ELEMENT_TYPE_LAST_ATTRIB < ELEMENT_TYPE_COUNT`.
+        let typed_elems: *mut RefList<Element> = unsafe {
+            (uc.scene_view().unknowns_mut_ptr() as *mut RefList<Element>).add(attrib_type as usize)
+        };
         // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, uc->scene.elements_by_type[type])`
-        let mut p_elem: *mut *mut Element = (*typed_elems).data as *mut *mut Element;
-        let p_elem_end: *mut *mut Element = add_ptr(p_elem, (*typed_elems).count);
+        // SAFETY: `typed_elems` addresses the scene's own per-type list (see
+        // above), filled in by the pass above.
+        let mut p_elem: *mut *mut Element = unsafe { (*typed_elems).data } as *mut *mut Element;
+        // SAFETY: as above; `data`/`count` describe one result-buffer run.
+        let p_elem_end: *mut *mut Element = add_ptr(p_elem, unsafe { (*typed_elems).count });
         while p_elem != p_elem_end {
-            let elem: *mut Element = *p_elem;
-            fetch_src_elements(
-                uc,
-                &raw mut (*elem).instances as *mut c_void,
-                elem,
-                false,
-                true,
-                ptr::null(),
-                ElementType::Node,
-            )?;
-            p_elem = p_elem.add(1);
+            // SAFETY: `p_elem != p_elem_end`, so it addresses a live, initialized
+            // slot of that run.
+            let elem: *mut Element = unsafe { *p_elem };
+            // SAFETY: `elem` is a live element of the scene (see above), so
+            // `&raw mut (*elem).instances` addresses its own list header.
+            unsafe {
+                fetch_src_elements(
+                    uc,
+                    &raw mut (*elem).instances as *mut c_void,
+                    elem,
+                    false,
+                    true,
+                    ptr::null(),
+                    ElementType::Node,
+                )
+            }?;
+            // SAFETY: `p_elem != p_elem_end`, so the advance lands at or before the
+            // run's one-past-the-end pointer.
+            p_elem = unsafe { p_elem.add(1) };
         }
         attrib_type += 1;
     }
@@ -7176,14 +8728,23 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_cluster_end: *mut *mut SkinCluster =
         add_ptr(p_cluster, uc.scene_view().skin_clusters_view().count());
     while p_cluster != p_cluster_end {
-        let cluster: *mut SkinCluster = *p_cluster;
-        (*cluster).bone_node = opt_ref(fetch_dst_element(
-            &mut (*cluster).element,
-            false,
-            ptr::null(),
-            ElementType::Node,
-        ) as *mut Node);
-        p_cluster = p_cluster.add(1);
+        // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live, initialized
+        // slot of the scene's skin-cluster-pointer run.
+        let cluster: *mut SkinCluster = unsafe { *p_cluster };
+        // SAFETY: `cluster` is a live `ufbx_skin_cluster` of the scene (see above),
+        // so `&mut (*cluster).element` addresses its own element header; the
+        // fetched destination is null or a live `ufbx_node`.
+        unsafe {
+            (*cluster).bone_node = opt_ref(fetch_dst_element(
+                &mut (*cluster).element,
+                false,
+                ptr::null(),
+                ElementType::Node,
+            ) as *mut Node)
+        };
+        // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or before
+        // the run's one-past-the-end pointer.
+        p_cluster = unsafe { p_cluster.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_skin_deformer, p_skin, uc->scene.skin_deformers)`
@@ -7192,176 +8753,312 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_skin_end: *mut *mut SkinDeformer =
         add_ptr(p_skin, uc.scene_view().skin_deformers_view().count());
     while p_skin != p_skin_end {
-        let skin: *mut SkinDeformer = *p_skin;
-        fetch_dst_elements(
-            uc,
-            &raw mut (*skin).clusters as *mut c_void,
-            &mut (*skin).element,
-            false,
-            true,
-            ptr::null(),
-            ElementType::SkinCluster,
-        )?;
+        // SAFETY: `p_skin != p_skin_end`, so it addresses a live, initialized slot
+        // of the scene's skin-deformer-pointer run.
+        let skin: *mut SkinDeformer = unsafe { *p_skin };
+        // SAFETY: `skin` is a live `ufbx_skin_deformer` of the scene (see above),
+        // so the projections address its own `clusters` list header and element
+        // header.
+        unsafe {
+            fetch_dst_elements(
+                uc,
+                &raw mut (*skin).clusters as *mut c_void,
+                &mut (*skin).element,
+                false,
+                true,
+                ptr::null(),
+                ElementType::SkinCluster,
+            )
+        }?;
 
         // Remove clusters without a valid `bone`
         if !uc.opts_view().connect_broken_elements() {
-            let clusters: *mut *mut SkinCluster = (*skin).clusters.data as *mut *mut SkinCluster;
+            // SAFETY: `skin` is live (see above), and the fetch above filled its
+            // `clusters` list.
+            let clusters: *mut *mut SkinCluster =
+                unsafe { (*skin).clusters.data } as *mut *mut SkinCluster;
             let mut num_broken: usize = 0;
-            for i in 0..(*skin).clusters.count {
-                if opt_ptr(&(**clusters.add(i)).bone_node).is_null() {
+            // SAFETY: as above.
+            for i in 0..unsafe { (*skin).clusters.count } {
+                // SAFETY: `i` is below the cluster run's length, so it addresses a
+                // live slot holding a live `ufbx_skin_cluster`, whose `bone_node`
+                // field `&(**clusters.add(i)).bone_node` projects.
+                if unsafe { opt_ptr(&(**clusters.add(i)).bone_node) }.is_null() {
                     num_broken += 1;
                 } else if num_broken > 0 {
-                    *clusters.add(i - num_broken) = *clusters.add(i);
+                    // SAFETY: `i` indexes the cluster run (see above) and
+                    // `num_broken <= i`, so the compacted destination is inside it
+                    // too.
+                    unsafe { *clusters.add(i - num_broken) = *clusters.add(i) };
                 }
             }
-            (*skin).clusters.count -= num_broken;
+            // SAFETY: `skin` is live (see above); `num_broken` counts entries of
+            // its own cluster list.
+            unsafe { (*skin).clusters.count -= num_broken };
         }
 
         let mut total_weights: usize = 0;
         // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, skin->clusters)`
-        let mut p_cluster: *mut *mut SkinCluster = (*skin).clusters.data as *mut *mut SkinCluster;
-        let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*skin).clusters.count);
+        // SAFETY: `skin` is live (see above).
+        let mut p_cluster: *mut *mut SkinCluster =
+            unsafe { (*skin).clusters.data } as *mut *mut SkinCluster;
+        // SAFETY: as above; `data`/`count` describe one run.
+        let p_cluster_end: *mut *mut SkinCluster =
+            add_ptr(p_cluster, unsafe { (*skin).clusters.count });
         while p_cluster != p_cluster_end {
-            let cluster: *mut SkinCluster = *p_cluster;
+            // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live,
+            // initialized slot of that run.
+            let cluster: *mut SkinCluster = unsafe { *p_cluster };
             ufbxi_check!(
                 uc,
-                usize::MAX - total_weights > (*cluster).num_weights,
+                // SAFETY: `cluster` is a live `ufbx_skin_cluster` (see above).
+                usize::MAX - total_weights > unsafe { (*cluster).num_weights },
                 "SIZE_MAX - total_weights > cluster->num_weights"
             );
-            total_weights += (*cluster).num_weights;
-            p_cluster = p_cluster.add(1);
+            // SAFETY: as above.
+            total_weights += unsafe { (*cluster).num_weights };
+            // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or
+            // before the run's one-past-the-end pointer.
+            p_cluster = unsafe { p_cluster.add(1) };
         }
 
         let mut num_vertices: usize = 0;
 
         // Iterate through meshes so we can pad the vertices to the largest one
         {
-            let conns: List<Connection> = find_src_connections(&mut (*skin).element, ptr::null());
+            // SAFETY: `skin` is live (see above), so `&mut (*skin).element`
+            // addresses its own element header.
+            let conns: List<Connection> =
+                unsafe { find_src_connections(&mut (*skin).element, ptr::null()) };
             // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
             for conn_ix in 0..conns.count {
-                let conn: *mut Connection = (conns.data as *mut Connection).add(conn_ix);
+                // SAFETY: `conns` is the connection run `find_src_connections`
+                // returned, so `conn_ix < conns.count` indexes it.
+                let conn: *mut Connection = unsafe { (conns.data as *mut Connection).add(conn_ix) };
                 let mut mesh: *mut Mesh = ptr::null_mut();
-                if (*conn).dst_prop.length > 0 {
+                // SAFETY: `conn` addresses a live, initialized connection (see
+                // above).
+                if unsafe { (*conn).dst_prop.length } > 0 {
                     continue;
                 }
-                let dst: *mut Element = ref_ptr(&(*conn).dst);
-                if (*dst).type_ == ElementType::Mesh {
+                // SAFETY: as above; a connection's `dst` is a non-null live element
+                // pointer.
+                let dst: *mut Element = unsafe { ref_ptr(&(*conn).dst) };
+                // SAFETY: `dst` is a live element of the scene (see above).
+                if unsafe { (*dst).type_ } == ElementType::Mesh {
                     mesh = dst as *mut Mesh;
-                } else if (*dst).type_ == ElementType::Node {
+                // SAFETY: as above.
+                } else if unsafe { (*dst).type_ } == ElementType::Node {
                     let mut node: *mut Node = dst as *mut Node;
-                    if !opt_ptr(&(*node).geometry_transform_helper).is_null() {
-                        node = opt_ptr(&(*node).geometry_transform_helper);
+                    // SAFETY: `type_ == Node`, so `dst` heads a live `ufbx_node` and
+                    // `&(*node).geometry_transform_helper` addresses its own field.
+                    if !unsafe { opt_ptr(&(*node).geometry_transform_helper) }.is_null() {
+                        // SAFETY: as above; a non-null helper is another live
+                        // `ufbx_node`.
+                        node = unsafe { opt_ptr(&(*node).geometry_transform_helper) };
                     }
-                    mesh = opt_ptr(&(*node).mesh);
+                    // SAFETY: `node` is a live `ufbx_node` (see above), so
+                    // `&(*node).mesh` addresses its own field.
+                    mesh = unsafe { opt_ptr(&(*node).mesh) };
                 }
                 if mesh.is_null() {
                     continue;
                 }
-                num_vertices = max_sz(num_vertices, (*mesh).num_vertices);
+                // SAFETY: a non-null `mesh` is a live `ufbx_mesh` of the scene.
+                num_vertices = max_sz(num_vertices, unsafe { (*mesh).num_vertices });
             }
         }
 
         if !uc.opts_view().skip_skin_vertices() {
-            (*skin).vertices.count = num_vertices;
-            (*skin).vertices.data = uc.result_view().push_zero::<SkinVertex>(num_vertices);
-            ufbxi_check!(uc, !(*skin).vertices.data.is_null(), "skin->vertices.data");
+            // SAFETY: `skin` is live (see above).
+            unsafe { (*skin).vertices.count = num_vertices };
+            // SAFETY: as above; `result_view()` is `uc`'s own result buffer.
+            unsafe {
+                (*skin).vertices.data = uc.result_view().push_zero::<SkinVertex>(num_vertices)
+            };
+            // SAFETY: `skin` is live (see above).
+            ufbxi_check!(
+                uc,
+                !unsafe { (*skin).vertices.data }.is_null(),
+                "skin->vertices.data"
+            );
 
-            (*skin).weights.count = total_weights;
-            (*skin).weights.data = uc.result_view().push_zero::<SkinWeight>(total_weights);
-            ufbxi_check!(uc, !(*skin).weights.data.is_null(), "skin->weights.data");
+            // SAFETY: `skin` is live (see above).
+            unsafe { (*skin).weights.count = total_weights };
+            // SAFETY: as above; `result_view()` is `uc`'s own result buffer.
+            unsafe {
+                (*skin).weights.data = uc.result_view().push_zero::<SkinWeight>(total_weights)
+            };
+            // SAFETY: `skin` is live (see above).
+            ufbxi_check!(
+                uc,
+                !unsafe { (*skin).weights.data }.is_null(),
+                "skin->weights.data"
+            );
 
             let retain_all: bool = !uc.opts_view().clean_skin_weights();
 
-            let skin_vertices: *mut SkinVertex = (*skin).vertices.data as *mut SkinVertex;
-            let skin_weights: *mut SkinWeight = (*skin).weights.data as *mut SkinWeight;
+            // SAFETY: `skin` is live (see above).
+            let skin_vertices: *mut SkinVertex =
+                unsafe { (*skin).vertices.data } as *mut SkinVertex;
+            // SAFETY: as above.
+            let skin_weights: *mut SkinWeight = unsafe { (*skin).weights.data } as *mut SkinWeight;
 
             // Count the number of weights per vertex
             // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, skin->clusters)`
+            // SAFETY: `skin` is live (see above).
             let mut p_cluster: *mut *mut SkinCluster =
-                (*skin).clusters.data as *mut *mut SkinCluster;
-            let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*skin).clusters.count);
+                unsafe { (*skin).clusters.data } as *mut *mut SkinCluster;
+            // SAFETY: as above; `data`/`count` describe one run.
+            let p_cluster_end: *mut *mut SkinCluster =
+                add_ptr(p_cluster, unsafe { (*skin).clusters.count });
             while p_cluster != p_cluster_end {
-                let cluster: *mut SkinCluster = *p_cluster;
-                for i in 0..(*cluster).num_weights {
-                    let vertex: u32 = *(*cluster).vertices.data.add(i);
+                // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live,
+                // initialized slot of that run.
+                let cluster: *mut SkinCluster = unsafe { *p_cluster };
+                // SAFETY: `cluster` is a live `ufbx_skin_cluster` (see above).
+                for i in 0..unsafe { (*cluster).num_weights } {
+                    // SAFETY: the cluster's `vertices` run holds `num_weights`
+                    // entries and `i` is below it.
+                    let vertex: u32 = unsafe { *(*cluster).vertices.data.add(i) };
                     if (vertex as usize) < num_vertices
-                        && (retain_all || *(*cluster).weights.data.add(i) > 0.0)
+                        // SAFETY: the cluster's `weights` run holds `num_weights`
+                        // entries too, and `i` is below it.
+                        && (retain_all || unsafe { *(*cluster).weights.data.add(i) } > 0.0)
                     {
-                        (*skin_vertices.add(vertex as usize)).num_weights = (*skin_vertices
-                            .add(vertex as usize))
-                        .num_weights
-                        .wrapping_add(1);
+                        // SAFETY: `vertex < num_vertices`, the length of the zeroed
+                        // `skin_vertices` run pushed above.
+                        unsafe {
+                            (*skin_vertices.add(vertex as usize)).num_weights = (*skin_vertices
+                                .add(vertex as usize))
+                            .num_weights
+                            .wrapping_add(1)
+                        };
                     }
                 }
-                p_cluster = p_cluster.add(1);
+                // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or
+                // before the run's one-past-the-end pointer.
+                p_cluster = unsafe { p_cluster.add(1) };
             }
 
-            let default_dq: Real = if (*skin).skinning_method == SkinningMethod::DualQuaternion {
-                1.0f32 as Real
-            } else {
-                0.0f32 as Real
-            };
+            // SAFETY: `skin` is live (see above).
+            let default_dq: Real =
+                if unsafe { (*skin).skinning_method } == SkinningMethod::DualQuaternion {
+                    1.0f32 as Real
+                } else {
+                    0.0f32 as Real
+                };
 
             // Prefix sum to assign the vertex weight offsets and set up default DQ values
             let mut offset: u32 = 0;
             let mut max_weights: u32 = 0;
             for i in 0..num_vertices {
-                (*skin_vertices.add(i)).weight_begin = offset;
-                (*skin_vertices.add(i)).dq_weight = default_dq;
-                let num_weights: u32 = (*skin_vertices.add(i)).num_weights;
+                // SAFETY: `i < num_vertices`, the length of the `skin_vertices` run
+                // pushed above.
+                unsafe { (*skin_vertices.add(i)).weight_begin = offset };
+                // SAFETY: as above.
+                unsafe { (*skin_vertices.add(i)).dq_weight = default_dq };
+                // SAFETY: as above.
+                let num_weights: u32 = unsafe { (*skin_vertices.add(i)).num_weights };
                 offset = offset.wrapping_add(num_weights);
-                (*skin_vertices.add(i)).num_weights = 0;
+                // SAFETY: as above.
+                unsafe { (*skin_vertices.add(i)).num_weights = 0 };
 
                 if num_weights > max_weights {
                     max_weights = num_weights;
                 }
             }
             ufbx_assert!(offset as usize <= total_weights);
-            (*skin).max_weights_per_vertex = max_weights as usize;
+            // SAFETY: `skin` is live (see above).
+            unsafe { (*skin).max_weights_per_vertex = max_weights as usize };
 
             // Copy the DQ weights to vertices
-            for i in 0..(*skin).num_dq_weights {
-                let vertex: u32 = *(*skin).dq_vertices.data.add(i);
+            // SAFETY: `skin` is live (see above).
+            for i in 0..unsafe { (*skin).num_dq_weights } {
+                // SAFETY: the skin's `dq_vertices` run holds `num_dq_weights`
+                // entries and `i` is below it.
+                let vertex: u32 = unsafe { *(*skin).dq_vertices.data.add(i) };
                 if (vertex as usize) < num_vertices {
-                    (*skin_vertices.add(vertex as usize)).dq_weight =
-                        *(*skin).dq_weights.data.add(i);
+                    // SAFETY: `vertex < num_vertices` bounds the `skin_vertices`
+                    // run, and the skin's `dq_weights` run holds `num_dq_weights`
+                    // entries with `i` below it.
+                    unsafe {
+                        (*skin_vertices.add(vertex as usize)).dq_weight =
+                            *(*skin).dq_weights.data.add(i)
+                    };
                 }
             }
 
             // Copy the weights to vertices
             let mut cluster_index: u32 = 0;
             // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, skin->clusters)`
+            // SAFETY: `skin` is live (see above).
             let mut p_cluster: *mut *mut SkinCluster =
-                (*skin).clusters.data as *mut *mut SkinCluster;
-            let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*skin).clusters.count);
+                unsafe { (*skin).clusters.data } as *mut *mut SkinCluster;
+            // SAFETY: as above; `data`/`count` describe one run.
+            let p_cluster_end: *mut *mut SkinCluster =
+                add_ptr(p_cluster, unsafe { (*skin).clusters.count });
             while p_cluster != p_cluster_end {
-                let cluster: *mut SkinCluster = *p_cluster;
-                for i in 0..(*cluster).num_weights {
-                    let vertex: u32 = *(*cluster).vertices.data.add(i);
+                // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live,
+                // initialized slot of that run.
+                let cluster: *mut SkinCluster = unsafe { *p_cluster };
+                // SAFETY: `cluster` is a live `ufbx_skin_cluster` (see above).
+                for i in 0..unsafe { (*cluster).num_weights } {
+                    // SAFETY: the cluster's `vertices` run holds `num_weights`
+                    // entries and `i` is below it.
+                    let vertex: u32 = unsafe { *(*cluster).vertices.data.add(i) };
                     if (vertex as usize) < num_vertices
-                        && (retain_all || *(*cluster).weights.data.add(i) > 0.0)
+                        // SAFETY: the cluster's `weights` run holds `num_weights`
+                        // entries too, and `i` is below it.
+                        && (retain_all || unsafe { *(*cluster).weights.data.add(i) } > 0.0)
                     {
                         // C: `skin->vertices.data[vertex].num_weights++` — the
                         // pre-increment value.
-                        let local_index: u32 = (*skin_vertices.add(vertex as usize)).num_weights;
-                        (*skin_vertices.add(vertex as usize)).num_weights =
-                            local_index.wrapping_add(1);
-                        let index: u32 = (*skin_vertices.add(vertex as usize))
-                            .weight_begin
-                            .wrapping_add(local_index);
-                        (*skin_weights.add(index as usize)).cluster_index = cluster_index;
-                        (*skin_weights.add(index as usize)).weight =
-                            *(*cluster).weights.data.add(i);
+                        // SAFETY: `vertex < num_vertices`, the length of the
+                        // `skin_vertices` run.
+                        let local_index: u32 =
+                            unsafe { (*skin_vertices.add(vertex as usize)).num_weights };
+                        // SAFETY: as above.
+                        unsafe {
+                            (*skin_vertices.add(vertex as usize)).num_weights =
+                                local_index.wrapping_add(1)
+                        };
+                        // SAFETY: as above.
+                        let index: u32 = unsafe {
+                            (*skin_vertices.add(vertex as usize))
+                                .weight_begin
+                                .wrapping_add(local_index)
+                        };
+                        // SAFETY: the counting pass above gave each vertex exactly
+                        // `num_weights` slots starting at its `weight_begin`, and
+                        // `local_index` counts the weights written for this vertex so
+                        // far, so `index` stays inside the `total_weights`-long
+                        // `skin_weights` run.
+                        unsafe {
+                            (*skin_weights.add(index as usize)).cluster_index = cluster_index
+                        };
+                        // SAFETY: as above, with `i` below the cluster's
+                        // `num_weights` weight run.
+                        unsafe {
+                            (*skin_weights.add(index as usize)).weight =
+                                *(*cluster).weights.data.add(i)
+                        };
                     }
                 }
                 cluster_index = cluster_index.wrapping_add(1);
-                p_cluster = p_cluster.add(1);
+                // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or
+                // before the run's one-past-the-end pointer.
+                p_cluster = unsafe { p_cluster.add(1) };
             }
 
             // Sort the vertex weights by descending weight value
-            sort_skin_weights(uc, skin)?;
+            // SAFETY: `skin` is a live `ufbx_skin_deformer` whose `vertices` and
+            // `weights` runs are filled in above.
+            unsafe { sort_skin_weights(uc, skin) }?;
         }
-        p_skin = p_skin.add(1);
+        // SAFETY: `p_skin != p_skin_end`, so the advance lands at or before the
+        // run's one-past-the-end pointer.
+        p_skin = unsafe { p_skin.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_deformer, p_blend, uc->scene.blend_deformers)`
@@ -7370,17 +9067,26 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_blend_end: *mut *mut BlendDeformer =
         add_ptr(p_blend, uc.scene_view().blend_deformers_view().count());
     while p_blend != p_blend_end {
-        let blend: *mut BlendDeformer = *p_blend;
-        fetch_dst_elements(
-            uc,
-            &raw mut (*blend).channels as *mut c_void,
-            &mut (*blend).element,
-            false,
-            true,
-            ptr::null(),
-            ElementType::BlendChannel,
-        )?;
-        p_blend = p_blend.add(1);
+        // SAFETY: `p_blend != p_blend_end`, so it addresses a live, initialized
+        // slot of the scene's blend-deformer-pointer run.
+        let blend: *mut BlendDeformer = unsafe { *p_blend };
+        // SAFETY: `blend` is a live `ufbx_blend_deformer` of the scene (see above),
+        // so the projections address its own `channels` list header and element
+        // header.
+        unsafe {
+            fetch_dst_elements(
+                uc,
+                &raw mut (*blend).channels as *mut c_void,
+                &mut (*blend).element,
+                false,
+                true,
+                ptr::null(),
+                ElementType::BlendChannel,
+            )
+        }?;
+        // SAFETY: `p_blend != p_blend_end`, so the advance lands at or before the
+        // run's one-past-the-end pointer.
+        p_blend = unsafe { p_blend.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_cache_deformer, p_deformer, uc->scene.cache_deformers)`
@@ -7389,20 +9095,37 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_deformer_end: *mut *mut CacheDeformer =
         add_ptr(p_deformer, uc.scene_view().cache_deformers_view().count());
     while p_deformer != p_deformer_end {
-        let deformer_view: &'a CacheDeformerView = CacheDeformerView::from_ptr(*p_deformer);
+        // SAFETY: `p_deformer != p_deformer_end`, so it addresses a live,
+        // initialized slot of the scene's cache-deformer-pointer run, holding a
+        // live `ufbx_cache_deformer` allocated from `uc`'s result buffer — a
+        // write-capable root for the view.
+        let deformer_view: &'a CacheDeformerView =
+            unsafe { CacheDeformerView::from_ptr(*p_deformer) };
         let deformer: *mut CacheDeformer = deformer_view.get();
-        (*deformer).channel = find_string(
-            deformer_view.props_view(),
-            b"ChannelName\0".as_ptr(),
-            EMPTY_STRING.0,
-        );
-        (*deformer).file = opt_ref(fetch_dst_element(
-            &mut (*deformer).element,
-            false,
-            ptr::null(),
-            ElementType::CacheFile,
-        ) as *mut CacheFile);
-        p_deformer = p_deformer.add(1);
+        // SAFETY: `deformer` is the live element the view was minted from, and
+        // `props_view()` is its own live `ufbx_props`; the name is a NUL-terminated
+        // literal.
+        unsafe {
+            (*deformer).channel = find_string(
+                deformer_view.props_view(),
+                b"ChannelName\0".as_ptr(),
+                EMPTY_STRING.0,
+            )
+        };
+        // SAFETY: `deformer` is live (see above), so `&mut (*deformer).element`
+        // addresses its own element header; the fetched destination is null or a
+        // live `ufbx_cache_file`.
+        unsafe {
+            (*deformer).file = opt_ref(fetch_dst_element(
+                &mut (*deformer).element,
+                false,
+                ptr::null(),
+                ElementType::CacheFile,
+            ) as *mut CacheFile)
+        };
+        // SAFETY: `p_deformer != p_deformer_end`, so the advance lands at or before
+        // the run's one-past-the-end pointer.
+        p_deformer = unsafe { p_deformer.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_cache_file, p_cache, uc->scene.cache_files)`
@@ -7411,53 +9134,88 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_cache_end: *mut *mut CacheFile =
         add_ptr(p_cache, uc.scene_view().cache_files_view().count());
     while p_cache != p_cache_end {
-        let cache_view: &'a CacheFileView = CacheFileView::from_ptr(*p_cache);
+        // SAFETY: `p_cache != p_cache_end`, so it addresses a live, initialized
+        // slot of the scene's cache-file-pointer run, holding a live
+        // `ufbx_cache_file` allocated from `uc`'s result buffer — a write-capable
+        // root for the view.
+        let cache_view: &'a CacheFileView = unsafe { CacheFileView::from_ptr(*p_cache) };
         let cache: *mut CacheFile = cache_view.get();
 
-        (*cache).absolute_filename = find_string(
-            cache_view.props_view(),
-            b"CacheAbsoluteFileName\0".as_ptr(),
-            EMPTY_STRING.0,
-        );
-        (*cache).relative_filename = find_string(
-            cache_view.props_view(),
-            b"CacheFileName\0".as_ptr(),
-            EMPTY_STRING.0,
-        );
+        // SAFETY: `cache` is the live element the view was minted from, and
+        // `props_view()` is its own live `ufbx_props`; the name is a
+        // NUL-terminated literal.
+        unsafe {
+            (*cache).absolute_filename = find_string(
+                cache_view.props_view(),
+                b"CacheAbsoluteFileName\0".as_ptr(),
+                EMPTY_STRING.0,
+            )
+        };
+        // SAFETY: as above.
+        unsafe {
+            (*cache).relative_filename = find_string(
+                cache_view.props_view(),
+                b"CacheFileName\0".as_ptr(),
+                EMPTY_STRING.0,
+            )
+        };
 
-        (*cache).raw_absolute_filename = find_blob(
-            cache_view.props_view(),
-            b"CacheAbsoluteFileName\0".as_ptr(),
-            EMPTY_BLOB.0,
-        );
-        (*cache).raw_relative_filename = find_blob(
-            cache_view.props_view(),
-            b"CacheFileName\0".as_ptr(),
-            EMPTY_BLOB.0,
-        );
+        // SAFETY: as above.
+        unsafe {
+            (*cache).raw_absolute_filename = find_blob(
+                cache_view.props_view(),
+                b"CacheAbsoluteFileName\0".as_ptr(),
+                EMPTY_BLOB.0,
+            )
+        };
+        // SAFETY: as above.
+        unsafe {
+            (*cache).raw_relative_filename = find_blob(
+                cache_view.props_view(),
+                b"CacheFileName\0".as_ptr(),
+                EMPTY_BLOB.0,
+            )
+        };
 
-        let type_: i64 = api_find_int(cache_view.props_view(), b"CacheFileType\0".as_ptr(), 0);
+        // SAFETY: `props_view()` is the cache file's own live `ufbx_props` and the
+        // name is a NUL-terminated literal.
+        let type_: i64 =
+            unsafe { api_find_int(cache_view.props_view(), b"CacheFileType\0".as_ptr(), 0) };
         if type_ >= 0 && type_ <= CacheFileFormat::Mc as i64 {
             // C: `(ufbx_cache_file_format)type` — the guard above pins `type`
             // into `0..=UFBX_CACHE_FILE_FORMAT_MC`, exactly the enum range.
-            (*cache).format = core::mem::transmute::<u32, CacheFileFormat>(type_ as u32);
+            // SAFETY: the guard pins `type_` into `0..=UFBX_CACHE_FILE_FORMAT_MC`,
+            // exactly the discriminants of the `u32`-repr `CacheFileFormat`;
+            // `cache` is the live element the view was minted from.
+            unsafe { (*cache).format = core::mem::transmute::<u32, CacheFileFormat>(type_ as u32) };
         }
 
-        resolve_filenames(
-            uc,
-            &raw mut (*cache).filename as *mut Strblob,
-            &raw mut (*cache).absolute_filename as *mut Strblob,
-            &raw mut (*cache).relative_filename as *mut Strblob,
-            false,
-        )?;
-        resolve_filenames(
-            uc,
-            &raw mut (*cache).raw_filename as *mut Strblob,
-            &raw mut (*cache).raw_absolute_filename as *mut Strblob,
-            &raw mut (*cache).raw_relative_filename as *mut Strblob,
-            true,
-        )?;
-        p_cache = p_cache.add(1);
+        // SAFETY: `cache` is live (see above), so the projections address its own
+        // `ufbx_string` filename fields, which are `Strblob`-shaped for `raw`
+        // `false`.
+        unsafe {
+            resolve_filenames(
+                uc,
+                &raw mut (*cache).filename as *mut Strblob,
+                &raw mut (*cache).absolute_filename as *mut Strblob,
+                &raw mut (*cache).relative_filename as *mut Strblob,
+                false,
+            )
+        }?;
+        // SAFETY: as above, for its own `ufbx_blob` raw filename fields, which are
+        // `Strblob`-shaped for `raw` `true`.
+        unsafe {
+            resolve_filenames(
+                uc,
+                &raw mut (*cache).raw_filename as *mut Strblob,
+                &raw mut (*cache).raw_absolute_filename as *mut Strblob,
+                &raw mut (*cache).raw_relative_filename as *mut Strblob,
+                true,
+            )
+        }?;
+        // SAFETY: `p_cache != p_cache_end`, so the advance lands at or before the
+        // run's one-past-the-end pointer.
+        p_cache = unsafe { p_cache.add(1) };
     }
 
     ufbx_assert!(
@@ -7469,7 +9227,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let mut full_weights: *mut List<Real> = uc
         .tmp_view()
         .push_pop::<List<Real>>(uc.tmp_full_weights_view(), num_full_weights);
-    buf_free(uc.tmp_full_weights_mut_ptr());
+    // SAFETY: `tmp_full_weights_mut_ptr` hands out `uc`'s own live full-weight
+    // buffer.
+    unsafe { buf_free(uc.tmp_full_weights_mut_ptr()) };
     ufbxi_check!(uc, !full_weights.is_null(), "full_weights");
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_channel, p_channel, uc->scene.blend_channels)`
@@ -7478,63 +9238,122 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_channel_end: *mut *mut BlendChannel =
         add_ptr(p_channel, uc.scene_view().blend_channels_view().count());
     while p_channel != p_channel_end {
-        let channel: *mut BlendChannel = *p_channel;
+        // SAFETY: `p_channel != p_channel_end`, so it addresses a live, initialized
+        // slot of the scene's blend-channel-pointer run.
+        let channel: *mut BlendChannel = unsafe { *p_channel };
 
-        fetch_blend_keyframes(uc, &raw mut (*channel).keyframes, &mut (*channel).element)?;
+        // SAFETY: `channel` is a live `ufbx_blend_channel` of the scene (see
+        // above), so the projections address its own `keyframes` list header and
+        // element header.
+        unsafe {
+            fetch_blend_keyframes(uc, &raw mut (*channel).keyframes, &mut (*channel).element)
+        }?;
 
-        for i in 0..(*channel).keyframes.count {
-            let key: *mut BlendKeyframe = ((*channel).keyframes.data as *mut BlendKeyframe).add(i);
-            (*key).target_weight = 1.0f32 as Real;
-            if i < (*full_weights).count {
+        // SAFETY: `channel` is live (see above).
+        for i in 0..unsafe { (*channel).keyframes.count } {
+            // SAFETY: the fetch above filled the channel's `keyframes` run, and `i`
+            // is below its `count`.
+            let key: *mut BlendKeyframe =
+                unsafe { ((*channel).keyframes.data as *mut BlendKeyframe).add(i) };
+            // SAFETY: `key` addresses a live keyframe of that run (see above).
+            unsafe { (*key).target_weight = 1.0f32 as Real };
+            // SAFETY: `full_weights` addresses this channel's full-weight list
+            // header — the popped run holds one per blend channel and is advanced
+            // once per channel below, with the assert above pinning its length to
+            // the channel count.
+            if i < unsafe { (*full_weights).count } {
                 if !uc.blender_full_weights() {
-                    (*key).target_weight = *(*full_weights).data.add(i) / 100.0;
-                } else if (*full_weights).count == (*ref_ptr(&(*key).shape)).num_offsets {
+                    // SAFETY: `key` is live (see above); the full-weight list's own
+                    // `data` run holds `count` reals and `i` is below it.
+                    unsafe { (*key).target_weight = *(*full_weights).data.add(i) / 100.0 };
+                // SAFETY: `full_weights` is live (see above); `key` is live and its
+                // `shape` is a non-null live `ufbx_blend_shape` pointer.
+                } else if unsafe { (*full_weights).count == (*ref_ptr(&(*key).shape)).num_offsets }
+                {
                     if i == 0 {
                         // Duplicate `index_data` for modification if we retain DOM
                         if uc.opts_view().retain_dom() {
-                            (*full_weights).data = push_copy::<Real>(
-                                uc.result_mut_ptr(),
-                                (*full_weights).count,
-                                (*full_weights).data,
+                            // SAFETY: `result_mut_ptr` is `uc`'s own live result
+                            // buffer, and `full_weights`'s `count`/`data` describe
+                            // the weight run being copied.
+                            unsafe {
+                                (*full_weights).data = push_copy::<Real>(
+                                    uc.result_mut_ptr(),
+                                    (*full_weights).count,
+                                    (*full_weights).data,
+                                )
+                            };
+                            // SAFETY: `full_weights` is live (see above).
+                            ufbxi_check!(
+                                uc,
+                                !unsafe { (*full_weights).data }.is_null(),
+                                "full_weights->data"
                             );
-                            ufbxi_check!(uc, !(*full_weights).data.is_null(), "full_weights->data");
                         }
                         // C: `ufbxi_for_list(ufbx_real, p_weight, *full_weights)`
-                        let mut p_weight: *mut Real = (*full_weights).data as *mut Real;
-                        let p_weight_end: *mut Real = add_ptr(p_weight, (*full_weights).count);
+                        // SAFETY: `full_weights` is live (see above).
+                        let mut p_weight: *mut Real = unsafe { (*full_weights).data } as *mut Real;
+                        // SAFETY: as above; `data`/`count` describe one run.
+                        let p_weight_end: *mut Real =
+                            add_ptr(p_weight, unsafe { (*full_weights).count });
                         while p_weight != p_weight_end {
-                            *p_weight /= 100.0;
-                            p_weight = p_weight.add(1);
+                            // SAFETY: `p_weight != p_weight_end`, so it addresses a
+                            // live, initialized entry of that run.
+                            unsafe { *p_weight /= 100.0 };
+                            // SAFETY: `p_weight != p_weight_end`, so the advance
+                            // lands at or before the run's one-past-the-end pointer.
+                            p_weight = unsafe { p_weight.add(1) };
                         }
                     }
                     // C: struct assignment (memcpy) of the `ufbx_real_list`
                     // header; `List<T>` is not `Copy` in the generated
                     // bindings, so the copy is a byte-identical
                     // `copy_nonoverlapping`.
-                    ptr::copy_nonoverlapping(
-                        full_weights as *const List<Real>,
-                        &raw mut (*ref_ptr(&(*key).shape)).offset_weights,
-                        1,
-                    );
+                    // SAFETY: `full_weights` addresses this channel's own list
+                    // header (see above); the destination is the live blend shape's
+                    // own `offset_weights` header, a distinct field of the same
+                    // type.
+                    unsafe {
+                        ptr::copy_nonoverlapping(
+                            full_weights as *const List<Real>,
+                            &raw mut (*ref_ptr(&(*key).shape)).offset_weights,
+                            1,
+                        )
+                    };
                 }
             }
         }
 
-        sort_blend_keyframes(
-            uc,
-            (*channel).keyframes.data as *mut BlendKeyframe,
-            (*channel).keyframes.count,
-        )?;
-        full_weights = full_weights.add(1);
+        // SAFETY: `channel` is live and its `keyframes` run holds `count`
+        // initialized keyframes (see above).
+        unsafe {
+            sort_blend_keyframes(
+                uc,
+                (*channel).keyframes.data as *mut BlendKeyframe,
+                (*channel).keyframes.count,
+            )
+        }?;
+        // SAFETY: the popped full-weight run holds one list header per blend
+        // channel (the assert above), and the loop advances once per channel, so
+        // the advance lands at or before its one-past-the-end pointer.
+        full_weights = unsafe { full_weights.add(1) };
 
-        if (*channel).keyframes.count > 0 {
-            (*channel).target_shape = opt_ref(ref_ptr(
-                &(*((*channel).keyframes.data as *mut BlendKeyframe)
-                    .add((*channel).keyframes.count - 1))
-                .shape,
-            ));
+        // SAFETY: `channel` is live (see above).
+        if unsafe { (*channel).keyframes.count } > 0 {
+            // SAFETY: as above; the run is non-empty here, so its last entry is
+            // live and initialized, and that keyframe's `shape` is a non-null live
+            // `ufbx_blend_shape` pointer.
+            unsafe {
+                (*channel).target_shape = opt_ref(ref_ptr(
+                    &(*((*channel).keyframes.data as *mut BlendKeyframe)
+                        .add((*channel).keyframes.count - 1))
+                    .shape,
+                ))
+            };
         }
-        p_channel = p_channel.add(1);
+        // SAFETY: `p_channel != p_channel_end`, so the advance lands at or before
+        // the run's one-past-the-end pointer.
+        p_channel = unsafe { p_channel.add(1) };
     }
 
     {
@@ -7548,9 +9367,13 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             "zero_indices && consecutive_indices"
         );
 
-        ptr::write_bytes(zero_indices, 0, uc.max_zero_indices());
+        // SAFETY: `zero_indices` is the non-null run just pushed with
+        // `max_zero_indices()` `u32`s, exactly the span zeroed here.
+        unsafe { ptr::write_bytes(zero_indices, 0, uc.max_zero_indices()) };
         for i in 0..uc.max_consecutive_indices() {
-            *consecutive_indices.add(i) = i as u32;
+            // SAFETY: `consecutive_indices` is the non-null run just pushed with
+            // `max_consecutive_indices()` `u32`s, and `i` is below that.
+            unsafe { *consecutive_indices.add(i) = i as u32 };
         }
 
         uc.set_zero_indices(zero_indices);
@@ -7560,233 +9383,411 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let mut p_mesh: *mut *mut Mesh = uc.scene_view().meshes_view().data() as *mut *mut Mesh;
         let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, uc.scene_view().meshes_view().count());
         while p_mesh != p_mesh_end {
-            let mesh: *mut Mesh = *p_mesh;
+            // SAFETY: `p_mesh != p_mesh_end`, so it addresses a live, initialized
+            // slot of the scene's mesh-pointer run.
+            let mesh: *mut Mesh = unsafe { *p_mesh };
 
-            patch_index_pointer(
-                uc,
-                &raw mut (*mesh).vertex_position.indices.data as *mut *mut u32,
-            );
-            patch_index_pointer(
-                uc,
-                &raw mut (*mesh).vertex_normal.indices.data as *mut *mut u32,
-            );
-            patch_index_pointer(
-                uc,
-                &raw mut (*mesh).vertex_color.indices.data as *mut *mut u32,
-            );
-            patch_index_pointer(
-                uc,
-                &raw mut (*mesh).vertex_crease.indices.data as *mut *mut u32,
-            );
-            patch_index_pointer(uc, &raw mut (*mesh).face_material.data as *mut *mut u32);
-            patch_index_pointer(uc, &raw mut (*mesh).face_group.data as *mut *mut u32);
+            // SAFETY: `mesh` is a live `ufbx_mesh` of the scene (see above), so the
+            // projection addresses its own attribute index-list data pointer.
+            unsafe {
+                patch_index_pointer(
+                    uc,
+                    &raw mut (*mesh).vertex_position.indices.data as *mut *mut u32,
+                )
+            };
+            // SAFETY: as above, for the mesh's own `vertex_normal` indices.
+            unsafe {
+                patch_index_pointer(
+                    uc,
+                    &raw mut (*mesh).vertex_normal.indices.data as *mut *mut u32,
+                )
+            };
+            // SAFETY: as above, for the mesh's own `vertex_color` indices.
+            unsafe {
+                patch_index_pointer(
+                    uc,
+                    &raw mut (*mesh).vertex_color.indices.data as *mut *mut u32,
+                )
+            };
+            // SAFETY: as above, for the mesh's own `vertex_crease` indices.
+            unsafe {
+                patch_index_pointer(
+                    uc,
+                    &raw mut (*mesh).vertex_crease.indices.data as *mut *mut u32,
+                )
+            };
+            // SAFETY: as above, for the mesh's own `face_material` list.
+            unsafe {
+                patch_index_pointer(uc, &raw mut (*mesh).face_material.data as *mut *mut u32)
+            };
+            // SAFETY: as above, for the mesh's own `face_group` list.
+            unsafe { patch_index_pointer(uc, &raw mut (*mesh).face_group.data as *mut *mut u32) };
 
-            patch_index_pointer(
-                uc,
-                &raw mut (*mesh).skinned_position.indices.data as *mut *mut u32,
-            );
-            patch_index_pointer(
-                uc,
-                &raw mut (*mesh).skinned_normal.indices.data as *mut *mut u32,
-            );
+            // SAFETY: as above, for the mesh's own `skinned_position` indices.
+            unsafe {
+                patch_index_pointer(
+                    uc,
+                    &raw mut (*mesh).skinned_position.indices.data as *mut *mut u32,
+                )
+            };
+            // SAFETY: as above, for the mesh's own `skinned_normal` indices.
+            unsafe {
+                patch_index_pointer(
+                    uc,
+                    &raw mut (*mesh).skinned_normal.indices.data as *mut *mut u32,
+                )
+            };
 
             // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
-            let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
-            let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
+            // SAFETY: `mesh` is live (see above).
+            let mut set: *mut UvSet = unsafe { (*mesh).uv_sets.data } as *mut UvSet;
+            // SAFETY: as above; `data`/`count` describe one run.
+            let set_end: *mut UvSet = add_ptr(set, unsafe { (*mesh).uv_sets.count });
             while set != set_end {
-                patch_index_pointer(uc, &raw mut (*set).vertex_uv.indices.data as *mut *mut u32);
-                patch_index_pointer(
-                    uc,
-                    &raw mut (*set).vertex_bitangent.indices.data as *mut *mut u32,
-                );
-                patch_index_pointer(
-                    uc,
-                    &raw mut (*set).vertex_tangent.indices.data as *mut *mut u32,
-                );
-                set = set.add(1);
+                // SAFETY: `set != set_end`, so it addresses a live, initialized
+                // entry of the mesh's UV-set run, and the projection addresses that
+                // set's own index-list data pointer.
+                unsafe {
+                    patch_index_pointer(uc, &raw mut (*set).vertex_uv.indices.data as *mut *mut u32)
+                };
+                // SAFETY: as above, for this set's `vertex_bitangent` indices.
+                unsafe {
+                    patch_index_pointer(
+                        uc,
+                        &raw mut (*set).vertex_bitangent.indices.data as *mut *mut u32,
+                    )
+                };
+                // SAFETY: as above, for this set's `vertex_tangent` indices.
+                unsafe {
+                    patch_index_pointer(
+                        uc,
+                        &raw mut (*set).vertex_tangent.indices.data as *mut *mut u32,
+                    )
+                };
+                // SAFETY: `set != set_end`, so the advance lands at or before the
+                // run's one-past-the-end pointer.
+                set = unsafe { set.add(1) };
             }
 
             // C: `ufbxi_for_list(ufbx_color_set, set, mesh->color_sets)`
-            let mut cset: *mut ColorSet = (*mesh).color_sets.data as *mut ColorSet;
-            let cset_end: *mut ColorSet = add_ptr(cset, (*mesh).color_sets.count);
+            // SAFETY: `mesh` is live (see above).
+            let mut cset: *mut ColorSet = unsafe { (*mesh).color_sets.data } as *mut ColorSet;
+            // SAFETY: as above; `data`/`count` describe one run.
+            let cset_end: *mut ColorSet = add_ptr(cset, unsafe { (*mesh).color_sets.count });
             while cset != cset_end {
-                patch_index_pointer(
-                    uc,
-                    &raw mut (*cset).vertex_color.indices.data as *mut *mut u32,
-                );
-                cset = cset.add(1);
+                // SAFETY: `cset != cset_end`, so it addresses a live, initialized
+                // entry of the mesh's color-set run, and the projection addresses
+                // that set's own index-list data pointer.
+                unsafe {
+                    patch_index_pointer(
+                        uc,
+                        &raw mut (*cset).vertex_color.indices.data as *mut *mut u32,
+                    )
+                };
+                // SAFETY: `cset != cset_end`, so the advance lands at or before the
+                // run's one-past-the-end pointer.
+                cset = unsafe { cset.add(1) };
             }
 
             // Generate normals if necessary
-            if !(*mesh).vertex_normal.exists && uc.opts_view().generate_missing_normals() {
-                generate_normals(uc, mesh)?;
+            // SAFETY: `mesh` is live (see above).
+            if !unsafe { (*mesh).vertex_normal.exists } && uc.opts_view().generate_missing_normals()
+            {
+                // SAFETY: `mesh` is a live, initialized `ufbx_mesh` (see above).
+                unsafe { generate_normals(uc, mesh) }?;
             }
 
             // Assign first UV and color sets as the "canonical" ones
-            if (*mesh).uv_sets.count > 0 {
+            // SAFETY: `mesh` is live (see above).
+            if unsafe { (*mesh).uv_sets.count } > 0 {
                 // C: struct assignment (memcpy) of the vertex-attribute
                 // headers; the `Vertex*` structs are not `Copy` in the
                 // generated bindings, so the copy is spelled as a
                 // byte-identical `copy_nonoverlapping`.
-                ptr::copy_nonoverlapping(
-                    &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_uv,
-                    &raw mut (*mesh).vertex_uv,
-                    1,
-                );
-                ptr::copy_nonoverlapping(
-                    &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_bitangent,
-                    &raw mut (*mesh).vertex_bitangent,
-                    1,
-                );
-                ptr::copy_nonoverlapping(
-                    &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_tangent,
-                    &raw mut (*mesh).vertex_tangent,
-                    1,
-                );
+                // SAFETY: `uv_sets.count > 0`, so element `0` of the mesh's UV-set
+                // run is live and initialized; the destination is the mesh's own
+                // `vertex_uv` header, a distinct field of the same type.
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_uv,
+                        &raw mut (*mesh).vertex_uv,
+                        1,
+                    )
+                };
+                // SAFETY: as above, for the `vertex_bitangent` headers.
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_bitangent,
+                        &raw mut (*mesh).vertex_bitangent,
+                        1,
+                    )
+                };
+                // SAFETY: as above, for the `vertex_tangent` headers.
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_tangent,
+                        &raw mut (*mesh).vertex_tangent,
+                        1,
+                    )
+                };
             }
-            if (*mesh).color_sets.count > 0 {
-                ptr::copy_nonoverlapping(
-                    &raw const (*((*mesh).color_sets.data as *mut ColorSet).add(0)).vertex_color,
-                    &raw mut (*mesh).vertex_color,
-                    1,
-                );
+            // SAFETY: `mesh` is live (see above).
+            if unsafe { (*mesh).color_sets.count } > 0 {
+                // SAFETY: `color_sets.count > 0`, so element `0` of the mesh's
+                // color-set run is live and initialized; the destination is the
+                // mesh's own `vertex_color` header, a distinct field of the same
+                // type.
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        &raw const (*((*mesh).color_sets.data as *mut ColorSet).add(0))
+                            .vertex_color,
+                        &raw mut (*mesh).vertex_color,
+                        1,
+                    )
+                };
             }
 
-            if (*mesh).face_group_parts.count == 1 {
-                patch_index_pointer(
-                    uc,
-                    &raw mut (*((*mesh).face_group_parts.data as *mut MeshPart).add(0))
-                        .face_indices
-                        .data as *mut *mut u32,
-                );
+            // SAFETY: `mesh` is live (see above).
+            if unsafe { (*mesh).face_group_parts.count } == 1 {
+                // SAFETY: the count is `1`, so element `0` of the mesh's
+                // face-group-part run is live and initialized, and the projection
+                // addresses that part's own face-index data pointer.
+                unsafe {
+                    patch_index_pointer(
+                        uc,
+                        &raw mut (*((*mesh).face_group_parts.data as *mut MeshPart).add(0))
+                            .face_indices
+                            .data as *mut *mut u32,
+                    )
+                };
             }
 
-            fetch_mesh_materials(uc, &raw mut (*mesh).materials, &mut (*mesh).element, true)?;
+            // SAFETY: `mesh` is live (see above), so the projections address its
+            // own `materials` list header and element header.
+            unsafe {
+                fetch_mesh_materials(uc, &raw mut (*mesh).materials, &mut (*mesh).element, true)
+            }?;
 
             // Patch materials to instances if necessary
-            if (*mesh).materials.count > 0 {
+            // SAFETY: `mesh` is live (see above).
+            if unsafe { (*mesh).materials.count } > 0 {
                 // C: `ufbxi_for_ptr_list(ufbx_node, p_node, mesh->instances)`
-                let mut p_node: *mut *mut Node = (*mesh).element.instances.data as *mut *mut Node;
-                let p_node_end: *mut *mut Node = add_ptr(p_node, (*mesh).element.instances.count);
+                // SAFETY: as above; the instance list was fetched by the pass above.
+                let mut p_node: *mut *mut Node =
+                    unsafe { (*mesh).element.instances.data } as *mut *mut Node;
+                // SAFETY: as above; `data`/`count` describe one run.
+                let p_node_end: *mut *mut Node =
+                    add_ptr(p_node, unsafe { (*mesh).element.instances.count });
                 while p_node != p_node_end {
-                    let node: *mut Node = *p_node;
+                    // SAFETY: `p_node != p_node_end`, so it addresses a live,
+                    // initialized slot of that run.
+                    let node: *mut Node = unsafe { *p_node };
                     // C-parity: `mesh->materials.data[0]` may be NULL (broken
                     // element connections), so the entry is read as the bare
                     // `ufbx_material*` the `Ref` field is at the ABI level.
+                    // SAFETY: `mesh` is live (see above).
                     let mesh_materials: *mut *mut Material =
-                        (*mesh).materials.data as *mut *mut Material;
-                    if (*node).materials.count < (*mesh).materials.count
-                        && !(*mesh_materials.add(0)).is_null()
-                    {
-                        let materials: *mut *mut Material = uc
-                            .result_view()
-                            .push::<*mut Material>((*mesh).materials.count);
+                        unsafe { (*mesh).materials.data } as *mut *mut Material;
+                    // SAFETY: `node` and `mesh` are live (see above), and
+                    // `materials.count > 0` makes element `0` of the mesh's material
+                    // run live.
+                    if unsafe {
+                        (*node).materials.count < (*mesh).materials.count
+                            && !(*mesh_materials.add(0)).is_null()
+                    } {
+                        // SAFETY: `mesh` is live (see above); `result_view()` is
+                        // `uc`'s own result buffer.
+                        let materials: *mut *mut Material = unsafe {
+                            uc.result_view()
+                                .push::<*mut Material>((*mesh).materials.count)
+                        };
                         ufbxi_check!(uc, !materials.is_null(), "materials");
                         // C: `ufbxi_nounroll for (...)` — the no-unroll pragma
                         // is optimizer-only and has no Rust analogue.
-                        for i in 0..(*node).materials.count {
-                            *materials.add(i) =
-                                *((*node).materials.data as *mut *mut Material).add(i);
+                        // SAFETY: `node` is live (see above).
+                        for i in 0..unsafe { (*node).materials.count } {
+                            // SAFETY: `materials` is the non-null run just pushed
+                            // with `mesh->materials.count` slots, and the loop bound
+                            // `node->materials.count` is below it (checked above);
+                            // the node's own material run holds that many entries.
+                            unsafe {
+                                *materials.add(i) =
+                                    *((*node).materials.data as *mut *mut Material).add(i)
+                            };
                         }
-                        for i in (*node).materials.count..(*mesh).materials.count {
-                            *materials.add(i) = *mesh_materials.add(i);
+                        // SAFETY: `node` and `mesh` are live (see above).
+                        for i in unsafe { (*node).materials.count..(*mesh).materials.count } {
+                            // SAFETY: `i < mesh->materials.count`, the length of both
+                            // the pushed `materials` run and the mesh's own material
+                            // run.
+                            unsafe { *materials.add(i) = *mesh_materials.add(i) };
                         }
-                        (*node).materials.data = materials as *const Ref<Material>;
-                        (*node).materials.count = (*mesh).materials.count;
+                        // SAFETY: `node` is live (see above); `materials` is the run
+                        // just filled in.
+                        unsafe { (*node).materials.data = materials as *const Ref<Material> };
+                        // SAFETY: `node` and `mesh` are live (see above).
+                        unsafe { (*node).materials.count = (*mesh).materials.count };
                     }
-                    p_node = p_node.add(1);
+                    // SAFETY: `p_node != p_node_end`, so the advance lands at or
+                    // before the run's one-past-the-end pointer.
+                    p_node = unsafe { p_node.add(1) };
                 }
             }
 
             if uc.retain_mesh_parts() {
-                let num_parts: usize = max_sz((*mesh).materials.count, 1);
-                (*mesh).material_parts.data = uc.result_view().push_zero::<MeshPart>(num_parts);
+                // SAFETY: `mesh` is live (see above).
+                let num_parts: usize = max_sz(unsafe { (*mesh).materials.count }, 1);
+                // SAFETY: as above; `result_view()` is `uc`'s own result buffer.
+                unsafe {
+                    (*mesh).material_parts.data = uc.result_view().push_zero::<MeshPart>(num_parts)
+                };
                 ufbxi_check!(
                     uc,
-                    !(*mesh).material_parts.data.is_null(),
+                    // SAFETY: `mesh` is live (see above).
+                    !unsafe { (*mesh).material_parts.data }.is_null(),
                     "mesh->material_parts.data"
                 );
-                (*mesh).material_parts.count = num_parts;
+                // SAFETY: `mesh` is live (see above).
+                unsafe { (*mesh).material_parts.count = num_parts };
             }
 
-            if (*mesh).materials.count <= 1 {
+            // SAFETY: `mesh` is live (see above).
+            if unsafe { (*mesh).materials.count } <= 1 {
                 // Use the shared consecutive index buffer for mesh faces if there's only one material
                 // See HACK(consecutive-faces) in `ufbxi_read_mesh()`.
-                if (*mesh).material_parts.count > 0 {
-                    let part: *mut MeshPart = ((*mesh).material_parts.data as *mut MeshPart).add(0);
-                    (*part).num_faces = (*mesh).num_faces;
-                    (*part).num_triangles = (*mesh).num_triangles;
-                    (*part).num_empty_faces = (*mesh).num_empty_faces;
-                    (*part).num_point_faces = (*mesh).num_point_faces;
-                    (*part).num_line_faces = (*mesh).num_line_faces;
-                    (*part).face_indices.data = uc.consecutive_indices();
-                    (*part).face_indices.count = (*mesh).num_faces;
-                    (*mesh).material_part_usage_order.data = uc.zero_indices();
-                    (*mesh).material_part_usage_order.count = 1;
+                // SAFETY: `mesh` is live (see above).
+                if unsafe { (*mesh).material_parts.count } > 0 {
+                    // SAFETY: the count is above zero, so element `0` of the mesh's
+                    // material-part run is live.
+                    let part: *mut MeshPart =
+                        unsafe { ((*mesh).material_parts.data as *mut MeshPart).add(0) };
+                    // SAFETY: `part` addresses that entry and `mesh` is live (both
+                    // above).
+                    unsafe { (*part).num_faces = (*mesh).num_faces };
+                    // SAFETY: as above.
+                    unsafe { (*part).num_triangles = (*mesh).num_triangles };
+                    // SAFETY: as above.
+                    unsafe { (*part).num_empty_faces = (*mesh).num_empty_faces };
+                    // SAFETY: as above.
+                    unsafe { (*part).num_point_faces = (*mesh).num_point_faces };
+                    // SAFETY: as above.
+                    unsafe { (*part).num_line_faces = (*mesh).num_line_faces };
+                    // SAFETY: `part` addresses that entry (see above); the shared
+                    // consecutive-index run is `uc`'s own, sized to cover every
+                    // mesh's face count.
+                    unsafe { (*part).face_indices.data = uc.consecutive_indices() };
+                    // SAFETY: as above, with `mesh` live.
+                    unsafe { (*part).face_indices.count = (*mesh).num_faces };
+                    // SAFETY: `mesh` is live (see above); the shared zero-index run
+                    // is `uc`'s own and holds at least one entry here.
+                    unsafe { (*mesh).material_part_usage_order.data = uc.zero_indices() };
+                    // SAFETY: `mesh` is live (see above).
+                    unsafe { (*mesh).material_part_usage_order.count = 1 };
                 }
 
-                if (*mesh).materials.count == 1 {
-                    (*mesh).face_material.data = uc.zero_indices();
-                    (*mesh).face_material.count = (*mesh).num_faces;
+                // SAFETY: `mesh` is live (see above).
+                if unsafe { (*mesh).materials.count } == 1 {
+                    // SAFETY: as above; the shared zero-index run is `uc`'s own,
+                    // sized to cover every mesh's face count.
+                    unsafe { (*mesh).face_material.data = uc.zero_indices() };
+                    // SAFETY: `mesh` is live (see above).
+                    unsafe { (*mesh).face_material.count = (*mesh).num_faces };
                 } else {
-                    (*mesh).face_material.data = ptr::null_mut();
-                    (*mesh).face_material.count = 0;
+                    // SAFETY: `mesh` is live (see above).
+                    unsafe { (*mesh).face_material.data = ptr::null_mut() };
+                    // SAFETY: as above.
+                    unsafe { (*mesh).face_material.count = 0 };
                 }
-            } else if (*mesh).materials.count > 0 {
-                finalize_mesh_material(uc.result_view(), uc.error_mut_ptr(), mesh)?;
+            // SAFETY: `mesh` is live (see above).
+            } else if unsafe { (*mesh).materials.count } > 0 {
+                // SAFETY: `mesh` is a live, initialized `ufbx_mesh` (see above);
+                // `result_view()`/`error_mut_ptr()` are `uc`'s own result buffer and
+                // error slot.
+                unsafe { finalize_mesh_material(uc.result_view(), uc.error_mut_ptr(), mesh) }?;
             }
 
             // Fetch deformers
-            fetch_dst_elements(
-                uc,
-                &raw mut (*mesh).skin_deformers as *mut c_void,
-                &mut (*mesh).element,
-                search_node,
-                true,
-                ptr::null(),
-                ElementType::SkinDeformer,
-            )?;
-            fetch_dst_elements(
-                uc,
-                &raw mut (*mesh).blend_deformers as *mut c_void,
-                &mut (*mesh).element,
-                search_node,
-                true,
-                ptr::null(),
-                ElementType::BlendDeformer,
-            )?;
-            fetch_dst_elements(
-                uc,
-                &raw mut (*mesh).cache_deformers as *mut c_void,
-                &mut (*mesh).element,
-                search_node,
-                true,
-                ptr::null(),
-                ElementType::CacheDeformer,
-            )?;
-            fetch_deformers(
-                uc,
-                &raw mut (*mesh).all_deformers,
-                &mut (*mesh).element,
-                search_node,
-            )?;
+            // SAFETY: `mesh` is live (see above), so the projections address its
+            // own `skin_deformers` list header and element header.
+            unsafe {
+                fetch_dst_elements(
+                    uc,
+                    &raw mut (*mesh).skin_deformers as *mut c_void,
+                    &mut (*mesh).element,
+                    search_node,
+                    true,
+                    ptr::null(),
+                    ElementType::SkinDeformer,
+                )
+            }?;
+            // SAFETY: as above, for its own `blend_deformers` list.
+            unsafe {
+                fetch_dst_elements(
+                    uc,
+                    &raw mut (*mesh).blend_deformers as *mut c_void,
+                    &mut (*mesh).element,
+                    search_node,
+                    true,
+                    ptr::null(),
+                    ElementType::BlendDeformer,
+                )
+            }?;
+            // SAFETY: as above, for its own `cache_deformers` list.
+            unsafe {
+                fetch_dst_elements(
+                    uc,
+                    &raw mut (*mesh).cache_deformers as *mut c_void,
+                    &mut (*mesh).element,
+                    search_node,
+                    true,
+                    ptr::null(),
+                    ElementType::CacheDeformer,
+                )
+            }?;
+            // SAFETY: as above, for its own `all_deformers` list.
+            unsafe {
+                fetch_deformers(
+                    uc,
+                    &raw mut (*mesh).all_deformers,
+                    &mut (*mesh).element,
+                    search_node,
+                )
+            }?;
 
             // Vertex position must always exist if not explicitly allowed to be missing
-            if !(*mesh).vertex_position.exists && !uc.opts_view().allow_missing_vertex_position() {
-                ufbxi_check!(uc, (*mesh).num_indices == 0, "mesh->num_indices == 0");
-                (*mesh).vertex_position.exists = true;
-                (*mesh).vertex_position.unique_per_vertex = true;
-                (*mesh).skinned_position.exists = true;
-                (*mesh).skinned_position.unique_per_vertex = true;
+            // SAFETY: `mesh` is live (see above).
+            if !unsafe { (*mesh).vertex_position.exists }
+                && !uc.opts_view().allow_missing_vertex_position()
+            {
+                // SAFETY: `mesh` is live (see above).
+                ufbxi_check!(
+                    uc,
+                    unsafe { (*mesh).num_indices } == 0,
+                    "mesh->num_indices == 0"
+                );
+                // SAFETY: as above.
+                unsafe { (*mesh).vertex_position.exists = true };
+                // SAFETY: as above.
+                unsafe { (*mesh).vertex_position.unique_per_vertex = true };
+                // SAFETY: as above.
+                unsafe { (*mesh).skinned_position.exists = true };
+                // SAFETY: as above.
+                unsafe { (*mesh).skinned_position.unique_per_vertex = true };
             }
 
             // Update metadata
-            if (*mesh).max_face_triangles > uc.scene_view().metadata_view().max_face_triangles() {
+            // SAFETY: `mesh` is live (see above).
+            if unsafe { (*mesh).max_face_triangles }
+                > uc.scene_view().metadata_view().max_face_triangles()
+            {
                 uc.scene_view()
                     .metadata_view()
-                    .set_max_face_triangles((*mesh).max_face_triangles);
+                    // SAFETY: `mesh` is live (see above).
+                    .set_max_face_triangles(unsafe { (*mesh).max_face_triangles });
             }
-            p_mesh = p_mesh.add(1);
+            // SAFETY: `p_mesh != p_mesh_end`, so the advance lands at or before the
+            // run's one-past-the-end pointer.
+            p_mesh = unsafe { p_mesh.add(1) };
         }
     }
 
@@ -7796,20 +9797,33 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_stereo_end: *mut *mut StereoCamera =
         add_ptr(p_stereo, uc.scene_view().stereo_cameras_view().count());
     while p_stereo != p_stereo_end {
-        let stereo: *mut StereoCamera = *p_stereo;
-        (*stereo).left = opt_ref(fetch_dst_element(
-            &mut (*stereo).element,
-            search_node,
-            sp::LeftCamera.as_ptr(),
-            ElementType::Camera,
-        ) as *mut Camera);
-        (*stereo).right = opt_ref(fetch_dst_element(
-            &mut (*stereo).element,
-            search_node,
-            sp::RightCamera.as_ptr(),
-            ElementType::Camera,
-        ) as *mut Camera);
-        p_stereo = p_stereo.add(1);
+        // SAFETY: `p_stereo != p_stereo_end`, so it addresses a live, initialized
+        // slot of the scene's stereo-camera-pointer run.
+        let stereo: *mut StereoCamera = unsafe { *p_stereo };
+        // SAFETY: `stereo` is a live `ufbx_stereo_camera` of the scene (see above),
+        // so `&mut (*stereo).element` addresses its own element header; the prop
+        // name is an interned NUL-terminated pool string and the fetched
+        // destination is null or a live `ufbx_camera`.
+        unsafe {
+            (*stereo).left = opt_ref(fetch_dst_element(
+                &mut (*stereo).element,
+                search_node,
+                sp::LeftCamera.as_ptr(),
+                ElementType::Camera,
+            ) as *mut Camera)
+        };
+        // SAFETY: as above, for the right camera.
+        unsafe {
+            (*stereo).right = opt_ref(fetch_dst_element(
+                &mut (*stereo).element,
+                search_node,
+                sp::RightCamera.as_ptr(),
+                ElementType::Camera,
+            ) as *mut Camera)
+        };
+        // SAFETY: `p_stereo != p_stereo_end`, so the advance lands at or before the
+        // run's one-past-the-end pointer.
+        p_stereo = unsafe { p_stereo.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_nurbs_curve, p_curve, uc->scene.nurbs_curves)`
@@ -7818,9 +9832,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_nurbs_curve_end: *mut *mut NurbsCurve =
         add_ptr(p_nurbs_curve, uc.scene_view().nurbs_curves_view().count());
     while p_nurbs_curve != p_nurbs_curve_end {
-        let curve: *mut NurbsCurve = *p_nurbs_curve;
-        finalize_nurbs_basis(uc, &raw mut (*curve).basis)?;
-        p_nurbs_curve = p_nurbs_curve.add(1);
+        // SAFETY: `p_nurbs_curve != p_nurbs_curve_end`, so it addresses a live,
+        // initialized slot of the scene's NURBS-curve-pointer run.
+        let curve: *mut NurbsCurve = unsafe { *p_nurbs_curve };
+        // SAFETY: `curve` is a live `ufbx_nurbs_curve` of the scene (see above), so
+        // the projection addresses its own basis.
+        unsafe { finalize_nurbs_basis(uc, &raw mut (*curve).basis) }?;
+        // SAFETY: `p_nurbs_curve != p_nurbs_curve_end`, so the advance lands at or
+        // before the run's one-past-the-end pointer.
+        p_nurbs_curve = unsafe { p_nurbs_curve.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_nurbs_surface, p_surface, uc->scene.nurbs_surfaces)`
@@ -7829,17 +9849,29 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_surface_end: *mut *mut NurbsSurface =
         add_ptr(p_surface, uc.scene_view().nurbs_surfaces_view().count());
     while p_surface != p_surface_end {
-        let surface: *mut NurbsSurface = *p_surface;
-        finalize_nurbs_basis(uc, &raw mut (*surface).basis_u)?;
-        finalize_nurbs_basis(uc, &raw mut (*surface).basis_v)?;
+        // SAFETY: `p_surface != p_surface_end`, so it addresses a live, initialized
+        // slot of the scene's NURBS-surface-pointer run.
+        let surface: *mut NurbsSurface = unsafe { *p_surface };
+        // SAFETY: `surface` is a live `ufbx_nurbs_surface` of the scene (see
+        // above), so the projection addresses its own U basis.
+        unsafe { finalize_nurbs_basis(uc, &raw mut (*surface).basis_u) }?;
+        // SAFETY: as above, for its own V basis.
+        unsafe { finalize_nurbs_basis(uc, &raw mut (*surface).basis_v) }?;
 
-        (*surface).material = opt_ref(fetch_dst_element(
-            &mut (*surface).element,
-            true,
-            ptr::null(),
-            ElementType::Material,
-        ) as *mut Material);
-        p_surface = p_surface.add(1);
+        // SAFETY: `surface` is live (see above), so `&mut (*surface).element`
+        // addresses its own element header; the fetched destination is null or a
+        // live `ufbx_material`.
+        unsafe {
+            (*surface).material = opt_ref(fetch_dst_element(
+                &mut (*surface).element,
+                true,
+                ptr::null(),
+                ElementType::Material,
+            ) as *mut Material)
+        };
+        // SAFETY: `p_surface != p_surface_end`, so the advance lands at or before
+        // the run's one-past-the-end pointer.
+        p_surface = unsafe { p_surface.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_stack, p_stack, uc->scene.anim_stacks)`
@@ -7848,24 +9880,37 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_stack_end: *mut *mut AnimStack =
         add_ptr(p_stack, uc.scene_view().anim_stacks_view().count());
     while p_stack != p_stack_end {
-        let stack: *mut AnimStack = *p_stack;
-        fetch_dst_elements(
-            uc,
-            &raw mut (*stack).layers as *mut c_void,
-            &mut (*stack).element,
-            false,
-            true,
-            ptr::null(),
-            ElementType::AnimLayer,
-        )?;
+        // SAFETY: `p_stack != p_stack_end`, so it addresses a live, initialized
+        // slot of the scene's anim-stack-pointer run.
+        let stack: *mut AnimStack = unsafe { *p_stack };
+        // SAFETY: `stack` is a live `ufbx_anim_stack` of the scene (see above), so
+        // the projections address its own `layers` list header and element header.
+        unsafe {
+            fetch_dst_elements(
+                uc,
+                &raw mut (*stack).layers as *mut c_void,
+                &mut (*stack).element,
+                false,
+                true,
+                ptr::null(),
+                ElementType::AnimLayer,
+            )
+        }?;
 
-        push_anim(
-            uc,
-            &raw mut (*stack).anim as *mut *mut Anim,
-            (*stack).layers.data as *mut *mut AnimLayer,
-            (*stack).layers.count,
-        )?;
-        p_stack = p_stack.add(1);
+        // SAFETY: `stack` is live (see above), so `&raw mut (*stack).anim`
+        // addresses its own anim-pointer slot; the fetch above filled its `layers`
+        // list, whose `data`/`count` describe one layer-pointer run.
+        unsafe {
+            push_anim(
+                uc,
+                &raw mut (*stack).anim as *mut *mut Anim,
+                (*stack).layers.data as *mut *mut AnimLayer,
+                (*stack).layers.count,
+            )
+        }?;
+        // SAFETY: `p_stack != p_stack_end`, so the advance lands at or before the
+        // run's one-past-the-end pointer.
+        p_stack = unsafe { p_stack.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_layer, p_layer, uc->scene.anim_layers)`
@@ -7874,19 +9919,31 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_layer_end: *mut *mut AnimLayer =
         add_ptr(p_layer, uc.scene_view().anim_layers_view().count());
     while p_layer != p_layer_end {
-        let layer_view: &'a AnimLayerView = AnimLayerView::from_ptr(*p_layer);
+        // SAFETY: `p_layer != p_layer_end`, so it addresses a live, initialized
+        // slot of the scene's anim-layer-pointer run, holding a live
+        // `ufbx_anim_layer` allocated from `uc`'s result buffer — a write-capable
+        // root for the view.
+        let layer_view: &'a AnimLayerView = unsafe { AnimLayerView::from_ptr(*p_layer) };
         let layer: *mut AnimLayer = layer_view.get();
-        fetch_dst_elements(
-            uc,
-            &raw mut (*layer).anim_values as *mut c_void,
-            &mut (*layer).element,
-            false,
-            true,
-            ptr::null(),
-            ElementType::AnimValue,
-        )?;
+        // SAFETY: `layer` is the live element the view was minted from, so the
+        // projections address its own `anim_values` list header and element header.
+        unsafe {
+            fetch_dst_elements(
+                uc,
+                &raw mut (*layer).anim_values as *mut c_void,
+                &mut (*layer).element,
+                false,
+                true,
+                ptr::null(),
+                ElementType::AnimValue,
+            )
+        }?;
 
-        push_anim(uc, &raw mut (*layer).anim as *mut *mut Anim, p_layer, 1)?;
+        // SAFETY: `layer` is live (see above), so `&raw mut (*layer).anim`
+        // addresses its own anim-pointer slot; `p_layer` addresses this layer's own
+        // slot of the scene's layer-pointer run, the one-element layer list stored
+        // into the anim.
+        unsafe { push_anim(uc, &raw mut (*layer).anim as *mut *mut Anim, p_layer, 1) }?;
 
         let mut min_id: u32 = u32::MAX;
         let mut max_id: u32 = 0;
@@ -7894,61 +9951,104 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // Combine the animated properties with elements (potentially duplicates!)
         let mut num_anim_props: usize = 0;
         // C: `ufbxi_for_ptr_list(ufbx_anim_value, p_value, layer->anim_values)`
-        let mut p_value: *mut *mut AnimValue = (*layer).anim_values.data as *mut *mut AnimValue;
-        let p_value_end: *mut *mut AnimValue = add_ptr(p_value, (*layer).anim_values.count);
+        // SAFETY: `layer` is live (see above) and the fetch above filled its
+        // `anim_values` list.
+        let mut p_value: *mut *mut AnimValue =
+            unsafe { (*layer).anim_values.data } as *mut *mut AnimValue;
+        // SAFETY: as above; `data`/`count` describe one run.
+        let p_value_end: *mut *mut AnimValue =
+            add_ptr(p_value, unsafe { (*layer).anim_values.count });
         while p_value != p_value_end {
-            let value: *mut AnimValue = *p_value;
+            // SAFETY: `p_value != p_value_end`, so it addresses a live, initialized
+            // slot of that run.
+            let value: *mut AnimValue = unsafe { *p_value };
             // C: `ufbxi_for_list(ufbx_connection, ac, value->element.connections_src)`
-            let mut ac: *mut Connection = (*value).element.connections_src.data as *mut Connection;
-            let ac_end: *mut Connection = add_ptr(ac, (*value).element.connections_src.count);
+            // SAFETY: `value` is a live `ufbx_anim_value` of the scene (see above).
+            let mut ac: *mut Connection =
+                unsafe { (*value).element.connections_src.data } as *mut Connection;
+            // SAFETY: as above; `data`/`count` describe one run.
+            let ac_end: *mut Connection =
+                add_ptr(ac, unsafe { (*value).element.connections_src.count });
             while ac != ac_end {
-                if (*ac).src_prop.length == 0 && (*ac).dst_prop.length > 0 {
+                // SAFETY: `ac != ac_end`, so it addresses a live, initialized
+                // connection of that run.
+                if unsafe { (*ac).src_prop.length == 0 && (*ac).dst_prop.length > 0 } {
                     let aprop: *mut AnimProp = uc.tmp_stack_view().push::<AnimProp>(1);
-                    let id: u32 = (*ref_ptr(&(*ac).dst)).element_id;
+                    // SAFETY: `ac` is live (see above) and its `dst` is a non-null
+                    // live element pointer.
+                    let id: u32 = unsafe { (*ref_ptr(&(*ac).dst)).element_id };
                     min_id = min32(min_id, id);
                     max_id = max32(max_id, id);
                     // C: `ufbxi_arraycount(layer->_element_id_bitmask) - 1`
-                    let id_mask: u32 = (*layer)._element_id_bitmask.len() as u32 - 1;
-                    (*layer)._element_id_bitmask[((id >> 5) & id_mask) as usize] |=
-                        1u32 << (id & 31);
+                    // SAFETY: `layer` is live (see above).
+                    let id_mask: u32 = unsafe { (*layer)._element_id_bitmask.len() } as u32 - 1;
+                    // SAFETY: as above; `id_mask` is the bitmask array's length
+                    // minus one (a power of two), so the masked index is in bounds.
+                    unsafe {
+                        (*layer)._element_id_bitmask[((id >> 5) & id_mask) as usize] |=
+                            1u32 << (id & 31)
+                    };
                     ufbxi_check!(uc, !aprop.is_null(), "aprop");
-                    (*aprop).anim_value = Ref::from_ptr(value);
-                    (*aprop).element = Ref::from_ptr(ref_ptr(&(*ac).dst));
-                    (*aprop)._internal_key =
-                        get_name_key((*ac).dst_prop.data, (*ac).dst_prop.length);
-                    (*aprop).prop_name = (*ac).dst_prop;
+                    // SAFETY: `aprop` is the non-null one-element push just made
+                    // into `uc`'s tmp stack; `value` is a live anim value.
+                    unsafe { (*aprop).anim_value = Ref::from_ptr(value) };
+                    // SAFETY: as above; `ac`'s `dst` is a non-null live element
+                    // pointer.
+                    unsafe { (*aprop).element = Ref::from_ptr(ref_ptr(&(*ac).dst)) };
+                    // SAFETY: as above; `ac`'s `dst_prop` is an interned pool
+                    // string, so its `data` addresses `length` readable bytes.
+                    unsafe {
+                        (*aprop)._internal_key =
+                            get_name_key((*ac).dst_prop.data, (*ac).dst_prop.length)
+                    };
+                    // SAFETY: as above.
+                    unsafe { (*aprop).prop_name = (*ac).dst_prop };
                     num_anim_props += 1;
                 }
-                ac = ac.add(1);
+                // SAFETY: `ac != ac_end`, so the advance lands at or before the
+                // run's one-past-the-end pointer.
+                ac = unsafe { ac.add(1) };
             }
-            p_value = p_value.add(1);
+            // SAFETY: `p_value != p_value_end`, so the advance lands at or before
+            // the run's one-past-the-end pointer.
+            p_value = unsafe { p_value.add(1) };
         }
 
         if min_id != u32::MAX {
-            (*layer)._min_element_id = min_id;
-            (*layer)._max_element_id = max_id;
+            // SAFETY: `layer` is live (see above).
+            unsafe { (*layer)._min_element_id = min_id };
+            // SAFETY: as above.
+            unsafe { (*layer)._max_element_id = max_id };
         }
 
         match find_int(layer_view.props_view(), &sp::BlendMode, 0) {
             0 => {
                 // Additive
-                (*layer).blended = true;
-                (*layer).additive = true;
+                // SAFETY: `layer` is live (see above).
+                unsafe { (*layer).blended = true };
+                // SAFETY: as above.
+                unsafe { (*layer).additive = true };
             }
             1 => {
                 // Override
-                (*layer).blended = false;
-                (*layer).additive = false;
+                // SAFETY: `layer` is live (see above).
+                unsafe { (*layer).blended = false };
+                // SAFETY: as above.
+                unsafe { (*layer).additive = false };
             }
             2 => {
                 // Override Passthrough
-                (*layer).blended = true;
-                (*layer).additive = false;
+                // SAFETY: `layer` is live (see above).
+                unsafe { (*layer).blended = true };
+                // SAFETY: as above.
+                unsafe { (*layer).additive = false };
             }
             _ => {
                 // Unknown
-                (*layer).blended = false;
-                (*layer).additive = false;
+                // SAFETY: `layer` is live (see above).
+                unsafe { (*layer).blended = false };
+                // SAFETY: as above.
+                unsafe { (*layer).additive = false };
             }
         }
 
@@ -7957,25 +10057,42 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         if !weight_prop.is_null() {
             // C-parity: `prop->value_real` is the `ufbx_prop` value union's
             // first real; the generated struct keeps only `value_vec4`.
-            (*layer).weight = (*weight_prop).value_vec4.x / 100.0;
-            if (*layer).weight < 0.0f32 as Real {
-                (*layer).weight = 0.0f32 as Real;
+            // SAFETY: `layer` is live (see above); a non-null `weight_prop` is a
+            // live `ufbx_prop` of the layer's own props.
+            unsafe { (*layer).weight = (*weight_prop).value_vec4.x / 100.0 };
+            // SAFETY: `layer` is live (see above).
+            if unsafe { (*layer).weight } < 0.0f32 as Real {
+                // SAFETY: as above.
+                unsafe { (*layer).weight = 0.0f32 as Real };
             }
             // C: `0.99999f` — a `float` literal promoted to `ufbx_real`, NOT
             // the double 0.99999.
-            if (*layer).weight > 0.99999f32 as Real {
-                (*layer).weight = 1.0f32 as Real;
+            // SAFETY: `layer` is live (see above).
+            if unsafe { (*layer).weight } > 0.99999f32 as Real {
+                // SAFETY: as above.
+                unsafe { (*layer).weight = 1.0f32 as Real };
             }
-            (*layer).weight_is_animated =
-                ((*weight_prop).flags.raw() & PropFlags::ANIMATED.raw()) != 0;
+            // SAFETY: `layer` and `weight_prop` are both live (see above).
+            unsafe {
+                (*layer).weight_is_animated =
+                    ((*weight_prop).flags.raw() & PropFlags::ANIMATED.raw()) != 0
+            };
         } else {
-            (*layer).weight = 1.0f32 as Real;
-            (*layer).weight_is_animated = false;
+            // SAFETY: `layer` is live (see above).
+            unsafe { (*layer).weight = 1.0f32 as Real };
+            // SAFETY: as above.
+            unsafe { (*layer).weight_is_animated = false };
         }
-        (*layer).compose_rotation =
-            find_int(layer_view.props_view(), &sp::RotationAccumulationMode, 0) == 0;
-        (*layer).compose_scale =
-            find_int(layer_view.props_view(), &sp::ScaleAccumulationMode, 0) == 0;
+        // SAFETY: `layer` is live (see above).
+        unsafe {
+            (*layer).compose_rotation =
+                find_int(layer_view.props_view(), &sp::RotationAccumulationMode, 0) == 0
+        };
+        // SAFETY: as above.
+        unsafe {
+            (*layer).compose_scale =
+                find_int(layer_view.props_view(), &sp::ScaleAccumulationMode, 0) == 0
+        };
 
         // Add a dummy NULL element animated prop at the end so we can iterate
         // animated props without worrying about boundary conditions..
@@ -7984,21 +10101,34 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             ufbxi_check!(uc, !aprop.is_null(), "aprop");
         }
 
-        (*layer).anim_props.data = uc
-            .result_view()
-            .push_pop::<AnimProp>(uc.tmp_stack_view(), num_anim_props + 1);
+        // SAFETY: `layer` is live (see above); the loop pushed `num_anim_props`
+        // anim props onto `uc`'s tmp stack plus the terminator just above, and they
+        // are popped into `uc`'s own result buffer here.
+        unsafe {
+            (*layer).anim_props.data = uc
+                .result_view()
+                .push_pop::<AnimProp>(uc.tmp_stack_view(), num_anim_props + 1)
+        };
         ufbxi_check!(
             uc,
-            !(*layer).anim_props.data.is_null(),
+            // SAFETY: `layer` is live (see above).
+            !unsafe { (*layer).anim_props.data }.is_null(),
             "layer->anim_props.data"
         );
-        (*layer).anim_props.count = num_anim_props;
-        sort_anim_props(
-            uc,
-            (*layer).anim_props.data as *mut AnimProp,
-            (*layer).anim_props.count,
-        )?;
-        p_layer = p_layer.add(1);
+        // SAFETY: `layer` is live (see above).
+        unsafe { (*layer).anim_props.count = num_anim_props };
+        // SAFETY: as above; the `anim_props` run is non-null and holds `count`
+        // initialized props followed by the terminator.
+        unsafe {
+            sort_anim_props(
+                uc,
+                (*layer).anim_props.data as *mut AnimProp,
+                (*layer).anim_props.count,
+            )
+        }?;
+        // SAFETY: `p_layer != p_layer_end`, so the advance lands at or before the
+        // run's one-past-the-end pointer.
+        p_layer = unsafe { p_layer.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_value, p_value, uc->scene.anim_values)`
@@ -8007,34 +10137,68 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_value_end: *mut *mut AnimValue =
         add_ptr(p_value, uc.scene_view().anim_values_view().count());
     while p_value != p_value_end {
-        let value_view: &'a AnimValueView = AnimValueView::from_ptr(*p_value);
+        // SAFETY: `p_value != p_value_end`, so it addresses a live, initialized
+        // slot of the scene's anim-value-pointer run, holding a live
+        // `ufbx_anim_value` allocated from `uc`'s result buffer — a write-capable
+        // root for the view.
+        let value_view: &'a AnimValueView = unsafe { AnimValueView::from_ptr(*p_value) };
         let value: *mut AnimValue = value_view.get();
 
         // TODO: Search for things like d|Visibility with a constructed name
-        (*value).default_value.x =
-            find_real(value_view.props_view(), &sp::X, (*value).default_value.x);
-        (*value).default_value.x =
-            find_real(value_view.props_view(), &sp::d_X, (*value).default_value.x);
-        (*value).default_value.y =
-            find_real(value_view.props_view(), &sp::Y, (*value).default_value.y);
-        (*value).default_value.y =
-            find_real(value_view.props_view(), &sp::d_Y, (*value).default_value.y);
-        (*value).default_value.z =
-            find_real(value_view.props_view(), &sp::Z, (*value).default_value.z);
-        (*value).default_value.z =
-            find_real(value_view.props_view(), &sp::d_Z, (*value).default_value.z);
+        // SAFETY: `value` is the live element the view was minted from, and
+        // `props_view()` is its own live `ufbx_props`.
+        unsafe {
+            (*value).default_value.x =
+                find_real(value_view.props_view(), &sp::X, (*value).default_value.x)
+        };
+        // SAFETY: as above.
+        unsafe {
+            (*value).default_value.x =
+                find_real(value_view.props_view(), &sp::d_X, (*value).default_value.x)
+        };
+        // SAFETY: as above.
+        unsafe {
+            (*value).default_value.y =
+                find_real(value_view.props_view(), &sp::Y, (*value).default_value.y)
+        };
+        // SAFETY: as above.
+        unsafe {
+            (*value).default_value.y =
+                find_real(value_view.props_view(), &sp::d_Y, (*value).default_value.y)
+        };
+        // SAFETY: as above.
+        unsafe {
+            (*value).default_value.z =
+                find_real(value_view.props_view(), &sp::Z, (*value).default_value.z)
+        };
+        // SAFETY: as above.
+        unsafe {
+            (*value).default_value.z =
+                find_real(value_view.props_view(), &sp::d_Z, (*value).default_value.z)
+        };
 
         // C: `ufbxi_for_list(ufbx_connection, conn, value->element.connections_dst)`
-        let mut conn: *mut Connection = (*value).element.connections_dst.data as *mut Connection;
-        let conn_end: *mut Connection = add_ptr(conn, (*value).element.connections_dst.count);
+        // SAFETY: `value` is live (see above).
+        let mut conn: *mut Connection =
+            unsafe { (*value).element.connections_dst.data } as *mut Connection;
+        // SAFETY: as above; `data`/`count` describe one run.
+        let conn_end: *mut Connection =
+            add_ptr(conn, unsafe { (*value).element.connections_dst.count });
         while conn != conn_end {
-            if (*ref_ptr(&(*conn).src)).type_ == ElementType::AnimCurve
-                && (*conn).src_prop.length == 0
-            {
-                let curve: *mut AnimCurve = ref_ptr(&(*conn).src) as *mut AnimCurve;
+            // SAFETY: `conn != conn_end`, so it addresses a live, initialized
+            // connection of that run, whose `src` is a non-null live element
+            // pointer.
+            if unsafe {
+                (*ref_ptr(&(*conn).src)).type_ == ElementType::AnimCurve
+                    && (*conn).src_prop.length == 0
+            } {
+                // SAFETY: as above, and the check pins the source's type, so it
+                // heads a live `ufbx_anim_curve`.
+                let curve: *mut AnimCurve = unsafe { ref_ptr(&(*conn).src) } as *mut AnimCurve;
 
                 let mut index: u32 = 0;
-                let name: *const u8 = (*conn).dst_prop.data;
+                // SAFETY: `conn` is live (see above).
+                let name: *const u8 = unsafe { (*conn).dst_prop.data };
                 if name == sp::Y.as_ptr() || name == sp::d_Y.as_ptr() {
                     index = 1;
                 }
@@ -8042,24 +10206,40 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     index = 2;
                 }
 
-                let prop: *mut Prop = find_prop_len(
-                    value_view.props_view(),
-                    (*conn).dst_prop.data,
-                    (*conn).dst_prop.length,
-                )
+                // SAFETY: `props_view()` is the anim value's own live `ufbx_props`,
+                // and `conn`'s `dst_prop` is an interned pool string, so its `data`
+                // addresses `length` readable bytes.
+                let prop: *mut Prop = unsafe {
+                    find_prop_len(
+                        value_view.props_view(),
+                        (*conn).dst_prop.data,
+                        (*conn).dst_prop.length,
+                    )
+                }
                 .map_or(ptr::null_mut(), PropView::get);
                 if !prop.is_null() {
                     // C indexes the `ufbx_vec3` value union's `ufbx_real v[3]`
                     // view; the generated struct keeps only `x`/`y`/`z`, so the
                     // index is pointer arithmetic from the struct base.
-                    let v: *mut Real = &raw mut (*value).default_value as *mut Real;
-                    *v.add(index as usize) = (*prop).value_vec4.x;
+                    // SAFETY: `value` is live (see above), so the projection
+                    // addresses its own `ufbx_vec3` default value.
+                    let v: *mut Real = unsafe { &raw mut (*value).default_value } as *mut Real;
+                    // SAFETY: `index <= 2` bounds the three reals of that `ufbx_vec3`;
+                    // a non-null `prop` is a live `ufbx_prop` of the anim value's
+                    // props.
+                    unsafe { *v.add(index as usize) = (*prop).value_vec4.x };
                 }
-                (*value).curves[index as usize] = opt_ref(curve);
+                // SAFETY: `value` is live (see above) and `index <= 2` bounds its
+                // three-entry `curves` array; `curve` is non-null.
+                unsafe { (*value).curves[index as usize] = opt_ref(curve) };
             }
-            conn = conn.add(1);
+            // SAFETY: `conn != conn_end`, so the advance lands at or before the
+            // run's one-past-the-end pointer.
+            conn = unsafe { conn.add(1) };
         }
-        p_value = p_value.add(1);
+        // SAFETY: `p_value != p_value_end`, so the advance lands at or before the
+        // run's one-past-the-end pointer.
+        p_value = unsafe { p_value.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_curve, p_curve, uc->scene.anim_curves)`
@@ -8068,42 +10248,73 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_anim_curve_end: *mut *mut AnimCurve =
         add_ptr(p_anim_curve, uc.scene_view().anim_curves_view().count());
     while p_anim_curve != p_anim_curve_end {
-        let curve: *mut AnimCurve = *p_anim_curve;
-        if (*curve).keyframes.count > 0 {
-            (*curve).min_time = (*(*curve).keyframes.data.add(0)).time;
-            (*curve).max_time = (*(*curve).keyframes.data.add((*curve).keyframes.count - 1)).time;
+        // SAFETY: `p_anim_curve != p_anim_curve_end`, so it addresses a live,
+        // initialized slot of the scene's anim-curve-pointer run.
+        let curve: *mut AnimCurve = unsafe { *p_anim_curve };
+        // SAFETY: `curve` is a live `ufbx_anim_curve` of the scene (see above).
+        if unsafe { (*curve).keyframes.count } > 0 {
+            // SAFETY: as above; the keyframe run is non-empty here, so its first
+            // entry is live and initialized.
+            unsafe { (*curve).min_time = (*(*curve).keyframes.data.add(0)).time };
+            // SAFETY: as above, for its last entry.
+            unsafe {
+                (*curve).max_time =
+                    (*(*curve).keyframes.data.add((*curve).keyframes.count - 1)).time
+            };
         }
-        p_anim_curve = p_anim_curve.add(1);
+        // SAFETY: `p_anim_curve != p_anim_curve_end`, so the advance lands at or
+        // before the run's one-past-the-end pointer.
+        p_anim_curve = unsafe { p_anim_curve.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_shader, p_shader, uc->scene.shaders)`
     let mut p_shader: *mut *mut Shader = uc.scene_view().shaders_view().data() as *mut *mut Shader;
     let p_shader_end: *mut *mut Shader = add_ptr(p_shader, uc.scene_view().shaders_view().count());
     while p_shader != p_shader_end {
-        let shader_view: &'a ShaderView = ShaderView::from_ptr(*p_shader);
+        // SAFETY: `p_shader != p_shader_end`, so it addresses a live, initialized
+        // slot of the scene's shader-pointer run, holding a live `ufbx_shader`
+        // allocated from `uc`'s result buffer — a write-capable root for the view.
+        let shader_view: &'a ShaderView = unsafe { ShaderView::from_ptr(*p_shader) };
         let shader: *mut Shader = shader_view.get();
-        fetch_dst_elements(
-            uc,
-            &raw mut (*shader).bindings as *mut c_void,
-            &mut (*shader).element,
-            false,
-            false,
-            ptr::null(),
-            ElementType::ShaderBinding,
-        )?;
+        // SAFETY: `shader` is the live element the view was minted from, so the
+        // projections address its own `bindings` list header and element header.
+        unsafe {
+            fetch_dst_elements(
+                uc,
+                &raw mut (*shader).bindings as *mut c_void,
+                &mut (*shader).element,
+                false,
+                false,
+                ptr::null(),
+                ElementType::ShaderBinding,
+            )
+        }?;
 
-        let api: *mut Prop = api_find_prop(shader_view.props_view(), b"RenderAPI\0".as_ptr())
-            .map_or(ptr::null_mut(), PropView::get);
+        // SAFETY: `props_view()` is the shader's own live `ufbx_props` and the name
+        // is a NUL-terminated literal.
+        let api: *mut Prop =
+            unsafe { api_find_prop(shader_view.props_view(), b"RenderAPI\0".as_ptr()) }
+                .map_or(ptr::null_mut(), PropView::get);
         if !api.is_null() {
-            if strcmp((*api).value_str.data, b"ARNOLD_SHADER_ID\0".as_ptr()) == 0 {
-                (*shader).type_ = ShaderType::ArnoldStandardSurface;
-            } else if strcmp((*api).value_str.data, b"OSL\0".as_ptr()) == 0 {
-                (*shader).type_ = ShaderType::OslStandardSurface;
-            } else if strcmp((*api).value_str.data, b"SFX_PBS_SHADER\0".as_ptr()) == 0 {
-                (*shader).type_ = ShaderType::ShaderfxGraph;
+            // SAFETY: a non-null `api` is a live `ufbx_prop` of the shader's props,
+            // whose `value_str` is a NUL-terminated interned pool string; the
+            // comparand is a NUL-terminated literal.
+            if unsafe { strcmp((*api).value_str.data, b"ARNOLD_SHADER_ID\0".as_ptr()) } == 0 {
+                // SAFETY: `shader` is live (see above).
+                unsafe { (*shader).type_ = ShaderType::ArnoldStandardSurface };
+            // SAFETY: as the first `strcmp`.
+            } else if unsafe { strcmp((*api).value_str.data, b"OSL\0".as_ptr()) } == 0 {
+                // SAFETY: `shader` is live (see above).
+                unsafe { (*shader).type_ = ShaderType::OslStandardSurface };
+            // SAFETY: as the first `strcmp`.
+            } else if unsafe { strcmp((*api).value_str.data, b"SFX_PBS_SHADER\0".as_ptr()) } == 0 {
+                // SAFETY: `shader` is live (see above).
+                unsafe { (*shader).type_ = ShaderType::ShaderfxGraph };
             }
         }
-        p_shader = p_shader.add(1);
+        // SAFETY: `p_shader != p_shader_end`, so the advance lands at or before the
+        // run's one-past-the-end pointer.
+        p_shader = unsafe { p_shader.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_material, p_material, uc->scene.materials)`
@@ -8112,70 +10323,122 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_material_end: *mut *mut Material =
         add_ptr(p_material, uc.scene_view().materials_view().count());
     while p_material != p_material_end {
-        let material_view: &'a MaterialView = MaterialView::from_ptr(*p_material);
+        // SAFETY: `p_material != p_material_end`, so it addresses a live,
+        // initialized slot of the scene's material-pointer run, holding a live
+        // `ufbx_material` allocated from `uc`'s result buffer — a write-capable
+        // root for the view.
+        let material_view: &'a MaterialView = unsafe { MaterialView::from_ptr(*p_material) };
         let material: *mut Material = material_view.get();
-        (*material).shader = opt_ref(fetch_src_element(
-            &mut (*material).element,
-            false,
-            ptr::null(),
-            ElementType::Shader,
-        ) as *mut Shader);
+        // SAFETY: `material` is the live element the view was minted from, so
+        // `&mut (*material).element` addresses its own element header; the fetched
+        // source is null or a live `ufbx_shader`.
+        unsafe {
+            (*material).shader = opt_ref(fetch_src_element(
+                &mut (*material).element,
+                false,
+                ptr::null(),
+                ElementType::Shader,
+            ) as *mut Shader)
+        };
 
-        if strcmp((*material).shading_model_name.data, b"lambert\0".as_ptr()) == 0
-            || strcmp((*material).shading_model_name.data, b"Lambert\0".as_ptr()) == 0
+        // SAFETY: `material` is live (see above) and its `shading_model_name` is a
+        // NUL-terminated interned pool string; the comparands are NUL-terminated
+        // literals.
+        if unsafe { strcmp((*material).shading_model_name.data, b"lambert\0".as_ptr()) } == 0
+            // SAFETY: as above.
+            || unsafe { strcmp((*material).shading_model_name.data, b"Lambert\0".as_ptr()) } == 0
         {
-            (*material).shader_type = ShaderType::FbxLambert;
-        } else if strcmp((*material).shading_model_name.data, b"phong\0".as_ptr()) == 0
-            || strcmp((*material).shading_model_name.data, b"Phong\0".as_ptr()) == 0
+            // SAFETY: `material` is live (see above).
+            unsafe { (*material).shader_type = ShaderType::FbxLambert };
+        // SAFETY: as the first `strcmp`.
+        } else if unsafe { strcmp((*material).shading_model_name.data, b"phong\0".as_ptr()) } == 0
+            // SAFETY: as above.
+            || unsafe { strcmp((*material).shading_model_name.data, b"Phong\0".as_ptr()) } == 0
         {
-            (*material).shader_type = ShaderType::FbxPhong;
+            // SAFETY: `material` is live (see above).
+            unsafe { (*material).shader_type = ShaderType::FbxPhong };
         }
 
-        let material_shader: *mut Shader = opt_ptr(&(*material).shader);
+        // SAFETY: `material` is live (see above), so `&(*material).shader`
+        // addresses its own field.
+        let material_shader: *mut Shader = unsafe { opt_ptr(&(*material).shader) };
         if !material_shader.is_null() {
-            (*material).shader_type = (*material_shader).type_;
+            // SAFETY: `material` is live (see above); a non-null `material_shader`
+            // is a live `ufbx_shader` of the scene.
+            unsafe { (*material).shader_type = (*material_shader).type_ };
         } else {
             if uc.opts_view().use_blender_pbr_material()
                 && uc.exporter() == Exporter::BlenderBinary
                 && uc.exporter_version() >= pack_version(4, 12, 0)
             {
-                (*material).shader_type = ShaderType::BlenderPhong;
+                // SAFETY: `material` is live (see above).
+                unsafe { (*material).shader_type = ShaderType::BlenderPhong };
             }
 
             // TODO: Is this too strict?
-            if (*material).shader_type == ShaderType::Unknown {
-                let classid_a: u32 =
+            // SAFETY: `material` is live (see above).
+            if unsafe { (*material).shader_type } == ShaderType::Unknown {
+                // SAFETY: `props_view()` is the material's own live `ufbx_props` and
+                // the name is a NUL-terminated literal.
+                let classid_a: u32 = unsafe {
                     api_find_int(material_view.props_view(), b"3dsMax|ClassIDa\0".as_ptr(), 0)
-                        as u64 as u32;
-                let classid_b: u32 =
+                } as u64 as u32;
+                // SAFETY: as above.
+                let classid_b: u32 = unsafe {
                     api_find_int(material_view.props_view(), b"3dsMax|ClassIDb\0".as_ptr(), 0)
-                        as u64 as u32;
+                } as u64 as u32;
                 if classid_a == 0x3d6b1cecu32 && classid_b == 0xdeadc001u32 {
-                    (*material).shader_type = ShaderType::E3DsMaxPhysicalMaterial;
-                    (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|Parameters|\0");
+                    // SAFETY: `material` is live (see above).
+                    unsafe { (*material).shader_type = ShaderType::E3DsMaxPhysicalMaterial };
+                    // SAFETY: as above.
+                    unsafe {
+                        (*material).shader_prop_prefix =
+                            ufbxi_string_literal!(b"3dsMax|Parameters|\0")
+                    };
                 } else if classid_a == 0xf1551e33u32 && classid_b == 0x37fb1337u32 {
-                    (*material).shader_type = ShaderType::OpenpbrMaterial;
-                    (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|Parameters|\0");
+                    // SAFETY: `material` is live (see above).
+                    unsafe { (*material).shader_type = ShaderType::OpenpbrMaterial };
+                    // SAFETY: as above.
+                    unsafe {
+                        (*material).shader_prop_prefix =
+                            ufbxi_string_literal!(b"3dsMax|Parameters|\0")
+                    };
                 } else if classid_a == 0x38420192u32 && classid_b == 0x45fe4e1bu32 {
-                    (*material).shader_type = ShaderType::GltfMaterial;
-                    (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|\0");
+                    // SAFETY: `material` is live (see above).
+                    unsafe { (*material).shader_type = ShaderType::GltfMaterial };
+                    // SAFETY: as above.
+                    unsafe { (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|\0") };
                 } else if classid_a == 0xd00f1e00u32 && classid_b == 0xbe77e500u32 {
-                    (*material).shader_type = ShaderType::E3DsMaxPbrMetalRough;
-                    (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|main|\0");
+                    // SAFETY: `material` is live (see above).
+                    unsafe { (*material).shader_type = ShaderType::E3DsMaxPbrMetalRough };
+                    // SAFETY: as above.
+                    unsafe {
+                        (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|main|\0")
+                    };
                 } else if classid_a == 0xd00f1e00u32 && classid_b == 0x01dbad33u32 {
-                    (*material).shader_type = ShaderType::E3DsMaxPbrSpecGloss;
-                    (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|main|\0");
+                    // SAFETY: `material` is live (see above).
+                    unsafe { (*material).shader_type = ShaderType::E3DsMaxPbrSpecGloss };
+                    // SAFETY: as above.
+                    unsafe {
+                        (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|main|\0")
+                    };
                 }
             }
         }
 
-        fetch_textures(
-            uc,
-            &raw mut (*material).textures,
-            &mut (*material).element,
-            false,
-        )?;
-        p_material = p_material.add(1);
+        // SAFETY: `material` is live (see above), so the projections address its
+        // own `textures` list header and element header.
+        unsafe {
+            fetch_textures(
+                uc,
+                &raw mut (*material).textures,
+                &mut (*material).element,
+                false,
+            )
+        }?;
+        // SAFETY: `p_material != p_material_end`, so the advance lands at or before
+        // the run's one-past-the-end pointer.
+        p_material = unsafe { p_material.add(1) };
     }
 
     // Ugh.. Patch the textures from meshes for legacy LayerElement-style textures
@@ -8184,17 +10447,24 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let mut p_mesh: *mut *mut Mesh = uc.scene_view().meshes_view().data() as *mut *mut Mesh;
         let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, uc.scene_view().meshes_view().count());
         while p_mesh != p_mesh_end {
-            let mesh: *mut Mesh = *p_mesh;
-            let num_materials: usize = (*mesh).materials.count;
+            // SAFETY: `p_mesh != p_mesh_end`, so it addresses a live, initialized
+            // slot of the scene's mesh-pointer run.
+            let mesh: *mut Mesh = unsafe { *p_mesh };
+            // SAFETY: `mesh` is a live `ufbx_mesh` of the scene (see above).
+            let num_materials: usize = unsafe { (*mesh).materials.count };
 
+            // SAFETY: as above.
             let extra: *mut MeshExtra =
-                get_element_extra(uc, (*mesh).element.element_id) as *mut MeshExtra;
+                get_element_extra(uc, unsafe { (*mesh).element.element_id }) as *mut MeshExtra;
             if extra.is_null() {
-                p_mesh = p_mesh.add(1);
+                // SAFETY: `p_mesh != p_mesh_end`, so the advance lands at or before
+                // the run's one-past-the-end pointer.
+                p_mesh = unsafe { p_mesh.add(1) };
                 continue;
             }
             if num_materials == 0 {
-                p_mesh = p_mesh.add(1);
+                // SAFETY: as above.
+                p_mesh = unsafe { p_mesh.add(1) };
                 continue;
             }
 
@@ -8204,47 +10474,75 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             // writes both fields before the first read.
             let mut textures_storage = MaybeUninit::<RefList<Texture>>::uninit();
             let textures: *mut RefList<Texture> = textures_storage.as_mut_ptr();
-            fetch_dst_elements(
-                uc,
-                textures as *mut c_void,
-                &mut (*mesh).element,
-                true,
-                false,
-                ptr::null(),
-                ElementType::Texture,
-            )?;
+            // SAFETY: `textures_storage` is a live local, so `textures` addresses
+            // writable storage for one `ufbx_texture_list`, which
+            // `fetch_dst_elements` writes in full; `mesh` is live (see above), so
+            // `&mut (*mesh).element` addresses its own element header.
+            unsafe {
+                fetch_dst_elements(
+                    uc,
+                    textures as *mut c_void,
+                    &mut (*mesh).element,
+                    true,
+                    false,
+                    ptr::null(),
+                    ElementType::Texture,
+                )
+            }?;
 
             let mut num_material_textures: usize = 0;
             // C: `ufbxi_for(ufbxi_tmp_mesh_texture, tex, extra->texture_arr, extra->texture_count)`
-            let mut tex: *mut TmpMeshTexture = (*extra).texture_arr;
-            let tex_end: *mut TmpMeshTexture = add_ptr(tex, (*extra).texture_count);
+            // SAFETY: `extra` is the non-null per-element extra fetched above.
+            let mut tex: *mut TmpMeshTexture = unsafe { (*extra).texture_arr };
+            // SAFETY: as above; `texture_arr`/`texture_count` describe one run.
+            let tex_end: *mut TmpMeshTexture = add_ptr(tex, unsafe { (*extra).texture_count });
             while tex != tex_end {
-                if (*tex).all_same {
-                    let texture_id: i32 = if (*tex).num_faces > 0 {
-                        *(*tex).face_texture.add(0) as i32
+                // SAFETY: `tex != tex_end`, so it addresses a live, initialized
+                // entry of that run.
+                if unsafe { (*tex).all_same } {
+                    // SAFETY: as above.
+                    let texture_id: i32 = if unsafe { (*tex).num_faces } > 0 {
+                        // SAFETY: `num_faces > 0`, so entry `0` of the tmp mesh
+                        // texture's own per-face run is live.
+                        (unsafe { *(*tex).face_texture.add(0) }) as i32
                     } else {
                         0
                     };
-                    if texture_id >= 0 && (texture_id as usize) < (*textures).count {
+                    // SAFETY: `textures` was written in full by the fetch above.
+                    if texture_id >= 0 && (texture_id as usize) < unsafe { (*textures).count } {
                         let mat_texs: *mut TmpMaterialTexture =
                             uc.tmp_stack_view()
                                 .push::<TmpMaterialTexture>(num_materials);
                         ufbxi_check!(uc, !mat_texs.is_null(), "mat_texs");
                         num_material_textures += num_materials;
                         for i in 0..num_materials {
-                            (*mat_texs.add(i)).material_id = i as i32;
-                            (*mat_texs.add(i)).texture_id = texture_id;
-                            (*mat_texs.add(i)).prop_name = (*tex).prop_name;
+                            // SAFETY: `mat_texs` is the non-null push of
+                            // `num_materials` entries just made into `uc`'s tmp
+                            // stack, and `i < num_materials`.
+                            unsafe { (*mat_texs.add(i)).material_id = i as i32 };
+                            // SAFETY: as above.
+                            unsafe { (*mat_texs.add(i)).texture_id = texture_id };
+                            // SAFETY: as above, with `tex` live.
+                            unsafe { (*mat_texs.add(i)).prop_name = (*tex).prop_name };
                         }
                     }
-                } else if (*mesh).face_material.count != 0 {
-                    let num_faces: usize = min_sz((*tex).num_faces, (*mesh).num_faces);
+                // SAFETY: `mesh` is live (see above).
+                } else if unsafe { (*mesh).face_material.count } != 0 {
+                    // SAFETY: `tex` and `mesh` are live (see above).
+                    let num_faces: usize =
+                        min_sz(unsafe { (*tex).num_faces }, unsafe { (*mesh).num_faces });
                     let mut prev_material: i32 = -1;
                     let mut prev_texture: i32 = -1;
                     for i in 0..num_faces {
-                        let texture_id: i32 = *(*tex).face_texture.add(i) as i32;
-                        let material_id: i32 = *(*mesh).face_material.data.add(i) as i32;
-                        if texture_id < 0 || (texture_id as usize) >= (*textures).count {
+                        // SAFETY: `num_faces` is at most the tmp mesh texture's own
+                        // `num_faces`, the length of its per-face run.
+                        let texture_id: i32 = unsafe { *(*tex).face_texture.add(i) } as i32;
+                        // SAFETY: `num_faces` is at most the mesh's `num_faces`; the
+                        // `face_material` list is non-empty here (checked above), so
+                        // it is the per-face run of that length.
+                        let material_id: i32 = unsafe { *(*mesh).face_material.data.add(i) } as i32;
+                        // SAFETY: `textures` was written in full by the fetch above.
+                        if texture_id < 0 || (texture_id as usize) >= unsafe { (*textures).count } {
                             continue;
                         }
                         if material_id < 0 || (material_id as usize) >= num_materials {
@@ -8259,13 +10557,19 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         let mat_tex: *mut TmpMaterialTexture =
                             uc.tmp_stack_view().push::<TmpMaterialTexture>(1);
                         ufbxi_check!(uc, !mat_tex.is_null(), "mat_tex");
-                        (*mat_tex).material_id = material_id;
-                        (*mat_tex).texture_id = texture_id;
-                        (*mat_tex).prop_name = (*tex).prop_name;
+                        // SAFETY: `mat_tex` is the non-null one-element push just
+                        // made into `uc`'s tmp stack.
+                        unsafe { (*mat_tex).material_id = material_id };
+                        // SAFETY: as above.
+                        unsafe { (*mat_tex).texture_id = texture_id };
+                        // SAFETY: as above, with `tex` live.
+                        unsafe { (*mat_tex).prop_name = (*tex).prop_name };
                         num_material_textures += 1;
                     }
                 }
-                tex = tex.add(1);
+                // SAFETY: `tex != tex_end`, so the advance lands at or before the
+                // run's one-past-the-end pointer.
+                tex = unsafe { tex.add(1) };
             }
 
             // Push a sentinel material texture to the end so we don't need to
@@ -8274,42 +10578,66 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 let mat_tex: *mut TmpMaterialTexture =
                     uc.tmp_stack_view().push::<TmpMaterialTexture>(1);
                 ufbxi_check!(uc, !mat_tex.is_null(), "mat_tex");
-                (*mat_tex).material_id = -1;
-                (*mat_tex).texture_id = -1;
-                (*mat_tex).prop_name = EMPTY_STRING.0;
+                // SAFETY: `mat_tex` is the non-null one-element push just made into
+                // `uc`'s tmp stack.
+                unsafe { (*mat_tex).material_id = -1 };
+                // SAFETY: as above.
+                unsafe { (*mat_tex).texture_id = -1 };
+                // SAFETY: as above.
+                unsafe { (*mat_tex).prop_name = EMPTY_STRING.0 };
             }
 
             let mat_texs: *mut TmpMaterialTexture = uc
                 .tmp_view()
                 .push_pop::<TmpMaterialTexture>(uc.tmp_stack_view(), num_material_textures + 1);
             ufbxi_check!(uc, !mat_texs.is_null(), "mat_texs");
-            sort_tmp_material_textures(uc, mat_texs, num_material_textures)?;
+            // SAFETY: `mat_texs` is the non-null popped run holding the
+            // `num_material_textures` entries pushed above plus the sentinel.
+            unsafe { sort_tmp_material_textures(uc, mat_texs, num_material_textures) }?;
 
             let mut prev_material: i32 = -2;
             let mut prev_texture: i32 = -2;
             let mut prev_prop: *const u8 = ptr::null();
             let mut num_textures_in_material: usize = 0;
             for i in 0..num_material_textures + 1 {
-                let mat_tex: TmpMaterialTexture = *mat_texs.add(i);
+                // SAFETY: the `mat_texs` run holds `num_material_textures + 1`
+                // initialized entries (see above) and `i` is below that.
+                let mat_tex: TmpMaterialTexture = unsafe { *mat_texs.add(i) };
                 if mat_tex.material_id != prev_material {
                     if prev_material >= 0 && num_textures_in_material > 0 {
-                        let mat: *mut Material = *((*mesh).materials.data as *mut *mut Material)
-                            .add(prev_material as usize);
-                        if !mat.is_null() && (*mat).textures.count == 0 {
+                        // SAFETY: `mesh` is live (see above); `prev_material` came
+                        // from a `mat_tex` entry, which the pushes above bounded by
+                        // `num_materials`, the mesh's material-run length.
+                        let mat: *mut Material = unsafe {
+                            *((*mesh).materials.data as *mut *mut Material)
+                                .add(prev_material as usize)
+                        };
+                        // SAFETY: a non-null `mat` is a live `ufbx_material` of the
+                        // scene.
+                        if !mat.is_null() && unsafe { (*mat).textures.count } == 0 {
                             let texs: *mut MaterialTexture =
                                 uc.result_view().push_pop::<MaterialTexture>(
                                     uc.tmp_stack_view(),
                                     num_textures_in_material,
                                 );
                             ufbxi_check!(uc, !texs.is_null(), "texs");
-                            (*mat).textures.data = texs;
-                            (*mat).textures.count = num_textures_in_material;
+                            // SAFETY: `mat` is live (see above); `texs` is the
+                            // non-null popped run of `num_textures_in_material`
+                            // material textures.
+                            unsafe { (*mat).textures.data = texs };
+                            // SAFETY: as above.
+                            unsafe { (*mat).textures.count = num_textures_in_material };
                         } else {
-                            pop::<MaterialTexture>(
-                                uc.tmp_stack_mut_ptr(),
-                                num_textures_in_material,
-                                ptr::null_mut(),
-                            );
+                            // SAFETY: `tmp_stack_mut_ptr` hands out `uc`'s own live
+                            // tmp stack, which holds the `num_textures_in_material`
+                            // material textures pushed for this material.
+                            unsafe {
+                                pop::<MaterialTexture>(
+                                    uc.tmp_stack_mut_ptr(),
+                                    num_textures_in_material,
+                                    ptr::null_mut(),
+                                )
+                            };
                         }
                     }
 
@@ -8329,14 +10657,24 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
                 let tex: *mut MaterialTexture = uc.tmp_stack_view().push::<MaterialTexture>(1);
                 ufbxi_check!(uc, !tex.is_null(), "tex");
-                ufbx_assert!(prev_texture >= 0 && (prev_texture as usize) < (*textures).count);
-                (*tex).texture = *(*textures).data.add(prev_texture as usize);
+                // SAFETY: `textures` was written in full by the fetch above.
+                ufbx_assert!(
+                    prev_texture >= 0 && (prev_texture as usize) < unsafe { (*textures).count }
+                );
+                // SAFETY: `tex` is the non-null one-element push just made into
+                // `uc`'s tmp stack; the assert above bounds `prev_texture` by the
+                // fetched texture run's length.
+                unsafe { (*tex).texture = *(*textures).data.add(prev_texture as usize) };
                 // C: `tex->shader_prop = tex->material_prop = mat_tex.prop_name;`
-                (*tex).material_prop = mat_tex.prop_name;
-                (*tex).shader_prop = (*tex).material_prop;
+                // SAFETY: `tex` addresses that push (see above).
+                unsafe { (*tex).material_prop = mat_tex.prop_name };
+                // SAFETY: as above.
+                unsafe { (*tex).shader_prop = (*tex).material_prop };
                 num_textures_in_material += 1;
             }
-            p_mesh = p_mesh.add(1);
+            // SAFETY: `p_mesh != p_mesh_end`, so the advance lands at or before the
+            // run's one-past-the-end pointer.
+            p_mesh = unsafe { p_mesh.add(1) };
         }
     }
 
@@ -8348,74 +10686,126 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_texture_end: *mut *mut Texture =
         add_ptr(p_texture, uc.scene_view().textures_view().count());
     while p_texture != p_texture_end {
-        let texture_view: &'a TextureView = TextureView::from_ptr(*p_texture);
+        // SAFETY: `p_texture != p_texture_end`, so it addresses a live, initialized
+        // slot of the scene's texture-pointer run, holding a live `ufbx_texture`
+        // allocated from `uc`'s result buffer — a write-capable root for the view.
+        let texture_view: &'a TextureView = unsafe { TextureView::from_ptr(*p_texture) };
         let texture: *mut Texture = texture_view.get();
+        // SAFETY: `texture` is the live element the view was minted from.
         let extra: *mut TextureExtra =
-            get_element_extra(uc, (*texture).element.element_id) as *mut TextureExtra;
+            get_element_extra(uc, unsafe { (*texture).element.element_id }) as *mut TextureExtra;
 
         let uv_set: *mut Prop =
             find_prop(texture_view.props_view(), &sp::UVSet).map_or(ptr::null_mut(), PropView::get);
         if !uv_set.is_null() {
-            (*texture).uv_set = (*uv_set).value_str;
+            // SAFETY: `texture` is live (see above); a non-null `uv_set` is a live
+            // `ufbx_prop` of its props.
+            unsafe { (*texture).uv_set = (*uv_set).value_str };
         } else {
-            (*texture).uv_set = EMPTY_STRING.0;
+            // SAFETY: `texture` is live (see above).
+            unsafe { (*texture).uv_set = EMPTY_STRING.0 };
         }
 
-        (*texture).video = opt_ref(fetch_dst_element(
-            &mut (*texture).element,
-            false,
-            ptr::null(),
-            ElementType::Video,
-        ) as *mut Video);
-        let texture_video: *mut Video = opt_ptr(&(*texture).video);
+        // SAFETY: `texture` is live (see above), so `&mut (*texture).element`
+        // addresses its own element header; the fetched destination is null or a
+        // live `ufbx_video`.
+        unsafe {
+            (*texture).video = opt_ref(fetch_dst_element(
+                &mut (*texture).element,
+                false,
+                ptr::null(),
+                ElementType::Video,
+            ) as *mut Video)
+        };
+        // SAFETY: `texture` is live (see above), so `&(*texture).video` addresses
+        // its own field.
+        let texture_video: *mut Video = unsafe { opt_ptr(&(*texture).video) };
         if !texture_video.is_null() {
-            (*texture).content = (*texture_video).content;
+            // SAFETY: `texture` is live (see above); a non-null `texture_video` is a
+            // live `ufbx_video` of the scene.
+            unsafe { (*texture).content = (*texture_video).content };
         }
 
         finalize_shader_texture(uc, texture_view)?;
 
-        resolve_filenames(
-            uc,
-            &raw mut (*texture).filename as *mut Strblob,
-            &raw mut (*texture).absolute_filename as *mut Strblob,
-            &raw mut (*texture).relative_filename as *mut Strblob,
-            false,
-        )?;
-        resolve_filenames(
-            uc,
-            &raw mut (*texture).raw_filename as *mut Strblob,
-            &raw mut (*texture).raw_absolute_filename as *mut Strblob,
-            &raw mut (*texture).raw_relative_filename as *mut Strblob,
-            true,
-        )?;
+        // SAFETY: `texture` is live (see above), so the projections address its own
+        // `ufbx_string` filename fields, which are `Strblob`-shaped for `raw`
+        // `false`.
+        unsafe {
+            resolve_filenames(
+                uc,
+                &raw mut (*texture).filename as *mut Strblob,
+                &raw mut (*texture).absolute_filename as *mut Strblob,
+                &raw mut (*texture).relative_filename as *mut Strblob,
+                false,
+            )
+        }?;
+        // SAFETY: as above, for its own `ufbx_blob` raw filename fields, which are
+        // `Strblob`-shaped for `raw` `true`.
+        unsafe {
+            resolve_filenames(
+                uc,
+                &raw mut (*texture).raw_filename as *mut Strblob,
+                &raw mut (*texture).raw_absolute_filename as *mut Strblob,
+                &raw mut (*texture).raw_relative_filename as *mut Strblob,
+                true,
+            )
+        }?;
 
         // Fetch layered texture layers and patch alphas/blend modes
-        if (*texture).type_ == TextureType::Layered {
-            fetch_texture_layers(uc, &raw mut (*texture).layers, &mut (*texture).element)?;
+        // SAFETY: `texture` is live (see above).
+        if unsafe { (*texture).type_ } == TextureType::Layered {
+            // SAFETY: as above, so the projections address its own `layers` list
+            // header and element header.
+            unsafe {
+                fetch_texture_layers(uc, &raw mut (*texture).layers, &mut (*texture).element)
+            }?;
             if !extra.is_null() {
-                let num: usize = min_sz((*extra).num_alphas, (*texture).layers.count);
+                // SAFETY: `extra` is the non-null per-element extra fetched above,
+                // and `texture` is live.
+                let num: usize = min_sz(unsafe { (*extra).num_alphas }, unsafe {
+                    (*texture).layers.count
+                });
                 for i in 0..num {
-                    (*((*texture).layers.data as *mut TextureLayer).add(i)).alpha =
-                        *(*extra).alphas.add(i);
+                    // SAFETY: `num` is at most both the layer run's `count` and the
+                    // extra's `num_alphas`, the length of its own `alphas` run.
+                    unsafe {
+                        (*((*texture).layers.data as *mut TextureLayer).add(i)).alpha =
+                            *(*extra).alphas.add(i)
+                    };
                 }
-                let num: usize = min_sz((*extra).num_blend_modes, (*texture).layers.count);
+                // SAFETY: `extra` is non-null and `texture` is live (both above).
+                let num: usize = min_sz(unsafe { (*extra).num_blend_modes }, unsafe {
+                    (*texture).layers.count
+                });
                 for i in 0..num {
-                    let mode: i32 = *(*extra).blend_modes.add(i);
+                    // SAFETY: `num` is at most the extra's `num_blend_modes`, the
+                    // length of its own `blend_modes` run.
+                    let mode: i32 = unsafe { *(*extra).blend_modes.add(i) };
                     if mode >= 0 && mode < BlendMode::Overlay as i32 {
                         // C: `(ufbx_blend_mode)mode` — the guard above pins
                         // `mode` into the enum's range.
-                        (*((*texture).layers.data as *mut TextureLayer).add(i)).blend_mode =
-                            core::mem::transmute::<u32, BlendMode>(mode as u32);
+                        // SAFETY: the guard pins `mode` into the discriminants of
+                        // the `u32`-repr `BlendMode`; `num` is at most the layer
+                        // run's `count`, so `i` indexes it.
+                        unsafe {
+                            (*((*texture).layers.data as *mut TextureLayer).add(i)).blend_mode =
+                                core::mem::transmute::<u32, BlendMode>(mode as u32)
+                        };
                     }
                 }
             }
         }
 
-        insert_texture_file(uc, texture)?;
-        p_texture = p_texture.add(1);
+        // SAFETY: `texture` is a live, initialized `ufbx_texture` (see above).
+        unsafe { insert_texture_file(uc, texture) }?;
+        // SAFETY: `p_texture != p_texture_end`, so the advance lands at or before
+        // the run's one-past-the-end pointer.
+        p_texture = unsafe { p_texture.add(1) };
     }
 
-    propagate_main_textures(uc.scene_mut_ptr());
+    // SAFETY: `scene_mut_ptr` hands out `uc`'s own live, filled-in `ufbx_scene`.
+    unsafe { propagate_main_textures(uc.scene_mut_ptr()) };
     pop_texture_files(uc)?;
 
     // Second pass to fetch material maps
@@ -8425,60 +10815,109 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_material_end: *mut *mut Material =
         add_ptr(p_material, uc.scene_view().materials_view().count());
     while p_material != p_material_end {
-        let material: *mut Material = *p_material;
+        // SAFETY: `p_material != p_material_end`, so it addresses a live,
+        // initialized slot of the scene's material-pointer run.
+        let material: *mut Material = unsafe { *p_material };
 
-        sort_material_textures(
-            uc,
-            (*material).textures.data as *mut MaterialTexture,
-            (*material).textures.count,
-        )?;
-        fetch_maps(uc.scene_mut_ptr(), material);
+        // SAFETY: `material` is a live `ufbx_material` of the scene (see above),
+        // and its `textures` run holds `count` initialized entries.
+        unsafe {
+            sort_material_textures(
+                uc,
+                (*material).textures.data as *mut MaterialTexture,
+                (*material).textures.count,
+            )
+        }?;
+        // SAFETY: `scene_mut_ptr` hands out `uc`'s own live, filled-in
+        // `ufbx_scene`, and `material` is one of its live materials (see above).
+        unsafe { fetch_maps(uc.scene_mut_ptr(), material) };
 
         // Fetch `ufbx_material_texture.shader_prop` names
-        let material_shader: *mut Shader = opt_ptr(&(*material).shader);
+        // SAFETY: `material` is live (see above), so `&(*material).shader`
+        // addresses its own field.
+        let material_shader: *mut Shader = unsafe { opt_ptr(&(*material).shader) };
         if !material_shader.is_null() {
             // C: `ufbxi_for_ptr_list(ufbx_shader_binding, p_binding, material->shader->bindings)`
+            // SAFETY: a non-null `material_shader` is a live `ufbx_shader` of the
+            // scene.
             let mut p_binding: *mut *mut ShaderBinding =
-                (*material_shader).bindings.data as *mut *mut ShaderBinding;
+                unsafe { (*material_shader).bindings.data } as *mut *mut ShaderBinding;
+            // SAFETY: as above; `data`/`count` describe one run.
             let p_binding_end: *mut *mut ShaderBinding =
-                add_ptr(p_binding, (*material_shader).bindings.count);
+                add_ptr(p_binding, unsafe { (*material_shader).bindings.count });
             while p_binding != p_binding_end {
-                let binding: *mut ShaderBinding = *p_binding;
+                // SAFETY: `p_binding != p_binding_end`, so it addresses a live,
+                // initialized slot of that run.
+                let binding: *mut ShaderBinding = unsafe { *p_binding };
 
                 // C: `ufbxi_for_list(ufbx_shader_prop_binding, prop, binding->prop_bindings)`
+                // SAFETY: `binding` is a live `ufbx_shader_binding` (see above).
                 let mut prop: *mut ShaderPropBinding =
-                    (*binding).prop_bindings.data as *mut ShaderPropBinding;
+                    unsafe { (*binding).prop_bindings.data } as *mut ShaderPropBinding;
+                // SAFETY: as above; `data`/`count` describe one run.
                 let prop_end: *mut ShaderPropBinding =
-                    add_ptr(prop, (*binding).prop_bindings.count);
+                    add_ptr(prop, unsafe { (*binding).prop_bindings.count });
                 while prop != prop_end {
-                    let name: String = (*prop).material_prop;
+                    // SAFETY: `prop != prop_end`, so it addresses a live,
+                    // initialized entry of that run.
+                    let name: String = unsafe { (*prop).material_prop };
 
                     let mut index: usize = usize::MAX;
-                    macro_lower_bound_eq::<MaterialTexture>(
-                        4,
-                        &mut index,
-                        (*material).textures.data,
-                        0,
-                        (*material).textures.count,
-                        |a| str_less((*a).material_prop, name),
-                        |a| (*a).material_prop.data == name.data,
-                    );
-                    while index < (*material).textures.count
-                        && (*((*material).textures.data as *mut MaterialTexture).add(index))
-                            .shader_prop
-                            .data
-                            == name.data
+                    let cmp_lambda = |a: *const MaterialTexture| {
+                        // SAFETY: `macro_lower_bound_eq` only passes pointers to
+                        // live, initialized elements of the run it was handed; both
+                        // `material_prop`s are interned pool strings.
+                        unsafe { str_less((*a).material_prop, name) }
+                    };
+                    let eq_lambda = |a: *const MaterialTexture| {
+                        // SAFETY: as `cmp_lambda`.
+                        (unsafe { (*a).material_prop.data }) == name.data
+                    };
+                    // SAFETY: `material` is live (see above), so its `textures`
+                    // `data`/`count` describe the sorted run searched here, and
+                    // `&mut index` is a live local.
+                    unsafe {
+                        macro_lower_bound_eq::<MaterialTexture>(
+                            4,
+                            &mut index,
+                            (*material).textures.data,
+                            0,
+                            (*material).textures.count,
+                            cmp_lambda,
+                            eq_lambda,
+                        )
+                    };
+                    // SAFETY: `material` is live (see above), and `index` is below
+                    // its `textures.count` in the loop condition, so it indexes that
+                    // run.
+                    while index < unsafe { (*material).textures.count }
+                        && unsafe {
+                            (*((*material).textures.data as *mut MaterialTexture).add(index))
+                                .shader_prop
+                                .data
+                        } == name.data
                     {
-                        (*((*material).textures.data as *mut MaterialTexture).add(index))
-                            .shader_prop = (*prop).shader_prop;
+                        // SAFETY: `index < (*material).textures.count` (loop
+                        // condition), so it indexes the material's own texture run;
+                        // `prop` is live (see above).
+                        unsafe {
+                            (*((*material).textures.data as *mut MaterialTexture).add(index))
+                                .shader_prop = (*prop).shader_prop
+                        };
                         index += 1;
                     }
-                    prop = prop.add(1);
+                    // SAFETY: `prop != prop_end`, so the advance lands at or before
+                    // the run's one-past-the-end pointer.
+                    prop = unsafe { prop.add(1) };
                 }
-                p_binding = p_binding.add(1);
+                // SAFETY: `p_binding != p_binding_end`, so the advance lands at or
+                // before the run's one-past-the-end pointer.
+                p_binding = unsafe { p_binding.add(1) };
             }
         }
-        p_material = p_material.add(1);
+        // SAFETY: `p_material != p_material_end`, so the advance lands at or before
+        // the run's one-past-the-end pointer.
+        p_material = unsafe { p_material.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_display_layer, p_layer, uc->scene.display_layers)`
@@ -8489,17 +10928,26 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         uc.scene_view().display_layers_view().count(),
     );
     while p_display_layer != p_display_layer_end {
-        let layer: *mut DisplayLayer = *p_display_layer;
-        fetch_dst_elements(
-            uc,
-            &raw mut (*layer).nodes as *mut c_void,
-            &mut (*layer).element,
-            false,
-            true,
-            ptr::null(),
-            ElementType::Node,
-        )?;
-        p_display_layer = p_display_layer.add(1);
+        // SAFETY: `p_display_layer != p_display_layer_end`, so it addresses a live,
+        // initialized slot of the scene's display-layer-pointer run.
+        let layer: *mut DisplayLayer = unsafe { *p_display_layer };
+        // SAFETY: `layer` is a live `ufbx_display_layer` of the scene (see above),
+        // so the projections address its own `nodes` list header and element
+        // header.
+        unsafe {
+            fetch_dst_elements(
+                uc,
+                &raw mut (*layer).nodes as *mut c_void,
+                &mut (*layer).element,
+                false,
+                true,
+                ptr::null(),
+                ElementType::Node,
+            )
+        }?;
+        // SAFETY: `p_display_layer != p_display_layer_end`, so the advance lands at
+        // or before the run's one-past-the-end pointer.
+        p_display_layer = unsafe { p_display_layer.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_selection_set, p_set, uc->scene.selection_sets)`
@@ -8508,17 +10956,25 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_set_end: *mut *mut SelectionSet =
         add_ptr(p_set, uc.scene_view().selection_sets_view().count());
     while p_set != p_set_end {
-        let set: *mut SelectionSet = *p_set;
-        fetch_dst_elements(
-            uc,
-            &raw mut (*set).nodes as *mut c_void,
-            &mut (*set).element,
-            false,
-            true,
-            ptr::null(),
-            ElementType::SelectionNode,
-        )?;
-        p_set = p_set.add(1);
+        // SAFETY: `p_set != p_set_end`, so it addresses a live, initialized slot of
+        // the scene's selection-set-pointer run.
+        let set: *mut SelectionSet = unsafe { *p_set };
+        // SAFETY: `set` is a live `ufbx_selection_set` of the scene (see above), so
+        // the projections address its own `nodes` list header and element header.
+        unsafe {
+            fetch_dst_elements(
+                uc,
+                &raw mut (*set).nodes as *mut c_void,
+                &mut (*set).element,
+                false,
+                true,
+                ptr::null(),
+                ElementType::SelectionNode,
+            )
+        }?;
+        // SAFETY: `p_set != p_set_end`, so the advance lands at or before the run's
+        // one-past-the-end pointer.
+        p_set = unsafe { p_set.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_selection_node, p_node, uc->scene.selection_nodes)`
@@ -8527,35 +10983,71 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_sel_node_end: *mut *mut SelectionNode =
         add_ptr(p_sel_node, uc.scene_view().selection_nodes_view().count());
     while p_sel_node != p_sel_node_end {
-        let node: *mut SelectionNode = *p_sel_node;
-        (*node).target_node =
-            opt_ref(
-                fetch_dst_element(&mut (*node).element, false, ptr::null(), ElementType::Node)
-                    as *mut Node,
-            );
-        (*node).target_mesh =
-            opt_ref(
-                fetch_dst_element(&mut (*node).element, false, ptr::null(), ElementType::Mesh)
-                    as *mut Mesh,
-            );
-        if opt_ptr(&(*node).target_mesh).is_null() && !opt_ptr(&(*node).target_node).is_null() {
-            (*node).target_mesh = (*opt_ptr(&(*node).target_node)).mesh;
-        } else if opt_ptr(&(*node).target_node).is_null()
-            && !opt_ptr(&(*node).target_mesh).is_null()
-            && (*opt_ptr(&(*node).target_mesh)).element.instances.count > 0
+        // SAFETY: `p_sel_node != p_sel_node_end`, so it addresses a live,
+        // initialized slot of the scene's selection-node-pointer run.
+        let node: *mut SelectionNode = unsafe { *p_sel_node };
+        // SAFETY: `node` is a live `ufbx_selection_node` of the scene (see above),
+        // so `&mut (*node).element` addresses its own element header; the fetched
+        // destination is null or a live `ufbx_node`.
+        unsafe {
+            (*node).target_node = opt_ref(fetch_dst_element(
+                &mut (*node).element,
+                false,
+                ptr::null(),
+                ElementType::Node,
+            ) as *mut Node)
+        };
+        // SAFETY: as above, for a null-or-live `ufbx_mesh` destination.
+        unsafe {
+            (*node).target_mesh = opt_ref(fetch_dst_element(
+                &mut (*node).element,
+                false,
+                ptr::null(),
+                ElementType::Mesh,
+            ) as *mut Mesh)
+        };
+        // SAFETY: `node` is live (see above), so the `&(*node)...` projections
+        // address its own fields.
+        if unsafe { opt_ptr(&(*node).target_mesh) }.is_null()
+            // SAFETY: as above.
+            && !unsafe { opt_ptr(&(*node).target_node) }.is_null()
         {
-            (*node).target_node = opt_ref(
-                *((*opt_ptr(&(*node).target_mesh)).element.instances.data as *mut *mut Node).add(0),
-            );
+            // SAFETY: `node` is live and its `target_node` is non-null here, so it
+            // is a live `ufbx_node` whose own `mesh` field is read.
+            unsafe { (*node).target_mesh = (*opt_ptr(&(*node).target_node)).mesh };
+        // SAFETY: `node` is live (see above).
+        } else if unsafe { opt_ptr(&(*node).target_node) }.is_null()
+            // SAFETY: as above.
+            && !unsafe { opt_ptr(&(*node).target_mesh) }.is_null()
+            // SAFETY: `target_mesh` is non-null here, so it is a live `ufbx_mesh`
+            // whose own instance list is read.
+            && unsafe { (*opt_ptr(&(*node).target_mesh)).element.instances.count } > 0
+        {
+            // SAFETY: as above, and the instance list is non-empty, so its element
+            // `0` is a live node pointer; `node` is live.
+            unsafe {
+                (*node).target_node = opt_ref(
+                    *((*opt_ptr(&(*node).target_mesh)).element.instances.data as *mut *mut Node)
+                        .add(0),
+                )
+            };
         }
 
-        let mesh: *mut Mesh = opt_ptr(&(*node).target_mesh);
+        // SAFETY: `node` is live (see above), so `&(*node).target_mesh` addresses
+        // its own field.
+        let mesh: *mut Mesh = unsafe { opt_ptr(&(*node).target_mesh) };
         if !mesh.is_null() {
-            validate_indices(uc, &raw mut (*node).vertices, (*mesh).num_vertices)?;
-            validate_indices(uc, &raw mut (*node).edges, (*mesh).num_edges)?;
-            validate_indices(uc, &raw mut (*node).faces, (*mesh).num_faces)?;
+            // SAFETY: `node` is live, so the projection addresses its own `vertices`
+            // index-list header; a non-null `mesh` is a live `ufbx_mesh`.
+            unsafe { validate_indices(uc, &raw mut (*node).vertices, (*mesh).num_vertices) }?;
+            // SAFETY: as above, for its own `edges` index list.
+            unsafe { validate_indices(uc, &raw mut (*node).edges, (*mesh).num_edges) }?;
+            // SAFETY: as above, for its own `faces` index list.
+            unsafe { validate_indices(uc, &raw mut (*node).faces, (*mesh).num_faces) }?;
         }
-        p_sel_node = p_sel_node.add(1);
+        // SAFETY: `p_sel_node != p_sel_node_end`, so the advance lands at or before
+        // the run's one-past-the-end pointer.
+        p_sel_node = unsafe { p_sel_node.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_constraint, p_constraint, uc->scene.constraints)`
@@ -8564,52 +11056,86 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_constraint_end: *mut *mut Constraint =
         add_ptr(p_constraint, uc.scene_view().constraints_view().count());
     while p_constraint != p_constraint_end {
-        let constraint: *mut Constraint = *p_constraint;
+        // SAFETY: `p_constraint != p_constraint_end`, so it addresses a live,
+        // initialized slot of the scene's constraint-pointer run.
+        let constraint: *mut Constraint = unsafe { *p_constraint };
 
         let tmp_base: usize = uc.tmp_stack_view().num_items();
 
         // Find property connections in _both_ src and dst connections as they are inconsistent
         // in pre-7000 files. For example "Constrained Object" is a "PO" connection in 6100.
         // C: `ufbxi_for_list(ufbx_connection, conn, constraint->element.connections_src)`
-        for conn_ix in 0..(*constraint).element.connections_src.count {
-            let conn: *mut Connection =
-                ((*constraint).element.connections_src.data as *mut Connection).add(conn_ix);
-            if (*conn).src_prop.length == 0 || (*ref_ptr(&(*conn).dst)).type_ != ElementType::Node {
+        // SAFETY: `constraint` is a live `ufbx_constraint` of the scene (see above).
+        for conn_ix in 0..unsafe { (*constraint).element.connections_src.count } {
+            // SAFETY: as above; `conn_ix` is below the connection run's `count`.
+            let conn: *mut Connection = unsafe {
+                ((*constraint).element.connections_src.data as *mut Connection).add(conn_ix)
+            };
+            // SAFETY: `conn` addresses a live, initialized connection (see above),
+            // whose `dst` is a non-null live element pointer.
+            if unsafe {
+                (*conn).src_prop.length == 0 || (*ref_ptr(&(*conn).dst)).type_ != ElementType::Node
+            } {
                 continue;
             }
-            add_constraint_prop(
-                uc,
-                constraint,
-                ref_ptr(&(*conn).dst) as *mut Node,
-                (*conn).src_prop.data,
-            )?;
+            // SAFETY: `constraint` is live, the check pins the destination's type so
+            // it heads a live `ufbx_node`, and `src_prop` is an interned
+            // NUL-terminated pool string.
+            unsafe {
+                add_constraint_prop(
+                    uc,
+                    constraint,
+                    ref_ptr(&(*conn).dst) as *mut Node,
+                    (*conn).src_prop.data,
+                )
+            }?;
         }
         // C: `ufbxi_for_list(ufbx_connection, conn, constraint->element.connections_dst)`
-        for conn_ix in 0..(*constraint).element.connections_dst.count {
-            let conn: *mut Connection =
-                ((*constraint).element.connections_dst.data as *mut Connection).add(conn_ix);
-            if (*conn).dst_prop.length == 0 || (*ref_ptr(&(*conn).src)).type_ != ElementType::Node {
+        // SAFETY: `constraint` is live (see above).
+        for conn_ix in 0..unsafe { (*constraint).element.connections_dst.count } {
+            // SAFETY: as above; `conn_ix` is below the connection run's `count`.
+            let conn: *mut Connection = unsafe {
+                ((*constraint).element.connections_dst.data as *mut Connection).add(conn_ix)
+            };
+            // SAFETY: `conn` addresses a live, initialized connection (see above),
+            // whose `src` is a non-null live element pointer.
+            if unsafe {
+                (*conn).dst_prop.length == 0 || (*ref_ptr(&(*conn).src)).type_ != ElementType::Node
+            } {
                 continue;
             }
-            add_constraint_prop(
-                uc,
-                constraint,
-                ref_ptr(&(*conn).src) as *mut Node,
-                (*conn).dst_prop.data,
-            )?;
+            // SAFETY: `constraint` is live, the check pins the source's type so it
+            // heads a live `ufbx_node`, and `dst_prop` is an interned
+            // NUL-terminated pool string.
+            unsafe {
+                add_constraint_prop(
+                    uc,
+                    constraint,
+                    ref_ptr(&(*conn).src) as *mut Node,
+                    (*conn).dst_prop.data,
+                )
+            }?;
         }
 
         let num_targets: usize = uc.tmp_stack_view().num_items() - tmp_base;
-        (*constraint).targets.count = num_targets;
-        (*constraint).targets.data = uc
-            .result_view()
-            .push_pop::<ConstraintTarget>(uc.tmp_stack_view(), num_targets);
+        // SAFETY: `constraint` is live (see above).
+        unsafe { (*constraint).targets.count = num_targets };
+        // SAFETY: as above; the loops above pushed `num_targets` constraint targets
+        // onto `uc`'s tmp stack, popped into `uc`'s own result buffer here.
+        unsafe {
+            (*constraint).targets.data = uc
+                .result_view()
+                .push_pop::<ConstraintTarget>(uc.tmp_stack_view(), num_targets)
+        };
         ufbxi_check!(
             uc,
-            !(*constraint).targets.data.is_null(),
+            // SAFETY: `constraint` is live (see above).
+            !unsafe { (*constraint).targets.data }.is_null(),
             "constraint->targets.data"
         );
-        p_constraint = p_constraint.add(1);
+        // SAFETY: `p_constraint != p_constraint_end`, so the advance lands at or
+        // before the run's one-past-the-end pointer.
+        p_constraint = unsafe { p_constraint.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_audio_layer, p_layer, uc->scene.audio_layers)`
@@ -8618,17 +11144,25 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let p_audio_layer_end: *mut *mut AudioLayer =
         add_ptr(p_audio_layer, uc.scene_view().audio_layers_view().count());
     while p_audio_layer != p_audio_layer_end {
-        let layer: *mut AudioLayer = *p_audio_layer;
-        fetch_dst_elements(
-            uc,
-            &raw mut (*layer).clips as *mut c_void,
-            &mut (*layer).element,
-            false,
-            true,
-            ptr::null(),
-            ElementType::AudioClip,
-        )?;
-        p_audio_layer = p_audio_layer.add(1);
+        // SAFETY: `p_audio_layer != p_audio_layer_end`, so it addresses a live,
+        // initialized slot of the scene's audio-layer-pointer run.
+        let layer: *mut AudioLayer = unsafe { *p_audio_layer };
+        // SAFETY: `layer` is a live `ufbx_audio_layer` of the scene (see above), so
+        // the projections address its own `clips` list header and element header.
+        unsafe {
+            fetch_dst_elements(
+                uc,
+                &raw mut (*layer).clips as *mut c_void,
+                &mut (*layer).element,
+                false,
+                true,
+                ptr::null(),
+                ElementType::AudioClip,
+            )
+        }?;
+        // SAFETY: `p_audio_layer != p_audio_layer_end`, so the advance lands at or
+        // before the run's one-past-the-end pointer.
+        p_audio_layer = unsafe { p_audio_layer.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_lod_group, p_lod, uc->scene.lod_groups)`
@@ -8636,21 +11170,30 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         uc.scene_view().lod_groups_view().data() as *mut *mut LodGroup;
     let p_lod_end: *mut *mut LodGroup = add_ptr(p_lod, uc.scene_view().lod_groups_view().count());
     while p_lod != p_lod_end {
-        let lod: &'a LodGroupView = LodGroupView::from_ptr(*p_lod);
+        // SAFETY: `p_lod != p_lod_end`, so it addresses a live, initialized slot of
+        // the scene's LOD-group-pointer run, holding a live `ufbx_lod_group`
+        // allocated from `uc`'s result buffer — a write-capable root for the view.
+        let lod: &'a LodGroupView = unsafe { LodGroupView::from_ptr(*p_lod) };
         finalize_lod_group(uc, lod)?;
-        p_lod = p_lod.add(1);
+        // SAFETY: `p_lod != p_lod_end`, so the advance lands at or before the run's
+        // one-past-the-end pointer.
+        p_lod = unsafe { p_lod.add(1) };
     }
 
     fetch_file_textures(uc)?;
 
     // NOTE: This will be patched over in `ufbxi_update_scene()` if there are `anim_layers`
     if uc.scene_view().anim_layers_view().count() == 0 {
-        push_anim(
-            uc,
-            uc.scene_view().anim_mut_ptr() as *mut *mut Anim,
-            ptr::null_mut(),
-            0,
-        )?;
+        // SAFETY: `anim_mut_ptr` addresses the scene's own anim-pointer slot; the
+        // layer run is empty, so a null pointer with count `0` describes it.
+        unsafe {
+            push_anim(
+                uc,
+                uc.scene_view().anim_mut_ptr() as *mut *mut Anim,
+                ptr::null_mut(),
+                0,
+            )
+        }?;
     }
 
     uc.scene_view()
@@ -8752,18 +11295,27 @@ pub(crate) fn mul_quat(a: Quat, b: Quat) -> Quat {
 // ufbx.c:22672-22677 `ufbxi_add_weighted_vec3`
 #[inline(always)]
 pub(crate) unsafe fn add_weighted_vec3(r: *mut Vec3, b: Vec3, w: Real) {
-    (*r).x += b.x * w;
-    (*r).y += b.y * w;
-    (*r).z += b.z * w;
+    // SAFETY: `r` points to a live, initialized, writable `ufbx_vec3`
+    // accumulator (fn contract).
+    unsafe { (*r).x += b.x * w };
+    // SAFETY: as above, for the accumulator's `y`.
+    unsafe { (*r).y += b.y * w };
+    // SAFETY: as above, for the accumulator's `z`.
+    unsafe { (*r).z += b.z * w };
 }
 
 // ufbx.c:22679-22685 `ufbxi_add_weighted_quat`
 #[inline(always)]
 pub(crate) unsafe fn add_weighted_quat(r: *mut Quat, b: Quat, w: Real) {
-    (*r).x += b.x * w;
-    (*r).y += b.y * w;
-    (*r).z += b.z * w;
-    (*r).w += b.w * w;
+    // SAFETY: `r` points to a live, initialized, writable `ufbx_quat`
+    // accumulator (fn contract).
+    unsafe { (*r).x += b.x * w };
+    // SAFETY: as above, for the accumulator's `y`.
+    unsafe { (*r).y += b.y * w };
+    // SAFETY: as above, for the accumulator's `z`.
+    unsafe { (*r).z += b.z * w };
+    // SAFETY: as above, for the accumulator's `w`.
+    unsafe { (*r).w += b.w * w };
 }
 
 // ufbx.c:22687-22693 `ufbxi_add_weighted_mat`
@@ -8774,10 +11326,16 @@ pub(crate) unsafe fn add_weighted_quat(r: *mut Quat, b: Quat, w: Real) {
 pub(crate) unsafe fn add_weighted_mat(r: *mut Matrix, b: *const Matrix, w: Real) {
     let r_cols: *mut Vec3 = r as *mut Vec3;
     let b_cols: *const Vec3 = b as *const Vec3;
-    add_weighted_vec3(r_cols.add(0), *b_cols.add(0), w);
-    add_weighted_vec3(r_cols.add(1), *b_cols.add(1), w);
-    add_weighted_vec3(r_cols.add(2), *b_cols.add(2), w);
-    add_weighted_vec3(r_cols.add(3), *b_cols.add(3), w);
+    // SAFETY: `r` and `b` point to live, initialized `ufbx_matrix` values (fn
+    // contract, `r` writable), and each is laid out as exactly four consecutive
+    // `ufbx_vec3` columns, so column `0` of both is in bounds.
+    unsafe { add_weighted_vec3(r_cols.add(0), *b_cols.add(0), w) };
+    // SAFETY: as above, for column `1` of both matrices.
+    unsafe { add_weighted_vec3(r_cols.add(1), *b_cols.add(1), w) };
+    // SAFETY: as above, for column `2` of both matrices.
+    unsafe { add_weighted_vec3(r_cols.add(2), *b_cols.add(2), w) };
+    // SAFETY: as above, for column `3` of both matrices.
+    unsafe { add_weighted_vec3(r_cols.add(3), *b_cols.add(3), w) };
 }
 
 // ufbx.c:22695-22709 `ufbxi_mul_rotate`
@@ -8854,7 +11412,10 @@ pub(crate) unsafe fn mirror_translation(p_vec: *mut Vec3, axis: MirrorAxis) {
     let v: *mut Real = p_vec as *mut Real;
     // C: `axis - 1` — the enum is promoted to `int` before the subtraction.
     let i: usize = (axis as i32 - 1) as usize;
-    *v.add(i) = -*v.add(i);
+    // SAFETY: `p_vec` points to a live, initialized, writable `ufbx_vec3` (fn
+    // contract), which is three consecutive `ufbx_real`s, and `axis` is one of
+    // `X`/`Y`/`Z` (fn contract, asserted above) so `i = axis - 1` is in `0..3`.
+    unsafe { *v.add(i) = -*v.add(i) };
 }
 
 // ufbx.c:22751-22756 `ufbxi_mirror_rotation`
@@ -8866,9 +11427,13 @@ pub(crate) unsafe fn mirror_rotation(p_quat: *mut Quat, axis: MirrorAxis) {
     let v: *mut Real = p_quat as *mut Real;
     // C: `axis % 3` / `(axis + 1) % 3` — the enum is promoted to `int` first.
     let i0: usize = (axis as i32 % 3) as usize;
-    *v.add(i0) = -*v.add(i0);
+    // SAFETY: `p_quat` points to a live, initialized, writable `ufbx_quat` (fn
+    // contract), which is four consecutive `ufbx_real`s, and `i0 = axis % 3` is
+    // in `0..3`.
+    unsafe { *v.add(i0) = -*v.add(i0) };
     let i1: usize = ((axis as i32 + 1) % 3) as usize;
-    *v.add(i1) = -*v.add(i1);
+    // SAFETY: as above; `i1 = (axis + 1) % 3` is in `0..3`.
+    unsafe { *v.add(i1) = -*v.add(i1) };
 }
 
 // ufbx.c:22758-22784 `ufbxi_get_geometry_transform`
@@ -8905,15 +11470,25 @@ pub(crate) unsafe fn get_geometry_transform(props: &PropsView, node: *mut Node) 
     mul_rotate(&mut t, rotation, RotationOrder::Xyz);
     add_translate(&mut t, translation);
 
-    if (*node).has_adjust_transform {
-        t.translation.x *= (*node).adjust_translation_scale;
-        t.translation.y *= (*node).adjust_translation_scale;
-        t.translation.z *= (*node).adjust_translation_scale;
+    // SAFETY: `node` points to the live, initialized `ufbx_node` whose geometry
+    // transform is being computed (fn contract).
+    if unsafe { (*node).has_adjust_transform } {
+        // SAFETY: as above.
+        t.translation.x *= unsafe { (*node).adjust_translation_scale };
+        // SAFETY: as above.
+        t.translation.y *= unsafe { (*node).adjust_translation_scale };
+        // SAFETY: as above.
+        t.translation.z *= unsafe { (*node).adjust_translation_scale };
     }
 
-    if (*node).adjust_mirror_axis != MirrorAxis::None {
-        mirror_translation(&mut t.translation, (*node).adjust_mirror_axis);
-        mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis);
+    // SAFETY: `node` is live (see above).
+    if unsafe { (*node).adjust_mirror_axis } != MirrorAxis::None {
+        // SAFETY: `&mut t.translation` addresses a live local `ufbx_vec3`, and
+        // the branch condition established that the axis is not `None`.
+        unsafe { mirror_translation(&mut t.translation, (*node).adjust_mirror_axis) };
+        // SAFETY: `&mut t.rotation` addresses a live local `ufbx_quat`, and the
+        // branch condition established that the axis is not `None`.
+        unsafe { mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis) };
     }
 
     t
@@ -8953,11 +11528,15 @@ pub(crate) unsafe fn get_rotation<M: Mode>(
         },
     };
 
-    if (*node).has_adjust_transform {
-        mul_rotate_quat(&mut t, (*node).adjust_post_rotation);
+    // SAFETY: `node` points to the live, initialized `ufbx_node` whose rotation
+    // is being composed (fn contract).
+    if unsafe { (*node).has_adjust_transform } {
+        // SAFETY: as above.
+        mul_rotate_quat(&mut t, unsafe { (*node).adjust_post_rotation });
     }
 
-    if (*node).use_rotation_space {
+    // SAFETY: `node` is live (see above).
+    if unsafe { (*node).use_rotation_space } {
         mul_inv_rotate(&mut t, post_rotation, RotationOrder::Xyz);
         mul_rotate(&mut t, rotation, order);
         mul_rotate(&mut t, pre_rotation, RotationOrder::Xyz);
@@ -8965,13 +11544,18 @@ pub(crate) unsafe fn get_rotation<M: Mode>(
         mul_rotate(&mut t, rotation, RotationOrder::Xyz);
     }
 
-    if (*node).has_adjust_transform {
-        mul_rotate_quat(&mut t, (*node).adjust_pre_rotation);
+    // SAFETY: `node` is live (see above).
+    if unsafe { (*node).has_adjust_transform } {
+        // SAFETY: as above.
+        mul_rotate_quat(&mut t, unsafe { (*node).adjust_pre_rotation });
     }
 
     // C: `if (node->adjust_mirror_axis)` — enum truthiness.
-    if (*node).adjust_mirror_axis != MirrorAxis::None {
-        mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis);
+    // SAFETY: `node` is live (see above).
+    if unsafe { (*node).adjust_mirror_axis } != MirrorAxis::None {
+        // SAFETY: `&mut t.rotation` addresses a live local `ufbx_quat`, and the
+        // branch condition established that the axis is not `None`.
+        unsafe { mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis) };
     }
 
     t.rotation
@@ -9004,14 +11588,19 @@ pub(crate) unsafe fn get_scale<M: Mode>(props: &View<Props, M>, node: *const Nod
         },
     };
 
-    if (*node).has_adjust_transform {
-        mul_scale_real(&mut t, (*node).adjust_post_scale);
+    // SAFETY: `node` points to the live, initialized `ufbx_node` whose scale is
+    // being composed (fn contract).
+    if unsafe { (*node).has_adjust_transform } {
+        // SAFETY: as above.
+        mul_scale_real(&mut t, unsafe { (*node).adjust_post_scale });
     }
 
     mul_scale(&mut t, scaling);
 
-    if (*node).has_adjust_transform {
-        mul_scale_real(&mut t, (*node).adjust_pre_scale);
+    // SAFETY: `node` is live (see above).
+    if unsafe { (*node).has_adjust_transform } {
+        // SAFETY: as above.
+        mul_scale_real(&mut t, unsafe { (*node).adjust_pre_scale });
     }
 
     t.scale
@@ -9061,14 +11650,22 @@ pub(crate) unsafe fn get_transform<M: Mode>(
     // NOTE: Rpost is inverted (!) after converting from PostRotation Euler angles
 
     if !translation_scale.is_null() {
-        translation.x *= (*translation_scale).x;
-        translation.y *= (*translation_scale).y;
-        translation.z *= (*translation_scale).z;
+        // SAFETY: `translation_scale` is non-null here, and the fn contract is
+        // that a non-null one points to a live, initialized `ufbx_vec3`.
+        translation.x *= unsafe { (*translation_scale).x };
+        // SAFETY: as above.
+        translation.y *= unsafe { (*translation_scale).y };
+        // SAFETY: as above.
+        translation.z *= unsafe { (*translation_scale).z };
     }
 
-    if (*node).has_adjust_transform {
-        mul_rotate_quat(&mut t, (*node).adjust_post_rotation);
-        mul_scale_real(&mut t, (*node).adjust_post_scale);
+    // SAFETY: `node` points to the live, initialized `ufbx_node` whose transform
+    // is being composed (fn contract).
+    if unsafe { (*node).has_adjust_transform } {
+        // SAFETY: as above.
+        mul_rotate_quat(&mut t, unsafe { (*node).adjust_post_rotation });
+        // SAFETY: as above.
+        mul_scale_real(&mut t, unsafe { (*node).adjust_post_scale });
     }
 
     sub_translate(&mut t, scale_pivot);
@@ -9078,7 +11675,8 @@ pub(crate) unsafe fn get_transform<M: Mode>(
     add_translate(&mut t, scale_offset);
 
     sub_translate(&mut t, rot_pivot);
-    if (*node).use_rotation_space {
+    // SAFETY: `node` is live (see above).
+    if unsafe { (*node).use_rotation_space } {
         mul_inv_rotate(&mut t, post_rotation, RotationOrder::Xyz);
         mul_rotate(&mut t, rotation, order);
         mul_rotate(&mut t, pre_rotation, RotationOrder::Xyz);
@@ -9091,24 +11689,41 @@ pub(crate) unsafe fn get_transform<M: Mode>(
 
     add_translate(&mut t, translation);
 
-    if (*node).has_adjust_transform {
-        add_translate(&mut t, (*node).adjust_pre_translation);
-        mul_rotate_quat(&mut t, (*node).adjust_pre_rotation);
-        mul_scale_real(&mut t, (*node).adjust_pre_scale);
-        t.translation.x *= (*node).adjust_translation_scale;
-        t.translation.y *= (*node).adjust_translation_scale;
-        t.translation.z *= (*node).adjust_translation_scale;
+    // SAFETY: `node` is live (see above).
+    if unsafe { (*node).has_adjust_transform } {
+        // SAFETY: as above.
+        add_translate(&mut t, unsafe { (*node).adjust_pre_translation });
+        // SAFETY: as above.
+        mul_rotate_quat(&mut t, unsafe { (*node).adjust_pre_rotation });
+        // SAFETY: as above.
+        mul_scale_real(&mut t, unsafe { (*node).adjust_pre_scale });
+        // SAFETY: as above.
+        t.translation.x *= unsafe { (*node).adjust_translation_scale };
+        // SAFETY: as above.
+        t.translation.y *= unsafe { (*node).adjust_translation_scale };
+        // SAFETY: as above.
+        t.translation.z *= unsafe { (*node).adjust_translation_scale };
     }
 
     // C: `if (node->adjust_mirror_axis)` — enum truthiness.
-    if (*node).adjust_mirror_axis != MirrorAxis::None {
-        mirror_translation(&mut t.translation, (*node).adjust_mirror_axis);
-        mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis);
+    // SAFETY: `node` is live (see above).
+    if unsafe { (*node).adjust_mirror_axis } != MirrorAxis::None {
+        // SAFETY: `&mut t.translation` addresses a live local `ufbx_vec3`, and
+        // the branch condition established that the axis is not `None`.
+        unsafe { mirror_translation(&mut t.translation, (*node).adjust_mirror_axis) };
+        // SAFETY: `&mut t.rotation` addresses a live local `ufbx_quat`, and the
+        // branch condition established that the axis is not `None`.
+        unsafe { mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis) };
     }
 
     // Make sure the fast paths are identical to this function.
-    ufbxi_regression_assert!(is_quat_equal(t.rotation, get_rotation(props, order, node)));
-    ufbxi_regression_assert!(is_vec3_equal(t.scale, get_scale(props, node)));
+    // SAFETY: `props` and `node` are the same arguments this fn received, so the
+    // rotation-only fast path's contract is discharged by this fn's own.
+    ufbxi_regression_assert!(is_quat_equal(t.rotation, unsafe {
+        get_rotation(props, order, node)
+    }));
+    // SAFETY: as above, for the scale-only fast path.
+    ufbxi_regression_assert!(is_vec3_equal(t.scale, unsafe { get_scale(props, node) }));
 
     t
 }
@@ -9221,128 +11836,246 @@ pub(crate) unsafe fn update_node(
     // C: `(ufbx_rotation_order)ufbxi_find_enum(...)` — `ufbxi_find_enum` clamps
     // the result to `[0, UFBX_ROTATION_ORDER_SPHERIC]`, every value of which is
     // a valid `ufbx_rotation_order`.
-    (*node).rotation_order = core::mem::transmute::<u32, RotationOrder>(find_enum(
-        node_view.props_view(),
-        &sp::RotationOrder,
-        RotationOrder::Xyz as i64,
-        RotationOrder::Spheric as i64,
-    ) as u32);
-    (*node).euler_rotation = find_vec3(node_view.props_view(), &sp::Lcl_Rotation, 0.0, 0.0, 0.0);
+    // SAFETY: `node` is the node view's own storage, so it is live, initialized
+    // and writable; `ufbxi_find_enum` clamps its result to the `[XYZ, SPHERIC]`
+    // range passed, every value of which is a valid `ufbx_rotation_order`.
+    unsafe {
+        (*node).rotation_order = core::mem::transmute::<u32, RotationOrder>(find_enum(
+            node_view.props_view(),
+            &sp::RotationOrder,
+            RotationOrder::Xyz as i64,
+            RotationOrder::Spheric as i64,
+        ) as u32)
+    };
+    // SAFETY: `node` is the node view's own storage (see above).
+    unsafe {
+        (*node).euler_rotation = find_vec3(node_view.props_view(), &sp::Lcl_Rotation, 0.0, 0.0, 0.0)
+    };
 
-    if !(*node).is_root {
+    // SAFETY: `node` is the node view's own storage (see above).
+    if !unsafe { (*node).is_root } {
         let rotation_active: bool = find_int(node_view.props_view(), &sp::RotationActive, 1) != 0;
         let rotation_limit_only: bool =
             find_int(node_view.props_view(), &sp::RotationSpaceForLimitOnly, 0) != 0;
-        (*node).use_rotation_space = rotation_active && !rotation_limit_only;
+        // SAFETY: `node` is the node view's own storage (see above).
+        unsafe { (*node).use_rotation_space = rotation_active && !rotation_limit_only };
 
         let mut transform_scale: *const Vec3 = ptr::null();
         // C: `if (node->parent && node->parent->scale_helper)` — the field is
         // re-read in the body, as in C.
-        if !opt_ptr(&(*node).parent).is_null()
-            && !opt_ptr(&(*opt_ptr(&(*node).parent)).scale_helper).is_null()
+        // SAFETY: `node` is live (see above), so `&(*node).parent` addresses its
+        // own `parent` field, which holds a nullable `ufbx_node*` at the ABI
+        // level.
+        if !unsafe { opt_ptr(&(*node).parent) }.is_null()
+            // SAFETY: the first operand established that `node->parent` is
+            // non-null, and a non-null parent link points to a live, initialized
+            // `ufbx_node` owned by the same scene, so `&(*parent).scale_helper`
+            // addresses that node's own nullable helper link.
+            && !unsafe { opt_ptr(&(*opt_ptr(&(*node).parent)).scale_helper) }.is_null()
         {
-            transform_scale = &(*opt_ptr(&(*opt_ptr(&(*node).parent)).scale_helper))
-                .local_transform
-                .scale;
-        }
-        (*node).local_transform = get_transform(
-            node_view.props_view(),
-            (*node).rotation_order,
-            node,
-            transform_scale,
-        );
-        if (*node).is_scale_helper
-            && !opt_ptr(&(*node).parent).is_null()
-            && !opt_ptr(&(*opt_ptr(&(*node).parent)).inherit_scale_node).is_null()
-        {
-            let scale_parent: *mut Node = opt_ptr(&(*opt_ptr(&(*node).parent)).inherit_scale_node);
-            if !opt_ptr(&(*scale_parent).scale_helper).is_null() {
-                let inherit_scale: Vec3 = (*opt_ptr(&(*scale_parent).scale_helper))
+            // SAFETY: the condition above established that both `node->parent`
+            // and its `scale_helper` are non-null, and each points to a live,
+            // initialized `ufbx_node` of the same scene, so the helper's own
+            // `local_transform.scale` is readable and outlives this call.
+            transform_scale = unsafe {
+                &(*opt_ptr(&(*opt_ptr(&(*node).parent)).scale_helper))
                     .local_transform
-                    .scale;
-                (*node).local_transform.scale.x *= inherit_scale.x;
-                (*node).local_transform.scale.y *= inherit_scale.y;
-                (*node).local_transform.scale.z *= inherit_scale.z;
+                    .scale
+            };
+        }
+        // SAFETY: `node` is live and writable (see above); it is passed to
+        // `ufbxi_get_transform` as the node whose transform is composed, and
+        // `transform_scale` is either null or the live scale of the parent's
+        // scale helper (set above).
+        unsafe {
+            (*node).local_transform = get_transform(
+                node_view.props_view(),
+                (*node).rotation_order,
+                node,
+                transform_scale,
+            )
+        };
+        // SAFETY: `node` is live (see above).
+        if unsafe { (*node).is_scale_helper }
+            // SAFETY: as above, for the node's own `parent` link.
+            && !unsafe { opt_ptr(&(*node).parent) }.is_null()
+            // SAFETY: the operand before established that `node->parent` is
+            // non-null, so it points to a live, initialized `ufbx_node` whose
+            // own `inherit_scale_node` link is readable.
+            && !unsafe { opt_ptr(&(*opt_ptr(&(*node).parent)).inherit_scale_node) }.is_null()
+        {
+            // SAFETY: the condition above established that `node->parent` is
+            // non-null and points to a live `ufbx_node`.
+            let scale_parent: *mut Node =
+                unsafe { opt_ptr(&(*opt_ptr(&(*node).parent)).inherit_scale_node) };
+            // SAFETY: the condition above established that `scale_parent` is
+            // non-null, so it points to a live, initialized `ufbx_node` whose
+            // own `scale_helper` link is readable.
+            if !unsafe { opt_ptr(&(*scale_parent).scale_helper) }.is_null() {
+                // SAFETY: the branch condition established that the helper link
+                // is non-null, so it points to a live, initialized `ufbx_node`
+                // whose own `local_transform` is readable.
+                let inherit_scale: Vec3 = unsafe {
+                    (*opt_ptr(&(*scale_parent).scale_helper))
+                        .local_transform
+                        .scale
+                };
+                // SAFETY: `node` is live and writable (see above).
+                unsafe { (*node).local_transform.scale.x *= inherit_scale.x };
+                // SAFETY: as above.
+                unsafe { (*node).local_transform.scale.y *= inherit_scale.y };
+                // SAFETY: as above.
+                unsafe { (*node).local_transform.scale.z *= inherit_scale.z };
             }
         }
 
         if num_overrides > 0 {
-            let typed_id: u32 = (*node).element.typed_id;
+            // SAFETY: `node` is live (see above).
+            let typed_id: u32 = unsafe { (*node).element.typed_id };
             let mut override_ix: usize = usize::MAX;
             // C: `ufbxi_macro_lower_bound_eq(ufbx_transform_override, 16,
             // &override_ix, overrides, 0, num_overrides,
             // ( a->node_id < typed_id ), ( a->node_id == typed_id ));`
-            macro_lower_bound_eq::<TransformOverride>(
-                16,
-                &mut override_ix,
-                overrides,
-                0,
-                num_overrides,
-                |a| (*a).node_id < typed_id,
-                |a| (*a).node_id == typed_id,
-            );
+            // SAFETY: the fn contract is that `overrides` addresses
+            // `num_overrides` readable, initialized `ufbx_transform_override`s
+            // sorted by `node_id`; `&mut override_ix` addresses a live local.
+            // The lambdas are handed pointers into that same run.
+            unsafe {
+                macro_lower_bound_eq::<TransformOverride>(
+                    16,
+                    &mut override_ix,
+                    overrides,
+                    0,
+                    num_overrides,
+                    |a| (*a).node_id < typed_id,
+                    |a| (*a).node_id == typed_id,
+                )
+            };
             if override_ix != usize::MAX {
-                (*node).local_transform = (*overrides.add(override_ix)).transform;
+                // SAFETY: `override_ix` was written by the search above, so it
+                // indexes one of the `num_overrides` live entries; `node` is
+                // live and writable (see above).
+                unsafe { (*node).local_transform = (*overrides.add(override_ix)).transform };
             }
         }
-        (*node).node_to_parent = transform_to_matrix(&(*node).local_transform);
-        (*node).geometry_transform = get_geometry_transform(node_view.props_view(), node);
+        // SAFETY: `node` is live and writable (see above), so `&(*node).local_transform`
+        // borrows its own freshly composed local transform.
+        unsafe { (*node).node_to_parent = transform_to_matrix(&(*node).local_transform) };
+        // SAFETY: `node` is live and writable (see above), and it is the node
+        // whose geometry transform `ufbxi_get_geometry_transform` composes.
+        unsafe {
+            (*node).geometry_transform = get_geometry_transform(node_view.props_view(), node)
+        };
     } else {
-        (*node).geometry_transform = IDENTITY_TRANSFORM;
+        // SAFETY: `node` is the node view's own storage (see above).
+        unsafe { (*node).geometry_transform = IDENTITY_TRANSFORM };
     }
 
-    let unscaled_node_to_parent: Matrix = unscaled_transform_to_matrix(&(*node).local_transform);
+    // SAFETY: `node` is live (see above), so `&(*node).local_transform` borrows
+    // its own transform.
+    let unscaled_node_to_parent: Matrix =
+        unsafe { unscaled_transform_to_matrix(&(*node).local_transform) };
 
-    (*node).inherit_scale = (*node).local_transform.scale;
+    // SAFETY: `node` is live and writable (see above).
+    unsafe { (*node).inherit_scale = (*node).local_transform.scale };
 
-    let parent: *mut Node = opt_ptr(&(*node).parent);
+    // SAFETY: `node` is live (see above), so `&(*node).parent` addresses its own
+    // nullable parent link.
+    let parent: *mut Node = unsafe { opt_ptr(&(*node).parent) };
     if !parent.is_null() {
-        if (*node).inherit_mode == InheritMode::Normal {
-            (*node).node_to_world = matrix_mul(&(*parent).node_to_world, &(*node).node_to_parent);
-            (*node).unscaled_node_to_world =
-                matrix_mul(&(*parent).node_to_world, &unscaled_node_to_parent);
+        // SAFETY: `node` is live (see above).
+        if unsafe { (*node).inherit_mode } == InheritMode::Normal {
+            // SAFETY: `parent` is non-null here, so it points to a live,
+            // initialized `ufbx_node` of the same scene; `node` is live and
+            // writable, and `node_to_parent` was composed above.
+            unsafe {
+                (*node).node_to_world =
+                    matrix_mul(&(*parent).node_to_world, &(*node).node_to_parent)
+            };
+            // SAFETY: as above; `unscaled_node_to_parent` is a live local.
+            unsafe {
+                (*node).unscaled_node_to_world =
+                    matrix_mul(&(*parent).node_to_world, &unscaled_node_to_parent)
+            };
         } else {
-            let mut transform: Transform = (*node).local_transform;
+            // SAFETY: `node` is live (see above).
+            let mut transform: Transform = unsafe { (*node).local_transform };
 
             let mut parent_scale: Vec3 = ONE_VEC3;
-            if !opt_ptr(&(*node).inherit_scale_node).is_null() {
-                parent_scale = (*opt_ptr(&(*node).inherit_scale_node)).inherit_scale;
+            // SAFETY: `node` is live (see above), so `&(*node).inherit_scale_node`
+            // addresses its own nullable inherit-scale link.
+            if !unsafe { opt_ptr(&(*node).inherit_scale_node) }.is_null() {
+                // SAFETY: the branch condition established that the link is
+                // non-null, so it points to a live, initialized `ufbx_node`
+                // whose `inherit_scale` was computed earlier in this update
+                // pass.
+                parent_scale = unsafe { (*opt_ptr(&(*node).inherit_scale_node)).inherit_scale };
             }
 
             transform.scale.x *= parent_scale.x;
             transform.scale.y *= parent_scale.y;
             transform.scale.z *= parent_scale.z;
-            transform.translation.x *= (*parent).inherit_scale.x;
-            transform.translation.y *= (*parent).inherit_scale.y;
-            transform.translation.z *= (*parent).inherit_scale.z;
+            // SAFETY: `parent` is non-null here, so it points to a live,
+            // initialized `ufbx_node` of the same scene.
+            transform.translation.x *= unsafe { (*parent).inherit_scale.x };
+            // SAFETY: as above.
+            transform.translation.y *= unsafe { (*parent).inherit_scale.y };
+            // SAFETY: as above.
+            transform.translation.z *= unsafe { (*parent).inherit_scale.z };
 
-            let node_to_unscaled_parent: Matrix = transform_to_matrix(&transform);
-            let unscaled_node_to_unscaled_parent: Matrix = unscaled_transform_to_matrix(&transform);
+            // SAFETY: `&transform` borrows a live, fully initialized local
+            // `ufbx_transform`.
+            let node_to_unscaled_parent: Matrix = unsafe { transform_to_matrix(&transform) };
+            // SAFETY: as above.
+            let unscaled_node_to_unscaled_parent: Matrix =
+                unsafe { unscaled_transform_to_matrix(&transform) };
 
-            (*node).inherit_scale = transform.scale;
-            (*node).node_to_world =
-                matrix_mul(&(*parent).unscaled_node_to_world, &node_to_unscaled_parent);
-            (*node).unscaled_node_to_world = matrix_mul(
-                &(*parent).unscaled_node_to_world,
-                &unscaled_node_to_unscaled_parent,
-            );
+            // SAFETY: `node` is live and writable (see above).
+            unsafe { (*node).inherit_scale = transform.scale };
+            // SAFETY: `node` is live and writable, and `parent` is non-null so it
+            // points to a live, initialized `ufbx_node`.
+            unsafe {
+                (*node).node_to_world =
+                    matrix_mul(&(*parent).unscaled_node_to_world, &node_to_unscaled_parent)
+            };
+            // SAFETY: as above.
+            unsafe {
+                (*node).unscaled_node_to_world = matrix_mul(
+                    &(*parent).unscaled_node_to_world,
+                    &unscaled_node_to_unscaled_parent,
+                )
+            };
         }
     } else {
-        (*node).node_to_world = (*node).node_to_parent;
-        (*node).unscaled_node_to_world = unscaled_node_to_parent;
+        // SAFETY: `node` is live and writable (see above).
+        unsafe { (*node).node_to_world = (*node).node_to_parent };
+        // SAFETY: as above; `unscaled_node_to_parent` is a live local.
+        unsafe { (*node).unscaled_node_to_world = unscaled_node_to_parent };
     }
 
-    if !is_transform_identity(&(*node).geometry_transform) {
-        (*node).geometry_to_node = transform_to_matrix(&(*node).geometry_transform);
-        (*node).geometry_to_world = matrix_mul(&(*node).node_to_world, &(*node).geometry_to_node);
-        (*node).has_geometry_transform = true;
+    // SAFETY: `node` is live (see above), so `&(*node).geometry_transform`
+    // borrows its own geometry transform, set on both arms above.
+    if !unsafe { is_transform_identity(&(*node).geometry_transform) } {
+        // SAFETY: `node` is live and writable (see above).
+        unsafe { (*node).geometry_to_node = transform_to_matrix(&(*node).geometry_transform) };
+        // SAFETY: as above; both operands are the node's own matrices, set above.
+        unsafe {
+            (*node).geometry_to_world =
+                matrix_mul(&(*node).node_to_world, &(*node).geometry_to_node)
+        };
+        // SAFETY: as above.
+        unsafe { (*node).has_geometry_transform = true };
     } else {
-        (*node).geometry_to_node = IDENTITY_MATRIX;
-        (*node).geometry_to_world = (*node).node_to_world;
-        (*node).has_geometry_transform = false;
+        // SAFETY: `node` is live and writable (see above).
+        unsafe { (*node).geometry_to_node = IDENTITY_MATRIX };
+        // SAFETY: as above.
+        unsafe { (*node).geometry_to_world = (*node).node_to_world };
+        // SAFETY: as above.
+        unsafe { (*node).has_geometry_transform = false };
     }
 
-    (*node).visible = find_int(node_view.props_view(), &sp::Visibility, 1) != 0;
+    // SAFETY: `node` is live and writable (see above).
+    unsafe { (*node).visible = find_int(node_view.props_view(), &sp::Visibility, 1) != 0 };
 }
 
 // ufbx.c:23044-23062 `ufbxi_update_light`
@@ -9492,39 +12225,61 @@ pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a Ca
     // C: `(ufbx_projection_mode)ufbxi_find_enum(...)` etc — `ufbxi_find_enum`
     // clamps each result to its enum's `[0, LAST]` range (same device as
     // `ufbxi_update_light` above).
-    (*camera).projection_mode = core::mem::transmute::<u32, ProjectionMode>(find_enum(
-        camera_view.props_view(),
-        &sp::CameraProjectionType,
-        0,
-        ProjectionMode::Orthographic as i64,
-    ) as u32);
-    (*camera).aspect_mode = core::mem::transmute::<u32, AspectMode>(find_enum(
-        camera_view.props_view(),
-        &sp::AspectRatioMode,
-        0,
-        AspectMode::FixedHeight as i64,
-    ) as u32);
-    (*camera).aperture_mode = core::mem::transmute::<u32, ApertureMode>(find_enum(
-        camera_view.props_view(),
-        &sp::ApertureMode,
-        ApertureMode::Vertical as i64,
-        ApertureMode::FocalLength as i64,
-    ) as u32);
-    (*camera).aperture_format = core::mem::transmute::<u32, ApertureFormat>(find_enum(
-        camera_view.props_view(),
-        &sp::ApertureFormat,
-        ApertureFormat::Custom as i64,
-        ApertureFormat::Imax as i64,
-    ) as u32);
-    (*camera).gate_fit = core::mem::transmute::<u32, GateFit>(find_enum(
-        camera_view.props_view(),
-        &sp::GateFit,
-        0,
-        GateFit::Stretch as i64,
-    ) as u32);
+    // SAFETY: `camera` is the camera view's own storage, so it is live,
+    // initialized and writable; `ufbxi_find_enum` clamps its result to the
+    // `[0, ORTHOGRAPHIC]` range passed, every value of which is a valid
+    // `ufbx_projection_mode`.
+    unsafe {
+        (*camera).projection_mode = core::mem::transmute::<u32, ProjectionMode>(find_enum(
+            camera_view.props_view(),
+            &sp::CameraProjectionType,
+            0,
+            ProjectionMode::Orthographic as i64,
+        ) as u32)
+    };
+    // SAFETY: as above; the clamp range spans the whole `ufbx_aspect_mode` enum.
+    unsafe {
+        (*camera).aspect_mode = core::mem::transmute::<u32, AspectMode>(find_enum(
+            camera_view.props_view(),
+            &sp::AspectRatioMode,
+            0,
+            AspectMode::FixedHeight as i64,
+        ) as u32)
+    };
+    // SAFETY: as above; the clamp range spans the whole `ufbx_aperture_mode`
+    // enum.
+    unsafe {
+        (*camera).aperture_mode = core::mem::transmute::<u32, ApertureMode>(find_enum(
+            camera_view.props_view(),
+            &sp::ApertureMode,
+            ApertureMode::Vertical as i64,
+            ApertureMode::FocalLength as i64,
+        ) as u32)
+    };
+    // SAFETY: as above; the clamp range spans the whole `ufbx_aperture_format`
+    // enum.
+    unsafe {
+        (*camera).aperture_format = core::mem::transmute::<u32, ApertureFormat>(find_enum(
+            camera_view.props_view(),
+            &sp::ApertureFormat,
+            ApertureFormat::Custom as i64,
+            ApertureFormat::Imax as i64,
+        ) as u32)
+    };
+    // SAFETY: as above; the clamp range spans the whole `ufbx_gate_fit` enum.
+    unsafe {
+        (*camera).gate_fit = core::mem::transmute::<u32, GateFit>(find_enum(
+            camera_view.props_view(),
+            &sp::GateFit,
+            0,
+            GateFit::Stretch as i64,
+        ) as u32)
+    };
 
-    (*camera).near_plane = find_real(camera_view.props_view(), &sp::NearPlane, 0.0);
-    (*camera).far_plane = find_real(camera_view.props_view(), &sp::FarPlane, 0.0);
+    // SAFETY: `camera` is the camera view's own storage (see above).
+    unsafe { (*camera).near_plane = find_real(camera_view.props_view(), &sp::NearPlane, 0.0) };
+    // SAFETY: as above.
+    unsafe { (*camera).far_plane = find_real(camera_view.props_view(), &sp::FarPlane, 0.0) };
 
     // Search both W/H and Width/Height but prefer the latter
     let mut aspect_x: Real = find_real(camera_view.props_view(), &sp::AspectW, 0.0);
@@ -9537,19 +12292,26 @@ pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a Ca
     let fov_y: Real = find_real(camera_view.props_view(), &sp::FieldOfViewY, 0.0);
 
     let focal_length: Real = find_real(camera_view.props_view(), &sp::FocalLength, 0.0);
-    let mut ortho_extent: Real = (*scene).metadata.ortho_size_unit
+    // SAFETY: `scene` is the scene view's own storage, so its metadata is live
+    // and initialized.
+    let mut ortho_extent: Real = unsafe { (*scene).metadata.ortho_size_unit }
         * find_real(camera_view.props_view(), &sp::OrthoZoom, 1.0);
 
-    let format: ApertureFormatInfo = APERTURE_FORMATS[(*camera).aperture_format as usize];
+    // SAFETY: `camera` is live (see above); `aperture_format` was assigned above
+    // from a clamped `ufbxi_find_enum`, so it indexes `APERTURE_FORMATS`.
+    let format: ApertureFormatInfo =
+        APERTURE_FORMATS[unsafe { (*camera).aperture_format } as usize];
     let mut film_size: Vec2 = Vec2 {
         x: format.film_size_x as Real * (0.001 as Real),
         y: format.film_size_y as Real * (0.001 as Real),
     };
-    let mut squeeze_ratio: Real = if (*camera).aperture_format == ApertureFormat::E35MmAnamorphic {
-        2.0
-    } else {
-        1.0
-    };
+    // SAFETY: `camera` is live (see above).
+    let mut squeeze_ratio: Real =
+        if unsafe { (*camera).aperture_format } == ApertureFormat::E35MmAnamorphic {
+            2.0
+        } else {
+            1.0
+        };
 
     film_size.x = find_real(camera_view.props_view(), &sp::FilmWidth, film_size.x);
     film_size.y = find_real(camera_view.props_view(), &sp::FilmHeight, film_size.y);
@@ -9579,35 +12341,55 @@ pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a Ca
     film_size.y *= squeeze_ratio;
 
     // TODO: Should this be done always?
-    ortho_extent *= (*scene).metadata.geometry_scale;
-    (*camera).near_plane *= (*scene).metadata.geometry_scale;
-    (*camera).far_plane *= (*scene).metadata.geometry_scale;
+    // SAFETY: `scene` is the scene view's own storage (see above).
+    ortho_extent *= unsafe { (*scene).metadata.geometry_scale };
+    // SAFETY: `camera` is live and writable, `scene` is live (see above).
+    unsafe { (*camera).near_plane *= (*scene).metadata.geometry_scale };
+    // SAFETY: as above.
+    unsafe { (*camera).far_plane *= (*scene).metadata.geometry_scale };
 
-    (*camera).focal_length_mm = focal_length;
-    (*camera).film_size_inch = film_size;
-    (*camera).squeeze_ratio = squeeze_ratio;
-    (*camera).orthographic_extent = ortho_extent;
+    // SAFETY: `camera` is live and writable (see above).
+    unsafe { (*camera).focal_length_mm = focal_length };
+    // SAFETY: as above.
+    unsafe { (*camera).film_size_inch = film_size };
+    // SAFETY: as above.
+    unsafe { (*camera).squeeze_ratio = squeeze_ratio };
+    // SAFETY: as above.
+    unsafe { (*camera).orthographic_extent = ortho_extent };
 
-    match (*camera).aspect_mode {
+    // SAFETY: `camera` is live (see above).
+    match unsafe { (*camera).aspect_mode } {
         AspectMode::WindowSize | AspectMode::FixedRatio => {
-            (*camera).resolution_is_pixels = false;
-            (*camera).resolution.x = aspect_x;
-            (*camera).resolution.y = aspect_y;
+            // SAFETY: `camera` is live and writable (see above).
+            unsafe { (*camera).resolution_is_pixels = false };
+            // SAFETY: as above.
+            unsafe { (*camera).resolution.x = aspect_x };
+            // SAFETY: as above.
+            unsafe { (*camera).resolution.y = aspect_y };
         }
         AspectMode::FixedResolution => {
-            (*camera).resolution_is_pixels = true;
-            (*camera).resolution.x = aspect_x;
-            (*camera).resolution.y = aspect_y;
+            // SAFETY: `camera` is live and writable (see above).
+            unsafe { (*camera).resolution_is_pixels = true };
+            // SAFETY: as above.
+            unsafe { (*camera).resolution.x = aspect_x };
+            // SAFETY: as above.
+            unsafe { (*camera).resolution.y = aspect_y };
         }
         AspectMode::FixedWidth => {
-            (*camera).resolution_is_pixels = true;
-            (*camera).resolution.x = aspect_x;
-            (*camera).resolution.y = aspect_x * aspect_y;
+            // SAFETY: `camera` is live and writable (see above).
+            unsafe { (*camera).resolution_is_pixels = true };
+            // SAFETY: as above.
+            unsafe { (*camera).resolution.x = aspect_x };
+            // SAFETY: as above.
+            unsafe { (*camera).resolution.y = aspect_x * aspect_y };
         }
         AspectMode::FixedHeight => {
-            (*camera).resolution_is_pixels = true;
-            (*camera).resolution.x = aspect_y * aspect_x;
-            (*camera).resolution.y = aspect_y;
+            // SAFETY: `camera` is live and writable (see above).
+            unsafe { (*camera).resolution_is_pixels = true };
+            // SAFETY: as above.
+            unsafe { (*camera).resolution.x = aspect_y * aspect_x };
+            // SAFETY: as above.
+            unsafe { (*camera).resolution.y = aspect_y };
         }
         // C `default:` (ufbx.c:23167-23168) — unreachable in Rust because the
         // match above is exhaustive over the enum, but kept for diff parity.
@@ -9617,12 +12399,16 @@ pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a Ca
         }
     }
 
-    let aspect_ratio: Real = (*camera).resolution.x / (*camera).resolution.y;
+    // SAFETY: `camera` is live (see above); `resolution` was assigned on every
+    // arm of the match above.
+    let aspect_ratio: Real = unsafe { (*camera).resolution.x / (*camera).resolution.y };
     let film_ratio: Real = film_size.x / film_size.y;
 
-    (*camera).aspect_ratio = aspect_ratio;
+    // SAFETY: `camera` is live and writable (see above).
+    unsafe { (*camera).aspect_ratio = aspect_ratio };
 
-    let mut effective_fit: GateFit = (*camera).gate_fit;
+    // SAFETY: `camera` is live (see above).
+    let mut effective_fit: GateFit = unsafe { (*camera).gate_fit };
     if effective_fit == GateFit::Fill {
         effective_fit = if aspect_ratio > film_ratio {
             GateFit::Horizontal
@@ -9639,34 +12425,56 @@ pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a Ca
 
     match effective_fit {
         GateFit::None => {
-            (*camera).aperture_size_inch = (*camera).film_size_inch;
-            (*camera).orthographic_size.x = ortho_extent;
-            (*camera).orthographic_size.y = ortho_extent;
+            // SAFETY: `camera` is live and writable (see above); `film_size_inch`
+            // was assigned above.
+            unsafe { (*camera).aperture_size_inch = (*camera).film_size_inch };
+            // SAFETY: `camera` is live and writable (see above).
+            unsafe { (*camera).orthographic_size.x = ortho_extent };
+            // SAFETY: as above.
+            unsafe { (*camera).orthographic_size.y = ortho_extent };
         }
         GateFit::Vertical => {
-            (*camera).aperture_size_inch.x = (*camera).film_size_inch.y * aspect_ratio;
-            (*camera).aperture_size_inch.y = (*camera).film_size_inch.y;
-            (*camera).orthographic_size.x = ortho_extent * aspect_ratio;
-            (*camera).orthographic_size.y = ortho_extent;
+            // SAFETY: `camera` is live and writable (see above); `film_size_inch`
+            // was assigned above.
+            unsafe { (*camera).aperture_size_inch.x = (*camera).film_size_inch.y * aspect_ratio };
+            // SAFETY: as above.
+            unsafe { (*camera).aperture_size_inch.y = (*camera).film_size_inch.y };
+            // SAFETY: `camera` is live and writable (see above).
+            unsafe { (*camera).orthographic_size.x = ortho_extent * aspect_ratio };
+            // SAFETY: as above.
+            unsafe { (*camera).orthographic_size.y = ortho_extent };
         }
         GateFit::Horizontal => {
-            (*camera).aperture_size_inch.x = (*camera).film_size_inch.x;
-            (*camera).aperture_size_inch.y = (*camera).film_size_inch.x / aspect_ratio;
-            (*camera).orthographic_size.x = ortho_extent;
-            (*camera).orthographic_size.y = ortho_extent / aspect_ratio;
+            // SAFETY: `camera` is live and writable (see above); `film_size_inch`
+            // was assigned above.
+            unsafe { (*camera).aperture_size_inch.x = (*camera).film_size_inch.x };
+            // SAFETY: as above.
+            unsafe { (*camera).aperture_size_inch.y = (*camera).film_size_inch.x / aspect_ratio };
+            // SAFETY: `camera` is live and writable (see above).
+            unsafe { (*camera).orthographic_size.x = ortho_extent };
+            // SAFETY: as above.
+            unsafe { (*camera).orthographic_size.y = ortho_extent / aspect_ratio };
         }
         GateFit::Fill | GateFit::Overscan => {
-            (*camera).aperture_size_inch = (*camera).film_size_inch;
-            (*camera).orthographic_size.x = ortho_extent;
-            (*camera).orthographic_size.y = ortho_extent;
+            // SAFETY: `camera` is live and writable (see above); `film_size_inch`
+            // was assigned above.
+            unsafe { (*camera).aperture_size_inch = (*camera).film_size_inch };
+            // SAFETY: `camera` is live and writable (see above).
+            unsafe { (*camera).orthographic_size.x = ortho_extent };
+            // SAFETY: as above.
+            unsafe { (*camera).orthographic_size.y = ortho_extent };
             // C: `ufbxi_unreachable(...)` mid-arm — it is NOT a return, the
             // arm's assignments above it already ran (PORTING.md "Asserts").
             ufbxi_unreachable!("Unreachable, set to vertical/horizontal above");
         }
         GateFit::Stretch => {
-            (*camera).aperture_size_inch = (*camera).film_size_inch;
-            (*camera).orthographic_size.x = ortho_extent;
-            (*camera).orthographic_size.y = ortho_extent;
+            // SAFETY: `camera` is live and writable (see above); `film_size_inch`
+            // was assigned above.
+            unsafe { (*camera).aperture_size_inch = (*camera).film_size_inch };
+            // SAFETY: `camera` is live and writable (see above).
+            unsafe { (*camera).orthographic_size.x = ortho_extent };
+            // SAFETY: as above.
+            unsafe { (*camera).orthographic_size.y = ortho_extent };
             // TODO: Not sure what to do here...
         }
         // C `default:` (ufbx.c:23214-23215).
@@ -9676,42 +12484,92 @@ pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a Ca
         }
     }
 
-    match (*camera).aperture_mode {
+    // SAFETY: `camera` is live (see above).
+    match unsafe { (*camera).aperture_mode } {
         ApertureMode::HorizontalAndVertical => {
-            (*camera).field_of_view_deg.x = fov_x;
-            (*camera).field_of_view_deg.y = fov_y;
+            // SAFETY: `camera` is live and writable (see above).
+            unsafe { (*camera).field_of_view_deg.x = fov_x };
+            // SAFETY: as above.
+            unsafe { (*camera).field_of_view_deg.y = fov_y };
             // C: `(ufbx_real)ufbx_tan((double)(...))` — the inner product is
             // real arithmetic, promoted to double only at the `tan` call.
-            (*camera).field_of_view_tan.x =
-                math::tan((fov_x * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
-            (*camera).field_of_view_tan.y =
-                math::tan((fov_y * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
+            // SAFETY: as above.
+            unsafe {
+                (*camera).field_of_view_tan.x =
+                    math::tan((fov_x * (sp::DEG_TO_RAD * 0.5)) as f64) as Real
+            };
+            // SAFETY: as above.
+            unsafe {
+                (*camera).field_of_view_tan.y =
+                    math::tan((fov_y * (sp::DEG_TO_RAD * 0.5)) as f64) as Real
+            };
         }
         ApertureMode::Horizontal => {
-            (*camera).field_of_view_deg.x = fov;
-            (*camera).field_of_view_tan.x =
-                math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
-            (*camera).field_of_view_tan.y = (*camera).field_of_view_tan.x / aspect_ratio;
-            (*camera).field_of_view_deg.y =
-                math::atan(as_f64!((*camera).field_of_view_tan.y)) as Real * sp::RAD_TO_DEG * 2.0;
+            // SAFETY: `camera` is live and writable (see above).
+            unsafe { (*camera).field_of_view_deg.x = fov };
+            // SAFETY: as above.
+            unsafe {
+                (*camera).field_of_view_tan.x =
+                    math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real
+            };
+            // SAFETY: as above; `field_of_view_tan.x` was assigned on the line
+            // before.
+            unsafe { (*camera).field_of_view_tan.y = (*camera).field_of_view_tan.x / aspect_ratio };
+            // SAFETY: as above, reading the `y` assigned on the line before.
+            unsafe {
+                (*camera).field_of_view_deg.y = math::atan(as_f64!((*camera).field_of_view_tan.y))
+                    as Real
+                    * sp::RAD_TO_DEG
+                    * 2.0
+            };
         }
         ApertureMode::Vertical => {
-            (*camera).field_of_view_deg.y = fov;
-            (*camera).field_of_view_tan.y =
-                math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
-            (*camera).field_of_view_tan.x = (*camera).field_of_view_tan.y * aspect_ratio;
-            (*camera).field_of_view_deg.x =
-                math::atan(as_f64!((*camera).field_of_view_tan.x)) as Real * sp::RAD_TO_DEG * 2.0;
+            // SAFETY: `camera` is live and writable (see above).
+            unsafe { (*camera).field_of_view_deg.y = fov };
+            // SAFETY: as above.
+            unsafe {
+                (*camera).field_of_view_tan.y =
+                    math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real
+            };
+            // SAFETY: as above; `field_of_view_tan.y` was assigned on the line
+            // before.
+            unsafe { (*camera).field_of_view_tan.x = (*camera).field_of_view_tan.y * aspect_ratio };
+            // SAFETY: as above, reading the `x` assigned on the line before.
+            unsafe {
+                (*camera).field_of_view_deg.x = math::atan(as_f64!((*camera).field_of_view_tan.x))
+                    as Real
+                    * sp::RAD_TO_DEG
+                    * 2.0
+            };
         }
         ApertureMode::FocalLength => {
-            (*camera).field_of_view_tan.x =
-                (*camera).aperture_size_inch.x / ((*camera).focal_length_mm * sp::MM_TO_INCH) * 0.5;
-            (*camera).field_of_view_tan.y =
-                (*camera).aperture_size_inch.y / ((*camera).focal_length_mm * sp::MM_TO_INCH) * 0.5;
-            (*camera).field_of_view_deg.x =
-                math::atan(as_f64!((*camera).field_of_view_tan.x)) as Real * sp::RAD_TO_DEG * 2.0;
-            (*camera).field_of_view_deg.y =
-                math::atan(as_f64!((*camera).field_of_view_tan.y)) as Real * sp::RAD_TO_DEG * 2.0;
+            // SAFETY: `camera` is live and writable (see above);
+            // `aperture_size_inch` and `focal_length_mm` were assigned above.
+            unsafe {
+                (*camera).field_of_view_tan.x = (*camera).aperture_size_inch.x
+                    / ((*camera).focal_length_mm * sp::MM_TO_INCH)
+                    * 0.5
+            };
+            // SAFETY: as above.
+            unsafe {
+                (*camera).field_of_view_tan.y = (*camera).aperture_size_inch.y
+                    / ((*camera).focal_length_mm * sp::MM_TO_INCH)
+                    * 0.5
+            };
+            // SAFETY: as above, reading the `field_of_view_tan.x` assigned above.
+            unsafe {
+                (*camera).field_of_view_deg.x = math::atan(as_f64!((*camera).field_of_view_tan.x))
+                    as Real
+                    * sp::RAD_TO_DEG
+                    * 2.0
+            };
+            // SAFETY: as above, reading the `field_of_view_tan.y` assigned above.
+            unsafe {
+                (*camera).field_of_view_deg.y = math::atan(as_f64!((*camera).field_of_view_tan.y))
+                    as Real
+                    * sp::RAD_TO_DEG
+                    * 2.0
+            };
         }
         // C `default:` (ufbx.c:23243-23244).
         #[allow(unreachable_patterns)]
@@ -9720,10 +12578,15 @@ pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a Ca
         }
     }
 
-    if (*camera).projection_mode == ProjectionMode::Perspective {
-        (*camera).projection_plane = (*camera).field_of_view_tan;
+    // SAFETY: `camera` is live (see above).
+    if unsafe { (*camera).projection_mode } == ProjectionMode::Perspective {
+        // SAFETY: `camera` is live and writable (see above); `field_of_view_tan`
+        // was assigned on every arm of the match above.
+        unsafe { (*camera).projection_plane = (*camera).field_of_view_tan };
     } else {
-        (*camera).projection_plane = (*camera).orthographic_size;
+        // SAFETY: `camera` is live and writable (see above); `orthographic_size`
+        // was assigned on every arm of the gate-fit match above.
+        unsafe { (*camera).projection_plane = (*camera).orthographic_size };
     }
 }
 
@@ -9759,23 +12622,42 @@ pub(crate) fn update_line_curve(line_view: &LineCurveView) {
 #[inline(never)]
 pub(crate) unsafe fn update_pose(pose: *mut Pose) {
     // C: `ufbxi_for_list(ufbx_bone_pose, bone, pose->bone_poses)`
-    let mut bone: *mut BonePose = (*pose).bone_poses.data as *mut BonePose;
-    let bone_end: *mut BonePose = add_ptr(bone, (*pose).bone_poses.count);
+    // SAFETY: `pose` points to a live, initialized `ufbx_pose` (fn contract), so
+    // its own bone-pose list is readable.
+    let mut bone: *mut BonePose = unsafe { (*pose).bone_poses.data } as *mut BonePose;
+    // SAFETY: as above; `data`/`count` describe one arena run.
+    let bone_end: *mut BonePose = add_ptr(bone, unsafe { (*pose).bone_poses.count });
     while bone != bone_end {
-        let node: *mut Node = ref_ptr(&(*bone).bone_node);
+        // SAFETY: `bone != bone_end`, so it addresses a live, initialized entry
+        // of the pose's bone-pose run, whose `bone_node` link is non-optional.
+        let node: *mut Node = unsafe { ref_ptr(&(*bone).bone_node) };
 
         let mut parent_to_world: *const Matrix = &IDENTITY_MATRIX;
-        let bone_pose: *mut BonePose = get_bone_pose(pose, opt_ptr(&(*node).parent));
+        // SAFETY: `node` is a resolved element link, so it points to a live,
+        // initialized `ufbx_node` of the same scene, and `pose` is live.
+        let bone_pose: *mut BonePose = unsafe { get_bone_pose(pose, opt_ptr(&(*node).parent)) };
         if !bone_pose.is_null() {
-            parent_to_world = &(*bone_pose).bone_to_world;
-        } else if !opt_ptr(&(*node).parent).is_null() {
-            parent_to_world = &(*opt_ptr(&(*node).parent)).node_to_world;
+            // SAFETY: `bone_pose` is non-null here, so it addresses a live entry
+            // of the pose's own bone-pose run, which outlives this loop.
+            parent_to_world = unsafe { &(*bone_pose).bone_to_world };
+        // SAFETY: `node` is live (see above).
+        } else if !unsafe { opt_ptr(&(*node).parent) }.is_null() {
+            // SAFETY: the branch condition established that the parent link is
+            // non-null, so it points to a live, initialized `ufbx_node` of the
+            // same scene, which outlives this loop.
+            parent_to_world = unsafe { &(*opt_ptr(&(*node).parent)).node_to_world };
         }
 
-        let world_to_parent: Matrix = matrix_invert(parent_to_world);
-        (*bone).bone_to_parent = matrix_mul(&world_to_parent, &(*bone).bone_to_world);
+        // SAFETY: `parent_to_world` is either the static identity matrix or a
+        // live scene matrix borrowed above.
+        let world_to_parent: Matrix = unsafe { matrix_invert(parent_to_world) };
+        // SAFETY: `bone` addresses a live, writable entry of the pose's own run
+        // (see above).
+        unsafe { (*bone).bone_to_parent = matrix_mul(&world_to_parent, &(*bone).bone_to_world) };
 
-        bone = bone.add(1);
+        // SAFETY: `bone != bone_end`, so the advance lands at or before the run's
+        // one-past-the-end pointer.
+        bone = unsafe { bone.add(1) };
     }
 }
 
@@ -9783,15 +12665,30 @@ pub(crate) unsafe fn update_pose(pose: *mut Pose) {
 #[inline(never)]
 pub(crate) unsafe fn update_skin_cluster(cluster: *mut SkinCluster) {
     // C: `if (cluster->bone_node)` — pointer truthiness.
-    let bone_node: *mut Node = opt_ptr(&(*cluster).bone_node);
+    // SAFETY: `cluster` points to a live, initialized `ufbx_skin_cluster` (fn
+    // contract), so `&(*cluster).bone_node` addresses its own nullable bone link.
+    let bone_node: *mut Node = unsafe { opt_ptr(&(*cluster).bone_node) };
     if !bone_node.is_null() {
-        (*cluster).geometry_to_world =
-            matrix_mul(&(*bone_node).node_to_world, &(*cluster).geometry_to_bone);
+        // SAFETY: `bone_node` is non-null here, so it points to a live,
+        // initialized `ufbx_node` of the same scene; `cluster` is live and
+        // writable (see above).
+        unsafe {
+            (*cluster).geometry_to_world =
+                matrix_mul(&(*bone_node).node_to_world, &(*cluster).geometry_to_bone)
+        };
     } else {
-        (*cluster).geometry_to_world =
-            matrix_mul(&(*cluster).bind_to_world, &(*cluster).geometry_to_bone);
+        // SAFETY: `cluster` is live and writable (see above); both operands are
+        // its own matrices.
+        unsafe {
+            (*cluster).geometry_to_world =
+                matrix_mul(&(*cluster).bind_to_world, &(*cluster).geometry_to_bone)
+        };
     }
-    (*cluster).geometry_to_world_transform = matrix_to_transform(&(*cluster).geometry_to_world);
+    // SAFETY: `cluster` is live and writable (see above); `geometry_to_world` was
+    // assigned on both arms above.
+    unsafe {
+        (*cluster).geometry_to_world_transform = matrix_to_transform(&(*cluster).geometry_to_world)
+    };
 }
 
 // ufbx.c:23299-23342 `ufbxi_update_blend_channel`
@@ -9876,8 +12773,12 @@ pub(crate) fn update_blend_channel(channel_view: &BlendChannelView) {
 // ufbx.c:23344-23349 `ufbxi_update_material`
 #[inline(never)]
 pub(crate) unsafe fn update_material(scene: *mut Scene, material: *mut Material) {
-    if (*material).element.props.num_animated > 0 {
-        fetch_maps(scene, material);
+    // SAFETY: `material` points to a live, initialized `ufbx_material` (fn
+    // contract), so its element's property list is readable.
+    if unsafe { (*material).element.props.num_animated } > 0 {
+        // SAFETY: `scene` and `material` are the live, initialized scene and one
+        // of its materials (fn contract) — `ufbxi_fetch_maps`'s own contract.
+        unsafe { fetch_maps(scene, material) };
     }
 }
 
@@ -9989,25 +12890,40 @@ pub(crate) unsafe fn find_bool3(
     name: *const u8,
     default_value: bool,
 ) {
-    let name_len: usize = strlen(name);
+    // SAFETY: `name` is a NUL-terminated property-name literal (fn contract) —
+    // `strlen`'s contract.
+    let name_len: usize = unsafe { strlen(name) };
     // C: `char local[64];` — an uninitialized local; only `local[0..name_len]`
     // is ever read back (`local_len == name_len + 1` bytes are written first).
     let mut local_storage = MaybeUninit::<[u8; 64]>::uninit();
     let local: *mut u8 = local_storage.as_mut_ptr() as *mut u8;
     // C: `ufbx_assert(name_len < sizeof(local) - 2);`
     ufbx_assert!(name_len < size_of::<[u8; 64]>() - 2);
-    ptr::copy_nonoverlapping(name, local, name_len);
+    // SAFETY: `name` addresses `name_len` readable bytes (its own NUL-terminated
+    // spelling), the assert above established `name_len < 62`, so the copy fits
+    // in the 64-byte local, and the two regions are distinct objects.
+    unsafe { ptr::copy_nonoverlapping(name, local, name_len) };
 
     let local_len: usize = name_len + 1;
-    *local.add(local_len) = b'\0';
+    // SAFETY: the assert above established `name_len < 62`, so
+    // `local_len = name_len + 1 < 63` indexes inside the 64-byte local.
+    unsafe { *local.add(local_len) = b'\0' };
 
     let def: i64 = if default_value { 1 } else { 0 };
-    *local.add(name_len) = b'X';
-    *dst.add(0) = api_find_int_len(props, local, local_len, def) != 0;
-    *local.add(name_len) = b'Y';
-    *dst.add(1) = api_find_int_len(props, local, local_len, def) != 0;
-    *local.add(name_len) = b'Z';
-    *dst.add(2) = api_find_int_len(props, local, local_len, def) != 0;
+    // SAFETY: `name_len < 62` (asserted above) indexes inside the 64-byte local.
+    unsafe { *local.add(name_len) = b'X' };
+    // SAFETY: `dst` addresses three writable `bool`s (fn contract); `local` holds
+    // `local_len` initialized bytes followed by a NUL, which is what
+    // `ufbx_find_int_len` reads.
+    unsafe { *dst.add(0) = api_find_int_len(props, local, local_len, def) != 0 };
+    // SAFETY: as above, for the `Y` suffix.
+    unsafe { *local.add(name_len) = b'Y' };
+    // SAFETY: as above, for the second `bool` of `dst`.
+    unsafe { *dst.add(1) = api_find_int_len(props, local, local_len, def) != 0 };
+    // SAFETY: as above, for the `Z` suffix.
+    unsafe { *local.add(name_len) = b'Z' };
+    // SAFETY: as above, for the third `bool` of `dst`.
+    unsafe { *dst.add(2) = api_find_int_len(props, local, local_len, def) != 0 };
 }
 
 // ufbx.c:23416-23488 `ufbxi_update_constraint`
@@ -10181,10 +13097,18 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
 // ufbx.c:23490-23495 `ufbxi_update_anim`
 #[inline(never)]
 pub(crate) unsafe fn update_anim(scene: *mut Scene) {
-    if (*scene).anim_stacks.count > 0 {
+    // SAFETY: `scene` points to the live, initialized `ufbx_scene` being updated
+    // (fn contract), so its own anim-stack pointer list is readable.
+    if unsafe { (*scene).anim_stacks.count } > 0 {
         // C: `scene->anim = scene->anim_stacks.data[0]->anim;`
-        let stack: *mut AnimStack = *((*scene).anim_stacks.data as *const *mut AnimStack);
-        (*scene).anim = (*stack).anim;
+        // SAFETY: `count > 0`, so element `0` of the scene's anim-stack pointer
+        // run is live and initialized.
+        let stack: *mut AnimStack =
+            unsafe { *((*scene).anim_stacks.data as *const *mut AnimStack) };
+        // SAFETY: `stack` is a resolved element pointer from the scene's own
+        // list, so it points to a live, initialized `ufbx_anim_stack`; `scene` is
+        // live and writable (see above).
+        unsafe { (*scene).anim = (*stack).anim };
     }
 }
 
@@ -10201,14 +13125,25 @@ pub(crate) unsafe fn mirror_matrix_dst(m: *mut Matrix, axis: MirrorAxis) {
     }
     let ax: i32 = axis as i32 - 1;
     let cols: *mut Vec3 = m as *mut Vec3;
-    let c0: *mut Real = cols.add(0) as *mut Real;
-    *c0.add(ax as usize) = -*c0.add(ax as usize);
-    let c1: *mut Real = cols.add(1) as *mut Real;
-    *c1.add(ax as usize) = -*c1.add(ax as usize);
-    let c2: *mut Real = cols.add(2) as *mut Real;
-    *c2.add(ax as usize) = -*c2.add(ax as usize);
-    let c3: *mut Real = cols.add(3) as *mut Real;
-    *c3.add(ax as usize) = -*c3.add(ax as usize);
+    // SAFETY: `m` points to a live, initialized, writable `ufbx_matrix` (fn
+    // contract) laid out as four consecutive `ufbx_vec3` columns, so column `0`
+    // is in bounds.
+    let c0: *mut Real = unsafe { cols.add(0) } as *mut Real;
+    // SAFETY: a column is three consecutive `ufbx_real`s, and the early return
+    // above established `axis != None`, so `ax = axis - 1` is in `0..3`.
+    unsafe { *c0.add(ax as usize) = -*c0.add(ax as usize) };
+    // SAFETY: as above, for column `1`.
+    let c1: *mut Real = unsafe { cols.add(1) } as *mut Real;
+    // SAFETY: as above; `ax` is in `0..3`.
+    unsafe { *c1.add(ax as usize) = -*c1.add(ax as usize) };
+    // SAFETY: as above, for column `2`.
+    let c2: *mut Real = unsafe { cols.add(2) } as *mut Real;
+    // SAFETY: as above; `ax` is in `0..3`.
+    unsafe { *c2.add(ax as usize) = -*c2.add(ax as usize) };
+    // SAFETY: as above, for column `3`.
+    let c3: *mut Real = unsafe { cols.add(3) } as *mut Real;
+    // SAFETY: as above; `ax` is in `0..3`.
+    unsafe { *c3.add(ax as usize) = -*c3.add(ax as usize) };
 }
 
 // ufbx.c:23507-23514 `ufbxi_mirror_matrix_src`
@@ -10222,10 +13157,16 @@ pub(crate) unsafe fn mirror_matrix_src(m: *mut Matrix, axis: MirrorAxis) {
     }
     let ax: i32 = axis as i32 - 1;
     let cols: *mut Vec3 = m as *mut Vec3;
-    let col: *mut Vec3 = cols.add(ax as usize);
-    (*col).x = -(*col).x;
-    (*col).y = -(*col).y;
-    (*col).z = -(*col).z;
+    // SAFETY: `m` points to a live, initialized, writable `ufbx_matrix` (fn
+    // contract) laid out as four consecutive `ufbx_vec3` columns, and the early
+    // return above established `axis != None`, so `ax = axis - 1` is in `0..3`.
+    let col: *mut Vec3 = unsafe { cols.add(ax as usize) };
+    // SAFETY: `col` addresses one of the matrix's own columns (see above).
+    unsafe { (*col).x = -(*col).x };
+    // SAFETY: as above.
+    unsafe { (*col).y = -(*col).y };
+    // SAFETY: as above.
+    unsafe { (*col).z = -(*col).z };
 }
 
 // ufbx.c:23516-23521 `ufbxi_mirror_matrix`
@@ -10235,24 +13176,40 @@ pub(crate) unsafe fn mirror_matrix(m: *mut Matrix, axis: MirrorAxis) {
     if axis as u32 == 0 {
         return;
     }
-    mirror_matrix_src(m, axis);
-    mirror_matrix_dst(m, axis);
+    // SAFETY: `m` points to a live, initialized, writable `ufbx_matrix` (fn
+    // contract) — the same contract `ufbxi_mirror_matrix_src` takes.
+    unsafe { mirror_matrix_src(m, axis) };
+    // SAFETY: as above, for `ufbxi_mirror_matrix_dst`.
+    unsafe { mirror_matrix_dst(m, axis) };
 }
 
 // ufbx.c:23523-23619 `ufbxi_update_initial_clusters`
 #[inline(never)]
 pub(crate) unsafe fn update_initial_clusters(scene: *mut Scene) {
     // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
-    let mut p_cluster: *mut *mut SkinCluster = (*scene).skin_clusters.data as *mut *mut SkinCluster;
-    let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*scene).skin_clusters.count);
+    // SAFETY: `scene` points to the live, initialized `ufbx_scene` being updated
+    // (fn contract), so its own skin-cluster pointer list is readable.
+    let mut p_cluster: *mut *mut SkinCluster =
+        unsafe { (*scene).skin_clusters.data } as *mut *mut SkinCluster;
+    // SAFETY: as above; `data`/`count` describe one arena run.
+    let p_cluster_end: *mut *mut SkinCluster =
+        add_ptr(p_cluster, unsafe { (*scene).skin_clusters.count });
     while p_cluster != p_cluster_end {
-        let cluster: *mut SkinCluster = *p_cluster;
-        (*cluster).geometry_to_bone = (*cluster).mesh_node_to_bone;
-        p_cluster = p_cluster.add(1);
+        // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live,
+        // initialized element pointer of the scene's own run.
+        let cluster: *mut SkinCluster = unsafe { *p_cluster };
+        // SAFETY: `cluster` is a resolved element pointer from the scene's own
+        // list, so it points to a live, initialized, writable `ufbx_skin_cluster`.
+        unsafe { (*cluster).geometry_to_bone = (*cluster).mesh_node_to_bone };
+        // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or before
+        // the run's one-past-the-end pointer.
+        p_cluster = unsafe { p_cluster.add(1) };
     }
 
-    let mirror_axis: MirrorAxis = (*scene).metadata.mirror_axis;
-    let geometry_scale: Real = (*scene).metadata.geometry_scale;
+    // SAFETY: `scene` is live (see above).
+    let mirror_axis: MirrorAxis = unsafe { (*scene).metadata.mirror_axis };
+    // SAFETY: as above.
+    let geometry_scale: Real = unsafe { (*scene).metadata.geometry_scale };
 
     // Space conversion for bind matrices
     {
@@ -10261,112 +13218,223 @@ pub(crate) unsafe fn update_initial_clusters(scene: *mut Scene) {
         let world_to_units: Matrix;
         let mut translation_scale: Real = 1.0 as Real;
 
-        if (*scene).metadata.space_conversion == SpaceConversion::TransformRoot
-            && (*scene).metadata.mirror_axis == MirrorAxis::None
+        // SAFETY: `scene` is live (see above).
+        if unsafe { (*scene).metadata.space_conversion } == SpaceConversion::TransformRoot
+            // SAFETY: as above.
+            && unsafe { (*scene).metadata.mirror_axis } == MirrorAxis::None
         {
-            world_to_units = (*ref_ptr(&(*scene).root_node)).node_to_parent;
+            // SAFETY: `scene` is live (see above), so `&(*scene).root_node`
+            // addresses its own non-optional root link, which points to a live,
+            // initialized `ufbx_node`.
+            world_to_units = unsafe { (*ref_ptr(&(*scene).root_node)).node_to_parent };
         } else {
             // C: `ufbx_transform root_transform;` — every member is written
             // below before the first read.
-            let mut root_transform: Transform = core::mem::zeroed();
+            // SAFETY: `ufbx_transform` is a plain struct of `ufbx_real` fields,
+            // for which the all-zero bit pattern is a valid value.
+            let mut root_transform: Transform = unsafe { core::mem::zeroed() };
             root_transform.translation = ZERO_VEC3;
-            root_transform.rotation = (*scene).metadata.root_rotation;
-            root_transform.scale.x = (*scene).metadata.root_scale;
-            root_transform.scale.y = (*scene).metadata.root_scale;
-            root_transform.scale.z = (*scene).metadata.root_scale;
-            world_to_units = transform_to_matrix(&root_transform);
-            translation_scale = (*scene).metadata.geometry_scale;
+            // SAFETY: `scene` is live (see above).
+            root_transform.rotation = unsafe { (*scene).metadata.root_rotation };
+            // SAFETY: as above.
+            root_transform.scale.x = unsafe { (*scene).metadata.root_scale };
+            // SAFETY: as above.
+            root_transform.scale.y = unsafe { (*scene).metadata.root_scale };
+            // SAFETY: as above.
+            root_transform.scale.z = unsafe { (*scene).metadata.root_scale };
+            // SAFETY: `&root_transform` borrows a live local `ufbx_transform`,
+            // zero-initialized above and with every member assigned since.
+            world_to_units = unsafe { transform_to_matrix(&root_transform) };
+            // SAFETY: as above.
+            translation_scale = unsafe { (*scene).metadata.geometry_scale };
         }
 
         // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
+        // SAFETY: `scene` is live (see above), so its own skin-cluster pointer
+        // list is readable.
         let mut p_cluster: *mut *mut SkinCluster =
-            (*scene).skin_clusters.data as *mut *mut SkinCluster;
-        let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*scene).skin_clusters.count);
+            unsafe { (*scene).skin_clusters.data } as *mut *mut SkinCluster;
+        // SAFETY: as above; `data`/`count` describe one arena run.
+        let p_cluster_end: *mut *mut SkinCluster =
+            add_ptr(p_cluster, unsafe { (*scene).skin_clusters.count });
         while p_cluster != p_cluster_end {
-            let cluster: *mut SkinCluster = *p_cluster;
-            (*cluster).bind_to_world = matrix_mul(&world_to_units, &(*cluster).bind_to_world);
+            // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live,
+            // initialized element pointer of the scene's own run.
+            let cluster: *mut SkinCluster = unsafe { *p_cluster };
+            // SAFETY: `cluster` is a resolved element pointer from the scene's
+            // own list, so it points to a live, initialized, writable
+            // `ufbx_skin_cluster`.
+            unsafe {
+                (*cluster).bind_to_world = matrix_mul(&world_to_units, &(*cluster).bind_to_world)
+            };
             // C: `cluster->bind_to_world.cols[3].x` — the `cols[4]` overlay.
-            let bind_cols: *mut Vec3 = &mut (*cluster).bind_to_world as *mut Matrix as *mut Vec3;
-            (*bind_cols.add(3)).x *= translation_scale;
-            (*bind_cols.add(3)).y *= translation_scale;
-            (*bind_cols.add(3)).z *= translation_scale;
-            mirror_matrix(&mut (*cluster).bind_to_world, mirror_axis);
-            p_cluster = p_cluster.add(1);
+            // SAFETY: `cluster` is live and writable (see above); the borrow is
+            // taken as a raw pointer immediately and is the only live handle to
+            // the matrix in this block.
+            let bind_cols: *mut Vec3 =
+                unsafe { &mut (*cluster).bind_to_world } as *mut Matrix as *mut Vec3;
+            // SAFETY: an `ufbx_matrix` is laid out as exactly four consecutive
+            // `ufbx_vec3` columns, so column `3` is its last one, in bounds.
+            unsafe { (*bind_cols.add(3)).x *= translation_scale };
+            // SAFETY: as above.
+            unsafe { (*bind_cols.add(3)).y *= translation_scale };
+            // SAFETY: as above.
+            unsafe { (*bind_cols.add(3)).z *= translation_scale };
+            // SAFETY: `cluster` is live and writable (see above), so the borrow
+            // addresses its own `bind_to_world` matrix.
+            unsafe { mirror_matrix(&mut (*cluster).bind_to_world, mirror_axis) };
+            // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or
+            // before the run's one-past-the-end pointer.
+            p_cluster = unsafe { p_cluster.add(1) };
         }
 
         // C: `ufbxi_for_ptr_list(ufbx_pose, p_pose, scene->poses)`
-        let mut p_pose: *mut *mut Pose = (*scene).poses.data as *mut *mut Pose;
-        let p_pose_end: *mut *mut Pose = add_ptr(p_pose, (*scene).poses.count);
+        // SAFETY: `scene` is live (see above), so its own pose pointer list is
+        // readable.
+        let mut p_pose: *mut *mut Pose = unsafe { (*scene).poses.data } as *mut *mut Pose;
+        // SAFETY: as above; `data`/`count` describe one arena run.
+        let p_pose_end: *mut *mut Pose = add_ptr(p_pose, unsafe { (*scene).poses.count });
         while p_pose != p_pose_end {
             // C: `ufbxi_for_list(ufbx_bone_pose, pose, (*p_pose)->bone_poses)`
-            let mut pose: *mut BonePose = (**p_pose).bone_poses.data as *mut BonePose;
-            let pose_end: *mut BonePose = add_ptr(pose, (**p_pose).bone_poses.count);
+            // SAFETY: `p_pose != p_pose_end`, so it addresses a live element
+            // pointer of the scene's own run, which points to a live,
+            // initialized `ufbx_pose` whose bone-pose list is readable.
+            let mut pose: *mut BonePose = unsafe { (**p_pose).bone_poses.data } as *mut BonePose;
+            // SAFETY: as above; `data`/`count` describe one arena run.
+            let pose_end: *mut BonePose = add_ptr(pose, unsafe { (**p_pose).bone_poses.count });
             while pose != pose_end {
-                (*pose).bone_to_world = matrix_mul(&world_to_units, &(*pose).bone_to_world);
-                let pose_cols: *mut Vec3 = &mut (*pose).bone_to_world as *mut Matrix as *mut Vec3;
-                (*pose_cols.add(3)).x *= translation_scale;
-                (*pose_cols.add(3)).y *= translation_scale;
-                (*pose_cols.add(3)).z *= translation_scale;
-                mirror_matrix(&mut (*pose).bone_to_world, mirror_axis);
-                pose = pose.add(1);
+                // SAFETY: `pose != pose_end`, so it addresses a live,
+                // initialized, writable entry of that pose's bone-pose run.
+                unsafe {
+                    (*pose).bone_to_world = matrix_mul(&world_to_units, &(*pose).bone_to_world)
+                };
+                // SAFETY: `pose` is live and writable (see above); the borrow is
+                // taken as a raw pointer immediately and is the only live handle
+                // to the matrix in this block.
+                let pose_cols: *mut Vec3 =
+                    unsafe { &mut (*pose).bone_to_world } as *mut Matrix as *mut Vec3;
+                // SAFETY: an `ufbx_matrix` is laid out as exactly four
+                // consecutive `ufbx_vec3` columns, so column `3` is its last one,
+                // in bounds.
+                unsafe { (*pose_cols.add(3)).x *= translation_scale };
+                // SAFETY: as above.
+                unsafe { (*pose_cols.add(3)).y *= translation_scale };
+                // SAFETY: as above.
+                unsafe { (*pose_cols.add(3)).z *= translation_scale };
+                // SAFETY: `pose` is live and writable (see above), so the borrow
+                // addresses its own `bone_to_world` matrix.
+                unsafe { mirror_matrix(&mut (*pose).bone_to_world, mirror_axis) };
+                // SAFETY: `pose != pose_end`, so the advance lands at or before
+                // the run's one-past-the-end pointer.
+                pose = unsafe { pose.add(1) };
             }
-            p_pose = p_pose.add(1);
+            // SAFETY: `p_pose != p_pose_end`, so the advance lands at or before
+            // the run's one-past-the-end pointer.
+            p_pose = unsafe { p_pose.add(1) };
         }
     }
 
     // Patch initial `mesh_node_to_bone`
     // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
-    let mut p_cluster: *mut *mut SkinCluster = (*scene).skin_clusters.data as *mut *mut SkinCluster;
-    let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*scene).skin_clusters.count);
+    // SAFETY: `scene` is live (see above), so its own skin-cluster pointer list
+    // is readable.
+    let mut p_cluster: *mut *mut SkinCluster =
+        unsafe { (*scene).skin_clusters.data } as *mut *mut SkinCluster;
+    // SAFETY: as above; `data`/`count` describe one arena run.
+    let p_cluster_end: *mut *mut SkinCluster =
+        add_ptr(p_cluster, unsafe { (*scene).skin_clusters.count });
     while p_cluster != p_cluster_end {
-        let cluster: *mut SkinCluster = *p_cluster;
+        // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live,
+        // initialized element pointer of the scene's own run.
+        let cluster: *mut SkinCluster = unsafe { *p_cluster };
 
-        let skin: *mut SkinDeformer = fetch_src_element(
-            &mut (*cluster).element,
-            false,
-            ptr::null(),
-            ElementType::SkinDeformer,
-        ) as *mut SkinDeformer;
+        // SAFETY: `cluster` is a resolved element pointer from the scene's own
+        // list, so `&mut (*cluster).element` addresses its own live, initialized
+        // element header, whose connection lists `ufbxi_fetch_src_element` walks.
+        let skin: *mut SkinDeformer = unsafe {
+            fetch_src_element(
+                &mut (*cluster).element,
+                false,
+                ptr::null(),
+                ElementType::SkinDeformer,
+            )
+        } as *mut SkinDeformer;
         if skin.is_null() {
-            p_cluster = p_cluster.add(1);
+            // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or
+            // before the run's one-past-the-end pointer.
+            p_cluster = unsafe { p_cluster.add(1) };
             continue;
         }
 
-        let mut node: *mut Node =
+        // SAFETY: `skin` is non-null here and was resolved from the cluster's own
+        // connections, so it points to a live, initialized `ufbx_skin_deformer`
+        // whose element header carries the connection lists to walk.
+        let mut node: *mut Node = unsafe {
             fetch_src_element(&mut (*skin).element, false, ptr::null(), ElementType::Node)
-                as *mut Node;
+        } as *mut Node;
         if node.is_null() {
-            let mesh: *mut Mesh =
+            // SAFETY: as above, for the mesh connection of the same deformer.
+            let mesh: *mut Mesh = unsafe {
                 fetch_src_element(&mut (*skin).element, false, ptr::null(), ElementType::Mesh)
-                    as *mut Mesh;
+            } as *mut Mesh;
             // C: `mesh->instances` — the `ufbx_mesh` element-header union view
             // (ufbx.h), which the generated struct keeps as `element.instances`.
-            if !mesh.is_null() && (*mesh).element.instances.count > 0 {
-                node = *((*mesh).element.instances.data as *const *mut Node);
+            // SAFETY: `mesh` is non-null in the second operand, so it points to a
+            // live, initialized `ufbx_mesh` whose element header is readable.
+            if !mesh.is_null() && unsafe { (*mesh).element.instances.count } > 0 {
+                // SAFETY: the condition established that the mesh's instance run
+                // is non-empty, so element `0` is live and initialized.
+                node = unsafe { *((*mesh).element.instances.data as *const *mut Node) };
             }
         }
         if node.is_null() {
-            p_cluster = p_cluster.add(1);
+            // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or
+            // before the run's one-past-the-end pointer.
+            p_cluster = unsafe { p_cluster.add(1) };
             continue;
         }
 
         // Normalize to the non-helper node
-        if (*node).is_geometry_transform_helper {
-            node = opt_ptr(&(*node).parent);
+        // SAFETY: `node` is non-null here and was resolved from the scene's own
+        // element graph, so it points to a live, initialized `ufbx_node`.
+        if unsafe { (*node).is_geometry_transform_helper } {
+            // SAFETY: as above, for the node's own parent link; a geometry
+            // transform helper is always created as a child of the node it
+            // serves, so the link resolves to a live `ufbx_node` of this scene.
+            node = unsafe { opt_ptr(&(*node).parent) };
         }
 
-        if matrix_all_zero(&(*cluster).mesh_node_to_bone) {
+        // SAFETY: `cluster` is live (see above), so the borrow addresses its own
+        // `mesh_node_to_bone` matrix.
+        if unsafe { matrix_all_zero(&(*cluster).mesh_node_to_bone) } {
             // If `mesh_node_to_bone` is not explicitly specified compute it from bind pose.
-            let world_to_bind: Matrix = matrix_invert(&(*cluster).bind_to_world);
-            (*cluster).mesh_node_to_bone = matrix_mul(&world_to_bind, &(*node).node_to_world);
+            // SAFETY: `cluster` is live (see above), so the borrow addresses its
+            // own `bind_to_world` matrix.
+            let world_to_bind: Matrix = unsafe { matrix_invert(&(*cluster).bind_to_world) };
+            // SAFETY: `cluster` is live and writable, and `node` points to a live,
+            // initialized `ufbx_node` of the same scene (see above).
+            unsafe {
+                (*cluster).mesh_node_to_bone = matrix_mul(&world_to_bind, &(*node).node_to_world)
+            };
         } else {
             // If `mesh_node_to_bone` is explicit, we may need to modify it for space conversion.
-            mirror_matrix(&mut (*cluster).mesh_node_to_bone, mirror_axis);
+            // SAFETY: `cluster` is live and writable (see above), so the borrow
+            // addresses its own `mesh_node_to_bone` matrix.
+            unsafe { mirror_matrix(&mut (*cluster).mesh_node_to_bone, mirror_axis) };
             if geometry_scale != 1.0 {
-                let cols: *mut Vec3 = &mut (*cluster).mesh_node_to_bone as *mut Matrix as *mut Vec3;
-                (*cols.add(3)).x *= geometry_scale;
-                (*cols.add(3)).y *= geometry_scale;
-                (*cols.add(3)).z *= geometry_scale;
+                // SAFETY: `cluster` is live and writable (see above); the borrow
+                // is taken as a raw pointer immediately and is the only live
+                // handle to the matrix in this block.
+                let cols: *mut Vec3 =
+                    unsafe { &mut (*cluster).mesh_node_to_bone } as *mut Matrix as *mut Vec3;
+                // SAFETY: an `ufbx_matrix` is laid out as exactly four
+                // consecutive `ufbx_vec3` columns, so column `3` is its last one,
+                // in bounds.
+                unsafe { (*cols.add(3)).x *= geometry_scale };
+                // SAFETY: as above.
+                unsafe { (*cols.add(3)).y *= geometry_scale };
+                // SAFETY: as above.
+                unsafe { (*cols.add(3)).z *= geometry_scale };
             }
         }
 
@@ -10375,18 +13443,35 @@ pub(crate) unsafe fn update_initial_clusters(scene: *mut Scene) {
         // matrices are formed.
         // TODO: Add a test with moving the skinned mesh root around.
         // C: `if (node->geometry_transform_helper)` — pointer truthiness.
-        if !opt_ptr(&(*node).geometry_transform_helper).is_null() {
-            let geo_node: *mut Node = opt_ptr(&(*node).geometry_transform_helper);
-            (*cluster).geometry_to_bone =
-                matrix_mul(&(*cluster).mesh_node_to_bone, &(*geo_node).node_to_parent);
-        } else if (*node).has_geometry_transform {
-            (*cluster).geometry_to_bone =
-                matrix_mul(&(*cluster).mesh_node_to_bone, &(*node).geometry_to_node);
+        // SAFETY: `node` points to a live, initialized `ufbx_node` (see above),
+        // so `&(*node).geometry_transform_helper` addresses its own nullable
+        // helper link.
+        if !unsafe { opt_ptr(&(*node).geometry_transform_helper) }.is_null() {
+            // SAFETY: the branch condition established that the link is non-null,
+            // so it points to a live, initialized `ufbx_node` of this scene.
+            let geo_node: *mut Node = unsafe { opt_ptr(&(*node).geometry_transform_helper) };
+            // SAFETY: `cluster` is live and writable and `geo_node` points to a
+            // live, initialized `ufbx_node` (see above).
+            unsafe {
+                (*cluster).geometry_to_bone =
+                    matrix_mul(&(*cluster).mesh_node_to_bone, &(*geo_node).node_to_parent)
+            };
+        // SAFETY: `node` is live (see above).
+        } else if unsafe { (*node).has_geometry_transform } {
+            // SAFETY: `cluster` is live and writable and `node` is live (see
+            // above); both borrows address their owners' own matrices.
+            unsafe {
+                (*cluster).geometry_to_bone =
+                    matrix_mul(&(*cluster).mesh_node_to_bone, &(*node).geometry_to_node)
+            };
         } else {
-            (*cluster).geometry_to_bone = (*cluster).mesh_node_to_bone;
+            // SAFETY: `cluster` is live and writable (see above).
+            unsafe { (*cluster).geometry_to_bone = (*cluster).mesh_node_to_bone };
         }
 
-        p_cluster = p_cluster.add(1);
+        // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or before
+        // the run's one-past-the-end pointer.
+        p_cluster = unsafe { p_cluster.add(1) };
     }
 }
 
@@ -10467,26 +13552,46 @@ pub(crate) unsafe fn axis_matrix(
     }
 
     // Remap axes (axis enum divided by 2) potentially flipping if the signs (enum parity) doesn't match
-    ptr::write_bytes(mat as *mut u8, 0, size_of::<Matrix>());
+    // SAFETY: `mat` points to writable — possibly uninitialized — storage for
+    // one `ufbx_matrix` (fn contract), so the `size_of::<Matrix>()` bytes it
+    // covers may be zeroed.
+    unsafe { ptr::write_bytes(mat as *mut u8, 0, size_of::<Matrix>()) };
     // C: `mat->cols[i].v[j]` — the `cols[4]` / `v[3]` union overlay.
     let cols: *mut Vec3 = mat as *mut Vec3;
-    let cx: *mut Real = cols.add((src_x >> 1) as usize) as *mut Real;
-    *cx.add((dst_x >> 1) as usize) = if ((src_x ^ dst_x) & 1) == 0 {
-        1.0 as Real
-    } else {
-        -1.0 as Real
+    // SAFETY: `mat` is writable `ufbx_matrix` storage (fn contract) laid out as
+    // four consecutive `ufbx_vec3` columns, and `src`/`dst` carry real axes (fn
+    // contract: not `UFBX_COORDINATE_AXIS_UNKNOWN`), so `src_x >> 1` is in
+    // `0..3` and selects a column in bounds.
+    let cx: *mut Real = unsafe { cols.add((src_x >> 1) as usize) } as *mut Real;
+    // SAFETY: the column `cx` addresses is three consecutive `ufbx_real`s and
+    // `dst_x >> 1` is in `0..3` (see above), so the element is in bounds — and
+    // initialized, having been zeroed by the `write_bytes` above.
+    unsafe {
+        *cx.add((dst_x >> 1) as usize) = if ((src_x ^ dst_x) & 1) == 0 {
+            1.0 as Real
+        } else {
+            -1.0 as Real
+        }
     };
-    let cy: *mut Real = cols.add((src_y >> 1) as usize) as *mut Real;
-    *cy.add((dst_y >> 1) as usize) = if ((src_y ^ dst_y) & 1) == 0 {
-        1.0 as Real
-    } else {
-        -1.0 as Real
+    // SAFETY: as for `cx`, for the column selected by `src_y >> 1`.
+    let cy: *mut Real = unsafe { cols.add((src_y >> 1) as usize) } as *mut Real;
+    // SAFETY: as for the `cx` element write, for `dst_y >> 1` within `cy`.
+    unsafe {
+        *cy.add((dst_y >> 1) as usize) = if ((src_y ^ dst_y) & 1) == 0 {
+            1.0 as Real
+        } else {
+            -1.0 as Real
+        }
     };
-    let cz: *mut Real = cols.add((src_z >> 1) as usize) as *mut Real;
-    *cz.add((dst_z >> 1) as usize) = if ((src_z ^ dst_z) & 1) == 0 {
-        1.0 as Real
-    } else {
-        -1.0 as Real
+    // SAFETY: as for `cx`, for the column selected by `src_z >> 1`.
+    let cz: *mut Real = unsafe { cols.add((src_z >> 1) as usize) } as *mut Real;
+    // SAFETY: as for the `cx` element write, for `dst_z >> 1` within `cz`.
+    unsafe {
+        *cz.add((dst_z >> 1) as usize) = if ((src_z ^ dst_z) & 1) == 0 {
+            1.0 as Real
+        } else {
+            -1.0 as Real
+        }
     };
 
     true
@@ -10704,128 +13809,210 @@ pub(crate) unsafe fn update_scene<'a>(
     // as C's `ufbxi_for_ptr_list` does.
     let scene: *mut Scene = scene_view.get();
     // C: `ufbxi_for_ptr_list(ufbx_node, p_node, scene->nodes)`
-    let mut p_node: *mut *mut Node = (*scene).nodes.data as *mut *mut Node;
-    let p_node_end: *mut *mut Node = add_ptr(p_node, (*scene).nodes.count);
+    // SAFETY: `scene` is `scene_view`'s own live, initialized `ufbx_scene`
+    // storage, so its element lists are readable.
+    let mut p_node: *mut *mut Node = unsafe { (*scene).nodes.data } as *mut *mut Node;
+    // SAFETY: `scene` is live (see above).
+    let p_node_end: *mut *mut Node = add_ptr(p_node, unsafe { (*scene).nodes.count });
     while p_node != p_node_end {
-        let node: &'a NodeView = NodeView::from_ptr(*p_node);
-        update_node(node, transform_overrides, num_transform_overrides);
-        p_node = p_node.add(1);
+        // SAFETY: `p_node` addresses an element of the `scene->nodes` run (loop
+        // condition), which holds `count` pointers to live `ufbx_node`s in the
+        // same arena that `scene_view` is anchored to.
+        let node: &'a NodeView = unsafe { NodeView::from_ptr(*p_node) };
+        // SAFETY: `transform_overrides` addresses `num_transform_overrides`
+        // initialized overrides (fn contract), passed through unchanged.
+        unsafe { update_node(node, transform_overrides, num_transform_overrides) };
+        // SAFETY: `p_node` is inside the run (loop condition), so stepping one
+        // element lands at most one past its end.
+        p_node = unsafe { p_node.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_light, p_light, scene->lights)`
-    let mut p_light: *mut *mut Light = (*scene).lights.data as *mut *mut Light;
-    let p_light_end: *mut *mut Light = add_ptr(p_light, (*scene).lights.count);
+    // SAFETY: `scene` is live (see above).
+    let mut p_light: *mut *mut Light = unsafe { (*scene).lights.data } as *mut *mut Light;
+    // SAFETY: `scene` is live (see above).
+    let p_light_end: *mut *mut Light = add_ptr(p_light, unsafe { (*scene).lights.count });
     while p_light != p_light_end {
-        let light: &'a LightView = LightView::from_ptr(*p_light);
+        // SAFETY: as for the node run, for `scene->lights` and `ufbx_light`.
+        let light: &'a LightView = unsafe { LightView::from_ptr(*p_light) };
         update_light(light);
-        p_light = p_light.add(1);
+        // SAFETY: `p_light` is inside the run (loop condition).
+        p_light = unsafe { p_light.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_camera, p_camera, scene->cameras)`
-    let mut p_camera: *mut *mut Camera = (*scene).cameras.data as *mut *mut Camera;
-    let p_camera_end: *mut *mut Camera = add_ptr(p_camera, (*scene).cameras.count);
+    // SAFETY: `scene` is live (see above).
+    let mut p_camera: *mut *mut Camera = unsafe { (*scene).cameras.data } as *mut *mut Camera;
+    // SAFETY: `scene` is live (see above).
+    let p_camera_end: *mut *mut Camera = add_ptr(p_camera, unsafe { (*scene).cameras.count });
     while p_camera != p_camera_end {
-        let camera: &'a CameraView = CameraView::from_ptr(*p_camera);
-        update_camera(scene_view, camera);
-        p_camera = p_camera.add(1);
+        // SAFETY: as for the node run, for `scene->cameras` and `ufbx_camera`.
+        let camera: &'a CameraView = unsafe { CameraView::from_ptr(*p_camera) };
+        // SAFETY: `scene_view` and `camera` are live views into the same arena.
+        unsafe { update_camera(scene_view, camera) };
+        // SAFETY: `p_camera` is inside the run (loop condition).
+        p_camera = unsafe { p_camera.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_bone, p_bone, scene->bones)`
-    let mut p_bone: *mut *mut Bone = (*scene).bones.data as *mut *mut Bone;
-    let p_bone_end: *mut *mut Bone = add_ptr(p_bone, (*scene).bones.count);
+    // SAFETY: `scene` is live (see above).
+    let mut p_bone: *mut *mut Bone = unsafe { (*scene).bones.data } as *mut *mut Bone;
+    // SAFETY: `scene` is live (see above).
+    let p_bone_end: *mut *mut Bone = add_ptr(p_bone, unsafe { (*scene).bones.count });
     while p_bone != p_bone_end {
-        let bone: &'a BoneView = BoneView::from_ptr(*p_bone);
+        // SAFETY: as for the node run, for `scene->bones` and `ufbx_bone`.
+        let bone: &'a BoneView = unsafe { BoneView::from_ptr(*p_bone) };
         update_bone(scene_view, bone);
-        p_bone = p_bone.add(1);
+        // SAFETY: `p_bone` is inside the run (loop condition).
+        p_bone = unsafe { p_bone.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_line_curve, p_line, scene->line_curves)`
-    let mut p_line: *mut *mut LineCurve = (*scene).line_curves.data as *mut *mut LineCurve;
-    let p_line_end: *mut *mut LineCurve = add_ptr(p_line, (*scene).line_curves.count);
+    // SAFETY: `scene` is live (see above).
+    let mut p_line: *mut *mut LineCurve =
+        unsafe { (*scene).line_curves.data } as *mut *mut LineCurve;
+    // SAFETY: `scene` is live (see above).
+    let p_line_end: *mut *mut LineCurve = add_ptr(p_line, unsafe { (*scene).line_curves.count });
     while p_line != p_line_end {
-        let line: &'a LineCurveView = LineCurveView::from_ptr(*p_line);
+        // SAFETY: as for the node run, for `scene->line_curves` and
+        // `ufbx_line_curve`.
+        let line: &'a LineCurveView = unsafe { LineCurveView::from_ptr(*p_line) };
         update_line_curve(line);
-        p_line = p_line.add(1);
+        // SAFETY: `p_line` is inside the run (loop condition).
+        p_line = unsafe { p_line.add(1) };
     }
 
     if initial {
-        update_initial_clusters(scene);
+        // SAFETY: `scene` is live (see above).
+        unsafe { update_initial_clusters(scene) };
 
         // C: `ufbxi_for_ptr_list(ufbx_pose, p_pose, scene->poses)`
-        let mut p_pose: *mut *mut Pose = (*scene).poses.data as *mut *mut Pose;
-        let p_pose_end: *mut *mut Pose = add_ptr(p_pose, (*scene).poses.count);
+        // SAFETY: `scene` is live (see above).
+        let mut p_pose: *mut *mut Pose = unsafe { (*scene).poses.data } as *mut *mut Pose;
+        // SAFETY: `scene` is live (see above).
+        let p_pose_end: *mut *mut Pose = add_ptr(p_pose, unsafe { (*scene).poses.count });
         while p_pose != p_pose_end {
-            update_pose(*p_pose);
-            p_pose = p_pose.add(1);
+            // SAFETY: `p_pose` addresses an element of the `scene->poses` run
+            // (loop condition), so it reads a pointer to a live `ufbx_pose`.
+            unsafe { update_pose(*p_pose) };
+            // SAFETY: `p_pose` is inside the run (loop condition).
+            p_pose = unsafe { p_pose.add(1) };
         }
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
-    let mut p_cluster: *mut *mut SkinCluster = (*scene).skin_clusters.data as *mut *mut SkinCluster;
-    let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, (*scene).skin_clusters.count);
+    // SAFETY: `scene` is live (see above).
+    let mut p_cluster: *mut *mut SkinCluster =
+        unsafe { (*scene).skin_clusters.data } as *mut *mut SkinCluster;
+    // SAFETY: `scene` is live (see above).
+    let p_cluster_end: *mut *mut SkinCluster =
+        add_ptr(p_cluster, unsafe { (*scene).skin_clusters.count });
     while p_cluster != p_cluster_end {
-        update_skin_cluster(*p_cluster);
-        p_cluster = p_cluster.add(1);
+        // SAFETY: `p_cluster` addresses an element of the `scene->skin_clusters`
+        // run (loop condition), so it reads a pointer to a live
+        // `ufbx_skin_cluster`.
+        unsafe { update_skin_cluster(*p_cluster) };
+        // SAFETY: `p_cluster` is inside the run (loop condition).
+        p_cluster = unsafe { p_cluster.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_channel, p_channel, scene->blend_channels)`
+    // SAFETY: `scene` is live (see above).
     let mut p_channel: *mut *mut BlendChannel =
-        (*scene).blend_channels.data as *mut *mut BlendChannel;
-    let p_channel_end: *mut *mut BlendChannel = add_ptr(p_channel, (*scene).blend_channels.count);
+        unsafe { (*scene).blend_channels.data } as *mut *mut BlendChannel;
+    // SAFETY: `scene` is live (see above).
+    let p_channel_end: *mut *mut BlendChannel =
+        add_ptr(p_channel, unsafe { (*scene).blend_channels.count });
     while p_channel != p_channel_end {
-        let channel: &'a BlendChannelView = BlendChannelView::from_ptr(*p_channel);
+        // SAFETY: as for the node run, for `scene->blend_channels` and
+        // `ufbx_blend_channel`.
+        let channel: &'a BlendChannelView = unsafe { BlendChannelView::from_ptr(*p_channel) };
         update_blend_channel(channel);
-        p_channel = p_channel.add(1);
+        // SAFETY: `p_channel` is inside the run (loop condition).
+        p_channel = unsafe { p_channel.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, scene->textures)`
-    let mut p_texture: *mut *mut Texture = (*scene).textures.data as *mut *mut Texture;
-    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, (*scene).textures.count);
+    // SAFETY: `scene` is live (see above).
+    let mut p_texture: *mut *mut Texture = unsafe { (*scene).textures.data } as *mut *mut Texture;
+    // SAFETY: `scene` is live (see above).
+    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, unsafe { (*scene).textures.count });
     while p_texture != p_texture_end {
-        let texture: &'a TextureView = TextureView::from_ptr(*p_texture);
+        // SAFETY: as for the node run, for `scene->textures` and `ufbx_texture`.
+        let texture: &'a TextureView = unsafe { TextureView::from_ptr(*p_texture) };
         update_texture(texture);
-        p_texture = p_texture.add(1);
+        // SAFETY: `p_texture` is inside the run (loop condition).
+        p_texture = unsafe { p_texture.add(1) };
     }
 
-    propagate_main_textures(scene);
+    // SAFETY: `scene` is live (see above).
+    unsafe { propagate_main_textures(scene) };
 
     // C: `ufbxi_for_ptr_list(ufbx_material, p_material, scene->materials)`
-    let mut p_material: *mut *mut Material = (*scene).materials.data as *mut *mut Material;
-    let p_material_end: *mut *mut Material = add_ptr(p_material, (*scene).materials.count);
+    // SAFETY: `scene` is live (see above).
+    let mut p_material: *mut *mut Material =
+        unsafe { (*scene).materials.data } as *mut *mut Material;
+    // SAFETY: `scene` is live (see above).
+    let p_material_end: *mut *mut Material =
+        add_ptr(p_material, unsafe { (*scene).materials.count });
     while p_material != p_material_end {
-        update_material(scene, *p_material);
-        p_material = p_material.add(1);
+        // SAFETY: `scene` is live, and `p_material` addresses an element of the
+        // `scene->materials` run (loop condition), so it reads a pointer to a
+        // live `ufbx_material`.
+        unsafe { update_material(scene, *p_material) };
+        // SAFETY: `p_material` is inside the run (loop condition).
+        p_material = unsafe { p_material.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_stack, p_stack, scene->anim_stacks)`
-    let mut p_stack: *mut *mut AnimStack = (*scene).anim_stacks.data as *mut *mut AnimStack;
-    let p_stack_end: *mut *mut AnimStack = add_ptr(p_stack, (*scene).anim_stacks.count);
+    // SAFETY: `scene` is live (see above).
+    let mut p_stack: *mut *mut AnimStack =
+        unsafe { (*scene).anim_stacks.data } as *mut *mut AnimStack;
+    // SAFETY: `scene` is live (see above).
+    let p_stack_end: *mut *mut AnimStack = add_ptr(p_stack, unsafe { (*scene).anim_stacks.count });
     while p_stack != p_stack_end {
-        let stack: &'a AnimStackView = AnimStackView::from_ptr(*p_stack);
+        // SAFETY: as for the node run, for `scene->anim_stacks` and
+        // `ufbx_anim_stack`.
+        let stack: &'a AnimStackView = unsafe { AnimStackView::from_ptr(*p_stack) };
         update_anim_stack(scene_view, stack);
-        p_stack = p_stack.add(1);
+        // SAFETY: `p_stack` is inside the run (loop condition).
+        p_stack = unsafe { p_stack.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_display_layer, p_layer, scene->display_layers)`
+    // SAFETY: `scene` is live (see above).
     let mut p_layer: *mut *mut DisplayLayer =
-        (*scene).display_layers.data as *mut *mut DisplayLayer;
-    let p_layer_end: *mut *mut DisplayLayer = add_ptr(p_layer, (*scene).display_layers.count);
+        unsafe { (*scene).display_layers.data } as *mut *mut DisplayLayer;
+    // SAFETY: `scene` is live (see above).
+    let p_layer_end: *mut *mut DisplayLayer =
+        add_ptr(p_layer, unsafe { (*scene).display_layers.count });
     while p_layer != p_layer_end {
-        let layer: &'a DisplayLayerView = DisplayLayerView::from_ptr(*p_layer);
+        // SAFETY: as for the node run, for `scene->display_layers` and
+        // `ufbx_display_layer`.
+        let layer: &'a DisplayLayerView = unsafe { DisplayLayerView::from_ptr(*p_layer) };
         update_display_layer(layer);
-        p_layer = p_layer.add(1);
+        // SAFETY: `p_layer` is inside the run (loop condition).
+        p_layer = unsafe { p_layer.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_constraint, p_constraint, scene->constraints)`
-    let mut p_constraint: *mut *mut Constraint = (*scene).constraints.data as *mut *mut Constraint;
-    let p_constraint_end: *mut *mut Constraint = add_ptr(p_constraint, (*scene).constraints.count);
+    // SAFETY: `scene` is live (see above).
+    let mut p_constraint: *mut *mut Constraint =
+        unsafe { (*scene).constraints.data } as *mut *mut Constraint;
+    // SAFETY: `scene` is live (see above).
+    let p_constraint_end: *mut *mut Constraint =
+        add_ptr(p_constraint, unsafe { (*scene).constraints.count });
     while p_constraint != p_constraint_end {
-        let constraint: &'a ConstraintView = ConstraintView::from_ptr(*p_constraint);
+        // SAFETY: as for the node run, for `scene->constraints` and
+        // `ufbx_constraint`.
+        let constraint: &'a ConstraintView = unsafe { ConstraintView::from_ptr(*p_constraint) };
         update_constraint(constraint);
-        p_constraint = p_constraint.add(1);
+        // SAFETY: `p_constraint` is inside the run (loop condition).
+        p_constraint = unsafe { p_constraint.add(1) };
     }
 
-    update_anim(scene);
+    // SAFETY: `scene` is live (see above).
+    unsafe { update_anim(scene) };
 }
 
 // ufbx.c:23869-23878 `ufbxi_update_scene_metadata`
@@ -10902,7 +14089,9 @@ pub(crate) unsafe fn round_if_near(targets: *const Real, num_targets: usize, val
     for i in 0..num_targets {
         // C: `double target = targets[i];` — the real target promotes to
         // double, and the range test below compares `value` in double too.
-        let target: f64 = as_f64!(*targets.add(i));
+        // SAFETY: `targets` addresses `num_targets` initialized `ufbx_real`s (fn
+        // contract) and `i` is in `0..num_targets` (loop bound).
+        let target: f64 = as_f64!(unsafe { *targets.add(i) });
         let mut error: f64 = target * 9.5367431640625e-7;
         if error < 0.0 {
             error = -error;
@@ -11081,10 +14270,8 @@ mod tests {
             // SAFETY: `prop` is a NUL-terminated static string literal in the
             // mapping table, so the scan stops inside the literal — which is
             // exactly the property this check exists to confirm.
-            unsafe {
-                while *mapping.prop.add(len) != 0 {
-                    len += 1;
-                }
+            while unsafe { *mapping.prop.add(len) } != 0 {
+                len += 1;
             }
             assert_eq!(len, mapping.prop_len as usize);
         }
@@ -11098,7 +14285,11 @@ mod tests {
         if str_.data.is_null() {
             assert_eq!(str_.length, 0);
         } else {
-            assert_eq!(*str_.data.add(str_.length), 0);
+            // SAFETY: `str_` comes from a shader mapping table (fn contract) and
+            // is non-null in this branch, so it is one of the
+            // `ufbxi_string_literal!` entries: a NUL-terminated literal whose
+            // `length` is `.len() - 1`, so `data[length]` is in bounds.
+            assert_eq!(unsafe { *str_.data.add(str_.length) }, 0);
             assert!(str_.length > 0);
         }
     }
