@@ -274,52 +274,21 @@ impl SubdivideOptsView {
     }
 }
 
-// Typed interior-mutable VIEW over `VertexVec3` (non-Copy: has List fields).
+// Typed interior-mutable VIEW over `VertexVec3` (non-Copy: has List fields);
+// field accessors are generated (src/generated_views.rs).
 pub(crate) type VertexVec3View = crate::native::view::View<crate::generated::VertexVec3>;
 
-impl VertexVec3View {
-    #[inline(always)]
-    pub(crate) fn values_view(&self) -> &crate::prelude::ListView<crate::generated::Vec3> {
-        unsafe {
-            &*(&raw mut (*self.get()).values
-                as *mut crate::prelude::ListView<crate::generated::Vec3>)
-        }
-    }
-    #[inline(always)]
-    pub(crate) fn indices_view(&self) -> &crate::prelude::ListView<u32> {
-        unsafe { &*(&raw mut (*self.get()).indices as *mut crate::prelude::ListView<u32>) }
-    }
-}
-
-// Typed interior-mutable VIEW over a `Mesh` field (public struct; only the sc-accessed
-// leaves are exposed).
+// Typed interior-mutable VIEW over a `Mesh` field (public struct); field
+// accessors are generated (src/generated_views.rs).
 pub(crate) type MeshView = crate::native::view::View<crate::generated::Mesh>;
 
 impl MeshView {
-    #[inline(always)]
-    pub(crate) fn vertex_indices_view(&self) -> &crate::prelude::ListView<u32> {
-        unsafe { &*(&raw mut (*self.get()).vertex_indices as *mut crate::prelude::ListView<u32>) }
-    }
+    // `vertex_position` — typed VIEW handle over the aggregate field (the
+    // generated projection `vertex_position()` is the same lens; this alias
+    // keeps the concrete `&VertexVec3View` type at existing call sites).
     #[inline(always)]
     pub(crate) fn vertex_position_view(&self) -> &VertexVec3View {
         unsafe { &*(&raw mut (*self.get()).vertex_position as *mut VertexVec3View) }
-    }
-    // Plain field reads (`num_vertices`, `subdivision_boundary`, ...) are
-    // generated accessors — see src/generated_views.rs.
-    // `edge_crease` (List<Real>) — typed VIEW handle (reinterpret-in-place);
-    // interior-mutable over the context-owned `src_mesh`, read via `.data()`.
-    #[inline(always)]
-    pub(crate) fn edge_crease_view(&self) -> &crate::prelude::ListView<crate::prelude::Real> {
-        unsafe {
-            &*(&raw mut (*self.get()).edge_crease
-                as *mut crate::prelude::ListView<crate::prelude::Real>)
-        }
-    }
-    #[inline(always)]
-    pub(crate) fn subdivision_result_ptr(
-        &self,
-    ) -> *const Option<crate::prelude::Ref<crate::generated::SubdivisionResult>> {
-        unsafe { &raw const (*self.get()).subdivision_result }
     }
 }
 

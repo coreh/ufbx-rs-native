@@ -364,6 +364,8 @@ view_accessor_structs = [
     "ufbx_mesh_part",
     "ufbx_face_group",
     "ufbx_mesh",
+    "ufbx_skin_deformer",
+    "ufbx_subdivision_result",
 ]
 
 # `(struct, field)` pairs whose READ accessor is hand-written instead of
@@ -2155,30 +2157,57 @@ def emit_view_impls(rs: RustStruct):
     emit(f"impl<M: Mode> View<{name}, M> {{")
     indent()
     for field in fields:
-        if (rs.ir.name, field.ir.name) in view_accessor_skip_read:
-            continue
-        # A field accessor named after a `from_*` field is not a conversion
-        # constructor; keep the field's name.
-        if field.name.startswith("from_"):
-            emit("#[allow(clippy::wrong_self_convention)]")
-        emit("#[inline(always)]")
-        if is_view_projection_field(field):
-            emit(f"pub(crate) fn {field.name}(&self) -> &View<{field.type.name}, M> {{")
+        base = field.name.strip("_")
+        if (rs.ir.name, field.ir.name) not in view_accessor_skip_read:
+            # A field accessor named after a `from_*` field is not a conversion
+            # constructor; keep the field's name.
+            if field.name.startswith("from_"):
+                emit("#[allow(clippy::wrong_self_convention)]")
+            emit("#[inline(always)]")
+            if is_view_projection_field(field):
+                emit(f"pub(crate) fn {field.name}(&self) -> &View<{field.type.name}, M> {{")
+                indent()
+                emit(f"// SAFETY: in-place projection of the `{field.name}` field; liveness and")
+                emit("// `M`-adequate provenance carry over from this view's own mint.")
+                emit(f"unsafe {{ View::mint((&raw const (*self.as_ptr()).{field.name}).cast_mut()) }}")
+                unindent()
+                emit("}")
+            else:
+                fty = field.type.fmt_member("")
+                emit(f"pub(crate) fn {field.name}(&self) -> {fty} {{")
+                indent()
+                emit(f"// SAFETY: by-value read of the `{field.name}` field; the viewed `{name}`")
+                emit("// is valid and live per this view's mint vouch.")
+                emit(f"unsafe {{ ptr::read(&raw const (*self.as_ptr()).{field.name}) }}")
+                unindent()
+                emit("}")
+        if field.type.is_list:
+            # In-place list projection for sub-field access (`.data()`,
+            # `.count()`, and Mut-side sub-field writes via the ListView
+            # surface); the by-value read above serves whole-List copies.
+            list_type = "RefList" if field.type.is_ref_list else "List"
+            inner = field.type.inner.fmt_member("")
+            emit("#[inline(always)]")
+            emit(f"pub(crate) fn {base}_view(&self) -> &View<{list_type}<{inner}>, M> {{")
             indent()
             emit(f"// SAFETY: in-place projection of the `{field.name}` field; liveness and")
             emit("// `M`-adequate provenance carry over from this view's own mint.")
             emit(f"unsafe {{ View::mint((&raw const (*self.as_ptr()).{field.name}).cast_mut()) }}")
             unindent()
             emit("}")
-        else:
-            fty = field.type.fmt_member("")
-            emit(f"pub(crate) fn {field.name}(&self) -> {fty} {{")
-            indent()
-            emit(f"// SAFETY: by-value read of the `{field.name}` field; the viewed `{name}`")
-            emit("// is valid and live per this view's mint vouch.")
-            emit(f"unsafe {{ ptr::read(&raw const (*self.as_ptr()).{field.name}) }}")
-            unindent()
-            emit("}")
+        # Read-address projection: legal in both modes (a `*const` inherits the
+        # view's provenance; deref stays on the caller's obligation).
+        fty = field.type.fmt_member("")
+        if base.startswith("from_"):
+            emit("#[allow(clippy::wrong_self_convention)]")
+        emit("#[inline(always)]")
+        emit(f"pub(crate) fn {base}_ptr(&self) -> *const {fty} {{")
+        indent()
+        emit(f"// SAFETY: in-bounds projection of the `{field.name}` field; the returned")
+        emit("// read pointer inherits the view's provenance.")
+        emit(f"unsafe {{ &raw const (*self.as_ptr()).{field.name} }}")
+        unindent()
+        emit("}")
     unindent()
     emit("}")
 
@@ -2223,7 +2252,8 @@ def emit_views_file():
     emit("//")
     emit("// Crate-internal `View<T, M>` field accessors over the generated public")
     emit("// structs (`view_accessor_structs` in generate_rust.py): a by-value read")
-    emit("// per leaf field, an in-place `&View` projection per aggregate field, and")
+    emit("// per leaf field, an in-place `&View` projection per aggregate and list")
+    emit("// (`*_view`) field, a `*_ptr` read-address projection per field, and")
     emit("// `Mut`-only setters / raw field pointers. Soundness model (mint vouch,")
     emit("// `Mut`/`Const` provenance): src/native/view.rs.")
     emit()
