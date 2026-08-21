@@ -2277,8 +2277,9 @@ pub(crate) unsafe fn next_prop_slow(iter: *mut PropIter) -> *const Prop {
         cmp = if prop_key < over_key { -1 } else { 1 };
     } else {
         // SAFETY: equal keys means neither cursor took the `UINT32_MAX`
-        // terminator above, so both address live elements of their runs; both
-        // names are string-pool `ufbx_string`s, stored NUL-terminated.
+        // terminator above, so both address live elements of their runs;
+        // `prop.name` is a string-pool string and `over.prop_name` was interned
+        // NUL-terminated by `create_anim_imp` (STRINGS table or `push_anim_string`).
         cmp = unsafe { strcmp((*prop).name.data, (*over).prop_name.data) };
     }
 
@@ -2424,7 +2425,8 @@ pub(crate) unsafe fn evaluate_selected_props(
                 }
                 break;
             // SAFETY: `name` is an entry of the caller's name table and
-            // `prop->name` a string-pool string, both NUL-terminated.
+            // `prop.name` is either a string-pool string (element prop) or an
+            // override name interned by `create_anim_imp` — both NUL-terminated.
             } else if unsafe { strcmp(name, (*prop).name.data) } < 0 {
                 name_ix += 1;
                 if name_ix < max_props {
@@ -4785,8 +4787,9 @@ pub(crate) unsafe extern "C" fn prop_override_less(
         // SAFETY: as above.
         return unsafe { (*a)._internal_key } < unsafe { (*b)._internal_key };
     }
-    // SAFETY: as above; each element's `prop_name` is a pooled, NUL-terminated
-    // `ufbx_string`, so `strcmp` stays inside both.
+    // SAFETY: as above; at the one call site (the post-interning sort in
+    // `create_anim_imp`) every `prop_name` is a STRINGS-table entry or a
+    // NUL-terminated `push_anim_string` copy, so `strcmp` stays inside both.
     unsafe { strcmp((*a).prop_name.data, (*b).prop_name.data) < 0 }
 }
 

@@ -9754,9 +9754,9 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             .find::<TmpAnimStack, _>(hash, &name);
 
         if !entry.is_null() {
-            // SAFETY: a non-null entry holds a live element of uc's own
-            // scene, so its `stack` element may be dereferenced and its
-            // `props` run filled.
+            // SAFETY: a non-null entry was filled by `read_anim_stack` with
+            // `stack` pointing at a live element in uc's own `tmp_elements`
+            // arena, so it may be dereferenced and its `props` run filled.
             unsafe {
                 let stack: *mut AnimStack = (*entry).stack;
                 if (*stack).element.props.props.count == 0 {
@@ -12071,9 +12071,10 @@ pub(crate) unsafe fn update_vertex_first_index(mesh: *mut Mesh) {
         // and `ix < num_indices` bounds the read.
         let vx: u32 = unsafe { *(*mesh).vertex_indices.data.add(ix) };
         if vx < num_vertices
-            // SAFETY: `vertex_first_index` holds one entry per vertex — its
-            // `count` is `num_vertices`, set by `ufbxi_finalize_mesh` before
-            // this runs — and `vx < num_vertices` bounds the read.
+            // SAFETY: every caller establishes `vertex_first_index.count ==
+            // num_vertices` (set by `process_indices`, or by `finalize_mesh`'s
+            // count==0 branch) before this runs, so `vx < num_vertices` bounds
+            // the read.
             && unsafe { *((*mesh).vertex_first_index.data as *mut u32).add(vx as usize) }
                 == NO_INDEX
         {
