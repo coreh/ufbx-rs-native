@@ -2702,10 +2702,11 @@ pub(crate) fn find_baked_element<'a, M: Mode>(
 }
 
 // ufbx.c:31340-31370 `ufbx_evaluate_baked_vec3`
-// C-parity: the trailing `keyframes.data[keyframes.count - 1]` is an
-// out-of-bounds read for an empty list (`count - 1` wraps to `SIZE_MAX`), and
-// `keys` is dereferenced without a null check — ported as pointer arithmetic
-// so the Rust behaves the way the C does instead of panicking earlier.
+// PORT DIVERGENCE (ufbx.c:31369): upstream's trailing
+// `keyframes.data[keyframes.count - 1]` reads `data[SIZE_MAX]` for an empty
+// list (`count - 1` wraps), an out-of-bounds read reachable from any caller
+// passing an empty keyframe list. The empty case returns `ZERO_VEC3` here;
+// reconcile once upstream lands the fix.
 pub(crate) unsafe fn evaluate_baked_vec3(keyframes: List<BakedVec3>, time: f64) -> Vec3 {
     let mut begin: usize = 0;
     let mut end: usize = keyframes.count;
@@ -2773,12 +2774,13 @@ pub(crate) unsafe fn evaluate_baked_vec3(keyframes: List<BakedVec3>, time: f64) 
         );
     }
 
-    // SAFETY: C-parity deliberate out-of-bounds read (ufbx.c:31369). Both loops
-    // are skipped only when `keyframes.count == 0`, where `count.wrapping_sub(1)`
-    // yields `usize::MAX` and `data.add` reads past the run exactly as the C
-    // source's `data[count - 1]` does; when `count >= 1` this addresses the last
-    // live keyframe of the run.
-    unsafe { (*keyframes.data.add(keyframes.count.wrapping_sub(1))).value }
+    // PORT DIVERGENCE (ufbx.c:31369): guard the empty list (see fn header).
+    if keyframes.count == 0 {
+        return ZERO_VEC3;
+    }
+    // SAFETY: `count >= 1` (guarded above), so `count - 1` addresses the last
+    // live keyframe of the run — the clamp value when no keyframe is past `time`.
+    unsafe { (*keyframes.data.add(keyframes.count - 1)).value }
 }
 
 // ufbx.c:31372-31403 `ufbx_evaluate_baked_quat`
@@ -2864,12 +2866,16 @@ pub(crate) unsafe fn evaluate_baked_quat(keyframes: List<BakedQuat>, time: f64) 
         );
     }
 
-    // SAFETY: C-parity deliberate out-of-bounds read (ufbx.c:31402). Both loops
-    // are skipped only when `keyframes.count == 0`, where `count.wrapping_sub(1)`
-    // yields `usize::MAX` and `data.add` reads past the run exactly as the C
-    // source's `data[count - 1]` does; when `count >= 1` this addresses the last
-    // live keyframe of the run.
-    unsafe { (*keyframes.data.add(keyframes.count.wrapping_sub(1))).value }
+    // PORT DIVERGENCE (ufbx.c:31402): upstream's trailing
+    // `keyframes.data[keyframes.count - 1]` reads `data[SIZE_MAX]` for an empty
+    // list; return `IDENTITY_QUAT` for that case. Reconcile once upstream lands
+    // the fix.
+    if keyframes.count == 0 {
+        return IDENTITY_QUAT;
+    }
+    // SAFETY: `count >= 1` (guarded above), so `count - 1` addresses the last
+    // live keyframe of the run — the clamp value when no keyframe is past `time`.
+    unsafe { (*keyframes.data.add(keyframes.count - 1)).value }
 }
 
 // ufbx.c:31405-31412 `ufbx_get_bone_pose`
