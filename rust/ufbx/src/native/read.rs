@@ -9572,6 +9572,12 @@ unsafe fn read_take_prop_channel_rec(
                 ElementType::AnimValue,
             )
         };
+        // PORT DIVERGENCE (ufbx.c:15652): C omits this check, so a null `value`
+        // from an allocation failure (a failed `push_synthetic_element` does not
+        // force the `connect_oo` below to fail) reaches the projection in the
+        // loop and is dereferenced. Guard it here, matching every other
+        // `push_synthetic_element` site; reconcile once upstream lands the fix.
+        ufbxi_check!(uc, !value.is_null(), "value");
 
         // Add a "virtual" connection between the animated property and the layer/target
         connect_oo(uc, value_fbx_id, layer_fbx_id)?;
@@ -9583,11 +9589,7 @@ unsafe fn read_take_prop_channel_rec(
             // C-parity: `&value->default_value.v[i]` — `ufbx_vec3` is a union
             // of `{ x, y, z }` and `ufbx_real v[3]`; the generator emits only
             // the named-struct member, so the array view is reached by cast.
-            // SAFETY: when non-null, `value` points at a live `ufbx_anim_value`.
-            // Its null case is an inherited, unchecked C-parity hazard: upstream
-            // omits the check (see the note above the push), and a failed
-            // `push_synthetic_element` does not force the `connect_oo` above to
-            // fail, so a null `value` reaches this projection exactly as in C.
+            // SAFETY: `value` is the live `ufbx_anim_value` null-checked above.
             // `default_value` is a three-`ufbx_real` union and
             // `i < num_channel_nodes <= 3` bounds the step; `channel_names[i]` is
             // the NUL-terminated `'C'` value fetched for that channel.

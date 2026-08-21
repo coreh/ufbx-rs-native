@@ -31,6 +31,15 @@ line references are to the current upstream state and are re-anchored on sync.
    raw pointers and an explicit `// C-parity:` comment rather than "fixing" it.
 5. **Every ported function carries a `// ufbx.c:NNNN-MMMM` anchor comment** —
    diff-only review and upstream-diff reapplication both depend on it.
+6. **Deliberate fixes for genuine UB in upstream C are marked `// PORT DIVERGENCE
+   (ufbx.c:NNNN): <what C does wrong> ... reconcile once upstream lands the fix.`**
+   Rule 4 is the default (port UB-adjacent-but-working code as-is with `// C-parity:`);
+   this is the narrow exception for a *real* memory-safety bug (not merely
+   UB-adjacent) that has been reported upstream and is being fixed ahead of the
+   sync. The marker keeps the divergence greppable so it can be dropped — reverting
+   to plain C-parity — when the upstream fix arrives on the next sync. Do NOT
+   silently "fix" C bugs without this marker; an unmarked behavioral divergence
+   breaks upstream-diff reapplication.
 
 ## Naming
 

@@ -419,9 +419,11 @@ static XML_CTYPE: [u8; 256] = {
 // ufbx.c:7312-7321 `ufbxi_xml_refill`
 #[inline(never)]
 pub(crate) fn xml_refill(xc: &XmlContext) {
-    // SAFETY: `read_fn` is Some once the XML reader is initialized (refill is
-    // only reached in that state); the callback and buffer pointers are valid by
-    // construction.
+    // SAFETY: the sole entry point (`cache_load_xml` -> `load_xml`) fills
+    // `read_fn` from an opened stream, so it is Some wherever refill runs; the
+    // callback reads into `data`, which addresses `data_size()` writable bytes.
+    // (`load_xml`'s signature admits a null `read_fn` with a non-empty prefix;
+    // no caller does that today, so `unwrap_unchecked` holds.)
     let mut num: usize = unsafe {
         (xc.read_fn().unwrap_unchecked())(
             xc.read_user(),
@@ -429,19 +431,24 @@ pub(crate) fn xml_refill(xc: &XmlContext) {
             xc.data_size(),
         )
     };
-    if num == usize::MAX || num < xc.data_size() {
-        xc.set_io_error(true);
+    // PORT DIVERGENCE (ufbx.c:7315): C keeps `num == SIZE_MAX` (the read_fn
+    // IO-error return), skipping the sentinel append and wrapping `pos_end` to
+    // `data - 1` so later scans run past the buffer. Clamp it to a zero-length
+    // read so the sentinel is appended and `pos_end` stays in bounds (the
+    // `io_error` flag is then set by the short-read branch); reconcile once
+    // upstream lands the fix.
+    if num == usize::MAX {
+        num = 0;
     }
     if num < xc.data_size() {
+        xc.set_io_error(true);
         // C: `xc->data[num++] = '\0';`
         xc.data_at(num).set(b'\0');
         num += 1;
     }
     xc.set_pos(xc.data_ptr());
-    // C-parity: `xc->pos_end = xc->data + num;` — a misbehaving `read_fn` can
-    // return `SIZE_MAX` here (the `io_error` flag is set but the pointer is
-    // still formed), so the offset is applied with wrapping semantics rather
-    // than `add`, which would trip the pointer-overflow precondition.
+    // C: `xc->pos_end = xc->data + num;`. `num <= data_size()` after the clamp
+    // above, so this stays within `data`'s one-past-the-end bound.
     xc.set_pos_end(xc.data_ptr().wrapping_add(num));
 }
 
@@ -449,8 +456,9 @@ pub(crate) fn xml_refill(xc: &XmlContext) {
 #[inline(always)]
 pub(crate) fn xml_advance(xc: &XmlContext) {
     // C: `if (++xc->pos == xc->pos_end)` — pre-increment decomposed.
-    // SAFETY: `pos` stays within `[data, pos_end]` by the parser invariant, so
-    // advancing by one is in-bounds (at most one-past-the-end).
+    // SAFETY: `pos < pos_end` on entry (the caller reads `*pos` first), and
+    // `pos_end` bounds the current window (the prefix, or the refill buffer
+    // one-past its last byte), so advancing by one reaches at most `pos_end`.
     xc.set_pos(unsafe { xc.pos().add(1) });
     if xc.pos() == xc.pos_end() {
         xml_refill(xc);
@@ -489,7 +497,11 @@ pub(crate) fn xml_push_token_char(xc: &XmlContext, c: u8) -> Result<(), Fail> {
 // C returns `int` 1/0; every call site consumes it as a boolean.
 #[inline(never)]
 pub(crate) fn xml_accept(xc: &XmlContext, ch: u8) -> bool {
-    // SAFETY: `pos` points at a valid byte within the nul-terminated buffer.
+    // SAFETY: `pos < pos_end`, so `*pos` is a readable byte. `xml_advance`
+    // refills exactly when `pos` reaches `pos_end`, and `xml_refill` always
+    // leaves `pos < pos_end` (a data byte, or the terminating NUL on a short or
+    // errored read), so every read here lands on a live byte of the current
+    // window (the prefix or the refill buffer).
     if unsafe { *xc.pos() } == ch {
         xml_advance(xc);
         true
@@ -501,7 +513,10 @@ pub(crate) fn xml_accept(xc: &XmlContext, ch: u8) -> bool {
 // ufbx.c:7347-7352 `ufbxi_xml_skip_while`
 #[inline(never)]
 pub(crate) fn xml_skip_while(xc: &XmlContext, ctypes: u32) {
-    // SAFETY: `pos` points at a valid byte within the nul-terminated buffer.
+    // SAFETY: `pos < pos_end`, so `*pos` is a readable byte — `xml_advance`
+    // refills at `pos == pos_end` and `xml_refill` always leaves `pos < pos_end`
+    // (a data byte, or the terminating NUL); the NUL is not in `ctypes`, so the
+    // loop stops there rather than advancing past it.
     while XML_CTYPE[unsafe { *xc.pos() } as usize] as u32 & ctypes != 0 {
         xml_advance(xc);
     }
@@ -525,9 +540,11 @@ pub(crate) unsafe fn xml_skip_until_string(
     let wrap_mask: usize = buf.len() - 1;
     ufbx_assert!(suffix_len < buf.len());
     loop {
-        // SAFETY: `pos` points at a readable byte of the refill buffer — the
-        // parser keeps it inside `[data, pos_end)`, and the NUL sentinel
-        // `xml_refill` appends terminates the loop before it runs past.
+        // SAFETY: `pos < pos_end`, so `*pos` is a readable byte of the current
+        // window (prefix or refill buffer) — `xml_advance` refills at
+        // `pos == pos_end` and `xml_refill` always leaves `pos < pos_end`; the
+        // `c != 0` check below stops the loop at the NUL a short/errored refill
+        // appends, before another read can run past the data.
         let c: u8 = unsafe { *xc.pos() };
         ufbxi_check_err_msg!(xc.error_view(), c != 0, "Truncated file");
         xml_advance(xc);
@@ -585,17 +602,20 @@ pub(crate) unsafe fn xml_read_until(
 ) -> Result<(), Fail> {
     xc.set_tok_len(0);
     loop {
-        // SAFETY: `pos` points at a readable byte of the refill buffer — the
-        // parser keeps it inside `[data, pos_end)`, and the NUL sentinel
-        // `xml_refill` appends stops the walk before it runs past.
+        // SAFETY: `pos < pos_end`, so `*pos` is a readable byte of the current
+        // window (prefix or refill buffer) — `xml_advance` refills at
+        // `pos == pos_end` and `xml_refill` always leaves `pos < pos_end`; the
+        // NUL a short/errored refill appends is not in `ctypes` (and the `&`
+        // path's `c != 0` check catches it), so the walk stops before running past.
         let mut c: u8 = unsafe { *xc.pos() };
 
         if c == b'&' {
             let entity_begin: usize = xc.tok_len();
             loop {
                 xml_advance(xc);
-                // SAFETY: same buffer invariant; `xml_advance` refills when the
-                // read position reaches the end.
+                // SAFETY: `pos < pos_end` as above (the preceding `xml_advance`
+                // refilled if needed), so `*pos` is a readable byte; the
+                // `c != '\0'` check stops at the terminating NUL.
                 c = unsafe { *xc.pos() };
                 ufbxi_check_err!(xc.error_view(), c != b'\0', "c != '\\0'");
                 if c == b';' {
@@ -761,8 +781,10 @@ unsafe fn xml_parse_tag_rec(
     );
 
     if !xml_accept(xc, b'<') {
-        // SAFETY: `pos` points at a readable byte of the refill buffer (parser
-        // invariant: it stays inside `[data, pos_end)`).
+        // SAFETY: `pos < pos_end`, so `*pos` is a readable byte of the current
+        // window (prefix or refill buffer) — `xml_advance` refills at
+        // `pos == pos_end` and `xml_refill` always leaves `pos < pos_end`; this
+        // read tests for the terminating NUL itself.
         if unsafe { *xc.pos() } == b'\0' {
             // SAFETY: `p_closing` is the caller's live `bool` out-param (fn
             // raw-param contract).

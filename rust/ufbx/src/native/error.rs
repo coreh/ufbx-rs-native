@@ -528,14 +528,15 @@ pub(crate) unsafe fn utf8_valid_length(str_: *const u8, length: usize) -> usize 
 pub(crate) unsafe fn clean_string_utf8(str_: *mut u8, length: usize) {
     let mut pos: usize = 0;
     loop {
-        // C-parity: C passes the FULL `length` (not `length - pos`) as the
-        // scan bound here; a terminating NUL at `str_[length]` (guaranteed by
-        // both callers) is what keeps the scan in bounds.
+        // PORT DIVERGENCE (ufbx.c:3492): C passes the full `length` from the
+        // offset base `str + pos`, so `utf8_valid_length`'s multi-byte lookahead
+        // reads up to two bytes past the terminating NUL. This passes the
+        // remaining `length - pos` instead; reconcile once upstream lands the fix.
         // SAFETY: `pos <= length` on every iteration (the loop breaks at
-        // equality), so `str_.add(pos)` stays inside the caller's buffer; the
-        // full-`length` scan bound is in-bounds because both callers guarantee
-        // a terminating NUL at `str_[length]`, per the C-parity note above.
-        pos += unsafe { utf8_valid_length(str_.add(pos) as *const u8, length) };
+        // equality), so `str_.add(pos)` stays inside the caller's buffer, and
+        // the `length - pos` scan bound keeps the lookahead inside
+        // `[str_, str_+length)`.
+        pos += unsafe { utf8_valid_length(str_.add(pos) as *const u8, length - pos) };
         if pos == length {
             break;
         }

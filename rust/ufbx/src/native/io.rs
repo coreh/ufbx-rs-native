@@ -290,9 +290,14 @@ pub(crate) fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
                 // and causes us to seek indefinitely forwards as `fseek()` does not
                 // report if we hit EOF...
                 let mut single_byte = MaybeUninit::<[u8; 1]>::uninit(); // ufbxi_uninit
-                                                                        // SAFETY: a stream that provides `skip_fn` also provides
-                                                                        // `read_fn` (stream-setup invariant); the destination is a
-                                                                        // local 1-byte buffer and exactly 1 byte is requested.
+                                                                        // PORT DIVERGENCE (ufbx.c:6869): C calls `uc->read_fn` here with
+                                                                        // no null guard, so a stream that sets `skip_fn` but leaves
+                                                                        // `read_fn` null invokes a null pointer. Check it first (matching
+                                                                        // the sibling `read_to` guard); reconcile once upstream lands the fix.
+                ufbxi_check_msg!(uc, uc.read_fn().is_some(), "IO error", "uc->read_fn");
+                // SAFETY: `read_fn` is `Some` (checked just above); the
+                // destination is a local 1-byte buffer and exactly 1 byte is
+                // requested.
                 let num_read: usize = unsafe {
                     (uc.read_fn().unwrap_unchecked())(
                         uc.read_user(),
