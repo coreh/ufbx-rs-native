@@ -706,8 +706,9 @@ pub(crate) unsafe fn load_memory(
     uc.set_data_begin(uc.data());
     uc.set_data_size(size);
     uc.set_progress_bytes_total(size as u64);
-    // SAFETY: `uc` is the initialized context, `opts` is non-null (checked) and
-    // `error` is null-or-live per this fn's contract.
+    // SAFETY: `uc` is the initialized context; `opts` is null-or-live (sentinels
+    // validated by the macro when non-null; `evaluate::load` zero-fills on null)
+    // and `error` is null-or-live per this fn's contract.
     unsafe { evaluate::load(uc, opts, error) }
 }
 
@@ -741,8 +742,9 @@ pub(crate) unsafe fn load_file_len(
     uc.set_deferred_load(true);
     uc.set_load_filename(filename);
     uc.set_load_filename_len(filename_len);
-    // SAFETY: `uc` is the initialized context, `opts` is non-null (checked) and
-    // `error` is null-or-live per this fn's contract.
+    // SAFETY: `uc` is the initialized context; `opts` is null-or-live (sentinels
+    // validated by the macro when non-null; `evaluate::load` zero-fills on null)
+    // and `error` is null-or-live per this fn's contract.
     unsafe { evaluate::load(uc, opts, error) }
 }
 
@@ -827,8 +829,9 @@ pub(crate) unsafe fn load_stream_prefix(
     // SAFETY: as above.
     uc.set_read_user(unsafe { (*stream).user });
 
-    // SAFETY: `uc` is the initialized context, `opts` is non-null (checked) and
-    // `error` is null-or-live per this fn's contract.
+    // SAFETY: `uc` is the initialized context; `opts` is null-or-live (sentinels
+    // validated by the macro when non-null; `evaluate::load` zero-fills on null)
+    // and `error` is null-or-live per this fn's contract.
     let scene: *mut Scene = unsafe { evaluate::load(uc, opts, error) };
     scene
 }
@@ -2281,8 +2284,9 @@ pub(crate) unsafe fn evaluate_scene(
     unsafe { ufbxi_check_opts_ptr!(Scene, opts, error) };
     // C: `ufbxi_eval_context ec = { 0 };`
     let ec = evaluate::EvalContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
-    // SAFETY: `&ec` is the fresh zeroed eval context; `scene`/`anim` are live per
-    // this fn's contract and `opts`/`error` null-or-live, forwarded unchanged.
+    // SAFETY: `&ec` is the fresh zeroed eval context; `scene` is live and `anim`
+    // null-or-live (the callee substitutes `scene.anim` on null) per this fn's
+    // contract, `opts`/`error` null-or-live, forwarded unchanged.
     unsafe { evaluate::evaluate_scene(&ec, scene as *mut Scene, anim, time, opts, error) }
 }
 
@@ -6360,9 +6364,10 @@ pub(crate) fn catch_get_vertex_real<M: Mode>(
     ) {
         return 0.0;
     }
-    // SAFETY: `ix < values.count`, or `ix == NO_INDEX` (== -1 as i32) which
-    // reads the zero element ufbx guarantees immediately BEFORE `values.data`
-    // (same arena allocation; the C API relies on the same invariant).
+    // SAFETY: `ix < values.count` (and `ix < 2^31`, so the `as i32` cast is
+    // value-preserving — counts this large cannot occur in a loaded scene), or
+    // `ix == NO_INDEX` (== -1 as i32) which reads the zero element ufbx guarantees
+    // immediately BEFORE `values.data` (same arena allocation).
     unsafe { *v.values_data().offset(ix as i32 as isize) }
 }
 
@@ -6394,9 +6399,10 @@ pub(crate) fn catch_get_vertex_vec2<M: Mode>(
     ) {
         return ZERO_VEC2;
     }
-    // SAFETY: `ix < values.count`, or `ix == NO_INDEX` (== -1 as i32) which
-    // reads the zero element ufbx guarantees immediately BEFORE `values.data`
-    // (same arena allocation; the C API relies on the same invariant).
+    // SAFETY: `ix < values.count` (and `ix < 2^31`, so the `as i32` cast is
+    // value-preserving — counts this large cannot occur in a loaded scene), or
+    // `ix == NO_INDEX` (== -1 as i32) which reads the zero element ufbx guarantees
+    // immediately BEFORE `values.data` (same arena allocation).
     unsafe { *v.values_data().offset(ix as i32 as isize) }
 }
 
@@ -6428,9 +6434,10 @@ pub(crate) fn catch_get_vertex_vec3<M: Mode>(
     ) {
         return ZERO_VEC3;
     }
-    // SAFETY: `ix < values.count`, or `ix == NO_INDEX` (== -1 as i32) which
-    // reads the zero element ufbx guarantees immediately BEFORE `values.data`
-    // (same arena allocation; the C API relies on the same invariant).
+    // SAFETY: `ix < values.count` (and `ix < 2^31`, so the `as i32` cast is
+    // value-preserving — counts this large cannot occur in a loaded scene), or
+    // `ix == NO_INDEX` (== -1 as i32) which reads the zero element ufbx guarantees
+    // immediately BEFORE `values.data` (same arena allocation).
     unsafe { *v.values_data().offset(ix as i32 as isize) }
 }
 
@@ -6462,9 +6469,10 @@ pub(crate) fn catch_get_vertex_vec4<M: Mode>(
     ) {
         return ZERO_VEC4;
     }
-    // SAFETY: `ix < values.count`, or `ix == NO_INDEX` (== -1 as i32) which
-    // reads the zero element ufbx guarantees immediately BEFORE `values.data`
-    // (same arena allocation; the C API relies on the same invariant).
+    // SAFETY: `ix < values.count` (and `ix < 2^31`, so the `as i32` cast is
+    // value-preserving — counts this large cannot occur in a loaded scene), or
+    // `ix == NO_INDEX` (== -1 as i32) which reads the zero element ufbx guarantees
+    // immediately BEFORE `values.data` (same arena allocation).
     unsafe { *v.values_data().offset(ix as i32 as isize) }
 }
 
