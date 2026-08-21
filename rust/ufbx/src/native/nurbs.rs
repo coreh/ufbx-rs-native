@@ -57,6 +57,8 @@ use crate::native::scene_process::finalize_mesh_material;
 #[cfg(feature = "tessellation")]
 use crate::native::string_pool::slow_normalize3;
 #[cfg(feature = "tessellation")]
+use crate::native::view::View;
+#[cfg(feature = "tessellation")]
 use crate::prelude::Ref;
 use crate::prelude::{List, Real};
 
@@ -1128,16 +1130,20 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
         mesh.max_face_triangles = 2;
     }
 
+    // SAFETY: `mesh` is tc's own mesh slot, reached through `*mut` off the
+    // context (write-capable provenance for `Mut`) and live for the borrow;
+    // the fields accessed below were filled above.
+    let mesh_view = unsafe { View::<Mesh>::from_ptr(mesh) };
+
     // SAFETY: reading the live surface's material ref (tc construction
     // invariant).
     if !unsafe { opt_ptr(&(*surface).material) }.is_null() {
-        // SAFETY: `mesh` is tc's own mesh slot.
-        unsafe {
-            (*mesh).face_material.data = tc.result_view().push_zero::<u32>(num_faces) as *const u32;
-        }
+        mesh_view
+            .face_material_view()
+            .set_data(tc.result_view().push_zero::<u32>(num_faces) as *const u32);
         ufbxi_check_err!(
             tc.error_view(),
-            !unsafe { (*mesh).face_material.data }.is_null(),
+            !mesh_view.face_material().data.is_null(),
             "mesh->face_material.data"
         );
 
@@ -1148,21 +1154,21 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
         // checked; the material it receives is the surface's own live ref.
         unsafe {
             *mat = opt_ptr(&(*surface).material);
-            (*mesh).materials.data = mat as *const Ref<Material>;
-            (*mesh).materials.count = 1;
         }
+        mesh_view
+            .materials_view()
+            .set_data(mat as *const Ref<Material>);
+        mesh_view.materials_view().set_count(1);
     }
 
     if !tc.opts_view().skip_mesh_parts() {
-        // SAFETY: `mesh` is tc's own mesh slot.
-        unsafe {
-            (*mesh).material_parts.count = 1;
-            (*mesh).material_parts.data =
-                tc.result_view().push_zero::<MeshPart>(1) as *const MeshPart;
-        }
+        mesh_view.material_parts_view().set_count(1);
+        mesh_view
+            .material_parts_view()
+            .set_data(tc.result_view().push_zero::<MeshPart>(1) as *const MeshPart);
         ufbxi_check_err!(
             tc.error_view(),
-            !unsafe { (*mesh).material_parts.data }.is_null(),
+            !mesh_view.material_parts().data.is_null(),
             "mesh->material_parts.data"
         );
     }
@@ -1172,17 +1178,17 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
     // `vertex_normal.values` is the `normals` push, whose `count` elements are
     // exactly the run `compute_normals` writes.
     unsafe {
-        finalize_mesh_material(tc.result_view(), tc.error_mut_ptr(), mesh)?;
-        finalize_mesh(tc.result_view(), tc.error_mut_ptr(), mesh)?;
+        finalize_mesh_material(tc.result_view(), tc.error_mut_ptr(), mesh_view.get())?;
+        finalize_mesh(tc.result_view(), tc.error_mut_ptr(), mesh_view.get())?;
 
-        (*mesh).generated_normals = true;
+        mesh_view.set_generated_normals(true);
         compute_normals(
-            mesh,
-            &(*mesh).vertex_position,
-            (*mesh).vertex_normal.indices.data,
-            (*mesh).vertex_normal.indices.count,
-            (*mesh).vertex_normal.values.data as *mut Vec3,
-            (*mesh).vertex_normal.values.count,
+            mesh_view.as_ptr(),
+            mesh_view.vertex_position_ptr(),
+            mesh_view.vertex_normal().indices().data,
+            mesh_view.vertex_normal().indices().count,
+            mesh_view.vertex_normal().values().data as *mut Vec3,
+            mesh_view.vertex_normal().values().count,
         );
     }
 
@@ -1191,8 +1197,8 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
     if unsafe { (*surface).flip_normals } {
         // C: `ufbxi_nounroll ufbxi_for_list(ufbx_vec3, normal, mesh->vertex_normal.values)`
         unsafe {
-            let mut normal: *mut Vec3 = (*mesh).vertex_normal.values.data as *mut Vec3;
-            let normal_end: *mut Vec3 = add_ptr(normal, (*mesh).vertex_normal.values.count);
+            let mut normal: *mut Vec3 = mesh_view.vertex_normal().values().data as *mut Vec3;
+            let normal_end: *mut Vec3 = add_ptr(normal, mesh_view.vertex_normal().values().count);
             while normal != normal_end {
                 (*normal).x *= -1.0f32 as Real;
                 (*normal).y *= -1.0f32 as Real;
