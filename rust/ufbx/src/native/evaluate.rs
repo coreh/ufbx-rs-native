@@ -1565,10 +1565,15 @@ pub(crate) unsafe fn override_less_than_prop(
     }
     // C: `return strcmp(over->prop_name.data, prop->name.data);` — the `int`
     // result converts to `bool` (nonzero == true), so ANY name difference
-    // reports "less". Ported verbatim.
-    // SAFETY: as above; both names are `ufbx_string`s from the string pool,
-    // which stores every string NUL-terminated.
-    unsafe { strcmp((*over).prop_name.data, (*prop).name.data) != 0 }
+    // reports "less".
+    // PORT DIVERGENCE (ufbx.c:25633): upstream `strcmp` scans `prop.name` to a
+    // NUL, but on the NOT_FOUND path of `evaluate_prop_flags_len` it is the
+    // caller's raw `_len` name and need not be NUL-terminated (over-read on an
+    // element_id + `_internal_key` collision). `str_cmp` reads only `min(len)`
+    // bytes with the same ordering for NUL-terminated names; reconcile on sync.
+    // SAFETY: `over.prop_name` and `prop.name` are valid `String` runs of their
+    // `.length` bytes; `str_cmp` bounds both reads by those lengths.
+    unsafe { sp::str_cmp((*over).prop_name, (*prop).name) != 0 }
 }
 
 // ufbx.c:25636-25641 `ufbxi_override_equals_to_prop`
@@ -1588,9 +1593,12 @@ pub(crate) unsafe fn override_equals_to_prop(
     if unsafe { (*over)._internal_key } != unsafe { (*prop)._internal_key } {
         return false;
     }
-    // SAFETY: as above; both names are string-pool `ufbx_string`s, which are
-    // stored NUL-terminated.
-    unsafe { strcmp((*over).prop_name.data, (*prop).name.data) == 0 }
+    // PORT DIVERGENCE (ufbx.c:25640): as in `override_less_than_prop` — the
+    // upstream `strcmp` over-reads a non-NUL `_len` `prop.name`; use the
+    // length-bounded `str_cmp` instead; reconcile once upstream lands the fix.
+    // SAFETY: `over.prop_name` and `prop.name` are valid `String` runs of their
+    // `.length` bytes; `str_cmp` bounds both reads by those lengths.
+    unsafe { sp::str_cmp((*over).prop_name, (*prop).name) == 0 }
 }
 
 // ufbx.c:25643-25664 `ufbxi_find_prop_override`
