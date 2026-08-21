@@ -1012,9 +1012,9 @@ pub unsafe extern "C" fn ufbx_evaluate_baked_vec3(
     keyframes: crate::prelude::List<crate::generated::BakedVec3>,
     time: f64,
 ) -> crate::generated::Vec3 {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
+    // SAFETY: an ABI shim; `keyframes.data`/`count` describe the caller's live
+    // keyframe run per this `unsafe fn`'s contract, forwarded unchanged to the
+    // native impl whose contract is identical.
     unsafe { crate::native::api::evaluate_baked_vec3(keyframes, time) }
 }
 
@@ -1024,9 +1024,9 @@ pub unsafe extern "C" fn ufbx_evaluate_baked_quat(
     keyframes: crate::prelude::List<crate::generated::BakedQuat>,
     time: f64,
 ) -> crate::generated::Quat {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
+    // SAFETY: an ABI shim; `keyframes.data`/`count` describe the caller's live
+    // keyframe run per this `unsafe fn`'s contract, forwarded unchanged to the
+    // native impl whose contract is identical.
     unsafe { crate::native::api::evaluate_baked_quat(keyframes, time) }
 }
 
@@ -1281,10 +1281,10 @@ pub unsafe extern "C" fn ufbx_catch_get_skin_vertex_matrix(
     vertex: usize,
     fallback: *const crate::generated::Matrix,
 ) -> crate::generated::Matrix {
-    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // SAFETY: an ABI shim; `skin` is bridged to a read-only `View<_, Const>`
+    // (sound for any readable provenance), `panic` is null or caller-owned with
+    // exclusive access for this call so `as_mut` is sound, and the remaining raw
+    // arguments carry this `unsafe fn`'s contract, forwarded to the native impl.
     unsafe {
         crate::native::api::catch_get_skin_vertex_matrix(
         panic.as_mut(),
@@ -1492,10 +1492,10 @@ pub unsafe extern "C" fn ufbx_catch_triangulate_face(
     mesh: *const crate::generated::Mesh,
     face: crate::generated::Face,
 ) -> u32 {
-    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // SAFETY: an ABI shim; `mesh` is bridged to a read-only `View<_, Const>`,
+    // `panic` is null or caller-owned with exclusive access for this call so
+    // `as_mut` is sound, and the remaining raw arguments carry this `unsafe fn`'s
+    // contract, forwarded to the native impl.
     unsafe {
         crate::native::api::catch_triangulate_face(
         panic.as_mut(),
@@ -1518,10 +1518,10 @@ pub unsafe extern "C" fn ufbx_catch_compute_topology(
     indices: *mut crate::generated::TopoEdge,
     num_indices: usize,
 ) {
-    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // SAFETY: an ABI shim; `mesh` is bridged to a read-only `View<_, Const>`,
+    // `panic` is null or caller-owned with exclusive access for this call so
+    // `as_mut` is sound, and the remaining raw arguments carry this `unsafe fn`'s
+    // contract, forwarded to the native impl.
     unsafe {
         crate::native::api::catch_compute_topology(
         panic.as_mut(),
@@ -1543,9 +1543,9 @@ pub unsafe extern "C" fn ufbx_catch_topo_next_vertex_edge(
     num_topo: usize,
     index: u32,
 ) -> u32 {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
+    // SAFETY: an ABI shim; `panic` is null or caller-owned with exclusive access
+    // for this call so `as_mut` is sound; the remaining raw arguments carry this
+    // `unsafe fn`'s contract, forwarded unchanged to the native impl.
     unsafe {
         crate::native::api::catch_topo_next_vertex_edge(panic.as_mut(), topo, num_topo, index)
     }
@@ -1560,9 +1560,9 @@ pub unsafe extern "C" fn ufbx_catch_topo_prev_vertex_edge(
     num_topo: usize,
     index: u32,
 ) -> u32 {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
+    // SAFETY: an ABI shim; `panic` is null or caller-owned with exclusive access
+    // for this call so `as_mut` is sound; the remaining raw arguments carry this
+    // `unsafe fn`'s contract, forwarded unchanged to the native impl.
     unsafe {
         crate::native::api::catch_topo_prev_vertex_edge(panic.as_mut(), topo, num_topo, index)
     }
@@ -1577,9 +1577,9 @@ pub unsafe extern "C" fn ufbx_catch_get_weighted_face_normal(
     face: crate::generated::Face,
 ) -> crate::generated::Vec3 {
     crate::native::api::catch_get_weighted_face_normal(
-        // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-        // own raw-pointer contract and are forwarded unchanged to the native impl,
-        // whose contract is identical.
+        // SAFETY: C-ABI root; per the public contract `panic` is null or points
+        // to a caller-owned `ufbx_panic` we may access exclusively for this call,
+        // so `as_mut` yields a sound `Option<&mut Panic>`.
         unsafe { panic.as_mut() },
         // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
         // read-only `View<_, Const>`, sound for any readable provenance, over a
@@ -1603,10 +1603,10 @@ pub unsafe extern "C" fn ufbx_catch_generate_normal_mapping(
     num_normal_indices: usize,
     assume_smooth: bool,
 ) -> usize {
-    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // SAFETY: an ABI shim; `mesh` is bridged to a read-only `View<_, Const>`,
+    // `panic` is null or caller-owned with exclusive access for this call so
+    // `as_mut` is sound, and the remaining raw arguments carry this `unsafe fn`'s
+    // contract, forwarded to the native impl.
     unsafe {
         crate::native::api::catch_generate_normal_mapping(
         panic.as_mut(),
@@ -1660,10 +1660,10 @@ pub unsafe extern "C" fn ufbx_catch_compute_normals(
     normals: *mut crate::generated::Vec3,
     num_normals: usize,
 ) {
-    // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // SAFETY: an ABI shim; `mesh` and `positions` are bridged to read-only
+    // `View<_, Const>`s, `panic` is null or caller-owned with exclusive access
+    // for this call so `as_mut` is sound, and the remaining raw arguments carry
+    // this `unsafe fn`'s contract, forwarded to the native impl.
     unsafe {
         crate::native::api::catch_compute_normals(
         panic.as_mut(),
@@ -1903,9 +1903,9 @@ pub unsafe extern "C" fn ufbx_thread_pool_run_task(
     ctx: crate::prelude::ThreadPoolContext,
     index: u32,
 ) {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
+    // SAFETY: an ABI shim; `ctx` is this `unsafe fn`'s opaque handle over a live
+    // `ThreadPool` per the public contract, forwarded unchanged to the native
+    // impl whose contract is identical.
     unsafe { crate::native::api::thread_pool_run_task(ctx, index) }
 }
 
@@ -1916,9 +1916,9 @@ pub unsafe extern "C" fn ufbx_thread_pool_set_user_ptr(
     ctx: crate::prelude::ThreadPoolContext,
     user_ptr: *mut core::ffi::c_void,
 ) {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
+    // SAFETY: an ABI shim; `ctx` is this `unsafe fn`'s opaque handle over a live
+    // `ThreadPool` per the public contract, and both arguments are forwarded
+    // unchanged to the native impl whose contract is identical.
     unsafe { crate::native::api::thread_pool_set_user_ptr(ctx, user_ptr) }
 }
 
@@ -1928,9 +1928,9 @@ pub unsafe extern "C" fn ufbx_thread_pool_set_user_ptr(
 pub unsafe extern "C" fn ufbx_thread_pool_get_user_ptr(
     ctx: crate::prelude::ThreadPoolContext,
 ) -> *mut core::ffi::c_void {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
+    // SAFETY: an ABI shim; `ctx` is this `unsafe fn`'s opaque handle over a live
+    // `ThreadPool` per the public contract, forwarded unchanged to the native
+    // impl whose contract is identical.
     unsafe { crate::native::api::thread_pool_get_user_ptr(ctx) }
 }
 
@@ -1942,9 +1942,9 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_real(
     v: *const crate::generated::VertexReal,
     index: usize,
 ) -> crate::prelude::Real {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
+    // SAFETY: C-ABI root; per the public contract `panic` is null or points to
+    // a caller-owned `ufbx_panic` we may access exclusively for this call, so
+    // `as_mut` yields a sound `Option<&mut Panic>`.
     // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
     // read-only `View<_, Const>`, sound for any readable provenance, over a
     // pointee the caller owns per this `unsafe fn`'s contract.
@@ -1965,9 +1965,9 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_vec2(
     v: *const crate::generated::VertexVec2,
     index: usize,
 ) -> crate::generated::Vec2 {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
+    // SAFETY: C-ABI root; per the public contract `panic` is null or points to
+    // a caller-owned `ufbx_panic` we may access exclusively for this call, so
+    // `as_mut` yields a sound `Option<&mut Panic>`.
     // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
     // read-only `View<_, Const>`, sound for any readable provenance, over a
     // pointee the caller owns per this `unsafe fn`'s contract.
@@ -1991,9 +1991,9 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_vec3(
     // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
     // read-only `View<_, Const>`, sound for any readable provenance, over a
     // pointee the caller owns per this `unsafe fn`'s contract.
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
+    // SAFETY: C-ABI root; per the public contract `panic` is null or points to
+    // a caller-owned `ufbx_panic` we may access exclusively for this call, so
+    // `as_mut` yields a sound `Option<&mut Panic>`.
     crate::native::api::catch_get_vertex_vec3(
         unsafe { panic.as_mut() },
         unsafe {
@@ -2011,9 +2011,9 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_vec4(
     v: *const crate::generated::VertexVec4,
     index: usize,
 ) -> crate::generated::Vec4 {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
+    // SAFETY: C-ABI root; per the public contract `panic` is null or points to
+    // a caller-owned `ufbx_panic` we may access exclusively for this call, so
+    // `as_mut` yields a sound `Option<&mut Panic>`.
     // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
     // read-only `View<_, Const>`, sound for any readable provenance, over a
     // pointee the caller owns per this `unsafe fn`'s contract.
@@ -2034,9 +2034,9 @@ pub unsafe extern "C" fn ufbx_catch_get_vertex_w_vec3(
     v: *const crate::generated::VertexVec3,
     index: usize,
 ) -> crate::prelude::Real {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
+    // SAFETY: C-ABI root; per the public contract `panic` is null or points to
+    // a caller-owned `ufbx_panic` we may access exclusively for this call, so
+    // `as_mut` yields a sound `Option<&mut Panic>`.
     // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer as a
     // read-only `View<_, Const>`, sound for any readable provenance, over a
     // pointee the caller owns per this `unsafe fn`'s contract.
