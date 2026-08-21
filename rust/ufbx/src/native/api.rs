@@ -4911,8 +4911,10 @@ pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
         let i2: u32 = face.index_begin.wrapping_add(2);
         let i3: u32 = face.index_begin.wrapping_add(3);
         // SAFETY: `i0` is within the face's index range (bounds guarded above),
-        // so the `indices.data` lookup yields a valid vertex index into
-        // `values.data`; both runs belong to the mesh's own `vertex_position`.
+        // keeping the `indices.data` read inside the mesh's own
+        // `vertex_position.indices` run (`count == num_indices`); the fetched
+        // value indexes `values.data` in bounds per the mesh's index-validity
+        // invariant (indices sanitized at load).
         let v0: Vec3 = unsafe {
             *mesh
                 .vertex_position()

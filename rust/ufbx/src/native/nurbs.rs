@@ -1132,7 +1132,9 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
 
     // SAFETY: `mesh` is tc's own mesh slot, reached through `*mut` off the
     // context (write-capable provenance for `Mut`) and live for the borrow;
-    // the fields accessed below were filled above.
+    // every field accessed below was either filled above or is zero-valid from
+    // tc's zeroed construction (`tessellate_nurbs_surface` creates the whole
+    // context zeroed).
     let mesh_view = unsafe { View::<Mesh>::from_ptr(mesh) };
 
     // SAFETY: reading the live surface's material ref (tc construction

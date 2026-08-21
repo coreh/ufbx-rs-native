@@ -1865,7 +1865,8 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         }
 
         // SAFETY: `fbx_mesh` is this mesh's own `ufbx_mesh` element in uc's
-        // arena (write-capable provenance), finalized into uc's result arena.
+        // tmp_elements arena (write-capable provenance); `finalize_mesh` updates
+        // it in place, pushing its new list data onto uc's result arena.
         unsafe {
             finalize_mesh(
                 uc.result_view(),
@@ -1891,8 +1892,9 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         }
 
         if mesh.num_groups() > 1 {
-            // SAFETY: `fbx_mesh` is this mesh's own element (as above), updated
-            // in uc's result arena.
+            // SAFETY: `fbx_mesh` is this mesh's own element in uc's
+            // tmp_elements arena (as above), updated in place with its
+            // face-group part data pushed onto uc's result arena.
             unsafe {
                 update_face_groups(
                     uc.result_view(),

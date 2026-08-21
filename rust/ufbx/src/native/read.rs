@@ -3569,7 +3569,9 @@ pub(crate) unsafe fn process_indices(
 
 // ufbx.c:13219-13240 `ufbxi_patch_mesh_reals`
 // Safe `fn`: the mesh view is the only parameter, and each residual raw op
-// walks a run described by that same mesh's own list fields.
+// walks a run described by that same mesh's own list fields — which every
+// minted `View<Mesh>` keeps either zeroed (fresh `tmp_elements` element) or
+// pointing at a live `count`-long arena run, so the walks stay in bounds.
 #[inline(never)]
 pub(crate) fn patch_mesh_reals(mesh: &View<Mesh>) {
     mesh.vertex_position().set_value_reals(3);
@@ -10956,8 +10958,9 @@ pub(crate) unsafe fn read_legacy_mesh(
         // C: `mesh->vertex_uv = set->vertex_uv;` — struct assignment is a
         // memcpy; `VertexVec2` is not `Copy` in `generated.rs`.
         // SAFETY: `set` is the live single-element allocation, distinct from the
-        // mesh, and its `vertex_uv` was fully written by `read_vertex_element`
-        // above.
+        // mesh; its `vertex_uv` is initialized — zeroed by the `push_zero` above,
+        // then possibly overwritten by `read_vertex_element` (which returns Ok
+        // without touching it when the UV data array is missing or empty).
         mesh.set_vertex_uv(unsafe { core::ptr::read(&raw const (*set).vertex_uv) });
     }
 

@@ -5186,8 +5186,8 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: &View<Mesh>) -> Result
     // (memcpy); `VertexVec3` is not `Copy` in the generated bindings, so the
     // copy is spelled as a byte-identical `copy_nonoverlapping`.
     // SAFETY: both projections address the viewed mesh's own distinct
-    // `vertex_normal` / `skinned_normal` fields; `vertex_normal` was fully
-    // written just above.
+    // `vertex_normal` / `skinned_normal` fields; `vertex_normal` is initialized
+    // (zeroed at element push, its list/exists fields rewritten just above).
     unsafe { ptr::copy_nonoverlapping(mesh.vertex_normal_ptr(), mesh.skinned_normal_raw(), 1) };
 
     // SAFETY: `tmp_stack` is `uc`'s own live buffer and the `num_indices`
@@ -6917,9 +6917,10 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(),
         unsafe { flip_attrib_winding(uc, mesh, mesh.skinned_normal().indices_view(), false) }?;
     }
 
-    // SAFETY: `modify_geometry` runs on meshes `finalize_mesh` already passed
-    // through, so `vertex_first_index` is a `num_vertices`-long run — the count
-    // contract `update_vertex_first_index` rests on.
+    // SAFETY: every mesh reaching `modify_geometry` had `vertex_first_index`
+    // sized to `num_vertices` — by `process_indices` on the FBX/legacy read
+    // path, or by `finalize_mesh` on the OBJ path — the count contract
+    // `update_vertex_first_index` rests on.
     unsafe { update_vertex_first_index(mesh) };
 
     // Mapping from old index values to flipped ones, reserve index -1

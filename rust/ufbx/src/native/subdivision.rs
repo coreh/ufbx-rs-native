@@ -1854,8 +1854,8 @@ pub(crate) unsafe fn subdivide_layer(
 //
 // # Safety
 // `ptr` must address a live `ufbx_vertex_*` field laid out with the
-// `ufbx_vertex_attrib` prefix, owned by an arena that keeps it alive and
-// unmoved for `'a`, and its provenance must be write-capable (the
+// `ufbx_vertex_attrib` prefix, owned by a context or arena that keeps it alive
+// and unmoved for `'a`, and its provenance must be write-capable (the
 // `View<_, Mut>` mint vouch).
 #[cfg(feature = "subdivision")]
 #[inline(always)]

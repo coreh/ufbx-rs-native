@@ -398,8 +398,10 @@ pub(crate) unsafe fn evaluate_skinning(
             // C: `memcpy(result_pos, mesh->vertices.data, num_vertices * sizeof(ufbx_vec3));`
             // SAFETY: the mesh's `vertices` list holds
             // `num_vertices == mesh->num_vertices` elements; `result_pos`
-            // addresses that many writable slots of the freshly pushed result
-            // allocation, which is disjoint from the source scene buffer.
+            // addresses that many writable slots of the freshly pushed
+            // allocation, which as a fresh push cannot overlap the previously
+            // allocated source vertex run (even when both live in the same
+            // result buffer, as on the load path).
             unsafe { ptr::copy_nonoverlapping(mesh.vertices().data, result_pos, num_vertices) };
 
             // C: `ufbxi_for_ptr_list(ufbx_blend_deformer, p_blend, mesh->blend_deformers)`
@@ -482,10 +484,10 @@ pub(crate) unsafe fn evaluate_skinning(
 
             // SAFETY: `mesh.as_ptr()` addresses the scene-owned mesh this view
             // was minted over (read-only use) and `topo` is the non-null
-            // `max_skinned_indices`-element scratch allocation, which
-            // `max_skinned_indices >= mesh->num_indices` (the first loop's max
-            // over exactly the meshes this loop skins) sizes for `num_indices`
-            // entries.
+            // `max_skinned_indices`-element scratch allocation, where
+            // `max_skinned_indices >= mesh->num_indices` (the first loop maxed
+            // over a superset of the meshes this loop skins) covers
+            // `num_indices` entries.
             unsafe { compute_topology(mesh.as_ptr(), topo, num_indices) };
             // SAFETY: as above for `mesh`/`topo`; `normal_indices` is the non-null
             // `num_indices`-element result allocation pushed just above.
