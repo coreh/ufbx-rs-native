@@ -49,7 +49,7 @@ use crate::native::scene_process::finalize_mesh_material;
 #[cfg(feature = "subdivision")]
 use crate::native::string_pool::slow_normalize3;
 #[cfg(feature = "subdivision")]
-use crate::native::view::{Const, SliceViewIter, View};
+use crate::native::view::{Const, Mode, SliceViewIter, View};
 #[cfg(feature = "subdivision")]
 use crate::prelude::{ListView, Real};
 #[cfg(feature = "subdivision")]
@@ -1846,35 +1846,55 @@ pub(crate) unsafe fn subdivide_layer(
     Ok(())
 }
 
+// Rust-port infrastructure (not a ufbx.c function): every `ufbxi_subdivide_attrib`
+// call site in `ufbxi_subdivide_mesh_level` (ufbx.c:29657 onwards) passes
+// `(ufbx_vertex_attrib*)&x->vertex_foo` — the type-erasing cast onto the shared
+// `{ exists, values, indices, value_reals, ... }` prefix of `ufbx_vertex_vec2` /
+// `_vec3` / `_vec4` / `_real`. This is that cast, in one place.
+//
+// # Safety
+// `ptr` must address a live `ufbx_vertex_*` field laid out with the
+// `ufbx_vertex_attrib` prefix, owned by an arena that keeps it alive and
+// unmoved for `'a`, and its provenance must be write-capable (the
+// `View<_, Mut>` mint vouch).
+#[cfg(feature = "subdivision")]
+#[inline(always)]
+unsafe fn attrib_view<'a, T>(ptr: *mut T) -> &'a View<VertexAttrib> {
+    // SAFETY: the caller vouches for liveness, the `ufbx_vertex_attrib` layout
+    // prefix and write-capable provenance (fn contract above).
+    unsafe { View::<VertexAttrib>::from_ptr(ptr as *mut VertexAttrib) }
+}
+
 // ufbx.c:29464-29489 `ufbxi_subdivide_attrib`
+// Safe `fn`: the attribute arrives as a view; the residual raw ops address the
+// two `MaybeUninit` locals this fn owns, the viewed attribute's list headers
+// via `values_raw()`/`indices_raw()`, and the runs `subdivide_layer` walks —
+// each vouched at its own block.
 #[cfg(feature = "subdivision")]
 #[inline(never)]
-pub(crate) unsafe fn subdivide_attrib(
+pub(crate) fn subdivide_attrib(
     sc: &SubdivideContext,
-    attrib: *mut VertexAttrib,
+    attrib: &View<VertexAttrib>,
     boundary: SubdivisionBoundary,
     check_split_data: bool,
 ) -> Result<(), crate::native::error::Fail> {
-    // SAFETY: `attrib` points to a live `VertexAttrib` (fn contract).
-    if !unsafe { (*attrib).exists } {
+    if !attrib.exists() {
         return Ok(());
     }
 
-    // SAFETY: `attrib` points to a live `VertexAttrib`.
-    ufbx_assert!(unsafe { (*attrib).value_reals } >= 2 && unsafe { (*attrib).value_reals } <= 4);
+    ufbx_assert!(attrib.value_reals() >= 2 && attrib.value_reals() <= 4);
 
     let mut input_mem = MaybeUninit::<SubdivideLayerInput>::uninit(); // ufbxi_uninit
     let input: *mut SubdivideLayerInput = input_mem.as_mut_ptr();
     // SAFETY: `input` is the address of the local `input_mem`, so every field
     // write is in-bounds; the assert above bounds `value_reals` in 2..=4, keeping
-    // the `REAL_SUM_FNS[value_reals-1]` index in 1..=3; `attrib` is live so its
-    // `values`/`indices` data and `value_reals` are readable.
+    // the `REAL_SUM_FNS[value_reals-1]` index in 1..=3.
     unsafe {
-        (*input).sum_fn = REAL_SUM_FNS[(*attrib).value_reals - 1];
+        (*input).sum_fn = REAL_SUM_FNS[attrib.value_reals() - 1];
         (*input).sum_user = core::ptr::null_mut();
-        (*input).values = (*attrib).values.data;
-        (*input).indices = (*attrib).indices.data;
-        (*input).stride = (*attrib).value_reals.wrapping_mul(size_of::<Real>());
+        (*input).values = attrib.values().data;
+        (*input).indices = attrib.indices().data;
+        (*input).stride = attrib.value_reals().wrapping_mul(size_of::<Real>());
         (*input).boundary = boundary;
         (*input).check_split_data = check_split_data;
         (*input).ignore_indices = false;
@@ -1886,13 +1906,14 @@ pub(crate) unsafe fn subdivide_attrib(
     // fields of `input` were fully initialized above, satisfying `subdivide_layer`.
     unsafe { subdivide_layer(sc, output, input) }?;
 
-    // SAFETY: `attrib` is live; `output` addresses the fully-populated
-    // `output_mem` after a successful `subdivide_layer`.
+    // SAFETY: `output` addresses the fully-populated `output_mem` after a
+    // successful `subdivide_layer`; `values_raw()`/`indices_raw()` address the
+    // viewed attribute's own list headers.
     unsafe {
-        (*attrib).values.data = (*output).values;
-        (*attrib).indices.data = (*output).indices;
-        (*attrib).values.count = (*output).num_values;
-        (*attrib).indices.count = (*output).num_indices;
+        (*attrib.values_raw()).data = (*output).values;
+        (*attrib.indices_raw()).data = (*output).indices;
+        (*attrib.values_raw()).count = (*output).num_values;
+        (*attrib.indices_raw()).count = (*output).num_indices;
     }
 
     Ok(())
@@ -2156,44 +2177,38 @@ pub(crate) unsafe fn subdivide_weights(
 }
 
 // ufbx.c:29596-29629 `ufbxi_subdivide_vertex_crease`
+// Safe `fn`: both crease attributes arrive as views, and the residual raw ops
+// index the freshly pushed `dst` runs and the `src` runs those views describe.
 #[cfg(feature = "subdivision")]
 #[inline(never)]
-pub(crate) unsafe fn subdivide_vertex_crease(
+pub(crate) fn subdivide_vertex_crease<M: Mode>(
     sc: &SubdivideContext,
-    dst: *mut VertexReal,
-    src: *const VertexReal,
+    dst: &View<VertexReal>,
+    src: &View<VertexReal, M>,
 ) -> Result<(), crate::native::error::Fail> {
-    // SAFETY: `src` points to a live `VertexReal` (fn contract).
-    let src_indices: usize = unsafe { (*src).indices.count };
-    // SAFETY: `src` points to a live `VertexReal`.
-    let src_values: usize = unsafe { (*src).values.count };
+    let src_indices: usize = src.indices().count;
+    let src_values: usize = src.values().count;
 
-    // SAFETY: `dst` points to a live `VertexReal` (fn contract); the pushed
-    // `values.data` is a `src_values+1`-element buffer.
-    unsafe {
-        (*dst).values.count = src_values.wrapping_add(1);
-        (*dst).values.data = sc.result_view().push::<Real>((*dst).values.count);
-    }
+    // The pushed `values.data` is a `src_values+1`-element buffer.
+    dst.values_view().set_count(src_values.wrapping_add(1));
+    dst.values_view()
+        .set_data(sc.result_view().push::<Real>(dst.values().count));
     ufbxi_check_err!(
         sc.error_view(),
-        // SAFETY: `dst` is live.
-        !unsafe { (*dst).values.data }.is_null(),
+        !dst.values().data.is_null(),
         "dst->values.data"
     );
     // SAFETY: `dst.values.data` holds `src_values+1` `Real`s, so slot `src_values`
     // (the trailing zero) is in-bounds.
-    unsafe { *((*dst).values.data as *mut Real).add(src_values) = 0.0 };
+    unsafe { *(dst.values().data as *mut Real).add(src_values) = 0.0 };
 
-    // SAFETY: `dst` is live; the pushed `indices.data` is a `src_indices*4`-element
-    // buffer.
-    unsafe {
-        (*dst).indices.count = src_indices.wrapping_mul(4);
-        (*dst).indices.data = sc.result_view().push::<u32>((*dst).indices.count);
-    }
+    // The pushed `indices.data` is a `src_indices*4`-element buffer.
+    dst.indices_view().set_count(src_indices.wrapping_mul(4));
+    dst.indices_view()
+        .set_data(sc.result_view().push::<u32>(dst.indices().count));
     ufbxi_check_err!(
         sc.error_view(),
-        // SAFETY: `dst` is live.
-        !unsafe { (*dst).indices.data }.is_null(),
+        !dst.indices().data.is_null(),
         "dst->indices.data"
     );
 
@@ -2202,7 +2217,7 @@ pub(crate) unsafe fn subdivide_vertex_crease(
     let mut i: usize = 0;
     while i < src_values {
         // SAFETY: `i < src_values`, in range for the live `src.values` array.
-        let mut crease: Real = unsafe { *(*src).values.data.add(i) };
+        let mut crease: Real = unsafe { *src.values().data.add(i) };
         // C: `0.999f` / `0.1f` are `float` literals widened to `ufbx_real`.
         if crease < 0.999f32 as Real {
             crease -= 0.1f32 as Real;
@@ -2212,7 +2227,7 @@ pub(crate) unsafe fn subdivide_vertex_crease(
         }
         // SAFETY: `i < src_values < src_values+1`, an in-range slot of the
         // freshly pushed `dst.values.data`.
-        unsafe { *((*dst).values.data as *mut Real).add(i) = crease };
+        unsafe { *(dst.values().data as *mut Real).add(i) = crease };
         i += 1;
     }
 
@@ -2223,11 +2238,11 @@ pub(crate) unsafe fn subdivide_vertex_crease(
     while i < src_indices {
         // SAFETY: `i < src_indices`, so `i*4` addresses a live 4-slot quad within
         // the `src_indices*4`-element `dst.indices.data` push.
-        let quad: *mut u32 = unsafe { ((*dst).indices.data as *mut u32).add(i.wrapping_mul(4)) };
+        let quad: *mut u32 = unsafe { (dst.indices().data as *mut u32).add(i.wrapping_mul(4)) };
         // SAFETY: `quad.add(0..=3)` are the four slots of this in-bounds quad;
         // `i < src_indices` indexes the live `src.indices` array.
         unsafe {
-            *quad.add(0) = *(*src).indices.data.add(i);
+            *quad.add(0) = *src.indices().data.add(i);
             *quad.add(1) = zero_index;
             *quad.add(2) = zero_index;
             *quad.add(3) = zero_index;
@@ -2268,17 +2283,15 @@ pub(crate) unsafe fn subdivide_mesh_level(
     sc.set_topo(topo);
     sc.set_num_topo(mesh.num_indices());
 
-    // SAFETY: `vertex_position_raw()` addresses `result`'s own live
-    // `vertex_position` field, reinterpreted as the attribute
-    // `subdivide_attrib` subdivides in place.
-    unsafe {
-        subdivide_attrib(
-            sc,
-            result.vertex_position_raw() as *mut VertexAttrib,
-            sc.opts_view().boundary(),
-            false,
-        )
-    }?;
+    subdivide_attrib(
+        sc,
+        // SAFETY: `vertex_position_raw()` addresses `result`'s own live
+        // `vertex_position` field, reinterpreted as the type-erased attribute
+        // `subdivide_attrib` subdivides in place (C's cast).
+        unsafe { attrib_view(result.vertex_position_raw()) },
+        sc.opts_view().boundary(),
+        false,
+    )?;
 
     // SAFETY: each `*_raw()` addresses a live vertex-attribute field of
     // `result`, zeroed in place to its own size (all-zero is a valid empty
@@ -2344,35 +2357,29 @@ pub(crate) unsafe fn subdivide_mesh_level(
             SliceViewIter::<UvSet>::from_raw_parts(uv_sets.data() as *mut UvSet, uv_sets.count())
         };
         for set in sets {
-            // SAFETY: `vertex_uv_raw()` addresses this live `UvSet`'s own
-            // attribute field, subdivided in place.
-            unsafe {
+            subdivide_attrib(
+                sc,
+                // SAFETY: `vertex_uv_raw()` addresses this live `UvSet`'s own
+                // attribute field, subdivided in place.
+                unsafe { attrib_view(set.vertex_uv_raw()) },
+                sc.opts_view().uv_boundary(),
+                true,
+            )?;
+            if sc.opts_view().interpolate_tangents() {
                 subdivide_attrib(
                     sc,
-                    set.vertex_uv_raw() as *mut VertexAttrib,
+                    // SAFETY: as above, for this set's tangent attribute.
+                    unsafe { attrib_view(set.vertex_tangent_raw()) },
                     sc.opts_view().uv_boundary(),
                     true,
-                )
-            }?;
-            if sc.opts_view().interpolate_tangents() {
-                // SAFETY: as above, for this set's tangent attribute.
-                unsafe {
-                    subdivide_attrib(
-                        sc,
-                        set.vertex_tangent_raw() as *mut VertexAttrib,
-                        sc.opts_view().uv_boundary(),
-                        true,
-                    )
-                }?;
-                // SAFETY: as above, for the bitangent attribute.
-                unsafe {
-                    subdivide_attrib(
-                        sc,
-                        set.vertex_bitangent_raw() as *mut VertexAttrib,
-                        sc.opts_view().uv_boundary(),
-                        true,
-                    )
-                }?;
+                )?;
+                subdivide_attrib(
+                    sc,
+                    // SAFETY: as above, for the bitangent attribute.
+                    unsafe { attrib_view(set.vertex_bitangent_raw()) },
+                    sc.opts_view().uv_boundary(),
+                    true,
+                )?;
             } else {
                 // SAFETY: each `*_raw()` addresses a live attribute field of this
                 // set, zeroed in place to its own size.
@@ -2403,16 +2410,14 @@ pub(crate) unsafe fn subdivide_mesh_level(
             )
         };
         for set in sets {
-            // SAFETY: `vertex_color_raw()` addresses this live `ColorSet`'s own
-            // attribute field, subdivided in place.
-            unsafe {
-                subdivide_attrib(
-                    sc,
-                    set.vertex_color_raw() as *mut VertexAttrib,
-                    sc.opts_view().uv_boundary(),
-                    true,
-                )
-            }?;
+            subdivide_attrib(
+                sc,
+                // SAFETY: `vertex_color_raw()` addresses this live `ColorSet`'s
+                // own attribute field, subdivided in place.
+                unsafe { attrib_view(set.vertex_color_raw()) },
+                sc.opts_view().uv_boundary(),
+                true,
+            )?;
         }
     }
 
@@ -2448,16 +2453,14 @@ pub(crate) unsafe fn subdivide_mesh_level(
     }
 
     if sc.opts_view().interpolate_normals() && !sc.opts_view().ignore_normals() {
-        // SAFETY: `vertex_normal_raw()` addresses `result`'s own live normal
-        // attribute, subdivided in place.
-        unsafe {
-            subdivide_attrib(
-                sc,
-                result.vertex_normal_raw() as *mut VertexAttrib,
-                sc.opts_view().boundary(),
-                true,
-            )
-        }?;
+        subdivide_attrib(
+            sc,
+            // SAFETY: `vertex_normal_raw()` addresses `result`'s own live normal
+            // attribute, subdivided in place.
+            unsafe { attrib_view(result.vertex_normal_raw()) },
+            sc.opts_view().boundary(),
+            true,
+        )?;
         // C: `ufbxi_for_list(ufbx_vec3, normal, result->vertex_normal.values)`
         {
             let values = result.vertex_normal().values();
@@ -2484,16 +2487,14 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 );
             }
         } else {
-            // SAFETY: `skinned_normal_raw()` addresses `result`'s own live
-            // skinned-normal attribute, subdivided in place.
-            unsafe {
-                subdivide_attrib(
-                    sc,
-                    result.skinned_normal_raw() as *mut VertexAttrib,
-                    sc.opts_view().boundary(),
-                    true,
-                )
-            }?;
+            subdivide_attrib(
+                sc,
+                // SAFETY: `skinned_normal_raw()` addresses `result`'s own live
+                // skinned-normal attribute, subdivided in place.
+                unsafe { attrib_view(result.skinned_normal_raw()) },
+                sc.opts_view().boundary(),
+                true,
+            )?;
             // C: `ufbxi_for_list(ufbx_vec3, normal, result->skinned_normal.values)`
             let values = result.skinned_normal().values();
             // SAFETY: `values.data`/`.count` describe the live array, so
@@ -2510,15 +2511,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     }
 
     if result.vertex_crease().exists() {
-        // SAFETY: `vertex_crease_raw()` addresses `result`'s own live crease
-        // field, and `mesh.vertex_crease()` views the source mesh's.
-        unsafe {
-            subdivide_vertex_crease(
-                sc,
-                result.vertex_crease_raw(),
-                mesh.vertex_crease().as_ptr(),
-            )
-        }?;
+        subdivide_vertex_crease(sc, result.vertex_crease(), mesh.vertex_crease())?;
     }
 
     if mesh.skinned_position().values().data == mesh.vertex_position().values().data {
@@ -2532,16 +2525,14 @@ pub(crate) unsafe fn subdivide_mesh_level(
             );
         }
     } else {
-        // SAFETY: `skinned_position_raw()` addresses `result`'s own live
-        // skinned-position attribute, subdivided in place.
-        unsafe {
-            subdivide_attrib(
-                sc,
-                result.skinned_position_raw() as *mut VertexAttrib,
-                sc.opts_view().boundary(),
-                false,
-            )
-        }?;
+        subdivide_attrib(
+            sc,
+            // SAFETY: `skinned_position_raw()` addresses `result`'s own live
+            // skinned-position attribute, subdivided in place.
+            unsafe { attrib_view(result.skinned_position_raw()) },
+            sc.opts_view().boundary(),
+            false,
+        )?;
     }
 
     let result_sub: *mut SubdivisionResult = sc.result_view().push_zero::<SubdivisionResult>(1);
@@ -3005,14 +2996,13 @@ pub(crate) unsafe fn subdivide_mesh_level(
     // field; a lone count store, left raw rather than minting a view for it.
     unsafe { (*result.vertex_first_index_raw()).count = 0 };
 
-    // SAFETY: `result.get()` is this view's own pointer to `sc`'s live
-    // destination mesh and `error_mut_ptr()` is `sc`'s own live error slot, the
-    // finalize contract.
-    unsafe { finalize_mesh_material(sc.result_view(), sc.error_mut_ptr(), result.get()) }?;
+    // SAFETY: `error_mut_ptr()` is `sc`'s own live error slot, the finalize
+    // contract.
+    unsafe { finalize_mesh_material(sc.result_view(), sc.error_mut_ptr(), result) }?;
     // SAFETY: as above.
-    unsafe { finalize_mesh(sc.result_view(), sc.error_mut_ptr(), result.get()) }?;
+    unsafe { finalize_mesh(sc.result_view(), sc.error_mut_ptr(), result) }?;
     // SAFETY: as above.
-    unsafe { update_face_groups(sc.result_view(), sc.error_mut_ptr(), result.get(), true) }?;
+    unsafe { update_face_groups(sc.result_view(), sc.error_mut_ptr(), result, true) }?;
 
     Ok(())
 }
@@ -3200,9 +3190,8 @@ pub(crate) fn subdivide_mesh_imp(
         }
     };
 
-    // SAFETY: patching sc's own destination mesh in place, through this view's
-    // own pointer.
-    unsafe { patch_mesh_reals(mesh.get()) };
+    // Patch sc's own destination mesh in place.
+    patch_mesh_reals(mesh);
 
     sc.set_imp(sc.result_view().push::<MeshImp>(1));
     ufbxi_check_err!(sc.error_view(), !sc.imp().is_null(), "sc->imp");

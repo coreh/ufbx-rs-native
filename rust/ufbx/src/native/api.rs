@@ -5063,10 +5063,9 @@ pub(crate) unsafe fn catch_compute_topology<M: Mode>(
         return;
     }
 
-    // SAFETY: `as_ptr()` yields the view's live `Mesh`; `indices` has
-    // `num_indices >= mesh.num_indices` `TopoEdge` slots (guarded above) for
-    // `compute_topology`.
-    unsafe { crate::native::topology::compute_topology(mesh.as_ptr(), indices) };
+    // SAFETY: `indices` has `num_indices >= mesh.num_indices` `TopoEdge` slots
+    // (guarded above) for `compute_topology` to fill.
+    unsafe { crate::native::topology::compute_topology(mesh, indices) };
 }
 
 // ufbx.c:32484-32492 `ufbx_catch_topo_next_vertex_edge`
@@ -5323,9 +5322,9 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
             // SAFETY: `topo`/`num_topo` are this fn's raw-pointer contract,
             // forwarded unchanged to the topology walkers.
             let prev: u32 = unsafe { topo_next_vertex_edge(topo, num_topo, cur) };
-            // SAFETY: `as_ptr()` yields the view's live `Mesh`; same
-            // `topo`/`num_topo` contract.
-            if !unsafe { is_edge_smooth(mesh.as_ptr(), topo, num_topo, cur, assume_smooth) } {
+            // SAFETY: same `topo`/`num_topo` raw-pointer contract, forwarded to
+            // the smooth-edge predicate along with this fn's mesh view.
+            if !unsafe { is_edge_smooth(mesh, topo, num_topo, cur, assume_smooth) } {
                 start = cur;
             }
             if prev == NO_INDEX {
@@ -5351,9 +5350,9 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
                 break;
             }
 
-            // SAFETY: `as_ptr()` yields the view's live `Mesh`; same
-            // `topo`/`num_topo` contract.
-            if !unsafe { is_edge_smooth(mesh.as_ptr(), topo, num_topo, next, assume_smooth) } {
+            // SAFETY: same `topo`/`num_topo` raw-pointer contract, forwarded to
+            // the smooth-edge predicate along with this fn's mesh view.
+            if !unsafe { is_edge_smooth(mesh, topo, num_topo, next, assume_smooth) } {
                 next_index = next_index.wrapping_add(1);
             }
             // SAFETY: `next` is an index within the mesh's index range.

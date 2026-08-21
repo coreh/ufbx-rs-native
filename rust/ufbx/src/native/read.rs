@@ -2476,7 +2476,7 @@ pub(crate) unsafe fn warn_polygon_mapping(
 #[inline(never)]
 pub(crate) unsafe fn read_vertex_element(
     uc: &Context,
-    mesh: *mut Mesh,
+    mesh: &View<Mesh>,
     node: &NodeView,
     attrib: *mut VertexAttrib,
     data_name: *const u8,
@@ -2485,10 +2485,6 @@ pub(crate) unsafe fn read_vertex_element(
     data_type: u8,
     num_components: usize,
 ) -> Result<(), Fail> {
-    // SAFETY: `mesh` is the caller's `ufbx_mesh` — an arena-owned element
-    // reached through `*mut` (write-capable provenance for `Mut`), live for the
-    // borrow; the fields read below are initialized at each use site.
-    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
     // SAFETY: `attrib` is the caller's writable `ufbx_vertex_attrib` (fn
     // contract), so the borrow addresses its own `values.data` field.
     let p_dst_data: *mut *mut Real =
@@ -3423,13 +3419,9 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
 #[inline(never)]
 pub(crate) unsafe fn process_indices(
     uc: &Context,
-    mesh: *mut Mesh,
+    mesh: &View<Mesh>,
     index_data: *mut u32,
 ) -> Result<(), Fail> {
-    // SAFETY: `mesh` is the caller's `ufbx_mesh` — an arena-owned element
-    // reached through `*mut` (write-capable provenance for `Mut`), live for the
-    // borrow; the fields accessed below are initialized at each use site.
-    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
     // Count the number of faces and allocate the index list
     // Indices less than zero (~actual_index) ends a polygon
     let mut num_total_faces: usize = 0;
@@ -3576,12 +3568,10 @@ pub(crate) unsafe fn process_indices(
 }
 
 // ufbx.c:13219-13240 `ufbxi_patch_mesh_reals`
+// Safe `fn`: the mesh view is the only parameter, and each residual raw op
+// walks a run described by that same mesh's own list fields.
 #[inline(never)]
-pub(crate) unsafe fn patch_mesh_reals(mesh: *mut Mesh) {
-    // SAFETY: `mesh` is the caller's `ufbx_mesh` — an arena-owned element
-    // reached through `*mut` (write-capable provenance for `Mut`), live for the
-    // borrow; the fields accessed below are initialized at each use site.
-    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
+pub(crate) fn patch_mesh_reals(mesh: &View<Mesh>) {
     mesh.vertex_position().set_value_reals(3);
     mesh.vertex_normal().set_value_reals(3);
     mesh.vertex_uv().set_value_reals(2);
@@ -3697,14 +3687,10 @@ const SEEN_IDS_COUNT: usize = 1usize << FACE_GROUP_HASH_BITS;
 pub(crate) unsafe fn assign_face_groups(
     buf: &BufView,
     error: *mut Error,
-    mesh: *mut Mesh,
+    mesh: &View<Mesh>,
     p_consecutive_indices: *mut usize,
     retain_parts: bool,
 ) -> Result<(), Fail> {
-    // SAFETY: `mesh` is the caller's `ufbx_mesh` — an arena-owned element
-    // reached through `*mut` (write-capable provenance for `Mut`), live for the
-    // borrow; the fields accessed below are initialized at each use site.
-    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
     let num_faces: usize = mesh.num_faces();
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr(error) },
@@ -3990,13 +3976,9 @@ pub(crate) unsafe fn assign_face_groups(
 pub(crate) unsafe fn update_face_groups(
     buf: &BufView,
     error: *mut Error,
-    mesh: *mut Mesh,
+    mesh: &View<Mesh>,
     need_copy: bool,
 ) -> Result<(), Fail> {
-    // SAFETY: `mesh` is the caller's `ufbx_mesh` — an arena-owned element
-    // reached through `*mut` (write-capable provenance for `Mut`), live for the
-    // borrow; the fields accessed below are initialized at each use site.
-    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
     let num_faces: usize = mesh.faces().count;
     let num_groups: usize = mesh.face_group_parts().count;
     if num_groups == 0 {
@@ -4134,8 +4116,7 @@ pub(crate) unsafe fn read_mesh(
         unsafe { read_synthetic_blend_shapes(uc, node, info) }?;
     }
 
-    // SAFETY: `mesh.get()` is this view's own pointer to the fresh element.
-    unsafe { patch_mesh_reals(mesh.get()) };
+    patch_mesh_reals(mesh);
 
     // Sometimes there are empty meshes in FBX files?
     // TODO: Should these be included in output? option? strict mode?
@@ -4297,9 +4278,8 @@ pub(crate) unsafe fn read_mesh(
         mesh.set_num_edges(mesh.edges().count);
     }
 
-    // SAFETY: `mesh.get()` is this view's own pointer to the fresh element and
-    // `index_data` spans its `num_indices` `u32`s.
-    unsafe { process_indices(uc, mesh.get(), index_data) }?;
+    // SAFETY: `index_data` spans the mesh's `num_indices` `u32`s.
+    unsafe { process_indices(uc, mesh, index_data) }?;
 
     // Count the number of UV/color sets
     let mut num_uv: usize = 0;
@@ -4361,14 +4341,13 @@ pub(crate) unsafe fn read_mesh(
             if mesh.vertex_normal().exists() {
                 continue;
             }
-            // SAFETY: `mesh.get()` is this view's own pointer to the fresh
-            // element and `vertex_normal_raw()` addresses its live
+            // SAFETY: `vertex_normal_raw()` addresses the mesh's own live
             // `ufbx_vertex_vec3` field; the `3` value-real count matches that
             // attribute type.
             unsafe {
                 read_vertex_element(
                     uc,
-                    mesh.get(),
+                    mesh,
                     n,
                     mesh.vertex_normal_raw() as *mut VertexAttrib,
                     sp::Normals.as_ptr(),
@@ -4395,13 +4374,12 @@ pub(crate) unsafe fn read_mesh(
                     &mut (*layer).index as *mut u32 as *mut c_void,
                 )
             });
-            // SAFETY: `mesh.get()` is this view's own pointer to the fresh
-            // element and `&mut (*layer).elem` addresses the in-bounds slot's
-            // live `ufbx_vertex_vec3`; the `3` value-real count matches it.
+            // SAFETY: `&mut (*layer).elem` addresses the in-bounds slot's live
+            // `ufbx_vertex_vec3`; the `3` value-real count matches it.
             unsafe {
                 read_vertex_element(
                     uc,
-                    mesh.get(),
+                    mesh,
                     n,
                     &mut (*layer).elem as *mut VertexVec3 as *mut VertexAttrib,
                     sp::Binormals.as_ptr(),
@@ -4432,13 +4410,12 @@ pub(crate) unsafe fn read_mesh(
                     &mut (*layer).index as *mut u32 as *mut c_void,
                 )
             });
-            // SAFETY: `mesh.get()` is this view's own pointer to the fresh
-            // element and `&mut (*layer).elem` addresses the in-bounds slot's
-            // live `ufbx_vertex_vec3`; the `3` value-real count matches it.
+            // SAFETY: `&mut (*layer).elem` addresses the in-bounds slot's live
+            // `ufbx_vertex_vec3`; the `3` value-real count matches it.
             unsafe {
                 read_vertex_element(
                     uc,
-                    mesh.get(),
+                    mesh,
                     n,
                     &mut (*layer).elem as *mut VertexVec3 as *mut VertexAttrib,
                     sp::Tangents.as_ptr(),
@@ -4484,13 +4461,12 @@ pub(crate) unsafe fn read_mesh(
                 unsafe { (*set).name = EMPTY_STRING.0 };
             }
 
-            // SAFETY: `mesh.get()` is this view's own pointer to the fresh
-            // element and `&mut (*set).vertex_uv` addresses the in-bounds slot's
+            // SAFETY: `&mut (*set).vertex_uv` addresses the in-bounds slot's
             // live `ufbx_vertex_vec2`; the `2` value-real count matches it.
             unsafe {
                 read_vertex_element(
                     uc,
-                    mesh.get(),
+                    mesh,
                     n,
                     &mut (*set).vertex_uv as *mut VertexVec2 as *mut VertexAttrib,
                     sp::UV.as_ptr(),
@@ -4537,14 +4513,12 @@ pub(crate) unsafe fn read_mesh(
                 unsafe { (*set).name = EMPTY_STRING.0 };
             }
 
-            // SAFETY: `mesh.get()` is this view's own pointer to the fresh
-            // element and `&mut (*set).vertex_color` addresses the in-bounds
-            // slot's live `ufbx_vertex_vec4`; the `4` value-real count matches
-            // it.
+            // SAFETY: `&mut (*set).vertex_color` addresses the in-bounds slot's
+            // live `ufbx_vertex_vec4`; the `4` value-real count matches it.
             unsafe {
                 read_vertex_element(
                     uc,
-                    mesh.get(),
+                    mesh,
                     n,
                     &mut (*set).vertex_color as *mut VertexVec4 as *mut VertexAttrib,
                     sp::Colors.as_ptr(),
@@ -4560,13 +4534,12 @@ pub(crate) unsafe fn read_mesh(
                     .set_count(mesh.color_sets().count - 1);
             }
         } else if n.name() == sp::LayerElementVertexCrease.as_ptr() {
-            // SAFETY: `mesh.get()` is this view's own pointer to the fresh
-            // element and `vertex_crease_raw()` addresses its live
+            // SAFETY: `vertex_crease_raw()` addresses the mesh's own live
             // `ufbx_vertex_real` field; the `1` value-real count matches it.
             unsafe {
                 read_vertex_element(
                     uc,
-                    mesh.get(),
+                    mesh,
                     n,
                     mesh.vertex_crease_raw() as *mut VertexAttrib,
                     sp::VertexCrease.as_ptr(),
@@ -5103,19 +5076,16 @@ pub(crate) unsafe fn read_mesh(
     mesh.set_skinned_position(unsafe { core::ptr::read(mesh.vertex_position_ptr()) });
     mesh.set_skinned_normal(unsafe { core::ptr::read(mesh.vertex_normal_ptr()) });
 
-    // SAFETY: `mesh.get()` is this view's own pointer to the fresh element.
-    unsafe { patch_mesh_reals(mesh.get()) };
+    patch_mesh_reals(mesh);
 
     if mesh.face_group().count > 0 && mesh.face_groups().count == 0 {
-        // SAFETY: `mesh.get()` is this view's own pointer to the fresh element
-        // with a non-empty `face_group`, and
-        // `uc.error_mut_ptr()`/`max_consecutive_indices_mut_ptr()` are uc's own
-        // live error and counter slots.
+        // SAFETY: `uc.error_mut_ptr()`/`max_consecutive_indices_mut_ptr()` are
+        // uc's own live error and counter slots.
         unsafe {
             assign_face_groups(
                 uc.result_view(),
                 uc.error_mut_ptr(),
-                mesh.get(),
+                mesh,
                 uc.max_consecutive_indices_mut_ptr(),
                 uc.retain_mesh_parts(),
             )
@@ -10820,8 +10790,7 @@ pub(crate) unsafe fn read_legacy_mesh(
     // SAFETY: `info` is the caller's live `ufbxi_element_info`.
     unsafe { read_synthetic_blend_shapes(uc, node, info) }?;
 
-    // SAFETY: `mesh.get()` is this view's own pointer to the fresh element.
-    unsafe { patch_mesh_reals(mesh.get()) };
+    patch_mesh_reals(mesh);
 
     if uc.opts_view().ignore_geometry() {
         return Ok(());
@@ -10898,9 +10867,9 @@ pub(crate) unsafe fn read_legacy_mesh(
         }
     }
 
-    // SAFETY: `mesh.get()` is this view's own pointer to the fresh element and
-    // `index_data` its `num_indices`-long index run, installed above.
-    unsafe { process_indices(uc, mesh.get(), index_data) }?;
+    // SAFETY: `index_data` is the mesh's `num_indices`-long index run,
+    // installed above.
+    unsafe { process_indices(uc, mesh, index_data) }?;
 
     // Normals are either per-vertex or per-index in legacy FBX files?
     // If the version is 5000 prefer per-vertex, otherwise per-index...
@@ -10965,13 +10934,12 @@ pub(crate) unsafe fn read_legacy_mesh(
             (*set).index = 0;
             (*set).name.data = EMPTY_CHAR.as_ptr();
         }
-        // SAFETY: `mesh.get()` is this view's own pointer to the fresh element
-        // and `&mut (*set).vertex_uv` is the `ufbx_vertex_vec2` slot of the
+        // SAFETY: `&mut (*set).vertex_uv` is the `ufbx_vertex_vec2` slot of the
         // fresh non-null set, which the `'r'`/2 attribute shape matches.
         unsafe {
             read_vertex_element(
                 uc,
-                mesh.get(),
+                mesh,
                 uv_info,
                 &mut (*set).vertex_uv as *mut VertexVec2 as *mut VertexAttrib,
                 sp::TextureUV.as_ptr(),
@@ -11176,8 +11144,7 @@ pub(crate) unsafe fn read_legacy_mesh(
     // zeroed field of the freshly pushed element.
     mesh.set_skinned_normal(unsafe { core::ptr::read(mesh.vertex_normal_ptr()) });
 
-    // SAFETY: `mesh.get()` is this view's own pointer to the fresh element.
-    unsafe { patch_mesh_reals(mesh.get()) };
+    patch_mesh_reals(mesh);
 
     Ok(())
 }
@@ -11931,11 +11898,7 @@ macro_rules! ufbxi_patch_zero {
 }
 
 // ufbx.c:16676-16689 `ufbxi_update_vertex_first_index`
-pub(crate) unsafe fn update_vertex_first_index(mesh: *mut Mesh) {
-    // SAFETY: `mesh` is the caller's `ufbx_mesh` — an arena-owned element
-    // reached through `*mut` (write-capable provenance for `Mut`), live for the
-    // borrow; the fields accessed below are initialized at each use site.
-    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
+pub(crate) unsafe fn update_vertex_first_index(mesh: &View<Mesh>) {
     // C: `ufbxi_for_list(uint32_t, p_vx_ix, mesh->vertex_first_index)`
     // `vertex_first_index` is the mesh's `count`-long run.
     let mut p_vx_ix = mesh.vertex_first_index().data as *mut u32;
@@ -11979,12 +11942,8 @@ pub(crate) unsafe fn update_vertex_first_index(mesh: *mut Mesh) {
 pub(crate) unsafe fn finalize_mesh(
     buf: &BufView,
     error: *mut Error,
-    mesh: *mut Mesh,
+    mesh: &View<Mesh>,
 ) -> Result<(), Fail> {
-    // SAFETY: `mesh` is the caller's `ufbx_mesh` — an arena-owned element
-    // reached through `*mut` (write-capable provenance for `Mut`), live for the
-    // borrow; the fields accessed below are initialized at each use site.
-    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
     if mesh.vertices().count == 0 {
         // The bitwise copy mirrors C's struct assignment of two non-`Copy` list
         // structs, and both stay owned by the same mesh.
@@ -12078,11 +12037,11 @@ pub(crate) unsafe fn finalize_mesh(
             !mesh.vertex_first_index().data.is_null(),
             "mesh->vertex_first_index.data"
         );
-        // SAFETY: `mesh.get()` is this view's own pointer to the mesh, whose
-        // `vertex_first_index` is the non-null `num_vertices`-long run pushed
-        // just above.
+        // SAFETY: the mesh's `vertex_first_index` is the non-null
+        // `num_vertices`-long run pushed just above — the count contract
+        // `update_vertex_first_index` rests on.
         unsafe {
-            update_vertex_first_index(mesh.get());
+            update_vertex_first_index(mesh);
         }
     }
 
@@ -12154,11 +12113,7 @@ pub(crate) unsafe fn finalize_mesh(
         mesh.color_sets_view().set_count(1);
     }
 
-    // SAFETY: `mesh.get()` is this view's own pointer to the mesh, whose
-    // attribute lists are the runs patched above.
-    unsafe {
-        patch_mesh_reals(mesh.get());
-    }
+    patch_mesh_reals(mesh);
 
     Ok(())
 }

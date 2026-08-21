@@ -31,7 +31,7 @@ use crate::native::platform::{macro_lower_bound_eq, ufbx_assert, unstable_sort, 
 use crate::native::platform::{math, max_real, min_real, stable_sort, ufbxi_ignore, KD_FAST_DEPTH};
 #[cfg(feature = "triangulation")]
 use crate::native::string_pool::{distsq2, dot3, length3, mul3, slow_normalized_cross3};
-use crate::native::view::{Const, View};
+use crate::native::view::{Mode, View};
 #[cfg(feature = "triangulation")]
 use crate::prelude::as_f64;
 #[cfg(feature = "triangulation")]
@@ -1213,13 +1213,7 @@ pub(crate) unsafe extern "C" fn topo_less_index_index(
 
 // ufbx.c:28707-28784 `ufbxi_compute_topology`
 #[inline(never)]
-pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge) {
-    // SAFETY: `mesh` points to a valid, live `Mesh` (caller contract). It comes
-    // from the public entry points, so it may derive from a caller's `&Mesh` —
-    // `Const` is the only sound mode for it. The freeze the `Const` tag demands
-    // holds: this fn only READS the mesh (every write targets `topo`), so no
-    // parent pointer writes the viewed bytes while the view is live.
-    let mesh = unsafe { View::<Mesh, Const>::from_ptr(mesh) };
+pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: *mut TopoEdge) {
     let num_indices: usize = mesh.num_indices();
 
     // Temporarily use `prev` and `next` for vertices
@@ -1412,8 +1406,8 @@ pub(crate) unsafe fn compute_topology(mesh: *const Mesh, topo: *mut TopoEdge) {
 }
 
 // ufbx.c:28786-28819 `ufbxi_is_edge_smooth`
-pub(crate) unsafe fn is_edge_smooth(
-    mesh: *const Mesh,
+pub(crate) unsafe fn is_edge_smooth<M: Mode>(
+    mesh: &View<Mesh, M>,
     topo: *const TopoEdge,
     num_topo: usize,
     index: u32,
@@ -1422,12 +1416,6 @@ pub(crate) unsafe fn is_edge_smooth(
     // C: `ufbxi_ignore(num_topo);`
     let _ = num_topo;
     ufbx_assert!((index as usize) < num_topo);
-    // SAFETY: `mesh` points to a valid, live `Mesh` (caller contract). It comes
-    // from the public entry points, so it may derive from a caller's `&Mesh` —
-    // `Const` is the only sound mode for it. The freeze the `Const` tag demands
-    // holds: this fn only READS the mesh, so no parent pointer writes the viewed
-    // bytes while the view is live.
-    let mesh = unsafe { View::<Mesh, Const>::from_ptr(mesh) };
     if !mesh.edge_smoothing().data.is_null() {
         // SAFETY: `index < num_topo` (asserted), so `topo.add(index)` is a live
         // `TopoEdge`.

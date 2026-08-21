@@ -257,7 +257,7 @@ use crate::native::string_pool::{
 use crate::native::view::{Const, Mode, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::as_f64;
-use crate::prelude::{Blob, List, Real, Ref, RefList, String};
+use crate::prelude::{Blob, List, ListView, Real, Ref, RefList, String};
 
 // Rust-port infrastructure (not a ufbx.c section): reinterpret-in-place VIEWS
 // over the scene-graph element structs the `ufbxi_update_*` family mutates.
@@ -5109,12 +5109,7 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
 
 // ufbx.c:20363-20403 `ufbxi_generate_normals`
 #[inline(never)]
-pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(), Fail> {
-    // SAFETY: `mesh` points to a live, initialized `ufbx_mesh` — the mesh being
-    // finalized (fn contract). Its only caller walks `uc->scene.meshes`, an
-    // element run owned by the load context, so the pointer carries
-    // write-capable provenance and `Mut` is the right mode.
-    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
+pub(crate) unsafe fn generate_normals(uc: &Context, mesh: &View<Mesh>) -> Result<(), Fail> {
     let num_indices: usize = mesh.num_indices();
 
     mesh.set_generated_normals(true);
@@ -6749,51 +6744,40 @@ pub(crate) unsafe fn normalize_vec3_list(list: *const List<Vec3>) {
 #[inline(never)]
 pub(crate) unsafe fn flip_attrib_winding(
     uc: &Context,
-    mesh: *mut Mesh,
-    indices: *mut List<u32>,
+    mesh: &View<Mesh>,
+    indices: &ListView<u32>,
     is_position: bool,
 ) -> Result<(), Fail> {
     // All zero, no flipping needed
-    // SAFETY: `indices` points to a live `ufbx_uint32_list` header — one of the
-    // mesh's own attribute index lists (fn contract).
-    if unsafe { (*indices).data } == uc.zero_indices() || unsafe { (*indices).count } == 0 {
+    if indices.data() == uc.zero_indices() || indices.count() == 0 {
         return Ok(());
     }
 
-    // SAFETY: `mesh` points to the live, initialized `ufbx_mesh` that owns
-    // `indices` (fn contract); its only caller derives the pointer from the
-    // context-owned mesh element run, so the provenance is write-capable.
-    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
-
-    // SAFETY: `indices` is live (see above).
-    if unsafe { (*indices).data } == mesh.vertex_position().indices().data && !is_position {
+    if indices.data() == mesh.vertex_position().indices().data && !is_position {
         // Sharing indices with vertex position, already flipped.
         return Ok(());
-    // SAFETY: `indices` is live (see above).
-    } else if unsafe { (*indices).data } == uc.consecutive_indices() {
+    } else if indices.data() == uc.consecutive_indices() {
         // Need to duplicate consecutive indices, but we can cache the per mesh.
         if !uc.tmp_mesh_consecutive_indices().is_null() {
-            // SAFETY: `indices` is live; the cached run is `uc`'s own result-arena
-            // copy of the consecutive indices for this mesh.
-            unsafe { (*indices).data = uc.tmp_mesh_consecutive_indices() };
+            // The cached run is `uc`'s own result-arena copy of the consecutive
+            // indices for this mesh.
+            indices.set_data(uc.tmp_mesh_consecutive_indices());
             return Ok(());
         }
         // SAFETY: `result_mut_ptr` is `uc`'s own live result buffer, and
-        // `(*indices).data`/`count` describe the consecutive-index run being
+        // `indices`' `data`/`count` describe the consecutive-index run being
         // copied.
-        unsafe {
-            (*indices).data =
-                push_copy::<u32>(uc.result_mut_ptr(), (*indices).count, (*indices).data)
-        };
-        // SAFETY: `indices` is live (see above).
-        ufbxi_check!(uc, !unsafe { (*indices).data }.is_null(), "indices->data");
-        // SAFETY: as above; the push is the fresh non-null result-arena run.
-        uc.set_tmp_mesh_consecutive_indices(unsafe { (*indices).data } as *mut u32);
+        indices.set_data(unsafe {
+            push_copy::<u32>(uc.result_mut_ptr(), indices.count(), indices.data())
+        });
+        ufbxi_check!(uc, !indices.data().is_null(), "indices->data");
+        // The push above is the fresh non-null result-arena run.
+        uc.set_tmp_mesh_consecutive_indices(indices.data() as *mut u32);
     }
 
-    // SAFETY: `indices` is live and its `data` is a writable run of `count`
-    // indices — either the mesh's own or the result-arena copy pushed above.
-    let data: *mut u32 = unsafe { (*indices).data as *mut u32 };
+    // `indices`' `data` is a writable run of `count` indices — either the mesh's
+    // own or the result-arena copy pushed above.
+    let data: *mut u32 = indices.data() as *mut u32;
     // C: `ufbxi_for_list(ufbx_face, face, mesh->faces)`
     let mut face: *mut Face = mesh.faces().data as *mut Face;
     // `data`/`count` describe one arena run.
@@ -6840,21 +6824,16 @@ pub(crate) unsafe fn flip_attrib_winding(
 
 // ufbx.c:21109-21163 `ufbxi_flip_winding`
 #[inline(never)]
-pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), Fail> {
+pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(), Fail> {
     uc.set_tmp_mesh_consecutive_indices(ptr::null_mut());
-    // SAFETY: `mesh` points to the live, initialized `ufbx_mesh` being flipped
-    // (fn contract). Its caller walks `uc->scene.meshes`, an element run owned
-    // by the load context, so the pointer carries write-capable provenance and
-    // `Mut` is the right mode. Every raw pointer into the mesh below is derived
-    // from this view, so the writes through them stay children of it.
-    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
-    // SAFETY: `vertex_position().indices_raw()` addresses the viewed mesh's own
-    // attribute index-list header, and `mesh.get()` the mesh itself.
-    unsafe { flip_attrib_winding(uc, mesh.get(), mesh.vertex_position().indices_raw(), true) }?;
+    // SAFETY: `indices_view()` views the mesh's own `vertex_position` index
+    // list, so its `count` spans the face index ranges `flip_attrib_winding`
+    // reverses.
+    unsafe { flip_attrib_winding(uc, mesh, mesh.vertex_position().indices_view(), true) }?;
     // SAFETY: as above, for the mesh's own `vertex_normal` index list.
-    unsafe { flip_attrib_winding(uc, mesh.get(), mesh.vertex_normal().indices_raw(), false) }?;
+    unsafe { flip_attrib_winding(uc, mesh, mesh.vertex_normal().indices_view(), false) }?;
     // SAFETY: as above, for the mesh's own `vertex_crease` index list.
-    unsafe { flip_attrib_winding(uc, mesh.get(), mesh.vertex_crease().indices_raw(), false) }?;
+    unsafe { flip_attrib_winding(uc, mesh, mesh.vertex_crease().indices_view(), false) }?;
     if mesh.uv_sets().count > 0 {
         // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
         // SAFETY: `uv_sets` describes one contiguous arena run of the mesh's own
@@ -6866,17 +6845,13 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
             )
         };
         for set in sets {
-            // SAFETY: `indices_raw()` addresses this live `UvSet`'s own
-            // attribute index-list header, and `mesh` owns the set run.
-            unsafe { flip_attrib_winding(uc, mesh.get(), set.vertex_uv().indices_raw(), false) }?;
+            // SAFETY: `indices_view()` views this live `UvSet`'s own attribute
+            // index list, whose span matches the mesh that owns the set run.
+            unsafe { flip_attrib_winding(uc, mesh, set.vertex_uv().indices_view(), false) }?;
             // SAFETY: as above, for this set's `vertex_tangent` index list.
-            unsafe {
-                flip_attrib_winding(uc, mesh.get(), set.vertex_tangent().indices_raw(), false)
-            }?;
+            unsafe { flip_attrib_winding(uc, mesh, set.vertex_tangent().indices_view(), false) }?;
             // SAFETY: as above, for this set's `vertex_bitangent` index list.
-            unsafe {
-                flip_attrib_winding(uc, mesh.get(), set.vertex_bitangent().indices_raw(), false)
-            }?;
+            unsafe { flip_attrib_winding(uc, mesh, set.vertex_bitangent().indices_view(), false) }?;
         }
         // C: struct assignment (memcpy) of the vertex-attribute headers; the
         // `Vertex*` structs are not `Copy` in the generated bindings, so the
@@ -6919,11 +6894,9 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
             )
         };
         for set in sets {
-            // SAFETY: `indices_raw()` addresses this live `ColorSet`'s own
-            // attribute index-list header, and `mesh` owns the set run.
-            unsafe {
-                flip_attrib_winding(uc, mesh.get(), set.vertex_color().indices_raw(), false)
-            }?;
+            // SAFETY: `indices_view()` views this live `ColorSet`'s own attribute
+            // index list, whose span matches the mesh that owns the set run.
+            unsafe { flip_attrib_winding(uc, mesh, set.vertex_color().indices_view(), false) }?;
         }
         // SAFETY: `color_sets.count > 0`, so element `0` of the mesh's color-set
         // run is live and initialized; the destination is the mesh's own
@@ -6936,16 +6909,18 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
             )
         };
     }
-    // SAFETY: `skinned_position().indices_raw()` addresses the viewed mesh's own
-    // `skinned_position` index-list header.
-    unsafe { flip_attrib_winding(uc, mesh.get(), mesh.skinned_position().indices_raw(), false) }?;
+    // SAFETY: `skinned_position().indices_view()` views the mesh's own
+    // `skinned_position` index list.
+    unsafe { flip_attrib_winding(uc, mesh, mesh.skinned_position().indices_view(), false) }?;
     if mesh.skinned_normal().indices().data != mesh.vertex_normal().indices().data {
         // SAFETY: as above, for the mesh's own `skinned_normal` index list.
-        unsafe { flip_attrib_winding(uc, mesh.get(), mesh.skinned_normal().indices_raw(), false) }?;
+        unsafe { flip_attrib_winding(uc, mesh, mesh.skinned_normal().indices_view(), false) }?;
     }
 
-    // SAFETY: `mesh.get()` addresses the live, initialized viewed mesh.
-    unsafe { update_vertex_first_index(mesh.get()) };
+    // SAFETY: `modify_geometry` runs on meshes `finalize_mesh` already passed
+    // through, so `vertex_first_index` is a `num_vertices`-long run — the count
+    // contract `update_vertex_first_index` rests on.
+    unsafe { update_vertex_first_index(mesh) };
 
     // Mapping from old index values to flipped ones, reserve index -1
     // (aka `UFBX_NO_INDEX`) for itself.
@@ -7182,7 +7157,7 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
             // Flip face winding retaining the first vertex
             if do_flip_winding {
                 mesh.set_reversed_winding(true);
-                flip_winding(uc, mesh.get())?;
+                flip_winding(uc, mesh)?;
             }
 
             let geo_node: *mut Node = get_geometry_transform_node(mesh.element_raw());
@@ -8005,13 +7980,8 @@ pub(crate) unsafe extern "C" fn material_part_usage_less(
 pub(crate) unsafe fn finalize_mesh_material(
     buf: &BufView,
     error: *mut Error,
-    mesh: *mut Mesh,
+    mesh: &View<Mesh>,
 ) -> Result<(), Fail> {
-    // SAFETY: `mesh` points to the live, initialized `ufbx_mesh` being finalized
-    // (fn contract). Every caller hands over a mesh owned by its own load /
-    // tessellate / subdivide context, so the provenance is write-capable and
-    // `Mut` is the right mode.
-    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
     let num_materials: usize = mesh.materials().count;
     let num_parts: usize = mesh.material_parts().count;
     let num_faces: usize = mesh.faces().count;
@@ -9509,8 +9479,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
             // Generate normals if necessary
             if !mesh.vertex_normal().exists() && uc.opts_view().generate_missing_normals() {
-                // SAFETY: `mesh.get()` addresses the live, initialized viewed mesh.
-                unsafe { generate_normals(uc, mesh.get()) }?;
+                // SAFETY: `uc`'s tmp/result arenas back the topology and
+                // normal runs `generate_normals` pushes.
+                unsafe { generate_normals(uc, mesh) }?;
             }
 
             // Assign first UV and color sets as the "canonical" ones
@@ -9688,12 +9659,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     mesh.face_material_view().set_count(0);
                 }
             } else if mesh.materials().count > 0 {
-                // SAFETY: `mesh.get()` addresses the live, initialized viewed mesh;
-                // `result_view()`/`error_mut_ptr()` are `uc`'s own result buffer and
-                // error slot.
-                unsafe {
-                    finalize_mesh_material(uc.result_view(), uc.error_mut_ptr(), mesh.get())
-                }?;
+                // SAFETY: `result_view()`/`error_mut_ptr()` are `uc`'s own
+                // result buffer and error slot.
+                unsafe { finalize_mesh_material(uc.result_view(), uc.error_mut_ptr(), mesh) }?;
             }
 
             // Fetch deformers
