@@ -4818,17 +4818,22 @@ pub(crate) unsafe fn find_face_index(mesh: *mut Mesh, index: usize) -> u32 {
     }
     let ix: u32 = index as u32;
 
-    let mut face_ix: usize = usize::MAX;
     // SAFETY: `mesh` is non-null here (checked above) and points at a live `Mesh`
-    // per this fn's contract; `faces.data`/`.count` are its own list fields, and
-    // each closure derefs a `Face` the search keeps within `[0, count)`.
+    // per this fn's raw-pointer contract. C only reads the mesh here, so a
+    // read-only `Const` view is minted; nothing writes those bytes while it is
+    // live.
+    let mesh = unsafe { View::<Mesh, Const>::from_ptr(mesh) };
+
+    let mut face_ix: usize = usize::MAX;
+    // SAFETY: `faces.data`/`.count` describe the mesh's own face run, and each
+    // closure derefs a `Face` the search keeps within `[0, count)`.
     unsafe {
         macro_lower_bound_eq::<Face>(
             4,
             &mut face_ix,
-            (*mesh).faces.data,
+            mesh.faces().data,
             0,
-            (*mesh).faces.count,
+            mesh.faces().count,
             // C: `a->index_begin + a->num_indices <= ix` — `uint32_t` arithmetic.
             |a| (*a).index_begin.wrapping_add((*a).num_indices) <= ix,
             // C: `ix >= a->index_begin && ix < a->index_begin + a->num_indices`.
@@ -4854,8 +4859,6 @@ pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
     mesh: &View<Mesh, M>,
     face: Face,
 ) -> u32 {
-    // View-typed boundary; C-shaped body reads through the raw pointer.
-    let mesh: *const Mesh = mesh.as_ptr();
     if face.num_indices < 3 {
         return 0;
     }
@@ -4870,31 +4873,23 @@ pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
     ) {
         return 0;
     }
-    // SAFETY: `mesh` is a live `Mesh` (the view's provenance); the guard reads
-    // its own `num_indices` field.
-    if unsafe {
-        ufbxi_panicf!(
-            panic,
-            (face.index_begin as usize) < (*mesh).num_indices,
-            "Face index begin (%u) out of bounds (%zu)",
-            face.index_begin,
-            (*mesh).num_indices,
-        )
-    } {
+    if ufbxi_panicf!(
+        panic,
+        (face.index_begin as usize) < mesh.num_indices(),
+        "Face index begin (%u) out of bounds (%zu)",
+        face.index_begin,
+        mesh.num_indices(),
+    ) {
         return 0;
     }
-    // SAFETY: same live `Mesh`; the guard reads its own `num_indices` field.
-    if unsafe {
-        ufbxi_panicf!(
-            panic,
-            (*mesh).num_indices.wrapping_sub(face.index_begin as usize)
-                >= face.num_indices as usize,
-            "Face index end (%u + %u) out of bounds (%zu)",
-            face.index_begin,
-            face.num_indices,
-            (*mesh).num_indices,
-        )
-    } {
+    if ufbxi_panicf!(
+        panic,
+        mesh.num_indices().wrapping_sub(face.index_begin as usize) >= face.num_indices as usize,
+        "Face index end (%u + %u) out of bounds (%zu)",
+        face.index_begin,
+        face.num_indices,
+        mesh.num_indices(),
+    ) {
         return 0;
     }
 
@@ -4915,39 +4910,35 @@ pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
         let i1: u32 = face.index_begin.wrapping_add(1);
         let i2: u32 = face.index_begin.wrapping_add(2);
         let i3: u32 = face.index_begin.wrapping_add(3);
-        // SAFETY: `mesh` is a live `Mesh` (view provenance); `i0` is within the
-        // face's index range (bounds guarded above), so the `indices.data`
-        // lookup yields a valid vertex index into `values.data`.
+        // SAFETY: `i0` is within the face's index range (bounds guarded above),
+        // so the `indices.data` lookup yields a valid vertex index into
+        // `values.data`; both runs belong to the mesh's own `vertex_position`.
         let v0: Vec3 = unsafe {
-            *(*mesh)
-                .vertex_position
-                .values
-                .data
-                .add(*(*mesh).vertex_position.indices.data.add(i0 as usize) as usize)
+            *mesh
+                .vertex_position()
+                .values_data()
+                .add(*mesh.vertex_position().indices_data().add(i0 as usize) as usize)
         };
         // SAFETY: as above for `i1`.
         let v1: Vec3 = unsafe {
-            *(*mesh)
-                .vertex_position
-                .values
-                .data
-                .add(*(*mesh).vertex_position.indices.data.add(i1 as usize) as usize)
+            *mesh
+                .vertex_position()
+                .values_data()
+                .add(*mesh.vertex_position().indices_data().add(i1 as usize) as usize)
         };
         // SAFETY: as above for `i2`.
         let v2: Vec3 = unsafe {
-            *(*mesh)
-                .vertex_position
-                .values
-                .data
-                .add(*(*mesh).vertex_position.indices.data.add(i2 as usize) as usize)
+            *mesh
+                .vertex_position()
+                .values_data()
+                .add(*mesh.vertex_position().indices_data().add(i2 as usize) as usize)
         };
         // SAFETY: as above for `i3`.
         let v3: Vec3 = unsafe {
-            *(*mesh)
-                .vertex_position
-                .values
-                .data
-                .add(*(*mesh).vertex_position.indices.data.add(i3 as usize) as usize)
+            *mesh
+                .vertex_position()
+                .values_data()
+                .add(*mesh.vertex_position().indices_data().add(i3 as usize) as usize)
         };
 
         let a: Vec3 = sub3(v2, v0);
@@ -4993,13 +4984,13 @@ pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
         let nc = crate::native::topology::NgonContext(core::cell::UnsafeCell::new(
             core::mem::MaybeUninit::zeroed(),
         ));
-        // SAFETY: `positions_mut_ptr()` addresses `nc`'s own positions slot;
-        // `mesh` is a live `Mesh` (view provenance) whose `vertex_position` is
-        // read by value (a `Copy` attribute) and written into that slot.
+        // SAFETY: `positions_mut_ptr()` addresses `nc`'s own positions slot; the
+        // mesh's `vertex_position` is read by value (a `Copy` attribute) through
+        // its own in-place projection and written into that slot.
         unsafe {
             core::ptr::write(
                 nc.positions_mut_ptr(),
-                core::ptr::read(&(*mesh).vertex_position),
+                core::ptr::read(mesh.vertex_position().as_ptr()),
             );
         }
         nc.set_face(face);
@@ -5062,26 +5053,20 @@ pub(crate) unsafe fn catch_compute_topology<M: Mode>(
     indices: *mut TopoEdge,
     num_indices: usize,
 ) {
-    // View-typed boundary; the C-shaped body below reads through the raw
-    // pointer (reads via a `Const` view's SRO provenance are legal).
-    let mesh: *const Mesh = mesh.as_ptr();
-    // SAFETY: `mesh` is a live `Mesh` (the view's provenance); the guard reads
-    // its own `num_indices` field.
-    if unsafe {
-        ufbxi_panicf!(
-            panic,
-            num_indices >= (*mesh).num_indices,
-            "Required mesh.num_indices (%zu) indices, got %zu",
-            (*mesh).num_indices,
-            num_indices,
-        )
-    } {
+    if ufbxi_panicf!(
+        panic,
+        num_indices >= mesh.num_indices(),
+        "Required mesh.num_indices (%zu) indices, got %zu",
+        mesh.num_indices(),
+        num_indices,
+    ) {
         return;
     }
 
-    // SAFETY: `mesh` is a live `Mesh`; `indices` has `num_indices >= mesh
-    // .num_indices` `TopoEdge` slots (guarded above) for `compute_topology`.
-    unsafe { crate::native::topology::compute_topology(mesh, indices) };
+    // SAFETY: `as_ptr()` yields the view's live `Mesh`; `indices` has
+    // `num_indices >= mesh.num_indices` `TopoEdge` slots (guarded above) for
+    // `compute_topology`.
+    unsafe { crate::native::topology::compute_topology(mesh.as_ptr(), indices) };
 }
 
 // ufbx.c:32484-32492 `ufbx_catch_topo_next_vertex_edge`
@@ -5306,37 +5291,28 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
     num_normal_indices: usize,
     assume_smooth: bool,
 ) -> usize {
-    // View-typed boundary; the C-shaped body below reads through the raw
-    // pointer (reads via a `Const` view's SRO provenance are legal).
-    let mesh: *const Mesh = mesh.as_ptr();
     let mut next_index: u32 = 0;
-    // SAFETY: `mesh` is a live `Mesh` (the view's provenance); the guard reads
-    // its own `num_indices` field.
-    if unsafe {
-        ufbxi_panicf!(
-            panic,
-            num_normal_indices >= (*mesh).num_indices,
-            "Expected at least mesh.num_indices (%zu), got %zu",
-            (*mesh).num_indices,
-            num_normal_indices,
-        )
-    } {
+    if ufbxi_panicf!(
+        panic,
+        num_normal_indices >= mesh.num_indices(),
+        "Expected at least mesh.num_indices (%zu), got %zu",
+        mesh.num_indices(),
+        num_normal_indices,
+    ) {
         return 0;
     }
 
-    // SAFETY: `mesh` is a live `Mesh`; reading its own `num_indices` field.
-    for i in 0..unsafe { (*mesh).num_indices } {
+    for i in 0..mesh.num_indices() {
         // SAFETY: `i < mesh.num_indices <= num_normal_indices` (guarded above),
         // so `normal_indices.add(i)` addresses a caller-reserved slot.
         unsafe { *normal_indices.add(i) = NO_INDEX };
     }
 
     // Walk around vertices and merge around smooth edges
-    // SAFETY: `mesh` is a live `Mesh`; reading its own `num_vertices` field.
-    for vi in 0..unsafe { (*mesh).num_vertices } {
+    for vi in 0..mesh.num_vertices() {
         // SAFETY: `vi < mesh.num_vertices`, so `vertex_first_index.data.add(vi)`
         // addresses a live element of the mesh's own list.
-        let original_start: u32 = unsafe { *(*mesh).vertex_first_index.data.add(vi) };
+        let original_start: u32 = unsafe { *mesh.vertex_first_index().data.add(vi) };
         if original_start == NO_INDEX {
             continue;
         }
@@ -5347,8 +5323,9 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
             // SAFETY: `topo`/`num_topo` are this fn's raw-pointer contract,
             // forwarded unchanged to the topology walkers.
             let prev: u32 = unsafe { topo_next_vertex_edge(topo, num_topo, cur) };
-            // SAFETY: same live `mesh` and `topo`/`num_topo` contract.
-            if !unsafe { is_edge_smooth(mesh, topo, num_topo, cur, assume_smooth) } {
+            // SAFETY: `as_ptr()` yields the view's live `Mesh`; same
+            // `topo`/`num_topo` contract.
+            if !unsafe { is_edge_smooth(mesh.as_ptr(), topo, num_topo, cur, assume_smooth) } {
                 start = cur;
             }
             if prev == NO_INDEX {
@@ -5374,8 +5351,9 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
                 break;
             }
 
-            // SAFETY: same live `mesh` and `topo`/`num_topo` contract.
-            if !unsafe { is_edge_smooth(mesh, topo, num_topo, next, assume_smooth) } {
+            // SAFETY: `as_ptr()` yields the view's live `Mesh`; same
+            // `topo`/`num_topo` contract.
+            if !unsafe { is_edge_smooth(mesh.as_ptr(), topo, num_topo, next, assume_smooth) } {
                 next_index = next_index.wrapping_add(1);
             }
             // SAFETY: `next` is an index within the mesh's index range.
@@ -5384,8 +5362,7 @@ pub(crate) unsafe fn catch_generate_normal_mapping<M: Mode>(
     }
 
     // Assign non-manifold indices
-    // SAFETY: `mesh` is a live `Mesh`; reading its own `num_indices` field.
-    for i in 0..unsafe { (*mesh).num_indices } {
+    for i in 0..mesh.num_indices() {
         // SAFETY: `i < mesh.num_indices`, so `normal_indices.add(i)` addresses a
         // caller-reserved slot.
         if unsafe { *normal_indices.add(i) } == NO_INDEX {
@@ -5434,20 +5411,13 @@ pub(crate) unsafe fn catch_compute_normals<M: Mode>(
     normals: *mut Vec3,
     num_normals: usize,
 ) {
-    // View-typed boundary; the C-shaped body below reads through the raw
-    // pointer (reads via a `Const` view's SRO provenance are legal).
-    let mesh: *const Mesh = mesh.as_ptr();
-    // SAFETY: `mesh` is a live `Mesh` (the view's provenance); the guard reads
-    // its own `num_indices` field.
-    if unsafe {
-        ufbxi_panicf!(
-            panic,
-            num_normal_indices >= (*mesh).num_indices,
-            "Expected at least mesh.num_indices (%zu), got %zu",
-            (*mesh).num_indices,
-            num_normal_indices,
-        )
-    } {
+    if ufbxi_panicf!(
+        panic,
+        num_normal_indices >= mesh.num_indices(),
+        "Expected at least mesh.num_indices (%zu), got %zu",
+        mesh.num_indices(),
+        num_normal_indices,
+    ) {
         return;
     }
 
@@ -5461,11 +5431,10 @@ pub(crate) unsafe fn catch_compute_normals<M: Mode>(
         );
     }
 
-    // SAFETY: `mesh` is a live `Mesh`; reading its own `num_faces` field.
-    for fi in 0..unsafe { (*mesh).num_faces } {
+    for fi in 0..mesh.num_faces() {
         // SAFETY: `fi < mesh.num_faces`, so `faces.data.add(fi)` addresses a live
         // `Face` in the mesh's own list.
-        let face: Face = unsafe { *(*mesh).faces.data.add(fi) };
+        let face: Face = unsafe { *mesh.faces().data.add(fi) };
         let normal: Vec3 = catch_get_weighted_face_normal(None, positions, face);
         for ix in 0..face.num_indices as usize {
             // SAFETY: the face's index range lies within `mesh.num_indices <=
