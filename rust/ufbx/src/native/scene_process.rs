@@ -254,7 +254,7 @@ use crate::native::read::{
 use crate::native::string_pool::{
     self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
 };
-use crate::native::view::{Const, Mode, View};
+use crate::native::view::{Const, Mode, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::as_f64;
 use crate::prelude::{Blob, List, Real, Ref, RefList, String};
@@ -5111,11 +5111,13 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
 #[inline(never)]
 pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(), Fail> {
     // SAFETY: `mesh` points to a live, initialized `ufbx_mesh` — the mesh being
-    // finalized (fn contract).
-    let num_indices: usize = unsafe { (*mesh).num_indices };
+    // finalized (fn contract). Its only caller walks `uc->scene.meshes`, an
+    // element run owned by the load context, so the pointer carries
+    // write-capable provenance and `Mut` is the right mode.
+    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
+    let num_indices: usize = mesh.num_indices();
 
-    // SAFETY: as above.
-    unsafe { (*mesh).generated_normals = true };
+    mesh.set_generated_normals(true);
 
     let topo: *mut TopoEdge = uc.tmp_stack_view().push::<TopoEdge>(num_indices);
     ufbxi_check!(uc, !topo.is_null(), "topo");
@@ -5123,20 +5125,26 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(
     let normal_indices: *mut u32 = uc.result_view().push::<u32>(num_indices);
     ufbxi_check!(uc, !normal_indices.is_null(), "normal_indices");
 
-    // SAFETY: `mesh` is live and `topo` is the fresh non-null `num_indices`-edge
-    // push above, which is the output run `compute_topology` fills.
-    unsafe { compute_topology(mesh, topo, num_indices) };
-    // SAFETY: `mesh` is live, `topo` holds the `num_indices` edges just
-    // computed, and `normal_indices` is the fresh non-null `num_indices`-element
-    // push that receives the mapping.
+    // SAFETY: `mesh.as_ptr()` reads the viewed mesh and `topo` is the fresh
+    // non-null `num_indices`-edge push above, which is the output run
+    // `compute_topology` fills.
+    unsafe { compute_topology(mesh.as_ptr(), topo, num_indices) };
+    // SAFETY: `mesh.as_ptr()` reads the viewed mesh, `topo` holds the
+    // `num_indices` edges just computed, and `normal_indices` is the fresh
+    // non-null `num_indices`-element push that receives the mapping.
     let num_normals: usize = unsafe {
-        generate_normal_mapping(mesh, topo, num_indices, normal_indices, num_indices, false)
+        generate_normal_mapping(
+            mesh.as_ptr(),
+            topo,
+            num_indices,
+            normal_indices,
+            num_indices,
+            false,
+        )
     };
 
-    // SAFETY: `mesh` is live (see above).
-    if num_normals == unsafe { (*mesh).num_vertices } {
-        // SAFETY: as above.
-        unsafe { (*mesh).vertex_normal.unique_per_vertex = true };
+    if num_normals == mesh.num_vertices() {
+        mesh.vertex_normal().set_unique_per_vertex(true);
     }
 
     let mut normal_data: *mut Vec3 = uc.result_view().push::<Vec3>(num_normals + 1);
@@ -5150,14 +5158,14 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(
     // stays inside it.
     normal_data = unsafe { normal_data.add(1) };
 
-    // SAFETY: `mesh` is live, so `&raw const (*mesh).vertex_position` addresses
-    // its own vertex-position attribute; `normal_indices` holds `num_indices`
-    // mapping entries and `normal_data` the `num_normals` accumulator slots the
-    // push reserved past the zero element.
+    // SAFETY: `mesh.as_ptr()` reads the viewed mesh and `vertex_position_ptr()`
+    // addresses its own vertex-position attribute; `normal_indices` holds
+    // `num_indices` mapping entries and `normal_data` the `num_normals`
+    // accumulator slots the push reserved past the zero element.
     unsafe {
         compute_normals(
-            mesh,
-            &raw const (*mesh).vertex_position,
+            mesh.as_ptr(),
+            mesh.vertex_position_ptr(),
             normal_indices,
             num_indices,
             normal_data,
@@ -5165,33 +5173,27 @@ pub(crate) unsafe fn generate_normals(uc: &Context, mesh: *mut Mesh) -> Result<(
         )
     };
 
-    // SAFETY: `mesh` is live; the two runs stored here are the result-arena
-    // pushes above, which outlive the scene.
-    unsafe { (*mesh).vertex_normal.exists = true };
-    // SAFETY: as above.
-    unsafe { (*mesh).vertex_normal.values.data = normal_data as *const Vec3 };
-    // SAFETY: as above.
-    unsafe { (*mesh).vertex_normal.values.count = num_normals };
-    // SAFETY: as above.
-    unsafe { (*mesh).vertex_normal.indices.data = normal_indices as *const u32 };
-    // SAFETY: as above.
-    unsafe { (*mesh).vertex_normal.indices.count = num_indices };
-    // SAFETY: as above.
-    unsafe { (*mesh).vertex_normal.value_reals = 3 };
+    // The two runs stored here are the result-arena pushes above, which outlive
+    // the scene.
+    let vertex_normal = mesh.vertex_normal();
+    vertex_normal.set_exists(true);
+    vertex_normal
+        .values_view()
+        .set_data(normal_data as *const Vec3);
+    vertex_normal.values_view().set_count(num_normals);
+    vertex_normal
+        .indices_view()
+        .set_data(normal_indices as *const u32);
+    vertex_normal.indices_view().set_count(num_indices);
+    vertex_normal.set_value_reals(3);
 
     // C: `mesh->skinned_normal = mesh->vertex_normal;` — struct assignment
     // (memcpy); `VertexVec3` is not `Copy` in the generated bindings, so the
     // copy is spelled as a byte-identical `copy_nonoverlapping`.
-    // SAFETY: `mesh` is live, so both projections address its own distinct
+    // SAFETY: both projections address the viewed mesh's own distinct
     // `vertex_normal` / `skinned_normal` fields; `vertex_normal` was fully
     // written just above.
-    unsafe {
-        ptr::copy_nonoverlapping(
-            &raw const (*mesh).vertex_normal,
-            &raw mut (*mesh).skinned_normal,
-            1,
-        )
-    };
+    unsafe { ptr::copy_nonoverlapping(mesh.vertex_normal_ptr(), mesh.skinned_normal_raw(), 1) };
 
     // SAFETY: `tmp_stack` is `uc`'s own live buffer and the `num_indices`
     // `TopoEdge`s pushed above are still its topmost entries.
@@ -6758,9 +6760,13 @@ pub(crate) unsafe fn flip_attrib_winding(
         return Ok(());
     }
 
-    // SAFETY: `indices` is live (see above); `mesh` points to the live,
-    // initialized `ufbx_mesh` that owns it (fn contract).
-    if unsafe { (*indices).data == (*mesh).vertex_position.indices.data } && !is_position {
+    // SAFETY: `mesh` points to the live, initialized `ufbx_mesh` that owns
+    // `indices` (fn contract); its only caller derives the pointer from the
+    // context-owned mesh element run, so the provenance is write-capable.
+    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
+
+    // SAFETY: `indices` is live (see above).
+    if unsafe { (*indices).data } == mesh.vertex_position().indices().data && !is_position {
         // Sharing indices with vertex position, already flipped.
         return Ok(());
     // SAFETY: `indices` is live (see above).
@@ -6789,10 +6795,9 @@ pub(crate) unsafe fn flip_attrib_winding(
     // indices — either the mesh's own or the result-arena copy pushed above.
     let data: *mut u32 = unsafe { (*indices).data as *mut u32 };
     // C: `ufbxi_for_list(ufbx_face, face, mesh->faces)`
-    // SAFETY: `mesh` is live (see above), so its own face list is readable.
-    let mut face: *mut Face = unsafe { (*mesh).faces.data as *mut Face };
-    // SAFETY: as above; `data`/`count` describe one arena run.
-    let face_end: *mut Face = add_ptr(face, unsafe { (*mesh).faces.count });
+    let mut face: *mut Face = mesh.faces().data as *mut Face;
+    // `data`/`count` describe one arena run.
+    let face_end: *mut Face = add_ptr(face, mesh.faces().count);
     while face != face_end {
         // SAFETY: `face != face_end`, so it addresses a live, initialized entry of
         // the mesh's face run.
@@ -6838,35 +6843,40 @@ pub(crate) unsafe fn flip_attrib_winding(
 pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), Fail> {
     uc.set_tmp_mesh_consecutive_indices(ptr::null_mut());
     // SAFETY: `mesh` points to the live, initialized `ufbx_mesh` being flipped
-    // (fn contract), so `&raw mut (*mesh).vertex_position.indices` addresses its
-    // own attribute index-list header.
-    unsafe { flip_attrib_winding(uc, mesh, &raw mut (*mesh).vertex_position.indices, true) }?;
+    // (fn contract). Its caller walks `uc->scene.meshes`, an element run owned
+    // by the load context, so the pointer carries write-capable provenance and
+    // `Mut` is the right mode. Every raw pointer into the mesh below is derived
+    // from this view, so the writes through them stay children of it.
+    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
+    // SAFETY: `vertex_position().indices_raw()` addresses the viewed mesh's own
+    // attribute index-list header, and `mesh.get()` the mesh itself.
+    unsafe { flip_attrib_winding(uc, mesh.get(), mesh.vertex_position().indices_raw(), true) }?;
     // SAFETY: as above, for the mesh's own `vertex_normal` index list.
-    unsafe { flip_attrib_winding(uc, mesh, &raw mut (*mesh).vertex_normal.indices, false) }?;
+    unsafe { flip_attrib_winding(uc, mesh.get(), mesh.vertex_normal().indices_raw(), false) }?;
     // SAFETY: as above, for the mesh's own `vertex_crease` index list.
-    unsafe { flip_attrib_winding(uc, mesh, &raw mut (*mesh).vertex_crease.indices, false) }?;
-    // SAFETY: `mesh` is live (see above).
-    if unsafe { (*mesh).uv_sets.count } > 0 {
+    unsafe { flip_attrib_winding(uc, mesh.get(), mesh.vertex_crease().indices_raw(), false) }?;
+    if mesh.uv_sets().count > 0 {
         // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
-        // SAFETY: as above; the mesh's own UV-set list is readable.
-        let mut set: *mut UvSet = unsafe { (*mesh).uv_sets.data } as *mut UvSet;
-        // SAFETY: as above; `data`/`count` describe one arena run.
-        let set_end: *mut UvSet = add_ptr(set, unsafe { (*mesh).uv_sets.count });
-        while set != set_end {
-            // SAFETY: `set != set_end`, so it addresses a live, initialized entry
-            // of the mesh's UV-set run, and `mesh` owns it.
-            unsafe { flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_uv.indices, false) }?;
+        // SAFETY: `uv_sets` describes one contiguous arena run of the mesh's own
+        // UV sets, live and unmoved for this call.
+        let sets = unsafe {
+            SliceViewIter::<UvSet>::from_raw_parts(
+                mesh.uv_sets().data as *mut UvSet,
+                mesh.uv_sets().count,
+            )
+        };
+        for set in sets {
+            // SAFETY: `indices_raw()` addresses this live `UvSet`'s own
+            // attribute index-list header, and `mesh` owns the set run.
+            unsafe { flip_attrib_winding(uc, mesh.get(), set.vertex_uv().indices_raw(), false) }?;
             // SAFETY: as above, for this set's `vertex_tangent` index list.
             unsafe {
-                flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_tangent.indices, false)
+                flip_attrib_winding(uc, mesh.get(), set.vertex_tangent().indices_raw(), false)
             }?;
             // SAFETY: as above, for this set's `vertex_bitangent` index list.
             unsafe {
-                flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_bitangent.indices, false)
+                flip_attrib_winding(uc, mesh.get(), set.vertex_bitangent().indices_raw(), false)
             }?;
-            // SAFETY: `set != set_end`, so the advance lands at or before the
-            // run's one-past-the-end pointer.
-            set = unsafe { set.add(1) };
         }
         // C: struct assignment (memcpy) of the vertex-attribute headers; the
         // `Vertex*` structs are not `Copy` in the generated bindings, so the
@@ -6876,81 +6886,80 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
         // header, a distinct field of the same type.
         unsafe {
             ptr::copy_nonoverlapping(
-                &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_uv,
-                &raw mut (*mesh).vertex_uv,
+                &raw const (*(mesh.uv_sets().data as *mut UvSet).add(0)).vertex_uv,
+                mesh.vertex_uv_raw(),
                 1,
             )
         };
         // SAFETY: as above, for the `vertex_bitangent` headers.
         unsafe {
             ptr::copy_nonoverlapping(
-                &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_bitangent,
-                &raw mut (*mesh).vertex_bitangent,
+                &raw const (*(mesh.uv_sets().data as *mut UvSet).add(0)).vertex_bitangent,
+                mesh.vertex_bitangent_raw(),
                 1,
             )
         };
         // SAFETY: as above, for the `vertex_tangent` headers.
         unsafe {
             ptr::copy_nonoverlapping(
-                &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_tangent,
-                &raw mut (*mesh).vertex_tangent,
+                &raw const (*(mesh.uv_sets().data as *mut UvSet).add(0)).vertex_tangent,
+                mesh.vertex_tangent_raw(),
                 1,
             )
         };
     }
-    // SAFETY: `mesh` is live (see above).
-    if unsafe { (*mesh).color_sets.count } > 0 {
+    if mesh.color_sets().count > 0 {
         // C: `ufbxi_for_list(ufbx_color_set, set, mesh->color_sets)`
-        // SAFETY: as above; the mesh's own color-set list is readable.
-        let mut set: *mut ColorSet = unsafe { (*mesh).color_sets.data } as *mut ColorSet;
-        // SAFETY: as above; `data`/`count` describe one arena run.
-        let set_end: *mut ColorSet = add_ptr(set, unsafe { (*mesh).color_sets.count });
-        while set != set_end {
-            // SAFETY: `set != set_end`, so it addresses a live, initialized entry
-            // of the mesh's color-set run, and `mesh` owns it.
-            unsafe { flip_attrib_winding(uc, mesh, &raw mut (*set).vertex_color.indices, false) }?;
-            // SAFETY: `set != set_end`, so the advance lands at or before the
-            // run's one-past-the-end pointer.
-            set = unsafe { set.add(1) };
+        // SAFETY: `color_sets` describes one contiguous arena run of the mesh's
+        // own color sets, live and unmoved for this call.
+        let sets = unsafe {
+            SliceViewIter::<ColorSet>::from_raw_parts(
+                mesh.color_sets().data as *mut ColorSet,
+                mesh.color_sets().count,
+            )
+        };
+        for set in sets {
+            // SAFETY: `indices_raw()` addresses this live `ColorSet`'s own
+            // attribute index-list header, and `mesh` owns the set run.
+            unsafe {
+                flip_attrib_winding(uc, mesh.get(), set.vertex_color().indices_raw(), false)
+            }?;
         }
         // SAFETY: `color_sets.count > 0`, so element `0` of the mesh's color-set
         // run is live and initialized; the destination is the mesh's own
         // `vertex_color` header, a distinct field of the same type.
         unsafe {
             ptr::copy_nonoverlapping(
-                &raw const (*((*mesh).color_sets.data as *mut ColorSet).add(0)).vertex_color,
-                &raw mut (*mesh).vertex_color,
+                &raw const (*(mesh.color_sets().data as *mut ColorSet).add(0)).vertex_color,
+                mesh.vertex_color_raw(),
                 1,
             )
         };
     }
-    // SAFETY: `mesh` is live (see above), so `&raw mut` addresses its own
+    // SAFETY: `skinned_position().indices_raw()` addresses the viewed mesh's own
     // `skinned_position` index-list header.
-    unsafe { flip_attrib_winding(uc, mesh, &raw mut (*mesh).skinned_position.indices, false) }?;
-    // SAFETY: `mesh` is live (see above).
-    if unsafe { (*mesh).skinned_normal.indices.data != (*mesh).vertex_normal.indices.data } {
+    unsafe { flip_attrib_winding(uc, mesh.get(), mesh.skinned_position().indices_raw(), false) }?;
+    if mesh.skinned_normal().indices().data != mesh.vertex_normal().indices().data {
         // SAFETY: as above, for the mesh's own `skinned_normal` index list.
-        unsafe { flip_attrib_winding(uc, mesh, &raw mut (*mesh).skinned_normal.indices, false) }?;
+        unsafe { flip_attrib_winding(uc, mesh.get(), mesh.skinned_normal().indices_raw(), false) }?;
     }
 
-    // SAFETY: `mesh` is live and initialized (fn contract).
-    unsafe { update_vertex_first_index(mesh) };
+    // SAFETY: `mesh.get()` addresses the live, initialized viewed mesh.
+    unsafe { update_vertex_first_index(mesh.get()) };
 
     // Mapping from old index values to flipped ones, reserve index -1
     // (aka `UFBX_NO_INDEX`) for itself.
-    // SAFETY: `mesh` is live (see above).
-    if unsafe { (*mesh).edges.count } > 0 {
+    if mesh.edges().count > 0 {
         ufbxi_check!(
             uc,
             // SAFETY: the three `uc` accessors hand out `uc`'s own tmp allocator
-            // and tmp-array header, and `mesh` is live so its `num_indices` is
-            // readable.
+            // and tmp-array header.
             unsafe {
                 grow_array::<u8>(
                     uc.ator_tmp_mut_ptr(),
                     uc.tmp_arr_mut_ptr(),
                     uc.tmp_arr_size_mut_ptr(),
-                    (*mesh).num_indices.wrapping_add(1).wrapping_mul(size_of::<u32>()),
+                    mesh.num_indices().wrapping_add(1).wrapping_mul(size_of::<u32>()),
                 )
             },
             "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->tmp_arr)), (&uc->tmp_arr), (&uc->tmp_arr_size), ((mesh->num_indices + 1) * sizeof(uint32_t)))"
@@ -6963,10 +6972,9 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
         // so index `-1` is that array's first element.
         unsafe { *index_mapping.offset(-1) = NO_INDEX };
         // C: `ufbxi_for_list(ufbx_face, face, mesh->faces)`
-        // SAFETY: `mesh` is live (see above), so its own face list is readable.
-        let mut face: *mut Face = unsafe { (*mesh).faces.data } as *mut Face;
-        // SAFETY: as above; `data`/`count` describe one arena run.
-        let face_end: *mut Face = add_ptr(face, unsafe { (*mesh).faces.count });
+        let mut face: *mut Face = mesh.faces().data as *mut Face;
+        // `data`/`count` describe one arena run.
+        let face_end: *mut Face = add_ptr(face, mesh.faces().count);
         while face != face_end {
             // SAFETY: `face != face_end`, so it addresses a live, initialized entry
             // of the mesh's face run.
@@ -7000,10 +7008,9 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: *mut Mesh) -> Result<(), F
         }
 
         // C: `ufbxi_for_list(ufbx_edge, p_edge, mesh->edges)`
-        // SAFETY: `mesh` is live (see above), so its own edge list is readable.
-        let mut p_edge: *mut Edge = unsafe { (*mesh).edges.data } as *mut Edge;
-        // SAFETY: as above; `data`/`count` describe one arena run.
-        let p_edge_end: *mut Edge = add_ptr(p_edge, unsafe { (*mesh).edges.count });
+        let mut p_edge: *mut Edge = mesh.edges().data as *mut Edge;
+        // `data`/`count` describe one arena run.
+        let p_edge_end: *mut Edge = add_ptr(p_edge, mesh.edges().count);
         while p_edge != p_edge_end {
             // C-parity: the `(int32_t)` casts are load-bearing — a
             // `UFBX_NO_INDEX` endpoint indexes `index_mapping[-1]`, the slot
@@ -7118,7 +7125,7 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
 
     // SAFETY: walks the stored `meshes` element-pointer run of the uc-owned scene
     // (`count` entries) and, inside it, each mesh's own `uv_sets` run; the list
-    // helpers take `&raw const` places of the mesh's own attribute lists (each
+    // helpers take view projections of the mesh's own attribute lists (each
     // carrying its own length), and `geo_node` is null-checked before its
     // transform is read.
     unsafe {
@@ -7126,11 +7133,13 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
         let mut p_mesh: *mut *mut Mesh = uc.scene_view().meshes_view().data() as *mut *mut Mesh;
         let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, uc.scene_view().meshes_view().count());
         while p_mesh != p_mesh_end {
-            let mesh: *mut Mesh = *p_mesh;
+            // The stored entry is a context-owned mesh element, so its
+            // provenance is write-capable: `Mut` is the right mode.
+            let mesh = View::<Mesh>::from_ptr(*p_mesh);
 
             if do_scale {
                 scale_vec3_list(
-                    &raw const (*mesh).vertex_position.values as *const c_void,
+                    mesh.vertex_position().values_ptr() as *const c_void,
                     geometry_scale,
                     0,
                 );
@@ -7139,30 +7148,31 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
             let mut do_flip_winding: bool = do_winding;
             if do_mirror {
                 mirror_vec3_list(
-                    &raw const (*mesh).vertex_position.values as *const c_void,
+                    mesh.vertex_position().values_ptr() as *const c_void,
                     mirror_axis,
                     0,
                 );
                 mirror_vec3_list(
-                    &raw const (*mesh).vertex_normal.values as *const c_void,
+                    mesh.vertex_normal().values_ptr() as *const c_void,
                     mirror_axis,
                     0,
                 );
                 // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
-                let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
-                let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
-                while set != set_end {
+                let sets = SliceViewIter::<UvSet>::from_raw_parts(
+                    mesh.uv_sets().data as *mut UvSet,
+                    mesh.uv_sets().count,
+                );
+                for set in sets {
                     mirror_vec3_list(
-                        &raw const (*set).vertex_tangent.values as *const c_void,
+                        set.vertex_tangent().values_ptr() as *const c_void,
                         mirror_axis,
                         0,
                     );
                     mirror_vec3_list(
-                        &raw const (*set).vertex_bitangent.values as *const c_void,
+                        set.vertex_bitangent().values_ptr() as *const c_void,
                         mirror_axis,
                         0,
                     );
-                    set = set.add(1);
                 }
                 if !uc.opts_view().handedness_conversion_retain_winding() {
                     do_flip_winding = !do_flip_winding;
@@ -7171,11 +7181,11 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
 
             // Flip face winding retaining the first vertex
             if do_flip_winding {
-                (*mesh).reversed_winding = true;
-                flip_winding(uc, mesh)?;
+                mesh.set_reversed_winding(true);
+                flip_winding(uc, mesh.get())?;
             }
 
-            let geo_node: *mut Node = get_geometry_transform_node(&raw mut (*mesh).element);
+            let geo_node: *mut Node = get_geometry_transform_node(mesh.element_raw());
             if do_geometry_transforms && !geo_node.is_null() {
                 let mut tangent_matrix: Matrix = (*geo_node).geometry_to_node;
                 tangent_matrix.m03 = 0.0;
@@ -7185,34 +7195,35 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                     matrix_for_normals(&raw const (*geo_node).geometry_to_node);
 
                 transform_vec3_list(
-                    &raw const (*mesh).vertex_position.values as *const c_void,
+                    mesh.vertex_position().values_ptr() as *const c_void,
                     &raw const (*geo_node).geometry_to_node,
                     0,
                 );
                 transform_vec3_list(
-                    &raw const (*mesh).vertex_normal.values as *const c_void,
+                    mesh.vertex_normal().values_ptr() as *const c_void,
                     &normal_matrix,
                     0,
                 );
-                normalize_vec3_list(&raw const (*mesh).vertex_normal.values);
+                normalize_vec3_list(mesh.vertex_normal().values_ptr());
 
                 // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
-                let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
-                let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
-                while set != set_end {
+                let sets = SliceViewIter::<UvSet>::from_raw_parts(
+                    mesh.uv_sets().data as *mut UvSet,
+                    mesh.uv_sets().count,
+                );
+                for set in sets {
                     transform_vec3_list(
-                        &raw const (*set).vertex_tangent.values as *const c_void,
+                        set.vertex_tangent().values_ptr() as *const c_void,
                         &tangent_matrix,
                         0,
                     );
                     transform_vec3_list(
-                        &raw const (*set).vertex_bitangent.values as *const c_void,
+                        set.vertex_bitangent().values_ptr() as *const c_void,
                         &tangent_matrix,
                         0,
                     );
-                    normalize_vec3_list(&raw const (*set).vertex_tangent.values);
-                    normalize_vec3_list(&raw const (*set).vertex_bitangent.values);
-                    set = set.add(1);
+                    normalize_vec3_list(set.vertex_tangent().values_ptr());
+                    normalize_vec3_list(set.vertex_bitangent().values_ptr());
                 }
             }
             p_mesh = p_mesh.add(1);
@@ -7393,26 +7404,28 @@ pub(crate) fn postprocess_scene(uc: &Context) {
     if uc.opts_view().normalize_normals() || uc.opts_view().normalize_tangents() {
         // SAFETY: walks the stored `meshes` element-pointer run of the uc-owned scene
         // (`count` entries) and, inside it, each mesh's own `uv_sets` run;
-        // `normalize_vec3_list` is handed a `&raw const` of the mesh's own attribute
-        // list, which carries its own length.
+        // `normalize_vec3_list` is handed a view projection of the mesh's own
+        // attribute list, which carries its own length.
         unsafe {
             // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
             let mut p_mesh: *mut *mut Mesh = uc.scene_view().meshes_view().data() as *mut *mut Mesh;
             let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, uc.scene_view().meshes_view().count());
             while p_mesh != p_mesh_end {
-                let mesh: *mut Mesh = *p_mesh;
+                // The stored entry is a context-owned mesh element, so its
+                // provenance is write-capable: `Mut` is the right mode.
+                let mesh = View::<Mesh>::from_ptr(*p_mesh);
                 if uc.opts_view().normalize_normals() {
-                    normalize_vec3_list(&raw const (*mesh).vertex_normal.values);
+                    normalize_vec3_list(mesh.vertex_normal().values_ptr());
                 }
                 if uc.opts_view().normalize_tangents() {
                     // C-parity: the loop body normalizes the MESH-level tangent and
                     // bitangent lists (not `set->...`), so it repeats the same work
                     // once per UV set. Ported verbatim.
-                    let mut set: *mut UvSet = (*mesh).uv_sets.data as *mut UvSet;
-                    let set_end: *mut UvSet = add_ptr(set, (*mesh).uv_sets.count);
+                    let mut set: *mut UvSet = mesh.uv_sets().data as *mut UvSet;
+                    let set_end: *mut UvSet = add_ptr(set, mesh.uv_sets().count);
                     while set != set_end {
-                        normalize_vec3_list(&raw const (*mesh).vertex_tangent.values);
-                        normalize_vec3_list(&raw const (*mesh).vertex_bitangent.values);
+                        normalize_vec3_list(mesh.vertex_tangent().values_ptr());
+                        normalize_vec3_list(mesh.vertex_bitangent().values_ptr());
                         set = set.add(1);
                     }
                 }
@@ -7995,32 +8008,29 @@ pub(crate) unsafe fn finalize_mesh_material(
     mesh: *mut Mesh,
 ) -> Result<(), Fail> {
     // SAFETY: `mesh` points to the live, initialized `ufbx_mesh` being finalized
-    // (fn contract), so its own list headers are readable.
-    let num_materials: usize = unsafe { (*mesh).materials.count };
-    // SAFETY: as above.
-    let num_parts: usize = unsafe { (*mesh).material_parts.count };
-    // SAFETY: as above.
-    let num_faces: usize = unsafe { (*mesh).faces.count };
+    // (fn contract). Every caller hands over a mesh owned by its own load /
+    // tessellate / subdivide context, so the provenance is write-capable and
+    // `Mut` is the right mode.
+    let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
+    let num_materials: usize = mesh.materials().count;
+    let num_parts: usize = mesh.material_parts().count;
+    let num_faces: usize = mesh.faces().count;
 
-    // SAFETY: as above.
-    let parts: *mut MeshPart = unsafe { (*mesh).material_parts.data } as *mut MeshPart;
+    let parts: *mut MeshPart = mesh.material_parts().data as *mut MeshPart;
     ufbx_assert!(
         parts.is_null()
-            // SAFETY: as above.
-            || (unsafe { (*mesh).material_parts.count } == num_materials)
-            // SAFETY: as above.
-            || (unsafe { (*mesh).material_parts.count } == 1 && num_materials == 0)
+            || (mesh.material_parts().count == num_materials)
+            || (mesh.material_parts().count == 1 && num_materials == 0)
     );
 
-    // SAFETY: as above.
-    let face_material: *mut u32 = unsafe { (*mesh).face_material.data } as *mut u32;
+    let face_material: *mut u32 = mesh.face_material().data as *mut u32;
 
     // Count the number of faces and triangles per material
     // C: `ufbxi_nounroll for (size_t i = 0; i < num_faces; i++)`
     for i in 0..num_faces {
-        // SAFETY: `mesh` is live and `num_faces` is the length of its own face
-        // run, so `i < num_faces` addresses a live, initialized face.
-        let face: Face = unsafe { *(*mesh).faces.data.add(i) };
+        // SAFETY: `num_faces` is the length of the mesh's own face run, so
+        // `i < num_faces` addresses a live, initialized face.
+        let face: Face = unsafe { *mesh.faces().data.add(i) };
         let mut mat_ix: u32 = 0;
 
         if !face_material.is_null() {
@@ -8105,28 +8115,26 @@ pub(crate) unsafe fn finalize_mesh_material(
             }
         }
 
-        // SAFETY: `mesh` is live and initialized (fn contract).
-        unsafe { (*mesh).material_part_usage_order.count = num_parts };
-        // SAFETY: as above; `buf` is the result buffer the finalized lists are
-        // pushed into.
-        unsafe { (*mesh).material_part_usage_order.data = buf.push::<u32>(num_parts) };
+        let usage_order = mesh.material_part_usage_order_view();
+        usage_order.set_count(num_parts);
+        // `buf` is the result buffer the finalized lists are pushed into.
+        usage_order.set_data(buf.push::<u32>(num_parts));
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr(error) },
-            // SAFETY: `mesh` is live (see above).
-            !unsafe { (*mesh).material_part_usage_order.data }.is_null(),
+            !usage_order.data().is_null(),
             "mesh->material_part_usage_order.data"
         );
         for i in 0..num_parts {
             // SAFETY: the non-null usage-order run was pushed with `num_parts`
             // `u32`s, so `i < num_parts` stays inside it.
-            unsafe { *((*mesh).material_part_usage_order.data as *mut u32).add(i) = i as u32 };
+            unsafe { *(usage_order.data() as *mut u32).add(i) = i as u32 };
         }
         // SAFETY: the usage-order run holds `num_parts` `u32`s (see above),
         // `material_part_usage_less` is the matching comparator, and it reads its
         // user data as the `num_parts`-long `parts` run passed here.
         unsafe {
             unstable_sort(
-                (*mesh).material_part_usage_order.data as *mut c_void,
+                usage_order.data() as *mut c_void,
                 num_parts,
                 size_of::<u32>(),
                 material_part_usage_less,
@@ -9384,122 +9392,129 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, uc.scene_view().meshes_view().count());
         while p_mesh != p_mesh_end {
             // SAFETY: `p_mesh != p_mesh_end`, so it addresses a live, initialized
-            // slot of the scene's mesh-pointer run.
-            let mesh: *mut Mesh = unsafe { *p_mesh };
+            // slot of the scene's mesh-pointer run; the stored entry is a
+            // context-owned mesh element, so its provenance is write-capable and
+            // `Mut` is the right mode.
+            let mesh = unsafe { View::<Mesh>::from_ptr(*p_mesh) };
 
-            // SAFETY: `mesh` is a live `ufbx_mesh` of the scene (see above), so the
-            // projection addresses its own attribute index-list data pointer.
+            // SAFETY: `indices_raw()` addresses the viewed mesh's own attribute
+            // index-list header, so `&raw mut (*..).data` is its data pointer.
             unsafe {
                 patch_index_pointer(
                     uc,
-                    &raw mut (*mesh).vertex_position.indices.data as *mut *mut u32,
+                    &raw mut (*mesh.vertex_position().indices_raw()).data as *mut *mut u32,
                 )
             };
             // SAFETY: as above, for the mesh's own `vertex_normal` indices.
             unsafe {
                 patch_index_pointer(
                     uc,
-                    &raw mut (*mesh).vertex_normal.indices.data as *mut *mut u32,
+                    &raw mut (*mesh.vertex_normal().indices_raw()).data as *mut *mut u32,
                 )
             };
             // SAFETY: as above, for the mesh's own `vertex_color` indices.
             unsafe {
                 patch_index_pointer(
                     uc,
-                    &raw mut (*mesh).vertex_color.indices.data as *mut *mut u32,
+                    &raw mut (*mesh.vertex_color().indices_raw()).data as *mut *mut u32,
                 )
             };
             // SAFETY: as above, for the mesh's own `vertex_crease` indices.
             unsafe {
                 patch_index_pointer(
                     uc,
-                    &raw mut (*mesh).vertex_crease.indices.data as *mut *mut u32,
+                    &raw mut (*mesh.vertex_crease().indices_raw()).data as *mut *mut u32,
                 )
             };
             // SAFETY: as above, for the mesh's own `face_material` list.
             unsafe {
-                patch_index_pointer(uc, &raw mut (*mesh).face_material.data as *mut *mut u32)
+                patch_index_pointer(
+                    uc,
+                    &raw mut (*mesh.face_material_raw()).data as *mut *mut u32,
+                )
             };
             // SAFETY: as above, for the mesh's own `face_group` list.
-            unsafe { patch_index_pointer(uc, &raw mut (*mesh).face_group.data as *mut *mut u32) };
+            unsafe {
+                patch_index_pointer(uc, &raw mut (*mesh.face_group_raw()).data as *mut *mut u32)
+            };
 
             // SAFETY: as above, for the mesh's own `skinned_position` indices.
             unsafe {
                 patch_index_pointer(
                     uc,
-                    &raw mut (*mesh).skinned_position.indices.data as *mut *mut u32,
+                    &raw mut (*mesh.skinned_position().indices_raw()).data as *mut *mut u32,
                 )
             };
             // SAFETY: as above, for the mesh's own `skinned_normal` indices.
             unsafe {
                 patch_index_pointer(
                     uc,
-                    &raw mut (*mesh).skinned_normal.indices.data as *mut *mut u32,
+                    &raw mut (*mesh.skinned_normal().indices_raw()).data as *mut *mut u32,
                 )
             };
 
             // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
-            // SAFETY: `mesh` is live (see above).
-            let mut set: *mut UvSet = unsafe { (*mesh).uv_sets.data } as *mut UvSet;
-            // SAFETY: as above; `data`/`count` describe one run.
-            let set_end: *mut UvSet = add_ptr(set, unsafe { (*mesh).uv_sets.count });
-            while set != set_end {
-                // SAFETY: `set != set_end`, so it addresses a live, initialized
-                // entry of the mesh's UV-set run, and the projection addresses that
-                // set's own index-list data pointer.
+            // SAFETY: `uv_sets` describes one contiguous arena run of the mesh's
+            // own UV sets, live and unmoved for this call.
+            let sets = unsafe {
+                SliceViewIter::<UvSet>::from_raw_parts(
+                    mesh.uv_sets().data as *mut UvSet,
+                    mesh.uv_sets().count,
+                )
+            };
+            for set in sets {
+                // SAFETY: `indices_raw()` addresses this live `UvSet`'s own
+                // index-list header, so `&raw mut (*..).data` is its data pointer.
                 unsafe {
-                    patch_index_pointer(uc, &raw mut (*set).vertex_uv.indices.data as *mut *mut u32)
+                    patch_index_pointer(
+                        uc,
+                        &raw mut (*set.vertex_uv().indices_raw()).data as *mut *mut u32,
+                    )
                 };
                 // SAFETY: as above, for this set's `vertex_bitangent` indices.
                 unsafe {
                     patch_index_pointer(
                         uc,
-                        &raw mut (*set).vertex_bitangent.indices.data as *mut *mut u32,
+                        &raw mut (*set.vertex_bitangent().indices_raw()).data as *mut *mut u32,
                     )
                 };
                 // SAFETY: as above, for this set's `vertex_tangent` indices.
                 unsafe {
                     patch_index_pointer(
                         uc,
-                        &raw mut (*set).vertex_tangent.indices.data as *mut *mut u32,
+                        &raw mut (*set.vertex_tangent().indices_raw()).data as *mut *mut u32,
                     )
                 };
-                // SAFETY: `set != set_end`, so the advance lands at or before the
-                // run's one-past-the-end pointer.
-                set = unsafe { set.add(1) };
             }
 
             // C: `ufbxi_for_list(ufbx_color_set, set, mesh->color_sets)`
-            // SAFETY: `mesh` is live (see above).
-            let mut cset: *mut ColorSet = unsafe { (*mesh).color_sets.data } as *mut ColorSet;
-            // SAFETY: as above; `data`/`count` describe one run.
-            let cset_end: *mut ColorSet = add_ptr(cset, unsafe { (*mesh).color_sets.count });
-            while cset != cset_end {
-                // SAFETY: `cset != cset_end`, so it addresses a live, initialized
-                // entry of the mesh's color-set run, and the projection addresses
-                // that set's own index-list data pointer.
+            // SAFETY: `color_sets` describes one contiguous arena run of the
+            // mesh's own color sets, live and unmoved for this call.
+            let csets = unsafe {
+                SliceViewIter::<ColorSet>::from_raw_parts(
+                    mesh.color_sets().data as *mut ColorSet,
+                    mesh.color_sets().count,
+                )
+            };
+            for cset in csets {
+                // SAFETY: `indices_raw()` addresses this live `ColorSet`'s own
+                // index-list header, so `&raw mut (*..).data` is its data pointer.
                 unsafe {
                     patch_index_pointer(
                         uc,
-                        &raw mut (*cset).vertex_color.indices.data as *mut *mut u32,
+                        &raw mut (*cset.vertex_color().indices_raw()).data as *mut *mut u32,
                     )
                 };
-                // SAFETY: `cset != cset_end`, so the advance lands at or before the
-                // run's one-past-the-end pointer.
-                cset = unsafe { cset.add(1) };
             }
 
             // Generate normals if necessary
-            // SAFETY: `mesh` is live (see above).
-            if !unsafe { (*mesh).vertex_normal.exists } && uc.opts_view().generate_missing_normals()
-            {
-                // SAFETY: `mesh` is a live, initialized `ufbx_mesh` (see above).
-                unsafe { generate_normals(uc, mesh) }?;
+            if !mesh.vertex_normal().exists() && uc.opts_view().generate_missing_normals() {
+                // SAFETY: `mesh.get()` addresses the live, initialized viewed mesh.
+                unsafe { generate_normals(uc, mesh.get()) }?;
             }
 
             // Assign first UV and color sets as the "canonical" ones
-            // SAFETY: `mesh` is live (see above).
-            if unsafe { (*mesh).uv_sets.count } > 0 {
+            if mesh.uv_sets().count > 0 {
                 // C: struct assignment (memcpy) of the vertex-attribute
                 // headers; the `Vertex*` structs are not `Copy` in the
                 // generated bindings, so the copy is spelled as a
@@ -9509,75 +9524,67 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 // `vertex_uv` header, a distinct field of the same type.
                 unsafe {
                     ptr::copy_nonoverlapping(
-                        &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_uv,
-                        &raw mut (*mesh).vertex_uv,
+                        &raw const (*(mesh.uv_sets().data as *mut UvSet).add(0)).vertex_uv,
+                        mesh.vertex_uv_raw(),
                         1,
                     )
                 };
                 // SAFETY: as above, for the `vertex_bitangent` headers.
                 unsafe {
                     ptr::copy_nonoverlapping(
-                        &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_bitangent,
-                        &raw mut (*mesh).vertex_bitangent,
+                        &raw const (*(mesh.uv_sets().data as *mut UvSet).add(0)).vertex_bitangent,
+                        mesh.vertex_bitangent_raw(),
                         1,
                     )
                 };
                 // SAFETY: as above, for the `vertex_tangent` headers.
                 unsafe {
                     ptr::copy_nonoverlapping(
-                        &raw const (*((*mesh).uv_sets.data as *mut UvSet).add(0)).vertex_tangent,
-                        &raw mut (*mesh).vertex_tangent,
+                        &raw const (*(mesh.uv_sets().data as *mut UvSet).add(0)).vertex_tangent,
+                        mesh.vertex_tangent_raw(),
                         1,
                     )
                 };
             }
-            // SAFETY: `mesh` is live (see above).
-            if unsafe { (*mesh).color_sets.count } > 0 {
+            if mesh.color_sets().count > 0 {
                 // SAFETY: `color_sets.count > 0`, so element `0` of the mesh's
                 // color-set run is live and initialized; the destination is the
                 // mesh's own `vertex_color` header, a distinct field of the same
                 // type.
                 unsafe {
                     ptr::copy_nonoverlapping(
-                        &raw const (*((*mesh).color_sets.data as *mut ColorSet).add(0))
-                            .vertex_color,
-                        &raw mut (*mesh).vertex_color,
+                        &raw const (*(mesh.color_sets().data as *mut ColorSet).add(0)).vertex_color,
+                        mesh.vertex_color_raw(),
                         1,
                     )
                 };
             }
 
-            // SAFETY: `mesh` is live (see above).
-            if unsafe { (*mesh).face_group_parts.count } == 1 {
+            if mesh.face_group_parts().count == 1 {
                 // SAFETY: the count is `1`, so element `0` of the mesh's
                 // face-group-part run is live and initialized, and the projection
                 // addresses that part's own face-index data pointer.
                 unsafe {
                     patch_index_pointer(
                         uc,
-                        &raw mut (*((*mesh).face_group_parts.data as *mut MeshPart).add(0))
+                        &raw mut (*(mesh.face_group_parts().data as *mut MeshPart).add(0))
                             .face_indices
                             .data as *mut *mut u32,
                     )
                 };
             }
 
-            // SAFETY: `mesh` is live (see above), so the projections address its
+            // SAFETY: `materials_raw()`/`element_raw()` address the viewed mesh's
             // own `materials` list header and element header.
-            unsafe {
-                fetch_mesh_materials(uc, &raw mut (*mesh).materials, &mut (*mesh).element, true)
-            }?;
+            unsafe { fetch_mesh_materials(uc, mesh.materials_raw(), mesh.element_raw(), true) }?;
 
             // Patch materials to instances if necessary
-            // SAFETY: `mesh` is live (see above).
-            if unsafe { (*mesh).materials.count } > 0 {
+            if mesh.materials().count > 0 {
                 // C: `ufbxi_for_ptr_list(ufbx_node, p_node, mesh->instances)`
-                // SAFETY: as above; the instance list was fetched by the pass above.
-                let mut p_node: *mut *mut Node =
-                    unsafe { (*mesh).element.instances.data } as *mut *mut Node;
-                // SAFETY: as above; `data`/`count` describe one run.
-                let p_node_end: *mut *mut Node =
-                    add_ptr(p_node, unsafe { (*mesh).element.instances.count });
+                // The instance list was fetched by the pass above.
+                let mut p_node: *mut *mut Node = mesh.element().instances().data as *mut *mut Node;
+                // `data`/`count` describe one run.
+                let p_node_end: *mut *mut Node = add_ptr(p_node, mesh.element().instances().count);
                 while p_node != p_node_end {
                     // SAFETY: `p_node != p_node_end`, so it addresses a live,
                     // initialized slot of that run.
@@ -9585,22 +9592,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     // C-parity: `mesh->materials.data[0]` may be NULL (broken
                     // element connections), so the entry is read as the bare
                     // `ufbx_material*` the `Ref` field is at the ABI level.
-                    // SAFETY: `mesh` is live (see above).
                     let mesh_materials: *mut *mut Material =
-                        unsafe { (*mesh).materials.data } as *mut *mut Material;
-                    // SAFETY: `node` and `mesh` are live (see above), and
-                    // `materials.count > 0` makes element `0` of the mesh's material
-                    // run live.
+                        mesh.materials().data as *mut *mut Material;
+                    // SAFETY: `node` is live (see above), and `materials.count > 0`
+                    // makes element `0` of the mesh's material run live.
                     if unsafe {
-                        (*node).materials.count < (*mesh).materials.count
+                        (*node).materials.count < mesh.materials().count
                             && !(*mesh_materials.add(0)).is_null()
                     } {
-                        // SAFETY: `mesh` is live (see above); `result_view()` is
-                        // `uc`'s own result buffer.
-                        let materials: *mut *mut Material = unsafe {
-                            uc.result_view()
-                                .push::<*mut Material>((*mesh).materials.count)
-                        };
+                        // `result_view()` is `uc`'s own result buffer.
+                        let materials: *mut *mut Material = uc
+                            .result_view()
+                            .push::<*mut Material>(mesh.materials().count);
                         ufbxi_check!(uc, !materials.is_null(), "materials");
                         // C: `ufbxi_nounroll for (...)` — the no-unroll pragma
                         // is optimizer-only and has no Rust analogue.
@@ -9615,8 +9618,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                                     *((*node).materials.data as *mut *mut Material).add(i)
                             };
                         }
-                        // SAFETY: `node` and `mesh` are live (see above).
-                        for i in unsafe { (*node).materials.count..(*mesh).materials.count } {
+                        // SAFETY: `node` is live (see above).
+                        for i in unsafe { (*node).materials.count }..mesh.materials().count {
                             // SAFETY: `i < mesh->materials.count`, the length of both
                             // the pushed `materials` run and the mesh's own material
                             // run.
@@ -9625,8 +9628,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         // SAFETY: `node` is live (see above); `materials` is the run
                         // just filled in.
                         unsafe { (*node).materials.data = materials as *const Ref<Material> };
-                        // SAFETY: `node` and `mesh` are live (see above).
-                        unsafe { (*node).materials.count = (*mesh).materials.count };
+                        // SAFETY: `node` is live (see above).
+                        unsafe { (*node).materials.count = mesh.materials().count };
                     }
                     // SAFETY: `p_node != p_node_end`, so the advance lands at or
                     // before the run's one-past-the-end pointer.
@@ -9635,85 +9638,71 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
 
             if uc.retain_mesh_parts() {
-                // SAFETY: `mesh` is live (see above).
-                let num_parts: usize = max_sz(unsafe { (*mesh).materials.count }, 1);
-                // SAFETY: as above; `result_view()` is `uc`'s own result buffer.
-                unsafe {
-                    (*mesh).material_parts.data = uc.result_view().push_zero::<MeshPart>(num_parts)
-                };
+                let num_parts: usize = max_sz(mesh.materials().count, 1);
+                let material_parts = mesh.material_parts_view();
+                // `result_view()` is `uc`'s own result buffer.
+                material_parts.set_data(uc.result_view().push_zero::<MeshPart>(num_parts));
                 ufbxi_check!(
                     uc,
-                    // SAFETY: `mesh` is live (see above).
-                    !unsafe { (*mesh).material_parts.data }.is_null(),
+                    !material_parts.data().is_null(),
                     "mesh->material_parts.data"
                 );
-                // SAFETY: `mesh` is live (see above).
-                unsafe { (*mesh).material_parts.count = num_parts };
+                material_parts.set_count(num_parts);
             }
 
-            // SAFETY: `mesh` is live (see above).
-            if unsafe { (*mesh).materials.count } <= 1 {
+            if mesh.materials().count <= 1 {
                 // Use the shared consecutive index buffer for mesh faces if there's only one material
                 // See HACK(consecutive-faces) in `ufbxi_read_mesh()`.
-                // SAFETY: `mesh` is live (see above).
-                if unsafe { (*mesh).material_parts.count } > 0 {
+                if mesh.material_parts().count > 0 {
                     // SAFETY: the count is above zero, so element `0` of the mesh's
                     // material-part run is live.
-                    let part: *mut MeshPart =
-                        unsafe { ((*mesh).material_parts.data as *mut MeshPart).add(0) };
-                    // SAFETY: `part` addresses that entry and `mesh` is live (both
-                    // above).
-                    unsafe { (*part).num_faces = (*mesh).num_faces };
-                    // SAFETY: as above.
-                    unsafe { (*part).num_triangles = (*mesh).num_triangles };
-                    // SAFETY: as above.
-                    unsafe { (*part).num_empty_faces = (*mesh).num_empty_faces };
-                    // SAFETY: as above.
-                    unsafe { (*part).num_point_faces = (*mesh).num_point_faces };
-                    // SAFETY: as above.
-                    unsafe { (*part).num_line_faces = (*mesh).num_line_faces };
-                    // SAFETY: `part` addresses that entry (see above); the shared
-                    // consecutive-index run is `uc`'s own, sized to cover every
-                    // mesh's face count.
-                    unsafe { (*part).face_indices.data = uc.consecutive_indices() };
-                    // SAFETY: as above, with `mesh` live.
-                    unsafe { (*part).face_indices.count = (*mesh).num_faces };
-                    // SAFETY: `mesh` is live (see above); the shared zero-index run
-                    // is `uc`'s own and holds at least one entry here.
-                    unsafe { (*mesh).material_part_usage_order.data = uc.zero_indices() };
-                    // SAFETY: `mesh` is live (see above).
-                    unsafe { (*mesh).material_part_usage_order.count = 1 };
+                    let part: &View<MeshPart> = unsafe {
+                        View::<MeshPart>::from_ptr(
+                            (mesh.material_parts().data as *mut MeshPart).add(0),
+                        )
+                    };
+                    part.set_num_faces(mesh.num_faces());
+                    part.set_num_triangles(mesh.num_triangles());
+                    part.set_num_empty_faces(mesh.num_empty_faces());
+                    part.set_num_point_faces(mesh.num_point_faces());
+                    part.set_num_line_faces(mesh.num_line_faces());
+                    // The shared consecutive-index run is `uc`'s own, sized to cover
+                    // every mesh's face count.
+                    part.face_indices_view().set_data(uc.consecutive_indices());
+                    part.face_indices_view().set_count(mesh.num_faces());
+                    // The shared zero-index run is `uc`'s own and holds at least one
+                    // entry here.
+                    mesh.material_part_usage_order_view()
+                        .set_data(uc.zero_indices());
+                    mesh.material_part_usage_order_view().set_count(1);
                 }
 
-                // SAFETY: `mesh` is live (see above).
-                if unsafe { (*mesh).materials.count } == 1 {
-                    // SAFETY: as above; the shared zero-index run is `uc`'s own,
-                    // sized to cover every mesh's face count.
-                    unsafe { (*mesh).face_material.data = uc.zero_indices() };
-                    // SAFETY: `mesh` is live (see above).
-                    unsafe { (*mesh).face_material.count = (*mesh).num_faces };
+                if mesh.materials().count == 1 {
+                    // The shared zero-index run is `uc`'s own, sized to cover every
+                    // mesh's face count.
+                    mesh.face_material_view().set_data(uc.zero_indices());
+                    mesh.face_material_view().set_count(mesh.num_faces());
                 } else {
-                    // SAFETY: `mesh` is live (see above).
-                    unsafe { (*mesh).face_material.data = ptr::null_mut() };
-                    // SAFETY: as above.
-                    unsafe { (*mesh).face_material.count = 0 };
+                    mesh.face_material_view().set_data(ptr::null());
+                    mesh.face_material_view().set_count(0);
                 }
-            // SAFETY: `mesh` is live (see above).
-            } else if unsafe { (*mesh).materials.count } > 0 {
-                // SAFETY: `mesh` is a live, initialized `ufbx_mesh` (see above);
+            } else if mesh.materials().count > 0 {
+                // SAFETY: `mesh.get()` addresses the live, initialized viewed mesh;
                 // `result_view()`/`error_mut_ptr()` are `uc`'s own result buffer and
                 // error slot.
-                unsafe { finalize_mesh_material(uc.result_view(), uc.error_mut_ptr(), mesh) }?;
+                unsafe {
+                    finalize_mesh_material(uc.result_view(), uc.error_mut_ptr(), mesh.get())
+                }?;
             }
 
             // Fetch deformers
-            // SAFETY: `mesh` is live (see above), so the projections address its
-            // own `skin_deformers` list header and element header.
+            // SAFETY: the projections address the viewed mesh's own
+            // `skin_deformers` list header and element header.
             unsafe {
                 fetch_dst_elements(
                     uc,
-                    &raw mut (*mesh).skin_deformers as *mut c_void,
-                    &mut (*mesh).element,
+                    mesh.skin_deformers_raw() as *mut c_void,
+                    mesh.element_raw(),
                     search_node,
                     true,
                     ptr::null(),
@@ -9724,8 +9713,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             unsafe {
                 fetch_dst_elements(
                     uc,
-                    &raw mut (*mesh).blend_deformers as *mut c_void,
-                    &mut (*mesh).element,
+                    mesh.blend_deformers_raw() as *mut c_void,
+                    mesh.element_raw(),
                     search_node,
                     true,
                     ptr::null(),
@@ -9736,8 +9725,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             unsafe {
                 fetch_dst_elements(
                     uc,
-                    &raw mut (*mesh).cache_deformers as *mut c_void,
-                    &mut (*mesh).element,
+                    mesh.cache_deformers_raw() as *mut c_void,
+                    mesh.element_raw(),
                     search_node,
                     true,
                     ptr::null(),
@@ -9748,42 +9737,26 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             unsafe {
                 fetch_deformers(
                     uc,
-                    &raw mut (*mesh).all_deformers,
-                    &mut (*mesh).element,
+                    mesh.all_deformers_raw(),
+                    mesh.element_raw(),
                     search_node,
                 )
             }?;
 
             // Vertex position must always exist if not explicitly allowed to be missing
-            // SAFETY: `mesh` is live (see above).
-            if !unsafe { (*mesh).vertex_position.exists }
-                && !uc.opts_view().allow_missing_vertex_position()
-            {
-                // SAFETY: `mesh` is live (see above).
-                ufbxi_check!(
-                    uc,
-                    unsafe { (*mesh).num_indices } == 0,
-                    "mesh->num_indices == 0"
-                );
-                // SAFETY: as above.
-                unsafe { (*mesh).vertex_position.exists = true };
-                // SAFETY: as above.
-                unsafe { (*mesh).vertex_position.unique_per_vertex = true };
-                // SAFETY: as above.
-                unsafe { (*mesh).skinned_position.exists = true };
-                // SAFETY: as above.
-                unsafe { (*mesh).skinned_position.unique_per_vertex = true };
+            if !mesh.vertex_position().exists() && !uc.opts_view().allow_missing_vertex_position() {
+                ufbxi_check!(uc, mesh.num_indices() == 0, "mesh->num_indices == 0");
+                mesh.vertex_position().set_exists(true);
+                mesh.vertex_position().set_unique_per_vertex(true);
+                mesh.skinned_position().set_exists(true);
+                mesh.skinned_position().set_unique_per_vertex(true);
             }
 
             // Update metadata
-            // SAFETY: `mesh` is live (see above).
-            if unsafe { (*mesh).max_face_triangles }
-                > uc.scene_view().metadata_view().max_face_triangles()
-            {
+            if mesh.max_face_triangles() > uc.scene_view().metadata_view().max_face_triangles() {
                 uc.scene_view()
                     .metadata_view()
-                    // SAFETY: `mesh` is live (see above).
-                    .set_max_face_triangles(unsafe { (*mesh).max_face_triangles });
+                    .set_max_face_triangles(mesh.max_face_triangles());
             }
             // SAFETY: `p_mesh != p_mesh_end`, so the advance lands at or before the
             // run's one-past-the-end pointer.
@@ -10448,14 +10421,14 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, uc.scene_view().meshes_view().count());
         while p_mesh != p_mesh_end {
             // SAFETY: `p_mesh != p_mesh_end`, so it addresses a live, initialized
-            // slot of the scene's mesh-pointer run.
-            let mesh: *mut Mesh = unsafe { *p_mesh };
-            // SAFETY: `mesh` is a live `ufbx_mesh` of the scene (see above).
-            let num_materials: usize = unsafe { (*mesh).materials.count };
+            // slot of the scene's mesh-pointer run; the stored entry is a
+            // context-owned mesh element, so its provenance is write-capable and
+            // `Mut` is the right mode.
+            let mesh = unsafe { View::<Mesh>::from_ptr(*p_mesh) };
+            let num_materials: usize = mesh.materials().count;
 
-            // SAFETY: as above.
             let extra: *mut MeshExtra =
-                get_element_extra(uc, unsafe { (*mesh).element.element_id }) as *mut MeshExtra;
+                get_element_extra(uc, mesh.element().element_id()) as *mut MeshExtra;
             if extra.is_null() {
                 // SAFETY: `p_mesh != p_mesh_end`, so the advance lands at or before
                 // the run's one-past-the-end pointer.
@@ -10476,13 +10449,13 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             let textures: *mut RefList<Texture> = textures_storage.as_mut_ptr();
             // SAFETY: `textures_storage` is a live local, so `textures` addresses
             // writable storage for one `ufbx_texture_list`, which
-            // `fetch_dst_elements` writes in full; `mesh` is live (see above), so
-            // `&mut (*mesh).element` addresses its own element header.
+            // `fetch_dst_elements` writes in full; `element_raw()` addresses the
+            // viewed mesh's own element header.
             unsafe {
                 fetch_dst_elements(
                     uc,
                     textures as *mut c_void,
-                    &mut (*mesh).element,
+                    mesh.element_raw(),
                     true,
                     false,
                     ptr::null(),
@@ -10526,11 +10499,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             unsafe { (*mat_texs.add(i)).prop_name = (*tex).prop_name };
                         }
                     }
-                // SAFETY: `mesh` is live (see above).
-                } else if unsafe { (*mesh).face_material.count } != 0 {
-                    // SAFETY: `tex` and `mesh` are live (see above).
-                    let num_faces: usize =
-                        min_sz(unsafe { (*tex).num_faces }, unsafe { (*mesh).num_faces });
+                } else if mesh.face_material().count != 0 {
+                    // SAFETY: `tex` is live (see above).
+                    let num_faces: usize = min_sz(unsafe { (*tex).num_faces }, mesh.num_faces());
                     let mut prev_material: i32 = -1;
                     let mut prev_texture: i32 = -1;
                     for i in 0..num_faces {
@@ -10540,7 +10511,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         // SAFETY: `num_faces` is at most the mesh's `num_faces`; the
                         // `face_material` list is non-empty here (checked above), so
                         // it is the per-face run of that length.
-                        let material_id: i32 = unsafe { *(*mesh).face_material.data.add(i) } as i32;
+                        let material_id: i32 = unsafe { *mesh.face_material().data.add(i) } as i32;
                         // SAFETY: `textures` was written in full by the fetch above.
                         if texture_id < 0 || (texture_id as usize) >= unsafe { (*textures).count } {
                             continue;
@@ -10605,11 +10576,11 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 let mat_tex: TmpMaterialTexture = unsafe { *mat_texs.add(i) };
                 if mat_tex.material_id != prev_material {
                     if prev_material >= 0 && num_textures_in_material > 0 {
-                        // SAFETY: `mesh` is live (see above); `prev_material` came
-                        // from a `mat_tex` entry, which the pushes above bounded by
-                        // `num_materials`, the mesh's material-run length.
+                        // SAFETY: `prev_material` came from a `mat_tex` entry, which
+                        // the pushes above bounded by `num_materials`, the mesh's
+                        // material-run length.
                         let mat: *mut Material = unsafe {
-                            *((*mesh).materials.data as *mut *mut Material)
+                            *(mesh.materials().data as *mut *mut Material)
                                 .add(prev_material as usize)
                         };
                         // SAFETY: a non-null `mat` is a live `ufbx_material` of the
@@ -11037,13 +11008,17 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // its own field.
         let mesh: *mut Mesh = unsafe { opt_ptr(&(*node).target_mesh) };
         if !mesh.is_null() {
+            // SAFETY: a non-null `target_mesh` is a live `ufbx_mesh` element of the
+            // uc-owned scene, so its provenance is write-capable and `Mut` is the
+            // right mode.
+            let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
             // SAFETY: `node` is live, so the projection addresses its own `vertices`
-            // index-list header; a non-null `mesh` is a live `ufbx_mesh`.
-            unsafe { validate_indices(uc, &raw mut (*node).vertices, (*mesh).num_vertices) }?;
+            // index-list header.
+            unsafe { validate_indices(uc, &raw mut (*node).vertices, mesh.num_vertices()) }?;
             // SAFETY: as above, for its own `edges` index list.
-            unsafe { validate_indices(uc, &raw mut (*node).edges, (*mesh).num_edges) }?;
+            unsafe { validate_indices(uc, &raw mut (*node).edges, mesh.num_edges()) }?;
             // SAFETY: as above, for its own `faces` index list.
-            unsafe { validate_indices(uc, &raw mut (*node).faces, (*mesh).num_faces) }?;
+            unsafe { validate_indices(uc, &raw mut (*node).faces, mesh.num_faces()) }?;
         }
         // SAFETY: `p_sel_node != p_sel_node_end`, so the advance lands at or before
         // the run's one-past-the-end pointer.
