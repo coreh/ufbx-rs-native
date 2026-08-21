@@ -17,6 +17,6 @@ PYTHONPATH=bindgen python3 rust/ufbx/bindgen/generate_layout_tests.py \
 
 # Canonical form is rustfmt'ed — the tree-wide `cargo fmt` convention includes
 # the generated files, and CI diffs regen output against the committed tree.
-rustfmt --edition 2021 rust/ufbx/src/generated.rs rust/ufbx/tests/layout.rs
+rustfmt --edition 2021 rust/ufbx/src/generated.rs rust/ufbx/src/generated_views.rs rust/ufbx/tests/layout.rs
 
 (cd rust && cargo test --test layout)

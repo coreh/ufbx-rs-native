@@ -238,48 +238,16 @@ impl<M: Mode> View<Props, M> {
     }
 }
 
+// The plain `Prop` field reads (`value_vec4`/`value_int`/`value_str`/
+// `value_blob`/`name`/`type_`/`flags`) are generated accessors — see
+// src/generated_views.rs; only the union-shaped read below is hand-written.
 impl<M: Mode> View<Prop, M> {
-    #[inline(always)]
-    pub(crate) fn value_vec4(&self) -> Vec4 {
-        // SAFETY: reading the `value_vec4` field of a valid arena `Prop`.
-        unsafe { (*self.as_ptr()).value_vec4 }
-    }
     #[inline(always)]
     pub(crate) fn value_vec3(&self) -> Vec3 {
         // C-parity: the `ufbx_prop` value union's 3-real view; the generated
         // struct keeps only `value_vec4` (same mapping as `find_vec3`).
         // SAFETY: reading the first three reals of a valid arena `Prop`.
         unsafe { *(&(*self.as_ptr()).value_vec4 as *const Vec4 as *const Vec3) }
-    }
-    #[inline(always)]
-    pub(crate) fn value_int(&self) -> i64 {
-        // SAFETY: reading the `value_int` field of a valid arena `Prop`.
-        unsafe { (*self.as_ptr()).value_int }
-    }
-    #[inline(always)]
-    pub(crate) fn value_str(&self) -> String {
-        // SAFETY: reading the `value_str` field of a valid arena `Prop`.
-        unsafe { (*self.as_ptr()).value_str }
-    }
-    #[inline(always)]
-    pub(crate) fn value_blob(&self) -> Blob {
-        // SAFETY: reading the `value_blob` field of a valid arena `Prop`.
-        unsafe { (*self.as_ptr()).value_blob }
-    }
-    #[inline(always)]
-    pub(crate) fn name(&self) -> String {
-        // SAFETY: reading the `name` field of a valid arena `Prop`.
-        unsafe { (*self.as_ptr()).name }
-    }
-    #[inline(always)]
-    pub(crate) fn type_(&self) -> PropType {
-        // SAFETY: reading the `type_` field of a valid arena `Prop`.
-        unsafe { (*self.as_ptr()).type_ }
-    }
-    #[inline(always)]
-    pub(crate) fn flags(&self) -> PropFlags {
-        // SAFETY: reading the `flags` field of a valid arena `Prop`.
-        unsafe { (*self.as_ptr()).flags }
     }
 }
 

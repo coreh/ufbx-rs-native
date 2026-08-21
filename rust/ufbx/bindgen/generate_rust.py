@@ -342,6 +342,41 @@ ignore_types = {
     "ufbx_blob",
 }
 
+# NOTE(ufbx-rs-native): structs that get `View<T, M>` field accessors emitted
+# into src/generated_views.rs (crate-internal; soundness model in
+# src/native/view.rs). The set is the mesh-view campaign surface: `ufbx_mesh`
+# plus every aggregate reached from it by field access. A field whose type is
+# itself in this set gets an in-place `&View<F, M>` projection accessor; every
+# other field gets a by-value read. Order is emission order.
+view_accessor_structs = [
+    "ufbx_element",
+    "ufbx_props",
+    "ufbx_prop",
+    "ufbx_face",
+    "ufbx_edge",
+    "ufbx_vertex_attrib",
+    "ufbx_vertex_real",
+    "ufbx_vertex_vec2",
+    "ufbx_vertex_vec3",
+    "ufbx_vertex_vec4",
+    "ufbx_uv_set",
+    "ufbx_color_set",
+    "ufbx_mesh_part",
+    "ufbx_face_group",
+    "ufbx_mesh",
+]
+
+# `(struct, field)` pairs whose READ accessor is hand-written instead of
+# generated (the Mut setter / raw-pointer accessors are still emitted):
+#   * `ufbx_props.defaults`: the sound read is the mode-preserving
+#     `Option<&View<Props, M>>` nav accessor in native/parse.rs (niche-packed
+#     bare-pointer read; see its SAFETY comment) — a plain by-value read of
+#     `Option<Ref<Props>>` would push call sites back through `Ref::as_ref`,
+#     whose `&Props` formation is the Stacked Borrows trap the view avoids.
+view_accessor_skip_read = {
+    ("ufbx_props", "defaults"),
+}
+
 ignore_non_raw = {
     "ufbx_open_file",
     "ufbx_open_memory",
@@ -1682,6 +1717,15 @@ def parse_capi_forwarders(capi_path):
         # Strip line comments and collapse whitespace to a single statement.
         lines = [ln.split("//", 1)[0].rstrip() for ln in body.splitlines()]
         stmt = " ".join(ln.strip() for ln in lines if ln.strip())
+        # `unsafe { ... }` blocks (unsafe_op_in_unsafe_fn discipline — whole-body
+        # or per-argument) are transparent to forwarding: strip them,
+        # innermost-first so nested wrappers unwrap outward.
+        while True:
+            stripped = re.sub(r'unsafe \{ ([^{}]*) \}', r'\1', stmt)
+            if stripped == stmt:
+                break
+            stmt = stripped
+        stmt = re.sub(r'\s+', ' ', stmt).replace(" ,", ",").replace("( ", "(").replace(" )", ")")
         # A read-only Const-view mint of a param counts as verbatim (the
         # wrapper re-mints from its own `&T`, see apply_const_view_args);
         # strip it BEFORE arg-splitting — the mint's generic args contain
@@ -2083,6 +2127,116 @@ def emit_element_data():
     unindent()
     emit("}")
 
+def is_view_projection_field(field: RustField) -> bool:
+    # A field whose type is itself a view-accessor struct projects to a nested
+    # `&View<F, M>` instead of copying the aggregate out by value.
+    ft = field.type
+    return (
+        ft.kind == "struct"
+        and not ft.is_list
+        and not ft.is_string
+        and ft.ir is not None
+        and ft.ir.base_name in view_accessor_structs
+    )
+
+def emit_view_impls(rs: RustStruct):
+    typ = types[rs.ir.name]
+    assert not typ.needs_lifetime and not typ.rust_needs_lifetime, \
+        f"view accessors assume a lifetime-free struct, got {rs.ir.name}"
+    name = rs.name
+
+    fields = [f for f in rs.fields if f.ir.kind not in ("inlineBuf", "inlineBufLength")]
+
+    # Mode-generic read surface: by-value leaf reads + in-place aggregate
+    # projections. Serves both `Mut` (arena/context provenance) and `Const`
+    # (frozen `&`-derived provenance) views.
+    emit()
+    emit("#[allow(dead_code)]")
+    emit(f"impl<M: Mode> View<{name}, M> {{")
+    indent()
+    for field in fields:
+        if (rs.ir.name, field.ir.name) in view_accessor_skip_read:
+            continue
+        # A field accessor named after a `from_*` field is not a conversion
+        # constructor; keep the field's name.
+        if field.name.startswith("from_"):
+            emit("#[allow(clippy::wrong_self_convention)]")
+        emit("#[inline(always)]")
+        if is_view_projection_field(field):
+            emit(f"pub(crate) fn {field.name}(&self) -> &View<{field.type.name}, M> {{")
+            indent()
+            emit(f"// SAFETY: in-place projection of the `{field.name}` field; liveness and")
+            emit("// `M`-adequate provenance carry over from this view's own mint.")
+            emit(f"unsafe {{ View::mint((&raw const (*self.as_ptr()).{field.name}).cast_mut()) }}")
+            unindent()
+            emit("}")
+        else:
+            fty = field.type.fmt_member("")
+            emit(f"pub(crate) fn {field.name}(&self) -> {fty} {{")
+            indent()
+            emit(f"// SAFETY: by-value read of the `{field.name}` field; the viewed `{name}`")
+            emit("// is valid and live per this view's mint vouch.")
+            emit(f"unsafe {{ ptr::read(&raw const (*self.as_ptr()).{field.name}) }}")
+            unindent()
+            emit("}")
+    unindent()
+    emit("}")
+
+    # `Mut`-only write surface: whole-field setters + raw field pointers (for
+    # in-place mutation, `&raw`-taking call sites, and by-value aggregate reads
+    # via `ptr::read` during construction).
+    emit()
+    emit("#[allow(dead_code)]")
+    emit(f"impl View<{name}, Mut> {{")
+    indent()
+    for field in fields:
+        fty = field.type.fmt_member("")
+        # Compose from the underscore-stripped base so keyword-renamed (`type_`)
+        # and private (`_internal_key`) fields yield snake_case method names.
+        base = field.name.strip("_")
+        emit("#[inline(always)]")
+        emit(f"pub(crate) fn set_{base}(&self, value: {fty}) {{")
+        indent()
+        emit(f"// SAFETY: field write through the `Mut` view's write-capable viewed")
+        emit("// memory (mint vouch); no `&`/`&mut` to the viewed bytes is live.")
+        emit(f"unsafe {{ (*self.get()).{field.name} = value }}")
+        unindent()
+        emit("}")
+        if base.startswith("from_"):
+            emit("#[allow(clippy::wrong_self_convention)]")
+        emit("#[inline(always)]")
+        emit(f"pub(crate) fn {base}_raw(&self) -> *mut {fty} {{")
+        indent()
+        emit("// SAFETY: in-bounds field projection; the returned raw pointer")
+        emit("// inherits the view's write-capable provenance.")
+        emit(f"unsafe {{ &raw mut (*self.get()).{field.name} }}")
+        unindent()
+        emit("}")
+    unindent()
+    emit("}")
+
+def emit_views_file():
+    emit("// GENERATED FILE — do not edit by hand. Produced by rust/regen.sh from")
+    emit("// ufbx.h via bindgen/ufbx_ir.py + rust/ufbx/bindgen/generate_rust.py.")
+    emit("// Fixes belong in the GENERATOR (see PORTING.md); hand edits are")
+    emit("// silently overwritten on the next regeneration and CI diffs this file.")
+    emit("//")
+    emit("// Crate-internal `View<T, M>` field accessors over the generated public")
+    emit("// structs (`view_accessor_structs` in generate_rust.py): a by-value read")
+    emit("// per leaf field, an in-place `&View` projection per aggregate field, and")
+    emit("// `Mut`-only setters / raw field pointers. Soundness model (mint vouch,")
+    emit("// `Mut`/`Const` provenance): src/native/view.rs.")
+    emit()
+    emit("use crate::generated::*;")
+    emit("use crate::native::view::{Mode, Mut, View};")
+    emit("use crate::prelude::*;")
+    emit("use std::ptr;")
+
+    for cname in view_accessor_structs:
+        emit_view_impls(structs[cname])
+
+    emit()
+
 def emit_file():
     emit("// GENERATED FILE — do not edit by hand. Produced by rust/regen.sh from")
     emit("// ufbx.h via bindgen/ufbx_ir.py + rust/ufbx/bindgen/generate_rust.py.")
@@ -2213,3 +2367,8 @@ if __name__ == "__main__":
         g_outfile = f
         init_file()
         emit_file()
+
+    with open(os.path.join(output_path, "generated_views.rs"), "wt", encoding="utf-8") as f:
+        g_outfile = f
+        g_indent = 0
+        emit_views_file()

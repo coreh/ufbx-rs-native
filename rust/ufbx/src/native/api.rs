@@ -2614,14 +2614,6 @@ impl<M: Mode> View<Node, M> {
     }
 }
 
-impl<M: Mode> View<Element, M> {
-    #[inline(always)]
-    pub(crate) fn element_id(&self) -> u32 {
-        // SAFETY: reading the `element_id` field of a valid `Element`.
-        unsafe { (*self.as_ptr()).element_id }
-    }
-}
-
 pub(crate) fn find_baked_node_by_typed_id<M: Mode>(
     bake: &View<BakedAnim, M>,
     typed_id: u32,

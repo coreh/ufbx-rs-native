@@ -302,18 +302,8 @@ impl MeshView {
     pub(crate) fn vertex_position_view(&self) -> &VertexVec3View {
         unsafe { &*(&raw mut (*self.get()).vertex_position as *mut VertexVec3View) }
     }
-    #[inline(always)]
-    pub(crate) fn subdivision_boundary(&self) -> crate::generated::SubdivisionBoundary {
-        unsafe { (*self.get()).subdivision_boundary }
-    }
-    #[inline(always)]
-    pub(crate) fn subdivision_uv_boundary(&self) -> crate::generated::SubdivisionBoundary {
-        unsafe { (*self.get()).subdivision_uv_boundary }
-    }
-    #[inline(always)]
-    pub(crate) fn num_vertices(&self) -> usize {
-        unsafe { (*self.get()).num_vertices }
-    }
+    // Plain field reads (`num_vertices`, `subdivision_boundary`, ...) are
+    // generated accessors — see src/generated_views.rs.
     // `edge_crease` (List<Real>) — typed VIEW handle (reinterpret-in-place);
     // interior-mutable over the context-owned `src_mesh`, read via `.data()`.
     #[inline(always)]

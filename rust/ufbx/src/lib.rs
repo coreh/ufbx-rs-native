@@ -58,6 +58,10 @@
 // its emission style (NEVER hand-edit generated.rs — see PORTING.md rule 0).
 #[allow(unsafe_op_in_unsafe_fn)]
 pub mod generated;
+// Generated crate-internal `View<T, M>` field accessors over the public
+// structs (mesh-view campaign); every unsafe op there is a wrapped per-field
+// read/write/projection under the view-mint vouch (see native/view.rs).
+pub(crate) mod generated_views;
 pub mod prelude;
 
 // Native port of ufbx.c, one module per C banner section (declared in ufbx.c

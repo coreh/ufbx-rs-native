@@ -101,17 +101,10 @@ pub(crate) struct NgonContext(
     pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerNgonContext>>,
 );
 
-// Typed interior-mutable VIEW over a `Face` field, reinterpreted in place.
+// Typed interior-mutable VIEW over a `Face` field, reinterpreted in place;
+// field accessors are generated (src/generated_views.rs).
 #[cfg(feature = "triangulation")]
 pub(crate) type FaceView = crate::native::view::View<Face>;
-
-#[cfg(feature = "triangulation")]
-impl FaceView {
-    #[inline(always)]
-    pub(crate) fn index_begin(&self) -> u32 {
-        unsafe { (*self.get()).index_begin }
-    }
-}
 
 #[cfg(feature = "triangulation")]
 impl NgonContext {
