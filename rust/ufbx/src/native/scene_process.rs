@@ -304,6 +304,15 @@ element_props_view!(AnimValueView, AnimValue);
 element_props_view!(AnimLayerView, AnimLayer);
 element_props_view!(ShaderView, Shader);
 
+// Plain view aliases (no `props_view()` accessor) for the remaining
+// `ufbxi_update_*` targets: `update_pose`/`update_skin_cluster` never consult
+// the property table, and `ufbx_shader_texture`/`ufbx_material_map` are not
+// elements (no `element.props` header to project).
+pub(crate) type PoseView = crate::native::view::View<Pose>;
+pub(crate) type SkinClusterView = crate::native::view::View<SkinCluster>;
+pub(crate) type ShaderTextureView = crate::native::view::View<ShaderTexture>;
+pub(crate) type MaterialMapView = crate::native::view::View<MaterialMap>;
+
 // The finalize path also walks the untyped `ufbx_element` run (the arena
 // `element_data` block); an `ElementView` reinterprets those `*mut Element`
 // pointers so the property table reached through them anchors to `uc` exactly
@@ -4393,10 +4402,12 @@ pub(crate) unsafe fn fetch_mapping_maps(
 
 // ufbx.c:20096-20107 `ufbxi_update_factor`
 #[inline(never)]
-pub(crate) unsafe fn update_factor(factor_map: *mut MaterialMap, color_map: *mut MaterialMap) {
-    // SAFETY: `factor_map` points to a live `ufbx_material_map` (fn contract).
+pub(crate) fn update_factor(factor_map: &MaterialMapView, color_map: &MaterialMapView) {
+    let factor_map: *mut MaterialMap = factor_map.get();
+    let color_map: *mut MaterialMap = color_map.get();
+    // SAFETY: `factor_map` is the factor view's own live storage.
     if !unsafe { (*factor_map).has_value } {
-        // SAFETY: `color_map` likewise points to a live `ufbx_material_map`.
+        // SAFETY: `color_map` is the color view's own live storage.
         if unsafe { (*color_map).has_value && !is_vec4_zero((*color_map).value_vec4) } {
             // C-parity: `factor_map->value_real` is the value union's first
             // real (`value_vec4.x` in the generated struct).
@@ -4642,90 +4653,90 @@ pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
     };
 
     // SAFETY: `material` is live, so each `&raw mut` projection addresses one of
-    // its own `ufbx_material_map` members, which is what `update_factor` reads
-    // and writes.
+    // its own `ufbx_material_map` members, and each view reinterprets that
+    // member in place for `update_factor` to read and write.
     unsafe {
         update_factor(
-            &raw mut (*material).fbx.diffuse_factor,
-            &raw mut (*material).fbx.diffuse_color,
+            MaterialMapView::from_ptr(&raw mut (*material).fbx.diffuse_factor),
+            MaterialMapView::from_ptr(&raw mut (*material).fbx.diffuse_color),
         )
     };
     // SAFETY: as above.
     unsafe {
         update_factor(
-            &raw mut (*material).fbx.specular_factor,
-            &raw mut (*material).fbx.specular_color,
+            MaterialMapView::from_ptr(&raw mut (*material).fbx.specular_factor),
+            MaterialMapView::from_ptr(&raw mut (*material).fbx.specular_color),
         )
     };
     // SAFETY: as above.
     unsafe {
         update_factor(
-            &raw mut (*material).fbx.reflection_factor,
-            &raw mut (*material).fbx.reflection_color,
+            MaterialMapView::from_ptr(&raw mut (*material).fbx.reflection_factor),
+            MaterialMapView::from_ptr(&raw mut (*material).fbx.reflection_color),
         )
     };
     // SAFETY: as above.
     unsafe {
         update_factor(
-            &raw mut (*material).fbx.transparency_factor,
-            &raw mut (*material).fbx.transparency_color,
+            MaterialMapView::from_ptr(&raw mut (*material).fbx.transparency_factor),
+            MaterialMapView::from_ptr(&raw mut (*material).fbx.transparency_color),
         )
     };
     // SAFETY: as above.
     unsafe {
         update_factor(
-            &raw mut (*material).fbx.emission_factor,
-            &raw mut (*material).fbx.emission_color,
+            MaterialMapView::from_ptr(&raw mut (*material).fbx.emission_factor),
+            MaterialMapView::from_ptr(&raw mut (*material).fbx.emission_color),
         )
     };
     // SAFETY: as above.
     unsafe {
         update_factor(
-            &raw mut (*material).fbx.ambient_factor,
-            &raw mut (*material).fbx.ambient_color,
+            MaterialMapView::from_ptr(&raw mut (*material).fbx.ambient_factor),
+            MaterialMapView::from_ptr(&raw mut (*material).fbx.ambient_color),
         )
     };
 
     // SAFETY: as above, for the `pbr` members.
     unsafe {
         update_factor(
-            &raw mut (*material).pbr.base_factor,
-            &raw mut (*material).pbr.base_color,
+            MaterialMapView::from_ptr(&raw mut (*material).pbr.base_factor),
+            MaterialMapView::from_ptr(&raw mut (*material).pbr.base_color),
         )
     };
     // SAFETY: as above.
     unsafe {
         update_factor(
-            &raw mut (*material).pbr.specular_factor,
-            &raw mut (*material).pbr.specular_color,
+            MaterialMapView::from_ptr(&raw mut (*material).pbr.specular_factor),
+            MaterialMapView::from_ptr(&raw mut (*material).pbr.specular_color),
         )
     };
     // SAFETY: as above.
     unsafe {
         update_factor(
-            &raw mut (*material).pbr.emission_factor,
-            &raw mut (*material).pbr.emission_color,
+            MaterialMapView::from_ptr(&raw mut (*material).pbr.emission_factor),
+            MaterialMapView::from_ptr(&raw mut (*material).pbr.emission_color),
         )
     };
     // SAFETY: as above.
     unsafe {
         update_factor(
-            &raw mut (*material).pbr.sheen_factor,
-            &raw mut (*material).pbr.sheen_color,
+            MaterialMapView::from_ptr(&raw mut (*material).pbr.sheen_factor),
+            MaterialMapView::from_ptr(&raw mut (*material).pbr.sheen_color),
         )
     };
     // SAFETY: as above.
     unsafe {
         update_factor(
-            &raw mut (*material).pbr.thin_film_factor,
-            &raw mut (*material).pbr.thin_film_thickness,
+            MaterialMapView::from_ptr(&raw mut (*material).pbr.thin_film_factor),
+            MaterialMapView::from_ptr(&raw mut (*material).pbr.thin_film_thickness),
         )
     };
     // SAFETY: as above.
     unsafe {
         update_factor(
-            &raw mut (*material).pbr.transmission_factor,
-            &raw mut (*material).pbr.transmission_color,
+            MaterialMapView::from_ptr(&raw mut (*material).pbr.transmission_factor),
+            MaterialMapView::from_ptr(&raw mut (*material).pbr.transmission_color),
         )
     };
 
@@ -5399,11 +5410,13 @@ static FILE_SHADERS: [FileShader; 6] = [
 
 // ufbx.c:20496-20535 `ufbxi_update_shader_texture`
 #[inline(never)]
-pub(crate) unsafe fn update_shader_texture(texture_view: &TextureView, shader: *mut ShaderTexture) {
+pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &ShaderTextureView) {
     let texture: *mut Texture = texture_view.get();
+    let shader: *mut ShaderTexture = shader_view.get();
     // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
-    // SAFETY: `shader` points to a live, initialized `ufbx_shader_texture` — the
-    // texture's shader record (fn contract), so its own input list is readable.
+    // SAFETY: `shader` is the shader view's own live, initialized
+    // `ufbx_shader_texture` — the texture's shader record — so its own input
+    // list is readable.
     let mut input: *mut ShaderTextureInput =
         unsafe { (*shader).inputs.data as *mut ShaderTextureInput };
     // SAFETY: as above; `data`/`count` describe one arena run.
@@ -5808,13 +5821,14 @@ pub(crate) fn finalize_shader_texture<'a>(
     }
 
     // SAFETY: `texture` lives in the uc arena, so the reinterpret satisfies the
-    // element-view construction invariant; `shader` is the fresh push above.
+    // element-view construction invariant; `shader` is the fresh push above,
+    // reinterpreted in place by its view.
     unsafe {
         // Anchor the texture to `'a` (= uc): `texture` lives in the uc arena, so the
         // explicit `&'a` annotation forces the reinterpret lifetime to unify with the
         // `uc` borrow rather than infer free.
         let texture_view: &'a TextureView = TextureView::from_ptr(texture);
-        update_shader_texture(texture_view, shader);
+        update_shader_texture(texture_view, ShaderTextureView::from_ptr(shader));
     }
 
     Ok(())
@@ -11784,11 +11798,7 @@ pub(crate) fn get_constraint_transform(props: &PropsView) -> Transform {
 
 // ufbx.c:22955-23042 `ufbxi_update_node`
 #[inline(never)]
-pub(crate) unsafe fn update_node(
-    node_view: &NodeView,
-    overrides: *const TransformOverride,
-    num_overrides: usize,
-) {
+pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride]) {
     let node: *mut Node = node_view.get();
     // C: `(ufbx_rotation_order)ufbxi_find_enum(...)` — `ufbxi_find_enum` clamps
     // the result to `[0, UFBX_ROTATION_ORDER_SPHERIC]`, every value of which is
@@ -11886,33 +11896,32 @@ pub(crate) unsafe fn update_node(
             }
         }
 
-        if num_overrides > 0 {
+        if !overrides.is_empty() {
             // SAFETY: `node` is live (see above).
             let typed_id: u32 = unsafe { (*node).element.typed_id };
             let mut override_ix: usize = usize::MAX;
             // C: `ufbxi_macro_lower_bound_eq(ufbx_transform_override, 16,
             // &override_ix, overrides, 0, num_overrides,
             // ( a->node_id < typed_id ), ( a->node_id == typed_id ));`
-            // SAFETY: the fn contract is that `overrides` addresses
-            // `num_overrides` readable, initialized `ufbx_transform_override`s
-            // sorted by `node_id`; `&mut override_ix` addresses a live local.
-            // The lambdas are handed pointers into that same run.
+            // SAFETY: the search spans exactly the `overrides` slice (sorted by
+            // `node_id` per the public evaluate contract, established at the
+            // `update_scene` boundary); `&mut override_ix` addresses a live
+            // local, and the lambdas are handed pointers into that same run.
             unsafe {
                 macro_lower_bound_eq::<TransformOverride>(
                     16,
                     &mut override_ix,
-                    overrides,
+                    overrides.as_ptr(),
                     0,
-                    num_overrides,
+                    overrides.len(),
                     |a| (*a).node_id < typed_id,
                     |a| (*a).node_id == typed_id,
                 )
             };
             if override_ix != usize::MAX {
-                // SAFETY: `override_ix` was written by the search above, so it
-                // indexes one of the `num_overrides` live entries; `node` is
-                // live and writable (see above).
-                unsafe { (*node).local_transform = (*overrides.add(override_ix)).transform };
+                // SAFETY: `node` is live and writable (see above); the index was
+                // written by the in-bounds search over the slice.
+                unsafe { (*node).local_transform = overrides[override_ix].transform };
             }
         }
         // SAFETY: `node` is live and writable (see above), so `&(*node).local_transform`
@@ -12176,7 +12185,7 @@ static APERTURE_FORMATS: [ApertureFormatInfo; 12] = [
 // interleaved with a dozen escaping locals, so an honest decomposition would
 // need a dozen blocks and tuple-returning wraps that break the C line
 // correspondence.
-pub(crate) unsafe fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraView) {
+pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraView) {
     let scene: *mut Scene = scene.get();
     let camera: *mut Camera = camera_view.get();
     // C: `(ufbx_projection_mode)ufbxi_find_enum(...)` etc — `ufbxi_find_enum`
@@ -12577,10 +12586,11 @@ pub(crate) fn update_line_curve(line_view: &LineCurveView) {
 
 // ufbx.c:23271-23287 `ufbxi_update_pose`
 #[inline(never)]
-pub(crate) unsafe fn update_pose(pose: *mut Pose) {
+pub(crate) fn update_pose(pose_view: &PoseView) {
+    let pose: *mut Pose = pose_view.get();
     // C: `ufbxi_for_list(ufbx_bone_pose, bone, pose->bone_poses)`
-    // SAFETY: `pose` points to a live, initialized `ufbx_pose` (fn contract), so
-    // its own bone-pose list is readable.
+    // SAFETY: `pose` is the pose view's own live, initialized `ufbx_pose`
+    // storage, so its own bone-pose list is readable.
     let mut bone: *mut BonePose = unsafe { (*pose).bone_poses.data } as *mut BonePose;
     // SAFETY: as above; `data`/`count` describe one arena run.
     let bone_end: *mut BonePose = add_ptr(bone, unsafe { (*pose).bone_poses.count });
@@ -12620,10 +12630,12 @@ pub(crate) unsafe fn update_pose(pose: *mut Pose) {
 
 // ufbx.c:23289-23297 `ufbxi_update_skin_cluster`
 #[inline(never)]
-pub(crate) unsafe fn update_skin_cluster(cluster: *mut SkinCluster) {
+pub(crate) fn update_skin_cluster(cluster_view: &SkinClusterView) {
+    let cluster: *mut SkinCluster = cluster_view.get();
     // C: `if (cluster->bone_node)` — pointer truthiness.
-    // SAFETY: `cluster` points to a live, initialized `ufbx_skin_cluster` (fn
-    // contract), so `&(*cluster).bone_node` addresses its own nullable bone link.
+    // SAFETY: `cluster` is the cluster view's own live, initialized
+    // `ufbx_skin_cluster` storage, so `&(*cluster).bone_node` addresses its own
+    // nullable bone link.
     let bone_node: *mut Node = unsafe { opt_ptr(&(*cluster).bone_node) };
     if !bone_node.is_null() {
         // SAFETY: `bone_node` is non-null here, so it points to a live,
@@ -12729,13 +12741,14 @@ pub(crate) fn update_blend_channel(channel_view: &BlendChannelView) {
 
 // ufbx.c:23344-23349 `ufbxi_update_material`
 #[inline(never)]
-pub(crate) unsafe fn update_material(scene: *mut Scene, material: *mut Material) {
-    // SAFETY: `material` points to a live, initialized `ufbx_material` (fn
-    // contract), so its element's property list is readable.
+pub(crate) fn update_material(scene_view: &SceneView, material_view: &MaterialView) {
+    let material: *mut Material = material_view.get();
+    // SAFETY: `material` is the material view's own live, initialized
+    // `ufbx_material` storage, so its element's property list is readable.
     if unsafe { (*material).element.props.num_animated } > 0 {
-        // SAFETY: `scene` and `material` are the live, initialized scene and one
-        // of its materials (fn contract) — `ufbxi_fetch_maps`'s own contract.
-        unsafe { fetch_maps(scene, material) };
+        // SAFETY: the views' own live scene and one of its materials —
+        // `ufbxi_fetch_maps`'s own contract.
+        unsafe { fetch_maps(scene_view.get(), material) };
     }
 }
 
@@ -12776,12 +12789,14 @@ pub(crate) fn update_texture(texture_view: &TextureView) {
         ) as u32);
     }
 
-    // SAFETY: `texture` as above; `opt_ptr` result is null-checked before use.
+    // SAFETY: `texture` as above; `opt_ptr` result is null-checked before use,
+    // and a non-null shader link points to a live `ufbx_shader_texture` of the
+    // same scene, which its view reinterprets in place.
     unsafe {
         // C: `if (texture->shader)` — pointer truthiness.
         let shader: *mut ShaderTexture = opt_ptr(&(*texture).shader);
         if !shader.is_null() {
-            update_shader_texture(texture_view, shader);
+            update_shader_texture(texture_view, ShaderTextureView::from_ptr(shader));
         }
     }
 }
@@ -13053,9 +13068,10 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
 
 // ufbx.c:23490-23495 `ufbxi_update_anim`
 #[inline(never)]
-pub(crate) unsafe fn update_anim(scene: *mut Scene) {
-    // SAFETY: `scene` points to the live, initialized `ufbx_scene` being updated
-    // (fn contract), so its own anim-stack pointer list is readable.
+pub(crate) fn update_anim(scene_view: &SceneView) {
+    let scene: *mut Scene = scene_view.get();
+    // SAFETY: `scene` is the scene view's own live, initialized `ufbx_scene`
+    // storage, so its own anim-stack pointer list is readable.
     if unsafe { (*scene).anim_stacks.count } > 0 {
         // C: `scene->anim = scene->anim_stacks.data[0]->anim;`
         // SAFETY: `count > 0`, so element `0` of the scene's anim-stack pointer
@@ -13142,10 +13158,11 @@ pub(crate) unsafe fn mirror_matrix(m: *mut Matrix, axis: MirrorAxis) {
 
 // ufbx.c:23523-23619 `ufbxi_update_initial_clusters`
 #[inline(never)]
-pub(crate) unsafe fn update_initial_clusters(scene: *mut Scene) {
+pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
+    let scene: *mut Scene = scene_view.get();
     // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
-    // SAFETY: `scene` points to the live, initialized `ufbx_scene` being updated
-    // (fn contract), so its own skin-cluster pointer list is readable.
+    // SAFETY: `scene` is the scene view's own live, initialized `ufbx_scene`
+    // storage, so its own skin-cluster pointer list is readable.
     let mut p_cluster: *mut *mut SkinCluster =
         unsafe { (*scene).skin_clusters.data } as *mut *mut SkinCluster;
     // SAFETY: as above; `data`/`count` describe one arena run.
@@ -13765,6 +13782,19 @@ pub(crate) unsafe fn update_scene<'a>(
     // pointer is used only to walk the typed `*mut *mut T` element runs, exactly
     // as C's `ufbxi_for_ptr_list` does.
     let scene: *mut Scene = scene_view.get();
+
+    // The raw (`transform_overrides`, `num_transform_overrides`) pair crosses
+    // the public evaluate ABI; make the slice exactly once at this boundary.
+    // SAFETY: the fn contract is that `transform_overrides` addresses
+    // `num_transform_overrides` readable, initialized `ufbx_transform_override`s
+    // (sorted by `node_id`) live for this call; a zero count takes the empty
+    // arm (the pointer may be null then).
+    let overrides: &[TransformOverride] = if num_transform_overrides > 0 {
+        unsafe { core::slice::from_raw_parts(transform_overrides, num_transform_overrides) }
+    } else {
+        &[]
+    };
+
     // C: `ufbxi_for_ptr_list(ufbx_node, p_node, scene->nodes)`
     // SAFETY: `scene` is `scene_view`'s own live, initialized `ufbx_scene`
     // storage, so its element lists are readable.
@@ -13776,9 +13806,7 @@ pub(crate) unsafe fn update_scene<'a>(
         // condition), which holds `count` pointers to live `ufbx_node`s in the
         // same arena that `scene_view` is anchored to.
         let node: &'a NodeView = unsafe { NodeView::from_ptr(*p_node) };
-        // SAFETY: `transform_overrides` addresses `num_transform_overrides`
-        // initialized overrides (fn contract), passed through unchanged.
-        unsafe { update_node(node, transform_overrides, num_transform_overrides) };
+        update_node(node, overrides);
         // SAFETY: `p_node` is inside the run (loop condition), so stepping one
         // element lands at most one past its end.
         p_node = unsafe { p_node.add(1) };
@@ -13805,8 +13833,7 @@ pub(crate) unsafe fn update_scene<'a>(
     while p_camera != p_camera_end {
         // SAFETY: as for the node run, for `scene->cameras` and `ufbx_camera`.
         let camera: &'a CameraView = unsafe { CameraView::from_ptr(*p_camera) };
-        // SAFETY: `scene_view` and `camera` are live views into the same arena.
-        unsafe { update_camera(scene_view, camera) };
+        update_camera(scene_view, camera);
         // SAFETY: `p_camera` is inside the run (loop condition).
         p_camera = unsafe { p_camera.add(1) };
     }
@@ -13840,8 +13867,7 @@ pub(crate) unsafe fn update_scene<'a>(
     }
 
     if initial {
-        // SAFETY: `scene` is live (see above).
-        unsafe { update_initial_clusters(scene) };
+        update_initial_clusters(scene_view);
 
         // C: `ufbxi_for_ptr_list(ufbx_pose, p_pose, scene->poses)`
         // SAFETY: `scene` is live (see above).
@@ -13849,9 +13875,9 @@ pub(crate) unsafe fn update_scene<'a>(
         // SAFETY: `scene` is live (see above).
         let p_pose_end: *mut *mut Pose = add_ptr(p_pose, unsafe { (*scene).poses.count });
         while p_pose != p_pose_end {
-            // SAFETY: `p_pose` addresses an element of the `scene->poses` run
-            // (loop condition), so it reads a pointer to a live `ufbx_pose`.
-            unsafe { update_pose(*p_pose) };
+            // SAFETY: as for the node run, for `scene->poses` and `ufbx_pose`.
+            let pose: &'a PoseView = unsafe { PoseView::from_ptr(*p_pose) };
+            update_pose(pose);
             // SAFETY: `p_pose` is inside the run (loop condition).
             p_pose = unsafe { p_pose.add(1) };
         }
@@ -13865,10 +13891,10 @@ pub(crate) unsafe fn update_scene<'a>(
     let p_cluster_end: *mut *mut SkinCluster =
         add_ptr(p_cluster, unsafe { (*scene).skin_clusters.count });
     while p_cluster != p_cluster_end {
-        // SAFETY: `p_cluster` addresses an element of the `scene->skin_clusters`
-        // run (loop condition), so it reads a pointer to a live
+        // SAFETY: as for the node run, for `scene->skin_clusters` and
         // `ufbx_skin_cluster`.
-        unsafe { update_skin_cluster(*p_cluster) };
+        let cluster: &'a SkinClusterView = unsafe { SkinClusterView::from_ptr(*p_cluster) };
+        update_skin_cluster(cluster);
         // SAFETY: `p_cluster` is inside the run (loop condition).
         p_cluster = unsafe { p_cluster.add(1) };
     }
@@ -13913,10 +13939,10 @@ pub(crate) unsafe fn update_scene<'a>(
     let p_material_end: *mut *mut Material =
         add_ptr(p_material, unsafe { (*scene).materials.count });
     while p_material != p_material_end {
-        // SAFETY: `scene` is live, and `p_material` addresses an element of the
-        // `scene->materials` run (loop condition), so it reads a pointer to a
-        // live `ufbx_material`.
-        unsafe { update_material(scene, *p_material) };
+        // SAFETY: as for the node run, for `scene->materials` and
+        // `ufbx_material`.
+        let material: &'a MaterialView = unsafe { MaterialView::from_ptr(*p_material) };
+        update_material(scene_view, material);
         // SAFETY: `p_material` is inside the run (loop condition).
         p_material = unsafe { p_material.add(1) };
     }
@@ -13968,8 +13994,7 @@ pub(crate) unsafe fn update_scene<'a>(
         p_constraint = unsafe { p_constraint.add(1) };
     }
 
-    // SAFETY: `scene` is live (see above).
-    unsafe { update_anim(scene) };
+    update_anim(scene_view);
 }
 
 // ufbx.c:23869-23878 `ufbxi_update_scene_metadata`
