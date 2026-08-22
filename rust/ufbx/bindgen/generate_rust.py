@@ -366,6 +366,11 @@ view_accessor_structs = [
     "ufbx_mesh",
     "ufbx_skin_deformer",
     "ufbx_subdivision_result",
+    "ufbx_cache_deformer",
+    "ufbx_material_map",
+    "ufbx_material_feature_info",
+    "ufbx_material_texture",
+    "ufbx_shader_prop_binding",
 ]
 
 # `(struct, field)` pairs whose READ accessor is hand-written instead of

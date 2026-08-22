@@ -4243,27 +4243,28 @@ pub(crate) unsafe fn fetch_mapping_maps(
             if (flags & MAPPING_FETCH_FEATURE) != 0 {
                 // SAFETY: with `MAPPING_FETCH_FEATURE` the caller's `features`
                 // array is indexed by `mapping->index`, which the mapping tables
-                // keep within the material's feature count.
-                let feature: *mut MaterialFeatureInfo =
-                    unsafe { features.add((*mapping).index as usize) };
+                // keep within the material's feature count; the view reinterprets
+                // that entry in place.
+                let feature: &View<MaterialFeatureInfo> = unsafe {
+                    View::<MaterialFeatureInfo>::from_ptr(features.add((*mapping).index as usize))
+                };
                 // C: `if (prop && prop->type != UFBX_PROP_REFERENCE)`
                 if let Some(prop) = prop.filter(|p| p.type_() != PropType::Reference) {
-                    // C-parity: `prop->value_real` is the `ufbx_prop` value
-                    // union's first real (`value_vec4.x` below).
-                    // SAFETY: `feature` is in bounds (see above).
-                    unsafe {
-                        (*feature).enabled = prop.value_int() != 0;
-                        (*feature).is_explicit = true;
-                        if (mapping_flags & SHADER_FEATURE_IF_AROUND_1 as u32) != 0 {
-                            (*feature).enabled = prop.value_vec4().x >= 0.5f32 as Real
-                                && prop.value_vec4().x <= 1.5f32 as Real;
-                        }
-                        if (mapping_flags & SHADER_FEATURE_INVERTED as u32) != 0 {
-                            (*feature).enabled = !(*feature).enabled;
-                        }
-                        if (mapping_flags & SHADER_FEATURE_IF_EXISTS as u32) != 0 {
-                            (*feature).enabled = true;
-                        }
+                    feature.set_enabled(prop.value_int() != 0);
+                    feature.set_is_explicit(true);
+                    if (mapping_flags & SHADER_FEATURE_IF_AROUND_1 as u32) != 0 {
+                        // C-parity: `prop->value_real` is the `ufbx_prop` value
+                        // union's first real (`value_vec4.x` here).
+                        feature.set_enabled(
+                            prop.value_vec4().x >= 0.5f32 as Real
+                                && prop.value_vec4().x <= 1.5f32 as Real,
+                        );
+                    }
+                    if (mapping_flags & SHADER_FEATURE_INVERTED as u32) != 0 {
+                        feature.set_enabled(!feature.enabled());
+                    }
+                    if (mapping_flags & SHADER_FEATURE_IF_EXISTS as u32) != 0 {
+                        feature.set_enabled(true);
                     }
                 }
                 if (mapping_flags & SHADER_FEATURE_IF_TEXTURE as u32) != 0 {
@@ -4272,8 +4273,7 @@ pub(crate) unsafe fn fetch_mapping_maps(
                     let texture: *mut Texture =
                         unsafe { find_prop_texture_len(material, name.data, name.length) };
                     if !texture.is_null() {
-                        // SAFETY: `feature` is in bounds (see above).
-                        unsafe { (*feature).enabled = true };
+                        feature.set_enabled(true);
                     }
                 }
                 // SAFETY: `binding != binding_end`, so the advance lands at or
@@ -4394,20 +4394,17 @@ pub(crate) unsafe fn fetch_mapping_maps(
 // ufbx.c:20096-20107 `ufbxi_update_factor`
 #[inline(never)]
 pub(crate) fn update_factor(factor_map: &MaterialMapView, color_map: &MaterialMapView) {
-    let factor_map: *mut MaterialMap = factor_map.get();
-    let color_map: *mut MaterialMap = color_map.get();
-    // SAFETY: `factor_map` and `color_map` are the two views' own live storage.
-    unsafe {
-        if !(*factor_map).has_value {
-            if (*color_map).has_value && !is_vec4_zero((*color_map).value_vec4) {
-                // C-parity: `factor_map->value_real` is the value union's first
-                // real (`value_vec4.x` in the generated struct).
-                (*factor_map).value_vec4.x = 1.0f32 as Real;
-                (*factor_map).value_int = 1;
-            } else {
-                (*factor_map).value_vec4.x = 0.0f32 as Real;
-                (*factor_map).value_int = 0;
-            }
+    if !factor_map.has_value() {
+        if color_map.has_value() && !is_vec4_zero(color_map.value_vec4()) {
+            // C-parity: `factor_map->value_real` is the value union's first
+            // real (`value_vec4.x` in the generated struct).
+            // SAFETY: the factor view's own live `value_vec4` field.
+            unsafe { (*factor_map.value_vec4_raw()).x = 1.0f32 as Real };
+            factor_map.set_value_int(1);
+        } else {
+            // SAFETY: as above.
+            unsafe { (*factor_map.value_vec4_raw()).x = 0.0f32 as Real };
+            factor_map.set_value_int(0);
         }
     }
 }
@@ -9038,27 +9035,26 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let deformer_view: &'a CacheDeformerView =
             unsafe { CacheDeformerView::from_ptr(*p_deformer) };
         let deformer: *mut CacheDeformer = deformer_view.get();
-        // SAFETY: `deformer` is the live element the view was minted from, and
-        // `props_view()` is its own live `ufbx_props`; the name is a NUL-terminated
-        // literal.
-        unsafe {
-            (*deformer).channel = find_string(
+        // SAFETY: `props_view()` is the deformer's own live `ufbx_props`; the
+        // name is a NUL-terminated literal.
+        deformer_view.set_channel(unsafe {
+            find_string(
                 deformer_view.props_view(),
                 b"ChannelName\0".as_ptr(),
                 EMPTY_STRING.0,
             )
-        };
+        });
         // SAFETY: `deformer` is live (see above), so `&mut (*deformer).element`
         // addresses its own element header; the fetched destination is null or a
         // live `ufbx_cache_file`.
-        unsafe {
-            (*deformer).file = opt_ref(fetch_dst_element(
+        deformer_view.set_file(unsafe {
+            opt_ref(fetch_dst_element(
                 &mut (*deformer).element,
                 false,
                 ptr::null(),
                 ElementType::CacheFile,
             ) as *mut CacheFile)
-        };
+        });
         // SAFETY: `p_deformer != p_deformer_end`, so the advance lands at or before
         // the run's one-past-the-end pointer.
         p_deformer = unsafe { p_deformer.add(1) };
@@ -10733,19 +10729,17 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 let binding: *mut ShaderBinding = unsafe { *p_binding };
 
                 // C: `ufbxi_for_list(ufbx_shader_prop_binding, prop, binding->prop_bindings)`
-                // SAFETY: `binding` is a live `ufbx_shader_binding` (see above).
-                // `data`/`count` describe one run.
-                let (mut prop, prop_count) = unsafe {
-                    (
+                // SAFETY: `binding` is a live `ufbx_shader_binding` (see above);
+                // `data`/`count` describe its own initialized prop-binding run,
+                // owned by the uc result arena.
+                let prop_iter = unsafe {
+                    SliceViewIter::<ShaderPropBinding>::from_raw_parts(
                         (*binding).prop_bindings.data as *mut ShaderPropBinding,
                         (*binding).prop_bindings.count,
                     )
                 };
-                let prop_end: *mut ShaderPropBinding = add_ptr(prop, prop_count);
-                while prop != prop_end {
-                    // SAFETY: `prop != prop_end`, so it addresses a live,
-                    // initialized entry of that run.
-                    let name: String = unsafe { (*prop).material_prop };
+                for prop in prop_iter {
+                    let name: String = prop.material_prop();
 
                     let mut index: usize = usize::MAX;
                     let cmp_lambda = |a: *const MaterialTexture| {
@@ -10783,17 +10777,13 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         } == name.data
                     {
                         // SAFETY: `index < (*material).textures.count` (loop
-                        // condition), so it indexes the material's own texture run;
-                        // `prop` is live (see above).
+                        // condition), so it indexes the material's own texture run.
                         unsafe {
                             (*((*material).textures.data as *mut MaterialTexture).add(index))
-                                .shader_prop = (*prop).shader_prop
+                                .shader_prop = prop.shader_prop()
                         };
                         index += 1;
                     }
-                    // SAFETY: `prop != prop_end`, so the advance lands at or before
-                    // the run's one-past-the-end pointer.
-                    prop = unsafe { prop.add(1) };
                 }
                 // SAFETY: `p_binding != p_binding_end`, so the advance lands at or
                 // before the run's one-past-the-end pointer.
