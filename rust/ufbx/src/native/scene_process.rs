@@ -2349,10 +2349,9 @@ pub(crate) unsafe fn fetch_dst_elements(
         (*list).data = uc
             .result_view()
             .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
-            as *const Ref<Element>
-    };
-    // SAFETY: as above.
-    unsafe { (*list).count = num_elements };
+            as *const Ref<Element>;
+        (*list).count = num_elements;
+    }
     // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
@@ -2460,10 +2459,9 @@ pub(crate) unsafe fn fetch_src_elements(
         (*list).data = uc
             .result_view()
             .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
-            as *const Ref<Element>
-    };
-    // SAFETY: as above.
-    unsafe { (*list).count = num_elements };
+            as *const Ref<Element>;
+        (*list).count = num_elements;
+    }
     // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
@@ -2604,9 +2602,10 @@ pub(crate) unsafe fn fetch_textures(
                 // SAFETY: `tex` is non-null (checked) and addresses the
                 // `MaterialTexture` slot just pushed on `tmp_stack`; `conn` points
                 // to a live `Connection`.
-                unsafe { (*tex).material_prop = (*conn).dst_prop };
-                // SAFETY: as above.
-                unsafe { (*tex).shader_prop = (*tex).material_prop };
+                unsafe {
+                    (*tex).material_prop = (*conn).dst_prop;
+                    (*tex).shader_prop = (*tex).material_prop;
+                }
                 // SAFETY: as above; `src` has `type_ == Texture` (checked), so it
                 // names a live `ufbx_texture`.
                 unsafe { (*tex).texture = Ref::from_ptr(ref_ptr(&(*conn).src) as *mut Texture) };
@@ -2627,10 +2626,9 @@ pub(crate) unsafe fn fetch_textures(
     unsafe {
         (*list).data = uc
             .result_view()
-            .push_pop::<MaterialTexture>(uc.tmp_stack_view(), num_textures)
-    };
-    // SAFETY: as above.
-    unsafe { (*list).count = num_textures };
+            .push_pop::<MaterialTexture>(uc.tmp_stack_view(), num_textures);
+        (*list).count = num_textures;
+    }
     // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
@@ -2692,10 +2690,9 @@ pub(crate) unsafe fn fetch_mesh_materials(
         (*list).data = uc
             .result_view()
             .push_pop::<*mut Material>(uc.tmp_stack_view(), num_materials)
-            as *const Ref<Material>
-    };
-    // SAFETY: as above.
-    unsafe { (*list).count = num_materials };
+            as *const Ref<Material>;
+        (*list).count = num_materials;
+    }
     // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
@@ -2767,10 +2764,9 @@ pub(crate) unsafe fn fetch_deformers(
         (*list).data = uc
             .result_view()
             .push_pop::<*mut Element>(uc.tmp_stack_view(), num_deformers)
-            as *const Ref<Element>
-    };
-    // SAFETY: as above.
-    unsafe { (*list).count = num_deformers };
+            as *const Ref<Element>;
+        (*list).count = num_deformers;
+    }
     // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
@@ -2820,10 +2816,9 @@ pub(crate) unsafe fn fetch_blend_keyframes(
     unsafe {
         (*list).data = uc
             .result_view()
-            .push_pop::<BlendKeyframe>(uc.tmp_stack_view(), num_keyframes)
-    };
-    // SAFETY: as above.
-    unsafe { (*list).count = num_keyframes };
+            .push_pop::<BlendKeyframe>(uc.tmp_stack_view(), num_keyframes);
+        (*list).count = num_keyframes;
+    }
     // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
@@ -2896,10 +2891,9 @@ pub(crate) unsafe fn fetch_texture_layers(
     unsafe {
         (*list).data = uc
             .result_view()
-            .push_pop::<TextureLayer>(uc.tmp_stack_view(), num_layers)
-    };
-    // SAFETY: as above.
-    unsafe { (*list).count = num_layers };
+            .push_pop::<TextureLayer>(uc.tmp_stack_view(), num_layers);
+        (*list).count = num_layers;
+    }
     // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
@@ -4211,9 +4205,10 @@ pub(crate) unsafe fn fetch_mapping_maps(
             // SAFETY: `identity_binding` addresses this function's own aligned
             // `ShaderPropBinding` storage; both members are written here before
             // its address is handed to `bindings`.
-            unsafe { (*identity_binding).material_prop = prop_name };
-            // SAFETY: as above.
-            unsafe { (*identity_binding).shader_prop = EMPTY_STRING.0 };
+            unsafe {
+                (*identity_binding).material_prop = prop_name;
+                (*identity_binding).shader_prop = EMPTY_STRING.0;
+            }
             bindings.data = identity_binding;
             bindings.count = 1;
         }
@@ -4253,9 +4248,10 @@ pub(crate) unsafe fn fetch_mapping_maps(
                 // of the material's property list.
                 if !prop.is_null() && unsafe { (*prop).type_ } != PropType::Reference {
                     // SAFETY: `feature` is in bounds (see above) and `prop` is live.
-                    unsafe { (*feature).enabled = (*prop).value_int != 0 };
-                    // SAFETY: as above.
-                    unsafe { (*feature).is_explicit = true };
+                    unsafe {
+                        (*feature).enabled = (*prop).value_int != 0;
+                        (*feature).is_explicit = true;
+                    }
                     if (mapping_flags & SHADER_FEATURE_IF_AROUND_1 as u32) != 0 {
                         // C-parity: `prop->value_real` is the `ufbx_prop` value
                         // union's first real (`value_vec4.x` here).
@@ -4308,9 +4304,10 @@ pub(crate) unsafe fn fetch_mapping_maps(
                         unsafe { (*map).value_int = f64_to_i64(as_f64!((*map).value_vec4.x)) };
                     } else {
                         // SAFETY: `map` is in bounds (see above) and `prop` is live.
-                        unsafe { (*map).value_vec4 = (*prop).value_vec4 };
-                        // SAFETY: as above.
-                        unsafe { (*map).value_int = (*prop).value_int };
+                        unsafe {
+                            (*map).value_vec4 = (*prop).value_vec4;
+                            (*map).value_int = (*prop).value_int;
+                        }
                     }
                     // SAFETY: `map` is in bounds (see above).
                     unsafe { (*map).has_value = true };
@@ -4346,9 +4343,10 @@ pub(crate) unsafe fn fetch_mapping_maps(
                         // value union's 3-real view; the generated struct keeps
                         // only `value_vec4`, whose x/y/z overlay it exactly.
                         // SAFETY: `map` is in bounds (see above).
-                        unsafe { (*map).value_vec4.y = (*map).value_vec4.x };
-                        // SAFETY: as above.
-                        unsafe { (*map).value_vec4.z = (*map).value_vec4.x };
+                        unsafe {
+                            (*map).value_vec4.y = (*map).value_vec4.x;
+                            (*map).value_vec4.z = (*map).value_vec4.x;
+                        }
                     }
                     if (prop_flags & PropFlags::VALUE_REAL.raw()) != 0 {
                         // SAFETY: `map` is in bounds (see above).
@@ -4412,14 +4410,16 @@ pub(crate) fn update_factor(factor_map: &MaterialMapView, color_map: &MaterialMa
             // C-parity: `factor_map->value_real` is the value union's first
             // real (`value_vec4.x` in the generated struct).
             // SAFETY: `factor_map` is live (see above).
-            unsafe { (*factor_map).value_vec4.x = 1.0f32 as Real };
-            // SAFETY: as above.
-            unsafe { (*factor_map).value_int = 1 };
+            unsafe {
+                (*factor_map).value_vec4.x = 1.0f32 as Real;
+                (*factor_map).value_int = 1;
+            }
         } else {
             // SAFETY: as above.
-            unsafe { (*factor_map).value_vec4.x = 0.0f32 as Real };
-            // SAFETY: as above.
-            unsafe { (*factor_map).value_int = 0 };
+            unsafe {
+                (*factor_map).value_vec4.x = 0.0f32 as Real;
+                (*factor_map).value_int = 0;
+            }
         }
     }
 }
@@ -4659,86 +4659,56 @@ pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
         update_factor(
             MaterialMapView::from_ptr(&raw mut (*material).fbx.diffuse_factor),
             MaterialMapView::from_ptr(&raw mut (*material).fbx.diffuse_color),
-        )
-    };
-    // SAFETY: as above.
-    unsafe {
+        );
         update_factor(
             MaterialMapView::from_ptr(&raw mut (*material).fbx.specular_factor),
             MaterialMapView::from_ptr(&raw mut (*material).fbx.specular_color),
-        )
-    };
-    // SAFETY: as above.
-    unsafe {
+        );
         update_factor(
             MaterialMapView::from_ptr(&raw mut (*material).fbx.reflection_factor),
             MaterialMapView::from_ptr(&raw mut (*material).fbx.reflection_color),
-        )
-    };
-    // SAFETY: as above.
-    unsafe {
+        );
         update_factor(
             MaterialMapView::from_ptr(&raw mut (*material).fbx.transparency_factor),
             MaterialMapView::from_ptr(&raw mut (*material).fbx.transparency_color),
-        )
-    };
-    // SAFETY: as above.
-    unsafe {
+        );
         update_factor(
             MaterialMapView::from_ptr(&raw mut (*material).fbx.emission_factor),
             MaterialMapView::from_ptr(&raw mut (*material).fbx.emission_color),
-        )
-    };
-    // SAFETY: as above.
-    unsafe {
+        );
         update_factor(
             MaterialMapView::from_ptr(&raw mut (*material).fbx.ambient_factor),
             MaterialMapView::from_ptr(&raw mut (*material).fbx.ambient_color),
-        )
-    };
+        );
+    }
 
     // SAFETY: as above, for the `pbr` members.
     unsafe {
         update_factor(
             MaterialMapView::from_ptr(&raw mut (*material).pbr.base_factor),
             MaterialMapView::from_ptr(&raw mut (*material).pbr.base_color),
-        )
-    };
-    // SAFETY: as above.
-    unsafe {
+        );
         update_factor(
             MaterialMapView::from_ptr(&raw mut (*material).pbr.specular_factor),
             MaterialMapView::from_ptr(&raw mut (*material).pbr.specular_color),
-        )
-    };
-    // SAFETY: as above.
-    unsafe {
+        );
         update_factor(
             MaterialMapView::from_ptr(&raw mut (*material).pbr.emission_factor),
             MaterialMapView::from_ptr(&raw mut (*material).pbr.emission_color),
-        )
-    };
-    // SAFETY: as above.
-    unsafe {
+        );
         update_factor(
             MaterialMapView::from_ptr(&raw mut (*material).pbr.sheen_factor),
             MaterialMapView::from_ptr(&raw mut (*material).pbr.sheen_color),
-        )
-    };
-    // SAFETY: as above.
-    unsafe {
+        );
         update_factor(
             MaterialMapView::from_ptr(&raw mut (*material).pbr.thin_film_factor),
             MaterialMapView::from_ptr(&raw mut (*material).pbr.thin_film_thickness),
-        )
-    };
-    // SAFETY: as above.
-    unsafe {
+        );
         update_factor(
             MaterialMapView::from_ptr(&raw mut (*material).pbr.transmission_factor),
             MaterialMapView::from_ptr(&raw mut (*material).pbr.transmission_color),
-        )
-    };
+        );
+    }
 
     // Patch transmission roughness if only extra roughness is defined
     // SAFETY: `material` is live and the zero-fill above initialized every `pbr`
@@ -4891,9 +4861,10 @@ pub(crate) unsafe fn add_constraint_prop(
                 // resolved from that connection.
                 unsafe { (*target).node = Ref::from_ptr(node) };
                 // SAFETY: `target` is the fresh non-null push above.
-                unsafe { (*target).weight = 1.0f32 as Real };
-                // SAFETY: as above.
-                unsafe { (*target).transform = IDENTITY_TRANSFORM };
+                unsafe {
+                    (*target).weight = 1.0f32 as Real;
+                    (*target).transform = IDENTITY_TRANSFORM;
+                }
             }
             // C `default:` (ufbx.c:20260-20261) — unreachable in Rust because
             // the match above is exhaustive over the enum, but kept for diff
@@ -4975,11 +4946,11 @@ pub(crate) unsafe fn finalize_nurbs_basis(
 
             // SAFETY: `basis` is live; `spans` is the push above, holding
             // `num_spans` initialized reals.
-            unsafe { (*basis).spans.data = spans };
-            // SAFETY: as above.
-            unsafe { (*basis).spans.count = num_spans };
-            // SAFETY: as above.
-            unsafe { (*basis).valid = true };
+            unsafe {
+                (*basis).spans.data = spans;
+                (*basis).spans.count = num_spans;
+                (*basis).valid = true;
+            }
             for i in 1..knots.count {
                 // SAFETY: `1 <= i < count` bounds both reads inside the knot
                 // span of `count` initialized reals.
@@ -5446,13 +5417,12 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
             // dereferences it unconditionally).
             // SAFETY: `prop` resolves to that same live `ufbx_prop`, and `input`
             // addresses a live entry of the input run.
-            unsafe { (*input).value_vec4 = (*prop).value_vec4 };
-            // SAFETY: as above.
-            unsafe { (*input).value_int = (*prop).value_int };
-            // SAFETY: as above.
-            unsafe { (*input).value_str = (*prop).value_str };
-            // SAFETY: as above.
-            unsafe { (*input).value_blob = (*prop).value_blob };
+            unsafe {
+                (*input).value_vec4 = (*prop).value_vec4;
+                (*input).value_int = (*prop).value_int;
+                (*input).value_str = (*prop).value_str;
+                (*input).value_blob = (*prop).value_blob;
+            }
             // SAFETY: `texture` is the texture view's own live storage, so
             // `&(*texture).element` borrows its element header; `input.prop` was
             // just set to that live prop, and `opt_ref` wraps the nullable
@@ -5544,9 +5514,10 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
         if !map.is_null() {
             // SAFETY: `map` is non-null (checked) and addresses a live entry of
             // the shader's input run; `shader` is live.
-            unsafe { (*shader).main_texture = (*map).texture };
-            // SAFETY: as above.
-            unsafe { (*map).texture_output_index = (*shader).main_texture_output_index };
+            unsafe {
+                (*shader).main_texture = (*map).texture;
+                (*map).texture_output_index = (*shader).main_texture_output_index;
+            }
         }
     }
 }
@@ -5888,11 +5859,10 @@ pub(crate) unsafe fn propagate_main_textures(scene: *mut Scene) {
 
             // SAFETY: `shader` and `main_shader` are both non-null (checked) and
             // point to live `ufbx_shader_texture`s.
-            unsafe { (*shader).main_texture = (*main_shader).main_texture };
-            // SAFETY: as above.
             unsafe {
-                (*shader).main_texture_output_index = (*main_shader).main_texture_output_index
-            };
+                (*shader).main_texture = (*main_shader).main_texture;
+                (*shader).main_texture_output_index = (*main_shader).main_texture_output_index;
+            }
 
             // SAFETY: `p_texture != p_texture_end` (see above).
             p_texture = unsafe { p_texture.add(1) };
@@ -5987,11 +5957,10 @@ pub(crate) unsafe fn propagate_main_textures(scene: *mut Scene) {
             if !unsafe { opt_ptr(&(*input_shader).main_texture) }.is_null() {
                 // SAFETY: `input` addresses a live entry and `input_shader` a live
                 // `ufbx_shader_texture`.
-                unsafe { (*input).texture = (*input_shader).main_texture };
-                // SAFETY: as above.
                 unsafe {
-                    (*input).texture_output_index = (*input_shader).main_texture_output_index
-                };
+                    (*input).texture = (*input_shader).main_texture;
+                    (*input).texture_output_index = (*input_shader).main_texture_output_index;
+                }
             }
             // SAFETY: `input != input_end` (see above).
             input = unsafe { input.add(1) };
@@ -6116,9 +6085,10 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
 
         // SAFETY: `entry` is the fresh non-null map slot above, and `file` the
         // fresh push, which lives in `uc`'s `tmp` arena for the rest of the read.
-        unsafe { (*entry).key = key };
-        // SAFETY: as above.
-        unsafe { (*entry).file = file };
+        unsafe {
+            (*entry).key = key;
+            (*entry).file = file;
+        }
     }
 
     // SAFETY: `entry` is non-null — either the hit from `map_find` or the freshly
@@ -6131,43 +6101,31 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
     unsafe { (*texture).has_file = true };
     // SAFETY: `file` and `texture` are both live (see above), so the macro's
     // `(*file)` / `(*texture)` field projections address their own members.
-    unsafe { patch_empty!((*file).filename, length, (*texture).filename) };
-    // SAFETY: as above.
     unsafe {
+        patch_empty!((*file).filename, length, (*texture).filename);
         patch_empty!(
             (*file).relative_filename,
             length,
             (*texture).relative_filename
-        )
-    };
-    // SAFETY: as above.
-    unsafe {
+        );
         patch_empty!(
             (*file).absolute_filename,
             length,
             (*texture).absolute_filename
-        )
-    };
-    // SAFETY: as above.
-    unsafe { patch_empty!((*file).raw_filename, size, (*texture).raw_filename) };
-    // SAFETY: as above.
-    unsafe {
+        );
+        patch_empty!((*file).raw_filename, size, (*texture).raw_filename);
         patch_empty!(
             (*file).raw_relative_filename,
             size,
             (*texture).raw_relative_filename
-        )
-    };
-    // SAFETY: as above.
-    unsafe {
+        );
         patch_empty!(
             (*file).raw_absolute_filename,
             size,
             (*texture).raw_absolute_filename
-        )
-    };
-    // SAFETY: as above.
-    unsafe { patch_empty!((*file).content, size, (*texture).content) };
+        );
+        patch_empty!((*file).content, size, (*texture).content);
+    }
 
     Ok(())
 }
@@ -6684,11 +6642,11 @@ pub(crate) unsafe fn scale_vec3_list(v_list: *const c_void, scale: Real, stride:
         let v: *mut Vec3 = p as *mut Vec3;
         // SAFETY: `p` walks the `count` strided elements of the list, each a live
         // `ufbx_vec3`.
-        unsafe { (*v).x *= scale };
-        // SAFETY: as above.
-        unsafe { (*v).y *= scale };
-        // SAFETY: as above.
-        unsafe { (*v).z *= scale };
+        unsafe {
+            (*v).x *= scale;
+            (*v).y *= scale;
+            (*v).z *= scale;
+        }
         p = p.wrapping_add(stride);
     }
 }
@@ -6822,9 +6780,10 @@ pub(crate) unsafe fn flip_attrib_winding(
             // length of the `data` run; `begin < end` keeps both inside that span.
             let tmp: u32 = unsafe { *data.add(begin) };
             // SAFETY: as above.
-            unsafe { *data.add(begin) = *data.add(end) };
-            // SAFETY: as above.
-            unsafe { *data.add(end) = tmp };
+            unsafe {
+                *data.add(begin) = *data.add(end);
+                *data.add(end) = tmp;
+            }
             begin += 1;
             end -= 1;
         }
@@ -7014,9 +6973,10 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(),
             // SAFETY: as above, for the `b` endpoint.
             let b: u32 = unsafe { *index_mapping.offset((*p_edge).b as i32 as isize) };
             // SAFETY: `p_edge` addresses a live entry (see above).
-            unsafe { (*p_edge).a = b };
-            // SAFETY: as above.
-            unsafe { (*p_edge).b = a };
+            unsafe {
+                (*p_edge).a = b;
+                (*p_edge).b = a;
+            }
             // SAFETY: `p_edge != p_edge_end`, so the advance lands at or before the
             // run's one-past-the-end pointer.
             p_edge = unsafe { p_edge.add(1) };
@@ -7927,9 +7887,10 @@ pub(crate) unsafe fn validate_indices(
     if max_index == 0 && uc.opts_view().index_error_handling() == IndexErrorHandling::Clamp {
         // SAFETY: `indices` points to a live `ufbx_uint32_list` header — the
         // attribute index list being validated (fn contract).
-        unsafe { (*indices).data = ptr::null_mut() };
-        // SAFETY: as above.
-        unsafe { (*indices).count = 0 };
+        unsafe {
+            (*indices).data = ptr::null_mut();
+            (*indices).count = 0;
+        }
         return Ok(());
     }
 
@@ -8191,9 +8152,10 @@ pub(crate) unsafe fn push_anim(
     // SAFETY: `anim` is the non-null one-element zeroed push just made into `uc`'s
     // result buffer, so it addresses writable storage for one `ufbx_anim`;
     // `layers`/`num_layers` describe the caller's layer-pointer run (fn contract).
-    unsafe { (*anim).layers.data = layers as *const Ref<AnimLayer> };
-    // SAFETY: as above.
-    unsafe { (*anim).layers.count = num_layers };
+    unsafe {
+        (*anim).layers.data = layers as *const Ref<AnimLayer>;
+        (*anim).layers.count = num_layers;
+    }
 
     // SAFETY: `p_anim` points to a live, writable `ufbx_anim*` slot (fn contract).
     unsafe { *p_anim = anim };
@@ -8283,9 +8245,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     uc.scene_view().elements_view().set_count(num_elements);
     // SAFETY: the two accessors hand out `uc`'s own live element-offset and
     // element buffers.
-    unsafe { buf_free(uc.tmp_element_offsets_mut_ptr()) };
-    // SAFETY: as above.
-    unsafe { buf_free(uc.tmp_elements_mut_ptr()) };
+    unsafe {
+        buf_free(uc.tmp_element_offsets_mut_ptr());
+        buf_free(uc.tmp_elements_mut_ptr());
+    }
 
     uc.set_tmp_element_flag(uc.tmp_view().push_zero::<u8>(num_elements));
     ufbxi_check!(uc, !uc.tmp_element_flag().is_null(), "uc->tmp_element_flag");
@@ -8392,9 +8355,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
         // SAFETY: `name_elem` addresses a slot of that run and `elem` a live
         // element header (both above).
-        unsafe { (*name_elem).name = (*elem).name };
-        // SAFETY: as above.
-        unsafe { (*name_elem).type_ = (*elem).type_ };
+        unsafe {
+            (*name_elem).name = (*elem).name;
+            (*name_elem).type_ = (*elem).type_;
+        }
         // SAFETY: as above; `elem`'s name is an interned pool string, so
         // `name.data` addresses `name.length` readable bytes.
         unsafe {
@@ -8450,9 +8414,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 && uc.opts_view().inherit_mode_handling() == InheritModeHandling::Preserve
             {
                 // SAFETY: `node` is live (see above).
-                unsafe { (*node).original_inherit_mode = InheritMode::Normal };
-                // SAFETY: as above.
-                unsafe { (*node).inherit_mode = InheritMode::Normal };
+                unsafe {
+                    (*node).original_inherit_mode = InheritMode::Normal;
+                    (*node).inherit_mode = InheritMode::Normal;
+                }
             }
 
             // RrSs nodes inherit scale from their parent, Rrs ignore the scale of
@@ -8960,9 +8925,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             for i in 0..num_vertices {
                 // SAFETY: `i < num_vertices`, the length of the `skin_vertices` run
                 // pushed above.
-                unsafe { (*skin_vertices.add(i)).weight_begin = offset };
-                // SAFETY: as above.
-                unsafe { (*skin_vertices.add(i)).dq_weight = default_dq };
+                unsafe {
+                    (*skin_vertices.add(i)).weight_begin = offset;
+                    (*skin_vertices.add(i)).dq_weight = default_dq;
+                }
                 // SAFETY: as above.
                 let num_weights: u32 = unsafe { (*skin_vertices.add(i)).num_weights };
                 offset = offset.wrapping_add(num_weights);
@@ -9154,16 +9120,13 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 cache_view.props_view(),
                 b"CacheAbsoluteFileName\0".as_ptr(),
                 EMPTY_STRING.0,
-            )
-        };
-        // SAFETY: as above.
-        unsafe {
+            );
             (*cache).relative_filename = find_string(
                 cache_view.props_view(),
                 b"CacheFileName\0".as_ptr(),
                 EMPTY_STRING.0,
-            )
-        };
+            );
+        }
 
         // SAFETY: as above.
         unsafe {
@@ -9171,16 +9134,13 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 cache_view.props_view(),
                 b"CacheAbsoluteFileName\0".as_ptr(),
                 EMPTY_BLOB.0,
-            )
-        };
-        // SAFETY: as above.
-        unsafe {
+            );
             (*cache).raw_relative_filename = find_blob(
                 cache_view.props_view(),
                 b"CacheFileName\0".as_ptr(),
                 EMPTY_BLOB.0,
-            )
-        };
+            );
+        }
 
         // SAFETY: `props_view()` is the cache file's own live `ufbx_props` and the
         // name is a NUL-terminated literal.
@@ -9968,10 +9928,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     // string, so its `data` addresses `length` readable bytes.
                     unsafe {
                         (*aprop)._internal_key =
-                            get_name_key((*ac).dst_prop.data, (*ac).dst_prop.length)
-                    };
-                    // SAFETY: as above.
-                    unsafe { (*aprop).prop_name = (*ac).dst_prop };
+                            get_name_key((*ac).dst_prop.data, (*ac).dst_prop.length);
+                        (*aprop).prop_name = (*ac).dst_prop;
+                    }
                     num_anim_props += 1;
                 }
                 // SAFETY: `ac != ac_end`, so the advance lands at or before the
@@ -9985,39 +9944,44 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
         if min_id != u32::MAX {
             // SAFETY: `layer` is live (see above).
-            unsafe { (*layer)._min_element_id = min_id };
-            // SAFETY: as above.
-            unsafe { (*layer)._max_element_id = max_id };
+            unsafe {
+                (*layer)._min_element_id = min_id;
+                (*layer)._max_element_id = max_id;
+            }
         }
 
         match find_int(layer_view.props_view(), &sp::BlendMode, 0) {
             0 => {
                 // Additive
                 // SAFETY: `layer` is live (see above).
-                unsafe { (*layer).blended = true };
-                // SAFETY: as above.
-                unsafe { (*layer).additive = true };
+                unsafe {
+                    (*layer).blended = true;
+                    (*layer).additive = true;
+                }
             }
             1 => {
                 // Override
                 // SAFETY: `layer` is live (see above).
-                unsafe { (*layer).blended = false };
-                // SAFETY: as above.
-                unsafe { (*layer).additive = false };
+                unsafe {
+                    (*layer).blended = false;
+                    (*layer).additive = false;
+                }
             }
             2 => {
                 // Override Passthrough
                 // SAFETY: `layer` is live (see above).
-                unsafe { (*layer).blended = true };
-                // SAFETY: as above.
-                unsafe { (*layer).additive = false };
+                unsafe {
+                    (*layer).blended = true;
+                    (*layer).additive = false;
+                }
             }
             _ => {
                 // Unknown
                 // SAFETY: `layer` is live (see above).
-                unsafe { (*layer).blended = false };
-                // SAFETY: as above.
-                unsafe { (*layer).additive = false };
+                unsafe {
+                    (*layer).blended = false;
+                    (*layer).additive = false;
+                }
             }
         }
 
@@ -10048,20 +10012,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             };
         } else {
             // SAFETY: `layer` is live (see above).
-            unsafe { (*layer).weight = 1.0f32 as Real };
-            // SAFETY: as above.
-            unsafe { (*layer).weight_is_animated = false };
+            unsafe {
+                (*layer).weight = 1.0f32 as Real;
+                (*layer).weight_is_animated = false;
+            }
         }
         // SAFETY: `layer` is live (see above).
         unsafe {
             (*layer).compose_rotation =
-                find_int(layer_view.props_view(), &sp::RotationAccumulationMode, 0) == 0
-        };
-        // SAFETY: as above.
-        unsafe {
+                find_int(layer_view.props_view(), &sp::RotationAccumulationMode, 0) == 0;
             (*layer).compose_scale =
-                find_int(layer_view.props_view(), &sp::ScaleAccumulationMode, 0) == 0
-        };
+                find_int(layer_view.props_view(), &sp::ScaleAccumulationMode, 0) == 0;
+        }
 
         // Add a dummy NULL element animated prop at the end so we can iterate
         // animated props without worrying about boundary conditions..
@@ -10118,33 +10080,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // `props_view()` is its own live `ufbx_props`.
         unsafe {
             (*value).default_value.x =
-                find_real(value_view.props_view(), &sp::X, (*value).default_value.x)
-        };
-        // SAFETY: as above.
-        unsafe {
+                find_real(value_view.props_view(), &sp::X, (*value).default_value.x);
             (*value).default_value.x =
-                find_real(value_view.props_view(), &sp::d_X, (*value).default_value.x)
-        };
-        // SAFETY: as above.
-        unsafe {
+                find_real(value_view.props_view(), &sp::d_X, (*value).default_value.x);
             (*value).default_value.y =
-                find_real(value_view.props_view(), &sp::Y, (*value).default_value.y)
-        };
-        // SAFETY: as above.
-        unsafe {
+                find_real(value_view.props_view(), &sp::Y, (*value).default_value.y);
             (*value).default_value.y =
-                find_real(value_view.props_view(), &sp::d_Y, (*value).default_value.y)
-        };
-        // SAFETY: as above.
-        unsafe {
+                find_real(value_view.props_view(), &sp::d_Y, (*value).default_value.y);
             (*value).default_value.z =
-                find_real(value_view.props_view(), &sp::Z, (*value).default_value.z)
-        };
-        // SAFETY: as above.
-        unsafe {
+                find_real(value_view.props_view(), &sp::Z, (*value).default_value.z);
             (*value).default_value.z =
-                find_real(value_view.props_view(), &sp::d_Z, (*value).default_value.z)
-        };
+                find_real(value_view.props_view(), &sp::d_Z, (*value).default_value.z);
+        }
 
         // C: `ufbxi_for_list(ufbx_connection, conn, value->element.connections_dst)`
         // SAFETY: `value` is live (see above).
@@ -10358,39 +10305,36 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 } as u64 as u32;
                 if classid_a == 0x3d6b1cecu32 && classid_b == 0xdeadc001u32 {
                     // SAFETY: `material` is live (see above).
-                    unsafe { (*material).shader_type = ShaderType::E3DsMaxPhysicalMaterial };
-                    // SAFETY: as above.
                     unsafe {
+                        (*material).shader_type = ShaderType::E3DsMaxPhysicalMaterial;
                         (*material).shader_prop_prefix =
-                            ufbxi_string_literal!(b"3dsMax|Parameters|\0")
-                    };
+                            ufbxi_string_literal!(b"3dsMax|Parameters|\0");
+                    }
                 } else if classid_a == 0xf1551e33u32 && classid_b == 0x37fb1337u32 {
                     // SAFETY: `material` is live (see above).
-                    unsafe { (*material).shader_type = ShaderType::OpenpbrMaterial };
-                    // SAFETY: as above.
                     unsafe {
+                        (*material).shader_type = ShaderType::OpenpbrMaterial;
                         (*material).shader_prop_prefix =
-                            ufbxi_string_literal!(b"3dsMax|Parameters|\0")
-                    };
+                            ufbxi_string_literal!(b"3dsMax|Parameters|\0");
+                    }
                 } else if classid_a == 0x38420192u32 && classid_b == 0x45fe4e1bu32 {
                     // SAFETY: `material` is live (see above).
-                    unsafe { (*material).shader_type = ShaderType::GltfMaterial };
-                    // SAFETY: as above.
-                    unsafe { (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|\0") };
+                    unsafe {
+                        (*material).shader_type = ShaderType::GltfMaterial;
+                        (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|\0");
+                    }
                 } else if classid_a == 0xd00f1e00u32 && classid_b == 0xbe77e500u32 {
                     // SAFETY: `material` is live (see above).
-                    unsafe { (*material).shader_type = ShaderType::E3DsMaxPbrMetalRough };
-                    // SAFETY: as above.
                     unsafe {
-                        (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|main|\0")
-                    };
+                        (*material).shader_type = ShaderType::E3DsMaxPbrMetalRough;
+                        (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|main|\0");
+                    }
                 } else if classid_a == 0xd00f1e00u32 && classid_b == 0x01dbad33u32 {
                     // SAFETY: `material` is live (see above).
-                    unsafe { (*material).shader_type = ShaderType::E3DsMaxPbrSpecGloss };
-                    // SAFETY: as above.
                     unsafe {
-                        (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|main|\0")
-                    };
+                        (*material).shader_type = ShaderType::E3DsMaxPbrSpecGloss;
+                        (*material).shader_prop_prefix = ufbxi_string_literal!(b"3dsMax|main|\0");
+                    }
                 }
             }
         }
@@ -10488,9 +10432,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             // SAFETY: `mat_texs` is the non-null push of
                             // `num_materials` entries just made into `uc`'s tmp
                             // stack, and `i < num_materials`.
-                            unsafe { (*mat_texs.add(i)).material_id = i as i32 };
-                            // SAFETY: as above.
-                            unsafe { (*mat_texs.add(i)).texture_id = texture_id };
+                            unsafe {
+                                (*mat_texs.add(i)).material_id = i as i32;
+                                (*mat_texs.add(i)).texture_id = texture_id;
+                            }
                             // SAFETY: as above, with `tex` live.
                             unsafe { (*mat_texs.add(i)).prop_name = (*tex).prop_name };
                         }
@@ -10526,9 +10471,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         ufbxi_check!(uc, !mat_tex.is_null(), "mat_tex");
                         // SAFETY: `mat_tex` is the non-null one-element push just
                         // made into `uc`'s tmp stack.
-                        unsafe { (*mat_tex).material_id = material_id };
-                        // SAFETY: as above.
-                        unsafe { (*mat_tex).texture_id = texture_id };
+                        unsafe {
+                            (*mat_tex).material_id = material_id;
+                            (*mat_tex).texture_id = texture_id;
+                        }
                         // SAFETY: as above, with `tex` live.
                         unsafe { (*mat_tex).prop_name = (*tex).prop_name };
                         num_material_textures += 1;
@@ -10547,11 +10493,11 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 ufbxi_check!(uc, !mat_tex.is_null(), "mat_tex");
                 // SAFETY: `mat_tex` is the non-null one-element push just made into
                 // `uc`'s tmp stack.
-                unsafe { (*mat_tex).material_id = -1 };
-                // SAFETY: as above.
-                unsafe { (*mat_tex).texture_id = -1 };
-                // SAFETY: as above.
-                unsafe { (*mat_tex).prop_name = EMPTY_STRING.0 };
+                unsafe {
+                    (*mat_tex).material_id = -1;
+                    (*mat_tex).texture_id = -1;
+                    (*mat_tex).prop_name = EMPTY_STRING.0;
+                }
             }
 
             let mat_texs: *mut TmpMaterialTexture = uc
@@ -10591,9 +10537,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             // SAFETY: `mat` is live (see above); `texs` is the
                             // non-null popped run of `num_textures_in_material`
                             // material textures.
-                            unsafe { (*mat).textures.data = texs };
-                            // SAFETY: as above.
-                            unsafe { (*mat).textures.count = num_textures_in_material };
+                            unsafe {
+                                (*mat).textures.data = texs;
+                                (*mat).textures.count = num_textures_in_material;
+                            }
                         } else {
                             // SAFETY: `tmp_stack_mut_ptr` hands out `uc`'s own live
                             // tmp stack, which holds the `num_textures_in_material`
@@ -10634,9 +10581,10 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 unsafe { (*tex).texture = *(*textures).data.add(prev_texture as usize) };
                 // C: `tex->shader_prop = tex->material_prop = mat_tex.prop_name;`
                 // SAFETY: `tex` addresses that push (see above).
-                unsafe { (*tex).material_prop = mat_tex.prop_name };
-                // SAFETY: as above.
-                unsafe { (*tex).shader_prop = (*tex).material_prop };
+                unsafe {
+                    (*tex).material_prop = mat_tex.prop_name;
+                    (*tex).shader_prop = (*tex).material_prop;
+                }
                 num_textures_in_material += 1;
             }
             // SAFETY: `p_mesh != p_mesh_end`, so the advance lands at or before the
@@ -11892,11 +11840,11 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
                         .scale
                 };
                 // SAFETY: `node` is live and writable (see above).
-                unsafe { (*node).local_transform.scale.x *= inherit_scale.x };
-                // SAFETY: as above.
-                unsafe { (*node).local_transform.scale.y *= inherit_scale.y };
-                // SAFETY: as above.
-                unsafe { (*node).local_transform.scale.z *= inherit_scale.z };
+                unsafe {
+                    (*node).local_transform.scale.x *= inherit_scale.x;
+                    (*node).local_transform.scale.y *= inherit_scale.y;
+                    (*node).local_transform.scale.z *= inherit_scale.z;
+                }
             }
         }
 
@@ -12006,15 +11954,12 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
             // points to a live, initialized `ufbx_node`.
             unsafe {
                 (*node).node_to_world =
-                    matrix_mul(&(*parent).unscaled_node_to_world, &node_to_unscaled_parent)
-            };
-            // SAFETY: as above.
-            unsafe {
+                    matrix_mul(&(*parent).unscaled_node_to_world, &node_to_unscaled_parent);
                 (*node).unscaled_node_to_world = matrix_mul(
                     &(*parent).unscaled_node_to_world,
                     &unscaled_node_to_unscaled_parent,
-                )
-            };
+                );
+            }
         }
     } else {
         // SAFETY: `node` is live and writable (see above).
@@ -12031,17 +11976,16 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
         // SAFETY: as above; both operands are the node's own matrices, set above.
         unsafe {
             (*node).geometry_to_world =
-                matrix_mul(&(*node).node_to_world, &(*node).geometry_to_node)
-        };
-        // SAFETY: as above.
-        unsafe { (*node).has_geometry_transform = true };
+                matrix_mul(&(*node).node_to_world, &(*node).geometry_to_node);
+            (*node).has_geometry_transform = true;
+        }
     } else {
         // SAFETY: `node` is live and writable (see above).
-        unsafe { (*node).geometry_to_node = IDENTITY_MATRIX };
-        // SAFETY: as above.
-        unsafe { (*node).geometry_to_world = (*node).node_to_world };
-        // SAFETY: as above.
-        unsafe { (*node).has_geometry_transform = false };
+        unsafe {
+            (*node).geometry_to_node = IDENTITY_MATRIX;
+            (*node).geometry_to_world = (*node).node_to_world;
+            (*node).has_geometry_transform = false;
+        }
     }
 
     // SAFETY: `node` is live and writable (see above).
@@ -12247,9 +12191,10 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
     };
 
     // SAFETY: `camera` is the camera view's own storage (see above).
-    unsafe { (*camera).near_plane = find_real(camera_view.props_view(), &sp::NearPlane, 0.0) };
-    // SAFETY: as above.
-    unsafe { (*camera).far_plane = find_real(camera_view.props_view(), &sp::FarPlane, 0.0) };
+    unsafe {
+        (*camera).near_plane = find_real(camera_view.props_view(), &sp::NearPlane, 0.0);
+        (*camera).far_plane = find_real(camera_view.props_view(), &sp::FarPlane, 0.0);
+    }
 
     // Search both W/H and Width/Height but prefer the latter
     let mut aspect_x: Real = find_real(camera_view.props_view(), &sp::AspectW, 0.0);
@@ -12314,52 +12259,52 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
     // SAFETY: `scene` is the scene view's own storage (see above).
     ortho_extent *= unsafe { (*scene).metadata.geometry_scale };
     // SAFETY: `camera` is live and writable, `scene` is live (see above).
-    unsafe { (*camera).near_plane *= (*scene).metadata.geometry_scale };
-    // SAFETY: as above.
-    unsafe { (*camera).far_plane *= (*scene).metadata.geometry_scale };
+    unsafe {
+        (*camera).near_plane *= (*scene).metadata.geometry_scale;
+        (*camera).far_plane *= (*scene).metadata.geometry_scale;
+    }
 
     // SAFETY: `camera` is live and writable (see above).
-    unsafe { (*camera).focal_length_mm = focal_length };
-    // SAFETY: as above.
-    unsafe { (*camera).film_size_inch = film_size };
-    // SAFETY: as above.
-    unsafe { (*camera).squeeze_ratio = squeeze_ratio };
-    // SAFETY: as above.
-    unsafe { (*camera).orthographic_extent = ortho_extent };
+    unsafe {
+        (*camera).focal_length_mm = focal_length;
+        (*camera).film_size_inch = film_size;
+        (*camera).squeeze_ratio = squeeze_ratio;
+        (*camera).orthographic_extent = ortho_extent;
+    }
 
     // SAFETY: `camera` is live (see above).
     match unsafe { (*camera).aspect_mode } {
         AspectMode::WindowSize | AspectMode::FixedRatio => {
             // SAFETY: `camera` is live and writable (see above).
-            unsafe { (*camera).resolution_is_pixels = false };
-            // SAFETY: as above.
-            unsafe { (*camera).resolution.x = aspect_x };
-            // SAFETY: as above.
-            unsafe { (*camera).resolution.y = aspect_y };
+            unsafe {
+                (*camera).resolution_is_pixels = false;
+                (*camera).resolution.x = aspect_x;
+                (*camera).resolution.y = aspect_y;
+            }
         }
         AspectMode::FixedResolution => {
             // SAFETY: `camera` is live and writable (see above).
-            unsafe { (*camera).resolution_is_pixels = true };
-            // SAFETY: as above.
-            unsafe { (*camera).resolution.x = aspect_x };
-            // SAFETY: as above.
-            unsafe { (*camera).resolution.y = aspect_y };
+            unsafe {
+                (*camera).resolution_is_pixels = true;
+                (*camera).resolution.x = aspect_x;
+                (*camera).resolution.y = aspect_y;
+            }
         }
         AspectMode::FixedWidth => {
             // SAFETY: `camera` is live and writable (see above).
-            unsafe { (*camera).resolution_is_pixels = true };
-            // SAFETY: as above.
-            unsafe { (*camera).resolution.x = aspect_x };
-            // SAFETY: as above.
-            unsafe { (*camera).resolution.y = aspect_x * aspect_y };
+            unsafe {
+                (*camera).resolution_is_pixels = true;
+                (*camera).resolution.x = aspect_x;
+                (*camera).resolution.y = aspect_x * aspect_y;
+            }
         }
         AspectMode::FixedHeight => {
             // SAFETY: `camera` is live and writable (see above).
-            unsafe { (*camera).resolution_is_pixels = true };
-            // SAFETY: as above.
-            unsafe { (*camera).resolution.x = aspect_y * aspect_x };
-            // SAFETY: as above.
-            unsafe { (*camera).resolution.y = aspect_y };
+            unsafe {
+                (*camera).resolution_is_pixels = true;
+                (*camera).resolution.x = aspect_y * aspect_x;
+                (*camera).resolution.y = aspect_y;
+            }
         }
         // C `default:` (ufbx.c:23167-23168) — unreachable in Rust because the
         // match above is exhaustive over the enum, but kept for diff parity.
@@ -12399,40 +12344,46 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
             // was assigned above.
             unsafe { (*camera).aperture_size_inch = (*camera).film_size_inch };
             // SAFETY: `camera` is live and writable (see above).
-            unsafe { (*camera).orthographic_size.x = ortho_extent };
-            // SAFETY: as above.
-            unsafe { (*camera).orthographic_size.y = ortho_extent };
+            unsafe {
+                (*camera).orthographic_size.x = ortho_extent;
+                (*camera).orthographic_size.y = ortho_extent;
+            }
         }
         GateFit::Vertical => {
             // SAFETY: `camera` is live and writable (see above); `film_size_inch`
             // was assigned above.
-            unsafe { (*camera).aperture_size_inch.x = (*camera).film_size_inch.y * aspect_ratio };
-            // SAFETY: as above.
-            unsafe { (*camera).aperture_size_inch.y = (*camera).film_size_inch.y };
+            unsafe {
+                (*camera).aperture_size_inch.x = (*camera).film_size_inch.y * aspect_ratio;
+                (*camera).aperture_size_inch.y = (*camera).film_size_inch.y;
+            }
             // SAFETY: `camera` is live and writable (see above).
-            unsafe { (*camera).orthographic_size.x = ortho_extent * aspect_ratio };
-            // SAFETY: as above.
-            unsafe { (*camera).orthographic_size.y = ortho_extent };
+            unsafe {
+                (*camera).orthographic_size.x = ortho_extent * aspect_ratio;
+                (*camera).orthographic_size.y = ortho_extent;
+            }
         }
         GateFit::Horizontal => {
             // SAFETY: `camera` is live and writable (see above); `film_size_inch`
             // was assigned above.
-            unsafe { (*camera).aperture_size_inch.x = (*camera).film_size_inch.x };
-            // SAFETY: as above.
-            unsafe { (*camera).aperture_size_inch.y = (*camera).film_size_inch.x / aspect_ratio };
+            unsafe {
+                (*camera).aperture_size_inch.x = (*camera).film_size_inch.x;
+                (*camera).aperture_size_inch.y = (*camera).film_size_inch.x / aspect_ratio;
+            }
             // SAFETY: `camera` is live and writable (see above).
-            unsafe { (*camera).orthographic_size.x = ortho_extent };
-            // SAFETY: as above.
-            unsafe { (*camera).orthographic_size.y = ortho_extent / aspect_ratio };
+            unsafe {
+                (*camera).orthographic_size.x = ortho_extent;
+                (*camera).orthographic_size.y = ortho_extent / aspect_ratio;
+            }
         }
         GateFit::Fill | GateFit::Overscan => {
             // SAFETY: `camera` is live and writable (see above); `film_size_inch`
             // was assigned above.
             unsafe { (*camera).aperture_size_inch = (*camera).film_size_inch };
             // SAFETY: `camera` is live and writable (see above).
-            unsafe { (*camera).orthographic_size.x = ortho_extent };
-            // SAFETY: as above.
-            unsafe { (*camera).orthographic_size.y = ortho_extent };
+            unsafe {
+                (*camera).orthographic_size.x = ortho_extent;
+                (*camera).orthographic_size.y = ortho_extent;
+            }
             // C: `ufbxi_unreachable(...)` mid-arm — it is NOT a return, the
             // arm's assignments above it already ran (PORTING.md "Asserts").
             ufbxi_unreachable!("Unreachable, set to vertical/horizontal above");
@@ -12442,9 +12393,10 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
             // was assigned above.
             unsafe { (*camera).aperture_size_inch = (*camera).film_size_inch };
             // SAFETY: `camera` is live and writable (see above).
-            unsafe { (*camera).orthographic_size.x = ortho_extent };
-            // SAFETY: as above.
-            unsafe { (*camera).orthographic_size.y = ortho_extent };
+            unsafe {
+                (*camera).orthographic_size.x = ortho_extent;
+                (*camera).orthographic_size.y = ortho_extent;
+            }
             // TODO: Not sure what to do here...
         }
         // C `default:` (ufbx.c:23214-23215).
@@ -12458,30 +12410,27 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
     match unsafe { (*camera).aperture_mode } {
         ApertureMode::HorizontalAndVertical => {
             // SAFETY: `camera` is live and writable (see above).
-            unsafe { (*camera).field_of_view_deg.x = fov_x };
-            // SAFETY: as above.
-            unsafe { (*camera).field_of_view_deg.y = fov_y };
+            unsafe {
+                (*camera).field_of_view_deg.x = fov_x;
+                (*camera).field_of_view_deg.y = fov_y;
+            }
             // C: `(ufbx_real)ufbx_tan((double)(...))` — the inner product is
             // real arithmetic, promoted to double only at the `tan` call.
             // SAFETY: as above.
             unsafe {
                 (*camera).field_of_view_tan.x =
-                    math::tan((fov_x * (sp::DEG_TO_RAD * 0.5)) as f64) as Real
-            };
-            // SAFETY: as above.
-            unsafe {
+                    math::tan((fov_x * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
                 (*camera).field_of_view_tan.y =
-                    math::tan((fov_y * (sp::DEG_TO_RAD * 0.5)) as f64) as Real
-            };
+                    math::tan((fov_y * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
+            }
         }
         ApertureMode::Horizontal => {
             // SAFETY: `camera` is live and writable (see above).
-            unsafe { (*camera).field_of_view_deg.x = fov };
-            // SAFETY: as above.
             unsafe {
+                (*camera).field_of_view_deg.x = fov;
                 (*camera).field_of_view_tan.x =
-                    math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real
-            };
+                    math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
+            }
             // SAFETY: as above; `field_of_view_tan.x` was assigned on the line
             // before.
             unsafe { (*camera).field_of_view_tan.y = (*camera).field_of_view_tan.x / aspect_ratio };
@@ -12495,12 +12444,11 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
         }
         ApertureMode::Vertical => {
             // SAFETY: `camera` is live and writable (see above).
-            unsafe { (*camera).field_of_view_deg.y = fov };
-            // SAFETY: as above.
             unsafe {
+                (*camera).field_of_view_deg.y = fov;
                 (*camera).field_of_view_tan.y =
-                    math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real
-            };
+                    math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
+            }
             // SAFETY: as above; `field_of_view_tan.y` was assigned on the line
             // before.
             unsafe { (*camera).field_of_view_tan.x = (*camera).field_of_view_tan.y * aspect_ratio };
@@ -12518,14 +12466,11 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
             unsafe {
                 (*camera).field_of_view_tan.x = (*camera).aperture_size_inch.x
                     / ((*camera).focal_length_mm * sp::MM_TO_INCH)
-                    * 0.5
-            };
-            // SAFETY: as above.
-            unsafe {
+                    * 0.5;
                 (*camera).field_of_view_tan.y = (*camera).aperture_size_inch.y
                     / ((*camera).focal_length_mm * sp::MM_TO_INCH)
-                    * 0.5
-            };
+                    * 0.5;
+            }
             // SAFETY: as above, reading the `field_of_view_tan.x` assigned above.
             unsafe {
                 (*camera).field_of_view_deg.x = math::atan(as_f64!((*camera).field_of_view_tan.x))
@@ -13139,11 +13084,11 @@ pub(crate) unsafe fn mirror_matrix_src(m: *mut Matrix, axis: MirrorAxis) {
     // return above established `axis != None`, so `ax = axis - 1` is in `0..3`.
     let col: *mut Vec3 = unsafe { cols.add(ax as usize) };
     // SAFETY: `col` addresses one of the matrix's own columns (see above).
-    unsafe { (*col).x = -(*col).x };
-    // SAFETY: as above.
-    unsafe { (*col).y = -(*col).y };
-    // SAFETY: as above.
-    unsafe { (*col).z = -(*col).z };
+    unsafe {
+        (*col).x = -(*col).x;
+        (*col).y = -(*col).y;
+        (*col).z = -(*col).z;
+    }
 }
 
 // ufbx.c:23516-23521 `ufbxi_mirror_matrix`
@@ -13253,11 +13198,11 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
                 unsafe { &mut (*cluster).bind_to_world } as *mut Matrix as *mut Vec3;
             // SAFETY: an `ufbx_matrix` is laid out as exactly four consecutive
             // `ufbx_vec3` columns, so column `3` is its last one, in bounds.
-            unsafe { (*bind_cols.add(3)).x *= translation_scale };
-            // SAFETY: as above.
-            unsafe { (*bind_cols.add(3)).y *= translation_scale };
-            // SAFETY: as above.
-            unsafe { (*bind_cols.add(3)).z *= translation_scale };
+            unsafe {
+                (*bind_cols.add(3)).x *= translation_scale;
+                (*bind_cols.add(3)).y *= translation_scale;
+                (*bind_cols.add(3)).z *= translation_scale;
+            }
             // SAFETY: `cluster` is live and writable (see above), so the borrow
             // addresses its own `bind_to_world` matrix.
             unsafe { mirror_matrix(&mut (*cluster).bind_to_world, mirror_axis) };
@@ -13294,11 +13239,11 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
                 // SAFETY: an `ufbx_matrix` is laid out as exactly four
                 // consecutive `ufbx_vec3` columns, so column `3` is its last one,
                 // in bounds.
-                unsafe { (*pose_cols.add(3)).x *= translation_scale };
-                // SAFETY: as above.
-                unsafe { (*pose_cols.add(3)).y *= translation_scale };
-                // SAFETY: as above.
-                unsafe { (*pose_cols.add(3)).z *= translation_scale };
+                unsafe {
+                    (*pose_cols.add(3)).x *= translation_scale;
+                    (*pose_cols.add(3)).y *= translation_scale;
+                    (*pose_cols.add(3)).z *= translation_scale;
+                }
                 // SAFETY: `pose` is live and writable (see above), so the borrow
                 // addresses its own `bone_to_world` matrix.
                 unsafe { mirror_matrix(&mut (*pose).bone_to_world, mirror_axis) };
@@ -13408,11 +13353,11 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
                 // SAFETY: an `ufbx_matrix` is laid out as exactly four
                 // consecutive `ufbx_vec3` columns, so column `3` is its last one,
                 // in bounds.
-                unsafe { (*cols.add(3)).x *= geometry_scale };
-                // SAFETY: as above.
-                unsafe { (*cols.add(3)).y *= geometry_scale };
-                // SAFETY: as above.
-                unsafe { (*cols.add(3)).z *= geometry_scale };
+                unsafe {
+                    (*cols.add(3)).x *= geometry_scale;
+                    (*cols.add(3)).y *= geometry_scale;
+                    (*cols.add(3)).z *= geometry_scale;
+                }
             }
         }
 

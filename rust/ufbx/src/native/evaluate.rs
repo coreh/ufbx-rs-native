@@ -3923,17 +3923,11 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                 opt_ptr(&raw const (*constraint).aim_up_node) as *mut c_void,
             )
                 as *mut UfbxNode;
-        }
-        // SAFETY: as above.
-        unsafe {
             *(&raw mut (*constraint).ik_effector as *mut *mut UfbxNode) = translate_element(
                 ec,
                 opt_ptr(&raw const (*constraint).ik_effector) as *mut c_void,
             )
                 as *mut UfbxNode;
-        }
-        // SAFETY: as above.
-        unsafe {
             *(&raw mut (*constraint).ik_end_node as *mut *mut UfbxNode) = translate_element(
                 ec,
                 opt_ptr(&raw const (*constraint).ik_end_node) as *mut c_void,
@@ -4152,9 +4146,6 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             *(&raw mut (*value).curves[1] as *mut *mut AnimCurve) =
                 translate_element(ec, opt_ptr(&raw const (*value).curves[1]) as *mut c_void)
                     as *mut AnimCurve;
-        }
-        // SAFETY: as above.
-        unsafe {
             *(&raw mut (*value).curves[2] as *mut *mut AnimCurve) =
                 translate_element(ec, opt_ptr(&raw const (*value).curves[2]) as *mut c_void)
                     as *mut AnimCurve;
@@ -4331,9 +4322,10 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // `ufbx_scene` regions.
     unsafe { ptr::copy_nonoverlapping(ec.scene_mut_ptr(), &raw mut (*imp).scene, 1) };
     // SAFETY: `imp` is that live pushed header.
-    unsafe { (*imp).refcount.ator = ec.ator_result() };
-    // SAFETY: as above.
-    unsafe { (*imp).refcount.ator.error = ptr::null_mut() };
+    unsafe {
+        (*imp).refcount.ator = ec.ator_result();
+        (*imp).refcount.ator.error = ptr::null_mut();
+    }
 
     // Copy retained buffers and translate the allocator struct to the one
     // contained within `ufbxi_scene_imp`
@@ -4347,11 +4339,11 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // and `refcount.ator` were filled in just above.
     unsafe { (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size };
     // SAFETY: as above.
-    unsafe { (*imp).scene.metadata.temp_memory_used = ec.ator_tmp_view().current_size() };
-    // SAFETY: as above.
-    unsafe { (*imp).scene.metadata.result_allocs = (*imp).refcount.ator.num_allocs };
-    // SAFETY: as above.
-    unsafe { (*imp).scene.metadata.temp_allocs = ec.ator_tmp_view().num_allocs() };
+    unsafe {
+        (*imp).scene.metadata.temp_memory_used = ec.ator_tmp_view().current_size();
+        (*imp).scene.metadata.result_allocs = (*imp).refcount.ator.num_allocs;
+        (*imp).scene.metadata.temp_allocs = ec.ator_tmp_view().num_allocs();
+    }
 
     // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, imp->scene.elements)`
     // SAFETY: `imp` is the live pushed header holding the copy of the destination

@@ -911,9 +911,10 @@ pub(crate) unsafe fn obj_parse_index(
     // `indices` cursor has `num_left > 0` slots of the reserved `tmp_indices`
     // run ahead of it — the refill above restores that when it hits zero — so
     // the store and the one-slot advance stay inside that run.
-    unsafe { *(*fast_indices).indices = index };
-    // SAFETY: as above.
-    unsafe { (*fast_indices).indices = (*fast_indices).indices.add(1) };
+    unsafe {
+        *(*fast_indices).indices = index;
+        (*fast_indices).indices = (*fast_indices).indices.add(1);
+    }
     // SAFETY: the writer state is the obj context's own; `num_left > 0` here.
     unsafe { (*fast_indices).num_left -= 1 };
 
@@ -926,9 +927,10 @@ pub(crate) unsafe fn obj_parse_index(
     // SAFETY: `s` is the caller's live `String` (contract above); `ptr` rests
     // inside its own span at or before `end`, so the rebased span is a suffix
     // of the original.
-    unsafe { (*s).data = ptr };
-    // SAFETY: as above.
-    unsafe { (*s).length = to_size(end as isize - ptr as isize) };
+    unsafe {
+        (*s).data = ptr;
+        (*s).length = to_size(end as isize - ptr as isize);
+    }
 
     Ok(())
 }
@@ -1416,9 +1418,10 @@ pub(crate) unsafe fn obj_pop_vertices(
     unsafe { pop::<Real>(uc.obj().tmp_vertices_mut_ptr(attrib as usize), count, data) };
 
     // SAFETY: caller contract — `dst` is a writable `List<Real>` out-param.
-    unsafe { (*dst).data = data };
-    // SAFETY: as above.
-    unsafe { (*dst).count = count };
+    unsafe {
+        (*dst).data = data;
+        (*dst).count = count;
+    }
     Ok(())
 }
 

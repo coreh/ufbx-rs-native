@@ -179,13 +179,7 @@ pub(crate) unsafe fn init_ref(refcount: *mut Refcount, magic: u32, parent: *mut 
     // SAFETY: same live `Refcount`; writing its own field.
     unsafe {
         (*refcount).self_magic = REFCOUNT_IMP_MAGIC;
-    }
-    // SAFETY: as above.
-    unsafe {
         (*refcount).type_magic = magic;
-    }
-    // SAFETY: as above.
-    unsafe {
         (*refcount).parent = parent;
     }
 }
@@ -224,9 +218,6 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         // SAFETY: as above; writing its own fields.
         unsafe {
             (*refcount).self_magic = 0;
-        }
-        // SAFETY: as above.
-        unsafe {
             (*refcount).type_magic = 0;
         }
 
@@ -609,9 +600,6 @@ pub(crate) unsafe fn open_memory_ctx(
     // SAFETY: `mem` is the live allocated `MemoryStream`; writing its own fields.
     unsafe {
         (*mem).size = data_size;
-    }
-    // SAFETY: as above.
-    unsafe {
         (*mem).self_size = self_size;
     }
     // SAFETY: `mem` is the live `MemoryStream` and `opts` is live per above.
@@ -656,21 +644,9 @@ pub(crate) unsafe fn open_memory_ctx(
     // SAFETY: `stream` is the caller's live out-stream; writing its own fields.
     unsafe {
         (*stream).read_fn = Some(memory_read);
-    }
-    // SAFETY: as above.
-    unsafe {
         (*stream).skip_fn = Some(memory_skip);
-    }
-    // SAFETY: as above.
-    unsafe {
         (*stream).size_fn = Some(memory_size);
-    }
-    // SAFETY: as above.
-    unsafe {
         (*stream).close_fn = Some(memory_close);
-    }
-    // SAFETY: as above.
-    unsafe {
         (*stream).user = mem as *mut c_void;
     }
 
@@ -2069,26 +2045,14 @@ pub(crate) unsafe fn evaluate_transform_flags(
                 // SAFETY: as above.
                 unsafe {
                     (*hs).value_vec4.x = 1.0;
-                }
-                // SAFETY: as above.
-                unsafe {
                     (*hs).value_vec4.y = 1.0;
-                }
-                // SAFETY: as above.
-                unsafe {
                     (*hs).value_vec4.z = 1.0;
                 }
             }
             // SAFETY: as above.
             unsafe {
                 (*hs).value_vec4.x *= scale_factor.x;
-            }
-            // SAFETY: as above.
-            unsafe {
                 (*hs).value_vec4.y *= scale_factor.y;
-            }
-            // SAFETY: as above.
-            unsafe {
                 (*hs).value_vec4.z *= scale_factor.z;
             }
             // C: `translation_scale = &helper_scale.value_vec3;`
@@ -2193,13 +2157,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
         // its own components.
         unsafe {
             (*t).scale.x *= scale_factor.x;
-        }
-        // SAFETY: as above.
-        unsafe {
             (*t).scale.y *= scale_factor.y;
-        }
-        // SAFETY: as above.
-        unsafe {
             (*t).scale.z *= scale_factor.z;
         }
     }
@@ -2461,21 +2419,16 @@ pub(crate) unsafe fn bake_anim(
 
     // SAFETY: each `*_mut_ptr()` accessor yields the bake context's own temp
     // buffer, freed once here.
-    unsafe { buf_free(bc.tmp_mut_ptr()) };
-    // SAFETY: as above.
-    unsafe { buf_free(bc.tmp_prop_mut_ptr()) };
-    // SAFETY: as above.
-    unsafe { buf_free(bc.tmp_times_mut_ptr()) };
-    // SAFETY: as above.
-    unsafe { buf_free(bc.tmp_bake_props_mut_ptr()) };
-    // SAFETY: as above.
-    unsafe { buf_free(bc.tmp_nodes_mut_ptr()) };
-    // SAFETY: as above.
-    unsafe { buf_free(bc.tmp_elements_mut_ptr()) };
-    // SAFETY: as above.
-    unsafe { buf_free(bc.tmp_props_mut_ptr()) };
-    // SAFETY: as above.
-    unsafe { buf_free(bc.tmp_bake_stack_mut_ptr()) };
+    unsafe {
+        buf_free(bc.tmp_mut_ptr());
+        buf_free(bc.tmp_prop_mut_ptr());
+        buf_free(bc.tmp_times_mut_ptr());
+        buf_free(bc.tmp_bake_props_mut_ptr());
+        buf_free(bc.tmp_nodes_mut_ptr());
+        buf_free(bc.tmp_elements_mut_ptr());
+        buf_free(bc.tmp_props_mut_ptr());
+        buf_free(bc.tmp_bake_stack_mut_ptr());
+    }
     // C: `ufbxi_free(&bc->ator_tmp, char, bc->tmp_arr, bc->tmp_arr_size);`
     // SAFETY: `bc.ator_tmp_mut_ptr()` is the context's own temp allocator and
     // `bc.tmp_arr()`/`bc.tmp_arr_size()` the block it allocated from it.
@@ -3895,11 +3848,11 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
             let vqe: Quat = mul_quat(vqt, vq0);
             // SAFETY: `q0`/`qe`/`qs` are live stack locals accumulated in place;
             // `add_weighted_*` write through the exclusive `&mut` references.
-            unsafe { add_weighted_quat(&mut q0, vq0, weight.weight) };
-            // SAFETY: as above.
-            unsafe { add_weighted_quat(&mut qe, vqe, weight.weight) };
-            // SAFETY: as above.
-            unsafe { add_weighted_vec3(&mut qs, t.scale, weight.weight) };
+            unsafe {
+                add_weighted_quat(&mut q0, vq0, weight.weight);
+                add_weighted_quat(&mut qe, vqe, weight.weight);
+                add_weighted_vec3(&mut qs, t.scale, weight.weight);
+            }
         }
 
         if skin_vertex.dq_weight < 1.0 {
@@ -4881,11 +4834,11 @@ pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
         // SAFETY: `num_indices >= required_indices` was guarded above (`>= 3` for
         // a triangle), so `indices.add(0..=2)` address distinct caller-reserved
         // slots.
-        unsafe { *indices.add(0) = face.index_begin.wrapping_add(0) };
-        // SAFETY: as above.
-        unsafe { *indices.add(1) = face.index_begin.wrapping_add(1) };
-        // SAFETY: as above.
-        unsafe { *indices.add(2) = face.index_begin.wrapping_add(2) };
+        unsafe {
+            *indices.add(0) = face.index_begin.wrapping_add(0);
+            *indices.add(1) = face.index_begin.wrapping_add(1);
+            *indices.add(2) = face.index_begin.wrapping_add(2);
+        }
         1
     } else if face.num_indices == 4 {
         // Quad: Split along the shortest axis unless a vertex crosses the axis
@@ -5452,11 +5405,11 @@ pub(crate) unsafe fn catch_compute_normals<M: Mode>(
         let len: Real = unsafe { length3(*normals.add(i)) };
         if len > 0.0 {
             // SAFETY: as above.
-            unsafe { (*normals.add(i)).x /= len };
-            // SAFETY: as above.
-            unsafe { (*normals.add(i)).y /= len };
-            // SAFETY: as above.
-            unsafe { (*normals.add(i)).z /= len };
+            unsafe {
+                (*normals.add(i)).x /= len;
+                (*normals.add(i)).y /= len;
+                (*normals.add(i)).z /= len;
+            }
         }
     }
 }
@@ -7610,9 +7563,10 @@ mod tests {
             let hits = user as *mut (usize, usize);
             // SAFETY: `user` is the `&mut (usize, usize)` the test passes as the
             // callback's `user` pointer; writing its own tuple fields.
-            unsafe { (*hits).0 = data as usize };
-            // SAFETY: as above.
-            unsafe { (*hits).1 = data_size };
+            unsafe {
+                (*hits).0 = data as usize;
+                (*hits).1 = data_size;
+            }
         }
 
         unsafe {

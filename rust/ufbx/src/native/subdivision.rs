@@ -873,9 +873,10 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
     let dst: *mut SubdivisionVertexWeights = output as *mut SubdivisionVertexWeights;
     // SAFETY: the callback contract guarantees `output` points to a writable
     // `SubdivisionVertexWeights` destination.
-    unsafe { (*dst).weights = weights };
-    // SAFETY: as above.
-    unsafe { (*dst).num_weights = num_weights };
+    unsafe {
+        (*dst).weights = weights;
+        (*dst).num_weights = num_weights;
+    }
 
     1
 }
@@ -3268,9 +3269,10 @@ pub(crate) unsafe fn subdivide_mesh(
     // free contract.
     unsafe { free::<SubdivideInput>(sc.ator_tmp_mut_ptr(), sc.inputs(), sc.inputs_cap()) };
     // SAFETY: `tmp`/`source` are `sc`'s own live scratch bufs.
-    unsafe { buf_free(sc.tmp_mut_ptr()) };
-    // SAFETY: as above.
-    unsafe { buf_free(sc.source_mut_ptr()) };
+    unsafe {
+        buf_free(sc.tmp_mut_ptr());
+        buf_free(sc.source_mut_ptr());
+    }
 
     if let Ok(finished_imp) = result {
         // SAFETY: `ator_tmp_mut_ptr()` is `sc`'s own live temp allocator.
@@ -3296,9 +3298,10 @@ pub(crate) unsafe fn subdivide_mesh(
         // SAFETY: `result` is `sc`'s own live scratch buf.
         unsafe { buf_free(sc.result_mut_ptr()) };
         // SAFETY: both allocators are `sc`'s own live temp/result allocators.
-        unsafe { free_ator(sc.ator_tmp_mut_ptr()) };
-        // SAFETY: as above.
-        unsafe { free_ator(sc.ator_result_mut_ptr()) };
+        unsafe {
+            free_ator(sc.ator_tmp_mut_ptr());
+            free_ator(sc.ator_result_mut_ptr());
+        }
         core::ptr::null_mut()
     }
 }

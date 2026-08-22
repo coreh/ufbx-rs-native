@@ -538,9 +538,8 @@ pub(crate) unsafe fn read_properties(
         (*props).props.data = uc
             .result_view()
             .push_zero::<Prop>(node.num_children() as usize);
+        (*props).props.count = node.num_children() as usize;
     }
-    // SAFETY: as above.
-    unsafe { (*props).props.count = node.num_children() as usize };
     // SAFETY: as above.
     ufbxi_check!(
         uc,
@@ -7369,9 +7368,6 @@ pub(crate) unsafe fn find_uint32_list(dst: *mut List<u32>, node: &NodeView, name
         // for as long as the parse tree, whose `'i'` payload is `size` `uint32_t`.
         unsafe {
             (*dst).data = (*arr).data as *const u32;
-        }
-        // SAFETY: as above.
-        unsafe {
             (*dst).count = (*arr).size;
         }
     }
@@ -7462,13 +7458,7 @@ pub(crate) unsafe fn read_audio_clip(
     // SAFETY: `audio` is the fresh non-null element pushed above.
     unsafe {
         (*audio).filename = EMPTY_STRING.0;
-    }
-    // SAFETY: as above.
-    unsafe {
         (*audio).absolute_filename = EMPTY_STRING.0;
-    }
-    // SAFETY: as above.
-    unsafe {
         (*audio).relative_filename = EMPTY_STRING.0;
     }
 
@@ -8349,9 +8339,6 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             // SAFETY: `ua` is uc's own live `ascii` state.
             unsafe {
                 (*ua).src_is_retained = false;
-            }
-            // SAFETY: as above.
-            unsafe {
                 (*ua).src_buf = core::ptr::null_mut();
             }
             // SAFETY: `src`/`src_end` were just retargeted at the same
@@ -8429,9 +8416,6 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             // SAFETY: `batch` points into the live `batches` local.
             unsafe {
                 (*batch).num_nodes = num_nodes;
-            }
-            // SAFETY: as above.
-            unsafe {
                 (*batch).nodes = tmp_buf.push_pop::<*mut Node>(uc.tmp_stack_view(), num_nodes);
             }
             // SAFETY: as above.
@@ -8774,9 +8758,6 @@ pub(crate) unsafe fn read_take_anim_channel(
     // SAFETY: `curve` is the fresh non-null element pushed above.
     unsafe {
         (*curve).keyframes.data = uc.result_view().push::<Keyframe>(num_keys);
-    }
-    // SAFETY: as above.
-    unsafe {
         (*curve).keyframes.count = num_keys;
     }
     // SAFETY: as above.
@@ -8827,18 +8808,12 @@ pub(crate) unsafe fn read_take_anim_channel(
             // SAFETY: `curve` is the fresh non-null element pushed above.
             unsafe {
                 (*curve).min_value = next_value as Real;
-            }
-            // SAFETY: as above.
-            unsafe {
                 (*curve).max_value = next_value as Real;
             }
         } else {
             // SAFETY: as above.
             unsafe {
                 (*curve).min_value = min_real((*curve).min_value, next_value as Real);
-            }
-            // SAFETY: as above.
-            unsafe {
                 (*curve).max_value = max_real((*curve).max_value, next_value as Real);
             }
         }
@@ -8854,9 +8829,6 @@ pub(crate) unsafe fn read_take_anim_channel(
         // SAFETY: `key` is the in-bounds keyframe computed above.
         unsafe {
             (*key).time = next_time;
-        }
-        // SAFETY: as above.
-        unsafe {
             (*key).value = next_value as Real;
         }
         // SAFETY: the check above leaves at least three doubles between `data` and
@@ -9207,9 +9179,6 @@ pub(crate) unsafe fn read_take_anim_channel(
             // SAFETY: `key` is the in-bounds keyframe computed above.
             unsafe {
                 (*key).left.dx = 0.0f32;
-            }
-            // SAFETY: as above.
-            unsafe {
                 (*key).left.dy = 0.0f32;
             }
         }
@@ -9231,9 +9200,6 @@ pub(crate) unsafe fn read_take_anim_channel(
             // SAFETY: `key` is the in-bounds keyframe computed above.
             unsafe {
                 (*key).right.dx = 0.0f32;
-            }
-            // SAFETY: as above.
-            unsafe {
                 (*key).right.dy = 0.0f32;
             }
         }
@@ -9864,9 +9830,6 @@ pub(crate) unsafe fn setup_root_node(uc: &Context, root: *mut UfbxNode) {
         // SAFETY: `root` is the caller's live root `ufbx_node` (fn contract).
         unsafe {
             (*root).local_transform = IDENTITY_TRANSFORM;
-        }
-        // SAFETY: as above.
-        unsafe {
             (*root).node_to_parent = IDENTITY_MATRIX;
         }
     }
@@ -10290,9 +10253,6 @@ pub(crate) unsafe fn read_legacy_prop(
                 // SAFETY: `prop` is the caller's live, writable `ufbx_prop`.
                 unsafe {
                     (*prop).value_str = EMPTY_STRING.0;
-                }
-                // SAFETY: as above.
-                unsafe {
                     (*prop).value_blob = EMPTY_BLOB.0;
                 }
                 flags |= PropFlags::VALUE_INT.raw();
@@ -10334,9 +10294,6 @@ pub(crate) unsafe fn read_legacy_prop(
                     // SAFETY: `prop` is the caller's live, writable `ufbx_prop`.
                     unsafe {
                         (*prop).value_str = EMPTY_STRING.0;
-                    }
-                    // SAFETY: as above.
-                    unsafe {
                         (*prop).value_blob = EMPTY_BLOB.0;
                     }
                 }
@@ -10508,13 +10465,7 @@ pub(crate) unsafe fn read_legacy_material(
     // SAFETY: `material` is the fresh non-null element pushed above.
     unsafe {
         (*material).shading_model_name = EMPTY_STRING.0;
-    }
-    // SAFETY: as above.
-    unsafe {
         (*material).element.props.props.count = num_props;
-    }
-    // SAFETY: as above.
-    unsafe {
         (*material).element.props.props.data =
             uc.result_view().push_copy_slice(&tmp_props[..num_props]);
     }
@@ -10648,9 +10599,6 @@ pub(crate) unsafe fn read_legacy_light(
     // SAFETY: `light` is the fresh non-null element pushed above.
     unsafe {
         (*light).element.props.props.count = num_props;
-    }
-    // SAFETY: as above.
-    unsafe {
         (*light).element.props.props.data =
             uc.result_view().push_copy_slice(&tmp_props[..num_props]);
     }
@@ -10694,9 +10642,6 @@ pub(crate) unsafe fn read_legacy_camera(
     // SAFETY: `camera` is the fresh non-null element pushed above.
     unsafe {
         (*camera).element.props.props.count = num_props;
-    }
-    // SAFETY: as above.
-    unsafe {
         (*camera).element.props.props.data =
             uc.result_view().push_copy_slice(&tmp_props[..num_props]);
     }
@@ -10746,9 +10691,6 @@ pub(crate) unsafe fn read_legacy_limb_node(
     // SAFETY: `bone` is the fresh non-null element pushed above.
     unsafe {
         (*bone).element.props.props.count = num_props;
-    }
-    // SAFETY: as above.
-    unsafe {
         (*bone).element.props.props.data =
             uc.result_view().push_copy_slice(&tmp_props[..num_props]);
     }
@@ -11589,9 +11531,6 @@ pub(crate) unsafe fn strblob_set(dst: *mut Strblob, data: *const u8, length: usi
         // through `blob` is well-defined whichever member the caller reads.
         unsafe {
             (*dst).blob.data = data;
-        }
-        // SAFETY: as above.
-        unsafe {
             (*dst).blob.size = length;
         }
     } else {
@@ -11602,9 +11541,6 @@ pub(crate) unsafe fn strblob_set(dst: *mut Strblob, data: *const u8, length: usi
             } else {
                 data
             };
-        }
-        // SAFETY: as above.
-        unsafe {
             (*dst).str_.length = length;
         }
     }
@@ -11873,9 +11809,6 @@ pub(crate) unsafe fn open_file(
         // SAFETY: `info` points at the live local storage as above.
         unsafe {
             (*info).original_filename.data = path;
-        }
-        // SAFETY: as above.
-        unsafe {
             (*info).original_filename.size = path_len;
         }
     }
@@ -11965,9 +11898,6 @@ pub(crate) unsafe fn finalize_mesh(
     // SAFETY: as above.
     unsafe {
         ufbxi_patch_zero!(*mesh.num_indices_raw(), mesh.vertex_indices().count);
-    }
-    // SAFETY: as above.
-    unsafe {
         ufbxi_patch_zero!(*mesh.num_faces_raw(), mesh.faces().count);
     }
 
@@ -12004,17 +11934,8 @@ pub(crate) unsafe fn finalize_mesh(
         // SAFETY: as above.
         unsafe {
             ufbxi_patch_zero!(*mesh.max_face_triangles_raw(), max_face_triangles);
-        }
-        // SAFETY: as above.
-        unsafe {
             ufbxi_patch_zero!(*mesh.num_empty_faces_raw(), num_bad_faces[0]);
-        }
-        // SAFETY: as above.
-        unsafe {
             ufbxi_patch_zero!(*mesh.num_point_faces_raw(), num_bad_faces[1]);
-        }
-        // SAFETY: as above.
-        unsafe {
             ufbxi_patch_zero!(*mesh.num_line_faces_raw(), num_bad_faces[2]);
         }
     }

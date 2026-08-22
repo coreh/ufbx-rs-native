@@ -938,9 +938,6 @@ pub(crate) unsafe fn triangulate_ngon(
                 } else {
                     face.num_indices.wrapping_sub(1)
                 };
-            }
-            // SAFETY: as above.
-            unsafe {
                 *edges.add(i.wrapping_mul(2).wrapping_add(1) as usize) =
                     if i.wrapping_add(1) < face.num_indices {
                         i.wrapping_add(1)
