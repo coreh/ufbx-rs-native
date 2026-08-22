@@ -11797,6 +11797,10 @@ pub(crate) fn get_constraint_transform(props: &PropsView) -> Transform {
 }
 
 // ufbx.c:22955-23042 `ufbxi_update_node`
+// C threads the overrides as a raw (`const ufbx_transform_override *overrides`,
+// `size_t num_overrides`) pair; here they arrive as one slice, formed exactly
+// once from that pair at the `ufbxi_update_scene` boundary where it enters
+// from the public evaluate ABI.
 #[inline(never)]
 pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride]) {
     let node: *mut Node = node_view.get();
