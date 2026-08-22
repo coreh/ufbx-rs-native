@@ -76,15 +76,27 @@ const _: () =
     assert!(core::mem::offset_of!(GeometryCacheImp, cache) == core::mem::size_of::<Refcount>());
 
 // SAFETY: `#[repr(C)]` with `refcount` leading, `CACHE_IMP_MAGIC` is the magic
-// `ufbxi_get_imp(ufbxi_geometry_cache_imp, ...)` users check, and `parts`
-// projects the three named fields of the passed `imp`. The extra
-// `owned_by_scene` / `string_buf` fields trail the shared header and are
-// stamped by the call site.
+// `ufbxi_get_imp(ufbxi_geometry_cache_imp, ...)` users check, `Payload` is the
+// public struct at the pinned offset, and `header_parts` projects the two
+// named fields of the passed `imp`. The extra `owned_by_scene` / `string_buf`
+// fields trail the shared header and are stamped by the call site.
 #[cfg(feature = "geometry-cache")]
-unsafe impl crate::native::parse::ImpHeader for GeometryCacheImp {
+unsafe impl crate::native::parse::ImpRecover for GeometryCacheImp {
     type Payload = crate::generated::GeometryCache;
     const MAGIC: u32 = CACHE_IMP_MAGIC;
 
+    #[inline(always)]
+    unsafe fn header_parts(imp: *mut Self) -> (*mut Refcount, *mut u32) {
+        // SAFETY: the caller vouches `imp` addresses a live `GeometryCacheImp`,
+        // so these field projections stay inside that allocation.
+        unsafe { (&raw mut (*imp).refcount, &raw mut (*imp).magic) }
+    }
+}
+
+// SAFETY: `parts` projects the three named fields of the passed `imp` (layout
+// pinned by the `offset_of` assert above).
+#[cfg(feature = "geometry-cache")]
+unsafe impl crate::native::parse::ImpHeader for GeometryCacheImp {
     #[inline(always)]
     unsafe fn parts(imp: *mut Self) -> (*mut Refcount, *mut Self::Payload, *mut u32) {
         // SAFETY: the caller vouches `imp` addresses a live `GeometryCacheImp`,
@@ -2138,7 +2150,10 @@ pub(crate) fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
 // ufbx.c:24637-24691 `ufbxi_cache_load_imp`
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
-pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Result<(), Fail> {
+pub(crate) unsafe fn cache_load_imp(
+    cc: &CacheContext,
+    filename: String,
+) -> Result<crate::native::parse::ImpToken<GeometryCacheImp>, Fail> {
     cc.tmp_view().set_ator(cc.ator_tmp());
     cc.tmp_stack_view().set_ator(cc.ator_tmp());
 
@@ -2216,22 +2231,22 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
     // `GeometryCache` field — a distinct allocation — and the helper moves it
     // into the fresh `imp` slot; `cc.cache` is not read again (PORTING.md
     // "Copy vs non-Copy internal structs": an explicit move).
-    unsafe {
+    let imp_token = unsafe {
         finish_imp(
             cc.imp(),
             core::ptr::null_mut(),
             cc.cache_mut_ptr(),
             cc.ator_result(),
             cc.take_result(),
-        );
-    }
+        )
+    };
 
     unsafe { (*cc.imp()).owned_by_scene = cc.owned_by_scene() };
     unsafe { (*cc.imp()).refcount.buf.ator = &raw mut (*cc.imp()).refcount.ator };
     unsafe { (*cc.imp()).string_buf = cc.string_pool_view().take_buf() };
     unsafe { (*cc.imp()).string_buf.ator = &raw mut (*cc.imp()).refcount.ator };
 
-    Ok(())
+    Ok(imp_token)
 }
 
 // ufbx.c:24693-24716 `ufbxi_cache_load`
@@ -2239,8 +2254,10 @@ pub(crate) unsafe fn cache_load_imp(cc: &CacheContext, filename: String) -> Resu
 #[inline(never)]
 pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut GeometryCache {
     // SAFETY: `cc` is the initialized cache context the caller set up, which is
-    // what `cache_load_imp` requires; `filename` is forwarded unchanged.
-    let ok = unsafe { cache_load_imp(cc, filename).is_ok() };
+    // what `cache_load_imp` requires; `filename` is forwarded unchanged. On
+    // success the `ImpToken` carries the finished imp through the shared
+    // teardown to the return below.
+    let result = unsafe { cache_load_imp(cc, filename) };
 
     // SAFETY (this teardown group): every pointer addresses one of `cc`'s own
     // fields, each paired with the allocator that produced it — the temp bufs
@@ -2258,10 +2275,9 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
         unsafe { free_ator(cc.ator_tmp()) };
     }
 
-    if ok {
-        // SAFETY: a successful `cache_load_imp` stamped `cc.imp` with a
-        // non-null result-buf allocation whose `cache` field it initialized.
-        unsafe { &raw mut (*cc.imp()).cache }
+    if let Ok(imp_token) = result {
+        // C: `return &cc->imp->cache;` — commit the finished imp across the ABI.
+        imp_token.into_payload()
     } else {
         // SAFETY: `error_mut_ptr` addresses `cc`'s own live `Error` field, and
         // the default description is a NUL-terminated byte literal.
@@ -2398,6 +2414,26 @@ pub(crate) struct GeometryCacheImp {
     pub refcount: Refcount,
     pub magic: u32,
     pub owned_by_scene: bool,
+}
+
+// SAFETY: `#[repr(C)]` with `refcount` leading, `CACHE_IMP_MAGIC` is the magic
+// `ufbxi_get_imp(ufbxi_geometry_cache_imp, ...)` users check, and
+// `header_parts` projects the two named fields of the passed `imp`. This arm
+// has NO payload field (this build never creates a cache), but
+// `ufbx_free_geometry_cache`/`ufbx_retain_geometry_cache` still compile their
+// recovery against it, exactly like the C `#else` struct — recovery-only, no
+// `ImpHeader`.
+#[cfg(not(feature = "geometry-cache"))]
+unsafe impl crate::native::parse::ImpRecover for GeometryCacheImp {
+    type Payload = crate::generated::GeometryCache;
+    const MAGIC: u32 = crate::native::allocator::CACHE_IMP_MAGIC;
+
+    #[inline(always)]
+    unsafe fn header_parts(imp: *mut Self) -> (*mut Refcount, *mut u32) {
+        // SAFETY: the caller vouches `imp` addresses a live `GeometryCacheImp`,
+        // so these field projections stay inside that allocation.
+        unsafe { (&raw mut (*imp).refcount, &raw mut (*imp).magic) }
+    }
 }
 
 // ufbx.c:24771-24779 `ufbxi_load_geometry_cache` (`#else` branch — feature

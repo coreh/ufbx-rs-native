@@ -8131,12 +8131,24 @@ pub(crate) struct AnimImp {
 const _: () = assert!(core::mem::offset_of!(AnimImp, anim) == size_of::<Refcount>());
 
 // SAFETY: `#[repr(C)]` with `refcount` leading, `ANIM_IMP_MAGIC` is the magic
-// `ufbxi_get_imp(ufbxi_anim_imp, ...)` users check, and `parts` projects the
-// three named fields of the passed `imp`.
-unsafe impl crate::native::parse::ImpHeader for AnimImp {
+// `ufbxi_get_imp(ufbxi_anim_imp, ...)` users check, `Payload` is the public
+// struct at the pinned offset, and `header_parts` projects the two named
+// fields of the passed `imp`.
+unsafe impl crate::native::parse::ImpRecover for AnimImp {
     type Payload = Anim;
     const MAGIC: u32 = crate::native::allocator::ANIM_IMP_MAGIC;
 
+    #[inline(always)]
+    unsafe fn header_parts(imp: *mut Self) -> (*mut Refcount, *mut u32) {
+        // SAFETY: the caller vouches `imp` addresses a live `AnimImp`, so these
+        // field projections stay inside that allocation.
+        unsafe { (&raw mut (*imp).refcount, &raw mut (*imp).magic) }
+    }
+}
+
+// SAFETY: `parts` projects the three named fields of the passed `imp` (layout
+// pinned by the `offset_of` assert above).
+unsafe impl crate::native::parse::ImpHeader for AnimImp {
     #[inline(always)]
     unsafe fn parts(imp: *mut Self) -> (*mut Refcount, *mut Self::Payload, *mut u32) {
         // SAFETY: the caller vouches `imp` addresses a live `AnimImp`, so these

@@ -90,8 +90,9 @@ use crate::native::hash::{
 };
 use crate::native::obj::{mtl_load, obj_free, obj_load};
 use crate::native::parse::{
-    begin_parse, determine_format, finish_imp, get_imp, get_name_key, get_name_key_c, load_maps,
-    load_strings, Context, Node, Refcount, SceneImp, ELEMENT_TYPE_COUNT, MIN_FILE_FORMAT_LOOKAHEAD,
+    begin_parse, determine_format, finish_imp, get_name_key, get_name_key_c, load_maps,
+    load_strings, Context, ImpRef, ImpToken, Node, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
+    MIN_FILE_FORMAT_LOOKAHEAD,
 };
 #[cfg(feature = "baking")]
 use crate::native::parse::{find_prop, is_vec3_zero, PropView, PropsView};
@@ -4406,7 +4407,10 @@ pub(crate) unsafe fn evaluate_scene(
         };
     }
 
-    ec.set_src_imp(get_imp::<SceneImp>(scene as *mut c_void));
+    // SAFETY: `scene` is the caller's live scene payload behind a `SceneImp`
+    // handed out by this library (this `unsafe fn`'s contract), live for the
+    // whole evaluation.
+    ec.set_src_imp(unsafe { ImpRef::<SceneImp>::from_payload(scene) }.as_ptr());
     // C: `ec->src_scene = *scene;` (struct assignment)
     // SAFETY: `scene` is the caller's live `ufbx_scene` (this `unsafe fn`'s
     // contract) and `ec.src_scene_mut_ptr()` is `ec`'s own `src_scene` field, a
@@ -4826,7 +4830,7 @@ pub(crate) unsafe extern "C" fn transform_override_less(
 
 // ufbx.c:26552-26668 `ufbxi_create_anim_imp`
 #[inline(never)]
-pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
+pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<ImpToken<AnimImp>, Fail> {
     let scene: *const Scene = ac.scene();
     let anim: *mut Anim = ac.anim_mut_ptr();
 
@@ -5092,17 +5096,17 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<(), Fail> {
     // the scene this anim was created for, which owns it for the duration of
     // this call; and `ac.anim_mut_ptr()` is ac's own `Anim` slot, a distinct
     // allocation from the pushed imp.
-    unsafe {
+    let imp_token = unsafe {
         finish_imp(
             ac.imp(),
-            &raw mut (*get_imp::<SceneImp>(scene as *mut Scene as *mut c_void)).refcount,
+            ImpRef::<SceneImp>::from_payload(scene as *mut Scene).refcount_ptr(),
             ac.anim_mut_ptr(),
             ac.ator_result(),
             ac.take_result(),
-        );
-    }
+        )
+    };
 
-    Ok(())
+    Ok(imp_token)
 }
 
 // -- Animation baking (ufbx.c:26670)
@@ -5124,6 +5128,24 @@ pub(crate) struct BakedAnimImp {
 }
 
 const _: () = assert!(core::mem::offset_of!(BakedAnimImp, bake) == size_of::<Refcount>());
+
+// SAFETY: `#[repr(C)]` with `refcount` leading, `BAKED_ANIM_IMP_MAGIC` is the
+// magic `ufbxi_get_imp(ufbxi_baked_anim_imp, ...)` users check, `Payload` is
+// the public struct at the pinned offset, and `header_parts` projects the two
+// named fields of the passed `imp`. Recovery-only: baked anims are finalized
+// manually (the C statement group is interleaved with the metadata writes in
+// `bake_anim_imp`), not through `finish_imp`.
+unsafe impl crate::native::parse::ImpRecover for BakedAnimImp {
+    type Payload = BakedAnim;
+    const MAGIC: u32 = crate::native::allocator::BAKED_ANIM_IMP_MAGIC;
+
+    #[inline(always)]
+    unsafe fn header_parts(imp: *mut Self) -> (*mut Refcount, *mut u32) {
+        // SAFETY: the caller vouches `imp` addresses a live `BakedAnimImp`, so
+        // these field projections stay inside that allocation.
+        unsafe { (&raw mut (*imp).refcount, &raw mut (*imp).magic) }
+    }
+}
 
 // C: `#if UFBXI_FEATURE_ANIMATION_BAKING` (ufbx.c:26678, closed at
 // ufbx.c:27767) — every item from here to the end of the section carries

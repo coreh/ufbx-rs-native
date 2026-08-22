@@ -17,8 +17,6 @@
 // legitimately strand items, so the lint is only armed for the full build.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
-#[cfg(feature = "tessellation")]
-use core::ffi::c_void;
 use core::mem::size_of;
 
 #[cfg(feature = "tessellation")]
@@ -31,8 +29,9 @@ use crate::generated::{
     ElementType, Face, LineSegment, Material, Mesh, MeshPart, NurbsCurve, NurbsSurface,
     NurbsTopology, RawTessellateCurveOpts, RawTessellateSurfaceOpts, Vec2, Vec3,
 };
+use crate::native::allocator::LINE_CURVE_IMP_MAGIC;
 #[cfg(feature = "tessellation")]
-use crate::native::allocator::{does_overflow, init_ator, Allocator, LINE_CURVE_IMP_MAGIC};
+use crate::native::allocator::{does_overflow, init_ator, Allocator};
 #[cfg(feature = "tessellation")]
 use crate::native::api::{
     compute_normals, evaluate_nurbs_curve, evaluate_nurbs_surface, ZERO_VEC2, ZERO_VEC3,
@@ -45,9 +44,9 @@ use crate::native::error::Fail;
 use crate::native::error::{ufbxi_check_err, ufbxi_check_err_msg, EMPTY_CHAR};
 #[cfg(feature = "tessellation")]
 use crate::native::hash::Map;
-use crate::native::parse::Refcount;
 #[cfg(feature = "tessellation")]
-use crate::native::parse::{finish_imp, get_imp, ImpHeader, MeshImp, SceneImp};
+use crate::native::parse::{finish_imp, ImpHeader, ImpRef, ImpToken, MeshImp, SceneImp};
+use crate::native::parse::{ImpRecover, Refcount};
 #[cfg(feature = "tessellation")]
 use crate::native::platform::{add_ptr, ufbx_assert};
 #[cfg(feature = "tessellation")]
@@ -135,13 +134,26 @@ pub(crate) struct LineCurveImp {
 const _: () = assert!(core::mem::offset_of!(LineCurveImp, curve) == size_of::<Refcount>());
 
 // SAFETY: `#[repr(C)]` with `refcount` leading, `LINE_CURVE_IMP_MAGIC` is the
-// magic `ufbxi_get_imp(ufbxi_line_curve_imp, ...)` users check, and `parts`
-// projects the three named fields of the passed `imp`.
-#[cfg(feature = "tessellation")]
-unsafe impl ImpHeader for LineCurveImp {
+// magic `ufbxi_get_imp(ufbxi_line_curve_imp, ...)` users check, `Payload` is
+// the public struct at the pinned offset, and `header_parts` projects the two
+// named fields of the passed `imp`. NOT gated, like the struct:
+// `ufbx_free_line_curve`/`ufbx_retain_line_curve` recover it unconditionally.
+unsafe impl ImpRecover for LineCurveImp {
     type Payload = LineCurve;
     const MAGIC: u32 = LINE_CURVE_IMP_MAGIC;
 
+    #[inline(always)]
+    unsafe fn header_parts(imp: *mut Self) -> (*mut Refcount, *mut u32) {
+        // SAFETY: the caller vouches `imp` addresses a live `LineCurveImp`, so
+        // these field projections stay inside that allocation.
+        unsafe { (&raw mut (*imp).refcount, &raw mut (*imp).magic) }
+    }
+}
+
+// SAFETY: `parts` projects the three named fields of the passed `imp` (layout
+// pinned by the `offset_of` assert above).
+#[cfg(feature = "tessellation")]
+unsafe impl ImpHeader for LineCurveImp {
     #[inline(always)]
     unsafe fn parts(imp: *mut Self) -> (*mut Refcount, *mut Self::Payload, *mut u32) {
         // SAFETY: the caller vouches `imp` addresses a live `LineCurveImp`, so
@@ -553,7 +565,9 @@ impl TessellateSurfaceContext {
 // ufbx.c:27840-27931 `ufbxi_tessellate_nurbs_curve_imp`
 #[cfg(feature = "tessellation")]
 #[inline(never)]
-pub(crate) fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> Result<(), Fail> {
+pub(crate) fn tessellate_nurbs_curve_imp(
+    tc: &TessellateCurveContext,
+) -> Result<ImpToken<LineCurveImp>, Fail> {
     // C: `tc->opts.span_subdivision <= 0` — `span_subdivision` is `size_t`.
     if tc.opts_view().span_subdivision() == 0 {
         tc.opts_view().set_span_subdivision(4);
@@ -706,24 +720,25 @@ pub(crate) fn tessellate_nurbs_curve_imp(tc: &TessellateCurveContext) -> Result<
     // belongs to, which owns that curve for the duration of this call; and
     // `tc.line_mut_ptr()` is tc's own `LineCurve` slot — a distinct allocation
     // from the freshly pushed imp.
-    unsafe {
+    let imp_token = unsafe {
         finish_imp(
             tc.imp(),
-            &raw mut (*get_imp::<SceneImp>(ref_ptr(&(*curve).element.scene) as *mut c_void))
-                .refcount,
+            ImpRef::<SceneImp>::from_payload(ref_ptr(&(*curve).element.scene)).refcount_ptr(),
             tc.line_mut_ptr(),
             tc.ator_result(),
             tc.take_result(),
-        );
-    }
+        )
+    };
 
-    Ok(())
+    Ok(imp_token)
 }
 
 // ufbx.c:27933-28239 `ufbxi_tessellate_nurbs_surface_imp`
 #[cfg(feature = "tessellation")]
 #[inline(never)]
-pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Result<(), Fail> {
+pub(crate) fn tessellate_nurbs_surface_imp(
+    tc: &TessellateSurfaceContext,
+) -> Result<ImpToken<MeshImp>, Fail> {
     // C: `tc->opts.span_subdivision_u <= 0` — `span_subdivision_u/v` are `size_t`.
     if tc.opts_view().span_subdivision_u() == 0 {
         tc.opts_view().set_span_subdivision_u(4);
@@ -1222,22 +1237,21 @@ pub(crate) fn tessellate_nurbs_surface_imp(tc: &TessellateSurfaceContext) -> Res
     // allocation; the parent refcount comes from the scene owning the input
     // surface for the duration of this call; and `tc.mesh_mut_ptr()` is tc's own
     // `Mesh` slot, a distinct allocation from the pushed imp.
-    unsafe {
+    let imp_token = unsafe {
         finish_imp(
             tc.imp(),
-            &raw mut (*get_imp::<SceneImp>(ref_ptr(&(*surface).element.scene) as *mut c_void))
-                .refcount,
+            ImpRef::<SceneImp>::from_payload(ref_ptr(&(*surface).element.scene)).refcount_ptr(),
             tc.mesh_mut_ptr(),
             tc.ator_result(),
             tc.take_result(),
-        );
-    }
+        )
+    };
 
     // SAFETY: the imp header is fully initialized just above, so its `mesh`
     // payload is a live `Mesh` this call owns.
     unsafe { (*tc.imp()).mesh.subdivision_evaluated = true };
 
-    Ok(())
+    Ok(imp_token)
 }
 
 // ufbx.c:28241 `#endif` (UFBXI_FEATURE_TESSELLATION)

@@ -35,7 +35,7 @@ use crate::native::error::{
 #[cfg(not(feature = "subdivision"))]
 use crate::native::error::{ufbxi_fmt_err_info, ufbxi_report_err_msg};
 #[cfg(feature = "subdivision")]
-use crate::native::parse::{finish_imp, get_imp, MeshImp, Refcount, SceneImp};
+use crate::native::parse::{finish_imp, ImpRef, ImpToken, MeshImp, Refcount, SceneImp};
 #[cfg(feature = "subdivision")]
 use crate::native::platform::{
     max_sz, min_sz, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable, unstable_sort, NO_INDEX,
@@ -3013,7 +3013,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
 pub(crate) fn subdivide_mesh_imp(
     sc: &SubdivideContext,
     level: usize,
-) -> Result<(), crate::native::error::Fail> {
+) -> Result<ImpToken<MeshImp>, crate::native::error::Fail> {
     if sc.opts_view().boundary() as u32 == SubdivisionBoundary::Default as u32 {
         sc.opts_view()
             .set_boundary(sc.src_mesh_view().subdivision_boundary());
@@ -3177,16 +3177,14 @@ pub(crate) fn subdivide_mesh_imp(
     let src_mesh: &View<Mesh, Const> = unsafe { View::<Mesh, Const>::from_ptr(sc.src_mesh_ptr()) };
     // SAFETY: when the source is an evaluated tessellated-NURBS mesh its wide
     // allocation is a `MeshImp`, otherwise it belongs to a scene whose
-    // `SceneImp` owns it — the same discrimination `get_imp` expects, and either
-    // parent outlives this call.
+    // `SceneImp` owns it — the same discrimination C's `ufbxi_get_imp` calls
+    // encode, and either parent outlives this call.
     let parent: *mut Refcount = unsafe {
         if src_mesh.subdivision_evaluated() && src_mesh.from_tessellated_nurbs() {
-            let imp: *mut MeshImp = get_imp(sc.src_mesh_ptr() as *mut c_void);
-            &mut (*imp).refcount
+            ImpRef::<MeshImp>::from_payload(sc.src_mesh_ptr()).refcount_ptr()
         } else {
-            let imp: *mut SceneImp =
-                get_imp(ref_ptr(&(*sc.src_mesh_ptr()).element.scene) as *mut c_void);
-            &mut (*imp).refcount
+            ImpRef::<SceneImp>::from_payload(ref_ptr(&(*sc.src_mesh_ptr()).element.scene))
+                .refcount_ptr()
         }
     };
 
@@ -3215,21 +3213,21 @@ pub(crate) fn subdivide_mesh_imp(
     // allocation of `sc->result`, so filling its header writes our own
     // allocation; `parent` is the live owner picked above; and `mesh.get()`
     // addresses sc's own `Mesh` slot, a distinct allocation from the pushed imp.
-    unsafe {
+    let imp_token = unsafe {
         finish_imp(
             sc.imp(),
             parent,
             mesh.get(),
             sc.ator_result(),
             sc.take_result(),
-        );
-    }
+        )
+    };
 
     // SAFETY: the imp header is fully initialized just above, so its `mesh`
     // payload is a live `Mesh` this call owns.
     unsafe { (*sc.imp()).mesh.subdivision_evaluated = true };
 
-    Ok(())
+    Ok(imp_token)
 }
 
 // ufbx.c:30036-30067 `ufbxi_subdivide_mesh`
@@ -3260,7 +3258,10 @@ pub(crate) unsafe fn subdivide_mesh(
     // non-overlapping.
     unsafe { core::ptr::copy_nonoverlapping(mesh, sc.src_mesh_mut_ptr(), 1) };
 
-    let ok: bool = subdivide_mesh_imp(sc, level).is_ok();
+    // C: `int ok = ufbxi_subdivide_mesh_imp(sc, level);` — on success the
+    // `ImpToken` carries the finished imp through the shared teardown to the
+    // return below.
+    let result = subdivide_mesh_imp(sc, level);
 
     // SAFETY: `ator_tmp_mut_ptr()`/`inputs()`/`inputs_cap()` are `sc`'s own
     // allocator and the `inputs` array (with its capacity) it allocated, the
@@ -3271,7 +3272,7 @@ pub(crate) unsafe fn subdivide_mesh(
     // SAFETY: as above.
     unsafe { buf_free(sc.source_mut_ptr()) };
 
-    if ok {
+    if let Ok(imp_token) = result {
         // SAFETY: `ator_tmp_mut_ptr()` is `sc`'s own live temp allocator.
         unsafe { free_ator(sc.ator_tmp_mut_ptr()) };
         if !p_error.is_null() {
@@ -3279,10 +3280,8 @@ pub(crate) unsafe fn subdivide_mesh(
             unsafe { clear_error(p_error) };
         }
 
-        let imp: *mut MeshImp = sc.imp();
-        // SAFETY: on success `subdivide_mesh_imp` installed a non-null `imp`;
-        // `&raw mut (*imp).mesh` projects its live `mesh` field address.
-        unsafe { &raw mut (*imp).mesh }
+        // C: `return &sc->imp->mesh;` — commit the finished imp across the ABI.
+        imp_token.into_payload()
     } else {
         // SAFETY: `error_mut_ptr()` is `sc`'s own live error slot; the description
         // is a `'static` NUL-terminated literal; `p_error` is the caller's

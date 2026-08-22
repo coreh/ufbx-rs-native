@@ -286,8 +286,11 @@ pub(crate) struct Refcount {
 // bare address via exposed provenance: every `*_imp` allocation site exposes
 // its wide (allocation-covering) pointer once at creation, so the header falls
 // within an exposed allocation and the recovered pointer can legally reach it.
+//
+// Private: the raw arithmetic is reachable only through `ImpRef::from_payload`
+// below, so every recovery in the crate goes through that one audited seam.
 #[inline(always)]
-pub(crate) fn get_imp<T>(ptr: *mut c_void) -> *mut T {
+fn get_imp<T>(ptr: *mut c_void) -> *mut T {
     let addr = (ptr as *mut u8).addr();
     core::ptr::with_exposed_provenance_mut::<u8>(addr - size_of::<Refcount>()) as *mut T
 }
@@ -326,24 +329,47 @@ const _: () = assert!(core::mem::offset_of!(MeshImp, mesh) == size_of::<Refcount
 //     tc->imp->refcount.ator = tc->ator_result;
 //     tc->imp->refcount.buf = tc->result;
 //
-// `ImpHeader` pins the `#[repr(C)]` header-then-payload-then-magic layout those
-// imp structs share — the same layout the `offset_of` asserts pin for
-// `ufbxi_get_imp` — so `finish_imp` can write that group once, with one safety
-// argument, instead of five raw-pointer writes per site.
+// The recovery half of the imp contract: what `ImpRef` (C's `ufbxi_get_imp`
+// users) needs from a `ufbxi_*_imp` struct — the magic to check and the two
+// header fields every imp carries. Split from `ImpHeader` because the
+// `cfg(not(feature = "geometry-cache"))` `GeometryCacheImp` has NO payload
+// field (ufbx.c:24765-24769) yet `ufbx_free_geometry_cache` /
+// `ufbx_retain_geometry_cache` still recover and magic-check it in that build.
 //
 // # Safety
 //
 // Implementors are `#[repr(C)]` structs whose leading field is the `Refcount`
 // header, whose `MAGIC` is the `UFBXI_*_IMP_MAGIC` that `ufbxi_get_imp` users
-// check, and whose `parts` returns exactly the `(refcount, payload, magic)`
-// field projections of the passed `imp` (so a pointer valid for the imp is
-// valid for all three).
-pub(crate) unsafe trait ImpHeader: Sized {
+// check, whose `Payload` is the public struct `ufbxi_get_imp` recovers Self
+// from (stored at offset `size_of::<Refcount>()` when the build has it), and
+// whose `header_parts` returns exactly the `(refcount, magic)` field
+// projections of the passed `imp` (so a pointer valid for the imp is valid for
+// both).
+pub(crate) unsafe trait ImpRecover: Sized {
     // The public struct the header wraps (C: `imp->scene`, `imp->mesh`, ...).
     type Payload;
     // C: the value stamped into both `imp->magic` and the refcount type magic.
     const MAGIC: u32;
 
+    // The two header fields shared by every imp layout, in one projection.
+    //
+    // # Safety
+    //
+    // `imp` addresses a live (possibly uninitialized) `Self`.
+    unsafe fn header_parts(imp: *mut Self) -> (*mut Refcount, *mut u32);
+}
+
+// The finalization half: `ImpHeader` pins the full `#[repr(C)]`
+// header-then-payload-then-magic layout — the same layout the `offset_of`
+// asserts pin for `ufbxi_get_imp` — so `finish_imp` can write that group once,
+// with one safety argument, instead of five raw-pointer writes per site.
+//
+// # Safety
+//
+// As `ImpRecover`, and `parts` returns exactly the
+// `(refcount, payload, magic)` field projections of the passed `imp` (so a
+// pointer valid for the imp is valid for all three).
+pub(crate) unsafe trait ImpHeader: ImpRecover {
     // The three fields `finish_imp` writes, in one projection.
     //
     // # Safety
@@ -352,13 +378,43 @@ pub(crate) unsafe trait ImpHeader: Sized {
     unsafe fn parts(imp: *mut Self) -> (*mut Refcount, *mut Self::Payload, *mut u32);
 }
 
+// SAFETY: `#[repr(C)]` with `refcount` leading, `SCENE_IMP_MAGIC` is the magic
+// `ufbxi_get_imp(ufbxi_scene_imp, ...)` users check, `Payload` is the public
+// struct at the pinned offset, and `header_parts` projects the two named
+// fields of the passed `imp`. Recovery-only: scenes are finalized manually
+// (the C statement group is interleaved with scene-specific writes, e.g.
+// `string_buf`), not through `finish_imp`.
+unsafe impl ImpRecover for SceneImp {
+    type Payload = Scene;
+    const MAGIC: u32 = crate::native::allocator::SCENE_IMP_MAGIC;
+
+    #[inline(always)]
+    unsafe fn header_parts(imp: *mut Self) -> (*mut Refcount, *mut u32) {
+        // SAFETY: the caller vouches `imp` addresses a live `SceneImp`, so
+        // these field projections stay inside that allocation.
+        unsafe { (&raw mut (*imp).refcount, &raw mut (*imp).magic) }
+    }
+}
+
 // SAFETY: `#[repr(C)]` with `refcount` leading, `MESH_IMP_MAGIC` is the magic
-// `ufbxi_get_imp(ufbxi_mesh_imp, ...)` users check, and `parts` projects the
-// three named fields of the passed `imp`.
-unsafe impl ImpHeader for MeshImp {
+// `ufbxi_get_imp(ufbxi_mesh_imp, ...)` users check, `Payload` is the public
+// struct at the pinned offset, and `header_parts` projects the two named
+// fields of the passed `imp`.
+unsafe impl ImpRecover for MeshImp {
     type Payload = crate::generated::Mesh;
     const MAGIC: u32 = crate::native::allocator::MESH_IMP_MAGIC;
 
+    #[inline(always)]
+    unsafe fn header_parts(imp: *mut Self) -> (*mut Refcount, *mut u32) {
+        // SAFETY: the caller vouches `imp` addresses a live `MeshImp`, so these
+        // field projections stay inside that allocation.
+        unsafe { (&raw mut (*imp).refcount, &raw mut (*imp).magic) }
+    }
+}
+
+// SAFETY: `parts` projects the three named fields of the passed `imp` (layout
+// pinned by the `offset_of` assert above).
+unsafe impl ImpHeader for MeshImp {
     #[inline(always)]
     unsafe fn parts(imp: *mut Self) -> (*mut Refcount, *mut Self::Payload, *mut u32) {
         // SAFETY: the caller vouches `imp` addresses a live `MeshImp`, so these
@@ -370,6 +426,116 @@ unsafe impl ImpHeader for MeshImp {
                 &raw mut (*imp).magic,
             )
         }
+    }
+}
+
+// Non-owning recovery handle over a `ufbxi_*_imp` allocation — C's
+// `ufbxi_get_imp(type, ptr)` idiom as one audited seam. Recover the imp from a
+// public payload pointer once, then reach its header through typed projections
+// instead of per-site pointer arithmetic behind the payload.
+//
+// Deliberately NOT an owning/RAII handle: imp lifetimes are parent-graph- and
+// ABI-shaped (`Refcount::parent` edges, released recursively by
+// `native::api::release_ref`), never Rust-scope-shaped — so there is no
+// `Drop`, and `retain`/`release` mirror C's explicit `ufbxi_retain_ref` /
+// `ufbxi_release_ref` calls exactly.
+pub(crate) struct ImpRef<T: ImpRecover>(*mut T);
+
+impl<T: ImpRecover> ImpRef<T> {
+    // C: `ufbxi_get_imp(ufbxi_*_imp, ptr)`.
+    //
+    // # Safety
+    //
+    // `payload` is the payload pointer of a live `T` imp allocation handed out
+    // by this library (every imp creation site exposes its wide pointer, so
+    // the header BEFORE the payload is recoverable via exposed provenance),
+    // and that allocation stays live for every use of the returned handle.
+    #[inline(always)]
+    pub(crate) unsafe fn from_payload(payload: *mut T::Payload) -> Self {
+        Self(get_imp(payload as *mut c_void))
+    }
+
+    #[inline(always)]
+    pub(crate) fn as_ptr(&self) -> *mut T {
+        self.0
+    }
+
+    // C: `imp->magic == UFBXI_*_IMP_MAGIC` — the defensive stale-handle check
+    // every public retain/free entry runs before touching the refcount.
+    #[inline(always)]
+    pub(crate) fn has_magic(&self) -> bool {
+        // SAFETY: the imp is live per the `from_payload` vouch; reading its
+        // own `magic` field.
+        unsafe { *T::header_parts(self.0).1 == T::MAGIC }
+    }
+
+    #[inline(always)]
+    pub(crate) fn refcount_ptr(&self) -> *mut Refcount {
+        // SAFETY: the imp is live per the `from_payload` vouch; projecting its
+        // own `refcount` field.
+        unsafe { T::header_parts(self.0).0 }
+    }
+
+    // C: `ufbxi_retain_ref(&imp->refcount)`.
+    #[inline(always)]
+    pub(crate) fn retain(&self) {
+        // SAFETY: the live imp's own refcount header, initialized at creation
+        // per the `from_payload` vouch.
+        unsafe { crate::native::api::retain_ref(self.refcount_ptr()) };
+    }
+
+    // C: `ufbxi_release_ref(&imp->refcount)`. Consumes the handle: dropping
+    // the last reference frees the allocation the handle points into.
+    #[inline(always)]
+    pub(crate) fn release(self) {
+        // SAFETY: as `retain` — and the handle is consumed, so nothing uses it
+        // after the potential free.
+        unsafe { crate::native::api::release_ref(self.refcount_ptr()) };
+    }
+}
+
+// The must-consume proof that `finish_imp` finalized an imp: refcount 1, owned
+// by nobody until the caller commits it somewhere explicit. A linear-type
+// emulation with a drop bomb — `Drop` NEVER releases (imp teardown on error
+// paths is arena/allocator teardown, and an automatic release would
+// double-free against it); it only trips a debug-build assert, so a code path
+// that loses the token fails tests/Miri while costing release builds nothing.
+// The exits are `into_payload` (commit across the ABI) and `forget` (ownership
+// recorded elsewhere); an explicit `release` exit can be added when an
+// owning-error-path consumer appears.
+#[must_use = "consume the token explicitly (into_payload/forget) — dropping it \
+              means the finished imp's ownership was never decided"]
+pub(crate) struct ImpToken<T: ImpHeader>(*mut T);
+
+impl<T: ImpHeader> ImpToken<T> {
+    // Commit: hand the payload pointer across the public ABI
+    // (C: `return &imp->payload;` at the end of every creation entry point).
+    #[inline(always)]
+    pub(crate) fn into_payload(self) -> *mut T::Payload {
+        // SAFETY: tokens are created only by `finish_imp`, on an imp it just
+        // finalized and left live; projecting that imp's own payload field.
+        let payload = unsafe { T::parts(self.0).1 };
+        core::mem::forget(self);
+        payload
+    }
+
+    // Discard the token without deciding ownership here — for a site whose imp
+    // pointer is already stored elsewhere (a context field) and whose caller
+    // commits it later. Explicit on purpose: the call marks the handoff.
+    #[allow(dead_code)]
+    #[inline(always)]
+    pub(crate) fn forget(self) {
+        core::mem::forget(self);
+    }
+}
+
+impl<T: ImpHeader> Drop for ImpToken<T> {
+    fn drop(&mut self) {
+        // NEVER releases — see the type docs. Debug-only tripwire.
+        debug_assert!(
+            false,
+            "ImpToken dropped: a finished imp's ownership was never explicitly decided"
+        );
     }
 }
 
@@ -388,6 +554,9 @@ unsafe impl ImpHeader for MeshImp {
 // - `payload` addresses a readable `T::Payload` in an allocation distinct from
 //   `imp` (the context's own payload slot). Its value is MOVED bitwise into the
 //   imp, so the caller must not use the source value afterwards.
+//
+// Returns the `ImpToken` for the finished imp — the caller must thread it to
+// wherever ownership is decided (see the token's docs).
 #[inline(always)]
 pub(crate) unsafe fn finish_imp<T: ImpHeader>(
     imp: *mut T,
@@ -395,7 +564,7 @@ pub(crate) unsafe fn finish_imp<T: ImpHeader>(
     payload: *mut T::Payload,
     ator: Allocator,
     buf: Buf,
-) {
+) -> ImpToken<T> {
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public payload pointer via exposed provenance.
     (imp as *mut u8).expose_provenance();
@@ -417,6 +586,8 @@ pub(crate) unsafe fn finish_imp<T: ImpHeader>(
     unsafe { (*refcount).ator = ator };
     // SAFETY: as above — the header's own `buf` field.
     unsafe { (*refcount).buf = buf };
+
+    ImpToken(imp)
 }
 
 // ufbx.c:6252-6272 `ufbxi_ascii_token`
@@ -8313,9 +8484,10 @@ mod tests {
         let mut imp = core::mem::MaybeUninit::<MeshImp>::uninit();
         let imp_ptr = imp.as_mut_ptr();
         unsafe {
+            (imp_ptr as *mut u8).expose_provenance();
             let mesh_ptr = &raw mut (*imp_ptr).mesh;
-            let back: *mut MeshImp = get_imp(mesh_ptr as *mut c_void);
-            assert_eq!(back, imp_ptr);
+            let back = ImpRef::<MeshImp>::from_payload(mesh_ptr);
+            assert_eq!(back.as_ptr(), imp_ptr);
         }
     }
 
