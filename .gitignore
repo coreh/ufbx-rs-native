@@ -28,3 +28,5 @@ __pycache__/
 rust/target/
 bindgen/build/
 rust/tools/mathfuzz/target/
+unsafe_history.csv
+unsafe_history.svg
