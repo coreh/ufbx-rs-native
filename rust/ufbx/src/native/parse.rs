@@ -6858,7 +6858,7 @@ pub(crate) unsafe fn match_skip(fmt: *const u8, alternation: bool) -> *const u8 
         // body unchanged.
         let ret = unsafe { match_skip_rec(fmt, alternation) };
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
-        return ret;
+        ret
     }
     #[cfg(not(feature = "regression"))]
     // SAFETY: forwards the caller's `fmt` validity contract to the recursive
@@ -6956,7 +6956,7 @@ pub(crate) unsafe fn match_imp(
         // the recursive body unchanged.
         let ret = unsafe { match_imp_rec(p_str, end, p_fmt) };
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
-        return ret;
+        ret
     }
     #[cfg(not(feature = "regression"))]
     // SAFETY: forwards the caller's `p_str`/`end`/`p_fmt` validity contract to the

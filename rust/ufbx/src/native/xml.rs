@@ -827,7 +827,7 @@ pub(crate) unsafe fn xml_parse_tag(
         // fn's raw-param contract is exactly the callee's.
         let ret = unsafe { xml_parse_tag_rec(xc, depth, p_closing, opening) };
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
-        return ret;
+        ret
     }
     // SAFETY: `p_closing` and `opening` are forwarded unchanged, so this fn's
     // raw-param contract is exactly the callee's.

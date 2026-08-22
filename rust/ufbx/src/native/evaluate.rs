@@ -2531,7 +2531,7 @@ pub(crate) unsafe fn extrapolate_curve(
         // raw-pointer contract of this `unsafe fn`, forwarded unchanged.
         let ret = unsafe { extrapolate_curve_rec(curve, real_time, flags) };
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
-        return ret;
+        ret
     }
     #[cfg(not(feature = "regression"))]
     // SAFETY: `curve` is the caller's live `ufbx_anim_curve` — the raw-pointer

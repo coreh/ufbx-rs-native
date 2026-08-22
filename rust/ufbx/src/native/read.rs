@@ -9094,7 +9094,7 @@ pub(crate) unsafe fn read_take_prop_channel(
         let ret =
             unsafe { read_take_prop_channel_rec(uc, node, target_fbx_id, layer_fbx_id, name) };
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
-        return ret;
+        ret
     }
     // SAFETY: the wrapper forwards its own arguments unchanged, so `name` is the
     // caller's string over `length` readable bytes (fn contract).
