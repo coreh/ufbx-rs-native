@@ -2153,7 +2153,7 @@ pub(crate) fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
 pub(crate) unsafe fn cache_load_imp(
     cc: &CacheContext,
     filename: String,
-) -> Result<crate::native::parse::ImpToken<GeometryCacheImp>, Fail> {
+) -> Result<crate::native::parse::FinishedImp<GeometryCacheImp>, Fail> {
     cc.tmp_view().set_ator(cc.ator_tmp());
     cc.tmp_stack_view().set_ator(cc.ator_tmp());
 
@@ -2231,7 +2231,7 @@ pub(crate) unsafe fn cache_load_imp(
     // `GeometryCache` field — a distinct allocation — and the helper moves it
     // into the fresh `imp` slot; `cc.cache` is not read again (PORTING.md
     // "Copy vs non-Copy internal structs": an explicit move).
-    let imp_token = unsafe {
+    let finished_imp = unsafe {
         finish_imp(
             cc.imp(),
             core::ptr::null_mut(),
@@ -2246,7 +2246,7 @@ pub(crate) unsafe fn cache_load_imp(
     unsafe { (*cc.imp()).string_buf = cc.string_pool_view().take_buf() };
     unsafe { (*cc.imp()).string_buf.ator = &raw mut (*cc.imp()).refcount.ator };
 
-    Ok(imp_token)
+    Ok(finished_imp)
 }
 
 // ufbx.c:24693-24716 `ufbxi_cache_load`
@@ -2255,7 +2255,7 @@ pub(crate) unsafe fn cache_load_imp(
 pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut GeometryCache {
     // SAFETY: `cc` is the initialized cache context the caller set up, which is
     // what `cache_load_imp` requires; `filename` is forwarded unchanged. On
-    // success the `ImpToken` carries the finished imp through the shared
+    // success the `FinishedImp` carries the finished imp through the shared
     // teardown to the return below.
     let result = unsafe { cache_load_imp(cc, filename) };
 
@@ -2275,9 +2275,9 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
         unsafe { free_ator(cc.ator_tmp()) };
     }
 
-    if let Ok(imp_token) = result {
+    if let Ok(finished_imp) = result {
         // C: `return &cc->imp->cache;` — commit the finished imp across the ABI.
-        imp_token.into_payload()
+        finished_imp.into_payload()
     } else {
         // SAFETY: `error_mut_ptr` addresses `cc`'s own live `Error` field, and
         // the default description is a NUL-terminated byte literal.

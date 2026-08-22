@@ -287,7 +287,7 @@ pub(crate) struct Refcount {
 // its wide (allocation-covering) pointer once at creation, so the header falls
 // within an exposed allocation and the recovered pointer can legally reach it.
 //
-// Private: the raw arithmetic is reachable only through `ImpRef::from_payload`
+// Private: the raw arithmetic is reachable only through `ImpHandle::from_payload`
 // below, so every recovery in the crate goes through that one audited seam.
 #[inline(always)]
 fn get_imp<T>(ptr: *mut c_void) -> *mut T {
@@ -329,7 +329,7 @@ const _: () = assert!(core::mem::offset_of!(MeshImp, mesh) == size_of::<Refcount
 //     tc->imp->refcount.ator = tc->ator_result;
 //     tc->imp->refcount.buf = tc->result;
 //
-// The recovery half of the imp contract: what `ImpRef` (C's `ufbxi_get_imp`
+// The recovery half of the imp contract: what `ImpHandle` (C's `ufbxi_get_imp`
 // users) needs from a `ufbxi_*_imp` struct — the magic to check and the two
 // header fields every imp carries. Split from `ImpHeader` because the
 // `cfg(not(feature = "geometry-cache"))` `GeometryCacheImp` has NO payload
@@ -439,9 +439,9 @@ unsafe impl ImpHeader for MeshImp {
 // `native::api::release_ref`), never Rust-scope-shaped — so there is no
 // `Drop`, and `retain`/`release` mirror C's explicit `ufbxi_retain_ref` /
 // `ufbxi_release_ref` calls exactly.
-pub(crate) struct ImpRef<T: ImpRecover>(*mut T);
+pub(crate) struct ImpHandle<T: ImpRecover>(*mut T);
 
-impl<T: ImpRecover> ImpRef<T> {
+impl<T: ImpRecover> ImpHandle<T> {
     // C: `ufbxi_get_imp(ufbxi_*_imp, ptr)`.
     //
     // # Safety
@@ -499,27 +499,27 @@ impl<T: ImpRecover> ImpRef<T> {
 // emulation with a drop bomb — `Drop` NEVER releases (imp teardown on error
 // paths is arena/allocator teardown, and an automatic release would
 // double-free against it); it only trips a debug-build assert, so a code path
-// that loses the token fails tests/Miri while costing release builds nothing.
+// that loses the value fails tests/Miri while costing release builds nothing.
 // The exits are `into_payload` (commit across the ABI) and `forget` (ownership
 // recorded elsewhere); an explicit `release` exit can be added when an
 // owning-error-path consumer appears.
-#[must_use = "consume the token explicitly (into_payload/forget) — dropping it \
-              means the finished imp's ownership was never decided"]
-pub(crate) struct ImpToken<T: ImpHeader>(*mut T);
+#[must_use = "consume the FinishedImp explicitly (into_payload/forget) — dropping \
+              it means the finished imp's ownership was never decided"]
+pub(crate) struct FinishedImp<T: ImpHeader>(*mut T);
 
-impl<T: ImpHeader> ImpToken<T> {
+impl<T: ImpHeader> FinishedImp<T> {
     // Commit: hand the payload pointer across the public ABI
     // (C: `return &imp->payload;` at the end of every creation entry point).
     #[inline(always)]
     pub(crate) fn into_payload(self) -> *mut T::Payload {
-        // SAFETY: tokens are created only by `finish_imp`, on an imp it just
-        // finalized and left live; projecting that imp's own payload field.
+        // SAFETY: `FinishedImp`s are created only by `finish_imp`, on an imp it
+        // just finalized and left live; projecting that imp's own payload field.
         let payload = unsafe { T::parts(self.0).1 };
         core::mem::forget(self);
         payload
     }
 
-    // Discard the token without deciding ownership here — for a site whose imp
+    // Discard the value without deciding ownership here — for a site whose imp
     // pointer is already stored elsewhere (a context field) and whose caller
     // commits it later. Explicit on purpose: the call marks the handoff.
     #[allow(dead_code)]
@@ -529,12 +529,12 @@ impl<T: ImpHeader> ImpToken<T> {
     }
 }
 
-impl<T: ImpHeader> Drop for ImpToken<T> {
+impl<T: ImpHeader> Drop for FinishedImp<T> {
     fn drop(&mut self) {
         // NEVER releases — see the type docs. Debug-only tripwire.
         debug_assert!(
             false,
-            "ImpToken dropped: a finished imp's ownership was never explicitly decided"
+            "FinishedImp dropped: a finished imp's ownership was never explicitly decided"
         );
     }
 }
@@ -555,8 +555,8 @@ impl<T: ImpHeader> Drop for ImpToken<T> {
 //   `imp` (the context's own payload slot). Its value is MOVED bitwise into the
 //   imp, so the caller must not use the source value afterwards.
 //
-// Returns the `ImpToken` for the finished imp — the caller must thread it to
-// wherever ownership is decided (see the token's docs).
+// Returns the `FinishedImp` for the finished imp — the caller must thread it to
+// wherever ownership is decided (see that type's docs).
 #[inline(always)]
 pub(crate) unsafe fn finish_imp<T: ImpHeader>(
     imp: *mut T,
@@ -564,7 +564,7 @@ pub(crate) unsafe fn finish_imp<T: ImpHeader>(
     payload: *mut T::Payload,
     ator: Allocator,
     buf: Buf,
-) -> ImpToken<T> {
+) -> FinishedImp<T> {
     // Expose the wide allocation so `get_imp` can recover this header from a
     // (possibly narrowed) public payload pointer via exposed provenance.
     (imp as *mut u8).expose_provenance();
@@ -587,7 +587,7 @@ pub(crate) unsafe fn finish_imp<T: ImpHeader>(
     // SAFETY: as above — the header's own `buf` field.
     unsafe { (*refcount).buf = buf };
 
-    ImpToken(imp)
+    FinishedImp(imp)
 }
 
 // ufbx.c:6252-6272 `ufbxi_ascii_token`
@@ -8486,7 +8486,7 @@ mod tests {
         unsafe {
             (imp_ptr as *mut u8).expose_provenance();
             let mesh_ptr = &raw mut (*imp_ptr).mesh;
-            let back = ImpRef::<MeshImp>::from_payload(mesh_ptr);
+            let back = ImpHandle::<MeshImp>::from_payload(mesh_ptr);
             assert_eq!(back.as_ptr(), imp_ptr);
         }
     }

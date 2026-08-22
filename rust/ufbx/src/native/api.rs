@@ -127,8 +127,8 @@ use crate::native::nurbs::{
     TessellateSurfaceContext,
 };
 use crate::native::parse::{
-    find_enum, find_real as ufbxi_find_real, get_name_key, Context, ImpRef, InnerContext, MeshImp,
-    Refcount, SceneImp, ELEMENT_TYPE_COUNT,
+    find_enum, find_real as ufbxi_find_real, get_name_key, Context, ImpHandle, InnerContext,
+    MeshImp, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
 };
 use crate::native::platform::{
     add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
@@ -845,7 +845,7 @@ pub(crate) unsafe fn free_scene(scene: *mut Scene) {
 
     // SAFETY: the non-null `scene` is the payload of a live `SceneImp` handed
     // out by this library — the raw-pointer contract of this `unsafe fn`.
-    let imp = unsafe { ImpRef::<SceneImp>::from_payload(scene) };
+    let imp = unsafe { ImpHandle::<SceneImp>::from_payload(scene) };
     ufbx_assert!(imp.has_magic());
     if !imp.has_magic() {
         return;
@@ -862,7 +862,7 @@ pub(crate) unsafe fn retain_scene(scene: *mut Scene) {
 
     // SAFETY: the non-null `scene` is the payload of a live `SceneImp` handed
     // out by this library — the raw-pointer contract of this `unsafe fn`.
-    let imp = unsafe { ImpRef::<SceneImp>::from_payload(scene) };
+    let imp = unsafe { ImpHandle::<SceneImp>::from_payload(scene) };
     ufbx_assert!(imp.has_magic());
     if !imp.has_magic() {
         return;
@@ -2345,15 +2345,15 @@ pub(crate) unsafe fn create_anim(
 
     ac.set_scene(scene);
 
-    // C: `int ok = ufbxi_create_anim_imp(&ac);` — on success the `ImpToken`
+    // C: `int ok = ufbxi_create_anim_imp(&ac);` — on success the `FinishedImp`
     // carries the finished imp to the return below.
     let result = evaluate::create_anim_imp(&ac);
 
-    if let Ok(imp_token) = result {
+    if let Ok(finished_imp) = result {
         // SAFETY: `error` is null-or-live per this fn's contract.
         unsafe { clear_error(error) };
         // C: `return &ac->imp->anim;` — commit the finished imp across the ABI.
-        imp_token.into_payload()
+        finished_imp.into_payload()
     } else {
         // SAFETY: `ac.error_mut_ptr()` is the context's own error slot and
         // `error` is null-or-live per this fn's contract.
@@ -2385,7 +2385,7 @@ pub(crate) unsafe fn free_anim(anim: *mut Anim) {
 
     // SAFETY: the custom `anim` is the payload of a live `AnimImp` handed out
     // by this library — the raw-pointer contract of this `unsafe fn`.
-    let imp = unsafe { ImpRef::<AnimImp>::from_payload(anim) };
+    let imp = unsafe { ImpHandle::<AnimImp>::from_payload(anim) };
     ufbx_assert!(imp.has_magic());
     if !imp.has_magic() {
         return;
@@ -2406,7 +2406,7 @@ pub(crate) unsafe fn retain_anim(anim: *mut Anim) {
 
     // SAFETY: the custom `anim` is the payload of a live `AnimImp` handed out
     // by this library — the raw-pointer contract of this `unsafe fn`.
-    let imp = unsafe { ImpRef::<AnimImp>::from_payload(anim) };
+    let imp = unsafe { ImpHandle::<AnimImp>::from_payload(anim) };
     ufbx_assert!(imp.has_magic());
     if !imp.has_magic() {
         return;
@@ -2542,7 +2542,7 @@ pub(crate) unsafe fn retain_baked_anim(bake: *mut BakedAnim) {
 
     // SAFETY: the non-null `bake` is the payload of a live `BakedAnimImp`
     // handed out by this library — the raw-pointer contract of this `unsafe fn`.
-    let imp = unsafe { ImpRef::<BakedAnimImp>::from_payload(bake) };
+    let imp = unsafe { ImpHandle::<BakedAnimImp>::from_payload(bake) };
     ufbx_assert!(imp.has_magic());
     if !imp.has_magic() {
         return;
@@ -2558,7 +2558,7 @@ pub(crate) unsafe fn free_baked_anim(bake: *mut BakedAnim) {
 
     // SAFETY: the non-null `bake` is the payload of a live `BakedAnimImp`
     // handed out by this library — the raw-pointer contract of this `unsafe fn`.
-    let imp = unsafe { ImpRef::<BakedAnimImp>::from_payload(bake) };
+    let imp = unsafe { ImpHandle::<BakedAnimImp>::from_payload(bake) };
     ufbx_assert!(imp.has_magic());
     if !imp.has_magic() {
         return;
@@ -4600,17 +4600,17 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
     tc.set_curve(curve);
 
     // C: `int ok = ufbxi_tessellate_nurbs_curve_imp(&tc);` — on success the
-    // `ImpToken` carries the finished imp through the teardown to the return.
+    // `FinishedImp` carries the finished imp through the teardown to the return.
     let result = tessellate_nurbs_curve_imp(&tc);
 
     // SAFETY: `ator_tmp_mut_ptr()` addresses `tc`'s own temp allocator.
     unsafe { free_ator(tc.ator_tmp_mut_ptr()) };
 
-    if let Ok(imp_token) = result {
+    if let Ok(finished_imp) = result {
         // SAFETY: `error` is this fn's raw-pointer param, null or a live `Error`.
         unsafe { clear_error(error) };
         // C: `return &tc->imp->curve;` — commit the finished imp across the ABI.
-        imp_token.into_payload()
+        finished_imp.into_payload()
     } else {
         // SAFETY: `error_mut_ptr()` addresses `tc`'s own error; the byte literal
         // is NUL-terminated; `error` is null or a live `Error`.
@@ -4689,7 +4689,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     tc.set_surface(surface);
 
     // C: `int ok = ufbxi_tessellate_nurbs_surface_imp(&tc);` — on success the
-    // `ImpToken` carries the finished imp through the teardown to the return.
+    // `FinishedImp` carries the finished imp through the teardown to the return.
     let result = tessellate_nurbs_surface_imp(&tc);
 
     // SAFETY: these accessors address `tc`'s own temp buffer, position map, and
@@ -4698,11 +4698,11 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     unsafe { map_free(tc.position_map_mut_ptr()) };
     unsafe { free_ator(tc.ator_tmp_mut_ptr()) };
 
-    if let Ok(imp_token) = result {
+    if let Ok(finished_imp) = result {
         // SAFETY: `error` is this fn's raw-pointer param, null or a live `Error`.
         unsafe { clear_error(error) };
         // C: `return &tc->imp->mesh;` — commit the finished imp across the ABI.
-        imp_token.into_payload()
+        finished_imp.into_payload()
     } else {
         // SAFETY: `error_mut_ptr()` addresses `tc`'s own error; the byte literal
         // is NUL-terminated; `error` is null or a live `Error`.
@@ -4763,7 +4763,7 @@ pub(crate) unsafe fn free_line_curve(line_curve: *mut LineCurve) {
     // SAFETY: the tessellated `line_curve` is the payload of a live
     // `LineCurveImp` handed out by this library — the raw-pointer contract of
     // this `unsafe fn`.
-    let imp = unsafe { ImpRef::<LineCurveImp>::from_payload(line_curve) };
+    let imp = unsafe { ImpHandle::<LineCurveImp>::from_payload(line_curve) };
     ufbx_assert!(imp.has_magic());
     if !imp.has_magic() {
         return;
@@ -4785,7 +4785,7 @@ pub(crate) unsafe fn retain_line_curve(line_curve: *mut LineCurve) {
     // SAFETY: the tessellated `line_curve` is the payload of a live
     // `LineCurveImp` handed out by this library — the raw-pointer contract of
     // this `unsafe fn`.
-    let imp = unsafe { ImpRef::<LineCurveImp>::from_payload(line_curve) };
+    let imp = unsafe { ImpHandle::<LineCurveImp>::from_payload(line_curve) };
     ufbx_assert!(imp.has_magic());
     if !imp.has_magic() {
         return;
@@ -5524,7 +5524,7 @@ pub(crate) unsafe fn free_mesh(mesh: *mut Mesh) {
     // SAFETY: the subdivided/tessellated `mesh` is the payload of a live
     // `MeshImp` handed out by this library — the raw-pointer contract of this
     // `unsafe fn`.
-    let imp = unsafe { ImpRef::<MeshImp>::from_payload(mesh) };
+    let imp = unsafe { ImpHandle::<MeshImp>::from_payload(mesh) };
     ufbx_assert!(imp.has_magic());
     if !imp.has_magic() {
         return;
@@ -5546,7 +5546,7 @@ pub(crate) unsafe fn retain_mesh(mesh: *mut Mesh) {
     // SAFETY: the subdivided/tessellated `mesh` is the payload of a live
     // `MeshImp` handed out by this library — the raw-pointer contract of this
     // `unsafe fn`.
-    let imp = unsafe { ImpRef::<MeshImp>::from_payload(mesh) };
+    let imp = unsafe { ImpHandle::<MeshImp>::from_payload(mesh) };
     ufbx_assert!(imp.has_magic());
     if !imp.has_magic() {
         return;
@@ -5601,7 +5601,7 @@ pub(crate) unsafe fn free_geometry_cache(cache: *mut GeometryCache) {
 
     // SAFETY: the non-null `cache` is the payload of a live `GeometryCacheImp`
     // handed out by this library — the raw-pointer contract of this `unsafe fn`.
-    let imp = unsafe { ImpRef::<GeometryCacheImp>::from_payload(cache) };
+    let imp = unsafe { ImpHandle::<GeometryCacheImp>::from_payload(cache) };
     ufbx_assert!(imp.has_magic());
     if !imp.has_magic() {
         return;
@@ -5622,7 +5622,7 @@ pub(crate) unsafe fn retain_geometry_cache(cache: *mut GeometryCache) {
 
     // SAFETY: the non-null `cache` is the payload of a live `GeometryCacheImp`
     // handed out by this library — the raw-pointer contract of this `unsafe fn`.
-    let imp = unsafe { ImpRef::<GeometryCacheImp>::from_payload(cache) };
+    let imp = unsafe { ImpHandle::<GeometryCacheImp>::from_payload(cache) };
     ufbx_assert!(imp.has_magic());
     if !imp.has_magic() {
         return;
@@ -7526,7 +7526,7 @@ mod tests {
             retain_ref(&raw mut (*imp).refcount);
 
             let mesh_ptr = &raw mut (*imp).mesh;
-            let back = ImpRef::<MeshImp>::from_payload(mesh_ptr);
+            let back = ImpHandle::<MeshImp>::from_payload(mesh_ptr);
             assert_eq!(back.as_ptr(), imp);
             assert!(back.has_magic());
 
@@ -8165,7 +8165,7 @@ mod tests {
             let bake: *mut BakedAnim = &raw mut (*imp).bake;
 
             // `ufbxi_get_imp` round-trip: no `custom` gate on this pair.
-            let back = ImpRef::<BakedAnimImp>::from_payload(bake);
+            let back = ImpHandle::<BakedAnimImp>::from_payload(bake);
             assert_eq!(back.as_ptr(), imp);
 
             retain_baked_anim(bake);

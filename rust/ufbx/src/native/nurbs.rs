@@ -45,7 +45,7 @@ use crate::native::error::{ufbxi_check_err, ufbxi_check_err_msg, EMPTY_CHAR};
 #[cfg(feature = "tessellation")]
 use crate::native::hash::Map;
 #[cfg(feature = "tessellation")]
-use crate::native::parse::{finish_imp, ImpHeader, ImpRef, ImpToken, MeshImp, SceneImp};
+use crate::native::parse::{finish_imp, FinishedImp, ImpHandle, ImpHeader, MeshImp, SceneImp};
 use crate::native::parse::{ImpRecover, Refcount};
 #[cfg(feature = "tessellation")]
 use crate::native::platform::{add_ptr, ufbx_assert};
@@ -567,7 +567,7 @@ impl TessellateSurfaceContext {
 #[inline(never)]
 pub(crate) fn tessellate_nurbs_curve_imp(
     tc: &TessellateCurveContext,
-) -> Result<ImpToken<LineCurveImp>, Fail> {
+) -> Result<FinishedImp<LineCurveImp>, Fail> {
     // C: `tc->opts.span_subdivision <= 0` — `span_subdivision` is `size_t`.
     if tc.opts_view().span_subdivision() == 0 {
         tc.opts_view().set_span_subdivision(4);
@@ -720,17 +720,17 @@ pub(crate) fn tessellate_nurbs_curve_imp(
     // belongs to, which owns that curve for the duration of this call; and
     // `tc.line_mut_ptr()` is tc's own `LineCurve` slot — a distinct allocation
     // from the freshly pushed imp.
-    let imp_token = unsafe {
+    let finished_imp = unsafe {
         finish_imp(
             tc.imp(),
-            ImpRef::<SceneImp>::from_payload(ref_ptr(&(*curve).element.scene)).refcount_ptr(),
+            ImpHandle::<SceneImp>::from_payload(ref_ptr(&(*curve).element.scene)).refcount_ptr(),
             tc.line_mut_ptr(),
             tc.ator_result(),
             tc.take_result(),
         )
     };
 
-    Ok(imp_token)
+    Ok(finished_imp)
 }
 
 // ufbx.c:27933-28239 `ufbxi_tessellate_nurbs_surface_imp`
@@ -738,7 +738,7 @@ pub(crate) fn tessellate_nurbs_curve_imp(
 #[inline(never)]
 pub(crate) fn tessellate_nurbs_surface_imp(
     tc: &TessellateSurfaceContext,
-) -> Result<ImpToken<MeshImp>, Fail> {
+) -> Result<FinishedImp<MeshImp>, Fail> {
     // C: `tc->opts.span_subdivision_u <= 0` — `span_subdivision_u/v` are `size_t`.
     if tc.opts_view().span_subdivision_u() == 0 {
         tc.opts_view().set_span_subdivision_u(4);
@@ -1237,10 +1237,10 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     // allocation; the parent refcount comes from the scene owning the input
     // surface for the duration of this call; and `tc.mesh_mut_ptr()` is tc's own
     // `Mesh` slot, a distinct allocation from the pushed imp.
-    let imp_token = unsafe {
+    let finished_imp = unsafe {
         finish_imp(
             tc.imp(),
-            ImpRef::<SceneImp>::from_payload(ref_ptr(&(*surface).element.scene)).refcount_ptr(),
+            ImpHandle::<SceneImp>::from_payload(ref_ptr(&(*surface).element.scene)).refcount_ptr(),
             tc.mesh_mut_ptr(),
             tc.ator_result(),
             tc.take_result(),
@@ -1251,7 +1251,7 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     // payload is a live `Mesh` this call owns.
     unsafe { (*tc.imp()).mesh.subdivision_evaluated = true };
 
-    Ok(imp_token)
+    Ok(finished_imp)
 }
 
 // ufbx.c:28241 `#endif` (UFBXI_FEATURE_TESSELLATION)

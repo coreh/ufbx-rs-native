@@ -35,7 +35,7 @@ use crate::native::error::{
 #[cfg(not(feature = "subdivision"))]
 use crate::native::error::{ufbxi_fmt_err_info, ufbxi_report_err_msg};
 #[cfg(feature = "subdivision")]
-use crate::native::parse::{finish_imp, ImpRef, ImpToken, MeshImp, Refcount, SceneImp};
+use crate::native::parse::{finish_imp, FinishedImp, ImpHandle, MeshImp, Refcount, SceneImp};
 #[cfg(feature = "subdivision")]
 use crate::native::platform::{
     max_sz, min_sz, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable, unstable_sort, NO_INDEX,
@@ -3013,7 +3013,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
 pub(crate) fn subdivide_mesh_imp(
     sc: &SubdivideContext,
     level: usize,
-) -> Result<ImpToken<MeshImp>, crate::native::error::Fail> {
+) -> Result<FinishedImp<MeshImp>, crate::native::error::Fail> {
     if sc.opts_view().boundary() as u32 == SubdivisionBoundary::Default as u32 {
         sc.opts_view()
             .set_boundary(sc.src_mesh_view().subdivision_boundary());
@@ -3181,9 +3181,9 @@ pub(crate) fn subdivide_mesh_imp(
     // encode, and either parent outlives this call.
     let parent: *mut Refcount = unsafe {
         if src_mesh.subdivision_evaluated() && src_mesh.from_tessellated_nurbs() {
-            ImpRef::<MeshImp>::from_payload(sc.src_mesh_ptr()).refcount_ptr()
+            ImpHandle::<MeshImp>::from_payload(sc.src_mesh_ptr()).refcount_ptr()
         } else {
-            ImpRef::<SceneImp>::from_payload(ref_ptr(&(*sc.src_mesh_ptr()).element.scene))
+            ImpHandle::<SceneImp>::from_payload(ref_ptr(&(*sc.src_mesh_ptr()).element.scene))
                 .refcount_ptr()
         }
     };
@@ -3213,7 +3213,7 @@ pub(crate) fn subdivide_mesh_imp(
     // allocation of `sc->result`, so filling its header writes our own
     // allocation; `parent` is the live owner picked above; and `mesh.get()`
     // addresses sc's own `Mesh` slot, a distinct allocation from the pushed imp.
-    let imp_token = unsafe {
+    let finished_imp = unsafe {
         finish_imp(
             sc.imp(),
             parent,
@@ -3227,7 +3227,7 @@ pub(crate) fn subdivide_mesh_imp(
     // payload is a live `Mesh` this call owns.
     unsafe { (*sc.imp()).mesh.subdivision_evaluated = true };
 
-    Ok(imp_token)
+    Ok(finished_imp)
 }
 
 // ufbx.c:30036-30067 `ufbxi_subdivide_mesh`
@@ -3259,7 +3259,7 @@ pub(crate) unsafe fn subdivide_mesh(
     unsafe { core::ptr::copy_nonoverlapping(mesh, sc.src_mesh_mut_ptr(), 1) };
 
     // C: `int ok = ufbxi_subdivide_mesh_imp(sc, level);` — on success the
-    // `ImpToken` carries the finished imp through the shared teardown to the
+    // `FinishedImp` carries the finished imp through the shared teardown to the
     // return below.
     let result = subdivide_mesh_imp(sc, level);
 
@@ -3272,7 +3272,7 @@ pub(crate) unsafe fn subdivide_mesh(
     // SAFETY: as above.
     unsafe { buf_free(sc.source_mut_ptr()) };
 
-    if let Ok(imp_token) = result {
+    if let Ok(finished_imp) = result {
         // SAFETY: `ator_tmp_mut_ptr()` is `sc`'s own live temp allocator.
         unsafe { free_ator(sc.ator_tmp_mut_ptr()) };
         if !p_error.is_null() {
@@ -3281,7 +3281,7 @@ pub(crate) unsafe fn subdivide_mesh(
         }
 
         // C: `return &sc->imp->mesh;` — commit the finished imp across the ABI.
-        imp_token.into_payload()
+        finished_imp.into_payload()
     } else {
         // SAFETY: `error_mut_ptr()` is `sc`'s own live error slot; the description
         // is a `'static` NUL-terminated literal; `p_error` is the caller's
