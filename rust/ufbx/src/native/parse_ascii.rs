@@ -1096,19 +1096,22 @@ pub(crate) unsafe fn ascii_array_task_parse_floats(
     // SAFETY: `t` points to a valid, live `AsciiArrayTask` (caller contract);
     // reads its `offset` field.
     let mut offset: usize = unsafe { (*t).offset };
-    // SAFETY: `t` is a valid, live `AsciiArrayTask`; when its type is `'f'`,
-    // `arr_data` is the base of the `f32` destination array and `offset` is the
+    // SAFETY: `t` is a valid, live `AsciiArrayTask`; when its type is `'f'`/`'d'`,
+    // `arr_data` is the base of the matching destination array and `offset` is the
     // count already written, so `add_ptr` addresses its next slot.
-    let mut dst_float: *mut f32 = if unsafe { (*t).arr_type } == b'f' {
-        add_ptr(unsafe { (*t).arr_data } as *mut f32, offset)
-    } else {
-        core::ptr::null_mut()
-    };
-    // SAFETY: as above, for the `'d'` (f64) destination array.
-    let mut dst_double: *mut f64 = if unsafe { (*t).arr_type } == b'd' {
-        add_ptr(unsafe { (*t).arr_data } as *mut f64, offset)
-    } else {
-        core::ptr::null_mut()
+    let (mut dst_float, mut dst_double): (*mut f32, *mut f64) = unsafe {
+        (
+            if (*t).arr_type == b'f' {
+                add_ptr((*t).arr_data as *mut f32, offset)
+            } else {
+                core::ptr::null_mut()
+            },
+            if (*t).arr_type == b'd' {
+                add_ptr((*t).arr_data as *mut f64, offset)
+            } else {
+                core::ptr::null_mut()
+            },
+        )
     };
     ufbx_assert!(!dst_float.is_null() || !dst_double.is_null());
     let mut src_begin: *const u8 = src;
@@ -1194,19 +1197,22 @@ pub(crate) unsafe fn ascii_array_task_parse_ints(
     // SAFETY: `t` points to a valid, live `AsciiArrayTask` (caller contract);
     // reads its `offset` field.
     let mut offset: usize = unsafe { (*t).offset };
-    // SAFETY: `t` is a valid, live `AsciiArrayTask`; when its type is `'i'`,
-    // `arr_data` is the base of the `i32` destination array and `offset` is the
+    // SAFETY: `t` is a valid, live `AsciiArrayTask`; when its type is `'i'`/`'l'`,
+    // `arr_data` is the base of the matching destination array and `offset` is the
     // count already written, so `add_ptr` addresses its next slot.
-    let mut dst32: *mut i32 = if unsafe { (*t).arr_type } == b'i' {
-        add_ptr(unsafe { (*t).arr_data } as *mut i32, offset)
-    } else {
-        core::ptr::null_mut()
-    };
-    // SAFETY: as above, for the `'l'` (i64) destination array.
-    let mut dst64: *mut i64 = if unsafe { (*t).arr_type } == b'l' {
-        add_ptr(unsafe { (*t).arr_data } as *mut i64, offset)
-    } else {
-        core::ptr::null_mut()
+    let (mut dst32, mut dst64): (*mut i32, *mut i64) = unsafe {
+        (
+            if (*t).arr_type == b'i' {
+                add_ptr((*t).arr_data as *mut i32, offset)
+            } else {
+                core::ptr::null_mut()
+            },
+            if (*t).arr_type == b'l' {
+                add_ptr((*t).arr_data as *mut i64, offset)
+            } else {
+                core::ptr::null_mut()
+            },
+        )
     };
     ufbx_assert!(!dst32.is_null() || !dst64.is_null());
     let mut src_begin: *const u8 = src;

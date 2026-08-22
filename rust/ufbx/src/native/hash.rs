@@ -933,9 +933,7 @@ pub(crate) unsafe extern "C" fn map_cmp_uint64(
     let _ = user; // (void)user
                   // SAFETY: C-callback contract — the map compares `u64` keys, so `va`/`vb`
                   // each address a live `u64`.
-    let a = unsafe { *(va as *const u64) };
-    // SAFETY: as above, for `vb`.
-    let b = unsafe { *(vb as *const u64) };
+    let (a, b) = unsafe { (*(va as *const u64), *(vb as *const u64)) };
     if a < b {
         return -1;
     }
@@ -954,9 +952,7 @@ pub(crate) unsafe extern "C" fn map_cmp_const_char_ptr(
     let _ = user; // (void)user
                   // SAFETY: C-callback contract — the map compares `const char *` keys, so
                   // `va`/`vb` each address a live `*const u8`.
-    let a = unsafe { *(va as *const *const u8) };
-    // SAFETY: as above, for `vb`.
-    let b = unsafe { *(vb as *const *const u8) };
+    let (a, b) = unsafe { (*(va as *const *const u8), *(vb as *const *const u8)) };
     if a < b {
         return -1;
     }
@@ -975,9 +971,7 @@ pub(crate) unsafe extern "C" fn map_cmp_uintptr(
     let _ = user; // (void)user
                   // SAFETY: C-callback contract — the map compares `uintptr_t` keys, so
                   // `va`/`vb` each address a live `usize`.
-    let a = unsafe { *(va as *const usize) };
-    // SAFETY: as above, for `vb`.
-    let b = unsafe { *(vb as *const usize) };
+    let (a, b) = unsafe { (*(va as *const usize), *(vb as *const usize)) };
     if a < b {
         return -1;
     }
@@ -999,9 +993,7 @@ pub(crate) unsafe extern "C" fn map_cmp_ptr_id(
     let _ = user; // (void)user
                   // SAFETY: C-callback contract — the map compares `ufbxi_ptr_id` keys, so
                   // `va`/`vb` each address a live `PtrId`.
-    let a = unsafe { *(va as *const PtrId) };
-    // SAFETY: as above, for `vb`.
-    let b = unsafe { *(vb as *const PtrId) };
+    let (a, b) = unsafe { (*(va as *const PtrId), *(vb as *const PtrId)) };
     if a.id != b.id {
         return if a.id < b.id { -1 } else { 1 };
     }

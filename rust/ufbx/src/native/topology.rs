@@ -338,10 +338,14 @@ unsafe fn kd_check_slow_rec(
             )
         };
         let split: Real = dot3(point, nc.axes_at(axis as usize).get());
-        // SAFETY (this group): `tri` points to a valid, live `KdTriangle` (caller contract);
+        // SAFETY: `tri` points to a valid, live `KdTriangle` (caller contract);
         // `axis` is 0 or 1, in bounds for the length-2 `min_t`/`max_t` arrays.
-        let hit_left: bool = unsafe { (*tri).min_t[axis as usize] } <= split;
-        let hit_right: bool = unsafe { (*tri).max_t[axis as usize] } >= split;
+        let (hit_left, hit_right) = unsafe {
+            (
+                (*tri).min_t[axis as usize] <= split,
+                (*tri).max_t[axis as usize] >= split,
+            )
+        };
 
         if hit_left && hit_right {
             // SAFETY: forwards the caller's `nc`/`tri` validity to `kd_check_point`.
@@ -423,10 +427,14 @@ unsafe fn kd_check_fast_rec(
             return false;
         }
 
-        // SAFETY (this group): `tri` points to a valid, live `KdTriangle` (caller contract);
+        // SAFETY: `tri` points to a valid, live `KdTriangle` (caller contract);
         // `axis` is 0 or 1, in bounds for the length-2 `min_t`/`max_t` arrays.
-        let hit_left: bool = unsafe { (*tri).min_t[axis as usize] } <= node.split;
-        let hit_right: bool = unsafe { (*tri).max_t[axis as usize] } >= node.split;
+        let (hit_left, hit_right) = unsafe {
+            (
+                (*tri).min_t[axis as usize] <= node.split,
+                (*tri).max_t[axis as usize] >= node.split,
+            )
+        };
 
         let side: u32 = if hit_left { 0 } else { 1 };
         let child_kd_index: u32 = kd_index.wrapping_mul(2).wrapping_add(1).wrapping_add(side);
@@ -507,21 +515,17 @@ pub(crate) unsafe fn kd_check(nc: &NgonContext, points: *const Vec2, indices: *c
     // SAFETY: `KdTriangle` is plain arithmetic/index scalars; an all-zero bit
     // pattern is a valid value.
     let mut tri: KdTriangle = unsafe { core::mem::zeroed() }; // ufbxi_uninit
-                                                              // SAFETY: the caller passes `points`/`indices` addressing the 3 corners of
-                                                              // the candidate triangle, so offsets 0..=2 are in bounds and readable.
-    tri.points[0] = unsafe { *points.add(0) };
-    // SAFETY: as above.
-    tri.points[1] = unsafe { *points.add(1) };
-    // SAFETY: as above.
-    tri.points[2] = unsafe { *points.add(2) };
-    // SAFETY: as above, for `indices`.
-    tri.indices[0] = unsafe { *indices.add(0) };
-    // SAFETY: as above.
-    tri.indices[1] = unsafe { *indices.add(1) };
-    // SAFETY: as above.
-    tri.indices[2] = unsafe { *indices.add(2) };
-    // SAFETY: `points` offsets 0..=2 are the readable triangle corners (as above).
+
+    // SAFETY: the caller passes `points`/`indices` addressing the 3 corners of
+    // the candidate triangle, so offsets 0..=2 are in bounds and readable.
     unsafe {
+        tri.points[0] = *points.add(0);
+        tri.points[1] = *points.add(1);
+        tri.points[2] = *points.add(2);
+        tri.indices[0] = *indices.add(0);
+        tri.indices[1] = *indices.add(1);
+        tri.indices[2] = *indices.add(2);
+
         tri.min_t[0] = min_real(
             min_real((*points.add(0)).x, (*points.add(1)).x),
             (*points.add(2)).x,
@@ -556,7 +560,7 @@ pub(crate) unsafe extern "C" fn kd_index_less(
     // `kd_build_rec` passed — the `&NgonContext` address — so this forms a
     // shared borrow of that live context.
     let nc: &NgonContext = unsafe { &*(user as *const NgonContext) };
-    let pos: *mut VertexVec3 = nc.positions_mut_ptr();
+    let pos: &crate::native::subdivision::VertexVec3View = nc.positions_view();
     // SAFETY: the comparator contract is that `va`/`vb` address live `u32`
     // elements of the KD index buffer being sorted.
     let (a, b) = unsafe { (*(va as *const u32), *(vb as *const u32)) };
@@ -564,9 +568,8 @@ pub(crate) unsafe extern "C" fn kd_index_less(
     // `cur_face.index_begin + a` selects a live `indices` slot whose value is an
     // in-range `values` slot; `pos` is `nc`'s own live `positions`.
     let da: Real = dot3(nc.cur_axis_dir(), unsafe {
-        *(*pos).values.data.add(
-            *(*pos)
-                .indices
+        *pos.values().data.add(
+            *pos.indices()
                 .data
                 .add(nc.cur_face_view().index_begin().wrapping_add(a) as usize)
                 as usize,
@@ -574,9 +577,8 @@ pub(crate) unsafe extern "C" fn kd_index_less(
     });
     // SAFETY: as above, for corner index `b`.
     let db: Real = dot3(nc.cur_axis_dir(), unsafe {
-        *(*pos).values.data.add(
-            *(*pos)
-                .indices
+        *pos.values().data.add(
+            *pos.indices()
                 .data
                 .add(nc.cur_face_view().index_begin().wrapping_add(b) as usize)
                 as usize,
@@ -1174,13 +1176,14 @@ pub(crate) unsafe extern "C" fn topo_less_index_prev_next(
     let b: *const TopoEdge = vb as *const TopoEdge;
     // C: the `prev`/`next` fields temporarily hold vertex indices and are
     // compared as `int32_t` (a `UFBX_NO_INDEX` sorts as -1, i.e. first).
-    // SAFETY (this group): the sort's comparator contract is that `va`/`vb` address live
+    // SAFETY: the sort's comparator contract is that `va`/`vb` address live
     // `TopoEdge` elements of the array being sorted (`compute_topology`'s `topo`).
-    if unsafe { (*a).prev as i32 != (*b).prev as i32 } {
-        // SAFETY: as above.
-        return unsafe { ((*a).prev as i32) < ((*b).prev as i32) };
+    unsafe {
+        if (*a).prev as i32 != (*b).prev as i32 {
+            return ((*a).prev as i32) < ((*b).prev as i32);
+        }
+        ((*a).next as i32) < ((*b).next as i32)
     }
-    unsafe { ((*a).next as i32) < ((*b).next as i32) }
 }
 
 // ufbx.c:28700-28705 `ufbxi_topo_less_index_index`
@@ -1268,9 +1271,12 @@ pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: *mut 
             let edge: Edge = unsafe { *mesh.edges().data.add(ei as usize) };
             // SAFETY: `edge.a`/`edge.b` index the mesh's own `vertex_indices`
             // array, live for a mesh whose `edges` are populated.
-            let mut va: u32 = unsafe { *mesh.vertex_indices().data.add(edge.a as usize) };
-            // SAFETY: as above, for `edge.b`.
-            let mut vb: u32 = unsafe { *mesh.vertex_indices().data.add(edge.b as usize) };
+            let (mut va, mut vb) = unsafe {
+                (
+                    *mesh.vertex_indices().data.add(edge.a as usize),
+                    *mesh.vertex_indices().data.add(edge.b as usize),
+                )
+            };
             if vb < va {
                 std::mem::swap(&mut va, &mut vb);
             }

@@ -218,13 +218,14 @@ pub(crate) unsafe fn swap_endian_array(
     count: usize,
     type_: u8,
 ) -> *const u8 {
-    match type_ {
-        // SAFETY: forwards the caller's contract — `src` addresses `count`
-        // elements of the size selected by `type_` — to `swap_endian`.
-        b'i' | b'f' => unsafe { swap_endian(uc, src, count, 4) },
-        // SAFETY: as above.
-        b'l' | b'd' => unsafe { swap_endian(uc, src, count, 8) },
-        _ => src as *const u8,
+    // SAFETY: forwards the caller's contract — `src` addresses `count`
+    // elements of the size selected by `type_` — to `swap_endian`.
+    unsafe {
+        match type_ {
+            b'i' | b'f' => swap_endian(uc, src, count, 4),
+            b'l' | b'd' => swap_endian(uc, src, count, 8),
+            _ => src as *const u8,
+        }
     }
 }
 
@@ -233,20 +234,18 @@ pub(crate) unsafe fn swap_endian_array(
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn swap_endian_value(uc: &Context, src: *const c_void, type_: u8) -> *const u8 {
-    match type_ {
-        // SAFETY: each arm forwards to `swap_endian` a `src` the caller
-        // guarantees addresses at least the `count * elem_size` bytes named by
-        // the constants below (the value's header words for its `type_`).
-        b'Y' => unsafe { swap_endian(uc, src, 1, 2) },
-        // SAFETY: as above.
-        b'I' | b'F' => unsafe { swap_endian(uc, src, 1, 4) },
-        // SAFETY: as above.
-        b'L' | b'D' => unsafe { swap_endian(uc, src, 1, 8) },
-        // SAFETY: as above.
-        b'S' | b'R' => unsafe { swap_endian(uc, src, 1, 4) },
-        // SAFETY: as above.
-        b'i' | b'l' | b'f' | b'd' | b'b' => unsafe { swap_endian(uc, src, 3, 4) },
-        _ => src as *const u8,
+    // SAFETY: each arm forwards to `swap_endian` a `src` the caller
+    // guarantees addresses at least the `count * elem_size` bytes named by
+    // the constants below (the value's header words for its `type_`).
+    unsafe {
+        match type_ {
+            b'Y' => swap_endian(uc, src, 1, 2),
+            b'I' | b'F' => swap_endian(uc, src, 1, 4),
+            b'L' | b'D' => swap_endian(uc, src, 1, 8),
+            b'S' | b'R' => swap_endian(uc, src, 1, 4),
+            b'i' | b'l' | b'f' | b'd' | b'b' => swap_endian(uc, src, 3, 4),
+            _ => src as *const u8,
+        }
     }
 }
 
@@ -639,20 +638,19 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
     }
 
     if !file_big_endian {
-        match dst_type {
-            // SAFETY: the fast-parse loop re-peeks a fresh 13-byte window each
-            // step (null-checked), reads its typed value, and writes one `$m_dst`
-            // to `d`, which walks the `dst` array of `size` elements (caller
-            // contract) starting at `base`; it advances `d` only after checking
-            // `base < size`, so writes stay in bounds.
-            b'i' => unsafe { ufbxi_convert_parse_fast!(i32, b'I', read_i32(val)) },
-            // SAFETY: as above.
-            b'l' => unsafe { ufbxi_convert_parse_fast!(i64, b'L', read_i64(val)) },
-            // SAFETY: as above.
-            b'f' => unsafe { ufbxi_convert_parse_fast!(f32, b'F', read_f32(val)) },
-            // SAFETY: as above.
-            b'd' => unsafe { ufbxi_convert_parse_fast!(f64, b'D', read_f64(val)) },
-            _ => {} // Fallthrough to rest
+        // SAFETY: the fast-parse loop re-peeks a fresh 13-byte window each
+        // step (null-checked), reads its typed value, and writes one `$m_dst`
+        // to `d`, which walks the `dst` array of `size` elements (caller
+        // contract) starting at `base`; it advances `d` only after checking
+        // `base < size`, so writes stay in bounds.
+        unsafe {
+            match dst_type {
+                b'i' => ufbxi_convert_parse_fast!(i32, b'I', read_i32(val)),
+                b'l' => ufbxi_convert_parse_fast!(i64, b'L', read_i64(val)),
+                b'f' => ufbxi_convert_parse_fast!(f32, b'F', read_f32(val)),
+                b'd' => ufbxi_convert_parse_fast!(f64, b'D', read_f64(val)),
+                _ => {} // Fallthrough to rest
+            }
         }
 
         // Early return if we handled everything
@@ -719,24 +717,22 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
         }};
     }
 
-    match dst_type {
-        // SAFETY: the switch loop re-peeks a fresh 13-byte window each step
-        // (null-checked), reads its typed value (for a big-endian file the header
-        // words are first copied byte-swapped into `uc`'s owned swap buffer and
-        // read from there), and writes one `$m_dst` to `d`, which starts at
-        // `base` in the `dst` array of `size` elements (caller contract) and
-        // advances only while `i < size`, so writes stay in bounds.
-        b'c' => unsafe { ufbxi_convert_parse_switch!(u8, ufbxi_cast_u8, ufbxi_cast_u8) },
-        // SAFETY: as above.
-        b'i' => unsafe { ufbxi_convert_parse_switch!(i32, ufbxi_cast_i32, ufbxi_cast_f64_to_i32) },
-        // SAFETY: as above.
-        b'l' => unsafe { ufbxi_convert_parse_switch!(i64, ufbxi_cast_i64, ufbxi_cast_f64_to_i64) },
-        // SAFETY: as above.
-        b'f' => unsafe { ufbxi_convert_parse_switch!(f32, ufbxi_cast_f32, ufbxi_cast_f32) },
-        // SAFETY: as above.
-        b'd' => unsafe { ufbxi_convert_parse_switch!(f64, ufbxi_cast_f64, ufbxi_cast_f64) },
+    // SAFETY: the switch loop re-peeks a fresh 13-byte window each step
+    // (null-checked), reads its typed value (for a big-endian file the header
+    // words are first copied byte-swapped into `uc`'s owned swap buffer and
+    // read from there), and writes one `$m_dst` to `d`, which starts at
+    // `base` in the `dst` array of `size` elements (caller contract) and
+    // advances only while `i < size`, so writes stay in bounds.
+    unsafe {
+        match dst_type {
+            b'c' => ufbxi_convert_parse_switch!(u8, ufbxi_cast_u8, ufbxi_cast_u8),
+            b'i' => ufbxi_convert_parse_switch!(i32, ufbxi_cast_i32, ufbxi_cast_f64_to_i32),
+            b'l' => ufbxi_convert_parse_switch!(i64, ufbxi_cast_i64, ufbxi_cast_f64_to_i64),
+            b'f' => ufbxi_convert_parse_switch!(f32, ufbxi_cast_f32, ufbxi_cast_f32),
+            b'd' => ufbxi_convert_parse_switch!(f64, ufbxi_cast_f64, ufbxi_cast_f64),
 
-        _ => return Err(Fail),
+            _ => return Err(Fail),
+        }
     }
 
     Ok(())

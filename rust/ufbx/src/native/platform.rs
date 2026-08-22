@@ -393,9 +393,10 @@ pub(crate) unsafe fn copy_16_bytes(dst: *mut u8, src: *const u8) {
     // uninitialized, which `MaybeUninit` tolerates) and `dst` 16 writable ones;
     // no alignment is required by the unaligned accessors, and load-then-store
     // is well defined when the two ranges overlap.
-    let t = unsafe { (src as *const MaybeUninit<[u8; 16]>).read_unaligned() };
-    // SAFETY: as above, for the store half.
-    unsafe { (dst as *mut MaybeUninit<[u8; 16]>).write_unaligned(t) };
+    unsafe {
+        let t = (src as *const MaybeUninit<[u8; 16]>).read_unaligned();
+        (dst as *mut MaybeUninit<[u8; 16]>).write_unaligned(t);
+    }
 }
 
 // -- Large fast integer
@@ -854,10 +855,9 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
             }
             // C: `(mi_i < mi_i_end) & (mi_j < mi_j_end)` — non-short-circuit.
             while (i < i_end) & (j < j_end) {
-                // SAFETY (both): run contract; `j < j_end <= size` and
+                // SAFETY: run contract; `j < j_end <= size` and
                 // `i < i_end <= size` are the loop condition.
-                let a: *const T = unsafe { src.add(j) };
-                let b: *const T = unsafe { src.add(i) };
+                let (a, b) = unsafe { (src.add(j), src.add(i)) };
                 if cmp_lambda(a, b) {
                     // SAFETY: run contract; `k < size` (it advances once per
                     // consumed source element of this merge pair), and `a` is
@@ -1124,10 +1124,9 @@ pub(crate) unsafe fn stable_sort(
             }
             // C: `(i < i_end) & (j < j_end)` — non-short-circuit.
             while (i < i_end) & (j < j_end) {
-                // SAFETY (both): run contract; `j < j_end <= size` and
+                // SAFETY: run contract; `j < j_end <= size` and
                 // `i < i_end <= size` are the loop condition.
-                let a = unsafe { src.add(j * stride) };
-                let b = unsafe { src.add(i * stride) };
+                let (a, b) = unsafe { (src.add(j * stride), src.add(i * stride)) };
                 // SAFETY: `a`/`b` are element pointers into the run `less_fn`
                 // was handed with `less_user`.
                 if unsafe { less_fn(less_user, a as *const c_void, b as *const c_void) } {

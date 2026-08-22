@@ -734,9 +734,12 @@ pub(crate) unsafe extern "C" fn subdivision_weight_less(
     let _ = user;
     // SAFETY: the sort comparator contract guarantees `va` and `vb` each point
     // to a live `SubdivisionWeight` element; `ptr::read` copies each out by value.
-    let a: SubdivisionWeight = unsafe { core::ptr::read(va as *const SubdivisionWeight) };
-    // SAFETY: as above for `vb`.
-    let b: SubdivisionWeight = unsafe { core::ptr::read(vb as *const SubdivisionWeight) };
+    let (a, b) = unsafe {
+        (
+            core::ptr::read(va as *const SubdivisionWeight),
+            core::ptr::read(vb as *const SubdivisionWeight),
+        )
+    };
     ufbxi_dev_assert!(a.index != b.index);
     if a.weight != b.weight {
         return a.weight > b.weight;
@@ -931,20 +934,17 @@ pub(crate) unsafe fn is_edge_split(
         }
         let stride: usize = unsafe { (*input).stride };
         // SAFETY: `input.values` is a byte-addressed attribute buffer holding
-        // `stride` bytes per value; `a0` comes from `input.indices`, which maps
-        // corners to indices into that value array (not to mesh vertices), so
-        // the `.add(a0*stride)` byte offset stays within the buffer.
-        let da0: *const u8 =
-            unsafe { ((*input).values as *const u8).add((a0 as usize).wrapping_mul(stride)) };
-        // SAFETY: as above with value index `a1`.
-        let da1: *const u8 =
-            unsafe { ((*input).values as *const u8).add((a1 as usize).wrapping_mul(stride)) };
-        // SAFETY: as above with value index `b0`.
-        let db0: *const u8 =
-            unsafe { ((*input).values as *const u8).add((b0 as usize).wrapping_mul(stride)) };
-        // SAFETY: as above with value index `b1`.
-        let db1: *const u8 =
-            unsafe { ((*input).values as *const u8).add((b1 as usize).wrapping_mul(stride)) };
+        // `stride` bytes per value; `a0`/`a1`/`b0`/`b1` come from `input.indices`,
+        // which maps corners to indices into that value array (not to mesh
+        // vertices), so every `.add(ix*stride)` byte offset stays within the buffer.
+        let (da0, da1, db0, db1) = unsafe {
+            (
+                ((*input).values as *const u8).add((a0 as usize).wrapping_mul(stride)),
+                ((*input).values as *const u8).add((a1 as usize).wrapping_mul(stride)),
+                ((*input).values as *const u8).add((b0 as usize).wrapping_mul(stride)),
+                ((*input).values as *const u8).add((b1 as usize).wrapping_mul(stride)),
+            )
+        };
         // SAFETY: `da0`/`db0` and `da1`/`db1` each point to `stride` live bytes
         // within `input.values`, the length `memcmp` compares.
         if unsafe { memcmp(da0, db0, stride) == 0 && memcmp(da1, db1, stride) == 0 } {
@@ -1213,18 +1213,17 @@ pub(crate) unsafe fn subdivide_layer(
             crease = 1.0;
         }
 
-        // SAFETY: `input` is live; `indices[ix]` is an in-range index into the
-        // value array whose `stride`-sized entry the byte offset into `values`
-        // addresses.
-        let v0: *const u8 = unsafe {
-            ((*input).values as *const u8)
-                .add((*(*input).indices.add(ix as usize) as usize).wrapping_mul(stride))
-        };
-        // SAFETY: as above, using this corner's `.next` sibling corner's value.
-        let v1: *const u8 = unsafe {
-            ((*input).values as *const u8).add(
-                (*(*input).indices.add((*topo.add(ix as usize)).next as usize) as usize)
-                    .wrapping_mul(stride),
+        // SAFETY: `input` is live; `indices[ix]` and `indices[topo[ix].next]` are
+        // in-range indices into the value array whose `stride`-sized entries the
+        // byte offsets into `values` address.
+        let (v0, v1) = unsafe {
+            (
+                ((*input).values as *const u8)
+                    .add((*(*input).indices.add(ix as usize) as usize).wrapping_mul(stride)),
+                ((*input).values as *const u8).add(
+                    (*(*input).indices.add((*topo.add(ix as usize)).next as usize) as usize)
+                        .wrapping_mul(stride),
+                ),
             )
         };
 
@@ -1233,13 +1232,14 @@ pub(crate) unsafe fn subdivide_layer(
             // Already calculated
         } else if crease <= 0.0 {
             // SAFETY: this corner's and its twin's `.face` are in-range face
-            // indices, so `face*stride` stays within the face segment of `values`.
-            let f0: *const u8 = unsafe {
-                face_values.add(((*topo.add(ix as usize)).face as usize).wrapping_mul(stride))
-            };
-            // SAFETY: as above, for the twin corner (`twin != NO_INDEX` in this arm).
-            let f1: *const u8 = unsafe {
-                face_values.add(((*topo.add(twin as usize)).face as usize).wrapping_mul(stride))
+            // indices (`twin != NO_INDEX` in this arm), so `face*stride` stays
+            // within the face segment of `values`.
+            let (f0, f1) = unsafe {
+                (
+                    face_values.add(((*topo.add(ix as usize)).face as usize).wrapping_mul(stride)),
+                    face_values
+                        .add(((*topo.add(twin as usize)).face as usize).wrapping_mul(stride)),
+                )
             };
             // SAFETY: `inputs` holds at least 4 live slots (grown `>= 32`); the
             // four `data`/`weight` fields are the sum-fn's inputs.
@@ -1279,12 +1279,12 @@ pub(crate) unsafe fn subdivide_layer(
         } else if crease < 1.0 {
             // SAFETY: this corner's and its twin's `.face` are in-range face
             // indices, so `face*stride` stays within the face segment of `values`.
-            let f0: *const u8 = unsafe {
-                face_values.add(((*topo.add(ix as usize)).face as usize).wrapping_mul(stride))
-            };
-            // SAFETY: as above, for the twin corner.
-            let f1: *const u8 = unsafe {
-                face_values.add(((*topo.add(twin as usize)).face as usize).wrapping_mul(stride))
+            let (f0, f1) = unsafe {
+                (
+                    face_values.add(((*topo.add(ix as usize)).face as usize).wrapping_mul(stride)),
+                    face_values
+                        .add(((*topo.add(twin as usize)).face as usize).wrapping_mul(stride)),
+                )
             };
             let w0: Real = 0.25 + 0.25 * crease;
             let w1: Real = 0.25 - 0.25 * crease;
@@ -1402,21 +1402,22 @@ pub(crate) unsafe fn subdivide_layer(
             let mut num_inputs: usize = 4;
 
             {
-                // SAFETY: `input`/`topo` live; the `.next` sibling corner's vertex
-                // is in-range, addressing its `stride`-sized attribute in `values`.
-                let e0: *const u8 = unsafe {
-                    ((*input).values as *const u8).add(
-                        (*(*input)
-                            .indices
-                            .add((*topo.add(start as usize)).next as usize)
-                            as usize)
-                            .wrapping_mul(stride),
-                    )
-                };
-                // SAFETY: as above, using `start_prev`'s vertex.
-                let e1: *const u8 = unsafe {
-                    ((*input).values as *const u8).add(
-                        (*(*input).indices.add(start_prev as usize) as usize).wrapping_mul(stride),
+                // SAFETY: `input`/`topo` live; the `.next` sibling corner's and
+                // `start_prev`'s vertices are in-range, addressing their
+                // `stride`-sized attributes in `values`.
+                let (e0, e1) = unsafe {
+                    (
+                        ((*input).values as *const u8).add(
+                            (*(*input)
+                                .indices
+                                .add((*topo.add(start as usize)).next as usize)
+                                as usize)
+                                .wrapping_mul(stride),
+                        ),
+                        ((*input).values as *const u8).add(
+                            (*(*input).indices.add(start_prev as usize) as usize)
+                                .wrapping_mul(stride),
+                        ),
                     )
                 };
                 // SAFETY: this corner's `.face` is an in-range face index, so
@@ -1435,11 +1436,15 @@ pub(crate) unsafe fn subdivide_layer(
                 }
             }
 
-            // SAFETY: `input`/`topo` live; `start` is an in-range corner index.
-            let start_split: bool = unsafe { is_edge_split(input, topo, start) };
-            // SAFETY: as above; `end_edge != NO_INDEX` is an in-range corner index.
-            let prev_split: bool =
-                end_edge != NO_INDEX && unsafe { is_edge_split(input, topo, end_edge) };
+            // SAFETY: `input`/`topo` live; `start` is an in-range corner index, and
+            // the short-circuiting `end_edge != NO_INDEX` guard keeps the second
+            // call's corner index in range too.
+            let (start_split, prev_split) = unsafe {
+                (
+                    is_edge_split(input, topo, start),
+                    end_edge != NO_INDEX && is_edge_split(input, topo, end_edge),
+                )
+            };
 
             // Either of the first two edges may be creased
             // SAFETY: `topo` live; `start` is an in-range corner index.
@@ -2010,15 +2015,20 @@ pub(crate) unsafe fn init_skin_weights(
         "dst"
     );
 
+    // C: `const ufbx_skin_deformer *skin` — read-only for the whole call, so a
+    // `Const` view (mintable from any readable provenance) is the honest mode.
+    // SAFETY: `skin` points to a live `SkinDeformer` (fn contract) that nothing
+    // in this call writes, satisfying the frozen-tag requirement.
+    let skin: &View<SkinDeformer, Const> = unsafe { View::<SkinDeformer, Const>::from_ptr(skin) };
+
     let mut i: usize = 0;
     while i < num_vertices {
-        // SAFETY: `skin` points to a live `SkinDeformer` (fn contract).
-        ufbxi_dev_assert!(i < unsafe { (*skin).vertices.count });
+        ufbxi_dev_assert!(i < skin.vertices().count);
         // SAFETY: `skin.vertices.count >= num_vertices` by loaded-scene
         // consistency — a mesh's skin deformer carries an entry per vertex,
         // the assumption ufbx.c makes too — so `.add(i)` is a live element,
         // copied out by value; dev-asserted in dev/regression builds.
-        let vertex: SkinVertex = unsafe { *(*skin).vertices.data.add(i) };
+        let vertex: SkinVertex = unsafe { *skin.vertices().data.add(i) };
         let num_weights: usize = min_sz(sc.max_vertex_weights(), vertex.num_weights as usize);
 
         let weights: *mut SubdivisionWeight = sc.tmp_view().push::<SubdivisionWeight>(num_weights);
@@ -2031,10 +2041,10 @@ pub(crate) unsafe fn init_skin_weights(
             "weights"
         );
 
-        // SAFETY: `skin` is live; `vertex.weight_begin` indexes into its
-        // `weights` list, so `.add(weight_begin)` points at this vertex's run.
+        // SAFETY: `vertex.weight_begin` indexes into the deformer's `weights`
+        // list, so `.add(weight_begin)` points at this vertex's run.
         let skin_weights: *const SkinWeight =
-            unsafe { (*skin).weights.data.add(vertex.weight_begin as usize) };
+            unsafe { skin.weights().data.add(vertex.weight_begin as usize) };
 
         // SAFETY: `dst` is a fresh `num_vertices`-element push and `i` is in
         // range, so slot `i` is live.
@@ -2369,20 +2379,22 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 true,
             )?;
             if sc.opts_view().interpolate_tangents() {
-                subdivide_attrib(
-                    sc,
-                    // SAFETY: as above, for this set's tangent attribute.
-                    unsafe { attrib_view(set.vertex_tangent_raw()) },
-                    sc.opts_view().uv_boundary(),
-                    true,
-                )?;
-                subdivide_attrib(
-                    sc,
-                    // SAFETY: as above, for the bitangent attribute.
-                    unsafe { attrib_view(set.vertex_bitangent_raw()) },
-                    sc.opts_view().uv_boundary(),
-                    true,
-                )?;
+                // SAFETY: as above, for this set's tangent and bitangent
+                // attribute fields.
+                unsafe {
+                    subdivide_attrib(
+                        sc,
+                        attrib_view(set.vertex_tangent_raw()),
+                        sc.opts_view().uv_boundary(),
+                        true,
+                    )?;
+                    subdivide_attrib(
+                        sc,
+                        attrib_view(set.vertex_bitangent_raw()),
+                        sc.opts_view().uv_boundary(),
+                        true,
+                    )?;
+                }
             } else {
                 // SAFETY: each `*_raw()` addresses a live attribute field of this
                 // set, zeroed in place to its own size.
@@ -2548,6 +2560,21 @@ pub(crate) unsafe fn subdivide_mesh_level(
         // SAFETY: `subdivision_result_ptr()` addresses `mesh`'s own live
         // optional-ref field, from which `opt_ptr` reads the raw pointer (or null).
         let mesh_sub: *mut SubdivisionResult = unsafe { opt_ptr(mesh.subdivision_result_ptr()) };
+        // The source mesh's previous-level result is read-only in this scope, so
+        // it is viewed `Const` (the frozen tag holds: every write below targets
+        // `result_sub`, a distinct fresh allocation).
+        // SAFETY: `mesh_sub` is either null or the live `SubdivisionResult`
+        // retained by `mesh`, which outlives this scope.
+        let mesh_sub_view: Option<&View<SubdivisionResult, Const>> = if mesh_sub.is_null() {
+            None
+        } else {
+            Some(unsafe { View::<SubdivisionResult, Const>::from_ptr(mesh_sub) })
+        };
+        // SAFETY: `result_sub` is the fresh non-null result-arena push above, so
+        // the view carries that buffer's write-capable provenance; no other
+        // reference to those bytes is formed while it is live.
+        let result_sub_view: &View<SubdivisionResult> =
+            unsafe { View::<SubdivisionResult>::from_ptr(result_sub) };
 
         let mut skin: *mut SkinDeformer = core::ptr::null_mut();
         if sc.opts_view().evaluate_skin_weights() {
@@ -2575,8 +2602,11 @@ pub(crate) unsafe fn subdivide_mesh_level(
             max_weights = max_sz(max_weights, mesh.num_vertices());
         }
         if !skin.is_null() {
-            // SAFETY: `skin` is the non-null live deformer resolved above.
-            max_weights = max_sz(max_weights, unsafe { (*skin).clusters.count });
+            // SAFETY: `skin` is the non-null live deformer resolved above, read
+            // only here — a `Const` view scoped to this branch.
+            let skin_view: &View<SkinDeformer, Const> =
+                unsafe { View::<SkinDeformer, Const>::from_ptr(skin) };
+            max_weights = max_sz(max_weights, skin_view.clusters().count);
         }
 
         sc.set_tmp_vertex_weights(sc.tmp_view().push_zero::<Real>(mesh.num_vertices()));
@@ -2595,29 +2625,29 @@ pub(crate) unsafe fn subdivide_mesh_level(
             });
 
             let weights: *mut SubdivisionVertexWeights;
-            // SAFETY: `mesh_sub` is non-null here, so `.source_vertex_ranges.count`
-            // reads a live field.
-            if !mesh_sub.is_null() && unsafe { (*mesh_sub).source_vertex_ranges.count } > 0 {
-                // SAFETY: `mesh_sub` is live; `&(*mesh_sub).field` projects live
-                // list fields, copied out by value into the call arguments.
+            if let Some(sub) = mesh_sub_view.filter(|sub| sub.source_vertex_ranges().count > 0) {
+                // SAFETY: the list arguments are by-value copies of `mesh_sub`'s
+                // own live source-vertex lists — `subdivision_copy_weights`'
+                // contract.
                 weights = unsafe {
                     subdivision_copy_weights(
                         sc,
-                        core::ptr::read(&(*mesh_sub).source_vertex_ranges),
-                        core::ptr::read(&(*mesh_sub).source_vertex_weights),
+                        sub.source_vertex_ranges(),
+                        sub.source_vertex_weights(),
                     )
                 };
             } else {
                 weights = init_source_vertex_weights(sc, mesh.num_vertices());
             }
 
-            // SAFETY: `result_sub` is the live zeroed push above; `&mut
-            // (*result_sub).field` projects its live source-vertex list fields.
+            // SAFETY: `weights` is the per-vertex weight array built just above,
+            // and the out-params address `result_sub`'s own live source-vertex
+            // list fields — `subdivide_weights`' contract.
             unsafe {
                 subdivide_weights(
                     sc,
-                    &mut (*result_sub).source_vertex_ranges,
-                    &mut (*result_sub).source_vertex_weights,
+                    result_sub_view.source_vertex_ranges_raw(),
+                    result_sub_view.source_vertex_weights_raw(),
                     weights,
                 )
             }?;
@@ -2633,16 +2663,15 @@ pub(crate) unsafe fn subdivide_mesh_level(
             let weights: *mut SubdivisionVertexWeights;
             // C-parity: the guard reads `source_vertex_ranges` here too
             // (ufbx.c:29750), not `skin_cluster_ranges`.
-            // SAFETY: `mesh_sub` is non-null here, so `.source_vertex_ranges.count`
-            // reads a live field.
-            if !mesh_sub.is_null() && unsafe { (*mesh_sub).source_vertex_ranges.count } > 0 {
-                // SAFETY: `mesh_sub` is live; `&(*mesh_sub).field` projects live
-                // skin-cluster list fields, copied out by value.
+            if let Some(sub) = mesh_sub_view.filter(|sub| sub.source_vertex_ranges().count > 0) {
+                // SAFETY: the list arguments are by-value copies of `mesh_sub`'s
+                // own live skin-cluster lists — `subdivision_copy_weights`'
+                // contract.
                 weights = unsafe {
                     subdivision_copy_weights(
                         sc,
-                        core::ptr::read(&(*mesh_sub).skin_cluster_ranges),
-                        core::ptr::read(&(*mesh_sub).skin_cluster_weights),
+                        sub.skin_cluster_ranges(),
+                        sub.skin_cluster_weights(),
                     )
                 };
             } else {
@@ -2650,13 +2679,14 @@ pub(crate) unsafe fn subdivide_mesh_level(
                 weights = unsafe { init_skin_weights(sc, mesh.num_vertices(), skin) };
             }
 
-            // SAFETY: `result_sub` is the live zeroed push; `&mut
-            // (*result_sub).field` projects its live skin-cluster list fields.
+            // SAFETY: `weights` is the per-vertex weight array built just above,
+            // and the out-params address `result_sub`'s own live skin-cluster
+            // list fields — `subdivide_weights`' contract.
             unsafe {
                 subdivide_weights(
                     sc,
-                    &mut (*result_sub).skin_cluster_ranges,
-                    &mut (*result_sub).skin_cluster_weights,
+                    result_sub_view.skin_cluster_ranges_raw(),
+                    result_sub_view.skin_cluster_weights_raw(),
                     weights,
                 )
             }?;
@@ -2708,12 +2738,13 @@ pub(crate) unsafe fn subdivide_mesh_level(
         // fields, carrying the context's write-capable provenance.
         let edges: &ListView<Edge> = unsafe { ListView::from_ptr(result.edges_raw()) };
         let edge_crease: &ListView<Real> = result.edge_crease_view();
-        // SAFETY: as above.
-        let edge_smoothing: &ListView<bool> =
-            unsafe { ListView::from_ptr(result.edge_smoothing_raw()) };
-        // SAFETY: as above.
-        let edge_visibility: &ListView<bool> =
-            unsafe { ListView::from_ptr(result.edge_visibility_raw()) };
+        // SAFETY: as above, for the smoothing and visibility lists.
+        let (edge_smoothing, edge_visibility): (&ListView<bool>, &ListView<bool>) = unsafe {
+            (
+                ListView::from_ptr(result.edge_smoothing_raw()),
+                ListView::from_ptr(result.edge_visibility_raw()),
+            )
+        };
 
         result.set_num_edges(
             mesh.num_edges()
@@ -2996,9 +3027,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     }
 
     // Will be filled in by `ufbxi_finalize_mesh()`.
-    // SAFETY: `vertex_first_index_raw()` addresses `result`'s own live list
-    // field; a lone count store, left raw rather than minting a view for it.
-    unsafe { (*result.vertex_first_index_raw()).count = 0 };
+    result.vertex_first_index_view().set_count(0);
 
     // SAFETY: `error_mut_ptr()` is `sc`'s own live error slot, the finalize
     // contract.

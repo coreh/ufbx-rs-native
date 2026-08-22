@@ -580,12 +580,13 @@ pub(crate) unsafe fn finish_imp<T: ImpHeader>(
     // a distinct allocation from `imp`, so the copy is non-overlapping and the
     // destination is the imp's own payload field.
     unsafe { core::ptr::copy_nonoverlapping(payload, imp_payload, 1) };
-    // SAFETY: `ator`/`buf` fields of the header initialized just above; the
+    // SAFETY: the header's own `ator`/`buf` fields, initialized just above; the
     // moved-in `Buf` replaces the push's uninitialized bytes (`Buf` has no
     // `Drop`, so no stale value is dropped).
-    unsafe { (*refcount).ator = ator };
-    // SAFETY: as above — the header's own `buf` field.
-    unsafe { (*refcount).buf = buf };
+    unsafe {
+        (*refcount).ator = ator;
+        (*refcount).buf = buf;
+    }
 
     FinishedImp(imp)
 }
@@ -5027,12 +5028,13 @@ pub(crate) unsafe fn get_val2(
 ) -> bool {
     // SAFETY: `fmt` holds at least 2 bytes and `v0`/`v1` are the caller's
     // out-pointers matching `fmt[0]`/`fmt[1]` — `get_val_at`'s contract.
-    if !unsafe { get_val_at(node, 0, *fmt.add(0), v0) } {
-        return false;
-    }
-    // SAFETY: as above, for index 1.
-    if !unsafe { get_val_at(node, 1, *fmt.add(1), v1) } {
-        return false;
+    unsafe {
+        if !get_val_at(node, 0, *fmt.add(0), v0) {
+            return false;
+        }
+        if !get_val_at(node, 1, *fmt.add(1), v1) {
+            return false;
+        }
     }
     true
 }
@@ -5049,16 +5051,16 @@ pub(crate) unsafe fn get_val3(
 ) -> bool {
     // SAFETY: `fmt` holds at least 3 bytes and `v0`/`v1`/`v2` are the caller's
     // out-pointers matching `fmt[0..3]` — `get_val_at`'s contract.
-    if !unsafe { get_val_at(node, 0, *fmt.add(0), v0) } {
-        return false;
-    }
-    // SAFETY: as above, for index 1.
-    if !unsafe { get_val_at(node, 1, *fmt.add(1), v1) } {
-        return false;
-    }
-    // SAFETY: as above, for index 2.
-    if !unsafe { get_val_at(node, 2, *fmt.add(2), v2) } {
-        return false;
+    unsafe {
+        if !get_val_at(node, 0, *fmt.add(0), v0) {
+            return false;
+        }
+        if !get_val_at(node, 1, *fmt.add(1), v1) {
+            return false;
+        }
+        if !get_val_at(node, 2, *fmt.add(2), v2) {
+            return false;
+        }
     }
     true
 }
@@ -5076,20 +5078,19 @@ pub(crate) unsafe fn get_val4(
 ) -> bool {
     // SAFETY: `fmt` holds at least 4 bytes and `v0..v3` are the caller's
     // out-pointers matching `fmt[0..4]` — `get_val_at`'s contract.
-    if !unsafe { get_val_at(node, 0, *fmt.add(0), v0) } {
-        return false;
-    }
-    // SAFETY: as above, for index 1.
-    if !unsafe { get_val_at(node, 1, *fmt.add(1), v1) } {
-        return false;
-    }
-    // SAFETY: as above, for index 2.
-    if !unsafe { get_val_at(node, 2, *fmt.add(2), v2) } {
-        return false;
-    }
-    // SAFETY: as above, for index 3.
-    if !unsafe { get_val_at(node, 3, *fmt.add(3), v3) } {
-        return false;
+    unsafe {
+        if !get_val_at(node, 0, *fmt.add(0), v0) {
+            return false;
+        }
+        if !get_val_at(node, 1, *fmt.add(1), v1) {
+            return false;
+        }
+        if !get_val_at(node, 2, *fmt.add(2), v2) {
+            return false;
+        }
+        if !get_val_at(node, 3, *fmt.add(3), v3) {
+            return false;
+        }
     }
     true
 }
@@ -5108,24 +5109,22 @@ pub(crate) unsafe fn get_val5(
 ) -> bool {
     // SAFETY: `fmt` holds at least 5 bytes and `v0..v4` are the caller's
     // out-pointers matching `fmt[0..5]` — `get_val_at`'s contract.
-    if !unsafe { get_val_at(node, 0, *fmt.add(0), v0) } {
-        return false;
-    }
-    // SAFETY: as above, for index 1.
-    if !unsafe { get_val_at(node, 1, *fmt.add(1), v1) } {
-        return false;
-    }
-    // SAFETY: as above, for index 2.
-    if !unsafe { get_val_at(node, 2, *fmt.add(2), v2) } {
-        return false;
-    }
-    // SAFETY: as above, for index 3.
-    if !unsafe { get_val_at(node, 3, *fmt.add(3), v3) } {
-        return false;
-    }
-    // SAFETY: as above, for index 4.
-    if !unsafe { get_val_at(node, 4, *fmt.add(4), v4) } {
-        return false;
+    unsafe {
+        if !get_val_at(node, 0, *fmt.add(0), v0) {
+            return false;
+        }
+        if !get_val_at(node, 1, *fmt.add(1), v1) {
+            return false;
+        }
+        if !get_val_at(node, 2, *fmt.add(2), v2) {
+            return false;
+        }
+        if !get_val_at(node, 3, *fmt.add(3), v3) {
+            return false;
+        }
+        if !get_val_at(node, 4, *fmt.add(4), v4) {
+            return false;
+        }
     }
     true
 }
@@ -5167,12 +5166,13 @@ pub(crate) unsafe fn find_val2(
     };
     // SAFETY: `fmt` holds at least 2 bytes and `v0`/`v1` are the caller's
     // out-pointers matching `fmt[0]`/`fmt[1]` — `get_val_at`'s contract.
-    if !unsafe { get_val_at(child, 0, *fmt.add(0), v0) } {
-        return false;
-    }
-    // SAFETY: as above, for index 1.
-    if !unsafe { get_val_at(child, 1, *fmt.add(1), v1) } {
-        return false;
+    unsafe {
+        if !get_val_at(child, 0, *fmt.add(0), v0) {
+            return false;
+        }
+        if !get_val_at(child, 1, *fmt.add(1), v1) {
+            return false;
+        }
     }
     true
 }
@@ -5399,24 +5399,24 @@ pub(crate) unsafe fn update_parse_state(parent: ParseState, name: *const u8) -> 
             if name == sp::Model.as_ptr() {
                 return ParseState::LegacyModel;
             }
-            // SAFETY (this group): `name` is a NUL-terminated interned parser name and the
+            // SAFETY: `name` is a NUL-terminated interned parser name and each
             // literal is NUL-terminated — `strcmp`'s contract.
-            if unsafe { strcmp(name, b"References\0".as_ptr()) } == 0 {
-                return ParseState::References;
-            }
-            if unsafe { strcmp(name, b"Relations\0".as_ptr()) } == 0 {
-                return ParseState::Relations;
-            }
-            if name == sp::Media.as_ptr() {
-                return ParseState::LegacyMedia;
-            }
-            // SAFETY: as above.
-            if unsafe { strcmp(name, b"Switcher\0".as_ptr()) } == 0 {
-                return ParseState::LegacySwitcher;
-            }
-            // SAFETY: as above.
-            if unsafe { strcmp(name, b"SceneGenericPersistence\0".as_ptr()) } == 0 {
-                return ParseState::LegacyScenePersistence;
+            unsafe {
+                if strcmp(name, b"References\0".as_ptr()) == 0 {
+                    return ParseState::References;
+                }
+                if strcmp(name, b"Relations\0".as_ptr()) == 0 {
+                    return ParseState::Relations;
+                }
+                if name == sp::Media.as_ptr() {
+                    return ParseState::LegacyMedia;
+                }
+                if strcmp(name, b"Switcher\0".as_ptr()) == 0 {
+                    return ParseState::LegacySwitcher;
+                }
+                if strcmp(name, b"SceneGenericPersistence\0".as_ptr()) == 0 {
+                    return ParseState::LegacyScenePersistence;
+                }
             }
         }
 
@@ -6519,6 +6519,12 @@ unsafe fn retain_dom_node_rec(
     node: *mut Node,
     p_dom_node: *mut *mut DomNode,
 ) -> Result<(), Fail> {
+    // Bridge the raw parse-tree `node` to a view once; every read of it below
+    // runs through the view accessors, and nothing in this fn writes the node.
+    // SAFETY: `node` is a valid parse node living in `uc`'s arena (fn contract),
+    // which outlives this call and carries write-capable provenance.
+    let node_view: &NodeView = unsafe { NodeView::from_ptr(node) };
+
     let dst: *mut DomNode = uc.result_view().push_zero(1);
     ufbxi_check!(uc, !dst.is_null(), "dst");
     ufbxi_check!(
@@ -6533,11 +6539,11 @@ unsafe fn retain_dom_node_rec(
         unsafe { *p_dom_node = dst };
     }
 
-    // SAFETY: `dst` is the freshly pushed result `DomNode` and `node` is the
-    // valid parse node (fn contract); copy its name span across.
+    // SAFETY: `dst` is the freshly pushed result `DomNode`; copy the node's name
+    // span across.
     unsafe {
-        (*dst).name.data = (*node).name;
-        (*dst).name.length = (*node).name_len as usize;
+        (*dst).name.data = node_view.name();
+        (*dst).name.length = node_view.name_len() as usize;
     }
 
     {
@@ -6578,12 +6584,10 @@ unsafe fn retain_dom_node_rec(
     // `push_string_place_str`'s contract.
     unsafe { sp::push_string_place_str(uc.string_pool_mut_ptr(), &mut (*dst).name, false)? };
 
-    // SAFETY: `node` is the valid parse node; reading its `value_type_mask`
-    // scalar field.
-    if unsafe { (*node).value_type_mask } == ValueType::Array as u16 {
-        // SAFETY: `value_type_mask == Array` selects the `array` arm of `node`'s
+    if node_view.value_type_mask() == ValueType::Array as u16 {
+        // `value_type_mask == Array` selects the `array` arm of `node`'s
         // `content` union (PORTING.md "Unions").
-        let arr = unsafe { (*node).content.array };
+        let arr = node_view.array();
         let val: *mut DomValue = uc.result_view().push_zero(1);
         ufbxi_check!(uc, !val.is_null(), "val");
 
@@ -6619,9 +6623,7 @@ unsafe fn retain_dom_node_rec(
         let mut ix: usize = 0;
         while ix < MAX_NON_ARRAY_VALUES {
             // `as i32` mirrors C's promotion of the `uint16_t` mask to `int`.
-            // SAFETY: `node` is the valid parse node; reading its scalar
-            // `value_type_mask`.
-            let mask = ((((unsafe { (*node).value_type_mask }) as i32) >> (2 * ix)) & 0x3) as u32;
+            let mask = (((node_view.value_type_mask() as i32) >> (2 * ix)) & 0x3) as u32;
             if mask == 0 {
                 break;
             }
@@ -6633,29 +6635,23 @@ unsafe fn retain_dom_node_rec(
             if mask == ValueType::String as u32 {
                 // SAFETY: `val` is the freshly pushed `DomValue`.
                 unsafe { (*val).type_ = DomValueType::String };
-                // Bridge the raw parse-tree `node` to a view for the `get_val_at`
-                // extractor (this fn keeps the raw node for its owned derefs).
-                // SAFETY: `node` is a valid parse node, so `NodeView::from_ptr`
-                // reinterprets it in place; `ix < MAX_NON_ARRAY_VALUES` and the
-                // out-pointer addresses `val`'s `value_str` field for fmt `'S'`.
-                ufbxi_ignore!(unsafe {
-                    get_val_at(
-                        NodeView::from_ptr(node),
+                // SAFETY: `ix < MAX_NON_ARRAY_VALUES` and the out-pointers
+                // address `val`'s own `value_str`/`value_blob` fields, matching
+                // the `'S'`/`'b'` formats — `get_val_at`'s contract.
+                unsafe {
+                    ufbxi_ignore!(get_val_at(
+                        node_view,
                         ix,
                         b'S',
                         &mut (*val).value_str as *mut String as *mut c_void,
-                    )
-                });
-                // SAFETY: as above, with the out-pointer addressing `val`'s
-                // `value_blob` field for fmt `'b'`.
-                ufbxi_ignore!(unsafe {
-                    get_val_at(
-                        NodeView::from_ptr(node),
+                    ));
+                    ufbxi_ignore!(get_val_at(
+                        node_view,
                         ix,
                         b'b',
                         &mut (*val).value_blob as *mut Blob as *mut c_void,
-                    )
-                });
+                    ));
+                }
             } else {
                 ufbx_assert!(mask == ValueType::Number as u32);
                 // `node->vals[ix]` reads the `vals` arm of the `ufbxi_node`
@@ -6667,8 +6663,8 @@ unsafe fn retain_dom_node_rec(
                 // `node`'s value array and `vals`/`num` are the stored union arms.
                 unsafe {
                     (*val).type_ = DomValueType::Number;
-                    (*val).value_int = (*(*node).content.vals.add(ix)).num.i;
-                    (*val).value_float = (*(*node).content.vals.add(ix)).num.f;
+                    (*val).value_int = (*node_view.vals().add(ix)).num.i;
+                    (*val).value_float = (*node_view.vals().add(ix)).num.f;
                 }
             }
 
@@ -6691,15 +6687,12 @@ unsafe fn retain_dom_node_rec(
         );
     }
 
-    // SAFETY: `node` is the valid parse node; reading its scalar `num_children`.
-    if unsafe { (*node).num_children } > 0 {
+    if node_view.num_children() > 0 {
         // ufbxi_for(ufbxi_node, child, node->children, node->num_children)
-        // SAFETY: `node` is valid; `children`/`num_children` describe a
-        // contiguous run of child nodes, so `child_end` is one-past-the-end.
-        let mut child = unsafe { (*node).children };
-        let child_end = unsafe {
-            crate::native::platform::add_ptr((*node).children, (*node).num_children as usize)
-        };
+        // `children`/`num_children` describe a contiguous run of child nodes, so
+        // `child_end` is one-past-the-end.
+        let mut child = node_view.children();
+        let child_end = add_ptr(node_view.children(), node_view.num_children() as usize);
         while child != child_end {
             // SAFETY: `child` walks the child run, each a valid parse node.
             unsafe { retain_dom_node(uc, child, core::ptr::null_mut())? };
@@ -6708,12 +6701,12 @@ unsafe fn retain_dom_node_rec(
             child = unsafe { child.add(1) };
         }
 
-        // SAFETY: `dst` is the live result `DomNode`; `node` is valid.
-        unsafe { (*dst).children.count = (*node).num_children as usize };
+        // SAFETY: `dst` is the live result `DomNode`.
+        unsafe { (*dst).children.count = node_view.num_children() as usize };
         let children_data = uc
             .result_view()
-            .push_pop::<*mut DomNode>(uc.tmp_dom_nodes_view(), unsafe { (*node).num_children }
-                as usize) as *const Ref<DomNode>;
+            .push_pop::<*mut DomNode>(uc.tmp_dom_nodes_view(), node_view.num_children() as usize)
+            as *const Ref<DomNode>;
         // SAFETY: `dst` is the live result `DomNode`.
         unsafe { (*dst).children.data = children_data };
         // SAFETY: `dst` is the live result `DomNode`; reading back its
@@ -6902,12 +6895,16 @@ unsafe fn match_skip_rec(mut fmt: *const u8, alternation: bool) -> *const u8 {
                 c = unsafe { *(fmt as *const i8) };
                 while c != b']' as i8 {
                     // SAFETY: as above; reading the class byte and advancing.
-                    c = unsafe { *(fmt as *const i8) };
-                    fmt = unsafe { fmt.add(1) };
+                    unsafe {
+                        c = *(fmt as *const i8);
+                        fmt = fmt.add(1);
+                    }
                     if c == b'\\' as i8 {
                         // SAFETY: `\` is followed by an escaped byte in the class.
-                        c = unsafe { *(fmt as *const i8) };
-                        fmt = unsafe { fmt.add(1) };
+                        unsafe {
+                            c = *(fmt as *const i8);
+                            fmt = fmt.add(1);
+                        }
                     }
                 }
                 // C-parity trailing `fmt++`: the scan loop above advances past the
@@ -7327,14 +7324,16 @@ pub(crate) fn determine_format(uc: &Context) -> Result<(), Fail> {
             // C: `for (uint32_t fmt = UFBX_FILE_FORMAT_FBX; fmt < UFBX_FILE_FORMAT_COUNT; fmt++)`
             let mut fmt: u32 = FileFormat::Fbx as u32;
             while fmt < FILE_FORMAT_COUNT {
-                // SAFETY (this group): `data_size <= uc.data_size()` (clamped above), so
+                // SAFETY: `data_size <= uc.data_size()` (clamped above), so
                 // `is_format` reads only inside the buffered read window; `fmt`
                 // ranges over `Fbx..FILE_FORMAT_COUNT`, every one of which is a
                 // valid `FileFormat` discriminant.
-                let fmt_enum: FileFormat = unsafe { core::mem::transmute::<u32, FileFormat>(fmt) };
-                if unsafe { is_format(uc.data(), data_size, fmt_enum) } {
-                    format = fmt_enum;
-                    break;
+                unsafe {
+                    let fmt_enum: FileFormat = core::mem::transmute::<u32, FileFormat>(fmt);
+                    if is_format(uc.data(), data_size, fmt_enum) {
+                        format = fmt_enum;
+                        break;
+                    }
                 }
                 fmt += 1;
             }
@@ -7504,19 +7503,17 @@ pub(crate) fn parse_toplevel_child_imp(
 #[inline(never)]
 pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(), Fail> {
     // C: `ufbxi_for(ufbxi_node, node, uc->top_nodes, uc->top_nodes_len)`
-    let mut node: *mut Node = uc.top_nodes();
-    let node_end: *mut Node = add_ptr(node, uc.top_nodes_len());
-    while node != node_end {
-        // SAFETY: `node` walks `[top_nodes, top_nodes + top_nodes_len)`, a
-        // contiguous run of valid `Node`s; read its `name` field.
-        if unsafe { (*node).name } == name {
-            uc.set_top_node(node);
+    // SAFETY: `top_nodes`/`top_nodes_len` describe `uc`'s own contiguous run of
+    // cached top-level nodes; nothing in the walk below grows or pops that array,
+    // so every element stays live and unmoved for the iteration.
+    let top_nodes: SliceViewIter<'_, Node> =
+        unsafe { SliceViewIter::from_raw_parts(uc.top_nodes(), uc.top_nodes_len()) };
+    for node in top_nodes {
+        if node.name() == name {
+            uc.set_top_node(node.get());
             uc.set_top_child_index(0);
             return Ok(());
         }
-        // SAFETY: `node` is before `node_end` within the run, so `add(1)` stays
-        // in bounds (up to one-past-the-end).
-        node = unsafe { node.add(1) };
     }
 
     // Reached end and not found in cache
@@ -8264,21 +8261,22 @@ pub(crate) unsafe fn name_key_less(
     name_len: usize,
     key: u32,
 ) -> bool {
-    // SAFETY (this group): `prop` points to a valid `Prop` (fn contract); read its
-    // `_internal_key`.
-    if unsafe { (*prop)._internal_key } < key {
+    // SAFETY: `prop` points to a valid `Prop` in the caller's property table (fn
+    // contract), which outlives this call and carries write-capable provenance.
+    let prop: &PropView = unsafe { PropView::from_ptr(prop) };
+
+    if prop._internal_key() < key {
         return true;
     }
-    if unsafe { (*prop)._internal_key } > key {
+    if prop._internal_key() > key {
         return false;
     }
 
-    // SAFETY: `prop` is valid; read its `name.length`.
-    let prop_len: usize = unsafe { (*prop).name.length };
+    let prop_len: usize = prop.name().length;
     let len: usize = min_sz(prop_len, name_len);
     // SAFETY: `prop.name.data` spans `prop_len` bytes and `data` spans `name_len`;
     // `len` is their min, so both reads stay in bounds — `memcmp`'s contract.
-    let cmp: i32 = unsafe { memcmp((*prop).name.data, data, len) };
+    let cmp: i32 = unsafe { memcmp(prop.name().data, data, len) };
     if cmp != 0 {
         return cmp < 0;
     }
