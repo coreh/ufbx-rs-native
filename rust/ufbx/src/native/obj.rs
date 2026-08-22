@@ -31,8 +31,7 @@
 #[cfg(feature = "obj")]
 use crate::generated::{
     ElementType, Face, FaceGroup, Material, Mesh, MeshPart, Node as UfbxNode, OpenFileType, Prop,
-    PropFlags, RawStream, ShaderType, Texture, Vec4, VertexAttrib, VertexVec2, VertexVec3,
-    WarningType,
+    PropFlags, RawStream, ShaderType, Texture, Vec4, VertexAttrib, VoidList, WarningType,
 };
 #[cfg(feature = "obj")]
 use crate::native::allocator::{free, grow_array};
@@ -78,11 +77,15 @@ use crate::native::read::{
     SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
 };
 #[cfg(feature = "obj")]
+use crate::native::scene_process::MaterialView;
+#[cfg(feature = "obj")]
 use crate::native::string_pool::{push_string_place_blob, push_string_place_str, str_c, str_equal};
 #[cfg(feature = "obj")]
 use crate::native::view::{SliceViewIter, View};
 #[cfg(feature = "obj")]
 use crate::native::warnings::ufbxi_warnf;
+#[cfg(feature = "obj")]
+use crate::prelude::as_f64;
 #[cfg(feature = "obj")]
 use crate::prelude::{Blob, List, Real, String};
 #[cfg(feature = "obj")]
@@ -169,9 +172,19 @@ impl ObjMeshView {
         unsafe { (*self.get()).fbx_mesh }
     }
     #[inline(always)]
+    pub(crate) fn fbx_node(&self) -> *mut UfbxNode {
+        // SAFETY: reading the `fbx_node` pointer field of a valid arena `ObjMesh`.
+        unsafe { (*self.get()).fbx_node }
+    }
+    #[inline(always)]
     pub(crate) fn fbx_node_id(&self) -> u64 {
         // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
         unsafe { (*self.get()).fbx_node_id }
+    }
+    #[inline(always)]
+    pub(crate) fn fbx_mesh_id(&self) -> u64 {
+        // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
+        unsafe { (*self.get()).fbx_mesh_id }
     }
     #[inline(always)]
     pub(crate) fn vertex_range_min(&self, attrib: usize) -> u64 {
@@ -219,37 +232,34 @@ pub(crate) unsafe fn obj_pop_props(
     ufbxi_check!(uc, !props.data.is_null(), "props.data");
 
     // C: `ufbxi_for_list(ufbx_prop, prop, props)`
-    let mut prop: *mut Prop = props.data as *mut Prop;
-    let prop_end = add_ptr(prop, props.count);
-    // Every deref in this loop rests on one invariant: `prop` walks
-    // `props.data .. props.data + count`, the fresh non-null run popped above,
-    // so it addresses a live `Prop` whose own `name` span `get_name_key` reads.
-    while prop != prop_end {
-        // SAFETY: as stated above the loop.
-        unsafe { (*prop)._internal_key = get_name_key((*prop).name.data, (*prop).name.length) };
-        // SAFETY: as stated above the loop.
-        unsafe {
-            if (*prop).value_str.length == 0 {
-                (*prop).value_str.data = EMPTY_CHAR.as_ptr();
-            }
+    // SAFETY: `props.data` is the fresh non-null run popped above, holding
+    // `props.count` contiguous `Prop` on uc's result arena (write-capable
+    // provenance), so the whole walk stays inside that one allocation.
+    let prop_run =
+        unsafe { SliceViewIter::<Prop>::from_raw_parts(props.data as *mut Prop, props.count) };
+    for prop in prop_run {
+        let name: String = prop.name();
+        // SAFETY: `name` is this prop's own interned name span.
+        prop.set_internal_key(unsafe { get_name_key(name.data, name.length) });
+
+        let mut value_str: String = prop.value_str();
+        if value_str.length == 0 {
+            value_str.data = EMPTY_CHAR.as_ptr();
+            prop.set_value_str(value_str);
         }
-        // SAFETY: as stated above the loop.
-        unsafe {
-            if (*prop).value_int == 0 {
-                // C: `prop->value_real` — the first `ufbx_real` of the value
-                // union (`value_vec4.x` in the generated struct).
-                (*prop).value_int = f64_to_i64((*prop).value_vec4.x as f64);
-            }
+
+        if prop.value_int() == 0 {
+            // C: `prop->value_real` — the first `ufbx_real` of the value
+            // union (`value_vec4.x` in the generated struct).
+            prop.set_value_int(f64_to_i64(as_f64!(prop.value_vec4().x)));
         }
-        // SAFETY: as stated above the loop.
-        unsafe {
-            if (*prop).value_blob.size == 0 && (*prop).value_str.length > 0 {
-                (*prop).value_blob.data = (*prop).value_str.data;
-                (*prop).value_blob.size = (*prop).value_str.length;
-            }
+
+        let mut value_blob: Blob = prop.value_blob();
+        if value_blob.size == 0 && value_str.length > 0 {
+            value_blob.data = value_str.data;
+            value_blob.size = value_str.length;
+            prop.set_value_blob(value_blob);
         }
-        // SAFETY: the walk stops at `prop_end`, one past the run's last item.
-        prop = unsafe { prop.add(1) };
     }
 
     if props.count > 1 {
@@ -314,16 +324,14 @@ pub(crate) fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
     }
     ufbxi_check!(
         uc,
-        // SAFETY: reading the two pointer fields just written above.
-        unsafe { !(*mesh).fbx_node.is_null() && !(*mesh).fbx_mesh.is_null() },
+        !mesh_view.fbx_node().is_null() && !mesh_view.fbx_mesh().is_null(),
         "mesh->fbx_node && mesh->fbx_mesh"
     );
 
     // SAFETY: `mesh->fbx_mesh` is the element push result, non-null past the
-    // check above.
-    unsafe {
-        (*mesh_view.fbx_mesh()).vertex_position.unique_per_vertex = true;
-    }
+    // check above, living in uc's own element arena (write-capable provenance).
+    let fbx_mesh: &View<Mesh> = unsafe { View::<Mesh>::from_ptr(mesh_view.fbx_mesh()) };
+    fbx_mesh.vertex_position().set_unique_per_vertex(true);
 
     ufbxi_check!(
         uc,
@@ -332,7 +340,7 @@ pub(crate) fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
         // SAFETY: `fbx_node` is non-null past the check above, so borrowing its
         // `element_id` field is valid.
         !uc.tmp_node_ids_view()
-            .push_copy_ref(unsafe { &(*(*mesh).fbx_node).element.element_id })
+            .push_copy_ref(unsafe { &(*mesh_view.fbx_node()).element.element_id })
             .is_null(),
         "((uint32_t*)ufbxi_push_size_copy((&uc->tmp_node_ids), sizeof(uint32_t), (1), (&mesh->fbx_node->element_id)))"
     );
@@ -342,12 +350,10 @@ pub(crate) fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
     uc.obj().set_face_group_dirty(true);
     uc.obj().set_material_dirty(true);
 
-    // SAFETY: connecting the fresh mesh's own synthetic ids (read from the
-    // push result / through the anchored view) in uc's connection arena.
-    unsafe {
-        connect_oo(uc, (*mesh).fbx_mesh_id, mesh_view.fbx_node_id())?;
-        connect_oo(uc, mesh_view.fbx_node_id(), 0)?;
-    }
+    // Connects the fresh mesh's own synthetic ids (read through the anchored
+    // view) in uc's connection arena.
+    connect_oo(uc, mesh_view.fbx_mesh_id(), mesh_view.fbx_node_id())?;
+    connect_oo(uc, mesh_view.fbx_node_id(), 0)?;
 
     Ok(())
 }
@@ -364,12 +370,13 @@ pub(crate) fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
     // guard above; anchoring it as a view resolves `fbx_mesh` through the
     // accessor.
     let mesh: &ObjMeshView = unsafe { ObjMeshView::from_ptr(uc.obj().mesh()) };
-    let fbx_mesh: *mut Mesh = mesh.fbx_mesh();
+    // SAFETY: `mesh->fbx_mesh` is the mesh's own element (non-null since
+    // `obj_push_mesh`) in uc's element arena (write-capable provenance).
+    let fbx_mesh: &View<Mesh> = unsafe { View::<Mesh>::from_ptr(mesh.fbx_mesh()) };
 
     let num_props: usize = uc.obj().tmp_props_view().num_items();
-    // SAFETY: `fbx_mesh` is the mesh's own element (non-null since
-    // `obj_push_mesh`), so its prop list is an unaliased destination.
-    unsafe { obj_pop_props(uc, &mut (*fbx_mesh).element.props.props, num_props)? };
+    // SAFETY: the mesh element's own prop list is an unaliased destination.
+    unsafe { obj_pop_props(uc, fbx_mesh.element().props().props_raw(), num_props)? };
 
     let num_groups: usize = uc.obj().tmp_face_group_infos_view().num_items();
     // Pops the obj parser's own `tmp_face_group_infos` arena into uc's result
@@ -379,12 +386,9 @@ pub(crate) fn obj_flush_mesh(uc: &Context) -> Result<(), Fail> {
         .push_pop::<FaceGroup>(uc.obj().tmp_face_group_infos_view(), num_groups);
     ufbxi_check!(uc, !groups.is_null(), "groups");
 
-    // SAFETY: `fbx_mesh` as above; `groups` is the fresh non-null `num_groups`
-    // run popped just above.
-    unsafe {
-        (*fbx_mesh).face_groups.data = groups;
-        (*fbx_mesh).face_groups.count = num_groups;
-    }
+    // `groups` is the fresh non-null `num_groups` run popped just above.
+    fbx_mesh.face_groups_view().set_data(groups);
+    fbx_mesh.face_groups_view().set_count(num_groups);
 
     Ok(())
 }
@@ -836,10 +840,9 @@ pub(crate) unsafe fn obj_parse_index(
     // `obj_read_line` appends), and a '#' token — the one kind that ends on an
     // arbitrary byte — is only ever produced at index 0, so none reaches here.
     // The `'/'` rebasing below only shrinks a span from the front, keeping the
-    // same `end`. `ptr`/`end` bracket the span.
-    let mut ptr: *const u8 = unsafe { (*s).data };
-    // SAFETY: as above; one past the span's last byte, still within the window.
-    let end: *const u8 = unsafe { ptr.add((*s).length) };
+    // same `end`. `ptr`/`end` bracket the span, `end` being one past its last
+    // byte and still within the window.
+    let (mut ptr, end) = unsafe { ((*s).data, (*s).data.add((*s).length)) };
 
     let mut negative: bool = false;
     // SAFETY: `ptr` is either inside the span or equal to `end`; both are
@@ -1064,11 +1067,15 @@ pub(crate) fn obj_parse_indices(
             }
         }
 
+        // SAFETY: `mesh.fbx_mesh()` is the mesh's own element (non-null since
+        // `obj_push_mesh`) in uc's element arena (write-capable provenance).
+        let fbx_mesh: &View<Mesh> = unsafe { View::<Mesh>::from_ptr(mesh.fbx_mesh()) };
+        let mesh_id: u32 = fbx_mesh.element().element_id();
+
         // SAFETY: `entry` is the group-map entry found or inserted above;
-        // `mesh.fbx_mesh()` is the mesh's own element (non-null since
-        // `obj_push_mesh`); `group` is the fresh result of the arena push.
+        // `group` is the fresh result of the arena push, checked non-null, and
+        // lives on the obj parser's own `tmp_face_group_infos` arena.
         unsafe {
-            let mesh_id: u32 = (*mesh.fbx_mesh()).element.element_id;
             if (*entry).mesh_id != mesh_id {
                 // C: `uint32_t id = mesh->num_groups++;`
                 let id: u32 = mesh.num_groups();
@@ -1081,8 +1088,9 @@ pub(crate) fn obj_parse_indices(
                     .tmp_face_group_infos_view()
                     .push_zero::<FaceGroup>(1);
                 ufbxi_check!(uc, !group.is_null(), "group");
-                (*group).id = 0;
-                (*group).name = name;
+                let group: &View<FaceGroup> = View::<FaceGroup>::from_ptr(group);
+                group.set_id(0);
+                group.set_name(name);
             }
 
             uc.obj().set_face_group((*entry).local_id);
@@ -1115,11 +1123,11 @@ pub(crate) fn obj_parse_indices(
     let face: *mut Face = uc.obj().tmp_faces_view().push_fast::<Face>(1);
     ufbxi_check!(uc, !face.is_null(), "face");
 
-    // SAFETY: `face` is the fresh non-null push result.
-    unsafe {
-        (*face).index_begin = mesh.num_indices() as u32;
-        (*face).num_indices = num_indices as u32;
-    }
+    // SAFETY: `face` is the fresh non-null push result on the obj parser's own
+    // `tmp_faces` arena (write-capable provenance).
+    let face: &View<Face> = unsafe { View::<Face>::from_ptr(face) };
+    face.set_index_begin(mesh.num_indices() as u32);
+    face.set_num_indices(num_indices as u32);
 
     mesh.set_num_faces(mesh.num_faces() + 1);
     mesh.set_num_indices(mesh.num_indices() + num_indices);
@@ -1402,15 +1410,15 @@ pub(crate) unsafe fn obj_pop_vertices(
     ufbxi_check!(uc, !data.is_null(), "data");
 
     // SAFETY: `data` is the fresh non-null `count + 4` element run, so its
-    // first four slots are the padding quad written here.
+    // first four slots are the padding quad written here and the run holds
+    // `count` more elements past that quad.
     unsafe {
         *data.add(0) = 0.0f32 as Real;
         *data.add(1) = 0.0f32 as Real;
         *data.add(2) = 0.0f32 as Real;
         *data.add(3) = 0.0f32 as Real;
+        data = data.add(4);
     }
-    // SAFETY: as above — the run holds `count` more elements past the quad.
-    data = unsafe { data.add(4) };
 
     // SAFETY: pops `count` items off this attribute's own `tmp_vertices` arena
     // (`count` is that arena's item count above `min_index`, computed above)
@@ -1484,18 +1492,22 @@ pub(crate) unsafe fn obj_setup_attrib(
     let dst_indices: *mut u32 = uc.result_view().push::<u32>(num_indices);
     ufbxi_check!(uc, !dst_indices.is_null(), "dst_indices");
 
-    // SAFETY: caller contract — `dst` is a writable `VertexAttrib` out-param;
+    // SAFETY: caller contract — `dst` is a writable `VertexAttrib` out-param
+    // reached through the caller's own arena-owned mesh element, so its
+    // provenance is write-capable.
+    let dst: &View<VertexAttrib> = unsafe { View::<VertexAttrib>::from_ptr(dst) };
+
     // `data` is the value run the caller popped for this attribute and
     // `dst_indices` the fresh non-null `num_indices` run pushed above.
-    unsafe {
-        (*dst).exists = true;
+    dst.set_exists(true);
 
-        (*dst).values.data = data.data as *mut c_void;
-        (*dst).values.count = num_values;
+    let mut values: VoidList = dst.values();
+    values.data = data.data as *mut c_void;
+    values.count = num_values;
+    dst.set_values(values);
 
-        (*dst).indices.data = dst_indices;
-        (*dst).indices.count = num_indices;
-    }
+    dst.indices_view().set_data(dst_indices);
+    dst.indices_view().set_count(num_indices);
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < num_indices; i++)`
     for i in 0..num_indices {
@@ -1660,7 +1672,11 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         // run (one allocation) that anchors the view.
         let mesh: &ObjMeshView = unsafe { ObjMeshView::from_ptr(meshes.add(i - 1)) };
 
-        let fbx_mesh: *mut Mesh = mesh.fbx_mesh();
+        // SAFETY: `mesh->fbx_mesh` is this mesh's own `ufbx_mesh` element in
+        // uc's element arena (non-null since `obj_push_mesh`), so its
+        // provenance is write-capable; anchoring it once puts every field
+        // access below on the accessor path.
+        let fbx_mesh: &View<Mesh> = unsafe { View::<Mesh>::from_ptr(mesh.fbx_mesh()) };
 
         let num_faces: usize = mesh.num_faces();
 
@@ -1699,56 +1715,60 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 ufbxi_check!(uc, !color_valid.is_null(), "color_valid");
             }
 
-            // SAFETY: `fbx_mesh` is this mesh's own element (non-null since
-            // `obj_push_mesh`); each list it is given here is the run popped
-            // for it out of the matching obj-parser arena, checked non-null
-            // right after, and the discarding pop takes this mesh's own faces.
-            unsafe {
-                (*fbx_mesh).faces.count = num_faces;
-                (*fbx_mesh).face_material.count = num_faces;
+            // Each list `fbx_mesh` is given here is the run popped for it out
+            // of the matching obj-parser arena, checked non-null right after.
+            fbx_mesh.faces_view().set_count(num_faces);
+            fbx_mesh.face_material_view().set_count(num_faces);
 
-                (*fbx_mesh).faces.data = uc
-                    .result_view()
-                    .push_pop::<Face>(uc.obj().tmp_faces_view(), num_faces);
-                (*fbx_mesh).face_material.data = uc
-                    .result_view()
-                    .push_pop::<u32>(uc.obj().tmp_face_material_view(), num_faces);
+            fbx_mesh.faces_view().set_data(
+                uc.result_view()
+                    .push_pop::<Face>(uc.obj().tmp_faces_view(), num_faces),
+            );
+            fbx_mesh.face_material_view().set_data(
+                uc.result_view()
+                    .push_pop::<u32>(uc.obj().tmp_face_material_view(), num_faces),
+            );
 
-                ufbxi_check!(
-                    uc,
-                    !(*fbx_mesh).faces.data.is_null(),
-                    "fbx_mesh->faces.data"
+            ufbxi_check!(
+                uc,
+                !fbx_mesh.faces_view().data().is_null(),
+                "fbx_mesh->faces.data"
+            );
+            ufbxi_check!(
+                uc,
+                !fbx_mesh.face_material_view().data().is_null(),
+                "fbx_mesh->face_material.data"
+            );
+
+            if uc.obj().has_face_smoothing() {
+                fbx_mesh.face_smoothing_view().set_count(num_faces);
+                fbx_mesh.face_smoothing_view().set_data(
+                    uc.result_view()
+                        .push_pop::<bool>(uc.obj().tmp_face_smoothing_view(), num_faces),
                 );
                 ufbxi_check!(
                     uc,
-                    !(*fbx_mesh).face_material.data.is_null(),
-                    "fbx_mesh->face_material.data"
+                    !fbx_mesh.face_smoothing_view().data().is_null(),
+                    "fbx_mesh->face_smoothing.data"
                 );
+            }
 
-                if uc.obj().has_face_smoothing() {
-                    (*fbx_mesh).face_smoothing.count = num_faces;
-                    (*fbx_mesh).face_smoothing.data = uc
-                        .result_view()
-                        .push_pop::<bool>(uc.obj().tmp_face_smoothing_view(), num_faces);
+            if uc.obj().has_face_group() {
+                if mesh.num_groups() > 1 {
+                    fbx_mesh.face_group_view().set_count(num_faces);
+                    fbx_mesh.face_group_view().set_data(
+                        uc.result_view()
+                            .push_pop::<u32>(uc.obj().tmp_face_group_view(), num_faces),
+                    );
                     ufbxi_check!(
                         uc,
-                        !(*fbx_mesh).face_smoothing.data.is_null(),
-                        "fbx_mesh->face_smoothing.data"
+                        !fbx_mesh.face_group_view().data().is_null(),
+                        "fbx_mesh->face_group.data"
                     );
-                }
-
-                if uc.obj().has_face_group() {
-                    if mesh.num_groups() > 1 {
-                        (*fbx_mesh).face_group.count = num_faces;
-                        (*fbx_mesh).face_group.data = uc
-                            .result_view()
-                            .push_pop::<u32>(uc.obj().tmp_face_group_view(), num_faces);
-                        ufbxi_check!(
-                            uc,
-                            !(*fbx_mesh).face_group.data.is_null(),
-                            "fbx_mesh->face_group.data"
-                        );
-                    } else {
+                } else {
+                    // SAFETY: the discarding pop takes this mesh's own faces
+                    // off the obj parser's `tmp_face_group` arena.
+                    unsafe {
                         pop::<u32>(
                             uc.obj().tmp_face_group_mut_ptr(),
                             num_faces,
@@ -1767,7 +1787,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                     uc,
                     mesh,
                     tmp_indices,
-                    &mut (*fbx_mesh).vertex_position as *mut VertexVec3 as *mut VertexAttrib,
+                    fbx_mesh.vertex_position_raw() as *mut VertexAttrib,
                     &vertices[ObjAttrib::Position as usize],
                     ObjAttrib::Position as u32,
                     non_disjoint[ObjAttrib::Position as usize],
@@ -1778,7 +1798,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                     uc,
                     mesh,
                     tmp_indices,
-                    &mut (*fbx_mesh).vertex_uv as *mut VertexVec2 as *mut VertexAttrib,
+                    fbx_mesh.vertex_uv_raw() as *mut VertexAttrib,
                     &vertices[ObjAttrib::Uv as usize],
                     ObjAttrib::Uv as u32,
                     non_disjoint[ObjAttrib::Uv as usize],
@@ -1789,7 +1809,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                     uc,
                     mesh,
                     tmp_indices,
-                    &mut (*fbx_mesh).vertex_normal as *mut VertexVec3 as *mut VertexAttrib,
+                    fbx_mesh.vertex_normal_raw() as *mut VertexAttrib,
                     &vertices[ObjAttrib::Normal as usize],
                     ObjAttrib::Normal as u32,
                     non_disjoint[ObjAttrib::Normal as usize],
@@ -1799,10 +1819,9 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
 
             if uc.obj().has_vertex_color() {
                 ufbx_assert!(!color_valid.is_null());
-                // SAFETY: `fbx_mesh` is this mesh's own element; both index
-                // walks run over `data .. data + count` of a list this
-                // function just populated (the position indices, then the
-                // fresh `push_copy` of them). `color_valid` holds at least
+                // SAFETY: both index walks run over `data .. data + count` of a
+                // list this function just populated (the position indices, then
+                // the fresh `push_copy` of them). `color_valid` holds at least
                 // `max_index` flags for the first walk (colors are padded to
                 // the position vertex count before popping and both pops share
                 // the same `min_ix`, so its flag run is at least as long as
@@ -1812,11 +1831,12 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 unsafe {
                     let mut has_color: bool = false;
                     let mut all_valid: bool = true;
-                    let max_index: usize = (*fbx_mesh).vertex_position.values.count;
+                    let max_index: usize = fbx_mesh.vertex_position().values_view().count();
                     // C: `ufbxi_for_list(uint32_t, p_ix, fbx_mesh->vertex_position.indices)`
-                    let mut p_ix: *mut u32 = (*fbx_mesh).vertex_position.indices.data as *mut u32;
+                    let mut p_ix: *mut u32 =
+                        fbx_mesh.vertex_position().indices_view().data() as *mut u32;
                     let p_ix_end: *mut u32 =
-                        add_ptr(p_ix, (*fbx_mesh).vertex_position.indices.count);
+                        add_ptr(p_ix, fbx_mesh.vertex_position().indices_view().count());
                     while p_ix != p_ix_end {
                         if (*p_ix as usize) < max_index {
                             if *color_valid.add(*p_ix as usize) {
@@ -1829,26 +1849,29 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                     }
 
                     if has_color {
-                        (*fbx_mesh).vertex_color.exists = true;
-                        (*fbx_mesh).vertex_color.values.data =
-                            vertices[ObjAttrib::Color as usize].data as *const Vec4;
-                        (*fbx_mesh).vertex_color.values.count =
-                            vertices[ObjAttrib::Color as usize].count / 4;
+                        fbx_mesh.vertex_color().set_exists(true);
+                        fbx_mesh
+                            .vertex_color()
+                            .values_view()
+                            .set_data(vertices[ObjAttrib::Color as usize].data as *const Vec4);
+                        fbx_mesh
+                            .vertex_color()
+                            .values_view()
+                            .set_count(vertices[ObjAttrib::Color as usize].count / 4);
                         // C: `fbx_mesh->vertex_color.indices = fbx_mesh->vertex_position.indices;`
-                        core::ptr::write(
-                            &mut (*fbx_mesh).vertex_color.indices,
-                            core::ptr::read(&(*fbx_mesh).vertex_position.indices),
-                        );
-                        (*fbx_mesh).vertex_color.unique_per_vertex = true;
+                        fbx_mesh
+                            .vertex_color()
+                            .set_indices(fbx_mesh.vertex_position().indices());
+                        fbx_mesh.vertex_color().set_unique_per_vertex(true);
 
                         if !all_valid {
                             let mut indices: *mut u32 =
-                                (*fbx_mesh).vertex_color.indices.data as *mut u32;
+                                fbx_mesh.vertex_color().indices_view().data() as *mut u32;
                             indices =
                                 push_copy::<u32>(uc.result_mut_ptr(), mesh.num_indices(), indices);
                             ufbxi_check!(uc, !indices.is_null(), "indices");
 
-                            let num_values: usize = (*fbx_mesh).vertex_color.values.count;
+                            let num_values: usize = fbx_mesh.vertex_color().values_view().count();
                             // C: `ufbxi_for(uint32_t, p_ix, indices, mesh->num_indices)`
                             let mut p_ix: *mut u32 = indices;
                             let p_ix_end: *mut u32 = add_ptr(p_ix, mesh.num_indices());
@@ -1860,75 +1883,66 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                                 p_ix = p_ix.add(1);
                             }
 
-                            (*fbx_mesh).vertex_color.indices.data = indices;
+                            fbx_mesh.vertex_color().indices_view().set_data(indices);
                         }
                     }
                 }
             }
         }
 
-        // SAFETY: `fbx_mesh` is this mesh's own `ufbx_mesh` element in uc's
-        // tmp_elements arena (write-capable provenance); `finalize_mesh` updates
-        // it in place, pushing its new list data onto uc's result arena.
-        unsafe {
-            finalize_mesh(
-                uc.result_view(),
-                uc.error_mut_ptr(),
-                View::<Mesh>::from_ptr(fbx_mesh),
-            )?
-        };
+        // SAFETY: `finalize_mesh` updates this mesh's own element in place,
+        // pushing its new list data onto uc's result arena.
+        unsafe { finalize_mesh(uc.result_view(), uc.error_mut_ptr(), fbx_mesh)? };
 
         if uc.retain_mesh_parts() {
-            // SAFETY: `fbx_mesh` is this mesh's own element; the part run is
-            // freshly zero-pushed onto uc's result arena, checked below.
-            unsafe {
-                (*fbx_mesh).face_group_parts.count = mesh.num_groups() as usize;
-                (*fbx_mesh).face_group_parts.data = uc
-                    .result_view()
-                    .push_zero::<MeshPart>(mesh.num_groups() as usize);
-                ufbxi_check!(
-                    uc,
-                    !(*fbx_mesh).face_group_parts.data.is_null(),
-                    "fbx_mesh->face_group_parts.data"
-                );
-            }
+            // The part run is freshly zero-pushed onto uc's result arena,
+            // checked below.
+            fbx_mesh
+                .face_group_parts_view()
+                .set_count(mesh.num_groups() as usize);
+            fbx_mesh.face_group_parts_view().set_data(
+                uc.result_view()
+                    .push_zero::<MeshPart>(mesh.num_groups() as usize),
+            );
+            ufbxi_check!(
+                uc,
+                !fbx_mesh.face_group_parts_view().data().is_null(),
+                "fbx_mesh->face_group_parts.data"
+            );
         }
 
         if mesh.num_groups() > 1 {
-            // SAFETY: `fbx_mesh` is this mesh's own element in uc's
-            // tmp_elements arena (as above), updated in place with its
+            // SAFETY: this mesh's own element is updated in place with its
             // face-group part data pushed onto uc's result arena.
-            unsafe {
-                update_face_groups(
-                    uc.result_view(),
-                    uc.error_mut_ptr(),
-                    View::<Mesh>::from_ptr(fbx_mesh),
-                    false,
-                )?
-            };
+            unsafe { update_face_groups(uc.result_view(), uc.error_mut_ptr(), fbx_mesh, false)? };
         } else if mesh.num_groups() == 1 {
-            // SAFETY: `fbx_mesh` is this mesh's own element; `part` is the
-            // first entry of the `face_group_parts` run pushed above, taken
-            // only when its count is non-zero, and the sentinel index arrays
-            // are static.
-            unsafe {
-                (*fbx_mesh).face_group.data = SENTINEL_INDEX_ZERO.as_ptr();
-                (*fbx_mesh).face_group.count = num_faces;
-                // NOTE: Consecutive and zero indices are always allocated so we can skip doing it here,
-                // see HACK(consecutiv-faces)..
-                if (*fbx_mesh).face_group_parts.count > 0 {
-                    let part: *mut MeshPart = (*fbx_mesh).face_group_parts.data as *mut MeshPart;
-                    // C-parity: `part->num_faces` is assigned twice in a row
-                    // (ufbx.c:17662-17663); the second write wins. Both are kept.
-                    (*part).num_faces = (*fbx_mesh).num_faces;
-                    (*part).num_faces = num_faces;
-                    (*part).num_empty_faces = (*fbx_mesh).num_empty_faces;
-                    (*part).num_point_faces = (*fbx_mesh).num_point_faces;
-                    (*part).num_line_faces = (*fbx_mesh).num_line_faces;
-                    (*part).num_triangles = (*fbx_mesh).num_triangles;
-                    (*part).face_indices.data = SENTINEL_INDEX_CONSECUTIVE.as_ptr();
-                    (*part).face_indices.count = num_faces;
-                }
+            fbx_mesh
+                .face_group_view()
+                .set_data(SENTINEL_INDEX_ZERO.as_ptr());
+            fbx_mesh.face_group_view().set_count(num_faces);
+            // NOTE: Consecutive and zero indices are always allocated so we can skip doing it here,
+            // see HACK(consecutiv-faces)..
+            if fbx_mesh.face_group_parts_view().count() > 0 {
+                // SAFETY: `part` is the first entry of the `face_group_parts`
+                // run pushed above onto uc's result arena (write-capable
+                // provenance), taken only when its count is non-zero.
+                let part: &View<MeshPart> = unsafe {
+                    View::<MeshPart>::from_ptr(
+                        fbx_mesh.face_group_parts_view().data() as *mut MeshPart
+                    )
+                };
+                // C-parity: `part->num_faces` is assigned twice in a row
+                // (ufbx.c:17662-17663); the second write wins. Both are kept.
+                part.set_num_faces(fbx_mesh.num_faces());
+                part.set_num_faces(num_faces);
+                part.set_num_empty_faces(fbx_mesh.num_empty_faces());
+                part.set_num_point_faces(fbx_mesh.num_point_faces());
+                part.set_num_line_faces(fbx_mesh.num_line_faces());
+                part.set_num_triangles(fbx_mesh.num_triangles());
+                // The sentinel index arrays are static.
+                part.face_indices_view()
+                    .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
+                part.face_indices_view().set_count(num_faces);
             }
         }
 
@@ -2059,7 +2073,7 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             ufbxi_check!(uc, !lib.data.is_null(), "lib.data");
             uc.obj().mtllib_relative_path_view().set_data(lib.data);
             uc.obj().mtllib_relative_path_view().set_size(lib.length);
-        // SAFETY: as above.
+        // SAFETY: as for the `mtllib` comparison above.
         } else if unsafe { str_equal(cmd, str_c(b"usemtl\0".as_ptr())) } {
             obj_parse_material(uc)?;
         } else if !uc.opts_view().disable_quirks() && key == 0 {
@@ -2101,10 +2115,14 @@ pub(crate) fn obj_flush_material(uc: &Context) -> Result<(), Fail> {
     let material: *mut Material =
         unsafe { *uc.obj().tmp_materials().add((*entry).element_id as usize) };
 
+    // SAFETY: `material` is the element stored for this id, living in uc's own
+    // element arena (write-capable provenance).
+    let material: &MaterialView = unsafe { MaterialView::from_ptr(material) };
+
     let num_props: usize = uc.obj().tmp_props_view().num_items();
-    // SAFETY: `material` is the element stored for this id, so its own prop
-    // list is the unaliased destination.
-    unsafe { obj_pop_props(uc, &mut (*material).element.props.props, num_props)? };
+    // SAFETY: the material element's own prop list is the unaliased
+    // destination.
+    unsafe { obj_pop_props(uc, material.props_view().props_raw(), num_props)? };
 
     Ok(())
 }
@@ -2130,22 +2148,23 @@ pub(crate) unsafe fn obj_parse_prop(
 
     let prop: *mut Prop = uc.obj().tmp_props_view().push_zero::<Prop>(1);
     ufbxi_check!(uc, !prop.is_null(), "prop");
-    // SAFETY: `prop` is the fresh non-null zeroed push result, so every write
-    // through it below lands in the obj parser's own `tmp_props` arena.
-    unsafe { (*prop).name = name };
+    // SAFETY: `prop` is the fresh non-null zeroed push result on the obj
+    // parser's own `tmp_props` arena (write-capable provenance), so every
+    // access through the anchored view below lands in that arena.
+    let prop: &View<Prop> = unsafe { View::<Prop>::from_ptr(prop) };
+    prop.set_name(name);
 
     // SAFETY: interns the prop's own `name` field into uc's string pool, both
     // taken through their raw-ptr getters.
-    unsafe { push_string_place_str(uc.string_pool_mut_ptr(), &mut (*prop).name, false)? };
+    unsafe { push_string_place_str(uc.string_pool_mut_ptr(), prop.name_raw(), false)? };
 
     let mut flags: u32 = PropFlags::VALUE_STR.raw();
 
     // C-parity: `prop->value_real_arr[]` is the `ufbx_prop` value union's
     // 4-real view (ufbx.h); the generated struct keeps only the `value_vec4`
-    // member (PORTING.md union table).
-    // SAFETY: `prop` is the fresh push result (as above); the reinterpreted
-    // `value_vec4` field is four contiguous `Real`s.
-    let value_real_arr: *mut Real = unsafe { &mut (*prop).value_vec4 as *mut Vec4 as *mut Real };
+    // member (PORTING.md union table). The reinterpreted `value_vec4` field is
+    // four contiguous `Real`s.
+    let value_real_arr: *mut Real = prop.value_vec4_raw() as *mut Real;
 
     let mut num_reals: usize = 0;
     while num_reals < 4 {
@@ -2171,8 +2190,7 @@ pub(crate) unsafe fn obj_parse_prop(
         // of the prop's own `value_vec4`.
         unsafe { *value_real_arr.add(num_reals) = val as Real };
         if num_reals == 0 {
-            // SAFETY: `prop` is the fresh push result (as above).
-            unsafe { (*prop).value_int = f64_to_i64(val) };
+            prop.set_value_int(f64_to_i64(val));
             flags |= PropFlags::VALUE_INT.raw();
         }
 
@@ -2207,53 +2225,50 @@ pub(crate) unsafe fn obj_parse_prop(
                 start + num_args - 1
             },
         );
-        // SAFETY: `prop` is the fresh push result (as above); `span` is the
-        // token span `obj_span_token` returned for the same token run.
-        unsafe {
-            (*prop).value_str = span;
-            (*prop).value_blob.data = span.data;
-            (*prop).value_blob.size = span.length;
-        }
+        // `span` is the token span `obj_span_token` returned for the same
+        // token run.
+        prop.set_value_str(span);
+        let mut value_blob: Blob = prop.value_blob();
+        value_blob.data = span.data;
+        value_blob.size = span.length;
+        prop.set_value_blob(value_blob);
 
         // SAFETY: interns the prop's own value fields into uc's string pool,
         // both taken through their raw-ptr getters.
         unsafe {
-            push_string_place_str(uc.string_pool_mut_ptr(), &mut (*prop).value_str, false)?;
-            push_string_place_blob(uc.string_pool_mut_ptr(), &mut (*prop).value_blob, true)?;
+            push_string_place_str(uc.string_pool_mut_ptr(), prop.value_str_raw(), false)?;
+            push_string_place_blob(uc.string_pool_mut_ptr(), prop.value_blob_raw(), true)?;
         }
     } else {
-        // SAFETY: `prop` is the fresh push result (as above).
-        unsafe { (*prop).value_str.data = EMPTY_CHAR.as_ptr() };
+        let mut value_str: String = prop.value_str();
+        value_str.data = EMPTY_CHAR.as_ptr();
+        prop.set_value_str(value_str);
     }
 
     if num_reals > 0 {
         flags = PropFlags::VALUE_REAL.raw() << (num_reals - 1);
     } else {
-        // SAFETY: `prop` is the fresh push result (as above); its `value_str`
-        // is either an interned pool string or `EMPTY_CHAR`, NUL-terminated
-        // either way, as are the two literals.
-        if unsafe { strcmp((*prop).value_str.data, b"on\0".as_ptr()) } == 0 {
-            // SAFETY: `prop` is the fresh push result (as above).
-            unsafe {
-                (*prop).value_int = 1;
-                // C: `prop->value_real = 1.0f;` — the first `ufbx_real` of the
-                // value union (`value_vec4.x` in the generated struct).
-                (*prop).value_vec4.x = 1.0f32 as Real;
-            }
+        // SAFETY: the prop's `value_str` is either an interned pool string or
+        // `EMPTY_CHAR`, NUL-terminated either way, as are the two literals.
+        if unsafe { strcmp(prop.value_str().data, b"on\0".as_ptr()) } == 0 {
+            prop.set_value_int(1);
+            // C: `prop->value_real = 1.0f;` — the first `ufbx_real` of the
+            // value union (`value_vec4.x` in the generated struct).
+            let mut value_vec4: Vec4 = prop.value_vec4();
+            value_vec4.x = 1.0f32 as Real;
+            prop.set_value_vec4(value_vec4);
             flags |= PropFlags::VALUE_INT.raw();
         // SAFETY: as for the `"on"` comparison above.
-        } else if unsafe { strcmp((*prop).value_str.data, b"off\0".as_ptr()) } == 0 {
-            // SAFETY: `prop` is the fresh push result (as above).
-            unsafe {
-                (*prop).value_int = 0;
-                (*prop).value_vec4.x = 0.0f32 as Real;
-            }
+        } else if unsafe { strcmp(prop.value_str().data, b"off\0".as_ptr()) } == 0 {
+            prop.set_value_int(0);
+            let mut value_vec4: Vec4 = prop.value_vec4();
+            value_vec4.x = 0.0f32 as Real;
+            prop.set_value_vec4(value_vec4);
             flags |= PropFlags::VALUE_INT.raw();
         }
     }
 
-    // SAFETY: `prop` is the fresh push result (as above).
-    unsafe { (*prop).flags = PropFlags::from_raw(flags) };
+    prop.set_flags(PropFlags::from_raw(flags));
 
     if !p_next.is_null() {
         // SAFETY: caller contract — a non-null `p_next` is a writable `usize`

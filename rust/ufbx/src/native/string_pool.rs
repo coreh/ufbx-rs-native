@@ -188,10 +188,12 @@ pub(crate) unsafe fn get_concat_key(parts: *const String, num_parts: usize) -> u
         // SAFETY: `part` walks `[parts, part_end)`, so it addresses a live
         // `String`; when its length is the C-string sentinel, `strlen` reads the
         // NUL-terminated run `part->data` points at.
-        let length = if unsafe { (*part).length } != usize::MAX {
-            unsafe { (*part).length }
-        } else {
-            unsafe { strlen((*part).data) }
+        let length = unsafe {
+            if (*part).length != usize::MAX {
+                (*part).length
+            } else {
+                strlen((*part).data)
+            }
         };
         let mut i: usize = 0;
         while i < length {
@@ -219,11 +221,10 @@ pub(crate) unsafe fn concat_str_cmp(
     parts: *const String,
     num_parts: usize,
 ) -> i32 {
-    // SAFETY: the caller vouches `ref_` addresses a valid `String`.
-    let mut ptr_ = unsafe { (*ref_).data };
-    // SAFETY: `ref_->data` is readable for `ref_->length` bytes, so this is its
-    // one-past-the-end pointer within the same run.
-    let end = unsafe { ptr_.add((*ref_).length) };
+    // SAFETY: the caller vouches `ref_` addresses a valid `String`, whose
+    // `data` is readable for `length` bytes, so `end` is that run's
+    // one-past-the-end pointer.
+    let (mut ptr_, end) = unsafe { ((*ref_).data, (*ref_).data.add((*ref_).length)) };
     // C: `ufbxi_for(const ufbx_string, part, parts, num_parts)`
     let mut part = parts;
     // SAFETY: the caller vouches `parts` addresses `num_parts` `String`s, so the
@@ -233,10 +234,12 @@ pub(crate) unsafe fn concat_str_cmp(
         // SAFETY: `part` walks `[parts, part_end)`, so it addresses a live
         // `String`; when its length is the C-string sentinel, `strlen` reads the
         // NUL-terminated run `part->data` points at.
-        let length = if unsafe { (*part).length } != usize::MAX {
-            unsafe { (*part).length }
-        } else {
-            unsafe { strlen((*part).data) }
+        let length = unsafe {
+            if (*part).length != usize::MAX {
+                (*part).length
+            } else {
+                strlen((*part).data)
+            }
         };
         // SAFETY: `ptr_` and `end` bracket the same `ref_->data` run — `ptr_`
         // only advances toward `end` below — so they are two pointers into one

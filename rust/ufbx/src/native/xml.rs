@@ -65,9 +65,42 @@ impl View<XmlTag> {
         unsafe { (*self.get()).name.data }
     }
     #[inline(always)]
+    pub(crate) fn set_name_data(&self, data: *const u8) {
+        // SAFETY: storing the `name.data` pointer field of a valid arena `XmlTag`.
+        unsafe {
+            (*self.get()).name.data = data;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn name_raw(&self) -> *mut String {
+        // SAFETY: in-bounds projection of the `name` field; the returned raw
+        // pointer inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).name }
+    }
+    #[inline(always)]
     pub(crate) fn text(&self) -> String {
         // SAFETY: `String` is a POD `{ptr,len}`; reading it from a valid `XmlTag`.
         unsafe { (*self.get()).text }
+    }
+    #[inline(always)]
+    pub(crate) fn set_text_data(&self, data: *const u8) {
+        // SAFETY: storing the `text.data` pointer field of a valid arena `XmlTag`.
+        unsafe {
+            (*self.get()).text.data = data;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn set_text_length(&self, length: usize) {
+        // SAFETY: storing the `text.length` field of a valid arena `XmlTag`.
+        unsafe {
+            (*self.get()).text.length = length;
+        }
+    }
+    #[inline(always)]
+    pub(crate) fn text_raw(&self) -> *mut String {
+        // SAFETY: in-bounds projection of the `text` field; the returned raw
+        // pointer inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).text }
     }
     #[inline(always)]
     pub(crate) fn attribs(&self) -> *mut XmlAttrib {
@@ -75,9 +108,23 @@ impl View<XmlTag> {
         unsafe { (*self.get()).attribs }
     }
     #[inline(always)]
+    pub(crate) fn set_attribs(&self, attribs: *mut XmlAttrib) {
+        // SAFETY: storing the `attribs` run pointer of a valid arena `XmlTag`.
+        unsafe {
+            (*self.get()).attribs = attribs;
+        }
+    }
+    #[inline(always)]
     pub(crate) fn num_attribs(&self) -> usize {
         // SAFETY: reading a `usize` count field.
         unsafe { (*self.get()).num_attribs }
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_attribs(&self, num_attribs: usize) {
+        // SAFETY: storing a `usize` count field.
+        unsafe {
+            (*self.get()).num_attribs = num_attribs;
+        }
     }
     #[inline(always)]
     pub(crate) fn children(&self) -> *mut XmlTag {
@@ -85,9 +132,23 @@ impl View<XmlTag> {
         unsafe { (*self.get()).children }
     }
     #[inline(always)]
+    pub(crate) fn set_children(&self, children: *mut XmlTag) {
+        // SAFETY: storing the `children` run pointer of a valid arena `XmlTag`.
+        unsafe {
+            (*self.get()).children = children;
+        }
+    }
+    #[inline(always)]
     pub(crate) fn num_children(&self) -> usize {
         // SAFETY: reading a `usize` count field.
         unsafe { (*self.get()).num_children }
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_children(&self, num_children: usize) {
+        // SAFETY: storing a `usize` count field.
+        unsafe {
+            (*self.get()).num_children = num_children;
+        }
     }
 }
 
@@ -100,9 +161,21 @@ impl View<XmlAttrib> {
         unsafe { (*self.get()).name.data }
     }
     #[inline(always)]
+    pub(crate) fn name_raw(&self) -> *mut String {
+        // SAFETY: in-bounds projection of the `name` field; the returned raw
+        // pointer inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).name }
+    }
+    #[inline(always)]
     pub(crate) fn value(&self) -> String {
         // SAFETY: `String` is a POD `{ptr,len}`; reading it from a valid `XmlAttrib`.
         unsafe { (*self.get()).value }
+    }
+    #[inline(always)]
+    pub(crate) fn value_raw(&self) -> *mut String {
+        // SAFETY: in-bounds projection of the `value` field; the returned raw
+        // pointer inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).value }
     }
 }
 
@@ -816,21 +889,22 @@ unsafe fn xml_parse_tag_rec(
             if has_text {
                 let tag: *mut XmlTag = xc.tmp_stack_view().push_zero(1);
                 ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
-                // SAFETY (this store and the two below): `tag` is the fresh,
-                // checked-non-null single-element push above, so writing its
-                // fields writes xc's own tmp-stack allocation; `EMPTY_CHAR` is a
-                // NUL-terminated `'static` run, and `push_copy` copies the
-                // `tok_len` bytes the token buffer holds into xc's result buf.
-                unsafe { (*tag).name.data = EMPTY_CHAR.as_ptr() };
+                // SAFETY: `tag` is the fresh, checked-non-null single-element
+                // push above, so it addresses xc's own tmp-stack allocation
+                // (write-capable provenance).
+                let tag: &XmlTagView = unsafe { XmlTagView::from_ptr(tag) };
+                // `EMPTY_CHAR` is a NUL-terminated `'static` run.
+                tag.set_name_data(EMPTY_CHAR.as_ptr());
 
-                unsafe { (*tag).text.length = xc.tok_len() - 1 };
-                unsafe {
-                    (*tag).text.data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok())
-                };
+                tag.set_text_length(xc.tok_len() - 1);
+                // SAFETY: `push_copy` copies the `tok_len` bytes the token
+                // buffer holds into xc's result buf.
+                tag.set_text_data(unsafe {
+                    push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok())
+                });
                 ufbxi_check_err!(
                     xc.error_view(),
-                    // SAFETY: reading the pointer field just stored in `tag`.
-                    !unsafe { (*tag).text.data }.is_null(),
+                    !tag.text().data.is_null(),
                     "tag->text.data"
                 );
             }
@@ -874,13 +948,15 @@ unsafe fn xml_parse_tag_rec(
 
             let tag: *mut XmlTag = xc.tmp_stack_view().push_zero(1);
             ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
-            // SAFETY: `tag` is the fresh, checked-non-null push above, so
-            // `&raw mut` on its `text` field addresses xc's own tmp-stack
-            // allocation; the suffix is a NUL-terminated `'static` literal.
-            unsafe { xml_skip_until_string(xc, &raw mut (*tag).text, b"]]>\0".as_ptr())? };
-            // SAFETY: writing the same fresh push; `EMPTY_CHAR` is a
-            // NUL-terminated `'static` run.
-            unsafe { (*tag).name.data = EMPTY_CHAR.as_ptr() };
+            // SAFETY: `tag` is the fresh, checked-non-null push above, so it
+            // addresses xc's own tmp-stack allocation (write-capable
+            // provenance).
+            let tag: &XmlTagView = unsafe { XmlTagView::from_ptr(tag) };
+            // SAFETY: the `text` field projection addresses that same fresh
+            // push; the suffix is a NUL-terminated `'static` literal.
+            unsafe { xml_skip_until_string(xc, tag.text_raw(), b"]]>\0".as_ptr())? };
+            // `EMPTY_CHAR` is a NUL-terminated `'static` run.
+            tag.set_name_data(EMPTY_CHAR.as_ptr());
         } else if xml_accept(xc, b'-') {
             if !xml_accept(xc, b'-') {
                 return Err(Fail);
@@ -906,12 +982,13 @@ unsafe fn xml_parse_tag_rec(
 
     let tag: *mut XmlTag = xc.tmp_stack_view().push_zero(1);
     ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
-    // SAFETY: `tag` is the fresh, checked-non-null push above, so `&raw mut` on
-    // its `name` field addresses xc's own tmp-stack allocation.
-    unsafe { xml_read_until(xc, &raw mut (*tag).name, XML_CTYPE_NAME_END)? };
-    // SAFETY: writing the same fresh push; `EMPTY_CHAR` is a NUL-terminated
-    // `'static` run.
-    unsafe { (*tag).text.data = EMPTY_CHAR.as_ptr() };
+    // SAFETY: `tag` is the fresh, checked-non-null push above, so it addresses
+    // xc's own tmp-stack allocation (write-capable provenance).
+    let tag: &XmlTagView = unsafe { XmlTagView::from_ptr(tag) };
+    // SAFETY: the `name` field projection addresses that same fresh push.
+    unsafe { xml_read_until(xc, tag.name_raw(), XML_CTYPE_NAME_END)? };
+    // `EMPTY_CHAR` is a NUL-terminated `'static` run.
+    tag.set_text_data(EMPTY_CHAR.as_ptr());
 
     let mut has_children: bool = false;
 
@@ -929,10 +1006,12 @@ unsafe fn xml_parse_tag_rec(
         } else {
             let attrib: *mut XmlAttrib = xc.tmp_stack_view().push_zero(1);
             ufbxi_check_err!(xc.error_view(), !attrib.is_null(), "attrib");
-            // SAFETY: `attrib` is the fresh, checked-non-null push above, so
-            // `&raw mut` on its `name` field addresses xc's own tmp-stack
-            // allocation.
-            unsafe { xml_read_until(xc, &raw mut (*attrib).name, XML_CTYPE_NAME_END)? };
+            // SAFETY: `attrib` is the fresh, checked-non-null push above, so it
+            // addresses xc's own tmp-stack allocation (write-capable
+            // provenance).
+            let attrib: &XmlAttribView = unsafe { XmlAttribView::from_ptr(attrib) };
+            // SAFETY: the `name` field projection addresses that same fresh push.
+            unsafe { xml_read_until(xc, attrib.name_raw(), XML_CTYPE_NAME_END)? };
             xml_skip_while(xc, XML_CTYPE_WHITESPACE);
             if !xml_accept(xc, b'=') {
                 return Err(Fail);
@@ -946,25 +1025,18 @@ unsafe fn xml_parse_tag_rec(
             } else {
                 ufbxi_fail_err!(xc.error_view(), "Bad attrib value");
             }
-            // SAFETY: `attrib` is still that fresh push, so `&raw mut` on its
-            // `value` field addresses xc's own tmp-stack allocation.
-            unsafe { xml_read_until(xc, &raw mut (*attrib).value, quote_ctype)? };
+            // SAFETY: the `value` field projection addresses that same fresh push.
+            unsafe { xml_read_until(xc, attrib.value_raw(), quote_ctype)? };
             xml_advance(xc);
             num_attribs += 1;
         }
     }
 
-    // SAFETY (both stores): `tag` is the fresh, checked-non-null push above;
     // `push_pop` moves exactly the `num_attribs` attribs this loop stacked on
     // xc's tmp stack into xc's result buf.
-    unsafe { (*tag).num_attribs = num_attribs };
-    unsafe { (*tag).attribs = xc.result_view().push_pop(xc.tmp_stack_view(), num_attribs) };
-    ufbxi_check_err!(
-        xc.error_view(),
-        // SAFETY: reading the pointer field just stored in `tag`.
-        !unsafe { (*tag).attribs }.is_null(),
-        "tag->attribs"
-    );
+    tag.set_num_attribs(num_attribs);
+    tag.set_attribs(xc.result_view().push_pop(xc.tmp_stack_view(), num_attribs));
+    ufbxi_check_err!(xc.error_view(), !tag.attribs().is_null(), "tag->attribs");
 
     if has_children {
         let children_begin: usize = xc.tmp_stack_view().num_items();
@@ -973,27 +1045,20 @@ unsafe fn xml_parse_tag_rec(
             // SAFETY: `closing` is an unaliased local out-param; `tag`'s `name`
             // is the NUL-terminated arena string the callee compares the
             // closing tag against.
-            unsafe { xml_parse_tag(xc, depth + 1, &mut closing, (*tag).name.data)? };
+            unsafe { xml_parse_tag(xc, depth + 1, &mut closing, tag.name_data())? };
             if closing {
                 break;
             }
         }
 
-        // SAFETY (both stores): `tag` is that same fresh push; `push_pop` moves
-        // exactly the `num_children` tags the loop stacked on xc's tmp stack
-        // into xc's result buf.
-        unsafe { (*tag).num_children = xc.tmp_stack_view().num_items() - children_begin };
-        unsafe {
-            (*tag).children = xc
-                .result_view()
-                .push_pop(xc.tmp_stack_view(), (*tag).num_children)
-        };
-        ufbxi_check_err!(
-            xc.error_view(),
-            // SAFETY: reading the pointer field just stored in `tag`.
-            !unsafe { (*tag).children }.is_null(),
-            "tag->children"
+        // `push_pop` moves exactly the `num_children` tags the loop stacked on
+        // xc's tmp stack into xc's result buf.
+        tag.set_num_children(xc.tmp_stack_view().num_items() - children_begin);
+        tag.set_children(
+            xc.result_view()
+                .push_pop(xc.tmp_stack_view(), tag.num_children()),
         );
+        ufbxi_check_err!(xc.error_view(), !tag.children().is_null(), "tag->children");
     }
 
     Ok(())
@@ -1004,12 +1069,12 @@ unsafe fn xml_parse_tag_rec(
 pub(crate) fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
     let tag: *mut XmlTag = xc.result_view().push_zero(1);
     ufbxi_check_err!(xc.error_view(), !tag.is_null(), "tag");
-    // SAFETY: `tag` is a fresh non-null single-element push, so writing its
-    // fields is writing our own allocation; `EMPTY_CHAR` is a `'static` run.
-    unsafe {
-        (*tag).name.data = EMPTY_CHAR.as_ptr();
-        (*tag).text.data = EMPTY_CHAR.as_ptr();
-    }
+    // SAFETY: `tag` is a fresh non-null single-element push, so it addresses
+    // xc's own result allocation (write-capable provenance).
+    let tag: &XmlTagView = unsafe { XmlTagView::from_ptr(tag) };
+    // `EMPTY_CHAR` is a `'static` run.
+    tag.set_name_data(EMPTY_CHAR.as_ptr());
+    tag.set_text_data(EMPTY_CHAR.as_ptr());
 
     loop {
         let mut closing: bool = false;
@@ -1022,20 +1087,14 @@ pub(crate) fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
         }
     }
 
-    // SAFETY: `tag` is still our fresh push, so writing its fields is writing
-    // our own allocation. `push_pop` moves exactly the `num_items` tags this
-    // parse stacked on xc's tmp stack into xc's result buf.
-    unsafe {
-        (*tag).num_children = xc.tmp_stack_view().num_items();
-        (*tag).children = xc
-            .result_view()
-            .push_pop(xc.tmp_stack_view(), (*tag).num_children);
-    }
-    ufbxi_check_err!(
-        xc.error_view(),
-        !unsafe { (*tag).children }.is_null(),
-        "tag->children"
+    // `push_pop` moves exactly the `num_items` tags this parse stacked on xc's
+    // tmp stack into xc's result buf.
+    tag.set_num_children(xc.tmp_stack_view().num_items());
+    tag.set_children(
+        xc.result_view()
+            .push_pop(xc.tmp_stack_view(), tag.num_children()),
     );
+    ufbxi_check_err!(xc.error_view(), !tag.children().is_null(), "tag->children");
 
     xc.set_doc(xc.result_view().push(1));
     ufbxi_check_err!(xc.error_view(), !xc.doc().is_null(), "xc->doc");
@@ -1043,7 +1102,7 @@ pub(crate) fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
     // SAFETY: `xc.doc()` was just checked non-null and is our fresh push, whose
     // fields we fill before any reader sees it.
     unsafe {
-        (*xc.doc()).root = tag;
+        (*xc.doc()).root = tag.get();
         (*xc.doc()).buf = xc.take_result();
     }
 
@@ -1069,11 +1128,13 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     // aggregate initializer leaves the context in (every field is a scalar,
     // pointer, POD array or zeroable `Buf`).
     let xc: XmlContext = unsafe { core::mem::zeroed() };
-    // SAFETY (all three reads): `opts` points at a live `XmlLoadOpts` the
-    // caller owns for the duration of the call (fn raw-param contract).
-    xc.set_ator(unsafe { (*opts).ator });
-    xc.set_read_fn(unsafe { (*opts).read_fn });
-    xc.set_read_user(unsafe { (*opts).read_user });
+    // SAFETY: `opts` points at a live `XmlLoadOpts` the caller owns for the
+    // duration of the call (fn raw-param contract).
+    unsafe {
+        xc.set_ator((*opts).ator);
+        xc.set_read_fn((*opts).read_fn);
+        xc.set_read_user((*opts).read_user);
+    }
 
     xc.tmp_stack_view().set_ator(xc.ator());
     xc.result_view().set_ator(xc.ator());
@@ -1084,8 +1145,10 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     if unsafe { (*opts).prefix_length } > 0 {
         // SAFETY: `opts` is live; `prefix`/`prefix_length` describe one caller-
         // owned run, so the offset forms an in-range one-past-the-end pointer.
-        xc.set_pos(unsafe { (*opts).prefix });
-        xc.set_pos_end(unsafe { (*opts).prefix.add((*opts).prefix_length) });
+        unsafe {
+            xc.set_pos((*opts).prefix);
+            xc.set_pos_end((*opts).prefix.add((*opts).prefix_length));
+        }
     } else {
         xml_refill(&xc);
     }
@@ -1095,8 +1158,10 @@ pub(crate) unsafe fn load_xml(opts: *mut XmlLoadOpts, error: *mut Error) -> *mut
     // SAFETY: both are xc's own state — the tmp stack buf it owns, and the
     // token run either grown from `xc.ator()` to exactly `tok_cap` bytes or
     // still `(null, 0)`, which `free` ignores.
-    unsafe { buf_free(xc.tmp_stack_mut_ptr()) };
-    unsafe { free::<u8>(xc.ator(), xc.tok(), xc.tok_cap()) };
+    unsafe {
+        buf_free(xc.tmp_stack_mut_ptr());
+        free::<u8>(xc.ator(), xc.tok(), xc.tok_cap());
+    }
 
     if ok {
         xc.doc()

@@ -1959,8 +1959,10 @@ pub(crate) unsafe extern "C" fn cmp_cache_frame_less(
     // elements' interned `channel` fields are.
     if unsafe { (*a).channel.data != (*b).channel.data } {
         // Channel names should be interned
-        ufbxi_regression_assert!(unsafe { !str_equal((*a).channel, (*b).channel) });
-        return unsafe { str_less((*a).channel, (*b).channel) };
+        unsafe {
+            ufbxi_regression_assert!(!str_equal((*a).channel, (*b).channel));
+            return str_less((*a).channel, (*b).channel);
+        }
     }
     unsafe { (*a).time < (*b).time }
 }
@@ -2224,7 +2226,7 @@ pub(crate) unsafe fn cache_load_imp(
     // `cc->imp->magic = ...` / `cc->imp->refcount.ator = cc->ator_result` /
     // `cc->imp->refcount.buf = cc->result` — the shared imp-finalization group.
     //
-    // SAFETY (this and every `(*cc.imp())` projection below): `cc.imp()` is the
+    // SAFETY (the `finish_imp` call and the store run below): `cc.imp()` is the
     // non-null single-element result-buf allocation pushed and checked just
     // above; it is the last allocation, so nothing else aliases it while these
     // header fields are stamped. `cache_mut_ptr` addresses `cc`'s own
@@ -2241,10 +2243,12 @@ pub(crate) unsafe fn cache_load_imp(
         )
     };
 
-    unsafe { (*cc.imp()).owned_by_scene = cc.owned_by_scene() };
-    unsafe { (*cc.imp()).refcount.buf.ator = &raw mut (*cc.imp()).refcount.ator };
-    unsafe { (*cc.imp()).string_buf = cc.string_pool_view().take_buf() };
-    unsafe { (*cc.imp()).string_buf.ator = &raw mut (*cc.imp()).refcount.ator };
+    unsafe {
+        (*cc.imp()).owned_by_scene = cc.owned_by_scene();
+        (*cc.imp()).refcount.buf.ator = &raw mut (*cc.imp()).refcount.ator;
+        (*cc.imp()).string_buf = cc.string_pool_view().take_buf();
+        (*cc.imp()).string_buf.ator = &raw mut (*cc.imp()).refcount.ator;
+    }
 
     Ok(finished_imp)
 }
@@ -2259,20 +2263,24 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
     // teardown to the return below.
     let result = unsafe { cache_load_imp(cc, filename) };
 
-    // SAFETY (this teardown group): every pointer addresses one of `cc`'s own
-    // fields, each paired with the allocator that produced it — the temp bufs
-    // and the `name_buf`/`tmp_arr` runs with `cc.ator_tmp`. Each is freed once,
-    // and the context is not used for allocation afterwards.
-    unsafe { buf_free(cc.tmp_mut_ptr()) };
-    unsafe { buf_free(cc.tmp_stack_mut_ptr()) };
-    unsafe { free::<u8>(cc.ator_tmp(), cc.name_buf(), cc.name_cap()) };
-    unsafe { free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size()) };
+    // SAFETY: every pointer addresses one of `cc`'s own fields, each paired
+    // with the allocator that produced it — the temp bufs and the
+    // `name_buf`/`tmp_arr` runs with `cc.ator_tmp`. Each is freed once, and the
+    // context is not used for allocation afterwards.
+    unsafe {
+        buf_free(cc.tmp_mut_ptr());
+        buf_free(cc.tmp_stack_mut_ptr());
+        free::<u8>(cc.ator_tmp(), cc.name_buf(), cc.name_cap());
+        free::<u8>(cc.ator_tmp(), cc.tmp_arr(), cc.tmp_arr_size());
+    }
     if !cc.owned_by_scene() {
         // SAFETY: the temp allocator and its string pool belong to `cc` alone
         // when the cache is not owned by a scene, so freeing them here is the
         // single release of that state.
-        unsafe { string_pool_temp_free(cc.string_pool_mut_ptr()) };
-        unsafe { free_ator(cc.ator_tmp()) };
+        unsafe {
+            string_pool_temp_free(cc.string_pool_mut_ptr());
+            free_ator(cc.ator_tmp());
+        }
     }
 
     if let Ok(finished_imp) = result {
@@ -2324,10 +2332,9 @@ pub(crate) unsafe fn load_geometry_cache(
     // zero-initializer these lines port.
     let cc: CacheContext = unsafe { core::mem::zeroed() };
     let mut ator_tmp: Allocator = unsafe { core::mem::zeroed() };
-    // SAFETY (both calls): the error pointer addresses `cc`'s own `Error`
-    // field, the allocators are the zeroed locals/fields being initialized
-    // here, the opts references are live, and the names are NUL-terminated
-    // byte literals.
+    // SAFETY: the error pointer addresses `cc`'s own `Error` field, the
+    // allocators are the zeroed locals/fields being initialized here, the opts
+    // references are live, and the names are NUL-terminated byte literals.
     unsafe {
         init_ator(
             cc.error_mut_ptr(),
@@ -2335,8 +2342,6 @@ pub(crate) unsafe fn load_geometry_cache(
             &opts.temp_allocator,
             c"temp",
         );
-    }
-    unsafe {
         init_ator(
             cc.error_mut_ptr(),
             cc.ator_result_mut_ptr(),
@@ -2400,11 +2405,13 @@ pub(crate) unsafe fn load_geometry_cache(
 #[cfg(feature = "geometry-cache")]
 #[inline(never)]
 pub(crate) unsafe fn free_geometry_cache_imp(imp: *mut GeometryCacheImp) {
-    // SAFETY (both ops): the caller's contract is that `imp` points at a live
+    // SAFETY: the caller's contract is that `imp` points at a live
     // `GeometryCacheImp` — the magic read then confirms it is one of ours, and
     // `string_buf` is that header's own buf, freed once as the cache dies.
-    ufbx_assert!(unsafe { (*imp).magic } == CACHE_IMP_MAGIC);
-    unsafe { buf_free(&mut (*imp).string_buf) };
+    unsafe {
+        ufbx_assert!((*imp).magic == CACHE_IMP_MAGIC);
+        buf_free(&mut (*imp).string_buf);
+    }
 }
 
 // ufbx.c:24765-24769 `ufbxi_geometry_cache_imp` (`#else` branch — feature disabled)
@@ -2903,7 +2910,7 @@ pub(crate) fn scale_units(uc: &Context, mut target_meters: Real) -> Result<(), F
         unsafe { round_if_near(POW10_TARGETS.as_ptr(), POW10_TARGETS.len(), target_meters) };
 
     let mut ratio: Real = uc.scene_view().settings_view().unit_meters() / target_meters;
-    // SAFETY: as above.
+    // SAFETY: scans the same static array with its own length.
     ratio = unsafe { round_if_near(POW10_TARGETS.as_ptr(), POW10_TARGETS.len(), ratio) };
     if ratio == 1.0f32 as Real {
         return Ok(());
