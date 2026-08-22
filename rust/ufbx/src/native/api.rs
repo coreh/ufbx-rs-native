@@ -203,16 +203,14 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         // SAFETY: `refcount` is non-null here and points at a live `Refcount` —
         // the raw-pointer contract of this `unsafe fn`.
         ufbx_assert!(unsafe { (*refcount).self_magic } == REFCOUNT_IMP_MAGIC);
-        // SAFETY: same live `Refcount`; `refcount.refcount` is its own atomic.
+        // SAFETY (this group): same live `Refcount`; `refcount.refcount` is its own atomic.
         if unsafe { atomic_counter_dec(&mut (*refcount).refcount) } > 0 {
             return;
         }
-        // SAFETY: as above.
         unsafe { atomic_counter_free(&mut (*refcount).refcount) };
 
-        // SAFETY: same live `Refcount`; reading its own fields.
+        // SAFETY (this group): same live `Refcount`; reading its own fields.
         let parent: *mut Refcount = unsafe { (*refcount).parent };
-        // SAFETY: as above.
         let type_magic: u32 = unsafe { (*refcount).type_magic };
 
         // SAFETY: as above; writing its own fields.
@@ -793,16 +791,12 @@ pub(crate) unsafe fn load_stream_prefix(
     uc.set_data(prefix as *const u8);
     uc.set_data_begin(uc.data());
     uc.set_data_size(prefix_size);
-    // SAFETY: `stream` points at the caller's live `RawStream`; each read takes
+    // SAFETY (this group): `stream` points at the caller's live `RawStream`; each read takes
     // one of its own callback/user fields.
     uc.set_read_fn(unsafe { (*stream).read_fn });
-    // SAFETY: as above.
     uc.set_skip_fn(unsafe { (*stream).skip_fn });
-    // SAFETY: as above.
     uc.set_size_fn(unsafe { (*stream).size_fn });
-    // SAFETY: as above.
     uc.set_close_fn(unsafe { (*stream).close_fn });
-    // SAFETY: as above.
     uc.set_read_user(unsafe { (*stream).user });
 
     // SAFETY: `uc` is the initialized context; `opts` is null-or-live (sentinels
@@ -1453,9 +1447,8 @@ pub(crate) unsafe fn evaluate_curve_flags(
     }
 
     let mut begin: usize = 0;
-    // SAFETY: live `curve` per above; reading its own keyframe run.
+    // SAFETY (this group): live `curve` per above; reading its own keyframe run.
     let mut end: usize = unsafe { (*curve).keyframes.count };
-    // SAFETY: as above.
     let keys: *const Keyframe = unsafe { (*curve).keyframes.data };
     while end - begin >= 8 {
         let mid: usize = (begin + end) >> 1;
@@ -3562,11 +3555,9 @@ pub(crate) unsafe fn transform_to_matrix(t: *const Transform) -> Matrix {
     // SAFETY: `t` is non-null here (checked above) and points at a live
     // `Transform` per this fn's contract; reading its own `rotation` field.
     let q: Quat = unsafe { (*t).rotation };
-    // SAFETY: same live `Transform`; reading its own `scale` field.
+    // SAFETY (this group): same live `Transform`; reading its own `scale` field.
     let sx: Real = 2.0 * unsafe { (*t).scale.x };
-    // SAFETY: as above.
     let sy: Real = 2.0 * unsafe { (*t).scale.y };
-    // SAFETY: as above.
     let sz: Real = 2.0 * unsafe { (*t).scale.z };
     let xx: Real = q.x * q.x;
     let xy: Real = q.x * q.y;
@@ -3590,12 +3581,10 @@ pub(crate) unsafe fn transform_to_matrix(t: *const Transform) -> Matrix {
     m.m02 = sz * (xz + yw);
     m.m12 = sz * (-xw + yz);
     m.m22 = sz * (-xx - yy + 0.5);
-    // SAFETY: `t` points at a live `Transform` per this fn's contract; reading
+    // SAFETY (this group): `t` points at a live `Transform` per this fn's contract; reading
     // its own `translation` field.
     m.m03 = unsafe { (*t).translation.x };
-    // SAFETY: as above.
     m.m13 = unsafe { (*t).translation.y };
-    // SAFETY: as above.
     m.m23 = unsafe { (*t).translation.z };
     m
 }
@@ -3625,14 +3614,11 @@ pub(crate) unsafe fn matrix_to_transform(m: *const Matrix) -> Transform {
     // SAFETY: an all-zero bit pattern is a valid `Transform` (all `Real`
     // sub-fields).
     let mut t: Transform = unsafe { core::mem::zeroed() };
-    // SAFETY: the live `Matrix` behind `m` holds four contiguous `Vec3` columns
+    // SAFETY (this group): the live `Matrix` behind `m` holds four contiguous `Vec3` columns
     // (its `m00`..`m23` scalars), so `m_cols.add(0..=3)` each address a column.
     t.translation = unsafe { *m_cols.add(3) };
-    // SAFETY: as above.
     t.scale.x = length3(unsafe { *m_cols.add(0) });
-    // SAFETY: as above.
     t.scale.y = length3(unsafe { *m_cols.add(1) });
-    // SAFETY: as above.
     t.scale.z = length3(unsafe { *m_cols.add(2) });
 
     // Flip a single non-zero axis if negative determinant
@@ -3781,13 +3767,10 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
 
     // C: `ufbx_matrix mat = { 0.0f };` / `ufbx_quat q0 = { 0.0f }, qe = { 0.0f };`
     // / `ufbx_quat first_q0 = { 0.0f };` — partial initializers zero the rest.
-    // SAFETY: an all-zero bit pattern is a valid `Matrix`/`Quat` (all `Real`).
+    // SAFETY (this group): an all-zero bit pattern is a valid `Matrix`/`Quat` (all `Real`).
     let mut mat: Matrix = unsafe { core::mem::zeroed() };
-    // SAFETY: as above.
     let mut q0: Quat = unsafe { core::mem::zeroed() };
-    // SAFETY: as above.
     let mut qe: Quat = unsafe { core::mem::zeroed() };
-    // SAFETY: as above.
     let mut first_q0: Quat = unsafe { core::mem::zeroed() };
     let mut qs: Vec3 = Vec3 {
         x: 0.0,
@@ -4070,16 +4053,12 @@ pub(crate) unsafe fn add_blend_shape_vertex_offsets(
         return;
     }
 
-    // SAFETY: `shape` points at a live `BlendShape` per this fn's contract;
+    // SAFETY (this group): `shape` points at a live `BlendShape` per this fn's contract;
     // every field read below is one of its own list fields.
     let num_offsets: usize = unsafe { (*shape).num_offsets };
-    // SAFETY: as above.
     let vertex_indices: *const u32 = unsafe { (*shape).offset_vertices.data };
-    // SAFETY: as above.
     let offsets: *const Vec3 = unsafe { (*shape).position_offsets.data };
-    // SAFETY: as above.
     let weights_data: *const Real = unsafe { (*shape).offset_weights.data };
-    // SAFETY: as above.
     let weights_count: usize = unsafe { (*shape).offset_weights.count };
     for i in 0..num_offsets {
         // SAFETY: `i < num_offsets`, so `vertex_indices.add(i)` addresses a live
@@ -4344,9 +4323,8 @@ pub(crate) unsafe fn evaluate_nurbs_curve(curve: *const NurbsCurve, u: Real) -> 
         return result;
     }
 
-    // SAFETY: an all-zero bit pattern is a valid `Vec4` (all `Real` fields).
+    // SAFETY (this group): an all-zero bit pattern is a valid `Vec4` (all `Real` fields).
     let mut p: Vec4 = unsafe { core::mem::zeroed() };
-    // SAFETY: as above.
     let mut d: Vec4 = unsafe { core::mem::zeroed() };
 
     // SAFETY: same live `NurbsCurve`; reading its own `basis.order`.
@@ -4445,21 +4423,16 @@ pub(crate) unsafe fn evaluate_nurbs_surface(
         return result;
     }
 
-    // SAFETY: an all-zero bit pattern is a valid `Vec4` (all `Real` fields).
+    // SAFETY (this group): an all-zero bit pattern is a valid `Vec4` (all `Real` fields).
     let mut p: Vec4 = unsafe { core::mem::zeroed() };
-    // SAFETY: as above.
     let mut du: Vec4 = unsafe { core::mem::zeroed() };
-    // SAFETY: as above.
     let mut dv: Vec4 = unsafe { core::mem::zeroed() };
 
-    // SAFETY: same live `NurbsSurface`; every field read below is one of its own
+    // SAFETY (this group): same live `NurbsSurface`; every field read below is one of its own
     // control-point-count / basis-order fields.
     let num_u: usize = unsafe { (*surface).num_control_points_u };
-    // SAFETY: as above.
     let num_v: usize = unsafe { (*surface).num_control_points_v };
-    // SAFETY: as above.
     let order_u: usize = unsafe { (*surface).basis_u.order } as usize;
-    // SAFETY: as above.
     let order_v: usize = unsafe { (*surface).basis_v.order } as usize;
     if order_u > MAX_NURBS_ORDER || order_v > MAX_NURBS_ORDER {
         return result;

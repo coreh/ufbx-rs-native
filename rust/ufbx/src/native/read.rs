@@ -422,12 +422,11 @@ pub(crate) unsafe fn read_property(
 // ufbx.c:11871-11876 `ufbxi_prop_less`
 #[inline(always)]
 pub(crate) unsafe fn prop_less(a: *mut Prop, b: *mut Prop) -> bool {
-    // SAFETY: `a` and `b` are live `ufbx_prop` elements handed to the sort
+    // SAFETY (this group): `a` and `b` are live `ufbx_prop` elements handed to the sort
     // comparator from the property array being sorted (fn contract).
     if unsafe { (*a)._internal_key } < unsafe { (*b)._internal_key } {
         return true;
     }
-    // SAFETY: as above.
     if unsafe { (*a)._internal_key } > unsafe { (*b)._internal_key } {
         return false;
     }
@@ -533,14 +532,13 @@ pub(crate) unsafe fn read_properties(
     }
     let node: &NodeView = node.unwrap();
 
-    // SAFETY: `props` is the caller's writable `ufbx_props` slot.
+    // SAFETY (this group): `props` is the caller's writable `ufbx_props` slot.
     unsafe {
         (*props).props.data = uc
             .result_view()
             .push_zero::<Prop>(node.num_children() as usize);
         (*props).props.count = node.num_children() as usize;
     }
-    // SAFETY: as above.
     ufbxi_check!(
         uc,
         !unsafe { (*props).props.data }.is_null(),
@@ -2574,10 +2572,9 @@ pub(crate) unsafe fn read_vertex_element(
     }
 
     if !indices.is_null() {
-        // SAFETY: `indices` is non-null (checked) and points at the node's own
+        // SAFETY (this group): `indices` is non-null (checked) and points at the node's own
         // array descriptor, whose `data` spans `size` `int32_t` indices.
         let num_indices: usize = unsafe { (*indices).size };
-        // SAFETY: as above.
         let index_data: *mut u32 = unsafe { (*indices).data } as *mut u32;
 
         if mapping == sp::ByPolygonVertex.as_ptr() {
@@ -2861,10 +2858,9 @@ pub(crate) unsafe fn read_truncated_array(
     // contract).
     unsafe { *p_count = size };
 
-    // SAFETY: `arr` is non-null (the null case returned above) and points at
+    // SAFETY (this group): `arr` is non-null (the null case returned above) and points at
     // the node's own array descriptor, live for as long as the parse tree.
     let mut data: *mut c_void = unsafe { (*arr).data };
-    // SAFETY: as above.
     if unsafe { (*arr).size } < size {
         ufbxi_check!(
             uc,
@@ -5409,14 +5405,13 @@ pub(crate) unsafe fn read_nurbs_surface(
         ufbxi_check!(uc, !points.is_null(), "points");
         ufbxi_check!(uc, !knot_u.is_null(), "knot_u");
         ufbxi_check!(uc, !knot_v.is_null(), "knot_v");
-        // SAFETY: `points` is non-null (checked above) and `find_array` returns
+        // SAFETY (this group): `points` is non-null (checked above) and `find_array` returns
         // the node's own array descriptor, live for as long as the parse tree.
         ufbxi_check!(
             uc,
             unsafe { (*points).size } % 4 == 0,
             "points->size % 4 == 0"
         );
-        // SAFETY: as above.
         ufbxi_check!(
             uc,
             unsafe { (*points).size } / 4 == dimension_u.wrapping_mul(dimension_v),
@@ -6291,17 +6286,13 @@ pub(crate) unsafe fn read_animation_curve(
         (*curve).keyframes.count = num_keys;
     }
 
-    // SAFETY: each descriptor was checked non-null above and is live for as long
+    // SAFETY (this group): each descriptor was checked non-null above and is live for as long
     // as the parse tree; the `'l'`/`'r'`/`'i'`/`'?'` payloads are runs of `size`
     // `i64`s, reals, `i32`s and `f32`s respectively.
     let mut p_time: *mut i64 = unsafe { (*times).data } as *mut i64;
-    // SAFETY: as above.
     let mut p_value: *mut Real = unsafe { (*values).data } as *mut Real;
-    // SAFETY: as above.
     let mut p_flag: *mut i32 = unsafe { (*attr_flags).data } as *mut i32;
-    // SAFETY: as above.
     let mut p_attr: *mut f32 = unsafe { (*attrs).data } as *mut f32;
-    // SAFETY: as above.
     let mut p_ref: *mut i32 = unsafe { (*refs).data } as *mut i32;
     // SAFETY: as above — `refs.size` is exactly the length of the `p_ref` run, so
     // the one-past-the-end pointer is in range.
@@ -6800,7 +6791,7 @@ pub(crate) unsafe fn read_texture(
         (*texture).relative_filename = EMPTY_STRING.0;
     }
 
-    // SAFETY: fmt `'S'` pairs with the `*mut String` out-pointer
+    // SAFETY (this group): fmt `'S'` pairs with the `*mut String` out-pointer
     // `&mut (*texture).absolute_filename`, a field of the fresh non-null element.
     ufbxi_ignore!(unsafe {
         find_val1(
@@ -6810,7 +6801,6 @@ pub(crate) unsafe fn read_texture(
             &mut (*texture).absolute_filename as *mut String as *mut c_void,
         )
     });
-    // SAFETY: as above.
     ufbxi_ignore!(unsafe {
         find_val1(
             node,
@@ -6839,7 +6829,7 @@ pub(crate) unsafe fn read_texture(
         )
     });
 
-    // SAFETY: fmt `'b'` pairs with the `*mut Blob` out-pointer
+    // SAFETY (this group): fmt `'b'` pairs with the `*mut Blob` out-pointer
     // `&mut (*texture).raw_absolute_filename`, a field of the fresh non-null
     // element.
     ufbxi_ignore!(unsafe {
@@ -6850,7 +6840,6 @@ pub(crate) unsafe fn read_texture(
             &mut (*texture).raw_absolute_filename as *mut Blob as *mut c_void,
         )
     });
-    // SAFETY: as above.
     ufbxi_ignore!(unsafe {
         find_val1(
             node,
@@ -6953,7 +6942,7 @@ pub(crate) unsafe fn read_video(
         (*video).relative_filename = EMPTY_STRING.0;
     }
 
-    // SAFETY: fmt `'S'` pairs with the `*mut String` out-pointer
+    // SAFETY (this group): fmt `'S'` pairs with the `*mut String` out-pointer
     // `&mut (*video).absolute_filename`, a field of the fresh non-null element.
     ufbxi_ignore!(unsafe {
         find_val1(
@@ -6963,7 +6952,6 @@ pub(crate) unsafe fn read_video(
             &mut (*video).absolute_filename as *mut String as *mut c_void,
         )
     });
-    // SAFETY: as above.
     ufbxi_ignore!(unsafe {
         find_val1(
             node,
@@ -6992,7 +6980,7 @@ pub(crate) unsafe fn read_video(
         )
     });
 
-    // SAFETY: fmt `'b'` pairs with the `*mut Blob` out-pointer
+    // SAFETY (this group): fmt `'b'` pairs with the `*mut Blob` out-pointer
     // `&mut (*video).raw_absolute_filename`, a field of the fresh non-null
     // element.
     ufbxi_ignore!(unsafe {
@@ -7003,7 +6991,6 @@ pub(crate) unsafe fn read_video(
             &mut (*video).raw_absolute_filename as *mut Blob as *mut c_void,
         )
     });
-    // SAFETY: as above.
     ufbxi_ignore!(unsafe {
         find_val1(
             node,
@@ -7263,10 +7250,9 @@ pub(crate) unsafe fn read_binding_table(
 
         // C: `ufbx_string src, dst;` — fully written by `ufbxi_get_val4` before
         // any read; zero-initialized here (no upstream `ufbxi_uninit` marker).
-        // SAFETY: `ufbx_string` is a plain pointer/length pair, for which the
+        // SAFETY (this group): `ufbx_string` is a plain pointer/length pair, for which the
         // all-zero bit pattern is a valid (empty, null-data) value.
         let mut src: String = unsafe { core::mem::zeroed() };
-        // SAFETY: as above.
         let mut dst: String = unsafe { core::mem::zeroed() };
         let mut src_type: *const u8 = core::ptr::null();
         let mut dst_type: *const u8 = core::ptr::null();
@@ -8324,11 +8310,10 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             // buffer is a separate `ator_tmp` allocation, so the two are disjoint.
             unsafe { core::ptr::copy_nonoverlapping((*ua).src, uc.read_buffer(), size) };
             // C: `uc->data = uc->data_begin = ua->src = uc->read_buffer;`
-            // SAFETY: `ua` is uc's own live `ascii` state.
+            // SAFETY (this group): `ua` is uc's own live `ascii` state.
             unsafe {
                 (*ua).src = uc.read_buffer();
             }
-            // SAFETY: as above.
             uc.set_data_begin(unsafe { (*ua).src });
             uc.set_data(uc.data_begin());
             // SAFETY: `ua` is uc's own live `ascii` state; `read_buffer` holds at
@@ -8365,10 +8350,9 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
 
         if !parsed_to_end {
             let mut num_nodes: usize = 0;
-            // SAFETY: `uc.get()` is the live, initialized context this call runs
+            // SAFETY (this group): `uc.get()` is the live, initialized context this call runs
             // on, so its `thread_pool` sub-struct is readable.
             let task_start: u32 = unsafe { (*uc.get()).thread_pool.start_index };
-            // SAFETY: as above.
             let mut max_tasks: u32 =
                 unsafe { (*uc.get()).thread_pool.num_tasks } / THREAD_GROUP_COUNT as u32;
             // SAFETY: `uc.thread_pool_mut_ptr()` is uc's own live `thread_pool`.
@@ -8413,12 +8397,11 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 }
             }
 
-            // SAFETY: `batch` points into the live `batches` local.
+            // SAFETY (this group): `batch` points into the live `batches` local.
             unsafe {
                 (*batch).num_nodes = num_nodes;
                 (*batch).nodes = tmp_buf.push_pop::<*mut Node>(uc.tmp_stack_view(), num_nodes);
             }
-            // SAFETY: as above.
             ufbxi_check!(uc, !unsafe { (*batch).nodes }.is_null(), "batch->nodes");
             // SAFETY: `batch` points into the live `batches` local and `uc.get()`
             // is the live, initialized context this call runs on.
@@ -8755,12 +8738,11 @@ pub(crate) unsafe fn read_take_anim_channel(
         },
         "ufbxi_find_val1(node, ufbxi_KeyCount, \"Z\", &num_keys)"
     );
-    // SAFETY: `curve` is the fresh non-null element pushed above.
+    // SAFETY (this group): `curve` is the fresh non-null element pushed above.
     unsafe {
         (*curve).keyframes.data = uc.result_view().push::<Keyframe>(num_keys);
         (*curve).keyframes.count = num_keys;
     }
-    // SAFETY: as above.
     ufbxi_check!(
         uc,
         !unsafe { (*curve).keyframes.data }.is_null(),
@@ -8792,10 +8774,9 @@ pub(crate) unsafe fn read_take_anim_channel(
             unsafe { data_end.offset_from(data) } >= 2,
             "data_end - data >= 2"
         );
-        // SAFETY: the check above leaves at least two doubles between `data` and
+        // SAFETY (this group): the check above leaves at least two doubles between `data` and
         // `data_end`, so offsets 0 and 1 are in bounds of the payload.
         next_time = unsafe { *data.add(0) } / uc.ktime_sec_double();
-        // SAFETY: as above.
         next_value = unsafe { *data.add(1) };
     }
 
@@ -10462,14 +10443,13 @@ pub(crate) unsafe fn read_legacy_material(
         )
     };
 
-    // SAFETY: `material` is the fresh non-null element pushed above.
+    // SAFETY (this group): `material` is the fresh non-null element pushed above.
     unsafe {
         (*material).shading_model_name = EMPTY_STRING.0;
         (*material).element.props.props.count = num_props;
         (*material).element.props.props.data =
             uc.result_view().push_copy_slice(&tmp_props[..num_props]);
     }
-    // SAFETY: as above.
     ufbxi_check!(
         uc,
         !unsafe { (*material).element.props.props.data }.is_null(),
@@ -10596,13 +10576,12 @@ pub(crate) unsafe fn read_legacy_light(
         )
     };
 
-    // SAFETY: `light` is the fresh non-null element pushed above.
+    // SAFETY (this group): `light` is the fresh non-null element pushed above.
     unsafe {
         (*light).element.props.props.count = num_props;
         (*light).element.props.props.data =
             uc.result_view().push_copy_slice(&tmp_props[..num_props]);
     }
-    // SAFETY: as above.
     ufbxi_check!(
         uc,
         !unsafe { (*light).element.props.props.data }.is_null(),
@@ -10639,13 +10618,12 @@ pub(crate) unsafe fn read_legacy_camera(
         )
     };
 
-    // SAFETY: `camera` is the fresh non-null element pushed above.
+    // SAFETY (this group): `camera` is the fresh non-null element pushed above.
     unsafe {
         (*camera).element.props.props.count = num_props;
         (*camera).element.props.props.data =
             uc.result_view().push_copy_slice(&tmp_props[..num_props]);
     }
-    // SAFETY: as above.
     ufbxi_check!(
         uc,
         !unsafe { (*camera).element.props.props.data }.is_null(),
@@ -10688,13 +10666,12 @@ pub(crate) unsafe fn read_legacy_limb_node(
         };
     }
 
-    // SAFETY: `bone` is the fresh non-null element pushed above.
+    // SAFETY (this group): `bone` is the fresh non-null element pushed above.
     unsafe {
         (*bone).element.props.props.count = num_props;
         (*bone).element.props.props.data =
             uc.result_view().push_copy_slice(&tmp_props[..num_props]);
     }
-    // SAFETY: as above.
     ufbxi_check!(
         uc,
         !unsafe { (*bone).element.props.props.data }.is_null(),
@@ -10993,12 +10970,10 @@ pub(crate) unsafe fn read_legacy_mesh(
         if child.name() == sp::Material.as_ptr() {
             let mut fbx_id: u64 = 0;
             // C: `ufbx_string type_and_name, type, name;` — written below.
-            // SAFETY: `ufbx_string` is a plain pointer/length pair, for which the
+            // SAFETY (this group): `ufbx_string` is a plain pointer/length pair, for which the
             // all-zero bit pattern is a valid (empty, null-data) value.
             let mut type_and_name: String = unsafe { core::mem::zeroed() };
-            // SAFETY: as above.
             let mut type_: String = unsafe { core::mem::zeroed() };
-            // SAFETY: as above.
             let mut name: String = unsafe { core::mem::zeroed() };
             // SAFETY: fmt `'s'` pairs with the `*mut ufbx_string` out-pointer
             // `&mut type_and_name`, which is a live local.
@@ -11025,12 +11000,10 @@ pub(crate) unsafe fn read_legacy_mesh(
         } else if child.name() == sp::Link.as_ptr() {
             let mut fbx_id: u64 = 0;
             // C: `ufbx_string type_and_name, type, name;` — written below.
-            // SAFETY: `ufbx_string` is a plain pointer/length pair, for which the
+            // SAFETY (this group): `ufbx_string` is a plain pointer/length pair, for which the
             // all-zero bit pattern is a valid (empty, null-data) value.
             let mut type_and_name: String = unsafe { core::mem::zeroed() };
-            // SAFETY: as above.
             let mut type_: String = unsafe { core::mem::zeroed() };
-            // SAFETY: as above.
             let mut name: String = unsafe { core::mem::zeroed() };
             // SAFETY: fmt `'s'` pairs with the `*mut ufbx_string` out-pointer
             // `&mut type_and_name`, which is a live local.
@@ -11600,10 +11573,9 @@ pub(crate) unsafe fn resolve_relative_filename(
     p_src: *const Strblob,
     raw: bool,
 ) -> Result<(), Fail> {
-    // SAFETY: `p_src` is the caller's live `ufbxi_strblob` source, read through
+    // SAFETY (this group): `p_src` is the caller's live `ufbxi_strblob` source, read through
     // the member selected by the same `raw` flag the caller threads everywhere.
     let mut src: *const u8 = unsafe { strblob_data(p_src, raw) };
-    // SAFETY: as above.
     let mut src_length: usize = unsafe { strblob_length(p_src, raw) };
 
     // Skip leading directory separators and early return if the relative path is empty

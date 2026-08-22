@@ -5399,12 +5399,11 @@ pub(crate) unsafe fn update_parse_state(parent: ParseState, name: *const u8) -> 
             if name == sp::Model.as_ptr() {
                 return ParseState::LegacyModel;
             }
-            // SAFETY: `name` is a NUL-terminated interned parser name and the
+            // SAFETY (this group): `name` is a NUL-terminated interned parser name and the
             // literal is NUL-terminated — `strcmp`'s contract.
             if unsafe { strcmp(name, b"References\0".as_ptr()) } == 0 {
                 return ParseState::References;
             }
-            // SAFETY: as above.
             if unsafe { strcmp(name, b"Relations\0".as_ptr()) } == 0 {
                 return ParseState::Relations;
             }
@@ -7328,12 +7327,11 @@ pub(crate) fn determine_format(uc: &Context) -> Result<(), Fail> {
             // C: `for (uint32_t fmt = UFBX_FILE_FORMAT_FBX; fmt < UFBX_FILE_FORMAT_COUNT; fmt++)`
             let mut fmt: u32 = FileFormat::Fbx as u32;
             while fmt < FILE_FORMAT_COUNT {
-                // SAFETY: `data_size <= uc.data_size()` (clamped above), so
+                // SAFETY (this group): `data_size <= uc.data_size()` (clamped above), so
                 // `is_format` reads only inside the buffered read window; `fmt`
                 // ranges over `Fbx..FILE_FORMAT_COUNT`, every one of which is a
                 // valid `FileFormat` discriminant.
                 let fmt_enum: FileFormat = unsafe { core::mem::transmute::<u32, FileFormat>(fmt) };
-                // SAFETY: as above.
                 if unsafe { is_format(uc.data(), data_size, fmt_enum) } {
                     format = fmt_enum;
                     break;
@@ -8266,12 +8264,11 @@ pub(crate) unsafe fn name_key_less(
     name_len: usize,
     key: u32,
 ) -> bool {
-    // SAFETY: `prop` points to a valid `Prop` (fn contract); read its
+    // SAFETY (this group): `prop` points to a valid `Prop` (fn contract); read its
     // `_internal_key`.
     if unsafe { (*prop)._internal_key } < key {
         return true;
     }
-    // SAFETY: as above.
     if unsafe { (*prop)._internal_key } > key {
         return false;
     }

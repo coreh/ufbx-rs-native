@@ -1278,7 +1278,7 @@ pub(crate) unsafe fn cmp_node_less(a: *mut Node, b: *mut Node) -> bool {
     } else {
         ufbx_assert!(a_parent.is_null() && b_parent.is_null());
     }
-    // SAFETY: `a` and `b` point to live, initialized `Node`s (fn contract).
+    // SAFETY (this group): `a` and `b` point to live, initialized `Node`s (fn contract).
     if unsafe { (*a).is_geometry_transform_helper != (*b).is_geometry_transform_helper } {
         // Sort geometry transform helpers always before rest of the children.
         // SAFETY: as above.
@@ -1286,13 +1286,11 @@ pub(crate) unsafe fn cmp_node_less(a: *mut Node, b: *mut Node) -> bool {
             (*a).is_geometry_transform_helper as u32 > (*b).is_geometry_transform_helper as u32
         };
     }
-    // SAFETY: as above.
     if unsafe { (*a).is_scale_helper != (*b).is_scale_helper } {
         // Sort scale helpers after geometry transform helpers.
         // SAFETY: as above.
         return unsafe { (*a).is_scale_helper as u32 > (*b).is_scale_helper as u32 };
     }
-    // SAFETY: as above.
     unsafe { (*a).element.element_id < (*b).element.element_id }
 }
 
@@ -1339,13 +1337,12 @@ pub(crate) unsafe fn cmp_tmp_material_texture_less(
     a: *const TmpMaterialTexture,
     b: *const TmpMaterialTexture,
 ) -> bool {
-    // SAFETY: `a` and `b` point to live, initialized `TmpMaterialTexture`s — the
+    // SAFETY (this group): `a` and `b` point to live, initialized `TmpMaterialTexture`s — the
     // two records the sort hands its comparator (fn contract).
     if unsafe { (*a).material_id != (*b).material_id } {
         // SAFETY: as above.
         return unsafe { (*a).material_id < (*b).material_id };
     }
-    // SAFETY: as above.
     if unsafe { (*a).texture_id != (*b).texture_id } {
         // SAFETY: as above.
         return unsafe { (*a).texture_id < (*b).texture_id };
@@ -2342,7 +2339,7 @@ pub(crate) unsafe fn fetch_dst_elements(
     }
 
     let list: *mut RefList<Element> = p_dst_list as *mut RefList<Element>;
-    // SAFETY: `p_dst_list` is the caller's out-list, which every call site passes
+    // SAFETY (this group): `p_dst_list` is the caller's out-list, which every call site passes
     // as a `ufbx_*_list` of element refs (C: the `void*` out-parameter of
     // `ufbxi_fetch_dst_elements`).
     unsafe {
@@ -2352,7 +2349,6 @@ pub(crate) unsafe fn fetch_dst_elements(
             as *const Ref<Element>;
         (*list).count = num_elements;
     }
-    // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     if ignore_duplicates {
@@ -2452,7 +2448,7 @@ pub(crate) unsafe fn fetch_src_elements(
     }
 
     let list: *mut RefList<Element> = p_dst_list as *mut RefList<Element>;
-    // SAFETY: `p_dst_list` is the caller's out-list, which every call site passes
+    // SAFETY (this group): `p_dst_list` is the caller's out-list, which every call site passes
     // as a `ufbx_*_list` of element refs (C: the `void*` out-parameter of
     // `ufbxi_fetch_src_elements`).
     unsafe {
@@ -2462,7 +2458,6 @@ pub(crate) unsafe fn fetch_src_elements(
             as *const Ref<Element>;
         (*list).count = num_elements;
     }
-    // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     if ignore_duplicates {
@@ -2622,14 +2617,13 @@ pub(crate) unsafe fn fetch_textures(
         }
     }
 
-    // SAFETY: `list` is the caller's out-list (fn contract).
+    // SAFETY (this group): `list` is the caller's out-list (fn contract).
     unsafe {
         (*list).data = uc
             .result_view()
             .push_pop::<MaterialTexture>(uc.tmp_stack_view(), num_textures);
         (*list).count = num_textures;
     }
-    // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
@@ -2685,7 +2679,7 @@ pub(crate) unsafe fn fetch_mesh_materials(
         }
     }
 
-    // SAFETY: `list` is the caller's out-list (fn contract).
+    // SAFETY (this group): `list` is the caller's out-list (fn contract).
     unsafe {
         (*list).data = uc
             .result_view()
@@ -2693,7 +2687,6 @@ pub(crate) unsafe fn fetch_mesh_materials(
             as *const Ref<Material>;
         (*list).count = num_materials;
     }
-    // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
@@ -2759,7 +2752,7 @@ pub(crate) unsafe fn fetch_deformers(
         }
     }
 
-    // SAFETY: `list` is the caller's out-list (fn contract).
+    // SAFETY (this group): `list` is the caller's out-list (fn contract).
     unsafe {
         (*list).data = uc
             .result_view()
@@ -2767,7 +2760,6 @@ pub(crate) unsafe fn fetch_deformers(
             as *const Ref<Element>;
         (*list).count = num_deformers;
     }
-    // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
@@ -2812,14 +2804,13 @@ pub(crate) unsafe fn fetch_blend_keyframes(
         conn = unsafe { conn.add(1) };
     }
 
-    // SAFETY: `list` is the caller's out-list (fn contract).
+    // SAFETY (this group): `list` is the caller's out-list (fn contract).
     unsafe {
         (*list).data = uc
             .result_view()
             .push_pop::<BlendKeyframe>(uc.tmp_stack_view(), num_keyframes);
         (*list).count = num_keyframes;
     }
-    // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
@@ -2887,14 +2878,13 @@ pub(crate) unsafe fn fetch_texture_layers(
         conn = unsafe { conn.add(1) };
     }
 
-    // SAFETY: `list` is the caller's out-list (fn contract).
+    // SAFETY (this group): `list` is the caller's out-list (fn contract).
     unsafe {
         (*list).data = uc
             .result_view()
             .push_pop::<TextureLayer>(uc.tmp_stack_view(), num_layers);
         (*list).count = num_layers;
     }
-    // SAFETY: as above.
     ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
@@ -3287,7 +3277,7 @@ pub(crate) unsafe extern "C" fn mat_transform_invert_x(v: *mut Vec4) {
 // subtraction are evaluated in `double` regardless of `ufbx_real`'s width; the
 // `(ufbx_real)0.1` cast happens before the widening back to `double`.
 pub(crate) unsafe extern "C" fn mat_transform_unknown_shininess(v: *mut Vec4) {
-    // SAFETY: `v` is the live `ufbx_vec4` the mapping walker hands its transform
+    // SAFETY (this group): `v` is the live `ufbx_vec4` the mapping walker hands its transform
     // callback (C: `ufbxi_mat_transform_fn` is always called on `&map->value_vec4`).
     if unsafe { (*v).x } >= 0.0 {
         // SAFETY: as above.
@@ -3295,7 +3285,6 @@ pub(crate) unsafe extern "C" fn mat_transform_unknown_shininess(v: *mut Vec4) {
             (*v).x = (1.0f64 - math::sqrt(as_f64!((*v).x)) * as_f64!(0.1f64 as Real)) as Real
         };
     }
-    // SAFETY: as above.
     if !(unsafe { (*v).x } >= 0.0) {
         // SAFETY: as above.
         unsafe { (*v).x = 0.0 };
@@ -3309,7 +3298,7 @@ pub(crate) unsafe extern "C" fn mat_transform_blender_opacity(v: *mut Vec4) {
 }
 // ufbx.c:19379 `ufbxi_mat_transform_blender_shininess`
 pub(crate) unsafe extern "C" fn mat_transform_blender_shininess(v: *mut Vec4) {
-    // SAFETY: `v` is the live `ufbx_vec4` the mapping walker hands its transform
+    // SAFETY (this group): `v` is the live `ufbx_vec4` the mapping walker hands its transform
     // callback (C: `ufbxi_mat_transform_fn` is always called on `&map->value_vec4`).
     if unsafe { (*v).x } >= 0.0 {
         // SAFETY: as above.
@@ -3317,7 +3306,6 @@ pub(crate) unsafe extern "C" fn mat_transform_blender_shininess(v: *mut Vec4) {
             (*v).x = (1.0f64 - math::sqrt(as_f64!((*v).x)) * as_f64!(0.1f64 as Real)) as Real
         };
     }
-    // SAFETY: as above.
     if !(unsafe { (*v).x } >= 0.0) {
         // SAFETY: as above.
         unsafe { (*v).x = 0.0 };
@@ -4167,10 +4155,9 @@ pub(crate) unsafe fn fetch_mapping_maps(
                     dst = unsafe { dst.add(prefix.length) };
                 }
                 if prefix2.length > 0 {
-                    // SAFETY: as the `prefix` copy, with the running total still
+                    // SAFETY (this group): as the `prefix` copy, with the running total still
                     // bounded by the 512-byte check.
                     unsafe { ptr::copy_nonoverlapping(prefix2.data, dst, prefix2.length) };
-                    // SAFETY: as above.
                     dst = unsafe { dst.add(prefix2.length) };
                 }
                 if prop_name.length > 0 {
@@ -4181,10 +4168,9 @@ pub(crate) unsafe fn fetch_mapping_maps(
                     dst = unsafe { dst.add(prop_name.length) };
                 }
                 if suffix.length > 0 {
-                    // SAFETY: as the `prefix` copy, with the running total still
+                    // SAFETY (this group): as the `prefix` copy, with the running total still
                     // bounded by the 512-byte check.
                     unsafe { ptr::copy_nonoverlapping(suffix.data, dst, suffix.length) };
-                    // SAFETY: as above.
                     dst = unsafe { dst.add(suffix.length) };
                 }
 
@@ -4477,12 +4463,11 @@ const _: () = assert!(
 pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
     ufbxi_ignore!(scene);
 
-    // SAFETY: `material` points to a live, initialized `ufbx_material` — the
+    // SAFETY (this group): `material` points to a live, initialized `ufbx_material` — the
     // scene element the finalize pass is filling in (fn contract); `shader` is
     // a live `Ref<Shader>` field of it, which `opt_ptr` reads as a nullable
     // pointer.
     let shader: *mut Shader = unsafe { opt_ptr(&(*material).shader) };
-    // SAFETY: as above.
     ufbx_assert!(unsafe { ((*material).shader_type as u32) < SHADER_TYPE_COUNT as u32 });
 
     // C-parity: `ufbx_material_fbx_maps` / `_pbr_maps` / `ufbx_material_features`
@@ -4520,13 +4505,11 @@ pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
     // remap loop below writes through `pbr_maps`/`feature_infos`), so every
     // other access to `material` in this body must be a raw place projection or
     // a `&raw mut` — never a `&mut`, which would retag and invalidate them.
-    // SAFETY: `material` is live (see above); each projection addresses its own
+    // SAFETY (this group): `material` is live (see above); each projection addresses its own
     // field, and the const asserts above pin that field's layout to a flat
     // `MaterialMap` / `MaterialFeatureInfo` array of the matching count.
     let fbx_maps: *mut MaterialMap = unsafe { &raw mut (*material).fbx as *mut MaterialMap };
-    // SAFETY: as above.
     let pbr_maps: *mut MaterialMap = unsafe { &raw mut (*material).pbr as *mut MaterialMap };
-    // SAFETY: as above.
     let feature_infos: *mut MaterialFeatureInfo =
         unsafe { &raw mut (*material).features as *mut MaterialFeatureInfo };
 
@@ -4912,9 +4895,8 @@ pub(crate) unsafe fn finalize_nurbs_basis(
         // SAFETY: `List<Real>` is a `data`/`count` pair of plain pointer and
         // integer fields, for which the all-zero bit pattern is valid.
         let mut knots: List<Real> = unsafe { MaybeUninit::zeroed().assume_init() };
-        // SAFETY: `basis` is live (see above).
+        // SAFETY (this group): `basis` is live (see above).
         knots.data = unsafe { (*basis).knot_vector.data };
-        // SAFETY: as above.
         knots.count = unsafe { (*basis).knot_vector.count };
         if knots.count > 2 * degree {
             // SAFETY: `knots` is the basis' own knot-vector span of `count`
@@ -5836,10 +5818,9 @@ pub(crate) unsafe fn propagate_main_textures(scene: *mut Scene) {
                 continue;
             }
 
-            // SAFETY: `shader` is non-null (checked) and points to a live
+            // SAFETY (this group): `shader` is non-null (checked) and points to a live
             // `ufbx_shader_texture` owned by that texture.
             let main_tex: *mut Texture = unsafe { opt_ptr(&(*shader).main_texture) };
-            // SAFETY: as above.
             if main_tex.is_null() || unsafe { (*shader).main_texture_output_index } != 0 {
                 // SAFETY: `p_texture != p_texture_end` (see above).
                 p_texture = unsafe { p_texture.add(1) };
@@ -6634,9 +6615,8 @@ pub(crate) unsafe fn scale_vec3_list(v_list: *const c_void, scale: Real, stride:
         stride = size_of::<Vec3>();
     }
 
-    // SAFETY: `list` is non-null (checked) and its header is live (see above).
+    // SAFETY (this group): `list` is non-null (checked) and its header is live (see above).
     let mut p: *mut u8 = unsafe { (*list).data as *mut u8 };
-    // SAFETY: as above.
     let end: *mut u8 = p.wrapping_add(unsafe { (*list).count }.wrapping_mul(stride));
     while p != end {
         let v: *mut Vec3 = p as *mut Vec3;
@@ -6670,9 +6650,8 @@ pub(crate) unsafe fn transform_vec3_list(
         stride = size_of::<Vec3>();
     }
 
-    // SAFETY: `list` is non-null (checked) and its header is live (see above).
+    // SAFETY (this group): `list` is non-null (checked) and its header is live (see above).
     let mut p: *mut u8 = unsafe { (*list).data as *mut u8 };
-    // SAFETY: as above.
     let end: *mut u8 = p.wrapping_add(unsafe { (*list).count }.wrapping_mul(stride));
     while p != end {
         let v: *mut Vec3 = p as *mut Vec3;
@@ -6688,10 +6667,9 @@ pub(crate) unsafe fn transform_vec3_list(
 pub(crate) unsafe fn normalize_vec3_list(list: *const List<Vec3>) {
     // C: `ufbxi_nounroll ufbxi_for_list(ufbx_vec3, normal, *list)` — the
     // no-unroll pragma is optimizer-only and has no Rust analogue.
-    // SAFETY: `list` points to a live `ufbx_vec3_list` header whose
+    // SAFETY (this group): `list` points to a live `ufbx_vec3_list` header whose
     // `data`/`count` describe one run of initialized vectors (fn contract).
     let mut normal: *mut Vec3 = unsafe { (*list).data as *mut Vec3 };
-    // SAFETY: as above.
     let normal_end: *mut Vec3 = add_ptr(normal, unsafe { (*list).count });
     while normal != normal_end {
         // SAFETY: `normal != normal_end`, so it addresses a live element of that
@@ -6765,9 +6743,8 @@ pub(crate) unsafe fn flip_attrib_winding(
         }
         // C: both sums are `unsigned int` arithmetic (wrapping) before the
         // widening to `size_t`.
-        // SAFETY: `face` addresses a live entry (see above).
+        // SAFETY (this group): `face` addresses a live entry (see above).
         let mut begin: usize = unsafe { (*face).index_begin }.wrapping_add(1) as usize;
-        // SAFETY: as above.
         let mut end: usize = unsafe {
             (*face)
                 .index_begin
@@ -6775,11 +6752,10 @@ pub(crate) unsafe fn flip_attrib_winding(
                 .wrapping_sub(1)
         } as usize;
         while begin < end {
-            // SAFETY: every face's `[index_begin, index_begin + num_indices)` span
+            // SAFETY (this group): every face's `[index_begin, index_begin + num_indices)` span
             // lies inside the mesh's `num_indices` attribute indices, which is the
             // length of the `data` run; `begin < end` keeps both inside that span.
             let tmp: u32 = unsafe { *data.add(begin) };
-            // SAFETY: as above.
             unsafe {
                 *data.add(begin) = *data.add(end);
                 *data.add(end) = tmp;
@@ -6933,9 +6909,8 @@ pub(crate) unsafe fn flip_winding(uc: &Context, mesh: &View<Mesh>) -> Result<(),
                 face = unsafe { face.add(1) };
                 continue;
             }
-            // SAFETY: `face` addresses a live entry (see above).
+            // SAFETY (this group): `face` addresses a live entry (see above).
             let begin: u32 = unsafe { (*face).index_begin };
-            // SAFETY: as above.
             let count: u32 = unsafe { (*face).num_indices }.wrapping_sub(1);
             // SAFETY: every face's `[index_begin, index_begin + num_indices)` span
             // lies inside the mesh's `num_indices` indices, and the tmp array holds
@@ -7925,17 +7900,15 @@ pub(crate) unsafe extern "C" fn material_part_usage_less(
     vb: *const c_void,
 ) -> bool {
     let parts: *mut MeshPart = user as *mut MeshPart;
-    // SAFETY: as the comparator for the mesh's material-part usage order, `va`/`vb`
+    // SAFETY (this group): as the comparator for the mesh's material-part usage order, `va`/`vb`
     // address live, initialized `u32` elements of that order array
     // (`unstable_sort` contract).
     let a: u32 = unsafe { *(va as *const u32) };
-    // SAFETY: as above.
     let b: u32 = unsafe { *(vb as *const u32) };
-    // SAFETY: `user` is the mesh's own `material_parts` run, passed as the sort's
+    // SAFETY (this group): `user` is the mesh's own `material_parts` run, passed as the sort's
     // user data, and the order array holds exactly the indices `0..num_parts` of
     // that run.
     let pa: *mut MeshPart = unsafe { parts.add(a as usize) };
-    // SAFETY: as above.
     let pb: *mut MeshPart = unsafe { parts.add(b as usize) };
     // SAFETY: `pa`/`pb` address live, initialized parts of the run (see above).
     if unsafe { (*pa).face_indices.count == 0 || (*pb).face_indices.count == 0 } {
@@ -8390,10 +8363,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // `&(*node).parent` addresses its own field.
         let parent: *mut Node = unsafe { opt_ptr(&(*node).parent) };
         if !parent.is_null() {
-            // SAFETY: a non-null `parent` is another live `ufbx_node` of the same
+            // SAFETY (this group): a non-null `parent` is another live `ufbx_node` of the same
             // scene.
             unsafe { (*parent).children.count += 1 };
-            // SAFETY: as above.
             if unsafe { (*parent).children.data }.is_null() {
                 // SAFETY: as above; `linearize_nodes` ordered the node-pointer run
                 // so each parent's children are contiguous, and `p_node` is the
@@ -8458,9 +8430,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
             // C: `size_t index = node->all_attribs.count++;` — the
             // pre-increment value.
-            // SAFETY: `node` is live (see above).
+            // SAFETY (this group): `node` is live (see above).
             let index: usize = unsafe { (*node).all_attribs.count };
-            // SAFETY: as above.
             unsafe { (*node).all_attribs.count += 1 };
             if index == 0 {
                 // SAFETY: `node` is live and `elem` is non-null (see above).
@@ -8868,10 +8839,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
             let retain_all: bool = !uc.opts_view().clean_skin_weights();
 
-            // SAFETY: `skin` is live (see above).
+            // SAFETY (this group): `skin` is live (see above).
             let skin_vertices: *mut SkinVertex =
                 unsafe { (*skin).vertices.data } as *mut SkinVertex;
-            // SAFETY: as above.
             let skin_weights: *mut SkinWeight = unsafe { (*skin).weights.data } as *mut SkinWeight;
 
             // Count the number of weights per vertex
@@ -8923,13 +8893,12 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             let mut offset: u32 = 0;
             let mut max_weights: u32 = 0;
             for i in 0..num_vertices {
-                // SAFETY: `i < num_vertices`, the length of the `skin_vertices` run
+                // SAFETY (this group): `i < num_vertices`, the length of the `skin_vertices` run
                 // pushed above.
                 unsafe {
                     (*skin_vertices.add(i)).weight_begin = offset;
                     (*skin_vertices.add(i)).dq_weight = default_dq;
                 }
-                // SAFETY: as above.
                 let num_weights: u32 = unsafe { (*skin_vertices.add(i)).num_weights };
                 offset = offset.wrapping_add(num_weights);
                 // SAFETY: as above.
@@ -11569,12 +11538,10 @@ pub(crate) unsafe fn get_transform<M: Mode>(
     // NOTE: Rpost is inverted (!) after converting from PostRotation Euler angles
 
     if !translation_scale.is_null() {
-        // SAFETY: `translation_scale` is non-null here, and the fn contract is
+        // SAFETY (this group): `translation_scale` is non-null here, and the fn contract is
         // that a non-null one points to a live, initialized `ufbx_vec3`.
         translation.x *= unsafe { (*translation_scale).x };
-        // SAFETY: as above.
         translation.y *= unsafe { (*translation_scale).y };
-        // SAFETY: as above.
         translation.z *= unsafe { (*translation_scale).z };
     }
 
@@ -13129,9 +13096,8 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
         p_cluster = unsafe { p_cluster.add(1) };
     }
 
-    // SAFETY: `scene` is live (see above).
+    // SAFETY (this group): `scene` is live (see above).
     let mirror_axis: MirrorAxis = unsafe { (*scene).metadata.mirror_axis };
-    // SAFETY: as above.
     let geometry_scale: Real = unsafe { (*scene).metadata.geometry_scale };
 
     // Space conversion for bind matrices

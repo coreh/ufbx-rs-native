@@ -7088,12 +7088,10 @@ pub(crate) unsafe fn bake_node_imp(
 
     // C: `ufbxi_bake_time_list times_t, times_r, times_s;` — each is filled in
     // by the `ufbxi_finalize_bake_times` call below.
-    // SAFETY: `BakeTimeList` is a pointer/length pair, and an all-zero pattern
+    // SAFETY (this group): `BakeTimeList` is a pointer/length pair, and an all-zero pattern
     // (null pointer, zero count) is a valid inhabitant of it.
     let mut times_t: BakeTimeList = unsafe { MaybeUninit::zeroed().assume_init() };
-    // SAFETY: as above.
     let mut times_r: BakeTimeList = unsafe { MaybeUninit::zeroed().assume_init() };
-    // SAFETY: as above.
     let mut times_s: BakeTimeList = unsafe { MaybeUninit::zeroed().assume_init() };
 
     // Translation
@@ -7313,12 +7311,10 @@ pub(crate) unsafe fn bake_node_imp(
     unsafe { finalize_bake_times(bc, &raw mut times_s) }?;
 
     // C: `ufbx_baked_vec3_list keys_t; ufbx_baked_quat_list keys_r; ufbx_baked_vec3_list keys_s;`
-    // SAFETY: these lists are pointer/length pairs, and an all-zero pattern
+    // SAFETY (this group): these lists are pointer/length pairs, and an all-zero pattern
     // (null pointer, zero count) is a valid inhabitant of each.
     let mut keys_t: List<BakedVec3> = unsafe { MaybeUninit::zeroed().assume_init() };
-    // SAFETY: as above.
     let mut keys_r: List<BakedQuat> = unsafe { MaybeUninit::zeroed().assume_init() };
-    // SAFETY: as above.
     let mut keys_s: List<BakedVec3> = unsafe { MaybeUninit::zeroed().assume_init() };
 
     keys_t.count = times_t.count;
