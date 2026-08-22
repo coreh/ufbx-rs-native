@@ -239,11 +239,15 @@ pub(crate) unsafe fn kd_check_point(nc: &NgonContext, tri: *const KdTriangle, in
     // `nc`'s face, which is `ngon_project`'s contract.
     let p: Vec2 = unsafe { ngon_project(nc, index) };
 
-    // SAFETY (this group): `tri` points to a valid, live `KdTriangle` (caller contract);
+    // SAFETY: `tri` points to a valid, live `KdTriangle` (caller contract);
     // `orient2d` reads only the passed `Vec2`s.
-    let u: Real = unsafe { orient2d(p, (*tri).points[0], (*tri).points[1]) };
-    let v: Real = unsafe { orient2d(p, (*tri).points[1], (*tri).points[2]) };
-    let w: Real = unsafe { orient2d(p, (*tri).points[2], (*tri).points[0]) };
+    let (u, v, w) = unsafe {
+        (
+            orient2d(p, (*tri).points[0], (*tri).points[1]),
+            orient2d(p, (*tri).points[1], (*tri).points[2]),
+            orient2d(p, (*tri).points[2], (*tri).points[0]),
+        )
+    };
 
     if u <= 0.0 && v <= 0.0 && w <= 0.0 {
         return true;
@@ -516,31 +520,25 @@ pub(crate) unsafe fn kd_check(nc: &NgonContext, points: *const Vec2, indices: *c
     tri.indices[1] = unsafe { *indices.add(1) };
     // SAFETY: as above.
     tri.indices[2] = unsafe { *indices.add(2) };
-    // SAFETY (this group): `points` offsets 0..=2 are the readable triangle corners (as above).
-    tri.min_t[0] = unsafe {
-        min_real(
+    // SAFETY: `points` offsets 0..=2 are the readable triangle corners (as above).
+    unsafe {
+        tri.min_t[0] = min_real(
             min_real((*points.add(0)).x, (*points.add(1)).x),
             (*points.add(2)).x,
-        )
-    };
-    tri.min_t[1] = unsafe {
-        min_real(
+        );
+        tri.min_t[1] = min_real(
             min_real((*points.add(0)).y, (*points.add(1)).y),
             (*points.add(2)).y,
-        )
-    };
-    tri.max_t[0] = unsafe {
-        max_real(
+        );
+        tri.max_t[0] = max_real(
             max_real((*points.add(0)).x, (*points.add(1)).x),
             (*points.add(2)).x,
-        )
-    };
-    tri.max_t[1] = unsafe {
-        max_real(
+        );
+        tri.max_t[1] = max_real(
             max_real((*points.add(0)).y, (*points.add(1)).y),
             (*points.add(2)).y,
-        )
-    };
+        );
+    }
     // SAFETY: `&tri` is a live local `KdTriangle`; forwards the caller's `nc`
     // validity to `kd_check_fast`.
     unsafe { kd_check_fast(nc, &tri, 0, 0, 0) }
@@ -559,10 +557,9 @@ pub(crate) unsafe extern "C" fn kd_index_less(
     // shared borrow of that live context.
     let nc: &NgonContext = unsafe { &*(user as *const NgonContext) };
     let pos: *mut VertexVec3 = nc.positions_mut_ptr();
-    // SAFETY (this group): the comparator contract is that `va`/`vb` address live `u32`
+    // SAFETY: the comparator contract is that `va`/`vb` address live `u32`
     // elements of the KD index buffer being sorted.
-    let a: u32 = unsafe { *(va as *const u32) };
-    let b: u32 = unsafe { *(vb as *const u32) };
+    let (a, b) = unsafe { (*(va as *const u32), *(vb as *const u32)) };
     // SAFETY: `a` is a corner index from the KD index buffer, so
     // `cur_face.index_begin + a` selects a live `indices` slot whose value is an
     // in-range `values` slot; `pos` is `nc`'s own live `positions`.
@@ -772,11 +769,9 @@ unsafe fn kd_build_rec(
 #[cfg(feature = "triangulation")]
 #[inline(never)]
 pub(crate) unsafe fn ngon_tri_weight(points: *const Vec2) -> Real {
-    // SAFETY (this group): the caller passes `points` addressing 3 consecutive `Vec2`s (the
+    // SAFETY: the caller passes `points` addressing 3 consecutive `Vec2`s (the
     // candidate triangle corners), so offsets 0..=2 are in bounds and readable.
-    let p0: Vec2 = unsafe { *points.add(0) };
-    let p1: Vec2 = unsafe { *points.add(1) };
-    let p2: Vec2 = unsafe { *points.add(2) };
+    let (p0, p1, p2) = unsafe { (*points.add(0), *points.add(1), *points.add(2)) };
     let orient: Real = orient2d(p0, p1, p2);
     if orient <= 0.0 {
         return -1.0;
@@ -955,12 +950,14 @@ pub(crate) unsafe fn triangulate_ngon(
 
         let mut num_steps: u32 = 0;
         while indices_left > 3 {
-            // SAFETY (this group): `point_indices` are corner indices in `[0, face.num_indices)`,
+            // SAFETY: `point_indices` are corner indices in `[0, face.num_indices)`,
             // valid corner indices for `ngon_project`.
-            points[0] = unsafe { ngon_project(nc, point_indices[0]) };
-            points[1] = unsafe { ngon_project(nc, point_indices[1]) };
-            points[2] = unsafe { ngon_project(nc, point_indices[2]) };
-            points[3] = unsafe { ngon_project(nc, point_indices[3]) };
+            unsafe {
+                points[0] = ngon_project(nc, point_indices[0]);
+                points[1] = ngon_project(nc, point_indices[1]);
+                points[2] = ngon_project(nc, point_indices[2]);
+                points[3] = ngon_project(nc, point_indices[3]);
+            }
 
             // SAFETY: `points` is a 4-element array, so offset 0 leaves 3 readable
             // corners — `ngon_tri_weight`'s requirement.
@@ -1059,11 +1056,15 @@ pub(crate) unsafe fn triangulate_ngon(
         // TODO: Could do something better here..
         let mut ix: u32 = point_indices[1];
         while indices_left > 3 {
-            // SAFETY (this group): `ix` is a corner index in `[0, face.num_indices)`, so
+            // SAFETY: `ix` is a corner index in `[0, face.num_indices)`, so
             // `2*ix + {0,1}` index the `2*face.num_indices`-element `edges` in
             // bounds; the `prev`/`next` read back are themselves corner indices.
-            let prev: u32 = unsafe { *edges.add(ix.wrapping_mul(2).wrapping_add(0) as usize) };
-            let next: u32 = unsafe { *edges.add(ix.wrapping_mul(2).wrapping_add(1) as usize) };
+            let (prev, next) = unsafe {
+                (
+                    *edges.add(ix.wrapping_mul(2).wrapping_add(0) as usize),
+                    *edges.add(ix.wrapping_mul(2).wrapping_add(1) as usize),
+                )
+            };
 
             // Mark as clipped
             // SAFETY: `ix`/`prev`/`next` are corner indices in
@@ -1101,10 +1102,14 @@ pub(crate) unsafe fn triangulate_ngon(
     let index_begin: u32 = face.index_begin;
     let mut ix: u32 = 0;
     while ix < face.num_indices {
-        // SAFETY (this group): `ix < face.num_indices`, so `2*ix + {0,1}` index the
+        // SAFETY: `ix < face.num_indices`, so `2*ix + {0,1}` index the
         // `2*face.num_indices`-element `edges` region in bounds.
-        let prev: u32 = unsafe { *edges.add(ix.wrapping_mul(2).wrapping_add(0) as usize) };
-        let next: u32 = unsafe { *edges.add(ix.wrapping_mul(2).wrapping_add(1) as usize) };
+        let (prev, next) = unsafe {
+            (
+                *edges.add(ix.wrapping_mul(2).wrapping_add(0) as usize),
+                *edges.add(ix.wrapping_mul(2).wrapping_add(1) as usize),
+            )
+        };
         if (prev & 0x80000000) == 0 {
             ix = ix.wrapping_add(1);
             continue;
@@ -1315,9 +1320,8 @@ pub(crate) unsafe fn compute_topology<M: Mode>(mesh: &View<Mesh, M>, topo: *mut 
     while i0 < num_indices {
         let mut i1: usize = i0;
 
-        // SAFETY (this group): `i0 < num_indices`, so `topo.add(i0)` is a live `TopoEdge`.
-        let a: u32 = unsafe { (*topo.add(i0)).prev };
-        let b: u32 = unsafe { (*topo.add(i0)).next };
+        // SAFETY: `i0 < num_indices`, so `topo.add(i0)` is a live `TopoEdge`.
+        let (a, b) = unsafe { ((*topo.add(i0)).prev, (*topo.add(i0)).next) };
         // SAFETY: the guard keeps `i1 + 1 < num_indices`, so `topo.add(i1 + 1)`
         // is a live `TopoEdge`.
         while i1 + 1 < num_indices

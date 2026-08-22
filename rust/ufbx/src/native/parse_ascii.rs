@@ -1627,12 +1627,16 @@ pub(crate) unsafe fn decode_base64(
     let mut p: *mut u8 = unsafe { (*p_result).data } as *mut u8;
     let mut i: usize = 0;
     while i + 4 <= src_length {
-        // SAFETY (this group): `i + 4 <= src_length`, so `src + i + 0..3` are readable source
+        // SAFETY: `i + 4 <= src_length`, so `src + i + 0..3` are readable source
         // bytes; each byte value is `< 256`, in bounds for the 256-entry `table`.
-        let a: u32 = unsafe { *table.add(*src.add(i + 0) as usize) as u32 };
-        let b: u32 = unsafe { *table.add(*src.add(i + 1) as usize) as u32 };
-        let c: u32 = unsafe { *table.add(*src.add(i + 2) as usize) as u32 };
-        let d: u32 = unsafe { *table.add(*src.add(i + 3) as usize) as u32 };
+        let (a, b, c, d) = unsafe {
+            (
+                *table.add(*src.add(i + 0) as usize) as u32,
+                *table.add(*src.add(i + 1) as usize) as u32,
+                *table.add(*src.add(i + 2) as usize) as u32,
+                *table.add(*src.add(i + 3) as usize) as u32,
+            )
+        };
         pad_error = error_mask;
         error_mask |= a | b | c | d;
 

@@ -2339,7 +2339,7 @@ pub(crate) unsafe fn fetch_dst_elements(
     }
 
     let list: *mut RefList<Element> = p_dst_list as *mut RefList<Element>;
-    // SAFETY (this group): `p_dst_list` is the caller's out-list, which every call site passes
+    // SAFETY: `p_dst_list` is the caller's out-list, which every call site passes
     // as a `ufbx_*_list` of element refs (C: the `void*` out-parameter of
     // `ufbxi_fetch_dst_elements`).
     unsafe {
@@ -2348,8 +2348,8 @@ pub(crate) unsafe fn fetch_dst_elements(
             .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
             as *const Ref<Element>;
         (*list).count = num_elements;
+        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
     }
-    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     if ignore_duplicates {
         // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, *list)`
@@ -2448,7 +2448,7 @@ pub(crate) unsafe fn fetch_src_elements(
     }
 
     let list: *mut RefList<Element> = p_dst_list as *mut RefList<Element>;
-    // SAFETY (this group): `p_dst_list` is the caller's out-list, which every call site passes
+    // SAFETY: `p_dst_list` is the caller's out-list, which every call site passes
     // as a `ufbx_*_list` of element refs (C: the `void*` out-parameter of
     // `ufbxi_fetch_src_elements`).
     unsafe {
@@ -2457,8 +2457,8 @@ pub(crate) unsafe fn fetch_src_elements(
             .push_pop::<*mut Element>(uc.tmp_stack_view(), num_elements)
             as *const Ref<Element>;
         (*list).count = num_elements;
+        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
     }
-    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     if ignore_duplicates {
         // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, *list)`
@@ -2617,14 +2617,14 @@ pub(crate) unsafe fn fetch_textures(
         }
     }
 
-    // SAFETY (this group): `list` is the caller's out-list (fn contract).
+    // SAFETY: `list` is the caller's out-list (fn contract).
     unsafe {
         (*list).data = uc
             .result_view()
             .push_pop::<MaterialTexture>(uc.tmp_stack_view(), num_textures);
         (*list).count = num_textures;
+        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
     }
-    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
 }
@@ -2679,15 +2679,15 @@ pub(crate) unsafe fn fetch_mesh_materials(
         }
     }
 
-    // SAFETY (this group): `list` is the caller's out-list (fn contract).
+    // SAFETY: `list` is the caller's out-list (fn contract).
     unsafe {
         (*list).data = uc
             .result_view()
             .push_pop::<*mut Material>(uc.tmp_stack_view(), num_materials)
             as *const Ref<Material>;
         (*list).count = num_materials;
+        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
     }
-    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
 }
@@ -2752,15 +2752,15 @@ pub(crate) unsafe fn fetch_deformers(
         }
     }
 
-    // SAFETY (this group): `list` is the caller's out-list (fn contract).
+    // SAFETY: `list` is the caller's out-list (fn contract).
     unsafe {
         (*list).data = uc
             .result_view()
             .push_pop::<*mut Element>(uc.tmp_stack_view(), num_deformers)
             as *const Ref<Element>;
         (*list).count = num_deformers;
+        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
     }
-    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
 }
@@ -2804,14 +2804,14 @@ pub(crate) unsafe fn fetch_blend_keyframes(
         conn = unsafe { conn.add(1) };
     }
 
-    // SAFETY (this group): `list` is the caller's out-list (fn contract).
+    // SAFETY: `list` is the caller's out-list (fn contract).
     unsafe {
         (*list).data = uc
             .result_view()
             .push_pop::<BlendKeyframe>(uc.tmp_stack_view(), num_keyframes);
         (*list).count = num_keyframes;
+        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
     }
-    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
 }
@@ -2878,14 +2878,14 @@ pub(crate) unsafe fn fetch_texture_layers(
         conn = unsafe { conn.add(1) };
     }
 
-    // SAFETY (this group): `list` is the caller's out-list (fn contract).
+    // SAFETY: `list` is the caller's out-list (fn contract).
     unsafe {
         (*list).data = uc
             .result_view()
             .push_pop::<TextureLayer>(uc.tmp_stack_view(), num_layers);
         (*list).count = num_layers;
+        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
     }
-    ufbxi_check!(uc, !unsafe { (*list).data }.is_null(), "list->data");
 
     Ok(())
 }
@@ -4155,10 +4155,12 @@ pub(crate) unsafe fn fetch_mapping_maps(
                     dst = unsafe { dst.add(prefix.length) };
                 }
                 if prefix2.length > 0 {
-                    // SAFETY (this group): as the `prefix` copy, with the running total still
+                    // SAFETY: as the `prefix` copy, with the running total still
                     // bounded by the 512-byte check.
-                    unsafe { ptr::copy_nonoverlapping(prefix2.data, dst, prefix2.length) };
-                    dst = unsafe { dst.add(prefix2.length) };
+                    unsafe {
+                        ptr::copy_nonoverlapping(prefix2.data, dst, prefix2.length);
+                        dst = dst.add(prefix2.length);
+                    }
                 }
                 if prop_name.length > 0 {
                     // SAFETY: as above; `prop_name` still points at the mapping
@@ -4168,10 +4170,12 @@ pub(crate) unsafe fn fetch_mapping_maps(
                     dst = unsafe { dst.add(prop_name.length) };
                 }
                 if suffix.length > 0 {
-                    // SAFETY (this group): as the `prefix` copy, with the running total still
+                    // SAFETY: as the `prefix` copy, with the running total still
                     // bounded by the 512-byte check.
-                    unsafe { ptr::copy_nonoverlapping(suffix.data, dst, suffix.length) };
-                    dst = unsafe { dst.add(suffix.length) };
+                    unsafe {
+                        ptr::copy_nonoverlapping(suffix.data, dst, suffix.length);
+                        dst = dst.add(suffix.length);
+                    }
                 }
 
                 prop_name.data = combined_name;
@@ -4505,13 +4509,16 @@ pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
     // remap loop below writes through `pbr_maps`/`feature_infos`), so every
     // other access to `material` in this body must be a raw place projection or
     // a `&raw mut` — never a `&mut`, which would retag and invalidate them.
-    // SAFETY (this group): `material` is live (see above); each projection addresses its own
+    // SAFETY: `material` is live (see above); each projection addresses its own
     // field, and the const asserts above pin that field's layout to a flat
     // `MaterialMap` / `MaterialFeatureInfo` array of the matching count.
-    let fbx_maps: *mut MaterialMap = unsafe { &raw mut (*material).fbx as *mut MaterialMap };
-    let pbr_maps: *mut MaterialMap = unsafe { &raw mut (*material).pbr as *mut MaterialMap };
-    let feature_infos: *mut MaterialFeatureInfo =
-        unsafe { &raw mut (*material).features as *mut MaterialFeatureInfo };
+    let (fbx_maps, pbr_maps, feature_infos) = unsafe {
+        (
+            &raw mut (*material).fbx as *mut MaterialMap,
+            &raw mut (*material).pbr as *mut MaterialMap,
+            &raw mut (*material).features as *mut MaterialFeatureInfo,
+        )
+    };
 
     let mut base_mapping: *const ShaderMapping = BASE_FBX_MAPPING.as_ptr();
     let mut num_base_mapping: usize = BASE_FBX_MAPPING.len();
@@ -4896,8 +4903,10 @@ pub(crate) unsafe fn finalize_nurbs_basis(
         // integer fields, for which the all-zero bit pattern is valid.
         let mut knots: List<Real> = unsafe { MaybeUninit::zeroed().assume_init() };
         // SAFETY (this group): `basis` is live (see above).
-        knots.data = unsafe { (*basis).knot_vector.data };
-        knots.count = unsafe { (*basis).knot_vector.count };
+        unsafe {
+            knots.data = (*basis).knot_vector.data;
+            knots.count = (*basis).knot_vector.count;
+        }
         if knots.count > 2 * degree {
             // SAFETY: `knots` is the basis' own knot-vector span of `count`
             // initialized reals and `degree < count`, so the read is in bounds;
@@ -7900,16 +7909,14 @@ pub(crate) unsafe extern "C" fn material_part_usage_less(
     vb: *const c_void,
 ) -> bool {
     let parts: *mut MeshPart = user as *mut MeshPart;
-    // SAFETY (this group): as the comparator for the mesh's material-part usage order, `va`/`vb`
+    // SAFETY: as the comparator for the mesh's material-part usage order, `va`/`vb`
     // address live, initialized `u32` elements of that order array
     // (`unstable_sort` contract).
-    let a: u32 = unsafe { *(va as *const u32) };
-    let b: u32 = unsafe { *(vb as *const u32) };
-    // SAFETY (this group): `user` is the mesh's own `material_parts` run, passed as the sort's
+    let (a, b) = unsafe { (*(va as *const u32), *(vb as *const u32)) };
+    // SAFETY: `user` is the mesh's own `material_parts` run, passed as the sort's
     // user data, and the order array holds exactly the indices `0..num_parts` of
     // that run.
-    let pa: *mut MeshPart = unsafe { parts.add(a as usize) };
-    let pb: *mut MeshPart = unsafe { parts.add(b as usize) };
+    let (pa, pb) = unsafe { (parts.add(a as usize), parts.add(b as usize)) };
     // SAFETY: `pa`/`pb` address live, initialized parts of the run (see above).
     if unsafe { (*pa).face_indices.count == 0 || (*pb).face_indices.count == 0 } {
         // SAFETY: as above.
@@ -11538,11 +11545,13 @@ pub(crate) unsafe fn get_transform<M: Mode>(
     // NOTE: Rpost is inverted (!) after converting from PostRotation Euler angles
 
     if !translation_scale.is_null() {
-        // SAFETY (this group): `translation_scale` is non-null here, and the fn contract is
+        // SAFETY: `translation_scale` is non-null here, and the fn contract is
         // that a non-null one points to a live, initialized `ufbx_vec3`.
-        translation.x *= unsafe { (*translation_scale).x };
-        translation.y *= unsafe { (*translation_scale).y };
-        translation.z *= unsafe { (*translation_scale).z };
+        unsafe {
+            translation.x *= (*translation_scale).x;
+            translation.y *= (*translation_scale).y;
+            translation.z *= (*translation_scale).z;
+        }
     }
 
     // SAFETY: `node` points to the live, initialized `ufbx_node` whose transform
@@ -13096,9 +13105,13 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
         p_cluster = unsafe { p_cluster.add(1) };
     }
 
-    // SAFETY (this group): `scene` is live (see above).
-    let mirror_axis: MirrorAxis = unsafe { (*scene).metadata.mirror_axis };
-    let geometry_scale: Real = unsafe { (*scene).metadata.geometry_scale };
+    // SAFETY: `scene` is live (see above).
+    let (mirror_axis, geometry_scale) = unsafe {
+        (
+            (*scene).metadata.mirror_axis,
+            (*scene).metadata.geometry_scale,
+        )
+    };
 
     // Space conversion for bind matrices
     {

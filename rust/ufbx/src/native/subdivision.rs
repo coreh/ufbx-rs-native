@@ -629,9 +629,11 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vec2(
         let src: *const Vec2 = unsafe { (*inputs.add(i)).data } as *const Vec2;
         // SAFETY: `i < num_inputs`, so `inputs.add(i)` is an in-bounds live entry.
         let weight: Real = unsafe { (*inputs.add(i)).weight };
-        // SAFETY (this group): `src` points to a live `Vec2` per the entry's `.data` contract.
-        dst.x += unsafe { (*src).x } * weight;
-        dst.y += unsafe { (*src).y } * weight;
+        // SAFETY: `src` points to a live `Vec2` per the entry's `.data` contract.
+        unsafe {
+            dst.x += (*src).x * weight;
+            dst.y += (*src).y * weight;
+        }
         i += 1;
     }
     // SAFETY: the callback contract guarantees `output` points to a writable
@@ -665,10 +667,12 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vec3(
         let src: *const Vec3 = unsafe { (*inputs.add(i)).data } as *const Vec3;
         // SAFETY: `i < num_inputs`, so `inputs.add(i)` is an in-bounds live entry.
         let weight: Real = unsafe { (*inputs.add(i)).weight };
-        // SAFETY (this group): `src` points to a live `Vec3` per the entry's `.data` contract.
-        dst.x += unsafe { (*src).x } * weight;
-        dst.y += unsafe { (*src).y } * weight;
-        dst.z += unsafe { (*src).z } * weight;
+        // SAFETY: `src` points to a live `Vec3` per the entry's `.data` contract.
+        unsafe {
+            dst.x += (*src).x * weight;
+            dst.y += (*src).y * weight;
+            dst.z += (*src).z * weight;
+        }
         i += 1;
     }
     // SAFETY: the callback contract guarantees `output` points to a writable
@@ -703,11 +707,13 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vec4(
         let src: *const Vec4 = unsafe { (*inputs.add(i)).data } as *const Vec4;
         // SAFETY: `i < num_inputs`, so `inputs.add(i)` is an in-bounds live entry.
         let weight: Real = unsafe { (*inputs.add(i)).weight };
-        // SAFETY (this group): `src` points to a live `Vec4` per the entry's `.data` contract.
-        dst.x += unsafe { (*src).x } * weight;
-        dst.y += unsafe { (*src).y } * weight;
-        dst.z += unsafe { (*src).z } * weight;
-        dst.w += unsafe { (*src).w } * weight;
+        // SAFETY: `src` points to a live `Vec4` per the entry's `.data` contract.
+        unsafe {
+            dst.x += (*src).x * weight;
+            dst.y += (*src).y * weight;
+            dst.z += (*src).z * weight;
+            dst.w += (*src).w * weight;
+        }
         i += 1;
     }
     // SAFETY: the callback contract guarantees `output` points to a writable
@@ -2315,10 +2321,14 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
     // One `ListView` mint per set list, serving the copy below, the
     // `ufbxi_for_list` walk and the `[0]` reads.
-    // SAFETY (this group): `uv_sets_raw()`/`color_sets_raw()` address `result`'s own live
+    // SAFETY: `uv_sets_raw()`/`color_sets_raw()` address `result`'s own live
     // list fields, carrying the context's write-capable provenance.
-    let uv_sets: &ListView<UvSet> = unsafe { ListView::from_ptr(result.uv_sets_raw()) };
-    let color_sets: &ListView<ColorSet> = unsafe { ListView::from_ptr(result.color_sets_raw()) };
+    let (uv_sets, color_sets) = unsafe {
+        (
+            ListView::from_ptr(result.uv_sets_raw()),
+            ListView::from_ptr(result.color_sets_raw()),
+        )
+    };
 
     // SAFETY: `uv_sets` describes `result`'s live UV-set array, copied into
     // `sc`'s result arena via `push_copy`.
@@ -2765,13 +2775,15 @@ pub(crate) unsafe fn subdivide_mesh_level(
             let a: u32 = (face.index_begin.wrapping_add(offset)).wrapping_mul(4);
             let b: u32 = (face.index_begin.wrapping_add(next)).wrapping_mul(4);
 
-            // SAFETY (this group): `di`/`di+1` are within the result `edges` array (2 written
+            // SAFETY: `di`/`di+1` are within the result `edges` array (2 written
             // per source edge, `num_edges` total capacity); one mint per element
             // serves both of its field writes.
-            let e0: &View<Edge> =
-                unsafe { View::<Edge>::from_ptr((edges.data() as *mut Edge).add(di + 0)) };
-            let e1: &View<Edge> =
-                unsafe { View::<Edge>::from_ptr((edges.data() as *mut Edge).add(di + 1)) };
+            let (e0, e1) = unsafe {
+                (
+                    View::<Edge>::from_ptr((edges.data() as *mut Edge).add(di + 0)),
+                    View::<Edge>::from_ptr((edges.data() as *mut Edge).add(di + 1)),
+                )
+            };
             e0.set_a(a);
             e0.set_b(a.wrapping_add(1));
             e1.set_a(b.wrapping_add(3));
@@ -2854,13 +2866,16 @@ pub(crate) unsafe fn subdivide_mesh_level(
 
     // One `ListView` mint per result face list, serving the pushes below and the
     // per-face fill loop.
-    // SAFETY (this group): each `*_raw()` addresses one of `result`'s own live list fields,
+    // SAFETY: each `*_raw()` addresses one of `result`'s own live list fields,
     // carrying the context's write-capable provenance.
-    let face_material: &ListView<u32> = unsafe { ListView::from_ptr(result.face_material_raw()) };
-    let face_smoothing: &ListView<bool> =
-        unsafe { ListView::from_ptr(result.face_smoothing_raw()) };
-    let face_group: &ListView<u32> = unsafe { ListView::from_ptr(result.face_group_raw()) };
-    let face_hole: &ListView<bool> = unsafe { ListView::from_ptr(result.face_hole_raw()) };
+    let (face_material, face_smoothing, face_group, face_hole) = unsafe {
+        (
+            ListView::from_ptr(result.face_material_raw()),
+            ListView::from_ptr(result.face_smoothing_raw()),
+            ListView::from_ptr(result.face_group_raw()),
+            ListView::from_ptr(result.face_hole_raw()),
+        )
+    };
 
     if !mesh.face_material().data.is_null() {
         face_material.set_count(result.num_faces());
@@ -2985,11 +3000,13 @@ pub(crate) unsafe fn subdivide_mesh_level(
     // field; a lone count store, left raw rather than minting a view for it.
     unsafe { (*result.vertex_first_index_raw()).count = 0 };
 
-    // SAFETY (this group): `error_mut_ptr()` is `sc`'s own live error slot, the finalize
+    // SAFETY: `error_mut_ptr()` is `sc`'s own live error slot, the finalize
     // contract.
-    unsafe { finalize_mesh_material(sc.result_view(), sc.error_mut_ptr(), result) }?;
-    unsafe { finalize_mesh(sc.result_view(), sc.error_mut_ptr(), result) }?;
-    unsafe { update_face_groups(sc.result_view(), sc.error_mut_ptr(), result, true) }?;
+    unsafe {
+        finalize_mesh_material(sc.result_view(), sc.error_mut_ptr(), result)?;
+        finalize_mesh(sc.result_view(), sc.error_mut_ptr(), result)?;
+        update_face_groups(sc.result_view(), sc.error_mut_ptr(), result, true)?;
+    }
 
     Ok(())
 }

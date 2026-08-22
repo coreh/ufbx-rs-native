@@ -532,18 +532,14 @@ pub(crate) unsafe fn read_properties(
     }
     let node: &NodeView = node.unwrap();
 
-    // SAFETY (this group): `props` is the caller's writable `ufbx_props` slot.
+    // SAFETY: `props` is the caller's writable `ufbx_props` slot.
     unsafe {
         (*props).props.data = uc
             .result_view()
             .push_zero::<Prop>(node.num_children() as usize);
         (*props).props.count = node.num_children() as usize;
+        ufbxi_check!(uc, !(*props).props.data.is_null(), "props->props.data");
     }
-    ufbxi_check!(
-        uc,
-        !unsafe { (*props).props.data }.is_null(),
-        "props->props.data"
-    );
 
     let mut i: usize = 0;
     // SAFETY: `props` is the caller's writable `ufbx_props` slot.
@@ -5405,18 +5401,16 @@ pub(crate) unsafe fn read_nurbs_surface(
         ufbxi_check!(uc, !points.is_null(), "points");
         ufbxi_check!(uc, !knot_u.is_null(), "knot_u");
         ufbxi_check!(uc, !knot_v.is_null(), "knot_v");
-        // SAFETY (this group): `points` is non-null (checked above) and `find_array` returns
+        // SAFETY: `points` is non-null (checked above) and `find_array` returns
         // the node's own array descriptor, live for as long as the parse tree.
-        ufbxi_check!(
-            uc,
-            unsafe { (*points).size } % 4 == 0,
-            "points->size % 4 == 0"
-        );
-        ufbxi_check!(
-            uc,
-            unsafe { (*points).size } / 4 == dimension_u.wrapping_mul(dimension_v),
-            "points->size / 4 == (size_t)dimension_u * (size_t)dimension_v"
-        );
+        unsafe {
+            ufbxi_check!(uc, (*points).size % 4 == 0, "points->size % 4 == 0");
+            ufbxi_check!(
+                uc,
+                (*points).size / 4 == dimension_u.wrapping_mul(dimension_v),
+                "points->size / 4 == (size_t)dimension_u * (size_t)dimension_v"
+            );
+        }
 
         // SAFETY: `nurbs` is the fresh non-null element; `points`/`knot_u`/
         // `knot_v` are the live array descriptors checked non-null above, whose
@@ -6791,24 +6785,22 @@ pub(crate) unsafe fn read_texture(
         (*texture).relative_filename = EMPTY_STRING.0;
     }
 
-    // SAFETY (this group): fmt `'S'` pairs with the `*mut String` out-pointer
+    // SAFETY: fmt `'S'` pairs with the `*mut String` out-pointer
     // `&mut (*texture).absolute_filename`, a field of the fresh non-null element.
-    ufbxi_ignore!(unsafe {
-        find_val1(
+    unsafe {
+        ufbxi_ignore!(find_val1(
             node,
             sp::FileName.as_ptr(),
             b"S\0".as_ptr(),
             &mut (*texture).absolute_filename as *mut String as *mut c_void,
-        )
-    });
-    ufbxi_ignore!(unsafe {
-        find_val1(
+        ));
+        ufbxi_ignore!(find_val1(
             node,
             sp::Filename.as_ptr(),
             b"S\0".as_ptr(),
             &mut (*texture).absolute_filename as *mut String as *mut c_void,
-        )
-    });
+        ));
+    }
     // SAFETY: as above, with the `*mut String` out-pointer
     // `&mut (*texture).relative_filename`.
     ufbxi_ignore!(unsafe {
@@ -6829,25 +6821,23 @@ pub(crate) unsafe fn read_texture(
         )
     });
 
-    // SAFETY (this group): fmt `'b'` pairs with the `*mut Blob` out-pointer
+    // SAFETY: fmt `'b'` pairs with the `*mut Blob` out-pointer
     // `&mut (*texture).raw_absolute_filename`, a field of the fresh non-null
     // element.
-    ufbxi_ignore!(unsafe {
-        find_val1(
+    unsafe {
+        ufbxi_ignore!(find_val1(
             node,
             sp::FileName.as_ptr(),
             b"b\0".as_ptr(),
             &mut (*texture).raw_absolute_filename as *mut Blob as *mut c_void,
-        )
-    });
-    ufbxi_ignore!(unsafe {
-        find_val1(
+        ));
+        ufbxi_ignore!(find_val1(
             node,
             sp::Filename.as_ptr(),
             b"b\0".as_ptr(),
             &mut (*texture).raw_absolute_filename as *mut Blob as *mut c_void,
-        )
-    });
+        ));
+    }
     // SAFETY: as above, with the `*mut Blob` out-pointer
     // `&mut (*texture).raw_relative_filename`.
     ufbxi_ignore!(unsafe {
@@ -6942,24 +6932,22 @@ pub(crate) unsafe fn read_video(
         (*video).relative_filename = EMPTY_STRING.0;
     }
 
-    // SAFETY (this group): fmt `'S'` pairs with the `*mut String` out-pointer
+    // SAFETY: fmt `'S'` pairs with the `*mut String` out-pointer
     // `&mut (*video).absolute_filename`, a field of the fresh non-null element.
-    ufbxi_ignore!(unsafe {
-        find_val1(
+    unsafe {
+        ufbxi_ignore!(find_val1(
             node,
             sp::FileName.as_ptr(),
             b"S\0".as_ptr(),
             &mut (*video).absolute_filename as *mut String as *mut c_void,
-        )
-    });
-    ufbxi_ignore!(unsafe {
-        find_val1(
+        ));
+        ufbxi_ignore!(find_val1(
             node,
             sp::Filename.as_ptr(),
             b"S\0".as_ptr(),
             &mut (*video).absolute_filename as *mut String as *mut c_void,
-        )
-    });
+        ));
+    }
     // SAFETY: as above, with the `*mut String` out-pointer
     // `&mut (*video).relative_filename`.
     ufbxi_ignore!(unsafe {
@@ -6980,25 +6968,23 @@ pub(crate) unsafe fn read_video(
         )
     });
 
-    // SAFETY (this group): fmt `'b'` pairs with the `*mut Blob` out-pointer
+    // SAFETY: fmt `'b'` pairs with the `*mut Blob` out-pointer
     // `&mut (*video).raw_absolute_filename`, a field of the fresh non-null
     // element.
-    ufbxi_ignore!(unsafe {
-        find_val1(
+    unsafe {
+        ufbxi_ignore!(find_val1(
             node,
             sp::FileName.as_ptr(),
             b"b\0".as_ptr(),
             &mut (*video).raw_absolute_filename as *mut Blob as *mut c_void,
-        )
-    });
-    ufbxi_ignore!(unsafe {
-        find_val1(
+        ));
+        ufbxi_ignore!(find_val1(
             node,
             sp::Filename.as_ptr(),
             b"b\0".as_ptr(),
             &mut (*video).raw_absolute_filename as *mut Blob as *mut c_void,
-        )
-    });
+        ));
+    }
     // SAFETY: as above, with the `*mut Blob` out-pointer
     // `&mut (*video).raw_relative_filename`.
     ufbxi_ignore!(unsafe {
@@ -8310,11 +8296,11 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             // buffer is a separate `ator_tmp` allocation, so the two are disjoint.
             unsafe { core::ptr::copy_nonoverlapping((*ua).src, uc.read_buffer(), size) };
             // C: `uc->data = uc->data_begin = ua->src = uc->read_buffer;`
-            // SAFETY (this group): `ua` is uc's own live `ascii` state.
+            // SAFETY: `ua` is uc's own live `ascii` state.
             unsafe {
                 (*ua).src = uc.read_buffer();
+                uc.set_data_begin((*ua).src);
             }
-            uc.set_data_begin(unsafe { (*ua).src });
             uc.set_data(uc.data_begin());
             // SAFETY: `ua` is uc's own live `ascii` state; `read_buffer` holds at
             // least `size` bytes, so stepping `size` reaches its one-past-the-end.
@@ -8397,12 +8383,12 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 }
             }
 
-            // SAFETY (this group): `batch` points into the live `batches` local.
+            // SAFETY: `batch` points into the live `batches` local.
             unsafe {
                 (*batch).num_nodes = num_nodes;
                 (*batch).nodes = tmp_buf.push_pop::<*mut Node>(uc.tmp_stack_view(), num_nodes);
+                ufbxi_check!(uc, !(*batch).nodes.is_null(), "batch->nodes");
             }
-            ufbxi_check!(uc, !unsafe { (*batch).nodes }.is_null(), "batch->nodes");
             // SAFETY: `batch` points into the live `batches` local and `uc.get()`
             // is the live, initialized context this call runs on.
             unsafe {
@@ -8738,16 +8724,16 @@ pub(crate) unsafe fn read_take_anim_channel(
         },
         "ufbxi_find_val1(node, ufbxi_KeyCount, \"Z\", &num_keys)"
     );
-    // SAFETY (this group): `curve` is the fresh non-null element pushed above.
+    // SAFETY: `curve` is the fresh non-null element pushed above.
     unsafe {
         (*curve).keyframes.data = uc.result_view().push::<Keyframe>(num_keys);
         (*curve).keyframes.count = num_keys;
+        ufbxi_check!(
+            uc,
+            !(*curve).keyframes.data.is_null(),
+            "curve->keyframes.data"
+        );
     }
-    ufbxi_check!(
-        uc,
-        !unsafe { (*curve).keyframes.data }.is_null(),
-        "curve->keyframes.data"
-    );
 
     let mut slope_left: f32 = 0.0f32;
     let mut weight_left: f32 = 0.333333f32;
@@ -8774,10 +8760,12 @@ pub(crate) unsafe fn read_take_anim_channel(
             unsafe { data_end.offset_from(data) } >= 2,
             "data_end - data >= 2"
         );
-        // SAFETY (this group): the check above leaves at least two doubles between `data` and
+        // SAFETY: the check above leaves at least two doubles between `data` and
         // `data_end`, so offsets 0 and 1 are in bounds of the payload.
-        next_time = unsafe { *data.add(0) } / uc.ktime_sec_double();
-        next_value = unsafe { *data.add(1) };
+        unsafe {
+            next_time = *data.add(0) / uc.ktime_sec_double();
+            next_value = *data.add(1);
+        }
     }
 
     for i in 0..num_keys {
@@ -10443,18 +10431,18 @@ pub(crate) unsafe fn read_legacy_material(
         )
     };
 
-    // SAFETY (this group): `material` is the fresh non-null element pushed above.
+    // SAFETY: `material` is the fresh non-null element pushed above.
     unsafe {
         (*material).shading_model_name = EMPTY_STRING.0;
         (*material).element.props.props.count = num_props;
         (*material).element.props.props.data =
             uc.result_view().push_copy_slice(&tmp_props[..num_props]);
+        ufbxi_check!(
+            uc,
+            !(*material).element.props.props.data.is_null(),
+            "material->props.props.data"
+        );
     }
-    ufbxi_check!(
-        uc,
-        !unsafe { (*material).element.props.props.data }.is_null(),
-        "material->props.props.data"
-    );
 
     // SAFETY: as above.
     unsafe {
@@ -10576,17 +10564,17 @@ pub(crate) unsafe fn read_legacy_light(
         )
     };
 
-    // SAFETY (this group): `light` is the fresh non-null element pushed above.
+    // SAFETY: `light` is the fresh non-null element pushed above.
     unsafe {
         (*light).element.props.props.count = num_props;
         (*light).element.props.props.data =
             uc.result_view().push_copy_slice(&tmp_props[..num_props]);
+        ufbxi_check!(
+            uc,
+            !(*light).element.props.props.data.is_null(),
+            "light->props.props.data"
+        );
     }
-    ufbxi_check!(
-        uc,
-        !unsafe { (*light).element.props.props.data }.is_null(),
-        "light->props.props.data"
-    );
 
     Ok(())
 }
@@ -10618,17 +10606,17 @@ pub(crate) unsafe fn read_legacy_camera(
         )
     };
 
-    // SAFETY (this group): `camera` is the fresh non-null element pushed above.
+    // SAFETY: `camera` is the fresh non-null element pushed above.
     unsafe {
         (*camera).element.props.props.count = num_props;
         (*camera).element.props.props.data =
             uc.result_view().push_copy_slice(&tmp_props[..num_props]);
+        ufbxi_check!(
+            uc,
+            !(*camera).element.props.props.data.is_null(),
+            "camera->props.props.data"
+        );
     }
-    ufbxi_check!(
-        uc,
-        !unsafe { (*camera).element.props.props.data }.is_null(),
-        "camera->props.props.data"
-    );
 
     Ok(())
 }
@@ -10666,17 +10654,17 @@ pub(crate) unsafe fn read_legacy_limb_node(
         };
     }
 
-    // SAFETY (this group): `bone` is the fresh non-null element pushed above.
+    // SAFETY: `bone` is the fresh non-null element pushed above.
     unsafe {
         (*bone).element.props.props.count = num_props;
         (*bone).element.props.props.data =
             uc.result_view().push_copy_slice(&tmp_props[..num_props]);
+        ufbxi_check!(
+            uc,
+            !(*bone).element.props.props.data.is_null(),
+            "bone->props.props.data"
+        );
     }
-    ufbxi_check!(
-        uc,
-        !unsafe { (*bone).element.props.props.data }.is_null(),
-        "bone->props.props.data"
-    );
 
     Ok(())
 }

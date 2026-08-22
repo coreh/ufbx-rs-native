@@ -209,9 +209,8 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         }
         unsafe { atomic_counter_free(&mut (*refcount).refcount) };
 
-        // SAFETY (this group): same live `Refcount`; reading its own fields.
-        let parent: *mut Refcount = unsafe { (*refcount).parent };
-        let type_magic: u32 = unsafe { (*refcount).type_magic };
+        // SAFETY: same live `Refcount`; reading its own fields.
+        let (parent, type_magic) = unsafe { ((*refcount).parent, (*refcount).type_magic) };
 
         // SAFETY: as above; writing its own fields.
         unsafe {
@@ -791,13 +790,15 @@ pub(crate) unsafe fn load_stream_prefix(
     uc.set_data(prefix as *const u8);
     uc.set_data_begin(uc.data());
     uc.set_data_size(prefix_size);
-    // SAFETY (this group): `stream` points at the caller's live `RawStream`; each read takes
+    // SAFETY: `stream` points at the caller's live `RawStream`; each read takes
     // one of its own callback/user fields.
-    uc.set_read_fn(unsafe { (*stream).read_fn });
-    uc.set_skip_fn(unsafe { (*stream).skip_fn });
-    uc.set_size_fn(unsafe { (*stream).size_fn });
-    uc.set_close_fn(unsafe { (*stream).close_fn });
-    uc.set_read_user(unsafe { (*stream).user });
+    unsafe {
+        uc.set_read_fn((*stream).read_fn);
+        uc.set_skip_fn((*stream).skip_fn);
+        uc.set_size_fn((*stream).size_fn);
+        uc.set_close_fn((*stream).close_fn);
+        uc.set_read_user((*stream).user);
+    }
 
     // SAFETY: `uc` is the initialized context; `opts` is null-or-live (sentinels
     // validated by the macro when non-null; `evaluate::load` zero-fills on null)
@@ -3581,11 +3582,13 @@ pub(crate) unsafe fn transform_to_matrix(t: *const Transform) -> Matrix {
     m.m02 = sz * (xz + yw);
     m.m12 = sz * (-xw + yz);
     m.m22 = sz * (-xx - yy + 0.5);
-    // SAFETY (this group): `t` points at a live `Transform` per this fn's contract; reading
+    // SAFETY: `t` points at a live `Transform` per this fn's contract; reading
     // its own `translation` field.
-    m.m03 = unsafe { (*t).translation.x };
-    m.m13 = unsafe { (*t).translation.y };
-    m.m23 = unsafe { (*t).translation.z };
+    unsafe {
+        m.m03 = (*t).translation.x;
+        m.m13 = (*t).translation.y;
+        m.m23 = (*t).translation.z;
+    }
     m
 }
 
@@ -3614,12 +3617,14 @@ pub(crate) unsafe fn matrix_to_transform(m: *const Matrix) -> Transform {
     // SAFETY: an all-zero bit pattern is a valid `Transform` (all `Real`
     // sub-fields).
     let mut t: Transform = unsafe { core::mem::zeroed() };
-    // SAFETY (this group): the live `Matrix` behind `m` holds four contiguous `Vec3` columns
+    // SAFETY: the live `Matrix` behind `m` holds four contiguous `Vec3` columns
     // (its `m00`..`m23` scalars), so `m_cols.add(0..=3)` each address a column.
-    t.translation = unsafe { *m_cols.add(3) };
-    t.scale.x = length3(unsafe { *m_cols.add(0) });
-    t.scale.y = length3(unsafe { *m_cols.add(1) });
-    t.scale.z = length3(unsafe { *m_cols.add(2) });
+    unsafe {
+        t.translation = *m_cols.add(3);
+        t.scale.x = length3(*m_cols.add(0));
+        t.scale.y = length3(*m_cols.add(1));
+        t.scale.z = length3(*m_cols.add(2));
+    }
 
     // Flip a single non-zero axis if negative determinant
     let mut sign_x: Real = 1.0;
@@ -4055,11 +4060,15 @@ pub(crate) unsafe fn add_blend_shape_vertex_offsets(
 
     // SAFETY (this group): `shape` points at a live `BlendShape` per this fn's contract;
     // every field read below is one of its own list fields.
-    let num_offsets: usize = unsafe { (*shape).num_offsets };
-    let vertex_indices: *const u32 = unsafe { (*shape).offset_vertices.data };
-    let offsets: *const Vec3 = unsafe { (*shape).position_offsets.data };
-    let weights_data: *const Real = unsafe { (*shape).offset_weights.data };
-    let weights_count: usize = unsafe { (*shape).offset_weights.count };
+    let (num_offsets, vertex_indices, offsets, weights_data, weights_count) = unsafe {
+        (
+            (*shape).num_offsets,
+            (*shape).offset_vertices.data,
+            (*shape).position_offsets.data,
+            (*shape).offset_weights.data,
+            (*shape).offset_weights.count,
+        )
+    };
     for i in 0..num_offsets {
         // SAFETY: `i < num_offsets`, so `vertex_indices.add(i)` addresses a live
         // `u32` in the shape's `offset_vertices` list.
@@ -4430,8 +4439,12 @@ pub(crate) unsafe fn evaluate_nurbs_surface(
 
     // SAFETY (this group): same live `NurbsSurface`; every field read below is one of its own
     // control-point-count / basis-order fields.
-    let num_u: usize = unsafe { (*surface).num_control_points_u };
-    let num_v: usize = unsafe { (*surface).num_control_points_v };
+    let (num_u, num_v) = unsafe {
+        (
+            (*surface).num_control_points_u,
+            (*surface).num_control_points_v,
+        )
+    };
     let order_u: usize = unsafe { (*surface).basis_u.order } as usize;
     let order_v: usize = unsafe { (*surface).basis_v.order } as usize;
     if order_u > MAX_NURBS_ORDER || order_v > MAX_NURBS_ORDER {
