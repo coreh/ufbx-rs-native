@@ -237,7 +237,7 @@ unsafe fn default_panic_handler(message: *const u8) {
 }
 
 // ufbx.c:3366 `static const char ufbxi_empty_char[1] = { '\0' };`
-pub(crate) static EMPTY_CHAR: [u8; 1] = [b'\0'];
+pub(crate) static EMPTY_CHAR: [u8; 1] = *b"\0";
 
 // ufbx.c:3368-3373 `ufbxi_vsnprintf`
 #[inline(never)]
