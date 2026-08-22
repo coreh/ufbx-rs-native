@@ -100,7 +100,7 @@ use crate::native::error::{
 #[cfg(feature = "geometry-cache")]
 use crate::native::platform::{min64, to_size, MAX_SKIP_SIZE};
 use crate::native::thread::ThreadPool;
-use crate::native::view::{Const, Mode, View};
+use crate::native::view::{Const, Mode, Mut, View};
 // Used by the feature-enabled arms of `ufbx_bake_anim` /
 // `ufbx_tessellate_nurbs_curve` / `_surface` and unconditionally by
 // `ufbx_subdivide_mesh` / `ufbx_load_geometry_cache_len`.
@@ -203,11 +203,13 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         // SAFETY: `refcount` is non-null here and points at a live `Refcount` —
         // the raw-pointer contract of this `unsafe fn`.
         ufbx_assert!(unsafe { (*refcount).self_magic } == REFCOUNT_IMP_MAGIC);
-        // SAFETY (this group): same live `Refcount`; `refcount.refcount` is its own atomic.
-        if unsafe { atomic_counter_dec(&mut (*refcount).refcount) } > 0 {
-            return;
+        // SAFETY: same live `Refcount`; `refcount.refcount` is its own atomic.
+        unsafe {
+            if atomic_counter_dec(&mut (*refcount).refcount) > 0 {
+                return;
+            }
+            atomic_counter_free(&mut (*refcount).refcount);
         }
-        unsafe { atomic_counter_free(&mut (*refcount).refcount) };
 
         // SAFETY: same live `Refcount`; reading its own fields.
         let (parent, type_magic) = unsafe { ((*refcount).parent, (*refcount).type_magic) };
@@ -1343,10 +1345,11 @@ pub(crate) unsafe fn find_anim_props(
     // reading its own `anim_props.count`.
     let mut begin: usize = unsafe { (*layer).anim_props.count };
     let mut end: usize = begin;
-    // SAFETY: live `layer` per above; the search spans its sorted `anim_props`
-    // run `0..count`, and every probe pointer the comparators receive addresses
-    // a live `AnimProp` whose `element` ref is readable, compared to this fn's
-    // `element` param.
+    // SAFETY: live `layer` per above; both searches span its sorted `anim_props`
+    // run (the second from the `begin` lower bound the first produces, so
+    // `begin <= count`), and every probe pointer the comparators receive
+    // addresses a live `AnimProp` whose `element` ref is readable, compared to
+    // this fn's `element` param.
     unsafe {
         macro_lower_bound_eq::<AnimProp>(
             16,
@@ -1356,11 +1359,7 @@ pub(crate) unsafe fn find_anim_props(
             (*layer).anim_props.count,
             |a| (ref_ptr(&(*a).element) as *const Element) < element,
             |a| std::ptr::eq(ref_ptr(&(*a).element), element),
-        )
-    };
-
-    // SAFETY: as above, with `begin <= count` the lower bound just produced.
-    unsafe {
+        );
         macro_upper_bound_eq::<AnimProp>(
             16,
             &mut end,
@@ -1368,8 +1367,8 @@ pub(crate) unsafe fn find_anim_props(
             begin,
             (*layer).anim_props.count,
             |a| std::ptr::eq(ref_ptr(&(*a).element), element),
-        )
-    };
+        );
+    }
 
     if begin != end {
         // SAFETY: `begin < end <= count`, so `anim_props.data.add(begin)`
@@ -1448,9 +1447,8 @@ pub(crate) unsafe fn evaluate_curve_flags(
     }
 
     let mut begin: usize = 0;
-    // SAFETY (this group): live `curve` per above; reading its own keyframe run.
-    let mut end: usize = unsafe { (*curve).keyframes.count };
-    let keys: *const Keyframe = unsafe { (*curve).keyframes.data };
+    // SAFETY: live `curve` per above; reading its own keyframe run.
+    let (mut end, keys) = unsafe { ((*curve).keyframes.count, (*curve).keyframes.data) };
     while end - begin >= 8 {
         let mid: usize = (begin + end) >> 1;
         // SAFETY: `mid < end <= count`, so `keys.add(mid)` addresses a live
@@ -1510,8 +1508,9 @@ pub(crate) unsafe fn evaluate_curve_flags(
                 // C: `return (ufbx_real)(prev->value*(1.0 - t) + next->value*t);`
                 // `1.0 - t` is double, so both `value`s promote to double.
                 // SAFETY: `prev`/`next` are the live adjacent keyframes.
-                return (as_f64!(unsafe { (*prev).value }) * (1.0 - t)
-                    + as_f64!(unsafe { (*next).value }) * t) as Real;
+                return unsafe {
+                    (as_f64!((*prev).value) * (1.0 - t) + as_f64!((*next).value) * t) as Real
+                };
             }
 
             Interpolation::Cubic => {
@@ -1668,12 +1667,14 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
 
     // Public-boundary root: caller-owned `*const Element` whose provenance can
     // be a read-only `&Element` (safe Rust wrapper), so mint a read-only
-    // `Const` view — legal for any readable provenance (Miri SB, topology finding).
+    // `Const` view — legal for any readable provenance (Miri SB, topology
+    // finding). `ufbx_evaluate_prop_flags` takes `const ufbx_element *`, so the
+    // element stays frozen for the whole body and its `props` table and
+    // `element_id` are reached through the view's accessors.
     // SAFETY: `element` points at a live `Element` — the raw-pointer contract of
-    // this `unsafe fn`; `&raw const (*element).props` addresses its own `props`
-    // field, minted as a read-only `Const` view.
-    let props: &View<Props, Const> =
-        unsafe { View::<Props, Const>::from_ptr(&raw const (*element).props) };
+    // this `unsafe fn`.
+    let element_view: &View<Element, Const> = unsafe { View::<Element, Const>::from_ptr(element) };
+    let props: &View<Props, Const> = element_view.props();
     // SAFETY: `props` is the live props view and `name`/`name_len` the caller's
     // key buffer.
     let prop: Option<&View<Prop, Const>> = unsafe { find_prop_len(props, name, name_len) };
@@ -1701,12 +1702,12 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
     // `unsafe fn`; reading its own `prop_overrides.count`.
     if unsafe { (*anim).prop_overrides.count } > 0 {
         // SAFETY: `&raw const (*anim).prop_overrides` addresses the live anim's
-        // own overrides list, `(*element).element_id` reads the live element's
-        // own id, and `&mut result` addresses the local prop.
+        // own overrides list and `&mut result` addresses the local prop; the
+        // element id is a safe read through the element view.
         unsafe {
             evaluate::find_prop_override(
                 &raw const (*anim).prop_overrides,
-                (*element).element_id,
+                element_view.element_id(),
                 &mut result,
             )
         };
@@ -1791,9 +1792,18 @@ pub(crate) unsafe fn evaluate_props_flags(
         if prop.is_null() {
             break;
         }
+        // `next_prop` yields either a prop in a table this loop leaves alone or,
+        // when an override merges, `&raw mut (*iter).tmp` — scratch bytes inside
+        // this frame's own iterator that the NEXT `next_prop` call rewrites. The
+        // frozen `Const` tag therefore covers one iteration only: the view is
+        // re-minted at the top of every pass and its last use (`prop_view.name()`
+        // as a call argument, below) precedes the next `next_prop`, so the tag is
+        // dead before any write can reach those bytes. Hoisting this mint out of
+        // the loop, or reading through the view after the next `next_prop`, is UB.
         // SAFETY: `prop` is non-null (checked) and the live prop the iterator
-        // yielded; reading its own `flags`.
-        if (unsafe { (*prop).flags.raw() }
+        // yielded; nothing writes it between this mint and the view's last use.
+        let prop_view: &View<Prop, Const> = unsafe { View::<Prop, Const>::from_ptr(prop) };
+        if (prop_view.flags().raw()
             & (PropFlags::ANIMATED.raw()
                 | PropFlags::OVERRIDDEN.raw()
                 | PropFlags::CONNECTED.raw()))
@@ -1816,19 +1826,18 @@ pub(crate) unsafe fn evaluate_props_flags(
             *dst = *prop;
         }
 
-        // SAFETY: `prop` is the live prop and `anim` the live anim; reading their
-        // own `flags`/`ignore_connections`.
-        if (unsafe { (*prop).flags.raw() } & PropFlags::CONNECTED.raw()) != 0
+        // SAFETY: `anim` is the live anim; reading its own `ignore_connections`.
+        if (prop_view.flags().raw() & PropFlags::CONNECTED.raw()) != 0
             && !unsafe { (*anim).ignore_connections }
         {
-            // SAFETY: `dst` is the live output slot, `anim`/`element` the live
-            // params, and `(*prop).name.data` the prop's own interned name.
+            // SAFETY: `dst` is the live output slot and `anim`/`element` the live
+            // params; the interned name pointer is a safe read through the view.
             unsafe {
                 evaluate::evaluate_connected_prop(
                     dst,
                     anim,
                     element,
-                    (*prop).name.data,
+                    prop_view.name().data,
                     time,
                     flags,
                 )
@@ -2671,8 +2680,9 @@ pub(crate) unsafe fn evaluate_baked_vec3(keyframes: List<BakedVec3>, time: f64) 
         // SAFETY: `prev > keys` guards the `prev.sub(1)` read to stay within the
         // run; `prev`/`prev-1` are live keyframes.
         if prev > keys
-            && unsafe { ((*prev).flags & BakedKeyFlags::STEP_RIGHT).any() }
-            && unsafe { (*prev.sub(1)).time } == time
+            && unsafe {
+                ((*prev).flags & BakedKeyFlags::STEP_RIGHT).any() && (*prev.sub(1)).time == time
+            }
         {
             // SAFETY: `prev > keys` (checked), so `prev.sub(1)` stays in the run.
             prev = unsafe { prev.sub(1) };
@@ -2693,11 +2703,7 @@ pub(crate) unsafe fn evaluate_baked_vec3(keyframes: List<BakedVec3>, time: f64) 
             t = 1.0;
         }
         // SAFETY: `prev`/`next` are live keyframes of the run.
-        return lerp3(
-            unsafe { (*prev).value },
-            unsafe { (*next).value },
-            t as Real,
-        );
+        return unsafe { lerp3((*prev).value, (*next).value, t as Real) };
     }
 
     // PORT DIVERGENCE (ufbx.c:31369): guard the empty list (see fn header).
@@ -2770,8 +2776,9 @@ pub(crate) unsafe fn evaluate_baked_quat(keyframes: List<BakedQuat>, time: f64) 
         // SAFETY: `prev > keys` guards the `prev.sub(1)` read; `prev`/`prev-1` are
         // live keyframes of the run.
         if prev > keys
-            && unsafe { ((*prev).flags & BakedKeyFlags::STEP_RIGHT).any() }
-            && unsafe { (*prev.sub(1)).time } == time
+            && unsafe {
+                ((*prev).flags & BakedKeyFlags::STEP_RIGHT).any() && (*prev.sub(1)).time == time
+            }
         {
             // SAFETY: `prev > keys` (checked), so `prev.sub(1)` stays in the run.
             prev = unsafe { prev.sub(1) };
@@ -2785,11 +2792,7 @@ pub(crate) unsafe fn evaluate_baked_quat(keyframes: List<BakedQuat>, time: f64) 
             t = 1.0;
         }
         // SAFETY: `prev`/`next` are live keyframes of the run.
-        return quat_slerp(
-            unsafe { (*prev).value },
-            unsafe { (*next).value },
-            t as Real,
-        );
+        return unsafe { quat_slerp((*prev).value, (*next).value, t as Real) };
     }
 
     // PORT DIVERGENCE (ufbx.c:31402): upstream's trailing
@@ -3364,26 +3367,29 @@ pub(crate) unsafe fn matrix_mul(a: *const Matrix, b: *const Matrix) -> Matrix {
 
     // C: `ufbx_matrix dst;` — every field is written below before the return,
     // so the zero-fill is inert (upstream carries no `// ufbxi_uninit` marker).
+    // SAFETY: an all-zero bit pattern is a valid `Matrix` (all `Real` fields).
+    let mut dst: Matrix = unsafe { core::mem::zeroed() };
+
     // SAFETY: `a` and `b` are non-null here (checked above) and point at live
     // `Matrix` values per this fn's contract; every field read below is one of
     // their own `mNN` fields.
-    let mut dst: Matrix = unsafe { core::mem::zeroed() };
+    unsafe {
+        dst.m03 = (*a).m00 * (*b).m03 + (*a).m01 * (*b).m13 + (*a).m02 * (*b).m23 + (*a).m03;
+        dst.m13 = (*a).m10 * (*b).m03 + (*a).m11 * (*b).m13 + (*a).m12 * (*b).m23 + (*a).m13;
+        dst.m23 = (*a).m20 * (*b).m03 + (*a).m21 * (*b).m13 + (*a).m22 * (*b).m23 + (*a).m23;
 
-    dst.m03 = unsafe { (*a).m00 * (*b).m03 + (*a).m01 * (*b).m13 + (*a).m02 * (*b).m23 + (*a).m03 };
-    dst.m13 = unsafe { (*a).m10 * (*b).m03 + (*a).m11 * (*b).m13 + (*a).m12 * (*b).m23 + (*a).m13 };
-    dst.m23 = unsafe { (*a).m20 * (*b).m03 + (*a).m21 * (*b).m13 + (*a).m22 * (*b).m23 + (*a).m23 };
+        dst.m00 = (*a).m00 * (*b).m00 + (*a).m01 * (*b).m10 + (*a).m02 * (*b).m20;
+        dst.m10 = (*a).m10 * (*b).m00 + (*a).m11 * (*b).m10 + (*a).m12 * (*b).m20;
+        dst.m20 = (*a).m20 * (*b).m00 + (*a).m21 * (*b).m10 + (*a).m22 * (*b).m20;
 
-    dst.m00 = unsafe { (*a).m00 * (*b).m00 + (*a).m01 * (*b).m10 + (*a).m02 * (*b).m20 };
-    dst.m10 = unsafe { (*a).m10 * (*b).m00 + (*a).m11 * (*b).m10 + (*a).m12 * (*b).m20 };
-    dst.m20 = unsafe { (*a).m20 * (*b).m00 + (*a).m21 * (*b).m10 + (*a).m22 * (*b).m20 };
+        dst.m01 = (*a).m00 * (*b).m01 + (*a).m01 * (*b).m11 + (*a).m02 * (*b).m21;
+        dst.m11 = (*a).m10 * (*b).m01 + (*a).m11 * (*b).m11 + (*a).m12 * (*b).m21;
+        dst.m21 = (*a).m20 * (*b).m01 + (*a).m21 * (*b).m11 + (*a).m22 * (*b).m21;
 
-    dst.m01 = unsafe { (*a).m00 * (*b).m01 + (*a).m01 * (*b).m11 + (*a).m02 * (*b).m21 };
-    dst.m11 = unsafe { (*a).m10 * (*b).m01 + (*a).m11 * (*b).m11 + (*a).m12 * (*b).m21 };
-    dst.m21 = unsafe { (*a).m20 * (*b).m01 + (*a).m21 * (*b).m11 + (*a).m22 * (*b).m21 };
-
-    dst.m02 = unsafe { (*a).m00 * (*b).m02 + (*a).m01 * (*b).m12 + (*a).m02 * (*b).m22 };
-    dst.m12 = unsafe { (*a).m10 * (*b).m02 + (*a).m11 * (*b).m12 + (*a).m12 * (*b).m22 };
-    dst.m22 = unsafe { (*a).m20 * (*b).m02 + (*a).m21 * (*b).m12 + (*a).m22 * (*b).m22 };
+        dst.m02 = (*a).m00 * (*b).m02 + (*a).m01 * (*b).m12 + (*a).m02 * (*b).m22;
+        dst.m12 = (*a).m10 * (*b).m02 + (*a).m11 * (*b).m12 + (*a).m12 * (*b).m22;
+        dst.m22 = (*a).m20 * (*b).m02 + (*a).m21 * (*b).m12 + (*a).m22 * (*b).m22;
+    }
 
     dst
 }
@@ -3430,41 +3436,37 @@ pub(crate) unsafe fn matrix_invert(m: *const Matrix) -> Matrix {
 
     // SAFETY: `m` points at a live `Matrix` per this fn's contract; every field
     // read below is one of its own `mNN` fields.
-    r.m00 = unsafe { (-(*m).m12 * (*m).m21 + (*m).m11 * (*m).m22) * rcp_det };
-    r.m10 = unsafe { ((*m).m12 * (*m).m20 - (*m).m10 * (*m).m22) * rcp_det };
-    r.m20 = unsafe { (-(*m).m11 * (*m).m20 + (*m).m10 * (*m).m21) * rcp_det };
-    r.m01 = unsafe { ((*m).m02 * (*m).m21 - (*m).m01 * (*m).m22) * rcp_det };
-    r.m11 = unsafe { (-(*m).m02 * (*m).m20 + (*m).m00 * (*m).m22) * rcp_det };
-    r.m21 = unsafe { ((*m).m01 * (*m).m20 - (*m).m00 * (*m).m21) * rcp_det };
-    r.m02 = unsafe { (-(*m).m02 * (*m).m11 + (*m).m01 * (*m).m12) * rcp_det };
-    r.m12 = unsafe { ((*m).m02 * (*m).m10 - (*m).m00 * (*m).m12) * rcp_det };
-    r.m22 = unsafe { (-(*m).m01 * (*m).m10 + (*m).m00 * (*m).m11) * rcp_det };
-    r.m03 = unsafe {
-        ((*m).m03 * (*m).m12 * (*m).m21
+    unsafe {
+        r.m00 = (-(*m).m12 * (*m).m21 + (*m).m11 * (*m).m22) * rcp_det;
+        r.m10 = ((*m).m12 * (*m).m20 - (*m).m10 * (*m).m22) * rcp_det;
+        r.m20 = (-(*m).m11 * (*m).m20 + (*m).m10 * (*m).m21) * rcp_det;
+        r.m01 = ((*m).m02 * (*m).m21 - (*m).m01 * (*m).m22) * rcp_det;
+        r.m11 = (-(*m).m02 * (*m).m20 + (*m).m00 * (*m).m22) * rcp_det;
+        r.m21 = ((*m).m01 * (*m).m20 - (*m).m00 * (*m).m21) * rcp_det;
+        r.m02 = (-(*m).m02 * (*m).m11 + (*m).m01 * (*m).m12) * rcp_det;
+        r.m12 = ((*m).m02 * (*m).m10 - (*m).m00 * (*m).m12) * rcp_det;
+        r.m22 = (-(*m).m01 * (*m).m10 + (*m).m00 * (*m).m11) * rcp_det;
+        r.m03 = ((*m).m03 * (*m).m12 * (*m).m21
             - (*m).m02 * (*m).m13 * (*m).m21
             - (*m).m03 * (*m).m11 * (*m).m22
             + (*m).m01 * (*m).m13 * (*m).m22
             + (*m).m02 * (*m).m11 * (*m).m23
             - (*m).m01 * (*m).m12 * (*m).m23)
-            * rcp_det
-    };
-    r.m13 = unsafe {
-        ((*m).m02 * (*m).m13 * (*m).m20 - (*m).m03 * (*m).m12 * (*m).m20
+            * rcp_det;
+        r.m13 = ((*m).m02 * (*m).m13 * (*m).m20 - (*m).m03 * (*m).m12 * (*m).m20
             + (*m).m03 * (*m).m10 * (*m).m22
             - (*m).m00 * (*m).m13 * (*m).m22
             - (*m).m02 * (*m).m10 * (*m).m23
             + (*m).m00 * (*m).m12 * (*m).m23)
-            * rcp_det
-    };
-    r.m23 = unsafe {
-        ((*m).m03 * (*m).m11 * (*m).m20
+            * rcp_det;
+        r.m23 = ((*m).m03 * (*m).m11 * (*m).m20
             - (*m).m01 * (*m).m13 * (*m).m20
             - (*m).m03 * (*m).m10 * (*m).m21
             + (*m).m00 * (*m).m13 * (*m).m21
             + (*m).m01 * (*m).m10 * (*m).m23
             - (*m).m00 * (*m).m11 * (*m).m23)
-            * rcp_det
-    };
+            * rcp_det;
+    }
 
     r
 }
@@ -3484,15 +3486,17 @@ pub(crate) unsafe fn matrix_for_normals(m: *const Matrix) -> Matrix {
     let mut r: Matrix = unsafe { core::mem::zeroed() };
     // SAFETY: `m` points at a live `Matrix` per this fn's contract; every field
     // read below is one of its own `mNN` fields.
-    r.m00 = unsafe { (-(*m).m12 * (*m).m21 + (*m).m11 * (*m).m22) * det_sign };
-    r.m01 = unsafe { ((*m).m12 * (*m).m20 - (*m).m10 * (*m).m22) * det_sign };
-    r.m02 = unsafe { (-(*m).m11 * (*m).m20 + (*m).m10 * (*m).m21) * det_sign };
-    r.m10 = unsafe { ((*m).m02 * (*m).m21 - (*m).m01 * (*m).m22) * det_sign };
-    r.m11 = unsafe { (-(*m).m02 * (*m).m20 + (*m).m00 * (*m).m22) * det_sign };
-    r.m12 = unsafe { ((*m).m01 * (*m).m20 - (*m).m00 * (*m).m21) * det_sign };
-    r.m20 = unsafe { (-(*m).m02 * (*m).m11 + (*m).m01 * (*m).m12) * det_sign };
-    r.m21 = unsafe { ((*m).m02 * (*m).m10 - (*m).m00 * (*m).m12) * det_sign };
-    r.m22 = unsafe { (-(*m).m01 * (*m).m10 + (*m).m00 * (*m).m11) * det_sign };
+    unsafe {
+        r.m00 = (-(*m).m12 * (*m).m21 + (*m).m11 * (*m).m22) * det_sign;
+        r.m01 = ((*m).m12 * (*m).m20 - (*m).m10 * (*m).m22) * det_sign;
+        r.m02 = (-(*m).m11 * (*m).m20 + (*m).m10 * (*m).m21) * det_sign;
+        r.m10 = ((*m).m02 * (*m).m21 - (*m).m01 * (*m).m22) * det_sign;
+        r.m11 = (-(*m).m02 * (*m).m20 + (*m).m00 * (*m).m22) * det_sign;
+        r.m12 = ((*m).m01 * (*m).m20 - (*m).m00 * (*m).m21) * det_sign;
+        r.m20 = (-(*m).m02 * (*m).m11 + (*m).m01 * (*m).m12) * det_sign;
+        r.m21 = ((*m).m02 * (*m).m10 - (*m).m00 * (*m).m12) * det_sign;
+        r.m22 = (-(*m).m01 * (*m).m10 + (*m).m00 * (*m).m11) * det_sign;
+    }
     // C: `r.m03 = r.m13 = r.m23 = 0.0f;`
     r.m23 = 0.0;
     r.m13 = r.m23;
@@ -3517,9 +3521,11 @@ pub(crate) unsafe fn transform_position(m: *const Matrix, v: Vec3) -> Vec3 {
     let mut r: Vec3 = unsafe { core::mem::zeroed() };
     // SAFETY: `m` is non-null here (checked above) and points at a live `Matrix`
     // per this fn's contract; every field read is one of its own `mNN` fields.
-    r.x = unsafe { (*m).m00 * v.x + (*m).m01 * v.y + (*m).m02 * v.z + (*m).m03 };
-    r.y = unsafe { (*m).m10 * v.x + (*m).m11 * v.y + (*m).m12 * v.z + (*m).m13 };
-    r.z = unsafe { (*m).m20 * v.x + (*m).m21 * v.y + (*m).m22 * v.z + (*m).m23 };
+    unsafe {
+        r.x = (*m).m00 * v.x + (*m).m01 * v.y + (*m).m02 * v.z + (*m).m03;
+        r.y = (*m).m10 * v.x + (*m).m11 * v.y + (*m).m12 * v.z + (*m).m13;
+        r.z = (*m).m20 * v.x + (*m).m21 * v.y + (*m).m22 * v.z + (*m).m23;
+    }
     r
 }
 
@@ -3539,9 +3545,11 @@ pub(crate) unsafe fn transform_direction(m: *const Matrix, v: Vec3) -> Vec3 {
     let mut r: Vec3 = unsafe { core::mem::zeroed() };
     // SAFETY: `m` is non-null here (checked above) and points at a live `Matrix`
     // per this fn's contract; every field read is one of its own `mNN` fields.
-    r.x = unsafe { (*m).m00 * v.x + (*m).m01 * v.y + (*m).m02 * v.z };
-    r.y = unsafe { (*m).m10 * v.x + (*m).m11 * v.y + (*m).m12 * v.z };
-    r.z = unsafe { (*m).m20 * v.x + (*m).m21 * v.y + (*m).m22 * v.z };
+    unsafe {
+        r.x = (*m).m00 * v.x + (*m).m01 * v.y + (*m).m02 * v.z;
+        r.y = (*m).m10 * v.x + (*m).m11 * v.y + (*m).m12 * v.z;
+        r.z = (*m).m20 * v.x + (*m).m21 * v.y + (*m).m22 * v.z;
+    }
     r
 }
 
@@ -3554,12 +3562,16 @@ pub(crate) unsafe fn transform_to_matrix(t: *const Transform) -> Matrix {
     }
 
     // SAFETY: `t` is non-null here (checked above) and points at a live
-    // `Transform` per this fn's contract; reading its own `rotation` field.
-    let q: Quat = unsafe { (*t).rotation };
-    // SAFETY (this group): same live `Transform`; reading its own `scale` field.
-    let sx: Real = 2.0 * unsafe { (*t).scale.x };
-    let sy: Real = 2.0 * unsafe { (*t).scale.y };
-    let sz: Real = 2.0 * unsafe { (*t).scale.z };
+    // `Transform` per this fn's contract; reading its own `rotation`/`scale`
+    // fields.
+    let (q, sx, sy, sz) = unsafe {
+        (
+            (*t).rotation,
+            2.0 * (*t).scale.x,
+            2.0 * (*t).scale.y,
+            2.0 * (*t).scale.z,
+        )
+    };
     let xx: Real = q.x * q.x;
     let xy: Real = q.x * q.y;
     let xz: Real = q.x * q.z;
@@ -3640,6 +3652,9 @@ pub(crate) unsafe fn matrix_to_transform(m: *const Matrix) -> Transform {
         }
     }
 
+    // The three column reads stay one-per-`let`: a tuple destructure would make
+    // `x`/`y`/`z` non-`LetStmt` bindings, which defeats clippy's type-alias
+    // escape hatch for the `Real`-to-`f64` casts on their fields below.
     // SAFETY: the live `Matrix` behind `m` holds four contiguous `Vec3` columns,
     // so `m_cols.add(0)` addresses its first column.
     let x: Vec3 = mul3(
@@ -3740,38 +3755,33 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
     vertex: usize,
     fallback: *const Matrix,
 ) -> Matrix {
-    // View-typed boundary; the C-shaped body below reads through the raw
-    // pointer (reads via a `Const` view's SRO provenance are legal).
-    let skin: *const SkinDeformer = skin.as_ptr();
-    ufbx_assert!(!skin.is_null());
+    ufbx_assert!(!skin.as_ptr().is_null());
     // C-parity: the panic guard dereferences `skin` BEFORE the `!skin` test on
     // the next line — keep the order (a null `skin` is already an assert
-    // violation above).
-    // SAFETY: `skin` is non-null (asserted above) and points at a live
-    // `SkinDeformer` (the view's `Const` provenance); the guard reads its own
-    // `vertices.count` field.
-    if unsafe {
-        ufbxi_panicf!(
-            panic,
-            vertex < (*skin).vertices.count,
-            "vertex (%zu) out of bounds (%zu)",
-            vertex,
-            (*skin).vertices.count,
-        )
-    } {
+    // violation above). The `vertices` list is a by-value read through the
+    // view's accessor, so no raw dereference is spelled out here.
+    if ufbxi_panicf!(
+        panic,
+        vertex < skin.vertices().count,
+        "vertex (%zu) out of bounds (%zu)",
+        vertex,
+        skin.vertices().count,
+    ) {
         return IDENTITY_MATRIX;
     }
 
-    // SAFETY: same live `SkinDeformer`; reading its own `vertices.count`.
-    if skin.is_null() || vertex >= unsafe { (*skin).vertices.count } {
+    if skin.as_ptr().is_null() || vertex >= skin.vertices().count {
         return IDENTITY_MATRIX;
     }
     // SAFETY: `vertex < vertices.count` here, so `vertices.data.add(vertex)`
     // addresses a live `SkinVertex` in the deformer's vertex list.
-    let skin_vertex: SkinVertex = unsafe { *(*skin).vertices.data.add(vertex) };
+    let skin_vertex: SkinVertex = unsafe { *skin.vertices().data.add(vertex) };
 
     // C: `ufbx_matrix mat = { 0.0f };` / `ufbx_quat q0 = { 0.0f }, qe = { 0.0f };`
     // / `ufbx_quat first_q0 = { 0.0f };` — partial initializers zero the rest.
+    // The four zero-fills stay one-per-`let`: a tuple destructure would make
+    // `q0` a non-`LetStmt` binding, which defeats clippy's type-alias escape
+    // hatch for the `Real`-to-`f64` cast on its fields below.
     // SAFETY (this group): an all-zero bit pattern is a valid `Matrix`/`Quat` (all `Real`).
     let mut mat: Matrix = unsafe { core::mem::zeroed() };
     let mut q0: Quat = unsafe { core::mem::zeroed() };
@@ -3787,18 +3797,18 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
     for i in 0..skin_vertex.num_weights {
         // C: `skin->weights.data[skin_vertex.weight_begin + i]` — `uint32_t`
         // arithmetic, so the sum wraps before it indexes.
-        // SAFETY: same live `SkinDeformer`; `weight_begin + i` indexes within its
-        // `weights` list (the cluster's weight range the C loop walks).
+        // SAFETY: `weight_begin + i` indexes within the deformer's own `weights`
+        // list (the cluster's weight range the C loop walks).
         let weight: SkinWeight = unsafe {
-            *(*skin)
-                .weights
+            *skin
+                .weights()
                 .data
                 .add(skin_vertex.weight_begin.wrapping_add(i) as usize)
         };
-        // SAFETY: same live `SkinDeformer`; `weight.cluster_index` indexes its
-        // `clusters` pointer list, yielding a live `*mut SkinCluster`.
+        // SAFETY: `weight.cluster_index` indexes the deformer's own `clusters`
+        // pointer list, yielding a live `*mut SkinCluster`.
         let cluster: *mut SkinCluster = unsafe {
-            *((*skin).clusters.data as *const *mut SkinCluster).add(weight.cluster_index as usize)
+            *(skin.clusters().data as *const *mut SkinCluster).add(weight.cluster_index as usize)
         };
         // C: `const ufbx_node *node = cluster->bone_node; if (!node) continue;`
         // SAFETY: `cluster` is a live `SkinCluster` from the list; `opt_ptr`
@@ -4058,7 +4068,7 @@ pub(crate) unsafe fn add_blend_shape_vertex_offsets(
         return;
     }
 
-    // SAFETY (this group): `shape` points at a live `BlendShape` per this fn's contract;
+    // SAFETY: `shape` points at a live `BlendShape` per this fn's contract;
     // every field read below is one of its own list fields.
     let (num_offsets, vertex_indices, offsets, weights_data, weights_count) = unsafe {
         (
@@ -4188,12 +4198,15 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
         // SAFETY: as above.
         u = unsafe { (*basis).t_min };
     } else if u >= unsafe { (*basis).t_max } {
-        // SAFETY: as above, reading its own `knot_vector.count`.
-        knot = unsafe { (*basis).knot_vector.count }
-            .wrapping_sub(degree)
-            .wrapping_sub(2);
-        // SAFETY: as above, reading its own `t_max` field.
-        u = unsafe { (*basis).t_max };
+        // SAFETY: as above, reading its own `knot_vector.count` and `t_max`.
+        unsafe {
+            knot = (*basis)
+                .knot_vector
+                .count
+                .wrapping_sub(degree)
+                .wrapping_sub(2);
+            u = (*basis).t_max;
+        }
     } else {
         // SAFETY: `knots` points at the basis's live knot-vector list;
         // `(*knots).data`/`.count` are its own fields, and each closure derefs
@@ -4311,13 +4324,16 @@ pub(crate) unsafe fn evaluate_nurbs_curve(curve: *const NurbsCurve, u: Real) -> 
     }
 
     // SAFETY: an all-zero bit pattern is a valid `[Real; MAX_NURBS_ORDER]`.
-    let mut weights: [Real; MAX_NURBS_ORDER] = unsafe { core::mem::zeroed() }; // ufbxi_uninit
-                                                                               // SAFETY: as above.
-    let mut derivs: [Real; MAX_NURBS_ORDER] = unsafe { core::mem::zeroed() }; // ufbxi_uninit
-                                                                              // SAFETY: `curve` is non-null here (checked above) and points at a live
-                                                                              // `NurbsCurve` per this fn's contract; `&(*curve).basis` borrows its own
-                                                                              // basis field, and `weights`/`derivs` are live stack buffers of length
-                                                                              // `MAX_NURBS_ORDER`.
+    let (mut weights, mut derivs): ([Real; MAX_NURBS_ORDER], [Real; MAX_NURBS_ORDER]) = unsafe {
+        (
+            core::mem::zeroed(), // ufbxi_uninit
+            core::mem::zeroed(), // ufbxi_uninit
+        )
+    };
+    // SAFETY: `curve` is non-null here (checked above) and points at a live
+    // `NurbsCurve` per this fn's contract; `&(*curve).basis` borrows its own
+    // basis field, and `weights`/`derivs` are live stack buffers of length
+    // `MAX_NURBS_ORDER`.
     let base: usize = unsafe {
         evaluate_nurbs_basis(
             &(*curve).basis,
@@ -4332,9 +4348,8 @@ pub(crate) unsafe fn evaluate_nurbs_curve(curve: *const NurbsCurve, u: Real) -> 
         return result;
     }
 
-    // SAFETY (this group): an all-zero bit pattern is a valid `Vec4` (all `Real` fields).
-    let mut p: Vec4 = unsafe { core::mem::zeroed() };
-    let mut d: Vec4 = unsafe { core::mem::zeroed() };
+    // SAFETY: an all-zero bit pattern is a valid `Vec4` (all `Real` fields).
+    let (mut p, mut d): (Vec4, Vec4) = unsafe { (core::mem::zeroed(), core::mem::zeroed()) };
 
     // SAFETY: same live `NurbsCurve`; reading its own `basis.order`.
     let order: usize = unsafe { (*curve).basis.order } as usize;
@@ -4395,17 +4410,23 @@ pub(crate) unsafe fn evaluate_nurbs_surface(
     }
 
     // SAFETY: an all-zero bit pattern is a valid `[Real; MAX_NURBS_ORDER]`.
-    let mut weights_u: [Real; MAX_NURBS_ORDER] = unsafe { core::mem::zeroed() }; // ufbxi_uninit
-                                                                                 // SAFETY: as above.
-    let mut weights_v: [Real; MAX_NURBS_ORDER] = unsafe { core::mem::zeroed() }; // ufbxi_uninit
-                                                                                 // SAFETY: as above.
-    let mut derivs_u: [Real; MAX_NURBS_ORDER] = unsafe { core::mem::zeroed() }; // ufbxi_uninit
-                                                                                // SAFETY: as above.
-    let mut derivs_v: [Real; MAX_NURBS_ORDER] = unsafe { core::mem::zeroed() }; // ufbxi_uninit
-                                                                                // SAFETY: `surface` is non-null here (checked above) and points at a live
-                                                                                // `NurbsSurface` per this fn's contract; `&(*surface).basis_u` borrows its
-                                                                                // own basis field, and `weights_u`/`derivs_u` are live stack buffers of
-                                                                                // length `MAX_NURBS_ORDER`.
+    let (mut weights_u, mut weights_v, mut derivs_u, mut derivs_v): (
+        [Real; MAX_NURBS_ORDER],
+        [Real; MAX_NURBS_ORDER],
+        [Real; MAX_NURBS_ORDER],
+        [Real; MAX_NURBS_ORDER],
+    ) = unsafe {
+        (
+            core::mem::zeroed(), // ufbxi_uninit
+            core::mem::zeroed(), // ufbxi_uninit
+            core::mem::zeroed(), // ufbxi_uninit
+            core::mem::zeroed(), // ufbxi_uninit
+        )
+    };
+    // SAFETY: `surface` is non-null here (checked above) and points at a live
+    // `NurbsSurface` per this fn's contract; `&(*surface).basis_u` borrows its
+    // own basis field, and `weights_u`/`derivs_u` are live stack buffers of
+    // length `MAX_NURBS_ORDER`.
     let base_u: usize = unsafe {
         evaluate_nurbs_basis(
             &(*surface).basis_u,
@@ -4432,21 +4453,25 @@ pub(crate) unsafe fn evaluate_nurbs_surface(
         return result;
     }
 
-    // SAFETY (this group): an all-zero bit pattern is a valid `Vec4` (all `Real` fields).
-    let mut p: Vec4 = unsafe { core::mem::zeroed() };
-    let mut du: Vec4 = unsafe { core::mem::zeroed() };
-    let mut dv: Vec4 = unsafe { core::mem::zeroed() };
+    // SAFETY: an all-zero bit pattern is a valid `Vec4` (all `Real` fields).
+    let (mut p, mut du, mut dv): (Vec4, Vec4, Vec4) = unsafe {
+        (
+            core::mem::zeroed(),
+            core::mem::zeroed(),
+            core::mem::zeroed(),
+        )
+    };
 
-    // SAFETY (this group): same live `NurbsSurface`; every field read below is one of its own
+    // SAFETY: same live `NurbsSurface`; every field read below is one of its own
     // control-point-count / basis-order fields.
-    let (num_u, num_v) = unsafe {
+    let (num_u, num_v, order_u, order_v) = unsafe {
         (
             (*surface).num_control_points_u,
             (*surface).num_control_points_v,
+            (*surface).basis_u.order as usize,
+            (*surface).basis_v.order as usize,
         )
     };
-    let order_u: usize = unsafe { (*surface).basis_u.order } as usize;
-    let order_v: usize = unsafe { (*surface).basis_v.order } as usize;
     if order_u > MAX_NURBS_ORDER || order_v > MAX_NURBS_ORDER {
         return result;
     }
@@ -4562,8 +4587,10 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
         }
         // SAFETY: `result_mut_ptr()`/`ator_result_mut_ptr()` address `tc`'s own
         // result buffer and result allocator.
-        unsafe { buf_free(tc.result_mut_ptr()) };
-        unsafe { free_ator(tc.ator_result_mut_ptr()) };
+        unsafe {
+            buf_free(tc.result_mut_ptr());
+            free_ator(tc.ator_result_mut_ptr());
+        }
         core::ptr::null_mut()
     }
 }
@@ -4633,9 +4660,11 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
 
     // SAFETY: these accessors address `tc`'s own temp buffer, position map, and
     // temp allocator.
-    unsafe { buf_free(tc.tmp_mut_ptr()) };
-    unsafe { map_free(tc.position_map_mut_ptr()) };
-    unsafe { free_ator(tc.ator_tmp_mut_ptr()) };
+    unsafe {
+        buf_free(tc.tmp_mut_ptr());
+        map_free(tc.position_map_mut_ptr());
+        free_ator(tc.ator_tmp_mut_ptr());
+    }
 
     if let Ok(finished_imp) = result {
         // SAFETY: `error` is this fn's raw-pointer param, null or a live `Error`.
@@ -4654,8 +4683,10 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
         }
         // SAFETY: `result_mut_ptr()`/`ator_result_mut_ptr()` address `tc`'s own
         // result buffer and result allocator.
-        unsafe { buf_free(tc.result_mut_ptr()) };
-        unsafe { free_ator(tc.ator_result_mut_ptr()) };
+        unsafe {
+            buf_free(tc.result_mut_ptr());
+            free_ator(tc.ator_result_mut_ptr());
+        }
         core::ptr::null_mut()
     }
 }
@@ -4832,37 +4863,20 @@ pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
         let i1: u32 = face.index_begin.wrapping_add(1);
         let i2: u32 = face.index_begin.wrapping_add(2);
         let i3: u32 = face.index_begin.wrapping_add(3);
-        // SAFETY: `i0` is within the face's index range (bounds guarded above),
-        // keeping the `indices.data` read inside the mesh's own
+        // SAFETY: `i0`..`i3` are within the face's index range (bounds guarded
+        // above), keeping each `indices.data` read inside the mesh's own
         // `vertex_position.indices` run (`count == num_indices`); the fetched
-        // value indexes `values.data` in bounds per the mesh's index-validity
+        // values index `values.data` in bounds per the mesh's index-validity
         // invariant (indices sanitized at load).
-        let v0: Vec3 = unsafe {
-            *mesh
-                .vertex_position()
-                .values_data()
-                .add(*mesh.vertex_position().indices_data().add(i0 as usize) as usize)
-        };
-        // SAFETY: as above for `i1`.
-        let v1: Vec3 = unsafe {
-            *mesh
-                .vertex_position()
-                .values_data()
-                .add(*mesh.vertex_position().indices_data().add(i1 as usize) as usize)
-        };
-        // SAFETY: as above for `i2`.
-        let v2: Vec3 = unsafe {
-            *mesh
-                .vertex_position()
-                .values_data()
-                .add(*mesh.vertex_position().indices_data().add(i2 as usize) as usize)
-        };
-        // SAFETY: as above for `i3`.
-        let v3: Vec3 = unsafe {
-            *mesh
-                .vertex_position()
-                .values_data()
-                .add(*mesh.vertex_position().indices_data().add(i3 as usize) as usize)
+        let (v0, v1, v2, v3): (Vec3, Vec3, Vec3, Vec3) = unsafe {
+            let values = mesh.vertex_position().values_data();
+            let indices_data = mesh.vertex_position().indices_data();
+            (
+                *values.add(*indices_data.add(i0 as usize) as usize),
+                *values.add(*indices_data.add(i1 as usize) as usize),
+                *values.add(*indices_data.add(i2 as usize) as usize),
+                *values.add(*indices_data.add(i3 as usize) as usize),
+            )
         };
 
         let a: Vec3 = sub3(v2, v0);
@@ -4887,19 +4901,23 @@ pub(crate) unsafe fn catch_triangulate_face<M: Mode>(
         // SAFETY: a quad needs `required_indices == 6` slots, guarded above, so
         // `indices.add(0..=5)` address distinct caller-reserved slots.
         if split_a {
-            unsafe { *indices.add(0) = i0 };
-            unsafe { *indices.add(1) = i1 };
-            unsafe { *indices.add(2) = i2 };
-            unsafe { *indices.add(3) = i2 };
-            unsafe { *indices.add(4) = i3 };
-            unsafe { *indices.add(5) = i0 };
+            unsafe {
+                *indices.add(0) = i0;
+                *indices.add(1) = i1;
+                *indices.add(2) = i2;
+                *indices.add(3) = i2;
+                *indices.add(4) = i3;
+                *indices.add(5) = i0;
+            }
         } else {
-            unsafe { *indices.add(0) = i1 };
-            unsafe { *indices.add(1) = i2 };
-            unsafe { *indices.add(2) = i3 };
-            unsafe { *indices.add(3) = i3 };
-            unsafe { *indices.add(4) = i0 };
-            unsafe { *indices.add(5) = i1 };
+            unsafe {
+                *indices.add(0) = i1;
+                *indices.add(1) = i2;
+                *indices.add(2) = i3;
+                *indices.add(3) = i3;
+                *indices.add(4) = i0;
+                *indices.add(5) = i1;
+            }
         }
 
         2
@@ -5454,9 +5472,17 @@ pub(crate) unsafe fn free_mesh(mesh: *mut Mesh) {
     if mesh.is_null() {
         return;
     }
+    // `mesh` is a write-capable `*mut Mesh`: every caller reaches this fn
+    // holding the mesh by raw pointer — `MeshRoot`'s stored payload pointer, or
+    // the `extern "C"` `ufbx_free_mesh` shim — never through a `&Mesh`. So the
+    // flag reads ride a `Mut` view, which matches that provenance and takes on
+    // no frozen-tag obligation over an allocation the refcount path below can
+    // deallocate.
     // SAFETY: `mesh` is non-null here and points at a live `Mesh` — the
-    // raw-pointer contract of this `unsafe fn`; reading its own flag fields.
-    if !unsafe { (*mesh).subdivision_evaluated } && !unsafe { (*mesh).from_tessellated_nurbs } {
+    // raw-pointer contract of this `unsafe fn`; its provenance is the caller's
+    // write-capable `*mut`, and no `&mut Mesh` is active while the view is used.
+    let mesh_view: &View<Mesh, Mut> = unsafe { View::<Mesh, Mut>::from_ptr(mesh) };
+    if !mesh_view.subdivision_evaluated() && !mesh_view.from_tessellated_nurbs() {
         return;
     }
 
@@ -5476,9 +5502,17 @@ pub(crate) unsafe fn retain_mesh(mesh: *mut Mesh) {
     if mesh.is_null() {
         return;
     }
+    // `mesh` is a write-capable `*mut Mesh`: every caller reaches this fn
+    // holding the mesh by raw pointer — `MeshRoot`'s stored payload pointer, or
+    // the `extern "C"` `ufbx_retain_mesh` shim — never through a `&Mesh`. So the
+    // flag reads ride a `Mut` view, which matches that provenance and takes on
+    // no frozen-tag obligation over an allocation the refcount path below can
+    // deallocate.
     // SAFETY: `mesh` is non-null here and points at a live `Mesh` — the
-    // raw-pointer contract of this `unsafe fn`; reading its own flag fields.
-    if !unsafe { (*mesh).subdivision_evaluated } && !unsafe { (*mesh).from_tessellated_nurbs } {
+    // raw-pointer contract of this `unsafe fn`; its provenance is the caller's
+    // write-capable `*mut`, and no `&mut Mesh` is active while the view is used.
+    let mesh_view: &View<Mesh, Mut> = unsafe { View::<Mesh, Mut>::from_ptr(mesh) };
+    if !mesh_view.subdivision_evaluated() && !mesh_view.from_tessellated_nurbs() {
         return;
     }
 
@@ -5776,19 +5810,21 @@ pub(crate) unsafe fn read_geometry_cache_real(
                     for i in 0..num_read {
                         // SAFETY: `i < num_read`, so the 8 bytes at `p.add(i*8)`
                         // lie within the written portion of the 512-double array.
-                        let v = unsafe { p.add(i * 8) };
-                        let t = unsafe { *v.add(0) };
-                        unsafe { *v.add(0) = *v.add(7) };
-                        unsafe { *v.add(7) = t };
-                        let t = unsafe { *v.add(1) };
-                        unsafe { *v.add(1) = *v.add(6) };
-                        unsafe { *v.add(6) = t };
-                        let t = unsafe { *v.add(2) };
-                        unsafe { *v.add(2) = *v.add(5) };
-                        unsafe { *v.add(5) = t };
-                        let t = unsafe { *v.add(3) };
-                        unsafe { *v.add(3) = *v.add(4) };
-                        unsafe { *v.add(4) = t };
+                        unsafe {
+                            let v = p.add(i * 8);
+                            let t = *v.add(0);
+                            *v.add(0) = *v.add(7);
+                            *v.add(7) = t;
+                            let t = *v.add(1);
+                            *v.add(1) = *v.add(6);
+                            *v.add(6) = t;
+                            let t = *v.add(2);
+                            *v.add(2) = *v.add(5);
+                            *v.add(5) = t;
+                            let t = *v.add(3);
+                            *v.add(3) = *v.add(4);
+                            *v.add(4) = t;
+                        }
                     }
                 }
                 for i in 0..num_read {
@@ -5816,13 +5852,15 @@ pub(crate) unsafe fn read_geometry_cache_real(
                     for i in 0..num_read {
                         // SAFETY: `i < num_read`, so the 4 bytes at `p.add(i*4)`
                         // lie within the written portion of the 512-float array.
-                        let v = unsafe { p.add(i * 4) };
-                        let t = unsafe { *v.add(0) };
-                        unsafe { *v.add(0) = *v.add(3) };
-                        unsafe { *v.add(3) = t };
-                        let t = unsafe { *v.add(1) };
-                        unsafe { *v.add(1) = *v.add(2) };
-                        unsafe { *v.add(2) = t };
+                        unsafe {
+                            let v = p.add(i * 4);
+                            let t = *v.add(0);
+                            *v.add(0) = *v.add(3);
+                            *v.add(3) = t;
+                            let t = *v.add(1);
+                            *v.add(1) = *v.add(2);
+                            *v.add(2) = t;
+                        }
                     }
                 }
                 for i in 0..num_read {
@@ -8622,13 +8660,12 @@ mod tests {
         // SAFETY: `shape` addresses the caller's live `MaybeUninit<BlendShape>`
         // storage; each `&raw mut (*shape).field` projects one of its own fields
         // and `.write()` initializes it without reading the uninit prior value.
-        unsafe { (&raw mut (*shape).num_offsets).write(offset_vertices.len()) };
-        // SAFETY: as above, for `offset_vertices`.
-        unsafe { (&raw mut (*shape).offset_vertices).write(List::from_slice(offset_vertices)) };
-        // SAFETY: as above, for `position_offsets`.
-        unsafe { (&raw mut (*shape).position_offsets).write(List::from_slice(position_offsets)) };
-        // SAFETY: as above, for `offset_weights`.
-        unsafe { (&raw mut (*shape).offset_weights).write(List::from_slice(offset_weights)) };
+        unsafe {
+            (&raw mut (*shape).num_offsets).write(offset_vertices.len());
+            (&raw mut (*shape).offset_vertices).write(List::from_slice(offset_vertices));
+            (&raw mut (*shape).position_offsets).write(List::from_slice(position_offsets));
+            (&raw mut (*shape).offset_weights).write(List::from_slice(offset_weights));
+        }
         shape
     }
 
