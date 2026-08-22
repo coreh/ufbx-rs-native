@@ -4464,13 +4464,15 @@ const _: () = assert!(
 
 // ufbx.c:20124-20216 `ufbxi_fetch_maps`
 #[inline(never)]
-pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
+pub(crate) fn fetch_maps(scene_view: &SceneView, material_view: &MaterialView) {
+    let scene: *mut Scene = scene_view.get();
+    let material: *mut Material = material_view.get();
     ufbxi_ignore!(scene);
 
-    // SAFETY (this group): `material` points to a live, initialized `ufbx_material` — the
-    // scene element the finalize pass is filling in (fn contract); `shader` is
-    // a live `Ref<Shader>` field of it, which `opt_ptr` reads as a nullable
-    // pointer.
+    // SAFETY (this group): `material` is the material view's own live,
+    // initialized `ufbx_material` — the scene element the finalize pass is
+    // filling in; `shader` is a live `Ref<Shader>` field of it, which
+    // `opt_ptr` reads as a nullable pointer.
     let shader: *mut Shader = unsafe { opt_ptr(&(*material).shader) };
     ufbx_assert!(unsafe { ((*material).shader_type as u32) < SHADER_TYPE_COUNT as u32 });
 
@@ -4523,8 +4525,8 @@ pub(crate) unsafe fn fetch_maps(scene: *mut Scene, material: *mut Material) {
     let mut base_mapping: *const ShaderMapping = BASE_FBX_MAPPING.as_ptr();
     let mut num_base_mapping: usize = BASE_FBX_MAPPING.len();
 
-    // SAFETY: `scene` points to the live, initialized `ufbx_scene` being
-    // finalized (fn contract), so its `metadata` is readable.
+    // SAFETY: `scene` is the scene view's own live, initialized `ufbx_scene`
+    // storage, so its `metadata` is readable.
     if unsafe { (*scene).metadata.file_format } == FileFormat::Obj
         // SAFETY: as above.
         || unsafe { (*scene).metadata.file_format } == FileFormat::Mtl
@@ -5798,10 +5800,11 @@ pub(crate) fn finalize_shader_texture<'a>(
 
 // ufbx.c:20692-20752 `ufbxi_propagate_main_textures`
 #[inline(never)]
-pub(crate) unsafe fn propagate_main_textures(scene: *mut Scene) {
+pub(crate) fn propagate_main_textures(scene_view: &SceneView) {
+    let scene: *mut Scene = scene_view.get();
     // We need to do at least 2^(N-1) passes for N shader textures
-    // SAFETY: `scene` points to the live, initialized `ufbx_scene` being
-    // finalized (fn contract), so its `metadata` is readable.
+    // SAFETY: `scene` is the scene view's own live, initialized `ufbx_scene`
+    // storage, so its `metadata` is readable.
     let mut mask: usize = unsafe { (*scene).metadata.num_shader_textures };
     while mask != 0 {
         mask >>= 1;
@@ -7863,14 +7866,15 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
 
 // ufbx.c:21528-21543 `ufbxi_validate_indices`
 #[inline(never)]
-pub(crate) unsafe fn validate_indices(
+pub(crate) fn validate_indices(
     uc: &Context,
-    indices: *mut List<u32>,
+    indices_view: &ListView<u32>,
     max_index: usize,
 ) -> Result<(), Fail> {
+    let indices: *mut List<u32> = indices_view.get();
     if max_index == 0 && uc.opts_view().index_error_handling() == IndexErrorHandling::Clamp {
-        // SAFETY: `indices` points to a live `ufbx_uint32_list` header — the
-        // attribute index list being validated (fn contract).
+        // SAFETY: `indices` is the view's own live `ufbx_uint32_list` header —
+        // the attribute index list being validated.
         unsafe {
             (*indices).data = ptr::null_mut();
             (*indices).count = 0;
@@ -10695,8 +10699,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         p_texture = unsafe { p_texture.add(1) };
     }
 
-    // SAFETY: `scene_mut_ptr` hands out `uc`'s own live, filled-in `ufbx_scene`.
-    unsafe { propagate_main_textures(uc.scene_mut_ptr()) };
+    propagate_main_textures(uc.scene_view());
     pop_texture_files(uc)?;
 
     // Second pass to fetch material maps
@@ -10719,9 +10722,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 (*material).textures.count,
             )
         }?;
-        // SAFETY: `scene_mut_ptr` hands out `uc`'s own live, filled-in
-        // `ufbx_scene`, and `material` is one of its live materials (see above).
-        unsafe { fetch_maps(uc.scene_mut_ptr(), material) };
+        // SAFETY: `material` is one of the scene's live materials (see above),
+        // reinterpreted in place by its view.
+        fetch_maps(uc.scene_view(), unsafe { MaterialView::from_ptr(material) });
 
         // Fetch `ufbx_material_texture.shader_prop` names
         // SAFETY: `material` is live (see above), so `&(*material).shader`
@@ -10932,13 +10935,26 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             // uc-owned scene, so its provenance is write-capable and `Mut` is the
             // right mode.
             let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
-            // SAFETY: `node` is live, so the projection addresses its own `vertices`
-            // index-list header.
-            unsafe { validate_indices(uc, &raw mut (*node).vertices, mesh.num_vertices()) }?;
-            // SAFETY: as above, for its own `edges` index list.
-            unsafe { validate_indices(uc, &raw mut (*node).edges, mesh.num_edges()) }?;
-            // SAFETY: as above, for its own `faces` index list.
-            unsafe { validate_indices(uc, &raw mut (*node).faces, mesh.num_faces()) }?;
+            // SAFETY: `node` is live, so each projection addresses one of its own
+            // index-list headers (`vertices`/`edges`/`faces`), reinterpreted in
+            // place by its view.
+            validate_indices(
+                uc,
+                unsafe { ListView::from_ptr(&raw mut (*node).vertices) },
+                mesh.num_vertices(),
+            )?;
+            // SAFETY: as above.
+            validate_indices(
+                uc,
+                unsafe { ListView::from_ptr(&raw mut (*node).edges) },
+                mesh.num_edges(),
+            )?;
+            // SAFETY: as above.
+            validate_indices(
+                uc,
+                unsafe { ListView::from_ptr(&raw mut (*node).faces) },
+                mesh.num_faces(),
+            )?;
         }
         // SAFETY: `p_sel_node != p_sel_node_end`, so the advance lands at or before
         // the run's one-past-the-end pointer.
@@ -12667,13 +12683,8 @@ pub(crate) fn update_blend_channel(channel_view: &BlendChannelView) {
 // ufbx.c:23344-23349 `ufbxi_update_material`
 #[inline(never)]
 pub(crate) fn update_material(scene_view: &SceneView, material_view: &MaterialView) {
-    let material: *mut Material = material_view.get();
-    // SAFETY: `material` is the material view's own live, initialized
-    // `ufbx_material` storage, so its element's property list is readable.
-    if unsafe { (*material).element.props.num_animated } > 0 {
-        // SAFETY: the views' own live scene and one of its materials —
-        // `ufbxi_fetch_maps`'s own contract.
-        unsafe { fetch_maps(scene_view.get(), material) };
+    if material_view.props_view().num_animated() > 0 {
+        fetch_maps(scene_view, material_view);
     }
 }
 
@@ -13856,8 +13867,7 @@ pub(crate) unsafe fn update_scene<'a>(
         p_texture = unsafe { p_texture.add(1) };
     }
 
-    // SAFETY: `scene` is live (see above).
-    unsafe { propagate_main_textures(scene) };
+    propagate_main_textures(scene_view);
 
     // C: `ufbxi_for_ptr_list(ufbx_material, p_material, scene->materials)`
     // SAFETY: `scene` is live (see above).
