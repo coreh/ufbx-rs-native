@@ -20,10 +20,12 @@ step() { printf '\n== %s\n' "$*"; }
 step "cargo fmt --check"
 (cd rust && cargo fmt --check)
 
-step "clippy (default / real-is-f32 / c-abi,dev)"
-(cd rust && cargo clippy --message-format=short -- -D warnings)
-(cd rust && cargo clippy --features real-is-f32 --message-format=short -- -D warnings)
-(cd rust && cargo clippy --features c-abi,dev --message-format=short -- -D warnings)
+step "clippy (default / real-is-f32 / c-abi,dev / +regression / lean), all targets"
+(cd rust && cargo clippy --all-targets --message-format=short -- -D warnings)
+(cd rust && cargo clippy --features real-is-f32 --all-targets --message-format=short -- -D warnings)
+(cd rust && cargo clippy --features c-abi,dev --all-targets --message-format=short -- -D warnings)
+(cd rust && cargo clippy --features c-abi,dev,regression --all-targets --message-format=short -- -D warnings)
+(cd rust && cargo clippy --no-default-features --all-targets --message-format=short -- -D warnings)
 
 step "tests (default / real-is-f32)"
 (cd rust && cargo test --quiet)

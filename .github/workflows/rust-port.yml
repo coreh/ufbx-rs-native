@@ -31,6 +31,24 @@ jobs:
         working-directory: rust
         run: cargo fmt --check
 
+  # Lint gate: the crate is clippy-clean in every feature config, and stays
+  # that way — warnings are denied across the full matrix (lib, tests, and
+  # benches via --all-targets).
+  clippy:
+    name: Clippy lints
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo clippy, every feature config, warnings denied
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          cargo clippy --all-targets -- -D warnings
+          cargo clippy --features c-abi,dev --all-targets -- -D warnings
+          cargo clippy --features c-abi,dev,regression --all-targets -- -D warnings
+          cargo clippy --features real-is-f32 --all-targets -- -D warnings
+          cargo clippy --no-default-features --all-targets -- -D warnings
+
   bindings:
     name: Check generated bindings
     runs-on: ubuntu-24.04
