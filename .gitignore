@@ -30,3 +30,4 @@ bindgen/build/
 rust/tools/mathfuzz/target/
 unsafe_history.csv
 unsafe_history.svg
+.DS_Store
