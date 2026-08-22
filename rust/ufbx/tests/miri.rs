@@ -517,8 +517,9 @@ fn public_dom_walkers_from_shared_refs() {
 }
 
 /// Animation evaluation from shared refs: per-value and per-prop evaluators,
-/// transform evaluation, the anim-prop finders, baked-keyframe interpolation,
-/// and the matrix/transform value helpers fed from scene data.
+/// transform evaluation over both a plain and an override-carrying anim, the
+/// anim-prop finders, baked-keyframe interpolation, and the matrix/transform
+/// value helpers fed from scene data.
 #[test]
 fn public_anim_eval_from_shared_refs() {
     let root = load("maya_interpolation_modes_7500_binary.fbx");
@@ -574,6 +575,66 @@ fn public_anim_eval_from_shared_refs() {
         let prop = ufbx::evaluate_prop(anim, elem, "Lcl Translation", 0.25);
         acc += prop.value_vec4.x as f64;
     }
+
+    // Override-carrying anim: with `prop_overrides` non-empty the internal prop
+    // iterator takes its slow path, which yields the iterator's own scratch
+    // `tmp` prop and rewrites those bytes on the following step. The read-only
+    // views the selected-prop loop mints over each yielded prop must therefore
+    // stay confined to one iteration; only an anim with overrides exercises
+    // that, so it is here rather than folded into the plain-anim walk above.
+    // The node must be a non-root one: `ufbx_evaluate_transform` returns the
+    // root's local transform without consulting props at all.
+    let node = scene
+        .nodes
+        .as_ref()
+        .iter()
+        .find(|n| !n.is_root)
+        .expect("non-root node");
+    let over = ufbx::create_anim(
+        scene,
+        ufbx::AnimOpts {
+            prop_overrides: vec![
+                ufbx::PropOverrideDesc {
+                    element_id: node.element.element_id,
+                    prop_name: "Lcl Translation".into(),
+                    value: ufbx::Vec4 {
+                        x: 1.0,
+                        y: 2.0,
+                        z: 3.0,
+                        w: 0.0,
+                    },
+                    ..Default::default()
+                },
+                ufbx::PropOverrideDesc {
+                    element_id: node.element.element_id,
+                    prop_name: "Lcl Scaling".into(),
+                    value: ufbx::Vec4 {
+                        x: 2.0,
+                        y: 2.0,
+                        z: 2.0,
+                        w: 0.0,
+                    },
+                    ..Default::default()
+                },
+            ]
+            .into(),
+            ..Default::default()
+        },
+    )
+    .expect("create_anim");
+    let over_anim: &ufbx::Anim = &over;
+    let t = ufbx::evaluate_transform(over_anim, node, 0.25);
+    // The overridden values reaching the transform is what pins the slow path as
+    // covered: were it skipped, the plain animated values would come back here.
+    assert_eq!(t.translation.x as f64, 1.0);
+    assert_eq!(t.scale.y as f64, 2.0);
+    acc += t.translation.z as f64;
+    acc += ufbx::evaluate_transform_flags(over_anim, node, 0.25, 0)
+        .scale
+        .y as f64;
+    acc += ufbx::evaluate_prop(over_anim, &node.element, "Lcl Translation", 0.25)
+        .value_vec4
+        .x as f64;
 
     // Baked-keyframe interpolation over slices from a baked result.
     let baked = ufbx::bake_anim(scene, anim, Default::default()).expect("bake_anim");

@@ -124,10 +124,8 @@ use crate::native::string_pool::{
     map_cmp_string, push_string_place_str, str_equal, str_less, string_pool_temp_free, STRINGS,
 };
 use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
-#[cfg(feature = "baking")]
 use crate::native::view::SliceViewIter;
-#[cfg(any(feature = "skinning-eval", feature = "scene-eval"))]
-use crate::native::view::View;
+use crate::native::view::{Const, View};
 use crate::native::warnings::{pop_warnings, ufbxi_warnf};
 use crate::prelude::as_f64;
 use crate::prelude::{List, OpenFileContext, Real, Ref, String};
@@ -1127,23 +1125,28 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // destination is `imp`'s own scene field; the context and the freshly pushed
     // header are distinct allocations.
     unsafe { ptr::copy_nonoverlapping(uc.scene_mut_ptr(), &raw mut (*imp).scene, 1) };
-    unsafe { (*imp).refcount.ator = uc.ator_result() };
-    unsafe { (*imp).refcount.ator.error = ptr::null_mut() };
+    unsafe {
+        (*imp).refcount.ator = uc.ator_result();
+        (*imp).refcount.ator.error = ptr::null_mut();
+    }
 
     // Copy retained buffers and translate the allocator struct to the one
     // contained within `ufbxi_scene_imp`
-    unsafe { (*imp).refcount.buf = uc.take_result() };
-    unsafe { (*imp).refcount.buf.ator = &raw mut (*imp).refcount.ator };
-    unsafe { (*imp).string_buf = uc.string_pool_view().take_buf() };
-    unsafe { (*imp).string_buf.ator = &raw mut (*imp).refcount.ator };
+    unsafe {
+        (*imp).refcount.buf = uc.take_result();
+        (*imp).refcount.buf.ator = &raw mut (*imp).refcount.ator;
+        (*imp).string_buf = uc.string_pool_view().take_buf();
+        (*imp).string_buf.ator = &raw mut (*imp).refcount.ator;
+    }
 
-    unsafe { (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size };
     // SAFETY: as above for `imp`; `ator_tmp` is `uc`'s own allocator field, live
     // for the `&Context` borrow.
-    unsafe { (*imp).scene.metadata.temp_memory_used = (*uc.ator_tmp_mut_ptr()).current_size };
-    unsafe { (*imp).scene.metadata.result_allocs = (*imp).refcount.ator.num_allocs };
-    // SAFETY: as the `temp_memory_used` write above.
-    unsafe { (*imp).scene.metadata.temp_allocs = (*uc.ator_tmp_mut_ptr()).num_allocs };
+    unsafe {
+        (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
+        (*imp).scene.metadata.temp_memory_used = (*uc.ator_tmp_mut_ptr()).current_size;
+        (*imp).scene.metadata.result_allocs = (*imp).refcount.ator.num_allocs;
+        (*imp).scene.metadata.temp_allocs = (*uc.ator_tmp_mut_ptr()).num_allocs;
+    }
 
     // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, imp->scene.elements)`
     let mut p_elem: *mut *mut Element = unsafe { (*imp).scene.elements.data as *mut *mut Element };
@@ -1301,25 +1304,23 @@ pub(crate) unsafe fn load(
     // without reading any of the still-uninitialized bytes around it.
     unsafe { (&raw mut (*inflate_retain.as_mut_ptr()).initialized).write(false) };
 
-    // SAFETY: the error slot, temp allocator and `opts.temp_allocator` are all
-    // `uc`'s own fields, live for the `&Context` borrow.
+    // SAFETY: the error slot, both allocators and the `opts.temp_allocator` /
+    // `opts.result_allocator` sources are all `uc`'s own fields, live for the
+    // `&Context` borrow.
     unsafe {
         init_ator(
             uc.error_mut_ptr(),
             uc.ator_tmp_mut_ptr(),
             uc.opts_view().temp_allocator_ptr(),
             c"temp",
-        )
-    };
-    // SAFETY: as above, for `uc`'s result allocator and `opts.result_allocator`.
-    unsafe {
+        );
         init_ator(
             uc.error_mut_ptr(),
             uc.ator_result_mut_ptr(),
             uc.opts_view().result_allocator_ptr(),
             c"result",
-        )
-    };
+        );
+    }
 
     if uc.opts_view().read_buffer_size() == 0 {
         uc.opts_view().set_read_buffer_size(0x4000);
@@ -1537,13 +1538,16 @@ pub(crate) unsafe fn load(
             && uc.scene_view().metadata_view().file_format() == FileFormat::Fbx
             && !supports_version(uc.version())
         {
-            unsafe { (*p_error).description.data = b"Unsupported version\0".as_ptr() };
-            // SAFETY: as above; the string literal is NUL-terminated, so `strlen`
-            // reads within it.
-            unsafe { (*p_error).description.length = strlen(b"Unsupported version\0".as_ptr()) };
-            unsafe { (*p_error).type_ = ErrorType::UnsupportedVersion };
-            // SAFETY: as above — the macro formats into the same live slot.
-            unsafe { ufbxi_fmt_err_info!(p_error, "%u", uc.version()) };
+            // SAFETY: as the condition above — `p_error` is the caller's live
+            // `ufbx_error` slot, which all four writes target; the string
+            // literal is NUL-terminated, so `strlen` reads within it, and the
+            // macro formats into that same live slot.
+            unsafe {
+                (*p_error).description.data = b"Unsupported version\0".as_ptr();
+                (*p_error).description.length = strlen(b"Unsupported version\0".as_ptr());
+                (*p_error).type_ = ErrorType::UnsupportedVersion;
+                ufbxi_fmt_err_info!(p_error, "%u", uc.version());
+            }
         }
         free_result(uc);
         ptr::null_mut()
@@ -1560,14 +1564,19 @@ pub(crate) unsafe fn override_less_than_prop(
     element_id: u32,
     prop: *const Prop,
 ) -> bool {
+    // Public-boundary root: `prop` is a caller-owned `*const Prop` whose
+    // provenance can be a read-only `&Prop`, so mint a read-only `Const` view —
+    // legal for any readable provenance, unlike the interior-mutable `Mut` view.
+    // This fn only reads, so the frozen tag never spans a write.
     // SAFETY (every access in this fn): `over` and `prop` are the caller's live
     // `ufbx_prop_override` / `ufbx_prop` — the raw-pointer contract of this
     // `unsafe fn`.
+    let prop: &View<Prop, Const> = unsafe { View::<Prop, Const>::from_ptr(prop) };
     if unsafe { (*over).element_id } != element_id {
         return unsafe { (*over).element_id } < element_id;
     }
-    if unsafe { (*over)._internal_key } != unsafe { (*prop)._internal_key } {
-        return unsafe { (*over)._internal_key } < unsafe { (*prop)._internal_key };
+    if unsafe { (*over)._internal_key } != prop._internal_key() {
+        return unsafe { (*over)._internal_key } < prop._internal_key();
     }
     // C: `return strcmp(over->prop_name.data, prop->name.data);` — the `int`
     // result converts to `bool` (nonzero == true), so ANY name difference
@@ -1579,7 +1588,7 @@ pub(crate) unsafe fn override_less_than_prop(
     // bytes with the same ordering for NUL-terminated names; reconcile on sync.
     // SAFETY: `over.prop_name` and `prop.name` are valid `String` runs of their
     // `.length` bytes; `str_cmp` bounds both reads by those lengths.
-    unsafe { sp::str_cmp((*over).prop_name, (*prop).name) != 0 }
+    unsafe { sp::str_cmp((*over).prop_name, prop.name()) != 0 }
 }
 
 // ufbx.c:25636-25641 `ufbxi_override_equals_to_prop`
@@ -1590,13 +1599,16 @@ pub(crate) unsafe fn override_equals_to_prop(
     element_id: u32,
     prop: *const Prop,
 ) -> bool {
+    // Read-only `Const` view over the caller-owned `*const Prop`, as in
+    // `override_less_than_prop` above.
     // SAFETY (every access in this fn): `over` and `prop` are the caller's live
     // `ufbx_prop_override` / `ufbx_prop` — the raw-pointer contract of this
     // `unsafe fn`.
+    let prop: &View<Prop, Const> = unsafe { View::<Prop, Const>::from_ptr(prop) };
     if unsafe { (*over).element_id } != element_id {
         return false;
     }
-    if unsafe { (*over)._internal_key } != unsafe { (*prop)._internal_key } {
+    if unsafe { (*over)._internal_key } != prop._internal_key() {
         return false;
     }
     // PORT DIVERGENCE (ufbx.c:25640): as in `override_less_than_prop` — the
@@ -1604,7 +1616,7 @@ pub(crate) unsafe fn override_equals_to_prop(
     // length-bounded `str_cmp` instead; reconcile once upstream lands the fix.
     // SAFETY: `over.prop_name` and `prop.name` are valid `String` runs of their
     // `.length` bytes; `str_cmp` bounds both reads by those lengths.
-    unsafe { sp::str_cmp((*over).prop_name, (*prop).name) == 0 }
+    unsafe { sp::str_cmp((*over).prop_name, prop.name()) == 0 }
 }
 
 // ufbx.c:25643-25664 `ufbxi_find_prop_override`
@@ -1637,24 +1649,23 @@ pub(crate) unsafe fn find_prop_override(
         let over: *const PropOverride = unsafe { (*overrides).data.add(ix) };
         // C: `const uint32_t clear_flags = UFBX_PROP_FLAG_NO_VALUE | UFBX_PROP_FLAG_NOT_FOUND;`
         let clear_flags: u32 = PropFlags::NO_VALUE.raw() | PropFlags::NOT_FOUND.raw();
+        // C: `prop->value_real_arr[3] = 0.0f;` — the `ufbx_prop` value union's
+        // `ufbx_real value_real_arr[4]` view; the generated struct keeps only
+        // `value_vec4`, which is those four `ufbx_real`s, so index 3 is its
+        // last element.
         // SAFETY (every access below): `prop` is the caller's live `ufbx_prop`
         // and `over` the matched override element of the caller's list.
         unsafe {
             (*prop).flags = PropFlags::from_raw(
                 ((*prop).flags.raw() & !clear_flags) | PropFlags::OVERRIDDEN.raw(),
-            )
-        };
-        unsafe { (*prop).value_vec4 = (*over).value };
-        // C: `prop->value_real_arr[3] = 0.0f;` — the `ufbx_prop` value union's
-        // `ufbx_real value_real_arr[4]` view; the generated struct keeps only
-        // `value_vec4`.
-        // SAFETY: as above; `value_vec4` is four `ufbx_real`s laid out as the C
-        // union's `value_real_arr`, so index 3 is its last element.
-        unsafe { *(&raw mut (*prop).value_vec4 as *mut Real).add(3) = 0.0 };
-        unsafe { (*prop).value_int = (*over).value_int };
-        unsafe { (*prop).value_str = (*over).value_str };
-        unsafe { (*prop).value_blob.data = (*prop).value_str.data };
-        unsafe { (*prop).value_blob.size = (*prop).value_str.length };
+            );
+            (*prop).value_vec4 = (*over).value;
+            *(&raw mut (*prop).value_vec4 as *mut Real).add(3) = 0.0;
+            (*prop).value_int = (*over).value_int;
+            (*prop).value_str = (*over).value_str;
+            (*prop).value_blob.data = (*prop).value_str.data;
+            (*prop).value_blob.size = (*prop).value_str.length;
+        }
         true
     } else {
         false
@@ -1675,8 +1686,9 @@ pub(crate) unsafe fn find_element_prop_overrides(
     let mut end: usize = begin;
 
     // SAFETY: as above, `data`/`count` describe the caller's override run, which
-    // is what the search walks; each comparator dereferences an element of that
-    // run.
+    // is what both searches walk; each comparator dereferences an element of
+    // that run, and `begin` is an index the first search left inside it (or its
+    // `count` end), so the `[begin, count)` window the second scans is in bounds.
     unsafe {
         macro_lower_bound_eq::<PropOverride>(
             32,
@@ -1686,12 +1698,7 @@ pub(crate) unsafe fn find_element_prop_overrides(
             (*overrides).count,
             |a| (*a).element_id < element_id,
             |a| (*a).element_id == element_id,
-        )
-    };
-
-    // SAFETY: as above; `begin` is an index the search left inside the run (or
-    // its `count` end), so the `[begin, count)` window it scans stays in bounds.
-    unsafe {
+        );
         macro_upper_bound_eq::<PropOverride>(
             32,
             &mut end,
@@ -1699,8 +1706,8 @@ pub(crate) unsafe fn find_element_prop_overrides(
             begin,
             (*overrides).count,
             |a| (*a).element_id == element_id,
-        )
-    };
+        );
+    }
 
     // C: `ufbx_prop_override_list result = { overrides->data + begin, end - begin };`
     // (`List<T>` carries a private `PhantomData` marker, so the aggregate
@@ -1983,19 +1990,18 @@ pub(crate) unsafe fn evaluate_props(
 
         for i in 0..num_props {
             // SAFETY: `i < num_props`, which is the length the caller declares
-            // for the `props` run.
-            let prop: *mut Prop = unsafe { props.add(i) };
+            // for the `props` run; it is the caller's output buffer, reached
+            // through `*mut` (write-capable provenance for `Mut`).
+            let prop: &View<Prop> = unsafe { View::<Prop>::from_ptr(props.add(i)) };
 
             // Don't evaluate on top of overridden properties
-            // SAFETY: `prop` is the element of the caller's prop run indexed
-            // above.
-            if (unsafe { (*prop).flags }.raw() & PropFlags::OVERRIDDEN.raw()) != 0 {
+            if (prop.flags().raw() & PropFlags::OVERRIDDEN.raw()) != 0 {
                 continue;
             }
 
             // Connections override animation by default
-            // SAFETY: as above for `prop`, and `anim` is the caller's live anim.
-            if (unsafe { (*prop).flags }.raw() & PropFlags::CONNECTED.raw()) != 0
+            // SAFETY: `anim` is the caller's live anim.
+            if (prop.flags().raw() & PropFlags::CONNECTED.raw()) != 0
                 && !unsafe { (*anim).ignore_connections }
             {
                 continue;
@@ -2008,15 +2014,15 @@ pub(crate) unsafe fn evaluate_props(
             // which the NULL-element sentinel terminating that run stops, so
             // every access stays inside the run.
             while std::ptr::eq(unsafe { ref_ptr(&(*aprop).element) }, element)
-                && unsafe { (*aprop)._internal_key } < unsafe { (*prop)._internal_key }
+                && unsafe { (*aprop)._internal_key } < prop._internal_key()
             {
                 aprop = unsafe { aprop.add(1) };
             }
-            if unsafe { (*aprop).prop_name.data } != unsafe { (*prop).name.data } {
+            if unsafe { (*aprop).prop_name.data } != prop.name().data {
                 while std::ptr::eq(unsafe { ref_ptr(&(*aprop).element) }, element)
                     // SAFETY: both names are string-pool `ufbx_string`s, which
                     // are stored NUL-terminated.
-                    && unsafe { strcmp((*aprop).prop_name.data, (*prop).name.data) } < 0
+                    && unsafe { strcmp((*aprop).prop_name.data, prop.name().data) } < 0
                 {
                     aprop = unsafe { aprop.add(1) };
                 }
@@ -2025,7 +2031,7 @@ pub(crate) unsafe fn evaluate_props(
             // TODO: Should we skip the blending for the first layer _per property_
             // This could be done by having `UFBX_PROP_FLAG_ANIMATION_EVALUATED`
             // that gets set for the first layer of animation that is applied.
-            if unsafe { (*aprop).prop_name.data } == unsafe { (*prop).name.data } {
+            if unsafe { (*aprop).prop_name.data } == prop.name().data {
                 // SAFETY: `aprop` is inside `layer`'s anim-prop run, so
                 // `anim_value` is its own field and holds a scene-owned
                 // `ufbx_anim_value`.
@@ -2035,10 +2041,10 @@ pub(crate) unsafe fn evaluate_props(
                 if layer_ix == 0 {
                     // C: `prop->value_vec3 = v;` — the `ufbx_prop` value
                     // union's 3-real view over `value_vec4`.
-                    // SAFETY: `prop` is the caller's prop element; `value_vec4`
-                    // is four `ufbx_real`s, so writing the union's leading
-                    // `ufbx_vec3` view stays inside it.
-                    unsafe { *(&raw mut (*prop).value_vec4 as *mut Vec3) = v };
+                    // SAFETY: `value_vec4` is four `ufbx_real`s of the viewed
+                    // prop, so writing the union's leading `ufbx_vec3` view
+                    // stays inside it.
+                    unsafe { *(prop.value_vec4_raw() as *mut Vec3) = v };
                 } else {
                     // SAFETY: the combine context is a live local of this frame,
                     // `layer` is the scene-owned layer, the name is `prop`'s own
@@ -2050,8 +2056,8 @@ pub(crate) unsafe fn evaluate_props(
                             &mut combine_ctx,
                             layer,
                             weight,
-                            (*prop).name.data,
-                            &raw mut (*prop).value_vec4 as *mut Vec3,
+                            prop.name().data,
+                            prop.value_vec4_raw() as *mut Vec3,
                             &v,
                         )
                     };
@@ -2061,21 +2067,16 @@ pub(crate) unsafe fn evaluate_props(
     }
 
     // C: `ufbxi_for(ufbx_prop, prop, props, num_props)`
-    let mut prop: *mut Prop = props;
-    let prop_end: *mut Prop = add_ptr(props, num_props);
-    while prop != prop_end {
-        // SAFETY (this loop): `prop` walks the caller's `num_props`-element prop
-        // run and stops at `prop_end`, so it addresses one of its elements and
-        // `prop + 1` is at most one past its end.
-        if (unsafe { (*prop).flags }.raw() & PropFlags::OVERRIDDEN.raw()) != 0 {
-            prop = unsafe { prop.add(1) };
+    // SAFETY: `props`/`num_props` is the caller's contiguous `num_props`-element
+    // prop run, reached through `*mut` (write-capable provenance for `Mut`).
+    for prop in unsafe { SliceViewIter::<Prop>::from_raw_parts(props, num_props) } {
+        if (prop.flags().raw() & PropFlags::OVERRIDDEN.raw()) != 0 {
             continue;
         }
         // C: `prop->value_int = ufbxi_f64_to_i64(prop->value_real);` — the
         // value union's first real is `value_vec4.x`; `ufbxi_f64_to_i64` takes
         // `double`, so the `ufbx_real` argument promotes.
-        unsafe { (*prop).value_int = f64_to_i64(as_f64!((*prop).value_vec4.x)) };
-        prop = unsafe { prop.add(1) };
+        prop.set_value_int(f64_to_i64(as_f64!(prop.value_vec4().x)));
     }
 }
 
@@ -2165,10 +2166,12 @@ unsafe fn evaluate_connected_prop_rec(
             )
         };
         // SAFETY (every write below): `prop` is the caller's live `ufbx_prop`.
-        unsafe { (*prop).value_vec4 = ep.value_vec4 };
-        unsafe { (*prop).value_int = ep.value_int };
-        unsafe { (*prop).value_str = ep.value_str };
-        unsafe { (*prop).value_blob = ep.value_blob };
+        unsafe {
+            (*prop).value_vec4 = ep.value_vec4;
+            (*prop).value_int = ep.value_int;
+            (*prop).value_str = ep.value_str;
+            (*prop).value_blob = ep.value_blob;
+        }
     } else {
         // Connection not found, maybe it's animated?
         // SAFETY: `prop` is the caller's live `ufbx_prop`.
@@ -2195,30 +2198,37 @@ pub(crate) unsafe fn init_prop_iter_slow(
     anim: *const Anim,
     element: *const Element,
 ) {
+    // Public-boundary root: `element` is a caller-owned `*const Element` whose
+    // provenance can be a read-only `&Element`, so mint a read-only `Const`
+    // view; this fn only reads through it, so the frozen tag never spans a write
+    // to the element.
     // SAFETY (every access in this fn): `iter` is the caller's live `PropIter`
     // storage and `anim`/`element` its live scene objects — the raw-pointer
     // contract of this `unsafe fn`.
-    unsafe { (*iter).prop = (*element).props.props.data };
+    let element: &View<Element, Const> = unsafe { View::<Element, Const>::from_ptr(element) };
     // C: `iter->prop_end = element->props.props.data + element->props.props.count;`
     // SAFETY: `data`/`count` describe the element's own prop run, so the end
     // pointer is one past its last element.
     unsafe {
-        (*iter).prop_end = (*element)
-            .props
-            .props
+        (*iter).prop = element.props().props().data;
+        (*iter).prop_end = element
+            .props()
+            .props()
             .data
-            .add((*element).props.props.count)
-    };
+            .add(element.props().props().count);
+    }
 
     // SAFETY: the projection addresses `anim`'s own override list, which is what
     // the search walks.
     let over: List<PropOverride> = unsafe {
-        find_element_prop_overrides(&raw const (*anim).prop_overrides, (*element).element_id)
+        find_element_prop_overrides(&raw const (*anim).prop_overrides, element.element_id())
     };
-    unsafe { (*iter).over = over.data };
-    // SAFETY: `over` is a sub-run of the anim's override list, so `data + count`
-    // is one past its last element.
-    unsafe { (*iter).over_end = over.data.add(over.count) };
+    // SAFETY: as above for `iter`; `over` is a sub-run of the anim's override
+    // list, so `data + count` is one past its last element.
+    unsafe {
+        (*iter).over = over.data;
+        (*iter).over_end = over.data.add(over.count);
+    }
     if over.count > 0 {
         // C: `memset(&iter->tmp, 0, sizeof(ufbx_prop));`
         // SAFETY: the projection addresses `iter`'s own `tmp` field, so exactly
@@ -2235,23 +2245,27 @@ pub(crate) unsafe fn init_prop_iter(
     anim: *const Anim,
     element: *const Element,
 ) {
+    // Read-only `Const` view over the caller-owned `*const Element`, as in
+    // `init_prop_iter_slow` above.
     // SAFETY (every access in this fn): `iter` is the caller's live `PropIter`
     // storage and `anim`/`element` its live scene objects — the raw-pointer
     // contract of this `unsafe fn`.
-    unsafe { (*iter).prop = (*element).props.props.data };
-    unsafe {
-        (*iter).prop_end = add_ptr(
-            (*element).props.props.data as *mut Prop,
-            (*element).props.props.count,
-        )
-    };
+    let element: &View<Element, Const> = unsafe { View::<Element, Const>::from_ptr(element) };
     // C: `iter->over = iter->over_end = NULL;`
-    unsafe { (*iter).over = ptr::null() };
-    unsafe { (*iter).over_end = ptr::null() };
+    unsafe {
+        (*iter).prop = element.props().props().data;
+        (*iter).prop_end = add_ptr(
+            element.props().props().data as *mut Prop,
+            element.props().props().count,
+        );
+        (*iter).over = ptr::null();
+        (*iter).over_end = ptr::null();
+    }
     if unsafe { (*anim).prop_overrides.count } > 0 {
-        // SAFETY: the three pointers are forwarded unchanged from this fn's own
-        // parameters, so the callee inherits the caller's contract.
-        unsafe { init_prop_iter_slow(iter, anim, element) };
+        // SAFETY: `iter`/`anim` are forwarded unchanged from this fn's own
+        // parameters and `element.as_ptr()` addresses the same live element, so
+        // the callee inherits the caller's contract.
+        unsafe { init_prop_iter_slow(iter, anim, element.as_ptr()) };
     }
 }
 
@@ -2304,15 +2318,17 @@ pub(crate) unsafe fn next_prop_slow(iter: *mut PropIter) -> *const Prop {
         // `over` addresses an element of the override run — `cmp >= 0` is only
         // reachable when `over_key` was read from a live element, since a
         // `UINT32_MAX` `over_key` with a live `prop` compares greater.
-        unsafe { (*dst).name = (*over).prop_name };
-        unsafe { (*dst)._internal_key = (*over)._internal_key };
-        unsafe { (*dst).type_ = PropType::Unknown };
-        unsafe { (*dst).flags = PropFlags::OVERRIDDEN };
-        unsafe { (*dst).value_str = (*over).value_str };
-        unsafe { (*dst).value_blob.data = (*dst).value_str.data };
-        unsafe { (*dst).value_blob.size = (*dst).value_str.length };
-        unsafe { (*dst).value_int = (*over).value_int };
-        unsafe { (*dst).value_vec4 = (*over).value };
+        unsafe {
+            (*dst).name = (*over).prop_name;
+            (*dst)._internal_key = (*over)._internal_key;
+            (*dst).type_ = PropType::Unknown;
+            (*dst).flags = PropFlags::OVERRIDDEN;
+            (*dst).value_str = (*over).value_str;
+            (*dst).value_blob.data = (*dst).value_str.data;
+            (*dst).value_blob.size = (*dst).value_str.length;
+            (*dst).value_int = (*over).value_int;
+            (*dst).value_vec4 = (*over).value;
+        }
         // SAFETY: `over` is inside the override run, so `over + 1` is at most
         // one past its end.
         unsafe { (*iter).over = over.add(1) };
@@ -2395,20 +2411,31 @@ pub(crate) unsafe fn evaluate_selected_props(
     // C: `while ((prop = ufbxi_next_prop(&iter)) != NULL)`
     loop {
         // SAFETY: `iter` is the storage `init_prop_iter` initialized above.
-        let prop: *const Prop = unsafe { next_prop(iter) };
-        if prop.is_null() {
+        let prop_ptr: *const Prop = unsafe { next_prop(iter) };
+        if prop_ptr.is_null() {
             break;
         }
+        // Read-only `Const` view over the yielded prop: it is reached through a
+        // `*const Prop` whose provenance can be a read-only `&Element`'s prop
+        // run, so `Mut` is not mintable here. The frozen tag is confined to one
+        // iteration, which is what the `Const` mode requires: when the anim
+        // carries overrides, `next_prop_slow` yields `&(*iter).tmp` and the next
+        // call writes those exact bytes through `iter`, but this view's last use
+        // is inside this iteration's body — no read through the frozen tag
+        // outlives that write. Nothing in the body writes the viewed prop
+        // either: the copies land in the caller's separate `props` output
+        // buffer.
+        // SAFETY (every `prop` access in this loop): `next_prop` returns either
+        // an element of the element's own prop run or the iterator's `tmp` prop,
+        // both live here, and it is non-null (checked above).
+        let prop: &View<Prop, Const> = unsafe { View::<Prop, Const>::from_ptr(prop_ptr) };
         while name_ix < max_props {
-            // SAFETY (every `*prop` access in this loop): `next_prop` returns
-            // either an element of the element's own prop run or the iterator's
-            // `tmp` prop, both live here, and it is non-null (checked above).
-            if key > unsafe { (*prop)._internal_key } {
+            if key > prop._internal_key() {
                 break;
             }
-            if name == unsafe { (*prop).name.data } {
-                // SAFETY: as above for `prop`; `anim` is the caller's live anim.
-                if (unsafe { (*prop).flags }.raw() & PropFlags::CONNECTED.raw()) != 0
+            if name == prop.name().data {
+                // SAFETY: `anim` is the caller's live anim.
+                if (prop.flags().raw() & PropFlags::CONNECTED.raw()) != 0
                     && !unsafe { (*anim).ignore_connections }
                 {
                     // C: `ufbx_prop *dst = &props[num_props++];`
@@ -2421,27 +2448,28 @@ pub(crate) unsafe fn evaluate_selected_props(
                     num_props += 1;
                     // SAFETY: `dst` is that in-bounds destination slot and
                     // `prop` a live source prop; `ufbx_prop` is plain data, so
-                    // the copy duplicates no ownership.
-                    unsafe { *dst = *prop };
-                    // SAFETY: `dst` is the prop just written, `anim`/`element`
-                    // are the caller's live scene objects and `name` an entry of
-                    // the caller's name table.
-                    unsafe { evaluate_connected_prop(dst, anim, element, name, time, flags) };
-                } else if (unsafe { (*prop).flags }.raw()
+                    // the copy duplicates no ownership. `dst` is then the prop
+                    // just written, `anim`/`element` are the caller's live scene
+                    // objects and `name` an entry of the caller's name table.
+                    unsafe {
+                        *dst = *prop.as_ptr();
+                        evaluate_connected_prop(dst, anim, element, name, time, flags);
+                    }
+                } else if (prop.flags().raw()
                     & (PropFlags::ANIMATED.raw() | PropFlags::OVERRIDDEN.raw()))
                     != 0
                 {
                     // C: `props[num_props++] = *prop;`
                     // SAFETY: as the `dst` write above — `num_props` is below
                     // `max_props`, and `prop` is a live source prop.
-                    unsafe { *props.add(num_props) = *prop };
+                    unsafe { *props.add(num_props) = *prop.as_ptr() };
                     num_props += 1;
                 }
                 break;
             // SAFETY: `name` is an entry of the caller's name table and
             // `prop.name` is either a string-pool string (element prop) or an
             // override name interned by `create_anim_imp` — both NUL-terminated.
-            } else if unsafe { strcmp(name, (*prop).name.data) } < 0 {
+            } else if unsafe { strcmp(name, prop.name().data) } < 0 {
                 name_ix += 1;
                 if name_ix < max_props {
                     // SAFETY: `name_ix < max_props` bounds the read inside the
@@ -3016,10 +3044,10 @@ pub(crate) unsafe fn translate_element_list(
     let list: *mut crate::prelude::RefList<Element> =
         p_list as *mut crate::prelude::RefList<Element>;
     // SAFETY: this `unsafe fn` requires `p_list` to address a live
-    // `ufbx_element_list` of the source scene.
-    let count: usize = unsafe { (*list).count };
-    // SAFETY: as above, reading the same live list's element array base.
-    let src: *mut *mut Element = unsafe { (*list).data as *mut *mut Element };
+    // `ufbx_element_list` of the source scene, so its count and element array
+    // base are its own fields.
+    let (count, src): (usize, *mut *mut Element) =
+        unsafe { ((*list).count, (*list).data as *mut *mut Element) };
     let dst: *mut *mut Element = ec.result_view().push::<*mut Element>(count);
     ufbxi_check_err!(ec.error_view(), !dst.is_null(), "dst");
     // SAFETY: as above, retargeting the same live list at the pushed array.
@@ -3169,25 +3197,24 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // SAFETY: both destination connection arrays were pushed with
         // `num_connections` elements (non-null, checked just above) and
         // `i < num_connections`, so slot `i` is in bounds of each.
-        let src: *mut Connection =
-            unsafe { (ec.scene_view().connections_src_view().data() as *mut Connection).add(i) };
-        // SAFETY: as above, for the `connections_dst` array.
-        let dst: *mut Connection =
-            unsafe { (ec.scene_view().connections_dst_view().data() as *mut Connection).add(i) };
+        let (src, dst): (*mut Connection, *mut Connection) = unsafe {
+            (
+                (ec.scene_view().connections_src_view().data() as *mut Connection).add(i),
+                (ec.scene_view().connections_dst_view().data() as *mut Connection).add(i),
+            )
+        };
         // C: `*src = ec->src_scene.connections_src.data[i];` (struct assignment)
         // SAFETY: per the source-scene premise the source `connections_src` run
         // holds `num_connections` live `ufbx_connection`s, so slot `i` is
         // readable; `src` addresses the matching slot of the freshly pushed
-        // destination run, a separate allocation.
+        // destination run, a separate allocation; the same holds for the
+        // `connections_dst` runs.
         unsafe {
             ptr::copy_nonoverlapping(
                 ec.src_scene_view().connections_src_view().data().add(i),
                 src,
                 1,
             );
-        }
-        // SAFETY: as above, for the `connections_dst` runs.
-        unsafe {
             ptr::copy_nonoverlapping(
                 ec.src_scene_view().connections_dst_view().data().add(i),
                 dst,
@@ -3275,8 +3302,8 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
         // C: `dst->connections_src.data = ec->scene.connections_src.data + (dst->connections_src.data - ec->src_scene.connections_src.data);`
         // SAFETY: `dst` holds the byte copy of `src` made above, so its
-        // `connections_src.data` still points into the source scene's
-        // `connections_src` run — one allocation with the base being subtracted,
+        // `connections_src`/`connections_dst` data still points into the source
+        // scene's matching run — one allocation with the base being subtracted,
         // making `offset_from` well defined — and the same index lands inside the
         // equally sized destination run pushed above.
         unsafe {
@@ -3286,9 +3313,6 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                     .data
                     .offset_from(ec.src_scene_view().connections_src_view().data()),
             );
-        }
-        // SAFETY: as above, for the `connections_dst` runs.
-        unsafe {
             (*dst).connections_dst.data = ec.scene_view().connections_dst_view().data().offset(
                 (*dst)
                     .connections_dst
@@ -3453,15 +3477,13 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // SAFETY (these five calls): each `*_raw` projection addresses the live
         // destination mesh's own `ufbx_element_list`, whose byte copy still
         // lists source-scene elements — `translate_element_list`'s contract.
-        unsafe { translate_element_list(ec, mesh.materials_raw() as *mut c_void) }?;
-        // SAFETY: as above.
-        unsafe { translate_element_list(ec, mesh.skin_deformers_raw() as *mut c_void) }?;
-        // SAFETY: as above.
-        unsafe { translate_element_list(ec, mesh.blend_deformers_raw() as *mut c_void) }?;
-        // SAFETY: as above.
-        unsafe { translate_element_list(ec, mesh.cache_deformers_raw() as *mut c_void) }?;
-        // SAFETY: as above.
-        unsafe { translate_element_list(ec, mesh.all_deformers_raw() as *mut c_void) }?;
+        unsafe {
+            translate_element_list(ec, mesh.materials_raw() as *mut c_void)?;
+            translate_element_list(ec, mesh.skin_deformers_raw() as *mut c_void)?;
+            translate_element_list(ec, mesh.blend_deformers_raw() as *mut c_void)?;
+            translate_element_list(ec, mesh.cache_deformers_raw() as *mut c_void)?;
+            translate_element_list(ec, mesh.all_deformers_raw() as *mut c_void)?;
+        }
         // SAFETY: `p_mesh` is inside the mesh list, so `p_mesh + 1` is at most
         // one past its end.
         p_mesh = unsafe { p_mesh.add(1) };
@@ -3486,9 +3508,6 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             *(&raw mut (*stereo).left as *mut *mut Camera) =
                 translate_element(ec, opt_ptr(&raw const (*stereo).left) as *mut c_void)
                     as *mut Camera;
-        }
-        // SAFETY: as above.
-        unsafe {
             *(&raw mut (*stereo).right as *mut *mut Camera) =
                 translate_element(ec, opt_ptr(&raw const (*stereo).right) as *mut c_void)
                     as *mut Camera;
@@ -3662,18 +3681,16 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // C: `material->fbx.maps` / `material->pbr.maps` — the flat `maps[]`
         // union view; the generated struct keeps only the named branch, whose
         // base is the aggregate itself (layout pinned in `native::scene_process`).
-        // SAFETY: that aggregate is `MATERIAL_FBX_MAP_COUNT` live
-        // `ufbx_material_map`s of the live destination material, still naming
-        // source-scene textures — `translate_maps`' contract.
+        // SAFETY: each aggregate is `MATERIAL_FBX_MAP_COUNT` /
+        // `MATERIAL_PBR_MAP_COUNT` live `ufbx_material_map`s of the live
+        // destination material, still naming source-scene textures —
+        // `translate_maps`' contract.
         unsafe {
             translate_maps(
                 ec,
                 &raw mut (*material).fbx as *mut MaterialMap,
                 MATERIAL_FBX_MAP_COUNT,
             );
-        }
-        // SAFETY: as above, for the `MATERIAL_PBR_MAP_COUNT`-long `pbr` aggregate.
-        unsafe {
             translate_maps(
                 ec,
                 &raw mut (*material).pbr as *mut MaterialMap,
@@ -3882,9 +3899,6 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             *(&raw mut (*node).target_node as *mut *mut UfbxNode) =
                 translate_element(ec, opt_ptr(&raw const (*node).target_node) as *mut c_void)
                     as *mut UfbxNode;
-        }
-        // SAFETY: as above.
-        unsafe {
             *(&raw mut (*node).target_mesh as *mut *mut Mesh) =
                 translate_element(ec, opt_ptr(&raw const (*node).target_mesh) as *mut c_void)
                     as *mut Mesh;
@@ -3906,18 +3920,15 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // above.
         let constraint: *mut Constraint = unsafe { *p_constraint };
 
-        // SAFETY (this store and the three below it): each named field is that
-        // live constraint's own nullable `Option<Ref<UfbxNode>>`, which `opt_ptr`
-        // reads as the element pointer it is; the byte copy left it naming a
-        // source-scene element — `translate_element`'s contract — and the result
-        // is written back in place.
+        // SAFETY (these four stores): each named field is that live constraint's
+        // own nullable `Option<Ref<UfbxNode>>`, which `opt_ptr` reads as the
+        // element pointer it is; the byte copy left it naming a source-scene
+        // element — `translate_element`'s contract — and the result is written
+        // back in place.
         unsafe {
             *(&raw mut (*constraint).node as *mut *mut UfbxNode) =
                 translate_element(ec, opt_ptr(&raw const (*constraint).node) as *mut c_void)
                     as *mut UfbxNode;
-        }
-        // SAFETY: as above.
-        unsafe {
             *(&raw mut (*constraint).aim_up_node as *mut *mut UfbxNode) = translate_element(
                 ec,
                 opt_ptr(&raw const (*constraint).aim_up_node) as *mut c_void,
@@ -4043,15 +4054,12 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             // allocations.
             unsafe { ptr::copy_nonoverlapping((*layer).anim_props.data.add(i), props.add(i), 1) };
             // SAFETY: `props[i]` holds the copy made just above, whose `element`
-            // is a non-null `Ref` to a source-scene element —
+            // and `anim_value` are non-null `Ref`s to source-scene elements —
             // `translate_element`'s contract — read through `ref_ptr` and written
             // back in place.
             unsafe {
                 *(&raw mut (*props.add(i)).element as *mut *mut Element) =
                     translate_element(ec, ref_ptr(&(*props.add(i)).element) as *mut c_void);
-            }
-            // SAFETY: as above, for that copy's `anim_value`.
-            unsafe {
                 *(&raw mut (*props.add(i)).anim_value as *mut *mut AnimValue) =
                     translate_element(ec, ref_ptr(&(*props.add(i)).anim_value) as *mut c_void)
                         as *mut AnimValue;
@@ -4140,9 +4148,6 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             *(&raw mut (*value).curves[0] as *mut *mut AnimCurve) =
                 translate_element(ec, opt_ptr(&raw const (*value).curves[0]) as *mut c_void)
                     as *mut AnimCurve;
-        }
-        // SAFETY: as above.
-        unsafe {
             *(&raw mut (*value).curves[1] as *mut *mut AnimCurve) =
                 translate_element(ec, opt_ptr(&raw const (*value).curves[1]) as *mut c_void)
                     as *mut AnimCurve;
@@ -4172,17 +4177,16 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_elem != p_elem_end {
         // SAFETY: `p_elem` walks the destination scene's element list and stops
         // at `p_elem_end`, so it addresses a live slot holding one of the element
-        // copies written into the destination buffer above.
-        let elem: *mut Element = unsafe { *p_elem };
-        // SAFETY: `elem` is that live destination element.
-        let mut num_animated: usize = unsafe { (*elem).props.num_animated };
+        // copies written into the destination buffer above — reached through
+        // `*mut` into `ec`'s result buffer (write-capable provenance for `Mut`).
+        let elem: &View<Element> = unsafe { View::<Element>::from_ptr(*p_elem) };
+        let mut num_animated: usize = elem.props().num_animated();
         let mut num_override: usize = 0;
 
         // Setup the overrides for this element if found
         // SAFETY (this condition): `over` is only read when it has not reached
-        // `over_end`, so it addresses a live entry of the anim's override run;
-        // `elem` is the live destination element.
-        while over != over_end && unsafe { (*over).element_id } == unsafe { (*elem).element_id } {
+        // `over_end`, so it addresses a live entry of the anim's override run.
+        while over != over_end && unsafe { (*over).element_id } == elem.element_id() {
             num_override += 1;
             // SAFETY: `over` is inside the override run, so `over + 1` is at most
             // one past its end.
@@ -4215,25 +4219,23 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         let new_props: crate::generated::Props = unsafe {
             evaluate_props_flags(
                 &anim,
-                elem,
+                elem.as_ptr(),
                 ec.time(),
                 props,
                 num_animated,
                 ec.opts_view().evaluate_flags(),
             )
         };
-        // SAFETY: `elem` is the live destination element, so its `props` field is
-        // a valid initialized `ufbx_props` the write overwrites in place.
-        unsafe { ptr::write(&raw mut (*elem).props, new_props) };
+        elem.set_props(new_props);
         // C: `elem->props.defaults = &ec->src_scene.elements.data[elem->element_id]->props;`
-        // SAFETY: `elem` is live, and per the source-scene premise its
-        // `element_id` indexes the source element list, whose slot holds the
-        // source-scene element this one was copied from — so its `props` field
-        // outlives the destination scene it is stored into.
+        // SAFETY: per the source-scene premise `elem`'s `element_id` indexes the
+        // source element list, whose slot holds the source-scene element this one
+        // was copied from — so its `props` field outlives the destination scene it
+        // is stored into.
         unsafe {
-            *(&raw mut (*elem).props.defaults as *mut *const crate::generated::Props) =
+            *(elem.props().defaults_raw() as *mut *const crate::generated::Props) =
                 &raw const (*(*(ec.src_scene_view().elements_view().data() as *mut *mut Element)
-                    .add((*elem).element_id as usize)))
+                    .add(elem.element_id() as usize)))
                 .props;
         }
         // SAFETY: `p_elem` is inside the element list, so `p_elem + 1` is at most
@@ -4329,17 +4331,17 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
 
     // Copy retained buffers and translate the allocator struct to the one
     // contained within `ufbxi_scene_imp`
-    // SAFETY: as above.
-    unsafe { (*imp).refcount.buf = ec.take_result() };
     // SAFETY: as above — the buffer is retargeted at the allocator embedded in
     // the same header, which the header keeps alive for as long as the buffer.
-    unsafe { (*imp).refcount.buf.ator = &raw mut (*imp).refcount.ator };
-
-    // SAFETY (these four stores): `imp` is the live pushed header, whose `scene`
-    // and `refcount.ator` were filled in just above.
-    unsafe { (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size };
-    // SAFETY: as above.
     unsafe {
+        (*imp).refcount.buf = ec.take_result();
+        (*imp).refcount.buf.ator = &raw mut (*imp).refcount.ator;
+    }
+
+    // SAFETY: `imp` is the live pushed header, whose `scene` and
+    // `refcount.ator` were filled in just above.
+    unsafe {
+        (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
         (*imp).scene.metadata.temp_memory_used = ec.ator_tmp_view().current_size();
         (*imp).scene.metadata.result_allocs = (*imp).refcount.ator.num_allocs;
         (*imp).scene.metadata.temp_allocs = ec.ator_tmp_view().num_allocs();
@@ -4417,25 +4419,23 @@ pub(crate) unsafe fn evaluate_scene(
     });
     ec.set_time(time);
 
-    // SAFETY: the error slot, temp allocator and `opts.temp_allocator` are all
-    // `ec`'s own fields, live for the `&EvalContext` borrow.
+    // SAFETY: the error slot, both allocators and the `opts.temp_allocator` /
+    // `opts.result_allocator` sources are all `ec`'s own fields, live for the
+    // `&EvalContext` borrow.
     unsafe {
         init_ator(
             ec.error_mut_ptr(),
             ec.ator_tmp_mut_ptr(),
             ec.opts_view().temp_allocator_ptr(),
             c"temp",
-        )
-    };
-    // SAFETY: as above, for `ec`'s result allocator and `opts.result_allocator`.
-    unsafe {
+        );
         init_ator(
             ec.error_mut_ptr(),
             ec.ator_result_mut_ptr(),
             ec.opts_view().result_allocator_ptr(),
             c"result",
-        )
-    };
+        );
+    }
 
     ec.result_view().set_ator(ec.ator_result_mut_ptr());
     ec.tmp_view().set_ator(ec.ator_tmp_mut_ptr());
@@ -4448,9 +4448,10 @@ pub(crate) unsafe fn evaluate_scene(
     if unsafe { evaluate_imp(ec) }.is_ok() {
         // SAFETY: `ec`'s temp buffer and temp allocator are its own fields, live
         // for the borrow, and this is the last use of each.
-        unsafe { buf_free(ec.tmp_mut_ptr()) };
-        // SAFETY: as above, for `ec`'s temp allocator.
-        unsafe { free_ator(ec.ator_tmp_mut_ptr()) };
+        unsafe {
+            buf_free(ec.tmp_mut_ptr());
+            free_ator(ec.ator_tmp_mut_ptr());
+        }
         if !p_error.is_null() {
             // SAFETY: `p_error` is non-null (checked just above) and points to
             // the caller's `ufbx_error` slot — this `unsafe fn`'s contract.
@@ -4471,16 +4472,15 @@ pub(crate) unsafe fn evaluate_scene(
                 p_error,
             )
         };
-        // SAFETY: `ec`'s temp buffer is its own field, live for the borrow, and
-        // this is the last use of it.
-        unsafe { buf_free(ec.tmp_mut_ptr()) };
-        // SAFETY: as above, for `ec`'s result buffer — the failure path discards
-        // it, so this is its last use.
-        unsafe { buf_free(ec.result_mut_ptr()) };
-        // SAFETY: as above, for `ec`'s temp allocator.
-        unsafe { free_ator(ec.ator_tmp_mut_ptr()) };
-        // SAFETY: as above, for `ec`'s result allocator.
-        unsafe { free_ator(ec.ator_result_mut_ptr()) };
+        // SAFETY: `ec`'s temp and result buffers and their allocators are its own
+        // fields, live for the borrow; the failure path discards the result, so
+        // this is the last use of each.
+        unsafe {
+            buf_free(ec.tmp_mut_ptr());
+            buf_free(ec.result_mut_ptr());
+            free_ator(ec.ator_tmp_mut_ptr());
+            free_ator(ec.ator_result_mut_ptr());
+        }
         ptr::null_mut()
     }
 }
@@ -4767,12 +4767,12 @@ pub(crate) unsafe extern "C" fn prop_override_prop_name_less(
     ufbxi_ignore!(user);
     let a: *const PropOverride = va as *const PropOverride;
     let b: *const PropOverride = vb as *const PropOverride;
-    // SAFETY (this condition): the sort comparator contract guarantees `va` and
-    // `vb` each point to a live `ufbx_prop_override` element of the array being
-    // sorted, so both `_internal_key` fields are readable.
-    if unsafe { (*a)._internal_key } != unsafe { (*b)._internal_key } {
+    // SAFETY: the sort comparator contract guarantees `va` and `vb` each point
+    // to a live `ufbx_prop_override` element of the array being sorted, so both
+    // `_internal_key` fields are readable.
+    if unsafe { (*a)._internal_key != (*b)._internal_key } {
         // SAFETY: as above.
-        return unsafe { (*a)._internal_key } < unsafe { (*b)._internal_key };
+        return unsafe { (*a)._internal_key < (*b)._internal_key };
     }
     // SAFETY: as above, reading each element's `prop_name` string by value;
     // `str_less` only compares the spans those strings describe.
@@ -4788,17 +4788,17 @@ pub(crate) unsafe extern "C" fn prop_override_less(
     ufbxi_ignore!(user);
     let a: *const PropOverride = va as *const PropOverride;
     let b: *const PropOverride = vb as *const PropOverride;
-    // SAFETY (this condition): the sort comparator contract guarantees `va` and
-    // `vb` each point to a live `ufbx_prop_override` element of the array being
-    // sorted, so both `element_id` fields are readable.
-    if unsafe { (*a).element_id } != unsafe { (*b).element_id } {
+    // SAFETY: the sort comparator contract guarantees `va` and `vb` each point
+    // to a live `ufbx_prop_override` element of the array being sorted, so both
+    // `element_id` fields are readable.
+    if unsafe { (*a).element_id != (*b).element_id } {
         // SAFETY: as above.
-        return unsafe { (*a).element_id } < unsafe { (*b).element_id };
+        return unsafe { (*a).element_id < (*b).element_id };
     }
     // SAFETY: as above, for the `_internal_key` fields.
-    if unsafe { (*a)._internal_key } != unsafe { (*b)._internal_key } {
+    if unsafe { (*a)._internal_key != (*b)._internal_key } {
         // SAFETY: as above.
-        return unsafe { (*a)._internal_key } < unsafe { (*b)._internal_key };
+        return unsafe { (*a)._internal_key < (*b)._internal_key };
     }
     // SAFETY: as above; at the one call site (the post-interning sort in
     // `create_anim_imp`) every `prop_name` is a STRINGS-table entry or a
@@ -5996,20 +5996,20 @@ pub(crate) unsafe extern "C" fn bake_prop_less(
     ufbxi_ignore!(user);
     let a: *const BakeProp = va as *const BakeProp;
     let b: *const BakeProp = vb as *const BakeProp;
-    // SAFETY (this condition): the sort comparator contract guarantees `va` and
-    // `vb` each point to a live `ufbxi_bake_prop` element of the array being
-    // sorted, so both `sort_id` fields are readable.
-    if unsafe { (*a).sort_id } != unsafe { (*b).sort_id } {
+    // SAFETY: the sort comparator contract guarantees `va` and `vb` each point
+    // to a live `ufbxi_bake_prop` element of the array being sorted, so both
+    // `sort_id` fields are readable.
+    if unsafe { (*a).sort_id != (*b).sort_id } {
         // SAFETY: as above.
-        return unsafe { (*a).sort_id } < unsafe { (*b).sort_id };
+        return unsafe { (*a).sort_id < (*b).sort_id };
     }
     // SAFETY: as above, for the `element_id` fields.
-    if unsafe { (*a).element_id } != unsafe { (*b).element_id } {
+    if unsafe { (*a).element_id != (*b).element_id } {
         // SAFETY: as above.
-        return unsafe { (*a).element_id } < unsafe { (*b).element_id };
+        return unsafe { (*a).element_id < (*b).element_id };
     }
     // SAFETY: as above, comparing the two `prop_name` pointers themselves.
-    if unsafe { (*a).prop_name } != unsafe { (*b).prop_name } {
+    if unsafe { (*a).prop_name != (*b).prop_name } {
         // SAFETY: as above; both `prop_name`s are pooled NUL-terminated strings,
         // so `strcmp` stays inside them.
         return unsafe { strcmp((*a).prop_name, (*b).prop_name) } < 0;
@@ -6098,10 +6098,10 @@ pub(crate) unsafe fn bake_times(
         }
 
         // SAFETY: `curve` is non-null (checked) and is one of the anim value's
-        // own curve elements, live for the scene.
-        let keys: *const Keyframe = unsafe { (*curve).keyframes.data };
-        // SAFETY: as above, for the same list's count.
-        let num_keys: usize = unsafe { (*curve).keyframes.count };
+        // own curve elements, live for the scene, so its keyframe list's base
+        // and count are its own fields.
+        let (keys, num_keys): (*const Keyframe, usize) =
+            unsafe { ((*curve).keyframes.data, (*curve).keyframes.count) };
         for key_ix in 0..num_keys {
             // SAFETY: `key_ix < num_keys`, the length of the `keys` array.
             let a: Keyframe = unsafe { *keys.add(key_ix) };
@@ -6755,11 +6755,12 @@ pub(crate) unsafe fn bake_postprocess_vec3(
     unsafe { *p_constant = constant };
 
     // SAFETY: `p_dst` points to the caller's live `ufbx_baked_vec3_list` slot —
-    // this `unsafe fn`'s contract.
-    unsafe { (*p_dst).count = src.count };
-    // SAFETY: as above for `p_dst`; `data` addresses `src.count` live elements,
+    // this `unsafe fn`'s contract; `data` addresses `src.count` live elements,
     // which is the run `push_copy` reads, and `bc.result` is `bc`'s own buffer.
-    unsafe { (*p_dst).data = push_copy::<BakedVec3>(bc.result_mut_ptr(), src.count, data) };
+    unsafe {
+        (*p_dst).count = src.count;
+        (*p_dst).data = push_copy::<BakedVec3>(bc.result_mut_ptr(), src.count, data);
+    }
     ufbxi_check_err!(
         bc.error_view(),
         // SAFETY: as above — `p_dst` is the caller's live list slot, just written.
@@ -6941,11 +6942,12 @@ pub(crate) unsafe fn bake_postprocess_quat(
     unsafe { *p_constant = constant };
 
     // SAFETY: `p_dst` points to the caller's live `ufbx_baked_quat_list` slot —
-    // this `unsafe fn`'s contract.
-    unsafe { (*p_dst).count = src.count };
-    // SAFETY: as above for `p_dst`; `data` addresses `src.count` live elements,
+    // this `unsafe fn`'s contract; `data` addresses `src.count` live elements,
     // which is the run `push_copy` reads, and `bc.result` is `bc`'s own buffer.
-    unsafe { (*p_dst).data = push_copy::<BakedQuat>(bc.result_mut_ptr(), src.count, data) };
+    unsafe {
+        (*p_dst).count = src.count;
+        (*p_dst).data = push_copy::<BakedQuat>(bc.result_mut_ptr(), src.count, data);
+    }
     ufbxi_check_err!(
         bc.error_view(),
         // SAFETY: as above — `p_dst` is the caller's live list slot, just written.
@@ -6991,10 +6993,9 @@ pub(crate) unsafe fn push_resampled_times(
     ufbxi_check_err!(bc.error_view(), !times.is_null(), "times");
     for i in 0..keys.count {
         // SAFETY: `keys` describes a live run of `keys.count` baked keys, and
-        // `i < keys.count`.
-        let flags: BakedKeyFlags = unsafe { (*keys.data.add(i)).flags };
-        // SAFETY: as above, for the same key's `time`.
-        let mut time: f64 = unsafe { (*keys.data.add(i)).time };
+        // `i < keys.count`, so slot `i`'s flags and time are both readable.
+        let (flags, mut time): (BakedKeyFlags, f64) =
+            unsafe { ((*keys.data.add(i)).flags, (*keys.data.add(i)).time) };
         // SAFETY (this condition): `i + 1 < keys.count` is established first and
         // `&&` short-circuits, so that slot is in bounds of the key run.
         if (flags.raw() & BakedKeyFlags::STEP_LEFT.raw()) != 0
@@ -7088,11 +7089,15 @@ pub(crate) unsafe fn bake_node_imp(
 
     // C: `ufbxi_bake_time_list times_t, times_r, times_s;` — each is filled in
     // by the `ufbxi_finalize_bake_times` call below.
-    // SAFETY (this group): `BakeTimeList` is a pointer/length pair, and an all-zero pattern
+    // SAFETY: `BakeTimeList` is a pointer/length pair, and an all-zero pattern
     // (null pointer, zero count) is a valid inhabitant of it.
-    let mut times_t: BakeTimeList = unsafe { MaybeUninit::zeroed().assume_init() };
-    let mut times_r: BakeTimeList = unsafe { MaybeUninit::zeroed().assume_init() };
-    let mut times_s: BakeTimeList = unsafe { MaybeUninit::zeroed().assume_init() };
+    let (mut times_t, mut times_r, mut times_s): (BakeTimeList, BakeTimeList, BakeTimeList) = unsafe {
+        (
+            MaybeUninit::zeroed().assume_init(),
+            MaybeUninit::zeroed().assume_init(),
+            MaybeUninit::zeroed().assume_init(),
+        )
+    };
 
     // Translation
     let mut resample_translation: bool = false;
@@ -7311,11 +7316,15 @@ pub(crate) unsafe fn bake_node_imp(
     unsafe { finalize_bake_times(bc, &raw mut times_s) }?;
 
     // C: `ufbx_baked_vec3_list keys_t; ufbx_baked_quat_list keys_r; ufbx_baked_vec3_list keys_s;`
-    // SAFETY (this group): these lists are pointer/length pairs, and an all-zero pattern
+    // SAFETY: these lists are pointer/length pairs, and an all-zero pattern
     // (null pointer, zero count) is a valid inhabitant of each.
-    let mut keys_t: List<BakedVec3> = unsafe { MaybeUninit::zeroed().assume_init() };
-    let mut keys_r: List<BakedQuat> = unsafe { MaybeUninit::zeroed().assume_init() };
-    let mut keys_s: List<BakedVec3> = unsafe { MaybeUninit::zeroed().assume_init() };
+    let (mut keys_t, mut keys_r, mut keys_s): (List<BakedVec3>, List<BakedQuat>, List<BakedVec3>) = unsafe {
+        (
+            MaybeUninit::zeroed().assume_init(),
+            MaybeUninit::zeroed().assume_init(),
+            MaybeUninit::zeroed().assume_init(),
+        )
+    };
 
     keys_t.count = times_t.count;
     keys_t.data = bc.tmp_prop_view().push::<BakedVec3>(keys_t.count);
@@ -7484,35 +7493,29 @@ pub(crate) unsafe fn bake_node_imp(
         (*baked_node).element_id = (*node).element.element_id;
         (*baked_node).typed_id = (*node).element.typed_id;
     }
-    // SAFETY: the two projections address the pushed baked node's own key list
-    // and constant flag, and `keys_t` describes the live run of `ix_t` written
-    // keys pushed onto `bc.tmp_prop`.
+    // SAFETY: each pair of projections addresses the pushed baked node's own key
+    // list and constant flag, and `keys_t`/`keys_r`/`keys_s` describe the live
+    // runs of `ix_t`/`ix_r`/`ix_s` written keys pushed onto `bc.tmp_prop`.
     unsafe {
         bake_postprocess_vec3(
             bc,
             &raw mut (*baked_node).translation_keys,
             &raw mut (*baked_node).constant_translation,
             keys_t,
-        )
-    }?;
-    // SAFETY: as above, for the baked node's rotation fields and `keys_r`.
-    unsafe {
+        )?;
         bake_postprocess_quat(
             bc,
             &raw mut (*baked_node).rotation_keys,
             &raw mut (*baked_node).constant_rotation,
             keys_r,
-        )
-    }?;
-    // SAFETY: as above, for the baked node's scale fields and `keys_s`.
-    unsafe {
+        )?;
         bake_postprocess_vec3(
             bc,
             &raw mut (*baked_node).scale_keys,
             &raw mut (*baked_node).constant_scale,
             keys_s,
-        )
-    }?;
+        )?;
+    }
 
     // SAFETY: `node` is a live scene node, so its `typed_id` indexes
     // `bc.baked_nodes()`, which `bake_anim` sizes with one slot per scene node.
@@ -7743,18 +7746,16 @@ pub(crate) unsafe fn bake_anim_prop(
 
     // SAFETY: `baked_prop` is the non-null (checked) zeroed `ufbx_baked_prop`
     // just pushed onto `bc.tmp_props`; `prop_name` is NUL-terminated, so
-    // `strlen` stays inside it.
-    unsafe { (*baked_prop).name.length = strlen(prop_name) };
-    // SAFETY: as above for `baked_prop`; `prop_name` is NUL-terminated with the
-    // length just measured, so the `length + 1` bytes `push_copy` reads are its
-    // own bytes plus the terminator, and `bc.result` is `bc`'s own buffer.
+    // `strlen` stays inside it and the `length + 1` bytes `push_copy` reads are
+    // its own bytes plus the terminator; `bc.result` is `bc`'s own buffer.
     unsafe {
+        (*baked_prop).name.length = strlen(prop_name);
         (*baked_prop).name.data = push_copy::<u8>(
             bc.result_mut_ptr(),
             (*baked_prop).name.length + 1,
             prop_name,
-        )
-    };
+        );
+    }
     ufbxi_check_err!(
         bc.error_view(),
         // SAFETY: `baked_prop` is the live pushed prop, just written.
@@ -7791,12 +7792,14 @@ pub(crate) unsafe fn bake_element(
     // SAFETY: `bc.scene()` is the source `ufbx_scene` `bake_anim_imp` stored into
     // `bc`, live for the bake; this `unsafe fn` requires `element_id` to be one
     // of that scene's element ids, so the slot is in bounds of `elements` and
-    // holds a live element pointer.
-    let element: *mut Element =
-        unsafe { *((*bc.scene()).elements.data as *const *mut Element).add(element_id as usize) };
-    // SAFETY (this condition): `element` is that live scene element.
-    if unsafe { (*element).type_ } as u32 == ElementType::Node as u32
-        && !bc.opts_view().skip_node_transforms()
+    // holds a stored `*mut Element` into the scene's own element buffer, which
+    // carries write-capable provenance for a `Mut` view.
+    let element: &View<Element> = unsafe {
+        View::<Element>::from_ptr(
+            *((*bc.scene()).elements.data as *const *mut Element).add(element_id as usize),
+        )
+    };
+    if element.type_() as u32 == ElementType::Node as u32 && !bc.opts_view().skip_node_transforms()
     {
         // SAFETY: `element_id`, `props` and `count` are this fn's own parameters,
         // forwarded unchanged under the contract `bake_node` states.
@@ -7816,8 +7819,7 @@ pub(crate) unsafe fn bake_element(
         }
 
         // Don't bake transform related props for nodes unless specifically requested
-        // SAFETY (the first operand): `element` is the live scene element.
-        if unsafe { (*element).type_ } as u32 == ElementType::Node as u32
+        if element.type_() as u32 == ElementType::Node as u32
             && !bc.opts_view().bake_transform_props()
             // SAFETY: `TRANSFORM_PROPS` is a `'static` array of interned string
             // pointers, so its base addresses exactly `len()` readable entries.
@@ -7836,7 +7838,7 @@ pub(crate) unsafe fn bake_element(
         // SAFETY: `element` is the live scene element and `prop_name` is one of
         // its interned NUL-terminated prop names; `begin < end <= count`, so
         // `props + begin` addresses `end - begin` live props of the run.
-        unsafe { bake_anim_prop(bc, element, prop_name, props.add(begin), end - begin) }?;
+        unsafe { bake_anim_prop(bc, element.get(), prop_name, props.add(begin), end - begin) }?;
         begin = end;
     }
 
@@ -7846,19 +7848,16 @@ pub(crate) unsafe fn bake_element(
         ufbxi_check_err!(bc.error_view(), !baked_elem.is_null(), "baked_elem");
 
         // SAFETY: `baked_elem` is the non-null (checked) zeroed
-        // `ufbx_baked_element` just pushed onto `bc.tmp_elements`, and `element`
-        // is the live scene element.
+        // `ufbx_baked_element` just pushed onto `bc.tmp_elements`; `bc.tmp_props`
+        // holds `num_props` items (read just above), which is what the pop moves
+        // into `bc.result`.
         unsafe {
-            (*baked_elem).element_id = (*element).element_id;
+            (*baked_elem).element_id = element.element_id();
             (*baked_elem).props.count = num_props;
-        }
-        // SAFETY: as above for `baked_elem`; `bc.tmp_props` holds `num_props`
-        // items (read just above), which is what the pop moves into `bc.result`.
-        unsafe {
             (*baked_elem).props.data = bc
                 .result_view()
-                .push_pop::<BakedProp>(bc.tmp_props_view(), num_props)
-        };
+                .push_pop::<BakedProp>(bc.tmp_props_view(), num_props);
+        }
         ufbxi_check_err!(
             bc.error_view(),
             // SAFETY: `baked_elem` is the live pushed element, just written.
@@ -7954,19 +7953,22 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
                 let prop: *mut BakeProp = bc.tmp_bake_props_view().push::<BakeProp>(1);
                 ufbxi_check_err!(bc.error_view(), !prop.is_null(), "prop");
 
-                let element: *mut Element = ref_ptr(&raw const (*anim_prop).element);
+                // The anim prop's `element` is a stored `Ref` into the scene's own
+                // element buffer, so it carries write-capable provenance.
+                let element: &View<Element> =
+                    View::<Element>::from_ptr(ref_ptr(&raw const (*anim_prop).element));
 
                 // Sort nodes by `typed_id` to make sure we process them in order.
-                if (*element).type_ as u32 == ElementType::Node as u32 {
+                if element.type_() as u32 == ElementType::Node as u32 {
                     if !bc.nodes_to_bake().is_null() {
-                        *bc.nodes_to_bake().add((*element).typed_id as usize) = true;
+                        *bc.nodes_to_bake().add(element.typed_id() as usize) = true;
                     }
-                    (*prop).sort_id = (*element).typed_id;
+                    (*prop).sort_id = element.typed_id();
                 } else {
                     (*prop).sort_id = u32::MAX;
                 }
 
-                (*prop).element_id = (*element).element_id;
+                (*prop).element_id = element.element_id();
                 (*prop).prop_name = (*anim_prop).prop_name.data;
                 (*prop).anim_value = ref_ptr(&raw const (*anim_prop).anim_value);
 
@@ -8011,9 +8013,11 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
                 if prop.prop_name() != sp::Weight.as_ptr() {
                     continue;
                 }
-                let element: *mut Element = *((*scene).elements.data as *const *mut Element)
-                    .add(prop.element_id() as usize);
-                if (*element).type_ as u32 == ElementType::AnimLayer as u32 {
+                let element: &View<Element> = View::<Element>::from_ptr(
+                    *((*scene).elements.data as *const *mut Element)
+                        .add(prop.element_id() as usize),
+                );
+                if element.type_() as u32 == ElementType::AnimLayer as u32 {
                     bake_times(bc, prop.anim_value(), true, 0)?;
                     has_weight_times = true;
                 }
@@ -8153,30 +8157,28 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     if bc.opts_view().trim_start_time() && unsafe { (*anim).time_begin } > 0.0 {
         // SAFETY: as above for `anim`; `bc.scene()` is the source `ufbx_scene`
         // the bake context was built around, live for the bake.
-        bc.set_ktime_offset(
-            -unsafe { (*anim).time_begin } * unsafe { (*bc.scene()).metadata.ktime_second } as f64,
-        );
+        bc.set_ktime_offset(unsafe {
+            -(*anim).time_begin * (*bc.scene()).metadata.ktime_second as f64
+        });
     }
 
-    // SAFETY: the error slot, temp allocator and `opts.temp_allocator` are all
-    // `bc`'s own fields, live for the `&BakeContext` borrow.
+    // SAFETY: the error slot, both allocators and the `opts.temp_allocator` /
+    // `opts.result_allocator` sources are all `bc`'s own fields, live for the
+    // `&BakeContext` borrow.
     unsafe {
         init_ator(
             bc.error_mut_ptr(),
             bc.ator_tmp_mut_ptr(),
             bc.opts_view().temp_allocator_ptr(),
             c"temp",
-        )
-    };
-    // SAFETY: as above, for `bc`'s result allocator and `opts.result_allocator`.
-    unsafe {
+        );
         init_ator(
             bc.error_mut_ptr(),
             bc.ator_result_mut_ptr(),
             bc.opts_view().result_allocator_ptr(),
             c"result",
-        )
-    };
+        );
+    }
 
     bc.result_view().set_unordered(true);
     bc.result_view().set_ator(bc.ator_result_mut_ptr());
@@ -8242,15 +8244,16 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
     // SAFETY: as above — `bc.imp()` is the live pushed header.
     unsafe { (*bc.imp()).magic = BAKED_ANIM_IMP_MAGIC };
     // C: `bc->imp->bake = bc->bake;` (struct assignment)
-    // SAFETY: the source is `bc`'s own `bake` field (live for the borrow) and
-    // the destination is the pushed header's own `bake` field; the bake context
-    // and the pushed header are distinct allocations.
-    unsafe { ptr::copy_nonoverlapping(bc.bake_mut_ptr(), &raw mut (*bc.imp()).bake, 1) };
-    // SAFETY: as above; the moved-out result allocator and buffer take ownership
-    // in the header's refcount, which `init_ref` set up.
-    unsafe { (*bc.imp()).refcount.ator = bc.ator_result() };
-    // SAFETY: as above, for the result buffer.
-    unsafe { (*bc.imp()).refcount.buf = bc.take_result() };
+    // SAFETY: the copy source is `bc`'s own `bake` field (live for the borrow)
+    // and the destination is the pushed header's own `bake` field; the bake
+    // context and the pushed header are distinct allocations. The moved-out
+    // result allocator and buffer then take ownership in that header's refcount,
+    // which `init_ref` set up.
+    unsafe {
+        ptr::copy_nonoverlapping(bc.bake_mut_ptr(), &raw mut (*bc.imp()).bake, 1);
+        (*bc.imp()).refcount.ator = bc.ator_result();
+        (*bc.imp()).refcount.buf = bc.take_result();
+    }
 
     Ok(())
 }
