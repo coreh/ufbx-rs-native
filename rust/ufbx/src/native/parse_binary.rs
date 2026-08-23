@@ -26,7 +26,7 @@ use core::mem::size_of;
 
 use crate::generated::{InflateInput, InflateRetain};
 use crate::native::allocator::{does_overflow, grow_array, ZERO_SIZE_BUFFER};
-use crate::native::buf::{push_copy, push_size, Buf, BufView};
+use crate::native::buf::{push_size, Buf, BufView};
 use crate::native::deflate::{inflate, inflate_init_retain};
 use crate::native::error::{
     ufbxi_check, ufbxi_check_err, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail, ufbxi_fail_err,
@@ -597,7 +597,7 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
                 // SAFETY: `d` is a live `String` slot; `(*d).data` is the
                 // just-read `len`-byte run, which `push_copy` copies into `buf`.
                 unsafe {
-                    (*d).data = push_copy::<u8>(buf.get(), len, (*d).data);
+                    (*d).data = buf.push_copy_raw::<u8>(len, (*d).data);
                 }
                 // SAFETY: `d` is a live `String` slot as above.
                 ufbxi_check!(uc, !unsafe { (*d).data }.is_null(), "d->data");

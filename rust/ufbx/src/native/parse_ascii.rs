@@ -43,9 +43,7 @@ use core::ffi::c_void;
 
 use crate::generated::{Exporter, WarningType};
 use crate::native::allocator::ZERO_SIZE_BUFFER;
-use crate::native::buf::{
-    pop_size, push, push_copy, push_pop_size, push_size, push_size_zero, Buf, BufView,
-};
+use crate::native::buf::{pop_size, push, push_pop_size, push_size, push_size_zero, Buf, BufView};
 use crate::native::error::{
     memchr, memcmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_check_return_msg,
     ufbxi_fail, ufbxi_fail_msg, Fail, EMPTY_CHAR,
@@ -572,7 +570,7 @@ pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Resul
             // `length` bytes (the `src` run just scanned) and `tmp_buf` is a live
             // buf, so `push_copy` copies that run into a fresh slot.
             unsafe {
-                (*span).source = push_copy::<u8>(tmp_buf.get(), length, begin);
+                (*span).source = tmp_buf.push_copy_raw::<u8>(length, begin);
             }
             // SAFETY: `span` is the live pushed slot; reads back its `source`.
             ufbxi_check!(uc, !unsafe { (*span).source }.is_null(), "span->source");
@@ -2555,8 +2553,7 @@ unsafe fn ascii_parse_node_rec(
                     // initialized local task, copied into `tmp_buf` (a live buf) and
                     // stored as the task's `data`.
                     unsafe {
-                        (*task).data =
-                            push_copy::<AsciiArrayTask>(tmp_buf.get(), 1, t) as *mut c_void;
+                        (*task).data = tmp_buf.push_copy_raw::<AsciiArrayTask>(1, t) as *mut c_void;
                     }
                     // SAFETY: `task` is the live created task; reads back its `data`.
                     ufbxi_check!(uc, !unsafe { (*task).data }.is_null(), "task->data");
@@ -2583,7 +2580,7 @@ unsafe fn ascii_parse_node_rec(
         // buf) as its `content.vals`.
         unsafe {
             (*node).value_type_mask = type_mask as u16;
-            (*node).content.vals = push_copy::<Value>(tmp_buf.get(), num_values as usize, vals);
+            (*node).content.vals = tmp_buf.push_copy_raw::<Value>(num_values as usize, vals);
         }
         // SAFETY: `node` is the live pushed slot; reads back its `content.vals`.
         ufbxi_check!(uc, !unsafe { (*node).content.vals }.is_null(), "node->vals");

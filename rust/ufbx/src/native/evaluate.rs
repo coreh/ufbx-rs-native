@@ -73,7 +73,7 @@ use crate::native::api::{evaluate_baked_vec3, evaluate_transform_flags, quat_fix
 use crate::native::api::{evaluate_props_flags, ELEMENT_TYPE_SIZE};
 #[cfg(feature = "baking")]
 use crate::native::buf::{buf_clear, pop};
-use crate::native::buf::{buf_free, push_copy, Buf, BufView};
+use crate::native::buf::{buf_free, Buf, BufView};
 use crate::native::cache::{load_external_files, scale_units, transform_to_axes};
 #[cfg(not(feature = "skinning-eval"))]
 use crate::native::error::ufbxi_report_err_msg;
@@ -3009,7 +3009,7 @@ pub(crate) unsafe fn translate_anim(ec: &EvalContext, p_anim: *mut *mut Anim) ->
     // SAFETY: `ec.result_mut_ptr()` is the eval context's own result buffer and
     // `p_anim` addresses the caller's live `ufbx_anim*` slot, whose pointee is
     // the source-scene anim `push_copy` copies one of.
-    let anim: *mut Anim = unsafe { push_copy::<Anim>(ec.result_mut_ptr(), 1, *p_anim) };
+    let anim: *mut Anim = unsafe { ec.result_view().push_copy_raw::<Anim>(1, *p_anim) };
     ufbxi_check_err!(ec.error_view(), !anim.is_null(), "anim");
     // SAFETY: `anim` is the non-null (checked just above) freshly pushed copy, so
     // its `layers` field is a live `ufbx_element_list` of source-scene layers —
@@ -3710,7 +3710,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             // SAFETY: `ec.result_mut_ptr()` is the eval context's own result
             // buffer and `shader` is the non-null (checked just above)
             // source-scene shader texture `push_copy` copies.
-            shader = unsafe { push_copy::<ShaderTexture>(ec.result_mut_ptr(), 1, shader) };
+            shader = unsafe { ec.result_view().push_copy_raw::<ShaderTexture>(1, shader) };
             ufbxi_check_err!(ec.error_view(), !shader.is_null(), "shader");
             // SAFETY: `texture` is the live destination texture, retargeted at the
             // copy just pushed.
@@ -3720,8 +3720,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             // pushed copy, so its `inputs` list still describes the source
             // scene's input run — the count/data pair `push_copy` copies from.
             let inputs: *mut ShaderTextureInput = unsafe {
-                push_copy::<ShaderTextureInput>(
-                    ec.result_mut_ptr(),
+                ec.result_view().push_copy_raw::<ShaderTextureInput>(
                     (*shader).inputs.count,
                     (*shader).inputs.data,
                 )
@@ -4785,8 +4784,7 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
         // `num_layers` entries, so the copy reads that whole caller run into a
         // fresh push on ac's own result buf.
         unsafe {
-            (*anim).override_layer_weights.data = push_copy::<Real>(
-                ac.result_mut_ptr(),
+            (*anim).override_layer_weights.data = ac.result_view().push_copy_raw::<Real>(
                 num_layers,
                 ac.opts_view().override_layer_weights_view().data(),
             );
@@ -4970,8 +4968,7 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
         // run into a fresh push of the same length on ac's own result buf.
         unsafe {
             (*anim).transform_overrides.count = ac.opts_view().transform_overrides_view().count();
-            (*anim).transform_overrides.data = push_copy::<TransformOverride>(
-                ac.result_mut_ptr(),
+            (*anim).transform_overrides.data = ac.result_view().push_copy_raw::<TransformOverride>(
                 (*anim).transform_overrides.count,
                 ac.opts_view().transform_overrides_view().data(),
             );
@@ -6197,9 +6194,7 @@ pub(crate) unsafe fn finalize_bake_times(
             // `bc.layer_weight_times` is `bc`'s own list, whose base addresses
             // exactly the `count` elements copied from.
             !unsafe {
-                push_copy::<BakeTime>(
-                    bc.tmp_times_mut_ptr(),
-                    bc.layer_weight_times_view().count(),
+                bc.tmp_times_view().push_copy_raw::<BakeTime>(bc.layer_weight_times_view().count(),
                     bc.layer_weight_times_view().data(),
                 )
             }
@@ -6664,7 +6659,7 @@ pub(crate) unsafe fn bake_postprocess_vec3(
     // which is the run `push_copy` reads, and `bc.result` is `bc`'s own buffer.
     unsafe {
         (*p_dst).count = src.count;
-        (*p_dst).data = push_copy::<BakedVec3>(bc.result_mut_ptr(), src.count, data);
+        (*p_dst).data = bc.result_view().push_copy_raw::<BakedVec3>(src.count, data);
     }
     ufbxi_check_err!(
         bc.error_view(),
@@ -6851,7 +6846,7 @@ pub(crate) unsafe fn bake_postprocess_quat(
     // which is the run `push_copy` reads, and `bc.result` is `bc`'s own buffer.
     unsafe {
         (*p_dst).count = src.count;
-        (*p_dst).data = push_copy::<BakedQuat>(bc.result_mut_ptr(), src.count, data);
+        (*p_dst).data = bc.result_view().push_copy_raw::<BakedQuat>(src.count, data);
     }
     ufbxi_check_err!(
         bc.error_view(),
@@ -7477,9 +7472,7 @@ pub(crate) unsafe fn bake_node_imp(
                     // projection addresses the live child's own `element_id`,
                     // the single `uint32_t` copied from.
                     !unsafe {
-                        push_copy::<u32>(
-                            bc.tmp_bake_stack_mut_ptr(),
-                            1,
+                        bc.tmp_bake_stack_view().push_copy_raw::<u32>(1,
                             &raw const (*child).element.element_id,
                         )
                     }
@@ -7539,9 +7532,7 @@ pub(crate) unsafe fn bake_node_imp(
                         // the projection addresses the live helper's own
                         // `element_id`, the single `uint32_t` copied from.
                         !unsafe {
-                            push_copy::<u32>(
-                                bc.tmp_bake_stack_mut_ptr(),
-                                1,
+                            bc.tmp_bake_stack_view().push_copy_raw::<u32>(1,
                                 &raw const (*child_scale_helper).element.element_id,
                             )
                         }
@@ -7676,11 +7667,9 @@ pub(crate) unsafe fn bake_anim_prop(
     // its own bytes plus the terminator; `bc.result` is `bc`'s own buffer.
     unsafe {
         (*baked_prop).name.length = strlen(prop_name);
-        (*baked_prop).name.data = push_copy::<u8>(
-            bc.result_mut_ptr(),
-            (*baked_prop).name.length + 1,
-            prop_name,
-        );
+        (*baked_prop).name.data = bc
+            .result_view()
+            .push_copy_raw::<u8>((*baked_prop).name.length + 1, prop_name);
     }
     ufbxi_check_err!(
         bc.error_view(),
@@ -7970,7 +7959,8 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
 
             bc.layer_weight_times_view().set_count(weight_times.count);
             bc.layer_weight_times_view().set_data(unsafe {
-                push_copy::<BakeTime>(bc.tmp_mut_ptr(), weight_times.count, weight_times.data)
+                bc.tmp_view()
+                    .push_copy_raw::<BakeTime>(weight_times.count, weight_times.data)
             });
             ufbxi_check_err!(
                 bc.error_view(),

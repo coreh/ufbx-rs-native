@@ -27,7 +27,7 @@ use crate::native::api::{
     topo_next_vertex_edge, topo_prev_vertex_edge, ZERO_VEC3,
 };
 #[cfg(feature = "subdivision")]
-use crate::native::buf::{buf_free, push_copy, push_size, Buf};
+use crate::native::buf::{buf_free, push_size, Buf};
 #[cfg(feature = "subdivision")]
 use crate::native::error::{
     clear_error, fix_error_type, memcmp, ufbxi_check_err, ufbxi_check_return_err,
@@ -867,8 +867,10 @@ pub(crate) unsafe extern "C" fn subdivide_sum_vertex_weights(
     sc.set_total_weights(sc.total_weights().wrapping_add(num_weights));
     // SAFETY: `tmp_mut_ptr()` is `sc`'s own live scratch `Buf`; `tmp_weights`
     // holds `num_weights` live `SubdivisionWeight` entries to copy from.
-    let weights: *mut SubdivisionWeight =
-        unsafe { push_copy::<SubdivisionWeight>(sc.tmp_mut_ptr(), num_weights, tmp_weights) };
+    let weights: *mut SubdivisionWeight = unsafe {
+        sc.tmp_view()
+            .push_copy_raw::<SubdivisionWeight>(num_weights, tmp_weights)
+    };
     // C: `ufbxi_check_err(&sc->error, weights);` — this function returns `int`,
     // so the C macro's `return 0` is a plain 0 here.
     ufbxi_check_return_err!(sc.error_view(), !weights.is_null(), 0, "weights");
@@ -2343,7 +2345,8 @@ pub(crate) unsafe fn subdivide_mesh_level(
     // SAFETY: `uv_sets` describes `result`'s live UV-set array, copied into
     // `sc`'s result arena via `push_copy`.
     uv_sets.set_data(unsafe {
-        push_copy::<UvSet>(sc.result_mut_ptr(), uv_sets.count(), uv_sets.data())
+        sc.result_view()
+            .push_copy_raw::<UvSet>(uv_sets.count(), uv_sets.data())
     });
     ufbxi_check_err!(
         sc.error_view(),
@@ -2354,7 +2357,8 @@ pub(crate) unsafe fn subdivide_mesh_level(
     // SAFETY: `color_sets` describes `result`'s live color-set array, copied
     // into `sc`'s result arena via `push_copy`.
     color_sets.set_data(unsafe {
-        push_copy::<ColorSet>(sc.result_mut_ptr(), color_sets.count(), color_sets.data())
+        sc.result_view()
+            .push_copy_raw::<ColorSet>(color_sets.count(), color_sets.data())
     });
     ufbxi_check_err!(
         sc.error_view(),

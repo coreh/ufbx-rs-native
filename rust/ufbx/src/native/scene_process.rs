@@ -219,7 +219,7 @@ use crate::native::api::{
     quat_rotate_vec3, transform_direction, transform_position, transform_to_matrix, EMPTY_BLOB,
     EMPTY_STRING, IDENTITY_MATRIX, IDENTITY_QUAT, IDENTITY_TRANSFORM, ZERO_VEC3,
 };
-use crate::native::buf::{buf_clear, buf_free, pop, push_copy, BufView};
+use crate::native::buf::{buf_clear, buf_free, pop, BufView};
 use crate::native::error::{
     memcmp, strcmp, strlen, ufbxi_check, ufbxi_check_err, ufbxi_check_msg, ufbxi_snprintf, Fail,
     EMPTY_CHAR,
@@ -1693,13 +1693,12 @@ pub(crate) fn resolve_connections(uc: &Context) -> Result<(), Fail> {
     // result buffer into a second run in that same buffer, then sorts both runs
     // in place with their own counts.
     unsafe {
-        uc.scene_view()
-            .connections_dst_view()
-            .set_data(push_copy::<Connection>(
-                uc.result_mut_ptr(),
+        uc.scene_view().connections_dst_view().set_data(
+            uc.result_view().push_copy_raw::<Connection>(
                 uc.scene_view().connections_src_view().count(),
                 uc.scene_view().connections_src_view().data(),
-            ));
+            ),
+        );
         ufbxi_check!(
             uc,
             !uc.scene_view().connections_dst_view().data().is_null(),
@@ -1846,9 +1845,7 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
                         // synthetic property for the animated property.
                         ufbxi_check!(
                             uc,
-                            !push_copy::<Prop>(
-                                uc.tmp_stack_mut_ptr(),
-                                to_size(prop.offset_from(copy_start)),
+                            !uc.tmp_stack_view().push_copy_raw::<Prop>(to_size(prop.offset_from(copy_start)),
                                 copy_start,
                             )
                             .is_null(),
@@ -1927,9 +1924,7 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
                         (*elem).props.props.count.wrapping_add(num_synthetic);
                     ufbxi_check!(
                         uc,
-                        !push_copy::<Prop>(
-                            uc.tmp_stack_mut_ptr(),
-                            to_size(prop_end.offset_from(copy_start)),
+                        !uc.tmp_stack_view().push_copy_raw::<Prop>(to_size(prop_end.offset_from(copy_start)),
                             copy_start,
                         )
                         .is_null(),
@@ -2709,9 +2704,7 @@ pub(crate) unsafe fn fetch_deformers(
                     // pointer-sized value, reinterpreted as the `*mut Element` it
                     // holds.
                     !unsafe {
-                        push_copy::<*mut Element>(
-                            uc.tmp_stack_mut_ptr(),
-                            1,
+                        uc.tmp_stack_view().push_copy_raw::<*mut Element>(1,
                             &(*conn).src as *const Ref<Element> as *const *mut Element,
                         )
                     }
@@ -5656,11 +5649,9 @@ pub(crate) fn finalize_shader_texture<'a>(
     // into uc's own result buffer, then records the fresh run on the texture's
     // own shader.
     unsafe {
-        (*shader).inputs.data = push_copy::<ShaderTextureInput>(
-            uc.result_mut_ptr(),
-            (*shader).inputs.count,
-            (*shader).inputs.data,
-        );
+        (*shader).inputs.data = uc
+            .result_view()
+            .push_copy_raw::<ShaderTextureInput>((*shader).inputs.count, (*shader).inputs.data);
         ufbxi_check!(uc, !(*shader).inputs.data.is_null(), "shader->inputs.data");
 
         (*texture).shader = opt_ref(shader);
@@ -6240,9 +6231,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
     unsafe {
         ufbxi_check!(
             uc,
-            !push_copy::<*mut Texture>(
-                uc.tmp_stack_mut_ptr(),
-                num_stack_textures,
+            !uc.tmp_stack_view().push_copy_raw::<*mut Texture>(num_stack_textures,
                 uc.scene_view().textures_view().data() as *const *mut Texture,
             )
             .is_null(),
@@ -6456,9 +6445,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                 while layer != layer_end {
                     ufbxi_check!(
                         uc,
-                        !push_copy::<*mut Texture>(
-                            uc.tmp_stack_mut_ptr(),
-                            1,
+                        !uc.tmp_stack_view().push_copy_raw::<*mut Texture>(1,
                             &(*layer).texture as *const Ref<Texture> as *const *mut Texture,
                         )
                         .is_null(),
@@ -6477,9 +6464,7 @@ pub(crate) fn fetch_file_textures(uc: &Context) -> Result<(), Fail> {
                         if !opt_ptr(&(*input).texture).is_null() {
                             ufbxi_check!(
                                 uc,
-                                !push_copy::<*mut Texture>(
-                                    uc.tmp_stack_mut_ptr(),
-                                    1,
+                                !uc.tmp_stack_view().push_copy_raw::<*mut Texture>(1,
                                     &(*input).texture as *const Option<Ref<Texture>>
                                         as *const *mut Texture,
                                 )
@@ -6670,7 +6655,8 @@ pub(crate) unsafe fn flip_attrib_winding(
         // `indices`' `data`/`count` describe the consecutive-index run being
         // copied.
         indices.set_data(unsafe {
-            push_copy::<u32>(uc.result_mut_ptr(), indices.count(), indices.data())
+            uc.result_view()
+                .push_copy_raw::<u32>(indices.count(), indices.data())
         });
         ufbxi_check!(uc, !indices.data().is_null(), "indices->data");
         // The push above is the fresh non-null result-arena run.
@@ -8370,9 +8356,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         // stack, and `&raw const (*node).attrib` addresses the live
                         // node's own single element-pointer field.
                         !unsafe {
-                            push_copy::<*mut Element>(
-                                uc.tmp_stack_mut_ptr(),
-                                1,
+                            uc.tmp_stack_view().push_copy_raw::<*mut Element>(1,
                                 &raw const (*node).attrib as *const *mut Element,
                             )
                         }
@@ -9130,8 +9114,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             // buffer, and `full_weights`'s `count`/`data` describe
                             // the weight run being copied.
                             unsafe {
-                                (*full_weights).data = push_copy::<Real>(
-                                    uc.result_mut_ptr(),
+                                (*full_weights).data = uc.result_view().push_copy_raw::<Real>(
                                     (*full_weights).count,
                                     (*full_weights).data,
                                 )

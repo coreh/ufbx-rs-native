@@ -38,7 +38,7 @@ use crate::native::allocator::{free, grow_array};
 #[cfg(feature = "obj")]
 use crate::native::api::EMPTY_STRING;
 #[cfg(feature = "obj")]
-use crate::native::buf::{buf_free, pop, push_copy, BufView};
+use crate::native::buf::{buf_free, pop, BufView};
 use crate::native::error::Fail;
 #[cfg(feature = "obj")]
 use crate::native::error::{
@@ -1865,8 +1865,9 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                         if !all_valid {
                             let mut indices: *mut u32 =
                                 fbx_mesh.vertex_color().indices_view().data() as *mut u32;
-                            indices =
-                                push_copy::<u32>(uc.result_mut_ptr(), mesh.num_indices(), indices);
+                            indices = uc
+                                .result_view()
+                                .push_copy_raw::<u32>(mesh.num_indices(), indices);
                             ufbxi_check!(uc, !indices.is_null(), "indices");
 
                             let num_values: usize = fbx_mesh.vertex_color().values_view().count();
@@ -2067,7 +2068,7 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             let mut lib: String = obj_span_token(uc, 1, usize::MAX);
             // SAFETY: copies the span (plus its terminator, still inside the
             // line window) onto uc's own tmp arena.
-            lib.data = unsafe { push_copy::<u8>(uc.tmp_mut_ptr(), lib.length + 1, lib.data) };
+            lib.data = unsafe { uc.tmp_view().push_copy_raw::<u8>(lib.length + 1, lib.data) };
             ufbxi_check!(uc, !lib.data.is_null(), "lib.data");
             uc.obj().mtllib_relative_path_view().set_data(lib.data);
             uc.obj().mtllib_relative_path_view().set_size(lib.length);
@@ -2571,8 +2572,10 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                 ufbxi_analysis_assert!(path.length < usize::MAX - 1);
                 // SAFETY: copies the filename (with its terminator) onto uc's
                 // own tmp arena.
-                let copy: *mut u8 =
-                    unsafe { push_copy::<u8>(uc.tmp_mut_ptr(), path.length + 1, path.data) };
+                let copy: *mut u8 = unsafe {
+                    uc.tmp_view()
+                        .push_copy_raw::<u8>(path.length + 1, path.data)
+                };
                 ufbxi_check!(uc, !copy.is_null(), "copy");
                 // SAFETY: `copy` is the fresh non-null `path.length + 1` byte
                 // run and `path.length > 4`, so the three rewritten extension

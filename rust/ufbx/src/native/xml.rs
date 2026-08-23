@@ -16,7 +16,7 @@ use core::ffi::{c_void, CStr};
 
 use crate::generated::Error;
 use crate::native::allocator::{free, grow_array, Allocator};
-use crate::native::buf::{buf_free, push_copy, Buf};
+use crate::native::buf::{buf_free, Buf};
 use crate::native::error::{
     c_strcmp, strcmp, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_fail_err, Fail, EMPTY_CHAR,
 };
@@ -666,7 +666,7 @@ pub(crate) unsafe fn xml_skip_until_string(
         unsafe { (*dst).length = xc.tok_len() - 1 };
         // SAFETY: `dst` as above; `push_copy` copies `tok_len` bytes out of xc's
         // own token buffer, which holds exactly that many, into xc's result buf.
-        unsafe { (*dst).data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok()) };
+        unsafe { (*dst).data = xc.result_view().push_copy_raw::<u8>(xc.tok_len(), xc.tok()) };
         ufbxi_check_err!(
             xc.error_view(),
             // SAFETY: reading the pointer field just stored through `dst`.
@@ -802,7 +802,7 @@ pub(crate) unsafe fn xml_read_until(
         unsafe { (*dst).length = xc.tok_len() - 1 };
         // SAFETY: `dst` as above; `push_copy` copies `tok_len` bytes out of xc's
         // own token buffer, which holds exactly that many, into xc's result buf.
-        unsafe { (*dst).data = push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok()) };
+        unsafe { (*dst).data = xc.result_view().push_copy_raw::<u8>(xc.tok_len(), xc.tok()) };
         ufbxi_check_err!(
             xc.error_view(),
             // SAFETY: reading the pointer field just stored through `dst`.
@@ -913,7 +913,7 @@ unsafe fn xml_parse_tag_rec(
                 // SAFETY: `push_copy` copies the `tok_len` bytes the token
                 // buffer holds into xc's result buf.
                 tag.set_text_data(unsafe {
-                    push_copy::<u8>(xc.result_mut_ptr(), xc.tok_len(), xc.tok())
+                    xc.result_view().push_copy_raw::<u8>(xc.tok_len(), xc.tok())
                 });
                 ufbxi_check_err!(
                     xc.error_view(),

@@ -111,7 +111,7 @@ use crate::native::api::{
     find_int_len as api_find_int_len, find_prop as api_find_prop, find_prop_len,
     transform_to_matrix, EMPTY_BLOB, EMPTY_STRING, IDENTITY_MATRIX, IDENTITY_TRANSFORM,
 };
-use crate::native::buf::{buf_clear, pop, push_copy, push_copy_fast, push_size, BufView};
+use crate::native::buf::{buf_clear, pop, push_size, BufView};
 use crate::native::error::{
     memchr, memcmp, strcmp, strlen, strncmp, ufbxi_check, ufbxi_check_err, ufbxi_check_msg,
     ufbxi_check_return, ufbxi_fail, ufbxi_fail_msg, ufbxi_fmt_err_info, Fail, EMPTY_CHAR,
@@ -1604,7 +1604,7 @@ pub(crate) unsafe fn push_synthetic_element_size(
         uc,
         // SAFETY: the buffer is uc's own `tmp_element_fbx_ids` and `p_fbx_id`
         // is the caller's slot, holding the one `u64` copied from it.
-        !unsafe { push_copy_fast::<u64>(uc.tmp_element_fbx_ids_mut_ptr(), 1, p_fbx_id) }.is_null(),
+        !unsafe { uc.tmp_element_fbx_ids_view().push_copy_fast_raw::<u64>(1, p_fbx_id) }.is_null(),
         core::ptr::null_mut(),
         "((uint64_t*)ufbxi_push_size_copy_fast((&uc->tmp_element_fbx_ids), sizeof(uint64_t), (1), (p_fbx_id)))"
     );
@@ -2376,7 +2376,7 @@ pub(crate) unsafe fn check_indices(
             if !owns_indices {
                 // SAFETY: the buffer is uc's own result buffer and `indices`
                 // spans the `num_indices` `u32`s being copied out of it.
-                indices = unsafe { push_copy::<u32>(uc.result_mut_ptr(), num_indices, indices) };
+                indices = unsafe { uc.result_view().push_copy_raw::<u32>(num_indices, indices) };
                 ufbxi_check!(uc, !indices.is_null(), "indices");
                 owns_indices = true;
             }
@@ -4123,8 +4123,10 @@ pub(crate) unsafe fn read_mesh(
         // SAFETY: `uc.result_mut_ptr()` is uc's own live result buf, and
         // `index_data` spans `mesh->num_indices` `u32`s (it is the `'i'` array's
         // payload, or null when `num_indices` is 0).
-        index_data =
-            unsafe { push_copy::<u32>(uc.result_mut_ptr(), mesh.num_indices(), index_data) };
+        index_data = unsafe {
+            uc.result_view()
+                .push_copy_raw::<u32>(mesh.num_indices(), index_data)
+        };
         ufbxi_check!(uc, !index_data.is_null(), "index_data");
     }
 
@@ -7563,7 +7565,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
             // `src < end` bounds `ps.add(src)`, one readable `ufbx_prop` to copy.
             ufbxi_check!(
                 uc,
-                !unsafe { push_copy::<Prop>(uc.tmp_stack_mut_ptr(), 1, ps.add(src)) }.is_null(),
+                !unsafe { uc.tmp_stack_view().push_copy_raw::<Prop>(1, ps.add(src)) }.is_null(),
                 // C-parity: verbatim post-expansion `#cond` text (see the C11
                 // 6.10.3.1 note in `sort_shader_prop_bindings`).
                 "((ufbx_prop*)ufbxi_push_size_copy((&uc->tmp_stack), sizeof(ufbx_prop), (1), (&ps[src])))"
@@ -10554,7 +10556,10 @@ pub(crate) unsafe fn read_legacy_mesh(
     if uc.opts_view().retain_dom() {
         // SAFETY: `uc.result_mut_ptr()` is uc's own live `result` buf and
         // `index_data` spans the `(*indices).size` `uint32_t` values copied.
-        index_data = unsafe { push_copy::<u32>(uc.result_mut_ptr(), (*indices).size, index_data) };
+        index_data = unsafe {
+            uc.result_view()
+                .push_copy_raw::<u32>((*indices).size, index_data)
+        };
         ufbxi_check!(uc, !index_data.is_null(), "index_data");
     }
 

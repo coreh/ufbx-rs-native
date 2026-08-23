@@ -166,6 +166,28 @@ impl BufView {
     pub(crate) fn push_copy_fast_ref<T>(&self, src: &T) -> *mut T {
         unsafe { push_copy_fast::<T>(self.get(), 1, src) }
     }
+    /// Copy-in from a RAW source run (arena pointers reached by pointer
+    /// arithmetic, where no borrow exists to carry validity) — the buf-side
+    /// vouch lives in the view like the rest of the family; only the
+    /// source-run validity stays on the caller.
+    ///
+    /// # Safety
+    /// `src` must be readable for `n` `T`s, and the run must not overlap the
+    /// chunk memory the push writes.
+    #[inline(always)]
+    #[must_use]
+    pub(crate) unsafe fn push_copy_raw<T>(&self, n: usize, src: *const T) -> *mut T {
+        // SAFETY: buf side per the view invariant (family comment above); the
+        // source run is the caller's vouch (fn contract).
+        unsafe { push_copy::<T>(self.get(), n, src) }
+    }
+    /// `push_copy_fast` flavor of [`Self::push_copy_raw`] (same contract).
+    #[inline(always)]
+    #[must_use]
+    pub(crate) unsafe fn push_copy_fast_raw<T>(&self, n: usize, src: *const T) -> *mut T {
+        // SAFETY: as for `push_copy_raw`.
+        unsafe { push_copy_fast::<T>(self.get(), n, src) }
+    }
     // Two-buf transfer: pop `n` items off the top of `src` and push them onto
     // `self`. The bufs must be distinct (C call sites always pair
     // result ← tmp_stack); same-buf transfer would interleave header updates.
