@@ -227,7 +227,7 @@ use crate::native::error::{
 use crate::native::hash::{hash64, hash_ptr, map_find, map_insert};
 use crate::native::parse::{
     find_enum, find_int, find_prop, find_prop_with_key, find_real, find_vec3, get_element_extra,
-    get_name_key_raw, is_node_property_name, is_quat_identity, is_transform_identity, is_vec3_zero,
+    get_name_key, is_node_property_name, is_quat_identity, is_transform_identity, is_vec3_zero,
     is_vec4_zero, matrix_all_zero, name_key_less, Context, FbxAttrEntry, FbxIdEntry, FileContent,
     MeshExtra, PropView, PropsView, Refcount, SceneMetadataView, SceneSettingsView, SceneView,
     TextureExtra, TextureFileEntry, TmpBonePose, TmpConnection, TmpMaterialTexture, TmpMeshTexture,
@@ -1841,7 +1841,7 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
                         conn_dst = conn_dst.add(1);
                     }
 
-                    let key: u32 = get_name_key_raw(name.data, name.length);
+                    let key: u32 = get_name_key(name.as_bytes());
                     while prop != prop_end && name_key_less(prop, name.data, name.length, key) {
                         prop = prop.add(1);
                     }
@@ -8275,9 +8275,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         }
         // SAFETY: as above; `elem`'s name is an interned pool string, so
         // `name.data` addresses `name.length` readable bytes.
-        unsafe {
-            (*name_elem)._internal_key = get_name_key_raw((*elem).name.data, (*elem).name.length)
-        };
+        unsafe { (*name_elem)._internal_key = get_name_key((*elem).name.as_bytes()) };
         // SAFETY: as above; `elem` is non-null, being a live element header.
         unsafe { (*name_elem).element = Ref::from_ptr(elem) };
     }
@@ -9838,8 +9836,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     // SAFETY: as above; `ac`'s `dst_prop` is an interned pool
                     // string, so its `data` addresses `length` readable bytes.
                     unsafe {
-                        (*aprop)._internal_key =
-                            get_name_key_raw((*ac).dst_prop.data, (*ac).dst_prop.length);
+                        (*aprop)._internal_key = get_name_key((*ac).dst_prop.as_bytes());
                         (*aprop).prop_name = (*ac).dst_prop;
                     }
                     num_anim_props += 1;

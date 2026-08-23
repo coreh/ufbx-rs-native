@@ -127,8 +127,8 @@ use crate::native::nurbs::{
     TessellateSurfaceContext,
 };
 use crate::native::parse::{
-    find_enum, find_real as ufbxi_find_real, get_name_key, get_name_key_raw, Context, ImpHandle,
-    InnerContext, MeshImp, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
+    find_enum, find_real as ufbxi_find_real, get_name_key, Context, ImpHandle, InnerContext,
+    MeshImp, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
 };
 use crate::native::platform::{
     add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
@@ -144,7 +144,7 @@ use crate::native::scene_process::{
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{
     add3, concat_str_cmp, cross3, get_concat_key, length3, lerp3, mul3, normalize3, safe_string,
-    str_equal, str_equal_raw, str_less, sub3, DEG_TO_RAD_DOUBLE, DPI, ONE_VEC3, RAD_TO_DEG_DOUBLE,
+    str_equal, str_less, sub3, DEG_TO_RAD_DOUBLE, DPI, ONE_VEC3, RAD_TO_DEG_DOUBLE,
 };
 // `ufbxi_dot3` is only reached from the `#if UFBXI_FEATURE_TRIANGULATION` arm of
 // `ufbx_catch_triangulate_face`.
@@ -1628,7 +1628,8 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
         result.name.data = name;
         result.name.length = name_len;
         // SAFETY: `name`/`name_len` describe the caller's key bytes.
-        result._internal_key = unsafe { get_name_key_raw(name, name_len) };
+        result._internal_key =
+            unsafe { get_name_key(crate::prelude::slice_from_ptr(name, name_len)) };
         result.flags = PropFlags::NOT_FOUND;
         result.value_str.data = EMPTY_CHAR.as_ptr();
         result.value_str.length = 0;
@@ -6098,12 +6099,10 @@ impl<M: Mode> View<DomValue, M> {
 }
 
 // ufbx.c:32957-32964 `ufbx_dom_find_len`
-pub(crate) unsafe fn dom_find_len<M: Mode>(
-    parent: &View<DomNode, M>,
-    name: *const u8,
-    name_len: usize,
-) -> Option<&View<DomNode, M>> {
-    let ref_: String = safe_string(name, name_len);
+pub(crate) unsafe fn dom_find_len<'a, M: Mode>(
+    parent: &'a View<DomNode, M>,
+    name: &[u8],
+) -> Option<&'a View<DomNode, M>> {
     // C: `ufbxi_for_ptr_list(ufbx_dom_node, p_child, parent->children)` — the
     // `RefList` payload is a flat array of `ufbx_dom_node*`.
     let mut p_child: *mut *mut DomNode = parent.children_data();
@@ -6111,14 +6110,13 @@ pub(crate) unsafe fn dom_find_len<M: Mode>(
     // and length, so `.add(count)` yields the one-past-end pointer.
     let p_child_end: *mut *mut DomNode = unsafe { p_child.add(parent.children_count()) };
     while p_child != p_child_end {
+        // Mode-generic mint from the STORED child pointer (arena write
+        // provenance), correlated to `parent`'s borrow.
         // SAFETY: `p_child` is in `[data, end)` of the child pointer list, so it
-        // addresses a live `*mut DomNode` whose pointee's own `name` is read;
-        // `str_equal` compares that interned string against `ref_`.
-        if unsafe { str_equal_raw((**p_child).name, ref_) } {
-            // Mode-generic mint from the STORED child pointer (arena write
-            // provenance), correlated to `parent`'s borrow.
-            // SAFETY: `*p_child` is a live arena `DomNode` pointer.
-            return Some(unsafe { View::<DomNode, M>::mint(*p_child) });
+        // addresses a live `*mut DomNode` pointer.
+        let child: &View<DomNode, M> = unsafe { View::<DomNode, M>::mint(*p_child) };
+        if str_equal(child.name_view().bytes(), name) {
+            return Some(child);
         }
         // SAFETY: `p_child` is before `p_child_end`, so stepping one element
         // stays within the child pointer list (up to the one-past-end bound).
@@ -7352,8 +7350,9 @@ pub(crate) unsafe fn dom_find<M: Mode>(
     name: *const u8,
 ) -> Option<&View<DomNode, M>> {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward (with `parent`) to the `_len` impl.
-    unsafe { dom_find_len(parent, name, strlen(name)) }
+    // `strlen` measures it, and the measured run is exactly the slice minted
+    // for the `_len` impl.
+    unsafe { dom_find_len(parent, crate::prelude::slice_from_ptr(name, strlen(name))) }
 }
 
 // -- Catch API (ufbx.c:33163-33179): the non-catch wrappers that call their

@@ -545,6 +545,15 @@ impl<M: crate::native::view::Mode> crate::native::view::View<String, M> {
     pub(crate) fn length(&self) -> usize {
         unsafe { (*self.as_ptr()).length }
     }
+    /// The string's bytes, borrowed for the view's own lifetime.
+    #[inline(always)]
+    pub(crate) fn bytes(&self) -> &[u8] {
+        // SAFETY: per the mint's per-leaf discipline a viewed `String` field
+        // holds a valid `ufbx_string`: `data` addresses `length` readable
+        // bytes that stay live and unwritten while this view borrow lasts
+        // (interned pool strings are never moved or rewritten; ufbx.c:4897).
+        unsafe { slice_from_ptr(self.data(), self.length()) }
+    }
 }
 
 impl StringView {

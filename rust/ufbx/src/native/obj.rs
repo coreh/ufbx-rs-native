@@ -56,7 +56,7 @@ use crate::native::hash::{
 use crate::native::io::refill;
 #[cfg(feature = "obj")]
 use crate::native::parse::{
-    get_name_key_raw, r#match, report_progress, Context, ElementInfo, FbxIdEntry, ObjAttrib,
+    get_name_key, r#match, report_progress, Context, ElementInfo, FbxIdEntry, ObjAttrib,
     ObjFastIndices, ObjGroupEntry, ObjMesh, OBJ_NUM_ATTRIBS, OBJ_NUM_ATTRIBS_EXT,
 };
 // The `#else`-branch stubs still take `&Context`.
@@ -238,9 +238,7 @@ pub(crate) unsafe fn obj_pop_props(
     let prop_run =
         unsafe { SliceViewIter::<Prop>::from_raw_parts(props.data as *mut Prop, props.count) };
     for prop in prop_run {
-        let name: String = prop.name();
-        // SAFETY: `name` is this prop's own interned name span.
-        prop.set_internal_key(unsafe { get_name_key_raw(name.data, name.length) });
+        prop.set_internal_key(get_name_key(prop.name_view().bytes()));
 
         let mut value_str: String = prop.value_str();
         if value_str.length == 0 {
@@ -1972,7 +1970,7 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
         // tokenizer's stored token run and `cmd.data .. + length` is its span.
         let (cmd, key): (String, u32) = unsafe {
             let cmd: String = *uc.obj().tokens().add(0);
-            (cmd, get_name_key_raw(cmd.data, cmd.length))
+            (cmd, get_name_key(cmd.as_bytes()))
         };
         if key == obj_cmd1(b'v') {
             obj_parse_vertex(uc, ObjAttrib::Position, 1)?;

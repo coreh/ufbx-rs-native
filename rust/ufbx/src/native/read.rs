@@ -120,7 +120,7 @@ use crate::native::float_parse::parse_double;
 use crate::native::hash::{hash64, hash_ptr_id, map_find, map_insert, PtrId};
 use crate::native::parse::{
     array_type_size, find_array, find_child, find_child_strcmp, find_int, find_prop, find_val1,
-    find_val2, find_vec3, get_array, get_dom_node, get_name_key_c, get_name_key_raw, get_prop_type,
+    find_val2, find_vec3, get_array, get_dom_node, get_name_key, get_name_key_c, get_prop_type,
     get_val1, get_val2, get_val3, get_val4, get_val5, get_val_at, get_val_type,
     init_node_prop_names, is_node_property_name, is_vec3_one, is_vec3_zero, parse_legacy_toplevel,
     parse_toplevel, parse_toplevel_child, push_element_extra, retain_toplevel, Ascii, Context,
@@ -273,9 +273,8 @@ pub(crate) unsafe fn read_property(
     }
 
     let mut flags: u32 = 0;
-    // SAFETY: `name` was filled in by the `"SC"` fetch above, so `name.data`
-    // spans `name.length` readable bytes — `get_name_key`'s contract.
-    prop.set_internal_key(unsafe { get_name_key_raw(prop.name().data, prop.name().length) });
+    // `name` was filled in by the `"SC"` fetch above (an interned pool string).
+    prop.set_internal_key(get_name_key(prop.name_view().bytes()));
 
     // C leaves `flags_str` uninitialized; it is only read when the `'S'` fetch
     // below succeeds, which fully writes it.
@@ -1741,7 +1740,7 @@ pub(crate) unsafe fn init_synthetic_int_prop(
     // SAFETY: every caller passes a `ufbxi_*` interned property name of at
     // least 4 characters (the dev assert above guards that contract), so the
     // 4-byte key read stays inside `name`.
-    unsafe { (*dst)._internal_key = get_name_key_raw(name, 4) };
+    unsafe { (*dst)._internal_key = get_name_key(crate::prelude::slice_from_ptr(name, 4)) };
 }
 
 // ufbx.c:12465-12477 `ufbxi_init_synthetic_real_prop`
@@ -1775,7 +1774,7 @@ pub(crate) unsafe fn init_synthetic_real_prop(
     // SAFETY: every caller passes a `ufbxi_*` interned property name of at
     // least 4 characters (the dev assert above guards that contract), so the
     // 4-byte key read stays inside `name`.
-    unsafe { (*dst)._internal_key = get_name_key_raw(name, 4) };
+    unsafe { (*dst)._internal_key = get_name_key(crate::prelude::slice_from_ptr(name, 4)) };
 }
 
 // ufbx.c:12479-12491 `ufbxi_init_synthetic_vec3_prop`
@@ -1814,7 +1813,7 @@ pub(crate) unsafe fn init_synthetic_vec3_prop(
     // SAFETY: every caller passes a `ufbxi_*` interned property name of at
     // least 4 characters (the dev assert above guards that contract), so the
     // 4-byte key read stays inside `name`.
-    unsafe { (*dst)._internal_key = get_name_key_raw(name, 4) };
+    unsafe { (*dst)._internal_key = get_name_key(crate::prelude::slice_from_ptr(name, 4)) };
 }
 
 // ufbx.c:12493-12505 `ufbxi_set_own_prop_vec3_uniform`
@@ -10212,7 +10211,7 @@ pub(crate) unsafe fn read_legacy_props(
         unsafe {
             (*prop).name.data = (*legacy_prop).prop_name;
             (*prop).name.length = strlen((*legacy_prop).prop_name);
-            (*prop)._internal_key = get_name_key_raw((*prop).name.data, (*prop).name.length);
+            (*prop)._internal_key = get_name_key((*prop).name.as_bytes());
             (*prop).flags = PropFlags::from_raw(0);
             (*prop).type_ = (*legacy_prop).prop_type;
         }

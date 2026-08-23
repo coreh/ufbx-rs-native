@@ -371,6 +371,8 @@ view_accessor_structs = [
     "ufbx_material_feature_info",
     "ufbx_material_texture",
     "ufbx_shader_prop_binding",
+    "ufbx_prop_override",
+    "ufbx_dom_node",
 ]
 
 # `(struct, field)` pairs whose READ accessor is hand-written instead of
@@ -462,8 +464,7 @@ pub fn dom_find<'a>(parent: &DomNode, name: &str) -> Option<&'a DomNode> {
     let result = unsafe {
         crate::native::api::dom_find_len(
             crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(parent as *const DomNode),
-            name.as_ptr(),
-            name.len(),
+            name.as_bytes(),
         )
     };
     result.map(|node| unsafe { &*node.as_ptr() })
@@ -2203,6 +2204,18 @@ def emit_view_impls(rs: RustStruct):
                 emit(f"unsafe {{ ptr::read(&raw const (*self.as_ptr()).{field.name}) }}")
                 unindent()
                 emit("}")
+        if field.type.is_string:
+            # In-place string projection: the anchored carrier for the safe
+            # `bytes()` read (prelude.rs `View<String, M>`); the by-value read
+            # above serves whole-String copies.
+            emit("#[inline(always)]")
+            emit(f"pub(crate) fn {base}_view(&self) -> &View<String, M> {{")
+            indent()
+            emit(f"// SAFETY: in-place projection of the `{field.name}` field; liveness and")
+            emit("// `M`-adequate provenance carry over from this view's own mint.")
+            emit(f"unsafe {{ View::mint((&raw const (*self.as_ptr()).{field.name}).cast_mut()) }}")
+            unindent()
+            emit("}")
         if field.type.is_list:
             # In-place list projection for sub-field access (`.data()`,
             # `.count()`, and Mut-side sub-field writes via the ListView

@@ -8224,15 +8224,6 @@ pub(crate) fn get_name_key(name: &[u8]) -> u32 {
     key
 }
 
-// Unanchored raw projection over the anchored slice body above, for call
-// sites whose key is still a raw `(ptr, len)` pair.
-#[inline(always)]
-pub(crate) unsafe fn get_name_key_raw(name: *const u8, len: usize) -> u32 {
-    // SAFETY: the caller vouches `name` is readable for `len` bytes — the
-    // slice contract forwarded from this fn's own.
-    get_name_key(unsafe { crate::prelude::slice_from_ptr(name, len) })
-}
-
 // ufbx.c:11624-11631 `ufbxi_get_name_key_c`
 #[inline(always)]
 pub(crate) unsafe fn get_name_key_c(name: *const u8) -> u32 {

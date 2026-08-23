@@ -90,7 +90,7 @@ use crate::native::hash::{
 };
 use crate::native::obj::{mtl_load, obj_free, obj_load};
 use crate::native::parse::{
-    begin_parse, determine_format, finish_imp, get_name_key_c, get_name_key_raw, load_maps,
+    begin_parse, determine_format, finish_imp, get_name_key, get_name_key_c, load_maps,
     load_strings, Context, FinishedImp, ImpHandle, Node, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
     MIN_FILE_FORMAT_LOOKAHEAD,
 };
@@ -1566,18 +1566,19 @@ pub(crate) unsafe fn override_less_than_prop(
     prop: *const Prop,
 ) -> bool {
     // Public-boundary root: `prop` is a caller-owned `*const Prop` whose
-    // provenance can be a read-only `&Prop`, so mint a read-only `Const` view —
+    // provenance can be a read-only `&Prop`, so mint read-only `Const` views —
     // legal for any readable provenance, unlike the interior-mutable `Mut` view.
-    // This fn only reads, so the frozen tag never spans a write.
-    // SAFETY (every access in this fn): `over` and `prop` are the caller's live
-    // `ufbx_prop_override` / `ufbx_prop` — the raw-pointer contract of this
-    // `unsafe fn`.
+    // This fn only reads, so the frozen tags never span a write.
+    // SAFETY: `over` and `prop` are the caller's live `ufbx_prop_override` /
+    // `ufbx_prop` — the raw-pointer contract of this `unsafe fn`.
     let prop: &View<Prop, Const> = unsafe { View::<Prop, Const>::from_ptr(prop) };
-    if unsafe { (*over).element_id } != element_id {
-        return unsafe { (*over).element_id } < element_id;
+    // SAFETY: as above.
+    let over: &View<PropOverride, Const> = unsafe { View::<PropOverride, Const>::from_ptr(over) };
+    if over.element_id() != element_id {
+        return over.element_id() < element_id;
     }
-    if unsafe { (*over)._internal_key } != prop._internal_key() {
-        return unsafe { (*over)._internal_key } < prop._internal_key();
+    if over._internal_key() != prop._internal_key() {
+        return over._internal_key() < prop._internal_key();
     }
     // C: `return strcmp(over->prop_name.data, prop->name.data);` — the `int`
     // result converts to `bool` (nonzero == true), so ANY name difference
@@ -1587,9 +1588,7 @@ pub(crate) unsafe fn override_less_than_prop(
     // caller's raw `_len` name and need not be NUL-terminated (over-read on an
     // element_id + `_internal_key` collision). `str_cmp` reads only `min(len)`
     // bytes with the same ordering for NUL-terminated names; reconcile on sync.
-    // SAFETY: `over.prop_name` and `prop.name` are valid `String` runs of their
-    // `.length` bytes; `str_cmp` bounds both reads by those lengths.
-    unsafe { sp::str_cmp_raw((*over).prop_name, prop.name()) != 0 }
+    sp::str_cmp(over.prop_name_view().bytes(), prop.name_view().bytes()) != 0
 }
 
 // ufbx.c:25636-25641 `ufbxi_override_equals_to_prop`
@@ -1600,24 +1599,23 @@ pub(crate) unsafe fn override_equals_to_prop(
     element_id: u32,
     prop: *const Prop,
 ) -> bool {
-    // Read-only `Const` view over the caller-owned `*const Prop`, as in
+    // Read-only `Const` views over the caller-owned pointers, as in
     // `override_less_than_prop` above.
-    // SAFETY (every access in this fn): `over` and `prop` are the caller's live
-    // `ufbx_prop_override` / `ufbx_prop` — the raw-pointer contract of this
-    // `unsafe fn`.
+    // SAFETY: `over` and `prop` are the caller's live `ufbx_prop_override` /
+    // `ufbx_prop` — the raw-pointer contract of this `unsafe fn`.
     let prop: &View<Prop, Const> = unsafe { View::<Prop, Const>::from_ptr(prop) };
-    if unsafe { (*over).element_id } != element_id {
+    // SAFETY: as above.
+    let over: &View<PropOverride, Const> = unsafe { View::<PropOverride, Const>::from_ptr(over) };
+    if over.element_id() != element_id {
         return false;
     }
-    if unsafe { (*over)._internal_key } != prop._internal_key() {
+    if over._internal_key() != prop._internal_key() {
         return false;
     }
     // PORT DIVERGENCE (ufbx.c:25640): as in `override_less_than_prop` — the
     // upstream `strcmp` over-reads a non-NUL `_len` `prop.name`; use the
     // length-bounded `str_cmp` instead; reconcile once upstream lands the fix.
-    // SAFETY: `over.prop_name` and `prop.name` are valid `String` runs of their
-    // `.length` bytes; `str_cmp` bounds both reads by those lengths.
-    unsafe { sp::str_cmp_raw((*over).prop_name, prop.name()) == 0 }
+    sp::str_cmp(over.prop_name_view().bytes(), prop.name_view().bytes()) == 0
 }
 
 // ufbx.c:25643-25664 `ufbxi_find_prop_override`
@@ -4957,8 +4955,7 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
                     &raw const (*src).value_str as *const String,
                 )?;
 
-                (*dst)._internal_key =
-                    get_name_key_raw((*dst).prop_name.data, (*dst).prop_name.length);
+                (*dst)._internal_key = get_name_key((*dst).prop_name.as_bytes());
             }
         }
 

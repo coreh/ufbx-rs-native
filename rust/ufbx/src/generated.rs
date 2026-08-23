@@ -6006,8 +6006,7 @@ pub fn dom_find<'a>(parent: &DomNode, name: &str) -> Option<&'a DomNode> {
             crate::native::view::View::<DomNode, crate::native::view::Const>::from_ptr(
                 parent as *const DomNode,
             ),
-            name.as_ptr(),
-            name.len(),
+            name.as_bytes(),
         )
     };
     result.map(|node| unsafe { &*node.as_ptr() })

@@ -1902,11 +1902,10 @@ pub unsafe extern "C" fn ufbx_dom_find_len(
     // C-ABI root: mirror C's unchecked `parent` deref — mint a read-only view
     // (legal for any readable provenance) and map the correlated result to raw.
     // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // `View<_, Const>` (sound for any readable provenance) and the caller's
+    // `name`/`name_len` key-buffer contract becomes the slice mint.
     match unsafe {
-        crate::native::api::dom_find_len(crate::native::view::View::<crate::generated::DomNode, crate::native::view::Const>::from_ptr(parent), name, name_len)
+        crate::native::api::dom_find_len(crate::native::view::View::<crate::generated::DomNode, crate::native::view::Const>::from_ptr(parent), crate::prelude::slice_from_ptr(name, name_len))
     } {
         Some(node) => node.as_ptr() as *mut crate::generated::DomNode,
         None => core::ptr::null_mut(),
