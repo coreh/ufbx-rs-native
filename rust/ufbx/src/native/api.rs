@@ -2822,42 +2822,17 @@ pub(crate) unsafe fn find_prop_texture_len(material: *const Material, name: &[u8
     }
 }
 
-// ufbx.c:31425-31432 `ufbx_find_shader_prop_len`
-pub(crate) fn find_shader_prop_len<M: Mode>(
-    shader: Option<&View<Shader, M>>,
+// Shared search core of the two `ufbx_find_shader_prop*` entries below
+// (navigation/projection split: this is the one anchored search body; both
+// public fns are thin projections over the returned positions). Locates the
+// equal-range of `name` in the first binding list containing it, as the list
+// view plus `[begin, end)` — `end > begin` whenever `Some` is returned.
+#[allow(clippy::type_complexity)] // one-off internal (list view, begin, end) triple
+fn find_shader_prop_binding_range<'a, M: Mode>(
+    shader: Option<&'a View<Shader, M>>,
     name: &[u8],
-) -> String {
-    let bindings: List<ShaderPropBinding> = find_shader_prop_bindings_len(shader, name);
-    if bindings.count > 0 {
-        // SAFETY: `count > 0` here, so `bindings.data` addresses a live
-        // `ShaderPropBinding` of the viewed shader's own run (the list was
-        // formed from an in-bounds `at` projection); reading its own
-        // `material_prop` field.
-        return unsafe { (*bindings.data).material_prop };
-    }
-    EMPTY_STRING.0
-}
-
-// ufbx.c:31434-31461 `ufbx_find_shader_prop_bindings_len`
-// `name: &[u8]` carries C's `(name, name_len)` pair (see `find_prop_len`); C's
-// null-or-live shader pointer arrives as `Option<&View<_, M>>`.
-pub(crate) fn find_shader_prop_bindings_len<M: Mode>(
-    shader: Option<&View<Shader, M>>,
-    name: &[u8],
-) -> List<ShaderPropBinding> {
-    // C: `ufbx_shader_prop_binding_list bindings = { NULL, 0 };` — `List<T>`
-    // carries a private `PhantomData` marker, so the C aggregate initializer
-    // becomes a zeroed value with both public fields written (same shape as
-    // `native::scene_process::find_dst_connections`).
-    // SAFETY: an all-zero bit pattern is a valid `List<ShaderPropBinding>` (raw
-    // data pointer plus `usize` count and a zero-size `PhantomData` marker).
-    let mut bindings: List<ShaderPropBinding> = unsafe { MaybeUninit::zeroed().assume_init() };
-    bindings.data = core::ptr::null();
-    bindings.count = 0;
-
-    let Some(shader) = shader else {
-        return bindings;
-    };
+) -> Option<(&'a View<List<ShaderPropBinding>, M>, usize, usize)> {
+    let shader = shader?;
 
     // C: `ufbxi_for_ptr_list(ufbx_shader_binding, p_bind, shader->bindings)`
     let bind_list = shader.bindings_view();
@@ -2896,10 +2871,46 @@ pub(crate) fn find_shader_prop_bindings_len<M: Mode>(
                 );
             }
 
-            bindings.data = pb.at(begin).as_ptr();
-            bindings.count = end - begin;
-            break;
+            return Some((pb, begin, end));
         }
+    }
+
+    None
+}
+
+// ufbx.c:31425-31432 `ufbx_find_shader_prop_len`
+pub(crate) fn find_shader_prop_len<M: Mode>(
+    shader: Option<&View<Shader, M>>,
+    name: &[u8],
+) -> String {
+    match find_shader_prop_binding_range(shader, name) {
+        // The range is non-empty, so `begin` indexes the first matching
+        // binding (in bounds of the `at` check).
+        Some((pb, begin, _end)) => pb.at(begin).material_prop(),
+        None => EMPTY_STRING.0,
+    }
+}
+
+// ufbx.c:31434-31461 `ufbx_find_shader_prop_bindings_len`
+// `name: &[u8]` carries C's `(name, name_len)` pair (see `find_prop_len`); C's
+// null-or-live shader pointer arrives as `Option<&View<_, M>>`.
+pub(crate) fn find_shader_prop_bindings_len<M: Mode>(
+    shader: Option<&View<Shader, M>>,
+    name: &[u8],
+) -> List<ShaderPropBinding> {
+    // C: `ufbx_shader_prop_binding_list bindings = { NULL, 0 };` — `List<T>`
+    // carries a private `PhantomData` marker, so the C aggregate initializer
+    // becomes a zeroed value with both public fields written (same shape as
+    // `native::scene_process::find_dst_connections`).
+    // SAFETY: an all-zero bit pattern is a valid `List<ShaderPropBinding>` (raw
+    // data pointer plus `usize` count and a zero-size `PhantomData` marker).
+    let mut bindings: List<ShaderPropBinding> = unsafe { MaybeUninit::zeroed().assume_init() };
+    bindings.data = core::ptr::null();
+    bindings.count = 0;
+
+    if let Some((pb, begin, end)) = find_shader_prop_binding_range(shader, name) {
+        bindings.data = pb.at(begin).as_ptr();
+        bindings.count = end - begin;
     }
 
     bindings
