@@ -4584,19 +4584,14 @@ pub fn is_thread_safe() -> bool {
 }
 
 pub unsafe fn load_memory_raw(data: &[u8], opts: &RawLoadOpts) -> Result<SceneRoot> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::load_memory(
             data.as_ptr() as *const c_void,
             data.len(),
             opts as *const RawLoadOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(SceneRoot::new(result))
+    result.map(SceneRoot::new)
 }
 
 pub fn load_memory(data: &[u8], opts: LoadOpts) -> Result<SceneRoot> {
@@ -4607,19 +4602,14 @@ pub fn load_memory(data: &[u8], opts: LoadOpts) -> Result<SceneRoot> {
 }
 
 pub unsafe fn load_file_raw(filename: &str, opts: &RawLoadOpts) -> Result<SceneRoot> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::load_file_len(
             filename.as_ptr(),
             filename.len(),
             opts as *const RawLoadOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(SceneRoot::new(result))
+    result.map(SceneRoot::new)
 }
 
 pub fn load_file(filename: &str, opts: LoadOpts) -> Result<SceneRoot> {
@@ -4630,12 +4620,8 @@ pub fn load_file(filename: &str, opts: LoadOpts) -> Result<SceneRoot> {
 }
 
 pub unsafe fn load_stdio_raw(file: *mut c_void, opts: &RawLoadOpts) -> Result<SceneRoot> {
-    let mut error: Error = Error::default();
-    let result = { crate::native::api::load_stdio(file, opts as *const RawLoadOpts, &mut error) };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(SceneRoot::new(result))
+    let result = { crate::native::api::load_stdio(file, opts as *const RawLoadOpts) };
+    result.map(SceneRoot::new)
 }
 
 pub fn load_stdio(file: *mut c_void, opts: LoadOpts) -> Result<SceneRoot> {
@@ -4650,20 +4636,15 @@ pub unsafe fn load_stdio_prefix_raw(
     prefix: &[u8],
     opts: &RawLoadOpts,
 ) -> Result<SceneRoot> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::load_stdio_prefix(
             file,
             prefix.as_ptr() as *const c_void,
             prefix.len(),
             opts as *const RawLoadOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(SceneRoot::new(result))
+    result.map(SceneRoot::new)
 }
 
 pub fn load_stdio_prefix(file: *mut c_void, prefix: &[u8], opts: LoadOpts) -> Result<SceneRoot> {
@@ -4674,18 +4655,9 @@ pub fn load_stdio_prefix(file: *mut c_void, prefix: &[u8], opts: LoadOpts) -> Re
 }
 
 pub unsafe fn load_stream_raw(stream: &RawStream, opts: &RawLoadOpts) -> Result<SceneRoot> {
-    let mut error: Error = Error::default();
-    let result = {
-        crate::native::api::load_stream(
-            stream as *const RawStream,
-            opts as *const RawLoadOpts,
-            &mut error,
-        )
-    };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(SceneRoot::new(result))
+    let result =
+        { crate::native::api::load_stream(stream as *const RawStream, opts as *const RawLoadOpts) };
+    result.map(SceneRoot::new)
 }
 
 pub fn load_stream(stream: Stream, opts: LoadOpts) -> Result<SceneRoot> {
@@ -4702,20 +4674,15 @@ pub unsafe fn load_stream_prefix_raw(
     prefix: &[u8],
     opts: &RawLoadOpts,
 ) -> Result<SceneRoot> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::load_stream_prefix(
             stream as *const RawStream,
             prefix.as_ptr() as *const c_void,
             prefix.len(),
             opts as *const RawLoadOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(SceneRoot::new(result))
+    result.map(SceneRoot::new)
 }
 
 pub fn load_stream_prefix(stream: Stream, prefix: &[u8], opts: LoadOpts) -> Result<SceneRoot> {
@@ -5225,15 +5192,15 @@ pub unsafe fn evaluate_scene_raw(
     time: f64,
     opts: &RawEvaluateOpts,
 ) -> Result<SceneRoot> {
-    unsafe {
+    let result = {
         crate::native::api::evaluate_scene(
             scene as *const Scene,
             anim as *const Anim,
             time,
             opts as *const RawEvaluateOpts,
         )
-    }
-    .map(SceneRoot::new)
+    };
+    result.map(SceneRoot::new)
 }
 
 pub fn evaluate_scene(

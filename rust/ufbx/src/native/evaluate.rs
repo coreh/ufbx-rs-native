@@ -78,7 +78,7 @@ use crate::native::cache::{load_external_files, scale_units, transform_to_axes};
 #[cfg(not(feature = "skinning-eval"))]
 use crate::native::error::ufbxi_report_err_msg;
 use crate::native::error::{
-    clear_error, fix_error_type, set_err_info, strcmp, strlen, ufbxi_check, ufbxi_check_err,
+    fix_error_type, set_err_info, strcmp, strlen, ufbxi_check, ufbxi_check_err,
     ufbxi_check_err_msg, ufbxi_check_msg, ufbxi_fail_err_msg, ufbxi_fail_msg, ufbxi_fmt_err_info,
     utf8_valid_length, Fail, EMPTY_CHAR,
 };
@@ -1258,8 +1258,7 @@ pub(crate) fn free_result(uc: &Context) {
 pub(crate) unsafe fn load(
     uc: &Context,
     user_opts: *const RawLoadOpts,
-    p_error: *mut Error,
-) -> *mut Scene {
+) -> Result<*mut Scene, Error> {
     // Test endianness
     {
         // C: `uint8_t buf[2]; uint16_t val = 0xbbaa; memcpy(buf, &val, 2);`
@@ -1515,40 +1514,37 @@ pub(crate) unsafe fn load(
     free_temp(uc);
 
     if ok {
-        if !p_error.is_null() {
-            // SAFETY: `p_error` is non-null (checked above) and points to the
-            // caller's `ufbx_error` slot — the contract of this `unsafe fn`.
-            unsafe { clear_error(p_error) };
-        }
         // SAFETY: `ok` means `load_imp` succeeded, and its last act is storing
         // the retained `ufbxi_scene_imp` into `uc`, so `scene_imp()` is the live
-        // result-buffer header whose own `scene` field is projected here.
-        unsafe { &raw mut (*uc.scene_imp()).scene }
+        // result-buffer header whose own `scene` field is projected here. (The
+        // success-path `clear_error` of the caller's slot lives in the boundary
+        // shim — PORTING.md "Trailing `ufbx_error *error`".)
+        Ok(unsafe { &raw mut (*uc.scene_imp()).scene })
     } else {
-        // SAFETY: `uc`'s error field is live for the borrow and `p_error` is the
-        // caller's `ufbx_error` slot or null, which `fix_error_type` accepts.
-        unsafe { fix_error_type(uc.error_mut_ptr(), b"Failed to load\0", p_error) };
-        // SAFETY (this condition and the block it guards): `p_error` is non-null
-        // (checked first, and `&&` short-circuits) and points to the caller's
-        // `ufbx_error` slot, which `fix_error_type` just wrote.
-        if !p_error.is_null()
-            && unsafe { (*p_error).type_ } == ErrorType::Unknown
+        // C copies the fixed error into the caller's slot; the `Result` shape
+        // carries it by value (the shim owns the slot writes; C's
+        // unsupported-version rewrite ran only with a non-null slot, but the
+        // rewrite is observable only through the slot, so applying it to the
+        // carried value is byte-equivalent).
+        let mut fixed: Error = Error::default();
+        // SAFETY: `uc`'s error field is live for the borrow and `&raw mut fixed`
+        // is this frame's live `Error` slot, which `fix_error_type` accepts.
+        unsafe { fix_error_type(uc.error_mut_ptr(), b"Failed to load\0", &raw mut fixed) };
+        if fixed.type_ == ErrorType::Unknown
             && uc.scene_view().metadata_view().file_format() == FileFormat::Fbx
             && !supports_version(uc.version())
         {
-            // SAFETY: as the condition above — `p_error` is the caller's live
-            // `ufbx_error` slot, which all four writes target; the string
-            // literal is NUL-terminated, so `strlen` reads within it, and the
-            // macro formats into that same live slot.
-            unsafe {
-                (*p_error).description.data = b"Unsupported version\0".as_ptr();
-                (*p_error).description.length = strlen(b"Unsupported version\0".as_ptr());
-                (*p_error).type_ = ErrorType::UnsupportedVersion;
-                ufbxi_fmt_err_info!(p_error, "%u", uc.version());
-            }
+            fixed.description = crate::prelude::String::new_c(
+                b"Unsupported version\0".as_ptr(),
+                b"Unsupported version".len(),
+            );
+            fixed.type_ = ErrorType::UnsupportedVersion;
+            // SAFETY: `&raw mut fixed` is this frame's live error slot the
+            // `%u` format writes into.
+            unsafe { ufbxi_fmt_err_info!(&raw mut fixed, "%u", uc.version()) };
         }
         free_result(uc);
-        ptr::null_mut()
+        Err(fixed)
     }
 }
 

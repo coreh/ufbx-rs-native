@@ -667,11 +667,10 @@ pub(crate) unsafe fn load_memory(
     data: *const c_void,
     size: usize,
     opts: *const RawLoadOpts,
-    error: *mut Error,
-) -> *mut Scene {
+) -> Result<*mut Scene, Error> {
     // SAFETY: `opts` is null-or-live per this fn's contract; the macro reads its
     // sentinel fields only when non-null.
-    unsafe { ufbxi_check_opts_ptr!(Scene, opts, error) };
+    unsafe { ufbxi_check_opts_res!(opts) };
     // C: `ufbxi_context uc; // ufbxi_uninit` + `memset(&uc, 0, sizeof(ufbxi_context));`
     let uc_storage = Context(core::cell::UnsafeCell::new(MaybeUninit::uninit())); // ufbxi_uninit
     let uc: &Context = &uc_storage;
@@ -684,21 +683,19 @@ pub(crate) unsafe fn load_memory(
     uc.set_data_size(size);
     uc.set_progress_bytes_total(size as u64);
     // SAFETY: `uc` is the initialized context; `opts` is null-or-live (sentinels
-    // validated by the macro when non-null; `evaluate::load` zero-fills on null)
-    // and `error` is null-or-live per this fn's contract.
-    unsafe { evaluate::load(uc, opts, error) }
+    // validated by the macro when non-null; `evaluate::load` zero-fills on null).
+    unsafe { evaluate::load(uc, opts) }
 }
 
 // ufbx.c:30513-30516 `ufbx_load_file`
 pub(crate) unsafe fn load_file(
     filename: *const u8,
     opts: *const RawLoadOpts,
-    error: *mut Error,
-) -> *mut Scene {
+) -> Result<*mut Scene, Error> {
     // SAFETY: `filename` is the caller's NUL-terminated path (the `usize::MAX`
-    // length sentinel), and `opts`/`error` are null-or-live per this fn's
-    // contract, forwarded unchanged.
-    unsafe { load_file_len(filename, usize::MAX, opts, error) }
+    // length sentinel), and `opts` is null-or-live per this fn's contract,
+    // forwarded unchanged.
+    unsafe { load_file_len(filename, usize::MAX, opts) }
 }
 
 // ufbx.c:30518-30527 `ufbx_load_file_len`
@@ -706,11 +703,10 @@ pub(crate) unsafe fn load_file_len(
     filename: *const u8,
     filename_len: usize,
     opts: *const RawLoadOpts,
-    error: *mut Error,
-) -> *mut Scene {
+) -> Result<*mut Scene, Error> {
     // SAFETY: `opts` is null-or-live per this fn's contract; the macro reads its
     // sentinel fields only when non-null.
-    unsafe { ufbxi_check_opts_ptr!(Scene, opts, error) };
+    unsafe { ufbxi_check_opts_res!(opts) };
     let uc_storage = Context(core::cell::UnsafeCell::new(MaybeUninit::uninit())); // ufbxi_uninit
     let uc: &Context = &uc_storage;
     // SAFETY: `uc.get()` addresses this frame's own uninitialized context
@@ -720,20 +716,18 @@ pub(crate) unsafe fn load_file_len(
     uc.set_load_filename(filename);
     uc.set_load_filename_len(filename_len);
     // SAFETY: `uc` is the initialized context; `opts` is null-or-live (sentinels
-    // validated by the macro when non-null; `evaluate::load` zero-fills on null)
-    // and `error` is null-or-live per this fn's contract.
-    unsafe { evaluate::load(uc, opts, error) }
+    // validated by the macro when non-null; `evaluate::load` zero-fills on null).
+    unsafe { evaluate::load(uc, opts) }
 }
 
 // ufbx.c:30529-30532 `ufbx_load_stdio`
 pub(crate) unsafe fn load_stdio(
     file_void: *mut c_void,
     opts: *const RawLoadOpts,
-    error: *mut Error,
-) -> *mut Scene {
-    // SAFETY: `file_void` is the caller's `FILE*` handle and `opts`/`error` are
+) -> Result<*mut Scene, Error> {
+    // SAFETY: `file_void` is the caller's `FILE*` handle and `opts` is
     // null-or-live per this fn's contract, forwarded unchanged.
-    unsafe { load_stdio_prefix(file_void, core::ptr::null(), 0, opts, error) }
+    unsafe { load_stdio_prefix(file_void, core::ptr::null(), 0, opts) }
 }
 
 // ufbx.c:30534-30554 `ufbx_load_stdio_prefix`
@@ -742,13 +736,14 @@ pub(crate) unsafe fn load_stdio_prefix(
     prefix: *const c_void,
     prefix_size: usize,
     opts: *const RawLoadOpts,
-    error: *mut Error,
-) -> *mut Scene {
+) -> Result<*mut Scene, Error> {
     // C: `#if !defined(UFBX_NO_STDIO)` — always taken (no matching feature);
     // the disabled `#else` arm reports `"UFBX_NO_STDIO", "Feature disabled"`
     // through a deferred-failure `ufbxi_load`.
     if file_void.is_null() {
-        return core::ptr::null_mut();
+        // C's silent NULL: no slot write on this path — the shim clears the
+        // caller slot only for an `Ok` with a non-null payload.
+        return Ok(core::ptr::null_mut());
     }
     // C: `ufbx_stream stream = { 0 };`
     // SAFETY: `RawStream` is a plain-data struct of pointers and integers, so the
@@ -758,20 +753,19 @@ pub(crate) unsafe fn load_stdio_prefix(
     // caller's live `FILE*` handle (non-null, checked above).
     unsafe { stdio_init(&mut stream, file_void, false) };
     // SAFETY: `&stream` is the just-initialized stdio stream, `prefix`/
-    // `prefix_size` describe the caller's optional prefix block, and
-    // `opts`/`error` are null-or-live per this fn's contract.
-    unsafe { load_stream_prefix(&stream, prefix, prefix_size, opts, error) }
+    // `prefix_size` describe the caller's optional prefix block, and `opts` is
+    // null-or-live per this fn's contract.
+    unsafe { load_stream_prefix(&stream, prefix, prefix_size, opts) }
 }
 
 // ufbx.c:30556-30559 `ufbx_load_stream`
 pub(crate) unsafe fn load_stream(
     stream: *const RawStream,
     opts: *const RawLoadOpts,
-    error: *mut Error,
-) -> *mut Scene {
-    // SAFETY: `stream` is the caller's live stream and `opts`/`error` are
-    // null-or-live per this fn's contract, forwarded unchanged.
-    unsafe { load_stream_prefix(stream, core::ptr::null(), 0, opts, error) }
+) -> Result<*mut Scene, Error> {
+    // SAFETY: `stream` is the caller's live stream and `opts` is null-or-live
+    // per this fn's contract, forwarded unchanged.
+    unsafe { load_stream_prefix(stream, core::ptr::null(), 0, opts) }
 }
 
 // ufbx.c:30561-30576 `ufbx_load_stream_prefix`
@@ -780,11 +774,10 @@ pub(crate) unsafe fn load_stream_prefix(
     prefix: *const c_void,
     prefix_size: usize,
     opts: *const RawLoadOpts,
-    error: *mut Error,
-) -> *mut Scene {
+) -> Result<*mut Scene, Error> {
     // SAFETY: `opts` is null-or-live per this fn's contract; the macro reads its
     // sentinel fields only when non-null.
-    unsafe { ufbxi_check_opts_ptr!(Scene, opts, error) };
+    unsafe { ufbxi_check_opts_res!(opts) };
     let uc_storage = Context(core::cell::UnsafeCell::new(MaybeUninit::uninit())); // ufbxi_uninit
     let uc: &Context = &uc_storage;
     // SAFETY: `uc.get()` addresses this frame's own uninitialized context
@@ -805,10 +798,8 @@ pub(crate) unsafe fn load_stream_prefix(
     }
 
     // SAFETY: `uc` is the initialized context; `opts` is null-or-live (sentinels
-    // validated by the macro when non-null; `evaluate::load` zero-fills on null)
-    // and `error` is null-or-live per this fn's contract.
-    let scene: *mut Scene = unsafe { evaluate::load(uc, opts, error) };
-    scene
+    // validated by the macro when non-null; `evaluate::load` zero-fills on null).
+    unsafe { evaluate::load(uc, opts) }
 }
 
 // ufbx.c:30578-30586 `ufbx_free_scene`

@@ -437,6 +437,23 @@ nullable_field_overrides = {
 }
 
 override_functions = { }
+
+# Natives whose trailing `ufbx_error *error` out-param has been converted to a
+# `Result<T, Error>` return (PORTING.md "Trailing `ufbx_error *error`
+# out-params"): the generated `_raw` wrapper maps the payload wrap over `Ok`
+# instead of threading a local error slot. Grows entry by entry as the surface
+# campaign converts them; the capi shims stay hand-written (they own the C slot
+# writes).
+result_shaped_natives = {
+    "ufbx_evaluate_scene",
+    "ufbx_load_memory",
+    "ufbx_load_file",
+    "ufbx_load_file_len",
+    "ufbx_load_stdio",
+    "ufbx_load_stdio_prefix",
+    "ufbx_load_stream",
+    "ufbx_load_stream_prefix",
+}
 override_member_functions = { }
 
 override_functions["ufbx_find_real_len"] = """
@@ -461,39 +478,6 @@ override_functions["ufbx_find_string_len"] = """
 
 override_functions["ufbx_find_prop_concat"] = """
 // TODO: ufbx_find_prop_concat()
-"""
-
-# `ufbx_evaluate_scene`'s native impl is `Result`-shaped (PORTING.md "Trailing
-# `ufbx_error *error` out-params"); the raw wrapper maps it directly.
-override_functions["ufbx_evaluate_scene"] = """
-pub unsafe fn evaluate_scene_raw(
-    scene: &Scene,
-    anim: &Anim,
-    time: f64,
-    opts: &RawEvaluateOpts,
-) -> Result<SceneRoot> {
-    unsafe {
-        crate::native::api::evaluate_scene(
-            scene as *const Scene,
-            anim as *const Anim,
-            time,
-            opts as *const RawEvaluateOpts,
-        )
-    }
-    .map(SceneRoot::new)
-}
-
-pub fn evaluate_scene(
-    scene: &Scene,
-    anim: &Anim,
-    time: f64,
-    opts: EvaluateOpts,
-) -> Result<SceneRoot> {
-    let mut arena = Arena::new();
-    let mut opts_mut = opts;
-    let opts_raw = opts_mut.to_raw_mut(&mut arena);
-    unsafe { evaluate_scene_raw(scene, anim, time, &opts_raw) }
-}
 """
 
 override_functions["ufbx_find_anim_prop_len"] = """
@@ -2054,6 +2038,11 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
     # wrapper's arg_pass mirrors the same C-ABI signature the native fn was
     # forwarded, so it is a valid direct call; a mismatch fails the build.
     fwd = capi_forward.get(rf.ir.name)
+    if rf.ir.name in result_shaped_natives and fwd is None:
+        # Result-shaped shims are match-shaped (they own the C slot writes), so
+        # the purity parser skips them; route the wrapper straight to the
+        # native impl, which is what carries the `Result`.
+        fwd = ("api", rf.ir.name.removeprefix("ufbx_"), set())
     # `direct_safe` additionally drops the `unsafe` block: a pure by-value shim
     # (no pointer/slice/string/blob/list arg, plain-value return, no
     # error/panic/alloc post-processing) forwards to a *safe* native fn.
@@ -2153,7 +2142,8 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
         params_str = ", ".join(params)
         emit(f"{unsafe}{{ {rf.name}_raw({params_str}) }}")
     else:
-        if rf.ir.has_error:
+        res_shaped = rf.ir.name in result_shaped_natives
+        if rf.ir.has_error and not res_shaped:
             emit(f"let mut error: Error = Error::default();")
             arg_pass.append("&mut error")
         if rf.ir.has_panic:
@@ -2181,14 +2171,21 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
             emit(f"panic!(\"ufbx::{rf.name}() {{}}\", panic.message());")
             unindent()
             emit("}")
-        if rf.ir.has_error:
+        if rf.ir.has_error and not res_shaped:
             emit(f"if error.type_ != ErrorType::None {{")
             indent()
             emit(f"return Err(error)")
             unindent()
             emit("}")
 
-        if not rf.return_type.is_void:
+        if res_shaped and not rf.return_type.is_void:
+            # `result` is the native's `Result<T, Error>`; wrap the payload.
+            if rf.ir.alloc_type:
+                alloc_type = alloc_types[rf.ir.alloc_type]
+                emit(f"result.map({alloc_type}::new)")
+            else:
+                emit("result")
+        elif not rf.return_type.is_void:
             res = "result"
             if rf.ir.alloc_type:
                 alloc_type = alloc_types[rf.ir.alloc_type]
