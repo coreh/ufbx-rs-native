@@ -46,8 +46,8 @@ use crate::native::scene_process::{
     axis_matrix, mirror_matrix, mirror_matrix_dst, round_if_near, POW10_TARGETS,
 };
 use crate::native::string_pool::{
-    map_cmp_string, push_string_place_str, str_cmp_raw, str_equal_raw, str_less_raw,
-    string_pool_temp_free, StringPool,
+    map_cmp_string, push_string_place_str, str_cmp, str_equal, str_less, string_pool_temp_free,
+    StringPool,
 };
 #[cfg(feature = "geometry-cache")]
 use crate::native::view::SliceViewIter;
@@ -1433,7 +1433,7 @@ pub(crate) unsafe extern "C" fn tmp_channel_less(
     // elements of the array being sorted, which `cache_sort_tmp_channels`
     // instantiates with `CacheTmpChannel`; `str_less` in turn requires two
     // valid `String` runs, which those elements' `name` fields are.
-    unsafe { str_less_raw((*a).name, (*b).name) }
+    unsafe { str_less((*a).name.as_bytes(), (*b).name.as_bytes()) }
 }
 
 // ufbx.c:24301-24306 `ufbxi_cache_sort_tmp_channels`
@@ -1947,8 +1947,8 @@ pub(crate) unsafe extern "C" fn cmp_cache_frame_less(
     if unsafe { (*a).channel.data != (*b).channel.data } {
         // Channel names should be interned
         unsafe {
-            ufbxi_regression_assert!(!str_equal_raw((*a).channel, (*b).channel));
-            return str_less_raw((*a).channel, (*b).channel);
+            ufbxi_regression_assert!(!str_equal((*a).channel.as_bytes(), (*b).channel.as_bytes()));
+            return str_less((*a).channel.as_bytes(), (*b).channel.as_bytes());
         }
     }
     unsafe { (*a).time < (*b).time }
@@ -2066,10 +2066,13 @@ pub(crate) fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
             (*chan).frames.data = frame;
             (*chan).frames.count = end - begin;
 
-            while tmp_chan < tmp_end && str_less_raw((*tmp_chan).name, (*chan).name) {
+            while tmp_chan < tmp_end
+                && str_less((*tmp_chan).name.as_bytes(), (*chan).name.as_bytes())
+            {
                 tmp_chan = tmp_chan.add(1);
             }
-            if tmp_chan < tmp_end && str_equal_raw((*tmp_chan).name, (*chan).name) {
+            if tmp_chan < tmp_end && str_equal((*tmp_chan).name.as_bytes(), (*chan).name.as_bytes())
+            {
                 (*chan).interpretation_name = (*tmp_chan).interpretation;
             }
 
@@ -2508,7 +2511,7 @@ pub(crate) unsafe extern "C" fn less_external_file(
     if unsafe { (*a).type_ != (*b).type_ } {
         return unsafe { (*a).type_ < (*b).type_ };
     }
-    let cmp: i32 = unsafe { str_cmp_raw((*a).filename, (*b).filename) };
+    let cmp: i32 = unsafe { str_cmp((*a).filename.as_bytes(), (*b).filename.as_bytes()) };
     if cmp != 0 {
         return cmp < 0;
     }
@@ -2797,7 +2800,7 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
                     (*cache).channels.data,
                     0,
                     (*cache).channels.count,
-                    |a: *const CacheChannel| str_less_raw((*a).name, channel),
+                    |a: *const CacheChannel| str_less((*a).name.as_bytes(), channel.as_bytes()),
                     |a: *const CacheChannel| (*a).name.data == channel.data,
                 );
                 if ix != usize::MAX {

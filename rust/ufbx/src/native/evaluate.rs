@@ -121,8 +121,7 @@ use crate::native::string_pool as sp;
 #[cfg(feature = "baking")]
 use crate::native::string_pool::lerp3;
 use crate::native::string_pool::{
-    map_cmp_string, push_string_place_str, str_equal_raw, str_less_raw, string_pool_temp_free,
-    STRINGS,
+    map_cmp_string, push_string_place_str, str_equal, str_less, string_pool_temp_free, STRINGS,
 };
 use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
 use crate::native::view::SliceViewIter;
@@ -4769,7 +4768,7 @@ pub(crate) unsafe extern "C" fn prop_override_prop_name_less(
     }
     // SAFETY: as above, reading each element's `prop_name` string by value;
     // `str_less` only compares the spans those strings describe.
-    unsafe { str_less_raw((*a).prop_name, (*b).prop_name) }
+    unsafe { str_less((*a).prop_name.as_bytes(), (*b).prop_name.as_bytes()) }
 }
 
 // ufbx.c:26536-26543 `ufbxi_prop_override_less`
@@ -4984,17 +4983,21 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
                     push_anim_string(ac, &raw mut (*over).value_str)?;
                 }
 
-                if str_equal_raw((*over).prop_name, prev_name) {
+                if str_equal((*over).prop_name.as_bytes(), prev_name.as_bytes()) {
                     (*over).prop_name = prev_name;
                     over = over.add(1);
                     continue;
                 }
 
-                while global_str != global_end && str_less_raw(*global_str, (*over).prop_name) {
+                while global_str != global_end
+                    && str_less((*global_str).as_bytes(), (*over).prop_name.as_bytes())
+                {
                     global_str = global_str.add(1);
                 }
 
-                if global_str != global_end && str_equal_raw(*global_str, (*over).prop_name) {
+                if global_str != global_end
+                    && str_equal((*global_str).as_bytes(), (*over).prop_name.as_bytes())
+                {
                     (*over).prop_name = *global_str;
                 } else {
                     push_anim_string(ac, &raw mut (*over).prop_name)?;

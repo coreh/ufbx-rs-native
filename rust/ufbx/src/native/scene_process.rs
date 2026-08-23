@@ -251,8 +251,7 @@ use crate::native::read::{
     NodeExtra, Strblob, SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
 };
 use crate::native::string_pool::{
-    self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, str_less_raw,
-    sub3, ONE_VEC3,
+    self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
 };
 use crate::native::view::{Const, Mode, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf_tag;
@@ -1349,7 +1348,7 @@ pub(crate) unsafe fn cmp_tmp_material_texture_less(
         if (*a).texture_id != (*b).texture_id {
             return (*a).texture_id < (*b).texture_id;
         }
-        str_less_raw((*a).prop_name, (*b).prop_name)
+        str_less((*a).prop_name.as_bytes(), (*b).prop_name.as_bytes())
     }
 }
 
@@ -2987,7 +2986,7 @@ pub(crate) unsafe fn cmp_anim_prop_less(a: *const AnimProp, b: *const AnimProp) 
         if (*a)._internal_key != (*b)._internal_key {
             return (*a)._internal_key < (*b)._internal_key;
         }
-        str_less_raw((*a).prop_name, (*b).prop_name)
+        str_less((*a).prop_name.as_bytes(), (*b).prop_name.as_bytes())
     }
 }
 
@@ -3037,7 +3036,7 @@ pub(crate) unsafe extern "C" fn material_texture_less(
     // SAFETY: `va`/`vb` are the two `ufbx_material_texture` elements the sort
     // hands this C-callback comparator (the sort is instantiated over that type),
     // and both `material_prop`s are interned string-pool spans.
-    unsafe { str_less_raw((*a).material_prop, (*b).material_prop) }
+    unsafe { str_less((*a).material_prop.as_bytes(), (*b).material_prop.as_bytes()) }
 }
 
 // ufbx.c:19315-19320 `ufbxi_sort_material_textures`
@@ -7549,7 +7548,12 @@ pub(crate) unsafe extern "C" fn file_content_less(
     // SAFETY: as the sort comparator for a `ufbxi_file_content` array, `va`/`vb`
     // address live, initialized elements of it (`stable_sort` contract), and both
     // `absolute_filename`s are interned pool strings.
-    unsafe { str_less_raw((*a).absolute_filename, (*b).absolute_filename) }
+    unsafe {
+        str_less(
+            (*a).absolute_filename.as_bytes(),
+            (*b).absolute_filename.as_bytes(),
+        )
+    }
 }
 
 // ufbx.c:21459-21464 `ufbxi_sort_file_contents`
@@ -7634,7 +7638,7 @@ pub(crate) unsafe fn fetch_file_content(uc: &Context, p_filename: *mut String, p
         // SAFETY: `macro_lower_bound_eq` only passes pointers to live, initialized
         // elements of the run it was handed; both `absolute_filename`s are
         // interned pool strings.
-        unsafe { str_less_raw((*a).absolute_filename, filename) }
+        unsafe { str_less((*a).absolute_filename.as_bytes(), filename.as_bytes()) }
     };
     // C-parity: the equality lambda compares interned string POINTERS, not the
     // bytes.
@@ -10673,7 +10677,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         // SAFETY: `macro_lower_bound_eq` only passes pointers to
                         // live, initialized elements of the run it was handed; both
                         // `material_prop`s are interned pool strings.
-                        unsafe { str_less_raw((*a).material_prop, name) }
+                        unsafe { str_less((*a).material_prop.as_bytes(), name.as_bytes()) }
                     };
                     let eq_lambda = |a: *const MaterialTexture| {
                         // SAFETY: as `cmp_lambda`.

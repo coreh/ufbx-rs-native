@@ -1197,7 +1197,10 @@ pub(crate) fn synthetic_id_from_ptr_id(uc: &Context, ptr: usize, id: u64) -> u64
 
 // ufbx.c:12250-12258 `ufbxi_synthetic_id_from_string`
 #[inline(always)]
-pub(crate) unsafe fn synthetic_id_from_string(uc: &Context, str_: *const u8) -> u64 {
+// Safe fn: `str_` is used address-only (the interned pointer itself becomes the
+// synthetic id, directly or via `synthetic_id_from_ptr_id`); no byte behind it
+// is ever read here.
+pub(crate) fn synthetic_id_from_string(uc: &Context, str_: *const u8) -> u64 {
     let uptr: usize = str_ as usize;
     // C: `UINTPTR_MAX < UFBXI_MAXIMUM_FAST_POINTER_ID ? UINTPTR_MAX : UFBXI_MAXIMUM_FAST_POINTER_ID`
     // — the ternary's common type is `uint64_t`, so the comparison happens in
@@ -7020,9 +7023,7 @@ pub(crate) unsafe fn read_pose(
             } {
                 continue;
             }
-            // SAFETY: the `'c'` fetch succeeded, so `name` points at the
-            // NUL-terminated raw parse-tree string the hash requires.
-            fbx_id = unsafe { synthetic_id_from_string(uc, name) };
+            fbx_id = synthetic_id_from_string(uc, name);
             ufbxi_check!(uc, fbx_id != 0, "fbx_id");
         } else {
             // SAFETY: fmt `'L'` writes one 64-bit integer through the
@@ -7126,7 +7127,7 @@ pub(crate) unsafe fn sort_shader_prop_bindings(
             bindings,
             uc.tmp_arr() as *mut ShaderPropBinding,
             count,
-            |a, b| sp::str_less_raw((*a).shader_prop, (*b).shader_prop),
+            |a, b| sp::str_less((*a).shader_prop.as_bytes(), (*b).shader_prop.as_bytes()),
         )
     };
     Ok(())
@@ -7528,9 +7529,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
         }?;
         if attrib_name_str.length > 0 {
             attrib_info.name = attrib_name_str;
-            // SAFETY: `type_and_name.data` comes from the `'s'` fetch above, which
-            // yields a NUL-terminated interned string pointer.
-            let attrib_id: u64 = unsafe { synthetic_id_from_string(uc, type_and_name.data) };
+            let attrib_id: u64 = synthetic_id_from_string(uc, type_and_name.data);
             ufbxi_check!(uc, attrib_id != 0, "attrib_id");
             // SAFETY: `info` is the caller's live `ufbxi_element_info`.
             if unsafe { (*info).fbx_id } != attrib_id && !fbx_id_exists(uc, attrib_id) {
@@ -9316,8 +9315,7 @@ pub(crate) fn read_take_object(
         },
         "ufbxi_get_val1(node, \"c\", (char**)&type_and_name)"
     );
-    // SAFETY: `type_and_name` is the pooled string just read above.
-    let target_fbx_id: u64 = unsafe { synthetic_id_from_string(uc, type_and_name) };
+    let target_fbx_id: u64 = synthetic_id_from_string(uc, type_and_name);
     ufbxi_check!(uc, target_fbx_id != 0, "target_fbx_id");
 
     // Add all suitable Channels as animated properties
@@ -10843,9 +10841,7 @@ pub(crate) unsafe fn read_legacy_mesh(
             // is the NUL-terminated interned name the split produced.
             unsafe { read_legacy_link(uc, child, &mut fbx_id, name.data) }?;
 
-            // SAFETY: `type_and_name.data` comes from the `'s'` fetch above, which
-            // yields a NUL-terminated interned string pointer.
-            let node_fbx_id: u64 = unsafe { synthetic_id_from_string(uc, type_and_name.data) };
+            let node_fbx_id: u64 = synthetic_id_from_string(uc, type_and_name.data);
             ufbxi_check!(uc, node_fbx_id != 0, "node_fbx_id");
             connect_oo(uc, node_fbx_id, fbx_id)?;
             if skin.is_null() {

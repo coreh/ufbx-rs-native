@@ -165,30 +165,6 @@ pub(crate) fn str_cmp(a: &[u8], b: &[u8]) -> i32 {
     0
 }
 
-// Unanchored raw-`String` projections over the three anchored slice bodies
-// above, for call sites whose operands are still by-value `String`s with no
-// view to borrow from (locals, temporaries, raw-probe fields).
-#[inline(always)]
-pub(crate) unsafe fn str_equal_raw(a: String, b: String) -> bool {
-    // SAFETY: the caller vouches `a`/`b` are valid `String` runs — each `data`
-    // readable for its own `length` (the `as_bytes` contract).
-    unsafe { str_equal(a.as_bytes(), b.as_bytes()) }
-}
-
-#[inline(always)]
-pub(crate) unsafe fn str_less_raw(a: String, b: String) -> bool {
-    // SAFETY: the caller vouches `a`/`b` are valid `String` runs — each `data`
-    // readable for its own `length` (the `as_bytes` contract).
-    unsafe { str_less(a.as_bytes(), b.as_bytes()) }
-}
-
-#[inline(always)]
-pub(crate) unsafe fn str_cmp_raw(a: String, b: String) -> i32 {
-    // SAFETY: the caller vouches `a`/`b` are valid `String` runs — each `data`
-    // readable for its own `length` (the `as_bytes` contract).
-    unsafe { str_cmp(a.as_bytes(), b.as_bytes()) }
-}
-
 // ufbx.c:4940-4944 `ufbxi_str_c`
 #[inline(always)]
 pub(crate) unsafe fn str_c(str_: *const u8) -> String {
@@ -365,7 +341,7 @@ pub(crate) unsafe extern "C" fn map_cmp_string(
     let b = vb as *const String;
     // SAFETY: the map comparator contract gives `va`/`vb` as pointers to the
     // live `String` keys being compared, so `*a`/`*b` read valid `String` runs.
-    unsafe { str_cmp_raw(*a, *b) }
+    unsafe { str_cmp((*a).as_bytes(), (*b).as_bytes()) }
 }
 
 // ufbx.c:5022-5026 `ufbxi_safe_string`
@@ -2141,19 +2117,19 @@ mod tests {
     #[test]
     fn test_string_helpers() {
         unsafe {
-            assert!(str_equal_raw(s(b"abc"), s(b"abc")));
-            assert!(!str_equal_raw(s(b"abc"), s(b"abd")));
-            assert!(!str_equal_raw(s(b"abc"), s(b"ab")));
+            assert!(str_equal(b"abc", b"abc"));
+            assert!(!str_equal(b"abc", b"abd"));
+            assert!(!str_equal(b"abc", b"ab"));
 
-            assert!(str_less_raw(s(b"ab"), s(b"abc")));
-            assert!(str_less_raw(s(b"abc"), s(b"abd")));
-            assert!(!str_less_raw(s(b"abc"), s(b"abc")));
+            assert!(str_less(b"ab", b"abc"));
+            assert!(str_less(b"abc", b"abd"));
+            assert!(!str_less(b"abc", b"abc"));
             // memcmp compares as UNSIGNED chars.
-            assert!(str_less_raw(s(b"a"), s(b"\xff")));
+            assert!(str_less(b"a", b"\xff"));
 
-            assert_eq!(str_cmp_raw(s(b"abc"), s(b"abc")), 0);
-            assert!(str_cmp_raw(s(b"ab"), s(b"abc")) < 0);
-            assert!(str_cmp_raw(s(b"abd"), s(b"abc")) > 0);
+            assert_eq!(str_cmp(b"abc", b"abc"), 0);
+            assert!(str_cmp(b"ab", b"abc") < 0);
+            assert!(str_cmp(b"abd", b"abc") > 0);
 
             let c = str_c(b"Model\0".as_ptr());
             assert_eq!(c.length, 5);
@@ -2223,7 +2199,8 @@ mod tests {
             let mut prev = String::new_c(EMPTY_CHAR.as_ptr(), 0);
             for str_ in STRINGS.0.iter() {
                 assert!(
-                    str_less_raw(prev, *str_) || (prev.length == 0 && str_.length > 0),
+                    str_less(prev.as_bytes(), (*str_).as_bytes())
+                        || (prev.length == 0 && str_.length > 0),
                     "ufbxi_strings out of order at {:?}",
                     core::str::from_utf8(bytes(str_.data, str_.length))
                 );

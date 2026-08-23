@@ -7789,7 +7789,7 @@ pub(crate) fn load_strings(uc: &Context) -> Result<(), Fail> {
         // their lengths, which is what `strlen`/`str_less` read.
         unsafe {
             ufbx_assert!(crate::native::error::strlen(str_.data) == str_.length);
-            ufbx_assert!(sp::str_less_raw(reg_prev, *str_));
+            ufbx_assert!(sp::str_less(reg_prev.as_bytes(), (*str_).as_bytes()));
             reg_prev = *str_;
         }
         ufbxi_check!(
@@ -8406,7 +8406,10 @@ pub(crate) fn init_node_prop_names(uc: &Context) -> Result<(), Fail> {
 }
 
 // ufbx.c:11736-11744 `ufbxi_is_node_property_name`
-pub(crate) unsafe fn is_node_property_name(uc: &Context, name: *const u8) -> bool {
+// Safe fn: `name` is used address-only — `node_prop_set` is keyed on the
+// canonical interned pointer (`hash_ptr` + address-identity `map_cmp_const_char_ptr`),
+// so no byte behind `name` is ever read here.
+pub(crate) fn is_node_property_name(uc: &Context, name: *const u8) -> bool {
     // You need to call `ufbxi_init_node_prop_names()` before calling this
     ufbx_assert!(uc.node_prop_set_view().size() > 0);
 
