@@ -727,8 +727,14 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             // `ctx` is `uc`'s own temp allocator (live for the `&Context`
             // borrow), and `filename`/`filename_len` describe the caller's
             // filename run — `open_file_ctx`'s contract.
-            ok = unsafe {
-                open_file_ctx(&mut stream, ctx, filename, filename_len, &opts, &mut error)
+            ok = match unsafe { open_file_ctx(&mut stream, ctx, filename, filename_len, &opts) } {
+                Ok(()) => true,
+                Err(e) => {
+                    // C wrote the fixed error into the local slot; the
+                    // `Result` shape hands it back by value.
+                    error = e;
+                    false
+                }
             };
         } else {
             // SAFETY: the callback pointer and temp allocator are `uc`'s own

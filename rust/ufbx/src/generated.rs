@@ -4896,20 +4896,15 @@ pub unsafe fn open_file_raw(
     path: &str,
     opts: &RawOpenFileOpts,
 ) -> Result<bool> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::open_file(
             stream as *mut RawStream,
             path.as_ptr(),
             path.len(),
             opts as *const RawOpenFileOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(result)
+    result.map(|()| true)
 }
 
 pub unsafe fn open_file_ctx_raw(
@@ -4918,7 +4913,6 @@ pub unsafe fn open_file_ctx_raw(
     path: &str,
     opts: &RawOpenFileOpts,
 ) -> Result<bool> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::open_file_ctx(
             stream as *mut RawStream,
@@ -4926,13 +4920,9 @@ pub unsafe fn open_file_ctx_raw(
             path.as_ptr(),
             path.len(),
             opts as *const RawOpenFileOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(result)
+    result.map(|()| true)
 }
 
 pub unsafe fn open_memory_raw(
@@ -4940,20 +4930,15 @@ pub unsafe fn open_memory_raw(
     data: &[u8],
     opts: &RawOpenMemoryOpts,
 ) -> Result<bool> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::open_memory(
             stream as *mut RawStream,
             data.as_ptr() as *const c_void,
             data.len(),
             opts as *const RawOpenMemoryOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(result)
+    result.map(|()| true)
 }
 
 pub unsafe fn open_memory_ctx_raw(
@@ -4962,7 +4947,6 @@ pub unsafe fn open_memory_ctx_raw(
     data: &[u8],
     opts: &RawOpenMemoryOpts,
 ) -> Result<bool> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::open_memory_ctx(
             stream as *mut RawStream,
@@ -4970,13 +4954,9 @@ pub unsafe fn open_memory_ctx_raw(
             data.as_ptr() as *const c_void,
             data.len(),
             opts as *const RawOpenMemoryOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(result)
+    result.map(|()| true)
 }
 
 pub fn evaluate_curve(curve: &AnimCurve, time: f64, default_value: Real) -> Real {
@@ -5792,19 +5772,14 @@ pub unsafe fn subdivide_mesh_raw(
     level: usize,
     opts: &RawSubdivideOpts,
 ) -> Result<MeshRoot> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::subdivide_mesh(
             mesh as *const Mesh,
             level,
             opts as *const RawSubdivideOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(MeshRoot::new(result))
+    result.map(MeshRoot::new)
 }
 
 pub fn subdivide_mesh(mesh: &Mesh, level: usize, opts: SubdivideOpts) -> Result<MeshRoot> {
@@ -5818,19 +5793,14 @@ pub unsafe fn load_geometry_cache_raw(
     filename: &str,
     opts: &RawGeometryCacheOpts,
 ) -> Result<GeometryCacheRoot> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::load_geometry_cache_len(
             filename.as_ptr(),
             filename.len(),
             opts as *const RawGeometryCacheOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(GeometryCacheRoot::new(result))
+    result.map(GeometryCacheRoot::new)
 }
 
 pub fn load_geometry_cache(filename: &str, opts: GeometryCacheOpts) -> Result<GeometryCacheRoot> {
@@ -5970,12 +5940,12 @@ pub fn dom_find<'a>(parent: &DomNode, name: &str) -> Option<&'a DomNode> {
     result.map(|node| unsafe { &*node.as_ptr() })
 }
 
+#[allow(clippy::let_and_return)]
 pub unsafe fn generate_indices_raw(
     streams: &[RawVertexStream],
     indices: &mut [u32],
     allocator: &RawAllocatorOpts,
 ) -> Result<usize> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::generate_indices(
             streams.as_ptr(),
@@ -5983,13 +5953,9 @@ pub unsafe fn generate_indices_raw(
             indices.as_mut_ptr(),
             indices.len(),
             allocator as *const RawAllocatorOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(result)
+    result
 }
 
 pub fn generate_indices(

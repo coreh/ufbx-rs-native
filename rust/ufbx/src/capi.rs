@@ -66,9 +66,25 @@ pub unsafe extern "C" fn ufbx_open_file(
     error: *mut crate::generated::Error,
 ) -> bool {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::open_file(stream, path, path_len, opts, error) }
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes (PORTING.md "Trailing `ufbx_error *error`").
+    match unsafe { crate::native::api::open_file(stream, path, path_len, opts) } {
+        Ok(()) => {
+            if !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract; C clears it on success.
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            true
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            false
+        }
+    }
 }
 
 // ufbx.c:30417-30435 `ufbx_open_file_ctx` (impl: native/api.rs `open_file_ctx`)
@@ -82,9 +98,25 @@ pub unsafe extern "C" fn ufbx_open_file_ctx(
     error: *mut crate::generated::Error,
 ) -> bool {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::open_file_ctx(stream, ctx, path, path_len, opts, error) }
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes (PORTING.md "Trailing `ufbx_error *error`").
+    match unsafe { crate::native::api::open_file_ctx(stream, ctx, path, path_len, opts) } {
+        Ok(()) => {
+            if !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract; C clears it on success.
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            true
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            false
+        }
+    }
 }
 
 // ufbx.c:30437-30440 `ufbx_open_memory` (impl: native/api.rs `open_memory`)
@@ -97,9 +129,25 @@ pub unsafe extern "C" fn ufbx_open_memory(
     error: *mut crate::generated::Error,
 ) -> bool {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::open_memory(stream, data, data_size, opts, error) }
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes (PORTING.md "Trailing `ufbx_error *error`").
+    match unsafe { crate::native::api::open_memory(stream, data, data_size, opts) } {
+        Ok(()) => {
+            if !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract; C clears it on success.
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            true
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            false
+        }
+    }
 }
 
 // ufbx.c:30442-30495 `ufbx_open_memory_ctx` (impl: native/api.rs `open_memory_ctx`)
@@ -113,9 +161,25 @@ pub unsafe extern "C" fn ufbx_open_memory_ctx(
     error: *mut crate::generated::Error,
 ) -> bool {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::open_memory_ctx(stream, ctx, data, data_size, opts, error) }
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes (PORTING.md "Trailing `ufbx_error *error`").
+    match unsafe { crate::native::api::open_memory_ctx(stream, ctx, data, data_size, opts) } {
+        Ok(()) => {
+            if !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract; C clears it on success.
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            true
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            false
+        }
+    }
 }
 
 // ufbx.c:30497-30500 `ufbx_is_thread_safe` (impl: native/api.rs `is_thread_safe`)
@@ -2049,9 +2113,28 @@ pub unsafe extern "C" fn ufbx_subdivide_mesh(
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Mesh {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::subdivide_mesh(mesh, level, opts, error) }
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes (PORTING.md "Trailing `ufbx_error *error`").
+    match unsafe { crate::native::api::subdivide_mesh(mesh, level, opts) } {
+        Ok(result) => {
+            // C clears the slot only when a real subdivision ran; the
+            // `level == 0` passthrough returns the INPUT mesh with the slot
+            // untouched.
+            if !core::ptr::eq(result, mesh) && !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract.
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            result
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            core::ptr::null_mut()
+        }
+    }
 }
 
 // ufbx.c:32627-32636 `ufbx_free_mesh` (impl: native/api.rs `free_mesh`)
@@ -2081,9 +2164,25 @@ pub unsafe extern "C" fn ufbx_load_geometry_cache(
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::GeometryCache {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::load_geometry_cache(filename, opts, error) }
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes (PORTING.md "Trailing `ufbx_error *error`").
+    match unsafe { crate::native::api::load_geometry_cache(filename, opts) } {
+        Ok(result) => {
+            if !result.is_null() && !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract; C clears it on success.
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            result
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            core::ptr::null_mut()
+        }
+    }
 }
 
 // ufbx.c:32657-32664 `ufbx_load_geometry_cache_len` (impl: native/api.rs
@@ -2096,9 +2195,25 @@ pub unsafe extern "C" fn ufbx_load_geometry_cache_len(
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::GeometryCache {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::load_geometry_cache_len(filename, filename_len, opts, error) }
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes (PORTING.md "Trailing `ufbx_error *error`").
+    match unsafe { crate::native::api::load_geometry_cache_len(filename, filename_len, opts) } {
+        Ok(result) => {
+            if !result.is_null() && !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract; C clears it on success.
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            result
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            core::ptr::null_mut()
+        }
+    }
 }
 
 // ufbx.c:32666-32675 `ufbx_free_geometry_cache` (impl: native/api.rs
@@ -2216,17 +2331,27 @@ pub unsafe extern "C" fn ufbx_generate_indices(
     error: *mut crate::generated::Error,
 ) -> usize {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe {
-        crate::native::api::generate_indices(
-            streams,
-            num_streams,
-            indices,
-            num_indices,
-            allocator,
-            error,
-        )
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes (PORTING.md "Trailing `ufbx_error *error`").
+    match unsafe {
+        crate::native::api::generate_indices(streams, num_streams, indices, num_indices, allocator)
+    } {
+        Ok(result) => {
+            if !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract; C leaves it cleared on success.
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            result
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            // C returns the core's count, which is 0 on every failure path.
+            0
+        }
     }
 }
 

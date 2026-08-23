@@ -29,9 +29,7 @@ use crate::native::api::{
 #[cfg(feature = "subdivision")]
 use crate::native::buf::{buf_free, push_size, Buf};
 #[cfg(feature = "subdivision")]
-use crate::native::error::{
-    clear_error, fix_error_type, memcmp, ufbxi_check_err, ufbxi_check_return_err,
-};
+use crate::native::error::{fix_error_type, memcmp, ufbxi_check_err, ufbxi_check_return_err};
 #[cfg(not(feature = "subdivision"))]
 use crate::native::error::{ufbxi_fmt_err_info, ufbxi_report_err_msg};
 #[cfg(feature = "subdivision")]
@@ -3189,8 +3187,7 @@ pub(crate) unsafe fn subdivide_mesh(
     mesh: *const Mesh,
     level: usize,
     user_opts: *const RawSubdivideOpts,
-    p_error: *mut Error,
-) -> *mut Mesh {
+) -> Result<*mut Mesh, Error> {
     // C: `ufbxi_subdivide_context sc = { 0 };`
     // C: `ufbxi_subdivide_context sc = { 0 };`
     let sc = SubdivideContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
@@ -3228,19 +3225,20 @@ pub(crate) unsafe fn subdivide_mesh(
     if let Ok(finished_imp) = result {
         // SAFETY: `ator_tmp_mut_ptr()` is `sc`'s own live temp allocator.
         unsafe { free_ator(sc.ator_tmp_mut_ptr()) };
-        if !p_error.is_null() {
-            // SAFETY: `p_error` is non-null and points to a live `Error`.
-            unsafe { clear_error(p_error) };
-        }
 
         // C: `return &sc->imp->mesh;` — commit the finished imp across the ABI.
-        finished_imp.into_payload()
+        // (The success-path `clear_error` of the caller's slot lives in the
+        // boundary shim.)
+        Ok(finished_imp.into_payload())
     } else {
         // SAFETY: `error_mut_ptr()` is `sc`'s own live error slot; the description
-        // is a `'static` NUL-terminated literal; `p_error` is the caller's
-        // (possibly null) error out-pointer, which `fix_error_type` handles.
+        // C copies the fixed error into the caller's slot; the `Result` shape
+        // carries it by value (the shim owns the slot writes).
+        let mut fixed: Error = Error::default();
+        // is a `'static` NUL-terminated literal; `&raw mut fixed` is this
+        // frame's live `Error`, which `fix_error_type` accepts.
         unsafe {
-            fix_error_type(sc.error_mut_ptr(), b"Failed to subdivide\0", p_error);
+            fix_error_type(sc.error_mut_ptr(), b"Failed to subdivide\0", &raw mut fixed);
         }
         // SAFETY: `result` is `sc`'s own live scratch buf.
         unsafe { buf_free(sc.result_mut_ptr()) };
@@ -3249,7 +3247,7 @@ pub(crate) unsafe fn subdivide_mesh(
             free_ator(sc.ator_tmp_mut_ptr());
             free_ator(sc.ator_result_mut_ptr());
         }
-        core::ptr::null_mut()
+        Err(fixed)
     }
 }
 
@@ -3260,22 +3258,21 @@ pub(crate) unsafe fn subdivide_mesh(
     mesh: *const Mesh,
     level: usize,
     user_opts: *const RawSubdivideOpts,
-    p_error: *mut Error,
-) -> *mut Mesh {
+) -> Result<*mut Mesh, Error> {
     // C: `mesh`/`level`/`user_opts` are unreferenced in the `#else` arm.
     let _ = (mesh, level, user_opts);
-    if !p_error.is_null() {
-        // SAFETY: `p_error` is non-null and points to a live `Error`, zeroed here
-        // to its own size.
-        unsafe { core::ptr::write_bytes(p_error as *mut u8, 0, core::mem::size_of::<Error>()) };
-        // SAFETY: `p_error` is non-null and points to a live `Error` whose info
-        // buffer the macro formats into.
-        unsafe { ufbxi_fmt_err_info!(p_error, "UFBX_ENABLE_SUBDIVISION") };
-        ufbxi_report_err_msg!(
-            unsafe { crate::native::error::ErrorView::from_ptr(p_error) },
-            "UFBXI_FEATURE_SUBDIVISION",
-            "Feature disabled"
-        );
-    }
-    core::ptr::null_mut()
+    // C zero-fills the caller slot then formats into it; the `Result` shape
+    // builds the same bytes in a local carried by `Err` (the shim owns the
+    // slot writes).
+    let mut error: Error = Error::default();
+    // SAFETY: `&raw mut error` is this frame's live `Error` slot whose info
+    // buffer the macro formats into.
+    unsafe { ufbxi_fmt_err_info!(&raw mut error, "UFBX_ENABLE_SUBDIVISION") };
+    ufbxi_report_err_msg!(
+        // SAFETY: same live local `Error` slot, minted as a view for the report.
+        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
+        "UFBXI_FEATURE_SUBDIVISION",
+        "Feature disabled"
+    );
+    Err(error)
 }

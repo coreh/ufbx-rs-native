@@ -402,7 +402,6 @@ mod tests {
     use crate::generated::{ErrorType, Vec3};
     use crate::native::api::generate_indices;
     use crate::prelude::Real;
-    use core::mem::MaybeUninit;
 
     fn vec3(x: Real, y: Real, z: Real) -> Vec3 {
         Vec3 { x, y, z }
@@ -412,17 +411,16 @@ mod tests {
     fn empty_vertex_size_fails() {
         unsafe {
             let mut indices = [0u32; 9];
-            let mut error = MaybeUninit::<crate::generated::Error>::uninit();
-            let num_vertices = generate_indices(
+            let error = generate_indices(
                 core::ptr::null(),
                 0,
                 indices.as_mut_ptr(),
                 9,
                 core::ptr::null(),
-                error.as_mut_ptr(),
-            );
-            let error = error.assume_init();
-            assert_eq!(num_vertices, 0);
+            )
+            .unwrap_err();
+            // An `Err` implies C's zero count (`result_vertices` is only
+            // assigned on the success arm).
             assert_eq!(error.type_, ErrorType::ZeroVertexSize);
         }
     }
@@ -441,18 +439,15 @@ mod tests {
                 vertex_size: core::mem::size_of::<Vec3>(),
             }];
             let mut indices = [0u32; 9];
-            let mut error = MaybeUninit::<crate::generated::Error>::uninit();
             let num_vertices = generate_indices(
                 streams.as_ptr(),
                 1,
                 indices.as_mut_ptr(),
                 0,
                 core::ptr::null(),
-                error.as_mut_ptr(),
-            );
-            let error = error.assume_init();
+            )
+            .unwrap();
             assert_eq!(num_vertices, 0);
-            assert_eq!(error.type_, ErrorType::None);
         }
     }
 
@@ -470,17 +465,16 @@ mod tests {
                 vertex_size: core::mem::size_of::<Vec3>(),
             }];
             let mut indices = [0u32; 9];
-            let mut error = MaybeUninit::<crate::generated::Error>::uninit();
-            let num_vertices = generate_indices(
+            let error = generate_indices(
                 streams.as_ptr(),
                 1,
                 indices.as_mut_ptr(),
                 3,
                 core::ptr::null(),
-                error.as_mut_ptr(),
-            );
-            let error = error.assume_init();
-            assert_eq!(num_vertices, 0);
+            )
+            .unwrap_err();
+            // An `Err` implies C's zero count (`result_vertices` is only
+            // assigned on the success arm).
             assert_eq!(error.type_, ErrorType::TruncatedVertexStream);
             assert_eq!(error.info(), "0");
         }
@@ -505,8 +499,8 @@ mod tests {
                 indices.as_mut_ptr(),
                 6,
                 core::ptr::null(),
-                core::ptr::null_mut(),
-            );
+            )
+            .unwrap();
             assert_eq!(num_vertices, 2);
             assert_eq!(indices, [0, 1, 0, 1, 0, 1]);
             assert_eq!(vertices[0].x, 1.0);
@@ -547,8 +541,8 @@ mod tests {
                 indices.as_mut_ptr(),
                 3,
                 core::ptr::null(),
-                core::ptr::null_mut(),
-            );
+            )
+            .unwrap();
             assert_eq!(num_vertices, 2);
             assert_eq!(indices, [0, 1, 0]);
             assert_eq!(normals[0].x, 1.0);
@@ -581,8 +575,8 @@ mod tests {
                 indices.as_mut_ptr(),
                 2,
                 core::ptr::null(),
-                core::ptr::null_mut(),
-            );
+            )
+            .unwrap();
             assert_eq!(num_vertices, 2);
             assert_eq!(indices, [0, 1]);
 
@@ -602,8 +596,8 @@ mod tests {
                 wide_indices.as_mut_ptr(),
                 2,
                 core::ptr::null(),
-                core::ptr::null_mut(),
-            );
+            )
+            .unwrap();
             assert_eq!(num_wide, 2);
             assert_eq!(wide_indices, [0, 1]);
         }

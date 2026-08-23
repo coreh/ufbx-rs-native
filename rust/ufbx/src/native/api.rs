@@ -67,8 +67,8 @@ use crate::generated::{
     BlendKeyframe, BlendShape, Bone, BonePose, CacheChannel, CacheDeformer, CacheFile, CacheFrame,
     Camera, CameraSwitcher, Character, Constraint, CoordinateAxes, CoordinateAxis, CurvePoint,
     DisplayLayer, DomNode, DomValue, DomValueType, Element, ElementType, Empty, Error, ErrorFrame,
-    Face, GeometryCache, Light, LineCurve, LodGroup, Marker, Material, MaterialTexture, Matrix,
-    Mesh, MetadataObject, NameElement, Node, NurbsBasis, NurbsCurve, NurbsSurface,
+    ErrorType, Face, GeometryCache, Light, LineCurve, LodGroup, Marker, Material, MaterialTexture,
+    Matrix, Mesh, MetadataObject, NameElement, Node, NurbsBasis, NurbsCurve, NurbsSurface,
     NurbsTrimBoundary, NurbsTrimSurface, OpenFileInfo, Panic, Pose, ProceduralGeometry, Prop,
     Props, Quat, RawAllocatorOpts, RawGeometryCacheDataOpts, RawGeometryCacheOpts, RawLoadOpts,
     RawOpenFileOpts, RawOpenMemoryOpts, RawStream, RawVertexStream, RotationOrder, Scene,
@@ -106,7 +106,6 @@ use crate::native::view::{Const, Mode, Mut, View};
 // `ufbx_tessellate_nurbs_curve` / `_surface` and unconditionally by
 // `ufbx_subdivide_mesh` / `ufbx_load_geometry_cache_len`.
 use crate::native::error::fix_error_type;
-use crate::native::error::ufbxi_check_opts_ptr;
 use crate::native::error::ufbxi_check_opts_res;
 #[cfg(any(
     not(feature = "scene-eval"),
@@ -459,16 +458,9 @@ pub unsafe extern "C" fn default_open_file(
                   // loader passes to this callback (the `ufbx_open_file_fn` contract); `info`
                   // is dereferenced for its own `context` field, and `path`/`path_len`
                   // describe the caller's path buffer.
-    unsafe {
-        open_file_ctx(
-            stream,
-            (*info).context,
-            path,
-            path_len,
-            core::ptr::null(),
-            core::ptr::null_mut(),
-        )
-    }
+                  // C passes a NULL error slot — the callback only reports success; the
+                  // `Result`'s error value is dropped, matching the null-slot no-write.
+    unsafe { open_file_ctx(stream, (*info).context, path, path_len, core::ptr::null()) }.is_ok()
 }
 
 // ufbx.c:30412-30415 `ufbx_open_file`
@@ -477,12 +469,11 @@ pub(crate) unsafe fn open_file(
     path: *const u8,
     path_len: usize,
     opts: *const RawOpenFileOpts,
-    error: *mut Error,
-) -> bool {
+) -> Result<(), Error> {
     // SAFETY: the pointers are this `unsafe fn`'s own params — `stream` the live
-    // out-stream, `path`/`path_len` the caller's path buffer, `opts`/`error`
-    // null-or-live — forwarded unchanged to `open_file_ctx`.
-    unsafe { open_file_ctx(stream, 0 as OpenFileContext, path, path_len, opts, error) }
+    // out-stream, `path`/`path_len` the caller's path buffer, `opts` null-or-live
+    // — forwarded unchanged to `open_file_ctx`.
+    unsafe { open_file_ctx(stream, 0 as OpenFileContext, path, path_len, opts) }
 }
 
 // ufbx.c:30417-30435 `ufbx_open_file_ctx`
@@ -492,8 +483,7 @@ pub(crate) unsafe fn open_file_ctx(
     path: *const u8,
     mut path_len: usize,
     opts: *const RawOpenFileOpts,
-    error: *mut Error,
-) -> bool {
+) -> Result<(), Error> {
     // C: `ufbxi_file_context fc; // ufbxi_uninit`
     let fc = FileContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()));
     // SAFETY: `fc` is the freshly created file context; `ctx` is the caller's
@@ -522,10 +512,8 @@ pub(crate) unsafe fn open_file_ctx(
             },
         )
     };
-    // SAFETY: `fc` is the live file context and `error` is null-or-live per the
-    // fn contract.
-    unsafe { end_file_context(&fc, error, ok) };
-    ok
+    // SAFETY: `fc` is the live file context.
+    unsafe { end_file_context(&fc, ok) }
 }
 
 // ufbx.c:30437-30440 `ufbx_open_memory`
@@ -534,12 +522,11 @@ pub(crate) unsafe fn open_memory(
     data: *const c_void,
     data_size: usize,
     opts: *const RawOpenMemoryOpts,
-    error: *mut Error,
-) -> bool {
+) -> Result<(), Error> {
     // SAFETY: the pointers are this `unsafe fn`'s own params — `stream` the live
-    // out-stream, `data`/`data_size` the caller's memory block, `opts`/`error`
-    // null-or-live — forwarded unchanged to `open_memory_ctx`.
-    unsafe { open_memory_ctx(stream, 0 as OpenFileContext, data, data_size, opts, error) }
+    // out-stream, `data`/`data_size` the caller's memory block, `opts` null-or-live
+    // — forwarded unchanged to `open_memory_ctx`.
+    unsafe { open_memory_ctx(stream, 0 as OpenFileContext, data, data_size, opts) }
 }
 
 // ufbx.c:30442-30495 `ufbx_open_memory_ctx`
@@ -549,8 +536,7 @@ pub(crate) unsafe fn open_memory_ctx(
     data: *const c_void,
     data_size: usize,
     opts: *const RawOpenMemoryOpts,
-    error: *mut Error,
-) -> bool {
+) -> Result<(), Error> {
     let mut local_opts = MaybeUninit::<RawOpenMemoryOpts>::uninit(); // ufbxi_uninit
     let mut opts = opts;
     if opts.is_null() {
@@ -588,9 +574,9 @@ pub(crate) unsafe fn open_memory_ctx(
     // SAFETY: `fc.ator_mut_ptr()` is the file context's own allocator.
     let memory: *mut u8 = unsafe { alloc::<u8>(fc.ator_mut_ptr(), self_size) };
     if memory.is_null() {
-        // SAFETY: `fc` is the live file context; `error` is null-or-live.
-        unsafe { end_file_context(&fc, error, false) };
-        return false;
+        // SAFETY: `fc` is the live file context; `end_file_context(false)`
+        // yields the fixed `Err` this path returns.
+        return unsafe { end_file_context(&fc, false) };
     }
 
     let mem = memory as *mut MemoryStream;
@@ -651,10 +637,8 @@ pub(crate) unsafe fn open_memory_ctx(
         (*stream).user = mem as *mut c_void;
     }
 
-    // SAFETY: `fc` is the live file context; `error` is null-or-live.
-    unsafe { end_file_context(&fc, error, true) };
-
-    true
+    // SAFETY: `fc` is the live file context.
+    unsafe { end_file_context(&fc, true) }
 }
 
 // ufbx.c:30497-30500 `ufbx_is_thread_safe`
@@ -5294,20 +5278,24 @@ pub(crate) unsafe fn subdivide_mesh(
     mesh: *const Mesh,
     level: usize,
     opts: *const crate::generated::RawSubdivideOpts,
-    error: *mut Error,
-) -> *mut Mesh {
+) -> Result<*mut Mesh, Error> {
     // SAFETY: `opts` is this fn's raw-pointer param; the macro reads its
     // `_begin_zero`/`_end_zero` guard fields only after a null check.
-    unsafe { ufbxi_check_opts_ptr!(Mesh, opts, error) };
+    unsafe { ufbxi_check_opts_res!(opts) };
     if mesh.is_null() {
-        return core::ptr::null_mut();
+        // C's silent NULL: no slot write — the shim clears the caller slot
+        // only for an `Ok` with a payload that is not the input pointer.
+        return Ok(core::ptr::null_mut());
     }
     if level == 0 {
-        return mesh as *mut Mesh;
+        // C's silent passthrough: the INPUT mesh comes back with the caller's
+        // slot untouched — the shim skips the success clear when the payload is
+        // the input pointer.
+        return Ok(mesh as *mut Mesh);
     }
-    // SAFETY: `mesh`/`opts`/`error` are this fn's raw-pointer params, forwarded
+    // SAFETY: `mesh`/`opts` are this fn's raw-pointer params, forwarded
     // unchanged under the same contract to the subdivision implementation.
-    unsafe { crate::native::subdivision::subdivide_mesh(mesh, level, opts, error) }
+    unsafe { crate::native::subdivision::subdivide_mesh(mesh, level, opts) }
 }
 
 // ufbx.c:32627-32636 `ufbx_free_mesh`
@@ -5374,19 +5362,11 @@ pub(crate) unsafe fn retain_mesh(mesh: *mut Mesh) {
 pub(crate) unsafe fn load_geometry_cache(
     filename: *const u8,
     opts: *const RawGeometryCacheOpts,
-    error: *mut Error,
-) -> *mut GeometryCache {
+) -> Result<*mut GeometryCache, Error> {
     // SAFETY: `filename` is this fn's raw-pointer param (a NUL-terminated C
     // string per contract); `strlen` measures it and both are forwarded to
     // `load_geometry_cache_len` under the same contract.
-    unsafe {
-        load_geometry_cache_len(
-            filename,
-            crate::native::error::strlen(filename),
-            opts,
-            error,
-        )
-    }
+    unsafe { load_geometry_cache_len(filename, crate::native::error::strlen(filename), opts) }
 }
 
 // ufbx.c:32657-32664 `ufbx_load_geometry_cache_len`
@@ -5398,15 +5378,14 @@ pub(crate) unsafe fn load_geometry_cache_len(
     filename: *const u8,
     filename_len: usize,
     opts: *const RawGeometryCacheOpts,
-    error: *mut Error,
-) -> *mut GeometryCache {
+) -> Result<*mut GeometryCache, Error> {
     // SAFETY: `opts` is this fn's raw-pointer param; the macro reads its
     // `_begin_zero`/`_end_zero` guard fields only after a null check.
-    unsafe { ufbxi_check_opts_ptr!(GeometryCache, opts, error) };
+    unsafe { ufbxi_check_opts_res!(opts) };
     let str_: String = safe_string(filename, filename_len);
     // SAFETY: `opts`/`error` are this fn's raw-pointer params, forwarded
     // unchanged under the same contract to the cache loader.
-    unsafe { crate::native::cache::load_geometry_cache(str_, opts, error) }
+    unsafe { crate::native::cache::load_geometry_cache(str_, opts) }
 }
 
 // ufbx.c:32666-32675 `ufbx_free_geometry_cache`
@@ -6047,29 +6026,31 @@ pub(crate) unsafe fn generate_indices(
     indices: *mut u32,
     num_indices: usize,
     allocator: *const RawAllocatorOpts,
-    error: *mut Error,
-) -> usize {
-    let mut local_error = MaybeUninit::<Error>::uninit(); // ufbxi_uninit
-    let mut error = error;
-    if error.is_null() {
-        error = local_error.as_mut_ptr();
-    }
-    // SAFETY: `error` is non-null here (either the caller's live `Error` or the
-    // local `MaybeUninit` storage above); the write zero-fills its byte extent.
-    unsafe {
-        core::ptr::write_bytes(error as *mut u8, 0, size_of::<Error>());
-    }
+) -> Result<usize, Error> {
+    // C substitutes a zero-filled local slot when the caller passes NULL; the
+    // `Result` shape always works in a local, carried by `Err` on failure (the
+    // shim owns the caller-slot writes). The core's working error target stays
+    // an always-present slot, exactly as in C.
+    let mut error: Error = Error::default();
     // SAFETY: `streams`/`indices`/`allocator` are this fn's raw-pointer params,
-    // forwarded unchanged with the initialized `error` to the implementation.
-    unsafe {
+    // forwarded unchanged with `&raw mut error` — this frame's live `Error` —
+    // to the implementation.
+    let result = unsafe {
         crate::native::index_gen::generate_indices(
             streams,
             num_streams,
             indices,
             num_indices,
             allocator,
-            error,
+            &raw mut error,
         )
+    };
+    if error.type_ != ErrorType::None {
+        // C returns the core's count here too, but the failure count is always
+        // 0 (`result_vertices` is only assigned on the success arm).
+        Err(error)
+    } else {
+        Ok(result)
     }
 }
 
@@ -7484,15 +7465,13 @@ mod tests {
         unsafe {
             let data = *b"hello, memory stream";
             let mut stream = RawStream::default();
-            let mut error = MaybeUninit::<Error>::zeroed().assume_init();
             assert!(open_memory(
                 &mut stream,
                 data.as_ptr() as *const c_void,
                 data.len(),
                 core::ptr::null(),
-                &mut error,
-            ));
-            assert_eq!(error.type_ as u32, 0);
+            )
+            .is_ok());
 
             // The stream owns a copy: reads survive the original going away.
             assert_eq!((stream.size_fn.unwrap())(stream.user), data.len() as u64);
@@ -7548,8 +7527,8 @@ mod tests {
                 data.as_ptr() as *const c_void,
                 data.len(),
                 &opts,
-                core::ptr::null_mut(),
-            ));
+            )
+            .is_ok());
             // no_copy: the stream reads the caller's bytes in place.
             let mem = stream.user as *mut MemoryStream;
             assert_eq!((*mem).data as usize, data.as_ptr() as usize);
@@ -7562,15 +7541,9 @@ mod tests {
     fn test_open_file_missing_reports_file_not_found() {
         unsafe {
             let mut stream = RawStream::default();
-            let mut error = MaybeUninit::<Error>::zeroed().assume_init();
             let path = b"definitely/not/a/real/file.fbx";
-            assert!(!open_file(
-                &mut stream,
-                path.as_ptr(),
-                path.len(),
-                core::ptr::null(),
-                &mut error,
-            ));
+            let error: Error =
+                open_file(&mut stream, path.as_ptr(), path.len(), core::ptr::null()).unwrap_err();
             let desc =
                 core::slice::from_raw_parts(error.description.data, error.description.length);
             assert_eq!(desc, b"File not found");
@@ -7586,14 +7559,7 @@ mod tests {
             let expected = std::fs::read(&path).unwrap();
 
             let mut stream = RawStream::default();
-            let mut error = MaybeUninit::<Error>::zeroed().assume_init();
-            assert!(open_file(
-                &mut stream,
-                path.as_ptr(),
-                path.len(),
-                core::ptr::null(),
-                &mut error,
-            ));
+            assert!(open_file(&mut stream, path.as_ptr(), path.len(), core::ptr::null()).is_ok());
             assert_eq!(
                 (stream.size_fn.unwrap())(stream.user),
                 expected.len() as u64

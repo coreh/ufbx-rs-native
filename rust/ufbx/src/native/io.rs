@@ -25,7 +25,7 @@ use core::mem::{size_of, MaybeUninit};
 use crate::generated::{Error, RawAllocatorOpts, RawCloseMemoryCb, RawStream};
 use crate::native::allocator::{alloc, free, free_ator, init_ator, Allocator};
 use crate::native::error::{
-    clear_error, fix_error_type, set_err_info, ufbxi_check, ufbxi_check_msg, ufbxi_check_return,
+    fix_error_type, set_err_info, ufbxi_check, ufbxi_check_msg, ufbxi_check_return,
     ufbxi_check_return_msg, ufbxi_report_err_msg, Fail,
 };
 use crate::native::parse::{get_read_offset, report_progress, Context};
@@ -531,7 +531,7 @@ pub(crate) unsafe fn begin_file_context(
 
 // ufbx.c:6974-6989 `ufbxi_end_file_context`
 #[inline(never)]
-pub(crate) unsafe fn end_file_context(fc: &FileContext, error: *mut Error, ok: bool) {
+pub(crate) unsafe fn end_file_context(fc: &FileContext, ok: bool) -> Result<(), Error> {
     if !fc.parent_ator().is_null() {
         // SAFETY: a non-null `parent_ator` is the live caller-owned `Allocator`
         // `begin_file_context` was handed (checked non-null just above); the
@@ -545,16 +545,17 @@ pub(crate) unsafe fn end_file_context(fc: &FileContext, error: *mut Error, ok: b
         // the duration of the `&FileContext` borrow.
         unsafe { free_ator(fc.ator_mut_ptr()) };
     }
-    if !error.is_null() {
-        if !ok {
-            // SAFETY: `error` is the caller's live `Error` slot (checked
-            // non-null above) and `fc.error_mut_ptr()` is `fc`'s own field.
-            unsafe { fix_error_type(fc.error_mut_ptr(), b"Failed to open file\0", error) };
-        } else {
-            // SAFETY: `error` is the caller's live `Error` slot, checked
-            // non-null above.
-            unsafe { clear_error(error) };
-        }
+    if !ok {
+        // C fixes into the caller's slot when one is present; the `Result`
+        // shape carries the fixed error by value (the shim owns the slot
+        // writes, including the success-path clear).
+        let mut fixed: Error = Error::default();
+        // SAFETY: `fc.error_mut_ptr()` is `fc`'s own field and `&raw mut fixed`
+        // this frame's live `Error`, which `fix_error_type` accepts.
+        unsafe { fix_error_type(fc.error_mut_ptr(), b"Failed to open file\0", &raw mut fixed) };
+        Err(fixed)
+    } else {
+        Ok(())
     }
 }
 

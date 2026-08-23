@@ -2176,8 +2176,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
 pub(crate) unsafe fn load_geometry_cache(
     filename: String,
     user_opts: *const RawGeometryCacheOpts,
-    p_error: *mut Error,
-) -> *mut GeometryCache {
+) -> Result<*mut GeometryCache, Error> {
     // C: `ufbx_geometry_cache_opts opts; // ufbxi_uninit`
     let opts: RawGeometryCacheOpts = if !user_opts.is_null() {
         // SAFETY: `user_opts` is non-null and the caller's contract is that it
@@ -2248,20 +2247,17 @@ pub(crate) unsafe fn load_geometry_cache(
     // SAFETY: `cc` is fully initialized above (allocators, string pool, opts) —
     // the state `cache_load` consumes.
     let cache: *mut GeometryCache = unsafe { cache_load(&cc, filename) };
-    if !p_error.is_null() {
-        if !cache.is_null() {
-            // SAFETY: `p_error` is non-null and the caller's contract is that
-            // it points at a writable `Error` out-param.
-            unsafe { clear_error(p_error) };
-        } else {
-            // SAFETY: same writable-out-param contract for `p_error`;
-            // `error_mut_ptr` addresses `cc`'s own live `Error`, and the two
-            // are distinct objects. `Error` is plain data, so the read leaves
-            // `cc`'s copy usable.
-            unsafe { core::ptr::write(p_error, core::ptr::read(cc.error_mut_ptr())) };
-        }
+    if !cache.is_null() {
+        // (The success-path `clear_error` of the caller's slot lives in the
+        // boundary shim.)
+        Ok(cache)
+    } else {
+        // C copies `cc`'s error — already `fix_error_type`d by `cache_load` —
+        // into the caller's slot; the `Result` shape carries it by value.
+        // SAFETY: `error_mut_ptr` addresses `cc`'s own live `Error`; `Error` is
+        // plain data, so the bitwise read duplicates it without a double-free.
+        Err(unsafe { core::ptr::read(cc.error_mut_ptr()) })
     }
-    cache
 }
 
 // ufbx.c:24757-24761 `ufbxi_free_geometry_cache_imp` (UFBXI_FEATURE_GEOMETRY_CACHE)
@@ -2315,25 +2311,23 @@ unsafe impl crate::native::parse::ImpRecover for GeometryCacheImp {
 pub(crate) unsafe fn load_geometry_cache(
     filename: String,
     user_opts: *const RawGeometryCacheOpts,
-    p_error: *mut Error,
-) -> *mut GeometryCache {
+) -> Result<*mut GeometryCache, Error> {
     // C: `filename`/`user_opts` are unreferenced in the `#else` arm.
     let _ = (filename, user_opts);
-    if !p_error.is_null() {
-        // SAFETY: `p_error` is non-null and the caller's contract is that it
-        // points at a writable `Error` out-param, so exactly
-        // `size_of::<Error>()` bytes are writable there.
-        unsafe { core::ptr::write_bytes(p_error as *mut u8, 0, size_of::<Error>()) };
-        // SAFETY: `p_error` is the non-null writable `Error` out-param
-        // zero-filled just above, and the format string is a literal.
-        unsafe { ufbxi_fmt_err_info!(p_error, "UFBX_ENABLE_GEOMETRY_CACHE") };
-        ufbxi_report_err_msg!(
-            unsafe { crate::native::error::ErrorView::from_ptr(p_error) },
-            "UFBXI_FEATURE_GEOMETRY_CACHE",
-            "Feature disabled"
-        );
-    }
-    core::ptr::null_mut()
+    // C zero-fills the caller slot then formats into it; the `Result` shape
+    // builds the same bytes in a local carried by `Err` (the shim owns the
+    // slot writes).
+    let mut error: Error = Error::default();
+    // SAFETY: `&raw mut error` is this frame's live `Error` slot the format
+    // writes into.
+    unsafe { ufbxi_fmt_err_info!(&raw mut error, "UFBX_ENABLE_GEOMETRY_CACHE") };
+    ufbxi_report_err_msg!(
+        // SAFETY: same live local `Error` slot, minted as a view for the report.
+        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
+        "UFBXI_FEATURE_GEOMETRY_CACHE",
+        "Feature disabled"
+    );
+    Err(error)
 }
 
 // ufbx.c:24781-24783 `ufbxi_free_geometry_cache_imp` (`#else` branch — feature disabled)

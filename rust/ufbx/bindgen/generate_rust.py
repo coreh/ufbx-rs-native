@@ -457,6 +457,14 @@ result_shaped_natives = {
     "ufbx_bake_anim",
     "ufbx_tessellate_nurbs_curve",
     "ufbx_tessellate_nurbs_surface",
+    "ufbx_subdivide_mesh",
+    "ufbx_load_geometry_cache",
+    "ufbx_load_geometry_cache_len",
+    "ufbx_generate_indices",
+    "ufbx_open_file",
+    "ufbx_open_file_ctx",
+    "ufbx_open_memory",
+    "ufbx_open_memory_ctx",
 }
 override_member_functions = { }
 
@@ -2093,6 +2101,12 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
                 and not rf.ir.alloc_type and not rf.return_type.is_list
                 and rf.return_type.kind != "pointer"):
             _allows.append("clippy::let_and_return")
+        # a result-shaped native whose Result passes through unmapped emits the
+        # same `let result = ..; result` shape
+        elif (rf.ir.name in result_shaped_natives and not rf.ir.alloc_type
+                and not (rf.return_type.is_result
+                         and rf.return_type.inner.fmt_member("") == "bool")):
+            _allows.append("clippy::let_and_return")
     if _allows:
         emit(f"#[allow({', '.join(_allows)})]")
     if is_raw:
@@ -2187,6 +2201,11 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
             if rf.ir.alloc_type:
                 alloc_type = alloc_types[rf.ir.alloc_type]
                 emit(f"result.map({alloc_type}::new)")
+            elif rf.return_type.is_result and rf.return_type.inner.fmt_member("") == "bool":
+                # C bool + slot maps to a native `Result<(), Error>`; the
+                # wrapper keeps its `Result<bool>` parity signature (the
+                # C-shaped `false` only ever travels with an error).
+                emit("result.map(|()| true)")
             else:
                 emit("result")
         elif not rf.return_type.is_void:
