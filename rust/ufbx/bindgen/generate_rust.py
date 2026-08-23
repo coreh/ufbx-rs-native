@@ -376,6 +376,7 @@ view_accessor_structs = [
     "ufbx_anim_curve",
     "ufbx_anim_value",
     "ufbx_keyframe",
+    "ufbx_connection",
     "ufbx_shader",
     "ufbx_shader_binding",
     "ufbx_shader_texture",

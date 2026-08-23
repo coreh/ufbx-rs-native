@@ -97,8 +97,8 @@ use crate::native::parse::{find_prop, is_vec3_zero, PropView, PropsView};
 #[cfg(feature = "skinning-eval")]
 use crate::native::platform::max_sz;
 use crate::native::platform::{
-    add_ptr, f64_to_i64, macro_lower_bound_eq, macro_upper_bound_eq, math, ufbx_assert,
-    ufbxi_dev_assert, ufbxi_ignore, unstable_sort, PATH_SEPARATOR,
+    add_ptr, f64_to_i64, math, ufbx_assert, ufbxi_dev_assert, ufbxi_ignore, unstable_sort,
+    PATH_SEPARATOR,
 };
 #[cfg(feature = "baking")]
 use crate::native::platform::{macro_stable_sort, ufbxi_unreachable};
@@ -123,7 +123,7 @@ use crate::native::string_pool::{
 };
 use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
 use crate::native::view::SliceViewIter;
-use crate::native::view::{Const, View};
+use crate::native::view::{Const, Mode, Mut, View};
 use crate::native::warnings::{pop_warnings, ufbxi_warnf};
 use crate::prelude::as_f64;
 use crate::prelude::{List, OpenFileContext, Real, Ref, String};
@@ -1557,20 +1557,11 @@ pub(crate) unsafe fn load(
 // ufbx.c:25629-25634 `ufbxi_override_less_than_prop`
 // C: `ufbxi_forceinline`.
 #[inline(always)]
-pub(crate) unsafe fn override_less_than_prop(
-    over: *const PropOverride,
+pub(crate) fn override_less_than_prop<MO: Mode, MP: Mode>(
+    over: &View<PropOverride, MO>,
     element_id: u32,
-    prop: *const Prop,
+    prop: &View<Prop, MP>,
 ) -> bool {
-    // Public-boundary root: `prop` is a caller-owned `*const Prop` whose
-    // provenance can be a read-only `&Prop`, so mint read-only `Const` views —
-    // legal for any readable provenance, unlike the interior-mutable `Mut` view.
-    // This fn only reads, so the frozen tags never span a write.
-    // SAFETY: `over` and `prop` are the caller's live `ufbx_prop_override` /
-    // `ufbx_prop` — the raw-pointer contract of this `unsafe fn`.
-    let prop: &View<Prop, Const> = unsafe { View::<Prop, Const>::from_ptr(prop) };
-    // SAFETY: as above.
-    let over: &View<PropOverride, Const> = unsafe { View::<PropOverride, Const>::from_ptr(over) };
     if over.element_id() != element_id {
         return over.element_id() < element_id;
     }
@@ -1591,18 +1582,11 @@ pub(crate) unsafe fn override_less_than_prop(
 // ufbx.c:25636-25641 `ufbxi_override_equals_to_prop`
 // C: `ufbxi_forceinline`.
 #[inline(always)]
-pub(crate) unsafe fn override_equals_to_prop(
-    over: *const PropOverride,
+pub(crate) fn override_equals_to_prop<MO: Mode, MP: Mode>(
+    over: &View<PropOverride, MO>,
     element_id: u32,
-    prop: *const Prop,
+    prop: &View<Prop, MP>,
 ) -> bool {
-    // Read-only `Const` views over the caller-owned pointers, as in
-    // `override_less_than_prop` above.
-    // SAFETY: `over` and `prop` are the caller's live `ufbx_prop_override` /
-    // `ufbx_prop` — the raw-pointer contract of this `unsafe fn`.
-    let prop: &View<Prop, Const> = unsafe { View::<Prop, Const>::from_ptr(prop) };
-    // SAFETY: as above.
-    let over: &View<PropOverride, Const> = unsafe { View::<PropOverride, Const>::from_ptr(over) };
     if over.element_id() != element_id {
         return false;
     }
@@ -1617,51 +1601,36 @@ pub(crate) unsafe fn override_equals_to_prop(
 
 // ufbx.c:25643-25664 `ufbxi_find_prop_override`
 #[inline(never)]
-pub(crate) unsafe fn find_prop_override(
-    overrides: *const List<PropOverride>,
+pub(crate) fn find_prop_override(
+    overrides: &View<List<PropOverride>, Const>,
     element_id: u32,
-    prop: *mut Prop,
+    prop: &View<Prop, Mut>,
 ) -> bool {
-    let mut ix: usize = usize::MAX;
-    // SAFETY: `overrides` is the caller's live override list — the raw-pointer
-    // contract of this `unsafe fn` — so `data`/`count` describe its run, which is
-    // what the search walks; the comparator closures are handed elements of that
-    // run and the caller's live `prop`.
-    unsafe {
-        macro_lower_bound_eq::<PropOverride>(
-            16,
-            &mut ix,
-            (*overrides).data,
-            0,
-            (*overrides).count,
-            |a| override_less_than_prop(a, element_id, prop),
-            |a| override_equals_to_prop(a, element_id, prop),
-        )
-    };
+    let ix = overrides.lower_bound_eq(
+        16,
+        |a| override_less_than_prop(a, element_id, prop),
+        |a| override_equals_to_prop(a, element_id, prop),
+    );
 
-    if ix != usize::MAX {
-        // SAFETY: a written `ix` is an index the search found inside the
-        // override run, so `data + ix` addresses one of its elements.
-        let over: *const PropOverride = unsafe { (*overrides).data.add(ix) };
+    if let Some(ix) = ix {
+        let over = overrides.at(ix);
         // C: `const uint32_t clear_flags = UFBX_PROP_FLAG_NO_VALUE | UFBX_PROP_FLAG_NOT_FOUND;`
         let clear_flags: u32 = PropFlags::NO_VALUE.raw() | PropFlags::NOT_FOUND.raw();
-        // C: `prop->value_real_arr[3] = 0.0f;` — the `ufbx_prop` value union's
-        // `ufbx_real value_real_arr[4]` view; the generated struct keeps only
-        // `value_vec4`, which is those four `ufbx_real`s, so index 3 is its
-        // last element.
-        // SAFETY (every access below): `prop` is the caller's live `ufbx_prop`
-        // and `over` the matched override element of the caller's list.
-        unsafe {
-            (*prop).flags = PropFlags::from_raw(
-                ((*prop).flags.raw() & !clear_flags) | PropFlags::OVERRIDDEN.raw(),
-            );
-            (*prop).value_vec4 = (*over).value;
-            *(&raw mut (*prop).value_vec4 as *mut Real).add(3) = 0.0;
-            (*prop).value_int = (*over).value_int;
-            (*prop).value_str = (*over).value_str;
-            (*prop).value_blob.data = (*prop).value_str.data;
-            (*prop).value_blob.size = (*prop).value_str.length;
-        }
+        prop.set_flags(PropFlags::from_raw(
+            (prop.flags().raw() & !clear_flags) | PropFlags::OVERRIDDEN.raw(),
+        ));
+        // C: `prop->value_vec4 = over->value;` then `prop->value_real_arr[3] = 0.0f;`
+        // — the union's four-real view; its trailing lane is `value_vec4.w`.
+        let mut value = over.value();
+        value.w = 0.0;
+        prop.set_value_vec4(value);
+        prop.set_value_int(over.value_int());
+        prop.set_value_str(over.value_str());
+        // C: `prop->value_blob.data = prop->value_str.data;` + `.size = ....length;`
+        let mut blob = prop.value_blob();
+        blob.data = prop.value_str().data;
+        blob.size = prop.value_str().length;
+        prop.set_value_blob(blob);
         true
     } else {
         false
@@ -1670,40 +1639,20 @@ pub(crate) unsafe fn find_prop_override(
 
 // ufbx.c:25666-25679 `ufbxi_find_element_prop_overrides`
 #[inline(never)]
-pub(crate) unsafe fn find_element_prop_overrides(
-    overrides: *const List<PropOverride>,
+pub(crate) fn find_element_prop_overrides(
+    overrides: &View<List<PropOverride>, Const>,
     element_id: u32,
 ) -> List<PropOverride> {
-    // C: `size_t begin = overrides->count, end = begin;` — pre-initialized
-    // because `ufbxi_macro_lower_bound_eq` does NOT write on a miss.
-    // SAFETY: `overrides` is the caller's live override list — the raw-pointer
-    // contract of this `unsafe fn`.
-    let mut begin: usize = unsafe { (*overrides).count };
-    let mut end: usize = begin;
-
-    // SAFETY: as above, `data`/`count` describe the caller's override run, which
-    // is what both searches walk; each comparator dereferences an element of
-    // that run, and `begin` is an index the first search left inside it (or its
-    // `count` end), so the `[begin, count)` window the second scans is in bounds.
-    unsafe {
-        macro_lower_bound_eq::<PropOverride>(
+    // C: `size_t begin = overrides->count, end = begin;` — the lower bound does
+    // not write on a miss; `unwrap_or` reproduces the pre-init.
+    let begin: usize = overrides
+        .lower_bound_eq(
             32,
-            &mut begin,
-            (*overrides).data,
-            0,
-            (*overrides).count,
-            |a| (*a).element_id < element_id,
-            |a| (*a).element_id == element_id,
-        );
-        macro_upper_bound_eq::<PropOverride>(
-            32,
-            &mut end,
-            (*overrides).data,
-            begin,
-            (*overrides).count,
-            |a| (*a).element_id == element_id,
-        );
-    }
+            |a| a.element_id() < element_id,
+            |a| a.element_id() == element_id,
+        )
+        .unwrap_or(overrides.count());
+    let end: usize = overrides.upper_bound_eq(32, begin, |a| a.element_id() == element_id);
 
     // C: `ufbx_prop_override_list result = { overrides->data + begin, end - begin };`
     // (`List<T>` carries a private `PhantomData` marker, so the aggregate
@@ -1711,9 +1660,10 @@ pub(crate) unsafe fn find_element_prop_overrides(
     // SAFETY: `ufbx_prop_override_list` is a pointer plus a count (plus a
     // zero-sized marker), for which the all-zero pattern is a valid inhabitant.
     let mut result: List<PropOverride> = unsafe { MaybeUninit::zeroed().assume_init() };
-    // SAFETY: `begin <= overrides->count`, so `data + begin` is at most one past
-    // the end of the caller's override run.
-    result.data = unsafe { (*overrides).data.add(begin) };
+    // C writes `data + begin` even for an empty range (`begin <= count`, so it
+    // is at most one past the end); the wrapping projection keeps the address
+    // without an in-bounds dereference claim.
+    result.data = overrides.data().wrapping_add(begin);
     result.count = end - begin;
     result
 }
@@ -2222,11 +2172,12 @@ pub(crate) unsafe fn init_prop_iter_slow(
             .add(element.props().props().count);
     }
 
-    // SAFETY: the projection addresses `anim`'s own override list, which is what
-    // the search walks.
-    let over: List<PropOverride> = unsafe {
-        find_element_prop_overrides(&raw const (*anim).prop_overrides, element.element_id())
-    };
+    // SAFETY: `&raw const (*anim).prop_overrides` addresses the live anim's own
+    // override list, read-only during evaluation — the `Const` mint's freeze.
+    let over: List<PropOverride> = find_element_prop_overrides(
+        unsafe { View::<_, Const>::from_ptr(&raw const (*anim).prop_overrides) },
+        element.element_id(),
+    );
     // SAFETY: as above for `iter`; `over` is a sub-run of the anim's override
     // list, so `data + count` is one past its last element.
     unsafe {

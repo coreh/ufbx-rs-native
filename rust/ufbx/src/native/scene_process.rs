@@ -238,10 +238,9 @@ use crate::native::parse::{
 #[cfg(feature = "regression")]
 use crate::native::parse::{is_quat_equal, is_vec3_equal};
 use crate::native::platform::{
-    add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, macro_upper_bound_eq, math,
-    max32, max_sz, min32, min_sz, pack_version, stable_sort, to_size, ufbx_assert,
-    ufbxi_dev_assert, ufbxi_ignore, ufbxi_regression_assert, ufbxi_string_literal,
-    ufbxi_unreachable, unstable_sort, NO_INDEX,
+    add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, math, max32, max_sz, min32,
+    min_sz, pack_version, stable_sort, to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_ignore,
+    ufbxi_regression_assert, ufbxi_string_literal, ufbxi_unreachable, unstable_sort, NO_INDEX,
 };
 use crate::native::read::{
     deduplicate_properties, find_fbx_id, fix_index, init_synthetic_vec3_prop, mesh_part_add_face,
@@ -1189,30 +1188,30 @@ pub(crate) unsafe fn cmp_name_element_less_ref(
 // ufbx.c:18572-18576 `ufbxi_cmp_prop_less_ref`
 // `name: &[u8]` carries C's `ufbx_string` query key (see `find_prop_len`).
 #[inline(always)]
-pub(crate) unsafe fn cmp_prop_less_ref(a: *const Prop, name: &[u8], key: u32) -> bool {
-    // SAFETY: `a` points to a live, initialized `Prop` — the array element the
-    // bounded search is probing (fn contract); its `name` is an interned span
-    // readable for its own length (the `as_bytes` contract).
-    unsafe {
-        if (*a)._internal_key != key {
-            return (*a)._internal_key < key;
-        }
-        str_less((*a).name.as_bytes(), name)
+pub(crate) fn cmp_prop_less_ref<M: crate::native::view::Mode>(
+    a: &crate::native::view::View<Prop, M>,
+    name: &[u8],
+    key: u32,
+) -> bool {
+    if a._internal_key() != key {
+        return a._internal_key() < key;
     }
+    str_less(a.name_view().bytes(), name)
 }
 
 // ufbx.c:18578-18582 `ufbxi_cmp_prop_less_concat`
 #[inline(always)]
-pub(crate) unsafe fn cmp_prop_less_concat(a: *const Prop, parts: &[String], key: u32) -> bool {
-    // SAFETY: `a` points to a live, initialized `Prop` — the array element the
-    // bounded search is probing (fn contract) — whose interned `name` is what
-    // `concat_str_cmp` walks against `parts`.
-    unsafe {
-        if (*a)._internal_key != key {
-            return (*a)._internal_key < key;
-        }
-        concat_str_cmp((*a).name, parts) < 0
+pub(crate) unsafe fn cmp_prop_less_concat<M: crate::native::view::Mode>(
+    a: &crate::native::view::View<Prop, M>,
+    parts: &[String],
+    key: u32,
+) -> bool {
+    if a._internal_key() != key {
+        return a._internal_key() < key;
     }
+    // SAFETY: each part's `data` is readable for its `length` bytes — the
+    // key-part contract forwarded from this fn's own.
+    unsafe { concat_str_cmp(a.name(), parts) < 0 }
 }
 
 // ufbx.c:18584-18590 `ufbxi_sort_name_elements`
@@ -2131,36 +2130,21 @@ pub(crate) unsafe fn find_dst_connections(
     // write-capable pointer anchors an `ElementView` for the reads below.
     let element_view: &ElementView = unsafe { ElementView::from_ptr(element) };
 
-    let mut begin: usize = element_view.connections_dst().count;
-    let mut end: usize = begin;
-
-    // SAFETY: `connections_dst` is that element's own `data`/`count` span of
-    // initialized `Connection`s, so the search range `0..count` is in bounds and
-    // every probe pointer the two closures receive addresses a live connection
-    // whose `dst_prop`/`src_prop` are interned (NUL-terminated) spans.
-    unsafe {
-        macro_lower_bound_eq(
+    let conns = element_view.connections_dst_view();
+    // C pre-initializes `begin = count` because the lower bound does not write
+    // on a miss; `unwrap_or` reproduces that.
+    let begin: usize = conns
+        .lower_bound_eq(
             32,
-            &mut begin,
-            element_view.connections_dst().data,
-            0,
-            element_view.connections_dst().count,
-            |a| strcmp((*a).dst_prop.data, prop) < 0,
-            |a| (*a).dst_prop.data == prop && (*a).src_prop.length == 0,
+            // SAFETY (inner op): both `dst_prop.data` and `prop` are interned
+            // NUL-terminated spans — `strcmp`'s walk contract.
+            |a| unsafe { strcmp(a.dst_prop().data, prop) } < 0,
+            |a| a.dst_prop().data == prop && a.src_prop().length == 0,
         )
-    };
-
-    // SAFETY: as above, with `begin <= count` the lower bound just produced.
-    unsafe {
-        macro_upper_bound_eq(
-            32,
-            &mut end,
-            element_view.connections_dst().data,
-            begin,
-            element_view.connections_dst().count,
-            |a| (*a).dst_prop.data == prop && (*a).src_prop.length == 0,
-        )
-    };
+        .unwrap_or(conns.count());
+    let end: usize = conns.upper_bound_eq(32, begin, |a| {
+        a.dst_prop().data == prop && a.src_prop().length == 0
+    });
 
     // C: `ufbx_connection_list result = { element->connections_dst.data + begin, end - begin };`
     // `List<T>` carries a private `PhantomData` marker, so the C aggregate
@@ -2168,9 +2152,10 @@ pub(crate) unsafe fn find_dst_connections(
     // SAFETY: `List<Connection>` is a raw pointer, a `usize` and a zero-sized
     // `PhantomData`, so the all-zero bit pattern is a valid (null, empty) value.
     let mut result: List<Connection> = unsafe { MaybeUninit::zeroed().assume_init() };
-    // SAFETY: `begin <= count` (it is a bound within `0..count`), so the offset
-    // lands at or one past the end of the element's connection span.
-    result.data = unsafe { element_view.connections_dst().data.add(begin) };
+    // C writes `data + begin` even for an empty range (`begin <= count`, so it
+    // is at most one past the end); the wrapping projection keeps the address
+    // without an in-bounds dereference claim.
+    result.data = conns.data().wrapping_add(begin);
     result.count = end - begin;
     result
 }
@@ -2191,44 +2176,30 @@ pub(crate) unsafe fn find_src_connections(
     // write-capable pointer anchors an `ElementView` for the reads below.
     let element_view: &ElementView = unsafe { ElementView::from_ptr(element) };
 
-    let mut begin: usize = element_view.connections_src().count;
-    let mut end: usize = begin;
-
-    // SAFETY: `connections_src` is that element's own `data`/`count` span of
-    // initialized `Connection`s, so the search range `0..count` is in bounds and
-    // every probe pointer the two closures receive addresses a live connection
-    // whose `src_prop`/`dst_prop` are interned (NUL-terminated) spans.
-    unsafe {
-        macro_lower_bound_eq(
+    let conns = element_view.connections_src_view();
+    // C pre-initializes `begin = count` because the lower bound does not write
+    // on a miss; `unwrap_or` reproduces that.
+    let begin: usize = conns
+        .lower_bound_eq(
             32,
-            &mut begin,
-            element_view.connections_src().data,
-            0,
-            element_view.connections_src().count,
-            |a| strcmp((*a).src_prop.data, prop) < 0,
-            |a| (*a).src_prop.data == prop && (*a).dst_prop.length == 0,
+            // SAFETY (inner op): both `src_prop.data` and `prop` are interned
+            // NUL-terminated spans — `strcmp`'s walk contract.
+            |a| unsafe { strcmp(a.src_prop().data, prop) } < 0,
+            |a| a.src_prop().data == prop && a.dst_prop().length == 0,
         )
-    };
-
-    // SAFETY: as above, with `begin <= count` the lower bound just produced.
-    unsafe {
-        macro_upper_bound_eq(
-            32,
-            &mut end,
-            element_view.connections_src().data,
-            begin,
-            element_view.connections_src().count,
-            |a| (*a).src_prop.data == prop && (*a).dst_prop.length == 0,
-        )
-    };
+        .unwrap_or(conns.count());
+    let end: usize = conns.upper_bound_eq(32, begin, |a| {
+        a.src_prop().data == prop && a.dst_prop().length == 0
+    });
 
     // C: `ufbx_connection_list result = { element->connections_src.data + begin, end - begin };`
     // SAFETY: `List<Connection>` is a raw pointer, a `usize` and a zero-sized
     // `PhantomData`, so the all-zero bit pattern is a valid (null, empty) value.
     let mut result: List<Connection> = unsafe { MaybeUninit::zeroed().assume_init() };
-    // SAFETY: `begin <= count` (it is a bound within `0..count`), so the offset
-    // lands at or one past the end of the element's connection span.
-    result.data = unsafe { element_view.connections_src().data.add(begin) };
+    // C writes `data + begin` even for an empty range (`begin <= count`, so it
+    // is at most one past the end); the wrapping projection keeps the address
+    // without an in-bounds dereference claim.
+    result.data = conns.data().wrapping_add(begin);
     result.count = end - begin;
     result
 }

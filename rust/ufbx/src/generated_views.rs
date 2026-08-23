@@ -5797,6 +5797,138 @@ impl View<Keyframe, Mut> {
 }
 
 #[allow(dead_code)]
+impl<M: Mode> View<Connection, M> {
+    #[inline(always)]
+    pub(crate) fn src(&self) -> Ref<Element> {
+        // SAFETY: by-value read of the `src` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).src) }
+    }
+    #[inline(always)]
+    pub(crate) fn src_ptr(&self) -> *const Ref<Element> {
+        // SAFETY: in-bounds projection of the `src` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).src }
+    }
+    #[inline(always)]
+    pub(crate) fn dst(&self) -> Ref<Element> {
+        // SAFETY: by-value read of the `dst` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).dst) }
+    }
+    #[inline(always)]
+    pub(crate) fn dst_ptr(&self) -> *const Ref<Element> {
+        // SAFETY: in-bounds projection of the `dst` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).dst }
+    }
+    #[inline(always)]
+    pub(crate) fn src_prop(&self) -> String {
+        // SAFETY: by-value read of the `src_prop` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).src_prop) }
+    }
+    #[inline(always)]
+    pub(crate) fn src_prop_view(&self) -> &View<String, M> {
+        // SAFETY: in-place projection of the `src_prop` field; liveness and
+        // `M`-adequate provenance carry over from this view's own mint.
+        unsafe { View::mint((&raw const (*self.as_ptr()).src_prop).cast_mut()) }
+    }
+    #[inline(always)]
+    pub(crate) fn src_prop_ptr(&self) -> *const String {
+        // SAFETY: in-bounds projection of the `src_prop` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).src_prop }
+    }
+    #[inline(always)]
+    pub(crate) fn dst_prop(&self) -> String {
+        // SAFETY: by-value read of the `dst_prop` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).dst_prop) }
+    }
+    #[inline(always)]
+    pub(crate) fn dst_prop_view(&self) -> &View<String, M> {
+        // SAFETY: in-place projection of the `dst_prop` field; liveness and
+        // `M`-adequate provenance carry over from this view's own mint.
+        unsafe { View::mint((&raw const (*self.as_ptr()).dst_prop).cast_mut()) }
+    }
+    #[inline(always)]
+    pub(crate) fn dst_prop_ptr(&self) -> *const String {
+        // SAFETY: in-bounds projection of the `dst_prop` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).dst_prop }
+    }
+}
+
+#[allow(dead_code)]
+impl View<Connection, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_src(&self, value: Ref<Element>) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).src = value }
+    }
+    #[inline(always)]
+    pub(crate) fn src_raw(&self) -> *mut Ref<Element> {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).src }
+    }
+    #[inline(always)]
+    pub(crate) fn set_dst(&self, value: Ref<Element>) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).dst = value }
+    }
+    #[inline(always)]
+    pub(crate) fn dst_raw(&self) -> *mut Ref<Element> {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).dst }
+    }
+    #[inline(always)]
+    pub(crate) fn set_src_prop(&self, value: String) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).src_prop = value }
+    }
+    #[inline(always)]
+    pub(crate) fn src_prop_raw(&self) -> *mut String {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).src_prop }
+    }
+    #[inline(always)]
+    pub(crate) fn set_dst_prop(&self, value: String) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).dst_prop = value }
+    }
+    #[inline(always)]
+    pub(crate) fn dst_prop_raw(&self) -> *mut String {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).dst_prop }
+    }
+}
+
+#[allow(dead_code)]
 impl<M: Mode> View<Shader, M> {
     #[inline(always)]
     pub(crate) fn element(&self) -> &View<Element, M> {

@@ -961,29 +961,13 @@ pub(crate) fn find_prop_len<'a, M: Mode>(
 
     let mut props: Option<&'a View<Props, M>> = Some(props);
     while let Some(cur) = props {
-        let mut index: usize = usize::MAX;
-        // SAFETY: the search spans `cur`'s own sorted prop run `0..props_count()`;
-        // every probe pointer the comparators receive addresses a live `Prop`
-        // whose `name` is an interned span readable for its own length (the
-        // `as_bytes` contract).
-        unsafe {
-            macro_lower_bound_eq::<Prop>(
-                4,
-                &mut index,
-                cur.props_data(),
-                0,
-                cur.props_count(),
-                |a| cmp_prop_less_ref(a, name, key),
-                |a| (*a)._internal_key == key && str_equal((*a).name.as_bytes(), name),
-            )
-        };
-        if index != usize::MAX {
-            // Mode-generic mint: `props_data()` is a VALUE read of the stored
-            // run pointer, so this carries the table's stored (arena, write)
-            // provenance — adequate for either mode.
-            // SAFETY: `index < props_count()` (a hit), so `props_data().add(index)`
-            // addresses the `index`-th live `Prop` of the run.
-            return Some(unsafe { View::<Prop, M>::mint(cur.props_data().add(index)) });
+        let run = cur.props_view();
+        if let Some(index) = run.lower_bound_eq(
+            4,
+            |a| cmp_prop_less_ref(a, name, key),
+            |a| a._internal_key() == key && str_equal(a.name_view().bytes(), name),
+        ) {
+            return Some(run.at(index));
         }
 
         props = cur.defaults();
@@ -1065,28 +1049,16 @@ pub(crate) unsafe fn find_prop_concat<'a, M: Mode>(
 
     let mut props: Option<&'a View<Props, M>> = Some(props);
     while let Some(cur) = props {
-        let mut index: usize = usize::MAX;
-
-        // SAFETY: the search spans `cur`'s own sorted prop run `0..props_count()`;
-        // every probe pointer the comparators receive addresses a live `Prop`
-        // whose `name` is an interned span, and `parts`/`num_parts`/`key`
-        // describe the concatenated query key.
-        unsafe {
-            macro_lower_bound_eq::<Prop>(
-                2,
-                &mut index,
-                cur.props_data(),
-                0,
-                cur.props_count(),
-                |a| cmp_prop_less_concat(a, parts, key),
-                |a| (*a)._internal_key == key && concat_str_cmp((*a).name, parts) == 0,
-            )
-        };
-        if index != usize::MAX {
-            // Same stored-provenance mint as `find_prop_len`.
-            // SAFETY: `index < props_count()` (a hit), so `props_data().add(index)`
-            // addresses the `index`-th live `Prop` of the run.
-            return Some(unsafe { View::<Prop, M>::mint(cur.props_data().add(index)) });
+        let run = cur.props_view();
+        // SAFETY (both inner ops): each part's `data` is readable for its
+        // `length` bytes — the key-part contract of this `unsafe fn`, forwarded
+        // to `cmp_prop_less_concat`/`concat_str_cmp`.
+        if let Some(index) = run.lower_bound_eq(
+            2,
+            |a| unsafe { cmp_prop_less_concat(a, parts, key) },
+            |a| a._internal_key() == key && unsafe { concat_str_cmp(a.name(), parts) } == 0,
+        ) {
+            return Some(run.at(index));
         }
 
         props = cur.defaults();
@@ -1656,13 +1628,14 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
     // `unsafe fn`; reading its own `prop_overrides.count`.
     if unsafe { (*anim).prop_overrides.count } > 0 {
         // SAFETY: `&raw const (*anim).prop_overrides` addresses the live anim's
-        // own overrides list and `&mut result` addresses the local prop; the
-        // element id is a safe read through the element view.
+        // own overrides list (read-only during evaluation — the `Const` mint's
+        // freeze) and `&raw mut result` roots a write-capable `Mut` view over
+        // the local prop.
         unsafe {
             evaluate::find_prop_override(
-                &raw const (*anim).prop_overrides,
+                View::<_, Const>::from_ptr(&raw const (*anim).prop_overrides),
                 element_view.element_id(),
-                &mut result,
+                View::<_, Mut>::from_ptr(&raw mut result),
             )
         };
         return result;
@@ -4673,25 +4646,18 @@ pub(crate) unsafe fn find_face_index(mesh: *mut Mesh, index: usize) -> u32 {
     // live.
     let mesh = unsafe { View::<Mesh, Const>::from_ptr(mesh) };
 
-    let mut face_ix: usize = usize::MAX;
-    // SAFETY: `faces.data`/`.count` describe the mesh's own face run, and each
-    // closure derefs a `Face` the search keeps within `[0, count)`.
-    unsafe {
-        macro_lower_bound_eq::<Face>(
-            4,
-            &mut face_ix,
-            mesh.faces().data,
-            0,
-            mesh.faces().count,
-            // C: `a->index_begin + a->num_indices <= ix` — `uint32_t` arithmetic.
-            |a| (*a).index_begin.wrapping_add((*a).num_indices) <= ix,
-            // C: `ix >= a->index_begin && ix < a->index_begin + a->num_indices`.
-            |a| ix >= (*a).index_begin && ix < (*a).index_begin.wrapping_add((*a).num_indices),
-        );
+    match mesh.faces_view().lower_bound_eq(
+        4,
+        // C: `a->index_begin + a->num_indices <= ix` — `uint32_t` arithmetic.
+        |a| a.index_begin().wrapping_add(a.num_indices()) <= ix,
+        // C: `ix >= a->index_begin && ix < a->index_begin + a->num_indices`.
+        |a| ix >= a.index_begin() && ix < a.index_begin().wrapping_add(a.num_indices()),
+    ) {
+        Some(face_ix) => face_ix as u32,
+        // C: `(uint32_t)face_ix` — a miss keeps `SIZE_MAX`, truncating to
+        // `UFBX_NO_INDEX`.
+        None => usize::MAX as u32,
     }
-    // C: `(uint32_t)face_ix` — a miss keeps `SIZE_MAX`, truncating to
-    // `UFBX_NO_INDEX`.
-    face_ix as u32
 }
 
 // ufbx.c:32392-32475 `ufbx_catch_triangulate_face`
