@@ -173,11 +173,48 @@ impl<T> View<T, Const> {
 // If a droppable type ever ends up behind a view, its reads must not use
 // these macros.
 
+/// Drop-glue guard for the leaf macros: `ptr::read` duplicates and `ptr::write`
+/// discards bitwise, which is only sound for the Drop-free C-POD model — this
+/// turns a future droppable-type-behind-a-view into a COMPILE ERROR at the
+/// offending accessor (post-monomorphization const assert, zero runtime cost).
+///
+/// # Safety
+/// As `ptr::read`: `p` must be valid for reads of an initialized `T`.
+#[inline(always)]
+pub(crate) unsafe fn read_no_drop<T>(p: *const T) -> T {
+    const {
+        assert!(
+            !core::mem::needs_drop::<T>(),
+            "leaf-macro read of a Drop type: bitwise duplication would double-drop              (see the view.rs macro doc)"
+        )
+    };
+    // SAFETY: forwarded unchanged from this fn's own contract.
+    unsafe { core::ptr::read(p) }
+}
+
+/// Write half of the guard (see [`read_no_drop`]): `ptr::write` never runs
+/// `Drop` on the old value, which under the assert is the only inhabited case
+/// anyway — and a place assignment WOULD drop stale bytes if `T` gained glue.
+///
+/// # Safety
+/// As `ptr::write`: `p` must be valid for writes of `T`.
+#[inline(always)]
+pub(crate) unsafe fn write_no_drop<T>(p: *mut T, value: T) {
+    const {
+        assert!(
+            !core::mem::needs_drop::<T>(),
+            "leaf-macro write of a Drop type: the discarded old value would need              dropping (see the view.rs macro doc)"
+        )
+    };
+    // SAFETY: forwarded unchanged from this fn's own contract.
+    unsafe { core::ptr::write(p, value) }
+}
+
 /// Single-leaf read through `$self.get()` (Mut views / context handles).
 macro_rules! view_read {
     ($self:expr, $field:ident) => {
         // SAFETY: single-leaf read; see the macro-level argument above.
-        unsafe { ::core::ptr::read(&raw const (*$self.get()).$field) }
+        unsafe { $crate::native::view::read_no_drop(&raw const (*$self.get()).$field) }
     };
 }
 pub(crate) use view_read;
@@ -186,7 +223,7 @@ pub(crate) use view_read;
 macro_rules! view_read_shared {
     ($self:expr, $field:ident) => {
         // SAFETY: single-leaf read; see the macro-level argument above.
-        unsafe { ::core::ptr::read(&raw const (*$self.as_ptr()).$field) }
+        unsafe { $crate::native::view::read_no_drop(&raw const (*$self.as_ptr()).$field) }
     };
 }
 pub(crate) use view_read_shared;
@@ -221,7 +258,7 @@ macro_rules! view_write {
     ($self:expr, $field:ident, $value:expr) => {
         // SAFETY: single-leaf place write; see the macro-level argument above.
         unsafe {
-            (*$self.get()).$field = $value;
+            $crate::native::view::write_no_drop(&raw mut (*$self.get()).$field, $value);
         }
     };
 }
