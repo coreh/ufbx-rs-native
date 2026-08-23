@@ -4812,12 +4812,7 @@ pub fn find_prop_element<'a>(
 #[allow(clippy::needless_lifetimes)]
 pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Option<&'a Element> {
     let result = unsafe {
-        crate::native::api::find_element_len(
-            scene as *const Scene,
-            type_,
-            name.as_ptr(),
-            name.len(),
-        )
+        crate::native::api::find_element_len(scene as *const Scene, type_, name.as_bytes())
     };
     if result.is_null() {
         None
@@ -4828,9 +4823,8 @@ pub fn find_element<'a>(scene: &'a Scene, type_: ElementType, name: &str) -> Opt
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
-    let result = unsafe {
-        crate::native::api::find_node_len(scene as *const Scene, name.as_ptr(), name.len())
-    };
+    let result =
+        unsafe { crate::native::api::find_node_len(scene as *const Scene, name.as_bytes()) };
     if result.is_null() {
         None
     } else {
@@ -4840,9 +4834,8 @@ pub fn find_node<'a>(scene: &'a Scene, name: &str) -> Option<&'a Node> {
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_anim_stack<'a>(scene: &'a Scene, name: &str) -> Option<&'a AnimStack> {
-    let result = unsafe {
-        crate::native::api::find_anim_stack_len(scene as *const Scene, name.as_ptr(), name.len())
-    };
+    let result =
+        unsafe { crate::native::api::find_anim_stack_len(scene as *const Scene, name.as_bytes()) };
     if result.is_null() {
         None
     } else {
@@ -4852,9 +4845,8 @@ pub fn find_anim_stack<'a>(scene: &'a Scene, name: &str) -> Option<&'a AnimStack
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_material<'a>(scene: &'a Scene, name: &str) -> Option<&'a Material> {
-    let result = unsafe {
-        crate::native::api::find_material_len(scene as *const Scene, name.as_ptr(), name.len())
-    };
+    let result =
+        unsafe { crate::native::api::find_material_len(scene as *const Scene, name.as_bytes()) };
     if result.is_null() {
         None
     } else {
@@ -4872,8 +4864,7 @@ pub fn find_anim_prop<'a>(
         crate::native::api::find_anim_prop_len(
             layer as *const AnimLayer,
             element as *const Element,
-            prop.as_ptr(),
-            prop.len(),
+            prop.as_bytes(),
         )
     };
     if result.is_null() {
@@ -5391,11 +5382,7 @@ pub fn get_bone_pose<'a>(pose: &'a Pose, node: &'a Node) -> Option<&'a BonePose>
 #[allow(clippy::needless_lifetimes)]
 pub fn find_prop_texture<'a>(material: &'a Material, name: &str) -> Option<&'a Texture> {
     let result = unsafe {
-        crate::native::api::find_prop_texture_len(
-            material as *const Material,
-            name.as_ptr(),
-            name.len(),
-        )
+        crate::native::api::find_prop_texture_len(material as *const Material, name.as_bytes())
     };
     if result.is_null() {
         None
@@ -5406,7 +5393,7 @@ pub fn find_prop_texture<'a>(material: &'a Material, name: &str) -> Option<&'a T
 
 pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
     let result = unsafe {
-        crate::native::api::find_shader_prop_len(shader as *const Shader, name.as_ptr(), name.len())
+        crate::native::api::find_shader_prop_len(shader as *const Shader, name.as_bytes())
     };
     unsafe { result.as_static_ref() }
 }
@@ -5414,11 +5401,7 @@ pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
 #[allow(clippy::needless_lifetimes)]
 pub fn find_shader_prop_bindings<'a>(shader: &'a Shader, name: &str) -> &'a [ShaderPropBinding] {
     let result = unsafe {
-        crate::native::api::find_shader_prop_bindings_len(
-            shader as *const Shader,
-            name.as_ptr(),
-            name.len(),
-        )
+        crate::native::api::find_shader_prop_bindings_len(shader as *const Shader, name.as_bytes())
     };
     unsafe { result.as_static_ref() }
 }
@@ -5431,8 +5414,7 @@ pub fn find_shader_texture_input<'a>(
     let result = unsafe {
         crate::native::api::find_shader_texture_input_len(
             shader as *const ShaderTexture,
-            name.as_ptr(),
-            name.len(),
+            name.as_bytes(),
         )
     };
     if result.is_null() {

@@ -447,7 +447,7 @@ override_functions["ufbx_find_prop_concat"] = """
 
 override_functions["ufbx_find_shader_prop_len"] = """
 pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
-    let result = unsafe { crate::native::api::find_shader_prop_len(shader as *const Shader, name.as_ptr(), name.len()) };
+    let result = unsafe { crate::native::api::find_shader_prop_len(shader as *const Shader, name.as_bytes()) };
     unsafe { result.as_static_ref() }
 }
 """
@@ -1739,6 +1739,18 @@ def parse_capi_forwarders(capi_path):
             r"crate::native::view::View::<[^>]*>::from_ptr\(\s*"
             r"([A-Za-z_][A-Za-z0-9_]*)\s*,?\s*\)",
             r"\1", stmt)
+        # A `slice_from_ptr(name, name_len)` mint of a (ptr, len) param pair
+        # also counts as verbatim: the native fn takes the pair as one `&[u8]`
+        # (see native/api.rs `find_prop_len`). Record the minted param so the
+        # direct-native call emits `name.as_bytes()` instead of ptr+len.
+        slice_args = set()
+        def _mint(m):
+            slice_args.add(m.group(1))
+            return m.group(1) + ", " + m.group(2)
+        stmt = re.sub(
+            r"crate::prelude::slice_from_ptr\(\s*"
+            r"([A-Za-z_][A-Za-z0-9_]*)\s*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)",
+            _mint, stmt)
         cm = re.fullmatch(
             r'crate::native::([a-z_]+)::([A-Za-z0-9_]+)\s*\((.*)\)', stmt)
         if not cm:
@@ -1764,7 +1776,7 @@ def parse_capi_forwarders(capi_path):
         call_args = [a[:-len(".as_mut()")] if a.endswith(".as_mut()") else a
                      for a in call_args]
         if call_args == pnames:
-            out[cname] = (mod, fn)
+            out[cname] = (mod, fn, slice_args)
     return out
 
 def emit_arg_pass(args: List[str], ra: RustArgument):
@@ -1828,10 +1840,6 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
             force_mut = non_raw and (rf.ir.name, ix) in force_mut_args
         ) for ix, arg in enumerate(rf.args))
 
-    arg_pass = []
-    for arg in rf.args:
-        emit_arg_pass(arg_pass, arg)
-
     ret = ""
     if not rf.return_type.is_void:
         rt = rf.return_type.fmt_arg(lifetime, force_const=True)
@@ -1871,6 +1879,15 @@ def emit_function(rf: RustFunction, non_raw: bool = False):
     # The callee for this wrapper body: the native fn when the shim is a pure
     # forward, else the capi shim itself (adapters that bridge/adapt args).
     call_head = f"crate::native::{fwd[0]}::{fwd[1]}" if fwd else rf.ir.name
+
+    arg_pass = []
+    for arg in rf.args:
+        # A param the capi shim slice-mints reaches the native fn as one
+        # `&[u8]` — the safe wrapper's `&str` maps to it via `as_bytes()`.
+        if fwd and arg.kind == "string" and arg.name in fwd[2]:
+            arg_pass.append(f"{arg.name}.as_bytes()")
+        else:
+            emit_arg_pass(arg_pass, arg)
 
     is_unsafe = False
 

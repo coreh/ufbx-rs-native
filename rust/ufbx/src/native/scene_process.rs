@@ -251,7 +251,7 @@ use crate::native::read::{
     NodeExtra, Strblob, SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
 };
 use crate::native::string_pool::{
-    self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp_raw, str_less, str_less_raw,
+    self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, str_less_raw,
     sub3, ONE_VEC3,
 };
 use crate::native::view::{Const, Mode, SliceViewIter, View};
@@ -1164,22 +1164,22 @@ pub(crate) unsafe fn cmp_name_element_less(a: *const NameElement, b: *const Name
 }
 
 // ufbx.c:18564-18570 `ufbxi_cmp_name_element_less_ref`
+// `name: &[u8]` carries C's `ufbx_string` query key (see `find_prop_len`).
 #[inline(always)]
 pub(crate) unsafe fn cmp_name_element_less_ref(
     a: *const NameElement,
-    name: String,
+    name: &[u8],
     type_: ElementType,
     key: u32,
 ) -> bool {
     // SAFETY: `a` points to a live, initialized `NameElement` — the array
-    // element the bounded search is probing (fn contract); `str_cmp` compares
-    // two `ufbx_string`s by their `data`/`length` spans, both of which are
-    // interned string-pool spans.
+    // element the bounded search is probing (fn contract); its `name` is an
+    // interned span readable for its own length (the `as_bytes` contract).
     unsafe {
         if (*a)._internal_key != key {
             return (*a)._internal_key < key;
         }
-        let cmp: i32 = str_cmp_raw((*a).name, name);
+        let cmp: i32 = str_cmp((*a).name.as_bytes(), name);
         if cmp != 0 {
             return cmp < 0;
         }
@@ -4198,11 +4198,11 @@ pub(crate) unsafe fn fetch_mapping_maps(
         }
 
         // SAFETY: `shader` is the caller's shader pointer (nullable, which
-        // `find_shader_prop_bindings_len` handles) and `prop_name` is a
-        // `data`/`length` span readable for its length — either the mapping
-        // table's `prop` bytes or the `combined_name` prefix just written.
+        // `find_shader_prop_bindings_len` handles) and `prop_name` is readable
+        // for its length (`as_bytes`) — either the mapping table's `prop`
+        // bytes or the `combined_name` prefix just written.
         let mut bindings: List<ShaderPropBinding> =
-            unsafe { find_shader_prop_bindings_len(shader, prop_name.data, prop_name.length) };
+            unsafe { find_shader_prop_bindings_len(shader, prop_name.as_bytes()) };
         if bindings.count == 0 {
             // SAFETY: `identity_binding` addresses this function's own aligned
             // `ShaderPropBinding` storage; both members are written here before
@@ -4267,9 +4267,9 @@ pub(crate) unsafe fn fetch_mapping_maps(
                 }
                 if (mapping_flags & SHADER_FEATURE_IF_TEXTURE as u32) != 0 {
                     // SAFETY: `material` points to a live `ufbx_material` and
-                    // `name` is a `data`/`length` span readable for its length.
+                    // `name` is readable for its length (`as_bytes`).
                     let texture: *mut Texture =
-                        unsafe { find_prop_texture_len(material, name.data, name.length) };
+                        unsafe { find_prop_texture_len(material, name.as_bytes()) };
                     if !texture.is_null() {
                         feature.set_enabled(true);
                     }
@@ -4359,10 +4359,10 @@ pub(crate) unsafe fn fetch_mapping_maps(
             }
 
             if (flags & MAPPING_FETCH_TEXTURE) != 0 {
-                // SAFETY: `material` points to a live `ufbx_material` and `name` is
-                // a `data`/`length` span readable for its length.
+                // SAFETY: `material` points to a live `ufbx_material` and `name`
+                // is readable for its length (`as_bytes`).
                 let texture: *mut Texture =
-                    unsafe { find_prop_texture_len(material, name.data, name.length) };
+                    unsafe { find_prop_texture_len(material, name.as_bytes()) };
                 if !texture.is_null() {
                     // SAFETY: `map` is in bounds (see above) and `texture` is a
                     // non-null (checked) live `ufbx_texture`.
@@ -5622,7 +5622,7 @@ pub(crate) fn finalize_shader_texture<'a>(
                 || sp::remove_suffix_c(&mut base_name, b".shader\0".as_ptr())
             {
                 let base: *mut ShaderTextureInput =
-                    find_shader_texture_input_len(shader, base_name.data, base_name.length);
+                    find_shader_texture_input_len(shader, base_name.as_bytes());
                 if !base.is_null() {
                     (*base).texture_prop = opt_ref(prop.get());
                     continue;
@@ -5631,7 +5631,7 @@ pub(crate) fn finalize_shader_texture<'a>(
                 || sp::remove_suffix_c(&mut base_name, b"Enabled\0".as_ptr())
             {
                 let base: *mut ShaderTextureInput =
-                    find_shader_texture_input_len(shader, base_name.data, base_name.length);
+                    find_shader_texture_input_len(shader, base_name.as_bytes());
                 if !base.is_null() {
                     (*base).texture_enabled_prop = opt_ref(prop.get());
                     continue;

@@ -79,9 +79,7 @@ use crate::native::read::{
 #[cfg(feature = "obj")]
 use crate::native::scene_process::MaterialView;
 #[cfg(feature = "obj")]
-use crate::native::string_pool::{
-    push_string_place_blob, push_string_place_str, str_c, str_equal_raw,
-};
+use crate::native::string_pool::{push_string_place_blob, push_string_place_str, str_c, str_equal};
 #[cfg(feature = "obj")]
 use crate::native::view::{SliceViewIter, View};
 #[cfg(feature = "obj")]
@@ -1218,7 +1216,7 @@ pub(crate) fn obj_parse_comment(uc: &Context) -> Result<(), Fail> {
     // SAFETY: the length guard runs first, so token 1 is in the tokenizer's
     // stored token run; the literal is NUL-terminated for `str_c`.
     if uc.obj().num_tokens() >= 3
-        && unsafe { str_equal_raw(*uc.obj().tokens().add(1), str_c(b"MRGB\0".as_ptr())) }
+        && unsafe { str_equal((*uc.obj().tokens().add(1)).as_bytes(), b"MRGB") }
     {
         let num_color: usize = uc.obj().vertex_count_at(ObjAttrib::Color as usize).get();
 
@@ -2011,7 +2009,7 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
                 // SAFETY: `num_tokens >= 2` here, so token 1 is in the stored
                 // token run; the literal is NUL-terminated for `str_c`.
                 uc.obj().set_face_smoothing(unsafe {
-                    !str_equal_raw(*uc.obj().tokens().add(1), str_c(b"off\0".as_ptr()))
+                    !str_equal((*uc.obj().tokens().add(1)).as_bytes(), b"off")
                 });
 
                 // Fill in previously missed face smoothing data
@@ -2066,7 +2064,7 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             obj_parse_comment(uc)?;
         // SAFETY: `cmd` is token 0's span and the literals are NUL-terminated
         // for `str_c`.
-        } else if unsafe { str_equal_raw(cmd, str_c(b"mtllib\0".as_ptr())) } {
+        } else if unsafe { str_equal(cmd.as_bytes(), b"mtllib") } {
             ufbxi_check!(uc, uc.obj().num_tokens() >= 2, "uc->obj.num_tokens >= 2");
             let mut lib: String = obj_span_token(uc, 1, usize::MAX);
             // SAFETY: copies the span (plus its terminator, still inside the
@@ -2076,7 +2074,7 @@ pub(crate) fn obj_parse_file(uc: &Context) -> Result<(), Fail> {
             uc.obj().mtllib_relative_path_view().set_data(lib.data);
             uc.obj().mtllib_relative_path_view().set_size(lib.length);
         // SAFETY: as for the `mtllib` comparison above.
-        } else if unsafe { str_equal_raw(cmd, str_c(b"usemtl\0".as_ptr())) } {
+        } else if unsafe { str_equal(cmd.as_bytes(), b"usemtl") } {
             obj_parse_material(uc)?;
         } else if !uc.opts_view().disable_quirks() && key == 0 {
             // ZBrush exporter seems to end the files with '\0', sometimes..
@@ -2403,7 +2401,7 @@ pub(crate) fn obj_parse_mtl(uc: &Context) -> Result<(), Fail> {
         // property parse takes no out-param.
         unsafe {
             let cmd: String = *uc.obj().tokens().add(0);
-            if str_equal_raw(cmd, str_c(b"newmtl\0".as_ptr())) {
+            if str_equal(cmd.as_bytes(), b"newmtl") {
                 // HACK: Reuse mesh material parsing, but don't allow for empty material name
                 ufbxi_check!(uc, uc.obj().num_tokens() >= 2, "uc->obj.num_tokens >= 2");
                 obj_flush_material(uc)?;

@@ -475,10 +475,17 @@ pub unsafe extern "C" fn ufbx_find_element_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::Element {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::find_element_len(scene, type_, name, name_len) }
+    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
+    // own raw-pointer contract, and the caller's name/len key-buffer contract
+    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
+    // empty slice).
+    unsafe {
+        crate::native::api::find_element_len(
+            scene,
+            type_,
+            crate::prelude::slice_from_ptr(name, name_len),
+        )
+    }
 }
 
 // ufbx.c:30743-30748 `ufbx_get_prop_element` (impl: native/api.rs `get_prop_element`)
@@ -515,10 +522,13 @@ pub unsafe extern "C" fn ufbx_find_node_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::Node {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::find_node_len(scene, name, name_len) }
+    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
+    // own raw-pointer contract, and the caller's name/len key-buffer contract
+    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
+    // empty slice).
+    unsafe {
+        crate::native::api::find_node_len(scene, crate::prelude::slice_from_ptr(name, name_len))
+    }
 }
 
 // ufbx.c:30765-30768 `ufbx_find_anim_stack_len` (impl: native/api.rs `find_anim_stack_len`)
@@ -528,10 +538,16 @@ pub unsafe extern "C" fn ufbx_find_anim_stack_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::AnimStack {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::find_anim_stack_len(scene, name, name_len) }
+    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
+    // own raw-pointer contract, and the caller's name/len key-buffer contract
+    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
+    // empty slice).
+    unsafe {
+        crate::native::api::find_anim_stack_len(
+            scene,
+            crate::prelude::slice_from_ptr(name, name_len),
+        )
+    }
 }
 
 // ufbx.c:30770-30773 `ufbx_find_material_len` (impl: native/api.rs `find_material_len`)
@@ -541,10 +557,13 @@ pub unsafe extern "C" fn ufbx_find_material_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::Material {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::find_material_len(scene, name, name_len) }
+    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
+    // own raw-pointer contract, and the caller's name/len key-buffer contract
+    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
+    // empty slice).
+    unsafe {
+        crate::native::api::find_material_len(scene, crate::prelude::slice_from_ptr(name, name_len))
+    }
 }
 
 // ufbx.c:30775-30790 `ufbx_find_anim_prop_len` (impl: native/api.rs `find_anim_prop_len`)
@@ -555,10 +574,17 @@ pub unsafe extern "C" fn ufbx_find_anim_prop_len(
     prop: *const u8,
     prop_len: usize,
 ) -> *mut crate::generated::AnimProp {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::find_anim_prop_len(layer, element, prop, prop_len) }
+    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
+    // own raw-pointer contract, and the caller's name/len key-buffer contract
+    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
+    // empty slice).
+    unsafe {
+        crate::native::api::find_anim_prop_len(
+            layer,
+            element,
+            crate::prelude::slice_from_ptr(prop, prop_len),
+        )
+    }
 }
 
 // ufbx.c:30792-30812 `ufbx_find_anim_props` (impl: native/api.rs `find_anim_props`)
@@ -1042,10 +1068,16 @@ pub unsafe extern "C" fn ufbx_find_prop_texture_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::Texture {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::find_prop_texture_len(material, name, name_len) }
+    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
+    // own raw-pointer contract, and the caller's name/len key-buffer contract
+    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
+    // empty slice).
+    unsafe {
+        crate::native::api::find_prop_texture_len(
+            material,
+            crate::prelude::slice_from_ptr(name, name_len),
+        )
+    }
 }
 
 // ufbx.c:31425-31432 `ufbx_find_shader_prop_len` (impl: native/api.rs `find_shader_prop_len`)
@@ -1055,10 +1087,16 @@ pub unsafe extern "C" fn ufbx_find_shader_prop_len(
     name: *const u8,
     name_len: usize,
 ) -> crate::prelude::String {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::find_shader_prop_len(shader, name, name_len) }
+    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
+    // own raw-pointer contract, and the caller's name/len key-buffer contract
+    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
+    // empty slice).
+    unsafe {
+        crate::native::api::find_shader_prop_len(
+            shader,
+            crate::prelude::slice_from_ptr(name, name_len),
+        )
+    }
 }
 
 // ufbx.c:31434-31461 `ufbx_find_shader_prop_bindings_len`
@@ -1069,10 +1107,16 @@ pub unsafe extern "C" fn ufbx_find_shader_prop_bindings_len(
     name: *const u8,
     name_len: usize,
 ) -> crate::prelude::List<crate::generated::ShaderPropBinding> {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::find_shader_prop_bindings_len(shader, name, name_len) }
+    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
+    // own raw-pointer contract, and the caller's name/len key-buffer contract
+    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
+    // empty slice).
+    unsafe {
+        crate::native::api::find_shader_prop_bindings_len(
+            shader,
+            crate::prelude::slice_from_ptr(name, name_len),
+        )
+    }
 }
 
 // ufbx.c:31463-31476 `ufbx_find_shader_texture_input_len`
@@ -1083,10 +1127,16 @@ pub unsafe extern "C" fn ufbx_find_shader_texture_input_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::ShaderTextureInput {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::find_shader_texture_input_len(shader, name, name_len) }
+    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
+    // own raw-pointer contract, and the caller's name/len key-buffer contract
+    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
+    // empty slice).
+    unsafe {
+        crate::native::api::find_shader_texture_input_len(
+            shader,
+            crate::prelude::slice_from_ptr(name, name_len),
+        )
+    }
 }
 
 // ufbx.c:31478-31490 `ufbx_coordinate_axes_valid` (impl: native/api.rs `coordinate_axes_valid`)

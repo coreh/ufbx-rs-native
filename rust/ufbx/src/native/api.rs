@@ -144,8 +144,7 @@ use crate::native::scene_process::{
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{
     add3, concat_str_cmp, cross3, get_concat_key, length3, lerp3, mul3, normalize3, safe_string,
-    str_equal, str_equal_raw, str_less_raw, sub3, DEG_TO_RAD_DOUBLE, DPI, ONE_VEC3,
-    RAD_TO_DEG_DOUBLE,
+    str_equal, str_equal_raw, str_less, sub3, DEG_TO_RAD_DOUBLE, DPI, ONE_VEC3, RAD_TO_DEG_DOUBLE,
 };
 // `ufbxi_dot3` is only reached from the `#if UFBXI_FEATURE_TRIANGULATION` arm of
 // `ufbx_catch_triangulate_face`.
@@ -1098,25 +1097,22 @@ pub(crate) unsafe fn find_prop_concat<'a, M: Mode>(
 }
 
 // ufbx.c:30730-30741 `ufbx_find_element_len`
+// `name: &[u8]` carries C's `(name, name_len)` pair (see `find_prop_len`).
 pub(crate) unsafe fn find_element_len(
     scene: *const Scene,
     type_: ElementType,
-    name: *const u8,
-    name_len: usize,
+    name: &[u8],
 ) -> *mut Element {
     if scene.is_null() {
         return core::ptr::null_mut();
     }
-    let name_str: String = safe_string(name, name_len);
-    // SAFETY: `name`/`name_len` describe the caller's key bytes — the
-    // raw-pointer contract of this `unsafe fn`.
-    let key: u32 = unsafe { get_name_key_raw(name, name_len) };
+    let key: u32 = get_name_key(name);
 
     let mut index: usize = usize::MAX;
     // SAFETY: `scene` is non-null (checked) and points at a live `Scene`; the
     // search spans its own sorted `elements_by_name` run `0..count`, and every
     // probe pointer the comparators receive addresses a live `NameElement` whose
-    // `name` is an interned span.
+    // `name` is an interned span readable for its own length (`as_bytes`).
     unsafe {
         macro_lower_bound_eq::<NameElement>(
             16,
@@ -1124,8 +1120,8 @@ pub(crate) unsafe fn find_element_len(
             (*scene).elements_by_name.data,
             0,
             (*scene).elements_by_name.count,
-            |a| cmp_name_element_less_ref(a, name_str, type_, key),
-            |a| str_equal_raw((*a).name, name_str) && (*a).type_ == type_,
+            |a| cmp_name_element_less_ref(a, name, type_, key),
+            |a| str_equal((*a).name.as_bytes(), name) && (*a).type_ == type_,
         )
     };
 
@@ -1185,44 +1181,32 @@ pub(crate) unsafe fn find_prop_element_len(
 }
 
 // ufbx.c:30760-30763 `ufbx_find_node_len`
-pub(crate) unsafe fn find_node_len(
-    scene: *const Scene,
-    name: *const u8,
-    name_len: usize,
-) -> *mut Node {
-    // SAFETY: `scene` is null-or-live and `name`/`name_len` are the caller's key
-    // bytes — the raw-pointer contract forwarded to `find_element_len`.
-    unsafe { find_element_len(scene, ElementType::Node, name, name_len) as *mut Node }
+pub(crate) unsafe fn find_node_len(scene: *const Scene, name: &[u8]) -> *mut Node {
+    // SAFETY: `scene` is null-or-live — the raw-pointer contract forwarded to
+    // `find_element_len`.
+    unsafe { find_element_len(scene, ElementType::Node, name) as *mut Node }
 }
 
 // ufbx.c:30765-30768 `ufbx_find_anim_stack_len`
-pub(crate) unsafe fn find_anim_stack_len(
-    scene: *const Scene,
-    name: *const u8,
-    name_len: usize,
-) -> *mut AnimStack {
-    // SAFETY: `scene` is null-or-live and `name`/`name_len` are the caller's key
-    // bytes — the raw-pointer contract forwarded to `find_element_len`.
-    unsafe { find_element_len(scene, ElementType::AnimStack, name, name_len) as *mut AnimStack }
+pub(crate) unsafe fn find_anim_stack_len(scene: *const Scene, name: &[u8]) -> *mut AnimStack {
+    // SAFETY: `scene` is null-or-live — the raw-pointer contract forwarded to
+    // `find_element_len`.
+    unsafe { find_element_len(scene, ElementType::AnimStack, name) as *mut AnimStack }
 }
 
 // ufbx.c:30770-30773 `ufbx_find_material_len`
-pub(crate) unsafe fn find_material_len(
-    scene: *const Scene,
-    name: *const u8,
-    name_len: usize,
-) -> *mut Material {
-    // SAFETY: `scene` is null-or-live and `name`/`name_len` are the caller's key
-    // bytes — the raw-pointer contract forwarded to `find_element_len`.
-    unsafe { find_element_len(scene, ElementType::Material, name, name_len) as *mut Material }
+pub(crate) unsafe fn find_material_len(scene: *const Scene, name: &[u8]) -> *mut Material {
+    // SAFETY: `scene` is null-or-live — the raw-pointer contract forwarded to
+    // `find_element_len`.
+    unsafe { find_element_len(scene, ElementType::Material, name) as *mut Material }
 }
 
 // ufbx.c:30775-30790 `ufbx_find_anim_prop_len`
+// `prop: &[u8]` carries C's `(prop, prop_len)` pair (see `find_prop_len`).
 pub(crate) unsafe fn find_anim_prop_len(
     layer: *const AnimLayer,
     element: *const Element,
-    prop: *const u8,
-    prop_len: usize,
+    prop: &[u8],
 ) -> *mut AnimProp {
     ufbx_assert!(!layer.is_null());
     ufbx_assert!(!element.is_null());
@@ -1230,14 +1214,12 @@ pub(crate) unsafe fn find_anim_prop_len(
         return core::ptr::null_mut();
     }
 
-    let prop_str: String = safe_string(prop, prop_len);
-
     let mut index: usize = usize::MAX;
     // SAFETY: `layer` is non-null (checked) and points at a live `AnimLayer`; the
     // search spans its own sorted `anim_props` run `0..count`, every probe
     // pointer the comparators receive addresses a live `AnimProp` whose `element`
-    // ref and `prop_name` span are readable, and `element`/`prop_str` derive from
-    // this fn's params.
+    // ref is readable and whose `prop_name` is an interned span readable for its
+    // own length (`as_bytes`); `element` is this fn's param.
     unsafe {
         macro_lower_bound_eq::<AnimProp>(
             16,
@@ -1253,12 +1235,12 @@ pub(crate) unsafe fn find_anim_prop_len(
                 if a_element != element {
                     a_element < element
                 } else {
-                    str_less_raw((*a).prop_name, prop_str)
+                    str_less((*a).prop_name.as_bytes(), prop)
                 }
             },
             |a| {
                 std::ptr::eq(ref_ptr(&(*a).element), element)
-                    && str_equal_raw((*a).prop_name, prop_str)
+                    && str_equal((*a).prop_name.as_bytes(), prop)
             },
         )
     };
@@ -2797,12 +2779,8 @@ pub(crate) unsafe fn get_bone_pose(pose: *const Pose, node: *const Node) -> *mut
 }
 
 // ufbx.c:31414-31423 `ufbx_find_prop_texture_len`
-pub(crate) unsafe fn find_prop_texture_len(
-    material: *const Material,
-    name: *const u8,
-    name_len: usize,
-) -> *mut Texture {
-    let name_str: String = safe_string(name, name_len);
+// `name: &[u8]` carries C's `(name, name_len)` pair (see `find_prop_len`).
+pub(crate) unsafe fn find_prop_texture_len(material: *const Material, name: &[u8]) -> *mut Texture {
     if material.is_null() {
         return core::ptr::null_mut();
     }
@@ -2819,8 +2797,8 @@ pub(crate) unsafe fn find_prop_texture_len(
             (*material).textures.data,
             0,
             (*material).textures.count,
-            |a| str_less_raw((*a).material_prop, name_str),
-            |a| str_equal_raw((*a).material_prop, name_str),
+            |a| str_less((*a).material_prop.as_bytes(), name),
+            |a| str_equal((*a).material_prop.as_bytes(), name),
         );
     }
     if index < usize::MAX {
@@ -2833,15 +2811,10 @@ pub(crate) unsafe fn find_prop_texture_len(
 }
 
 // ufbx.c:31425-31432 `ufbx_find_shader_prop_len`
-pub(crate) unsafe fn find_shader_prop_len(
-    shader: *const Shader,
-    name: *const u8,
-    name_len: usize,
-) -> String {
-    // SAFETY: `shader`/`name` are this fn's raw-pointer params, forwarded
-    // unchanged to `find_shader_prop_bindings_len` under its same contract.
-    let bindings: List<ShaderPropBinding> =
-        unsafe { find_shader_prop_bindings_len(shader, name, name_len) };
+pub(crate) unsafe fn find_shader_prop_len(shader: *const Shader, name: &[u8]) -> String {
+    // SAFETY: `shader` is this fn's raw-pointer param, forwarded unchanged to
+    // `find_shader_prop_bindings_len` under its same contract.
+    let bindings: List<ShaderPropBinding> = unsafe { find_shader_prop_bindings_len(shader, name) };
     if bindings.count > 0 {
         // SAFETY: `count > 0` here, so `bindings.data` addresses a live
         // `ShaderPropBinding`; reading its own `material_prop` field.
@@ -2851,10 +2824,10 @@ pub(crate) unsafe fn find_shader_prop_len(
 }
 
 // ufbx.c:31434-31461 `ufbx_find_shader_prop_bindings_len`
+// `name: &[u8]` carries C's `(name, name_len)` pair (see `find_prop_len`).
 pub(crate) unsafe fn find_shader_prop_bindings_len(
     shader: *const Shader,
-    name: *const u8,
-    name_len: usize,
+    name: &[u8],
 ) -> List<ShaderPropBinding> {
     // C: `ufbx_shader_prop_binding_list bindings = { NULL, 0 };` — `List<T>`
     // carries a private `PhantomData` marker, so the C aggregate initializer
@@ -2866,7 +2839,6 @@ pub(crate) unsafe fn find_shader_prop_bindings_len(
     bindings.data = core::ptr::null();
     bindings.count = 0;
 
-    let name_str: String = safe_string(name, name_len);
     if shader.is_null() {
         return bindings;
     }
@@ -2895,8 +2867,8 @@ pub(crate) unsafe fn find_shader_prop_bindings_len(
                 (*bind).prop_bindings.data,
                 0,
                 (*bind).prop_bindings.count,
-                |a| str_less_raw((*a).shader_prop, name_str),
-                |a| str_equal_raw((*a).shader_prop, name_str),
+                |a| str_less((*a).shader_prop.as_bytes(), name),
+                |a| str_equal((*a).shader_prop.as_bytes(), name),
             );
         }
 
@@ -2911,7 +2883,7 @@ pub(crate) unsafe fn find_shader_prop_bindings_len(
                     (*bind).prop_bindings.data,
                     begin,
                     (*bind).prop_bindings.count,
-                    |a| str_equal_raw((*a).shader_prop, name_str),
+                    |a| str_equal((*a).shader_prop.as_bytes(), name),
                 );
             }
 
@@ -2930,13 +2902,11 @@ pub(crate) unsafe fn find_shader_prop_bindings_len(
 }
 
 // ufbx.c:31463-31476 `ufbx_find_shader_texture_input_len`
+// `name: &[u8]` carries C's `(name, name_len)` pair (see `find_prop_len`).
 pub(crate) unsafe fn find_shader_texture_input_len(
     shader: *const ShaderTexture,
-    name: *const u8,
-    name_len: usize,
+    name: &[u8],
 ) -> *mut ShaderTextureInput {
-    let name_str: String = safe_string(name, name_len);
-
     let mut index: usize = usize::MAX;
     // SAFETY: `shader` points at a live `ShaderTexture` per this fn's contract;
     // `inputs.data`/`.count` are its own list fields, and each closure derefs a
@@ -2948,8 +2918,8 @@ pub(crate) unsafe fn find_shader_texture_input_len(
             (*shader).inputs.data,
             0,
             (*shader).inputs.count,
-            |a| str_less_raw((*a).name, name_str),
-            |a| str_equal_raw((*a).name, name_str),
+            |a| str_less((*a).name.as_bytes(), name),
+            |a| str_equal((*a).name.as_bytes(), name),
         );
     }
 
@@ -7256,29 +7226,39 @@ pub(crate) unsafe fn find_element(
     name: *const u8,
 ) -> *mut Element {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward (with `scene`) to the `_len` impl.
-    unsafe { find_element_len(scene, type_, name, strlen(name)) }
+    // `strlen` measures it, and the measured run (with `scene`) is exactly the
+    // slice minted for the `_len` impl.
+    unsafe {
+        find_element_len(
+            scene,
+            type_,
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+        )
+    }
 }
 
 // ufbx.c:33151 `ufbx_find_node`
 pub(crate) unsafe fn find_node(scene: *const Scene, name: *const u8) -> *mut Node {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward (with `scene`) to the `_len` impl.
-    unsafe { find_node_len(scene, name, strlen(name)) }
+    // `strlen` measures it, and the measured run (with `scene`) is exactly the
+    // slice minted for the `_len` impl.
+    unsafe { find_node_len(scene, crate::prelude::slice_from_ptr(name, strlen(name))) }
 }
 
 // ufbx.c:33152 `ufbx_find_anim_stack`
 pub(crate) unsafe fn find_anim_stack(scene: *const Scene, name: *const u8) -> *mut AnimStack {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward (with `scene`) to the `_len` impl.
-    unsafe { find_anim_stack_len(scene, name, strlen(name)) }
+    // `strlen` measures it, and the measured run (with `scene`) is exactly the
+    // slice minted for the `_len` impl.
+    unsafe { find_anim_stack_len(scene, crate::prelude::slice_from_ptr(name, strlen(name))) }
 }
 
 // ufbx.c:33153 `ufbx_find_material`
 pub(crate) unsafe fn find_material(scene: *const Scene, name: *const u8) -> *mut Material {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward (with `scene`) to the `_len` impl.
-    unsafe { find_material_len(scene, name, strlen(name)) }
+    // `strlen` measures it, and the measured run (with `scene`) is exactly the
+    // slice minted for the `_len` impl.
+    unsafe { find_material_len(scene, crate::prelude::slice_from_ptr(name, strlen(name))) }
 }
 
 // ufbx.c:33154 `ufbx_find_anim_prop`
@@ -7288,8 +7268,15 @@ pub(crate) unsafe fn find_anim_prop(
     prop: *const u8,
 ) -> *mut AnimProp {
     // SAFETY: `prop` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and all forward (with `layer`/`element`) to `_len`.
-    unsafe { find_anim_prop_len(layer, element, prop, strlen(prop)) }
+    // `strlen` measures it, and the measured run (with `layer`/`element`) is
+    // exactly the slice minted for the `_len` impl.
+    unsafe {
+        find_anim_prop_len(
+            layer,
+            element,
+            crate::prelude::slice_from_ptr(prop, strlen(prop)),
+        )
+    }
 }
 
 // ufbx.c:33155 `ufbx_evaluate_prop`
@@ -7320,15 +7307,17 @@ pub(crate) unsafe fn evaluate_prop_flags(
 // ufbx.c:33157 `ufbx_find_prop_texture`
 pub(crate) unsafe fn find_prop_texture(material: *const Material, name: *const u8) -> *mut Texture {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward (with `material`) to the `_len` impl.
-    unsafe { find_prop_texture_len(material, name, strlen(name)) }
+    // `strlen` measures it, and the measured run (with `material`) is exactly
+    // the slice minted for the `_len` impl.
+    unsafe { find_prop_texture_len(material, crate::prelude::slice_from_ptr(name, strlen(name))) }
 }
 
 // ufbx.c:33158 `ufbx_find_shader_prop`
 pub(crate) unsafe fn find_shader_prop(shader: *const Shader, name: *const u8) -> String {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward (with `shader`) to the `_len` impl.
-    unsafe { find_shader_prop_len(shader, name, strlen(name)) }
+    // `strlen` measures it, and the measured run (with `shader`) is exactly the
+    // slice minted for the `_len` impl.
+    unsafe { find_shader_prop_len(shader, crate::prelude::slice_from_ptr(name, strlen(name))) }
 }
 
 // ufbx.c:33159 `ufbx_find_shader_prop_bindings`
@@ -7337,8 +7326,11 @@ pub(crate) unsafe fn find_shader_prop_bindings(
     name: *const u8,
 ) -> List<ShaderPropBinding> {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward (with `shader`) to the `_len` impl.
-    unsafe { find_shader_prop_bindings_len(shader, name, strlen(name)) }
+    // `strlen` measures it, and the measured run (with `shader`) is exactly the
+    // slice minted for the `_len` impl.
+    unsafe {
+        find_shader_prop_bindings_len(shader, crate::prelude::slice_from_ptr(name, strlen(name)))
+    }
 }
 
 // ufbx.c:33160 `ufbx_find_shader_texture_input`
@@ -7347,8 +7339,11 @@ pub(crate) unsafe fn find_shader_texture_input(
     name: *const u8,
 ) -> *mut ShaderTextureInput {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward (with `shader`) to the `_len` impl.
-    unsafe { find_shader_texture_input_len(shader, name, strlen(name)) }
+    // `strlen` measures it, and the measured run (with `shader`) is exactly the
+    // slice minted for the `_len` impl.
+    unsafe {
+        find_shader_texture_input_len(shader, crate::prelude::slice_from_ptr(name, strlen(name)))
+    }
 }
 
 // ufbx.c:33161 `ufbx_dom_find`
@@ -7731,9 +7726,7 @@ mod tests {
     fn test_find_element_len_and_typed_lookups() {
         unsafe {
             // C: `if (!scene) return NULL;`
-            assert!(
-                find_element_len(core::ptr::null(), ElementType::Node, b"a".as_ptr(), 1).is_null()
-            );
+            assert!(find_element_len(core::ptr::null(), ElementType::Node, b"a").is_null());
 
             let names: [&[u8]; 4] = [b"alpha", b"beta", b"gamma", b"beta"];
             let types = [
@@ -7764,7 +7757,7 @@ mod tests {
             let mut scene: Scene = MaybeUninit::zeroed().assume_init();
             scene.elements_by_name = List::from_slice(&entries);
 
-            let find = |t, n: &[u8]| find_element_len(&scene, t, n.as_ptr(), n.len());
+            let find = |t, n: &[u8]| find_element_len(&scene, t, n);
             assert_eq!(find(ElementType::Node, b"alpha"), ptrs[0]);
             // Same name, different type: the type is part of the sort key.
             assert_eq!(find(ElementType::Node, b"beta"), ptrs[1]);
@@ -7774,19 +7767,16 @@ mod tests {
             assert!(find(ElementType::Node, b"delta").is_null());
 
             // The typed wrappers just pin the element type.
+            assert_eq!(find_node_len(&scene, b"alpha"), ptrs[0] as *mut Node);
             assert_eq!(
-                find_node_len(&scene, b"alpha".as_ptr(), 5),
-                ptrs[0] as *mut Node
-            );
-            assert_eq!(
-                find_material_len(&scene, b"gamma".as_ptr(), 5),
+                find_material_len(&scene, b"gamma"),
                 ptrs[2] as *mut Material
             );
             assert_eq!(
-                find_anim_stack_len(&scene, b"beta".as_ptr(), 4),
+                find_anim_stack_len(&scene, b"beta"),
                 ptrs[3] as *mut AnimStack
             );
-            assert!(find_node_len(&scene, b"gamma".as_ptr(), 5).is_null());
+            assert!(find_node_len(&scene, b"gamma").is_null());
 
             // String API wrappers: same results via `strlen`.
             assert_eq!(
@@ -7842,8 +7832,7 @@ mod tests {
             layer.anim_props = List::from_slice(&props);
             let base: *const AnimProp = props.as_ptr();
 
-            let find =
-                |e: *mut Element, n: &[u8]| find_anim_prop_len(&layer, e, n.as_ptr(), n.len());
+            let find = |e: *mut Element, n: &[u8]| find_anim_prop_len(&layer, e, n);
             assert_eq!(find(e0, b"Lcl Scaling"), base as *mut AnimProp);
             assert_eq!(find(e0, b"Lcl Translation"), base.add(1) as *mut AnimProp);
             assert_eq!(find(e2, b"Lcl Rotation"), base.add(2) as *mut AnimProp);
@@ -8565,7 +8554,7 @@ mod tests {
     fn test_find_shader_prop_len_falls_back_to_empty_string() {
         unsafe {
             // C: no bindings -> `ufbx_empty_string`, not NULL.
-            let s = find_shader_prop_len(core::ptr::null(), b"Diffuse".as_ptr(), 7);
+            let s = find_shader_prop_len(core::ptr::null(), b"Diffuse");
             assert_eq!(s.length, 0);
             assert_eq!(s.data, EMPTY_STRING.0.data);
             assert_eq!(
