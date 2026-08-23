@@ -18,7 +18,7 @@ use crate::generated::Error;
 use crate::native::allocator::{free, grow_array, Allocator};
 use crate::native::buf::{buf_free, push_copy, Buf};
 use crate::native::error::{
-    strcmp, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_fail_err, Fail, EMPTY_CHAR,
+    c_strcmp, strcmp, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_fail_err, Fail, EMPTY_CHAR,
 };
 use crate::native::platform::{ufbx_assert, IS_REGRESSION};
 use crate::native::view::{SliceViewIter, View};
@@ -76,6 +76,12 @@ impl View<XmlTag> {
         // SAFETY: in-bounds projection of the `name` field; the returned raw
         // pointer inherits the view's write-capable provenance.
         unsafe { &raw mut (*self.get()).name }
+    }
+    #[inline(always)]
+    pub(crate) fn name_view(&self) -> &View<String> {
+        // SAFETY: in-place projection of the `name` field; liveness and
+        // provenance carry over from this view's own mint.
+        unsafe { View::mint(&raw mut (*self.get()).name) }
     }
     #[inline(always)]
     pub(crate) fn text(&self) -> String {
@@ -156,15 +162,16 @@ pub(crate) type XmlAttribView = View<XmlAttrib>;
 
 impl View<XmlAttrib> {
     #[inline(always)]
-    pub(crate) fn name_data(&self) -> *const u8 {
-        // SAFETY: reading the `name.data` pointer field of a valid arena `XmlAttrib`.
-        unsafe { (*self.get()).name.data }
-    }
-    #[inline(always)]
     pub(crate) fn name_raw(&self) -> *mut String {
         // SAFETY: in-bounds projection of the `name` field; the returned raw
         // pointer inherits the view's write-capable provenance.
         unsafe { &raw mut (*self.get()).name }
+    }
+    #[inline(always)]
+    pub(crate) fn name_view(&self) -> &View<String> {
+        // SAFETY: in-place projection of the `name` field; liveness and
+        // provenance carry over from this view's own mint.
+        unsafe { View::mint(&raw mut (*self.get()).name) }
     }
     #[inline(always)]
     pub(crate) fn value(&self) -> String {
@@ -176,6 +183,12 @@ impl View<XmlAttrib> {
         // SAFETY: in-bounds projection of the `value` field; the returned raw
         // pointer inherits the view's write-capable provenance.
         unsafe { &raw mut (*self.get()).value }
+    }
+    #[inline(always)]
+    pub(crate) fn value_view(&self) -> &View<String> {
+        // SAFETY: in-place projection of the `value` field; liveness and
+        // provenance carry over from this view's own mint.
+        unsafe { View::mint(&raw mut (*self.get()).value) }
     }
 }
 
@@ -1205,9 +1218,7 @@ pub(crate) fn xml_find_child<'a>(tag: &'a XmlTagView, name: &CStr) -> Option<&'a
     let children: SliceViewIter<'a, XmlTag> =
         unsafe { SliceViewIter::from_raw_parts(tag.children(), tag.num_children()) };
     for child in children {
-        // SAFETY: `child.name_data()` is a valid NUL-terminated arena string;
-        // `name` is a valid NUL-terminated C string.
-        if unsafe { strcmp(child.name_data(), name.as_ptr().cast()) } == 0 {
+        if c_strcmp(child.name_view().bytes(), name.to_bytes_with_nul()) == 0 {
             return Some(child);
         }
     }
@@ -1226,9 +1237,7 @@ pub(crate) fn xml_find_attrib<'a>(tag: &'a XmlTagView, name: &CStr) -> Option<&'
     let attribs: SliceViewIter<'a, XmlAttrib> =
         unsafe { SliceViewIter::from_raw_parts(tag.attribs(), tag.num_attribs()) };
     for attrib in attribs {
-        // SAFETY: `attrib.name_data()` is a valid NUL-terminated arena string;
-        // `name` is a valid NUL-terminated C string.
-        if unsafe { strcmp(attrib.name_data(), name.as_ptr().cast()) } == 0 {
+        if c_strcmp(attrib.name_view().bytes(), name.to_bytes_with_nul()) == 0 {
             return Some(attrib);
         }
     }

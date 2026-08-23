@@ -2257,11 +2257,7 @@ pub(crate) unsafe fn create_anim(
         // SAFETY: `ac.error_mut_ptr()` is the context's own error slot and
         // `error` is null-or-live per this fn's contract.
         unsafe {
-            fix_error_type(
-                ac.error_mut_ptr(),
-                b"Failed to create anim\0".as_ptr(),
-                error,
-            );
+            fix_error_type(ac.error_mut_ptr(), b"Failed to create anim\0", error);
         }
         // SAFETY: `ac.result_mut_ptr()` is the context's own result buffer.
         unsafe { buf_free(ac.result_mut_ptr()) };
@@ -2388,7 +2384,7 @@ pub(crate) unsafe fn bake_anim(
         // SAFETY: `bc.error_mut_ptr()` is the context's own error slot and `error`
         // is null-or-live per this fn's contract.
         unsafe {
-            fix_error_type(bc.error_mut_ptr(), b"Failed to bake anim\0".as_ptr(), error);
+            fix_error_type(bc.error_mut_ptr(), b"Failed to bake anim\0", error);
         }
         // SAFETY: `bc.result_mut_ptr()` is the context's own result buffer.
         unsafe { buf_free(bc.result_mut_ptr()) };
@@ -4505,11 +4501,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
         // SAFETY: `error_mut_ptr()` addresses `tc`'s own error; the byte literal
         // is NUL-terminated; `error` is null or a live `Error`.
         unsafe {
-            fix_error_type(
-                tc.error_mut_ptr(),
-                b"Failed to tessellate\0".as_ptr(),
-                error,
-            );
+            fix_error_type(tc.error_mut_ptr(), b"Failed to tessellate\0", error);
         }
         // SAFETY: `result_mut_ptr()`/`ator_result_mut_ptr()` address `tc`'s own
         // result buffer and result allocator.
@@ -4601,11 +4593,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
         // SAFETY: `error_mut_ptr()` addresses `tc`'s own error; the byte literal
         // is NUL-terminated; `error` is null or a live `Error`.
         unsafe {
-            fix_error_type(
-                tc.error_mut_ptr(),
-                b"Failed to tessellate\0".as_ptr(),
-                error,
-            );
+            fix_error_type(tc.error_mut_ptr(), b"Failed to tessellate\0", error);
         }
         // SAFETY: `result_mut_ptr()`/`ator_result_mut_ptr()` address `tc`'s own
         // result buffer and result allocator.

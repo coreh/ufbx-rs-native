@@ -747,7 +747,7 @@ mod tests {
             // `fix_error_type` strcmp ladder at top-level entry points.
             crate::native::error::fix_error_type(
                 &mut err,
-                b"Failed to load\0".as_ptr(),
+                b"Failed to load\0",
                 core::ptr::null_mut(),
             );
             assert_eq!(err.type_, ErrorType::AllocationLimit);
@@ -774,7 +774,7 @@ mod tests {
             assert!(p.is_null());
             crate::native::error::fix_error_type(
                 &mut err,
-                b"Failed to load\0".as_ptr(),
+                b"Failed to load\0",
                 core::ptr::null_mut(),
             );
             assert_eq!(err.type_, ErrorType::MemoryLimit);

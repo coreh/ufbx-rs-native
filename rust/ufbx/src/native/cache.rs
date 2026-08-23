@@ -1501,9 +1501,7 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
             if tag.num_children() != 1 {
                 continue;
             }
-            // SAFETY: `name_data` is the tag's NUL-terminated arena name
-            // (xml-parser invariant), compared against a literal.
-            if unsafe { crate::native::error::strcmp(tag.name_data(), b"extra\0".as_ptr()) } != 0 {
+            if crate::native::error::c_strcmp(tag.name_view().bytes(), b"extra\0") != 0 {
                 continue;
             }
             let extra: *mut String = cc.tmp_stack_view().push(1);
@@ -1535,31 +1533,20 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
             let type_ = xml_find_attrib(tag_type, c"Type");
             let format = xml_find_attrib(tag_type, c"Format");
             if let Some(type_) = type_ {
-                if unsafe {
-                    // SAFETY: attrib values are NUL-terminated arena strings
-                    // (xml-parser invariant), compared against a literal.
-                    crate::native::error::strcmp(type_.value().data, b"OneFilePerFrame\0".as_ptr())
-                } == 0
+                if crate::native::error::c_strcmp(type_.value_view().bytes(), b"OneFilePerFrame\0")
+                    == 0
                 {
                     cc.set_xml_type(CacheXmlType::FilePerFrame);
-                } else if unsafe {
-                    // SAFETY: attrib values are NUL-terminated arena strings
-                    // (xml-parser invariant), compared against a literal.
-                    crate::native::error::strcmp(type_.value().data, b"OneFile\0".as_ptr())
-                } == 0
+                } else if crate::native::error::c_strcmp(type_.value_view().bytes(), b"OneFile\0")
+                    == 0
                 {
                     cc.set_xml_type(CacheXmlType::SingleFile);
                 }
             }
             if let Some(format) = format {
-                // SAFETY: NUL-terminated arena attrib values vs literals (as above).
-                if unsafe { crate::native::error::strcmp(format.value().data, b"mcc\0".as_ptr()) }
-                    == 0
-                {
+                if crate::native::error::c_strcmp(format.value_view().bytes(), b"mcc\0") == 0 {
                     cc.set_xml_format(CacheXmlFormat::Mcc);
-                } else if unsafe {
-                    crate::native::error::strcmp(format.value().data, b"mcx\0".as_ptr())
-                } == 0
+                } else if crate::native::error::c_strcmp(format.value_view().bytes(), b"mcx\0") == 0
                 {
                     cc.set_xml_format(CacheXmlFormat::Mcx);
                 }
@@ -2292,7 +2279,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
         unsafe {
             fix_error_type(
                 cc.error_mut_ptr(),
-                b"Failed to load geometry cache\0".as_ptr(),
+                b"Failed to load geometry cache\0",
                 core::ptr::null_mut(),
             );
         }

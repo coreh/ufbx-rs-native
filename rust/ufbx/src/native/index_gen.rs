@@ -337,7 +337,7 @@ pub(crate) unsafe fn generate_indices(
         unsafe {
             fix_error_type(
                 error,
-                b"Failed to generate indices\0".as_ptr(),
+                b"Failed to generate indices\0",
                 core::ptr::null_mut(),
             )
         };

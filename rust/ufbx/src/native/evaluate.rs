@@ -1530,7 +1530,7 @@ pub(crate) unsafe fn load(
     } else {
         // SAFETY: `uc`'s error field is live for the borrow and `p_error` is the
         // caller's `ufbx_error` slot or null, which `fix_error_type` accepts.
-        unsafe { fix_error_type(uc.error_mut_ptr(), b"Failed to load\0".as_ptr(), p_error) };
+        unsafe { fix_error_type(uc.error_mut_ptr(), b"Failed to load\0", p_error) };
         // SAFETY (this condition and the block it guards): `p_error` is non-null
         // (checked first, and `&&` short-circuits) and points to the caller's
         // `ufbx_error` slot, which `fix_error_type` just wrote.
@@ -4464,13 +4464,7 @@ pub(crate) unsafe fn evaluate_scene(
         // SAFETY: `ec`'s error field is live for the borrow, the message literal
         // is NUL-terminated, and `p_error` is the caller's `ufbx_error` slot or
         // null, which `fix_error_type` accepts.
-        unsafe {
-            fix_error_type(
-                ec.error_mut_ptr(),
-                b"Failed to evaluate\0".as_ptr(),
-                p_error,
-            )
-        };
+        unsafe { fix_error_type(ec.error_mut_ptr(), b"Failed to evaluate\0", p_error) };
         // SAFETY: `ec`'s temp and result buffers and their allocators are its own
         // fields, live for the borrow; the failure path discards the result, so
         // this is the last use of each.

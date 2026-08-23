@@ -559,7 +559,7 @@ pub(crate) unsafe fn end_file_context(fc: &FileContext, error: *mut Error, ok: b
         if !ok {
             // SAFETY: `error` is the caller's live `Error` slot (checked
             // non-null above) and `fc.error_mut_ptr()` is `fc`'s own field.
-            unsafe { fix_error_type(fc.error_mut_ptr(), b"Failed to open file\0".as_ptr(), error) };
+            unsafe { fix_error_type(fc.error_mut_ptr(), b"Failed to open file\0", error) };
         } else {
             // SAFETY: `error` is the caller's live `Error` slot, checked
             // non-null above.

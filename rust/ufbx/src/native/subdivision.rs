@@ -3321,11 +3321,7 @@ pub(crate) unsafe fn subdivide_mesh(
         // is a `'static` NUL-terminated literal; `p_error` is the caller's
         // (possibly null) error out-pointer, which `fix_error_type` handles.
         unsafe {
-            fix_error_type(
-                sc.error_mut_ptr(),
-                b"Failed to subdivide\0".as_ptr(),
-                p_error,
-            );
+            fix_error_type(sc.error_mut_ptr(), b"Failed to subdivide\0", p_error);
         }
         // SAFETY: `result` is `sc`'s own live scratch buf.
         unsafe { buf_free(sc.result_mut_ptr()) };

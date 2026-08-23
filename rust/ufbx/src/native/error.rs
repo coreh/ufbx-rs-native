@@ -137,6 +137,24 @@ pub(crate) unsafe fn strcmp(a: *const u8, b: *const u8) -> i32 {
     }
 }
 
+// C `strcmp` semantics over byte slices: compare as unsigned chars, stopping
+// at the first NUL byte or slice end (an exhausted slice reads as NUL). For a
+// `String` whose `data` is NUL-terminated at `length` — every interned or
+// `FailStr`-derived description — this is byte-for-byte `strcmp`: both walks
+// stop at the same first NUL, whether it sits inside the slice or right past
+// its end. Returns the difference at the first mismatch, like `strcmp` above.
+pub(crate) fn c_strcmp(a: &[u8], b: &[u8]) -> i32 {
+    let mut i: usize = 0;
+    loop {
+        let ca = if i < a.len() { a[i] } else { 0 };
+        let cb = if i < b.len() { b[i] } else { 0 };
+        if ca != cb || ca == 0 {
+            return ca as i32 - cb as i32;
+        }
+        i += 1;
+    }
+}
+
 // C `memcmp` semantics: lexicographic compare of `n` bytes as unsigned chars;
 // returns the difference at the first mismatch.
 pub(crate) unsafe fn memcmp(a: *const u8, b: *const u8, n: usize) -> i32 {
@@ -1147,67 +1165,69 @@ pub(crate) use ufbxi_fail_msg;
 #[inline(never)]
 pub(crate) unsafe fn fix_error_type(
     error: *mut Error,
-    default_desc: *const u8,
+    default_desc: &'static [u8],
     p_error: *mut Error,
 ) {
     // SAFETY: the caller's contract is that `error` points at a live,
     // unaliased `Error` (the entry points pass their own context error).
     let error = unsafe { &mut *error };
-    let mut desc = error.description.data;
-    if desc.is_null() {
-        desc = default_desc;
-    }
+    let desc_ptr = error.description.data;
+    let desc: &[u8] = if desc_ptr.is_null() {
+        default_desc
+    } else {
+        // SAFETY: the recorded description is always a NUL-terminated 'static
+        // run from a `FailStr`, so `strlen` finds its terminator and the run
+        // stays live for this whole fn.
+        unsafe { crate::prelude::slice_from_ptr(desc_ptr, strlen(desc_ptr)) }
+    };
     error.type_ = ErrorType::Unknown;
-    // SAFETY (every `strcmp` in the ladder below, and the `strlen` after it):
-    // `desc` is either the recorded description — always a NUL-terminated
-    // 'static literal from a `FailStr` — or the caller's `default_desc`, whose
-    // contract is likewise a NUL-terminated string; the right-hand operands are
-    // NUL-terminated byte literals.
-    if unsafe { strcmp(desc, b"Out of memory\0".as_ptr()) } == 0 {
+    if c_strcmp(desc, b"Out of memory\0") == 0 {
         error.type_ = ErrorType::OutOfMemory;
-    } else if unsafe { strcmp(desc, b"Memory limit exceeded\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Memory limit exceeded\0") == 0 {
         error.type_ = ErrorType::MemoryLimit;
-    } else if unsafe { strcmp(desc, b"Allocation limit exceeded\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Allocation limit exceeded\0") == 0 {
         error.type_ = ErrorType::AllocationLimit;
-    } else if unsafe { strcmp(desc, b"Truncated file\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Truncated file\0") == 0 {
         error.type_ = ErrorType::TruncatedFile;
-    } else if unsafe { strcmp(desc, b"IO error\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"IO error\0") == 0 {
         error.type_ = ErrorType::Io;
-    } else if unsafe { strcmp(desc, b"Cancelled\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Cancelled\0") == 0 {
         error.type_ = ErrorType::Cancelled;
-    } else if unsafe { strcmp(desc, b"Unrecognized file format\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Unrecognized file format\0") == 0 {
         error.type_ = ErrorType::UnrecognizedFileFormat;
-    } else if unsafe { strcmp(desc, b"File not found\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"File not found\0") == 0 {
         error.type_ = ErrorType::FileNotFound;
-    } else if unsafe { strcmp(desc, b"Empty file\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Empty file\0") == 0 {
         error.type_ = ErrorType::EmptyFile;
-    } else if unsafe { strcmp(desc, b"External file not found\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"External file not found\0") == 0 {
         error.type_ = ErrorType::ExternalFileNotFound;
-    } else if unsafe { strcmp(desc, b"Uninitialized options\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Uninitialized options\0") == 0 {
         error.type_ = ErrorType::UninitializedOptions;
-    } else if unsafe { strcmp(desc, b"Zero vertex size\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Zero vertex size\0") == 0 {
         error.type_ = ErrorType::ZeroVertexSize;
-    } else if unsafe { strcmp(desc, b"Truncated vertex stream\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Truncated vertex stream\0") == 0 {
         error.type_ = ErrorType::TruncatedVertexStream;
-    } else if unsafe { strcmp(desc, b"Invalid UTF-8\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Invalid UTF-8\0") == 0 {
         error.type_ = ErrorType::InvalidUtf8;
-    } else if unsafe { strcmp(desc, b"Feature disabled\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Feature disabled\0") == 0 {
         error.type_ = ErrorType::FeatureDisabled;
-    } else if unsafe { strcmp(desc, b"Bad NURBS geometry\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Bad NURBS geometry\0") == 0 {
         error.type_ = ErrorType::BadNurbs;
-    } else if unsafe { strcmp(desc, b"Bad index\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Bad index\0") == 0 {
         error.type_ = ErrorType::BadIndex;
-    } else if unsafe { strcmp(desc, b"Node depth limit exceeded\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Node depth limit exceeded\0") == 0 {
         error.type_ = ErrorType::NodeDepthLimit;
-    } else if unsafe { strcmp(desc, b"Threaded ASCII parse error\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Threaded ASCII parse error\0") == 0 {
         error.type_ = ErrorType::ThreadedAsciiParse;
-    } else if unsafe { strcmp(desc, b"Unsafe options\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Unsafe options\0") == 0 {
         error.type_ = ErrorType::UnsafeOptions;
-    } else if unsafe { strcmp(desc, b"Duplicate override\0".as_ptr()) } == 0 {
+    } else if c_strcmp(desc, b"Duplicate override\0") == 0 {
         error.type_ = ErrorType::DuplicateOverride;
     }
-    error.description.data = desc;
-    error.description.length = unsafe { strlen(desc) };
+    error.description.data = desc.as_ptr();
+    // C: `error->description.length = strlen(desc);` — the default literal
+    // carries its trailing NUL inside the slice, so cut at the first NUL.
+    error.description.length = desc.iter().position(|&b| b == 0).unwrap_or(desc.len());
     if !p_error.is_null() {
         // memcpy(p_error, error, sizeof(ufbx_error));
         // SAFETY: `p_error` is non-null and the caller's contract is that it
@@ -1397,7 +1417,7 @@ mod tests {
             assert_eq!(desc_bytes(&err), b"Out of memory");
 
             let mut p_error = Error::default();
-            fix_error_type(&mut err, b"Failed to load\0".as_ptr(), &mut p_error);
+            fix_error_type(&mut err, b"Failed to load\0", &mut p_error);
             assert_eq!(err.type_, ErrorType::OutOfMemory);
             assert_eq!(desc_bytes(&err), b"Out of memory");
             assert_eq!(p_error.type_, ErrorType::OutOfMemory);
@@ -1409,11 +1429,7 @@ mod tests {
         unsafe {
             // No description set -> per-entry-point default, type Unknown.
             let mut err = Error::default();
-            fix_error_type(
-                &mut err,
-                b"Failed to evaluate\0".as_ptr(),
-                core::ptr::null_mut(),
-            );
+            fix_error_type(&mut err, b"Failed to evaluate\0", core::ptr::null_mut());
             assert_eq!(err.type_, ErrorType::Unknown);
             assert_eq!(desc_bytes(&err), b"Failed to evaluate");
 
@@ -1421,11 +1437,7 @@ mod tests {
             let mut err = Error::default();
             err.description.data = b"Threaded ASCII parse error\0".as_ptr();
             err.description.length = 26;
-            fix_error_type(
-                &mut err,
-                b"Failed to load\0".as_ptr(),
-                core::ptr::null_mut(),
-            );
+            fix_error_type(&mut err, b"Failed to load\0", core::ptr::null_mut());
             assert_eq!(err.type_, ErrorType::ThreadedAsciiParse);
         }
     }
