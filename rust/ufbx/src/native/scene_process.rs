@@ -4190,12 +4190,24 @@ pub(crate) unsafe fn fetch_mapping_maps(
             }
         }
 
-        // SAFETY: `shader` is the caller's shader pointer (nullable, which
-        // `find_shader_prop_bindings_len` handles) and `prop_name` is readable
-        // for its length (`as_bytes`) — either the mapping table's `prop`
-        // bytes or the `combined_name` prefix just written.
-        let mut bindings: List<ShaderPropBinding> =
-            unsafe { find_shader_prop_bindings_len(shader, prop_name.as_bytes()) };
+        // SAFETY: the caller's nullable shader pointer becomes the `Const`
+        // view mint (live scene element, unwritten during the update pass), and
+        // `prop_name` is readable for its length (`as_bytes`) — either the
+        // mapping table's `prop` bytes or the `combined_name` prefix just
+        // written.
+        let mut bindings: List<ShaderPropBinding> = unsafe {
+            find_shader_prop_bindings_len(
+                if shader.is_null() {
+                    None
+                } else {
+                    Some(crate::native::view::View::<
+                        Shader,
+                        crate::native::view::Const,
+                    >::from_ptr(shader))
+                },
+                prop_name.as_bytes(),
+            )
+        };
         if bindings.count == 0 {
             // SAFETY: `identity_binding` addresses this function's own aligned
             // `ShaderPropBinding` storage; both members are written here before
@@ -5614,19 +5626,23 @@ pub(crate) fn finalize_shader_texture<'a>(
             if sp::remove_suffix_c(&mut base_name, b"_map\0".as_ptr())
                 || sp::remove_suffix_c(&mut base_name, b".shader\0".as_ptr())
             {
-                let base: *mut ShaderTextureInput =
-                    find_shader_texture_input_len(shader, base_name.as_bytes());
-                if !base.is_null() {
-                    (*base).texture_prop = opt_ref(prop.get());
+                let base = find_shader_texture_input_len(
+                    ShaderTextureView::from_ptr(shader),
+                    base_name.as_bytes(),
+                );
+                if let Some(base) = base {
+                    base.set_texture_prop(opt_ref(prop.get()));
                     continue;
                 }
             } else if sp::remove_suffix_c(&mut base_name, b".connected\0".as_ptr())
                 || sp::remove_suffix_c(&mut base_name, b"Enabled\0".as_ptr())
             {
-                let base: *mut ShaderTextureInput =
-                    find_shader_texture_input_len(shader, base_name.as_bytes());
-                if !base.is_null() {
-                    (*base).texture_enabled_prop = opt_ref(prop.get());
+                let base = find_shader_texture_input_len(
+                    ShaderTextureView::from_ptr(shader),
+                    base_name.as_bytes(),
+                );
+                if let Some(base) = base {
+                    base.set_texture_enabled_prop(opt_ref(prop.get()));
                     continue;
                 }
             }

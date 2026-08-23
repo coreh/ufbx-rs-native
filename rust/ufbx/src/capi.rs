@@ -1127,13 +1127,20 @@ pub unsafe extern "C" fn ufbx_find_shader_prop_len(
     name: *const u8,
     name_len: usize,
 ) -> crate::prelude::String {
-    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
-    // own raw-pointer contract, and the caller's name/len key-buffer contract
-    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
-    // empty slice).
+    // SAFETY: an ABI shim; the caller's null-or-live shader contract becomes
+    // the read-only `View<_, Const>` mint (legal for any readable provenance),
+    // and the name/len key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     unsafe {
         crate::native::api::find_shader_prop_len(
-            shader,
+            if shader.is_null() {
+                None
+            } else {
+                Some(crate::native::view::View::<
+                    crate::generated::Shader,
+                    crate::native::view::Const,
+                >::from_ptr(shader))
+            },
             crate::prelude::slice_from_ptr(name, name_len),
         )
     }
@@ -1147,13 +1154,20 @@ pub unsafe extern "C" fn ufbx_find_shader_prop_bindings_len(
     name: *const u8,
     name_len: usize,
 ) -> crate::prelude::List<crate::generated::ShaderPropBinding> {
-    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
-    // own raw-pointer contract, and the caller's name/len key-buffer contract
-    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
-    // empty slice).
+    // SAFETY: an ABI shim; the caller's null-or-live shader contract becomes
+    // the read-only `View<_, Const>` mint (legal for any readable provenance),
+    // and the name/len key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     unsafe {
         crate::native::api::find_shader_prop_bindings_len(
-            shader,
+            if shader.is_null() {
+                None
+            } else {
+                Some(crate::native::view::View::<
+                    crate::generated::Shader,
+                    crate::native::view::Const,
+                >::from_ptr(shader))
+            },
             crate::prelude::slice_from_ptr(name, name_len),
         )
     }
@@ -1167,15 +1181,18 @@ pub unsafe extern "C" fn ufbx_find_shader_texture_input_len(
     name: *const u8,
     name_len: usize,
 ) -> *mut crate::generated::ShaderTextureInput {
-    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
-    // own raw-pointer contract, and the caller's name/len key-buffer contract
-    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
-    // empty slice).
-    unsafe {
+    // SAFETY: an ABI shim; the caller's live shader contract becomes the
+    // read-only `View<_, Const>` mint (legal for any readable provenance), and
+    // the name/len key-buffer contract becomes the slice mint (`slice_from_ptr`
+    // maps the null/0 case to the empty slice).
+    match unsafe {
         crate::native::api::find_shader_texture_input_len(
-            shader,
+            crate::native::view::View::<crate::generated::ShaderTexture, crate::native::view::Const>::from_ptr(shader),
             crate::prelude::slice_from_ptr(name, name_len),
         )
+    } {
+        Some(input) => input.as_ptr() as *mut crate::generated::ShaderTextureInput,
+        None => core::ptr::null_mut(),
     }
 }
 

@@ -476,15 +476,39 @@ impl<T> ListView<T> {
 // by writing `.count`/`.data`, where `data` points at `Ref<T>` elements).
 pub(crate) type RefListView<T> = crate::native::view::View<RefList<T>>;
 
-impl<T> RefListView<T> {
+// Mode-generic read surface (see the `View<List<T>, M>` impl above).
+impl<T, M: crate::native::view::Mode> crate::native::view::View<RefList<T>, M> {
     #[inline(always)]
     pub(crate) fn count(&self) -> usize {
-        unsafe { (*self.get()).count }
+        // SAFETY: reading the viewed ref-list's own POD `count` field; liveness
+        // per the view's mint vouch (per-leaf discipline).
+        unsafe { (*self.as_ptr()).count }
     }
     #[inline(always)]
     pub(crate) fn data(&self) -> *const Ref<T> {
-        unsafe { (*self.get()).data }
+        // SAFETY: reading the viewed ref-list's own POD `data` field; liveness
+        // per the view's mint vouch (per-leaf discipline).
+        unsafe { (*self.as_ptr()).data }
     }
+    /// Safe indexed element view: per the mint's per-leaf discipline a viewed
+    /// `RefList` field holds a valid list — `data` is live for `count`
+    /// contiguous non-null `Ref<T>` slots — so a bounds-checked index yields a
+    /// live element (the ref-list sibling of `View<List<T>, M>::at`).
+    #[inline(always)]
+    pub(crate) fn at(&self, index: usize) -> &crate::native::view::View<T, M> {
+        assert!(index < self.count());
+        // SAFETY: `index` is in bounds of the list's own count (checked above),
+        // so the slot read is inside the vouched run; the non-null `Ref<T>` is
+        // read as bare pointer bits (never through `Ref::as_ref`) and names a
+        // live same-scene element whose stored provenance is adequate for `M`.
+        unsafe {
+            let elem: *mut T = *(self.data() as *const *mut T).add(index);
+            crate::native::view::View::mint(elem)
+        }
+    }
+}
+
+impl<T> RefListView<T> {
     #[inline(always)]
     pub(crate) fn set_count(&self, count: usize) {
         unsafe {

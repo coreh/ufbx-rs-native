@@ -2823,22 +2823,26 @@ pub(crate) unsafe fn find_prop_texture_len(material: *const Material, name: &[u8
 }
 
 // ufbx.c:31425-31432 `ufbx_find_shader_prop_len`
-pub(crate) unsafe fn find_shader_prop_len(shader: *const Shader, name: &[u8]) -> String {
-    // SAFETY: `shader` is this fn's raw-pointer param, forwarded unchanged to
-    // `find_shader_prop_bindings_len` under its same contract.
-    let bindings: List<ShaderPropBinding> = unsafe { find_shader_prop_bindings_len(shader, name) };
+pub(crate) fn find_shader_prop_len<M: Mode>(
+    shader: Option<&View<Shader, M>>,
+    name: &[u8],
+) -> String {
+    let bindings: List<ShaderPropBinding> = find_shader_prop_bindings_len(shader, name);
     if bindings.count > 0 {
         // SAFETY: `count > 0` here, so `bindings.data` addresses a live
-        // `ShaderPropBinding`; reading its own `material_prop` field.
+        // `ShaderPropBinding` of the viewed shader's own run (the list was
+        // formed from an in-bounds `at` projection); reading its own
+        // `material_prop` field.
         return unsafe { (*bindings.data).material_prop };
     }
     EMPTY_STRING.0
 }
 
 // ufbx.c:31434-31461 `ufbx_find_shader_prop_bindings_len`
-// `name: &[u8]` carries C's `(name, name_len)` pair (see `find_prop_len`).
-pub(crate) unsafe fn find_shader_prop_bindings_len(
-    shader: *const Shader,
+// `name: &[u8]` carries C's `(name, name_len)` pair (see `find_prop_len`); C's
+// null-or-live shader pointer arrives as `Option<&View<_, M>>`.
+pub(crate) fn find_shader_prop_bindings_len<M: Mode>(
+    shader: Option<&View<Shader, M>>,
     name: &[u8],
 ) -> List<ShaderPropBinding> {
     // C: `ufbx_shader_prop_binding_list bindings = { NULL, 0 };` — `List<T>`
@@ -2851,34 +2855,27 @@ pub(crate) unsafe fn find_shader_prop_bindings_len(
     bindings.data = core::ptr::null();
     bindings.count = 0;
 
-    if shader.is_null() {
+    let Some(shader) = shader else {
         return bindings;
-    }
+    };
 
     // C: `ufbxi_for_ptr_list(ufbx_shader_binding, p_bind, shader->bindings)`
-    // SAFETY: `shader` is non-null here and points at a live `Shader` per this
-    // fn's contract; `bindings.data`/`.count` are its own list fields.
-    let mut p_bind: *mut *mut ShaderBinding =
-        unsafe { (*shader).bindings.data } as *mut *mut ShaderBinding;
-    // SAFETY: same live `Shader`; `add_ptr` offsets the pointer-list base by its
-    // own element count, yielding the one-past-end pointer.
-    let p_bind_end: *mut *mut ShaderBinding = unsafe { add_ptr(p_bind, (*shader).bindings.count) };
-    while p_bind != p_bind_end {
-        // SAFETY: `p_bind` is in `[data, end)` of the shader's pointer list, so
-        // it addresses a live `*mut ShaderBinding` element.
-        let bind: *mut ShaderBinding = unsafe { *p_bind };
+    let bind_list = shader.bindings_view();
+    for bind_ix in 0..bind_list.count() {
+        let bind = bind_list.at(bind_ix);
+        let pb = bind.prop_bindings_view();
 
         let mut begin: usize = usize::MAX;
-        // SAFETY: `bind` is a live `ShaderBinding` from the shader's list;
-        // `prop_bindings.data`/`.count` are its own fields, and each closure
+        // SAFETY: `pb` is the viewed binding's own list — `data` live for
+        // `count` elements per the view's list invariant — and each closure
         // derefs a `ShaderPropBinding` the search keeps within `[0, count)`.
         unsafe {
             macro_lower_bound_eq::<ShaderPropBinding>(
                 4,
                 &mut begin,
-                (*bind).prop_bindings.data,
+                pb.data(),
                 0,
-                (*bind).prop_bindings.count,
+                pb.count(),
                 |a| str_less((*a).shader_prop.as_bytes(), name),
                 |a| str_equal((*a).shader_prop.as_bytes(), name),
             );
@@ -2886,28 +2883,23 @@ pub(crate) unsafe fn find_shader_prop_bindings_len(
 
         if begin != usize::MAX {
             let mut end: usize = begin;
-            // SAFETY: same live `ShaderBinding`; the closure derefs a
-            // `ShaderPropBinding` the search keeps within `[begin, count)`.
+            // SAFETY: as above; the closure derefs a `ShaderPropBinding` the
+            // search keeps within `[begin, count)`.
             unsafe {
                 macro_upper_bound_eq::<ShaderPropBinding>(
                     4,
                     &mut end,
-                    (*bind).prop_bindings.data,
+                    pb.data(),
                     begin,
-                    (*bind).prop_bindings.count,
+                    pb.count(),
                     |a| str_equal((*a).shader_prop.as_bytes(), name),
                 );
             }
 
-            // SAFETY: same live `ShaderBinding`; `begin < count`, so
-            // `prop_bindings.data.add(begin)` addresses a live element.
-            bindings.data = unsafe { (*bind).prop_bindings.data.add(begin) };
+            bindings.data = pb.at(begin).as_ptr();
             bindings.count = end - begin;
             break;
         }
-        // SAFETY: `p_bind` is before `p_bind_end`, so stepping one element stays
-        // within the shader's pointer list (up to the one-past-end bound).
-        p_bind = unsafe { p_bind.add(1) };
     }
 
     bindings
@@ -2915,33 +2907,32 @@ pub(crate) unsafe fn find_shader_prop_bindings_len(
 
 // ufbx.c:31463-31476 `ufbx_find_shader_texture_input_len`
 // `name: &[u8]` carries C's `(name, name_len)` pair (see `find_prop_len`).
-pub(crate) unsafe fn find_shader_texture_input_len(
-    shader: *const ShaderTexture,
+pub(crate) fn find_shader_texture_input_len<'a, M: Mode>(
+    shader: &'a View<ShaderTexture, M>,
     name: &[u8],
-) -> *mut ShaderTextureInput {
+) -> Option<&'a View<ShaderTextureInput, M>> {
     let mut index: usize = usize::MAX;
-    // SAFETY: `shader` points at a live `ShaderTexture` per this fn's contract;
-    // `inputs.data`/`.count` are its own list fields, and each closure derefs a
-    // `ShaderTextureInput` the search keeps within `[0, count)`.
+    let inputs = shader.inputs_view();
+    // SAFETY: `inputs` is the viewed shader's own list — `data` live for
+    // `count` elements per the view's list invariant — and each closure derefs
+    // a `ShaderTextureInput` the search keeps within `[0, count)`.
     unsafe {
         macro_lower_bound_eq::<ShaderTextureInput>(
             4,
             &mut index,
-            (*shader).inputs.data,
+            inputs.data(),
             0,
-            (*shader).inputs.count,
+            inputs.count(),
             |a| str_less((*a).name.as_bytes(), name),
             |a| str_equal((*a).name.as_bytes(), name),
         );
     }
 
     if index != usize::MAX {
-        // SAFETY: same live `ShaderTexture`; `index < count`, so
-        // `inputs.data.add(index)` addresses a live `ShaderTextureInput`.
-        return unsafe { (*shader).inputs.data.add(index) } as *mut ShaderTextureInput;
+        return Some(inputs.at(index));
     }
 
-    core::ptr::null_mut()
+    None
 }
 
 // ufbx.c:31478-31490 `ufbx_coordinate_axes_valid`
@@ -7315,10 +7306,20 @@ pub(crate) unsafe fn find_prop_texture(material: *const Material, name: *const u
 
 // ufbx.c:33158 `ufbx_find_shader_prop`
 pub(crate) unsafe fn find_shader_prop(shader: *const Shader, name: *const u8) -> String {
-    // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it, and the measured run (with `shader`) is exactly the
-    // slice minted for the `_len` impl.
-    unsafe { find_shader_prop_len(shader, crate::prelude::slice_from_ptr(name, strlen(name))) }
+    // SAFETY: the caller's null-or-live `shader` contract becomes the `Const`
+    // view mint; `name` is this fn's NUL-terminated raw-pointer string param —
+    // `strlen` measures it, and the measured run is the slice minted for the
+    // `_len` impl.
+    unsafe {
+        find_shader_prop_len(
+            if shader.is_null() {
+                None
+            } else {
+                Some(View::<Shader, Const>::from_ptr(shader))
+            },
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+        )
+    }
 }
 
 // ufbx.c:33159 `ufbx_find_shader_prop_bindings`
@@ -7326,11 +7327,19 @@ pub(crate) unsafe fn find_shader_prop_bindings(
     shader: *const Shader,
     name: *const u8,
 ) -> List<ShaderPropBinding> {
-    // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it, and the measured run (with `shader`) is exactly the
-    // slice minted for the `_len` impl.
+    // SAFETY: the caller's null-or-live `shader` contract becomes the `Const`
+    // view mint; `name` is this fn's NUL-terminated raw-pointer string param —
+    // `strlen` measures it, and the measured run is the slice minted for the
+    // `_len` impl.
     unsafe {
-        find_shader_prop_bindings_len(shader, crate::prelude::slice_from_ptr(name, strlen(name)))
+        find_shader_prop_bindings_len(
+            if shader.is_null() {
+                None
+            } else {
+                Some(View::<Shader, Const>::from_ptr(shader))
+            },
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+        )
     }
 }
 
@@ -7339,11 +7348,18 @@ pub(crate) unsafe fn find_shader_texture_input(
     shader: *const ShaderTexture,
     name: *const u8,
 ) -> *mut ShaderTextureInput {
-    // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it, and the measured run (with `shader`) is exactly the
-    // slice minted for the `_len` impl.
-    unsafe {
-        find_shader_texture_input_len(shader, crate::prelude::slice_from_ptr(name, strlen(name)))
+    // SAFETY: the caller's live `shader` contract becomes the `Const` view
+    // mint; `name` is this fn's NUL-terminated raw-pointer string param —
+    // `strlen` measures it, and the measured run is the slice minted for the
+    // `_len` impl.
+    match unsafe {
+        find_shader_texture_input_len(
+            View::<ShaderTexture, Const>::from_ptr(shader),
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+        )
+    } {
+        Some(input) => input.as_ptr() as *mut ShaderTextureInput,
+        None => core::ptr::null_mut(),
     }
 }
 
@@ -8554,16 +8570,16 @@ mod tests {
 
     #[test]
     fn test_find_shader_prop_len_falls_back_to_empty_string() {
-        unsafe {
-            // C: no bindings -> `ufbx_empty_string`, not NULL.
-            let s = find_shader_prop_len(core::ptr::null(), b"Diffuse");
-            assert_eq!(s.length, 0);
-            assert_eq!(s.data, EMPTY_STRING.0.data);
-            assert_eq!(
-                find_shader_prop(core::ptr::null(), b"Diffuse\0".as_ptr()).length,
-                0
-            );
-        }
+        // C: no bindings -> `ufbx_empty_string`, not NULL.
+        let s = find_shader_prop_len::<Const>(None, b"Diffuse");
+        assert_eq!(s.length, 0);
+        assert_eq!(s.data, EMPTY_STRING.0.data);
+        // SAFETY: null shader (handled) and a NUL-terminated literal name — the
+        // C-string flavor's contract.
+        assert_eq!(
+            unsafe { find_shader_prop(core::ptr::null(), b"Diffuse\0".as_ptr()) }.length,
+            0
+        );
     }
 
     // The `#else` (feature-disabled) arms are the only bodies these two entry

@@ -376,6 +376,10 @@ view_accessor_structs = [
     "ufbx_anim_curve",
     "ufbx_anim_value",
     "ufbx_keyframe",
+    "ufbx_shader",
+    "ufbx_shader_binding",
+    "ufbx_shader_texture",
+    "ufbx_shader_texture_input",
 ]
 
 # `(struct, field)` pairs whose READ accessor is hand-written instead of
@@ -477,6 +481,49 @@ pub fn dom_find<'a>(parent: &DomNode, name: &str) -> Option<&'a DomNode> {
         )
     };
     result.map(|node| unsafe { &*node.as_ptr() })
+}
+"""
+
+# The native shader finders take views (`Const` is legal over these
+# `&`-derived pointers), so the safe wrappers mint the view instead of casting
+# to a raw pointer.
+override_functions["ufbx_find_shader_prop_len"] = """
+pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
+    let result = crate::native::api::find_shader_prop_len(
+        Some(unsafe {
+            crate::native::view::View::<Shader, crate::native::view::Const>::from_ptr(shader as *const Shader)
+        }),
+        name.as_bytes(),
+    );
+    unsafe { result.as_static_ref() }
+}
+"""
+
+override_functions["ufbx_find_shader_prop_bindings_len"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn find_shader_prop_bindings<'a>(shader: &'a Shader, name: &str) -> &'a [ShaderPropBinding] {
+    let result = crate::native::api::find_shader_prop_bindings_len(
+        Some(unsafe {
+            crate::native::view::View::<Shader, crate::native::view::Const>::from_ptr(shader as *const Shader)
+        }),
+        name.as_bytes(),
+    );
+    unsafe { result.as_static_ref() }
+}
+"""
+
+override_functions["ufbx_find_shader_texture_input_len"] = """
+pub fn find_shader_texture_input<'a>(
+    shader: &ShaderTexture,
+    name: &str,
+) -> Option<&'a ShaderTextureInput> {
+    let result = crate::native::api::find_shader_texture_input_len(
+        unsafe {
+            crate::native::view::View::<ShaderTexture, crate::native::view::Const>::from_ptr(shader as *const ShaderTexture)
+        },
+        name.as_bytes(),
+    );
+    result.map(|input| unsafe { &*input.as_ptr() })
 }
 """
 

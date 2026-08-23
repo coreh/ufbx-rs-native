@@ -5402,36 +5402,43 @@ pub fn find_prop_texture<'a>(material: &'a Material, name: &str) -> Option<&'a T
 }
 
 pub fn find_shader_prop<'a>(shader: &'a Shader, name: &'a str) -> &'a str {
-    let result = unsafe {
-        crate::native::api::find_shader_prop_len(shader as *const Shader, name.as_bytes())
-    };
+    let result = crate::native::api::find_shader_prop_len(
+        Some(unsafe {
+            crate::native::view::View::<Shader, crate::native::view::Const>::from_ptr(
+                shader as *const Shader,
+            )
+        }),
+        name.as_bytes(),
+    );
     unsafe { result.as_static_ref() }
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_shader_prop_bindings<'a>(shader: &'a Shader, name: &str) -> &'a [ShaderPropBinding] {
-    let result = unsafe {
-        crate::native::api::find_shader_prop_bindings_len(shader as *const Shader, name.as_bytes())
-    };
+    let result = crate::native::api::find_shader_prop_bindings_len(
+        Some(unsafe {
+            crate::native::view::View::<Shader, crate::native::view::Const>::from_ptr(
+                shader as *const Shader,
+            )
+        }),
+        name.as_bytes(),
+    );
     unsafe { result.as_static_ref() }
 }
 
-#[allow(clippy::needless_lifetimes)]
 pub fn find_shader_texture_input<'a>(
     shader: &ShaderTexture,
     name: &str,
 ) -> Option<&'a ShaderTextureInput> {
-    let result = unsafe {
-        crate::native::api::find_shader_texture_input_len(
-            shader as *const ShaderTexture,
-            name.as_bytes(),
-        )
-    };
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    let result = crate::native::api::find_shader_texture_input_len(
+        unsafe {
+            crate::native::view::View::<ShaderTexture, crate::native::view::Const>::from_ptr(
+                shader as *const ShaderTexture,
+            )
+        },
+        name.as_bytes(),
+    );
+    result.map(|input| unsafe { &*input.as_ptr() })
 }
 
 #[allow(clippy::let_and_return)]
