@@ -221,8 +221,8 @@ use crate::native::api::{
 };
 use crate::native::buf::{buf_clear, buf_free, pop, BufView};
 use crate::native::error::{
-    memcmp, strcmp, strlen, ufbxi_check, ufbxi_check_err, ufbxi_check_msg, ufbxi_snprintf, Fail,
-    EMPTY_CHAR,
+    c_strcmp, memcmp, strcmp, strlen, ufbxi_check, ufbxi_check_err, ufbxi_check_msg,
+    ufbxi_snprintf, Fail, EMPTY_CHAR,
 };
 use crate::native::hash::{hash64, hash_ptr};
 use crate::native::parse::{
@@ -2112,6 +2112,11 @@ pub(crate) unsafe fn find_dst_connections(
     if prop.is_null() {
         prop = EMPTY_CHAR.as_ptr();
     }
+    // SAFETY: `prop` is a NUL-terminated interned name (defaulted above) — the
+    // `strlen` measure and the measured run are this fn's own contract; the
+    // ordering probes below then compare it as a safe slice (`c_strcmp` treats
+    // end-of-slice as NUL, byte-exact strcmp for NUL-terminated-at-length data).
+    let prop_bytes: &[u8] = unsafe { crate::prelude::slice_from_ptr(prop, strlen(prop)) };
 
     // SAFETY: `element` points to a live scene element in the arena, so its
     // write-capable pointer anchors an `ElementView` for the reads below.
@@ -2123,9 +2128,7 @@ pub(crate) unsafe fn find_dst_connections(
     let begin: usize = conns
         .lower_bound_eq(
             32,
-            // SAFETY (inner op): both `dst_prop.data` and `prop` are interned
-            // NUL-terminated spans — `strcmp`'s walk contract.
-            |a| unsafe { strcmp(a.dst_prop().data, prop) } < 0,
+            |a| c_strcmp(a.dst_prop_view().bytes(), prop_bytes) < 0,
             |a| a.dst_prop().data == prop && a.src_prop().length == 0,
         )
         .unwrap_or(conns.count());
@@ -2158,6 +2161,11 @@ pub(crate) unsafe fn find_src_connections(
     if prop.is_null() {
         prop = EMPTY_CHAR.as_ptr();
     }
+    // SAFETY: `prop` is a NUL-terminated interned name (defaulted above) — the
+    // `strlen` measure and the measured run are this fn's own contract; the
+    // ordering probes below then compare it as a safe slice (`c_strcmp` treats
+    // end-of-slice as NUL, byte-exact strcmp for NUL-terminated-at-length data).
+    let prop_bytes: &[u8] = unsafe { crate::prelude::slice_from_ptr(prop, strlen(prop)) };
 
     // SAFETY: `element` points to a live scene element in the arena, so its
     // write-capable pointer anchors an `ElementView` for the reads below.
@@ -2169,9 +2177,7 @@ pub(crate) unsafe fn find_src_connections(
     let begin: usize = conns
         .lower_bound_eq(
             32,
-            // SAFETY (inner op): both `src_prop.data` and `prop` are interned
-            // NUL-terminated spans — `strcmp`'s walk contract.
-            |a| unsafe { strcmp(a.src_prop().data, prop) } < 0,
+            |a| c_strcmp(a.src_prop_view().bytes(), prop_bytes) < 0,
             |a| a.src_prop().data == prop && a.dst_prop().length == 0,
         )
         .unwrap_or(conns.count());
