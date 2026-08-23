@@ -5225,17 +5225,15 @@ pub unsafe fn evaluate_scene_raw(
     time: f64,
     opts: &RawEvaluateOpts,
 ) -> Result<SceneRoot> {
-    match unsafe {
+    unsafe {
         crate::native::api::evaluate_scene(
             scene as *const Scene,
             anim as *const Anim,
             time,
             opts as *const RawEvaluateOpts,
         )
-    } {
-        Ok(result) => Ok(SceneRoot::new(result)),
-        Err(error) => Err(error),
     }
+    .map(SceneRoot::new)
 }
 
 pub fn evaluate_scene(
