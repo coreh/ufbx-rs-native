@@ -6037,9 +6037,9 @@ pub(crate) fn bake_push_time(bc: &BakeContext, time: f64, flags: u32) -> bool {
 // ufbx.c:26765-26813 `ufbxi_bake_times`
 #[cfg(feature = "baking")]
 #[inline(never)]
-pub(crate) unsafe fn bake_times(
+pub(crate) fn bake_times(
     bc: &BakeContext,
-    anim_value: *const AnimValue,
+    anim_value: &View<AnimValue, Const>,
     resample_linear: bool,
     key_flag: u32,
 ) -> Result<(), Fail> {
@@ -6051,28 +6051,15 @@ pub(crate) unsafe fn bake_times(
     };
 
     for curve_ix in 0..3usize {
-        // SAFETY: `anim_value` is the caller's live `ufbx_anim_value` — this
-        // `unsafe fn`'s contract — whose `curves` field is a fixed three-element
-        // array of nullable curve refs, so `curve_ix < 3` stays in bounds and
-        // `opt_ptr` reads that slot as the nullable element pointer it is.
-        let curve: *mut AnimCurve = unsafe {
-            opt_ptr(
-                (&raw const (*anim_value).curves as *const Option<Ref<AnimCurve>>).add(curve_ix),
-            )
-        };
-        if curve.is_null() {
+        let Some(curve) = anim_value.curve_view(curve_ix) else {
             continue;
-        }
+        };
 
-        // SAFETY: `curve` is non-null (checked) and is one of the anim value's
-        // own curve elements, live for the scene, so its keyframe list's base
-        // and count are its own fields.
-        let (keys, num_keys): (*const Keyframe, usize) =
-            unsafe { ((*curve).keyframes.data, (*curve).keyframes.count) };
+        let keys = curve.keyframes_view();
+        let num_keys: usize = keys.count();
         for key_ix in 0..num_keys {
-            // SAFETY: `key_ix < num_keys`, the length of the `keys` array.
-            let a: Keyframe = unsafe { *keys.add(key_ix) };
-            let a_time: f64 = a.time;
+            let a = keys.at(key_ix);
+            let a_time: f64 = a.time();
             ufbxi_check_err!(
                 bc.error_view(),
                 bake_push_time(bc, a_time, key_flag),
@@ -6081,29 +6068,29 @@ pub(crate) unsafe fn bake_times(
             if key_ix + 1 >= num_keys {
                 break;
             }
-            // SAFETY: the `break` above establishes `key_ix + 1 < num_keys`, so
-            // that slot is in bounds of the `keys` array.
-            let b: Keyframe = unsafe { *keys.add(key_ix + 1) };
-            let b_time: f64 = b.time;
+            // The `break` above establishes `key_ix + 1 < num_keys`, in bounds
+            // of the `at` check.
+            let b = keys.at(key_ix + 1);
+            let b_time: f64 = b.time();
 
             // Skip fully flat sections
-            if a.value == b.value && a.right.dy == 0.0f32 && b.left.dy == 0.0f32 {
+            if a.value() == b.value() && a.right().dy == 0.0f32 && b.left().dy == 0.0f32 {
                 continue;
             }
 
-            if a.interpolation as u32 == Interpolation::ConstantPrev as u32 {
+            if a.interpolation() as u32 == Interpolation::ConstantPrev as u32 {
                 ufbxi_check_err!(
                     bc.error_view(),
                     bake_push_time(bc, b_time, BakedKeyFlags::STEP_LEFT.raw()),
                     "ufbxi_bake_push_time(bc, b_time, UFBX_BAKED_KEY_STEP_LEFT)"
                 );
-            } else if a.interpolation as u32 == Interpolation::ConstantNext as u32 {
+            } else if a.interpolation() as u32 == Interpolation::ConstantNext as u32 {
                 ufbxi_check_err!(
                     bc.error_view(),
                     bake_push_time(bc, a_time, BakedKeyFlags::STEP_RIGHT.raw()),
                     "ufbxi_bake_push_time(bc, a_time, UFBX_BAKED_KEY_STEP_RIGHT)"
                 );
-            } else if (resample_linear || a.interpolation as u32 == Interpolation::Cubic as u32)
+            } else if (resample_linear || a.interpolation() as u32 == Interpolation::Cubic as u32)
                 && sample_rate > 0.0
             {
                 let duration: f64 = b_time - a_time;
@@ -7137,7 +7124,14 @@ pub(crate) unsafe fn bake_node_imp(
                 };
                 // SAFETY: `prop` is one of the live bake props, whose
                 // `anim_value` is the `ufbx_anim_value` it was collected from.
-                unsafe { bake_times(bc, prop.anim_value(), resample_linear, key_flag) }?;
+                unsafe {
+                    bake_times(
+                        bc,
+                        View::<AnimValue, Const>::from_ptr(prop.anim_value()),
+                        resample_linear,
+                        key_flag,
+                    )
+                }?;
             }
         }
     } else {
@@ -7149,7 +7143,7 @@ pub(crate) unsafe fn bake_node_imp(
                 unsafe {
                     bake_times(
                         bc,
-                        prop.anim_value(),
+                        View::<AnimValue, Const>::from_ptr(prop.anim_value()),
                         resample_translation,
                         BakedKeyFlags::KEYFRAME.raw(),
                     )
@@ -7184,7 +7178,14 @@ pub(crate) unsafe fn bake_node_imp(
                 };
                 // SAFETY: `prop.anim_value()` is the live `ufbx_anim_value` this
                 // bake prop was collected from.
-                unsafe { bake_times(bc, prop.anim_value(), resample_linear, key_flag) }?;
+                unsafe {
+                    bake_times(
+                        bc,
+                        View::<AnimValue, Const>::from_ptr(prop.anim_value()),
+                        resample_linear,
+                        key_flag,
+                    )
+                }?;
             }
         }
     } else {
@@ -7196,7 +7197,7 @@ pub(crate) unsafe fn bake_node_imp(
                 unsafe {
                     bake_times(
                         bc,
-                        prop.anim_value(),
+                        View::<AnimValue, Const>::from_ptr(prop.anim_value()),
                         !bc.opts_view().no_resample_rotation(),
                         BakedKeyFlags::KEYFRAME.raw(),
                     )
@@ -7270,7 +7271,7 @@ pub(crate) unsafe fn bake_node_imp(
                 unsafe {
                     bake_times(
                         bc,
-                        prop.anim_value(),
+                        View::<AnimValue, Const>::from_ptr(prop.anim_value()),
                         resample_scale,
                         BakedKeyFlags::KEYFRAME.raw(),
                     )
@@ -7653,7 +7654,14 @@ pub(crate) unsafe fn bake_anim_prop(
     for prop in unsafe { SliceViewIter::<BakeProp>::from_raw_parts(props, count) } {
         // SAFETY: `prop.anim_value()` is the live `ufbx_anim_value` this bake
         // prop was collected from.
-        unsafe { bake_times(bc, prop.anim_value(), false, BakedKeyFlags::KEYFRAME.raw()) }?;
+        unsafe {
+            bake_times(
+                bc,
+                View::<AnimValue, Const>::from_ptr(prop.anim_value()),
+                false,
+                BakedKeyFlags::KEYFRAME.raw(),
+            )
+        }?;
     }
 
     // C: `ufbxi_bake_time_list times;`
@@ -7985,7 +7993,12 @@ pub(crate) fn bake_anim(bc: &BakeContext) -> Result<(), Fail> {
                         .add(prop.element_id() as usize),
                 );
                 if element.type_() as u32 == ElementType::AnimLayer as u32 {
-                    bake_times(bc, prop.anim_value(), true, 0)?;
+                    bake_times(
+                        bc,
+                        View::<AnimValue, Const>::from_ptr(prop.anim_value()),
+                        true,
+                        0,
+                    )?;
                     has_weight_times = true;
                 }
             }

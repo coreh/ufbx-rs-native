@@ -9977,22 +9977,16 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let value: *mut AnimValue = value_view.get();
 
         // TODO: Search for things like d|Visibility with a constructed name
-        // SAFETY: `value` is the live element the view was minted from, and
-        // `props_view()` is its own live `ufbx_props`.
-        unsafe {
-            (*value).default_value.x =
-                find_real(value_view.props_view(), &sp::X, (*value).default_value.x);
-            (*value).default_value.x =
-                find_real(value_view.props_view(), &sp::d_X, (*value).default_value.x);
-            (*value).default_value.y =
-                find_real(value_view.props_view(), &sp::Y, (*value).default_value.y);
-            (*value).default_value.y =
-                find_real(value_view.props_view(), &sp::d_Y, (*value).default_value.y);
-            (*value).default_value.z =
-                find_real(value_view.props_view(), &sp::Z, (*value).default_value.z);
-            (*value).default_value.z =
-                find_real(value_view.props_view(), &sp::d_Z, (*value).default_value.z);
-        }
+        // C: `value->default_value.x = ufbxi_find_real(...)` x6 — read-modify
+        // through the view accessors, written back once below.
+        let mut dv: Vec3 = value_view.default_value();
+        dv.x = find_real(value_view.props_view(), &sp::X, dv.x);
+        dv.x = find_real(value_view.props_view(), &sp::d_X, dv.x);
+        dv.y = find_real(value_view.props_view(), &sp::Y, dv.y);
+        dv.y = find_real(value_view.props_view(), &sp::d_Y, dv.y);
+        dv.z = find_real(value_view.props_view(), &sp::Z, dv.z);
+        dv.z = find_real(value_view.props_view(), &sp::d_Z, dv.z);
+        value_view.set_default_value(dv);
 
         // C: `ufbxi_for_list(ufbx_connection, conn, value->element.connections_dst)`
         // SAFETY: `value` is live (see above).
