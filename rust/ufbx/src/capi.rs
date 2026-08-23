@@ -616,10 +616,17 @@ pub unsafe extern "C" fn ufbx_evaluate_curve(
     time: f64,
     default_value: crate::prelude::Real,
 ) -> crate::prelude::Real {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::evaluate_curve(curve, time, default_value) }
+    // SAFETY: an ABI shim; the caller's null-or-live pointer contract
+    // becomes the read-only `View<_, Const>` mint (legal for any readable
+    // provenance).
+    let curve = if curve.is_null() {
+        None
+    } else {
+        Some(unsafe {
+            crate::native::view::View::<crate::generated::AnimCurve, crate::native::view::Const>::from_ptr(curve)
+        })
+    };
+    crate::native::api::evaluate_curve(curve, time, default_value)
 }
 
 // ufbx.c:30832-30914 `ufbx_evaluate_curve_flags` (impl: native/api.rs
@@ -631,10 +638,17 @@ pub unsafe extern "C" fn ufbx_evaluate_curve_flags(
     default_value: crate::prelude::Real,
     flags: u32,
 ) -> crate::prelude::Real {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::evaluate_curve_flags(curve, time, default_value, flags) }
+    // SAFETY: an ABI shim; the caller's null-or-live pointer contract
+    // becomes the read-only `View<_, Const>` mint (legal for any readable
+    // provenance).
+    let curve = if curve.is_null() {
+        None
+    } else {
+        Some(unsafe {
+            crate::native::view::View::<crate::generated::AnimCurve, crate::native::view::Const>::from_ptr(curve)
+        })
+    };
+    crate::native::api::evaluate_curve_flags(curve, time, default_value, flags)
 }
 
 // ufbx.c:30916-30919 `ufbx_evaluate_anim_value_real` (impl: native/api.rs
@@ -644,10 +658,17 @@ pub unsafe extern "C" fn ufbx_evaluate_anim_value_real(
     anim_value: *const crate::generated::AnimValue,
     time: f64,
 ) -> crate::prelude::Real {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::evaluate_anim_value_real(anim_value, time) }
+    // SAFETY: an ABI shim; the caller's null-or-live pointer contract
+    // becomes the read-only `View<_, Const>` mint (legal for any readable
+    // provenance).
+    let anim_value = if anim_value.is_null() {
+        None
+    } else {
+        Some(unsafe {
+            crate::native::view::View::<crate::generated::AnimValue, crate::native::view::Const>::from_ptr(anim_value)
+        })
+    };
+    crate::native::api::evaluate_anim_value_real(anim_value, time)
 }
 
 // ufbx.c:30921-30924 `ufbx_evaluate_anim_value_vec3` (impl: native/api.rs
@@ -657,10 +678,17 @@ pub unsafe extern "C" fn ufbx_evaluate_anim_value_vec3(
     anim_value: *const crate::generated::AnimValue,
     time: f64,
 ) -> crate::generated::Vec3 {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::evaluate_anim_value_vec3(anim_value, time) }
+    // SAFETY: an ABI shim; the caller's null-or-live pointer contract
+    // becomes the read-only `View<_, Const>` mint (legal for any readable
+    // provenance).
+    let anim_value = if anim_value.is_null() {
+        None
+    } else {
+        Some(unsafe {
+            crate::native::view::View::<crate::generated::AnimValue, crate::native::view::Const>::from_ptr(anim_value)
+        })
+    };
+    crate::native::api::evaluate_anim_value_vec3(anim_value, time)
 }
 
 // ufbx.c:30926-30935 `ufbx_evaluate_anim_value_real_flags` (impl: native/api.rs
@@ -671,10 +699,17 @@ pub unsafe extern "C" fn ufbx_evaluate_anim_value_real_flags(
     time: f64,
     flags: u32,
 ) -> crate::prelude::Real {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::evaluate_anim_value_real_flags(anim_value, time, flags) }
+    // SAFETY: an ABI shim; the caller's null-or-live pointer contract
+    // becomes the read-only `View<_, Const>` mint (legal for any readable
+    // provenance).
+    let anim_value = if anim_value.is_null() {
+        None
+    } else {
+        Some(unsafe {
+            crate::native::view::View::<crate::generated::AnimValue, crate::native::view::Const>::from_ptr(anim_value)
+        })
+    };
+    crate::native::api::evaluate_anim_value_real_flags(anim_value, time, flags)
 }
 
 // ufbx.c:30937-30949 `ufbx_evaluate_anim_value_vec3_flags` (impl: native/api.rs
@@ -685,10 +720,17 @@ pub unsafe extern "C" fn ufbx_evaluate_anim_value_vec3_flags(
     time: f64,
     flags: u32,
 ) -> crate::generated::Vec3 {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::evaluate_anim_value_vec3_flags(anim_value, time, flags) }
+    // SAFETY: an ABI shim; the caller's null-or-live pointer contract
+    // becomes the read-only `View<_, Const>` mint (legal for any readable
+    // provenance).
+    let anim_value = if anim_value.is_null() {
+        None
+    } else {
+        Some(unsafe {
+            crate::native::view::View::<crate::generated::AnimValue, crate::native::view::Const>::from_ptr(anim_value)
+        })
+    };
+    crate::native::api::evaluate_anim_value_vec3_flags(anim_value, time, flags)
 }
 
 // ufbx.c:30951-30954 `ufbx_evaluate_prop_len` (impl: native/api.rs

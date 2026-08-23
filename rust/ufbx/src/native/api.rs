@@ -80,7 +80,7 @@ use crate::generated::{
 #[cfg(feature = "geometry-cache")]
 use crate::generated::{CacheDataEncoding, CacheDataFormat, OpenFileType, RawOpenFileCb};
 use crate::generated::{
-    EvaluateFlags, Interpolation, Keyframe, PropFlags, RawAnimOpts, RawEvaluateOpts, TransformFlags,
+    EvaluateFlags, Interpolation, PropFlags, RawAnimOpts, RawEvaluateOpts, TransformFlags,
 };
 #[cfg(feature = "tessellation")]
 use crate::generated::{RawTessellateCurveOpts, RawTessellateSurfaceOpts};
@@ -1339,121 +1339,154 @@ pub(crate) unsafe fn get_compatible_matrix_for_normals(node: *const Node) -> Mat
     norm_mat
 }
 
+// Hand nav accessors for `AnimValue.curves` (`view_accessor_skip_read` in
+// generate_rust.py): the field is a fixed array of three NULLABLE curve refs,
+// read per-slot as the niche-packed bare pointer it is — never through
+// `Ref::as_ref`, whose `&AnimCurve` formation is the Stacked Borrows trap the
+// view sidesteps (same rationale as `PropsView::defaults`).
+impl<M: Mode> View<AnimValue, M> {
+    #[inline(always)]
+    pub(crate) fn curve_view(&self, index: usize) -> Option<&View<AnimCurve, M>> {
+        assert!(index < 3);
+        // SAFETY: `index` is in bounds of the fixed three-slot array (checked
+        // above); the slot is read as niche-packed bare pointer bits, asserting
+        // only that leaf per this view's mint vouch.
+        let ptr: *mut AnimCurve = unsafe {
+            *(&raw const (*self.as_ptr()).curves)
+                .cast::<*mut AnimCurve>()
+                .add(index)
+        };
+        if ptr.is_null() {
+            None
+        } else {
+            // SAFETY: a non-null slot names a live curve element of the same
+            // scene as the viewed anim value, with the slot's stored provenance
+            // — adequate for `M` per the anim value's own mint.
+            Some(unsafe { View::mint(ptr) })
+        }
+    }
+
+    /// Slot `index` as the nullable raw pointer it stores, with no view minted
+    /// over it — for sites that hand the pointer straight to a raw-contract fn
+    /// (e.g. `translate_element`).
+    #[inline(always)]
+    pub(crate) fn curve_ptr(&self, index: usize) -> *mut AnimCurve {
+        assert!(index < 3);
+        // SAFETY: `index` is in bounds of the fixed three-slot array (checked
+        // above); the slot is read as niche-packed bare pointer bits, asserting
+        // only that leaf per this view's mint vouch.
+        unsafe {
+            *(&raw const (*self.as_ptr()).curves)
+                .cast::<*mut AnimCurve>()
+                .add(index)
+        }
+    }
+}
+
+impl View<AnimValue, Mut> {
+    /// Store a nullable curve pointer into slot `index` (the write half of
+    /// `curve_view`, for the evaluated-scene patch loops).
+    #[inline(always)]
+    pub(crate) fn set_curve_ptr(&self, index: usize, curve: *mut AnimCurve) {
+        assert!(index < 3);
+        // SAFETY: in-bounds slot write (checked above) through the `Mut` view's
+        // write-capable viewed memory, storing the nullable pointer as the
+        // niche-packed bare bits the `Option<Ref<AnimCurve>>` slot holds.
+        unsafe {
+            *(&raw mut (*self.get()).curves)
+                .cast::<*mut AnimCurve>()
+                .add(index) = curve;
+        }
+    }
+}
+
 // ufbx.c:30827-30830 `ufbx_evaluate_curve`
-pub(crate) unsafe fn evaluate_curve(
-    curve: *const AnimCurve,
+pub(crate) fn evaluate_curve(
+    curve: Option<&View<AnimCurve, Const>>,
     time: f64,
     default_value: Real,
 ) -> Real {
-    // SAFETY: `curve` is null-or-live per this fn's contract, forwarded unchanged
-    // to `evaluate_curve_flags`.
-    unsafe { evaluate_curve_flags(curve, time, default_value, 0) }
+    evaluate_curve_flags(curve, time, default_value, 0)
 }
 
 // ufbx.c:30832-30914 `ufbx_evaluate_curve_flags`
-pub(crate) unsafe fn evaluate_curve_flags(
-    curve: *const AnimCurve,
+// C's null-or-live `ufbx_anim_curve*` param arrives as `Option<&View<_, Const>>`
+// (the boundary shims mint the view from the caller's pointer).
+pub(crate) fn evaluate_curve_flags(
+    curve: Option<&View<AnimCurve, Const>>,
     time: f64,
     default_value: Real,
     flags: u32,
 ) -> Real {
-    if curve.is_null() {
+    let Some(curve) = curve else {
         return default_value;
-    }
-    // SAFETY: `curve` is non-null (checked) and points at a live `AnimCurve` —
-    // the raw-pointer contract of this `unsafe fn`; reading its own keyframe run.
-    if unsafe { (*curve).keyframes.count } <= 1 {
-        // SAFETY: as above.
-        if unsafe { (*curve).keyframes.count } == 1 {
-            // SAFETY: the run holds exactly one keyframe, so `data.add(0)`
-            // addresses that live `Keyframe`.
-            return unsafe { (*(*curve).keyframes.data.add(0)).value };
+    };
+    let keys = curve.keyframes_view();
+    if keys.count() <= 1 {
+        if keys.count() == 1 {
+            return keys.at(0).value();
         } else {
             return default_value;
         }
     }
 
     if (flags & EvaluateFlags::NO_EXTRAPOLATION.raw()) == 0 {
-        // SAFETY: live `curve` per above; reading its own time bounds.
-        if unsafe { time < (*curve).min_time || time > (*curve).max_time } {
-            // SAFETY: `curve` is the live animation curve, forwarded unchanged.
-            return unsafe { evaluate::extrapolate_curve(curve, time, flags) };
+        if time < curve.min_time() || time > curve.max_time() {
+            return evaluate::extrapolate_curve(curve, time, flags);
         }
     }
 
     let mut begin: usize = 0;
-    // SAFETY: live `curve` per above; reading its own keyframe run.
-    let (mut end, keys) = unsafe { ((*curve).keyframes.count, (*curve).keyframes.data) };
+    let mut end: usize = keys.count();
     while end - begin >= 8 {
         let mid: usize = (begin + end) >> 1;
-        // SAFETY: `mid < end <= count`, so `keys.add(mid)` addresses a live
-        // `Keyframe` of the run.
-        if unsafe { (*keys.add(mid)).time } <= time {
+        if keys.at(mid).time() <= time {
             begin = mid + 1;
         } else {
             end = mid;
         }
     }
 
-    // SAFETY: live `curve` per above; reading its own keyframe count.
-    end = unsafe { (*curve).keyframes.count };
+    end = keys.count();
     // C: `for (; begin < end; begin++)` — every switch arm returns, so the
     // increment is only reached through the `continue`.
     while begin < end {
-        // SAFETY: `begin < end <= count`, so `keys.add(begin)` addresses a live
-        // `Keyframe` of the run.
-        let next: *const Keyframe = unsafe { keys.add(begin) };
-        // SAFETY: `next` is the live keyframe just indexed.
-        if unsafe { (*next).time } <= time {
+        let next = keys.at(begin);
+        if next.time() <= time {
             begin += 1;
             continue;
         }
 
         // First keyframe
         if begin == 0 {
-            // SAFETY: `next` is the live keyframe just indexed.
-            return unsafe { (*next).value };
+            return next.value();
         }
 
-        // SAFETY: `begin >= 1` here, so `next.sub(1)` addresses the previous live
-        // `Keyframe` of the run.
-        let prev: *const Keyframe = unsafe { next.sub(1) };
+        let prev = keys.at(begin - 1);
 
         // Exact keyframe
-        // SAFETY: `prev` is the live previous keyframe.
-        if unsafe { (*prev).time } == time {
-            // SAFETY: as above.
-            return unsafe { (*prev).value };
+        if prev.time() == time {
+            return prev.value();
         }
 
-        // SAFETY: `next`/`prev` are live adjacent keyframes of the run.
-        let rcp_delta: f64 = 1.0 / unsafe { (*next).time - (*prev).time };
-        // SAFETY: `prev` is the live previous keyframe.
-        let mut t: f64 = (time - unsafe { (*prev).time }) * rcp_delta;
+        let rcp_delta: f64 = 1.0 / (next.time() - prev.time());
+        let mut t: f64 = (time - prev.time()) * rcp_delta;
 
-        // SAFETY: `prev` is the live previous keyframe; reading its own field.
-        match unsafe { (*prev).interpolation } {
-            // SAFETY: `prev` is the live previous keyframe.
-            Interpolation::ConstantPrev => return unsafe { (*prev).value },
+        match prev.interpolation() {
+            Interpolation::ConstantPrev => return prev.value(),
 
-            // SAFETY: `next` is the live next keyframe.
-            Interpolation::ConstantNext => return unsafe { (*next).value },
+            Interpolation::ConstantNext => return next.value(),
 
             Interpolation::Linear => {
                 // C: `return (ufbx_real)(prev->value*(1.0 - t) + next->value*t);`
                 // `1.0 - t` is double, so both `value`s promote to double.
-                // SAFETY: `prev`/`next` are the live adjacent keyframes.
-                return unsafe {
-                    (as_f64!((*prev).value) * (1.0 - t) + as_f64!((*next).value) * t) as Real
-                };
+                return (as_f64!(prev.value()) * (1.0 - t) + as_f64!(next.value()) * t) as Real;
             }
 
             Interpolation::Cubic => {
                 // C: tangent `dx`/`dy` are float, promoted to double.
-                // SAFETY: `prev` is the live previous keyframe.
-                let x1: f64 = unsafe { (*prev).right.dx } as f64 * rcp_delta;
-                // SAFETY: `next` is the live next keyframe.
-                let x2: f64 = 1.0 - unsafe { (*next).left.dx } as f64 * rcp_delta;
+                let x1: f64 = prev.right().dx as f64 * rcp_delta;
+                let x2: f64 = 1.0 - next.left().dx as f64 * rcp_delta;
                 t = evaluate::find_cubic_bezier_t(x1, x2, t);
 
                 let t2: f64 = t * t;
@@ -1463,11 +1496,10 @@ pub(crate) unsafe fn evaluate_curve_flags(
                 let u3: f64 = u2 * u;
 
                 // C: `double y0 = prev->value;` — `ufbx_real` promoted to double.
-                // SAFETY: `prev`/`next` are the live adjacent keyframes.
-                let y0: f64 = as_f64!(unsafe { (*prev).value });
-                let y3: f64 = as_f64!(unsafe { (*next).value });
-                let y1: f64 = y0 + unsafe { (*prev).right.dy } as f64;
-                let y2: f64 = y3 - unsafe { (*next).left.dy } as f64;
+                let y0: f64 = as_f64!(prev.value());
+                let y3: f64 = as_f64!(next.value());
+                let y1: f64 = y0 + prev.right().dy as f64;
+                let y2: f64 = y3 - next.left().dy as f64;
 
                 // C: `return (ufbx_real)(u3*y0 + 3.0 * (u2*t*y1 + u*t2*y2) + t3*y3);`
                 return (u3 * y0 + 3.0 * (u2 * t * y1 + u * t2 * y2) + t3 * y3) as Real;
@@ -1485,60 +1517,56 @@ pub(crate) unsafe fn evaluate_curve_flags(
     }
 
     // Last keyframe
-    // SAFETY: live `curve` per above; `count >= 2` here, so `data.add(count - 1)`
-    // addresses the last live `Keyframe` of the run.
-    unsafe { (*(*curve).keyframes.data.add((*curve).keyframes.count - 1)).value }
+    keys.at(keys.count() - 1).value()
 }
 
 // ufbx.c:30916-30919 `ufbx_evaluate_anim_value_real`
 #[inline(never)]
-pub(crate) unsafe fn evaluate_anim_value_real(anim_value: *const AnimValue, time: f64) -> Real {
-    // SAFETY: `anim_value` is null-or-live per this fn's contract, forwarded
-    // unchanged to `evaluate_anim_value_real_flags`.
-    unsafe { evaluate_anim_value_real_flags(anim_value, time, 0) }
+pub(crate) fn evaluate_anim_value_real(
+    anim_value: Option<&View<AnimValue, Const>>,
+    time: f64,
+) -> Real {
+    evaluate_anim_value_real_flags(anim_value, time, 0)
 }
 
 // ufbx.c:30921-30924 `ufbx_evaluate_anim_value_vec3`
 #[inline(never)]
-pub(crate) unsafe fn evaluate_anim_value_vec3(anim_value: *const AnimValue, time: f64) -> Vec3 {
-    // SAFETY: `anim_value` is null-or-live per this fn's contract, forwarded
-    // unchanged to `evaluate_anim_value_vec3_flags`.
-    unsafe { evaluate_anim_value_vec3_flags(anim_value, time, 0) }
+pub(crate) fn evaluate_anim_value_vec3(
+    anim_value: Option<&View<AnimValue, Const>>,
+    time: f64,
+) -> Vec3 {
+    evaluate_anim_value_vec3_flags(anim_value, time, 0)
 }
 
 // ufbx.c:30926-30935 `ufbx_evaluate_anim_value_real_flags`
+// C's null-or-live `ufbx_anim_value*` param arrives as `Option<&View<_, Const>>`
+// (the boundary shims mint the view from the caller's pointer).
 #[inline(never)]
-pub(crate) unsafe fn evaluate_anim_value_real_flags(
-    anim_value: *const AnimValue,
+pub(crate) fn evaluate_anim_value_real_flags(
+    anim_value: Option<&View<AnimValue, Const>>,
     time: f64,
     flags: u32,
 ) -> Real {
-    if anim_value.is_null() {
+    let Some(anim_value) = anim_value else {
         return 0.0;
-    }
+    };
 
-    // SAFETY: `anim_value` is non-null (checked) and points at a live `AnimValue`
-    // — the raw-pointer contract of this `unsafe fn`; reading its own default.
-    let mut res: Real = unsafe { (*anim_value).default_value.x };
+    let mut res: Real = anim_value.default_value().x;
     // C: `if (anim_value->curves[0]) res = ufbx_evaluate_curve_flags(anim_value->curves[0], time, res, flags);`
-    // SAFETY: `&raw const (*anim_value).curves[0]` addresses the live value's own
-    // curve slot; `opt_ptr` unwraps the nullable ref to a curve pointer.
-    let curve0: *mut AnimCurve = unsafe { opt_ptr(&raw const (*anim_value).curves[0]) };
-    if !curve0.is_null() {
-        // SAFETY: `curve0` is non-null (checked) and the live curve just unwrapped.
-        res = unsafe { evaluate_curve_flags(curve0, time, res, flags) };
+    if let Some(curve0) = anim_value.curve_view(0) {
+        res = evaluate_curve_flags(Some(curve0), time, res, flags);
     }
     res
 }
 
 // ufbx.c:30937-30949 `ufbx_evaluate_anim_value_vec3_flags`
 #[inline(never)]
-pub(crate) unsafe fn evaluate_anim_value_vec3_flags(
-    anim_value: *const AnimValue,
+pub(crate) fn evaluate_anim_value_vec3_flags(
+    anim_value: Option<&View<AnimValue, Const>>,
     time: f64,
     flags: u32,
 ) -> Vec3 {
-    if anim_value.is_null() {
+    let Some(anim_value) = anim_value else {
         // C: `ufbx_vec3 zero = { 0.0f };`
         let zero: Vec3 = Vec3 {
             x: 0.0,
@@ -1546,29 +1574,17 @@ pub(crate) unsafe fn evaluate_anim_value_vec3_flags(
             z: 0.0,
         };
         return zero;
-    }
+    };
 
-    // SAFETY: `anim_value` is non-null (checked) and points at a live `AnimValue`
-    // — the raw-pointer contract of this `unsafe fn`; reading its own default.
-    let mut res: Vec3 = unsafe { (*anim_value).default_value };
-    // SAFETY: `&raw const (*anim_value).curves[0]` addresses the live value's own
-    // curve slot; `opt_ptr` unwraps the nullable ref to a curve pointer.
-    let curve0: *mut AnimCurve = unsafe { opt_ptr(&raw const (*anim_value).curves[0]) };
-    if !curve0.is_null() {
-        // SAFETY: `curve0` is non-null (checked) and the live curve just unwrapped.
-        res.x = unsafe { evaluate_curve_flags(curve0, time, res.x, flags) };
+    let mut res: Vec3 = anim_value.default_value();
+    if let Some(curve0) = anim_value.curve_view(0) {
+        res.x = evaluate_curve_flags(Some(curve0), time, res.x, flags);
     }
-    // SAFETY: as above, for curve slot 1.
-    let curve1: *mut AnimCurve = unsafe { opt_ptr(&raw const (*anim_value).curves[1]) };
-    if !curve1.is_null() {
-        // SAFETY: `curve1` is non-null (checked) and the live curve just unwrapped.
-        res.y = unsafe { evaluate_curve_flags(curve1, time, res.y, flags) };
+    if let Some(curve1) = anim_value.curve_view(1) {
+        res.y = evaluate_curve_flags(Some(curve1), time, res.y, flags);
     }
-    // SAFETY: as above, for curve slot 2.
-    let curve2: *mut AnimCurve = unsafe { opt_ptr(&raw const (*anim_value).curves[2]) };
-    if !curve2.is_null() {
-        // SAFETY: `curve2` is non-null (checked) and the live curve just unwrapped.
-        res.z = unsafe { evaluate_curve_flags(curve2, time, res.z, flags) };
+    if let Some(curve2) = anim_value.curve_view(2) {
+        res.z = evaluate_curve_flags(Some(curve2), time, res.z, flags);
     }
     res
 }

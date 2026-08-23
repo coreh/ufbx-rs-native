@@ -5329,3 +5329,469 @@ impl View<DomNode, Mut> {
         unsafe { &raw mut (*self.get()).values }
     }
 }
+
+#[allow(dead_code)]
+impl<M: Mode> View<AnimCurve, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        // SAFETY: in-place projection of the `element` field; liveness and
+        // `M`-adequate provenance carry over from this view's own mint.
+        unsafe { View::mint((&raw const (*self.as_ptr()).element).cast_mut()) }
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        // SAFETY: in-bounds projection of the `element` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).element }
+    }
+    #[inline(always)]
+    pub(crate) fn keyframes(&self) -> List<Keyframe> {
+        // SAFETY: by-value read of the `keyframes` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).keyframes) }
+    }
+    #[inline(always)]
+    pub(crate) fn keyframes_view(&self) -> &View<List<Keyframe>, M> {
+        // SAFETY: in-place projection of the `keyframes` field; liveness and
+        // `M`-adequate provenance carry over from this view's own mint.
+        unsafe { View::mint((&raw const (*self.as_ptr()).keyframes).cast_mut()) }
+    }
+    #[inline(always)]
+    pub(crate) fn keyframes_ptr(&self) -> *const List<Keyframe> {
+        // SAFETY: in-bounds projection of the `keyframes` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).keyframes }
+    }
+    #[inline(always)]
+    pub(crate) fn pre_extrapolation(&self) -> Extrapolation {
+        // SAFETY: by-value read of the `pre_extrapolation` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).pre_extrapolation) }
+    }
+    #[inline(always)]
+    pub(crate) fn pre_extrapolation_ptr(&self) -> *const Extrapolation {
+        // SAFETY: in-bounds projection of the `pre_extrapolation` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).pre_extrapolation }
+    }
+    #[inline(always)]
+    pub(crate) fn post_extrapolation(&self) -> Extrapolation {
+        // SAFETY: by-value read of the `post_extrapolation` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).post_extrapolation) }
+    }
+    #[inline(always)]
+    pub(crate) fn post_extrapolation_ptr(&self) -> *const Extrapolation {
+        // SAFETY: in-bounds projection of the `post_extrapolation` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).post_extrapolation }
+    }
+    #[inline(always)]
+    pub(crate) fn min_value(&self) -> Real {
+        // SAFETY: by-value read of the `min_value` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).min_value) }
+    }
+    #[inline(always)]
+    pub(crate) fn min_value_ptr(&self) -> *const Real {
+        // SAFETY: in-bounds projection of the `min_value` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).min_value }
+    }
+    #[inline(always)]
+    pub(crate) fn max_value(&self) -> Real {
+        // SAFETY: by-value read of the `max_value` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).max_value) }
+    }
+    #[inline(always)]
+    pub(crate) fn max_value_ptr(&self) -> *const Real {
+        // SAFETY: in-bounds projection of the `max_value` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).max_value }
+    }
+    #[inline(always)]
+    pub(crate) fn min_time(&self) -> f64 {
+        // SAFETY: by-value read of the `min_time` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).min_time) }
+    }
+    #[inline(always)]
+    pub(crate) fn min_time_ptr(&self) -> *const f64 {
+        // SAFETY: in-bounds projection of the `min_time` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).min_time }
+    }
+    #[inline(always)]
+    pub(crate) fn max_time(&self) -> f64 {
+        // SAFETY: by-value read of the `max_time` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).max_time) }
+    }
+    #[inline(always)]
+    pub(crate) fn max_time_ptr(&self) -> *const f64 {
+        // SAFETY: in-bounds projection of the `max_time` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).max_time }
+    }
+}
+
+#[allow(dead_code)]
+impl View<AnimCurve, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).element = value }
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).element }
+    }
+    #[inline(always)]
+    pub(crate) fn set_keyframes(&self, value: List<Keyframe>) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).keyframes = value }
+    }
+    #[inline(always)]
+    pub(crate) fn keyframes_raw(&self) -> *mut List<Keyframe> {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).keyframes }
+    }
+    #[inline(always)]
+    pub(crate) fn set_pre_extrapolation(&self, value: Extrapolation) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).pre_extrapolation = value }
+    }
+    #[inline(always)]
+    pub(crate) fn pre_extrapolation_raw(&self) -> *mut Extrapolation {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).pre_extrapolation }
+    }
+    #[inline(always)]
+    pub(crate) fn set_post_extrapolation(&self, value: Extrapolation) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).post_extrapolation = value }
+    }
+    #[inline(always)]
+    pub(crate) fn post_extrapolation_raw(&self) -> *mut Extrapolation {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).post_extrapolation }
+    }
+    #[inline(always)]
+    pub(crate) fn set_min_value(&self, value: Real) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).min_value = value }
+    }
+    #[inline(always)]
+    pub(crate) fn min_value_raw(&self) -> *mut Real {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).min_value }
+    }
+    #[inline(always)]
+    pub(crate) fn set_max_value(&self, value: Real) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).max_value = value }
+    }
+    #[inline(always)]
+    pub(crate) fn max_value_raw(&self) -> *mut Real {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).max_value }
+    }
+    #[inline(always)]
+    pub(crate) fn set_min_time(&self, value: f64) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).min_time = value }
+    }
+    #[inline(always)]
+    pub(crate) fn min_time_raw(&self) -> *mut f64 {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).min_time }
+    }
+    #[inline(always)]
+    pub(crate) fn set_max_time(&self, value: f64) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).max_time = value }
+    }
+    #[inline(always)]
+    pub(crate) fn max_time_raw(&self) -> *mut f64 {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).max_time }
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<AnimValue, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        // SAFETY: in-place projection of the `element` field; liveness and
+        // `M`-adequate provenance carry over from this view's own mint.
+        unsafe { View::mint((&raw const (*self.as_ptr()).element).cast_mut()) }
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        // SAFETY: in-bounds projection of the `element` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).element }
+    }
+    #[inline(always)]
+    pub(crate) fn default_value(&self) -> Vec3 {
+        // SAFETY: by-value read of the `default_value` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).default_value) }
+    }
+    #[inline(always)]
+    pub(crate) fn default_value_ptr(&self) -> *const Vec3 {
+        // SAFETY: in-bounds projection of the `default_value` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).default_value }
+    }
+    #[inline(always)]
+    pub(crate) fn curves_ptr(&self) -> *const [Option<Ref<AnimCurve>>; 3] {
+        // SAFETY: in-bounds projection of the `curves` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).curves }
+    }
+}
+
+#[allow(dead_code)]
+impl View<AnimValue, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).element = value }
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).element }
+    }
+    #[inline(always)]
+    pub(crate) fn set_default_value(&self, value: Vec3) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).default_value = value }
+    }
+    #[inline(always)]
+    pub(crate) fn default_value_raw(&self) -> *mut Vec3 {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).default_value }
+    }
+    #[inline(always)]
+    pub(crate) fn set_curves(&self, value: [Option<Ref<AnimCurve>>; 3]) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).curves = value }
+    }
+    #[inline(always)]
+    pub(crate) fn curves_raw(&self) -> *mut [Option<Ref<AnimCurve>>; 3] {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).curves }
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Keyframe, M> {
+    #[inline(always)]
+    pub(crate) fn time(&self) -> f64 {
+        // SAFETY: by-value read of the `time` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).time) }
+    }
+    #[inline(always)]
+    pub(crate) fn time_ptr(&self) -> *const f64 {
+        // SAFETY: in-bounds projection of the `time` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).time }
+    }
+    #[inline(always)]
+    pub(crate) fn value(&self) -> Real {
+        // SAFETY: by-value read of the `value` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).value) }
+    }
+    #[inline(always)]
+    pub(crate) fn value_ptr(&self) -> *const Real {
+        // SAFETY: in-bounds projection of the `value` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).value }
+    }
+    #[inline(always)]
+    pub(crate) fn interpolation(&self) -> Interpolation {
+        // SAFETY: by-value read of the `interpolation` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).interpolation) }
+    }
+    #[inline(always)]
+    pub(crate) fn interpolation_ptr(&self) -> *const Interpolation {
+        // SAFETY: in-bounds projection of the `interpolation` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).interpolation }
+    }
+    #[inline(always)]
+    pub(crate) fn left(&self) -> Tangent {
+        // SAFETY: by-value read of the `left` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).left) }
+    }
+    #[inline(always)]
+    pub(crate) fn left_ptr(&self) -> *const Tangent {
+        // SAFETY: in-bounds projection of the `left` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).left }
+    }
+    #[inline(always)]
+    pub(crate) fn right(&self) -> Tangent {
+        // SAFETY: by-value read of the `right` field; the viewed allocation is
+        // live and unmoved per this view's mint vouch, and this field's bytes are
+        // initialized per the caller's per-leaf discipline (the `mint`/`Const`
+        // contracts do not claim whole-struct validity).
+        unsafe { ptr::read(&raw const (*self.as_ptr()).right) }
+    }
+    #[inline(always)]
+    pub(crate) fn right_ptr(&self) -> *const Tangent {
+        // SAFETY: in-bounds projection of the `right` field; the returned
+        // read pointer inherits the view's provenance.
+        unsafe { &raw const (*self.as_ptr()).right }
+    }
+}
+
+#[allow(dead_code)]
+impl View<Keyframe, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_time(&self, value: f64) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).time = value }
+    }
+    #[inline(always)]
+    pub(crate) fn time_raw(&self) -> *mut f64 {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).time }
+    }
+    #[inline(always)]
+    pub(crate) fn set_value(&self, value: Real) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).value = value }
+    }
+    #[inline(always)]
+    pub(crate) fn value_raw(&self) -> *mut Real {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).value }
+    }
+    #[inline(always)]
+    pub(crate) fn set_interpolation(&self, value: Interpolation) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).interpolation = value }
+    }
+    #[inline(always)]
+    pub(crate) fn interpolation_raw(&self) -> *mut Interpolation {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).interpolation }
+    }
+    #[inline(always)]
+    pub(crate) fn set_left(&self, value: Tangent) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).left = value }
+    }
+    #[inline(always)]
+    pub(crate) fn left_raw(&self) -> *mut Tangent {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).left }
+    }
+    #[inline(always)]
+    pub(crate) fn set_right(&self, value: Tangent) {
+        // SAFETY: field write through the `Mut` view's write-capable viewed
+        // memory (mint vouch); no reference to the viewed bytes outside the
+        // `UnsafeCell` view — no plain `&T`/`&mut T`, no `Const` view — is live
+        // across the write.
+        unsafe { (*self.get()).right = value }
+    }
+    #[inline(always)]
+    pub(crate) fn right_raw(&self) -> *mut Tangent {
+        // SAFETY: in-bounds field projection; the returned raw pointer
+        // inherits the view's write-capable provenance.
+        unsafe { &raw mut (*self.get()).right }
+    }
+}

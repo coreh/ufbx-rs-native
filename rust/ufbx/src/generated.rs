@@ -5009,65 +5009,75 @@ pub unsafe fn open_memory_ctx_raw(
     Ok(result)
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_curve(curve: &AnimCurve, time: f64, default_value: Real) -> Real {
-    let result = unsafe {
-        crate::native::api::evaluate_curve(curve as *const AnimCurve, time, default_value)
-    };
-    result
+    crate::native::api::evaluate_curve(
+        Some(unsafe {
+            crate::native::view::View::<AnimCurve, crate::native::view::Const>::from_ptr(
+                curve as *const AnimCurve,
+            )
+        }),
+        time,
+        default_value,
+    )
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_curve_flags(curve: &AnimCurve, time: f64, default_value: Real, flags: u32) -> Real {
-    let result = unsafe {
-        crate::native::api::evaluate_curve_flags(
-            curve as *const AnimCurve,
-            time,
-            default_value,
-            flags,
-        )
-    };
-    result
+    crate::native::api::evaluate_curve_flags(
+        Some(unsafe {
+            crate::native::view::View::<AnimCurve, crate::native::view::Const>::from_ptr(
+                curve as *const AnimCurve,
+            )
+        }),
+        time,
+        default_value,
+        flags,
+    )
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_anim_value_real(anim_value: &AnimValue, time: f64) -> Real {
-    let result = unsafe {
-        crate::native::api::evaluate_anim_value_real(anim_value as *const AnimValue, time)
-    };
-    result
+    crate::native::api::evaluate_anim_value_real(
+        Some(unsafe {
+            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(
+                anim_value as *const AnimValue,
+            )
+        }),
+        time,
+    )
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_anim_value_vec3(anim_value: &AnimValue, time: f64) -> Vec3 {
-    let result = unsafe {
-        crate::native::api::evaluate_anim_value_vec3(anim_value as *const AnimValue, time)
-    };
-    result
+    crate::native::api::evaluate_anim_value_vec3(
+        Some(unsafe {
+            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(
+                anim_value as *const AnimValue,
+            )
+        }),
+        time,
+    )
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_anim_value_real_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Real {
-    let result = unsafe {
-        crate::native::api::evaluate_anim_value_real_flags(
-            anim_value as *const AnimValue,
-            time,
-            flags,
-        )
-    };
-    result
+    crate::native::api::evaluate_anim_value_real_flags(
+        Some(unsafe {
+            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(
+                anim_value as *const AnimValue,
+            )
+        }),
+        time,
+        flags,
+    )
 }
 
-#[allow(clippy::let_and_return)]
 pub fn evaluate_anim_value_vec3_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Vec3 {
-    let result = unsafe {
-        crate::native::api::evaluate_anim_value_vec3_flags(
-            anim_value as *const AnimValue,
-            time,
-            flags,
-        )
-    };
-    result
+    crate::native::api::evaluate_anim_value_vec3_flags(
+        Some(unsafe {
+            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(
+                anim_value as *const AnimValue,
+            )
+        }),
+        time,
+        flags,
+    )
 }
 
 pub fn evaluate_prop<'a, 'b>(

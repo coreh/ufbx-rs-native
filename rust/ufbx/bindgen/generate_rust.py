@@ -373,6 +373,9 @@ view_accessor_structs = [
     "ufbx_shader_prop_binding",
     "ufbx_prop_override",
     "ufbx_dom_node",
+    "ufbx_anim_curve",
+    "ufbx_anim_value",
+    "ufbx_keyframe",
 ]
 
 # `(struct, field)` pairs whose READ accessor is hand-written instead of
@@ -382,8 +385,14 @@ view_accessor_structs = [
 #     bare-pointer read; see its SAFETY comment) — a plain by-value read of
 #     `Option<Ref<Props>>` would push call sites back through `Ref::as_ref`,
 #     whose `&Props` formation is the Stacked Borrows trap the view avoids.
+#   * `ufbx_anim_value.curves`: the sound read is the indexed
+#     `Option<&View<AnimCurve, M>>` nav accessor `curve_view` in native/api.rs
+#     (niche-packed bare-pointer read of one slot) — a by-value read of the
+#     whole `[Option<Ref<AnimCurve>>; 3]` array would push call sites back
+#     through `Ref::as_ref`, the same Stacked Borrows trap as above.
 view_accessor_skip_read = {
     ("ufbx_props", "defaults"),
+    ("ufbx_anim_value", "curves"),
 }
 
 ignore_non_raw = {
@@ -468,6 +477,80 @@ pub fn dom_find<'a>(parent: &DomNode, name: &str) -> Option<&'a DomNode> {
         )
     };
     result.map(|node| unsafe { &*node.as_ptr() })
+}
+"""
+
+# The native evaluate fns take `Option<&View<_, Const>>` (safe fns; a `Const`
+# view is legal over these `&`-derived pointers), so the safe wrappers mint the
+# view instead of casting to a raw pointer.
+override_functions["ufbx_evaluate_curve"] = """
+pub fn evaluate_curve(curve: &AnimCurve, time: f64, default_value: Real) -> Real {
+    crate::native::api::evaluate_curve(
+        Some(unsafe {
+            crate::native::view::View::<AnimCurve, crate::native::view::Const>::from_ptr(curve as *const AnimCurve)
+        }),
+        time,
+        default_value,
+    )
+}
+"""
+
+override_functions["ufbx_evaluate_curve_flags"] = """
+pub fn evaluate_curve_flags(curve: &AnimCurve, time: f64, default_value: Real, flags: u32) -> Real {
+    crate::native::api::evaluate_curve_flags(
+        Some(unsafe {
+            crate::native::view::View::<AnimCurve, crate::native::view::Const>::from_ptr(curve as *const AnimCurve)
+        }),
+        time,
+        default_value,
+        flags,
+    )
+}
+"""
+
+override_functions["ufbx_evaluate_anim_value_real"] = """
+pub fn evaluate_anim_value_real(anim_value: &AnimValue, time: f64) -> Real {
+    crate::native::api::evaluate_anim_value_real(
+        Some(unsafe {
+            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(anim_value as *const AnimValue)
+        }),
+        time,
+    )
+}
+"""
+
+override_functions["ufbx_evaluate_anim_value_vec3"] = """
+pub fn evaluate_anim_value_vec3(anim_value: &AnimValue, time: f64) -> Vec3 {
+    crate::native::api::evaluate_anim_value_vec3(
+        Some(unsafe {
+            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(anim_value as *const AnimValue)
+        }),
+        time,
+    )
+}
+"""
+
+override_functions["ufbx_evaluate_anim_value_real_flags"] = """
+pub fn evaluate_anim_value_real_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Real {
+    crate::native::api::evaluate_anim_value_real_flags(
+        Some(unsafe {
+            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(anim_value as *const AnimValue)
+        }),
+        time,
+        flags,
+    )
+}
+"""
+
+override_functions["ufbx_evaluate_anim_value_vec3_flags"] = """
+pub fn evaluate_anim_value_vec3_flags(anim_value: &AnimValue, time: f64, flags: u32) -> Vec3 {
+    crate::native::api::evaluate_anim_value_vec3_flags(
+        Some(unsafe {
+            crate::native::view::View::<AnimValue, crate::native::view::Const>::from_ptr(anim_value as *const AnimValue)
+        }),
+        time,
+        flags,
+    )
 }
 """
 

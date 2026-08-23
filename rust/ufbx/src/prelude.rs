@@ -426,15 +426,37 @@ impl<T> Default for RawList<T> {
 // `.count`/`.data`).
 pub(crate) type ListView<T> = crate::native::view::View<List<T>>;
 
-impl<T> ListView<T> {
+// Mode-generic read surface: serves both `Mut` (arena/context provenance) and
+// `Const` (frozen `&`-derived provenance) list views.
+impl<T, M: crate::native::view::Mode> crate::native::view::View<List<T>, M> {
     #[inline(always)]
     pub(crate) fn count(&self) -> usize {
-        unsafe { (*self.get()).count }
+        // SAFETY: reading the viewed list's own POD `count` field; liveness per
+        // the view's mint vouch (per-leaf discipline).
+        unsafe { (*self.as_ptr()).count }
     }
     #[inline(always)]
     pub(crate) fn data(&self) -> *const T {
-        unsafe { (*self.get()).data }
+        // SAFETY: reading the viewed list's own POD `data` field; liveness per
+        // the view's mint vouch (per-leaf discipline).
+        unsafe { (*self.as_ptr()).data }
     }
+    /// Safe indexed element view: per the mint's per-leaf discipline a viewed
+    /// `List` field holds a valid list — `data` is live and unmoved for `count`
+    /// contiguous elements (arena-stable) — so a bounds-checked index yields a
+    /// live element (the sibling vouch of `View<String, M>::bytes`).
+    #[inline(always)]
+    pub(crate) fn at(&self, index: usize) -> &crate::native::view::View<T, M> {
+        assert!(index < self.count());
+        // SAFETY: `index` is in bounds of the list's own count (checked above),
+        // so `data + index` addresses a live element of the run vouched by the
+        // list invariant above; the stored `data` pointer carries its own
+        // stored provenance, adequate for `M`.
+        unsafe { crate::native::view::View::mint((self.data() as *mut T).add(index)) }
+    }
+}
+
+impl<T> ListView<T> {
     #[inline(always)]
     pub(crate) fn set_count(&self, count: usize) {
         unsafe {

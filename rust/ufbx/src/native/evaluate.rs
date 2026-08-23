@@ -25,15 +25,13 @@ use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 use core::ptr;
 
-#[cfg(any(feature = "scene-eval", feature = "baking"))]
-use crate::generated::AnimValue;
 #[cfg(any(feature = "skinning-eval", feature = "scene-eval", feature = "baking"))]
 use crate::generated::Node as UfbxNode;
 use crate::generated::{
-    Anim, AnimCurve, AnimLayer, AnimProp, BakedAnim, Connection, DomNode, Element, Error,
-    ErrorType, Extrapolation, ExtrapolationMode, FileFormat, IndexErrorHandling, InflateRetain,
-    Keyframe, OpenFileInfo, OpenFileType, Prop, PropFlags, PropOverride, PropType, Quat,
-    RawAnimOpts, RawGeometryCacheDataOpts, RawLoadOpts, RawOpenFileOpts, RawPropOverrideDesc,
+    Anim, AnimCurve, AnimLayer, AnimProp, AnimValue, BakedAnim, Connection, DomNode, Element,
+    Error, ErrorType, Extrapolation, ExtrapolationMode, FileFormat, IndexErrorHandling,
+    InflateRetain, Keyframe, OpenFileInfo, OpenFileType, Prop, PropFlags, PropOverride, PropType,
+    Quat, RawAnimOpts, RawGeometryCacheDataOpts, RawLoadOpts, RawOpenFileOpts, RawPropOverrideDesc,
     RawStream, RotationOrder, Scene, Tangent, TransformOverride, UnicodeErrorHandling, Vec3,
     Warning, WarningType,
 };
@@ -1958,14 +1956,17 @@ pub(crate) unsafe fn evaluate_props(
                 // C: `weight = ufbx_evaluate_anim_value_real_flags(...) / (ufbx_real)100.0;`
                 // SAFETY: `weight_aprop` is a non-null (checked above) anim prop
                 // of `layer`, so `anim_value` is its own field and holds a
-                // scene-owned `ufbx_anim_value`.
-                weight = unsafe {
-                    evaluate_anim_value_real_flags(
-                        ref_ptr(&(*weight_aprop).anim_value),
-                        time,
-                        flags,
-                    )
-                } / (100.0 as Real);
+                // scene-owned `ufbx_anim_value` — live and unwritten during
+                // evaluation, the `Const` view mint's contract.
+                weight = evaluate_anim_value_real_flags(
+                    Some(unsafe {
+                        View::<AnimValue, Const>::from_ptr(ref_ptr(
+                            &raw const (*weight_aprop).anim_value,
+                        ))
+                    }),
+                    time,
+                    flags,
+                ) / (100.0 as Real);
                 // C: `if (weight < 0.0f) weight = 0.0f;`
                 if weight < 0.0 {
                     weight = 0.0;
@@ -2032,10 +2033,15 @@ pub(crate) unsafe fn evaluate_props(
             if unsafe { (*aprop).prop_name.data } == prop.name().data {
                 // SAFETY: `aprop` is inside `layer`'s anim-prop run, so
                 // `anim_value` is its own field and holds a scene-owned
-                // `ufbx_anim_value`.
-                let v: Vec3 = unsafe {
-                    evaluate_anim_value_vec3_flags(ref_ptr(&(*aprop).anim_value), time, flags)
-                };
+                // `ufbx_anim_value` — live and unwritten during evaluation, the
+                // `Const` view mint's contract.
+                let v: Vec3 = evaluate_anim_value_vec3_flags(
+                    Some(unsafe {
+                        View::<AnimValue, Const>::from_ptr(ref_ptr(&raw const (*aprop).anim_value))
+                    }),
+                    time,
+                    flags,
+                );
                 if layer_ix == 0 {
                     // C: `prop->value_vec3 = v;` — the `ufbx_prop` value
                     // union's 3-real view over `value_vec4`.
@@ -2511,8 +2517,8 @@ pub(crate) unsafe fn evaluate_selected_props(
 // `ufbxi_recursive_function(ufbx_real, ..., 3, ...)` (ufbx.c:25977-25978): see
 // `combine_anim_layer` above for the guard shape.
 #[inline(never)]
-pub(crate) unsafe fn extrapolate_curve(
-    curve: *const AnimCurve,
+pub(crate) fn extrapolate_curve(
+    curve: &View<AnimCurve, Const>,
     real_time: f64,
     flags: u32,
 ) -> Real {
@@ -2525,83 +2531,56 @@ pub(crate) unsafe fn extrapolate_curve(
             ufbx_assert!(d.get() < 3);
             d.set(d.get() + 1);
         });
-        // SAFETY: `curve` is the caller's live `ufbx_anim_curve` — the
-        // raw-pointer contract of this `unsafe fn`, forwarded unchanged.
-        let ret = unsafe { extrapolate_curve_rec(curve, real_time, flags) };
+        let ret = extrapolate_curve_rec(curve, real_time, flags);
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
         ret
     }
     #[cfg(not(feature = "regression"))]
-    // SAFETY: `curve` is the caller's live `ufbx_anim_curve` — the raw-pointer
-    // contract of this `unsafe fn`, forwarded unchanged.
-    unsafe {
-        extrapolate_curve_rec(curve, real_time, flags)
-    }
+    extrapolate_curve_rec(curve, real_time, flags)
 }
 
 // ufbx.c:25979-26042 `ufbxi_extrapolate_curve` body (the `_rec` half of the
 // `ufbxi_recursive_function` body; see the wrapper above)
 #[inline(never)]
-unsafe fn extrapolate_curve_rec(curve: *const AnimCurve, real_time: f64, flags: u32) -> Real {
-    // SAFETY: `curve` is the caller's live `ufbx_anim_curve` — the raw-pointer
-    // contract of this `unsafe fn`.
-    let pre: bool = real_time < unsafe { (*curve).min_time };
-    let key: *const Keyframe;
-    // C: `ufbx_extrapolation ext;` — copied by value; read through a pointer
-    // here (`Extrapolation` carries no `Copy`), same fields, same reads.
-    let ext: *const Extrapolation;
+fn extrapolate_curve_rec(curve: &View<AnimCurve, Const>, real_time: f64, flags: u32) -> Real {
+    let keys = curve.keyframes_view();
+    let pre: bool = real_time < curve.min_time();
+    let key: &View<Keyframe, Const>;
+    // C: `ufbx_extrapolation ext;` — copied by value, matching C.
+    let ext: Extrapolation;
     if pre {
-        // SAFETY: `curve` is the caller's live curve, and `ufbx_evaluate_curve_flags`
-        // only extrapolates once it has established `keyframes.count > 1`, so the
-        // keyframe list is non-empty and slot 0 is in bounds.
-        key = unsafe { (*curve).keyframes.data.add(0) };
-        // SAFETY: `pre_extrapolation` is a field of the caller's live curve.
-        ext = unsafe { &raw const (*curve).pre_extrapolation };
+        // `ufbx_evaluate_curve_flags` only extrapolates once it has established
+        // `keyframes.count > 1`, so slot 0 is in bounds of the `at` check.
+        key = keys.at(0);
+        ext = curve.pre_extrapolation();
     } else {
-        // SAFETY: as above — the keyframe list holds more than one element, so
+        // As above — the keyframe list holds more than one element, so
         // `count - 1` does not underflow and indexes the last slot.
-        key = unsafe { (*curve).keyframes.data.add((*curve).keyframes.count - 1) };
-        // SAFETY: `post_extrapolation` is a field of the caller's live curve.
-        ext = unsafe { &raw const (*curve).post_extrapolation };
+        key = keys.at(keys.count() - 1);
+        ext = curve.post_extrapolation();
     }
 
-    // SAFETY: `ext` addresses one of the two extrapolation fields of the live
-    // curve, assigned on both arms above.
-    if unsafe { (*ext).mode } == ExtrapolationMode::Constant {
-        // SAFETY: `key` addresses an in-bounds keyframe of the live curve.
-        return unsafe { (*key).value };
-    // SAFETY: `ext` addresses an extrapolation field of the live curve.
-    } else if unsafe { (*ext).mode } == ExtrapolationMode::Slope {
+    if ext.mode == ExtrapolationMode::Constant {
+        return key.value();
+    } else if ext.mode == ExtrapolationMode::Slope {
         // C: `ufbx_tangent tangent = *(pre ? &key->right : &key->left);`
-        // SAFETY: `key` addresses an in-bounds keyframe of the live curve, so
-        // both of its tangent fields are readable.
-        let tangent: Tangent = unsafe {
-            *(if pre {
-                &raw const (*key).right
-            } else {
-                &raw const (*key).left
-            })
-        };
+        let tangent: Tangent = if pre { key.right() } else { key.left() };
         // C: `key->value + (ufbx_real)(tangent.dy * ((real_time - key->time) / tangent.dx))`
         // — `dx`/`dy` are float, promoted to double in the expression.
-        // SAFETY: `key` addresses an in-bounds keyframe of the live curve.
-        return unsafe { (*key).value }
-            + (tangent.dy as f64 * ((real_time - unsafe { (*key).time }) / tangent.dx as f64))
-                as Real;
-    // SAFETY: `ext` addresses an extrapolation field of the live curve.
-    } else if unsafe { (*ext).repeat_count } == 0 {
-        // SAFETY: `key` addresses an in-bounds keyframe of the live curve.
-        return unsafe { (*key).value };
+        return key.value()
+            + (tangent.dy as f64 * ((real_time - key.time()) / tangent.dx as f64)) as Real;
+    } else if ext.repeat_count == 0 {
+        return key.value();
     }
 
     // Perform all operations in KTime ticks to be frame perfect
+    let scene: Ref<Scene> = curve.element().scene();
     // SAFETY: `element.scene` is the non-null owning-scene `Ref` of the live
-    // curve, so `ref_ptr` yields that live `ufbx_scene` to read metadata from.
-    let scale: f64 = unsafe { (*ref_ptr(&(*curve).element.scene)).metadata.ktime_second } as f64;
-    // SAFETY: `curve` is the caller's live curve.
-    let min_time: f64 = math::rint(unsafe { (*curve).min_time } * scale);
-    // SAFETY: `curve` is the caller's live curve.
-    let max_time: f64 = math::rint(unsafe { (*curve).max_time } * scale);
+    // viewed curve (read just above per the mint's per-leaf discipline), so
+    // `ref_ptr` yields that live `ufbx_scene` to read metadata from.
+    let scale: f64 = unsafe { (*ref_ptr(&raw const scene)).metadata.ktime_second } as f64;
+    let min_time: f64 = math::rint(curve.min_time() * scale);
+    let max_time: f64 = math::rint(curve.max_time() * scale);
     let time: f64 = real_time * scale;
 
     let delta: f64 = if pre {
@@ -2613,25 +2592,20 @@ unsafe fn extrapolate_curve_rec(curve: *const AnimCurve, real_time: f64, flags: 
 
     // Require at least one KTime unit
     if !(duration >= 1.0) {
-        // SAFETY: `key` addresses an in-bounds keyframe of the live curve.
-        return unsafe { (*key).value };
+        return key.value();
     }
 
     let rep: f64 = delta / duration;
     let mut rep_n: f64 = math::floor(rep);
     let mut rep_d: f64 = delta - rep_n * duration;
 
-    // SAFETY (this condition): `ext` addresses an extrapolation field of the
-    // live curve.
-    if unsafe { (*ext).repeat_count } > 0 && rep_n >= unsafe { (*ext).repeat_count } as f64 {
+    if ext.repeat_count > 0 && rep_n >= ext.repeat_count as f64 {
         // Clamp to the repeat count to handle mirroring
-        // SAFETY: as above.
-        rep_n = (unsafe { (*ext).repeat_count } - 1) as f64;
+        rep_n = (ext.repeat_count - 1) as f64;
         rep_d = duration;
     }
 
-    // SAFETY: `ext` addresses an extrapolation field of the live curve.
-    if unsafe { (*ext).mode } == ExtrapolationMode::Mirror {
+    if ext.mode == ExtrapolationMode::Mirror {
         let rep_parity: f64 = rep_n * 0.5 - math::floor(rep_n * 0.5);
         if rep_parity <= 0.25 {
             rep_d = duration - rep_d;
@@ -2643,25 +2617,17 @@ unsafe fn extrapolate_curve_rec(curve: *const AnimCurve, real_time: f64, flags: 
     }
     let new_time: f64 = (min_time + rep_d) / scale;
 
-    // SAFETY: `curve` is the caller's live curve — `ufbx_evaluate_curve_flags`'
-    // raw-pointer contract — and `key` addresses an in-bounds keyframe of it.
-    let mut value: Real = unsafe {
-        evaluate_curve_flags(
-            curve,
-            new_time,
-            (*key).value,
-            flags | crate::generated::EvaluateFlags::NO_EXTRAPOLATION.raw(),
-        )
-    };
+    let mut value: Real = evaluate_curve_flags(
+        Some(curve),
+        new_time,
+        key.value(),
+        flags | crate::generated::EvaluateFlags::NO_EXTRAPOLATION.raw(),
+    );
 
-    // SAFETY: `ext` addresses an extrapolation field of the live curve.
-    if unsafe { (*ext).mode } == ExtrapolationMode::RepeatRelative {
-        // SAFETY (both reads): the live curve's keyframe list holds more than
-        // one element (the caller only extrapolates past that check), so both
-        // the last slot and slot 0 are in bounds.
-        let mut val_delta: Real =
-            unsafe { (*(*curve).keyframes.data.add((*curve).keyframes.count - 1)).value }
-                - unsafe { (*(*curve).keyframes.data.add(0)).value };
+    if ext.mode == ExtrapolationMode::RepeatRelative {
+        // The keyframe list holds more than one element (the caller only
+        // extrapolates past that check), so both slots are in bounds.
+        let mut val_delta: Real = keys.at(keys.count() - 1).value() - keys.at(0).value();
         if pre {
             val_delta = -val_delta;
         }
@@ -4134,24 +4100,29 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     while p_value != p_value_end {
         // SAFETY: `p_value` walks the destination scene's anim-value pointer list
         // and stops at `p_value_end`, so it addresses a live slot holding one of
-        // the element copies written into the destination buffer above.
-        let value: *mut AnimValue = unsafe { *p_value };
-        // SAFETY (these three stores): `curves` is that live anim value's own
-        // fixed three-element array of nullable `Option<Ref<AnimCurve>>`, so each
-        // index is in bounds and `opt_ptr` reads it as the element pointer it is;
-        // the byte copy left it naming a source-scene element —
-        // `translate_element`'s contract — and the result is written back in
-        // place.
+        // the element copies written into the destination buffer above — a
+        // write-capable root for the `Mut` view.
+        let value: &View<AnimValue, crate::native::view::Mut> =
+            unsafe { View::<AnimValue, crate::native::view::Mut>::from_ptr(*p_value) };
+        // C: `value->curves[i] = (ufbx_anim_curve*)ufbxi_translate_element(...)`
+        // — the byte copy left each slot naming a source-scene element, and the
+        // translated pointer is stored back in place.
+        // SAFETY: `translate_element` maps each (nullable) source-scene element
+        // pointer to its destination copy under `ec`'s live context — its own
+        // contract; slot reads/writes go through the view accessors.
         unsafe {
-            *(&raw mut (*value).curves[0] as *mut *mut AnimCurve) =
-                translate_element(ec, opt_ptr(&raw const (*value).curves[0]) as *mut c_void)
-                    as *mut AnimCurve;
-            *(&raw mut (*value).curves[1] as *mut *mut AnimCurve) =
-                translate_element(ec, opt_ptr(&raw const (*value).curves[1]) as *mut c_void)
-                    as *mut AnimCurve;
-            *(&raw mut (*value).curves[2] as *mut *mut AnimCurve) =
-                translate_element(ec, opt_ptr(&raw const (*value).curves[2]) as *mut c_void)
-                    as *mut AnimCurve;
+            value.set_curve_ptr(
+                0,
+                translate_element(ec, value.curve_ptr(0) as *mut c_void) as *mut AnimCurve,
+            );
+            value.set_curve_ptr(
+                1,
+                translate_element(ec, value.curve_ptr(1) as *mut c_void) as *mut AnimCurve,
+            );
+            value.set_curve_ptr(
+                2,
+                translate_element(ec, value.curve_ptr(2) as *mut c_void) as *mut AnimCurve,
+            );
         }
         // SAFETY: `p_value` is inside the list, so `p_value + 1` is at most one
         // past its end.
