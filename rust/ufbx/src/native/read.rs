@@ -2266,7 +2266,7 @@ pub(crate) unsafe fn fix_index(
         #[allow(unreachable_patterns)]
         _ => {
             ufbxi_unreachable!("Unhandled index_error_handling");
-            return Err(Fail);
+            return Err(Fail::unrecorded());
         }
     }
 

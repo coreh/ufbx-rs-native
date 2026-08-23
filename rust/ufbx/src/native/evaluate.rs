@@ -559,8 +559,8 @@ pub(crate) unsafe fn evaluate_skinning(
 
 // ufbx.c:25164-25168 `ufbxi_evaluate_skinning` (`#else` branch — feature
 // disabled). C parity, NOT a stub: `ufbxi_report_err_msg` records the error
-// and KEEPS GOING (PORTING.md trap #16); the `return 0` that follows becomes
-// `Err(Fail)`.
+// and KEEPS GOING (PORTING.md trap #16); the `return 0` that follows carries
+// the report's recording witness.
 #[cfg(not(feature = "skinning-eval"))]
 #[inline(never)]
 pub(crate) unsafe fn evaluate_skinning(
@@ -577,12 +577,11 @@ pub(crate) unsafe fn evaluate_skinning(
     // SAFETY: `error` is the caller's live `ufbx_error` slot — the raw-pointer
     // contract of this `unsafe fn` — which is what the macro formats into.
     unsafe { ufbxi_fmt_err_info!(error, "UFBX_ENABLE_SKINNING_EVALUATION") };
-    ufbxi_report_err_msg!(
+    Err(ufbxi_report_err_msg!(
         unsafe { crate::native::error::ErrorView::from_ptr(error) },
         "UFBXI_FEATURE_SKINNING_EVALUATION",
         "Feature disabled"
-    );
-    Err(Fail)
+    ))
 }
 
 // ufbx.c:25171-25185 `ufbxi_fixup_opts_string`
@@ -669,7 +668,7 @@ pub(crate) fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> {
 pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // Check for deferred failure
     if uc.deferred_failure() {
-        return Err(Fail);
+        return Err(Fail::unrecorded());
     }
     if uc.deferred_load() {
         // C: `ufbx_stream stream = { 0 };` / `ufbx_open_file_opts opts = { 0 };`

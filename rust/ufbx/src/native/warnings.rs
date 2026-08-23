@@ -683,7 +683,7 @@ mod tests {
                 "Unsupported FBX version (%u)",
                 6000u32
             );
-            assert_eq!(r, Err(Fail));
+            assert!(r.is_err());
             assert_eq!(
                 core::slice::from_raw_parts(fx.err.description.data, fx.err.description.length),
                 b"Memory limit exceeded"

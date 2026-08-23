@@ -254,7 +254,7 @@ pub(crate) unsafe fn swap_endian_value(uc: &Context, src: *const c_void, type_: 
 // ufbx.c:8672-8765 `ufbxi_binary_convert_array`
 // C returns `int`: 1 on success, 0 on failure. The `default:` arms return 0
 // WITHOUT recording an error (and with `maybe_uc == NULL` so can they not) —
-// `Err(Fail)` carries no payload, so that maps directly.
+// `Err(Fail::unrecorded())` carries no payload, so that maps directly.
 #[inline(never)]
 pub(crate) unsafe fn binary_convert_array(
     maybe_uc: *mut InnerContext,
@@ -381,7 +381,7 @@ pub(crate) unsafe fn binary_convert_array(
                         "Bad array source type"
                     );
                 }
-                return Err(Fail);
+                return Err(Fail::unrecorded());
             }
         },
 
@@ -423,7 +423,7 @@ pub(crate) unsafe fn binary_convert_array(
                         "Bad array source type"
                     );
                 }
-                return Err(Fail);
+                return Err(Fail::unrecorded());
             }
         },
 
@@ -460,7 +460,7 @@ pub(crate) unsafe fn binary_convert_array(
                         "Bad array source type"
                     );
                 }
-                return Err(Fail);
+                return Err(Fail::unrecorded());
             }
         },
 
@@ -493,7 +493,7 @@ pub(crate) unsafe fn binary_convert_array(
                         "Bad array source type"
                     );
                 }
-                return Err(Fail);
+                return Err(Fail::unrecorded());
             }
         },
 
@@ -526,11 +526,11 @@ pub(crate) unsafe fn binary_convert_array(
                         "Bad array source type"
                     );
                 }
-                return Err(Fail);
+                return Err(Fail::unrecorded());
             }
         },
 
-        _ => return Err(Fail),
+        _ => return Err(Fail::unrecorded()),
     }
 
     Ok(())
@@ -731,7 +731,7 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
             b'f' => ufbxi_convert_parse_switch!(f32, ufbxi_cast_f32, ufbxi_cast_f32),
             b'd' => ufbxi_convert_parse_switch!(f64, ufbxi_cast_f64, ufbxi_cast_f64),
 
-            _ => return Err(Fail),
+            _ => return Err(Fail::unrecorded()),
         }
     }
 

@@ -2478,7 +2478,7 @@ pub(crate) unsafe fn load_external_cache(
         // distinct objects — and `Error` is plain data, so the read leaves
         // `cc`'s copy usable (it is not read again).
         unsafe { core::ptr::write(uc.error_mut_ptr(), core::ptr::read(cc.error_mut_ptr())) };
-        return Err(Fail);
+        return Err(Fail::unrecorded());
     }
 
     // SAFETY: the caller's contract is that `file` points at a live, writable

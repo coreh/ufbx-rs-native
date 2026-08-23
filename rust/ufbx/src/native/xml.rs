@@ -871,7 +871,7 @@ unsafe fn xml_parse_tag_rec(
         );
         xml_skip_while(xc, XML_CTYPE_WHITESPACE);
         if !xml_accept(xc, b'>') {
-            return Err(Fail);
+            return Err(Fail::unrecorded());
         }
         // SAFETY: `p_closing` is the caller's live `bool` out-param (fn
         // raw-param contract).
@@ -886,7 +886,7 @@ unsafe fn xml_parse_tag_rec(
             // the bump stay inside it.
             while unsafe { *ch } != 0 {
                 if !xml_accept(xc, unsafe { *ch }) {
-                    return Err(Fail);
+                    return Err(Fail::unrecorded());
                 }
                 ch = unsafe { ch.add(1) };
             }
@@ -904,7 +904,7 @@ unsafe fn xml_parse_tag_rec(
             tag.set_name_data(EMPTY_CHAR.as_ptr());
         } else if xml_accept(xc, b'-') {
             if !xml_accept(xc, b'-') {
-                return Err(Fail);
+                return Err(Fail::unrecorded());
             }
             // SAFETY: a null `dst` is the "discard the token" sentinel the
             // callee checks for; the suffix is a NUL-terminated `'static`
@@ -942,7 +942,7 @@ unsafe fn xml_parse_tag_rec(
         xml_skip_while(xc, XML_CTYPE_WHITESPACE);
         if xml_accept(xc, b'/') {
             if !xml_accept(xc, b'>') {
-                return Err(Fail);
+                return Err(Fail::unrecorded());
             }
             break;
         } else if xml_accept(xc, b'>') {
@@ -959,7 +959,7 @@ unsafe fn xml_parse_tag_rec(
             unsafe { xml_read_until(xc, attrib.name_raw(), XML_CTYPE_NAME_END)? };
             xml_skip_while(xc, XML_CTYPE_WHITESPACE);
             if !xml_accept(xc, b'=') {
-                return Err(Fail);
+                return Err(Fail::unrecorded());
             }
             xml_skip_while(xc, XML_CTYPE_WHITESPACE);
             let mut quote_ctype: u32 = 0;

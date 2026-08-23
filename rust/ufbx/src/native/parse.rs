@@ -4116,9 +4116,10 @@ pub(crate) fn fail_imp(
     cond: Option<crate::native::error::FailStr>,
     func: Option<crate::native::error::FailStr>,
     line: u32,
-) -> i32 {
+) -> crate::native::error::Fail {
     // Routes through the SAFE `fail_err` wrapper with the anchored `error_view()`;
     // the message-pointer unsafe is encapsulated inside `fail_err`/`fail_imp_err`.
+    // Forwards the recording WITNESS the wrapper mints.
     crate::native::error::fail_err(uc.error_view(), cond, func, line)
 }
 
@@ -4127,7 +4128,7 @@ pub(crate) fn fail_imp(
 // macros when the error stack is disabled.
 #[cfg(not(feature = "error-stack"))]
 #[inline(never)]
-pub(crate) fn fail_imp_no_stack(uc: &Context) -> i32 {
+pub(crate) fn fail_imp_no_stack(uc: &Context) -> crate::native::error::Fail {
     // Routes through the SAFE `fail_err_no_stack` wrapper with the anchored
     // `error_view()`; no message pointers (no stack frame).
     crate::native::error::fail_err_no_stack(uc.error_view())
@@ -8340,7 +8341,7 @@ mod tests {
         uc.data = data.as_ptr();
 
         unsafe {
-            assert_eq!(report_progress(Context::from_ptr(&raw mut *uc)), Err(Fail));
+            assert!(report_progress(Context::from_ptr(&raw mut *uc)).is_err());
             let desc =
                 core::slice::from_raw_parts(uc.error.description.data, uc.error.description.length);
             assert_eq!(desc, b"Cancelled");
