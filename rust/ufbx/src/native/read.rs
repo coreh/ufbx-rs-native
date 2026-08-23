@@ -117,7 +117,7 @@ use crate::native::error::{
     ufbxi_check_return, ufbxi_fail, ufbxi_fail_msg, ufbxi_fmt_err_info, Fail, EMPTY_CHAR,
 };
 use crate::native::float_parse::parse_double;
-use crate::native::hash::{hash64, hash_ptr_id, map_find, map_insert, PtrId};
+use crate::native::hash::{hash64, hash_ptr_id, PtrId};
 use crate::native::parse::{
     array_type_size, find_array, find_child, find_child_strcmp, find_int, find_prop, find_val1,
     find_val2, find_vec3, get_array, get_dom_node, get_name_key, get_name_key_c, get_prop_type,
@@ -1161,27 +1161,10 @@ pub(crate) fn push_synthetic_id(uc: &Context) -> u64 {
 pub(crate) fn synthetic_id_from_ptr_id(uc: &Context, ptr: usize, id: u64) -> u64 {
     let ptr_id = PtrId { ptr, id };
     let hash = hash_ptr_id(ptr_id);
-    // SAFETY: the key is a local `PtrId` passed by pointer to uc's own
-    // `ptr_fbx_id_map`, whose entries are `PtrFbxIdEntry` keyed by exactly that
-    // type; the lookup either returns one of its entries or null.
-    let mut entry: *mut PtrFbxIdEntry = unsafe {
-        map_find(
-            uc.ptr_fbx_id_map_mut_ptr(),
-            hash,
-            &ptr_id as *const PtrId as *const c_void,
-        )
-    };
+    let mut entry: *mut PtrFbxIdEntry = uc.ptr_fbx_id_map_view().find(hash, &ptr_id);
 
     if entry.is_null() {
-        // SAFETY: same map and key type as the lookup above; the fresh
-        // non-null insert result is initialized right here before use.
-        entry = unsafe {
-            map_insert(
-                uc.ptr_fbx_id_map_mut_ptr(),
-                hash,
-                &ptr_id as *const PtrId as *const c_void,
-            )
-        };
+        entry = uc.ptr_fbx_id_map_view().insert(hash, &ptr_id);
         ufbxi_check_return!(uc, !entry.is_null(), 0, "entry");
         // SAFETY: `entry` is the fresh non-null insert result checked above.
         unsafe {
@@ -1309,25 +1292,10 @@ pub(crate) unsafe fn split_type_and_name(
 #[inline(never)]
 pub(crate) fn insert_fbx_id(uc: &Context, fbx_id: u64, element_id: u32) -> Result<(), Fail> {
     let hash = hash64(fbx_id);
-    // SAFETY: the key is a local `u64` passed by pointer to uc's own
-    // `fbx_id_map`, whose entries are `FbxIdEntry` keyed by that `u64`.
-    let mut entry: *mut FbxIdEntry = unsafe {
-        map_find(
-            uc.fbx_id_map_mut_ptr(),
-            hash,
-            &fbx_id as *const u64 as *const c_void,
-        )
-    };
+    let mut entry: *mut FbxIdEntry = uc.fbx_id_map_view().find(hash, &fbx_id);
 
     if entry.is_null() {
-        // SAFETY: same map and key as the lookup above.
-        entry = unsafe {
-            map_insert(
-                uc.fbx_id_map_mut_ptr(),
-                hash,
-                &fbx_id as *const u64 as *const c_void,
-            )
-        };
+        entry = uc.fbx_id_map_view().insert(hash, &fbx_id);
         ufbxi_check!(uc, !entry.is_null(), "entry");
         // SAFETY: `entry` is the fresh non-null insert result checked above.
         unsafe {
@@ -1350,15 +1318,7 @@ pub(crate) fn insert_fbx_id(uc: &Context, fbx_id: u64, element_id: u32) -> Resul
 #[inline(never)]
 pub(crate) fn find_fbx_id(uc: &Context, fbx_id: u64) -> *mut FbxIdEntry {
     let hash = hash64(fbx_id);
-    // SAFETY: `fbx_id_map_mut_ptr()` is a valid map by construction; `hash` and
-    // the key pointer are valid local values.
-    unsafe {
-        map_find(
-            uc.fbx_id_map_mut_ptr(),
-            hash,
-            &fbx_id as *const u64 as *const c_void,
-        )
-    }
+    uc.fbx_id_map_view().find(hash, &fbx_id)
 }
 
 // ufbx.c:12331-12334 `ufbxi_fbx_id_exists`
@@ -1371,26 +1331,11 @@ pub(crate) fn fbx_id_exists(uc: &Context, fbx_id: u64) -> bool {
 #[inline(never)]
 pub(crate) fn insert_fbx_attr(uc: &Context, fbx_id: u64, attrib_fbx_id: u64) -> Result<(), Fail> {
     let hash = hash64(fbx_id);
-    // SAFETY: the key is a local `u64` passed by pointer to uc's own
-    // `fbx_attr_map`, whose entries are `FbxAttrEntry` keyed by that `u64`.
-    let mut entry: *mut FbxAttrEntry = unsafe {
-        map_find(
-            uc.fbx_attr_map_mut_ptr(),
-            hash,
-            &fbx_id as *const u64 as *const c_void,
-        )
-    };
+    let mut entry: *mut FbxAttrEntry = uc.fbx_attr_map_view().find(hash, &fbx_id);
     // TODO: Strict / warn about duplicate objects
 
     if entry.is_null() {
-        // SAFETY: same map and key as the lookup above.
-        entry = unsafe {
-            map_insert(
-                uc.fbx_attr_map_mut_ptr(),
-                hash,
-                &fbx_id as *const u64 as *const c_void,
-            )
-        };
+        entry = uc.fbx_attr_map_view().insert(hash, &fbx_id);
         ufbxi_check!(uc, !entry.is_null(), "entry");
         // SAFETY: `entry` is the fresh non-null insert result checked above.
         unsafe {

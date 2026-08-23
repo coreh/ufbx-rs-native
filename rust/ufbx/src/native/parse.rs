@@ -40,7 +40,7 @@ use crate::native::error::{
     memchr, memcmp, strcmp, strncmp, ufbxi_check, ufbxi_check_msg, ufbxi_check_return, ufbxi_fail,
     Fail, EMPTY_CHAR,
 };
-use crate::native::hash::{hash_uptr, map_find, map_insert, Map, PtrId};
+use crate::native::hash::{hash_uptr, Map, PtrId};
 use crate::native::parse_ascii::is_space;
 use crate::native::parse_binary::{BINARY_HEADER_SIZE, BINARY_MAGIC, BINARY_MAGIC_SIZE};
 use crate::native::platform::{
@@ -1064,6 +1064,10 @@ impl ObjContext {
     #[inline(always)]
     pub(crate) fn group_map_mut_ptr(&self) -> *mut Map {
         unsafe { &raw mut (*self.get()).group_map }
+    }
+    #[inline(always)]
+    pub(crate) fn group_map_view(&self) -> &crate::native::hash::MapView {
+        unsafe { &*(&raw mut (*self.get()).group_map as *mut crate::native::hash::MapView) }
     }
 
     #[inline(always)]
@@ -2989,6 +2993,22 @@ impl Context {
     #[inline(always)]
     pub(crate) fn anim_stack_map_view(&self) -> &crate::native::hash::MapView {
         unsafe { &*(&raw mut (*self.get()).anim_stack_map as *mut crate::native::hash::MapView) }
+    }
+    #[inline(always)]
+    pub(crate) fn ptr_fbx_id_map_view(&self) -> &crate::native::hash::MapView {
+        unsafe { &*(&raw mut (*self.get()).ptr_fbx_id_map as *mut crate::native::hash::MapView) }
+    }
+    #[inline(always)]
+    pub(crate) fn dom_node_map_view(&self) -> &crate::native::hash::MapView {
+        unsafe { &*(&raw mut (*self.get()).dom_node_map as *mut crate::native::hash::MapView) }
+    }
+    #[inline(always)]
+    pub(crate) fn fbx_id_map_view(&self) -> &crate::native::hash::MapView {
+        unsafe { &*(&raw mut (*self.get()).fbx_id_map as *mut crate::native::hash::MapView) }
+    }
+    #[inline(always)]
+    pub(crate) fn fbx_attr_map_view(&self) -> &crate::native::hash::MapView {
+        unsafe { &*(&raw mut (*self.get()).fbx_attr_map as *mut crate::native::hash::MapView) }
     }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
@@ -6456,11 +6476,7 @@ pub(crate) fn get_dom_node_imp(uc: &Context, node: Option<&NodeView>) -> *mut Do
     // getter, with a key that is a live local of the map's item type; a
     // non-null result points at an entry owned by that map.
     unsafe {
-        let result: *mut DomMapping = map_find(
-            uc.dom_node_map_mut_ptr(),
-            hash,
-            &mapping as *const DomMapping as *const c_void,
-        );
+        let result: *mut DomMapping = uc.dom_node_map_view().find(hash, &mapping);
         if !result.is_null() {
             (*result).dom_node
         } else {
@@ -6552,24 +6568,9 @@ unsafe fn retain_dom_node_rec(
             dom_node: core::ptr::null_mut(),
         };
         let hash = hash_uptr(mapping.node_ptr);
-        // SAFETY: looking up in `uc`'s own `dom_node_map` through its raw-ptr
-        // getter, with `mapping` a live local of the map's item type.
-        let mut result: *mut DomMapping = unsafe {
-            map_find(
-                uc.dom_node_map_mut_ptr(),
-                hash,
-                &mapping as *const DomMapping as *const c_void,
-            )
-        };
+        let mut result: *mut DomMapping = uc.dom_node_map_view().find(hash, &mapping);
         if result.is_null() {
-            // SAFETY: as above; inserts a new entry keyed by `mapping`.
-            result = unsafe {
-                map_insert(
-                    uc.dom_node_map_mut_ptr(),
-                    hash,
-                    &mapping as *const DomMapping as *const c_void,
-                )
-            };
+            result = uc.dom_node_map_view().insert(hash, &mapping);
             ufbxi_check!(uc, !result.is_null(), "result");
         }
         // SAFETY: `result` is a non-null entry owned by `uc`'s `dom_node_map`.
@@ -7964,15 +7965,7 @@ pub(crate) unsafe fn get_prop_type(uc: &Context, name: *const u8) -> PropType {
     // C takes the address of the parameter itself (`&name`) as the map key.
     let name: *const u8 = name;
     let hash = crate::native::hash::hash_ptr!(name);
-    // SAFETY: looking up in `uc`'s own `prop_type_map` through its raw-ptr
-    // getter, with `&name` a live local holding the key pointer value.
-    let entry: *mut PropTypeName = unsafe {
-        map_find(
-            uc.prop_type_map_mut_ptr(),
-            hash,
-            &name as *const *const u8 as *const c_void,
-        )
-    };
+    let entry: *mut PropTypeName = uc.prop_type_map_view().find(hash, &name);
     if !entry.is_null() {
         // SAFETY: `entry` is a non-null entry owned by `uc`'s `prop_type_map`;
         // read its `type_` field.

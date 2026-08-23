@@ -224,7 +224,7 @@ use crate::native::error::{
     memcmp, strcmp, strlen, ufbxi_check, ufbxi_check_err, ufbxi_check_msg, ufbxi_snprintf, Fail,
     EMPTY_CHAR,
 };
-use crate::native::hash::{hash64, hash_ptr, map_find, map_insert};
+use crate::native::hash::{hash64, hash_ptr};
 use crate::native::parse::{
     find_enum, find_int, find_prop, find_prop_with_key, find_real, find_vec3, get_element_extra,
     get_name_key, is_node_property_name, is_quat_identity, is_transform_identity, is_vec3_zero,
@@ -1476,15 +1476,7 @@ pub(crate) unsafe fn sort_connections(
 // ufbx.c:18655-18663 `ufbxi_find_attribute_fbx_id`
 pub(crate) fn find_attribute_fbx_id(uc: &Context, node_fbx_id: u64) -> u64 {
     let hash: u32 = hash64(node_fbx_id);
-    // SAFETY: `fbx_attr_map_mut_ptr()` is a valid map by construction; the key
-    // pointer is a valid local.
-    let entry: *mut FbxAttrEntry = unsafe {
-        map_find(
-            uc.fbx_attr_map_mut_ptr(),
-            hash,
-            &node_fbx_id as *const u64 as *const c_void,
-        )
-    };
+    let entry: *mut FbxAttrEntry = uc.fbx_attr_map_view().find(hash, &node_fbx_id);
     if !entry.is_null() {
         // SAFETY: `entry` is non-null (checked) and a valid FbxAttrEntry.
         return unsafe { (*entry).attr_fbx_id };
@@ -5977,24 +5969,9 @@ pub(crate) unsafe fn insert_texture_file(uc: &Context, texture: *mut Texture) ->
         return Ok(());
     }
     let hash: u32 = hash_ptr!(key);
-    // SAFETY: `texture_file_map_mut_ptr` is `uc`'s own live map, whose comparator
-    // reads the probe value as the `*const u8` key that `&key` addresses.
-    let mut entry: *mut TextureFileEntry = unsafe {
-        map_find(
-            uc.texture_file_map_mut_ptr(),
-            hash,
-            &key as *const *const u8 as *const c_void,
-        )
-    };
+    let mut entry: *mut TextureFileEntry = uc.texture_file_map_view().find(hash, &key);
     if entry.is_null() {
-        // SAFETY: as the `map_find` above.
-        entry = unsafe {
-            map_insert(
-                uc.texture_file_map_mut_ptr(),
-                hash,
-                &key as *const *const u8 as *const c_void,
-            )
-        };
+        entry = uc.texture_file_map_view().insert(hash, &key);
         ufbxi_check!(uc, !entry.is_null(), "entry");
 
         let file: *mut TextureFile = uc.tmp_view().push_zero(1);

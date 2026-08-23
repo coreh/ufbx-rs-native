@@ -49,9 +49,7 @@ use crate::native::error::{ufbxi_fail_msg, ufbxi_fmt_err_info};
 #[cfg(feature = "obj")]
 use crate::native::float_parse::parse_double;
 #[cfg(feature = "obj")]
-use crate::native::hash::{
-    hash_ptr, map_cmp_const_char_ptr, map_find, map_free, map_init, map_insert,
-};
+use crate::native::hash::{hash_ptr, map_cmp_const_char_ptr, map_free, map_init};
 #[cfg(feature = "obj")]
 use crate::native::io::refill;
 #[cfg(feature = "obj")]
@@ -1040,22 +1038,9 @@ pub(crate) fn obj_parse_indices(
         // SAFETY: looks the interned name pointer up in the obj parser's own
         // group map (keyed by that pointer, whose address is taken from an
         // unaliased local).
-        let mut entry: *mut ObjGroupEntry = unsafe {
-            map_find(
-                uc.obj().group_map_mut_ptr(),
-                hash,
-                &name.data as *const *const u8 as *const c_void,
-            )
-        };
+        let mut entry: *mut ObjGroupEntry = uc.obj().group_map_view().find(hash, &name.data);
         if entry.is_null() {
-            // SAFETY: inserts into the same map with the same key.
-            entry = unsafe {
-                map_insert(
-                    uc.obj().group_map_mut_ptr(),
-                    hash,
-                    &name.data as *const *const u8 as *const c_void,
-                )
-            };
+            entry = uc.obj().group_map_view().insert(hash, &name.data);
             ufbxi_check!(uc, !entry.is_null(), "entry");
             // SAFETY: `entry` is the fresh non-null insert result.
             unsafe {
