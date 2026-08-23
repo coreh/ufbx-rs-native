@@ -25,6 +25,7 @@ use crate::native::error::{
 use crate::native::platform::{
     is_aligned_mask, max_sz, ufbx_assert, ufbxi_maybe_null, MAXIMUM_ALIGNMENT,
 };
+use crate::native::view::{view_read, view_write};
 
 // -- Default global allocator (ufbx.c:370-386)
 //
@@ -148,17 +149,15 @@ pub(crate) type AllocatorView = crate::native::view::View<Allocator>;
 impl AllocatorView {
     #[inline(always)]
     pub(crate) fn current_size(&self) -> usize {
-        unsafe { (*self.get()).current_size }
+        view_read!(self, current_size)
     }
     #[inline(always)]
     pub(crate) fn num_allocs(&self) -> usize {
-        unsafe { (*self.get()).num_allocs }
+        view_read!(self, num_allocs)
     }
     #[inline(always)]
     pub(crate) fn set_error(&self, error: *mut Error) {
-        unsafe {
-            (*self.get()).error = error;
-        }
+        view_write!(self, error, error)
     }
 }
 

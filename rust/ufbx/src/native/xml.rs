@@ -21,6 +21,7 @@ use crate::native::error::{
     c_strcmp, strcmp, ufbxi_check_err, ufbxi_check_err_msg, ufbxi_fail_err, Fail, EMPTY_CHAR,
 };
 use crate::native::platform::{ufbx_assert, IS_REGRESSION};
+use crate::native::view::{view_raw_mut, view_read, view_write};
 use crate::native::view::{SliceViewIter, View};
 use crate::prelude::String;
 
@@ -73,9 +74,7 @@ impl View<XmlTag> {
     }
     #[inline(always)]
     pub(crate) fn name_raw(&self) -> *mut String {
-        // SAFETY: in-bounds projection of the `name` field; the returned raw
-        // pointer inherits the view's write-capable provenance.
-        unsafe { &raw mut (*self.get()).name }
+        view_raw_mut!(self, name)
     }
     #[inline(always)]
     pub(crate) fn name_view(&self) -> &View<String> {
@@ -85,8 +84,7 @@ impl View<XmlTag> {
     }
     #[inline(always)]
     pub(crate) fn text(&self) -> String {
-        // SAFETY: `String` is a POD `{ptr,len}`; reading it from a valid `XmlTag`.
-        unsafe { (*self.get()).text }
+        view_read!(self, text)
     }
     #[inline(always)]
     pub(crate) fn set_text_data(&self, data: *const u8) {
@@ -104,57 +102,39 @@ impl View<XmlTag> {
     }
     #[inline(always)]
     pub(crate) fn text_raw(&self) -> *mut String {
-        // SAFETY: in-bounds projection of the `text` field; the returned raw
-        // pointer inherits the view's write-capable provenance.
-        unsafe { &raw mut (*self.get()).text }
+        view_raw_mut!(self, text)
     }
     #[inline(always)]
     pub(crate) fn attribs(&self) -> *mut XmlAttrib {
-        // SAFETY: reading the `attribs` run pointer of a valid arena `XmlTag`.
-        unsafe { (*self.get()).attribs }
+        view_read!(self, attribs)
     }
     #[inline(always)]
     pub(crate) fn set_attribs(&self, attribs: *mut XmlAttrib) {
-        // SAFETY: storing the `attribs` run pointer of a valid arena `XmlTag`.
-        unsafe {
-            (*self.get()).attribs = attribs;
-        }
+        view_write!(self, attribs, attribs)
     }
     #[inline(always)]
     pub(crate) fn num_attribs(&self) -> usize {
-        // SAFETY: reading a `usize` count field.
-        unsafe { (*self.get()).num_attribs }
+        view_read!(self, num_attribs)
     }
     #[inline(always)]
     pub(crate) fn set_num_attribs(&self, num_attribs: usize) {
-        // SAFETY: storing a `usize` count field.
-        unsafe {
-            (*self.get()).num_attribs = num_attribs;
-        }
+        view_write!(self, num_attribs, num_attribs)
     }
     #[inline(always)]
     pub(crate) fn children(&self) -> *mut XmlTag {
-        // SAFETY: reading the `children` run pointer of a valid arena `XmlTag`.
-        unsafe { (*self.get()).children }
+        view_read!(self, children)
     }
     #[inline(always)]
     pub(crate) fn set_children(&self, children: *mut XmlTag) {
-        // SAFETY: storing the `children` run pointer of a valid arena `XmlTag`.
-        unsafe {
-            (*self.get()).children = children;
-        }
+        view_write!(self, children, children)
     }
     #[inline(always)]
     pub(crate) fn num_children(&self) -> usize {
-        // SAFETY: reading a `usize` count field.
-        unsafe { (*self.get()).num_children }
+        view_read!(self, num_children)
     }
     #[inline(always)]
     pub(crate) fn set_num_children(&self, num_children: usize) {
-        // SAFETY: storing a `usize` count field.
-        unsafe {
-            (*self.get()).num_children = num_children;
-        }
+        view_write!(self, num_children, num_children)
     }
 }
 
@@ -163,9 +143,7 @@ pub(crate) type XmlAttribView = View<XmlAttrib>;
 impl View<XmlAttrib> {
     #[inline(always)]
     pub(crate) fn name_raw(&self) -> *mut String {
-        // SAFETY: in-bounds projection of the `name` field; the returned raw
-        // pointer inherits the view's write-capable provenance.
-        unsafe { &raw mut (*self.get()).name }
+        view_raw_mut!(self, name)
     }
     #[inline(always)]
     pub(crate) fn name_view(&self) -> &View<String> {
@@ -175,14 +153,11 @@ impl View<XmlAttrib> {
     }
     #[inline(always)]
     pub(crate) fn value(&self) -> String {
-        // SAFETY: `String` is a POD `{ptr,len}`; reading it from a valid `XmlAttrib`.
-        unsafe { (*self.get()).value }
+        view_read!(self, value)
     }
     #[inline(always)]
     pub(crate) fn value_raw(&self) -> *mut String {
-        // SAFETY: in-bounds projection of the `value` field; the returned raw
-        // pointer inherits the view's write-capable provenance.
-        unsafe { &raw mut (*self.get()).value }
+        view_raw_mut!(self, value)
     }
     #[inline(always)]
     pub(crate) fn value_view(&self) -> &View<String> {
@@ -296,41 +271,31 @@ impl XmlContext {
     // `tok_cap` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tok_cap_mut_ptr(&self) -> *mut usize {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tok_cap }
+        view_raw_mut!(self, tok_cap)
     }
 
     // `tok` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tok_mut_ptr(&self) -> *mut *mut u8 {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tok }
+        view_raw_mut!(self, tok)
     }
 
     // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_stack_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_stack }
+        view_raw_mut!(self, tmp_stack)
     }
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).result }
+        view_raw_mut!(self, result)
     }
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).error }
+        view_raw_mut!(self, error)
     }
 
     // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
@@ -344,84 +309,63 @@ impl XmlContext {
 
     #[inline(always)]
     pub(crate) fn set_io_error(&self, io_error: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).io_error = io_error;
-        }
+        view_write!(self, io_error, io_error)
     }
 
     // `pos_end` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn pos_end(&self) -> *const u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*const u8` are valid.
-        unsafe { (*self.get()).pos_end }
+        view_read!(self, pos_end)
     }
 
     #[inline(always)]
     pub(crate) fn set_pos_end(&self, pos_end: *const u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).pos_end = pos_end;
-        }
+        view_write!(self, pos_end, pos_end)
     }
 
     // `pos` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn pos(&self) -> *const u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*const u8` are valid.
-        unsafe { (*self.get()).pos }
+        view_read!(self, pos)
     }
 
     #[inline(always)]
     pub(crate) fn set_pos(&self, pos: *const u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).pos = pos;
-        }
+        view_write!(self, pos, pos)
     }
 
     // `tok_len` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tok_len(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).tok_len }
+        view_read!(self, tok_len)
     }
 
     #[inline(always)]
     pub(crate) fn set_tok_len(&self, tok_len: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).tok_len = tok_len;
-        }
+        view_write!(self, tok_len, tok_len)
     }
 
     // `tok_cap` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tok_cap(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).tok_cap }
+        view_read!(self, tok_cap)
     }
 
     // `tok` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tok(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
-        unsafe { (*self.get()).tok }
+        view_read!(self, tok)
     }
 
     // `read_user` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn read_user(&self) -> *mut c_void {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut c_void` are valid.
-        unsafe { (*self.get()).read_user }
+        view_read!(self, read_user)
     }
 
     #[inline(always)]
     pub(crate) fn set_read_user(&self, read_user: *mut c_void) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).read_user = read_user;
-        }
+        view_write!(self, read_user, read_user)
     }
 
     // `read_fn` — scalar value accessor.
@@ -429,8 +373,7 @@ impl XmlContext {
     pub(crate) fn read_fn(
         &self,
     ) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize> {
-        // SAFETY: reading a scalar field; all bit patterns of `Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize>` are valid.
-        unsafe { (*self.get()).read_fn }
+        view_read!(self, read_fn)
     }
 
     #[inline(always)]
@@ -438,40 +381,29 @@ impl XmlContext {
         &self,
         read_fn: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize>,
     ) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).read_fn = read_fn;
-        }
+        view_write!(self, read_fn, read_fn)
     }
 
     // `doc` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn doc(&self) -> *mut XmlDocument {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut XmlDocument` are valid.
-        unsafe { (*self.get()).doc }
+        view_read!(self, doc)
     }
 
     #[inline(always)]
     pub(crate) fn set_doc(&self, doc: *mut XmlDocument) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).doc = doc;
-        }
+        view_write!(self, doc, doc)
     }
 
     // `ator` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn ator(&self) -> *mut Allocator {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut Allocator` are valid.
-        unsafe { (*self.get()).ator }
+        view_read!(self, ator)
     }
 
     #[inline(always)]
     pub(crate) fn set_ator(&self, ator: *mut Allocator) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).ator = ator;
-        }
+        view_write!(self, ator, ator)
     }
 }
 

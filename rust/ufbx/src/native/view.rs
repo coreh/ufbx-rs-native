@@ -147,6 +147,75 @@ impl<T> View<T, Const> {
     }
 }
 
+// Per-leaf accessor-body macros: the ONE safety argument every single-level
+// field accessor on a view/context handle shares, written once here instead of
+// repeated in ~1000 method bodies (user-directed unification, 2026-08-23).
+//
+// SAFETY argument, common to every expansion: the receiver is a view or
+// context handle whose `get()` / `as_ptr()` yields a raw pointer to a live,
+// unmoved allocation (its mint/construction invariant); the expansion projects
+// and touches exactly ONE leaf field as a raw place — no `&`/`&mut` to the
+// containing struct is ever formed and no whole-struct validity is asserted.
+// A read asserts only that this field's bytes are initialized (the per-leaf
+// discipline: the same assertion the hand-written body made); a write goes
+// through `get()`, which only `Mut`-mode views and context handles expose, so
+// write capability is type-checked. `&raw` projections compute an address with
+// the handle's provenance and assert nothing further.
+//
+// These are for ACCESSOR IMPL BODIES — a single-level `$field` only. Deeper
+// paths, stored-pointer derefs, and anything whose vouch exceeds the handle
+// invariant stay as explicit `unsafe` with their own SAFETY comments.
+
+/// Single-leaf place read through `$self.get()` (Mut views / context handles).
+macro_rules! view_read {
+    ($self:expr, $field:ident) => {
+        // SAFETY: single-leaf place read; see the macro-level argument above.
+        unsafe { (*$self.get()).$field }
+    };
+}
+pub(crate) use view_read;
+
+/// Single-leaf place read through `$self.as_ptr()` (mode-generic impls).
+macro_rules! view_read_shared {
+    ($self:expr, $field:ident) => {
+        // SAFETY: single-leaf place read; see the macro-level argument above.
+        unsafe { (*$self.as_ptr()).$field }
+    };
+}
+pub(crate) use view_read_shared;
+
+/// Single-leaf place write through `$self.get()` (write capability is carried
+/// by `get()` existing on the receiver).
+macro_rules! view_write {
+    ($self:expr, $field:ident, $value:expr) => {
+        // SAFETY: single-leaf place write; see the macro-level argument above.
+        unsafe {
+            (*$self.get()).$field = $value;
+        }
+    };
+}
+pub(crate) use view_write;
+
+/// Single-leaf `&raw mut` projection through `$self.get()`.
+macro_rules! view_raw_mut {
+    ($self:expr, $field:ident) => {
+        // SAFETY: single-leaf address projection; see the macro-level argument
+        // above.
+        unsafe { &raw mut (*$self.get()).$field }
+    };
+}
+pub(crate) use view_raw_mut;
+
+/// Single-leaf `&raw const` projection (either pointer getter).
+macro_rules! view_raw_const {
+    ($self:expr, $field:ident) => {
+        // SAFETY: single-leaf address projection; see the macro-level argument
+        // above.
+        unsafe { &raw const (*$self.get()).$field }
+    };
+}
+pub(crate) use view_raw_const;
+
 /// Safe iterator over a contiguous run of `T`, yielding `&View<T>`.
 ///
 /// A dumb contiguous walk — `slice::Iter` with a reinterpret on the yield — that

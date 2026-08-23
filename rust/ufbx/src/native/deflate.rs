@@ -21,6 +21,7 @@ use crate::native::platform::{
     add_ptr, copy_16_bytes, is_aligned, max_sz, min_sz, read_u64, to_size, ufbx_assert,
     ufbxi_dev_assert, ufbxi_ignore, ufbxi_regression_assert, wrap_shr64, FastUint,
 };
+use crate::native::view::{view_read, view_write};
 
 // C comment (ufbx.c:1852-1853):
 // Lookup data: [0:5] extra bits [5:8] flags [16:32] base value
@@ -124,41 +125,35 @@ pub(crate) type BitStreamView = crate::native::view::View<BitStream>;
 impl BitStreamView {
     #[inline(always)]
     pub(crate) fn bits(&self) -> u64 {
-        unsafe { (*self.get()).bits }
+        view_read!(self, bits)
     }
     #[inline(always)]
     pub(crate) fn set_bits(&self, bits: u64) {
-        unsafe {
-            (*self.get()).bits = bits;
-        }
+        view_write!(self, bits, bits)
     }
     #[inline(always)]
     pub(crate) fn left(&self) -> usize {
-        unsafe { (*self.get()).left }
+        view_read!(self, left)
     }
     #[inline(always)]
     pub(crate) fn set_left(&self, left: usize) {
-        unsafe {
-            (*self.get()).left = left;
-        }
+        view_write!(self, left, left)
     }
     #[inline(always)]
     pub(crate) fn chunk_ptr(&self) -> *const u8 {
-        unsafe { (*self.get()).chunk_ptr }
+        view_read!(self, chunk_ptr)
     }
     #[inline(always)]
     pub(crate) fn set_chunk_ptr(&self, chunk_ptr: *const u8) {
-        unsafe {
-            (*self.get()).chunk_ptr = chunk_ptr;
-        }
+        view_write!(self, chunk_ptr, chunk_ptr)
     }
     #[inline(always)]
     pub(crate) fn chunk_yield(&self) -> *const u8 {
-        unsafe { (*self.get()).chunk_yield }
+        view_read!(self, chunk_yield)
     }
     #[inline(always)]
     pub(crate) fn cancelled(&self) -> bool {
-        unsafe { (*self.get()).cancelled }
+        view_read!(self, cancelled)
     }
 }
 
@@ -345,81 +340,45 @@ impl DeflateContext {
     // `out_end` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn out_end(&self) -> *mut u8 {
-        // SAFETY: `self.get()` targets the allocation behind `&self`, and every
-        // `DeflateContext` is zero-initialized at creation (`mem::zeroed` in
-        // `inflate`) so the field is initialized; all bit patterns of the
-        // `*mut u8` scalar are valid.
-        unsafe { (*self.get()).out_end }
+        view_read!(self, out_end)
     }
 
     #[inline(always)]
     pub(crate) fn set_out_end(&self, out_end: *mut u8) {
-        // SAFETY: `self.get()` targets the allocation behind `&self` (zero-
-        // initialized at creation via `mem::zeroed` in `inflate`); storing a
-        // scalar cannot violate validity.
-        unsafe {
-            (*self.get()).out_end = out_end;
-        }
+        view_write!(self, out_end, out_end)
     }
 
     // `out_ptr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn out_ptr(&self) -> *mut u8 {
-        // SAFETY: `self.get()` targets the allocation behind `&self`, and every
-        // `DeflateContext` is zero-initialized at creation (`mem::zeroed` in
-        // `inflate`) so the field is initialized; all bit patterns of the
-        // `*mut u8` scalar are valid.
-        unsafe { (*self.get()).out_ptr }
+        view_read!(self, out_ptr)
     }
 
     #[inline(always)]
     pub(crate) fn set_out_ptr(&self, out_ptr: *mut u8) {
-        // SAFETY: `self.get()` targets the allocation behind `&self` (zero-
-        // initialized at creation via `mem::zeroed` in `inflate`); storing a
-        // scalar cannot violate validity.
-        unsafe {
-            (*self.get()).out_ptr = out_ptr;
-        }
+        view_write!(self, out_ptr, out_ptr)
     }
 
     // `out_begin` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn out_begin(&self) -> *mut u8 {
-        // SAFETY: `self.get()` targets the allocation behind `&self`, and every
-        // `DeflateContext` is zero-initialized at creation (`mem::zeroed` in
-        // `inflate`) so the field is initialized; all bit patterns of the
-        // `*mut u8` scalar are valid.
-        unsafe { (*self.get()).out_begin }
+        view_read!(self, out_begin)
     }
 
     #[inline(always)]
     pub(crate) fn set_out_begin(&self, out_begin: *mut u8) {
-        // SAFETY: `self.get()` targets the allocation behind `&self` (zero-
-        // initialized at creation via `mem::zeroed` in `inflate`); storing a
-        // scalar cannot violate validity.
-        unsafe {
-            (*self.get()).out_begin = out_begin;
-        }
+        view_write!(self, out_begin, out_begin)
     }
 
     // `fast_bits` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn fast_bits(&self) -> u32 {
-        // SAFETY: `self.get()` targets the allocation behind `&self`, and every
-        // `DeflateContext` is zero-initialized at creation (`mem::zeroed` in
-        // `inflate`) so the field is initialized; all bit patterns of the `u32`
-        // scalar are valid.
-        unsafe { (*self.get()).fast_bits }
+        view_read!(self, fast_bits)
     }
 
     #[inline(always)]
     pub(crate) fn set_fast_bits(&self, fast_bits: u32) {
-        // SAFETY: `self.get()` targets the allocation behind `&self` (zero-
-        // initialized at creation via `mem::zeroed` in `inflate`); storing a
-        // scalar cannot violate validity.
-        unsafe {
-            (*self.get()).fast_bits = fast_bits;
-        }
+        view_write!(self, fast_bits, fast_bits)
     }
 }
 

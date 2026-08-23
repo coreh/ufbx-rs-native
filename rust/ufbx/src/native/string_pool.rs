@@ -32,6 +32,7 @@ use crate::native::error::{
 };
 use crate::native::hash::{hash_string, hash_string_check_ascii, map_free, Map};
 use crate::native::platform::{math, min_real, min_sz, ufbx_assert, ufbxi_regression_assert};
+use crate::native::view::{view_raw_mut, view_write};
 use crate::native::warnings::{ufbxi_warnf_imp, Warnings};
 use crate::prelude::as_f64;
 use crate::prelude::{Blob, Real, String};
@@ -78,17 +79,15 @@ impl StringPoolView {
     }
     #[inline(always)]
     pub(crate) fn buf_mut_ptr(&self) -> *mut Buf {
-        unsafe { &raw mut (*self.get()).buf }
+        view_raw_mut!(self, buf)
     }
     #[inline(always)]
     pub(crate) fn set_error(&self, error: *mut Error) {
-        unsafe {
-            (*self.get()).error = error;
-        }
+        view_write!(self, error, error)
     }
     #[inline(always)]
     pub(crate) fn map_mut_ptr(&self) -> *mut Map {
-        unsafe { &raw mut (*self.get()).map }
+        view_raw_mut!(self, map)
     }
     // `map` (Map) — typed VIEW handle (reinterpret-in-place); accessors on MapView.
     #[inline(always)]
@@ -97,21 +96,15 @@ impl StringPoolView {
     }
     #[inline(always)]
     pub(crate) fn set_initial_size(&self, initial_size: usize) {
-        unsafe {
-            (*self.get()).initial_size = initial_size;
-        }
+        view_write!(self, initial_size, initial_size)
     }
     #[inline(always)]
     pub(crate) fn set_error_handling(&self, error_handling: UnicodeErrorHandling) {
-        unsafe {
-            (*self.get()).error_handling = error_handling;
-        }
+        view_write!(self, error_handling, error_handling)
     }
     #[inline(always)]
     pub(crate) fn set_warnings(&self, warnings: *mut Warnings) {
-        unsafe {
-            (*self.get()).warnings = warnings;
-        }
+        view_write!(self, warnings, warnings)
     }
 }
 

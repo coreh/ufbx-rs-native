@@ -6,6 +6,7 @@ use crate::generated::format_error;
 use crate::generated::{
     Error, Progress, ProgressResult, RawAllocator, RawStream, RawVertexStream, Vec2, Vec3, Vec4,
 };
+use crate::native::view::{view_read, view_read_shared, view_write};
 use crate::{OpenFileInfo, RawThreadPool};
 use std::alloc::{self, GlobalAlloc, Layout, System};
 use std::any::Any;
@@ -228,23 +229,19 @@ pub(crate) type RawStringView = crate::native::view::View<RawString>;
 impl RawStringView {
     #[inline(always)]
     pub(crate) fn data(&self) -> *const u8 {
-        unsafe { (*self.get()).data }
+        view_read!(self, data)
     }
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *const u8) {
-        unsafe {
-            (*self.get()).data = data;
-        }
+        view_write!(self, data, data)
     }
     #[inline(always)]
     pub(crate) fn length(&self) -> usize {
-        unsafe { (*self.get()).length }
+        view_read!(self, length)
     }
     #[inline(always)]
     pub(crate) fn set_length(&self, length: usize) {
-        unsafe {
-            (*self.get()).length = length;
-        }
+        view_write!(self, length, length)
     }
 }
 
@@ -278,11 +275,11 @@ pub(crate) type RawBlobView = crate::native::view::View<RawBlob>;
 impl RawBlobView {
     #[inline(always)]
     pub(crate) fn data(&self) -> *const u8 {
-        unsafe { (*self.get()).data }
+        view_read!(self, data)
     }
     #[inline(always)]
     pub(crate) fn size(&self) -> usize {
-        unsafe { (*self.get()).size }
+        view_read!(self, size)
     }
 }
 
@@ -292,23 +289,19 @@ pub(crate) type BlobView = crate::native::view::View<Blob>;
 impl BlobView {
     #[inline(always)]
     pub(crate) fn data(&self) -> *const u8 {
-        unsafe { (*self.get()).data }
+        view_read!(self, data)
     }
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *const u8) {
-        unsafe {
-            (*self.get()).data = data;
-        }
+        view_write!(self, data, data)
     }
     #[inline(always)]
     pub(crate) fn size(&self) -> usize {
-        unsafe { (*self.get()).size }
+        view_read!(self, size)
     }
     #[inline(always)]
     pub(crate) fn set_size(&self, size: usize) {
-        unsafe {
-            (*self.get()).size = size;
-        }
+        view_write!(self, size, size)
     }
 }
 
@@ -318,13 +311,11 @@ pub(crate) type RawThreadOptsView = crate::native::view::View<crate::generated::
 impl RawThreadOptsView {
     #[inline(always)]
     pub(crate) fn memory_limit(&self) -> usize {
-        unsafe { (*self.get()).memory_limit }
+        view_read!(self, memory_limit)
     }
     #[inline(always)]
     pub(crate) fn set_memory_limit(&self, memory_limit: usize) {
-        unsafe {
-            (*self.get()).memory_limit = memory_limit;
-        }
+        view_write!(self, memory_limit, memory_limit)
     }
 }
 
@@ -341,19 +332,19 @@ impl RawStreamView {
     pub(crate) fn read_fn(
         &self,
     ) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize> {
-        unsafe { (*self.get()).read_fn }
+        view_read!(self, read_fn)
     }
     #[inline(always)]
     pub(crate) fn skip_fn(&self) -> Option<unsafe extern "C" fn(*mut c_void, usize) -> bool> {
-        unsafe { (*self.get()).skip_fn }
+        view_read!(self, skip_fn)
     }
     #[inline(always)]
     pub(crate) fn close_fn(&self) -> Option<unsafe extern "C" fn(*mut c_void)> {
-        unsafe { (*self.get()).close_fn }
+        view_read!(self, close_fn)
     }
     #[inline(always)]
     pub(crate) fn user(&self) -> *mut c_void {
-        unsafe { (*self.get()).user }
+        view_read!(self, user)
     }
 }
 
@@ -374,7 +365,7 @@ impl RawOpenFileCbView {
             *const crate::generated::OpenFileInfo,
         ) -> bool,
     > {
-        unsafe { (*self.get()).fn_ }
+        view_read!(self, fn_)
     }
     #[inline(always)]
     pub(crate) fn set_fn_(
@@ -389,9 +380,7 @@ impl RawOpenFileCbView {
             ) -> bool,
         >,
     ) {
-        unsafe {
-            (*self.get()).fn_ = fn_;
-        }
+        view_write!(self, fn_, fn_)
     }
 }
 
@@ -438,15 +427,11 @@ pub(crate) type ListView<T> = crate::native::view::View<List<T>>;
 impl<T, M: crate::native::view::Mode> crate::native::view::View<List<T>, M> {
     #[inline(always)]
     pub(crate) fn count(&self) -> usize {
-        // SAFETY: reading the viewed list's own POD `count` field; liveness per
-        // the view's mint vouch (per-leaf discipline).
-        unsafe { (*self.as_ptr()).count }
+        view_read_shared!(self, count)
     }
     #[inline(always)]
     pub(crate) fn data(&self) -> *const T {
-        // SAFETY: reading the viewed list's own POD `data` field; liveness per
-        // the view's mint vouch (per-leaf discipline).
-        unsafe { (*self.as_ptr()).data }
+        view_read_shared!(self, data)
     }
     /// Safe indexed element view: per the mint's per-leaf discipline a viewed
     /// `List` field holds a valid list — `data` is live and unmoved for `count`
@@ -527,15 +512,11 @@ impl<T, M: crate::native::view::Mode> crate::native::view::View<List<T>, M> {
 impl<T> ListView<T> {
     #[inline(always)]
     pub(crate) fn set_count(&self, count: usize) {
-        unsafe {
-            (*self.get()).count = count;
-        }
+        view_write!(self, count, count)
     }
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *const T) {
-        unsafe {
-            (*self.get()).data = data;
-        }
+        view_write!(self, data, data)
     }
 }
 
@@ -548,15 +529,11 @@ pub(crate) type RefListView<T> = crate::native::view::View<RefList<T>>;
 impl<T, M: crate::native::view::Mode> crate::native::view::View<RefList<T>, M> {
     #[inline(always)]
     pub(crate) fn count(&self) -> usize {
-        // SAFETY: reading the viewed ref-list's own POD `count` field; liveness
-        // per the view's mint vouch (per-leaf discipline).
-        unsafe { (*self.as_ptr()).count }
+        view_read_shared!(self, count)
     }
     #[inline(always)]
     pub(crate) fn data(&self) -> *const Ref<T> {
-        // SAFETY: reading the viewed ref-list's own POD `data` field; liveness
-        // per the view's mint vouch (per-leaf discipline).
-        unsafe { (*self.as_ptr()).data }
+        view_read_shared!(self, data)
     }
     /// Safe indexed element view: per the mint's per-leaf discipline a viewed
     /// `RefList` field holds a valid list — `data` is live for `count`
@@ -579,15 +556,11 @@ impl<T, M: crate::native::view::Mode> crate::native::view::View<RefList<T>, M> {
 impl<T> RefListView<T> {
     #[inline(always)]
     pub(crate) fn set_count(&self, count: usize) {
-        unsafe {
-            (*self.get()).count = count;
-        }
+        view_write!(self, count, count)
     }
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *const Ref<T>) {
-        unsafe {
-            (*self.get()).data = data;
-        }
+        view_write!(self, data, data)
     }
 }
 
@@ -599,17 +572,11 @@ pub(crate) type RawListView<T> = crate::native::view::View<RawList<T>>;
 impl<T> RawListView<T> {
     #[inline(always)]
     pub(crate) fn count(&self) -> usize {
-        // SAFETY: `View`s are minted only from pointers into live arena memory
-        // (view.rs mint contract), so `self.get()` is dereferenceable; `count`
-        // is a POD leaf, so no value validity beyond it is asserted.
-        unsafe { (*self.get()).count }
+        view_read!(self, count)
     }
     #[inline(always)]
     pub(crate) fn data(&self) -> *const T {
-        // SAFETY: `View`s are minted only from pointers into live arena memory
-        // (view.rs mint contract), so `self.get()` is dereferenceable; `data`
-        // is a POD leaf, so no value validity beyond it is asserted.
-        unsafe { (*self.get()).data }
+        view_read!(self, data)
     }
 }
 
@@ -653,11 +620,11 @@ pub(crate) type StringView = crate::native::view::View<String>;
 impl<M: crate::native::view::Mode> crate::native::view::View<String, M> {
     #[inline(always)]
     pub(crate) fn data(&self) -> *const u8 {
-        unsafe { (*self.as_ptr()).data }
+        view_read_shared!(self, data)
     }
     #[inline(always)]
     pub(crate) fn length(&self) -> usize {
-        unsafe { (*self.as_ptr()).length }
+        view_read_shared!(self, length)
     }
     /// The string's bytes, borrowed for the view's own lifetime.
     #[inline(always)]
@@ -673,15 +640,11 @@ impl<M: crate::native::view::Mode> crate::native::view::View<String, M> {
 impl StringView {
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *const u8) {
-        unsafe {
-            (*self.get()).data = data;
-        }
+        view_write!(self, data, data)
     }
     #[inline(always)]
     pub(crate) fn set_length(&self, length: usize) {
-        unsafe {
-            (*self.get()).length = length;
-        }
+        view_write!(self, length, length)
     }
 }
 

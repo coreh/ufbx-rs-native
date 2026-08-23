@@ -45,6 +45,7 @@
 use crate::generated::{Error, ErrorFrame, ErrorType, Panic};
 use crate::native::platform::{min_sz, ufbx_assert, ufbxi_ignore};
 use crate::native::printf::{vprint, PrintArg, PrintBuffer};
+use crate::native::view::{view_read, view_write};
 
 // Zero-sized failure token: the C `return 0` failure channel. The actual
 // `ufbx_error` lives in the context, as in C (PORTING.md "Error threading").
@@ -1313,16 +1314,11 @@ pub(crate) type ErrorView = crate::native::view::View<Error>;
 impl ErrorView {
     #[inline(always)]
     pub(crate) fn type_(&self) -> crate::generated::ErrorType {
-        // SAFETY: an `ErrorView` is only minted from a pointer to a live,
-        // initialized `Error` in stable context/allocator storage (the
-        // view-minting invariant), so `self.get()` is valid to read.
-        unsafe { (*self.get()).type_ }
+        view_read!(self, type_)
     }
     #[inline(always)]
     pub(crate) fn set_type_(&self, type_: crate::generated::ErrorType) {
-        unsafe {
-            (*self.get()).type_ = type_;
-        }
+        view_write!(self, type_, type_)
     }
     #[inline(always)]
     pub(crate) fn description_view(&self) -> &crate::prelude::StringView {

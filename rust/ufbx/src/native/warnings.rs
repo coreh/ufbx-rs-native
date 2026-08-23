@@ -23,6 +23,7 @@ use crate::generated::{Error, Warning, WarningType};
 use crate::native::buf::{self, Buf};
 use crate::native::error::{clean_string_utf8, ufbxi_check_err, vsnprintf, Fail, FailStr};
 use crate::native::printf::PrintArg;
+use crate::native::view::{view_raw_mut, view_write};
 use crate::prelude::List;
 
 // ufbx.h:3592 `UFBX_ENUM_TYPE(ufbx_warning_type, UFBX_WARNING_TYPE,
@@ -67,25 +68,23 @@ impl WarningsView {
     }
     #[inline(always)]
     pub(crate) fn tmp_stack_mut_ptr(&self) -> *mut Buf {
-        unsafe { &raw mut (*self.get()).tmp_stack }
+        view_raw_mut!(self, tmp_stack)
     }
     #[inline(always)]
     pub(crate) fn set_error(&self, error: *mut Error) {
-        unsafe {
-            (*self.get()).error = error;
-        }
+        view_write!(self, error, error)
     }
     #[inline(always)]
     pub(crate) fn set_result(&self, result: *mut Buf) {
-        unsafe {
-            (*self.get()).result = result;
-        }
+        view_write!(self, result, result)
     }
     #[inline(always)]
     pub(crate) fn set_deferred_element_id_plus_one(&self, deferred_element_id_plus_one: u32) {
-        unsafe {
-            (*self.get()).deferred_element_id_plus_one = deferred_element_id_plus_one;
-        }
+        view_write!(
+            self,
+            deferred_element_id_plus_one,
+            deferred_element_id_plus_one
+        )
     }
 }
 

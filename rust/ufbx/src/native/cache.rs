@@ -49,8 +49,9 @@ use crate::native::string_pool::{
     map_cmp_string, push_string_place_str, str_cmp, str_equal, str_less, string_pool_temp_free,
     StringPool,
 };
-#[cfg(feature = "geometry-cache")]
 use crate::native::view::SliceViewIter;
+#[cfg(feature = "geometry-cache")]
+use crate::native::view::{view_raw_const, view_raw_mut, view_read, view_write};
 use crate::native::warnings::ufbxi_warnf;
 #[cfg(feature = "geometry-cache")]
 use crate::native::xml::{
@@ -138,49 +139,35 @@ pub(crate) type CacheTmpChannelView = crate::native::view::View<CacheTmpChannel>
 impl CacheTmpChannelView {
     #[inline(always)]
     pub(crate) fn try_load(&self) -> bool {
-        // SAFETY: reading a `bool` field of a valid arena `CacheTmpChannel`.
-        unsafe { (*self.get()).try_load }
+        view_read!(self, try_load)
     }
     #[inline(always)]
     pub(crate) fn set_try_load(&self, try_load: bool) {
-        // SAFETY: interior-mutable write of a POD field.
-        unsafe {
-            (*self.get()).try_load = try_load;
-        }
+        view_write!(self, try_load, try_load)
     }
     #[inline(always)]
     pub(crate) fn consecutive_fails(&self) -> u32 {
-        // SAFETY: reading a `u32` field.
-        unsafe { (*self.get()).consecutive_fails }
+        view_read!(self, consecutive_fails)
     }
     #[inline(always)]
     pub(crate) fn set_consecutive_fails(&self, consecutive_fails: u32) {
-        // SAFETY: interior-mutable write of a POD field.
-        unsafe {
-            (*self.get()).consecutive_fails = consecutive_fails;
-        }
+        view_write!(self, consecutive_fails, consecutive_fails)
     }
     #[inline(always)]
     pub(crate) fn sample_rate(&self) -> u32 {
-        // SAFETY: reading a `u32` field.
-        unsafe { (*self.get()).sample_rate }
+        view_read!(self, sample_rate)
     }
     #[inline(always)]
     pub(crate) fn current_time(&self) -> u32 {
-        // SAFETY: reading a `u32` field.
-        unsafe { (*self.get()).current_time }
+        view_read!(self, current_time)
     }
     #[inline(always)]
     pub(crate) fn set_current_time(&self, current_time: u32) {
-        // SAFETY: interior-mutable write of a POD field.
-        unsafe {
-            (*self.get()).current_time = current_time;
-        }
+        view_write!(self, current_time, current_time)
     }
     #[inline(always)]
     pub(crate) fn end_time(&self) -> u32 {
-        // SAFETY: reading a `u32` field.
-        unsafe { (*self.get()).end_time }
+        view_read!(self, end_time)
     }
 }
 
@@ -194,8 +181,7 @@ pub(crate) type XmlDocumentView = crate::native::view::View<XmlDocument>;
 impl XmlDocumentView {
     #[inline(always)]
     pub(crate) fn root(&self) -> *mut crate::native::xml::XmlTag {
-        // SAFETY: reading the `root` run pointer of a valid arena `XmlDocument`.
-        unsafe { (*self.get()).root }
+        view_read!(self, root)
     }
 }
 
@@ -209,17 +195,11 @@ pub(crate) type CacheFrameView = crate::native::view::View<CacheFrame>;
 impl CacheFrameView {
     #[inline(always)]
     pub(crate) fn set_mirror_axis(&self, mirror_axis: MirrorAxis) {
-        // SAFETY: interior-mutable write of a POD enum field.
-        unsafe {
-            (*self.get()).mirror_axis = mirror_axis;
-        }
+        view_write!(self, mirror_axis, mirror_axis)
     }
     #[inline(always)]
     pub(crate) fn set_scale_factor(&self, scale_factor: Real) {
-        // SAFETY: interior-mutable write of a POD field.
-        unsafe {
-            (*self.get()).scale_factor = scale_factor;
-        }
+        view_write!(self, scale_factor, scale_factor)
     }
 }
 
@@ -319,47 +299,32 @@ pub(crate) type GeometryCacheOptsView = crate::native::view::View<RawGeometryCac
 impl GeometryCacheOptsView {
     #[inline(always)]
     pub(crate) fn mirror_axis(&self) -> crate::generated::MirrorAxis {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.mirror_axis` read already makes.
-        unsafe { (*self.get()).mirror_axis }
+        view_read!(self, mirror_axis)
     }
 
     #[inline(always)]
     pub(crate) fn scale_factor(&self) -> Real {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.scale_factor` read already makes.
-        unsafe { (*self.get()).scale_factor }
+        view_read!(self, scale_factor)
     }
 
     #[inline(always)]
     pub(crate) fn use_scale_factor(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.use_scale_factor` read already makes.
-        unsafe { (*self.get()).use_scale_factor }
+        view_read!(self, use_scale_factor)
     }
 
     #[inline(always)]
     pub(crate) fn set_mirror_axis(&self, mirror_axis: crate::generated::MirrorAxis) {
-        // SAFETY: interior-mutable write of a POD opts field.
-        unsafe {
-            (*self.get()).mirror_axis = mirror_axis;
-        }
+        view_write!(self, mirror_axis, mirror_axis)
     }
 
     #[inline(always)]
     pub(crate) fn set_scale_factor(&self, scale_factor: Real) {
-        // SAFETY: interior-mutable write of a POD opts field.
-        unsafe {
-            (*self.get()).scale_factor = scale_factor;
-        }
+        view_write!(self, scale_factor, scale_factor)
     }
 
     #[inline(always)]
     pub(crate) fn set_use_scale_factor(&self, use_scale_factor: bool) {
-        // SAFETY: interior-mutable write of a POD opts field.
-        unsafe {
-            (*self.get()).use_scale_factor = use_scale_factor;
-        }
+        view_write!(self, use_scale_factor, use_scale_factor)
     }
 }
 
@@ -401,14 +366,12 @@ impl GeometryCacheView {
 
     #[inline(always)]
     pub(crate) fn root_filename(&self) -> crate::prelude::String {
-        unsafe { (*self.get()).root_filename }
+        view_read!(self, root_filename)
     }
 
     #[inline(always)]
     pub(crate) fn set_root_filename(&self, root_filename: crate::prelude::String) {
-        unsafe {
-            (*self.get()).root_filename = root_filename;
-        }
+        view_write!(self, root_filename, root_filename)
     }
 }
 
@@ -421,7 +384,7 @@ impl CacheContext {
 
     #[inline(always)]
     pub(crate) fn cache_mut_ptr(&self) -> *mut crate::generated::GeometryCache {
-        unsafe { &raw mut (*self.get()).cache }
+        view_raw_mut!(self, cache)
     }
 
     #[inline(always)]
@@ -434,14 +397,12 @@ impl CacheContext {
 
     #[inline(always)]
     pub(crate) fn set_result(&self, result: crate::native::buf::Buf) {
-        unsafe {
-            (*self.get()).result = result;
-        }
+        view_write!(self, result, result)
     }
 
     #[inline(always)]
     pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
-        unsafe { (*self.get()).ator_result }
+        view_read!(self, ator_result)
     }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
@@ -498,7 +459,7 @@ impl CacheContext {
     // `open_file_cb` — raw-ptr getter (const address for `*const RawOpenFileCb` params).
     #[inline(always)]
     pub(crate) fn open_file_cb_ptr(&self) -> *const crate::generated::RawOpenFileCb {
-        unsafe { &raw const (*self.get()).open_file_cb }
+        view_raw_const!(self, open_file_cb)
     }
     // `stream` (RawStream) — typed VIEW handle (reinterpret-in-place); callback leaves read-only.
     #[inline(always)]
@@ -521,58 +482,46 @@ impl CacheContext {
     // `stream_filename` (String) / `xml_type`/`xml_format` (Copy enums) — value getter/setter.
     #[inline(always)]
     pub(crate) fn stream_filename(&self) -> String {
-        unsafe { (*self.get()).stream_filename }
+        view_read!(self, stream_filename)
     }
     #[inline(always)]
     pub(crate) fn set_stream_filename(&self, stream_filename: String) {
-        unsafe {
-            (*self.get()).stream_filename = stream_filename;
-        }
+        view_write!(self, stream_filename, stream_filename)
     }
     #[inline(always)]
     pub(crate) fn xml_type(&self) -> CacheXmlType {
-        unsafe { (*self.get()).xml_type }
+        view_read!(self, xml_type)
     }
     #[inline(always)]
     pub(crate) fn set_xml_type(&self, xml_type: CacheXmlType) {
-        unsafe {
-            (*self.get()).xml_type = xml_type;
-        }
+        view_write!(self, xml_type, xml_type)
     }
     #[inline(always)]
     pub(crate) fn xml_format(&self) -> CacheXmlFormat {
-        unsafe { (*self.get()).xml_format }
+        view_read!(self, xml_format)
     }
     #[inline(always)]
     pub(crate) fn set_xml_format(&self, xml_format: CacheXmlFormat) {
-        unsafe {
-            (*self.get()).xml_format = xml_format;
-        }
+        view_write!(self, xml_format, xml_format)
     }
     // Whole-field accessors for fields that also expose a `_view` (subfield access):
     // `channel_name` read, `xml_filename` write (String), `open_file_cb` write (Copy),
     // `opts` write (RawGeometryCacheOpts is non-Copy — the setter moves the value in).
     #[inline(always)]
     pub(crate) fn channel_name(&self) -> String {
-        unsafe { (*self.get()).channel_name }
+        view_read!(self, channel_name)
     }
     #[inline(always)]
     pub(crate) fn set_xml_filename(&self, xml_filename: String) {
-        unsafe {
-            (*self.get()).xml_filename = xml_filename;
-        }
+        view_write!(self, xml_filename, xml_filename)
     }
     #[inline(always)]
     pub(crate) fn set_open_file_cb(&self, open_file_cb: crate::generated::RawOpenFileCb) {
-        unsafe {
-            (*self.get()).open_file_cb = open_file_cb;
-        }
+        view_write!(self, open_file_cb, open_file_cb)
     }
     #[inline(always)]
     pub(crate) fn set_opts(&self, opts: crate::generated::RawGeometryCacheOpts) {
-        unsafe {
-            (*self.get()).opts = opts;
-        }
+        view_write!(self, opts, opts)
     }
 
     // `opts` — typed VIEW handle (reinterpret-in-place); leaf accessors on `GeometryCacheOptsView`.
@@ -587,41 +536,31 @@ impl CacheContext {
     // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_stack_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_stack }
+        view_raw_mut!(self, tmp_stack)
     }
 
     // `tmp_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_arr_size_mut_ptr(&self) -> *mut usize {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_arr_size }
+        view_raw_mut!(self, tmp_arr_size)
     }
 
     // `tmp_arr` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_arr_mut_ptr(&self) -> *mut *mut u8 {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_arr }
+        view_raw_mut!(self, tmp_arr)
     }
 
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp }
+        view_raw_mut!(self, tmp)
     }
 
     // `string_pool` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn string_pool_mut_ptr(&self) -> *mut StringPool {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).string_pool }
+        view_raw_mut!(self, string_pool)
     }
     // `string_pool` (StringPool) — typed VIEW handle (reinterpret-in-place) for nested
     // access; whole value getter/setter for the faithful C struct-copy sites.
@@ -641,266 +580,200 @@ impl CacheContext {
     }
     #[inline(always)]
     pub(crate) fn set_string_pool(&self, string_pool: StringPool) {
-        unsafe {
-            (*self.get()).string_pool = string_pool;
-        }
+        view_write!(self, string_pool, string_pool)
     }
 
     // `stream_filename` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn stream_filename_mut_ptr(&self) -> *mut String {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).stream_filename }
+        view_raw_mut!(self, stream_filename)
     }
 
     // `stream` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn stream_mut_ptr(&self) -> *mut RawStream {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).stream }
+        view_raw_mut!(self, stream)
     }
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).result }
+        view_raw_mut!(self, result)
     }
 
     // `name_cap` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn name_cap_mut_ptr(&self) -> *mut usize {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).name_cap }
+        view_raw_mut!(self, name_cap)
     }
 
     // `name_buf` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn name_buf_mut_ptr(&self) -> *mut *mut u8 {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).name_buf }
+        view_raw_mut!(self, name_buf)
     }
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).error }
+        view_raw_mut!(self, error)
     }
 
     // `channel_name` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn channel_name_mut_ptr(&self) -> *mut String {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).channel_name }
+        view_raw_mut!(self, channel_name)
     }
 
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_result }
+        view_raw_mut!(self, ator_result)
     }
 
     // `imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn imp(&self) -> *mut GeometryCacheImp {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut GeometryCacheImp` are valid.
-        unsafe { (*self.get()).imp }
+        view_read!(self, imp)
     }
 
     #[inline(always)]
     pub(crate) fn set_imp(&self, imp: *mut GeometryCacheImp) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).imp = imp;
-        }
+        view_write!(self, imp, imp)
     }
 
     // `pos_end` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn pos_end(&self) -> *const u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*const u8` are valid.
-        unsafe { (*self.get()).pos_end }
+        view_read!(self, pos_end)
     }
 
     #[inline(always)]
     pub(crate) fn set_pos_end(&self, pos_end: *const u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).pos_end = pos_end;
-        }
+        view_write!(self, pos_end, pos_end)
     }
 
     // `pos` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn pos(&self) -> *const u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*const u8` are valid.
-        unsafe { (*self.get()).pos }
+        view_read!(self, pos)
     }
 
     #[inline(always)]
     pub(crate) fn set_pos(&self, pos: *const u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).pos = pos;
-        }
+        view_write!(self, pos, pos)
     }
 
     // `file_offset` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn file_offset(&self) -> u64 {
-        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
-        unsafe { (*self.get()).file_offset }
+        view_read!(self, file_offset)
     }
 
     #[inline(always)]
     pub(crate) fn set_file_offset(&self, file_offset: u64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).file_offset = file_offset;
-        }
+        view_write!(self, file_offset, file_offset)
     }
 
     // `name_cap` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn name_cap(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).name_cap }
+        view_read!(self, name_cap)
     }
 
     // `name_buf` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn name_buf(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
-        unsafe { (*self.get()).name_buf }
+        view_read!(self, name_buf)
     }
 
     // `xml_ticks_per_frame` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn xml_ticks_per_frame(&self) -> u32 {
-        // SAFETY: reading a scalar field; all bit patterns of `u32` are valid.
-        unsafe { (*self.get()).xml_ticks_per_frame }
+        view_read!(self, xml_ticks_per_frame)
     }
 
     #[inline(always)]
     pub(crate) fn set_xml_ticks_per_frame(&self, xml_ticks_per_frame: u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).xml_ticks_per_frame = xml_ticks_per_frame;
-        }
+        view_write!(self, xml_ticks_per_frame, xml_ticks_per_frame)
     }
 
     // `mc_for8` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn mc_for8(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).mc_for8 }
+        view_read!(self, mc_for8)
     }
 
     #[inline(always)]
     pub(crate) fn set_mc_for8(&self, mc_for8: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).mc_for8 = mc_for8;
-        }
+        view_write!(self, mc_for8, mc_for8)
     }
 
     // `frames_per_second` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn frames_per_second(&self) -> f64 {
-        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
-        unsafe { (*self.get()).frames_per_second }
+        view_read!(self, frames_per_second)
     }
 
     #[inline(always)]
     pub(crate) fn set_frames_per_second(&self, frames_per_second: f64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).frames_per_second = frames_per_second;
-        }
+        view_write!(self, frames_per_second, frames_per_second)
     }
 
     // `tmp_arr_size` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_arr_size(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).tmp_arr_size }
+        view_read!(self, tmp_arr_size)
     }
 
     // `tmp_arr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_arr(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
-        unsafe { (*self.get()).tmp_arr }
+        view_read!(self, tmp_arr)
     }
 
     // `num_channels` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn num_channels(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).num_channels }
+        view_read!(self, num_channels)
     }
 
     #[inline(always)]
     pub(crate) fn set_num_channels(&self, num_channels: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).num_channels = num_channels;
-        }
+        view_write!(self, num_channels, num_channels)
     }
 
     // `channels` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn channels(&self) -> *mut CacheTmpChannel {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut CacheTmpChannel` are valid.
-        unsafe { (*self.get()).channels }
+        view_read!(self, channels)
     }
 
     #[inline(always)]
     pub(crate) fn set_channels(&self, channels: *mut CacheTmpChannel) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).channels = channels;
-        }
+        view_write!(self, channels, channels)
     }
 
     // `ator_tmp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn ator_tmp(&self) -> *mut Allocator {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut Allocator` are valid.
-        unsafe { (*self.get()).ator_tmp }
+        view_read!(self, ator_tmp)
     }
 
     #[inline(always)]
     pub(crate) fn set_ator_tmp(&self, ator_tmp: *mut Allocator) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).ator_tmp = ator_tmp;
-        }
+        view_write!(self, ator_tmp, ator_tmp)
     }
 
     // `owned_by_scene` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn owned_by_scene(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).owned_by_scene }
+        view_read!(self, owned_by_scene)
     }
 
     #[inline(always)]
     pub(crate) fn set_owned_by_scene(&self, owned_by_scene: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).owned_by_scene = owned_by_scene;
-        }
+        view_write!(self, owned_by_scene, owned_by_scene)
     }
 }
 

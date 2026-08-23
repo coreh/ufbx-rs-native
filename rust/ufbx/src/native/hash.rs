@@ -13,6 +13,7 @@ use crate::native::allocator::{alloc, free, free_ator, ufbx_free, ufbx_malloc, A
 use crate::native::buf::{buf_free, push, Buf};
 use crate::native::error::{ufbxi_check_return_err, ufbxi_check_return_err_msg};
 use crate::native::platform::{read_u32, ufbx_assert, ufbxi_maybe_null, ufbxi_regression_assert};
+use crate::native::view::view_read;
 
 // ufbx.c:4688-4691 `ufbxi_ptr_id` — key type of the hash-map unit; kept up
 // here (out of C declaration order) because `ufbxi_hash_ptr_id` takes it by
@@ -281,11 +282,11 @@ pub(crate) type MapView = crate::native::view::View<Map>;
 impl MapView {
     #[inline(always)]
     pub(crate) fn size(&self) -> u32 {
-        unsafe { (*self.get()).size }
+        view_read!(self, size)
     }
     #[inline(always)]
     pub(crate) fn items(&self) -> *mut core::ffi::c_void {
-        unsafe { (*self.get()).items }
+        view_read!(self, items)
     }
 
     // Safe typed map operations over the view (ufbx.c:4657-4659 macros).

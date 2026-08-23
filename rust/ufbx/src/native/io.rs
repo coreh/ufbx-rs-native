@@ -30,6 +30,7 @@ use crate::native::error::{
 };
 use crate::native::parse::{get_read_offset, report_progress, Context};
 use crate::native::platform::{max64, max_sz, min64, min_sz, to_size, ufbx_assert, MAX_SKIP_SIZE};
+use crate::native::view::{view_raw_mut, view_read, view_write};
 use crate::prelude::OpenFileContext;
 
 // -- IO
@@ -448,14 +449,12 @@ impl FileContext {
 
     #[inline(always)]
     pub(crate) fn ator(&self) -> crate::native::allocator::Allocator {
-        unsafe { (*self.get()).ator }
+        view_read!(self, ator)
     }
 
     #[inline(always)]
     pub(crate) fn set_ator(&self, ator: crate::native::allocator::Allocator) {
-        unsafe {
-            (*self.get()).ator = ator;
-        }
+        view_write!(self, ator, ator)
     }
 
     // `error` — const raw-ptr getter (read-only sites); see `error_mut_ptr` for mutation.
@@ -465,9 +464,7 @@ impl FileContext {
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).error }
+        view_raw_mut!(self, error)
     }
 
     // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
@@ -483,9 +480,7 @@ impl FileContext {
     // `ator` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator }
+        view_raw_mut!(self, ator)
     }
 
     // `ator` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
@@ -498,17 +493,12 @@ impl FileContext {
     // `parent_ator` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn parent_ator(&self) -> *mut Allocator {
-        // SAFETY: reading a scalar field zero-initialized by `begin_file_context`,
-        // which runs before any accessor; all bit patterns of `*mut Allocator` are valid.
-        unsafe { (*self.get()).parent_ator }
+        view_read!(self, parent_ator)
     }
 
     #[inline(always)]
     pub(crate) fn set_parent_ator(&self, parent_ator: *mut Allocator) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).parent_ator = parent_ator;
-        }
+        view_write!(self, parent_ator, parent_ator)
     }
 }
 

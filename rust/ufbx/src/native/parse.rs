@@ -50,6 +50,7 @@ use crate::native::platform::{
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{SanitizedString, StringPool};
 use crate::native::thread::{ThreadPool, THREAD_GROUP_COUNT};
+use crate::native::view::{view_raw_const, view_raw_mut, view_read, view_write};
 use crate::native::view::{Mode, SliceViewIter, View};
 use crate::native::warnings::Warnings;
 use crate::prelude::{Blob, Real, Ref, String};
@@ -154,28 +155,23 @@ pub(crate) type NodeView = crate::native::view::View<Node>;
 impl NodeView {
     #[inline(always)]
     pub(crate) fn name(&self) -> *const u8 {
-        // SAFETY: reading the pooled `name` pointer field of a valid arena `Node`.
-        unsafe { (*self.get()).name }
+        view_read!(self, name)
     }
     #[inline(always)]
     pub(crate) fn num_children(&self) -> u32 {
-        // SAFETY: reading a `u32` count field of a valid arena `Node`.
-        unsafe { (*self.get()).num_children }
+        view_read!(self, num_children)
     }
     #[inline(always)]
     pub(crate) fn name_len(&self) -> u8 {
-        // SAFETY: reading a `u8` length field of a valid arena `Node`.
-        unsafe { (*self.get()).name_len }
+        view_read!(self, name_len)
     }
     #[inline(always)]
     pub(crate) fn value_type_mask(&self) -> u16 {
-        // SAFETY: reading a `u16` scalar field of a valid arena `Node`.
-        unsafe { (*self.get()).value_type_mask }
+        view_read!(self, value_type_mask)
     }
     #[inline(always)]
     pub(crate) fn children(&self) -> *mut Node {
-        // SAFETY: reading the `children` run pointer of a valid arena `Node`.
-        unsafe { (*self.get()).children }
+        view_read!(self, children)
     }
     #[inline(always)]
     pub(crate) fn vals(&self) -> *mut Value {
@@ -618,15 +614,15 @@ pub(crate) type AsciiTokenView = crate::native::view::View<AsciiToken>;
 impl AsciiTokenView {
     #[inline(always)]
     pub(crate) fn str_data(&self) -> *mut u8 {
-        unsafe { (*self.get()).str_data }
+        view_read!(self, str_data)
     }
     #[inline(always)]
     pub(crate) fn str_cap(&self) -> usize {
-        unsafe { (*self.get()).str_cap }
+        view_read!(self, str_cap)
     }
     #[inline(always)]
     pub(crate) fn type_(&self) -> u8 {
-        unsafe { (*self.get()).type_ }
+        view_read!(self, type_)
     }
 }
 
@@ -678,73 +674,59 @@ impl AsciiView {
     }
     #[inline(always)]
     pub(crate) fn token_mut_ptr(&self) -> *mut AsciiToken {
-        unsafe { &raw mut (*self.get()).token }
+        view_raw_mut!(self, token)
     }
     #[inline(always)]
     pub(crate) fn src_buf(&self) -> *mut Buf {
-        unsafe { (*self.get()).src_buf }
+        view_read!(self, src_buf)
     }
     #[inline(always)]
     pub(crate) fn set_src_buf(&self, src_buf: *mut Buf) {
-        unsafe {
-            (*self.get()).src_buf = src_buf;
-        }
+        view_write!(self, src_buf, src_buf)
     }
     #[inline(always)]
     pub(crate) fn retain_buf(&self) -> *mut Buf {
-        unsafe { (*self.get()).retain_buf }
+        view_read!(self, retain_buf)
     }
     #[inline(always)]
     pub(crate) fn src(&self) -> *const u8 {
-        unsafe { (*self.get()).src }
+        view_read!(self, src)
     }
     #[inline(always)]
     pub(crate) fn src_yield(&self) -> *const u8 {
-        unsafe { (*self.get()).src_yield }
+        view_read!(self, src_yield)
     }
     #[inline(always)]
     pub(crate) fn src_end(&self) -> *const u8 {
-        unsafe { (*self.get()).src_end }
+        view_read!(self, src_end)
     }
     #[inline(always)]
     pub(crate) fn read_first_comment(&self) -> bool {
-        unsafe { (*self.get()).read_first_comment }
+        view_read!(self, read_first_comment)
     }
     #[inline(always)]
     pub(crate) fn set_read_first_comment(&self, read_first_comment: bool) {
-        unsafe {
-            (*self.get()).read_first_comment = read_first_comment;
-        }
+        view_write!(self, read_first_comment, read_first_comment)
     }
     #[inline(always)]
     pub(crate) fn set_src(&self, src: *const u8) {
-        unsafe {
-            (*self.get()).src = src;
-        }
+        view_write!(self, src, src)
     }
     #[inline(always)]
     pub(crate) fn set_src_yield(&self, src_yield: *const u8) {
-        unsafe {
-            (*self.get()).src_yield = src_yield;
-        }
+        view_write!(self, src_yield, src_yield)
     }
     #[inline(always)]
     pub(crate) fn set_src_end(&self, src_end: *const u8) {
-        unsafe {
-            (*self.get()).src_end = src_end;
-        }
+        view_write!(self, src_end, src_end)
     }
     #[inline(always)]
     pub(crate) fn set_src_is_retained(&self, src_is_retained: bool) {
-        unsafe {
-            (*self.get()).src_is_retained = src_is_retained;
-        }
+        view_write!(self, src_is_retained, src_is_retained)
     }
     #[inline(always)]
     pub(crate) fn set_found_version(&self, found_version: bool) {
-        unsafe {
-            (*self.get()).found_version = found_version;
-        }
+        view_write!(self, found_version, found_version)
     }
 }
 
@@ -1001,44 +983,38 @@ impl ObjContext {
 
     #[inline(always)]
     pub(crate) fn group(&self) -> String {
-        // SAFETY: Copy String/Blob value read.
-        unsafe { (*self.get()).group }
+        view_read!(self, group)
     }
     #[inline(always)]
     pub(crate) fn set_group(&self, group: String) {
-        unsafe {
-            (*self.get()).group = group;
-        }
+        view_write!(self, group, group)
     }
     #[inline(always)]
     pub(crate) fn group_mut_ptr(&self) -> *mut String {
-        unsafe { &raw mut (*self.get()).group }
+        view_raw_mut!(self, group)
     }
 
     #[inline(always)]
     pub(crate) fn set_object(&self, object: String) {
-        unsafe {
-            (*self.get()).object = object;
-        }
+        view_write!(self, object, object)
     }
     #[inline(always)]
     pub(crate) fn object_mut_ptr(&self) -> *mut String {
-        unsafe { &raw mut (*self.get()).object }
+        view_raw_mut!(self, object)
     }
 
     #[inline(always)]
     pub(crate) fn line_mut_ptr(&self) -> *mut String {
-        unsafe { &raw mut (*self.get()).line }
+        view_raw_mut!(self, line)
     }
 
     #[inline(always)]
     pub(crate) fn mtllib_relative_path(&self) -> crate::prelude::Blob {
-        // SAFETY: Copy String/Blob value read.
-        unsafe { (*self.get()).mtllib_relative_path }
+        view_read!(self, mtllib_relative_path)
     }
     #[inline(always)]
     pub(crate) fn mtllib_relative_path_mut_ptr(&self) -> *mut crate::prelude::Blob {
-        unsafe { &raw mut (*self.get()).mtllib_relative_path }
+        view_raw_mut!(self, mtllib_relative_path)
     }
 
     #[inline(always)]
@@ -1063,7 +1039,7 @@ impl ObjContext {
 
     #[inline(always)]
     pub(crate) fn group_map_mut_ptr(&self) -> *mut Map {
-        unsafe { &raw mut (*self.get()).group_map }
+        view_raw_mut!(self, group_map)
     }
     #[inline(always)]
     pub(crate) fn group_map_view(&self) -> &crate::native::hash::MapView {
@@ -1072,7 +1048,7 @@ impl ObjContext {
 
     #[inline(always)]
     pub(crate) fn tmp_color_valid_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        unsafe { &raw mut (*self.get()).tmp_color_valid }
+        view_raw_mut!(self, tmp_color_valid)
     }
     #[inline(always)]
     pub(crate) fn tmp_color_valid_view(&self) -> &crate::native::buf::BufView {
@@ -1081,7 +1057,7 @@ impl ObjContext {
 
     #[inline(always)]
     pub(crate) fn tmp_faces_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        unsafe { &raw mut (*self.get()).tmp_faces }
+        view_raw_mut!(self, tmp_faces)
     }
     #[inline(always)]
     pub(crate) fn tmp_faces_view(&self) -> &crate::native::buf::BufView {
@@ -1090,7 +1066,7 @@ impl ObjContext {
 
     #[inline(always)]
     pub(crate) fn tmp_props_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        unsafe { &raw mut (*self.get()).tmp_props }
+        view_raw_mut!(self, tmp_props)
     }
     #[inline(always)]
     pub(crate) fn tmp_props_view(&self) -> &crate::native::buf::BufView {
@@ -1099,7 +1075,7 @@ impl ObjContext {
 
     #[inline(always)]
     pub(crate) fn tmp_meshes_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        unsafe { &raw mut (*self.get()).tmp_meshes }
+        view_raw_mut!(self, tmp_meshes)
     }
     #[inline(always)]
     pub(crate) fn tmp_meshes_view(&self) -> &crate::native::buf::BufView {
@@ -1108,7 +1084,7 @@ impl ObjContext {
 
     #[inline(always)]
     pub(crate) fn tmp_face_smoothing_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        unsafe { &raw mut (*self.get()).tmp_face_smoothing }
+        view_raw_mut!(self, tmp_face_smoothing)
     }
     #[inline(always)]
     pub(crate) fn tmp_face_smoothing_view(&self) -> &crate::native::buf::BufView {
@@ -1117,7 +1093,7 @@ impl ObjContext {
 
     #[inline(always)]
     pub(crate) fn tmp_face_group_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        unsafe { &raw mut (*self.get()).tmp_face_group }
+        view_raw_mut!(self, tmp_face_group)
     }
     #[inline(always)]
     pub(crate) fn tmp_face_group_view(&self) -> &crate::native::buf::BufView {
@@ -1126,7 +1102,7 @@ impl ObjContext {
 
     #[inline(always)]
     pub(crate) fn tmp_face_group_infos_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        unsafe { &raw mut (*self.get()).tmp_face_group_infos }
+        view_raw_mut!(self, tmp_face_group_infos)
     }
     #[inline(always)]
     pub(crate) fn tmp_face_group_infos_view(&self) -> &crate::native::buf::BufView {
@@ -1137,7 +1113,7 @@ impl ObjContext {
 
     #[inline(always)]
     pub(crate) fn tmp_face_material_mut_ptr(&self) -> *mut crate::native::buf::Buf {
-        unsafe { &raw mut (*self.get()).tmp_face_material }
+        view_raw_mut!(self, tmp_face_material)
     }
     #[inline(always)]
     pub(crate) fn tmp_face_material_view(&self) -> &crate::native::buf::BufView {
@@ -1146,290 +1122,217 @@ impl ObjContext {
 
     #[inline(always)]
     pub(crate) fn tokens_mut_ptr(&self) -> *mut *mut String {
-        unsafe { &raw mut (*self.get()).tokens }
+        view_raw_mut!(self, tokens)
     }
 
     #[inline(always)]
     pub(crate) fn tokens_cap_mut_ptr(&self) -> *mut usize {
-        unsafe { &raw mut (*self.get()).tokens_cap }
+        view_raw_mut!(self, tokens_cap)
     }
 
     #[inline(always)]
     pub(crate) fn tmp_materials_mut_ptr(&self) -> *mut *mut *mut crate::generated::Material {
-        unsafe { &raw mut (*self.get()).tmp_materials }
+        view_raw_mut!(self, tmp_materials)
     }
 
     #[inline(always)]
     pub(crate) fn tmp_materials_cap_mut_ptr(&self) -> *mut usize {
-        unsafe { &raw mut (*self.get()).tmp_materials_cap }
+        view_raw_mut!(self, tmp_materials_cap)
     }
 
     #[inline(always)]
     pub(crate) fn usemtl_index(&self) -> u32 {
-        // SAFETY: reading a scalar; all bit patterns of `u32` are valid.
-        unsafe { (*self.get()).usemtl_index }
+        view_read!(self, usemtl_index)
     }
 
     #[inline(always)]
     pub(crate) fn set_usemtl_index(&self, usemtl_index: u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).usemtl_index = usemtl_index;
-        }
+        view_write!(self, usemtl_index, usemtl_index)
     }
 
     #[inline(always)]
     pub(crate) fn usemtl_fbx_id(&self) -> u64 {
-        // SAFETY: reading a scalar; all bit patterns of `u64` are valid.
-        unsafe { (*self.get()).usemtl_fbx_id }
+        view_read!(self, usemtl_fbx_id)
     }
 
     #[inline(always)]
     pub(crate) fn set_usemtl_fbx_id(&self, usemtl_fbx_id: u64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).usemtl_fbx_id = usemtl_fbx_id;
-        }
+        view_write!(self, usemtl_fbx_id, usemtl_fbx_id)
     }
 
     #[inline(always)]
     pub(crate) fn tokens_cap(&self) -> usize {
-        // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).tokens_cap }
+        view_read!(self, tokens_cap)
     }
 
     #[inline(always)]
     pub(crate) fn tokens(&self) -> *mut String {
-        // SAFETY: reading a scalar; all bit patterns of `*mut String` are valid.
-        unsafe { (*self.get()).tokens }
+        view_read!(self, tokens)
     }
 
     #[inline(always)]
     pub(crate) fn tmp_materials_cap(&self) -> usize {
-        // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).tmp_materials_cap }
+        view_read!(self, tmp_materials_cap)
     }
 
     #[inline(always)]
     pub(crate) fn tmp_materials(&self) -> *mut *mut crate::generated::Material {
-        // SAFETY: reading a scalar; all bit patterns of `*mut *mut crate::generated::Material` are valid.
-        unsafe { (*self.get()).tmp_materials }
+        view_read!(self, tmp_materials)
     }
 
     #[inline(always)]
     pub(crate) fn eof(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).eof }
+        view_read!(self, eof)
     }
 
     #[inline(always)]
     pub(crate) fn set_eof(&self, eof: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).eof = eof;
-        }
+        view_write!(self, eof, eof)
     }
 
     #[inline(always)]
     pub(crate) fn read_progress(&self) -> usize {
-        // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).read_progress }
+        view_read!(self, read_progress)
     }
 
     #[inline(always)]
     pub(crate) fn set_read_progress(&self, read_progress: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).read_progress = read_progress;
-        }
+        view_write!(self, read_progress, read_progress)
     }
 
     #[inline(always)]
     pub(crate) fn object_dirty(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).object_dirty }
+        view_read!(self, object_dirty)
     }
 
     #[inline(always)]
     pub(crate) fn set_object_dirty(&self, object_dirty: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).object_dirty = object_dirty;
-        }
+        view_write!(self, object_dirty, object_dirty)
     }
 
     #[inline(always)]
     pub(crate) fn num_tokens(&self) -> usize {
-        // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).num_tokens }
+        view_read!(self, num_tokens)
     }
 
     #[inline(always)]
     pub(crate) fn set_num_tokens(&self, num_tokens: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).num_tokens = num_tokens;
-        }
+        view_write!(self, num_tokens, num_tokens)
     }
 
     #[inline(always)]
     pub(crate) fn mrgb_vertex_count(&self) -> usize {
-        // SAFETY: reading a scalar; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).mrgb_vertex_count }
+        view_read!(self, mrgb_vertex_count)
     }
 
     #[inline(always)]
     pub(crate) fn mesh(&self) -> *mut ObjMesh {
-        // SAFETY: reading a scalar; all bit patterns of `*mut ObjMesh` are valid.
-        unsafe { (*self.get()).mesh }
+        view_read!(self, mesh)
     }
 
     #[inline(always)]
     pub(crate) fn set_mesh(&self, mesh: *mut ObjMesh) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).mesh = mesh;
-        }
+        view_write!(self, mesh, mesh)
     }
 
     #[inline(always)]
     pub(crate) fn material_dirty(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).material_dirty }
+        view_read!(self, material_dirty)
     }
 
     #[inline(always)]
     pub(crate) fn set_material_dirty(&self, material_dirty: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).material_dirty = material_dirty;
-        }
+        view_write!(self, material_dirty, material_dirty)
     }
 
     #[inline(always)]
     pub(crate) fn initialized(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).initialized }
+        view_read!(self, initialized)
     }
 
     #[inline(always)]
     pub(crate) fn set_initialized(&self, initialized: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).initialized = initialized;
-        }
+        view_write!(self, initialized, initialized)
     }
 
     #[inline(always)]
     pub(crate) fn has_vertex_color(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).has_vertex_color }
+        view_read!(self, has_vertex_color)
     }
 
     #[inline(always)]
     pub(crate) fn set_has_vertex_color(&self, has_vertex_color: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).has_vertex_color = has_vertex_color;
-        }
+        view_write!(self, has_vertex_color, has_vertex_color)
     }
 
     #[inline(always)]
     pub(crate) fn has_face_smoothing(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).has_face_smoothing }
+        view_read!(self, has_face_smoothing)
     }
 
     #[inline(always)]
     pub(crate) fn set_has_face_smoothing(&self, has_face_smoothing: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).has_face_smoothing = has_face_smoothing;
-        }
+        view_write!(self, has_face_smoothing, has_face_smoothing)
     }
 
     #[inline(always)]
     pub(crate) fn has_face_group(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).has_face_group }
+        view_read!(self, has_face_group)
     }
 
     #[inline(always)]
     pub(crate) fn set_has_face_group(&self, has_face_group: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).has_face_group = has_face_group;
-        }
+        view_write!(self, has_face_group, has_face_group)
     }
 
     #[inline(always)]
     pub(crate) fn group_dirty(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).group_dirty }
+        view_read!(self, group_dirty)
     }
 
     #[inline(always)]
     pub(crate) fn set_group_dirty(&self, group_dirty: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).group_dirty = group_dirty;
-        }
+        view_write!(self, group_dirty, group_dirty)
     }
 
     #[inline(always)]
     pub(crate) fn face_smoothing(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).face_smoothing }
+        view_read!(self, face_smoothing)
     }
 
     #[inline(always)]
     pub(crate) fn set_face_smoothing(&self, face_smoothing: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).face_smoothing = face_smoothing;
-        }
+        view_write!(self, face_smoothing, face_smoothing)
     }
 
     #[inline(always)]
     pub(crate) fn face_material(&self) -> u32 {
-        // SAFETY: reading a scalar; all bit patterns of `u32` are valid.
-        unsafe { (*self.get()).face_material }
+        view_read!(self, face_material)
     }
 
     #[inline(always)]
     pub(crate) fn set_face_material(&self, face_material: u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).face_material = face_material;
-        }
+        view_write!(self, face_material, face_material)
     }
 
     #[inline(always)]
     pub(crate) fn face_group_dirty(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).face_group_dirty }
+        view_read!(self, face_group_dirty)
     }
 
     #[inline(always)]
     pub(crate) fn set_face_group_dirty(&self, face_group_dirty: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).face_group_dirty = face_group_dirty;
-        }
+        view_write!(self, face_group_dirty, face_group_dirty)
     }
 
     #[inline(always)]
     pub(crate) fn face_group(&self) -> u32 {
-        // SAFETY: reading a scalar; all bit patterns of `u32` are valid.
-        unsafe { (*self.get()).face_group }
+        view_read!(self, face_group)
     }
 
     #[inline(always)]
     pub(crate) fn set_face_group(&self, face_group: u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).face_group = face_group;
-        }
+        view_write!(self, face_group, face_group)
     }
 
     #[inline(always)]
@@ -1473,19 +1376,15 @@ pub(crate) type ObjFastIndicesView = crate::native::view::View<ObjFastIndices>;
 impl ObjFastIndicesView {
     #[inline(always)]
     pub(crate) fn set_indices(&self, indices: *mut u64) {
-        unsafe {
-            (*self.get()).indices = indices;
-        }
+        view_write!(self, indices, indices)
     }
     #[inline(always)]
     pub(crate) fn num_left(&self) -> usize {
-        unsafe { (*self.get()).num_left }
+        view_read!(self, num_left)
     }
     #[inline(always)]
     pub(crate) fn set_num_left(&self, num_left: usize) {
-        unsafe {
-            (*self.get()).num_left = num_left;
-        }
+        view_write!(self, num_left, num_left)
     }
 }
 
@@ -1691,7 +1590,7 @@ pub(crate) type LoadOptsView = crate::native::view::View<RawLoadOpts>;
 impl LoadOptsView {
     #[inline(always)]
     pub(crate) fn root_transform(&self) -> crate::generated::Transform {
-        unsafe { (*self.get()).root_transform }
+        view_read!(self, root_transform)
     }
 
     #[inline(always)]
@@ -1701,88 +1600,86 @@ impl LoadOptsView {
 
     #[inline(always)]
     pub(crate) fn filename_mut_ptr(&self) -> *mut crate::prelude::RawString {
-        unsafe { &raw mut (*self.get()).filename }
+        view_raw_mut!(self, filename)
     }
 
     #[inline(always)]
     pub(crate) fn obj_mtl_path_mut_ptr(&self) -> *mut crate::prelude::RawString {
-        unsafe { &raw mut (*self.get()).obj_mtl_path }
+        view_raw_mut!(self, obj_mtl_path)
     }
 
     #[inline(always)]
     pub(crate) fn geometry_transform_helper_name_mut_ptr(&self) -> *mut crate::prelude::RawString {
-        unsafe { &raw mut (*self.get()).geometry_transform_helper_name }
+        view_raw_mut!(self, geometry_transform_helper_name)
     }
 
     #[inline(always)]
     pub(crate) fn scale_helper_name_mut_ptr(&self) -> *mut crate::prelude::RawString {
-        unsafe { &raw mut (*self.get()).scale_helper_name }
+        view_raw_mut!(self, scale_helper_name)
     }
 
     #[inline(always)]
     pub(crate) fn allow_empty_faces(&self) -> bool {
-        unsafe { (*self.get()).allow_empty_faces }
+        view_read!(self, allow_empty_faces)
     }
 
     #[inline(always)]
     pub(crate) fn allow_missing_vertex_position(&self) -> bool {
-        unsafe { (*self.get()).allow_missing_vertex_position }
+        view_read!(self, allow_missing_vertex_position)
     }
 
     #[inline(always)]
     pub(crate) fn allow_nodes_out_of_root(&self) -> bool {
-        unsafe { (*self.get()).allow_nodes_out_of_root }
+        view_read!(self, allow_nodes_out_of_root)
     }
 
     #[inline(always)]
     pub(crate) fn allow_unsafe(&self) -> bool {
-        unsafe { (*self.get()).allow_unsafe }
+        view_read!(self, allow_unsafe)
     }
 
     #[inline(always)]
     pub(crate) fn clean_skin_weights(&self) -> bool {
-        unsafe { (*self.get()).clean_skin_weights }
+        view_read!(self, clean_skin_weights)
     }
 
     #[inline(always)]
     pub(crate) fn connect_broken_elements(&self) -> bool {
-        unsafe { (*self.get()).connect_broken_elements }
+        view_read!(self, connect_broken_elements)
     }
 
     #[inline(always)]
     pub(crate) fn disable_quirks(&self) -> bool {
-        unsafe { (*self.get()).disable_quirks }
+        view_read!(self, disable_quirks)
     }
 
     #[inline(always)]
     pub(crate) fn evaluate_caches(&self) -> bool {
-        unsafe { (*self.get()).evaluate_caches }
+        view_read!(self, evaluate_caches)
     }
 
     #[inline(always)]
     pub(crate) fn evaluate_skinning(&self) -> bool {
-        unsafe { (*self.get()).evaluate_skinning }
+        view_read!(self, evaluate_skinning)
     }
 
     #[inline(always)]
     pub(crate) fn file_format(&self) -> crate::generated::FileFormat {
-        unsafe { (*self.get()).file_format }
+        view_read!(self, file_format)
     }
 
     #[inline(always)]
     pub(crate) fn file_format_lookahead(&self) -> usize {
-        unsafe { (*self.get()).file_format_lookahead }
+        view_read!(self, file_format_lookahead)
     }
     #[inline(always)]
     pub(crate) fn set_file_format_lookahead(&self, file_format_lookahead: usize) {
-        unsafe {
-            (*self.get()).file_format_lookahead = file_format_lookahead;
-        }
+        view_write!(self, file_format_lookahead, file_format_lookahead)
     }
 
     #[inline(always)]
     pub(crate) fn file_size_estimate(&self) -> u64 {
-        unsafe { (*self.get()).file_size_estimate }
+        view_read!(self, file_size_estimate)
     }
 
     #[inline(always)]
@@ -1792,19 +1689,19 @@ impl LoadOptsView {
 
     #[inline(always)]
     pub(crate) fn force_single_thread_ascii_parsing(&self) -> bool {
-        unsafe { (*self.get()).force_single_thread_ascii_parsing }
+        view_read!(self, force_single_thread_ascii_parsing)
     }
 
     #[inline(always)]
     pub(crate) fn generate_missing_normals(&self) -> bool {
-        unsafe { (*self.get()).generate_missing_normals }
+        view_read!(self, generate_missing_normals)
     }
 
     #[inline(always)]
     pub(crate) fn geometry_transform_handling(
         &self,
     ) -> crate::generated::GeometryTransformHandling {
-        unsafe { (*self.get()).geometry_transform_handling }
+        view_read!(self, geometry_transform_handling)
     }
 
     #[inline(always)]
@@ -1817,121 +1714,113 @@ impl LoadOptsView {
 
     #[inline(always)]
     pub(crate) fn handedness_conversion_axis(&self) -> crate::generated::MirrorAxis {
-        unsafe { (*self.get()).handedness_conversion_axis }
+        view_read!(self, handedness_conversion_axis)
     }
 
     #[inline(always)]
     pub(crate) fn handedness_conversion_retain_winding(&self) -> bool {
-        unsafe { (*self.get()).handedness_conversion_retain_winding }
+        view_read!(self, handedness_conversion_retain_winding)
     }
 
     #[inline(always)]
     pub(crate) fn ignore_all_content(&self) -> bool {
-        unsafe { (*self.get()).ignore_all_content }
+        view_read!(self, ignore_all_content)
     }
 
     #[inline(always)]
     pub(crate) fn ignore_animation(&self) -> bool {
-        unsafe { (*self.get()).ignore_animation }
+        view_read!(self, ignore_animation)
     }
     #[inline(always)]
     pub(crate) fn set_ignore_animation(&self, ignore_animation: bool) {
-        unsafe {
-            (*self.get()).ignore_animation = ignore_animation;
-        }
+        view_write!(self, ignore_animation, ignore_animation)
     }
 
     #[inline(always)]
     pub(crate) fn ignore_embedded(&self) -> bool {
-        unsafe { (*self.get()).ignore_embedded }
+        view_read!(self, ignore_embedded)
     }
     #[inline(always)]
     pub(crate) fn set_ignore_embedded(&self, ignore_embedded: bool) {
-        unsafe {
-            (*self.get()).ignore_embedded = ignore_embedded;
-        }
+        view_write!(self, ignore_embedded, ignore_embedded)
     }
 
     #[inline(always)]
     pub(crate) fn ignore_geometry(&self) -> bool {
-        unsafe { (*self.get()).ignore_geometry }
+        view_read!(self, ignore_geometry)
     }
     #[inline(always)]
     pub(crate) fn set_ignore_geometry(&self, ignore_geometry: bool) {
-        unsafe {
-            (*self.get()).ignore_geometry = ignore_geometry;
-        }
+        view_write!(self, ignore_geometry, ignore_geometry)
     }
 
     #[inline(always)]
     pub(crate) fn ignore_missing_external_files(&self) -> bool {
-        unsafe { (*self.get()).ignore_missing_external_files }
+        view_read!(self, ignore_missing_external_files)
     }
 
     #[inline(always)]
     pub(crate) fn index_error_handling(&self) -> crate::generated::IndexErrorHandling {
-        unsafe { (*self.get()).index_error_handling }
+        view_read!(self, index_error_handling)
     }
 
     #[inline(always)]
     pub(crate) fn inherit_mode_handling(&self) -> crate::generated::InheritModeHandling {
-        unsafe { (*self.get()).inherit_mode_handling }
+        view_read!(self, inherit_mode_handling)
     }
 
     #[inline(always)]
     pub(crate) fn key_clamp_threshold(&self) -> f64 {
-        unsafe { (*self.get()).key_clamp_threshold }
+        view_read!(self, key_clamp_threshold)
     }
 
     #[inline(always)]
     pub(crate) fn load_external_files(&self) -> bool {
-        unsafe { (*self.get()).load_external_files }
+        view_read!(self, load_external_files)
     }
 
     #[inline(always)]
     pub(crate) fn no_format_from_content(&self) -> bool {
-        unsafe { (*self.get()).no_format_from_content }
+        view_read!(self, no_format_from_content)
     }
 
     #[inline(always)]
     pub(crate) fn no_format_from_extension(&self) -> bool {
-        unsafe { (*self.get()).no_format_from_extension }
+        view_read!(self, no_format_from_extension)
     }
 
     #[inline(always)]
     pub(crate) fn node_depth_limit(&self) -> u32 {
-        unsafe { (*self.get()).node_depth_limit }
+        view_read!(self, node_depth_limit)
     }
 
     #[inline(always)]
     pub(crate) fn normalize_normals(&self) -> bool {
-        unsafe { (*self.get()).normalize_normals }
+        view_read!(self, normalize_normals)
     }
 
     #[inline(always)]
     pub(crate) fn normalize_tangents(&self) -> bool {
-        unsafe { (*self.get()).normalize_tangents }
+        view_read!(self, normalize_tangents)
     }
 
     #[inline(always)]
     pub(crate) fn obj_axes(&self) -> crate::generated::CoordinateAxes {
-        unsafe { (*self.get()).obj_axes }
+        view_read!(self, obj_axes)
     }
 
     #[inline(always)]
     pub(crate) fn obj_merge_groups(&self) -> bool {
-        unsafe { (*self.get()).obj_merge_groups }
+        view_read!(self, obj_merge_groups)
     }
     #[inline(always)]
     pub(crate) fn set_obj_merge_groups(&self, obj_merge_groups: bool) {
-        unsafe {
-            (*self.get()).obj_merge_groups = obj_merge_groups;
-        }
+        view_write!(self, obj_merge_groups, obj_merge_groups)
     }
 
     #[inline(always)]
     pub(crate) fn obj_merge_objects(&self) -> bool {
-        unsafe { (*self.get()).obj_merge_objects }
+        view_read!(self, obj_merge_objects)
     }
 
     #[inline(always)]
@@ -1946,63 +1835,61 @@ impl LoadOptsView {
 
     #[inline(always)]
     pub(crate) fn obj_search_mtl_by_filename(&self) -> bool {
-        unsafe { (*self.get()).obj_search_mtl_by_filename }
+        view_read!(self, obj_search_mtl_by_filename)
     }
 
     #[inline(always)]
     pub(crate) fn obj_split_groups(&self) -> bool {
-        unsafe { (*self.get()).obj_split_groups }
+        view_read!(self, obj_split_groups)
     }
 
     #[inline(always)]
     pub(crate) fn obj_unit_meters(&self) -> crate::prelude::Real {
-        unsafe { (*self.get()).obj_unit_meters }
+        view_read!(self, obj_unit_meters)
     }
 
     #[inline(always)]
     pub(crate) fn open_file_cb_ptr(&self) -> *const crate::generated::RawOpenFileCb {
-        unsafe { &raw const (*self.get()).open_file_cb }
+        view_raw_const!(self, open_file_cb)
     }
 
     #[inline(always)]
     pub(crate) fn open_file_cb(&self) -> crate::generated::RawOpenFileCb {
-        unsafe { (*self.get()).open_file_cb }
+        view_read!(self, open_file_cb)
     }
 
     #[inline(always)]
     pub(crate) fn open_main_file_with_default(&self) -> bool {
-        unsafe { (*self.get()).open_main_file_with_default }
+        view_read!(self, open_main_file_with_default)
     }
 
     #[inline(always)]
     pub(crate) fn path_separator(&self) -> u8 {
-        unsafe { (*self.get()).path_separator }
+        view_read!(self, path_separator)
     }
     #[inline(always)]
     pub(crate) fn set_path_separator(&self, path_separator: u8) {
-        unsafe {
-            (*self.get()).path_separator = path_separator;
-        }
+        view_write!(self, path_separator, path_separator)
     }
 
     #[inline(always)]
     pub(crate) fn pivot_handling(&self) -> crate::generated::PivotHandling {
-        unsafe { (*self.get()).pivot_handling }
+        view_read!(self, pivot_handling)
     }
 
     #[inline(always)]
     pub(crate) fn pivot_handling_retain_empties(&self) -> bool {
-        unsafe { (*self.get()).pivot_handling_retain_empties }
+        view_read!(self, pivot_handling_retain_empties)
     }
 
     #[inline(always)]
     pub(crate) fn progress_cb(&self) -> crate::generated::RawProgressCb {
-        unsafe { (*self.get()).progress_cb }
+        view_read!(self, progress_cb)
     }
 
     #[inline(always)]
     pub(crate) fn progress_interval_hint(&self) -> u64 {
-        unsafe { (*self.get()).progress_interval_hint }
+        view_read!(self, progress_interval_hint)
     }
 
     #[inline(always)]
@@ -2012,38 +1899,36 @@ impl LoadOptsView {
 
     #[inline(always)]
     pub(crate) fn read_buffer_size(&self) -> usize {
-        unsafe { (*self.get()).read_buffer_size }
+        view_read!(self, read_buffer_size)
     }
     #[inline(always)]
     pub(crate) fn set_read_buffer_size(&self, read_buffer_size: usize) {
-        unsafe {
-            (*self.get()).read_buffer_size = read_buffer_size;
-        }
+        view_write!(self, read_buffer_size, read_buffer_size)
     }
 
     #[inline(always)]
     pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        unsafe { &raw const (*self.get()).result_allocator }
+        view_raw_const!(self, result_allocator)
     }
 
     #[inline(always)]
     pub(crate) fn retain_dom(&self) -> bool {
-        unsafe { (*self.get()).retain_dom }
+        view_read!(self, retain_dom)
     }
 
     #[inline(always)]
     pub(crate) fn retain_vertex_attrib_w(&self) -> bool {
-        unsafe { (*self.get()).retain_vertex_attrib_w }
+        view_read!(self, retain_vertex_attrib_w)
     }
 
     #[inline(always)]
     pub(crate) fn reverse_winding(&self) -> bool {
-        unsafe { (*self.get()).reverse_winding }
+        view_read!(self, reverse_winding)
     }
 
     #[inline(always)]
     pub(crate) fn root_transform_ptr(&self) -> *const crate::generated::Transform {
-        unsafe { &raw const (*self.get()).root_transform }
+        view_raw_const!(self, root_transform)
     }
 
     #[inline(always)]
@@ -2055,47 +1940,47 @@ impl LoadOptsView {
 
     #[inline(always)]
     pub(crate) fn skip_mesh_parts(&self) -> bool {
-        unsafe { (*self.get()).skip_mesh_parts }
+        view_read!(self, skip_mesh_parts)
     }
 
     #[inline(always)]
     pub(crate) fn skip_skin_vertices(&self) -> bool {
-        unsafe { (*self.get()).skip_skin_vertices }
+        view_read!(self, skip_skin_vertices)
     }
 
     #[inline(always)]
     pub(crate) fn space_conversion(&self) -> crate::generated::SpaceConversion {
-        unsafe { (*self.get()).space_conversion }
+        view_read!(self, space_conversion)
     }
 
     #[inline(always)]
     pub(crate) fn strict(&self) -> bool {
-        unsafe { (*self.get()).strict }
+        view_read!(self, strict)
     }
 
     #[inline(always)]
     pub(crate) fn target_axes(&self) -> crate::generated::CoordinateAxes {
-        unsafe { (*self.get()).target_axes }
+        view_read!(self, target_axes)
     }
 
     #[inline(always)]
     pub(crate) fn target_camera_axes(&self) -> crate::generated::CoordinateAxes {
-        unsafe { (*self.get()).target_camera_axes }
+        view_read!(self, target_camera_axes)
     }
 
     #[inline(always)]
     pub(crate) fn target_light_axes(&self) -> crate::generated::CoordinateAxes {
-        unsafe { (*self.get()).target_light_axes }
+        view_read!(self, target_light_axes)
     }
 
     #[inline(always)]
     pub(crate) fn target_unit_meters(&self) -> crate::prelude::Real {
-        unsafe { (*self.get()).target_unit_meters }
+        view_read!(self, target_unit_meters)
     }
 
     #[inline(always)]
     pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        unsafe { &raw const (*self.get()).temp_allocator }
+        view_raw_const!(self, temp_allocator)
     }
 
     #[inline(always)]
@@ -2105,22 +1990,22 @@ impl LoadOptsView {
 
     #[inline(always)]
     pub(crate) fn thread_opts_ptr(&self) -> *const crate::generated::RawThreadOpts {
-        unsafe { &raw const (*self.get()).thread_opts }
+        view_raw_const!(self, thread_opts)
     }
 
     #[inline(always)]
     pub(crate) fn unicode_error_handling(&self) -> crate::generated::UnicodeErrorHandling {
-        unsafe { (*self.get()).unicode_error_handling }
+        view_read!(self, unicode_error_handling)
     }
 
     #[inline(always)]
     pub(crate) fn use_blender_pbr_material(&self) -> bool {
-        unsafe { (*self.get()).use_blender_pbr_material }
+        view_read!(self, use_blender_pbr_material)
     }
 
     #[inline(always)]
     pub(crate) fn use_root_transform(&self) -> bool {
-        unsafe { (*self.get()).use_root_transform }
+        view_read!(self, use_root_transform)
     }
 }
 
@@ -2148,7 +2033,7 @@ impl SceneView {
     }
     #[inline(always)]
     pub(crate) fn settings_mut_ptr(&self) -> *mut crate::generated::SceneSettings {
-        unsafe { &raw mut (*self.get()).settings }
+        view_raw_mut!(self, settings)
     }
 
     #[inline(always)]
@@ -2515,47 +2400,43 @@ impl SceneView {
     pub(crate) fn unknowns_mut_ptr(
         &self,
     ) -> *mut crate::prelude::RefList<crate::generated::Unknown> {
-        unsafe { &raw mut (*self.get()).unknowns }
+        view_raw_mut!(self, unknowns)
     }
 
     #[inline(always)]
     pub(crate) fn root_node(&self) -> crate::prelude::Ref<crate::generated::Node> {
-        unsafe { (*self.get()).root_node }
+        view_read!(self, root_node)
     }
     #[inline(always)]
     pub(crate) fn set_root_node(&self, root_node: crate::prelude::Ref<crate::generated::Node>) {
-        unsafe {
-            (*self.get()).root_node = root_node;
-        }
+        view_write!(self, root_node, root_node)
     }
     #[inline(always)]
     pub(crate) fn root_node_ptr(&self) -> *const crate::prelude::Ref<crate::generated::Node> {
-        unsafe { &raw const (*self.get()).root_node }
+        view_raw_const!(self, root_node)
     }
     #[inline(always)]
     pub(crate) fn root_node_mut_ptr(&self) -> *mut crate::prelude::Ref<crate::generated::Node> {
-        unsafe { &raw mut (*self.get()).root_node }
+        view_raw_mut!(self, root_node)
     }
     #[inline(always)]
     pub(crate) fn anim_ptr(&self) -> *const crate::prelude::Ref<crate::generated::Anim> {
-        unsafe { &raw const (*self.get()).anim }
+        view_raw_const!(self, anim)
     }
     #[inline(always)]
     pub(crate) fn anim_mut_ptr(&self) -> *mut crate::prelude::Ref<crate::generated::Anim> {
-        unsafe { &raw mut (*self.get()).anim }
+        view_raw_mut!(self, anim)
     }
     #[inline(always)]
     pub(crate) fn dom_root(&self) -> Option<crate::prelude::Ref<crate::generated::DomNode>> {
-        unsafe { (*self.get()).dom_root }
+        view_read!(self, dom_root)
     }
     #[inline(always)]
     pub(crate) fn set_dom_root(
         &self,
         dom_root: Option<crate::prelude::Ref<crate::generated::DomNode>>,
     ) {
-        unsafe {
-            (*self.get()).dom_root = dom_root;
-        }
+        view_write!(self, dom_root, dom_root)
     }
 }
 
@@ -2577,164 +2458,132 @@ impl SceneMetadataView {
     // --- scalar value getters / setters ---
     #[inline(always)]
     pub(crate) fn file_format(&self) -> crate::generated::FileFormat {
-        unsafe { (*self.get()).file_format }
+        view_read!(self, file_format)
     }
     #[inline(always)]
     pub(crate) fn set_file_format(&self, file_format: crate::generated::FileFormat) {
-        unsafe {
-            (*self.get()).file_format = file_format;
-        }
+        view_write!(self, file_format, file_format)
     }
     #[inline(always)]
     pub(crate) fn geometry_scale(&self) -> crate::prelude::Real {
-        unsafe { (*self.get()).geometry_scale }
+        view_read!(self, geometry_scale)
     }
     #[inline(always)]
     pub(crate) fn set_bone_prop_size_unit(&self, bone_prop_size_unit: crate::prelude::Real) {
-        unsafe {
-            (*self.get()).bone_prop_size_unit = bone_prop_size_unit;
-        }
+        view_write!(self, bone_prop_size_unit, bone_prop_size_unit)
     }
     #[inline(always)]
     pub(crate) fn set_bone_prop_limb_length_relative(&self, bone_prop_limb_length_relative: bool) {
-        unsafe {
-            (*self.get()).bone_prop_limb_length_relative = bone_prop_limb_length_relative;
-        }
+        view_write!(
+            self,
+            bone_prop_limb_length_relative,
+            bone_prop_limb_length_relative
+        )
     }
     #[inline(always)]
     pub(crate) fn set_mirror_axis(&self, mirror_axis: crate::generated::MirrorAxis) {
-        unsafe {
-            (*self.get()).mirror_axis = mirror_axis;
-        }
+        view_write!(self, mirror_axis, mirror_axis)
     }
     #[inline(always)]
     pub(crate) fn set_is_unsafe(&self, is_unsafe: bool) {
-        unsafe {
-            (*self.get()).is_unsafe = is_unsafe;
-        }
+        view_write!(self, is_unsafe, is_unsafe)
     }
     #[inline(always)]
     pub(crate) fn set_may_contain_no_index(&self, may_contain_no_index: bool) {
-        unsafe {
-            (*self.get()).may_contain_no_index = may_contain_no_index;
-        }
+        view_write!(self, may_contain_no_index, may_contain_no_index)
     }
     #[inline(always)]
     pub(crate) fn set_may_contain_missing_vertex_position(
         &self,
         may_contain_missing_vertex_position: bool,
     ) {
-        unsafe {
-            (*self.get()).may_contain_missing_vertex_position = may_contain_missing_vertex_position;
-        }
+        view_write!(
+            self,
+            may_contain_missing_vertex_position,
+            may_contain_missing_vertex_position
+        )
     }
     #[inline(always)]
     pub(crate) fn set_may_contain_broken_elements(&self, may_contain_broken_elements: bool) {
-        unsafe {
-            (*self.get()).may_contain_broken_elements = may_contain_broken_elements;
-        }
+        view_write!(
+            self,
+            may_contain_broken_elements,
+            may_contain_broken_elements
+        )
     }
     #[inline(always)]
     pub(crate) fn set_version(&self, version: u32) {
-        unsafe {
-            (*self.get()).version = version;
-        }
+        view_write!(self, version, version)
     }
     #[inline(always)]
     pub(crate) fn set_ascii(&self, ascii: bool) {
-        unsafe {
-            (*self.get()).ascii = ascii;
-        }
+        view_write!(self, ascii, ascii)
     }
     #[inline(always)]
     pub(crate) fn set_big_endian(&self, big_endian: bool) {
-        unsafe {
-            (*self.get()).big_endian = big_endian;
-        }
+        view_write!(self, big_endian, big_endian)
     }
     #[inline(always)]
     pub(crate) fn set_geometry_ignored(&self, geometry_ignored: bool) {
-        unsafe {
-            (*self.get()).geometry_ignored = geometry_ignored;
-        }
+        view_write!(self, geometry_ignored, geometry_ignored)
     }
     #[inline(always)]
     pub(crate) fn set_animation_ignored(&self, animation_ignored: bool) {
-        unsafe {
-            (*self.get()).animation_ignored = animation_ignored;
-        }
+        view_write!(self, animation_ignored, animation_ignored)
     }
     #[inline(always)]
     pub(crate) fn set_embedded_ignored(&self, embedded_ignored: bool) {
-        unsafe {
-            (*self.get()).embedded_ignored = embedded_ignored;
-        }
+        view_write!(self, embedded_ignored, embedded_ignored)
     }
     #[inline(always)]
     pub(crate) fn set_exporter(&self, exporter: crate::generated::Exporter) {
-        unsafe {
-            (*self.get()).exporter = exporter;
-        }
+        view_write!(self, exporter, exporter)
     }
     #[inline(always)]
     pub(crate) fn set_exporter_version(&self, exporter_version: u32) {
-        unsafe {
-            (*self.get()).exporter_version = exporter_version;
-        }
+        view_write!(self, exporter_version, exporter_version)
     }
     #[inline(always)]
     pub(crate) fn num_shader_textures(&self) -> usize {
-        unsafe { (*self.get()).num_shader_textures }
+        view_read!(self, num_shader_textures)
     }
     #[inline(always)]
     pub(crate) fn set_num_shader_textures(&self, num_shader_textures: usize) {
-        unsafe {
-            (*self.get()).num_shader_textures = num_shader_textures;
-        }
+        view_write!(self, num_shader_textures, num_shader_textures)
     }
     #[inline(always)]
     pub(crate) fn set_ortho_size_unit(&self, ortho_size_unit: crate::prelude::Real) {
-        unsafe {
-            (*self.get()).ortho_size_unit = ortho_size_unit;
-        }
+        view_write!(self, ortho_size_unit, ortho_size_unit)
     }
     #[inline(always)]
     pub(crate) fn element_buffer_size(&self) -> usize {
-        unsafe { (*self.get()).element_buffer_size }
+        view_read!(self, element_buffer_size)
     }
     #[inline(always)]
     pub(crate) fn set_element_buffer_size(&self, element_buffer_size: usize) {
-        unsafe {
-            (*self.get()).element_buffer_size = element_buffer_size;
-        }
+        view_write!(self, element_buffer_size, element_buffer_size)
     }
     #[inline(always)]
     pub(crate) fn max_face_triangles(&self) -> usize {
-        unsafe { (*self.get()).max_face_triangles }
+        view_read!(self, max_face_triangles)
     }
     #[inline(always)]
     pub(crate) fn set_max_face_triangles(&self, max_face_triangles: usize) {
-        unsafe {
-            (*self.get()).max_face_triangles = max_face_triangles;
-        }
+        view_write!(self, max_face_triangles, max_face_triangles)
     }
     #[inline(always)]
     pub(crate) fn set_ktime_second(&self, ktime_second: i64) {
-        unsafe {
-            (*self.get()).ktime_second = ktime_second;
-        }
+        view_write!(self, ktime_second, ktime_second)
     }
 
     // --- String leaves: whole value getter/setter + StringView sub-view + _mut_ptr ---
     #[inline(always)]
     pub(crate) fn filename(&self) -> crate::prelude::String {
-        unsafe { (*self.get()).filename }
+        view_read!(self, filename)
     }
     #[inline(always)]
     pub(crate) fn set_filename(&self, filename: crate::prelude::String) {
-        unsafe {
-            (*self.get()).filename = filename;
-        }
+        view_write!(self, filename, filename)
     }
     #[inline(always)]
     pub(crate) fn filename_view(&self) -> &crate::prelude::StringView {
@@ -2742,11 +2591,11 @@ impl SceneMetadataView {
     }
     #[inline(always)]
     pub(crate) fn filename_mut_ptr(&self) -> *mut crate::prelude::String {
-        unsafe { &raw mut (*self.get()).filename }
+        view_raw_mut!(self, filename)
     }
     #[inline(always)]
     pub(crate) fn creator(&self) -> crate::prelude::String {
-        unsafe { (*self.get()).creator }
+        view_read!(self, creator)
     }
     #[inline(always)]
     pub(crate) fn creator_view(&self) -> &crate::prelude::StringView {
@@ -2754,7 +2603,7 @@ impl SceneMetadataView {
     }
     #[inline(always)]
     pub(crate) fn creator_mut_ptr(&self) -> *mut crate::prelude::String {
-        unsafe { &raw mut (*self.get()).creator }
+        view_raw_mut!(self, creator)
     }
     #[inline(always)]
     pub(crate) fn relative_root_view(&self) -> &crate::prelude::StringView {
@@ -2762,25 +2611,21 @@ impl SceneMetadataView {
     }
     #[inline(always)]
     pub(crate) fn relative_root_mut_ptr(&self) -> *mut crate::prelude::String {
-        unsafe { &raw mut (*self.get()).relative_root }
+        view_raw_mut!(self, relative_root)
     }
     #[inline(always)]
     pub(crate) fn set_original_file_path(&self, original_file_path: crate::prelude::String) {
-        unsafe {
-            (*self.get()).original_file_path = original_file_path;
-        }
+        view_write!(self, original_file_path, original_file_path)
     }
     #[inline(always)]
     pub(crate) fn original_file_path_ptr(&self) -> *const crate::prelude::String {
-        unsafe { &raw const (*self.get()).original_file_path }
+        view_raw_const!(self, original_file_path)
     }
 
     // --- Blob leaves: whole setter + BlobView sub-view + _mut_ptr / _ptr ---
     #[inline(always)]
     pub(crate) fn set_raw_filename(&self, raw_filename: crate::prelude::Blob) {
-        unsafe {
-            (*self.get()).raw_filename = raw_filename;
-        }
+        view_write!(self, raw_filename, raw_filename)
     }
     #[inline(always)]
     pub(crate) fn raw_filename_view(&self) -> &crate::prelude::BlobView {
@@ -2788,7 +2633,7 @@ impl SceneMetadataView {
     }
     #[inline(always)]
     pub(crate) fn raw_filename_mut_ptr(&self) -> *mut crate::prelude::Blob {
-        unsafe { &raw mut (*self.get()).raw_filename }
+        view_raw_mut!(self, raw_filename)
     }
     #[inline(always)]
     pub(crate) fn raw_relative_root_view(&self) -> &crate::prelude::BlobView {
@@ -2796,17 +2641,15 @@ impl SceneMetadataView {
     }
     #[inline(always)]
     pub(crate) fn raw_relative_root_mut_ptr(&self) -> *mut crate::prelude::Blob {
-        unsafe { &raw mut (*self.get()).raw_relative_root }
+        view_raw_mut!(self, raw_relative_root)
     }
     #[inline(always)]
     pub(crate) fn set_raw_original_file_path(&self, raw_original_file_path: crate::prelude::Blob) {
-        unsafe {
-            (*self.get()).raw_original_file_path = raw_original_file_path;
-        }
+        view_write!(self, raw_original_file_path, raw_original_file_path)
     }
     #[inline(always)]
     pub(crate) fn raw_original_file_path_ptr(&self) -> *const crate::prelude::Blob {
-        unsafe { &raw const (*self.get()).raw_original_file_path }
+        view_raw_const!(self, raw_original_file_path)
     }
 
     // --- warnings (List<Warning>): ListView sub-view + whole-addr _mut_ptr ---
@@ -2819,7 +2662,7 @@ impl SceneMetadataView {
     }
     #[inline(always)]
     pub(crate) fn warnings_mut_ptr(&self) -> *mut crate::prelude::List<crate::generated::Warning> {
-        unsafe { &raw mut (*self.get()).warnings }
+        view_raw_mut!(self, warnings)
     }
     #[inline(always)]
     pub(crate) fn has_warning_mut_ptr(&self) -> *mut bool {
@@ -2829,15 +2672,15 @@ impl SceneMetadataView {
     // --- scene_props (Props) / thumbnail (Thumbnail): addr-of only ---
     #[inline(always)]
     pub(crate) fn scene_props_ptr(&self) -> *const crate::generated::Props {
-        unsafe { &raw const (*self.get()).scene_props }
+        view_raw_const!(self, scene_props)
     }
     #[inline(always)]
     pub(crate) fn scene_props_mut_ptr(&self) -> *mut crate::generated::Props {
-        unsafe { &raw mut (*self.get()).scene_props }
+        view_raw_mut!(self, scene_props)
     }
     #[inline(always)]
     pub(crate) fn thumbnail_mut_ptr(&self) -> *mut crate::generated::Thumbnail {
-        unsafe { &raw mut (*self.get()).thumbnail }
+        view_raw_mut!(self, thumbnail)
     }
 }
 
@@ -2857,19 +2700,19 @@ impl SceneSettingsView {
     }
     #[inline(always)]
     pub(crate) fn axes(&self) -> crate::generated::CoordinateAxes {
-        unsafe { (*self.get()).axes }
+        view_read!(self, axes)
     }
     #[inline(always)]
     pub(crate) fn unit_meters(&self) -> crate::prelude::Real {
-        unsafe { (*self.get()).unit_meters }
+        view_read!(self, unit_meters)
     }
     #[inline(always)]
     pub(crate) fn frames_per_second(&self) -> f64 {
-        unsafe { (*self.get()).frames_per_second }
+        view_read!(self, frames_per_second)
     }
     #[inline(always)]
     pub(crate) fn props_mut_ptr(&self) -> *mut crate::generated::Props {
-        unsafe { &raw mut (*self.get()).props }
+        view_raw_mut!(self, props)
     }
 }
 
@@ -2881,7 +2724,7 @@ impl Context {
 
     #[inline(always)]
     pub(crate) fn axis_matrix(&self) -> Matrix {
-        unsafe { (*self.get()).axis_matrix }
+        view_read!(self, axis_matrix)
     }
 
     #[inline(always)]
@@ -2894,14 +2737,12 @@ impl Context {
 
     #[inline(always)]
     pub(crate) fn set_result(&self, result: crate::native::buf::Buf) {
-        unsafe {
-            (*self.get()).result = result;
-        }
+        view_write!(self, result, result)
     }
 
     #[inline(always)]
     pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
-        unsafe { (*self.get()).ator_result }
+        view_read!(self, ator_result)
     }
 
     // `obj` — the embedded ObjContext sub-context handle (Context.obj field).
@@ -2959,23 +2800,19 @@ impl Context {
     // `exporter`/`mirror_axis` (Copy enums) — value getter/setter.
     #[inline(always)]
     pub(crate) fn exporter(&self) -> Exporter {
-        unsafe { (*self.get()).exporter }
+        view_read!(self, exporter)
     }
     #[inline(always)]
     pub(crate) fn set_exporter(&self, exporter: Exporter) {
-        unsafe {
-            (*self.get()).exporter = exporter;
-        }
+        view_write!(self, exporter, exporter)
     }
     #[inline(always)]
     pub(crate) fn mirror_axis(&self) -> MirrorAxis {
-        unsafe { (*self.get()).mirror_axis }
+        view_read!(self, mirror_axis)
     }
     #[inline(always)]
     pub(crate) fn set_mirror_axis(&self, mirror_axis: MirrorAxis) {
-        unsafe {
-            (*self.get()).mirror_axis = mirror_axis;
-        }
+        view_write!(self, mirror_axis, mirror_axis)
     }
     // `node_prop_set`/`texture_file_map` (Map) — typed VIEW handles (reinterpret-in-place).
     #[inline(always)]
@@ -3128,97 +2965,73 @@ impl Context {
     #[cfg_attr(all(feature = "c-abi", feature = "dev"), allow(dead_code))]
     #[inline(always)]
     pub(crate) fn error_ptr(&self) -> *const Error {
-        // SAFETY: `&raw const` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw const (*self.get()).error }
+        view_raw_const!(self, error)
     }
 
     // `swap_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn swap_arr_size_mut_ptr(&self) -> *mut usize {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).swap_arr_size }
+        view_raw_mut!(self, swap_arr_size)
     }
 
     // `swap_arr` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn swap_arr_mut_ptr(&self) -> *mut *mut u8 {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).swap_arr }
+        view_raw_mut!(self, swap_arr)
     }
 
     // `top_child` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn top_child_mut_ptr(&self) -> *mut Node {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).top_child }
+        view_raw_mut!(self, top_child)
     }
 
     // `top_nodes_cap` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn top_nodes_cap_mut_ptr(&self) -> *mut usize {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).top_nodes_cap }
+        view_raw_mut!(self, top_nodes_cap)
     }
 
     // `top_nodes` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn top_nodes_mut_ptr(&self) -> *mut *mut Node {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).top_nodes }
+        view_raw_mut!(self, top_nodes)
     }
 
     // `dom_parse_toplevel` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn dom_parse_toplevel_mut_ptr(&self) -> *mut *mut DomNode {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).dom_parse_toplevel }
+        view_raw_mut!(self, dom_parse_toplevel)
     }
 
     // `element_extra_cap` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn element_extra_cap_mut_ptr(&self) -> *mut usize {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).element_extra_cap }
+        view_raw_mut!(self, element_extra_cap)
     }
 
     // `element_extra_arr` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn element_extra_arr_mut_ptr(&self) -> *mut *mut *mut c_void {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).element_extra_arr }
+        view_raw_mut!(self, element_extra_arr)
     }
 
     // `max_consecutive_indices` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn max_consecutive_indices_mut_ptr(&self) -> *mut usize {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).max_consecutive_indices }
+        view_raw_mut!(self, max_consecutive_indices)
     }
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn opts_mut_ptr(&self) -> *mut RawLoadOpts {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).opts }
+        view_raw_mut!(self, opts)
     }
 
     // `warnings` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn warnings_mut_ptr(&self) -> *mut Warnings {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).warnings }
+        view_raw_mut!(self, warnings)
     }
     // `warnings` (Warnings) — typed VIEW handle (reinterpret-in-place); accessors on WarningsView.
     #[inline(always)]
@@ -3229,263 +3042,199 @@ impl Context {
     // `read_buffer_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn read_buffer_size_mut_ptr(&self) -> *mut usize {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).read_buffer_size }
+        view_raw_mut!(self, read_buffer_size)
     }
 
     // `read_buffer` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn read_buffer_mut_ptr(&self) -> *mut *mut u8 {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).read_buffer }
+        view_raw_mut!(self, read_buffer)
     }
 
     // `root_id` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn root_id_mut_ptr(&self) -> *mut u64 {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).root_id }
+        view_raw_mut!(self, root_id)
     }
 
     // `axis_matrix` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn axis_matrix_mut_ptr(&self) -> *mut Matrix {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).axis_matrix }
+        view_raw_mut!(self, axis_matrix)
     }
 
     // `tmp_ascii_spans` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_ascii_spans_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_ascii_spans }
+        view_raw_mut!(self, tmp_ascii_spans)
     }
 
     // `legacy_node` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn legacy_node_mut_ptr(&self) -> *mut Node {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).legacy_node }
+        view_raw_mut!(self, legacy_node)
     }
 
     // `tmp_mesh_textures` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mesh_textures_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_mesh_textures }
+        view_raw_mut!(self, tmp_mesh_textures)
     }
 
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_result }
+        view_raw_mut!(self, ator_result)
     }
 
     // `tmp_element_id` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_element_id_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_element_id }
+        view_raw_mut!(self, tmp_element_id)
     }
 
     // `ptr_fbx_id_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ptr_fbx_id_map_mut_ptr(&self) -> *mut Map {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ptr_fbx_id_map }
+        view_raw_mut!(self, ptr_fbx_id_map)
     }
 
     // `texture_file_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn texture_file_map_mut_ptr(&self) -> *mut Map {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).texture_file_map }
+        view_raw_mut!(self, texture_file_map)
     }
 
     // `tmp_element_fbx_ids` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_element_fbx_ids_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_element_fbx_ids }
+        view_raw_mut!(self, tmp_element_fbx_ids)
     }
 
     // `tmp_element_ptrs` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_element_ptrs_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_element_ptrs }
+        view_raw_mut!(self, tmp_element_ptrs)
     }
 
     // `node_prop_set` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn node_prop_set_mut_ptr(&self) -> *mut Map {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).node_prop_set }
+        view_raw_mut!(self, node_prop_set)
     }
 
     // `prop_type_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn prop_type_map_mut_ptr(&self) -> *mut Map {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).prop_type_map }
+        view_raw_mut!(self, prop_type_map)
     }
 
     // `tmp_dom_nodes` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_dom_nodes_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_dom_nodes }
+        view_raw_mut!(self, tmp_dom_nodes)
     }
 
     // `dom_node_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn dom_node_map_mut_ptr(&self) -> *mut Map {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).dom_node_map }
+        view_raw_mut!(self, dom_node_map)
     }
 
     // `anim_stack_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn anim_stack_map_mut_ptr(&self) -> *mut Map {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).anim_stack_map }
+        view_raw_mut!(self, anim_stack_map)
     }
 
     // `fbx_id_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn fbx_id_map_mut_ptr(&self) -> *mut Map {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).fbx_id_map }
+        view_raw_mut!(self, fbx_id_map)
     }
 
     // `scene` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn scene_mut_ptr(&self) -> *mut Scene {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).scene }
+        view_raw_mut!(self, scene)
     }
 
     // `tmp_full_weights` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_full_weights_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_full_weights }
+        view_raw_mut!(self, tmp_full_weights)
     }
 
     // `tmp_elements` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_elements_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_elements }
+        view_raw_mut!(self, tmp_elements)
     }
 
     // `fbx_attr_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn fbx_attr_map_mut_ptr(&self) -> *mut Map {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).fbx_attr_map }
+        view_raw_mut!(self, fbx_attr_map)
     }
 
     // `tmp_element_offsets` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_element_offsets_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_element_offsets }
+        view_raw_mut!(self, tmp_element_offsets)
     }
 
     // `tmp_connections` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_connections_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_connections }
+        view_raw_mut!(self, tmp_connections)
     }
 
     // `thread_pool` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn thread_pool_mut_ptr(&self) -> *mut ThreadPool {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).thread_pool }
+        view_raw_mut!(self, thread_pool)
     }
 
     // `tmp_node_ids` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_node_ids_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_node_ids }
+        view_raw_mut!(self, tmp_node_ids)
     }
 
     // `ascii` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ascii_mut_ptr(&self) -> *mut Ascii {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ascii }
+        view_raw_mut!(self, ascii)
     }
 
     // `tmp_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_arr_size_mut_ptr(&self) -> *mut usize {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_arr_size }
+        view_raw_mut!(self, tmp_arr_size)
     }
     // Value getter for the read-only size sites (the `&mut`/grow-array out-param sites
     // keep using `tmp_arr_size_mut_ptr`).
     #[inline(always)]
     pub(crate) fn tmp_arr_size(&self) -> usize {
-        unsafe { (*self.get()).tmp_arr_size }
+        view_read!(self, tmp_arr_size)
     }
 
     // `tmp_arr` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_arr_mut_ptr(&self) -> *mut *mut u8 {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_arr }
+        view_raw_mut!(self, tmp_arr)
     }
 
     // `tmp_parse` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_parse_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_parse }
+        view_raw_mut!(self, tmp_parse)
     }
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).error }
+        view_raw_mut!(self, error)
     }
 
     // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
@@ -3500,17 +3249,13 @@ impl Context {
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp }
+        view_raw_mut!(self, tmp)
     }
 
     // `string_pool` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn string_pool_mut_ptr(&self) -> *mut StringPool {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).string_pool }
+        view_raw_mut!(self, string_pool)
     }
     // `string_pool` (StringPool) — typed VIEW handle (reinterpret-in-place) for nested
     // access; whole value getter/setter for the faithful C struct-copy sites.
@@ -3530,25 +3275,19 @@ impl Context {
     }
     #[inline(always)]
     pub(crate) fn set_string_pool(&self, string_pool: StringPool) {
-        unsafe {
-            (*self.get()).string_pool = string_pool;
-        }
+        view_write!(self, string_pool, string_pool)
     }
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).result }
+        view_raw_mut!(self, result)
     }
 
     // `tmp_stack` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_stack_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_stack }
+        view_raw_mut!(self, tmp_stack)
     }
 
     // Reborrow a raw `*mut InnerContext` as `&Context` (layout-identical via
@@ -3567,687 +3306,523 @@ impl Context {
     // `base64_table` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn base64_table(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
-        unsafe { (*self.get()).base64_table }
+        view_read!(self, base64_table)
     }
 
     #[inline(always)]
     pub(crate) fn set_base64_table(&self, base64_table: *mut u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).base64_table = base64_table;
-        }
+        view_write!(self, base64_table, base64_table)
     }
 
     // `parse_threaded` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn parse_threaded(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).parse_threaded }
+        view_read!(self, parse_threaded)
     }
 
     #[inline(always)]
     pub(crate) fn set_parse_threaded(&self, parse_threaded: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).parse_threaded = parse_threaded;
-        }
+        view_write!(self, parse_threaded, parse_threaded)
     }
 
     // `load_filename_len` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn load_filename_len(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).load_filename_len }
+        view_read!(self, load_filename_len)
     }
 
     #[inline(always)]
     pub(crate) fn set_load_filename_len(&self, load_filename_len: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).load_filename_len = load_filename_len;
-        }
+        view_write!(self, load_filename_len, load_filename_len)
     }
 
     // `load_filename` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn load_filename(&self) -> *const u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*const u8` are valid.
-        unsafe { (*self.get()).load_filename }
+        view_read!(self, load_filename)
     }
 
     #[inline(always)]
     pub(crate) fn set_load_filename(&self, load_filename: *const u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).load_filename = load_filename;
-        }
+        view_write!(self, load_filename, load_filename)
     }
 
     // `deferred_load` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn deferred_load(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).deferred_load }
+        view_read!(self, deferred_load)
     }
 
     #[inline(always)]
     pub(crate) fn set_deferred_load(&self, deferred_load: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).deferred_load = deferred_load;
-        }
+        view_write!(self, deferred_load, deferred_load)
     }
 
     // `deferred_failure` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn deferred_failure(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).deferred_failure }
+        view_read!(self, deferred_failure)
     }
 
     // `unit_scale` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn unit_scale(&self) -> Real {
-        // SAFETY: reading a scalar field; all bit patterns of `Real` are valid.
-        unsafe { (*self.get()).unit_scale }
+        view_read!(self, unit_scale)
     }
 
     #[inline(always)]
     pub(crate) fn set_unit_scale(&self, unit_scale: Real) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).unit_scale = unit_scale;
-        }
+        view_write!(self, unit_scale, unit_scale)
     }
 
     // `ktime_sec_double` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn ktime_sec_double(&self) -> f64 {
-        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
-        unsafe { (*self.get()).ktime_sec_double }
+        view_read!(self, ktime_sec_double)
     }
 
     #[inline(always)]
     pub(crate) fn set_ktime_sec_double(&self, ktime_sec_double: f64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).ktime_sec_double = ktime_sec_double;
-        }
+        view_write!(self, ktime_sec_double, ktime_sec_double)
     }
 
     // `ktime_sec` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn ktime_sec(&self) -> i64 {
-        // SAFETY: reading a scalar field; all bit patterns of `i64` are valid.
-        unsafe { (*self.get()).ktime_sec }
+        view_read!(self, ktime_sec)
     }
 
     #[inline(always)]
     pub(crate) fn set_ktime_sec(&self, ktime_sec: i64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).ktime_sec = ktime_sec;
-        }
+        view_write!(self, ktime_sec, ktime_sec)
     }
 
     // `num_file_content` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn num_file_content(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).num_file_content }
+        view_read!(self, num_file_content)
     }
 
     #[inline(always)]
     pub(crate) fn set_num_file_content(&self, num_file_content: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).num_file_content = num_file_content;
-        }
+        view_write!(self, num_file_content, num_file_content)
     }
 
     // `file_content` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn file_content(&self) -> *mut FileContent {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut FileContent` are valid.
-        unsafe { (*self.get()).file_content }
+        view_read!(self, file_content)
     }
 
     #[inline(always)]
     pub(crate) fn set_file_content(&self, file_content: *mut FileContent) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).file_content = file_content;
-        }
+        view_write!(self, file_content, file_content)
     }
 
     // `legacy_implicit_anim_layer_id` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn legacy_implicit_anim_layer_id(&self) -> u64 {
-        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
-        unsafe { (*self.get()).legacy_implicit_anim_layer_id }
+        view_read!(self, legacy_implicit_anim_layer_id)
     }
 
     #[inline(always)]
     pub(crate) fn set_legacy_implicit_anim_layer_id(&self, legacy_implicit_anim_layer_id: u64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).legacy_implicit_anim_layer_id = legacy_implicit_anim_layer_id;
-        }
+        view_write!(
+            self,
+            legacy_implicit_anim_layer_id,
+            legacy_implicit_anim_layer_id
+        )
     }
 
     // `num_elements` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn num_elements(&self) -> u32 {
-        // SAFETY: reading a scalar field; all bit patterns of `u32` are valid.
-        unsafe { (*self.get()).num_elements }
+        view_read!(self, num_elements)
     }
 
     #[inline(always)]
     pub(crate) fn set_num_elements(&self, num_elements: u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).num_elements = num_elements;
-        }
+        view_write!(self, num_elements, num_elements)
     }
 
     // `root_id` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn root_id(&self) -> u64 {
-        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
-        unsafe { (*self.get()).root_id }
+        view_read!(self, root_id)
     }
 
     #[inline(always)]
     pub(crate) fn set_root_id(&self, root_id: u64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).root_id = root_id;
-        }
+        view_write!(self, root_id, root_id)
     }
 
     // `tmp_mesh_consecutive_indices` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_mesh_consecutive_indices(&self) -> *mut u32 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u32` are valid.
-        unsafe { (*self.get()).tmp_mesh_consecutive_indices }
+        view_read!(self, tmp_mesh_consecutive_indices)
     }
 
     #[inline(always)]
     pub(crate) fn set_tmp_mesh_consecutive_indices(&self, tmp_mesh_consecutive_indices: *mut u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).tmp_mesh_consecutive_indices = tmp_mesh_consecutive_indices;
-        }
+        view_write!(
+            self,
+            tmp_mesh_consecutive_indices,
+            tmp_mesh_consecutive_indices
+        )
     }
 
     // `inflate_retain` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn inflate_retain(&self) -> *mut InflateRetain {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut InflateRetain` are valid.
-        unsafe { (*self.get()).inflate_retain }
+        view_read!(self, inflate_retain)
     }
 
     #[inline(always)]
     pub(crate) fn set_inflate_retain(&self, inflate_retain: *mut InflateRetain) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).inflate_retain = inflate_retain;
-        }
+        view_write!(self, inflate_retain, inflate_retain)
     }
 
     // `scene_imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn scene_imp(&self) -> *mut SceneImp {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut SceneImp` are valid.
-        unsafe { (*self.get()).scene_imp }
+        view_read!(self, scene_imp)
     }
 
     #[inline(always)]
     pub(crate) fn set_scene_imp(&self, scene_imp: *mut SceneImp) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).scene_imp = scene_imp;
-        }
+        view_write!(self, scene_imp, scene_imp)
     }
 
     // `blender_full_weights` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn blender_full_weights(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).blender_full_weights }
+        view_read!(self, blender_full_weights)
     }
 
     #[inline(always)]
     pub(crate) fn set_blender_full_weights(&self, blender_full_weights: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).blender_full_weights = blender_full_weights;
-        }
+        view_write!(self, blender_full_weights, blender_full_weights)
     }
 
     // `retain_vertex_w` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn retain_vertex_w(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).retain_vertex_w }
+        view_read!(self, retain_vertex_w)
     }
 
     #[inline(always)]
     pub(crate) fn set_retain_vertex_w(&self, retain_vertex_w: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).retain_vertex_w = retain_vertex_w;
-        }
+        view_write!(self, retain_vertex_w, retain_vertex_w)
     }
 
     // `has_scale_helper_nodes` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn has_scale_helper_nodes(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).has_scale_helper_nodes }
+        view_read!(self, has_scale_helper_nodes)
     }
 
     #[inline(always)]
     pub(crate) fn set_has_scale_helper_nodes(&self, has_scale_helper_nodes: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).has_scale_helper_nodes = has_scale_helper_nodes;
-        }
+        view_write!(self, has_scale_helper_nodes, has_scale_helper_nodes)
     }
 
     // `has_geometry_transform_nodes` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn has_geometry_transform_nodes(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).has_geometry_transform_nodes }
+        view_read!(self, has_geometry_transform_nodes)
     }
 
     #[inline(always)]
     pub(crate) fn set_has_geometry_transform_nodes(&self, has_geometry_transform_nodes: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).has_geometry_transform_nodes = has_geometry_transform_nodes;
-        }
+        view_write!(
+            self,
+            has_geometry_transform_nodes,
+            has_geometry_transform_nodes
+        )
     }
 
     // `synthetic_id_counter` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn synthetic_id_counter(&self) -> u64 {
-        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
-        unsafe { (*self.get()).synthetic_id_counter }
+        view_read!(self, synthetic_id_counter)
     }
 
     #[inline(always)]
     pub(crate) fn set_synthetic_id_counter(&self, synthetic_id_counter: u64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).synthetic_id_counter = synthetic_id_counter;
-        }
+        view_write!(self, synthetic_id_counter, synthetic_id_counter)
     }
 
     // `size_fn` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn size_fn(&self) -> Option<unsafe extern "C" fn(*mut c_void) -> u64> {
-        // SAFETY: reading a scalar field; all bit patterns of `Option<unsafe extern "C" fn(*mut c_void) -> u64>` are valid.
-        unsafe { (*self.get()).size_fn }
+        view_read!(self, size_fn)
     }
 
     #[inline(always)]
     pub(crate) fn set_size_fn(&self, size_fn: Option<unsafe extern "C" fn(*mut c_void) -> u64>) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).size_fn = size_fn;
-        }
+        view_write!(self, size_fn, size_fn)
     }
 
     // `close_fn` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn close_fn(&self) -> Option<unsafe extern "C" fn(*mut c_void)> {
-        // SAFETY: reading a scalar field; all bit patterns of `Option<unsafe extern "C" fn(*mut c_void)>` are valid.
-        unsafe { (*self.get()).close_fn }
+        view_read!(self, close_fn)
     }
 
     #[inline(always)]
     pub(crate) fn set_close_fn(&self, close_fn: Option<unsafe extern "C" fn(*mut c_void)>) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).close_fn = close_fn;
-        }
+        view_write!(self, close_fn, close_fn)
     }
 
     // `tmp_element_flag` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_element_flag(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
-        unsafe { (*self.get()).tmp_element_flag }
+        view_read!(self, tmp_element_flag)
     }
 
     #[inline(always)]
     pub(crate) fn set_tmp_element_flag(&self, tmp_element_flag: *mut u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).tmp_element_flag = tmp_element_flag;
-        }
+        view_write!(self, tmp_element_flag, tmp_element_flag)
     }
 
     // `element_extra_cap` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn element_extra_cap(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).element_extra_cap }
+        view_read!(self, element_extra_cap)
     }
 
     // `element_extra_arr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn element_extra_arr(&self) -> *mut *mut c_void {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut *mut c_void` are valid.
-        unsafe { (*self.get()).element_extra_arr }
+        view_read!(self, element_extra_arr)
     }
 
     // `latest_progress_bytes` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn latest_progress_bytes(&self) -> u64 {
-        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
-        unsafe { (*self.get()).latest_progress_bytes }
+        view_read!(self, latest_progress_bytes)
     }
 
     #[inline(always)]
     pub(crate) fn set_latest_progress_bytes(&self, latest_progress_bytes: u64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).latest_progress_bytes = latest_progress_bytes;
-        }
+        view_write!(self, latest_progress_bytes, latest_progress_bytes)
     }
 
     // `progress_bytes_total` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn progress_bytes_total(&self) -> u64 {
-        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
-        unsafe { (*self.get()).progress_bytes_total }
+        view_read!(self, progress_bytes_total)
     }
 
     #[inline(always)]
     pub(crate) fn set_progress_bytes_total(&self, progress_bytes_total: u64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).progress_bytes_total = progress_bytes_total;
-        }
+        view_write!(self, progress_bytes_total, progress_bytes_total)
     }
 
     // `progress_timer` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn progress_timer(&self) -> isize {
-        // SAFETY: reading a scalar field; all bit patterns of `isize` are valid.
-        unsafe { (*self.get()).progress_timer }
+        view_read!(self, progress_timer)
     }
 
     #[inline(always)]
     pub(crate) fn set_progress_timer(&self, progress_timer: isize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).progress_timer = progress_timer;
-        }
+        view_write!(self, progress_timer, progress_timer)
     }
 
     // `consecutive_indices` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn consecutive_indices(&self) -> *mut u32 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u32` are valid.
-        unsafe { (*self.get()).consecutive_indices }
+        view_read!(self, consecutive_indices)
     }
 
     #[inline(always)]
     pub(crate) fn set_consecutive_indices(&self, consecutive_indices: *mut u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).consecutive_indices = consecutive_indices;
-        }
+        view_write!(self, consecutive_indices, consecutive_indices)
     }
 
     // `zero_indices` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn zero_indices(&self) -> *mut u32 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u32` are valid.
-        unsafe { (*self.get()).zero_indices }
+        view_read!(self, zero_indices)
     }
 
     #[inline(always)]
     pub(crate) fn set_zero_indices(&self, zero_indices: *mut u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).zero_indices = zero_indices;
-        }
+        view_write!(self, zero_indices, zero_indices)
     }
 
     // `has_next_child` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn has_next_child(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).has_next_child }
+        view_read!(self, has_next_child)
     }
 
     #[inline(always)]
     pub(crate) fn set_has_next_child(&self, has_next_child: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).has_next_child = has_next_child;
-        }
+        view_write!(self, has_next_child, has_next_child)
     }
 
     // `top_child_index` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn top_child_index(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).top_child_index }
+        view_read!(self, top_child_index)
     }
 
     #[inline(always)]
     pub(crate) fn set_top_child_index(&self, top_child_index: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).top_child_index = top_child_index;
-        }
+        view_write!(self, top_child_index, top_child_index)
     }
 
     // `parsed_to_end` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn parsed_to_end(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).parsed_to_end }
+        view_read!(self, parsed_to_end)
     }
 
     #[inline(always)]
     pub(crate) fn set_parsed_to_end(&self, parsed_to_end: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).parsed_to_end = parsed_to_end;
-        }
+        view_write!(self, parsed_to_end, parsed_to_end)
     }
 
     // `top_nodes_cap` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn top_nodes_cap(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).top_nodes_cap }
+        view_read!(self, top_nodes_cap)
     }
 
     // `top_nodes_len` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn top_nodes_len(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).top_nodes_len }
+        view_read!(self, top_nodes_len)
     }
 
     #[inline(always)]
     pub(crate) fn set_top_nodes_len(&self, top_nodes_len: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).top_nodes_len = top_nodes_len;
-        }
+        view_write!(self, top_nodes_len, top_nodes_len)
     }
 
     // `top_nodes` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn top_nodes(&self) -> *mut Node {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut Node` are valid.
-        unsafe { (*self.get()).top_nodes }
+        view_read!(self, top_nodes)
     }
 
     // `p_element_id` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn p_element_id(&self) -> *mut u32 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u32` are valid.
-        unsafe { (*self.get()).p_element_id }
+        view_read!(self, p_element_id)
     }
 
     #[inline(always)]
     pub(crate) fn set_p_element_id(&self, p_element_id: *mut u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).p_element_id = p_element_id;
-        }
+        view_write!(self, p_element_id, p_element_id)
     }
 
     // `dom_parse_num_children` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn dom_parse_num_children(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).dom_parse_num_children }
+        view_read!(self, dom_parse_num_children)
     }
 
     #[inline(always)]
     pub(crate) fn set_dom_parse_num_children(&self, dom_parse_num_children: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).dom_parse_num_children = dom_parse_num_children;
-        }
+        view_write!(self, dom_parse_num_children, dom_parse_num_children)
     }
 
     // `dom_parse_toplevel` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn dom_parse_toplevel(&self) -> *mut DomNode {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut DomNode` are valid.
-        unsafe { (*self.get()).dom_parse_toplevel }
+        view_read!(self, dom_parse_toplevel)
     }
 
     #[inline(always)]
     pub(crate) fn set_dom_parse_toplevel(&self, dom_parse_toplevel: *mut DomNode) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).dom_parse_toplevel = dom_parse_toplevel;
-        }
+        view_write!(self, dom_parse_toplevel, dom_parse_toplevel)
     }
 
     // `num_templates` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn num_templates(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).num_templates }
+        view_read!(self, num_templates)
     }
 
     #[inline(always)]
     pub(crate) fn set_num_templates(&self, num_templates: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).num_templates = num_templates;
-        }
+        view_write!(self, num_templates, num_templates)
     }
 
     // `templates` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn templates(&self) -> *mut Template {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut Template` are valid.
-        unsafe { (*self.get()).templates }
+        view_read!(self, templates)
     }
 
     #[inline(always)]
     pub(crate) fn set_templates(&self, templates: *mut Template) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).templates = templates;
-        }
+        view_write!(self, templates, templates)
     }
 
     // `tmp_element_byte_offset` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_element_byte_offset(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).tmp_element_byte_offset }
+        view_read!(self, tmp_element_byte_offset)
     }
 
     #[inline(always)]
     pub(crate) fn set_tmp_element_byte_offset(&self, tmp_element_byte_offset: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).tmp_element_byte_offset = tmp_element_byte_offset;
-        }
+        view_write!(self, tmp_element_byte_offset, tmp_element_byte_offset)
     }
 
     // `tmp_arr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_arr(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
-        unsafe { (*self.get()).tmp_arr }
+        view_read!(self, tmp_arr)
     }
 
     // `max_consecutive_indices` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn max_consecutive_indices(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).max_consecutive_indices }
+        view_read!(self, max_consecutive_indices)
     }
 
     #[inline(always)]
     pub(crate) fn set_max_consecutive_indices(&self, max_consecutive_indices: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).max_consecutive_indices = max_consecutive_indices;
-        }
+        view_write!(self, max_consecutive_indices, max_consecutive_indices)
     }
 
     // `max_zero_indices` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn max_zero_indices(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).max_zero_indices }
+        view_read!(self, max_zero_indices)
     }
 
     #[inline(always)]
     pub(crate) fn set_max_zero_indices(&self, max_zero_indices: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).max_zero_indices = max_zero_indices;
-        }
+        view_write!(self, max_zero_indices, max_zero_indices)
     }
 
     // `swap_arr_size` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn swap_arr_size(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).swap_arr_size }
+        view_read!(self, swap_arr_size)
     }
 
     // `swap_arr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn swap_arr(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
-        unsafe { (*self.get()).swap_arr }
+        view_read!(self, swap_arr)
     }
 
     #[inline(always)]
     pub(crate) fn set_swap_arr(&self, swap_arr: *mut u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).swap_arr = swap_arr;
-        }
+        view_write!(self, swap_arr, swap_arr)
     }
 
     // `skip_fn` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn skip_fn(&self) -> Option<unsafe extern "C" fn(*mut c_void, usize) -> bool> {
-        // SAFETY: reading a scalar field; all bit patterns of `Option<unsafe extern "C" fn(*mut c_void, usize) -> bool>` are valid.
-        unsafe { (*self.get()).skip_fn }
+        view_read!(self, skip_fn)
     }
 
     #[inline(always)]
@@ -4255,115 +3830,84 @@ impl Context {
         &self,
         skip_fn: Option<unsafe extern "C" fn(*mut c_void, usize) -> bool>,
     ) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).skip_fn = skip_fn;
-        }
+        view_write!(self, skip_fn, skip_fn)
     }
 
     // `data_offset` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn data_offset(&self) -> u64 {
-        // SAFETY: reading a scalar field; all bit patterns of `u64` are valid.
-        unsafe { (*self.get()).data_offset }
+        view_read!(self, data_offset)
     }
 
     #[inline(always)]
     pub(crate) fn set_data_offset(&self, data_offset: u64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).data_offset = data_offset;
-        }
+        view_write!(self, data_offset, data_offset)
     }
 
     // `double_parse_flags` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn double_parse_flags(&self) -> u32 {
-        // SAFETY: reading a scalar field; all bit patterns of `u32` are valid.
-        unsafe { (*self.get()).double_parse_flags }
+        view_read!(self, double_parse_flags)
     }
 
     #[inline(always)]
     pub(crate) fn set_double_parse_flags(&self, double_parse_flags: u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).double_parse_flags = double_parse_flags;
-        }
+        view_write!(self, double_parse_flags, double_parse_flags)
     }
 
     // `read_legacy_settings` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn read_legacy_settings(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).read_legacy_settings }
+        view_read!(self, read_legacy_settings)
     }
 
     #[inline(always)]
     pub(crate) fn set_read_legacy_settings(&self, read_legacy_settings: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).read_legacy_settings = read_legacy_settings;
-        }
+        view_write!(self, read_legacy_settings, read_legacy_settings)
     }
 
     // `retain_mesh_parts` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn retain_mesh_parts(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).retain_mesh_parts }
+        view_read!(self, retain_mesh_parts)
     }
 
     #[inline(always)]
     pub(crate) fn set_retain_mesh_parts(&self, retain_mesh_parts: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).retain_mesh_parts = retain_mesh_parts;
-        }
+        view_write!(self, retain_mesh_parts, retain_mesh_parts)
     }
 
     // `sure_fbx` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn sure_fbx(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).sure_fbx }
+        view_read!(self, sure_fbx)
     }
 
     #[inline(always)]
     pub(crate) fn set_sure_fbx(&self, sure_fbx: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).sure_fbx = sure_fbx;
-        }
+        view_write!(self, sure_fbx, sure_fbx)
     }
 
     // `file_big_endian` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn file_big_endian(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).file_big_endian }
+        view_read!(self, file_big_endian)
     }
 
     #[inline(always)]
     pub(crate) fn set_file_big_endian(&self, file_big_endian: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).file_big_endian = file_big_endian;
-        }
+        view_write!(self, file_big_endian, file_big_endian)
     }
 
     // `local_big_endian` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn local_big_endian(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).local_big_endian }
+        view_read!(self, local_big_endian)
     }
 
     #[inline(always)]
     pub(crate) fn set_local_big_endian(&self, local_big_endian: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).local_big_endian = local_big_endian;
-        }
+        view_write!(self, local_big_endian, local_big_endian)
     }
 
     // `from_ascii` — scalar value accessor. Named after the C field it reads; the
@@ -4371,48 +3915,35 @@ impl Context {
     #[allow(clippy::wrong_self_convention)]
     #[inline(always)]
     pub(crate) fn from_ascii(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever store valid bools into.
-        unsafe { (*self.get()).from_ascii }
+        view_read!(self, from_ascii)
     }
 
     #[inline(always)]
     pub(crate) fn set_from_ascii(&self, from_ascii: bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).from_ascii = from_ascii;
-        }
+        view_write!(self, from_ascii, from_ascii)
     }
 
     // `exporter_version` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn exporter_version(&self) -> u32 {
-        // SAFETY: reading a scalar field; all bit patterns of `u32` are valid.
-        unsafe { (*self.get()).exporter_version }
+        view_read!(self, exporter_version)
     }
 
     #[inline(always)]
     pub(crate) fn set_exporter_version(&self, exporter_version: u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).exporter_version = exporter_version;
-        }
+        view_write!(self, exporter_version, exporter_version)
     }
 
     // FBX file format version (e.g. 7400). Scalar POD field: value getter +
     // setter, both safe (interior mutability via the `UnsafeCell` seam).
     #[inline(always)]
     pub(crate) fn version(&self) -> u32 {
-        // SAFETY: `version` is a plain `u32` (all bit patterns valid); the
-        // context is live for the borrow of `&self`.
-        unsafe { (*self.get()).version }
+        view_read!(self, version)
     }
 
     #[inline(always)]
     pub(crate) fn set_version(&self, version: u32) {
-        // SAFETY: as `version`; a `u32` store cannot violate validity.
-        unsafe {
-            (*self.get()).version = version;
-        }
+        view_write!(self, version, version)
     }
 
     // Temp-arena allocator. `Allocator` is aliased (copied by raw pointer into
@@ -4420,8 +3951,7 @@ impl Context {
     // pointer, not a reference — passing it onward is a safe operation.
     #[inline(always)]
     pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: projecting a field pointer; no deref, no reference formed.
-        unsafe { &raw mut (*self.get()).ator_tmp }
+        view_raw_mut!(self, ator_tmp)
     }
 
     // Input read cursor. Scalar raw pointer: value getter + setter. Copying a
@@ -4429,46 +3959,34 @@ impl Context {
     // (unchanged) unsafe obligation.
     #[inline(always)]
     pub(crate) fn data(&self) -> *const u8 {
-        // SAFETY: reading a `*const u8` field; all bit patterns valid.
-        unsafe { (*self.get()).data }
+        view_read!(self, data)
     }
 
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *const u8) {
-        // SAFETY: storing a `*const u8`; cannot violate validity.
-        unsafe {
-            (*self.get()).data = data;
-        }
+        view_write!(self, data, data)
     }
 
     // Remaining bytes at the read cursor. Scalar `usize`: value getter + setter.
     #[inline(always)]
     pub(crate) fn data_size(&self) -> usize {
-        // SAFETY: reading a `usize` field; all bit patterns valid.
-        unsafe { (*self.get()).data_size }
+        view_read!(self, data_size)
     }
 
     #[inline(always)]
     pub(crate) fn set_data_size(&self, data_size: usize) {
-        // SAFETY: storing a `usize`; cannot violate validity.
-        unsafe {
-            (*self.get()).data_size = data_size;
-        }
+        view_write!(self, data_size, data_size)
     }
 
     // Bytes remaining before the next progress-yield checkpoint. Scalar `usize`.
     #[inline(always)]
     pub(crate) fn yield_size(&self) -> usize {
-        // SAFETY: reading a `usize` field; all bit patterns valid.
-        unsafe { (*self.get()).yield_size }
+        view_read!(self, yield_size)
     }
 
     #[inline(always)]
     pub(crate) fn set_yield_size(&self, yield_size: usize) {
-        // SAFETY: storing a `usize`; cannot violate validity.
-        unsafe {
-            (*self.get()).yield_size = yield_size;
-        }
+        view_write!(self, yield_size, yield_size)
     }
 
     // Stream read callback. Scalar `Option<fn>` (a nullable fn pointer): value
@@ -4477,8 +3995,7 @@ impl Context {
     pub(crate) fn read_fn(
         &self,
     ) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize> {
-        // SAFETY: reading an `Option<fn>` field; all bit patterns valid.
-        unsafe { (*self.get()).read_fn }
+        view_read!(self, read_fn)
     }
 
     #[inline(always)]
@@ -4486,87 +4003,64 @@ impl Context {
         &self,
         read_fn: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, usize) -> usize>,
     ) {
-        // SAFETY: storing an `Option<fn>`; cannot violate validity.
-        unsafe {
-            (*self.get()).read_fn = read_fn;
-        }
+        view_write!(self, read_fn, read_fn)
     }
 
     // User pointer passed to `read_fn`. Scalar `*mut c_void`: value getter + setter.
     #[inline(always)]
     pub(crate) fn read_user(&self) -> *mut c_void {
-        // SAFETY: reading a `*mut c_void` field; all bit patterns valid.
-        unsafe { (*self.get()).read_user }
+        view_read!(self, read_user)
     }
 
     #[inline(always)]
     pub(crate) fn set_read_user(&self, read_user: *mut c_void) {
-        // SAFETY: storing a `*mut c_void`; cannot violate validity.
-        unsafe {
-            (*self.get()).read_user = read_user;
-        }
+        view_write!(self, read_user, read_user)
     }
 
     // Start of the current read buffer. Scalar `*const u8`: value getter + setter.
     #[inline(always)]
     pub(crate) fn data_begin(&self) -> *const u8 {
-        // SAFETY: reading a `*const u8` field; all bit patterns valid.
-        unsafe { (*self.get()).data_begin }
+        view_read!(self, data_begin)
     }
 
     #[inline(always)]
     pub(crate) fn set_data_begin(&self, data_begin: *const u8) {
-        // SAFETY: storing a `*const u8`; cannot violate validity.
-        unsafe {
-            (*self.get()).data_begin = data_begin;
-        }
+        view_write!(self, data_begin, data_begin)
     }
 
     // End-of-input flag. Scalar `bool` (only `0`/`1` ever stored): value getter
     // + setter.
     #[inline(always)]
     pub(crate) fn eof(&self) -> bool {
-        // SAFETY: reading a `bool` we only ever write valid bools into.
-        unsafe { (*self.get()).eof }
+        view_read!(self, eof)
     }
 
     #[inline(always)]
     pub(crate) fn set_eof(&self, eof: bool) {
-        // SAFETY: storing a `bool`; cannot violate validity.
-        unsafe {
-            (*self.get()).eof = eof;
-        }
+        view_write!(self, eof, eof)
     }
 
     // Progress-callback byte interval. Scalar `usize`: value getter + setter.
     #[inline(always)]
     pub(crate) fn progress_interval(&self) -> usize {
-        // SAFETY: reading a `usize` field; all bit patterns valid.
-        unsafe { (*self.get()).progress_interval }
+        view_read!(self, progress_interval)
     }
 
     #[inline(always)]
     pub(crate) fn set_progress_interval(&self, progress_interval: usize) {
-        // SAFETY: storing a `usize`; cannot violate validity.
-        unsafe {
-            (*self.get()).progress_interval = progress_interval;
-        }
+        view_write!(self, progress_interval, progress_interval)
     }
 
     // Deepest open node on the parse stack. Scalar `*mut Node`: value getter +
     // setter. Copies the pointer out; any deref stays the caller's obligation.
     #[inline(always)]
     pub(crate) fn top_node(&self) -> *mut Node {
-        // SAFETY: reading a `*mut Node` field; all bit patterns valid.
-        unsafe { (*self.get()).top_node }
+        view_read!(self, top_node)
     }
 
     #[inline(always)]
     pub(crate) fn set_top_node(&self, top_node: *mut Node) {
-        // SAFETY: storing a `*mut Node`; cannot violate validity.
-        unsafe {
-            (*self.get()).top_node = top_node;
-        }
+        view_write!(self, top_node, top_node)
     }
 
     // Rust-port: the top node borrowed AS A VIEW. The returned `&NodeView` borrows
@@ -4591,32 +4085,24 @@ impl Context {
     // cannot express writing back through the field).
     #[inline(always)]
     pub(crate) fn read_buffer(&self) -> *mut u8 {
-        // SAFETY: reading a `*mut u8` field; all bit patterns valid.
-        unsafe { (*self.get()).read_buffer }
+        view_read!(self, read_buffer)
     }
 
     #[inline(always)]
     pub(crate) fn set_read_buffer(&self, read_buffer: *mut u8) {
-        // SAFETY: storing a `*mut u8`; cannot violate validity.
-        unsafe {
-            (*self.get()).read_buffer = read_buffer;
-        }
+        view_write!(self, read_buffer, read_buffer)
     }
 
     // Capacity of `read_buffer` in bytes. Scalar `usize`: value getter + setter.
     // The paired `&mut uc.read_buffer_size` out-param site in `refill` stays raw.
     #[inline(always)]
     pub(crate) fn read_buffer_size(&self) -> usize {
-        // SAFETY: reading a `usize` field; all bit patterns valid.
-        unsafe { (*self.get()).read_buffer_size }
+        view_read!(self, read_buffer_size)
     }
 
     #[inline(always)]
     pub(crate) fn set_read_buffer_size(&self, read_buffer_size: usize) {
-        // SAFETY: storing a `usize`; cannot violate validity.
-        unsafe {
-            (*self.get()).read_buffer_size = read_buffer_size;
-        }
+        view_write!(self, read_buffer_size, read_buffer_size)
     }
 }
 

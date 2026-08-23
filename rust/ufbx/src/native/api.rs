@@ -100,6 +100,7 @@ use crate::native::error::{
 #[cfg(feature = "geometry-cache")]
 use crate::native::platform::{min64, to_size, MAX_SKIP_SIZE};
 use crate::native::thread::ThreadPool;
+use crate::native::view::view_read_shared;
 use crate::native::view::{Const, Mode, Mut, View};
 // Used by the feature-enabled arms of `ufbx_bake_anim` /
 // `ufbx_tessellate_nurbs_curve` / `_surface` and unconditionally by
@@ -5994,18 +5995,15 @@ impl<M: Mode> View<DomNode, M> {
 impl<M: Mode> View<DomValue, M> {
     #[inline(always)]
     pub(crate) fn type_(&self) -> DomValueType {
-        // SAFETY: reading the `type_` field of a valid arena `DomValue`.
-        unsafe { (*self.as_ptr()).type_ }
+        view_read_shared!(self, type_)
     }
     #[inline(always)]
     pub(crate) fn value_int(&self) -> i64 {
-        // SAFETY: reading the `value_int` field of a valid arena `DomValue`.
-        unsafe { (*self.as_ptr()).value_int }
+        view_read_shared!(self, value_int)
     }
     #[inline(always)]
     pub(crate) fn value_blob(&self) -> Blob {
-        // SAFETY: reading the `value_blob` field of a valid arena `DomValue`.
-        unsafe { (*self.as_ptr()).value_blob }
+        view_read_shared!(self, value_blob)
     }
 }
 

@@ -49,6 +49,9 @@ use crate::native::scene_process::finalize_mesh_material;
 #[cfg(feature = "subdivision")]
 use crate::native::string_pool::slow_normalize3;
 #[cfg(feature = "subdivision")]
+use crate::native::view::view_raw_mut;
+use crate::native::view::{view_read, view_write};
+#[cfg(feature = "subdivision")]
 use crate::native::view::{Const, Mode, SliceViewIter, View};
 #[cfg(feature = "subdivision")]
 use crate::prelude::{ListView, Real};
@@ -175,102 +178,72 @@ pub(crate) type SubdivideOptsView = crate::native::view::View<RawSubdivideOpts>;
 impl SubdivideOptsView {
     #[inline(always)]
     pub(crate) fn boundary(&self) -> crate::generated::SubdivisionBoundary {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.boundary` read already makes.
-        unsafe { (*self.get()).boundary }
+        view_read!(self, boundary)
     }
 
     #[inline(always)]
     pub(crate) fn evaluate_skin_weights(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.evaluate_skin_weights` read already makes.
-        unsafe { (*self.get()).evaluate_skin_weights }
+        view_read!(self, evaluate_skin_weights)
     }
 
     #[inline(always)]
     pub(crate) fn evaluate_source_vertices(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.evaluate_source_vertices` read already makes.
-        unsafe { (*self.get()).evaluate_source_vertices }
+        view_read!(self, evaluate_source_vertices)
     }
 
     #[inline(always)]
     pub(crate) fn ignore_normals(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.ignore_normals` read already makes.
-        unsafe { (*self.get()).ignore_normals }
+        view_read!(self, ignore_normals)
     }
 
     #[inline(always)]
     pub(crate) fn interpolate_normals(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.interpolate_normals` read already makes.
-        unsafe { (*self.get()).interpolate_normals }
+        view_read!(self, interpolate_normals)
     }
 
     #[inline(always)]
     pub(crate) fn interpolate_tangents(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.interpolate_tangents` read already makes.
-        unsafe { (*self.get()).interpolate_tangents }
+        view_read!(self, interpolate_tangents)
     }
 
     #[inline(always)]
     pub(crate) fn max_skin_weights(&self) -> usize {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.max_skin_weights` read already makes.
-        unsafe { (*self.get()).max_skin_weights }
+        view_read!(self, max_skin_weights)
     }
 
     #[inline(always)]
     pub(crate) fn max_source_vertices(&self) -> usize {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.max_source_vertices` read already makes.
-        unsafe { (*self.get()).max_source_vertices }
+        view_read!(self, max_source_vertices)
     }
 
     #[inline(always)]
     pub(crate) fn result_allocator(&self) -> crate::generated::RawAllocatorOpts {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.result_allocator` read already makes.
-        unsafe { (*self.get()).result_allocator }
+        view_read!(self, result_allocator)
     }
 
     #[inline(always)]
     pub(crate) fn skin_deformer_index(&self) -> usize {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.skin_deformer_index` read already makes.
-        unsafe { (*self.get()).skin_deformer_index }
+        view_read!(self, skin_deformer_index)
     }
 
     #[inline(always)]
     pub(crate) fn temp_allocator(&self) -> crate::generated::RawAllocatorOpts {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.temp_allocator` read already makes.
-        unsafe { (*self.get()).temp_allocator }
+        view_read!(self, temp_allocator)
     }
 
     #[inline(always)]
     pub(crate) fn uv_boundary(&self) -> crate::generated::SubdivisionBoundary {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.uv_boundary` read already makes.
-        unsafe { (*self.get()).uv_boundary }
+        view_read!(self, uv_boundary)
     }
 
     #[inline(always)]
     pub(crate) fn set_boundary(&self, boundary: crate::generated::SubdivisionBoundary) {
-        // SAFETY: interior-mutable write of a POD opts field.
-        unsafe {
-            (*self.get()).boundary = boundary;
-        }
+        view_write!(self, boundary, boundary)
     }
 
     #[inline(always)]
     pub(crate) fn set_uv_boundary(&self, uv_boundary: crate::generated::SubdivisionBoundary) {
-        // SAFETY: interior-mutable write of a POD opts field.
-        unsafe {
-            (*self.get()).uv_boundary = uv_boundary;
-        }
+        view_write!(self, uv_boundary, uv_boundary)
     }
 }
 
@@ -309,14 +282,12 @@ impl SubdivideContext {
 
     #[inline(always)]
     pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
-        unsafe { (*self.get()).ator_result }
+        view_read!(self, ator_result)
     }
 
     #[inline(always)]
     pub(crate) fn set_source(&self, source: crate::native::buf::Buf) {
-        unsafe {
-            (*self.get()).source = source;
-        }
+        view_write!(self, source, source)
     }
 
     #[inline(always)]
@@ -362,65 +333,49 @@ impl SubdivideContext {
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp }
+        view_raw_mut!(self, tmp)
     }
 
     // `src_mesh` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn src_mesh_mut_ptr(&self) -> *mut Mesh {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).src_mesh }
+        view_raw_mut!(self, src_mesh)
     }
 
     // `source` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn source_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).source }
+        view_raw_mut!(self, source)
     }
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).result }
+        view_raw_mut!(self, result)
     }
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn opts_mut_ptr(&self) -> *mut RawSubdivideOpts {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).opts }
+        view_raw_mut!(self, opts)
     }
 
     // `inputs_cap` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn inputs_cap_mut_ptr(&self) -> *mut usize {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).inputs_cap }
+        view_raw_mut!(self, inputs_cap)
     }
 
     // `inputs` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn inputs_mut_ptr(&self) -> *mut *mut SubdivideInput {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).inputs }
+        view_raw_mut!(self, inputs)
     }
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).error }
+        view_raw_mut!(self, error)
     }
 
     // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
@@ -435,17 +390,13 @@ impl SubdivideContext {
     // `dst_mesh` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn dst_mesh_mut_ptr(&self) -> *mut Mesh {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).dst_mesh }
+        view_raw_mut!(self, dst_mesh)
     }
 
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_tmp }
+        view_raw_mut!(self, ator_tmp)
     }
 
     // `ator_tmp` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
@@ -460,9 +411,7 @@ impl SubdivideContext {
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_result }
+        view_raw_mut!(self, ator_result)
     }
 
     // `ator_result` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
@@ -477,135 +426,101 @@ impl SubdivideContext {
     // `max_vertex_weights` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn max_vertex_weights(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).max_vertex_weights }
+        view_read!(self, max_vertex_weights)
     }
 
     #[inline(always)]
     pub(crate) fn set_max_vertex_weights(&self, max_vertex_weights: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).max_vertex_weights = max_vertex_weights;
-        }
+        view_write!(self, max_vertex_weights, max_vertex_weights)
     }
 
     // `total_weights` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn total_weights(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).total_weights }
+        view_read!(self, total_weights)
     }
 
     #[inline(always)]
     pub(crate) fn set_total_weights(&self, total_weights: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).total_weights = total_weights;
-        }
+        view_write!(self, total_weights, total_weights)
     }
 
     // `tmp_weights` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_weights(&self) -> *mut SubdivisionWeight {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut SubdivisionWeight` are valid.
-        unsafe { (*self.get()).tmp_weights }
+        view_read!(self, tmp_weights)
     }
 
     #[inline(always)]
     pub(crate) fn set_tmp_weights(&self, tmp_weights: *mut SubdivisionWeight) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).tmp_weights = tmp_weights;
-        }
+        view_write!(self, tmp_weights, tmp_weights)
     }
 
     // `tmp_vertex_weights` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_vertex_weights(&self) -> *mut Real {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut Real` are valid.
-        unsafe { (*self.get()).tmp_vertex_weights }
+        view_read!(self, tmp_vertex_weights)
     }
 
     #[inline(always)]
     pub(crate) fn set_tmp_vertex_weights(&self, tmp_vertex_weights: *mut Real) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).tmp_vertex_weights = tmp_vertex_weights;
-        }
+        view_write!(self, tmp_vertex_weights, tmp_vertex_weights)
     }
 
     // `inputs_cap` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn inputs_cap(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).inputs_cap }
+        view_read!(self, inputs_cap)
     }
 
     // `inputs` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn inputs(&self) -> *mut SubdivideInput {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut SubdivideInput` are valid.
-        unsafe { (*self.get()).inputs }
+        view_read!(self, inputs)
     }
 
     // `num_topo` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn num_topo(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).num_topo }
+        view_read!(self, num_topo)
     }
 
     #[inline(always)]
     pub(crate) fn set_num_topo(&self, num_topo: usize) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).num_topo = num_topo;
-        }
+        view_write!(self, num_topo, num_topo)
     }
 
     // `topo` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn topo(&self) -> *mut TopoEdge {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut TopoEdge` are valid.
-        unsafe { (*self.get()).topo }
+        view_read!(self, topo)
     }
 
     #[inline(always)]
     pub(crate) fn set_topo(&self, topo: *mut TopoEdge) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).topo = topo;
-        }
+        view_write!(self, topo, topo)
     }
 
     // `src_mesh_ptr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn src_mesh_ptr(&self) -> *mut Mesh {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut Mesh` are valid.
-        unsafe { (*self.get()).src_mesh_ptr }
+        view_read!(self, src_mesh_ptr)
     }
 
     #[inline(always)]
     pub(crate) fn set_src_mesh_ptr(&self, src_mesh_ptr: *mut Mesh) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).src_mesh_ptr = src_mesh_ptr;
-        }
+        view_write!(self, src_mesh_ptr, src_mesh_ptr)
     }
 
     // `imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn imp(&self) -> *mut MeshImp {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut MeshImp` are valid.
-        unsafe { (*self.get()).imp }
+        view_read!(self, imp)
     }
 
     #[inline(always)]
     pub(crate) fn set_imp(&self, imp: *mut MeshImp) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).imp = imp;
-        }
+        view_write!(self, imp, imp)
     }
 }
 

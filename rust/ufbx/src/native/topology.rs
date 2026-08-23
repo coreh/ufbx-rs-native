@@ -31,6 +31,8 @@ use crate::native::platform::{macro_lower_bound_eq, ufbx_assert, unstable_sort, 
 use crate::native::platform::{math, max_real, min_real, stable_sort, ufbxi_ignore, KD_FAST_DEPTH};
 #[cfg(feature = "triangulation")]
 use crate::native::string_pool::{distsq2, dot3, length3, mul3, slow_normalized_cross3};
+#[cfg(feature = "triangulation")]
+use crate::native::view::{view_raw_mut, view_read, view_write};
 use crate::native::view::{Mode, View};
 #[cfg(feature = "triangulation")]
 use crate::prelude::as_f64;
@@ -115,29 +117,23 @@ impl NgonContext {
     // `face`/`cur_face` (Copy `Face`) / `cur_axis_dir` (Copy `Vec3`) — value getter/setter.
     #[inline(always)]
     pub(crate) fn face(&self) -> Face {
-        unsafe { (*self.get()).face }
+        view_read!(self, face)
     }
     #[inline(always)]
     pub(crate) fn set_face(&self, face: Face) {
-        unsafe {
-            (*self.get()).face = face;
-        }
+        view_write!(self, face, face)
     }
     #[inline(always)]
     pub(crate) fn set_cur_face(&self, cur_face: Face) {
-        unsafe {
-            (*self.get()).cur_face = cur_face;
-        }
+        view_write!(self, cur_face, cur_face)
     }
     #[inline(always)]
     pub(crate) fn cur_axis_dir(&self) -> Vec3 {
-        unsafe { (*self.get()).cur_axis_dir }
+        view_read!(self, cur_axis_dir)
     }
     #[inline(always)]
     pub(crate) fn set_cur_axis_dir(&self, cur_axis_dir: Vec3) {
-        unsafe {
-            (*self.get()).cur_axis_dir = cur_axis_dir;
-        }
+        view_write!(self, cur_axis_dir, cur_axis_dir)
     }
     // `axes` ([Vec3; 3]) / `kd_nodes` ([KdNode; N]) — per-element `ScalarView` (Cell)
     // handles: `.get()`/`.set()` for the Copy elements, `.as_ptr()` for addr-of sites.
@@ -153,24 +149,18 @@ impl NgonContext {
     // `positions` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn positions_mut_ptr(&self) -> *mut VertexVec3 {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).positions }
+        view_raw_mut!(self, positions)
     }
 
     // `kd_indices` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn kd_indices(&self) -> *mut u32 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u32` are valid.
-        unsafe { (*self.get()).kd_indices }
+        view_read!(self, kd_indices)
     }
 
     #[inline(always)]
     pub(crate) fn set_kd_indices(&self, kd_indices: *mut u32) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).kd_indices = kd_indices;
-        }
+        view_write!(self, kd_indices, kd_indices)
     }
 }
 

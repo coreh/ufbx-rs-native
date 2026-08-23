@@ -79,6 +79,8 @@ use crate::native::scene_process::MaterialView;
 #[cfg(feature = "obj")]
 use crate::native::string_pool::{push_string_place_blob, push_string_place_str, str_c, str_equal};
 #[cfg(feature = "obj")]
+use crate::native::view::{view_read, view_write};
+#[cfg(feature = "obj")]
 use crate::native::view::{SliceViewIter, View};
 #[cfg(feature = "obj")]
 use crate::native::warnings::ufbxi_warnf;
@@ -118,71 +120,51 @@ pub(crate) type ObjMeshView = View<ObjMesh>;
 impl ObjMeshView {
     #[inline(always)]
     pub(crate) fn num_faces(&self) -> usize {
-        // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
-        unsafe { (*self.get()).num_faces }
+        view_read!(self, num_faces)
     }
     #[inline(always)]
     pub(crate) fn set_num_faces(&self, v: usize) {
-        // SAFETY: storing a scalar field of a valid arena `ObjMesh`.
-        unsafe {
-            (*self.get()).num_faces = v;
-        }
+        view_write!(self, num_faces, v)
     }
     #[inline(always)]
     pub(crate) fn num_indices(&self) -> usize {
-        // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
-        unsafe { (*self.get()).num_indices }
+        view_read!(self, num_indices)
     }
     #[inline(always)]
     pub(crate) fn set_num_indices(&self, v: usize) {
-        // SAFETY: storing a scalar field of a valid arena `ObjMesh`.
-        unsafe {
-            (*self.get()).num_indices = v;
-        }
+        view_write!(self, num_indices, v)
     }
     #[inline(always)]
     pub(crate) fn num_groups(&self) -> u32 {
-        // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
-        unsafe { (*self.get()).num_groups }
+        view_read!(self, num_groups)
     }
     #[inline(always)]
     pub(crate) fn set_num_groups(&self, v: u32) {
-        // SAFETY: storing a scalar field of a valid arena `ObjMesh`.
-        unsafe {
-            (*self.get()).num_groups = v;
-        }
+        view_write!(self, num_groups, v)
     }
     #[inline(always)]
     pub(crate) fn usemtl_base(&self) -> u32 {
-        // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
-        unsafe { (*self.get()).usemtl_base }
+        view_read!(self, usemtl_base)
     }
     #[inline(always)]
     pub(crate) fn set_usemtl_base(&self, v: u32) {
-        // SAFETY: storing a scalar field of a valid arena `ObjMesh`.
-        unsafe {
-            (*self.get()).usemtl_base = v;
-        }
+        view_write!(self, usemtl_base, v)
     }
     #[inline(always)]
     pub(crate) fn fbx_mesh(&self) -> *mut Mesh {
-        // SAFETY: reading the `fbx_mesh` pointer field of a valid arena `ObjMesh`.
-        unsafe { (*self.get()).fbx_mesh }
+        view_read!(self, fbx_mesh)
     }
     #[inline(always)]
     pub(crate) fn fbx_node(&self) -> *mut UfbxNode {
-        // SAFETY: reading the `fbx_node` pointer field of a valid arena `ObjMesh`.
-        unsafe { (*self.get()).fbx_node }
+        view_read!(self, fbx_node)
     }
     #[inline(always)]
     pub(crate) fn fbx_node_id(&self) -> u64 {
-        // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
-        unsafe { (*self.get()).fbx_node_id }
+        view_read!(self, fbx_node_id)
     }
     #[inline(always)]
     pub(crate) fn fbx_mesh_id(&self) -> u64 {
-        // SAFETY: reading a scalar field of a valid arena `ObjMesh`.
-        unsafe { (*self.get()).fbx_mesh_id }
+        view_read!(self, fbx_mesh_id)
     }
     #[inline(always)]
     pub(crate) fn vertex_range_min(&self, attrib: usize) -> u64 {

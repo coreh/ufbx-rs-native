@@ -23,6 +23,7 @@ use crate::native::allocator::{
 #[cfg(feature = "regression")]
 use crate::native::error::ufbxi_check_return_err_msg;
 use crate::native::platform::{ufbx_assert, ufbxi_regression_assert};
+use crate::native::view::{view_read, view_write};
 
 // ufbx.c:57 `#define UFBXI_HUGE_MAX_SCAN 16` (no UFBX_REGRESSION override)
 pub(crate) const HUGE_MAX_SCAN: usize = 16;
@@ -208,25 +209,19 @@ impl BufView {
 impl BufView {
     #[inline(always)]
     pub(crate) fn set_ator(&self, ator: *mut Allocator) {
-        unsafe {
-            (*self.get()).ator = ator;
-        }
+        view_write!(self, ator, ator)
     }
     #[inline(always)]
     pub(crate) fn num_items(&self) -> usize {
-        unsafe { (*self.get()).num_items }
+        view_read!(self, num_items)
     }
     #[inline(always)]
     pub(crate) fn set_unordered(&self, unordered: bool) {
-        unsafe {
-            (*self.get()).unordered = unordered;
-        }
+        view_write!(self, unordered, unordered)
     }
     #[inline(always)]
     pub(crate) fn set_clearable(&self, clearable: bool) {
-        unsafe {
-            (*self.get()).clearable = clearable;
-        }
+        view_write!(self, clearable, clearable)
     }
 }
 

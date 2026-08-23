@@ -123,6 +123,7 @@ use crate::native::string_pool::{
 };
 use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
 use crate::native::view::SliceViewIter;
+use crate::native::view::{view_raw_const, view_raw_mut, view_read, view_write};
 use crate::native::view::{Const, Mode, Mut, View};
 use crate::native::warnings::{pop_warnings, ufbxi_warnf};
 use crate::prelude::as_f64;
@@ -2642,48 +2643,37 @@ pub(crate) type EvaluateOptsView = crate::native::view::View<RawEvaluateOpts>;
 impl EvaluateOptsView {
     #[inline(always)]
     pub(crate) fn evaluate_caches(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.evaluate_caches` read already makes.
-        unsafe { (*self.get()).evaluate_caches }
+        view_read!(self, evaluate_caches)
     }
 
     #[inline(always)]
     pub(crate) fn evaluate_flags(&self) -> u32 {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.evaluate_flags` read already makes.
-        unsafe { (*self.get()).evaluate_flags }
+        view_read!(self, evaluate_flags)
     }
 
     #[inline(always)]
     pub(crate) fn evaluate_skinning(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.evaluate_skinning` read already makes.
-        unsafe { (*self.get()).evaluate_skinning }
+        view_read!(self, evaluate_skinning)
     }
 
     #[inline(always)]
     pub(crate) fn load_external_files(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.load_external_files` read already makes.
-        unsafe { (*self.get()).load_external_files }
+        view_read!(self, load_external_files)
     }
 
     #[inline(always)]
     pub(crate) fn open_file_cb_ptr(&self) -> *const crate::generated::RawOpenFileCb {
-        // SAFETY: `&raw const` address of a read-only sub-struct.
-        unsafe { &raw const (*self.get()).open_file_cb }
+        view_raw_const!(self, open_file_cb)
     }
 
     #[inline(always)]
     pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        // SAFETY: `&raw const` address of a read-only sub-struct.
-        unsafe { &raw const (*self.get()).result_allocator }
+        view_raw_const!(self, result_allocator)
     }
 
     #[inline(always)]
     pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        // SAFETY: `&raw const` address of a read-only sub-struct.
-        unsafe { &raw const (*self.get()).temp_allocator }
+        view_raw_const!(self, temp_allocator)
     }
 }
 
@@ -2704,7 +2694,7 @@ impl EvalContext {
 
     #[inline(always)]
     pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
-        unsafe { (*self.get()).ator_result }
+        view_read!(self, ator_result)
     }
 
     // `scene` (Scene) — typed VIEW handle (reinterpret-in-place); accessors on SceneView.
@@ -2749,49 +2739,37 @@ impl EvalContext {
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp }
+        view_raw_mut!(self, tmp)
     }
 
     // `src_scene` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn src_scene_mut_ptr(&self) -> *mut Scene {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).src_scene }
+        view_raw_mut!(self, src_scene)
     }
 
     // `scene` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn scene_mut_ptr(&self) -> *mut Scene {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).scene }
+        view_raw_mut!(self, scene)
     }
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).result }
+        view_raw_mut!(self, result)
     }
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn opts_mut_ptr(&self) -> *mut RawEvaluateOpts {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).opts }
+        view_raw_mut!(self, opts)
     }
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).error }
+        view_raw_mut!(self, error)
     }
 
     // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
@@ -2806,9 +2784,7 @@ impl EvalContext {
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_tmp }
+        view_raw_mut!(self, ator_tmp)
     }
 
     // `ator_tmp` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
@@ -2823,106 +2799,78 @@ impl EvalContext {
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_result }
+        view_raw_mut!(self, ator_result)
     }
 
     // `anim` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn anim_mut_ptr(&self) -> *mut *mut Anim {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).anim }
+        view_raw_mut!(self, anim)
     }
 
     // `scene_imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn scene_imp(&self) -> *mut SceneImp {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut SceneImp` are valid.
-        unsafe { (*self.get()).scene_imp }
+        view_read!(self, scene_imp)
     }
 
     #[inline(always)]
     pub(crate) fn set_scene_imp(&self, scene_imp: *mut SceneImp) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).scene_imp = scene_imp;
-        }
+        view_write!(self, scene_imp, scene_imp)
     }
 
     // `time` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn time(&self) -> f64 {
-        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
-        unsafe { (*self.get()).time }
+        view_read!(self, time)
     }
 
     #[inline(always)]
     pub(crate) fn set_time(&self, time: f64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).time = time;
-        }
+        view_write!(self, time, time)
     }
 
     // `anim` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn anim(&self) -> *mut Anim {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut Anim` are valid.
-        unsafe { (*self.get()).anim }
+        view_read!(self, anim)
     }
 
     #[inline(always)]
     pub(crate) fn set_anim(&self, anim: *mut Anim) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).anim = anim;
-        }
+        view_write!(self, anim, anim)
     }
 
     // `src_imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn src_imp(&self) -> *mut SceneImp {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut SceneImp` are valid.
-        unsafe { (*self.get()).src_imp }
+        view_read!(self, src_imp)
     }
 
     #[inline(always)]
     pub(crate) fn set_src_imp(&self, src_imp: *mut SceneImp) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).src_imp = src_imp;
-        }
+        view_write!(self, src_imp, src_imp)
     }
 
     #[inline(always)]
     pub(crate) fn dst_element(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
-        unsafe { (*self.get()).dst_element }
+        view_read!(self, dst_element)
     }
 
     #[inline(always)]
     pub(crate) fn set_dst_element(&self, dst_element: *mut u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).dst_element = dst_element;
-        }
+        view_write!(self, dst_element, dst_element)
     }
 
     // `src_element` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn src_element(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
-        unsafe { (*self.get()).src_element }
+        view_read!(self, src_element)
     }
 
     #[inline(always)]
     pub(crate) fn set_src_element(&self, src_element: *mut u8) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).src_element = src_element;
-        }
+        view_write!(self, src_element, src_element)
     }
 }
 
@@ -4431,8 +4379,7 @@ pub(crate) type AnimOptsView = crate::native::view::View<RawAnimOpts>;
 impl AnimOptsView {
     #[inline(always)]
     pub(crate) fn ignore_connections(&self) -> bool {
-        // SAFETY: reading a POD opts field by value.
-        unsafe { (*self.get()).ignore_connections }
+        view_read!(self, ignore_connections)
     }
 
     #[inline(always)]
@@ -4470,14 +4417,12 @@ impl AnimOptsView {
     pub(crate) fn prop_overrides_ptr(
         &self,
     ) -> *const crate::prelude::RawList<crate::generated::RawPropOverrideDesc> {
-        // SAFETY: `&raw const` address of a read-only list field.
-        unsafe { &raw const (*self.get()).prop_overrides }
+        view_raw_const!(self, prop_overrides)
     }
 
     #[inline(always)]
     pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        // SAFETY: `&raw const` address of a read-only sub-struct.
-        unsafe { &raw const (*self.get()).result_allocator }
+        view_raw_const!(self, result_allocator)
     }
 }
 
@@ -4497,7 +4442,7 @@ impl CreateAnimContext {
 
     #[inline(always)]
     pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
-        unsafe { (*self.get()).ator_result }
+        view_read!(self, ator_result)
     }
 
     // `result` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
@@ -4518,25 +4463,19 @@ impl CreateAnimContext {
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).result }
+        view_raw_mut!(self, result)
     }
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn opts_mut_ptr(&self) -> *mut RawAnimOpts {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).opts }
+        view_raw_mut!(self, opts)
     }
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).error }
+        view_raw_mut!(self, error)
     }
 
     // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
@@ -4551,47 +4490,35 @@ impl CreateAnimContext {
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_result }
+        view_raw_mut!(self, ator_result)
     }
 
     // `anim` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn anim_mut_ptr(&self) -> *mut Anim {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).anim }
+        view_raw_mut!(self, anim)
     }
 
     // `imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn imp(&self) -> *mut AnimImp {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut AnimImp` are valid.
-        unsafe { (*self.get()).imp }
+        view_read!(self, imp)
     }
 
     #[inline(always)]
     pub(crate) fn set_imp(&self, imp: *mut AnimImp) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).imp = imp;
-        }
+        view_write!(self, imp, imp)
     }
 
     // `scene` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn scene(&self) -> *const Scene {
-        // SAFETY: reading a scalar field; all bit patterns of `*const Scene` are valid.
-        unsafe { (*self.get()).scene }
+        view_read!(self, scene)
     }
 
     #[inline(always)]
     pub(crate) fn set_scene(&self, scene: *const Scene) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).scene = scene;
-        }
+        view_write!(self, scene, scene)
     }
 }
 
@@ -5090,23 +5017,19 @@ pub(crate) type BakeTimeListView = crate::native::view::View<BakeTimeList>;
 impl BakeTimeListView {
     #[inline(always)]
     pub(crate) fn count(&self) -> usize {
-        unsafe { (*self.get()).count }
+        view_read!(self, count)
     }
     #[inline(always)]
     pub(crate) fn data(&self) -> *mut BakeTime {
-        unsafe { (*self.get()).data }
+        view_read!(self, data)
     }
     #[inline(always)]
     pub(crate) fn set_count(&self, count: usize) {
-        unsafe {
-            (*self.get()).count = count;
-        }
+        view_write!(self, count, count)
     }
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *mut BakeTime) {
-        unsafe {
-            (*self.get()).data = data;
-        }
+        view_write!(self, data, data)
     }
 }
 
@@ -5163,173 +5086,122 @@ pub(crate) type BakeOptsView = crate::native::view::View<RawBakeOpts>;
 impl BakeOptsView {
     #[inline(always)]
     pub(crate) fn trim_start_time(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.trim_start_time` read already makes.
-        unsafe { (*self.get()).trim_start_time }
+        view_read!(self, trim_start_time)
     }
 
     #[inline(always)]
     pub(crate) fn resample_rate(&self) -> f64 {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.resample_rate` read already makes.
-        unsafe { (*self.get()).resample_rate }
+        view_read!(self, resample_rate)
     }
 
     #[inline(always)]
     pub(crate) fn minimum_sample_rate(&self) -> f64 {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.minimum_sample_rate` read already makes.
-        unsafe { (*self.get()).minimum_sample_rate }
+        view_read!(self, minimum_sample_rate)
     }
 
     #[inline(always)]
     pub(crate) fn maximum_sample_rate(&self) -> f64 {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.maximum_sample_rate` read already makes.
-        unsafe { (*self.get()).maximum_sample_rate }
+        view_read!(self, maximum_sample_rate)
     }
 
     #[inline(always)]
     pub(crate) fn bake_transform_props(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.bake_transform_props` read already makes.
-        unsafe { (*self.get()).bake_transform_props }
+        view_read!(self, bake_transform_props)
     }
 
     #[inline(always)]
     pub(crate) fn skip_node_transforms(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.skip_node_transforms` read already makes.
-        unsafe { (*self.get()).skip_node_transforms }
+        view_read!(self, skip_node_transforms)
     }
 
     #[inline(always)]
     pub(crate) fn no_resample_rotation(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.no_resample_rotation` read already makes.
-        unsafe { (*self.get()).no_resample_rotation }
+        view_read!(self, no_resample_rotation)
     }
 
     #[inline(always)]
     pub(crate) fn ignore_layer_weight_animation(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.ignore_layer_weight_animation` read already makes.
-        unsafe { (*self.get()).ignore_layer_weight_animation }
+        view_read!(self, ignore_layer_weight_animation)
     }
 
     #[inline(always)]
     pub(crate) fn max_keyframe_segments(&self) -> usize {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.max_keyframe_segments` read already makes.
-        unsafe { (*self.get()).max_keyframe_segments }
+        view_read!(self, max_keyframe_segments)
     }
 
     #[inline(always)]
     pub(crate) fn step_handling(&self) -> BakeStepHandling {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.step_handling` read already makes.
-        unsafe { (*self.get()).step_handling }
+        view_read!(self, step_handling)
     }
 
     #[inline(always)]
     pub(crate) fn step_custom_duration(&self) -> f64 {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.step_custom_duration` read already makes.
-        unsafe { (*self.get()).step_custom_duration }
+        view_read!(self, step_custom_duration)
     }
 
     #[inline(always)]
     pub(crate) fn step_custom_epsilon(&self) -> f64 {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.step_custom_epsilon` read already makes.
-        unsafe { (*self.get()).step_custom_epsilon }
+        view_read!(self, step_custom_epsilon)
     }
 
     #[inline(always)]
     pub(crate) fn evaluate_flags(&self) -> u32 {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.evaluate_flags` read already makes.
-        unsafe { (*self.get()).evaluate_flags }
+        view_read!(self, evaluate_flags)
     }
 
     #[inline(always)]
     pub(crate) fn key_reduction_enabled(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.key_reduction_enabled` read already makes.
-        unsafe { (*self.get()).key_reduction_enabled }
+        view_read!(self, key_reduction_enabled)
     }
 
     #[inline(always)]
     pub(crate) fn key_reduction_rotation(&self) -> bool {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.key_reduction_rotation` read already makes.
-        unsafe { (*self.get()).key_reduction_rotation }
+        view_read!(self, key_reduction_rotation)
     }
 
     #[inline(always)]
     pub(crate) fn key_reduction_threshold(&self) -> f64 {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.key_reduction_threshold` read already makes.
-        unsafe { (*self.get()).key_reduction_threshold }
+        view_read!(self, key_reduction_threshold)
     }
 
     #[inline(always)]
     pub(crate) fn key_reduction_passes(&self) -> usize {
-        // SAFETY: reading a POD/enum opts field by value — same assertion the
-        // direct `.opts.key_reduction_passes` read already makes.
-        unsafe { (*self.get()).key_reduction_passes }
+        view_read!(self, key_reduction_passes)
     }
 
     #[inline(always)]
     pub(crate) fn set_resample_rate(&self, resample_rate: f64) {
-        // SAFETY: interior-mutable write of a POD opts field; cannot violate validity.
-        unsafe {
-            (*self.get()).resample_rate = resample_rate;
-        }
+        view_write!(self, resample_rate, resample_rate)
     }
 
     #[inline(always)]
     pub(crate) fn set_minimum_sample_rate(&self, minimum_sample_rate: f64) {
-        // SAFETY: interior-mutable write of a POD opts field; cannot violate validity.
-        unsafe {
-            (*self.get()).minimum_sample_rate = minimum_sample_rate;
-        }
+        view_write!(self, minimum_sample_rate, minimum_sample_rate)
     }
 
     #[inline(always)]
     pub(crate) fn set_max_keyframe_segments(&self, max_keyframe_segments: usize) {
-        // SAFETY: interior-mutable write of a POD opts field; cannot violate validity.
-        unsafe {
-            (*self.get()).max_keyframe_segments = max_keyframe_segments;
-        }
+        view_write!(self, max_keyframe_segments, max_keyframe_segments)
     }
 
     #[inline(always)]
     pub(crate) fn set_key_reduction_threshold(&self, key_reduction_threshold: f64) {
-        // SAFETY: interior-mutable write of a POD opts field; cannot violate validity.
-        unsafe {
-            (*self.get()).key_reduction_threshold = key_reduction_threshold;
-        }
+        view_write!(self, key_reduction_threshold, key_reduction_threshold)
     }
 
     #[inline(always)]
     pub(crate) fn set_key_reduction_passes(&self, key_reduction_passes: usize) {
-        // SAFETY: interior-mutable write of a POD opts field; cannot violate validity.
-        unsafe {
-            (*self.get()).key_reduction_passes = key_reduction_passes;
-        }
+        view_write!(self, key_reduction_passes, key_reduction_passes)
     }
 
     #[inline(always)]
     pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        // SAFETY: `&raw const` address of a read-only sub-struct; no reference formed.
-        unsafe { &raw const (*self.get()).temp_allocator }
+        view_raw_const!(self, temp_allocator)
     }
 
     #[inline(always)]
     pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        // SAFETY: `&raw const` address of a read-only sub-struct; no reference formed.
-        unsafe { &raw const (*self.get()).result_allocator }
+        view_raw_const!(self, result_allocator)
     }
 }
 
@@ -5352,27 +5224,19 @@ pub(crate) type BakedAnimMetadataView =
 impl BakedAnimMetadataView {
     #[inline(always)]
     pub(crate) fn set_result_memory_used(&self, result_memory_used: usize) {
-        unsafe {
-            (*self.get()).result_memory_used = result_memory_used;
-        }
+        view_write!(self, result_memory_used, result_memory_used)
     }
     #[inline(always)]
     pub(crate) fn set_temp_memory_used(&self, temp_memory_used: usize) {
-        unsafe {
-            (*self.get()).temp_memory_used = temp_memory_used;
-        }
+        view_write!(self, temp_memory_used, temp_memory_used)
     }
     #[inline(always)]
     pub(crate) fn set_result_allocs(&self, result_allocs: usize) {
-        unsafe {
-            (*self.get()).result_allocs = result_allocs;
-        }
+        view_write!(self, result_allocs, result_allocs)
     }
     #[inline(always)]
     pub(crate) fn set_temp_allocs(&self, temp_allocs: usize) {
-        unsafe {
-            (*self.get()).temp_allocs = temp_allocs;
-        }
+        view_write!(self, temp_allocs, temp_allocs)
     }
 }
 
@@ -5400,33 +5264,23 @@ impl BakedAnimView {
 
     #[inline(always)]
     pub(crate) fn set_key_time_min(&self, key_time_min: f64) {
-        unsafe {
-            (*self.get()).key_time_min = key_time_min;
-        }
+        view_write!(self, key_time_min, key_time_min)
     }
     #[inline(always)]
     pub(crate) fn set_key_time_max(&self, key_time_max: f64) {
-        unsafe {
-            (*self.get()).key_time_max = key_time_max;
-        }
+        view_write!(self, key_time_max, key_time_max)
     }
     #[inline(always)]
     pub(crate) fn set_playback_time_begin(&self, playback_time_begin: f64) {
-        unsafe {
-            (*self.get()).playback_time_begin = playback_time_begin;
-        }
+        view_write!(self, playback_time_begin, playback_time_begin)
     }
     #[inline(always)]
     pub(crate) fn set_playback_time_end(&self, playback_time_end: f64) {
-        unsafe {
-            (*self.get()).playback_time_end = playback_time_end;
-        }
+        view_write!(self, playback_time_end, playback_time_end)
     }
     #[inline(always)]
     pub(crate) fn set_playback_duration(&self, playback_duration: f64) {
-        unsafe {
-            (*self.get()).playback_duration = playback_duration;
-        }
+        view_write!(self, playback_duration, playback_duration)
     }
 
     #[inline(always)]
@@ -5444,7 +5298,7 @@ impl BakeContext {
 
     #[inline(always)]
     pub(crate) fn bake_mut_ptr(&self) -> *mut BakedAnim {
-        unsafe { &raw mut (*self.get()).bake }
+        view_raw_mut!(self, bake)
     }
 
     #[inline(always)]
@@ -5457,7 +5311,7 @@ impl BakeContext {
 
     #[inline(always)]
     pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
-        unsafe { (*self.get()).ator_result }
+        view_read!(self, ator_result)
     }
 
     // `layer_weight_times` (BakeTimeList) — typed VIEW handle (reinterpret-in-place).
@@ -5549,105 +5403,79 @@ impl BakeContext {
     // `tmp_times` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_times_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_times }
+        view_raw_mut!(self, tmp_times)
     }
 
     // `tmp_props` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_props_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_props }
+        view_raw_mut!(self, tmp_props)
     }
 
     // `tmp_prop` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_prop_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_prop }
+        view_raw_mut!(self, tmp_prop)
     }
 
     // `tmp_nodes` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_nodes_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_nodes }
+        view_raw_mut!(self, tmp_nodes)
     }
 
     // `tmp_elements` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_elements_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_elements }
+        view_raw_mut!(self, tmp_elements)
     }
 
     // `tmp_bake_stack` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_bake_stack_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_bake_stack }
+        view_raw_mut!(self, tmp_bake_stack)
     }
 
     // `tmp_bake_props` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_bake_props_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_bake_props }
+        view_raw_mut!(self, tmp_bake_props)
     }
 
     // `tmp_arr_size` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_arr_size_mut_ptr(&self) -> *mut usize {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_arr_size }
+        view_raw_mut!(self, tmp_arr_size)
     }
 
     // `tmp_arr` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_arr_mut_ptr(&self) -> *mut *mut u8 {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp_arr }
+        view_raw_mut!(self, tmp_arr)
     }
 
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp }
+        view_raw_mut!(self, tmp)
     }
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).result }
+        view_raw_mut!(self, result)
     }
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn opts_mut_ptr(&self) -> *mut RawBakeOpts {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).opts }
+        view_raw_mut!(self, opts)
     }
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).error }
+        view_raw_mut!(self, error)
     }
 
     // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
@@ -5662,9 +5490,7 @@ impl BakeContext {
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_tmp }
+        view_raw_mut!(self, ator_tmp)
     }
 
     // `ator_tmp` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
@@ -5679,9 +5505,7 @@ impl BakeContext {
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_result }
+        view_raw_mut!(self, ator_result)
     }
 
     // `ator_result` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
@@ -5696,165 +5520,123 @@ impl BakeContext {
     // `scene` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn scene(&self) -> *const Scene {
-        // SAFETY: reading a scalar field; all bit patterns of `*const Scene` are valid.
-        unsafe { (*self.get()).scene }
+        view_read!(self, scene)
     }
 
     #[inline(always)]
     pub(crate) fn set_scene(&self, scene: *const Scene) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).scene = scene;
-        }
+        view_write!(self, scene, scene)
     }
 
     // `anim` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn anim(&self) -> *const Anim {
-        // SAFETY: reading a scalar field; all bit patterns of `*const Anim` are valid.
-        unsafe { (*self.get()).anim }
+        view_read!(self, anim)
     }
 
     #[inline(always)]
     pub(crate) fn set_anim(&self, anim: *const Anim) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).anim = anim;
-        }
+        view_write!(self, anim, anim)
     }
 
     // `imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn imp(&self) -> *mut BakedAnimImp {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut BakedAnimImp` are valid.
-        unsafe { (*self.get()).imp }
+        view_read!(self, imp)
     }
 
     #[inline(always)]
     pub(crate) fn set_imp(&self, imp: *mut BakedAnimImp) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).imp = imp;
-        }
+        view_write!(self, imp, imp)
     }
 
     // `time_max` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn time_max(&self) -> f64 {
-        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
-        unsafe { (*self.get()).time_max }
+        view_read!(self, time_max)
     }
 
     #[inline(always)]
     pub(crate) fn set_time_max(&self, time_max: f64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).time_max = time_max;
-        }
+        view_write!(self, time_max, time_max)
     }
 
     // `time_min` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn time_min(&self) -> f64 {
-        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
-        unsafe { (*self.get()).time_min }
+        view_read!(self, time_min)
     }
 
     #[inline(always)]
     pub(crate) fn set_time_min(&self, time_min: f64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).time_min = time_min;
-        }
+        view_write!(self, time_min, time_min)
     }
 
     // `time_end` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn time_end(&self) -> f64 {
-        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
-        unsafe { (*self.get()).time_end }
+        view_read!(self, time_end)
     }
 
     #[inline(always)]
     pub(crate) fn set_time_end(&self, time_end: f64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).time_end = time_end;
-        }
+        view_write!(self, time_end, time_end)
     }
 
     // `time_begin` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn time_begin(&self) -> f64 {
-        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
-        unsafe { (*self.get()).time_begin }
+        view_read!(self, time_begin)
     }
 
     #[inline(always)]
     pub(crate) fn set_time_begin(&self, time_begin: f64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).time_begin = time_begin;
-        }
+        view_write!(self, time_begin, time_begin)
     }
 
     // `ktime_offset` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn ktime_offset(&self) -> f64 {
-        // SAFETY: reading a scalar field; all bit patterns of `f64` are valid.
-        unsafe { (*self.get()).ktime_offset }
+        view_read!(self, ktime_offset)
     }
 
     #[inline(always)]
     pub(crate) fn set_ktime_offset(&self, ktime_offset: f64) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).ktime_offset = ktime_offset;
-        }
+        view_write!(self, ktime_offset, ktime_offset)
     }
 
     // `tmp_arr_size` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_arr_size(&self) -> usize {
-        // SAFETY: reading a scalar field; all bit patterns of `usize` are valid.
-        unsafe { (*self.get()).tmp_arr_size }
+        view_read!(self, tmp_arr_size)
     }
 
     // `tmp_arr` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn tmp_arr(&self) -> *mut u8 {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut u8` are valid.
-        unsafe { (*self.get()).tmp_arr }
+        view_read!(self, tmp_arr)
     }
 
     // `nodes_to_bake` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn nodes_to_bake(&self) -> *mut bool {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut bool` are valid.
-        unsafe { (*self.get()).nodes_to_bake }
+        view_read!(self, nodes_to_bake)
     }
 
     #[inline(always)]
     pub(crate) fn set_nodes_to_bake(&self, nodes_to_bake: *mut bool) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).nodes_to_bake = nodes_to_bake;
-        }
+        view_write!(self, nodes_to_bake, nodes_to_bake)
     }
 
     // `baked_nodes` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn baked_nodes(&self) -> *mut *mut BakedNode {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut *mut BakedNode` are valid.
-        unsafe { (*self.get()).baked_nodes }
+        view_read!(self, baked_nodes)
     }
 
     #[inline(always)]
     pub(crate) fn set_baked_nodes(&self, baked_nodes: *mut *mut BakedNode) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).baked_nodes = baked_nodes;
-        }
+        view_write!(self, baked_nodes, baked_nodes)
     }
 }
 
@@ -5884,20 +5666,17 @@ pub(crate) type BakePropView = crate::native::view::View<BakeProp>;
 impl BakePropView {
     #[inline(always)]
     pub(crate) fn prop_name(&self) -> *const u8 {
-        // SAFETY: view over a valid, initialized `BakeProp`; leaf read.
-        unsafe { (*self.get()).prop_name }
+        view_read!(self, prop_name)
     }
 
     #[inline(always)]
     pub(crate) fn anim_value(&self) -> *mut AnimValue {
-        // SAFETY: view over a valid, initialized `BakeProp`; leaf read.
-        unsafe { (*self.get()).anim_value }
+        view_read!(self, anim_value)
     }
 
     #[inline(always)]
     pub(crate) fn element_id(&self) -> u32 {
-        // SAFETY: view over a valid, initialized `BakeProp`; leaf read.
-        unsafe { (*self.get()).element_id }
+        view_read!(self, element_id)
     }
 }
 

@@ -56,7 +56,10 @@ use crate::native::scene_process::finalize_mesh_material;
 #[cfg(feature = "tessellation")]
 use crate::native::string_pool::slow_normalize3;
 #[cfg(feature = "tessellation")]
+use crate::native::view::view_raw_mut;
+#[cfg(feature = "tessellation")]
 use crate::native::view::View;
+use crate::native::view::{view_raw_const, view_read, view_write};
 #[cfg(feature = "tessellation")]
 use crate::prelude::Ref;
 use crate::prelude::{List, Real};
@@ -202,21 +205,19 @@ pub(crate) type TessellateCurveOptsView =
 impl TessellateCurveOptsView {
     #[inline(always)]
     pub(crate) fn span_subdivision(&self) -> usize {
-        unsafe { (*self.get()).span_subdivision }
+        view_read!(self, span_subdivision)
     }
     #[inline(always)]
     pub(crate) fn set_span_subdivision(&self, span_subdivision: usize) {
-        unsafe {
-            (*self.get()).span_subdivision = span_subdivision;
-        }
+        view_write!(self, span_subdivision, span_subdivision)
     }
     #[inline(always)]
     pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        unsafe { &raw const (*self.get()).temp_allocator }
+        view_raw_const!(self, temp_allocator)
     }
     #[inline(always)]
     pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        unsafe { &raw const (*self.get()).result_allocator }
+        view_raw_const!(self, result_allocator)
     }
 }
 
@@ -227,35 +228,31 @@ pub(crate) type TessellateSurfaceOptsView =
 impl TessellateSurfaceOptsView {
     #[inline(always)]
     pub(crate) fn span_subdivision_u(&self) -> usize {
-        unsafe { (*self.get()).span_subdivision_u }
+        view_read!(self, span_subdivision_u)
     }
     #[inline(always)]
     pub(crate) fn set_span_subdivision_u(&self, span_subdivision_u: usize) {
-        unsafe {
-            (*self.get()).span_subdivision_u = span_subdivision_u;
-        }
+        view_write!(self, span_subdivision_u, span_subdivision_u)
     }
     #[inline(always)]
     pub(crate) fn span_subdivision_v(&self) -> usize {
-        unsafe { (*self.get()).span_subdivision_v }
+        view_read!(self, span_subdivision_v)
     }
     #[inline(always)]
     pub(crate) fn set_span_subdivision_v(&self, span_subdivision_v: usize) {
-        unsafe {
-            (*self.get()).span_subdivision_v = span_subdivision_v;
-        }
+        view_write!(self, span_subdivision_v, span_subdivision_v)
     }
     #[inline(always)]
     pub(crate) fn skip_mesh_parts(&self) -> bool {
-        unsafe { (*self.get()).skip_mesh_parts }
+        view_read!(self, skip_mesh_parts)
     }
     #[inline(always)]
     pub(crate) fn temp_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        unsafe { &raw const (*self.get()).temp_allocator }
+        view_raw_const!(self, temp_allocator)
     }
     #[inline(always)]
     pub(crate) fn result_allocator_ptr(&self) -> *const crate::generated::RawAllocatorOpts {
-        unsafe { &raw const (*self.get()).result_allocator }
+        view_raw_const!(self, result_allocator)
     }
 }
 
@@ -282,7 +279,7 @@ impl TessellateCurveContext {
 
     #[inline(always)]
     pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
-        unsafe { (*self.get()).ator_result }
+        view_read!(self, ator_result)
     }
 
     #[inline(always)]
@@ -300,49 +297,37 @@ impl TessellateCurveContext {
     // `line` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn line_mut_ptr(&self) -> *mut LineCurve {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).line }
+        view_raw_mut!(self, line)
     }
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).result }
+        view_raw_mut!(self, result)
     }
 
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_result }
+        view_raw_mut!(self, ator_result)
     }
 
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_tmp }
+        view_raw_mut!(self, ator_tmp)
     }
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn opts_mut_ptr(&self) -> *mut RawTessellateCurveOpts {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).opts }
+        view_raw_mut!(self, opts)
     }
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).error }
+        view_raw_mut!(self, error)
     }
 
     // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
@@ -357,31 +342,23 @@ impl TessellateCurveContext {
     // `imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn imp(&self) -> *mut LineCurveImp {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut LineCurveImp` are valid.
-        unsafe { (*self.get()).imp }
+        view_read!(self, imp)
     }
 
     #[inline(always)]
     pub(crate) fn set_imp(&self, imp: *mut LineCurveImp) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).imp = imp;
-        }
+        view_write!(self, imp, imp)
     }
 
     // `curve` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn curve(&self) -> *const NurbsCurve {
-        // SAFETY: reading a scalar field; all bit patterns of `*const NurbsCurve` are valid.
-        unsafe { (*self.get()).curve }
+        view_read!(self, curve)
     }
 
     #[inline(always)]
     pub(crate) fn set_curve(&self, curve: *const NurbsCurve) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).curve = curve;
-        }
+        view_write!(self, curve, curve)
     }
 }
 
@@ -436,7 +413,7 @@ impl TessellateSurfaceContext {
 
     #[inline(always)]
     pub(crate) fn ator_result(&self) -> crate::native::allocator::Allocator {
-        unsafe { (*self.get()).ator_result }
+        view_read!(self, ator_result)
     }
 
     #[inline(always)]
@@ -461,65 +438,49 @@ impl TessellateSurfaceContext {
     // `mesh` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn mesh_mut_ptr(&self) -> *mut Mesh {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).mesh }
+        view_raw_mut!(self, mesh)
     }
 
     // `position_map` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn position_map_mut_ptr(&self) -> *mut Map {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).position_map }
+        view_raw_mut!(self, position_map)
     }
 
     // `tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn tmp_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).tmp }
+        view_raw_mut!(self, tmp)
     }
 
     // `result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn result_mut_ptr(&self) -> *mut Buf {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).result }
+        view_raw_mut!(self, result)
     }
 
     // `ator_result` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_result }
+        view_raw_mut!(self, ator_result)
     }
 
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).ator_tmp }
+        view_raw_mut!(self, ator_tmp)
     }
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn opts_mut_ptr(&self) -> *mut RawTessellateSurfaceOpts {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).opts }
+        view_raw_mut!(self, opts)
     }
 
     // `error` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn error_mut_ptr(&self) -> *mut Error {
-        // SAFETY: `&raw mut` computes the field address with the cell's
-        // provenance without forming a reference; no aliasing assertion.
-        unsafe { &raw mut (*self.get()).error }
+        view_raw_mut!(self, error)
     }
 
     // `error` — anchored VIEW handle; accessors on `ErrorView`. Routes the
@@ -534,31 +495,23 @@ impl TessellateSurfaceContext {
     // `imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn imp(&self) -> *mut MeshImp {
-        // SAFETY: reading a scalar field; all bit patterns of `*mut MeshImp` are valid.
-        unsafe { (*self.get()).imp }
+        view_read!(self, imp)
     }
 
     #[inline(always)]
     pub(crate) fn set_imp(&self, imp: *mut MeshImp) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).imp = imp;
-        }
+        view_write!(self, imp, imp)
     }
 
     // `surface` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn surface(&self) -> *const NurbsSurface {
-        // SAFETY: reading a scalar field; all bit patterns of `*const NurbsSurface` are valid.
-        unsafe { (*self.get()).surface }
+        view_read!(self, surface)
     }
 
     #[inline(always)]
     pub(crate) fn set_surface(&self, surface: *const NurbsSurface) {
-        // SAFETY: storing a scalar; cannot violate validity.
-        unsafe {
-            (*self.get()).surface = surface;
-        }
+        view_write!(self, surface, surface)
     }
 }
 
