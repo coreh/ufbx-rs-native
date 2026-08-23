@@ -5216,18 +5216,9 @@ pub fn evaluate_scene(
 }
 
 pub unsafe fn create_anim_raw(scene: &Scene, opts: &RawAnimOpts) -> Result<AnimRoot> {
-    let mut error: Error = Error::default();
-    let result = {
-        crate::native::api::create_anim(
-            scene as *const Scene,
-            opts as *const RawAnimOpts,
-            &mut error,
-        )
-    };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(AnimRoot::new(result))
+    let result =
+        { crate::native::api::create_anim(scene as *const Scene, opts as *const RawAnimOpts) };
+    result.map(AnimRoot::new)
 }
 
 pub fn create_anim(scene: &Scene, opts: AnimOpts) -> Result<AnimRoot> {
@@ -5242,19 +5233,14 @@ pub unsafe fn bake_anim_raw(
     anim: &Anim,
     opts: &RawBakeOpts,
 ) -> Result<BakedAnimRoot> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::bake_anim(
             scene as *const Scene,
             anim as *const Anim,
             opts as *const RawBakeOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(BakedAnimRoot::new(result))
+    result.map(BakedAnimRoot::new)
 }
 
 pub fn bake_anim(scene: &Scene, anim: &Anim, opts: BakeOpts) -> Result<BakedAnimRoot> {
@@ -5615,18 +5601,13 @@ pub unsafe fn tessellate_nurbs_curve_raw(
     curve: &NurbsCurve,
     opts: &RawTessellateCurveOpts,
 ) -> Result<LineCurveRoot> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::tessellate_nurbs_curve(
             curve as *const NurbsCurve,
             opts as *const RawTessellateCurveOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(LineCurveRoot::new(result))
+    result.map(LineCurveRoot::new)
 }
 
 pub fn tessellate_nurbs_curve(
@@ -5643,18 +5624,13 @@ pub unsafe fn tessellate_nurbs_surface_raw(
     surface: &NurbsSurface,
     opts: &RawTessellateSurfaceOpts,
 ) -> Result<MeshRoot> {
-    let mut error: Error = Error::default();
     let result = {
         crate::native::api::tessellate_nurbs_surface(
             surface as *const NurbsSurface,
             opts as *const RawTessellateSurfaceOpts,
-            &mut error,
         )
     };
-    if error.type_ != ErrorType::None {
-        return Err(error);
-    }
-    Ok(MeshRoot::new(result))
+    result.map(MeshRoot::new)
 }
 
 pub fn tessellate_nurbs_surface(

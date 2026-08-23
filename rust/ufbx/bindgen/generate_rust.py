@@ -453,6 +453,10 @@ result_shaped_natives = {
     "ufbx_load_stdio_prefix",
     "ufbx_load_stream",
     "ufbx_load_stream_prefix",
+    "ufbx_create_anim",
+    "ufbx_bake_anim",
+    "ufbx_tessellate_nurbs_curve",
+    "ufbx_tessellate_nurbs_surface",
 }
 override_member_functions = { }
 

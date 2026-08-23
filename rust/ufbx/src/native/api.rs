@@ -105,9 +105,9 @@ use crate::native::view::{Const, Mode, Mut, View};
 // Used by the feature-enabled arms of `ufbx_bake_anim` /
 // `ufbx_tessellate_nurbs_curve` / `_surface` and unconditionally by
 // `ufbx_subdivide_mesh` / `ufbx_load_geometry_cache_len`.
+use crate::native::error::fix_error_type;
 use crate::native::error::ufbxi_check_opts_ptr;
 use crate::native::error::ufbxi_check_opts_res;
-use crate::native::error::{clear_error, fix_error_type};
 #[cfg(any(
     not(feature = "scene-eval"),
     not(feature = "baking"),
@@ -2173,11 +2173,10 @@ pub(crate) unsafe fn evaluate_scene(
 pub(crate) unsafe fn create_anim(
     scene: *const Scene,
     opts: *const RawAnimOpts,
-    error: *mut Error,
-) -> *mut Anim {
+) -> Result<*mut Anim, Error> {
     // SAFETY: `opts` is null-or-live per this fn's contract; the macro reads its
     // sentinel fields only when non-null.
-    unsafe { ufbxi_check_opts_ptr!(Anim, opts, error) };
+    unsafe { ufbxi_check_opts_res!(opts) };
     ufbx_assert!(!scene.is_null());
 
     // C: `ufbxi_create_anim_context ac = { UFBX_ERROR_NONE };`
@@ -2200,21 +2199,29 @@ pub(crate) unsafe fn create_anim(
     let result = evaluate::create_anim_imp(&ac);
 
     if let Ok(finished_imp) = result {
-        // SAFETY: `error` is null-or-live per this fn's contract.
-        unsafe { clear_error(error) };
         // C: `return &ac->imp->anim;` — commit the finished imp across the ABI.
-        finished_imp.into_payload()
+        // (The success-path `clear_error` of the caller's slot lives in the
+        // boundary shim.)
+        Ok(finished_imp.into_payload())
     } else {
+        // C copies the fixed error into the caller's slot; the `Result` shape
+        // carries it by value (the shim owns the slot writes).
+        let mut fixed: Error = Error::default();
         // SAFETY: `ac.error_mut_ptr()` is the context's own error slot and
-        // `error` is null-or-live per this fn's contract.
+        // `&raw mut fixed` this frame's live `Error`, which `fix_error_type`
+        // accepts.
         unsafe {
-            fix_error_type(ac.error_mut_ptr(), b"Failed to create anim\0", error);
+            fix_error_type(
+                ac.error_mut_ptr(),
+                b"Failed to create anim\0",
+                &raw mut fixed,
+            );
         }
         // SAFETY: `ac.result_mut_ptr()` is the context's own result buffer.
         unsafe { buf_free(ac.result_mut_ptr()) };
         // SAFETY: `ac.ator_result_mut_ptr()` is the context's own result allocator.
         unsafe { free_ator(ac.ator_result_mut_ptr()) };
-        core::ptr::null_mut()
+        Err(fixed)
     }
 }
 
@@ -2272,12 +2279,11 @@ pub(crate) unsafe fn bake_anim(
     scene: *const Scene,
     anim: *const Anim,
     opts: *const RawBakeOpts,
-    error: *mut Error,
-) -> *mut BakedAnim {
+) -> Result<*mut BakedAnim, Error> {
     ufbx_assert!(!scene.is_null());
     // SAFETY: `opts` is null-or-live per this fn's contract; the macro reads its
     // sentinel fields only when non-null.
-    unsafe { ufbxi_check_opts_ptr!(BakedAnim, opts, error) };
+    unsafe { ufbxi_check_opts_res!(opts) };
     let mut anim = anim;
     if anim.is_null() {
         // SAFETY: `scene` is non-null (asserted) and points at a live `Scene` —
@@ -2325,23 +2331,26 @@ pub(crate) unsafe fn bake_anim(
     unsafe { free_ator(bc.ator_tmp_mut_ptr()) };
 
     if ok.is_ok() {
-        // SAFETY: `error` is null-or-live per this fn's contract.
-        unsafe { clear_error(error) };
         let imp: *mut BakedAnimImp = bc.imp();
         // SAFETY: `imp` is the context's live baked-anim imp; `&raw mut
-        // (*imp).bake` addresses its own `bake` field.
-        unsafe { &raw mut (*imp).bake }
+        // (*imp).bake` addresses its own `bake` field. (The success-path
+        // `clear_error` of the caller's slot lives in the boundary shim.)
+        Ok(unsafe { &raw mut (*imp).bake })
     } else {
-        // SAFETY: `bc.error_mut_ptr()` is the context's own error slot and `error`
-        // is null-or-live per this fn's contract.
+        // C copies the fixed error into the caller's slot; the `Result` shape
+        // carries it by value (the shim owns the slot writes).
+        let mut fixed: Error = Error::default();
+        // SAFETY: `bc.error_mut_ptr()` is the context's own error slot and
+        // `&raw mut fixed` this frame's live `Error`, which `fix_error_type`
+        // accepts.
         unsafe {
-            fix_error_type(bc.error_mut_ptr(), b"Failed to bake anim\0", error);
+            fix_error_type(bc.error_mut_ptr(), b"Failed to bake anim\0", &raw mut fixed);
         }
         // SAFETY: `bc.result_mut_ptr()` is the context's own result buffer.
         unsafe { buf_free(bc.result_mut_ptr()) };
         // SAFETY: `bc.ator_result_mut_ptr()` is the context's own result allocator.
         unsafe { free_ator(bc.ator_result_mut_ptr()) };
-        core::ptr::null_mut()
+        Err(fixed)
     }
 }
 
@@ -2350,27 +2359,24 @@ pub(crate) unsafe fn bake_anim(
     scene: *const Scene,
     anim: *const Anim,
     opts: *const RawBakeOpts,
-    error: *mut Error,
-) -> *mut BakedAnim {
+) -> Result<*mut BakedAnim, Error> {
     ufbx_assert!(!scene.is_null());
     // C: `anim`/`opts` are unreferenced in the `#else` arm.
     let _ = (anim, opts);
-    if !error.is_null() {
-        // SAFETY: `error` is non-null (checked) and points at the caller's live
-        // `Error` — the raw-pointer contract of this `unsafe fn`; the write
-        // zero-fills exactly its `Error` byte extent.
-        unsafe {
-            core::ptr::write_bytes(error as *mut u8, 0, size_of::<Error>());
-        }
-        // SAFETY: `error` is the live error slot the `%s`-less format writes into.
-        unsafe { ufbxi_fmt_err_info!(error, "UFBX_ENABLE_ANIMATION_BAKING") };
-        ufbxi_report_err_msg!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
-            "UFBXI_FEATURE_ANIMATION_BAKING",
-            "Feature disabled"
-        );
-    }
-    core::ptr::null_mut()
+    // C zero-fills the caller slot then formats into it; the `Result` shape
+    // builds the same bytes in a local carried by `Err` (the shim owns the
+    // slot writes).
+    let mut error: Error = Error::default();
+    // SAFETY: `&raw mut error` is this frame's live `Error` slot the `%s`-less
+    // format writes into.
+    unsafe { ufbxi_fmt_err_info!(&raw mut error, "UFBX_ENABLE_ANIMATION_BAKING") };
+    ufbxi_report_err_msg!(
+        // SAFETY: same live local `Error` slot, minted as a view for the report.
+        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
+        "UFBXI_FEATURE_ANIMATION_BAKING",
+        "Feature disabled"
+    );
+    Err(error)
 }
 
 // ufbx.c:31291-31299 `ufbx_retain_baked_anim`
@@ -4383,14 +4389,15 @@ pub(crate) unsafe fn evaluate_nurbs_surface(
 pub(crate) unsafe fn tessellate_nurbs_curve(
     curve: *const NurbsCurve,
     opts: *const RawTessellateCurveOpts,
-    error: *mut Error,
-) -> *mut LineCurve {
+) -> Result<*mut LineCurve, Error> {
     // SAFETY: `opts` is this fn's raw-pointer param; the macro reads its
     // `_begin_zero`/`_end_zero` guard fields only after a null check.
-    unsafe { ufbxi_check_opts_ptr!(LineCurve, opts, error) };
+    unsafe { ufbxi_check_opts_res!(opts) };
     ufbx_assert!(!curve.is_null());
     if curve.is_null() {
-        return core::ptr::null_mut();
+        // C's silent NULL: no slot write on this path — the shim clears the
+        // caller slot only for an `Ok` with a non-null payload.
+        return Ok(core::ptr::null_mut());
     }
 
     // C: `ufbxi_tessellate_curve_context tc = { UFBX_ERROR_NONE };`
@@ -4413,15 +4420,21 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
     unsafe { free_ator(tc.ator_tmp_mut_ptr()) };
 
     if let Ok(finished_imp) = result {
-        // SAFETY: `error` is this fn's raw-pointer param, null or a live `Error`.
-        unsafe { clear_error(error) };
-        // C: `return &tc->imp->curve;` — commit the finished imp across the ABI.
-        finished_imp.into_payload()
+        // C: `return &tc->imp->curve;` — commit the finished imp across the ABI. (The
+        // success-path `clear_error` of the caller's slot lives in the shim.)
+        Ok(finished_imp.into_payload())
     } else {
+        // C copies the fixed error into the caller's slot; the `Result` shape
+        // carries it by value (the shim owns the slot writes).
+        let mut fixed: Error = Error::default();
         // SAFETY: `error_mut_ptr()` addresses `tc`'s own error; the byte literal
-        // is NUL-terminated; `error` is null or a live `Error`.
+        // is NUL-terminated; `&raw mut fixed` is this frame's live `Error`.
         unsafe {
-            fix_error_type(tc.error_mut_ptr(), b"Failed to tessellate\0", error);
+            fix_error_type(
+                tc.error_mut_ptr(),
+                b"Failed to tessellate\0",
+                &raw mut fixed,
+            );
         }
         // SAFETY: `result_mut_ptr()`/`ator_result_mut_ptr()` address `tc`'s own
         // result buffer and result allocator.
@@ -4429,7 +4442,7 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
             buf_free(tc.result_mut_ptr());
             free_ator(tc.ator_result_mut_ptr());
         }
-        core::ptr::null_mut()
+        Err(fixed)
     }
 }
 
@@ -4440,25 +4453,23 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
 pub(crate) unsafe fn tessellate_nurbs_curve(
     curve: *const crate::generated::NurbsCurve,
     opts: *const crate::generated::RawTessellateCurveOpts,
-    error: *mut Error,
-) -> *mut crate::generated::LineCurve {
+) -> Result<*mut crate::generated::LineCurve, Error> {
     // C: `curve`/`opts` are unreferenced in the `#else` arm.
     let _ = (curve, opts);
-    if !error.is_null() {
-        // SAFETY: `error` is non-null (checked) and points at the caller's live
-        // `Error`; the write zero-fills exactly its `Error` byte extent.
-        unsafe {
-            core::ptr::write_bytes(error as *mut u8, 0, size_of::<Error>());
-        }
-        // SAFETY: `error` is the live error slot the `%s`-less format writes into.
-        unsafe { ufbxi_fmt_err_info!(error, "UFBX_ENABLE_TESSELLATION") };
-        ufbxi_report_err_msg!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
-            "UFBXI_FEATURE_TESSELLATION",
-            "Feature disabled"
-        );
-    }
-    core::ptr::null_mut()
+    // C zero-fills the caller slot then formats into it; the `Result` shape
+    // builds the same bytes in a local carried by `Err` (the shim owns the
+    // slot writes).
+    let mut error: Error = Error::default();
+    // SAFETY: `&raw mut error` is this frame's live `Error` slot the `%s`-less
+    // format writes into.
+    unsafe { ufbxi_fmt_err_info!(&raw mut error, "UFBX_ENABLE_TESSELLATION") };
+    ufbxi_report_err_msg!(
+        // SAFETY: same live local `Error` slot, minted as a view for the report.
+        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
+        "UFBXI_FEATURE_TESSELLATION",
+        "Feature disabled"
+    );
+    Err(error)
 }
 
 // ufbx.c:32320-32357 `ufbx_tessellate_nurbs_surface`
@@ -4469,14 +4480,15 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
 pub(crate) unsafe fn tessellate_nurbs_surface(
     surface: *const NurbsSurface,
     opts: *const RawTessellateSurfaceOpts,
-    error: *mut Error,
-) -> *mut Mesh {
+) -> Result<*mut Mesh, Error> {
     ufbx_assert!(!surface.is_null());
     // SAFETY: `opts` is this fn's raw-pointer param; the macro reads its
     // `_begin_zero`/`_end_zero` guard fields only after a null check.
-    unsafe { ufbxi_check_opts_ptr!(Mesh, opts, error) };
+    unsafe { ufbxi_check_opts_res!(opts) };
     if surface.is_null() {
-        return core::ptr::null_mut();
+        // C's silent NULL: no slot write on this path — the shim clears the
+        // caller slot only for an `Ok` with a non-null payload.
+        return Ok(core::ptr::null_mut());
     }
 
     // C: `ufbxi_tessellate_surface_context tc = { UFBX_ERROR_NONE };`
@@ -4505,15 +4517,21 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     }
 
     if let Ok(finished_imp) = result {
-        // SAFETY: `error` is this fn's raw-pointer param, null or a live `Error`.
-        unsafe { clear_error(error) };
-        // C: `return &tc->imp->mesh;` — commit the finished imp across the ABI.
-        finished_imp.into_payload()
+        // C: `return &tc->imp->mesh;` — commit the finished imp across the ABI. (The
+        // success-path `clear_error` of the caller's slot lives in the shim.)
+        Ok(finished_imp.into_payload())
     } else {
+        // C copies the fixed error into the caller's slot; the `Result` shape
+        // carries it by value (the shim owns the slot writes).
+        let mut fixed: Error = Error::default();
         // SAFETY: `error_mut_ptr()` addresses `tc`'s own error; the byte literal
-        // is NUL-terminated; `error` is null or a live `Error`.
+        // is NUL-terminated; `&raw mut fixed` is this frame's live `Error`.
         unsafe {
-            fix_error_type(tc.error_mut_ptr(), b"Failed to tessellate\0", error);
+            fix_error_type(
+                tc.error_mut_ptr(),
+                b"Failed to tessellate\0",
+                &raw mut fixed,
+            );
         }
         // SAFETY: `result_mut_ptr()`/`ator_result_mut_ptr()` address `tc`'s own
         // result buffer and result allocator.
@@ -4521,7 +4539,7 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
             buf_free(tc.result_mut_ptr());
             free_ator(tc.ator_result_mut_ptr());
         }
-        core::ptr::null_mut()
+        Err(fixed)
     }
 }
 
@@ -4532,23 +4550,21 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
 pub(crate) unsafe fn tessellate_nurbs_surface(
     surface: *const crate::generated::NurbsSurface,
     opts: *const crate::generated::RawTessellateSurfaceOpts,
-    error: *mut Error,
-) -> *mut Mesh {
+) -> Result<*mut Mesh, Error> {
     // C: `surface`/`opts` are unreferenced in the `#else` arm.
     let _ = (surface, opts);
-    if !error.is_null() {
-        // SAFETY: `error` is non-null (checked) and points at the caller's live
-        // `Error`; the write zero-fills exactly its `Error` byte extent.
-        unsafe {
-            core::ptr::write_bytes(error as *mut u8, 0, size_of::<Error>());
-        }
-        ufbxi_report_err_msg!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
-            "UFBXI_FEATURE_TESSELLATION",
-            "Feature disabled"
-        );
-    }
-    core::ptr::null_mut()
+    // C zero-fills the caller slot then formats into it; the `Result` shape
+    // builds the same bytes in a local carried by `Err` (the shim owns the
+    // slot writes).
+    let mut error: Error = Error::default();
+    ufbxi_report_err_msg!(
+        // SAFETY: `&raw mut error` is this frame's live `Error` slot, minted as
+        // a view for the report.
+        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
+        "UFBXI_FEATURE_TESSELLATION",
+        "Feature disabled"
+    );
+    Err(error)
 }
 
 // ufbx.c:32359-32368 `ufbx_free_line_curve`
@@ -8540,16 +8556,8 @@ mod tests {
             // dereferences it — so a dangling non-null pointer is enough (and
             // `ufbx_scene` has non-null `Ref` fields, so it cannot be zeroed).
             let scene: *const Scene = core::ptr::NonNull::dangling().as_ptr();
-            let mut error = MaybeUninit::<Error>::zeroed().assume_init();
-            assert!(bake_anim(scene, core::ptr::null(), core::ptr::null(), &mut error).is_null());
+            let error: Error = bake_anim(scene, core::ptr::null(), core::ptr::null()).unwrap_err();
             assert_feature_disabled(&error, "UFBX_ENABLE_ANIMATION_BAKING");
-            assert!(bake_anim(
-                scene,
-                core::ptr::null(),
-                core::ptr::null(),
-                core::ptr::null_mut()
-            )
-            .is_null());
         }
     }
 

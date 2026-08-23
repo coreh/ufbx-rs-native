@@ -1048,9 +1048,27 @@ pub unsafe extern "C" fn ufbx_create_anim(
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Anim {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::create_anim(scene, opts, error) }
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes (PORTING.md "Trailing `ufbx_error *error`").
+    match unsafe { crate::native::api::create_anim(scene, opts) } {
+        Ok(result) => {
+            if !result.is_null() && !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract; C clears it on success (and
+                // leaves it untouched on the silent-NULL paths, which arrive
+                // here as a null `Ok` payload).
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            result
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            core::ptr::null_mut()
+        }
+    }
 }
 
 // ufbx.c:31220-31229 `ufbx_free_anim` (impl: native/api.rs `free_anim`)
@@ -1081,9 +1099,27 @@ pub unsafe extern "C" fn ufbx_bake_anim(
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::BakedAnim {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::bake_anim(scene, anim, opts, error) }
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes (PORTING.md "Trailing `ufbx_error *error`").
+    match unsafe { crate::native::api::bake_anim(scene, anim, opts) } {
+        Ok(result) => {
+            if !result.is_null() && !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract; C clears it on success (and
+                // leaves it untouched on the silent-NULL paths, which arrive
+                // here as a null `Ok` payload).
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            result
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            core::ptr::null_mut()
+        }
+    }
 }
 
 // ufbx.c:31291-31299 `ufbx_retain_baked_anim` (impl: native/api.rs
@@ -1692,9 +1728,27 @@ pub unsafe extern "C" fn ufbx_tessellate_nurbs_curve(
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::LineCurve {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::tessellate_nurbs_curve(curve, opts, error) }
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes (PORTING.md "Trailing `ufbx_error *error`").
+    match unsafe { crate::native::api::tessellate_nurbs_curve(curve, opts) } {
+        Ok(result) => {
+            if !result.is_null() && !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract; C clears it on success (and
+                // leaves it untouched on the silent-NULL paths, which arrive
+                // here as a null `Ok` payload).
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            result
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            core::ptr::null_mut()
+        }
+    }
 }
 
 // ufbx.c:32320-32357 `ufbx_tessellate_nurbs_surface` (impl: native/api.rs
@@ -1706,9 +1760,27 @@ pub unsafe extern "C" fn ufbx_tessellate_nurbs_surface(
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Mesh {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::tessellate_nurbs_surface(surface, opts, error) }
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes (PORTING.md "Trailing `ufbx_error *error`").
+    match unsafe { crate::native::api::tessellate_nurbs_surface(surface, opts) } {
+        Ok(result) => {
+            if !result.is_null() && !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract; C clears it on success (and
+                // leaves it untouched on the silent-NULL paths, which arrive
+                // here as a null `Ok` payload).
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            result
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            core::ptr::null_mut()
+        }
+    }
 }
 
 // ufbx.c:32359-32368 `ufbx_free_line_curve` (impl: native/api.rs
