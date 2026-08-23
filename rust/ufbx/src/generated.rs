@@ -4742,8 +4742,7 @@ pub fn find_prop<'a>(props: &'a Props, name: &str) -> Option<&'a Prop> {
             crate::native::view::View::<Props, crate::native::view::Const>::from_ptr(
                 props as *const Props,
             ),
-            name.as_ptr(),
-            name.len(),
+            name.as_bytes(),
         )
     };
     result.map(|prop| unsafe { &*prop.as_ptr() })
@@ -4765,8 +4764,7 @@ pub fn find_blob(props: &Props, name: &str, def: Blob) -> Blob {
             crate::native::view::View::<Props, crate::native::view::Const>::from_ptr(
                 props as *const Props,
             ),
-            name.as_ptr(),
-            name.len(),
+            name.as_bytes(),
             def,
         )
     }

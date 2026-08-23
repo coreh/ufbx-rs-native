@@ -536,15 +536,18 @@ pub struct String {
 // sites that read OR write String subfields (`err.description.data = ...`).
 pub(crate) type StringView = crate::native::view::View<String>;
 
-impl StringView {
+impl<M: crate::native::view::Mode> crate::native::view::View<String, M> {
     #[inline(always)]
     pub(crate) fn data(&self) -> *const u8 {
-        unsafe { (*self.get()).data }
+        unsafe { (*self.as_ptr()).data }
     }
     #[inline(always)]
     pub(crate) fn length(&self) -> usize {
-        unsafe { (*self.get()).length }
+        unsafe { (*self.as_ptr()).length }
     }
+}
+
+impl StringView {
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *const u8) {
         unsafe {
@@ -569,6 +572,21 @@ impl String {
             length,
             _marker: PhantomData,
         }
+    }
+
+    /// Project a by-value `String` to its byte run with a caller-chosen
+    /// lifetime — the raw residue path for operands with no view (locals,
+    /// temporaries, raw-probe fields). Prefer `View<String, M>::bytes()`,
+    /// which carries the interning vouch itself.
+    ///
+    /// # Safety
+    /// `data` must be readable for `length` bytes, unmoved and unwritten for
+    /// `'a`.
+    #[inline(always)]
+    pub(crate) unsafe fn as_bytes<'a>(self) -> &'a [u8] {
+        // SAFETY: fn contract above; `slice_from_ptr` never touches `data`
+        // when `length == 0`.
+        unsafe { slice_from_ptr(self.data, self.length) }
     }
 
     pub(crate) unsafe fn as_static_ref(&self) -> &'static str {
@@ -648,7 +666,7 @@ impl Blob {
     }
 }
 
-unsafe fn slice_from_ptr<'a, T>(data: *const T, len: usize) -> &'a [T] {
+pub(crate) unsafe fn slice_from_ptr<'a, T>(data: *const T, len: usize) -> &'a [T] {
     if len > 0 {
         // SAFETY: `len > 0` here, so the caller's contract that `data` points at
         // `len` live `T` values for `'a` supplies a valid, aligned run; the

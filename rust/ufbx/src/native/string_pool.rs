@@ -127,43 +127,68 @@ pub(crate) struct SanitizedString {
 }
 
 // ufbx.c:4918-4921 `ufbxi_str_equal`
+// Slice equality is exactly C's shape: length compare first, then a byte
+// memcmp over the (equal) lengths.
 #[inline(always)]
-pub(crate) unsafe fn str_equal(a: String, b: String) -> bool {
-    // SAFETY: the caller vouches `a`/`b` are valid `String` runs; `a.data`/`b.data`
-    // are each readable for their own `length`, and the compare is reached only
-    // when the lengths are equal, so `a.length` bytes are readable from both.
-    a.length == b.length && unsafe { memcmp(a.data, b.data, a.length) } == 0
+pub(crate) fn str_equal(a: &[u8], b: &[u8]) -> bool {
+    a == b
 }
 
 // ufbx.c:4923-4929 `ufbxi_str_less`
 #[inline(always)]
-pub(crate) unsafe fn str_less(a: String, b: String) -> bool {
-    let len = min_sz(a.length, b.length);
-    // SAFETY: the caller vouches `a`/`b` are valid `String` runs; `len` is the
-    // shorter of the two lengths, so `len` bytes are readable from both `a.data`
-    // and `b.data`.
-    let cmp = unsafe { memcmp(a.data, b.data, len) };
-    if cmp != 0 {
-        return cmp < 0;
+pub(crate) fn str_less(a: &[u8], b: &[u8]) -> bool {
+    let len = min_sz(a.len(), b.len());
+    // C: `memcmp` over the shorter length — byte slices compare as unsigned
+    // chars, matching C's `(const unsigned char *)` walk.
+    let cmp = a[..len].cmp(&b[..len]);
+    if cmp != core::cmp::Ordering::Equal {
+        return cmp == core::cmp::Ordering::Less;
     }
-    a.length < b.length
+    a.len() < b.len()
 }
 
 // ufbx.c:4931-4938 `ufbxi_str_cmp`
+// C returns raw `memcmp` output whose magnitude is unspecified; every caller
+// uses only the sign, so the `Ordering` mapped to -1/0/1 is equivalent.
 #[inline(always)]
-pub(crate) unsafe fn str_cmp(a: String, b: String) -> i32 {
-    let len = min_sz(a.length, b.length);
-    // SAFETY: the caller vouches `a`/`b` are valid `String` runs; `len` is the
-    // shorter of the two lengths, so `len` bytes are readable from both `a.data`
-    // and `b.data`.
-    let cmp = unsafe { memcmp(a.data, b.data, len) };
-    if cmp != 0 {
-        return cmp;
+pub(crate) fn str_cmp(a: &[u8], b: &[u8]) -> i32 {
+    let len = min_sz(a.len(), b.len());
+    let cmp = a[..len].cmp(&b[..len]);
+    if cmp != core::cmp::Ordering::Equal {
+        return if cmp == core::cmp::Ordering::Less {
+            -1
+        } else {
+            1
+        };
     }
-    if a.length != b.length {
-        return if a.length < b.length { -1 } else { 1 };
+    if a.len() != b.len() {
+        return if a.len() < b.len() { -1 } else { 1 };
     }
     0
+}
+
+// Unanchored raw-`String` projections over the three anchored slice bodies
+// above, for call sites whose operands are still by-value `String`s with no
+// view to borrow from (locals, temporaries, raw-probe fields).
+#[inline(always)]
+pub(crate) unsafe fn str_equal_raw(a: String, b: String) -> bool {
+    // SAFETY: the caller vouches `a`/`b` are valid `String` runs — each `data`
+    // readable for its own `length` (the `as_bytes` contract).
+    unsafe { str_equal(a.as_bytes(), b.as_bytes()) }
+}
+
+#[inline(always)]
+pub(crate) unsafe fn str_less_raw(a: String, b: String) -> bool {
+    // SAFETY: the caller vouches `a`/`b` are valid `String` runs — each `data`
+    // readable for its own `length` (the `as_bytes` contract).
+    unsafe { str_less(a.as_bytes(), b.as_bytes()) }
+}
+
+#[inline(always)]
+pub(crate) unsafe fn str_cmp_raw(a: String, b: String) -> i32 {
+    // SAFETY: the caller vouches `a`/`b` are valid `String` runs — each `data`
+    // readable for its own `length` (the `as_bytes` contract).
+    unsafe { str_cmp(a.as_bytes(), b.as_bytes()) }
 }
 
 // ufbx.c:4940-4944 `ufbxi_str_c`
@@ -370,7 +395,7 @@ pub(crate) unsafe extern "C" fn map_cmp_string(
     let b = vb as *const String;
     // SAFETY: the map comparator contract gives `va`/`vb` as pointers to the
     // live `String` keys being compared, so `*a`/`*b` read valid `String` runs.
-    unsafe { str_cmp(*a, *b) }
+    unsafe { str_cmp_raw(*a, *b) }
 }
 
 // ufbx.c:5022-5026 `ufbxi_safe_string`
@@ -2146,19 +2171,19 @@ mod tests {
     #[test]
     fn test_string_helpers() {
         unsafe {
-            assert!(str_equal(s(b"abc"), s(b"abc")));
-            assert!(!str_equal(s(b"abc"), s(b"abd")));
-            assert!(!str_equal(s(b"abc"), s(b"ab")));
+            assert!(str_equal_raw(s(b"abc"), s(b"abc")));
+            assert!(!str_equal_raw(s(b"abc"), s(b"abd")));
+            assert!(!str_equal_raw(s(b"abc"), s(b"ab")));
 
-            assert!(str_less(s(b"ab"), s(b"abc")));
-            assert!(str_less(s(b"abc"), s(b"abd")));
-            assert!(!str_less(s(b"abc"), s(b"abc")));
+            assert!(str_less_raw(s(b"ab"), s(b"abc")));
+            assert!(str_less_raw(s(b"abc"), s(b"abd")));
+            assert!(!str_less_raw(s(b"abc"), s(b"abc")));
             // memcmp compares as UNSIGNED chars.
-            assert!(str_less(s(b"a"), s(b"\xff")));
+            assert!(str_less_raw(s(b"a"), s(b"\xff")));
 
-            assert_eq!(str_cmp(s(b"abc"), s(b"abc")), 0);
-            assert!(str_cmp(s(b"ab"), s(b"abc")) < 0);
-            assert!(str_cmp(s(b"abd"), s(b"abc")) > 0);
+            assert_eq!(str_cmp_raw(s(b"abc"), s(b"abc")), 0);
+            assert!(str_cmp_raw(s(b"ab"), s(b"abc")) < 0);
+            assert!(str_cmp_raw(s(b"abd"), s(b"abc")) > 0);
 
             let c = str_c(b"Model\0".as_ptr());
             assert_eq!(c.length, 5);
@@ -2228,7 +2253,7 @@ mod tests {
             let mut prev = String::new_c(EMPTY_CHAR.as_ptr(), 0);
             for str_ in STRINGS.0.iter() {
                 assert!(
-                    str_less(prev, *str_) || (prev.length == 0 && str_.length > 0),
+                    str_less_raw(prev, *str_) || (prev.length == 0 && str_.length > 0),
                     "ufbxi_strings out of order at {:?}",
                     core::str::from_utf8(bytes(str_.data, str_.length))
                 );

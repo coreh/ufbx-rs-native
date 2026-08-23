@@ -267,16 +267,15 @@ pub unsafe extern "C" fn ufbx_find_prop_len(
         return core::ptr::null_mut();
     }
     // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // `View<_, Const>` (sound for any readable provenance) and the caller's
+    // `name`/`name_len` key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     match unsafe {
         crate::native::api::find_prop_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
-        name,
-        name_len,
+        crate::prelude::slice_from_ptr(name, name_len),
     )
     } {
         Some(prop) => prop.as_ptr() as *mut crate::generated::Prop,
@@ -296,16 +295,15 @@ pub unsafe extern "C" fn ufbx_find_real_len(
         return def;
     }
     // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // `View<_, Const>` (sound for any readable provenance) and the caller's
+    // `name`/`name_len` key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     unsafe {
         crate::native::api::find_real_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
-        name,
-        name_len,
+        crate::prelude::slice_from_ptr(name, name_len),
         def,
     )
     }
@@ -323,16 +321,15 @@ pub unsafe extern "C" fn ufbx_find_vec3_len(
         return def;
     }
     // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // `View<_, Const>` (sound for any readable provenance) and the caller's
+    // `name`/`name_len` key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     unsafe {
         crate::native::api::find_vec3_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
-        name,
-        name_len,
+        crate::prelude::slice_from_ptr(name, name_len),
         def,
     )
     }
@@ -350,16 +347,15 @@ pub unsafe extern "C" fn ufbx_find_int_len(
         return def;
     }
     // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // `View<_, Const>` (sound for any readable provenance) and the caller's
+    // `name`/`name_len` key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     unsafe {
         crate::native::api::find_int_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
-        name,
-        name_len,
+        crate::prelude::slice_from_ptr(name, name_len),
         def,
     )
     }
@@ -377,16 +373,15 @@ pub unsafe extern "C" fn ufbx_find_bool_len(
         return def;
     }
     // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // `View<_, Const>` (sound for any readable provenance) and the caller's
+    // `name`/`name_len` key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     unsafe {
         crate::native::api::find_bool_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
-        name,
-        name_len,
+        crate::prelude::slice_from_ptr(name, name_len),
         def,
     )
     }
@@ -404,16 +399,15 @@ pub unsafe extern "C" fn ufbx_find_string_len(
         return def;
     }
     // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // `View<_, Const>` (sound for any readable provenance) and the caller's
+    // `name`/`name_len` key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     unsafe {
         crate::native::api::find_string_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
-        name,
-        name_len,
+        crate::prelude::slice_from_ptr(name, name_len),
         def,
     )
     }
@@ -431,16 +425,15 @@ pub unsafe extern "C" fn ufbx_find_blob_len(
         return def;
     }
     // SAFETY: an ABI shim; the source pointer is bridged to a read-only
-    // `View<_, Const>` (sound for any readable provenance) and the remaining
-    // raw arguments carry this `unsafe fn`'s contract, forwarded to the native
-    // impl unchanged.
+    // `View<_, Const>` (sound for any readable provenance) and the caller's
+    // `name`/`name_len` key-buffer contract becomes the slice mint
+    // (`slice_from_ptr` maps the null/0 case to the empty slice).
     unsafe {
         crate::native::api::find_blob_len(
         crate::native::view::View::<crate::generated::Props, crate::native::view::Const>::from_ptr(
             props,
         ),
-        name,
-        name_len,
+        crate::prelude::slice_from_ptr(name, name_len),
         def,
     )
     }

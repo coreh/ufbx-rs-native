@@ -210,15 +210,14 @@ use crate::generated::{
 };
 use crate::native::allocator::grow_array;
 use crate::native::api::{
-    compute_normals, compute_topology, coordinate_axes_valid, euler_to_quat, find_blob,
-    find_bool as api_find_bool, find_int as api_find_int, find_int_len as api_find_int_len,
-    find_prop as api_find_prop, find_prop_concat, find_prop_len, find_prop_texture_len,
-    find_real as api_find_real, find_real_len as api_find_real_len, find_shader_prop_bindings_len,
-    find_shader_texture_input, find_shader_texture_input_len, find_string,
-    find_vec3 as api_find_vec3, generate_normal_mapping, get_bone_pose, get_prop_element,
-    matrix_for_normals, matrix_invert, matrix_mul, matrix_to_transform, quat_rotate_vec3,
-    transform_direction, transform_position, transform_to_matrix, EMPTY_BLOB, EMPTY_STRING,
-    IDENTITY_MATRIX, IDENTITY_QUAT, IDENTITY_TRANSFORM, ZERO_VEC3,
+    compute_normals, compute_topology, coordinate_axes_valid, euler_to_quat, find_blob_len,
+    find_bool_len as api_find_bool_len, find_int_len as api_find_int_len, find_prop_concat,
+    find_prop_len, find_prop_texture_len, find_real_len as api_find_real_len,
+    find_shader_prop_bindings_len, find_shader_texture_input, find_shader_texture_input_len,
+    find_string_len, find_vec3_len as api_find_vec3_len, generate_normal_mapping, get_bone_pose,
+    get_prop_element, matrix_for_normals, matrix_invert, matrix_mul, matrix_to_transform,
+    quat_rotate_vec3, transform_direction, transform_position, transform_to_matrix, EMPTY_BLOB,
+    EMPTY_STRING, IDENTITY_MATRIX, IDENTITY_QUAT, IDENTITY_TRANSFORM, ZERO_VEC3,
 };
 use crate::native::buf::{buf_clear, buf_free, pop, push_copy, BufView};
 use crate::native::error::{
@@ -228,7 +227,7 @@ use crate::native::error::{
 use crate::native::hash::{hash64, hash_ptr, map_find, map_insert};
 use crate::native::parse::{
     find_enum, find_int, find_prop, find_prop_with_key, find_real, find_vec3, get_element_extra,
-    get_name_key, is_node_property_name, is_quat_identity, is_transform_identity, is_vec3_zero,
+    get_name_key_raw, is_node_property_name, is_quat_identity, is_transform_identity, is_vec3_zero,
     is_vec4_zero, matrix_all_zero, name_key_less, Context, FbxAttrEntry, FbxIdEntry, FileContent,
     MeshExtra, PropView, PropsView, Refcount, SceneMetadataView, SceneSettingsView, SceneView,
     TextureExtra, TextureFileEntry, TmpBonePose, TmpConnection, TmpMaterialTexture, TmpMeshTexture,
@@ -252,12 +251,13 @@ use crate::native::read::{
     NodeExtra, Strblob, SENTINEL_INDEX_CONSECUTIVE, SENTINEL_INDEX_ZERO,
 };
 use crate::native::string_pool::{
-    self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
+    self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp_raw, str_less, str_less_raw,
+    sub3, ONE_VEC3,
 };
 use crate::native::view::{Const, Mode, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::as_f64;
-use crate::prelude::{Blob, List, ListView, Real, Ref, RefList, String};
+use crate::prelude::{slice_from_ptr, Blob, List, ListView, Real, Ref, RefList, String};
 
 // Rust-port infrastructure (not a ufbx.c section): reinterpret-in-place VIEWS
 // over the scene-graph element structs the `ufbxi_update_*` family mutates.
@@ -1179,7 +1179,7 @@ pub(crate) unsafe fn cmp_name_element_less_ref(
         if (*a)._internal_key != key {
             return (*a)._internal_key < key;
         }
-        let cmp: i32 = str_cmp((*a).name, name);
+        let cmp: i32 = str_cmp_raw((*a).name, name);
         if cmp != 0 {
             return cmp < 0;
         }
@@ -1188,16 +1188,17 @@ pub(crate) unsafe fn cmp_name_element_less_ref(
 }
 
 // ufbx.c:18572-18576 `ufbxi_cmp_prop_less_ref`
+// `name: &[u8]` carries C's `ufbx_string` query key (see `find_prop_len`).
 #[inline(always)]
-pub(crate) unsafe fn cmp_prop_less_ref(a: *const Prop, name: String, key: u32) -> bool {
+pub(crate) unsafe fn cmp_prop_less_ref(a: *const Prop, name: &[u8], key: u32) -> bool {
     // SAFETY: `a` points to a live, initialized `Prop` — the array element the
-    // bounded search is probing (fn contract); `str_less` compares the two
-    // `ufbx_string` spans, both interned string-pool spans.
+    // bounded search is probing (fn contract); its `name` is an interned span
+    // readable for its own length (the `as_bytes` contract).
     unsafe {
         if (*a)._internal_key != key {
             return (*a)._internal_key < key;
         }
-        str_less((*a).name, name)
+        str_less((*a).name.as_bytes(), name)
     }
 }
 
@@ -1354,7 +1355,7 @@ pub(crate) unsafe fn cmp_tmp_material_texture_less(
         if (*a).texture_id != (*b).texture_id {
             return (*a).texture_id < (*b).texture_id;
         }
-        str_less((*a).prop_name, (*b).prop_name)
+        str_less_raw((*a).prop_name, (*b).prop_name)
     }
 }
 
@@ -1544,8 +1545,7 @@ pub(crate) fn resolve_connections(uc: &Context) -> Result<(), Fail> {
                             // null case), and it resolves to a uc-arena element, so
                             // its view anchors the lookup to `uc`.
                             ElementView::from_ptr(src).props_view(),
-                            (*tmp_conn).src_prop.data,
-                            (*tmp_conn).src_prop.length,
+                            (*tmp_conn).src_prop.as_bytes(),
                         )
                         .is_none()
                     {
@@ -1561,8 +1561,7 @@ pub(crate) fn resolve_connections(uc: &Context) -> Result<(), Fail> {
                             // `dst` is non-null here (short-circuit) and resolves to
                             // a uc-arena element, so its view anchors to `uc`.
                             ElementView::from_ptr(dst).props_view(),
-                            (*tmp_conn).dst_prop.data,
-                            (*tmp_conn).dst_prop.length,
+                            (*tmp_conn).dst_prop.as_bytes(),
                         )
                         .is_none()
                     {
@@ -1842,7 +1841,7 @@ pub(crate) fn add_connections_to_elements(uc: &Context) -> Result<(), Fail> {
                         conn_dst = conn_dst.add(1);
                     }
 
-                    let key: u32 = get_name_key(name.data, name.length);
+                    let key: u32 = get_name_key_raw(name.data, name.length);
                     while prop != prop_end && name_key_less(prop, name.data, name.length, key) {
                         prop = prop.add(1);
                     }
@@ -2994,7 +2993,7 @@ pub(crate) unsafe fn cmp_anim_prop_less(a: *const AnimProp, b: *const AnimProp) 
         if (*a)._internal_key != (*b)._internal_key {
             return (*a)._internal_key < (*b)._internal_key;
         }
-        str_less((*a).prop_name, (*b).prop_name)
+        str_less_raw((*a).prop_name, (*b).prop_name)
     }
 }
 
@@ -3044,7 +3043,7 @@ pub(crate) unsafe extern "C" fn material_texture_less(
     // SAFETY: `va`/`vb` are the two `ufbx_material_texture` elements the sort
     // hands this C-callback comparator (the sort is instantiated over that type),
     // and both `material_prop`s are interned string-pool spans.
-    unsafe { str_less((*a).material_prop, (*b).material_prop) }
+    unsafe { str_less_raw((*a).material_prop, (*b).material_prop) }
 }
 
 // ufbx.c:19315-19320 `ufbxi_sort_material_textures`
@@ -4236,8 +4235,7 @@ pub(crate) unsafe fn fetch_mapping_maps(
             let prop: Option<&View<Prop, Const>> = unsafe {
                 find_prop_len(
                     View::<Props, Const>::from_ptr(&raw const (*material).element.props),
-                    name.data,
-                    name.length,
+                    name.as_bytes(),
                 )
             };
             if (flags & MAPPING_FETCH_FEATURE) != 0 {
@@ -4977,8 +4975,11 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
         loop {
             let len: i32 =
                 ufbxi_snprintf!(prop_name, size_of::<[u8; 64]>(), "Thresholds|Level%zu", i);
-            let prop: *mut Prop = find_prop_len(lod_view.props_view(), prop_name, len as usize)
-                .map_or(ptr::null_mut(), PropView::get);
+            let prop: *mut Prop = find_prop_len(
+                lod_view.props_view(),
+                slice_from_ptr(prop_name, len as usize),
+            )
+            .map_or(ptr::null_mut(), PropView::get);
             if prop.is_null() {
                 break;
             }
@@ -4994,26 +4995,17 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
     // that same view's props with a NUL-terminated literal; `levels` is the fresh
     // non-null push above.
     unsafe {
-        (*lod).relative_distances = api_find_bool(
-            lod_view.props_view(),
-            b"ThresholdsUsedAsPercentage\0".as_ptr(),
-            false,
-        );
+        (*lod).relative_distances =
+            api_find_bool_len(lod_view.props_view(), b"ThresholdsUsedAsPercentage", false);
         (*lod).ignore_parent_transform =
-            !api_find_bool(lod_view.props_view(), b"WorldSpace\0".as_ptr(), true);
+            !api_find_bool_len(lod_view.props_view(), b"WorldSpace", true);
 
         (*lod).use_distance_limit =
-            api_find_bool(lod_view.props_view(), b"MinMaxDistance\0".as_ptr(), false);
-        (*lod).distance_limit_min = api_find_real(
-            lod_view.props_view(),
-            b"MinDistance\0".as_ptr(),
-            -100.0 as Real,
-        );
-        (*lod).distance_limit_max = api_find_real(
-            lod_view.props_view(),
-            b"MaxDistance\0".as_ptr(),
-            100.0 as Real,
-        );
+            api_find_bool_len(lod_view.props_view(), b"MinMaxDistance", false);
+        (*lod).distance_limit_min =
+            api_find_real_len(lod_view.props_view(), b"MinDistance", -100.0 as Real);
+        (*lod).distance_limit_max =
+            api_find_real_len(lod_view.props_view(), b"MaxDistance", 100.0 as Real);
 
         (*lod).lod_levels.data = levels;
         (*lod).lod_levels.count = num_levels;
@@ -5036,8 +5028,7 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
                 );
                 (*level).distance = api_find_real_len(
                     lod_view.props_view(),
-                    prop_name,
-                    len as usize,
+                    slice_from_ptr(prop_name, len as usize),
                     0.0f32 as Real,
                 );
             } else if (*lod).relative_distances {
@@ -5051,8 +5042,11 @@ pub(crate) fn finalize_lod_group(uc: &Context, lod_view: &LodGroupView) -> Resul
                     "DisplayLevels|Level%zu",
                     i
                 );
-                let display: i64 =
-                    api_find_int_len(lod_view.props_view(), prop_name, len as usize, 0);
+                let display: i64 = api_find_int_len(
+                    lod_view.props_view(),
+                    slice_from_ptr(prop_name, len as usize),
+                    0,
+                );
                 if display >= 0 && display <= 2 {
                     // C: `(ufbx_lod_display)display` — guarded to [0, 2], every
                     // value of which is a valid `ufbx_lod_display`.
@@ -5373,14 +5367,8 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
         if !prop.is_null() {
             // SAFETY: `prop` is non-null (checked) and points to a live `ufbx_prop`
             // of this texture's own prop list, so its `name` span is readable.
-            prop = unsafe {
-                find_prop_len(
-                    texture_view.props_view(),
-                    (*prop).name.data,
-                    (*prop).name.length,
-                )
-            }
-            .map_or(ptr::null_mut(), PropView::get);
+            prop = unsafe { find_prop_len(texture_view.props_view(), (*prop).name.as_bytes()) }
+                .map_or(ptr::null_mut(), PropView::get);
             // SAFETY: `input` addresses a live entry; `prop` is null or a live
             // prop of the texture's list, which is what `opt_ref` wraps.
             unsafe { (*input).prop = opt_ref(prop) };
@@ -5414,14 +5402,8 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
         if !prop.is_null() {
             // SAFETY: `prop` is non-null (checked) and points to a live `ufbx_prop`
             // of this texture's own prop list, so its `name` span is readable.
-            prop = unsafe {
-                find_prop_len(
-                    texture_view.props_view(),
-                    (*prop).name.data,
-                    (*prop).name.length,
-                )
-            }
-            .map_or(ptr::null_mut(), PropView::get);
+            prop = unsafe { find_prop_len(texture_view.props_view(), (*prop).name.as_bytes()) }
+                .map_or(ptr::null_mut(), PropView::get);
             // SAFETY: `input` addresses a live entry; `prop` is null or a live
             // prop of the texture's list.
             unsafe { (*input).texture_prop = opt_ref(prop) };
@@ -5447,14 +5429,8 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
         if !prop.is_null() {
             // SAFETY: `prop` is non-null (checked) and points to a live `ufbx_prop`
             // of this texture's own prop list, so its `name` span is readable.
-            prop = unsafe {
-                find_prop_len(
-                    texture_view.props_view(),
-                    (*prop).name.data,
-                    (*prop).name.length,
-                )
-            }
-            .map_or(ptr::null_mut(), PropView::get);
+            prop = unsafe { find_prop_len(texture_view.props_view(), (*prop).name.as_bytes()) }
+                .map_or(ptr::null_mut(), PropView::get);
             // SAFETY: `input` addresses a live entry; `prop` is null or a live
             // prop of the texture's list.
             unsafe { (*input).texture_enabled_prop = opt_ref(prop) };
@@ -5494,15 +5470,6 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
     }
 }
 
-// Carrier for C's function-local `static const char *const ...[]` tables
-// (ufbx.c:20563-20569): the arrays are immutable and reference immutable string
-// literals, but a bare `*const u8` is not `Sync`, which a Rust `static`
-// requires (same rationale as `ShaderMapping` above).
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub(crate) struct CharPtr(pub *const u8);
-unsafe impl Sync for CharPtr {}
-
 // ufbx.h:2772 `UFBX_ENUM_TYPE(ufbx_shader_texture_type, UFBX_SHADER_TEXTURE_TYPE, UFBX_SHADER_TEXTURE_OSL);`
 // expanding via ufbx.h:235-236 to `enum { UFBX_SHADER_TEXTURE_TYPE_COUNT = UFBX_SHADER_TEXTURE_OSL + 1 }`.
 pub(crate) const SHADER_TEXTURE_TYPE_COUNT: u32 = ShaderTextureType::Osl as u32 + 1;
@@ -5514,23 +5481,17 @@ pub(crate) fn finalize_shader_texture<'a>(
     texture_view: &'a TextureView,
 ) -> Result<(), Fail> {
     let texture: *mut Texture = texture_view.get();
-    // SAFETY: props-view lookups with NUL-terminated literal names.
-    let (classid_a, classid_b): (u32, u32) = unsafe {
-        (
-            api_find_int(texture_view.props_view(), b"3dsMax|ClassIDa\0".as_ptr(), 0) as u64 as u32,
-            api_find_int(texture_view.props_view(), b"3dsMax|ClassIDb\0".as_ptr(), 0) as u64 as u32,
-        )
-    };
+    let (classid_a, classid_b): (u32, u32) = (
+        api_find_int_len(texture_view.props_view(), b"3dsMax|ClassIDa", 0) as u64 as u32,
+        api_find_int_len(texture_view.props_view(), b"3dsMax|ClassIDb", 0) as u64 as u32,
+    );
     let classid: u64 = (classid_a as u64) << 32 | classid_b as u64;
 
-    // SAFETY: as above.
-    let max_texture: String = unsafe {
-        find_string(
-            texture_view.props_view(),
-            b"3dsMax|MaxTexture\0".as_ptr(),
-            EMPTY_STRING.0,
-        )
-    };
+    let max_texture: String = find_string_len(
+        texture_view.props_view(),
+        b"3dsMax|MaxTexture",
+        EMPTY_STRING.0,
+    );
 
     // Check first if the texture looks like it could be a shader.
     // C: `ufbx_shader_texture_type type = (ufbx_shader_texture_type)UFBX_SHADER_TEXTURE_TYPE_COUNT;`
@@ -5572,17 +5533,17 @@ pub(crate) fn finalize_shader_texture<'a>(
         (*shader).type_ = core::mem::transmute::<u32, ShaderTextureType>(type_);
 
         // C: `static const char *const name_props[] = { "3dsMax|params|OSLShaderName" };`
-        static NAME_PROPS: [CharPtr; 1] = [CharPtr(b"3dsMax|params|OSLShaderName\0".as_ptr())];
+        static NAME_PROPS: [&[u8]; 1] = [b"3dsMax|params|OSLShaderName"];
 
         // C: `static const char *const source_props[] = { "3dsMax|params|OSLCode" };`
-        static SOURCE_PROPS: [CharPtr; 1] = [CharPtr(b"3dsMax|params|OSLCode\0".as_ptr())];
+        static SOURCE_PROPS: [&[u8]; 1] = [b"3dsMax|params|OSLCode"];
 
         (*shader).shader_source.data = EMPTY_CHAR.as_ptr();
         (*shader).shader_name.data = EMPTY_CHAR.as_ptr();
 
         // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(name_props); i++)`
         for i in 0..NAME_PROPS.len() {
-            if let Some(prop) = api_find_prop(texture_view.props_view(), NAME_PROPS[i].0) {
+            if let Some(prop) = find_prop_len(texture_view.props_view(), NAME_PROPS[i]) {
                 (*shader).shader_name = prop.value_str();
                 break;
             }
@@ -5590,7 +5551,7 @@ pub(crate) fn finalize_shader_texture<'a>(
 
         // C: `ufbxi_nounroll for (size_t i = 0; i < ufbxi_arraycount(source_props); i++)`
         for i in 0..SOURCE_PROPS.len() {
-            if let Some(prop) = api_find_prop(texture_view.props_view(), SOURCE_PROPS[i].0) {
+            if let Some(prop) = find_prop_len(texture_view.props_view(), SOURCE_PROPS[i]) {
                 (*shader).shader_source = prop.value_str();
                 (*shader).raw_shader_source = prop.value_blob();
                 break;
@@ -7594,7 +7555,7 @@ pub(crate) unsafe extern "C" fn file_content_less(
     // SAFETY: as the sort comparator for a `ufbxi_file_content` array, `va`/`vb`
     // address live, initialized elements of it (`stable_sort` contract), and both
     // `absolute_filename`s are interned pool strings.
-    unsafe { str_less((*a).absolute_filename, (*b).absolute_filename) }
+    unsafe { str_less_raw((*a).absolute_filename, (*b).absolute_filename) }
 }
 
 // ufbx.c:21459-21464 `ufbxi_sort_file_contents`
@@ -7679,7 +7640,7 @@ pub(crate) unsafe fn fetch_file_content(uc: &Context, p_filename: *mut String, p
         // SAFETY: `macro_lower_bound_eq` only passes pointers to live, initialized
         // elements of the run it was handed; both `absolute_filename`s are
         // interned pool strings.
-        unsafe { str_less((*a).absolute_filename, filename) }
+        unsafe { str_less_raw((*a).absolute_filename, filename) }
     };
     // C-parity: the equality lambda compares interned string POINTERS, not the
     // bytes.
@@ -7759,16 +7720,13 @@ pub(crate) fn resolve_file_content<'a>(uc: &'a Context) -> Result<(), Fail> {
             let clip_view: &'a AudioClipView = AudioClipView::from_ptr(*p_clip);
             let clip: *mut AudioClip = clip_view.get();
             (*clip).absolute_filename =
-                find_string(clip_view.props_view(), b"Path\0".as_ptr(), EMPTY_STRING.0);
-            (*clip).relative_filename = find_string(
-                clip_view.props_view(),
-                b"RelPath\0".as_ptr(),
-                EMPTY_STRING.0,
-            );
+                find_string_len(clip_view.props_view(), b"Path", EMPTY_STRING.0);
+            (*clip).relative_filename =
+                find_string_len(clip_view.props_view(), b"RelPath", EMPTY_STRING.0);
             (*clip).raw_absolute_filename =
-                find_blob(clip_view.props_view(), b"Path\0".as_ptr(), EMPTY_BLOB.0);
+                find_blob_len(clip_view.props_view(), b"Path", EMPTY_BLOB.0);
             (*clip).raw_relative_filename =
-                find_blob(clip_view.props_view(), b"RelPath\0".as_ptr(), EMPTY_BLOB.0);
+                find_blob_len(clip_view.props_view(), b"RelPath", EMPTY_BLOB.0);
             resolve_filenames(
                 uc,
                 &raw mut (*clip).filename as *mut Strblob,
@@ -8216,19 +8174,18 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // SAFETY: `scene_props_ptr` addresses the scene metadata's own live
         // `ufbx_props`, and the name is a NUL-terminated literal.
         .set_original_file_path(unsafe {
-            find_string(
+            find_string_len(
                 PropsView::from_ptr(uc.scene_view().metadata_view().scene_props_ptr() as *mut Props),
-                b"DocumentUrl\0".as_ptr(),
-                EMPTY_STRING.0,
-            )
+                b"DocumentUrl",
+                EMPTY_STRING.0)
         });
     uc.scene_view()
         .metadata_view()
         // SAFETY: as above.
         .set_raw_original_file_path(unsafe {
-            find_blob(
+            find_blob_len(
                 PropsView::from_ptr(uc.scene_view().metadata_view().scene_props_ptr() as *mut Props),
-                b"DocumentUrl\0".as_ptr(),
+                b"DocumentUrl",
                 EMPTY_BLOB.0,
             )
         });
@@ -8319,7 +8276,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // SAFETY: as above; `elem`'s name is an interned pool string, so
         // `name.data` addresses `name.length` readable bytes.
         unsafe {
-            (*name_elem)._internal_key = get_name_key((*elem).name.data, (*elem).name.length)
+            (*name_elem)._internal_key = get_name_key_raw((*elem).name.data, (*elem).name.length)
         };
         // SAFETY: as above; `elem` is non-null, being a live element header.
         unsafe { (*name_elem).element = Ref::from_ptr(elem) };
@@ -9035,15 +8992,11 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         let deformer_view: &'a CacheDeformerView =
             unsafe { CacheDeformerView::from_ptr(*p_deformer) };
         let deformer: *mut CacheDeformer = deformer_view.get();
-        // SAFETY: `props_view()` is the deformer's own live `ufbx_props`; the
-        // name is a NUL-terminated literal.
-        deformer_view.set_channel(unsafe {
-            find_string(
-                deformer_view.props_view(),
-                b"ChannelName\0".as_ptr(),
-                EMPTY_STRING.0,
-            )
-        });
+        deformer_view.set_channel(find_string_len(
+            deformer_view.props_view(),
+            b"ChannelName",
+            EMPTY_STRING.0,
+        ));
         // SAFETY: `deformer` is live (see above), so `&mut (*deformer).element`
         // addresses its own element header; the fetched destination is null or a
         // live `ufbx_cache_file`.
@@ -9077,36 +9030,27 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // `props_view()` is its own live `ufbx_props`; the name is a
         // NUL-terminated literal.
         unsafe {
-            (*cache).absolute_filename = find_string(
+            (*cache).absolute_filename = find_string_len(
                 cache_view.props_view(),
-                b"CacheAbsoluteFileName\0".as_ptr(),
+                b"CacheAbsoluteFileName",
                 EMPTY_STRING.0,
             );
-            (*cache).relative_filename = find_string(
-                cache_view.props_view(),
-                b"CacheFileName\0".as_ptr(),
-                EMPTY_STRING.0,
-            );
+            (*cache).relative_filename =
+                find_string_len(cache_view.props_view(), b"CacheFileName", EMPTY_STRING.0);
         }
 
         // SAFETY: as above.
         unsafe {
-            (*cache).raw_absolute_filename = find_blob(
+            (*cache).raw_absolute_filename = find_blob_len(
                 cache_view.props_view(),
-                b"CacheAbsoluteFileName\0".as_ptr(),
+                b"CacheAbsoluteFileName",
                 EMPTY_BLOB.0,
             );
-            (*cache).raw_relative_filename = find_blob(
-                cache_view.props_view(),
-                b"CacheFileName\0".as_ptr(),
-                EMPTY_BLOB.0,
-            );
+            (*cache).raw_relative_filename =
+                find_blob_len(cache_view.props_view(), b"CacheFileName", EMPTY_BLOB.0);
         }
 
-        // SAFETY: `props_view()` is the cache file's own live `ufbx_props` and the
-        // name is a NUL-terminated literal.
-        let type_: i64 =
-            unsafe { api_find_int(cache_view.props_view(), b"CacheFileType\0".as_ptr(), 0) };
+        let type_: i64 = api_find_int_len(cache_view.props_view(), b"CacheFileType", 0);
         if type_ >= 0 && type_ <= CacheFileFormat::Mc as i64 {
             // C: `(ufbx_cache_file_format)type` — the guard above pins `type`
             // into `0..=UFBX_CACHE_FILE_FORMAT_MC`, exactly the enum range.
@@ -9895,7 +9839,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     // string, so its `data` addresses `length` readable bytes.
                     unsafe {
                         (*aprop)._internal_key =
-                            get_name_key((*ac).dst_prop.data, (*ac).dst_prop.length);
+                            get_name_key_raw((*ac).dst_prop.data, (*ac).dst_prop.length);
                         (*aprop).prop_name = (*ac).dst_prop;
                     }
                     num_anim_props += 1;
@@ -10090,13 +10034,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 // SAFETY: `props_view()` is the anim value's own live `ufbx_props`,
                 // and `conn`'s `dst_prop` is an interned pool string, so its `data`
                 // addresses `length` readable bytes.
-                let prop: Option<&PropView> = unsafe {
-                    find_prop_len(
-                        value_view.props_view(),
-                        (*conn).dst_prop.data,
-                        (*conn).dst_prop.length,
-                    )
-                };
+                let prop: Option<&PropView> =
+                    unsafe { find_prop_len(value_view.props_view(), (*conn).dst_prop.as_bytes()) };
                 if let Some(prop) = prop {
                     // C indexes the `ufbx_vec3` value union's `ufbx_real v[3]`
                     // view; the generated struct keeps only `x`/`y`/`z`, so the
@@ -10172,9 +10111,8 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
         // SAFETY: `props_view()` is the shader's own live `ufbx_props` and the name
         // is a NUL-terminated literal.
-        let api: *mut Prop =
-            unsafe { api_find_prop(shader_view.props_view(), b"RenderAPI\0".as_ptr()) }
-                .map_or(ptr::null_mut(), PropView::get);
+        let api: *mut Prop = find_prop_len(shader_view.props_view(), b"RenderAPI")
+            .map_or(ptr::null_mut(), PropView::get);
         if !api.is_null() {
             // SAFETY: a non-null `api` is a live `ufbx_prop` of the shader's props,
             // whose `value_str` is a NUL-terminated interned pool string; the
@@ -10257,14 +10195,12 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             if unsafe { (*material).shader_type } == ShaderType::Unknown {
                 // SAFETY: `props_view()` is the material's own live `ufbx_props` and
                 // both names are NUL-terminated literals.
-                let (classid_a, classid_b): (u32, u32) = unsafe {
-                    (
-                        api_find_int(material_view.props_view(), b"3dsMax|ClassIDa\0".as_ptr(), 0)
-                            as u64 as u32,
-                        api_find_int(material_view.props_view(), b"3dsMax|ClassIDb\0".as_ptr(), 0)
-                            as u64 as u32,
-                    )
-                };
+                let (classid_a, classid_b): (u32, u32) = (
+                    api_find_int_len(material_view.props_view(), b"3dsMax|ClassIDa", 0) as u64
+                        as u32,
+                    api_find_int_len(material_view.props_view(), b"3dsMax|ClassIDb", 0) as u64
+                        as u32,
+                );
                 if classid_a == 0x3d6b1cecu32 && classid_b == 0xdeadc001u32 {
                     // SAFETY: `material` is live (see above).
                     unsafe {
@@ -10746,7 +10682,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                         // SAFETY: `macro_lower_bound_eq` only passes pointers to
                         // live, initialized elements of the run it was handed; both
                         // `material_prop`s are interned pool strings.
-                        unsafe { str_less((*a).material_prop, name) }
+                        unsafe { str_less_raw((*a).material_prop, name) }
                     };
                     let eq_lambda = |a: *const MaterialTexture| {
                         // SAFETY: as `cmp_lambda`.
@@ -12804,15 +12740,15 @@ pub(crate) unsafe fn find_bool3(
     // SAFETY: `dst` addresses three writable `bool`s (fn contract); `local` holds
     // `local_len` initialized bytes followed by a NUL, which is what
     // `ufbx_find_int_len` reads.
-    unsafe { *dst.add(0) = api_find_int_len(props, local, local_len, def) != 0 };
+    unsafe { *dst.add(0) = api_find_int_len(props, slice_from_ptr(local, local_len), def) != 0 };
     // SAFETY: as above, for the `Y` suffix.
     unsafe { *local.add(name_len) = b'Y' };
     // SAFETY: as above, for the second `bool` of `dst`.
-    unsafe { *dst.add(1) = api_find_int_len(props, local, local_len, def) != 0 };
+    unsafe { *dst.add(1) = api_find_int_len(props, slice_from_ptr(local, local_len), def) != 0 };
     // SAFETY: as above, for the `Z` suffix.
     unsafe { *local.add(name_len) = b'Z' };
     // SAFETY: as above, for the third `bool` of `dst`.
-    unsafe { *dst.add(2) = api_find_int_len(props, local, local_len, def) != 0 };
+    unsafe { *dst.add(2) = api_find_int_len(props, slice_from_ptr(local, local_len), def) != 0 };
 }
 
 // ufbx.c:23416-23488 `ufbxi_update_constraint`
@@ -12888,7 +12824,7 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
     // the three `bool`s of the `[bool; 3]` field it is handed, and the transmute
     // is guarded by the explicit `[0, LAST)` range check above it.
     unsafe {
-        (*constraint).active = api_find_int(props, b"Active\0".as_ptr(), 1) != 0;
+        (*constraint).active = api_find_int_len(props, b"Active", 1) != 0;
         if constraint_type == ConstraintType::Aim {
             find_bool3(
                 (*constraint).constrain_rotation.as_mut_ptr(),
@@ -12908,15 +12844,15 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
                 z: 0.0,
             };
 
-            let up_type: i64 = api_find_int(props, b"WorldUpType\0".as_ptr(), 0);
+            let up_type: i64 = api_find_int_len(props, b"WorldUpType", 0);
             if up_type >= 0 && up_type < ConstraintAimUpType::None as i64 {
                 // C: `(ufbx_constraint_aim_up_type)up_type` — the range check above
                 // admits only valid enum values.
                 (*constraint).aim_up_type =
                     core::mem::transmute::<u32, ConstraintAimUpType>(up_type as u32);
             }
-            (*constraint).aim_vector = api_find_vec3(props, b"AimVector\0".as_ptr(), default_aim);
-            (*constraint).aim_up_vector = api_find_vec3(props, b"UpVector\0".as_ptr(), default_up);
+            (*constraint).aim_vector = api_find_vec3_len(props, b"AimVector", default_aim);
+            (*constraint).aim_up_vector = api_find_vec3_len(props, b"UpVector", default_up);
         } else if constraint_type == ConstraintType::Parent {
             find_bool3(
                 (*constraint).constrain_translation.as_mut_ptr(),
@@ -12961,8 +12897,7 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
             (*constraint).constrain_rotation[0] = true;
             (*constraint).constrain_rotation[1] = true;
             (*constraint).constrain_rotation[2] = true;
-            (*constraint).ik_pole_vector =
-                api_find_vec3(props, b"PoleVectorType\0".as_ptr(), ZERO_VEC3);
+            (*constraint).ik_pole_vector = api_find_vec3_len(props, b"PoleVectorType", ZERO_VEC3);
         }
     }
 }
@@ -13924,36 +13859,18 @@ pub(crate) fn update_scene_metadata(metadata_view: &SceneMetadataView) {
     // SAFETY: `metadata` is the metadata view's own storage and `props` is that
     // same view's props; every lookup name is a NUL-terminated literal.
     unsafe {
-        (*metadata).original_application.vendor = find_string(
-            props,
-            b"Original|ApplicationVendor\0".as_ptr(),
-            EMPTY_STRING.0,
-        );
-        (*metadata).original_application.name = find_string(
-            props,
-            b"Original|ApplicationName\0".as_ptr(),
-            EMPTY_STRING.0,
-        );
-        (*metadata).original_application.version = find_string(
-            props,
-            b"Original|ApplicationVersion\0".as_ptr(),
-            EMPTY_STRING.0,
-        );
-        (*metadata).latest_application.vendor = find_string(
-            props,
-            b"LastSaved|ApplicationVendor\0".as_ptr(),
-            EMPTY_STRING.0,
-        );
-        (*metadata).latest_application.name = find_string(
-            props,
-            b"LastSaved|ApplicationName\0".as_ptr(),
-            EMPTY_STRING.0,
-        );
-        (*metadata).latest_application.version = find_string(
-            props,
-            b"LastSaved|ApplicationVersion\0".as_ptr(),
-            EMPTY_STRING.0,
-        );
+        (*metadata).original_application.vendor =
+            find_string_len(props, b"Original|ApplicationVendor", EMPTY_STRING.0);
+        (*metadata).original_application.name =
+            find_string_len(props, b"Original|ApplicationName", EMPTY_STRING.0);
+        (*metadata).original_application.version =
+            find_string_len(props, b"Original|ApplicationVersion", EMPTY_STRING.0);
+        (*metadata).latest_application.vendor =
+            find_string_len(props, b"LastSaved|ApplicationVendor", EMPTY_STRING.0);
+        (*metadata).latest_application.name =
+            find_string_len(props, b"LastSaved|ApplicationName", EMPTY_STRING.0);
+        (*metadata).latest_application.version =
+            find_string_len(props, b"LastSaved|ApplicationVersion", EMPTY_STRING.0);
     }
 }
 

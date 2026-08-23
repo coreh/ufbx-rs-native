@@ -127,8 +127,8 @@ use crate::native::nurbs::{
     TessellateSurfaceContext,
 };
 use crate::native::parse::{
-    find_enum, find_real as ufbxi_find_real, get_name_key, Context, ImpHandle, InnerContext,
-    MeshImp, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
+    find_enum, find_real as ufbxi_find_real, get_name_key, get_name_key_raw, Context, ImpHandle,
+    InnerContext, MeshImp, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
 };
 use crate::native::platform::{
     add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
@@ -144,7 +144,8 @@ use crate::native::scene_process::{
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{
     add3, concat_str_cmp, cross3, get_concat_key, length3, lerp3, mul3, normalize3, safe_string,
-    str_equal, str_less, sub3, DEG_TO_RAD_DOUBLE, DPI, ONE_VEC3, RAD_TO_DEG_DOUBLE,
+    str_equal, str_equal_raw, str_less_raw, sub3, DEG_TO_RAD_DOUBLE, DPI, ONE_VEC3,
+    RAD_TO_DEG_DOUBLE,
 };
 // `ufbxi_dot3` is only reached from the `#if UFBXI_FEATURE_TRIANGULATION` arm of
 // `ufbx_catch_triangulate_face`.
@@ -950,23 +951,22 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
 // ufbx_abi exports).
 
 // ufbx.c:30635-30650 `ufbx_find_prop_len`
-pub(crate) unsafe fn find_prop_len<'a, M: Mode>(
+// `name: &[u8]` carries C's `(name, name_len)` pair (the `_len` suffix IS the
+// slice); C's `ufbxi_safe_string` null-guard is subsumed by the slice mint at
+// the ABI shims (`slice_from_ptr` maps the null/0 case to the empty slice).
+pub(crate) fn find_prop_len<'a, M: Mode>(
     props: &'a View<Props, M>,
-    name: *const u8,
-    name_len: usize,
+    name: &[u8],
 ) -> Option<&'a View<Prop, M>> {
-    // SAFETY: `name`/`name_len` describe the caller's key bytes — the
-    // raw-pointer contract of this `unsafe fn`.
-    let key = unsafe { get_name_key(name, name_len) };
-    let name_str = safe_string(name, name_len);
+    let key = get_name_key(name);
 
     let mut props: Option<&'a View<Props, M>> = Some(props);
     while let Some(cur) = props {
         let mut index: usize = usize::MAX;
         // SAFETY: the search spans `cur`'s own sorted prop run `0..props_count()`;
         // every probe pointer the comparators receive addresses a live `Prop`
-        // whose `name` is an interned span, and `name_str`/`key` derive from the
-        // query key above.
+        // whose `name` is an interned span readable for its own length (the
+        // `as_bytes` contract).
         unsafe {
             macro_lower_bound_eq::<Prop>(
                 4,
@@ -974,8 +974,8 @@ pub(crate) unsafe fn find_prop_len<'a, M: Mode>(
                 cur.props_data(),
                 0,
                 cur.props_count(),
-                |a| cmp_prop_less_ref(a, name_str, key),
-                |a| (*a)._internal_key == key && str_equal((*a).name, name_str),
+                |a| cmp_prop_less_ref(a, name, key),
+                |a| (*a)._internal_key == key && str_equal((*a).name.as_bytes(), name),
             )
         };
         if index != usize::MAX {
@@ -994,16 +994,8 @@ pub(crate) unsafe fn find_prop_len<'a, M: Mode>(
 }
 
 // ufbx.c:30652-30660 `ufbx_find_real_len`
-pub(crate) unsafe fn find_real_len<M: Mode>(
-    props: &View<Props, M>,
-    name: *const u8,
-    name_len: usize,
-    def: Real,
-) -> Real {
-    // SAFETY: `props` is the live props view and `name`/`name_len` are the
-    // caller's key-buffer params — the raw-pointer contract forwarded to
-    // `find_prop_len`.
-    match unsafe { find_prop_len(props, name, name_len) } {
+pub(crate) fn find_real_len<M: Mode>(props: &View<Props, M>, name: &[u8], def: Real) -> Real {
+    match find_prop_len(props, name) {
         // C-parity: `prop->value_real` is the `ufbx_prop` value union's first
         // real; the generated struct keeps only `value_vec4` (same mapping as
         // `native::parse::find_real`).
@@ -1016,16 +1008,8 @@ pub(crate) unsafe fn find_real_len<M: Mode>(
 // Ported ahead of its banner section because `ufbxi_update_constraint`
 // (ufbx.c:23416, `native::scene_process`) calls `ufbx_find_vec3`.
 #[inline(never)]
-pub(crate) unsafe fn find_vec3_len<M: Mode>(
-    props: &View<Props, M>,
-    name: *const u8,
-    name_len: usize,
-    def: Vec3,
-) -> Vec3 {
-    // SAFETY: `props` is the live props view and `name`/`name_len` are the
-    // caller's key-buffer params — the raw-pointer contract forwarded to
-    // `find_prop_len`.
-    match unsafe { find_prop_len(props, name, name_len) } {
+pub(crate) fn find_vec3_len<M: Mode>(props: &View<Props, M>, name: &[u8], def: Vec3) -> Vec3 {
+    match find_prop_len(props, name) {
         // C-parity: `prop->value_vec3` is the `ufbx_prop` value union's 3-real
         // view; the generated struct keeps only `value_vec4` (same mapping as
         // `native::parse::find_vec3`).
@@ -1036,32 +1020,16 @@ pub(crate) unsafe fn find_vec3_len<M: Mode>(
 
 // ufbx.c:30672-30680 `ufbx_find_int_len`
 #[inline(never)]
-pub(crate) unsafe fn find_int_len<M: Mode>(
-    props: &View<Props, M>,
-    name: *const u8,
-    name_len: usize,
-    def: i64,
-) -> i64 {
-    // SAFETY: `props` is the live props view and `name`/`name_len` are the
-    // caller's key-buffer params — the raw-pointer contract forwarded to
-    // `find_prop_len`.
-    match unsafe { find_prop_len(props, name, name_len) } {
+pub(crate) fn find_int_len<M: Mode>(props: &View<Props, M>, name: &[u8], def: i64) -> i64 {
+    match find_prop_len(props, name) {
         Some(prop) => prop.value_int(),
         None => def,
     }
 }
 
 // ufbx.c:30682-30690 `ufbx_find_bool_len`
-pub(crate) unsafe fn find_bool_len<M: Mode>(
-    props: &View<Props, M>,
-    name: *const u8,
-    name_len: usize,
-    def: bool,
-) -> bool {
-    // SAFETY: `props` is the live props view and `name`/`name_len` are the
-    // caller's key-buffer params — the raw-pointer contract forwarded to
-    // `find_prop_len`.
-    match unsafe { find_prop_len(props, name, name_len) } {
+pub(crate) fn find_bool_len<M: Mode>(props: &View<Props, M>, name: &[u8], def: bool) -> bool {
+    match find_prop_len(props, name) {
         Some(prop) => prop.value_int() != 0,
         None => def,
     }
@@ -1069,16 +1037,8 @@ pub(crate) unsafe fn find_bool_len<M: Mode>(
 
 // ufbx.c:30692-30700 `ufbx_find_string_len`
 #[inline(never)]
-pub(crate) unsafe fn find_string_len<M: Mode>(
-    props: &View<Props, M>,
-    name: *const u8,
-    name_len: usize,
-    def: String,
-) -> String {
-    // SAFETY: `props` is the live props view and `name`/`name_len` are the
-    // caller's key-buffer params — the raw-pointer contract forwarded to
-    // `find_prop_len`.
-    match unsafe { find_prop_len(props, name, name_len) } {
+pub(crate) fn find_string_len<M: Mode>(props: &View<Props, M>, name: &[u8], def: String) -> String {
+    match find_prop_len(props, name) {
         Some(prop) => prop.value_str(),
         None => def,
     }
@@ -1086,16 +1046,8 @@ pub(crate) unsafe fn find_string_len<M: Mode>(
 
 // ufbx.c:30702-30710 `ufbx_find_blob_len`
 // C has no `ufbxi_noinline` here (unlike `ufbx_find_string_len` above).
-pub(crate) unsafe fn find_blob_len<M: Mode>(
-    props: &View<Props, M>,
-    name: *const u8,
-    name_len: usize,
-    def: Blob,
-) -> Blob {
-    // SAFETY: `props` is the live props view and `name`/`name_len` are the
-    // caller's key-buffer params — the raw-pointer contract forwarded to
-    // `find_prop_len`.
-    match unsafe { find_prop_len(props, name, name_len) } {
+pub(crate) fn find_blob_len<M: Mode>(props: &View<Props, M>, name: &[u8], def: Blob) -> Blob {
+    match find_prop_len(props, name) {
         Some(prop) => prop.value_blob(),
         None => def,
     }
@@ -1158,7 +1110,7 @@ pub(crate) unsafe fn find_element_len(
     let name_str: String = safe_string(name, name_len);
     // SAFETY: `name`/`name_len` describe the caller's key bytes — the
     // raw-pointer contract of this `unsafe fn`.
-    let key: u32 = unsafe { get_name_key(name, name_len) };
+    let key: u32 = unsafe { get_name_key_raw(name, name_len) };
 
     let mut index: usize = usize::MAX;
     // SAFETY: `scene` is non-null (checked) and points at a live `Scene`; the
@@ -1173,7 +1125,7 @@ pub(crate) unsafe fn find_element_len(
             0,
             (*scene).elements_by_name.count,
             |a| cmp_name_element_less_ref(a, name_str, type_, key),
-            |a| str_equal((*a).name, name_str) && (*a).type_ == type_,
+            |a| str_equal_raw((*a).name, name_str) && (*a).type_ == type_,
         )
     };
 
@@ -1220,10 +1172,11 @@ pub(crate) unsafe fn find_prop_element_len(
     // field, minted as a read-only `Const` view.
     let props: &View<Props, Const> =
         unsafe { View::<Props, Const>::from_ptr(&raw const (*element).props) };
-    // SAFETY: `props` is the live props view and `name`/`name_len` are the
-    // caller's key-buffer params — the raw-pointer contract forwarded to
-    // `find_prop_len`.
-    match unsafe { find_prop_len(props, name, name_len) } {
+    // SAFETY: `name`/`name_len` are the caller's key-buffer params, minted as
+    // the query slice (`slice_from_ptr` maps the null/0 case to empty).
+    match find_prop_len(props, unsafe {
+        crate::prelude::slice_from_ptr(name, name_len)
+    }) {
         // SAFETY: `element` is the live element and `prop.as_ptr()` addresses the
         // matched live `Prop`; forwarded to `get_prop_element`.
         Some(prop) => unsafe { get_prop_element(element, prop.as_ptr(), type_) },
@@ -1300,11 +1253,12 @@ pub(crate) unsafe fn find_anim_prop_len(
                 if a_element != element {
                     a_element < element
                 } else {
-                    str_less((*a).prop_name, prop_str)
+                    str_less_raw((*a).prop_name, prop_str)
                 }
             },
             |a| {
-                std::ptr::eq(ref_ptr(&(*a).element), element) && str_equal((*a).prop_name, prop_str)
+                std::ptr::eq(ref_ptr(&(*a).element), element)
+                    && str_equal_raw((*a).prop_name, prop_str)
             },
         )
     };
@@ -1675,9 +1629,11 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
     // this `unsafe fn`.
     let element_view: &View<Element, Const> = unsafe { View::<Element, Const>::from_ptr(element) };
     let props: &View<Props, Const> = element_view.props();
-    // SAFETY: `props` is the live props view and `name`/`name_len` the caller's
-    // key buffer.
-    let prop: Option<&View<Prop, Const>> = unsafe { find_prop_len(props, name, name_len) };
+    // SAFETY: `name`/`name_len` are the caller's key-buffer params, minted as
+    // the query slice (`slice_from_ptr` maps the null/0 case to empty).
+    let prop: Option<&View<Prop, Const>> = find_prop_len(props, unsafe {
+        crate::prelude::slice_from_ptr(name, name_len)
+    });
     if let Some(found) = prop {
         // SAFETY: `found.as_ptr()` addresses the matched live `Prop`; the read
         // copies it out by value (C struct assignment).
@@ -1690,7 +1646,7 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
         result.name.data = name;
         result.name.length = name_len;
         // SAFETY: `name`/`name_len` describe the caller's key bytes.
-        result._internal_key = unsafe { get_name_key(name, name_len) };
+        result._internal_key = unsafe { get_name_key_raw(name, name_len) };
         result.flags = PropFlags::NOT_FOUND;
         result.value_str.data = EMPTY_CHAR.as_ptr();
         result.value_str.length = 0;
@@ -2863,8 +2819,8 @@ pub(crate) unsafe fn find_prop_texture_len(
             (*material).textures.data,
             0,
             (*material).textures.count,
-            |a| str_less((*a).material_prop, name_str),
-            |a| str_equal((*a).material_prop, name_str),
+            |a| str_less_raw((*a).material_prop, name_str),
+            |a| str_equal_raw((*a).material_prop, name_str),
         );
     }
     if index < usize::MAX {
@@ -2939,8 +2895,8 @@ pub(crate) unsafe fn find_shader_prop_bindings_len(
                 (*bind).prop_bindings.data,
                 0,
                 (*bind).prop_bindings.count,
-                |a| str_less((*a).shader_prop, name_str),
-                |a| str_equal((*a).shader_prop, name_str),
+                |a| str_less_raw((*a).shader_prop, name_str),
+                |a| str_equal_raw((*a).shader_prop, name_str),
             );
         }
 
@@ -2955,7 +2911,7 @@ pub(crate) unsafe fn find_shader_prop_bindings_len(
                     (*bind).prop_bindings.data,
                     begin,
                     (*bind).prop_bindings.count,
-                    |a| str_equal((*a).shader_prop, name_str),
+                    |a| str_equal_raw((*a).shader_prop, name_str),
                 );
             }
 
@@ -2992,8 +2948,8 @@ pub(crate) unsafe fn find_shader_texture_input_len(
             (*shader).inputs.data,
             0,
             (*shader).inputs.count,
-            |a| str_less((*a).name, name_str),
-            |a| str_equal((*a).name, name_str),
+            |a| str_less_raw((*a).name, name_str),
+            |a| str_equal_raw((*a).name, name_str),
         );
     }
 
@@ -6188,7 +6144,7 @@ pub(crate) unsafe fn dom_find_len<M: Mode>(
         // SAFETY: `p_child` is in `[data, end)` of the child pointer list, so it
         // addresses a live `*mut DomNode` whose pointee's own `name` is read;
         // `str_equal` compares that interned string against `ref_`.
-        if unsafe { str_equal((**p_child).name, ref_) } {
+        if unsafe { str_equal_raw((**p_child).name, ref_) } {
             // Mode-generic mint from the STORED child pointer (arena write
             // provenance), correlated to `parent`'s borrow.
             // SAFETY: `*p_child` is a live arena `DomNode` pointer.
@@ -7173,9 +7129,9 @@ pub(crate) unsafe fn find_prop<M: Mode>(
     name: *const u8,
 ) -> Option<&View<Prop, M>> {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward to the `_len` impl under the same
-    // contract.
-    unsafe { find_prop_len(props, name, strlen(name)) }
+    // `strlen` measures it, and the measured run is exactly the slice minted
+    // for the `_len` impl.
+    unsafe { find_prop_len(props, crate::prelude::slice_from_ptr(name, strlen(name))) }
 }
 
 // ufbx.c:33143 `ufbx_find_real`
@@ -7185,8 +7141,15 @@ pub(crate) unsafe fn find_real<M: Mode>(
     def: Real,
 ) -> Real {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward to the `_len` impl.
-    unsafe { find_real_len(props, name, strlen(name), def) }
+    // `strlen` measures it, and the measured run is exactly the slice minted
+    // for the `_len` impl.
+    unsafe {
+        find_real_len(
+            props,
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+            def,
+        )
+    }
 }
 
 // ufbx.c:33144 `ufbx_find_vec3`
@@ -7196,15 +7159,29 @@ pub(crate) unsafe fn find_vec3<M: Mode>(
     def: Vec3,
 ) -> Vec3 {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward to the `_len` impl.
-    unsafe { find_vec3_len(props, name, strlen(name), def) }
+    // `strlen` measures it, and the measured run is exactly the slice minted
+    // for the `_len` impl.
+    unsafe {
+        find_vec3_len(
+            props,
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+            def,
+        )
+    }
 }
 
 // ufbx.c:33145 `ufbx_find_int`
 pub(crate) unsafe fn find_int<M: Mode>(props: &View<Props, M>, name: *const u8, def: i64) -> i64 {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward to the `_len` impl.
-    unsafe { find_int_len(props, name, strlen(name), def) }
+    // `strlen` measures it, and the measured run is exactly the slice minted
+    // for the `_len` impl.
+    unsafe {
+        find_int_len(
+            props,
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+            def,
+        )
+    }
 }
 
 // ufbx.c:33146 `ufbx_find_bool`
@@ -7214,8 +7191,15 @@ pub(crate) unsafe fn find_bool<M: Mode>(
     def: bool,
 ) -> bool {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward to the `_len` impl.
-    unsafe { find_bool_len(props, name, strlen(name), def) }
+    // `strlen` measures it, and the measured run is exactly the slice minted
+    // for the `_len` impl.
+    unsafe {
+        find_bool_len(
+            props,
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+            def,
+        )
+    }
 }
 
 // ufbx.c:33147 `ufbx_find_string`
@@ -7225,8 +7209,15 @@ pub(crate) unsafe fn find_string<M: Mode>(
     def: String,
 ) -> String {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward to the `_len` impl.
-    unsafe { find_string_len(props, name, strlen(name), def) }
+    // `strlen` measures it, and the measured run is exactly the slice minted
+    // for the `_len` impl.
+    unsafe {
+        find_string_len(
+            props,
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+            def,
+        )
+    }
 }
 
 // ufbx.c:33148 `ufbx_find_blob`
@@ -7236,8 +7227,15 @@ pub(crate) unsafe fn find_blob<M: Mode>(
     def: Blob,
 ) -> Blob {
     // SAFETY: `name` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it and both forward to the `_len` impl.
-    unsafe { find_blob_len(props, name, strlen(name), def) }
+    // `strlen` measures it, and the measured run is exactly the slice minted
+    // for the `_len` impl.
+    unsafe {
+        find_blob_len(
+            props,
+            crate::prelude::slice_from_ptr(name, strlen(name)),
+            def,
+        )
+    }
 }
 
 // ufbx.c:33149 `ufbx_find_prop_element`
@@ -7751,7 +7749,7 @@ mod tests {
                 .map(|i| NameElement {
                     name: String::new_c(names[i].as_ptr(), names[i].len()),
                     type_: types[i],
-                    _internal_key: get_name_key(names[i].as_ptr(), names[i].len()),
+                    _internal_key: get_name_key(names[i]),
                     element: Ref::from_ptr(ptrs[i]),
                 })
                 .collect();
@@ -7834,7 +7832,7 @@ mod tests {
                 .iter()
                 .map(|&(element, name)| AnimProp {
                     element: Ref::from_ptr(element),
-                    _internal_key: get_name_key(name.as_ptr(), name.len()),
+                    _internal_key: get_name_key(name),
                     prop_name: String::new_c(name.as_ptr(), name.len()),
                     anim_value: Ref::from_ptr(anim_value),
                 })

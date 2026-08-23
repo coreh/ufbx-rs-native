@@ -7789,7 +7789,7 @@ pub(crate) fn load_strings(uc: &Context) -> Result<(), Fail> {
         // their lengths, which is what `strlen`/`str_less` read.
         unsafe {
             ufbx_assert!(crate::native::error::strlen(str_.data) == str_.length);
-            ufbx_assert!(sp::str_less(reg_prev, *str_));
+            ufbx_assert!(sp::str_less_raw(reg_prev, *str_));
             reg_prev = *str_;
         }
         ufbxi_check!(
@@ -8206,26 +8206,31 @@ pub(crate) unsafe fn is_transform_identity(t: *const Transform) -> bool {
 
 // ufbx.c:11609-11622 `ufbxi_get_name_key`
 #[inline(always)]
-pub(crate) unsafe fn get_name_key(name: *const u8, len: usize) -> u32 {
+pub(crate) fn get_name_key(name: &[u8]) -> u32 {
     let mut key: u32 = 0;
-    if len >= 4 {
-        // SAFETY: `len >= 4`, so `name.add(0..=3)` read live bytes of `name`.
-        key = unsafe {
-            (*name.add(0) as u32) << 24
-                | (*name.add(1) as u32) << 16
-                | (*name.add(2) as u32) << 8
-                | (*name.add(3) as u32)
-        };
+    if name.len() >= 4 {
+        key = (name[0] as u32) << 24
+            | (name[1] as u32) << 16
+            | (name[2] as u32) << 8
+            | (name[3] as u32);
     } else {
         for i in 0..4usize {
             key <<= 8;
-            if i < len {
-                // SAFETY: `i < len`, so `name.add(i)` reads a live byte of `name`.
-                key |= unsafe { *name.add(i) } as u32;
+            if i < name.len() {
+                key |= name[i] as u32;
             }
         }
     }
     key
+}
+
+// Unanchored raw projection over the anchored slice body above, for call
+// sites whose key is still a raw `(ptr, len)` pair.
+#[inline(always)]
+pub(crate) unsafe fn get_name_key_raw(name: *const u8, len: usize) -> u32 {
+    // SAFETY: the caller vouches `name` is readable for `len` bytes — the
+    // slice contract forwarded from this fn's own.
+    get_name_key(unsafe { crate::prelude::slice_from_ptr(name, len) })
 }
 
 // ufbx.c:11624-11631 `ufbxi_get_name_key_c`

@@ -90,7 +90,7 @@ use crate::native::hash::{
 };
 use crate::native::obj::{mtl_load, obj_free, obj_load};
 use crate::native::parse::{
-    begin_parse, determine_format, finish_imp, get_name_key, get_name_key_c, load_maps,
+    begin_parse, determine_format, finish_imp, get_name_key_c, get_name_key_raw, load_maps,
     load_strings, Context, FinishedImp, ImpHandle, Node, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
     MIN_FILE_FORMAT_LOOKAHEAD,
 };
@@ -121,7 +121,8 @@ use crate::native::string_pool as sp;
 #[cfg(feature = "baking")]
 use crate::native::string_pool::lerp3;
 use crate::native::string_pool::{
-    map_cmp_string, push_string_place_str, str_equal, str_less, string_pool_temp_free, STRINGS,
+    map_cmp_string, push_string_place_str, str_equal_raw, str_less_raw, string_pool_temp_free,
+    STRINGS,
 };
 use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
 use crate::native::view::SliceViewIter;
@@ -1588,7 +1589,7 @@ pub(crate) unsafe fn override_less_than_prop(
     // bytes with the same ordering for NUL-terminated names; reconcile on sync.
     // SAFETY: `over.prop_name` and `prop.name` are valid `String` runs of their
     // `.length` bytes; `str_cmp` bounds both reads by those lengths.
-    unsafe { sp::str_cmp((*over).prop_name, prop.name()) != 0 }
+    unsafe { sp::str_cmp_raw((*over).prop_name, prop.name()) != 0 }
 }
 
 // ufbx.c:25636-25641 `ufbxi_override_equals_to_prop`
@@ -1616,7 +1617,7 @@ pub(crate) unsafe fn override_equals_to_prop(
     // length-bounded `str_cmp` instead; reconcile once upstream lands the fix.
     // SAFETY: `over.prop_name` and `prop.name` are valid `String` runs of their
     // `.length` bytes; `str_cmp` bounds both reads by those lengths.
-    unsafe { sp::str_cmp((*over).prop_name, prop.name()) == 0 }
+    unsafe { sp::str_cmp_raw((*over).prop_name, prop.name()) == 0 }
 }
 
 // ufbx.c:25643-25664 `ufbxi_find_prop_override`
@@ -4776,7 +4777,7 @@ pub(crate) unsafe extern "C" fn prop_override_prop_name_less(
     }
     // SAFETY: as above, reading each element's `prop_name` string by value;
     // `str_less` only compares the spans those strings describe.
-    unsafe { str_less((*a).prop_name, (*b).prop_name) }
+    unsafe { str_less_raw((*a).prop_name, (*b).prop_name) }
 }
 
 // ufbx.c:26536-26543 `ufbxi_prop_override_less`
@@ -4956,7 +4957,8 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
                     &raw const (*src).value_str as *const String,
                 )?;
 
-                (*dst)._internal_key = get_name_key((*dst).prop_name.data, (*dst).prop_name.length);
+                (*dst)._internal_key =
+                    get_name_key_raw((*dst).prop_name.data, (*dst).prop_name.length);
             }
         }
 
@@ -4991,17 +4993,17 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
                     push_anim_string(ac, &raw mut (*over).value_str)?;
                 }
 
-                if str_equal((*over).prop_name, prev_name) {
+                if str_equal_raw((*over).prop_name, prev_name) {
                     (*over).prop_name = prev_name;
                     over = over.add(1);
                     continue;
                 }
 
-                while global_str != global_end && str_less(*global_str, (*over).prop_name) {
+                while global_str != global_end && str_less_raw(*global_str, (*over).prop_name) {
                     global_str = global_str.add(1);
                 }
 
-                if global_str != global_end && str_equal(*global_str, (*over).prop_name) {
+                if global_str != global_end && str_equal_raw(*global_str, (*over).prop_name) {
                     (*over).prop_name = *global_str;
                 } else {
                     push_anim_string(ac, &raw mut (*over).prop_name)?;
