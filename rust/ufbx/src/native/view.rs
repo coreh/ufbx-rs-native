@@ -165,24 +165,55 @@ impl<T> View<T, Const> {
 // These are for ACCESSOR IMPL BODIES — a single-level `$field` only. Deeper
 // paths, stored-pointer derefs, and anything whose vouch exceeds the handle
 // invariant stay as explicit `unsafe` with their own SAFETY comments.
+//
+// Reads expand to `ptr::read`, which for a non-`Copy` field produces a BITWISE
+// DUPLICATE. That is sound here only because the viewed data model is C PODs
+// with no `Drop` — bitwise duplication is the ported C struct-assignment
+// semantics (PORTING checklist #15; the same rule that makes `Ref<T>` `Copy`).
+// If a droppable type ever ends up behind a view, its reads must not use
+// these macros.
 
-/// Single-leaf place read through `$self.get()` (Mut views / context handles).
+/// Single-leaf read through `$self.get()` (Mut views / context handles).
 macro_rules! view_read {
     ($self:expr, $field:ident) => {
-        // SAFETY: single-leaf place read; see the macro-level argument above.
-        unsafe { (*$self.get()).$field }
+        // SAFETY: single-leaf read; see the macro-level argument above.
+        unsafe { ::core::ptr::read(&raw const (*$self.get()).$field) }
     };
 }
 pub(crate) use view_read;
 
-/// Single-leaf place read through `$self.as_ptr()` (mode-generic impls).
+/// Single-leaf read through `$self.as_ptr()` (mode-generic impls).
 macro_rules! view_read_shared {
     ($self:expr, $field:ident) => {
-        // SAFETY: single-leaf place read; see the macro-level argument above.
-        unsafe { (*$self.as_ptr()).$field }
+        // SAFETY: single-leaf read; see the macro-level argument above.
+        unsafe { ::core::ptr::read(&raw const (*$self.as_ptr()).$field) }
     };
 }
 pub(crate) use view_read_shared;
+
+/// Single-leaf `&raw const` projection through `$self.as_ptr()` (mode-generic
+/// impls; the read pointer inherits the view's provenance).
+macro_rules! view_raw_shared {
+    ($self:expr, $field:ident) => {
+        // SAFETY: single-leaf address projection; see the macro-level argument
+        // above.
+        unsafe { &raw const (*$self.as_ptr()).$field }
+    };
+}
+pub(crate) use view_raw_shared;
+
+/// In-place nested-view projection through `$self.as_ptr()`: mints a view over
+/// one embedded field. Liveness and `M`-adequate provenance carry over from
+/// the receiver's own mint (the projection stays inside the same allocation).
+macro_rules! view_project {
+    ($self:expr, $field:ident) => {
+        // SAFETY: in-place single-field projection; see the macro doc above.
+        unsafe {
+            $crate::native::view::View::mint((&raw const (*$self.as_ptr()).$field).cast_mut())
+        }
+    };
+}
+pub(crate) use view_project;
 
 /// Single-leaf place write through `$self.get()` (write capability is carried
 /// by `get()` existing on the receiver).
