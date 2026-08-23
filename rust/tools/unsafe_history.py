@@ -15,10 +15,17 @@ Counting rules:
     (the codebase convention is `//`).
   * Generated files (generated.rs, generated_views.rs) are counted by
     default; pass --exclude-generated to plot only the hand-written trend.
+  * The capi surface (capi.rs) is EXCLUDED by default — it is `unsafe extern
+    "C"` by nature and never trends down; pass --include-capi to count it.
+  * Test code is EXCLUDED by default: the `tests/` directory by path, and
+    in-file test modules by the crate convention that a column-0
+    `#[cfg(test)]` attribute introduces the test tail of the file (first such
+    line through end-of-file). Pass --include-tests to count test bodies.
 
 Usage:
   python3 rust/tools/unsafe_history.py                # CSV + SVG next to repo root
   python3 rust/tools/unsafe_history.py --branch main --step 5 -o /tmp/hist
+  python3 rust/tools/unsafe_history.py --include-capi --include-tests
 """
 
 import argparse
@@ -33,6 +40,7 @@ UNSAFE_BLOCK = re.compile(r"\bunsafe\s*\{")
 LINE_COMMENT = re.compile(r"//.*$")
 
 DEFAULT_EXCLUDE = ("generated.rs", "generated_views.rs")
+CFG_TEST = re.compile(r"^#\[cfg\(test\)\]")
 
 
 def git(repo, *args, check=True):
@@ -44,19 +52,44 @@ def git(repo, *args, check=True):
     return r.stdout
 
 
-def count_at(repo, rev, pathspec, exclude):
-    # One `git grep` per commit: pull every line containing `unsafe` out of the
-    # commit's tree, then classify in-process. -I skips binary blobs.
-    out = git(repo, "grep", "-I", "--no-color", "-e", "unsafe", rev, "--", pathspec)
+def test_cutoffs(repo, rev, pathspec):
+    # Per file: the first column-0 `#[cfg(test)]` line begins the test tail
+    # (crate convention: test modules close out the file). Lines at or past it
+    # are test code.
+    out = git(repo, "grep", "-n", "-I", "--no-color",
+              "-e", "^#\\[cfg(test)\\]", rev, "--", pathspec)
+    cutoffs = {}
+    for line in out.splitlines():
+        try:
+            _, path, lineno, _ = line.split(":", 3)
+            lineno = int(lineno)
+        except ValueError:
+            continue
+        if path not in cutoffs or lineno < cutoffs[path]:
+            cutoffs[path] = lineno
+    return cutoffs
+
+
+def count_at(repo, rev, pathspec, exclude, include_tests):
+    # One `git grep -n` per commit: pull every line containing `unsafe` out of
+    # the commit's tree, then classify in-process. -I skips binary blobs.
+    out = git(repo, "grep", "-n", "-I", "--no-color", "-e", "unsafe", rev, "--", pathspec)
+    cutoffs = {} if include_tests else test_cutoffs(repo, rev, pathspec)
     n_fn = n_block = 0
     for line in out.splitlines():
-        # Format: rev:path:content — split on the first two colons.
+        # Format: rev:path:lineno:content — split on the first three colons.
         try:
-            _, path, content = line.split(":", 2)
+            _, path, lineno, content = line.split(":", 3)
+            lineno = int(lineno)
         except ValueError:
             continue
         if os.path.basename(path) in exclude:
             continue
+        if not include_tests:
+            if "/tests/" in path or path.startswith("tests/"):
+                continue
+            if lineno >= cutoffs.get(path, sys.maxsize):
+                continue
         content = LINE_COMMENT.sub("", content)
         n_fn += len(UNSAFE_FN.findall(content))
         n_block += len(UNSAFE_BLOCK.findall(content))
@@ -137,10 +170,16 @@ def main():
     ap.add_argument("--pathspec", default="rust/ufbx/src", help="tree prefix to count")
     ap.add_argument("--step", type=int, default=1, help="sample every Nth commit")
     ap.add_argument("--exclude-generated", action="store_true")
+    ap.add_argument("--include-capi", action="store_true",
+                    help="count capi.rs (excluded by default: unsafe extern by nature)")
+    ap.add_argument("--include-tests", action="store_true",
+                    help="count test code (tests/ dir + in-file #[cfg(test)] tails)")
     ap.add_argument("-o", "--out", default="unsafe_history", help="output basename")
     args = ap.parse_args()
     repo = os.path.realpath(args.repo)
     exclude = DEFAULT_EXCLUDE if args.exclude_generated else ()
+    if not args.include_capi:
+        exclude = exclude + ("capi.rs",)
 
     revs = git(
         repo, "rev-list", "--first-parent", "--reverse",
@@ -154,7 +193,7 @@ def main():
     rows = []
     t0 = datetime.datetime.now()
     for i, (short, date) in enumerate(sampled):
-        n_fn, n_block = count_at(repo, short, args.pathspec, exclude)
+        n_fn, n_block = count_at(repo, short, args.pathspec, exclude, args.include_tests)
         rows.append((i, short, date, n_fn, n_block))
         if i % 50 == 0:
             el = (datetime.datetime.now() - t0).total_seconds()
@@ -166,7 +205,14 @@ def main():
         for r in rows:
             f.write(",".join(map(str, r)) + "\n")
 
-    suffix = " (generated files excluded)" if args.exclude_generated else ""
+    excluded = []
+    if args.exclude_generated:
+        excluded.append("generated")
+    if not args.include_capi:
+        excluded.append("capi")
+    if not args.include_tests:
+        excluded.append("tests")
+    suffix = f" (excluding {', '.join(excluded)})" if excluded else ""
     svg_path = args.out + ".svg"
     svg_chart(rows, svg_path, f"unsafe markers in {args.pathspec}{suffix}")
     print(f"wrote {csv_path} and {svg_path} ({len(rows)} samples)")
