@@ -31,9 +31,7 @@ use crate::native::error::{
     utf8_valid_length, Fail, EMPTY_CHAR,
 };
 use crate::native::hash::{hash_string, hash_string_check_ascii, map_free, Map};
-use crate::native::platform::{
-    math, min_real, min_sz, to_size, ufbx_assert, ufbxi_regression_assert,
-};
+use crate::native::platform::{math, min_real, min_sz, ufbx_assert, ufbxi_regression_assert};
 use crate::native::warnings::{ufbxi_warnf_imp, Warnings};
 use crate::prelude::as_f64;
 use crate::prelude::{Blob, Real, String};
@@ -201,96 +199,68 @@ pub(crate) unsafe fn str_c(str_: *const u8) -> String {
 
 // ufbx.c:4946-4958 `ufbxi_get_concat_key`
 #[inline(never)]
-pub(crate) unsafe fn get_concat_key(parts: *const String, num_parts: usize) -> u32 {
+pub(crate) unsafe fn get_concat_key(parts: &[String]) -> u32 {
     let mut key: u32 = 0;
     let mut shift: u32 = 32;
     // C: `ufbxi_for(const ufbx_string, part, parts, num_parts)`
-    let mut part = parts;
-    // SAFETY: the caller vouches `parts` addresses `num_parts` `String`s, so the
-    // one-past-the-end pointer is in bounds of that same allocation.
-    let part_end = unsafe { parts.add(num_parts) };
-    while part != part_end {
-        // SAFETY: `part` walks `[parts, part_end)`, so it addresses a live
-        // `String`; when its length is the C-string sentinel, `strlen` reads the
-        // NUL-terminated run `part->data` points at.
-        let length = unsafe {
-            if (*part).length != usize::MAX {
-                (*part).length
+    for part in parts {
+        // SAFETY: each part's `data` is readable for its `length` bytes (fn
+        // contract); when its length is the C-string sentinel, `strlen` reads
+        // the NUL-terminated run `part->data` points at instead.
+        let bytes: &[u8] = unsafe {
+            if part.length != usize::MAX {
+                part.as_bytes()
             } else {
-                strlen((*part).data)
+                crate::prelude::slice_from_ptr(part.data, strlen(part.data))
             }
         };
-        let mut i: usize = 0;
-        while i < length {
+        // C: `key |= (uint32_t)(uint8_t)part->data[i] << shift;`
+        for &b in bytes {
             shift -= 8;
-            // C: `key |= (uint32_t)(uint8_t)part->data[i] << shift;`
-            // SAFETY: `part` addresses a live `String` and `i < length`, its
-            // number of readable bytes at `part->data`.
-            key |= (unsafe { *(*part).data.add(i) } as u32) << shift;
+            key |= (b as u32) << shift;
             if shift == 0 {
                 return key;
             }
-            i += 1;
         }
-        // SAFETY: `part` is in `[parts, part_end)`, so advancing by one lands at
-        // or before the one-past-the-end `part_end`.
-        part = unsafe { part.add(1) };
     }
     key
 }
 
 // ufbx.c:4960-4972 `ufbxi_concat_str_cmp`
+// The `memcmp` leg is sign-mapped to -1/0/1 (slice `cmp` over unsigned bytes ==
+// `memcmp` ordering); every caller and the C code use only the sign.
 #[inline(never)]
-pub(crate) unsafe fn concat_str_cmp(
-    ref_: *const String,
-    parts: *const String,
-    num_parts: usize,
-) -> i32 {
-    // SAFETY: the caller vouches `ref_` addresses a valid `String`, whose
-    // `data` is readable for `length` bytes, so `end` is that run's
-    // one-past-the-end pointer.
-    let (mut ptr_, end) = unsafe { ((*ref_).data, (*ref_).data.add((*ref_).length)) };
+pub(crate) unsafe fn concat_str_cmp(ref_: String, parts: &[String]) -> i32 {
+    // SAFETY: the caller vouches `ref_` is a valid `String`, whose `data` is
+    // readable for `length` bytes.
+    let mut rest: &[u8] = unsafe { ref_.as_bytes() };
     // C: `ufbxi_for(const ufbx_string, part, parts, num_parts)`
-    let mut part = parts;
-    // SAFETY: the caller vouches `parts` addresses `num_parts` `String`s, so the
-    // one-past-the-end pointer is in bounds of that same allocation.
-    let part_end = unsafe { parts.add(num_parts) };
-    while part != part_end {
-        // SAFETY: `part` walks `[parts, part_end)`, so it addresses a live
-        // `String`; when its length is the C-string sentinel, `strlen` reads the
-        // NUL-terminated run `part->data` points at.
-        let length = unsafe {
-            if (*part).length != usize::MAX {
-                (*part).length
+    for part in parts {
+        // SAFETY: each part's `data` is readable for its `length` bytes (fn
+        // contract); when its length is the C-string sentinel, `strlen` reads
+        // the NUL-terminated run `part->data` points at instead.
+        let bytes: &[u8] = unsafe {
+            if part.length != usize::MAX {
+                part.as_bytes()
             } else {
-                strlen((*part).data)
+                crate::prelude::slice_from_ptr(part.data, strlen(part.data))
             }
         };
-        // SAFETY: `ptr_` and `end` bracket the same `ref_->data` run — `ptr_`
-        // only advances toward `end` below — so they are two pointers into one
-        // object, which is what `offset_from` requires.
-        let to_cmp = min_sz(to_size(unsafe { end.offset_from(ptr_) }), length);
-        let cmp = if to_cmp > 0 {
-            // SAFETY: `to_cmp <= end - ptr_` readable bytes at `ptr_` and
-            // `to_cmp <= length`, the bytes readable at `part->data`.
-            unsafe { memcmp(ptr_, (*part).data, to_cmp) }
-        } else {
-            0
+        let to_cmp = min_sz(rest.len(), bytes.len());
+        let cmp = match rest[..to_cmp].cmp(&bytes[..to_cmp]) {
+            core::cmp::Ordering::Less => -1,
+            core::cmp::Ordering::Equal => 0,
+            core::cmp::Ordering::Greater => 1,
         };
         if cmp != 0 {
             return cmp;
         }
-        if to_cmp != length {
+        if to_cmp != bytes.len() {
             return -1;
         }
-        // SAFETY: this point is reached only when `to_cmp == length`, so
-        // `length <= end - ptr_` and the advance stays at or before `end`.
-        ptr_ = unsafe { ptr_.add(length) };
-        // SAFETY: `part` is in `[parts, part_end)`, so advancing by one lands at
-        // or before the one-past-the-end `part_end`.
-        part = unsafe { part.add(1) };
+        rest = &rest[to_cmp..];
     }
-    if ptr_ == end {
+    if rest.is_empty() {
         0
     } else {
         1
@@ -2213,22 +2183,22 @@ mod tests {
         unsafe {
             // Key packs the first 4 bytes big-endian across parts.
             let parts = [s(b"ab"), s(b"cd")];
-            assert_eq!(get_concat_key(parts.as_ptr(), 2), 0x61626364);
+            assert_eq!(get_concat_key(&parts), 0x61626364);
             // SIZE_MAX length -> strlen(data) (C-string part).
             let parts2 = [String::new_c(b"abcd\0".as_ptr(), usize::MAX)];
-            assert_eq!(get_concat_key(parts2.as_ptr(), 1), 0x61626364);
+            assert_eq!(get_concat_key(&parts2), 0x61626364);
             let short = [s(b"a")];
-            assert_eq!(get_concat_key(short.as_ptr(), 1), 0x61000000);
+            assert_eq!(get_concat_key(&short), 0x61000000);
 
             let ref_ = s(b"abcd");
-            assert_eq!(concat_str_cmp(&ref_, parts.as_ptr(), 2), 0);
+            assert_eq!(concat_str_cmp(ref_, &parts), 0);
             let parts3 = [s(b"ab"), s(b"ce")];
-            assert!(concat_str_cmp(&ref_, parts3.as_ptr(), 2) < 0);
+            assert!(concat_str_cmp(ref_, &parts3) < 0);
             // Ref shorter than concat -> -1; longer -> +1.
             let ref_short = s(b"abc");
-            assert_eq!(concat_str_cmp(&ref_short, parts.as_ptr(), 2), -1);
+            assert_eq!(concat_str_cmp(ref_short, &parts), -1);
             let ref_long = s(b"abcde");
-            assert_eq!(concat_str_cmp(&ref_long, parts.as_ptr(), 2), 1);
+            assert_eq!(concat_str_cmp(ref_long, &parts), 1);
         }
     }
 

@@ -1057,12 +1057,11 @@ pub(crate) fn find_blob_len<M: Mode>(props: &View<Props, M>, name: &[u8], def: B
 // (ufbx.c:23416, `native::scene_process`) calls it.
 pub(crate) unsafe fn find_prop_concat<'a, M: Mode>(
     props: &'a View<Props, M>,
-    parts: *const String,
-    num_parts: usize,
+    parts: &[String],
 ) -> Option<&'a View<Prop, M>> {
-    // SAFETY: `parts`/`num_parts` describe the caller's array of name parts —
-    // the raw-pointer contract of this `unsafe fn`.
-    let key: u32 = unsafe { get_concat_key(parts, num_parts) };
+    // SAFETY: each part's `data` is readable for its `length` bytes — the
+    // key-part contract of this `unsafe fn`.
+    let key: u32 = unsafe { get_concat_key(parts) };
 
     let mut props: Option<&'a View<Props, M>> = Some(props);
     while let Some(cur) = props {
@@ -1079,8 +1078,8 @@ pub(crate) unsafe fn find_prop_concat<'a, M: Mode>(
                 cur.props_data(),
                 0,
                 cur.props_count(),
-                |a| cmp_prop_less_concat(a, parts, num_parts, key),
-                |a| (*a)._internal_key == key && concat_str_cmp(&(*a).name, parts, num_parts) == 0,
+                |a| cmp_prop_less_concat(a, parts, key),
+                |a| (*a)._internal_key == key && concat_str_cmp((*a).name, parts) == 0,
             )
         };
         if index != usize::MAX {

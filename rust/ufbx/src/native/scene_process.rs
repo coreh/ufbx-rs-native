@@ -1204,21 +1204,15 @@ pub(crate) unsafe fn cmp_prop_less_ref(a: *const Prop, name: &[u8], key: u32) ->
 
 // ufbx.c:18578-18582 `ufbxi_cmp_prop_less_concat`
 #[inline(always)]
-pub(crate) unsafe fn cmp_prop_less_concat(
-    a: *const Prop,
-    parts: *const String,
-    num_parts: usize,
-    key: u32,
-) -> bool {
+pub(crate) unsafe fn cmp_prop_less_concat(a: *const Prop, parts: &[String], key: u32) -> bool {
     // SAFETY: `a` points to a live, initialized `Prop` — the array element the
-    // bounded search is probing (fn contract); `parts` addresses `num_parts`
-    // initialized `ufbx_string`s (fn contract), which is what `concat_str_cmp`
-    // walks.
+    // bounded search is probing (fn contract) — whose interned `name` is what
+    // `concat_str_cmp` walks against `parts`.
     unsafe {
         if (*a)._internal_key != key {
             return (*a)._internal_key < key;
         }
-        concat_str_cmp(&(*a).name, parts, num_parts) < 0
+        concat_str_cmp((*a).name, parts) < 0
     }
 }
 
@@ -12788,23 +12782,22 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
             }
 
             let mut prop: Option<&PropView>; // ufbxi_uninit
-            let mut parts_storage = MaybeUninit::<[String; 2]>::uninit(); // ufbxi_uninit
-            let parts: *mut String = parts_storage.as_mut_ptr() as *mut String;
-            *parts.add(0) = (*node).element.name;
-            *parts.add(1) = sp::str_c(b".Weight\0".as_ptr());
-            prop = find_prop_concat(props, parts, 2);
+                                             // C: `ufbx_string parts[2];` (ufbxi_uninit) — both entries are
+                                             // written before every lookup.
+            let mut parts: [String; 2] = [(*node).element.name, sp::str_c(b".Weight\0".as_ptr())];
+            prop = find_prop_concat(props, &parts);
             // C: `prop->value_real` — the `ufbx_prop` value union's first real.
             (*target).weight = prop.map_or(weight_scale, |p| p.value_vec4().x) / weight_scale;
 
             if constraint_type == ConstraintType::Parent {
-                *parts.add(1) = sp::str_c(b".Offset T\0".as_ptr());
-                prop = find_prop_concat(props, parts, 2);
+                parts[1] = sp::str_c(b".Offset T\0".as_ptr());
+                prop = find_prop_concat(props, &parts);
                 let t: Vec3 = prop.map_or(ZERO_VEC3, PropView::value_vec3);
-                *parts.add(1) = sp::str_c(b".Offset R\0".as_ptr());
-                prop = find_prop_concat(props, parts, 2);
+                parts[1] = sp::str_c(b".Offset R\0".as_ptr());
+                prop = find_prop_concat(props, &parts);
                 let r: Vec3 = prop.map_or(ZERO_VEC3, PropView::value_vec3);
-                *parts.add(1) = sp::str_c(b".Offset S\0".as_ptr());
-                prop = find_prop_concat(props, parts, 2);
+                parts[1] = sp::str_c(b".Offset S\0".as_ptr());
+                prop = find_prop_concat(props, &parts);
                 let s: Vec3 = prop.map_or(ONE_VEC3, PropView::value_vec3);
 
                 (*target).transform.translation = t;
