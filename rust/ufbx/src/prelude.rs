@@ -454,6 +454,67 @@ impl<T, M: crate::native::view::Mode> crate::native::view::View<List<T>, M> {
         // stored provenance, adequate for `M`.
         unsafe { crate::native::view::View::mint((self.data() as *mut T).add(index)) }
     }
+
+    /// C `ufbxi_macro_lower_bound_eq` over this viewed list. The probe
+    /// closures receive in-bounds `&View<T, M>` elements minted under the same
+    /// list invariant as `at`, so callers' probes are safe code; the search
+    /// living here (rather than at each call site) is what moves the probe
+    /// vouch onto the list itself. Returns the first matching index.
+    #[inline]
+    pub(crate) fn lower_bound_eq(
+        &self,
+        linear_size: usize,
+        mut less: impl FnMut(&crate::native::view::View<T, M>) -> bool,
+        mut eq: impl FnMut(&crate::native::view::View<T, M>) -> bool,
+    ) -> Option<usize> {
+        let mut index: usize = usize::MAX;
+        // SAFETY: `data`/`count` are this view's own list run — live and
+        // unmoved per the list invariant above — and the search keeps every
+        // probe pointer within `[data, data + count)`, so each probe mints an
+        // in-bounds element view whose stored provenance is adequate for `M`.
+        unsafe {
+            crate::native::platform::macro_lower_bound_eq::<T>(
+                linear_size,
+                &mut index,
+                self.data(),
+                0,
+                self.count(),
+                |a| less(crate::native::view::View::mint(a.cast_mut())),
+                |a| eq(crate::native::view::View::mint(a.cast_mut())),
+            );
+        }
+        if index != usize::MAX {
+            Some(index)
+        } else {
+            None
+        }
+    }
+
+    /// C `ufbxi_macro_upper_bound_eq` (see `lower_bound_eq`): extends a match
+    /// found at `begin` to the end of its equal-run, returning the exclusive
+    /// end index.
+    #[inline]
+    pub(crate) fn upper_bound_eq(
+        &self,
+        linear_size: usize,
+        begin: usize,
+        mut eq: impl FnMut(&crate::native::view::View<T, M>) -> bool,
+    ) -> usize {
+        let mut end: usize = begin;
+        // SAFETY: as for `lower_bound_eq` — every probe stays within the
+        // list's own `[data, data + count)` run.
+        unsafe {
+            crate::native::platform::macro_upper_bound_eq::<T>(
+                linear_size,
+                &mut end,
+                self.data(),
+                begin,
+                self.count(),
+                |a| eq(crate::native::view::View::mint(a.cast_mut())),
+            );
+        }
+        end
+    }
 }
 
 impl<T> ListView<T> {

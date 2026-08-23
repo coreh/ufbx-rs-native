@@ -2840,37 +2840,13 @@ fn find_shader_prop_binding_range<'a, M: Mode>(
         let bind = bind_list.at(bind_ix);
         let pb = bind.prop_bindings_view();
 
-        let mut begin: usize = usize::MAX;
-        // SAFETY: `pb` is the viewed binding's own list — `data` live for
-        // `count` elements per the view's list invariant — and each closure
-        // derefs a `ShaderPropBinding` the search keeps within `[0, count)`.
-        unsafe {
-            macro_lower_bound_eq::<ShaderPropBinding>(
-                4,
-                &mut begin,
-                pb.data(),
-                0,
-                pb.count(),
-                |a| str_less((*a).shader_prop.as_bytes(), name),
-                |a| str_equal((*a).shader_prop.as_bytes(), name),
-            );
-        }
-
-        if begin != usize::MAX {
-            let mut end: usize = begin;
-            // SAFETY: as above; the closure derefs a `ShaderPropBinding` the
-            // search keeps within `[begin, count)`.
-            unsafe {
-                macro_upper_bound_eq::<ShaderPropBinding>(
-                    4,
-                    &mut end,
-                    pb.data(),
-                    begin,
-                    pb.count(),
-                    |a| str_equal((*a).shader_prop.as_bytes(), name),
-                );
-            }
-
+        if let Some(begin) = pb.lower_bound_eq(
+            4,
+            |a| str_less(a.shader_prop_view().bytes(), name),
+            |a| str_equal(a.shader_prop_view().bytes(), name),
+        ) {
+            let end: usize =
+                pb.upper_bound_eq(4, begin, |a| str_equal(a.shader_prop_view().bytes(), name));
             return Some((pb, begin, end));
         }
     }
@@ -2922,24 +2898,12 @@ pub(crate) fn find_shader_texture_input_len<'a, M: Mode>(
     shader: &'a View<ShaderTexture, M>,
     name: &[u8],
 ) -> Option<&'a View<ShaderTextureInput, M>> {
-    let mut index: usize = usize::MAX;
     let inputs = shader.inputs_view();
-    // SAFETY: `inputs` is the viewed shader's own list — `data` live for
-    // `count` elements per the view's list invariant — and each closure derefs
-    // a `ShaderTextureInput` the search keeps within `[0, count)`.
-    unsafe {
-        macro_lower_bound_eq::<ShaderTextureInput>(
-            4,
-            &mut index,
-            inputs.data(),
-            0,
-            inputs.count(),
-            |a| str_less((*a).name.as_bytes(), name),
-            |a| str_equal((*a).name.as_bytes(), name),
-        );
-    }
-
-    if index != usize::MAX {
+    if let Some(index) = inputs.lower_bound_eq(
+        4,
+        |a| str_less(a.name_view().bytes(), name),
+        |a| str_equal(a.name_view().bytes(), name),
+    ) {
         return Some(inputs.at(index));
     }
 
