@@ -7193,17 +7193,17 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 if (*node).has_geometry_transform {
                     set_own_prop_vec3_uniform(
                         &raw mut (*node).element.props,
-                        sp::GeometricTranslation.as_ptr(),
+                        &sp::GeometricTranslation,
                         0.0,
                     );
                     set_own_prop_vec3_uniform(
                         &raw mut (*node).element.props,
-                        sp::GeometricRotation.as_ptr(),
+                        &sp::GeometricRotation,
                         0.0,
                     );
                     set_own_prop_vec3_uniform(
                         &raw mut (*node).element.props,
-                        sp::GeometricScaling.as_ptr(),
+                        &sp::GeometricScaling,
                         1.0,
                     );
                 }
@@ -7211,9 +7211,9 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
 
             if !defaults.is_null() {
-                set_own_prop_vec3_uniform(defaults, sp::GeometricTranslation.as_ptr(), 0.0);
-                set_own_prop_vec3_uniform(defaults, sp::GeometricRotation.as_ptr(), 0.0);
-                set_own_prop_vec3_uniform(defaults, sp::GeometricScaling.as_ptr(), 1.0);
+                set_own_prop_vec3_uniform(defaults, &sp::GeometricTranslation, 0.0);
+                set_own_prop_vec3_uniform(defaults, &sp::GeometricRotation, 0.0);
+                set_own_prop_vec3_uniform(defaults, &sp::GeometricScaling, 1.0);
             }
         }
     }

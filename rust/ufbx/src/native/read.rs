@@ -108,8 +108,8 @@ use crate::generated::{
 };
 use crate::native::allocator::{grow_array, Allocator};
 use crate::native::api::{
-    find_int_len as api_find_int_len, find_prop as api_find_prop, find_prop_len,
-    transform_to_matrix, EMPTY_BLOB, EMPTY_STRING, IDENTITY_MATRIX, IDENTITY_TRANSFORM,
+    find_int_len as api_find_int_len, find_prop_len, transform_to_matrix, EMPTY_BLOB, EMPTY_STRING,
+    IDENTITY_MATRIX, IDENTITY_TRANSFORM,
 };
 use crate::native::buf::{buf_clear, pop, push_size, BufView};
 use crate::native::error::{
@@ -120,13 +120,13 @@ use crate::native::float_parse::parse_double;
 use crate::native::hash::{hash64, hash_ptr_id, PtrId};
 use crate::native::parse::{
     array_type_size, find_array, find_child, find_child_strcmp, find_int, find_prop, find_val1,
-    find_val2, find_vec3, get_array, get_dom_node, get_name_key, get_name_key_c, get_prop_type,
-    get_val1, get_val2, get_val3, get_val4, get_val5, get_val_at, get_val_type,
-    init_node_prop_names, is_node_property_name, is_vec3_one, is_vec3_zero, parse_legacy_toplevel,
-    parse_toplevel, parse_toplevel_child, push_element_extra, retain_toplevel, Ascii, Context,
-    ElementInfo, FbxAttrEntry, FbxIdEntry, MeshExtra, Node, NodeView, PropView, PropsView,
-    PtrFbxIdEntry, Template, TextureExtra, TmpAnimStack, TmpBonePose, TmpConnection,
-    TmpMeshTexture, ValueArray, ValueType,
+    find_val2, find_vec3, get_array, get_dom_node, get_name_key, get_prop_type, get_val1, get_val2,
+    get_val3, get_val4, get_val5, get_val_at, get_val_type, init_node_prop_names,
+    is_node_property_name, is_vec3_one, is_vec3_zero, parse_legacy_toplevel, parse_toplevel,
+    parse_toplevel_child, push_element_extra, retain_toplevel, Ascii, Context, ElementInfo,
+    FbxAttrEntry, FbxIdEntry, MeshExtra, Node, NodeView, PropView, PropsView, PtrFbxIdEntry,
+    Template, TextureExtra, TmpAnimStack, TmpBonePose, TmpConnection, TmpMeshTexture, ValueArray,
+    ValueType,
 };
 use crate::native::platform::{
     add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, math, max_real, max_sz, min32,
@@ -317,13 +317,12 @@ pub(crate) unsafe fn read_property(
         }
     }
 
-    // SAFETY: `type_str` was written by the `"SC"` fetch above as a
-    // NUL-terminated string owned by the parse tree — `get_prop_type`'s contract.
-    prop.set_type(unsafe { get_prop_type(uc, type_str) });
+    // `type_str` was written by the `"SC"` fetch above as an interned
+    // parse-tree string — the address-only key `get_prop_type` looks up.
+    prop.set_type(get_prop_type(uc, type_str));
     if prop.type_() == PropType::Unknown && !subtype_str.is_null() {
-        // SAFETY: `subtype_str` is non-null (checked) and was written by the
-        // `'C'` fetch above as a NUL-terminated parse-tree string.
-        prop.set_type(unsafe { get_prop_type(uc, subtype_str) });
+        // `subtype_str`: as above, from the `'C'` fetch.
+        prop.set_type(get_prop_type(uc, subtype_str));
     }
 
     // SAFETY: fmt `'L'` pairs with the `*mut i64` out-pointer `value_int_raw()`,
@@ -1766,7 +1765,7 @@ pub(crate) unsafe fn init_synthetic_vec3_prop(
 
 // ufbx.c:12493-12505 `ufbxi_set_own_prop_vec3_uniform`
 #[inline(never)]
-pub(crate) unsafe fn set_own_prop_vec3_uniform(props: *mut Props, name: *const u8, value: Real) {
+pub(crate) unsafe fn set_own_prop_vec3_uniform(props: *mut Props, name: &[u8], value: Real) {
     // C: `ufbx_props local_props = *props;` — struct memcpy; `Props` is not
     // `Copy` but has no drop glue.
     // SAFETY: `props` addresses the caller's live `ufbx_props` (fn contract);
@@ -1774,11 +1773,12 @@ pub(crate) unsafe fn set_own_prop_vec3_uniform(props: *mut Props, name: *const u
     // double-free (the copy is forgotten below).
     let mut local_props: Props = unsafe { core::ptr::read(props) };
     local_props.defaults = None;
+    // `name` is the interned static run itself — `find_prop`'s
+    // pointer-identity carrier (its length is never read).
     // SAFETY: `&raw mut local_props` addresses this frame's live, fully
-    // initialized `Props`, and `name` is a NUL-terminated interned property
-    // name — `find_prop`'s contract.
+    // initialized `Props` — the view mint's vouch.
     let prop: Option<&PropView> =
-        unsafe { api_find_prop(PropsView::from_ptr(&raw mut local_props), name) };
+        crate::native::parse::find_prop(unsafe { PropsView::from_ptr(&raw mut local_props) }, name);
     if let Some(prop) = prop {
         // SAFETY: `value_vec4_raw()` addresses the found prop's own 4-`Real`
         // value union arm, which C writes component by component.
@@ -3235,7 +3235,7 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
         unsafe {
             (*shape_props.add(0)).name.data = sp::DeformPercent.as_ptr();
             (*shape_props.add(0)).name.length = sp::DeformPercent.len() - 1;
-            (*shape_props.add(0))._internal_key = get_name_key_c(sp::DeformPercent.as_ptr());
+            (*shape_props.add(0))._internal_key = get_name_key(&sp::DeformPercent);
             (*shape_props.add(0)).type_ = PropType::Number;
             (*shape_props.add(0)).value_vec4.x = 0.0 as Real;
             (*shape_props.add(0)).value_str = EMPTY_STRING.0;
@@ -5738,7 +5738,7 @@ pub(crate) unsafe fn read_blend_channel(
             unsafe {
                 (*shape_props.add(0)).name.data = sp::DeformPercent.as_ptr();
                 (*shape_props.add(0)).name.length = sp::DeformPercent.len() - 1;
-                (*shape_props.add(0))._internal_key = get_name_key_c(sp::DeformPercent.as_ptr());
+                (*shape_props.add(0))._internal_key = get_name_key(&sp::DeformPercent);
                 (*shape_props.add(0)).type_ = PropType::Number;
                 (*shape_props.add(0)).value_str = EMPTY_STRING.0;
                 // C-parity: `shape_props[0].value_real` is the `ufbx_prop` value

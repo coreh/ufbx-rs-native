@@ -7447,7 +7447,11 @@ pub(crate) static PROP_TYPE_NAMES: PropTypeNameTable = PropTypeNameTable([
 ]);
 
 // ufbx.c:11470-11478 `ufbxi_get_prop_type`
-pub(crate) unsafe fn get_prop_type(uc: &Context, name: *const u8) -> PropType {
+// ADDRESS-ONLY `name`: C takes the address of the parameter itself (`&name`)
+// as the map key, and `prop_type_map` is keyed on canonical interned pointers
+// — no byte behind `name` is ever read (the `is_node_property_name`
+// precedent), so the raw param carries no caller obligation.
+pub(crate) fn get_prop_type(uc: &Context, name: *const u8) -> PropType {
     // C takes the address of the parameter itself (`&name`) as the map key.
     let name: *const u8 = name;
     let hash = crate::native::hash::hash_ptr!(name);
