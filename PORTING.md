@@ -107,6 +107,37 @@ Rules:
 - Record Rust `line!()`/function into `ufbx_error_frame` (values differ from C;
   fuzz table is regenerated per-build, but the mechanism must exist).
 
+### Trailing `ufbx_error *error` out-params → `Result<T, E>`
+
+C public-shaped entries thread failure through a NULLABLE, caller-owned
+`ufbx_error *error` in the FINAL argument position (written on the failure
+path — `ufbxi_fix_error_type` with the entry's default description — and
+cleared/ignored per each entry's own body). This is C's substitute for a sum
+return; the Rust mapping makes the sum explicit and keeps the raw slot at the
+boundary only:
+
+- **The anchored body is `Result`-shaped.** A fn carrying the trailing
+  `error: *mut Error` maps to `Result<T, Fail>` with the error target as a
+  typed `&ErrorView` (the same machinery the `ufbxi_check_err` family uses) —
+  or `Result<T, Error>` where the entry owns a LOCAL `ufbx_error` (the
+  `local_error` pattern, e.g. `ufbx_generate_indices`). The nullable raw
+  out-slot survives in exactly ONE unanchored projection per entry — the
+  capi/C-string boundary shim — which translates `Err` into the C writes
+  (null-check the slot, `fix_error_type`, default return value) byte-exactly
+  as that entry's C body does. Anchor invariant applies: one `Result` body,
+  shim is a projection.
+- **Verify the C caller before choosing the caller-side mapping.** `?` is only
+  correct where the C caller RETURNS EARLY on the error path — check the C
+  body, do not assume it. Where C records the error and KEEPS GOING
+  (`ufbxi_report_err_msg`, see the table above), the Rust caller must store
+  the `Err` and continue (`let r = ...; if r.is_err() { ... }` or the report
+  macro) — a `?` there silently changes control flow and drops C's
+  post-error work.
+- **Success-path writes are parity-relevant.** Entries differ in whether they
+  clear the out-slot up front, on success, or not at all; the shim reproduces
+  the entry's exact write pattern (the error bytes are covered by the error
+  parity rules above).
+
 ### Asserts (three distinct gates — do NOT collapse)
 
 | C (line) | Gate | Rust |
