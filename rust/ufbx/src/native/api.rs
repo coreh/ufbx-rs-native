@@ -132,8 +132,8 @@ use crate::native::parse::{
 };
 use crate::native::platform::{
     add_ptr, atomic_counter_dec, atomic_counter_free, atomic_counter_inc, atomic_counter_init,
-    macro_lower_bound_eq, macro_upper_bound_eq, math, min_sz, ufbx_assert, ufbxi_ignore,
-    ufbxi_unreachable, NO_INDEX, SOURCE_VERSION, THREAD_SAFE,
+    macro_lower_bound_eq, math, min_sz, ufbx_assert, ufbxi_ignore, ufbxi_unreachable, NO_INDEX,
+    SOURCE_VERSION, THREAD_SAFE,
 };
 use crate::native::read::{opt_ptr, ref_ptr};
 use crate::native::scene_process::{
@@ -1174,60 +1174,47 @@ pub(crate) unsafe fn find_material_len(scene: *const Scene, name: &[u8]) -> *mut
 
 // ufbx.c:30775-30790 `ufbx_find_anim_prop_len`
 // `prop: &[u8]` carries C's `(prop, prop_len)` pair (see `find_prop_len`).
-pub(crate) unsafe fn find_anim_prop_len(
-    layer: *const AnimLayer,
+// `element` is ADDRESS-ONLY: the anim-prop array is sorted by owning-element
+// pointer (ufbx.c:18596) and every probe compares addresses via `Ref::ptr` —
+// no byte behind `element` is ever read, so the raw param carries no
+// obligation (the `is_node_property_name` precedent).
+pub(crate) fn find_anim_prop_len<'a, M: Mode>(
+    layer: Option<&'a View<AnimLayer, M>>,
     element: *const Element,
     prop: &[u8],
-) -> *mut AnimProp {
-    ufbx_assert!(!layer.is_null());
+) -> Option<&'a View<AnimProp, M>> {
+    ufbx_assert!(layer.is_some());
     ufbx_assert!(!element.is_null());
-    if layer.is_null() || element.is_null() {
-        return core::ptr::null_mut();
+    let layer = layer?;
+    if element.is_null() {
+        return None;
     }
 
-    let mut index: usize = usize::MAX;
-    // SAFETY: `layer` is non-null (checked) and points at a live `AnimLayer`; the
-    // search spans its own sorted `anim_props` run `0..count`, every probe
-    // pointer the comparators receive addresses a live `AnimProp` whose `element`
-    // ref is readable and whose `prop_name` is an interned span readable for its
-    // own length (`as_bytes`); `element` is this fn's param.
-    unsafe {
-        macro_lower_bound_eq::<AnimProp>(
-            16,
-            &mut index,
-            (*layer).anim_props.data,
-            0,
-            (*layer).anim_props.count,
-            // C: `a->element != element ? a->element < element : ufbxi_str_less(a->prop_name, prop_str)`
-            // — a raw ADDRESS comparison of the owning element (the array is sorted
-            // by element pointer, ufbx.c:18596), not by `element_id`.
-            |a| {
-                let a_element: *const Element = ref_ptr(&(*a).element);
-                if a_element != element {
-                    a_element < element
-                } else {
-                    str_less((*a).prop_name.as_bytes(), prop)
-                }
-            },
-            |a| {
-                std::ptr::eq(ref_ptr(&(*a).element), element)
-                    && str_equal((*a).prop_name.as_bytes(), prop)
-            },
-        )
-    };
-
-    if index == usize::MAX {
-        return core::ptr::null_mut();
-    }
-    // SAFETY: `index < count` (not a miss), so `anim_props.data.add(index)`
-    // addresses the `index`-th live `AnimProp` of the layer's run.
-    unsafe { (*layer).anim_props.data.add(index) as *mut AnimProp }
+    let run = layer.anim_props_view();
+    let index = run.lower_bound_eq(
+        16,
+        // C: `a->element != element ? a->element < element : ufbxi_str_less(a->prop_name, prop_str)`
+        // — a raw ADDRESS comparison of the owning element (the array is sorted
+        // by element pointer, ufbx.c:18596), not by `element_id`.
+        |a| {
+            let a_element: *const Element = a.element().ptr();
+            if a_element != element {
+                a_element < element
+            } else {
+                str_less(a.prop_name_view().bytes(), prop)
+            }
+        },
+        |a| {
+            core::ptr::eq(a.element().ptr(), element) && str_equal(a.prop_name_view().bytes(), prop)
+        },
+    )?;
+    Some(run.at(index))
 }
 
 // ufbx.c:30792-30812 `ufbx_find_anim_props`
 #[inline(never)]
-pub(crate) unsafe fn find_anim_props(
-    layer: *const AnimLayer,
+pub(crate) fn find_anim_props<M: Mode>(
+    layer: Option<&View<AnimLayer, M>>,
     element: *const Element,
 ) -> List<AnimProp> {
     // C: `ufbx_anim_prop_list result = { 0 };` — `List<T>` carries a private
@@ -1239,48 +1226,34 @@ pub(crate) unsafe fn find_anim_props(
     let mut result: List<AnimProp> = unsafe { MaybeUninit::zeroed().assume_init() };
     result.data = core::ptr::null();
     result.count = 0;
-    ufbx_assert!(!layer.is_null());
+    ufbx_assert!(layer.is_some());
     ufbx_assert!(!element.is_null());
-    if layer.is_null() || element.is_null() {
+    let Some(layer) = layer else {
+        return result;
+    };
+    if element.is_null() {
         return result;
     }
 
-    // C: `size_t begin = layer->anim_props.count, end = begin;` — `begin` is
-    // pre-initialized because `ufbxi_macro_lower_bound_eq` does NOT write on a
-    // miss (PORTING.md "Sorting & searching").
-    // SAFETY: `layer` is non-null (checked) and points at a live `AnimLayer`;
-    // reading its own `anim_props.count`.
-    let mut begin: usize = unsafe { (*layer).anim_props.count };
-    let mut end: usize = begin;
-    // SAFETY: live `layer` per above; both searches span its sorted `anim_props`
-    // run (the second from the `begin` lower bound the first produces, so
-    // `begin <= count`), and every probe pointer the comparators receive
-    // addresses a live `AnimProp` whose `element` ref is readable, compared to
-    // this fn's `element` param.
-    unsafe {
-        macro_lower_bound_eq::<AnimProp>(
+    let run = layer.anim_props_view();
+    // C: `size_t begin = layer->anim_props.count, end = begin;` — the lower
+    // bound does not write on a miss; `unwrap_or` reproduces the pre-init.
+    // `element` is address-only, as for `find_anim_prop_len` above.
+    let begin: usize = run
+        .lower_bound_eq(
             16,
-            &mut begin,
-            (*layer).anim_props.data,
-            0,
-            (*layer).anim_props.count,
-            |a| (ref_ptr(&(*a).element) as *const Element) < element,
-            |a| std::ptr::eq(ref_ptr(&(*a).element), element),
-        );
-        macro_upper_bound_eq::<AnimProp>(
-            16,
-            &mut end,
-            (*layer).anim_props.data,
-            begin,
-            (*layer).anim_props.count,
-            |a| std::ptr::eq(ref_ptr(&(*a).element), element),
-        );
-    }
+            |a| (a.element().ptr() as *const Element) < element,
+            |a| core::ptr::eq(a.element().ptr(), element),
+        )
+        .unwrap_or(run.count());
+    let end: usize = run.upper_bound_eq(16, begin, |a| core::ptr::eq(a.element().ptr(), element));
 
     if begin != end {
-        // SAFETY: `begin < end <= count`, so `anim_props.data.add(begin)`
-        // addresses the first live `AnimProp` of the matched sub-run.
-        result.data = unsafe { (*layer).anim_props.data.add(begin) };
+        // The run base must carry the WHOLE-run provenance of the stored list
+        // pointer — an `at(begin).as_ptr()` base is retagged for that single
+        // element only, so the caller's `data..data+count` slice would be UB
+        // (Miri-SB-caught). `begin < end <= count`, so the offset is in bounds.
+        result.data = run.data().wrapping_add(begin);
         result.count = end - begin;
     }
 
@@ -2858,7 +2831,10 @@ pub(crate) fn find_shader_prop_bindings_len<M: Mode>(
     bindings.count = 0;
 
     if let Some((pb, begin, end)) = find_shader_prop_binding_range(shader, name) {
-        bindings.data = pb.at(begin).as_ptr();
+        // Whole-run provenance from the stored list pointer, as in
+        // `find_anim_props` (a one-element `at` retag would make the caller's
+        // multi-element slice UB). `begin < end <= count`.
+        bindings.data = pb.data().wrapping_add(begin);
         bindings.count = end - begin;
     }
 
@@ -7200,15 +7176,23 @@ pub(crate) unsafe fn find_anim_prop(
     element: *const Element,
     prop: *const u8,
 ) -> *mut AnimProp {
-    // SAFETY: `prop` is this fn's NUL-terminated raw-pointer string param;
-    // `strlen` measures it, and the measured run (with `layer`/`element`) is
-    // exactly the slice minted for the `_len` impl.
-    unsafe {
+    // SAFETY: the caller's null-or-live `layer` contract becomes the `Const`
+    // view mint; `prop` is this fn's NUL-terminated raw-pointer string param —
+    // `strlen` measures it, and the measured run is the slice minted for the
+    // `_len` impl.
+    match unsafe {
         find_anim_prop_len(
-            layer,
+            if layer.is_null() {
+                None
+            } else {
+                Some(View::<AnimLayer, Const>::from_ptr(layer))
+            },
             element,
             crate::prelude::slice_from_ptr(prop, strlen(prop)),
         )
+    } {
+        Some(found) => found.as_ptr() as *mut AnimProp,
+        None => core::ptr::null_mut(),
     }
 }
 
@@ -7791,10 +7775,16 @@ mod tests {
             layer.anim_props = List::from_slice(&props);
             let base: *const AnimProp = props.as_ptr();
 
-            let find = |e: *mut Element, n: &[u8]| find_anim_prop_len(&layer, e, n);
-            assert_eq!(find(e0, b"Lcl Scaling"), base as *mut AnimProp);
-            assert_eq!(find(e0, b"Lcl Translation"), base.add(1) as *mut AnimProp);
-            assert_eq!(find(e2, b"Lcl Rotation"), base.add(2) as *mut AnimProp);
+            // `Const` mint: the test list's `data` comes from a `&Vec` borrow
+            // (SharedReadOnly), so a `Mut`-mode probe mint over it would be the
+            // documented Stacked Borrows trap; reads only, no writes spanned.
+            let layer_view = View::<AnimLayer, Const>::from_ptr(&raw const layer);
+            let find = |e: *mut Element, n: &[u8]| {
+                find_anim_prop_len(Some(layer_view), e, n).map_or(core::ptr::null(), |p| p.as_ptr())
+            };
+            assert_eq!(find(e0, b"Lcl Scaling"), base);
+            assert_eq!(find(e0, b"Lcl Translation"), base.add(1));
+            assert_eq!(find(e2, b"Lcl Rotation"), base.add(2));
             // Wrong element, or an element with no animated props at all.
             assert!(find(e2, b"Lcl Scaling").is_null());
             assert!(find(e1, b"Lcl Scaling").is_null());
@@ -7805,14 +7795,14 @@ mod tests {
             );
 
             // `ufbx_find_anim_props` returns the whole per-element run.
-            let run = find_anim_props(&layer, e0);
+            let run = find_anim_props(Some(layer_view), e0);
             assert_eq!(run.data, base);
             assert_eq!(run.count, 2);
-            let run = find_anim_props(&layer, e2);
+            let run = find_anim_props(Some(layer_view), e2);
             assert_eq!(run.data, base.add(2));
             assert_eq!(run.count, 1);
             // C: `begin == end` leaves the `{ 0 }` initializer untouched.
-            let run = find_anim_props(&layer, e1);
+            let run = find_anim_props(Some(layer_view), e1);
             assert!(run.data.is_null());
             assert_eq!(run.count, 0);
         }

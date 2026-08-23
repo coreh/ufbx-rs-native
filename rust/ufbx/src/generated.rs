@@ -4860,25 +4860,28 @@ pub fn find_anim_prop<'a>(
     element: &'a Element,
     prop: &str,
 ) -> Option<&'a AnimProp> {
-    let result = unsafe {
-        crate::native::api::find_anim_prop_len(
-            layer as *const AnimLayer,
-            element as *const Element,
-            prop.as_bytes(),
-        )
-    };
-    if result.is_null() {
-        None
-    } else {
-        unsafe { Some(&*result) }
-    }
+    let result = crate::native::api::find_anim_prop_len(
+        Some(unsafe {
+            crate::native::view::View::<AnimLayer, crate::native::view::Const>::from_ptr(
+                layer as *const AnimLayer,
+            )
+        }),
+        element as *const Element,
+        prop.as_bytes(),
+    );
+    result.map(|prop| unsafe { &*prop.as_ptr() })
 }
 
 #[allow(clippy::needless_lifetimes)]
 pub fn find_anim_props<'a>(layer: &'a AnimLayer, element: &'a Element) -> &'a [AnimProp] {
-    let result = unsafe {
-        crate::native::api::find_anim_props(layer as *const AnimLayer, element as *const Element)
-    };
+    let result = crate::native::api::find_anim_props(
+        Some(unsafe {
+            crate::native::view::View::<AnimLayer, crate::native::view::Const>::from_ptr(
+                layer as *const AnimLayer,
+            )
+        }),
+        element as *const Element,
+    );
     unsafe { result.as_static_ref() }
 }
 

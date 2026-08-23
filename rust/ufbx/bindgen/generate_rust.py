@@ -377,6 +377,8 @@ view_accessor_structs = [
     "ufbx_anim_value",
     "ufbx_keyframe",
     "ufbx_connection",
+    "ufbx_anim_layer",
+    "ufbx_anim_prop",
     "ufbx_shader",
     "ufbx_shader_binding",
     "ufbx_shader_texture",
@@ -459,6 +461,37 @@ override_functions["ufbx_find_string_len"] = """
 
 override_functions["ufbx_find_prop_concat"] = """
 // TODO: ufbx_find_prop_concat()
+"""
+
+override_functions["ufbx_find_anim_prop_len"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn find_anim_prop<'a>(
+    layer: &'a AnimLayer,
+    element: &'a Element,
+    prop: &str,
+) -> Option<&'a AnimProp> {
+    let result = crate::native::api::find_anim_prop_len(
+        Some(unsafe {
+            crate::native::view::View::<AnimLayer, crate::native::view::Const>::from_ptr(layer as *const AnimLayer)
+        }),
+        element as *const Element,
+        prop.as_bytes(),
+    );
+    result.map(|prop| unsafe { &*prop.as_ptr() })
+}
+"""
+
+override_functions["ufbx_find_anim_props"] = """
+#[allow(clippy::needless_lifetimes)]
+pub fn find_anim_props<'a>(layer: &'a AnimLayer, element: &'a Element) -> &'a [AnimProp] {
+    let result = crate::native::api::find_anim_props(
+        Some(unsafe {
+            crate::native::view::View::<AnimLayer, crate::native::view::Const>::from_ptr(layer as *const AnimLayer)
+        }),
+        element as *const Element,
+    );
+    unsafe { result.as_static_ref() }
+}
 """
 
 override_functions["ufbx_find_shader_prop_len"] = """

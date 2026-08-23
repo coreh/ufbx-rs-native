@@ -572,16 +572,27 @@ pub unsafe extern "C" fn ufbx_find_anim_prop_len(
     prop: *const u8,
     prop_len: usize,
 ) -> *mut crate::generated::AnimProp {
-    // SAFETY: an ABI shim; the raw struct pointer carries this `unsafe fn`'s
-    // own raw-pointer contract, and the caller's name/len key-buffer contract
-    // becomes the slice mint (`slice_from_ptr` maps the null/0 case to the
-    // empty slice).
-    unsafe {
+    // SAFETY: an ABI shim; the caller's null-or-live layer contract becomes
+    // the read-only `View<_, Const>` mint (legal for any readable provenance),
+    // `element` is address-only, and the name/len key-buffer contract becomes
+    // the slice mint (`slice_from_ptr` maps the null/0 case to the empty
+    // slice).
+    match unsafe {
         crate::native::api::find_anim_prop_len(
-            layer,
+            if layer.is_null() {
+                None
+            } else {
+                Some(crate::native::view::View::<
+                    crate::generated::AnimLayer,
+                    crate::native::view::Const,
+                >::from_ptr(layer))
+            },
             element,
             crate::prelude::slice_from_ptr(prop, prop_len),
         )
+    } {
+        Some(found) => found.as_ptr() as *mut crate::generated::AnimProp,
+        None => core::ptr::null_mut(),
     }
 }
 
@@ -591,10 +602,19 @@ pub unsafe extern "C" fn ufbx_find_anim_props(
     layer: *const crate::generated::AnimLayer,
     element: *const crate::generated::Element,
 ) -> crate::prelude::List<crate::generated::AnimProp> {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::find_anim_props(layer, element) }
+    // SAFETY: an ABI shim; the caller's null-or-live layer contract becomes
+    // the read-only `View<_, Const>` mint (legal for any readable provenance);
+    // `element` is address-only.
+    crate::native::api::find_anim_props(
+        if layer.is_null() {
+            None
+        } else {
+            Some(unsafe {
+                crate::native::view::View::<crate::generated::AnimLayer, crate::native::view::Const>::from_ptr(layer)
+            })
+        },
+        element,
+    )
 }
 
 // ufbx.c:30814-30825 `ufbx_get_compatible_matrix_for_normals`

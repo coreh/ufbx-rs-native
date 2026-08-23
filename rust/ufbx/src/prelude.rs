@@ -165,6 +165,13 @@ pub struct Ref<T> {
 }
 
 impl<T> Ref<T> {
+    /// The referenced element's address as a raw pointer — for pointer-identity
+    /// compares and raw forwarding without forming a `&T` (the `Ref::as_ref`
+    /// Stacked Borrows trap). No deref happens, so this is safe.
+    pub(crate) fn ptr(&self) -> *mut T {
+        self.ptr.as_ptr()
+    }
+
     // pub(crate): the native port stores raw result-buffer pointers into
     // `ufbx_*` reference fields (C: `uc->scene.dom_root = dom_root;`); the
     // pointer is null-checked by the surrounding `ufbxi_check` first.
