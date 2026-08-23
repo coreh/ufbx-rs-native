@@ -106,6 +106,7 @@ use crate::native::view::{Const, Mode, Mut, View};
 // `ufbx_tessellate_nurbs_curve` / `_surface` and unconditionally by
 // `ufbx_subdivide_mesh` / `ufbx_load_geometry_cache_len`.
 use crate::native::error::ufbxi_check_opts_ptr;
+use crate::native::error::ufbxi_check_opts_res;
 use crate::native::error::{clear_error, fix_error_type};
 #[cfg(any(
     not(feature = "scene-eval"),
@@ -2135,17 +2136,16 @@ pub(crate) unsafe fn evaluate_scene(
     anim: *const Anim,
     time: f64,
     opts: *const RawEvaluateOpts,
-    error: *mut Error,
-) -> *mut Scene {
+) -> Result<*mut Scene, Error> {
     // SAFETY: `opts` is null-or-live per this fn's contract; the macro reads its
     // sentinel fields only when non-null.
-    unsafe { ufbxi_check_opts_ptr!(Scene, opts, error) };
+    unsafe { ufbxi_check_opts_res!(opts) };
     // C: `ufbxi_eval_context ec = { 0 };`
     let ec = evaluate::EvalContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::zeroed()));
     // SAFETY: `&ec` is the fresh zeroed eval context; `scene` is live and `anim`
     // null-or-live (the callee substitutes `scene.anim` on null) per this fn's
-    // contract, `opts`/`error` null-or-live, forwarded unchanged.
-    unsafe { evaluate::evaluate_scene(&ec, scene as *mut Scene, anim, time, opts, error) }
+    // contract, `opts` null-or-live, forwarded unchanged.
+    unsafe { evaluate::evaluate_scene(&ec, scene as *mut Scene, anim, time, opts) }
 }
 
 #[cfg(not(feature = "scene-eval"))]
@@ -2154,29 +2154,26 @@ pub(crate) unsafe fn evaluate_scene(
     anim: *const Anim,
     time: f64,
     opts: *const RawEvaluateOpts,
-    error: *mut Error,
-) -> *mut Scene {
+) -> Result<*mut Scene, Error> {
     // SAFETY: `opts` is null-or-live per this fn's contract; the macro reads its
     // sentinel fields only when non-null.
-    unsafe { ufbxi_check_opts_ptr!(Scene, opts, error) };
+    unsafe { ufbxi_check_opts_res!(opts) };
     // C: `scene`/`anim`/`time` are unreferenced in the `#else` arm.
     let _ = (scene, anim, time);
-    if !error.is_null() {
-        // SAFETY: `error` is non-null (checked) and points at the caller's live
-        // `Error` — the raw-pointer contract of this `unsafe fn`; the write
-        // zero-fills exactly its `Error` byte extent.
-        unsafe {
-            core::ptr::write_bytes(error as *mut u8, 0, size_of::<Error>());
-        }
-        // SAFETY: `error` is the live error slot the `%s`-less format writes into.
-        unsafe { ufbxi_fmt_err_info!(error, "UFBX_ENABLE_SCENE_EVALUATION") };
-        ufbxi_report_err_msg!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
-            "UFBXI_FEATURE_SCENE_EVALUATION",
-            "Feature disabled"
-        );
-    }
-    core::ptr::null_mut()
+    // C zero-fills the caller slot then formats into it; the `Result` shape
+    // builds the same bytes in a local carried by `Err` (the shim owns the
+    // slot writes).
+    let mut error: Error = Error::default();
+    // SAFETY: `&raw mut error` is this frame's live `Error` slot the `%s`-less
+    // format writes into.
+    unsafe { ufbxi_fmt_err_info!(&raw mut error, "UFBX_ENABLE_SCENE_EVALUATION") };
+    ufbxi_report_err_msg!(
+        // SAFETY: same live local `Error` slot, minted as a view for the report.
+        unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
+        "UFBXI_FEATURE_SCENE_EVALUATION",
+        "Feature disabled"
+    );
+    Err(error)
 }
 
 // ufbx.c:31194-31218 `ufbx_create_anim`
@@ -8537,25 +8534,10 @@ mod tests {
     #[cfg(not(feature = "scene-eval"))]
     fn test_evaluate_scene_feature_disabled() {
         unsafe {
-            let mut error = MaybeUninit::<Error>::zeroed().assume_init();
-            assert!(evaluate_scene(
-                core::ptr::null(),
-                core::ptr::null(),
-                0.0,
-                core::ptr::null(),
-                &mut error
-            )
-            .is_null());
+            let error: Error =
+                evaluate_scene(core::ptr::null(), core::ptr::null(), 0.0, core::ptr::null())
+                    .unwrap_err();
             assert_feature_disabled(&error, "UFBX_ENABLE_SCENE_EVALUATION");
-            // C: `error` is optional and the arm is a no-op without it.
-            assert!(evaluate_scene(
-                core::ptr::null(),
-                core::ptr::null(),
-                0.0,
-                core::ptr::null(),
-                core::ptr::null_mut()
-            )
-            .is_null());
         }
     }
 

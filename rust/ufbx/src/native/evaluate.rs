@@ -4246,8 +4246,7 @@ pub(crate) unsafe fn evaluate_scene(
     anim: *const Anim,
     time: f64,
     user_opts: *const RawEvaluateOpts,
-    p_error: *mut Error,
-) -> *mut Scene {
+) -> Result<*mut Scene, Error> {
     if !user_opts.is_null() {
         // C: `ec->opts = *user_opts;` (struct assignment)
         // SAFETY: `user_opts` is the caller's live `ufbx_evaluate_opts` (this
@@ -4318,20 +4317,20 @@ pub(crate) unsafe fn evaluate_scene(
             buf_free(ec.tmp_mut_ptr());
             free_ator(ec.ator_tmp_mut_ptr());
         }
-        if !p_error.is_null() {
-            // SAFETY: `p_error` is non-null (checked just above) and points to
-            // the caller's `ufbx_error` slot — this `unsafe fn`'s contract.
-            unsafe { clear_error(p_error) };
-        }
         // SAFETY: `evaluate_imp` succeeded, and its last act is storing the
         // retained `ufbxi_scene_imp` into `ec`, so `scene_imp()` is the live
         // result-buffer header whose own `scene` field is projected here.
-        unsafe { &raw mut (*ec.scene_imp()).scene }
+        // (The success-path `clear_error` of the caller's slot lives in the
+        // boundary shim — PORTING.md "Trailing `ufbx_error *error`".)
+        Ok(unsafe { &raw mut (*ec.scene_imp()).scene })
     } else {
+        // C copies the fixed error into the caller's slot; the `Result` shape
+        // carries it by value instead (the shim owns the slot writes).
+        let mut fixed: Error = Error::default();
         // SAFETY: `ec`'s error field is live for the borrow, the message literal
-        // is NUL-terminated, and `p_error` is the caller's `ufbx_error` slot or
-        // null, which `fix_error_type` accepts.
-        unsafe { fix_error_type(ec.error_mut_ptr(), b"Failed to evaluate\0", p_error) };
+        // is NUL-terminated, and `&raw mut fixed` is this frame's live `Error`
+        // slot, which `fix_error_type` accepts.
+        unsafe { fix_error_type(ec.error_mut_ptr(), b"Failed to evaluate\0", &raw mut fixed) };
         // SAFETY: `ec`'s temp and result buffers and their allocators are its own
         // fields, live for the borrow; the failure path discards the result, so
         // this is the last use of each.
@@ -4341,7 +4340,7 @@ pub(crate) unsafe fn evaluate_scene(
             free_ator(ec.ator_tmp_mut_ptr());
             free_ator(ec.ator_result_mut_ptr());
         }
-        ptr::null_mut()
+        Err(fixed)
     }
 }
 

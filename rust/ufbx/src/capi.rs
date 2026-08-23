@@ -892,9 +892,26 @@ pub unsafe extern "C" fn ufbx_evaluate_scene(
     error: *mut crate::generated::Error,
 ) -> *mut crate::generated::Scene {
     // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::evaluate_scene(scene, anim, time, opts, error) }
+    // own raw-pointer contract. The native impl is `Result`-shaped; this shim
+    // owns the C slot writes — cleared on success, the fixed error on failure
+    // (the entry's C write pattern, byte-exact).
+    match unsafe { crate::native::api::evaluate_scene(scene, anim, time, opts) } {
+        Ok(result) => {
+            if !error.is_null() {
+                // SAFETY: `error` is non-null (checked) and the caller's live
+                // slot per this shim's contract.
+                unsafe { crate::native::error::clear_error(error) };
+            }
+            result
+        }
+        Err(e) => {
+            if !error.is_null() {
+                // SAFETY: as above; the write covers exactly one `Error`.
+                unsafe { core::ptr::write(error, e) };
+            }
+            core::ptr::null_mut()
+        }
+    }
 }
 
 // ufbx.c:31194-31218 `ufbx_create_anim` (impl: native/api.rs `create_anim`)

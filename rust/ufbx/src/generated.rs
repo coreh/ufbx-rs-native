@@ -5225,20 +5225,17 @@ pub unsafe fn evaluate_scene_raw(
     time: f64,
     opts: &RawEvaluateOpts,
 ) -> Result<SceneRoot> {
-    let mut error: Error = Error::default();
-    let result = {
+    match unsafe {
         crate::native::api::evaluate_scene(
             scene as *const Scene,
             anim as *const Anim,
             time,
             opts as *const RawEvaluateOpts,
-            &mut error,
         )
-    };
-    if error.type_ != ErrorType::None {
-        return Err(error);
+    } {
+        Ok(result) => Ok(SceneRoot::new(result)),
+        Err(error) => Err(error),
     }
-    Ok(SceneRoot::new(result))
 }
 
 pub fn evaluate_scene(

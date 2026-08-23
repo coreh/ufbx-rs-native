@@ -463,6 +463,41 @@ override_functions["ufbx_find_prop_concat"] = """
 // TODO: ufbx_find_prop_concat()
 """
 
+# `ufbx_evaluate_scene`'s native impl is `Result`-shaped (PORTING.md "Trailing
+# `ufbx_error *error` out-params"); the raw wrapper maps it directly.
+override_functions["ufbx_evaluate_scene"] = """
+pub unsafe fn evaluate_scene_raw(
+    scene: &Scene,
+    anim: &Anim,
+    time: f64,
+    opts: &RawEvaluateOpts,
+) -> Result<SceneRoot> {
+    match unsafe {
+        crate::native::api::evaluate_scene(
+            scene as *const Scene,
+            anim as *const Anim,
+            time,
+            opts as *const RawEvaluateOpts,
+        )
+    } {
+        Ok(result) => Ok(SceneRoot::new(result)),
+        Err(error) => Err(error),
+    }
+}
+
+pub fn evaluate_scene(
+    scene: &Scene,
+    anim: &Anim,
+    time: f64,
+    opts: EvaluateOpts,
+) -> Result<SceneRoot> {
+    let mut arena = Arena::new();
+    let mut opts_mut = opts;
+    let opts_raw = opts_mut.to_raw_mut(&mut arena);
+    unsafe { evaluate_scene_raw(scene, anim, time, &opts_raw) }
+}
+"""
+
 override_functions["ufbx_find_anim_prop_len"] = """
 #[allow(clippy::needless_lifetimes)]
 pub fn find_anim_prop<'a>(

@@ -1267,6 +1267,38 @@ pub(crate) unsafe fn uninitialized_options(p_error: *mut Error) -> *mut core::ff
     core::ptr::null_mut()
 }
 
+/// The formatted "Uninitialized options" error as a VALUE, for the surface
+/// entries that return `Result<T, Error>` (PORTING.md "Trailing
+/// `ufbx_error *error` out-params"): same bytes `uninitialized_options`
+/// writes into the caller slot, carried in the `Err` instead.
+pub(crate) fn uninitialized_options_value() -> Error {
+    Error {
+        type_: ErrorType::UninitializedOptions,
+        description: crate::prelude::String::new_c(
+            b"Uninitialized options\0".as_ptr(),
+            b"Uninitialized options".len(),
+        ),
+        ..Error::default()
+    }
+}
+
+// `ufbxi_check_opts_ptr` flavor for `Result<T, Error>`-shaped surface entries:
+// yields `Err` by value instead of writing the caller slot (the boundary shim
+// owns the slot writes).
+macro_rules! ufbxi_check_opts_res {
+    ($m_opts:expr) => {{
+        let m_opts = $m_opts;
+        if !m_opts.is_null() {
+            let opts_cleared_to_zero = (*m_opts)._begin_zero | (*m_opts)._end_zero;
+            $crate::native::platform::ufbx_assert!(opts_cleared_to_zero == 0);
+            if opts_cleared_to_zero != 0 {
+                return Err($crate::native::error::uninitialized_options_value());
+            }
+        }
+    }};
+}
+pub(crate) use ufbxi_check_opts_res;
+
 // ufbx.c:30314-30318 `ufbxi_check_opts_ptr(m_type, m_opts, m_error)`
 macro_rules! ufbxi_check_opts_ptr {
     ($m_type:ty, $m_opts:expr, $m_error:expr) => {{
