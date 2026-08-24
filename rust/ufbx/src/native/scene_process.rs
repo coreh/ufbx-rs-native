@@ -373,6 +373,28 @@ impl crate::native::view::View<Scene> {
     }
 }
 
+// `ufbxi_update_initial_clusters` (ufbx.c:23523) reads four `ufbx_metadata`
+// leaves whose getters are not among the `SceneMetadataView` accessors in
+// `native/parse.rs`; they live here.
+impl SceneMetadataView {
+    #[inline(always)]
+    pub(crate) fn space_conversion(&self) -> SpaceConversion {
+        view_read!(self, space_conversion)
+    }
+    #[inline(always)]
+    pub(crate) fn root_rotation(&self) -> Quat {
+        view_read!(self, root_rotation)
+    }
+    #[inline(always)]
+    pub(crate) fn root_scale(&self) -> Real {
+        view_read!(self, root_scale)
+    }
+    #[inline(always)]
+    pub(crate) fn mirror_axis(&self) -> MirrorAxis {
+        view_read!(self, mirror_axis)
+    }
+}
+
 // `ufbxi_node_extra` (ufbx.c:12507-12510) is an internal scratch record rather
 // than a public element, so it has no generated view; the finalize pass reads
 // one leaf field out of it.
@@ -12575,37 +12597,17 @@ pub(crate) unsafe fn mirror_matrix(m: *mut Matrix, axis: MirrorAxis) {
 // ufbx.c:23523-23619 `ufbxi_update_initial_clusters`
 #[inline(never)]
 pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
-    let scene: *mut Scene = scene_view.get();
     // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
-    // SAFETY: `scene` is the scene view's own live, initialized `ufbx_scene`
-    // storage, so its own skin-cluster pointer list is readable.
-    // `data`/`count` describe one arena run.
-    let (mut p_cluster, p_cluster_count) = unsafe {
-        (
-            (*scene).skin_clusters.data as *mut *mut SkinCluster,
-            (*scene).skin_clusters.count,
-        )
-    };
-    let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, p_cluster_count);
-    while p_cluster != p_cluster_end {
-        // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live,
-        // initialized element pointer of the scene's own run.
-        let cluster: *mut SkinCluster = unsafe { *p_cluster };
-        // SAFETY: `cluster` is a resolved element pointer from the scene's own
-        // list, so it points to a live, initialized, writable `ufbx_skin_cluster`.
-        unsafe { (*cluster).geometry_to_bone = (*cluster).mesh_node_to_bone };
-        // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or before
-        // the run's one-past-the-end pointer.
-        p_cluster = unsafe { p_cluster.add(1) };
+    let skin_clusters: &RefListView<SkinCluster> = scene_view.skin_clusters_view();
+    for i in 0..skin_clusters.count() {
+        // C: `ufbx_skin_cluster *cluster = *p_cluster;`
+        let cluster: &View<SkinCluster> = skin_clusters.at(i);
+        cluster.set_geometry_to_bone(cluster.mesh_node_to_bone());
     }
 
-    // SAFETY: `scene` is live (see above).
-    let (mirror_axis, geometry_scale) = unsafe {
-        (
-            (*scene).metadata.mirror_axis,
-            (*scene).metadata.geometry_scale,
-        )
-    };
+    let metadata: &SceneMetadataView = scene_view.metadata_view();
+    let mirror_axis: MirrorAxis = metadata.mirror_axis();
+    let geometry_scale: Real = metadata.geometry_scale();
 
     // Space conversion for bind matrices
     {
@@ -12614,15 +12616,16 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
         let world_to_units: Matrix;
         let mut translation_scale: Real = 1.0 as Real;
 
-        // SAFETY: `scene` is live (see above).
-        if unsafe {
-            (*scene).metadata.space_conversion == SpaceConversion::TransformRoot
-                && (*scene).metadata.mirror_axis == MirrorAxis::None
-        } {
-            // SAFETY: `scene` is live (see above), so `&raw const (*scene).root_node`
-            // addresses its own non-optional root link, which points to a live,
-            // initialized `ufbx_node`.
-            world_to_units = unsafe { (*ref_ptr(&raw const (*scene).root_node)).node_to_parent };
+        if metadata.space_conversion() == SpaceConversion::TransformRoot
+            && metadata.mirror_axis() == MirrorAxis::None
+        {
+            // C: `world_to_units = scene->root_node->node_to_parent;`
+            // SAFETY: the scene's own non-optional root link names a live,
+            // initialized `ufbx_node` in the scene's arena, so its address
+            // carries write-capable provenance.
+            let root_node: &View<Node> =
+                unsafe { View::<Node>::from_ptr(scene_view.root_node().ptr()) };
+            world_to_units = root_node.node_to_parent();
         } else {
             // C: `ufbx_transform root_transform;` — every member is written
             // below before the first read.
@@ -12630,47 +12633,29 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
             // for which the all-zero bit pattern is a valid value.
             let mut root_transform: Transform = unsafe { core::mem::zeroed() };
             root_transform.translation = ZERO_VEC3;
-            // SAFETY: `scene` is live (see above); `&root_transform` borrows a
-            // live local `ufbx_transform`, zero-initialized above and with every
-            // member assigned before the read.
-            unsafe {
-                root_transform.rotation = (*scene).metadata.root_rotation;
-                root_transform.scale.x = (*scene).metadata.root_scale;
-                root_transform.scale.y = (*scene).metadata.root_scale;
-                root_transform.scale.z = (*scene).metadata.root_scale;
-                world_to_units = transform_to_matrix(&raw const root_transform);
-                translation_scale = (*scene).metadata.geometry_scale;
-            }
+            root_transform.rotation = metadata.root_rotation();
+            root_transform.scale.x = metadata.root_scale();
+            root_transform.scale.y = metadata.root_scale();
+            root_transform.scale.z = metadata.root_scale();
+            // SAFETY: `&root_transform` borrows a live local `ufbx_transform`,
+            // zero-initialized above and with every member assigned before the
+            // read.
+            world_to_units = unsafe { transform_to_matrix(&raw const root_transform) };
+            translation_scale = metadata.geometry_scale();
         }
 
         // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
-        // SAFETY: `scene` is live (see above), so its own skin-cluster pointer
-        // list is readable.
-        // `data`/`count` describe one arena run.
-        let (mut p_cluster, p_cluster_count) = unsafe {
-            (
-                (*scene).skin_clusters.data as *mut *mut SkinCluster,
-                (*scene).skin_clusters.count,
-            )
-        };
-        let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, p_cluster_count);
-        while p_cluster != p_cluster_end {
-            // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live,
-            // initialized element pointer of the scene's own run.
-            let cluster: *mut SkinCluster = unsafe { *p_cluster };
-            // SAFETY: `cluster` is a resolved element pointer from the scene's
-            // own list, so it points to a live, initialized, writable
-            // `ufbx_skin_cluster`.
-            unsafe {
-                (*cluster).bind_to_world = matrix_mul(
-                    &raw const world_to_units,
-                    &raw const (*cluster).bind_to_world,
-                )
-            };
+        for i in 0..skin_clusters.count() {
+            // C: `ufbx_skin_cluster *cluster = *p_cluster;`
+            let cluster: &View<SkinCluster> = skin_clusters.at(i);
+            // SAFETY: `&world_to_units` borrows a live, fully written local
+            // matrix and `bind_to_world_ptr()` projects the cluster's own live,
+            // initialized one.
+            cluster.set_bind_to_world(unsafe {
+                matrix_mul(&raw const world_to_units, cluster.bind_to_world_ptr())
+            });
             // C: `cluster->bind_to_world.cols[3].x` — the `cols[4]` overlay.
-            // SAFETY: `cluster` is live and writable (see above); the raw matrix
-            // address is reinterpreted as its four-column `Vec3` overlay.
-            let bind_cols: *mut Vec3 = unsafe { &raw mut (*cluster).bind_to_world } as *mut Vec3;
+            let bind_cols: *mut Vec3 = cluster.bind_to_world_raw() as *mut Vec3;
             // SAFETY: an `ufbx_matrix` is laid out as exactly four consecutive
             // `ufbx_vec3` columns, so column `3` is its last one, in bounds.
             unsafe {
@@ -12678,44 +12663,26 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
                 (*bind_cols.add(3)).y *= translation_scale;
                 (*bind_cols.add(3)).z *= translation_scale;
             }
-            // SAFETY: `cluster` is live and writable (see above), so the borrow
-            // addresses its own `bind_to_world` matrix.
-            unsafe { mirror_matrix(&raw mut (*cluster).bind_to_world, mirror_axis) };
-            // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or
-            // before the run's one-past-the-end pointer.
-            p_cluster = unsafe { p_cluster.add(1) };
+            // SAFETY: `bind_to_world_raw()` projects the cluster's own live,
+            // initialized, writable bind matrix.
+            unsafe { mirror_matrix(cluster.bind_to_world_raw(), mirror_axis) };
         }
 
         // C: `ufbxi_for_ptr_list(ufbx_pose, p_pose, scene->poses)`
-        // SAFETY: `scene` is live (see above), so its own pose pointer list is
-        // readable.
-        // `data`/`count` describe one arena run.
-        let (mut p_pose, p_pose_count) =
-            unsafe { ((*scene).poses.data as *mut *mut Pose, (*scene).poses.count) };
-        let p_pose_end: *mut *mut Pose = add_ptr(p_pose, p_pose_count);
-        while p_pose != p_pose_end {
+        let poses: &RefListView<Pose> = scene_view.poses_view();
+        for pose_index in 0..poses.count() {
             // C: `ufbxi_for_list(ufbx_bone_pose, pose, (*p_pose)->bone_poses)`
-            // SAFETY: `p_pose != p_pose_end`, so it addresses a live element
-            // pointer of the scene's own run, which points to a live,
-            // initialized `ufbx_pose` whose bone-pose list is readable.
-            // `data`/`count` describe one arena run.
-            let (mut pose, pose_count) = unsafe {
-                (
-                    (**p_pose).bone_poses.data as *mut BonePose,
-                    (**p_pose).bone_poses.count,
-                )
-            };
-            let pose_end: *mut BonePose = add_ptr(pose, pose_count);
-            while pose != pose_end {
-                // SAFETY: `pose != pose_end`, so it addresses a live,
-                // initialized, writable entry of that pose's bone-pose run.
-                unsafe {
-                    (*pose).bone_to_world =
-                        matrix_mul(&raw const world_to_units, &raw const (*pose).bone_to_world)
-                };
-                // SAFETY: `pose` is live and writable (see above); the raw matrix
-                // address is reinterpreted as its four-column `Vec3` overlay.
-                let pose_cols: *mut Vec3 = unsafe { &raw mut (*pose).bone_to_world } as *mut Vec3;
+            let bone_poses: &View<List<BonePose>> = poses.at(pose_index).bone_poses_view();
+            for bone_index in 0..bone_poses.count() {
+                let pose: &View<BonePose> = bone_poses.at(bone_index);
+                // SAFETY: `&world_to_units` borrows a live, fully written local
+                // matrix and `bone_to_world_ptr()` projects the bone pose's own
+                // live, initialized one.
+                pose.set_bone_to_world(unsafe {
+                    matrix_mul(&raw const world_to_units, pose.bone_to_world_ptr())
+                });
+                // C: `pose->bone_to_world.cols[3].x` — the `cols[4]` overlay.
+                let pose_cols: *mut Vec3 = pose.bone_to_world_raw() as *mut Vec3;
                 // SAFETY: an `ufbx_matrix` is laid out as exactly four
                 // consecutive `ufbx_vec3` columns, so column `3` is its last one,
                 // in bounds.
@@ -12724,60 +12691,42 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
                     (*pose_cols.add(3)).y *= translation_scale;
                     (*pose_cols.add(3)).z *= translation_scale;
                 }
-                // SAFETY: `pose` is live and writable (see above), so the borrow
-                // addresses its own `bone_to_world` matrix.
-                unsafe { mirror_matrix(&raw mut (*pose).bone_to_world, mirror_axis) };
-                // SAFETY: `pose != pose_end`, so the advance lands at or before
-                // the run's one-past-the-end pointer.
-                pose = unsafe { pose.add(1) };
+                // SAFETY: `bone_to_world_raw()` projects the bone pose's own
+                // live, initialized, writable matrix.
+                unsafe { mirror_matrix(pose.bone_to_world_raw(), mirror_axis) };
             }
-            // SAFETY: `p_pose != p_pose_end`, so the advance lands at or before
-            // the run's one-past-the-end pointer.
-            p_pose = unsafe { p_pose.add(1) };
         }
     }
 
     // Patch initial `mesh_node_to_bone`
     // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
-    // SAFETY: `scene` is live (see above), so its own skin-cluster pointer list
-    // is readable.
-    // `data`/`count` describe one arena run.
-    let (mut p_cluster, p_cluster_count) = unsafe {
-        (
-            (*scene).skin_clusters.data as *mut *mut SkinCluster,
-            (*scene).skin_clusters.count,
-        )
-    };
-    let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, p_cluster_count);
-    while p_cluster != p_cluster_end {
-        // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live,
-        // initialized element pointer of the scene's own run.
-        let cluster: *mut SkinCluster = unsafe { *p_cluster };
+    for i in 0..skin_clusters.count() {
+        // C: `ufbx_skin_cluster *cluster = *p_cluster;`
+        let cluster: &View<SkinCluster> = skin_clusters.at(i);
 
-        // SAFETY: `cluster` is a resolved element pointer from the scene's own
-        // list, so `&raw mut (*cluster).element` addresses its own live, initialized
+        // SAFETY: `element_raw()` projects the cluster's own live, initialized
         // element header, whose connection lists `ufbxi_fetch_src_element` walks.
         let skin: *mut SkinDeformer = unsafe {
             fetch_src_element(
-                &raw mut (*cluster).element,
+                cluster.element_raw(),
                 false,
                 ptr::null(),
                 ElementType::SkinDeformer,
             )
         } as *mut SkinDeformer;
         if skin.is_null() {
-            // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or
-            // before the run's one-past-the-end pointer.
-            p_cluster = unsafe { p_cluster.add(1) };
             continue;
         }
-
         // SAFETY: `skin` is non-null here and was resolved from the cluster's own
         // connections, so it points to a live, initialized `ufbx_skin_deformer`
-        // whose element header carries the connection lists to walk.
+        // in the scene's arena, which carries write-capable provenance.
+        let skin_view: &View<SkinDeformer> = unsafe { View::<SkinDeformer>::from_ptr(skin) };
+
+        // SAFETY: `element_raw()` projects the deformer's own live, initialized
+        // element header, whose connection lists `ufbxi_fetch_src_element` walks.
         let mut node: *mut Node = unsafe {
             fetch_src_element(
-                &raw mut (*skin).element,
+                skin_view.element_raw(),
                 false,
                 ptr::null(),
                 ElementType::Node,
@@ -12787,7 +12736,7 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
             // SAFETY: as above, for the mesh connection of the same deformer.
             let mesh: *mut Mesh = unsafe {
                 fetch_src_element(
-                    &raw mut (*skin).element,
+                    skin_view.element_raw(),
                     false,
                     ptr::null(),
                     ElementType::Mesh,
@@ -12799,53 +12748,50 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
                 // SAFETY: `mesh` is non-null (checked), so it points to a live,
                 // initialized `ufbx_mesh` in the arena that anchors a mesh view.
                 let mesh_view: &View<Mesh> = unsafe { View::<Mesh>::from_ptr(mesh) };
-                if mesh_view.element().instances().count > 0 {
-                    // SAFETY: the condition established that the mesh's instance
-                    // run is non-empty, so element `0` is live and initialized.
-                    node = unsafe { *(mesh_view.element().instances().data as *const *mut Node) };
+                let instances: &View<RefList<Node>> = mesh_view.element().instances_view();
+                if instances.count() > 0 {
+                    // C: `node = mesh->instances.data[0];`
+                    node = instances.at(0).get();
                 }
             }
         }
         if node.is_null() {
-            // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or
-            // before the run's one-past-the-end pointer.
-            p_cluster = unsafe { p_cluster.add(1) };
             continue;
         }
 
         // Normalize to the non-helper node
         // SAFETY: `node` is non-null here and was resolved from the scene's own
-        // element graph, so it points to a live, initialized `ufbx_node`.
-        if unsafe { (*node).is_geometry_transform_helper } {
-            // SAFETY: as above, for the node's own parent link; a geometry
-            // transform helper is always created as a child of the node it
-            // serves, so the link resolves to a live `ufbx_node` of this scene.
-            node = unsafe { opt_ptr(&raw const (*node).parent) };
+        // element graph, so it points to a live, initialized `ufbx_node` in the
+        // scene's arena, which carries write-capable provenance.
+        let mut node_view: &View<Node> = unsafe { View::<Node>::from_ptr(node) };
+        if node_view.is_geometry_transform_helper() {
+            // C: `node = node->parent;`
+            // SAFETY: a geometry transform helper is always created as a child of
+            // the node it serves, so its parent link resolves to a live,
+            // initialized `ufbx_node` of this scene.
+            node_view = unsafe { View::<Node>::from_ptr(opt_ptr(node_view.parent_ptr())) };
         }
 
-        // SAFETY: `cluster` is live (see above), so the borrow addresses its own
-        // `mesh_node_to_bone` matrix.
-        if unsafe { matrix_all_zero(&raw const (*cluster).mesh_node_to_bone) } {
+        // SAFETY: `mesh_node_to_bone_ptr()` projects the cluster's own live,
+        // initialized matrix.
+        if unsafe { matrix_all_zero(cluster.mesh_node_to_bone_ptr()) } {
             // If `mesh_node_to_bone` is not explicitly specified compute it from bind pose.
-            // SAFETY: `cluster` is live (see above), so the borrow addresses its
-            // own `bind_to_world` matrix.
-            let world_to_bind: Matrix =
-                unsafe { matrix_invert(&raw const (*cluster).bind_to_world) };
-            // SAFETY: `cluster` is live and writable, and `node` points to a live,
-            // initialized `ufbx_node` of the same scene (see above).
-            unsafe {
-                (*cluster).mesh_node_to_bone =
-                    matrix_mul(&raw const world_to_bind, &raw const (*node).node_to_world)
-            };
+            // SAFETY: `bind_to_world_ptr()` projects the cluster's own live,
+            // initialized matrix.
+            let world_to_bind: Matrix = unsafe { matrix_invert(cluster.bind_to_world_ptr()) };
+            // SAFETY: `&world_to_bind` borrows a live local matrix and
+            // `node_to_world_ptr()` projects the node's own live, initialized one.
+            cluster.set_mesh_node_to_bone(unsafe {
+                matrix_mul(&raw const world_to_bind, node_view.node_to_world_ptr())
+            });
         } else {
             // If `mesh_node_to_bone` is explicit, we may need to modify it for space conversion.
-            // SAFETY: `cluster` is live and writable (see above), so the borrow
-            // addresses its own `mesh_node_to_bone` matrix.
-            unsafe { mirror_matrix(&raw mut (*cluster).mesh_node_to_bone, mirror_axis) };
+            // SAFETY: `mesh_node_to_bone_raw()` projects the cluster's own live,
+            // initialized, writable matrix.
+            unsafe { mirror_matrix(cluster.mesh_node_to_bone_raw(), mirror_axis) };
             if geometry_scale != 1.0 {
-                // SAFETY: `cluster` is live and writable (see above); the raw
-                // matrix address is reinterpreted as its four-column overlay.
-                let cols: *mut Vec3 = unsafe { &raw mut (*cluster).mesh_node_to_bone } as *mut Vec3;
+                // C: `cluster->mesh_node_to_bone.cols[3].x` — the `cols[4]` overlay.
+                let cols: *mut Vec3 = cluster.mesh_node_to_bone_raw() as *mut Vec3;
                 // SAFETY: an `ufbx_matrix` is laid out as exactly four
                 // consecutive `ufbx_vec3` columns, so column `3` is its last one,
                 // in bounds.
@@ -12862,40 +12808,33 @@ pub(crate) fn update_initial_clusters(scene_view: &SceneView) {
         // matrices are formed.
         // TODO: Add a test with moving the skinned mesh root around.
         // C: `if (node->geometry_transform_helper)` — pointer truthiness.
-        // SAFETY: `node` points to a live, initialized `ufbx_node` (see above),
-        // so `&raw const (*node).geometry_transform_helper` addresses its own nullable
-        // helper link.
-        if !unsafe { opt_ptr(&raw const (*node).geometry_transform_helper) }.is_null() {
+        if node_view.geometry_transform_helper().is_some() {
+            // C: `ufbx_node *geo_node = node->geometry_transform_helper;`
             // SAFETY: the branch condition established that the link is non-null,
             // so it points to a live, initialized `ufbx_node` of this scene.
-            let geo_node: *mut Node =
-                unsafe { opt_ptr(&raw const (*node).geometry_transform_helper) };
-            // SAFETY: `cluster` is live and writable and `geo_node` points to a
-            // live, initialized `ufbx_node` (see above).
-            unsafe {
-                (*cluster).geometry_to_bone = matrix_mul(
-                    &raw const (*cluster).mesh_node_to_bone,
-                    &raw const (*geo_node).node_to_parent,
-                )
+            let geo_node: &View<Node> = unsafe {
+                View::<Node>::from_ptr(opt_ptr(node_view.geometry_transform_helper_ptr()))
             };
-        // SAFETY: `node` is live (see above).
-        } else if unsafe { (*node).has_geometry_transform } {
-            // SAFETY: `cluster` is live and writable and `node` is live (see
-            // above); both borrows address their owners' own matrices.
-            unsafe {
-                (*cluster).geometry_to_bone = matrix_mul(
-                    &raw const (*cluster).mesh_node_to_bone,
-                    &raw const (*node).geometry_to_node,
+            // SAFETY: both projections address their owners' own live,
+            // initialized matrices.
+            cluster.set_geometry_to_bone(unsafe {
+                matrix_mul(
+                    cluster.mesh_node_to_bone_ptr(),
+                    geo_node.node_to_parent_ptr(),
                 )
-            };
+            });
+        } else if node_view.has_geometry_transform() {
+            // SAFETY: both projections address their owners' own live,
+            // initialized matrices.
+            cluster.set_geometry_to_bone(unsafe {
+                matrix_mul(
+                    cluster.mesh_node_to_bone_ptr(),
+                    node_view.geometry_to_node_ptr(),
+                )
+            });
         } else {
-            // SAFETY: `cluster` is live and writable (see above).
-            unsafe { (*cluster).geometry_to_bone = (*cluster).mesh_node_to_bone };
+            cluster.set_geometry_to_bone(cluster.mesh_node_to_bone());
         }
-
-        // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or before
-        // the run's one-past-the-end pointer.
-        p_cluster = unsafe { p_cluster.add(1) };
     }
 }
 
