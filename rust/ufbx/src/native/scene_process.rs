@@ -8626,9 +8626,6 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let scene_skin_deformers: &RefListView<SkinDeformer> = uc.scene_view().skin_deformers_view();
     for skin_ix in 0..scene_skin_deformers.count() {
         let skin_view: &View<SkinDeformer> = scene_skin_deformers.at(skin_ix);
-        // The rest of this pass still walks the deformer through the raw cursor C
-        // carries in `ufbxi_for_ptr_list`.
-        let skin: *mut SkinDeformer = skin_view.get();
         // SAFETY: `ufbxi_fetch_dst_elements` fills the list header it is handed
         // from the destination connections of the element it is handed (fn
         // contract); both are projections of this deformer's own view.
@@ -8752,282 +8749,195 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
             let retain_all: bool = !uc.opts_view().clean_skin_weights();
 
-            // SAFETY: `skin` is live (see above).
-            let (skin_vertices, skin_weights) = unsafe {
-                (
-                    (*skin).vertices.data as *mut SkinVertex,
-                    (*skin).weights.data as *mut SkinWeight,
-                )
-            };
+            // The two runs pushed above, reached as lists: `at()` bounds every
+            // element access against the count each was given.
+            let skin_vertices: &ListView<SkinVertex> = skin_view.vertices_view();
+            let skin_weights: &ListView<SkinWeight> = skin_view.weights_view();
 
             // Count the number of weights per vertex
             // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, skin->clusters)`
-            // SAFETY: `skin` is live (see above).
-            // `data`/`count` describe one run.
-            let (mut p_cluster, p_cluster_count) = unsafe {
-                (
-                    (*skin).clusters.data as *mut *mut SkinCluster,
-                    (*skin).clusters.count,
-                )
-            };
-            let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, p_cluster_count);
-            while p_cluster != p_cluster_end {
-                // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live,
-                // initialized slot of that run.
-                let cluster: *mut SkinCluster = unsafe { *p_cluster };
-                // SAFETY: `cluster` is a live `ufbx_skin_cluster` (see above).
-                for i in 0..unsafe { (*cluster).num_weights } {
-                    // SAFETY: the cluster's `vertices` run holds `num_weights`
-                    // entries and `i` is below it.
-                    let vertex: u32 = unsafe { *(*cluster).vertices.data.add(i) };
+            let clusters: &RefListView<SkinCluster> = skin_view.clusters_view();
+            for cluster_ix in 0..clusters.count() {
+                let cluster: &View<SkinCluster> = clusters.at(cluster_ix);
+                for i in 0..cluster.num_weights() {
+                    // The cluster's `vertices`/`weights` runs both hold
+                    // `num_weights` entries (ufbx.c:14034, 16103), so the list
+                    // index is in bounds.
+                    let vertex: u32 = cluster.vertices()[i];
                     if (vertex as usize) < num_vertices
-                        // SAFETY: the cluster's `weights` run holds `num_weights`
-                        // entries too, and `i` is below it.
-                        && (retain_all || unsafe { *(*cluster).weights.data.add(i) } > 0.0)
+                        && (retain_all || cluster.weights()[i] > 0.0)
                     {
-                        // SAFETY: `vertex < num_vertices`, the length of the zeroed
-                        // `skin_vertices` run pushed above.
-                        unsafe {
-                            (*skin_vertices.add(vertex as usize)).num_weights = (*skin_vertices
-                                .add(vertex as usize))
-                            .num_weights
-                            .wrapping_add(1)
-                        };
+                        let skin_vertex: &View<SkinVertex> = skin_vertices.at(vertex as usize);
+                        skin_vertex.set_num_weights(skin_vertex.num_weights().wrapping_add(1));
                     }
                 }
-                // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or
-                // before the run's one-past-the-end pointer.
-                p_cluster = unsafe { p_cluster.add(1) };
             }
 
-            // SAFETY: `skin` is live (see above).
-            let default_dq: Real =
-                if unsafe { (*skin).skinning_method } == SkinningMethod::DualQuaternion {
-                    1.0f32 as Real
-                } else {
-                    0.0f32 as Real
-                };
+            let default_dq: Real = if skin_view.skinning_method() == SkinningMethod::DualQuaternion
+            {
+                1.0f32 as Real
+            } else {
+                0.0f32 as Real
+            };
 
             // Prefix sum to assign the vertex weight offsets and set up default DQ values
             let mut offset: u32 = 0;
             let mut max_weights: u32 = 0;
             for i in 0..num_vertices {
-                // SAFETY: `i < num_vertices`, the length of the `skin_vertices`
-                // run pushed above.
-                let num_weights: u32 = unsafe {
-                    (*skin_vertices.add(i)).weight_begin = offset;
-                    (*skin_vertices.add(i)).dq_weight = default_dq;
-                    (*skin_vertices.add(i)).num_weights
-                };
+                let skin_vertex: &View<SkinVertex> = skin_vertices.at(i);
+                skin_vertex.set_weight_begin(offset);
+                skin_vertex.set_dq_weight(default_dq);
+                let num_weights: u32 = skin_vertex.num_weights();
                 offset = offset.wrapping_add(num_weights);
-                // SAFETY: as above.
-                unsafe { (*skin_vertices.add(i)).num_weights = 0 };
+                skin_vertex.set_num_weights(0);
 
                 if num_weights > max_weights {
                     max_weights = num_weights;
                 }
             }
             ufbx_assert!(offset as usize <= total_weights);
-            // SAFETY: `skin` is live (see above).
-            unsafe { (*skin).max_weights_per_vertex = max_weights as usize };
+            skin_view.set_max_weights_per_vertex(max_weights as usize);
 
             // Copy the DQ weights to vertices
-            // SAFETY: `skin` is live (see above).
-            for i in 0..unsafe { (*skin).num_dq_weights } {
-                // SAFETY: the skin's `dq_vertices` run holds `num_dq_weights`
-                // entries and `i` is below it.
-                let vertex: u32 = unsafe { *(*skin).dq_vertices.data.add(i) };
+            for i in 0..skin_view.num_dq_weights() {
+                // The skin's `dq_vertices`/`dq_weights` runs both hold
+                // `num_dq_weights` entries (ufbx.c:14014-14018), so the list
+                // index is in bounds.
+                let vertex: u32 = skin_view.dq_vertices()[i];
                 if (vertex as usize) < num_vertices {
-                    // SAFETY: `vertex < num_vertices` bounds the `skin_vertices`
-                    // run, and the skin's `dq_weights` run holds `num_dq_weights`
-                    // entries with `i` below it.
-                    unsafe {
-                        (*skin_vertices.add(vertex as usize)).dq_weight =
-                            *(*skin).dq_weights.data.add(i)
-                    };
+                    skin_vertices
+                        .at(vertex as usize)
+                        .set_dq_weight(skin_view.dq_weights()[i]);
                 }
             }
 
             // Copy the weights to vertices
             let mut cluster_index: u32 = 0;
             // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, skin->clusters)`
-            // SAFETY: `skin` is live (see above).
-            // `data`/`count` describe one run.
-            let (mut p_cluster, p_cluster_count) = unsafe {
-                (
-                    (*skin).clusters.data as *mut *mut SkinCluster,
-                    (*skin).clusters.count,
-                )
-            };
-            let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, p_cluster_count);
-            while p_cluster != p_cluster_end {
-                // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live,
-                // initialized slot of that run.
-                let cluster: *mut SkinCluster = unsafe { *p_cluster };
-                // SAFETY: `cluster` is a live `ufbx_skin_cluster` (see above).
-                for i in 0..unsafe { (*cluster).num_weights } {
-                    // SAFETY: the cluster's `vertices` run holds `num_weights`
-                    // entries and `i` is below it.
-                    let vertex: u32 = unsafe { *(*cluster).vertices.data.add(i) };
+            let clusters: &RefListView<SkinCluster> = skin_view.clusters_view();
+            for cluster_ix in 0..clusters.count() {
+                let cluster: &View<SkinCluster> = clusters.at(cluster_ix);
+                for i in 0..cluster.num_weights() {
+                    // The cluster's `vertices`/`weights` runs both hold
+                    // `num_weights` entries (see the counting pass above).
+                    let vertex: u32 = cluster.vertices()[i];
                     if (vertex as usize) < num_vertices
-                        // SAFETY: the cluster's `weights` run holds `num_weights`
-                        // entries too, and `i` is below it.
-                        && (retain_all || unsafe { *(*cluster).weights.data.add(i) } > 0.0)
+                        && (retain_all || cluster.weights()[i] > 0.0)
                     {
                         // C: `skin->vertices.data[vertex].num_weights++` — the
                         // pre-increment value.
-                        // SAFETY: `vertex < num_vertices`, the length of the
-                        // `skin_vertices` run; the counting pass above gave each
-                        // vertex exactly `num_weights` slots starting at its
-                        // `weight_begin` and `local_index` counts the weights
-                        // written for this vertex so far, so `index` stays inside
-                        // the `total_weights`-long `skin_weights` run, with `i`
-                        // below the cluster's own `num_weights` weight run.
-                        unsafe {
-                            let local_index: u32 =
-                                (*skin_vertices.add(vertex as usize)).num_weights;
-                            (*skin_vertices.add(vertex as usize)).num_weights =
-                                local_index.wrapping_add(1);
-                            let index: u32 = (*skin_vertices.add(vertex as usize))
-                                .weight_begin
-                                .wrapping_add(local_index);
-                            (*skin_weights.add(index as usize)).cluster_index = cluster_index;
-                            (*skin_weights.add(index as usize)).weight =
-                                *(*cluster).weights.data.add(i);
-                        }
+                        let skin_vertex: &View<SkinVertex> = skin_vertices.at(vertex as usize);
+                        let local_index: u32 = skin_vertex.num_weights();
+                        skin_vertex.set_num_weights(local_index.wrapping_add(1));
+                        let index: u32 = skin_vertex.weight_begin().wrapping_add(local_index);
+                        // The counting pass gave each vertex exactly
+                        // `num_weights` slots starting at its `weight_begin` and
+                        // `local_index` counts the weights written for this
+                        // vertex so far, so `index` stays inside the
+                        // `total_weights`-long `skin_weights` run.
+                        let skin_weight: &View<SkinWeight> = skin_weights.at(index as usize);
+                        skin_weight.set_cluster_index(cluster_index);
+                        skin_weight.set_weight(cluster.weights()[i]);
                     }
                 }
                 cluster_index = cluster_index.wrapping_add(1);
-                // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or
-                // before the run's one-past-the-end pointer.
-                p_cluster = unsafe { p_cluster.add(1) };
             }
 
             // Sort the vertex weights by descending weight value
-            // SAFETY: `skin` is a live `ufbx_skin_deformer` whose `vertices` and
-            // `weights` runs are filled in above.
-            unsafe { sort_skin_weights(uc, skin) }?;
+            // SAFETY: `get()` hands out the viewed live `ufbx_skin_deformer`,
+            // whose `vertices` and `weights` runs are filled in above.
+            unsafe { sort_skin_weights(uc, skin_view.get()) }?;
         }
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_deformer, p_blend, uc->scene.blend_deformers)`
-    let mut p_blend: *mut *mut BlendDeformer =
-        uc.scene_view().blend_deformers_view().data() as *mut *mut BlendDeformer;
-    let p_blend_end: *mut *mut BlendDeformer =
-        add_ptr(p_blend, uc.scene_view().blend_deformers_view().count());
-    while p_blend != p_blend_end {
-        // SAFETY: `p_blend != p_blend_end`, so it addresses a live, initialized
-        // slot of the scene's blend-deformer-pointer run.
-        let blend: *mut BlendDeformer = unsafe { *p_blend };
-        // SAFETY: `blend` is a live `ufbx_blend_deformer` of the scene (see above),
-        // so the projections address its own `channels` list header and element
-        // header.
+    let scene_blend_deformers: &RefListView<BlendDeformer> = uc.scene_view().blend_deformers_view();
+    for blend_ix in 0..scene_blend_deformers.count() {
+        let blend: &View<BlendDeformer> = scene_blend_deformers.at(blend_ix);
+        // SAFETY: `ufbxi_fetch_dst_elements` fills the list header it is handed
+        // from the destination connections of the element it is handed (fn
+        // contract); both are projections of this deformer's own view.
         unsafe {
             fetch_dst_elements(
                 uc,
-                &raw mut (*blend).channels as *mut c_void,
-                &raw mut (*blend).element,
+                blend.channels_raw() as *mut c_void,
+                blend.element_raw(),
                 false,
                 true,
                 ptr::null(),
                 ElementType::BlendChannel,
             )
         }?;
-        // SAFETY: `p_blend != p_blend_end`, so the advance lands at or before the
-        // run's one-past-the-end pointer.
-        p_blend = unsafe { p_blend.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_cache_deformer, p_deformer, uc->scene.cache_deformers)`
-    let mut p_deformer: *mut *mut CacheDeformer =
-        uc.scene_view().cache_deformers_view().data() as *mut *mut CacheDeformer;
-    let p_deformer_end: *mut *mut CacheDeformer =
-        add_ptr(p_deformer, uc.scene_view().cache_deformers_view().count());
-    while p_deformer != p_deformer_end {
-        // SAFETY: `p_deformer != p_deformer_end`, so it addresses a live,
-        // initialized slot of the scene's cache-deformer-pointer run, holding a
-        // live `ufbx_cache_deformer` allocated from `uc`'s result buffer — a
-        // write-capable root for the view.
-        let deformer_view: &'a CacheDeformerView =
-            unsafe { CacheDeformerView::from_ptr(*p_deformer) };
-        let deformer: *mut CacheDeformer = deformer_view.get();
+    let scene_cache_deformers: &RefListView<CacheDeformer> = uc.scene_view().cache_deformers_view();
+    for deformer_ix in 0..scene_cache_deformers.count() {
+        let deformer_view: &CacheDeformerView = scene_cache_deformers.at(deformer_ix);
         deformer_view.set_channel(find_string_len(
             deformer_view.props_view(),
             b"ChannelName",
             EMPTY_STRING.0,
         ));
-        // SAFETY: `deformer` is live (see above), so `&raw mut (*deformer).element`
-        // addresses its own element header; the fetched destination is null or a
-        // live `ufbx_cache_file`.
+        // SAFETY: `element_raw` addresses the deformer's own element header,
+        // which is what `ufbxi_fetch_dst_element` reads (fn contract); the
+        // fetched destination is null or a live `ufbx_cache_file`.
         deformer_view.set_file(unsafe {
             opt_ref(fetch_dst_element(
-                &raw mut (*deformer).element,
+                deformer_view.element_raw(),
                 false,
                 ptr::null(),
                 ElementType::CacheFile,
             ) as *mut CacheFile)
         });
-        // SAFETY: `p_deformer != p_deformer_end`, so the advance lands at or before
-        // the run's one-past-the-end pointer.
-        p_deformer = unsafe { p_deformer.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_cache_file, p_cache, uc->scene.cache_files)`
-    let mut p_cache: *mut *mut CacheFile =
-        uc.scene_view().cache_files_view().data() as *mut *mut CacheFile;
-    let p_cache_end: *mut *mut CacheFile =
-        add_ptr(p_cache, uc.scene_view().cache_files_view().count());
-    while p_cache != p_cache_end {
-        // SAFETY: `p_cache != p_cache_end`, so it addresses a live, initialized
-        // slot of the scene's cache-file-pointer run, holding a live
-        // `ufbx_cache_file` allocated from `uc`'s result buffer — a write-capable
-        // root for the view.
-        let cache_view: &'a CacheFileView = unsafe { CacheFileView::from_ptr(*p_cache) };
-        let cache: *mut CacheFile = cache_view.get();
+    let scene_cache_files: &RefListView<CacheFile> = uc.scene_view().cache_files_view();
+    for cache_ix in 0..scene_cache_files.count() {
+        let cache_view: &CacheFileView = scene_cache_files.at(cache_ix);
 
-        // SAFETY: `cache` is the live element the view was minted from, and
-        // `props_view()` is its own live `ufbx_props`; the name is a
-        // NUL-terminated literal.
-        unsafe {
-            (*cache).absolute_filename = find_string_len(
-                cache_view.props_view(),
-                b"CacheAbsoluteFileName",
-                EMPTY_STRING.0,
-            );
-            (*cache).relative_filename =
-                find_string_len(cache_view.props_view(), b"CacheFileName", EMPTY_STRING.0);
-        }
+        cache_view.set_absolute_filename(find_string_len(
+            cache_view.props_view(),
+            b"CacheAbsoluteFileName",
+            EMPTY_STRING.0,
+        ));
+        cache_view.set_relative_filename(find_string_len(
+            cache_view.props_view(),
+            b"CacheFileName",
+            EMPTY_STRING.0,
+        ));
 
-        // SAFETY: as above.
-        unsafe {
-            (*cache).raw_absolute_filename = find_blob_len(
-                cache_view.props_view(),
-                b"CacheAbsoluteFileName",
-                EMPTY_BLOB.0,
-            );
-            (*cache).raw_relative_filename =
-                find_blob_len(cache_view.props_view(), b"CacheFileName", EMPTY_BLOB.0);
-        }
+        cache_view.set_raw_absolute_filename(find_blob_len(
+            cache_view.props_view(),
+            b"CacheAbsoluteFileName",
+            EMPTY_BLOB.0,
+        ));
+        cache_view.set_raw_relative_filename(find_blob_len(
+            cache_view.props_view(),
+            b"CacheFileName",
+            EMPTY_BLOB.0,
+        ));
 
         let type_: i64 = api_find_int_len(cache_view.props_view(), b"CacheFileType", 0);
         if type_ >= 0 && type_ <= CacheFileFormat::Mc as i64 {
             // C: `(ufbx_cache_file_format)type` — the guard above pins `type`
             // into `0..=UFBX_CACHE_FILE_FORMAT_MC`, exactly the enum range.
             // SAFETY: the guard pins `type_` into `0..=UFBX_CACHE_FILE_FORMAT_MC`,
-            // exactly the discriminants of the `u32`-repr `CacheFileFormat`;
-            // `cache` is the live element the view was minted from.
-            unsafe { (*cache).format = core::mem::transmute::<u32, CacheFileFormat>(type_ as u32) };
+            // exactly the discriminants of the `u32`-repr `CacheFileFormat`.
+            cache_view
+                .set_format(unsafe { core::mem::transmute::<u32, CacheFileFormat>(type_ as u32) });
         }
 
-        // SAFETY: `cache` is live (see above), so the projections address its own
+        // SAFETY: each `*_raw()` addresses one of the viewed cache file's own
         // `ufbx_string` filename fields, which are `Strblob`-shaped for `raw`
         // `false`.
         unsafe {
             resolve_filenames(
                 uc,
-                &raw mut (*cache).filename as *mut Strblob,
-                &raw mut (*cache).absolute_filename as *mut Strblob,
-                &raw mut (*cache).relative_filename as *mut Strblob,
+                cache_view.filename_raw() as *mut Strblob,
+                cache_view.absolute_filename_raw() as *mut Strblob,
+                cache_view.relative_filename_raw() as *mut Strblob,
                 false,
             )
         }?;
@@ -9036,15 +8946,12 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         unsafe {
             resolve_filenames(
                 uc,
-                &raw mut (*cache).raw_filename as *mut Strblob,
-                &raw mut (*cache).raw_absolute_filename as *mut Strblob,
-                &raw mut (*cache).raw_relative_filename as *mut Strblob,
+                cache_view.raw_filename_raw() as *mut Strblob,
+                cache_view.raw_absolute_filename_raw() as *mut Strblob,
+                cache_view.raw_relative_filename_raw() as *mut Strblob,
                 true,
             )
         }?;
-        // SAFETY: `p_cache != p_cache_end`, so the advance lands at or before the
-        // run's one-past-the-end pointer.
-        p_cache = unsafe { p_cache.add(1) };
     }
 
     ufbx_assert!(
@@ -9053,103 +8960,82 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     // C reads `uc->tmp_full_weights.num_items` as the `ufbxi_push_pop()` count
     // argument; hoisted so the `&mut` borrow does not overlap the read.
     let num_full_weights: usize = uc.tmp_full_weights_view().num_items();
-    let mut full_weights: *mut List<Real> = uc
+    let full_weights_base: *mut List<Real> = uc
         .tmp_view()
         .push_pop::<List<Real>>(uc.tmp_full_weights_view(), num_full_weights);
     // SAFETY: `tmp_full_weights_mut_ptr` hands out `uc`'s own live full-weight
     // buffer.
     unsafe { buf_free(uc.tmp_full_weights_mut_ptr()) };
-    ufbxi_check!(uc, !full_weights.is_null(), "full_weights");
+    ufbxi_check!(uc, !full_weights_base.is_null(), "full_weights");
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_channel, p_channel, uc->scene.blend_channels)`
-    let mut p_channel: *mut *mut BlendChannel =
-        uc.scene_view().blend_channels_view().data() as *mut *mut BlendChannel;
-    let p_channel_end: *mut *mut BlendChannel =
-        add_ptr(p_channel, uc.scene_view().blend_channels_view().count());
-    while p_channel != p_channel_end {
-        // SAFETY: `p_channel != p_channel_end`, so it addresses a live, initialized
-        // slot of the scene's blend-channel-pointer run.
-        let channel: *mut BlendChannel = unsafe { *p_channel };
+    let scene_blend_channels: &RefListView<BlendChannel> = uc.scene_view().blend_channels_view();
+    for channel_ix in 0..scene_blend_channels.count() {
+        let channel: &View<BlendChannel> = scene_blend_channels.at(channel_ix);
 
-        // SAFETY: `channel` is a live `ufbx_blend_channel` of the scene (see
-        // above), so the projections address its own `keyframes` list header and
-        // element header.
-        unsafe {
-            fetch_blend_keyframes(
-                uc,
-                &raw mut (*channel).keyframes,
-                &raw mut (*channel).element,
-            )
-        }?;
+        // SAFETY: `ufbxi_fetch_blend_keyframes` fills the list header it is handed
+        // from the destination connections of the element it is handed (fn
+        // contract); both are projections of this channel's own view.
+        unsafe { fetch_blend_keyframes(uc, channel.keyframes_raw(), channel.element_raw()) }?;
 
-        // SAFETY: `channel` is live (see above).
-        for i in 0..unsafe { (*channel).keyframes.count } {
-            // SAFETY: the fetch above filled the channel's `keyframes` run, and `i`
-            // is below its `count`.
-            let key: *mut BlendKeyframe =
-                unsafe { ((*channel).keyframes.data as *mut BlendKeyframe).add(i) };
-            // SAFETY: `key` addresses a live keyframe of that run (see above).
-            unsafe { (*key).target_weight = 1.0f32 as Real };
-            // SAFETY: `full_weights` addresses this channel's full-weight list
-            // header — the popped run holds one per blend channel and is advanced
-            // once per channel below, with the assert above pinning its length to
-            // the channel count.
-            if i < unsafe { (*full_weights).count } {
+        // C carries `full_weights` as a cursor advanced once per channel; the
+        // popped run holds one list header per blend channel, so the per-channel
+        // header is derived from the run's base.
+        // SAFETY: `channel_ix` is below the blend-channel count, which the assert
+        // above pins to the popped run's length, so the offset addresses a live
+        // header of that `uc`-owned run — write-capable provenance for the view.
+        let full_weights: &ListView<Real> =
+            unsafe { ListView::<Real>::from_ptr(full_weights_base.wrapping_add(channel_ix)) };
+
+        let keyframes: &ListView<BlendKeyframe> = channel.keyframes_view();
+        for i in 0..keyframes.count() {
+            let key: &View<BlendKeyframe> = keyframes.at(i);
+            key.set_target_weight(1.0f32 as Real);
+            if i < full_weights.count() {
                 if !uc.blender_full_weights() {
-                    // SAFETY: `key` is live (see above); the full-weight list's own
-                    // `data` run holds `count` reals and `i` is below it.
-                    unsafe { (*key).target_weight = *(*full_weights).data.add(i) / 100.0 };
-                // SAFETY: `full_weights` is live (see above); `key` is live and its
-                // `shape` is a non-null live `ufbx_blend_shape` pointer.
-                } else if unsafe {
-                    (*full_weights).count == (*ref_ptr(&raw const (*key).shape)).num_offsets
-                } {
+                    // SAFETY: the full-weight list's own `data` run holds `count`
+                    // reals and `i` is below it.
+                    key.set_target_weight(unsafe { *full_weights.data().add(i) } / 100.0);
+                // C: `key->shape->num_offsets` — `ufbxi_fetch_blend_keyframes`
+                // fills every keyframe's `shape` from a connection source, so it
+                // is a non-null live `ufbx_blend_shape` of the same scene.
+                // SAFETY: as above.
+                } else if full_weights.count()
+                    == unsafe { View::<BlendShape>::from_ptr(key.shape().ptr()) }.num_offsets()
+                {
                     if i == 0 {
                         // Duplicate `index_data` for modification if we retain DOM
                         if uc.opts_view().retain_dom() {
-                            // SAFETY: `result_mut_ptr` is `uc`'s own live result
+                            // SAFETY: `result_view()` is `uc`'s own live result
                             // buffer, and `full_weights`'s `count`/`data` describe
                             // the weight run being copied.
-                            unsafe {
-                                (*full_weights).data = uc.result_view().push_copy_raw::<Real>(
-                                    (*full_weights).count,
-                                    (*full_weights).data,
+                            full_weights.set_data(unsafe {
+                                uc.result_view().push_copy_raw::<Real>(
+                                    full_weights.count(),
+                                    full_weights.data(),
                                 )
-                            };
-                            // SAFETY: `full_weights` is live (see above).
-                            ufbxi_check!(
-                                uc,
-                                !unsafe { (*full_weights).data }.is_null(),
-                                "full_weights->data"
-                            );
+                            });
+                            ufbxi_check!(uc, !full_weights.data().is_null(), "full_weights->data");
                         }
                         // C: `ufbxi_for_list(ufbx_real, p_weight, *full_weights)`
-                        // SAFETY: `full_weights` is live (see above).
-                        // `data`/`count` describe one run.
-                        let (mut p_weight, p_weight_count) =
-                            unsafe { ((*full_weights).data as *mut Real, (*full_weights).count) };
-                        let p_weight_end: *mut Real = add_ptr(p_weight, p_weight_count);
-                        while p_weight != p_weight_end {
-                            // SAFETY: `p_weight != p_weight_end`, so it addresses a
-                            // live, initialized entry of that run.
-                            unsafe { *p_weight /= 100.0 };
-                            // SAFETY: `p_weight != p_weight_end`, so the advance
-                            // lands at or before the run's one-past-the-end pointer.
-                            p_weight = unsafe { p_weight.add(1) };
+                        for weight_ix in 0..full_weights.count() {
+                            // SAFETY: `weight_ix` is below the list's own `count`,
+                            // so it addresses a live, writable entry of the run
+                            // the list header describes.
+                            unsafe { *(full_weights.data() as *mut Real).add(weight_ix) /= 100.0 };
                         }
                     }
                     // C: struct assignment (memcpy) of the `ufbx_real_list`
                     // header; `List<T>` is not `Copy` in the generated
                     // bindings, so the copy is a byte-identical
                     // `copy_nonoverlapping`.
-                    // SAFETY: `full_weights` addresses this channel's own list
-                    // header (see above); the destination is the live blend shape's
-                    // own `offset_weights` header, a distinct field of the same
-                    // type.
+                    // SAFETY: the source is this channel's own list header (see
+                    // above); the destination is the live blend shape's own
+                    // `offset_weights` header, a distinct field of the same type.
                     unsafe {
                         ptr::copy_nonoverlapping(
-                            full_weights as *const List<Real>,
-                            &raw mut (*ref_ptr(&raw const (*key).shape)).offset_weights,
+                            full_weights.as_ptr(),
+                            View::<BlendShape>::from_ptr(key.shape().ptr()).offset_weights_raw(),
                             1,
                         )
                     };
@@ -9157,36 +9043,21 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
         }
 
-        // SAFETY: `channel` is live and its `keyframes` run holds `count`
-        // initialized keyframes (see above).
+        // SAFETY: the channel's `keyframes` run holds `count` initialized
+        // keyframes (the fetch above).
         unsafe {
             sort_blend_keyframes(
                 uc,
-                (*channel).keyframes.data as *mut BlendKeyframe,
-                (*channel).keyframes.count,
+                keyframes.data() as *mut BlendKeyframe,
+                keyframes.count(),
             )
         }?;
-        // SAFETY: the popped full-weight run holds one list header per blend
-        // channel (the assert above), and the loop advances once per channel, so
-        // the advance lands at or before its one-past-the-end pointer.
-        full_weights = unsafe { full_weights.add(1) };
 
-        // SAFETY: `channel` is live (see above).
-        if unsafe { (*channel).keyframes.count } > 0 {
-            // SAFETY: as above; the run is non-empty here, so its last entry is
-            // live and initialized, and that keyframe's `shape` is a non-null live
-            // `ufbx_blend_shape` pointer.
-            unsafe {
-                (*channel).target_shape = opt_ref(ref_ptr(
-                    &raw const (*((*channel).keyframes.data as *mut BlendKeyframe)
-                        .add((*channel).keyframes.count - 1))
-                    .shape,
-                ))
-            };
+        if keyframes.count() > 0 {
+            // C: `channel->target_shape = ...[count - 1].shape` — the run is
+            // non-empty here and every keyframe's `shape` is non-null (see above).
+            channel.set_target_shape(Some(keyframes.at(keyframes.count() - 1).shape()));
         }
-        // SAFETY: `p_channel != p_channel_end`, so the advance lands at or before
-        // the run's one-past-the-end pointer.
-        p_channel = unsafe { p_channel.add(1) };
     }
 
     {
@@ -9213,14 +9084,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         uc.set_consecutive_indices(consecutive_indices);
 
         // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, uc->scene.meshes)`
-        let mut p_mesh: *mut *mut Mesh = uc.scene_view().meshes_view().data() as *mut *mut Mesh;
-        let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, uc.scene_view().meshes_view().count());
-        while p_mesh != p_mesh_end {
-            // SAFETY: `p_mesh != p_mesh_end`, so it addresses a live, initialized
-            // slot of the scene's mesh-pointer run; the stored entry is a
-            // context-owned mesh element, so its provenance is write-capable and
-            // `Mut` is the right mode.
-            let mesh = unsafe { View::<Mesh>::from_ptr(*p_mesh) };
+        let scene_meshes: &RefListView<Mesh> = uc.scene_view().meshes_view();
+        for mesh_ix in 0..scene_meshes.count() {
+            let mesh: &View<Mesh> = scene_meshes.at(mesh_ix);
 
             // SAFETY: `indices_raw()` addresses the viewed mesh's own attribute
             // index-list header, so `&raw mut (*..).data` is its data pointer.
@@ -9341,24 +9207,21 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
             // Assign first UV and color sets as the "canonical" ones
             if mesh.uv_sets().count > 0 {
+                let uv_set: &View<UvSet> = mesh.uv_sets_view().at(0);
                 // C: struct assignment (memcpy) of the vertex-attribute
                 // headers; the `Vertex*` structs are not `Copy` in the
                 // generated bindings, so the copy is spelled as a
                 // byte-identical `copy_nonoverlapping`.
-                // SAFETY: `uv_sets.count > 0`, so element `0` of the mesh's UV-set
-                // run is live and initialized; the destination is the mesh's own
-                // `vertex_uv` header, a distinct field of the same type.
+                // SAFETY: source and destination are the UV set's own
+                // `vertex_uv` header and the mesh's own `vertex_uv` header,
+                // distinct places of the same type.
                 unsafe {
-                    ptr::copy_nonoverlapping(
-                        &raw const (*(mesh.uv_sets().data as *mut UvSet).add(0)).vertex_uv,
-                        mesh.vertex_uv_raw(),
-                        1,
-                    )
+                    ptr::copy_nonoverlapping(uv_set.vertex_uv_ptr(), mesh.vertex_uv_raw(), 1)
                 };
                 // SAFETY: as above, for the `vertex_bitangent` headers.
                 unsafe {
                     ptr::copy_nonoverlapping(
-                        &raw const (*(mesh.uv_sets().data as *mut UvSet).add(0)).vertex_bitangent,
+                        uv_set.vertex_bitangent_ptr(),
                         mesh.vertex_bitangent_raw(),
                         1,
                     )
@@ -9366,20 +9229,20 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 // SAFETY: as above, for the `vertex_tangent` headers.
                 unsafe {
                     ptr::copy_nonoverlapping(
-                        &raw const (*(mesh.uv_sets().data as *mut UvSet).add(0)).vertex_tangent,
+                        uv_set.vertex_tangent_ptr(),
                         mesh.vertex_tangent_raw(),
                         1,
                     )
                 };
             }
             if mesh.color_sets().count > 0 {
-                // SAFETY: `color_sets.count > 0`, so element `0` of the mesh's
-                // color-set run is live and initialized; the destination is the
-                // mesh's own `vertex_color` header, a distinct field of the same
-                // type.
+                let color_set: &View<ColorSet> = mesh.color_sets_view().at(0);
+                // SAFETY: source and destination are the color set's own
+                // `vertex_color` header and the mesh's own `vertex_color`
+                // header, distinct places of the same type.
                 unsafe {
                     ptr::copy_nonoverlapping(
-                        &raw const (*(mesh.color_sets().data as *mut ColorSet).add(0)).vertex_color,
+                        color_set.vertex_color_ptr(),
                         mesh.vertex_color_raw(),
                         1,
                     )
@@ -9387,15 +9250,13 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
 
             if mesh.face_group_parts().count == 1 {
-                // SAFETY: the count is `1`, so element `0` of the mesh's
-                // face-group-part run is live and initialized, and the projection
-                // addresses that part's own face-index data pointer.
+                let part: &View<MeshPart> = mesh.face_group_parts_view().at(0);
+                // SAFETY: `face_indices_raw()` addresses that part's own
+                // index-list header, so `&raw mut (*..).data` is its data pointer.
                 unsafe {
                     patch_index_pointer(
                         uc,
-                        &raw mut (*(mesh.face_group_parts().data as *mut MeshPart).add(0))
-                            .face_indices
-                            .data as *mut *mut u32,
+                        &raw mut (*part.face_indices_raw()).data as *mut *mut u32,
                     )
                 };
             }
@@ -9408,58 +9269,48 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             if mesh.materials().count > 0 {
                 // C: `ufbxi_for_ptr_list(ufbx_node, p_node, mesh->instances)`
                 // The instance list was fetched by the pass above.
-                let mut p_node: *mut *mut Node = mesh.element().instances().data as *mut *mut Node;
-                // `data`/`count` describe one run.
-                let p_node_end: *mut *mut Node = add_ptr(p_node, mesh.element().instances().count);
-                while p_node != p_node_end {
-                    // SAFETY: `p_node != p_node_end`, so it addresses a live,
-                    // initialized slot of that run.
-                    let node: *mut Node = unsafe { *p_node };
+                let instances: &RefListView<Node> = mesh.element().instances_view();
+                for node_ix in 0..instances.count() {
+                    let node: &View<Node> = instances.at(node_ix);
+                    let node_materials: &RefListView<Material> = node.materials_view();
                     // C-parity: `mesh->materials.data[0]` may be NULL (broken
                     // element connections), so the entry is read as the bare
                     // `ufbx_material*` the `Ref` field is at the ABI level.
                     let mesh_materials: *mut *mut Material =
-                        mesh.materials().data as *mut *mut Material;
-                    // SAFETY: `node` is live (see above), and `materials.count > 0`
-                    // makes element `0` of the mesh's material run live.
-                    if unsafe {
-                        (*node).materials.count < mesh.materials().count
-                            && !(*mesh_materials.add(0)).is_null()
-                    } {
+                        mesh.materials_view().data() as *mut *mut Material;
+                    // SAFETY: `materials.count > 0` makes element `0` of the
+                    // mesh's own material run live.
+                    if node_materials.count() < mesh.materials_view().count()
+                        && !unsafe { *mesh_materials.add(0) }.is_null()
+                    {
                         // `result_view()` is `uc`'s own result buffer.
                         let materials: *mut *mut Material = uc
                             .result_view()
-                            .push::<*mut Material>(mesh.materials().count);
+                            .push::<*mut Material>(mesh.materials_view().count());
                         ufbxi_check!(uc, !materials.is_null(), "materials");
                         // C: `ufbxi_nounroll for (...)` — the no-unroll pragma
                         // is optimizer-only and has no Rust analogue.
-                        // SAFETY: `node` is live (see above).
-                        for i in 0..unsafe { (*node).materials.count } {
+                        for i in 0..node_materials.count() {
                             // SAFETY: `materials` is the non-null run just pushed
                             // with `mesh->materials.count` slots, and the loop bound
                             // `node->materials.count` is below it (checked above);
-                            // the node's own material run holds that many entries.
+                            // the node's own material run holds that many entries,
+                            // whose slots are read as bare pointer bits.
                             unsafe {
                                 *materials.add(i) =
-                                    *((*node).materials.data as *mut *mut Material).add(i)
+                                    *(node_materials.data() as *mut *mut Material).add(i)
                             };
                         }
-                        // SAFETY: `node` is live (see above).
-                        for i in unsafe { (*node).materials.count }..mesh.materials().count {
+                        for i in node_materials.count()..mesh.materials_view().count() {
                             // SAFETY: `i < mesh->materials.count`, the length of both
                             // the pushed `materials` run and the mesh's own material
                             // run.
                             unsafe { *materials.add(i) = *mesh_materials.add(i) };
                         }
-                        // SAFETY: `node` is live (see above); `materials` is the run
-                        // just filled in.
-                        unsafe { (*node).materials.data = materials as *const Ref<Material> };
-                        // SAFETY: `node` is live (see above).
-                        unsafe { (*node).materials.count = mesh.materials().count };
+                        // `materials` is the run just filled in.
+                        node_materials.set_data(materials as *const Ref<Material>);
+                        node_materials.set_count(mesh.materials_view().count());
                     }
-                    // SAFETY: `p_node != p_node_end`, so the advance lands at or
-                    // before the run's one-past-the-end pointer.
-                    p_node = unsafe { p_node.add(1) };
                 }
             }
 
@@ -9480,14 +9331,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 // Use the shared consecutive index buffer for mesh faces if there's only one material
                 // See HACK(consecutive-faces) in `ufbxi_read_mesh()`.
                 if mesh.material_parts().count > 0 {
-                    // SAFETY: the count is above zero, so element `0` of the mesh's
-                    // material-part run is live; the run was pushed into uc's
-                    // result arena above (write-capable provenance for `Mut`).
-                    let part: &View<MeshPart> = unsafe {
-                        View::<MeshPart>::from_ptr(
-                            (mesh.material_parts().data as *mut MeshPart).add(0),
-                        )
-                    };
+                    let part: &View<MeshPart> = mesh.material_parts_view().at(0);
                     part.set_num_faces(mesh.num_faces());
                     part.set_num_triangles(mesh.num_triangles());
                     part.set_num_empty_faces(mesh.num_empty_faces());
@@ -9582,9 +9426,6 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     .metadata_view()
                     .set_max_face_triangles(mesh.max_face_triangles());
             }
-            // SAFETY: `p_mesh != p_mesh_end`, so the advance lands at or before the
-            // run's one-past-the-end pointer.
-            p_mesh = unsafe { p_mesh.add(1) };
         }
     }
 
