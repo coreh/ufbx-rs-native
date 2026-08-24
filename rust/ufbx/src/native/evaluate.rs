@@ -51,7 +51,7 @@ use crate::generated::{BlendDeformer, CacheDeformer, Mesh, SkinDeformer};
 #[cfg(feature = "skinning-eval")]
 use crate::generated::{CacheChannel, CacheInterpretation, Matrix, TopoEdge};
 use crate::native::allocator::{
-    free, free_ator, init_ator, Allocator, SCENE_IMP_MAGIC, ZERO_SIZE_BUFFER,
+    free, free_ator, init_ator, Allocator, AllocatorView, SCENE_IMP_MAGIC, ZERO_SIZE_BUFFER,
 };
 #[cfg(feature = "baking")]
 use crate::native::allocator::{grow_array, BAKED_ANIM_IMP_MAGIC};
@@ -88,8 +88,8 @@ use crate::native::hash::{
 use crate::native::obj::{mtl_load, obj_free, obj_load};
 use crate::native::parse::{
     begin_parse, determine_format, finish_imp, get_name_key, get_name_key_c, load_maps,
-    load_strings, Context, FinishedImp, ImpHandle, Node, Refcount, SceneImp, ELEMENT_TYPE_COUNT,
-    MIN_FILE_FORMAT_LOOKAHEAD,
+    load_strings, Context, FinishedImp, ImpHandle, Node, Refcount, SceneImp, SceneMetadataView,
+    SceneView, ELEMENT_TYPE_COUNT, MIN_FILE_FORMAT_LOOKAHEAD,
 };
 #[cfg(feature = "baking")]
 use crate::native::parse::{find_prop, is_vec3_zero};
@@ -123,7 +123,8 @@ use crate::native::string_pool::{
 use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
 use crate::native::view::SliceViewIter;
 use crate::native::view::{
-    view_raw_const, view_raw_mut, view_raw_shared, view_read, view_read_shared, view_write,
+    view_project, view_raw_const, view_raw_mut, view_raw_shared, view_read, view_read_shared,
+    view_write,
 };
 use crate::native::view::{Const, Mode, Mut, View};
 use crate::native::warnings::{pop_warnings, ufbxi_warnf};
@@ -594,6 +595,81 @@ pub(crate) fn resolve_warning_elements(uc: &Context) -> Result<(), Fail> {
     Ok(())
 }
 
+// Hand view accessors for `ufbxi_load_imp`: `ufbxi_scene_imp` and
+// `ufbxi_refcount` are internal `#[repr(C)]` structs with no generated `View`
+// impl, so the header fields this function navigates get single-level leaf
+// accessors here (the `View<CacheChannel>` precedent above). The four
+// `ufbx_metadata` memory-accounting setters join them for the same reason:
+// they are written only here, so the generated-side handle never grew them.
+impl View<SceneImp, Mut> {
+    #[inline(always)]
+    pub(crate) fn refcount_view(&self) -> &View<Refcount, Mut> {
+        view_project!(self, refcount)
+    }
+    #[inline(always)]
+    pub(crate) fn refcount_mut_ptr(&self) -> *mut Refcount {
+        view_raw_mut!(self, refcount)
+    }
+    #[inline(always)]
+    pub(crate) fn scene_view(&self) -> &SceneView {
+        view_project!(self, scene)
+    }
+    #[inline(always)]
+    pub(crate) fn scene_mut_ptr(&self) -> *mut Scene {
+        view_raw_mut!(self, scene)
+    }
+    #[inline(always)]
+    pub(crate) fn set_magic(&self, magic: u32) {
+        view_write!(self, magic, magic)
+    }
+    #[inline(always)]
+    pub(crate) fn string_buf_view(&self) -> &BufView {
+        view_project!(self, string_buf)
+    }
+    #[inline(always)]
+    pub(crate) fn set_string_buf(&self, string_buf: Buf) {
+        view_write!(self, string_buf, string_buf)
+    }
+}
+
+impl View<Refcount, Mut> {
+    #[inline(always)]
+    pub(crate) fn ator_view(&self) -> &AllocatorView {
+        view_project!(self, ator)
+    }
+    #[inline(always)]
+    pub(crate) fn set_ator(&self, ator: Allocator) {
+        view_write!(self, ator, ator)
+    }
+    #[inline(always)]
+    pub(crate) fn buf_view(&self) -> &BufView {
+        view_project!(self, buf)
+    }
+    #[inline(always)]
+    pub(crate) fn set_buf(&self, buf: Buf) {
+        view_write!(self, buf, buf)
+    }
+}
+
+impl SceneMetadataView {
+    #[inline(always)]
+    pub(crate) fn set_result_memory_used(&self, result_memory_used: usize) {
+        view_write!(self, result_memory_used, result_memory_used)
+    }
+    #[inline(always)]
+    pub(crate) fn set_temp_memory_used(&self, temp_memory_used: usize) {
+        view_write!(self, temp_memory_used, temp_memory_used)
+    }
+    #[inline(always)]
+    pub(crate) fn set_result_allocs(&self, result_allocs: usize) {
+        view_write!(self, result_allocs, result_allocs)
+    }
+    #[inline(always)]
+    pub(crate) fn set_temp_allocs(&self, temp_allocs: usize) {
+        view_write!(self, temp_allocs, temp_allocs)
+    }
+}
+
 // ufbx.c:25204-25410 `ufbxi_load_imp`
 // Stays `unsafe fn`: this is the load orchestrator, and nearly every statement
 // in it is a call to another `unsafe fn` taking the same `&Context`
@@ -910,8 +986,11 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
         let dom_root: *mut DomNode = uc.result_view().push_zero::<DomNode>(1);
         ufbxi_check!(uc, !dom_root.is_null(), "dom_root");
         // SAFETY: `dom_root` is the non-null (checked just above) zeroed
-        // `ufbx_dom_node` pushed into `uc`'s result buffer.
-        unsafe { (*dom_root).name.data = EMPTY_CHAR.as_ptr() };
+        // `ufbx_dom_node` pushed into `uc`'s result buffer — a live,
+        // write-capable arena allocation that outlives this frame.
+        let dom_root_view: &View<DomNode, Mut> =
+            unsafe { View::<DomNode, Mut>::from_ptr(dom_root) };
+        dom_root_view.name_view().set_data(EMPTY_CHAR.as_ptr());
         // SAFETY: `dom_root` is that same non-null result-buffer node, which
         // lives as long as the scene the `Ref` is stored into.
         uc.scene_view()
@@ -1064,52 +1143,84 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // (possibly narrowed) public `&Scene` pointer via exposed provenance.
     (imp as *mut u8).expose_provenance();
 
-    // SAFETY (this fn's remaining `*imp` accesses): `imp` is the non-null
-    // (checked just above) `ufbxi_scene_imp` pushed into `uc`'s result buffer,
-    // so every projection below addresses that live allocation's own fields.
-    unsafe { init_ref(&raw mut (*imp).refcount, SCENE_IMP_MAGIC, ptr::null_mut()) };
+    // SAFETY: `imp` is the non-null (checked just above) `ufbxi_scene_imp`
+    // pushed into `uc`'s result buffer — a live, write-capable arena
+    // allocation that outlives this frame; the `Mut` view's `MaybeUninit`
+    // storage tolerates the still-uninitialized push. The two addresses C
+    // keeps alive PAST this frame (`&imp->refcount.ator`, stored into both
+    // bufs, and `&imp->scene`, stored into every element) stay derived from
+    // `imp` itself below, so they outlive this navigation handle.
+    let imp_view: &View<SceneImp, Mut> = unsafe { View::<SceneImp, Mut>::from_ptr(imp) };
 
-    unsafe { (*imp).magic = SCENE_IMP_MAGIC };
+    // SAFETY: the projected pointer addresses `imp`'s own leading `Refcount`
+    // field, live for the view above — `init_ref`'s raw-pointer contract; the
+    // null parent is the "no parent to retain" case it handles.
+    unsafe {
+        init_ref(
+            imp_view.refcount_mut_ptr(),
+            SCENE_IMP_MAGIC,
+            ptr::null_mut(),
+        )
+    };
+
+    imp_view.set_magic(SCENE_IMP_MAGIC);
     // C: `imp->scene = uc->scene;` (struct copy)
     // SAFETY: the source is `uc`'s own scene field (live for the borrow) and the
     // destination is `imp`'s own scene field; the context and the freshly pushed
     // header are distinct allocations.
-    unsafe { ptr::copy_nonoverlapping(uc.scene_mut_ptr(), &raw mut (*imp).scene, 1) };
-    unsafe {
-        (*imp).refcount.ator = uc.ator_result();
-        (*imp).refcount.ator.error = ptr::null_mut();
-    }
+    unsafe { ptr::copy_nonoverlapping(uc.scene_mut_ptr(), imp_view.scene_mut_ptr(), 1) };
+    imp_view.refcount_view().set_ator(uc.ator_result());
+    imp_view
+        .refcount_view()
+        .ator_view()
+        .set_error(ptr::null_mut());
 
     // Copy retained buffers and translate the allocator struct to the one
     // contained within `ufbxi_scene_imp`
-    unsafe {
-        (*imp).refcount.buf = uc.take_result();
-        (*imp).refcount.buf.ator = &raw mut (*imp).refcount.ator;
-        (*imp).string_buf = uc.string_pool_view().take_buf();
-        (*imp).string_buf.ator = &raw mut (*imp).refcount.ator;
-    }
+    // C: `&imp->refcount.ator` — an address that outlives this frame (both bufs
+    // free through it), so it keeps `imp`'s own whole-header provenance.
+    // SAFETY: `refcount.ator` is a field of the live `ufbxi_scene_imp` above,
+    // so the projection stays inside that allocation.
+    let imp_ator: *mut Allocator = unsafe { &raw mut (*imp).refcount.ator };
+    imp_view.refcount_view().set_buf(uc.take_result());
+    imp_view.refcount_view().buf_view().set_ator(imp_ator);
+    imp_view.set_string_buf(uc.string_pool_view().take_buf());
+    imp_view.string_buf_view().set_ator(imp_ator);
 
-    // SAFETY: as above for `imp`; `ator_tmp` is `uc`'s own allocator field, live
-    // for the `&Context` borrow.
-    unsafe {
-        (*imp).scene.metadata.result_memory_used = (*imp).refcount.ator.current_size;
-        (*imp).scene.metadata.temp_memory_used = (*uc.ator_tmp_mut_ptr()).current_size;
-        (*imp).scene.metadata.result_allocs = (*imp).refcount.ator.num_allocs;
-        (*imp).scene.metadata.temp_allocs = (*uc.ator_tmp_mut_ptr()).num_allocs;
-    }
+    // SAFETY: `ator_tmp` is `uc`'s own allocator field, live and initialized
+    // for the `&Context` borrow, and the projected pointer carries the context
+    // handle's write-capable provenance.
+    let ator_tmp: &AllocatorView = unsafe { AllocatorView::from_ptr(uc.ator_tmp_mut_ptr()) };
+    imp_view
+        .scene_view()
+        .metadata_view()
+        .set_result_memory_used(imp_view.refcount_view().ator_view().current_size());
+    imp_view
+        .scene_view()
+        .metadata_view()
+        .set_temp_memory_used(ator_tmp.current_size());
+    imp_view
+        .scene_view()
+        .metadata_view()
+        .set_result_allocs(imp_view.refcount_view().ator_view().num_allocs());
+    imp_view
+        .scene_view()
+        .metadata_view()
+        .set_temp_allocs(ator_tmp.num_allocs());
 
+    // C: `&imp->scene` — stored into every element and read for the scene's
+    // whole lifetime, so it too keeps `imp`'s own whole-header provenance.
+    // SAFETY: `scene` is a field of the live `ufbxi_scene_imp` above.
+    let imp_scene: *mut Scene = unsafe { &raw mut (*imp).scene };
     // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, imp->scene.elements)`
-    let mut p_elem: *mut *mut Element = unsafe { (*imp).scene.elements.data as *mut *mut Element };
-    let p_elem_end: *mut *mut Element = add_ptr(p_elem, unsafe { (*imp).scene.elements.count });
-    while p_elem != p_elem_end {
+    let elements = imp_view.scene_view().elements_view();
+    for i in 0..elements.count() {
         // C: `(*p_elem)->scene = &imp->scene;`
-        // SAFETY: `p_elem` walks the scene's element pointer list and stops at
-        // `p_elem_end`, so it addresses a live slot holding a result-buffer
-        // `ufbx_element` whose own `scene` back-pointer is written here.
-        unsafe { *(&raw mut (**p_elem).scene as *mut *mut Scene) = &raw mut (*imp).scene };
-        // SAFETY: `p_elem` is inside the list, so `p_elem + 1` is at most one
-        // past its end.
-        p_elem = unsafe { p_elem.add(1) };
+        // SAFETY: `imp_scene` addresses the scene header inside the live
+        // result-buffer `ufbxi_scene_imp`, which outlives the scene itself.
+        elements
+            .at(i)
+            .set_scene(unsafe { Ref::from_ptr(imp_scene) });
     }
 
     uc.set_scene_imp(imp);
