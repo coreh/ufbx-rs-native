@@ -17,8 +17,6 @@
 //! the exact C spelling minus the `ufbxi_` prefix for grep-parity across the
 //! ~1500 later use sites (`AllSame`, `Cone_angle`, `d_X`, ...), hence the
 //! `non_upper_case_globals` allow.
-//!
-//! Phase 1: no consumers yet (`ufbxi_context` arrives with the parse units).
 #![allow(dead_code, non_upper_case_globals)]
 use core::ffi::c_void;
 use core::ptr;
@@ -360,12 +358,12 @@ pub(crate) unsafe fn string_pool_temp_free(pool: *mut StringPool) {
     // no-ops on count 0) or the buffer/capacity pair grown through the pool's own
     // `map.ator`, the pairing `free` requires.
     unsafe { free::<u8>((*pool).map.ator, (*pool).temp_str, (*pool).temp_cap) };
-    // SAFETY: `&mut (*pool).map` addresses the pool's own live `Map`, uniquely
-    // borrowed here for its last use before the pool is discarded.
-    unsafe { map_free(&mut (*pool).map) };
+    // SAFETY: `pool` is live and `map` is its own map, used here for the last
+    // time before the pool is discarded. `&raw mut` preserves provenance.
+    unsafe { map_free(&raw mut (*pool).map) };
 }
 
-// ufbx.c:5034-5064 `ufbxi_add_replacement_char`
+// ufbx.c:5034-5063 `ufbxi_add_replacement_char`
 // C: `ufbxi_nodiscard static size_t` — infallible, plain return value.
 pub(crate) unsafe fn add_replacement_char(pool: *mut StringPool, dst: *mut u8, c: u8) -> usize {
     // SAFETY: the caller vouches `pool` addresses a live `StringPool`.
@@ -464,8 +462,8 @@ pub(crate) unsafe fn sanitize_string(
             unsafe {
                 grow_array::<u8>(
                     (*pool).map.ator,
-                    &mut (*pool).temp_str,
-                    &mut (*pool).temp_cap,
+                    &raw mut (*pool).temp_str,
+                    &raw mut (*pool).temp_cap,
                     length * 2 + 64
                 )
             },
@@ -499,8 +497,8 @@ pub(crate) unsafe fn sanitize_string(
             unsafe {
                 grow_array::<u8>(
                     (*pool).map.ator,
-                    &mut (*pool).temp_str,
-                    &mut (*pool).temp_cap,
+                    &raw mut (*pool).temp_str,
+                    &raw mut (*pool).temp_cap,
                     length + 64
                 )
             },
@@ -534,8 +532,8 @@ pub(crate) unsafe fn sanitize_string(
                 unsafe {
                     grow_array::<u8>(
                         (*pool).map.ator,
-                        &mut (*pool).temp_str,
-                        &mut (*pool).temp_cap,
+                        &raw mut (*pool).temp_str,
+                        &raw mut (*pool).temp_cap,
                         dst_len + 16
                     )
                 },
@@ -803,7 +801,7 @@ pub(crate) unsafe fn push_string_imp(
         let mut non_ascii = false;
         // SAFETY: `str_` is readable for `length` bytes and `non_ascii` is an
         // unaliased local out-param.
-        hash = unsafe { hash_string_check_ascii(str_, length, &mut non_ascii) };
+        hash = unsafe { hash_string_check_ascii(str_, length, &raw mut non_ascii) };
         if non_ascii {
             // SAFETY: `str_` is readable for `length` bytes.
             let valid_length = unsafe { utf8_valid_length(str_, length) };
@@ -816,12 +814,12 @@ pub(crate) unsafe fn push_string_imp(
                     utf8_length: 0,
                 };
                 // C: `ufbxi_check_return_err(pool->error, ufbxi_sanitize_string(...), NULL);`
-                // SAFETY: `pool` is live, `&mut sanitized` is a live local,
-                // `str_` is readable for `length` bytes, and `valid_length <
+                // SAFETY: `pool` is live, the raw address identifies the local
+                // `sanitized` out-param, `str_` is readable for `length` bytes, and `valid_length <
                 // length` (just checked), the precondition `sanitize_string`
                 // asserts.
                 if unsafe {
-                    sanitize_string(pool, &mut sanitized, str_, length, valid_length, false)
+                    sanitize_string(pool, &raw mut sanitized, str_, length, valid_length, false)
                 }
                 .is_err()
                 {
@@ -950,9 +948,9 @@ pub(crate) unsafe fn push_string_place_str(
         "p_str"
     );
     // SAFETY: `pool` is live; `p_str` was just checked non-null and addresses a
-    // live `String`, so `&mut (*p_str).data`/`.length` are its own field
-    // out-params.
-    unsafe { push_string_place(pool, &mut (*p_str).data, &mut (*p_str).length, raw) }
+    // live `String`; `&raw mut` projects its field out-params without creating
+    // temporary references from the raw pointer.
+    unsafe { push_string_place(pool, &raw mut (*p_str).data, &raw mut (*p_str).length, raw) }
 }
 
 // ufbx.c:5277-5286 `ufbxi_push_string_place_blob`
@@ -969,13 +967,14 @@ pub(crate) unsafe fn push_string_place_blob(
         return Ok(());
     }
     // SAFETY: `pool` is live; `p_blob` is a live `Blob` whose `data`/`size`
-    // describe its run, and `&mut (*p_blob).size` is its own field out-param.
+    // describe its run; `&raw mut` projects its size out-param without creating
+    // a temporary reference from the raw pointer.
     unsafe {
         (*p_blob).data = push_string(
             pool,
             (*p_blob).data,
             (*p_blob).size,
-            &mut (*p_blob).size,
+            &raw mut (*p_blob).size,
             raw,
         );
     }
@@ -1799,11 +1798,6 @@ pub(crate) unsafe fn slow_normalized_cross3(a: *const Vec3, b: *const Vec3) -> V
     // SAFETY: the caller vouches `a`/`b` address live `Vec3`s.
     normalize3(cross3(unsafe { *a }, unsafe { *b }))
 }
-
-// CONTINUATION POINT: `// -- String pool` (ufbx.c:4895-5286) and
-// `// -- String constants` (ufbx.c:5288-5979) complete. Next banner:
-// ufbx.c:6175 `// -- Type definitions` (`ufbxi_value` / `ufbxi_node`, owned by
-// the parse units).
 
 #[cfg(test)]
 mod tests {

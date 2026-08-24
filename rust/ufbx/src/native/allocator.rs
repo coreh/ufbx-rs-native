@@ -11,9 +11,8 @@
 //!
 //! See PORTING.md "Allocator + ufbxi_buf": exact size/limit accounting, exact
 //! allocation sequence (fuzz-observable), raw pointers throughout.
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 use core::ffi::{c_void, CStr};
 use core::mem::size_of;
@@ -161,7 +160,7 @@ impl AllocatorView {
     }
 }
 
-// ufbx.c:3647-3653 `ufbxi_does_overflow`
+// ufbx.c:3647-3654 `ufbxi_does_overflow`
 #[inline(always)]
 pub(crate) fn does_overflow(total: usize, a: usize, b: usize) -> bool {
     // If `a` and `b` have at most 4 bits per `size_t` byte, the product can't overflow.

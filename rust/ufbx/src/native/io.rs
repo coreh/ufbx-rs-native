@@ -15,9 +15,8 @@
 //! `malloc` externs in `native::allocator`: libc is already linked on std
 //! targets. The `UFBX_EXTERNAL_STDIO` branch (ufbx.c:7149-7188) has no
 //! corresponding cargo feature and is not ported.
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
@@ -349,7 +348,7 @@ pub(crate) fn skip_bytes(uc: &Context, mut size: u64) -> Result<(), Fail> {
     Ok(())
 }
 
-// ufbx.c:6898-6931 `ufbxi_read_to`
+// ufbx.c:6898-6934 `ufbxi_read_to`
 #[inline(never)]
 pub(crate) unsafe fn read_to(uc: &Context, dst: *mut c_void, mut size: usize) -> Result<(), Fail> {
     let mut ptr = dst as *mut u8;
@@ -613,7 +612,7 @@ pub(crate) struct FposT {
 const SEEK_CUR: i32 = 1;
 const SEEK_END: i32 = 2;
 
-// ufbx.c:6995-7070 `ufbxi_fopen` — the `_WIN32` branch (UTF-8 to UTF-16
+// ufbx.c:6995-7071 `ufbxi_fopen` — the `_WIN32` branch (UTF-8 to UTF-16
 // conversion + `_wfopen`).
 #[cfg(windows)]
 #[inline(never)]
@@ -719,7 +718,7 @@ pub(crate) unsafe fn fopen(
     file
 }
 
-// ufbx.c:6995-7070 `ufbxi_fopen` — the plain-`fopen` branch.
+// ufbx.c:6995-7071 `ufbxi_fopen` — the plain-`fopen` branch.
 #[cfg(not(windows))]
 #[inline(never)]
 pub(crate) unsafe fn fopen(
@@ -1029,8 +1028,8 @@ pub(crate) unsafe extern "C" fn memory_close(user: *mut c_void) {
         // SAFETY: `ator` is that same allocator (by value) and the stream block
         // of `self_size` bytes came from it; `free_ator` then tears down an
         // allocator with zero live bytes.
-        unsafe { free::<u8>(&mut ator, stream as *mut u8, (*stream).self_size) };
-        unsafe { free_ator(&mut ator) };
+        unsafe { free::<u8>(&raw mut ator, stream as *mut u8, (*stream).self_size) };
+        unsafe { free_ator(&raw mut ator) };
     }
 }
 

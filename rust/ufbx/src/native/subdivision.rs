@@ -5,9 +5,8 @@
 //! keeps `ufbxi_subdivide_mesh` present and reporting
 //! `UFBX_ERROR_FEATURE_DISABLED`, ported here as well so the module's contract
 //! is complete in both feature configurations.
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 #[cfg(feature = "subdivision")]
 use crate::generated::{
@@ -167,8 +166,8 @@ pub(crate) struct SubdivideContext(
     core::cell::UnsafeCell<core::mem::MaybeUninit<InnerSubdivideContext>>,
 );
 
-// Typed interior-mutable VIEW over the `opts` field, reinterpreted in place
-// (approach A). Generated ABI-fixed `RawSubdivideOpts` plays the `Inner` role;
+// Typed interior-mutable view over the `opts` field, reinterpreted in place.
+// Generated ABI-fixed `RawSubdivideOpts` plays the inner-storage role;
 // `MaybeUninit` makes forming `&SubdivideOptsView` assert no validity — each leaf getter
 // asserts only the field it reads.
 pub(crate) type SubdivideOptsView = crate::native::view::View<RawSubdivideOpts>;
@@ -3133,8 +3132,10 @@ pub(crate) fn subdivide_mesh_imp(
         if src_mesh.subdivision_evaluated() && src_mesh.from_tessellated_nurbs() {
             ImpHandle::<MeshImp>::from_payload(sc.src_mesh_ptr()).refcount_ptr()
         } else {
-            ImpHandle::<SceneImp>::from_payload(ref_ptr(&(*sc.src_mesh_ptr()).element.scene))
-                .refcount_ptr()
+            ImpHandle::<SceneImp>::from_payload(ref_ptr(
+                &raw const (*sc.src_mesh_ptr()).element.scene,
+            ))
+            .refcount_ptr()
         }
     };
 

@@ -22,9 +22,8 @@
 //! `ufbxi_release_ref`, C prototypes ufbx.c:6229-6230) are defined by C in the
 //! API section (ufbx.c:30248-30300) — ported in `native::api` following the
 //! C's own placement.
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -243,7 +242,7 @@ impl<M: Mode> View<Prop, M> {
         // C-parity: the `ufbx_prop` value union's 3-real view; the generated
         // struct keeps only `value_vec4` (same mapping as `find_vec3`).
         // SAFETY: reading the first three reals of a valid arena `Prop`.
-        unsafe { *(&(*self.as_ptr()).value_vec4 as *const Vec4 as *const Vec3) }
+        unsafe { *(&raw const (*self.as_ptr()).value_vec4 as *const Vec3) }
     }
 }
 
@@ -4081,7 +4080,7 @@ impl Context {
     }
 
     // Backing read buffer. Scalar `*mut u8`: value getter + setter. The paired
-    // `&mut uc.read_buffer` out-param sites in `refill` stay raw (a value getter
+    // `&raw mut uc.read_buffer` out-param sites in `refill` stay raw (a value getter
     // cannot express writing back through the field).
     #[inline(always)]
     pub(crate) fn read_buffer(&self) -> *mut u8 {
@@ -4094,7 +4093,7 @@ impl Context {
     }
 
     // Capacity of `read_buffer` in bytes. Scalar `usize`: value getter + setter.
-    // The paired `&mut uc.read_buffer_size` out-param site in `refill` stays raw.
+    // The paired `&raw mut uc.read_buffer_size` out-param site in `refill` stays raw.
     #[inline(always)]
     pub(crate) fn read_buffer_size(&self) -> usize {
         view_read!(self, read_buffer_size)
@@ -5774,7 +5773,7 @@ pub(crate) unsafe fn is_array_node(
     false
 }
 
-// ufbx.c:8508-8606 `ufbxi_is_raw_string`
+// ufbx.c:8508-8605 `ufbxi_is_raw_string`
 #[inline(never)]
 pub(crate) unsafe fn is_raw_string(
     uc: &Context,
@@ -5983,7 +5982,7 @@ pub(crate) fn get_dom_node(uc: &Context, node: Option<&NodeView>) -> *mut DomNod
 }
 
 // Recursion limited by check in ufbxi_[binary/ascii]_parse_node()
-// ufbx.c:10718-10811 `ufbxi_retain_dom_node`
+// ufbx.c:10719-10811 `ufbxi_retain_dom_node`
 // `ufbxi_recursive_function(int, ufbxi_retain_dom_node, ..., UFBXI_MAX_NODE_DEPTH + 1, ...)`
 // (ufbx.c:10720-10721): under regression a thread-local depth guard wraps the
 // recursive body; otherwise the macro is empty and the wrapper is a plain call.
@@ -6067,10 +6066,10 @@ unsafe fn retain_dom_node_rec(
         }
     }
 
-    // SAFETY: `dst` is the live result `DomNode`; `&mut (*dst).name` addresses
+    // SAFETY: `dst` is the live result `DomNode`; `&raw mut (*dst).name` addresses
     // its name field, and `string_pool_mut_ptr` yields `uc`'s own pool pointer —
     // `push_string_place_str`'s contract.
-    unsafe { sp::push_string_place_str(uc.string_pool_mut_ptr(), &mut (*dst).name, false)? };
+    unsafe { sp::push_string_place_str(uc.string_pool_mut_ptr(), &raw mut (*dst).name, false)? };
 
     if node_view.value_type_mask() == ValueType::Array as u16 {
         // `value_type_mask == Array` selects the `array` arm of `node`'s
@@ -6131,13 +6130,13 @@ unsafe fn retain_dom_node_rec(
                         node_view,
                         ix,
                         b'S',
-                        &mut (*val).value_str as *mut String as *mut c_void,
+                        &raw mut (*val).value_str as *mut c_void,
                     ));
                     ufbxi_ignore!(get_val_at(
                         node_view,
                         ix,
                         b'b',
-                        &mut (*val).value_blob as *mut Blob as *mut c_void,
+                        &raw mut (*val).value_blob as *mut c_void,
                     ));
                 }
             } else {
@@ -6552,7 +6551,7 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
                 if !macro_.is_null() {
                     // SAFETY: `str_`/`macro_` are valid cursors into the input and
                     // a NUL-terminated sub-pattern — `match_imp`'s contract.
-                    ok = unsafe { match_imp(&mut str_, end, &mut macro_) };
+                    ok = unsafe { match_imp(&raw mut str_, end, &raw mut macro_) };
                 }
             }
 
@@ -6594,7 +6593,7 @@ unsafe fn match_imp_rec(p_str: *mut *const u8, end: *const u8, p_fmt: *mut *cons
             b'(' => {
                 // SAFETY: `str_`/`fmt` are valid cursors into the input and the
                 // NUL-terminated pattern — `match_imp`'s contract.
-                if unsafe { match_imp(&mut str_, end, &mut fmt) } {
+                if unsafe { match_imp(&raw mut str_, end, &raw mut fmt) } {
                     ok = true;
                 }
             }
@@ -6704,7 +6703,7 @@ pub(crate) unsafe fn r#match(str_: *const String, fmt: *const u8) -> bool {
     let mut fmt: *const u8 = fmt;
     // SAFETY: `ptr`/`end` bound the string's byte span and `fmt` is a
     // NUL-terminated pattern — `match_imp`'s contract.
-    if unsafe { match_imp(&mut ptr, end, &mut fmt) } {
+    if unsafe { match_imp(&raw mut ptr, end, &raw mut fmt) } {
         ptr == end
     } else {
         false
@@ -6731,7 +6730,7 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
 
         // SAFETY: `line`/`buf` are valid local `String`s and `buf` spans
         // `[data, data+size)` — `next_line`'s contract.
-        while unsafe { next_line(&mut line, &mut buf, true) } {
+        while unsafe { next_line(&raw mut line, &raw mut buf, true) } {
             // SAFETY: `line` is a valid `String` and the pattern is NUL-terminated
             // — `r#match`'s contract.
             if unsafe {
@@ -6750,7 +6749,7 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
     } else if format == FileFormat::Obj {
         // SAFETY: `line`/`buf` are valid local `String`s and `buf` spans
         // `[data, data+size)` — `next_line`'s contract.
-        while unsafe { next_line(&mut line, &mut buf, true) } {
+        while unsafe { next_line(&raw mut line, &raw mut buf, true) } {
             let pattern: *const u8 = b"(vn?\\s+\\F|vt)\\s+\\F\\s+\\F.*|f\\s+[\\-/0-9]+\\s+[\\-/0-9]+\\s*[\\-/0-9]+.*|(usemtl|mtllib)\\s+\\S.*\0".as_ptr();
             // SAFETY: `line` is a valid `String` and `pattern` is NUL-terminated —
             // `r#match`'s contract.
@@ -6761,7 +6760,7 @@ pub(crate) unsafe fn is_format(data: *const u8, size: usize, format: FileFormat)
     } else if format == FileFormat::Mtl {
         // SAFETY: `line`/`buf` are valid local `String`s and `buf` spans
         // `[data, data+size)` — `next_line`'s contract.
-        while unsafe { next_line(&mut line, &mut buf, true) } {
+        while unsafe { next_line(&raw mut line, &raw mut buf, true) } {
             let pattern: *const u8 = b"newmtl\\s+\\S.*\0".as_ptr();
             // SAFETY: `line` is a valid `String` and `pattern` is NUL-terminated —
             // `r#match`'s contract.
@@ -6974,13 +6973,15 @@ pub(crate) fn parse_toplevel_child_imp(
 ) -> Result<bool, Fail> {
     let mut end: bool = false;
     if uc.from_ascii() {
-        // SAFETY: `&mut end` is an unaliased local `bool` slot — a valid
+        // SAFETY: `&raw mut end` is an unaliased local `bool` slot — a valid
         // `*mut bool` out-flag, the node parsers' contract.
-        unsafe { crate::native::parse_ascii::ascii_parse_node(uc, 0, state, &mut end, buf, true)? };
+        unsafe {
+            crate::native::parse_ascii::ascii_parse_node(uc, 0, state, &raw mut end, buf, true)?
+        };
     } else {
         // SAFETY: as above.
         unsafe {
-            crate::native::parse_binary::binary_parse_node(uc, 0, state, &mut end, buf, true)?
+            crate::native::parse_binary::binary_parse_node(uc, 0, state, &raw mut end, buf, true)?
         };
     }
 
@@ -7015,14 +7016,14 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
         // Parse the next top-level node
         let mut end: bool = false;
         if uc.from_ascii() {
-            // SAFETY: `&mut end` is a valid `*mut bool` out-flag — the node
+            // SAFETY: `&raw mut end` is a valid `*mut bool` out-flag — the node
             // parsers' contract.
             unsafe {
                 crate::native::parse_ascii::ascii_parse_node(
                     uc,
                     0,
                     ParseState::Root,
-                    &mut end,
+                    &raw mut end,
                     uc.tmp_view(),
                     false,
                 )?
@@ -7034,7 +7035,7 @@ pub(crate) unsafe fn parse_toplevel(uc: &Context, name: *const u8) -> Result<(),
                     uc,
                     0,
                     ParseState::Root,
-                    &mut end,
+                    &raw mut end,
                     uc.tmp_view(),
                     false,
                 )?
@@ -7219,7 +7220,7 @@ pub(crate) fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
                 uc,
                 0,
                 ParseState::Root,
-                &mut end,
+                &raw mut end,
                 uc.tmp_view(),
                 true,
             )?;
@@ -7228,7 +7229,7 @@ pub(crate) fn parse_legacy_toplevel(uc: &Context) -> Result<(), Fail> {
                 uc,
                 0,
                 ParseState::Root,
-                &mut end,
+                &raw mut end,
                 uc.tmp_view(),
                 true,
             )?;
@@ -7589,8 +7590,6 @@ pub(crate) fn find_int<M: Mode>(props: &View<Props, M>, name: &[u8], def: i64) -
 }
 
 // ufbx.c:11551-11564 `ufbxi_find_enum`
-// Ported with the `// -- Scene processing` unit that first needs it
-// (`ufbxi_fetch_texture_layers`, ufbx.c:19251).
 #[inline(always)]
 pub(crate) fn find_enum<M: Mode>(
     props: &View<Props, M>,
@@ -7732,8 +7731,6 @@ pub(crate) unsafe fn get_name_key_c(name: *const u8) -> u32 {
 }
 
 // ufbx.c:11633-11643 `ufbxi_name_key_less`
-// Ported ahead of the rest of the `// -- Setup` section because
-// `ufbxi_add_connections_to_elements` (ufbx.c:18844) needs it.
 #[inline(always)]
 pub(crate) unsafe fn name_key_less(
     prop: *mut Prop,
@@ -7945,10 +7942,6 @@ pub(crate) fn load_maps(uc: &Context) -> Result<(), Fail> {
 
     Ok(())
 }
-
-// CONTINUATION POINT: `// -- Setup` section complete (ufbx.c:11409-11760).
-// Next banner: ufbx.c:11762 `// -- Reading the parsed data` (owned by
-// native/read.rs).
 
 #[cfg(test)]
 mod tests {

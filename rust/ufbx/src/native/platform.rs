@@ -30,7 +30,7 @@
 //!   evaluate-once contract it carries is owned by the check macros in the
 //!   error module (see PORTING.md "Error threading").
 //! - ufbx.c:609-615 `UFBX_HAS_FTELLO`: file IO capability probe, owned by the
-//!   io module when ported.
+//!   io module.
 //! - ufbx.c:617-630 `UFBXI_ARCH_X64` / `UFBXI_HAS_SSE`: only consumers are
 //!   `ufbxi_copy_16_bytes` (ported as the SSE load-then-store semantics — see
 //!   its overlap note) and `ufbxi_wrap_shr64` (ported as the portable masked
@@ -58,8 +58,6 @@
 //!   recursion-depth guard. Ported inline at each recursive function site
 //!   (`std::thread_local!` depth counter under `feature = "regression"`) when
 //!   those functions are ported — there is nothing standalone to define here.
-//!
-//! Phase 1: most items have no consumers yet.
 #![allow(dead_code, unused_macros, unused_imports)]
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -276,9 +274,9 @@ pub(crate) const MAX_SKIP_SIZE: usize = 128;
 
 // ufbx.c:55 / override ufbx.c:1004-1005
 #[cfg(not(feature = "regression"))]
-pub(crate) const MAP_MAX_SCAN: usize = 32;
+pub(crate) const MAP_MAX_SCAN: u32 = 32;
 #[cfg(feature = "regression")]
-pub(crate) const MAP_MAX_SCAN: usize = 2;
+pub(crate) const MAP_MAX_SCAN: u32 = 2;
 
 // ufbx.c:56 / override ufbx.c:1007-1008
 #[cfg(not(feature = "regression"))]
@@ -819,8 +817,8 @@ pub(crate) unsafe fn macro_stable_sort<T: Copy>(
             // element of the scratch run.
             unsafe { *src = *dst.add(i) }; // mi_src[0] = mi_dst[mi_i];
             while j != base {
-                // SAFETY: `src` is the scratch base element written just above.
-                let a: *const T = unsafe { &*src };
+                // `src` is the scratch base element written just above.
+                let a: *const T = src;
                 // SAFETY: run contract; `base < j <= i < size`, so `j - 1 < size`.
                 let b: *const T = unsafe { dst.add(j - 1) };
                 if !cmp_lambda(a, b) {
@@ -1184,7 +1182,7 @@ pub(crate) unsafe fn stable_sort(
     }
 }
 
-// ufbx.c:1318-1348 `ufbxi_unstable_sort` (heapsort; uses `ufbxi_swap`,
+// ufbx.c:1318-1347 `ufbxi_unstable_sort` (heapsort; uses `ufbxi_swap`,
 // ported above in the `// -- Swap` section).
 #[inline(never)]
 pub(crate) unsafe fn unstable_sort(

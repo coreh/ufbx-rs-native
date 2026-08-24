@@ -15,9 +15,8 @@
 //!
 //! The whole `#if` branch is gated on `UFBXI_FEATURE_INDEX_GENERATION`
 //! (`#[cfg(feature = "index-gen")]`).
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 use crate::generated::{Error, RawAllocatorOpts, RawVertexStream};
 #[cfg(feature = "index-gen")]
@@ -117,8 +116,8 @@ pub(crate) unsafe fn generate_indices(
     // substitutes a local error slot for null, and `init_ator` stores it
     // unchecked — `allocator` is the caller's options pointer (nullable,
     // `init_ator` substitutes zeroed opts for null), the name literal carries
-    // its NUL, and `&mut ator` addresses the zeroed allocator above.
-    unsafe { init_ator(error, &mut ator, allocator, c"allocator") };
+    // its NUL, and the raw address identifies the zeroed allocator above.
+    unsafe { init_ator(error, &raw mut ator, allocator, c"allocator") };
 
     let mut local_streams = MaybeUninit::<[VertexStream; LOCAL_STREAMS_COUNT]>::uninit(); // ufbxi_uninit
     let mut local_packed_vertex = MaybeUninit::<[u64; LOCAL_PACKED_VERTEX_COUNT]>::uninit(); // ufbxi_uninit
@@ -128,7 +127,7 @@ pub(crate) unsafe fn generate_indices(
     let mut streams: *mut VertexStream = core::ptr::null_mut();
     if num_streams > LOCAL_STREAMS_COUNT {
         // SAFETY: `ator` is the initialized allocator above.
-        streams = unsafe { alloc::<VertexStream>(&mut ator, num_streams) };
+        streams = unsafe { alloc::<VertexStream>(&raw mut ator, num_streams) };
         if streams.is_null() {
             fail = true;
         }
@@ -192,7 +191,7 @@ pub(crate) unsafe fn generate_indices(
         if packed_size > size_of::<[u64; LOCAL_PACKED_VERTEX_COUNT]>() {
             ufbx_assert!(packed_size % 8 == 0);
             // SAFETY: `ator` is the initialized allocator above.
-            packed_vertex = unsafe { alloc::<u64>(&mut ator, packed_size / 8) } as *mut u8;
+            packed_vertex = unsafe { alloc::<u64>(&raw mut ator, packed_size / 8) } as *mut u8;
             if packed_vertex.is_null() {
                 fail = true;
             }
@@ -207,21 +206,21 @@ pub(crate) unsafe fn generate_indices(
     // (`Option<CmpFn>`, `None` when zeroed via the null-fn niche), matching the
     // C zero-initializer.
     let mut map: Map = unsafe { MaybeUninit::<Map>::zeroed().assume_init() };
-    // SAFETY: `&mut map` addresses the zeroed map, `&mut ator` the initialized
-    // allocator, and the user pointer addresses `packed_size`, a local that
+    // SAFETY: the raw addresses identify the zeroed map and initialized
+    // allocator, and the user pointer identifies `packed_size`, a local that
     // outlives every comparator call (all of which happen below, before this fn
     // returns).
     unsafe {
         map_init(
-            &mut map,
-            &mut ator,
+            &raw mut map,
+            &raw mut ator,
             map_cmp_vertex,
-            &mut packed_size as *mut usize as *mut c_void,
+            (&raw mut packed_size).cast::<c_void>(),
         )
     };
 
-    // SAFETY: `&mut map` addresses the map initialized above.
-    if num_indices > 0 && !unsafe { map_grow_size(&mut map, packed_size, num_indices) } {
+    // SAFETY: the raw address identifies the map initialized above.
+    if num_indices > 0 && !unsafe { map_grow_size(&raw mut map, packed_size, num_indices) } {
         fail = true;
     }
 
@@ -260,16 +259,26 @@ pub(crate) unsafe fn generate_indices(
             // all initialized — zeroed by the `write_bytes` above, with the
             // stream loop overwriting the non-padding ranges each iteration.
             let hash: u32 = unsafe { hash_string(packed_vertex, packed_size) };
-            // SAFETY: `&mut map` addresses the initialized map, whose item size
+            // SAFETY: the raw address identifies the initialized map, whose item size
             // is the `packed_size` it was grown with, and the key addresses
             // `packed_size` readable bytes.
             let mut entry: *mut c_void = unsafe {
-                map_find_size(&mut map, packed_size, hash, packed_vertex as *const c_void)
+                map_find_size(
+                    &raw mut map,
+                    packed_size,
+                    hash,
+                    packed_vertex as *const c_void,
+                )
             };
             if entry.is_null() {
                 // SAFETY: same map and key contract as the lookup above.
                 entry = unsafe {
-                    map_insert_size(&mut map, packed_size, hash, packed_vertex as *const c_void)
+                    map_insert_size(
+                        &raw mut map,
+                        packed_size,
+                        hash,
+                        packed_vertex as *const c_void,
+                    )
                 };
                 if entry.is_null() {
                     fail = true;
@@ -344,23 +353,23 @@ pub(crate) unsafe fn generate_indices(
     }
 
     if !streams.is_null() && streams != local_streams_ptr {
-        // SAFETY: the guards single out the `alloc::<VertexStream>(&mut ator,
+        // SAFETY: the guards single out the `alloc::<VertexStream>(&raw mut ator,
         // num_streams)` result above, returned to the same allocator with the
         // count it was allocated with.
-        unsafe { free::<VertexStream>(&mut ator, streams, num_streams) };
+        unsafe { free::<VertexStream>(&raw mut ator, streams, num_streams) };
     }
     if !packed_vertex.is_null() && packed_vertex != local_packed_vertex_ptr {
-        // SAFETY: the guards single out the `alloc::<u64>(&mut ator,
+        // SAFETY: the guards single out the `alloc::<u64>(&raw mut ator,
         // packed_size / 8)` result above, returned to the same allocator with the
         // count it was allocated with (`packed_size` is unchanged since).
-        unsafe { free::<u64>(&mut ator, packed_vertex as *mut u64, packed_size / 8) };
+        unsafe { free::<u64>(&raw mut ator, packed_vertex as *mut u64, packed_size / 8) };
     }
 
     // SAFETY: `map` and `ator` are the live initialized locals above, and the map
     // is freed through the allocator that owns its storage before that allocator
     // itself is torn down.
-    unsafe { map_free(&mut map) };
-    unsafe { free_ator(&mut ator) };
+    unsafe { map_free(&raw mut map) };
+    unsafe { free_ator(&raw mut ator) };
 
     result_vertices
 }

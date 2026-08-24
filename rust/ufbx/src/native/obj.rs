@@ -1,20 +1,20 @@
 //! Port of the `// -- .obj file` banner section (ufbx.c:16767-18065).
 //!
-//! FIRST UNIT: ufbx.c:16767-17167 — the attribute stride table, the property
+//! Coverage: ufbx.c:16767-17167 — the attribute stride table, the property
 //! pop/dedup helper, the `ufbxi_obj_mesh` push/flush pair, the OBJ context
 //! init/free, the line reader with its continuation handling, the tokenizer
 //! and the vertex / index token parsers. The `#else` (feature-disabled) entry
 //! points at ufbx.c:18048-18064 are ported here as well so the module's
 //! contract is complete in both feature configurations.
 //!
-//! SECOND UNIT: ufbx.c:17168-17497 — the face/index line reader
+//! Coverage: ufbx.c:17168-17497 — the face/index line reader
 //! (`ufbxi_obj_parse_indices` with its mesh flushing, `usemtl` material
 //! binding and face-group dedup), the sliding-window multi-index form, the
 //! hex digit parser, `usemtl` material creation, the `ufbxi_obj_cmdN` command
 //! packers and the vertex/index finalizers (`ufbxi_obj_pop_vertices`,
 //! `ufbxi_obj_setup_attrib`, `ufbxi_obj_pad_colors`).
 //!
-//! THIRD UNIT: ufbx.c:17326-17365 (`ufbxi_obj_parse_comment`, unblocked by the
+//! Coverage: ufbx.c:17326-17365 (`ufbxi_obj_parse_comment`, unblocked by the
 //! `ufbxi_match` family landing in `native/parse.rs`) and ufbx.c:17498-18046 —
 //! the mesh finalizer (`ufbxi_obj_pop_meshes`), the `.obj` directive loop
 //! (`ufbxi_obj_parse_file`), the `.mtl` parser (`ufbxi_obj_flush_material`,
@@ -24,9 +24,8 @@
 //!
 //! The whole section is gated on `UFBXI_FEATURE_FORMAT_OBJ`
 //! (`#[cfg(feature = "obj")]`).
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 #[cfg(feature = "obj")]
 use crate::generated::{
@@ -246,7 +245,7 @@ pub(crate) unsafe fn obj_pop_props(
         unsafe { sort_properties(uc, props.data as *mut Prop, props.count)? };
         // SAFETY: `props` is an unaliased local descriptor of the run just
         // sorted, which the dedup compacts in place.
-        unsafe { deduplicate_properties(&mut props) };
+        unsafe { deduplicate_properties(&raw mut props) };
     }
 
     // C: `*dst = props;`
@@ -287,14 +286,14 @@ pub(crate) fn obj_push_mesh(uc: &Context) -> Result<(), Fail> {
     unsafe {
         (*mesh).fbx_node = push_synthetic_element::<UfbxNode>(
             uc,
-            &mut (*mesh).fbx_node_id,
+            &raw mut (*mesh).fbx_node_id,
             None,
             name,
             ElementType::Node,
         );
         (*mesh).fbx_mesh = push_synthetic_element::<Mesh>(
             uc,
-            &mut (*mesh).fbx_mesh_id,
+            &raw mut (*mesh).fbx_mesh_id,
             None,
             name,
             ElementType::Mesh,
@@ -431,7 +430,7 @@ pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
         // SAFETY: `root_info` is an unaliased local passed as the element-push
         // out-param; the push targets uc's own element arenas.
         let root: *mut UfbxNode =
-            unsafe { push_element::<UfbxNode>(uc, &mut root_info, ElementType::Node) };
+            unsafe { push_element::<UfbxNode>(uc, &raw mut root_info, ElementType::Node) };
         ufbxi_check!(uc, !root.is_null(), "root");
         // SAFETY: `root` is the fresh non-null element push result.
         unsafe { setup_root_node(uc, root) };
@@ -779,7 +778,7 @@ pub(crate) fn obj_parse_vertex(uc: &Context, attrib: ObjAttrib, offset: usize) -
             let str_: String = *uc.obj().tokens().add(offset + i);
             // C: `char *end; // ufbxi_uninit`
             let mut end: *const u8 = core::ptr::null(); // ufbxi_uninit
-            let val: f64 = parse_double(str_.data, str_.length, &mut end, parse_flags);
+            let val: f64 = parse_double(str_.data, str_.length, &raw mut end, parse_flags);
             ufbxi_check!(
                 uc,
                 end == str_.data.add(str_.length),
@@ -1124,7 +1123,7 @@ pub(crate) fn obj_parse_indices(
         unsafe {
             let mut tok: String = *uc.obj().tokens().add(token_begin + ix);
             for attrib in 0..OBJ_NUM_ATTRIBS as u32 {
-                obj_parse_index(uc, mesh, &mut tok, attrib)?;
+                obj_parse_index(uc, mesh, &raw mut tok, attrib)?;
             }
         }
     }
@@ -1278,7 +1277,7 @@ pub(crate) fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
     // local, then derives the synthetic id from the interned (pool-owned,
     // NUL-terminated) pointer.
     let fbx_id: u64 = unsafe {
-        push_string_place_str(uc.string_pool_mut_ptr(), &mut name, false)?;
+        push_string_place_str(uc.string_pool_mut_ptr(), &raw mut name, false)?;
         synthetic_id_from_string(uc, name.data)
     };
     ufbxi_check!(uc, fbx_id != 0, "fbx_id");
@@ -1298,7 +1297,7 @@ pub(crate) fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
         // SAFETY: `info` is an unaliased local out-param for the element push
         // onto uc's own element arenas.
         let material: *mut Material =
-            unsafe { push_element::<Material>(uc, &mut info, ElementType::Material) };
+            unsafe { push_element::<Material>(uc, &raw mut info, ElementType::Material) };
         ufbxi_check!(uc, !material.is_null(), "material");
 
         // SAFETY: `material` is the fresh non-null element push result.
@@ -1344,8 +1343,8 @@ pub(crate) const fn obj_cmd2(a: u8, b: u8) -> u32 {
 }
 
 // ufbx.c:17410 `#define ufbxi_obj_cmd3(a,b,c) ((uint32_t)(a)<<24u | (uint32_t)(b)<<16 | (uint32_t)(c)<<8u)`
-// C-parity: the `ufbxi_obj_cmd3` macro has zero call sites in ufbx.c (every
-// dispatched OBJ keyword is two characters); kept alongside `ufbxi_obj_cmd2`.
+// C-parity: the `ufbxi_obj_cmd3` macro has zero call sites in ufbx.c (no
+// dispatched OBJ keyword needs three packed bytes); kept with the other macros.
 #[allow(dead_code)]
 #[cfg(feature = "obj")]
 #[inline(always)]
@@ -1609,14 +1608,14 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         }
         // SAFETY: `vertices[attrib]` is an unaliased local out-param and
         // `attrib < OBJ_NUM_ATTRIBS` selects that attribute's own arenas.
-        unsafe { obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, 0)? };
+        unsafe { obj_pop_vertices(uc, &raw mut vertices[attrib], attrib as u32, 0)? };
     }
     if uc.obj().has_vertex_color() && non_disjoint[ObjAttrib::Position as usize] {
         // SAFETY: as above for the color attribute.
         unsafe {
             obj_pop_vertices(
                 uc,
-                &mut vertices[ObjAttrib::Color as usize],
+                &raw mut vertices[ObjAttrib::Color as usize],
                 ObjAttrib::Color as u32,
                 0,
             )?;
@@ -1656,7 +1655,9 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                     // SAFETY: `vertices[attrib]` is an unaliased local
                     // out-param; `attrib < OBJ_NUM_ATTRIBS` selects that
                     // attribute's own arenas.
-                    unsafe { obj_pop_vertices(uc, &mut vertices[attrib], attrib as u32, min_ix)? };
+                    unsafe {
+                        obj_pop_vertices(uc, &raw mut vertices[attrib], attrib as u32, min_ix)?
+                    };
                 }
             }
             if uc.obj().has_vertex_color() && !non_disjoint[ObjAttrib::Position as usize] {
@@ -1666,7 +1667,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
                 unsafe {
                     obj_pop_vertices(
                         uc,
-                        &mut vertices[ObjAttrib::Color as usize],
+                        &raw mut vertices[ObjAttrib::Color as usize],
                         ObjAttrib::Color as u32,
                         min_ix,
                     )?;
@@ -2146,7 +2147,7 @@ pub(crate) unsafe fn obj_parse_prop(
                                                     // SAFETY: `tok.data .. + length` is that token's own span and `end` is
                                                     // an unaliased local out-param.
         let val: f64 =
-            unsafe { parse_double(tok.data, tok.length, &mut end, uc.double_parse_flags()) };
+            unsafe { parse_double(tok.data, tok.length, &raw mut end, uc.double_parse_flags()) };
         // SAFETY: one past the same token span.
         if end != unsafe { tok.data.add(tok.length) } {
             break;
@@ -2279,7 +2280,7 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
             if r#match(&tok, b"-[A-Za-z][\\-A-Za-z0-9_]*\0".as_ptr()) {
                 tok.data = tok.data.add(1);
                 tok.length -= 1;
-                obj_parse_prop(uc, tok, start + 1, false, &mut start)?;
+                obj_parse_prop(uc, tok, start + 1, false, &raw mut start)?;
                 num_props += 1;
             } else {
                 break;
@@ -2293,8 +2294,8 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
     // SAFETY: interns the texture path into uc's own string pool through two
     // unaliased locals.
     unsafe {
-        push_string_place_str(uc.string_pool_mut_ptr(), &mut tex_str, false)?;
-        push_string_place_blob(uc.string_pool_mut_ptr(), &mut tex_raw, true)?;
+        push_string_place_str(uc.string_pool_mut_ptr(), &raw mut tex_str, false)?;
+        push_string_place_blob(uc.string_pool_mut_ptr(), &raw mut tex_raw, true)?;
     }
 
     let mut fbx_id: u64 = 0;
@@ -2303,7 +2304,7 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
     let texture: *mut Texture = unsafe {
         push_synthetic_element::<Texture>(
             uc,
-            &mut fbx_id,
+            &raw mut fbx_id,
             None,
             b"\0".as_ptr(),
             ElementType::Texture,
@@ -2322,7 +2323,7 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
         (*texture).relative_filename = tex_str;
         (*texture).raw_relative_filename = tex_raw;
 
-        obj_pop_props(uc, &mut (*texture).element.props.props, num_props)?;
+        obj_pop_props(uc, &raw mut (*texture).element.props.props, num_props)?;
     }
 
     // SAFETY: `num_tokens >= 2` past the guard above, so token 0 is in the
@@ -2333,7 +2334,7 @@ pub(crate) fn obj_parse_mtl_map(uc: &Context, prefix_len: usize) -> Result<(), F
         ufbx_assert!(prop.length >= prefix_len);
         prop.data = prop.data.add(prefix_len);
         prop.length -= prefix_len;
-        push_string_place_str(uc.string_pool_mut_ptr(), &mut prop, false)?;
+        push_string_place_str(uc.string_pool_mut_ptr(), &raw mut prop, false)?;
         prop
     };
 
@@ -2445,7 +2446,7 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
             has_stream = unsafe {
                 open_file(
                     uc.opts_view().open_file_cb_ptr(),
-                    &mut stream,
+                    &raw mut stream,
                     uc.opts_view().obj_mtl_path_view().data(),
                     uc.opts_view().obj_mtl_path_view().length(),
                     core::ptr::null(),
@@ -2493,7 +2494,7 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                 )?;
                 has_stream = open_file(
                     uc.opts_view().open_file_cb_ptr(),
-                    &mut stream,
+                    &raw mut stream,
                     (*dst).data,
                     (*dst).size,
                     uc.obj().mtllib_relative_path_mut_ptr(),
@@ -2566,7 +2567,7 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
                     };
                     has_stream = open_file(
                         uc.opts_view().open_file_cb_ptr(),
-                        &mut stream,
+                        &raw mut stream,
                         copy,
                         path.length,
                         core::ptr::null(),
@@ -2644,11 +2645,6 @@ pub(crate) fn mtl_load(uc: &Context) -> Result<(), Fail> {
 
     Ok(())
 }
-
-// CONTINUATION POINT: the `// -- .obj file` banner section (ufbx.c:16767-18065)
-// is COMPLETE — both the `#if UFBXI_FEATURE_FORMAT_OBJ` branch and the `#else`
-// stubs below. Next banner: ufbx.c:18066 `// -- Scene pre-processing`
-// (owned by `native/scene_process.rs`).
 
 // ufbx.c:18049-18053 `ufbxi_obj_load` (`#else` branch — feature disabled)
 #[cfg(not(feature = "obj"))]

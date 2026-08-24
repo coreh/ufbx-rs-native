@@ -17,9 +17,8 @@
 //! The big-endian path is live here (PORTING.md "Byte order"): `ufbxi_swap*`
 //! materialize a byte-swapped copy in `uc->swap_arr` and hand back a pointer
 //! into it, so every reader downstream stays little-endian.
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -105,7 +104,7 @@ macro_rules! ufbxi_cast_f64_to_i64 {
     };
 }
 
-// ufbx.c:8609-8646 `ufbxi_swap_endian`
+// ufbx.c:8609-8645 `ufbxi_swap_endian`
 // C: `ufbxi_nodiscard static ufbxi_noinline char *` — returns NULL on failure.
 #[inline(never)]
 #[must_use]
@@ -209,7 +208,7 @@ pub(crate) unsafe fn swap_endian(
 }
 
 // Swap the endianness of an array typed with a lowercase letter
-// ufbx.c:8648-8656 `ufbxi_swap_endian_array`
+// ufbx.c:8648-8655 `ufbxi_swap_endian_array`
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn swap_endian_array(
@@ -230,7 +229,7 @@ pub(crate) unsafe fn swap_endian_array(
 }
 
 // Swap the endianness of a single value (shallow, swaps string/array header words)
-// ufbx.c:8658-8670 `ufbxi_swap_endian_value`
+// ufbx.c:8658-8668 `ufbxi_swap_endian_value`
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn swap_endian_value(uc: &Context, src: *const c_void, type_: u8) -> *const u8 {
@@ -251,7 +250,7 @@ pub(crate) unsafe fn swap_endian_value(uc: &Context, src: *const c_void, type_: 
 
 // Read and convert a post-7000 FBX data array into a different format. `src_type` may be equal to `dst_type`
 // if the platform is not binary compatible with the FBX data representation.
-// ufbx.c:8672-8765 `ufbxi_binary_convert_array`
+// ufbx.c:8672-8764 `ufbxi_binary_convert_array`
 // C returns `int`: 1 on success, 0 on failure. The `default:` arms return 0
 // WITHOUT recording an error (and with `maybe_uc == NULL` so can they not) —
 // `Err(Fail::unrecorded())` carries no payload, so that maps directly.
@@ -817,7 +816,7 @@ pub(crate) struct DeflateTask {
     pub inflate_retain: *mut InflateRetain,
 }
 
-// ufbx.c:8917-8962 `ufbxi_deflate_task_fn`
+// ufbx.c:8917-8961 `ufbxi_deflate_task_fn`
 // `ufbxi_task_fn` run from the thread pool; dispatched by the threading branch
 // in `ufbxi_binary_parse_node` below.
 pub(crate) unsafe extern "C" fn deflate_task_fn(task: *mut Task) -> bool {
@@ -1570,19 +1569,19 @@ unsafe fn binary_parse_node_rec(
                         // SAFETY: `str_` is the non-null `length`-byte run read
                         // above; the hash helper scans exactly those bytes.
                         let hash: u32 = unsafe {
-                            hash_string_check_ascii(str_, length as usize, &mut non_ascii)
+                            hash_string_check_ascii(str_, length as usize, &raw mut non_ascii)
                         };
                         // SAFETY: `name` is the pooled node name; `is_raw_string`
                         // classifies value `i` under `parent_state`.
                         let raw: bool =
                             !non_ascii || unsafe { is_raw_string(uc, parent_state, name, i) };
-                        // SAFETY: `i < num_values`, so `&mut (*vals.add(i)).s`
-                        // borrows a live `String` slot; `str_` is the `length`-byte
-                        // run to intern into `uc`'s string pool.
+                        // SAFETY: `i < num_values`, so the raw address of
+                        // `(*vals.add(i)).s` identifies a live `String` slot;
+                        // `str_` is the `length`-byte run to intern into the pool.
                         unsafe {
                             push_sanitized_string(
                                 uc.string_pool_mut_ptr(),
-                                &mut (*vals.add(i)).s,
+                                &raw mut (*vals.add(i)).s,
                                 str_,
                                 length as usize,
                                 hash,
@@ -1653,9 +1652,9 @@ unsafe fn binary_parse_node_rec(
             }
 
             let mut end: bool = false;
-            // SAFETY: `&mut end` is a live local `bool` output flag; the recursive
-            // call parses the next child node.
-            unsafe { binary_parse_node(uc, depth + 1, parse_state, &mut end, tmp_buf, true) }?;
+            // SAFETY: the raw address identifies the live local `bool` output
+            // flag; the recursive call parses the next child node.
+            unsafe { binary_parse_node(uc, depth + 1, parse_state, &raw mut end, tmp_buf, true) }?;
             if end {
                 break;
             }
@@ -1692,6 +1691,3 @@ pub(crate) const BINARY_HEADER_SIZE: usize = 27;
 // C-parity: the C array is 23 bytes (22 magic bytes + the implicit NUL); only
 // the first `UFBXI_BINARY_MAGIC_SIZE` bytes are ever compared.
 pub(crate) static BINARY_MAGIC: [u8; 23] = *b"Kaydara FBX Binary  \x00\x1a\x00";
-
-// CONTINUATION POINT: ufbx.c:9404 `// -- ASCII parsing` — the end of the
-// `// -- Binary parsing` section; `native::parse_ascii` owns what follows.

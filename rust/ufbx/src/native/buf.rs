@@ -9,9 +9,8 @@
 //! doubling, align rounding); `ufbxi_buf_chunk` flexible array member becomes a
 //! header-only struct + pointer arithmetic; `UFBXI_HUGE_MAX_SCAN` and
 //! `ator->huge_size` are two different mechanisms — both kept.
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -315,8 +314,8 @@ pub(crate) unsafe fn push_size_new_block(b: *mut Buf, size: usize) -> *mut c_voi
                 // the `size <= space` check below PASS — identical to C
                 // (ufbx.c:3928-3929). Unreachable in practice: chunk sizes are
                 // 16-aligned and `align_mask <= 15`, so `pos <= chunk->size`
-                // always. Do NOT "fix" this with checked_sub in the
-                // unsafe-reduction phase — that would diverge from C.
+                // always. Do not replace this with `checked_sub`: that would
+                // diverge from C.
                 let space = unsafe { (*chunk).size }.wrapping_sub(pos);
                 if size <= space {
                     if space < best_space {
@@ -509,13 +508,15 @@ pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_voi
         // sufficient alignment for anything afterwards and mark the padding.
         // If we overflow the current block we don't need to care as the block
         // boundaries are not contiguous.
+        // NOTE(ufbx-rs-native): the C comment says "unordered"; the guarded path
+        // is the `!b->unordered` (ordered) one.
         // SAFETY: `b` is the live `Buf`; reading its current position.
         let pos = align_to_mask(unsafe { (*b).pos }, 0xf);
         // C-parity: `b->size - pos` (ufbx.c:4051) wraps if the 16-aligned
         // position passed the chunk end, yielding a huge value that would make
         // the `<=` check PASS — identical to C. Unreachable in practice: chunk
-        // sizes are 16-aligned, so `pos <= b->size` always. Do NOT replace with
-        // checked_sub-then-bail in the unsafe-reduction phase.
+        // sizes are 16-aligned, so `pos <= b->size` always. Do not replace this
+        // with a checked subtraction: that would diverge from C.
         // SAFETY: `b` is the live `Buf`; reading its current chunk size.
         if total < usize::MAX - 16 && total + 16 <= unsafe { (*b).size }.wrapping_sub(pos) {
             // SAFETY: `b` is the live `Buf`; `chunks[0]` is its live active
@@ -547,8 +548,8 @@ pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_voi
         // (aligned past the chunk end), yielding a huge value that would make
         // the `<=` check PASS — identical to C. Unreachable in practice: chunk
         // sizes are 16-aligned and `align_mask <= 15`, so `pos <= b->size`
-        // always. Do NOT replace with checked_sub-then-bail in the
-        // unsafe-reduction phase.
+        // always. Do not replace this with a checked subtraction: that would
+        // diverge from C.
         // SAFETY: `b` is the live `Buf`; reading its current chunk size.
         if total <= unsafe { (*b).size }.wrapping_sub(pos) {
             // SAFETY: `b` is the live `Buf`; `total >= 1` (size > 0, n > 0) and
@@ -1150,10 +1151,6 @@ pub(crate) unsafe fn push_peek<T>(dst: *mut Buf, src: *mut Buf, n: usize) -> *mu
     // `push_peek_size`.
     (unsafe { push_peek_size(dst, src, size_of::<T>(), n) }) as *mut T
 }
-
-// CONTINUATION POINT: `// -- Memory buffer` section complete (ufbx.c:3817-4354).
-// Next banner: ufbx.c:4356 `// -- Hash map` (owned by native/hash.rs or a new
-// map unit; `ufbxi_map_init` at ufbx.c:4393).
 
 #[cfg(test)]
 mod tests {

@@ -17,9 +17,8 @@
 //! the `ufbx_retain_baked_anim` / `ufbx_free_baked_anim` pair) plus the
 //! `ufbxi_bake_context` .. `ufbxi_bake_anim_imp` block under
 //! `feature = "baking"`, backing `ufbx_bake_anim` in `native::api`.
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
@@ -279,7 +278,7 @@ pub(crate) unsafe fn evaluate_skinning(
         }
 
         let num_vertices: usize = mesh.num_vertices();
-        let mut result_pos: *mut Vec3 = buf_result.push::<Vec3>(num_vertices + 1);
+        let mut result_pos: *mut Vec3 = buf_result.push::<Vec3>(num_vertices.wrapping_add(1));
         ufbxi_check_err!(
             unsafe { crate::native::error::ErrorView::from_ptr(error) },
             !result_pos.is_null(),
@@ -287,11 +286,12 @@ pub(crate) unsafe fn evaluate_skinning(
         );
 
         // C: `result_pos[0] = ufbx_zero_vec3; result_pos++;`
-        // SAFETY: `result_pos` is the non-null `num_vertices + 1`-element result
-        // allocation pushed just above, so slot 0 is writable.
+        // SAFETY: valid mesh counts satisfy the C allocation invariant
+        // `num_vertices < SIZE_MAX`; the checked non-null result therefore has
+        // a writable sentinel slot followed by `num_vertices` result slots.
         unsafe { *result_pos = ZERO_VEC3 };
-        // SAFETY: the allocation holds `num_vertices + 1 >= 2` elements, so
-        // `result_pos + 1` is in bounds.
+        // SAFETY: under that same invariant the one-element advance remains in
+        // the allocation (or reaches its one-past pointer for an empty mesh).
         result_pos = unsafe { result_pos.add(1) };
 
         let mut cached_position: bool = false;
@@ -347,19 +347,20 @@ pub(crate) unsafe fn evaluate_skinning(
                 {
                     // TODO: Is this right at all?
                     let num_normals: usize = mesh.skinned_normal().values().count;
-                    let mut normal_data: *mut Vec3 = buf_result.push::<Vec3>(num_normals + 1);
+                    let mut normal_data: *mut Vec3 =
+                        buf_result.push::<Vec3>(num_normals.wrapping_add(1));
                     ufbxi_check_err!(
                         unsafe { crate::native::error::ErrorView::from_ptr(error) },
                         !normal_data.is_null(),
                         "normal_data"
                     );
                     // C: `normal_data[0] = ufbx_zero_vec3; normal_data++;`
-                    // SAFETY: `normal_data` is the non-null `num_normals + 1`
-                    // element result allocation pushed just above, so slot 0 is
-                    // writable.
+                    // SAFETY: valid attribute counts satisfy the C allocation
+                    // invariant `num_normals < SIZE_MAX`; the checked non-null
+                    // result therefore has a writable sentinel slot.
                     unsafe { *normal_data = ZERO_VEC3 };
-                    // SAFETY: that allocation holds `num_normals + 1 >= 1`
-                    // elements, so `normal_data + 1` is at most one past its end.
+                    // SAFETY: under that same invariant this advance remains in
+                    // the allocation or reaches its one-past pointer.
                     normal_data = unsafe { normal_data.add(1) };
 
                     // SAFETY: `channel` is a live scene-owned cache channel,
@@ -459,7 +460,9 @@ pub(crate) unsafe fn evaluate_skinning(
                     // the pushed result allocation, readable and writable;
                     // the `*const Matrix` `transform_position` reads is derived
                     // from a borrow of the live local `mat`.
-                    unsafe { *result_pos.add(i) = transform_position(&mat, *result_pos.add(i)) };
+                    unsafe {
+                        *result_pos.add(i) = transform_position(&raw const mat, *result_pos.add(i))
+                    };
                 }
 
                 mesh.set_skinned_is_local(false);
@@ -504,7 +507,7 @@ pub(crate) unsafe fn evaluate_skinning(
                 mesh.skinned_normal().set_unique_per_vertex(true);
             }
 
-            let mut normal_data: *mut Vec3 = buf_result.push::<Vec3>(num_normals + 1);
+            let mut normal_data: *mut Vec3 = buf_result.push::<Vec3>(num_normals.wrapping_add(1));
             ufbxi_check_err!(
                 unsafe { crate::native::error::ErrorView::from_ptr(error) },
                 !normal_data.is_null(),
@@ -512,11 +515,12 @@ pub(crate) unsafe fn evaluate_skinning(
             );
 
             // C: `normal_data[0] = ufbx_zero_vec3; normal_data++;`
-            // SAFETY: `normal_data` is the non-null `num_normals + 1`-element
-            // result allocation pushed just above, so slot 0 is writable.
+            // SAFETY: valid attribute counts satisfy the C allocation invariant
+            // `num_normals < SIZE_MAX`; the checked non-null result therefore
+            // has a writable sentinel slot.
             unsafe { *normal_data = ZERO_VEC3 };
-            // SAFETY: that allocation holds `num_normals + 1 >= 1` elements, so
-            // `normal_data + 1` is at most one past its end.
+            // SAFETY: under that same invariant this advance remains in the
+            // allocation or reaches its one-past pointer.
             normal_data = unsafe { normal_data.add(1) };
 
             // SAFETY: `mesh.as_ptr()` and the `skinned_position` projection both
@@ -727,7 +731,15 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             // `ctx` is `uc`'s own temp allocator (live for the `&Context`
             // borrow), and `filename`/`filename_len` describe the caller's
             // filename run — `open_file_ctx`'s contract.
-            ok = match unsafe { open_file_ctx(&mut stream, ctx, filename, filename_len, &opts) } {
+            ok = match unsafe {
+                open_file_ctx(
+                    &raw mut stream,
+                    ctx,
+                    filename,
+                    filename_len,
+                    &raw const opts,
+                )
+            } {
                 Ok(()) => true,
                 Err(e) => {
                     // C wrote the fixed error into the local slot; the
@@ -744,7 +756,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
             ok = unsafe {
                 open_file(
                     uc.opts_view().open_file_cb_ptr(),
-                    &mut stream,
+                    &raw mut stream,
                     uc.load_filename(),
                     filename_len,
                     ptr::null(),
@@ -760,7 +772,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
                 // SAFETY: source is a borrow of the live local `error`,
                 // destination is `uc`'s own error field (live for the borrow),
                 // and the two are distinct allocations.
-                unsafe { ptr::copy_nonoverlapping(&error, uc.error_mut_ptr(), 1) };
+                unsafe { ptr::copy_nonoverlapping(&raw const error, uc.error_mut_ptr(), 1) };
             } else {
                 // SAFETY: `uc`'s error field is live for the borrow and
                 // `filename`/`filename_len` describe the caller's filename run.
@@ -1065,7 +1077,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
                 uc.tmp_view(),
                 0.0,
                 uc.opts_view().load_external_files() && uc.opts_view().evaluate_caches(),
-                &mut cache_opts,
+                &raw mut cache_opts,
             ) }
             .is_ok(),
             "ufbxi_evaluate_skinning(&uc->scene, &uc->error, &uc->result, &uc->tmp, 0.0, uc->opts.load_external_files && uc->opts.evaluate_caches, &cache_opts)"
@@ -1121,7 +1133,7 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
     // SAFETY (this fn's remaining `*imp` accesses): `imp` is the non-null
     // (checked just above) `ufbxi_scene_imp` pushed into `uc`'s result buffer,
     // so every projection below addresses that live allocation's own fields.
-    unsafe { init_ref(&mut (*imp).refcount, SCENE_IMP_MAGIC, ptr::null_mut()) };
+    unsafe { init_ref(&raw mut (*imp).refcount, SCENE_IMP_MAGIC, ptr::null_mut()) };
 
     unsafe { (*imp).magic = SCENE_IMP_MAGIC };
     // C: `imp->scene = uc->scene;` (struct copy)
@@ -1695,7 +1707,7 @@ pub(crate) fn pow_abs(v: f64, e: f64) -> f64 {
 
 // Recursion is limited by the fact that we recurse only when the property name is "Lcl Rotation"
 // and when recursing we always evaluate the property "RotationOrder"
-// ufbx.c:25697-25750 `ufbxi_combine_anim_layer`
+// ufbx.c:25697-25749 `ufbxi_combine_anim_layer`
 // `ufbxi_recursive_function_void(ufbxi_combine_anim_layer, ..., 2, ...)`
 // (ufbx.c:25699-25700): under regression a thread-local depth guard wraps the
 // recursive body; otherwise the macro is empty and the wrapper is a plain call.
@@ -1730,7 +1742,7 @@ pub(crate) unsafe fn combine_anim_layer(
     }
 }
 
-// ufbx.c:25702-25750 `ufbxi_combine_anim_layer` body (the `_rec` half of the
+// ufbx.c:25702-25749 `ufbxi_combine_anim_layer` body (the `_rec` half of the
 // `ufbxi_recursive_function` body; see the wrapper above)
 #[inline(never)]
 unsafe fn combine_anim_layer_rec(
@@ -1964,13 +1976,13 @@ pub(crate) unsafe fn evaluate_props(
             // anim-prop run and only advances while its `element` still matches,
             // which the NULL-element sentinel terminating that run stops, so
             // every access stays inside the run.
-            while std::ptr::eq(unsafe { ref_ptr(&(*aprop).element) }, element)
+            while std::ptr::eq(unsafe { ref_ptr(&raw const (*aprop).element) }, element)
                 && unsafe { (*aprop)._internal_key } < prop._internal_key()
             {
                 aprop = unsafe { aprop.add(1) };
             }
             if unsafe { (*aprop).prop_name.data } != prop.name().data {
-                while std::ptr::eq(unsafe { ref_ptr(&(*aprop).element) }, element)
+                while std::ptr::eq(unsafe { ref_ptr(&raw const (*aprop).element) }, element)
                     // SAFETY: both names are string-pool `ufbx_string`s, which
                     // are stored NUL-terminated.
                     && unsafe { strcmp((*aprop).prop_name.data, prop.name().data) } < 0
@@ -2009,12 +2021,12 @@ pub(crate) unsafe fn evaluate_props(
                     // live local.
                     unsafe {
                         combine_anim_layer(
-                            &mut combine_ctx,
+                            &raw mut combine_ctx,
                             layer,
                             weight,
                             prop.name().data,
                             prop.value_vec4_raw() as *mut Vec3,
-                            &v,
+                            &raw const v,
                         )
                     };
                 }
@@ -2094,7 +2106,7 @@ unsafe fn evaluate_connected_prop_rec(
         // scene-owned `ufbx_connection`, so `src` holds a scene-owned element
         // and `src_prop` is its own NUL-terminated string-pool name.
         let next_conn: *mut Connection =
-            unsafe { find_prop_connection(ref_ptr(&(*conn).src), (*conn).src_prop.data) };
+            unsafe { find_prop_connection(ref_ptr(&raw const (*conn).src), (*conn).src_prop.data) };
         if next_conn.is_null() {
             break;
         }
@@ -2106,7 +2118,8 @@ unsafe fn evaluate_connected_prop_rec(
     // SAFETY: `conn` is non-null (checked first, and `&&` short-circuits) and
     // points to a scene-owned connection, so `src`/`src_prop` are its own fields.
     if !conn.is_null()
-        && unsafe { find_prop_connection(ref_ptr(&(*conn).src), (*conn).src_prop.data) }.is_null()
+        && unsafe { find_prop_connection(ref_ptr(&raw const (*conn).src), (*conn).src_prop.data) }
+            .is_null()
     {
         // SAFETY: `anim` is the caller's live anim and `conn` the scene-owned
         // connection reached above, whose `src` element and `src_prop` name run
@@ -2114,7 +2127,7 @@ unsafe fn evaluate_connected_prop_rec(
         let ep: Prop = unsafe {
             evaluate_prop_flags_len(
                 anim,
-                ref_ptr(&(*conn).src),
+                ref_ptr(&raw const (*conn).src),
                 (*conn).src_prop.data,
                 (*conn).src_prop.length,
                 time,
@@ -2327,7 +2340,7 @@ pub(crate) unsafe fn next_prop(iter: *mut PropIter) -> *const Prop {
     }
 }
 
-// ufbx.c:25926-25973 `ufbxi_evaluate_selected_props`
+// ufbx.c:25926-25974 `ufbxi_evaluate_selected_props`
 #[inline(never)]
 pub(crate) unsafe fn evaluate_selected_props(
     anim: *const Anim,
@@ -2376,7 +2389,7 @@ pub(crate) unsafe fn evaluate_selected_props(
         // `*const Prop` whose provenance can be a read-only `&Element`'s prop
         // run, so `Mut` is not mintable here. The frozen tag is confined to one
         // iteration, which is what the `Const` mode requires: when the anim
-        // carries overrides, `next_prop_slow` yields `&(*iter).tmp` and the next
+        // carries overrides, `next_prop_slow` yields `&raw const (*iter).tmp` and the next
         // call writes those exact bytes through `iter`, but this view's last use
         // is inside this iteration's body — no read through the frozen tag
         // outlives that write. Nothing in the body writes the viewed prop
@@ -2633,8 +2646,8 @@ pub(crate) struct EvalContext(
     pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerEvalContext>>,
 );
 
-// Typed interior-mutable VIEW over the `opts` field, reinterpreted in place
-// (approach A). Generated ABI-fixed `RawEvaluateOpts` plays the `Inner` role;
+// Typed interior-mutable view over the `opts` field, reinterpreted in place.
+// Generated ABI-fixed `RawEvaluateOpts` is the inner storage;
 // `MaybeUninit` makes forming `&EvaluateOptsView` assert no validity — each leaf getter
 // asserts only the field it reads.
 #[cfg(feature = "scene-eval")]
@@ -3091,19 +3104,19 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // contract — read through `ref_ptr` and written back in place.
         unsafe {
             *(&raw mut (*src).src as *mut *mut Element) =
-                translate_element(ec, ref_ptr(&(*src).src) as *mut c_void);
+                translate_element(ec, ref_ptr(&raw const (*src).src) as *mut c_void);
         }
         unsafe {
             *(&raw mut (*src).dst as *mut *mut Element) =
-                translate_element(ec, ref_ptr(&(*src).dst) as *mut c_void);
+                translate_element(ec, ref_ptr(&raw const (*src).dst) as *mut c_void);
         }
         unsafe {
             *(&raw mut (*dst).src as *mut *mut Element) =
-                translate_element(ec, ref_ptr(&(*dst).src) as *mut c_void);
+                translate_element(ec, ref_ptr(&raw const (*dst).src) as *mut c_void);
         }
         unsafe {
             *(&raw mut (*dst).dst as *mut *mut Element) =
-                translate_element(ec, ref_ptr(&(*dst).dst) as *mut c_void);
+                translate_element(ec, ref_ptr(&raw const (*dst).dst) as *mut c_void);
         }
     }
 
@@ -3216,7 +3229,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // back in place.
         unsafe {
             *(&raw mut (*named).element as *mut *mut Element) =
-                translate_element(ec, ref_ptr(&(*named).element) as *mut c_void);
+                translate_element(ec, ref_ptr(&raw const (*named).element) as *mut c_void);
         }
     }
 
@@ -3473,7 +3486,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             // contract — read through `ref_ptr` and written back in place.
             unsafe {
                 *(&raw mut (*keys.add(i)).shape as *mut *mut BlendShape) =
-                    translate_element(ec, ref_ptr(&(*keys.add(i)).shape) as *mut c_void)
+                    translate_element(ec, ref_ptr(&raw const (*keys.add(i)).shape) as *mut c_void)
                         as *mut BlendShape;
             }
         }
@@ -3583,9 +3596,11 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             // `translate_element`'s contract — read through `ref_ptr` and written
             // back in place.
             unsafe {
-                *(&raw mut (*textures.add(i)).texture as *mut *mut Texture) =
-                    translate_element(ec, ref_ptr(&(*textures.add(i)).texture) as *mut c_void)
-                        as *mut Texture;
+                *(&raw mut (*textures.add(i)).texture as *mut *mut Texture) = translate_element(
+                    ec,
+                    ref_ptr(&raw const (*textures.add(i)).texture) as *mut c_void,
+                )
+                    as *mut Texture;
             }
         }
         // SAFETY: `material` is the live destination material, retargeted at the
@@ -3635,9 +3650,11 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             // `translate_element`'s contract — read through `ref_ptr` and written
             // back in place.
             unsafe {
-                *(&raw mut (*layers.add(i)).texture as *mut *mut Texture) =
-                    translate_element(ec, ref_ptr(&(*layers.add(i)).texture) as *mut c_void)
-                        as *mut Texture;
+                *(&raw mut (*layers.add(i)).texture as *mut *mut Texture) = translate_element(
+                    ec,
+                    ref_ptr(&raw const (*layers.add(i)).texture) as *mut c_void,
+                )
+                    as *mut Texture;
             }
         }
         // SAFETY: `texture` is the live destination texture, retargeted at the
@@ -3829,9 +3846,11 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             // a non-null `Ref` to a source-scene element — `translate_element`'s
             // contract — read through `ref_ptr` and written back in place.
             unsafe {
-                *(&raw mut (*targets.add(i)).node as *mut *mut UfbxNode) =
-                    translate_element(ec, ref_ptr(&(*targets.add(i)).node) as *mut c_void)
-                        as *mut UfbxNode;
+                *(&raw mut (*targets.add(i)).node as *mut *mut UfbxNode) = translate_element(
+                    ec,
+                    ref_ptr(&raw const (*targets.add(i)).node) as *mut c_void,
+                )
+                    as *mut UfbxNode;
             }
         }
         // SAFETY: `constraint` is the live destination constraint, retargeted at
@@ -3921,11 +3940,15 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             // `translate_element`'s contract — read through `ref_ptr` and written
             // back in place.
             unsafe {
-                *(&raw mut (*props.add(i)).element as *mut *mut Element) =
-                    translate_element(ec, ref_ptr(&(*props.add(i)).element) as *mut c_void);
-                *(&raw mut (*props.add(i)).anim_value as *mut *mut AnimValue) =
-                    translate_element(ec, ref_ptr(&(*props.add(i)).anim_value) as *mut c_void)
-                        as *mut AnimValue;
+                *(&raw mut (*props.add(i)).element as *mut *mut Element) = translate_element(
+                    ec,
+                    ref_ptr(&raw const (*props.add(i)).element) as *mut c_void,
+                );
+                *(&raw mut (*props.add(i)).anim_value as *mut *mut AnimValue) = translate_element(
+                    ec,
+                    ref_ptr(&raw const (*props.add(i)).anim_value) as *mut c_void,
+                )
+                    as *mut AnimValue;
             }
         }
         // Maintain NULL sentinel
@@ -3974,9 +3997,11 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             // `translate_element`'s contract — read through `ref_ptr` and written
             // back in place.
             unsafe {
-                *(&raw mut (*bones.add(i)).bone_node as *mut *mut UfbxNode) =
-                    translate_element(ec, ref_ptr(&(*bones.add(i)).bone_node) as *mut c_void)
-                        as *mut UfbxNode;
+                *(&raw mut (*bones.add(i)).bone_node as *mut *mut UfbxNode) = translate_element(
+                    ec,
+                    ref_ptr(&raw const (*bones.add(i)).bone_node) as *mut c_void,
+                )
+                    as *mut UfbxNode;
             }
         }
         // SAFETY: `pose` is the live destination pose, retargeted at the
@@ -4155,7 +4180,7 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                 ec.tmp_view(),
                 ec.time(),
                 ec.opts_view().load_external_files() && ec.opts_view().evaluate_caches(),
-                &mut cache_opts,
+                &raw mut cache_opts,
             )
         }?;
     }
@@ -4282,7 +4307,7 @@ pub(crate) unsafe fn evaluate_scene(
     } else {
         // SAFETY: `scene` is the caller's live scene, whose `anim` field is a
         // non-null `Ref` to the scene's own default animation.
-        unsafe { ref_ptr(&(*scene).anim) }
+        unsafe { ref_ptr(&raw const (*scene).anim) }
     });
     ec.set_time(time);
 
@@ -4372,7 +4397,7 @@ pub(crate) struct CreateAnimContext(
     pub(crate) core::cell::UnsafeCell<core::mem::MaybeUninit<InnerCreateAnimContext>>,
 );
 
-// Typed interior-mutable VIEW over `CreateAnimContext.opts` (approach A). Non-Copy
+// Typed interior-mutable view over `CreateAnimContext.opts`. Non-Copy
 // list fields recurse into `RawListView`; addr-of fields use `_ptr` getters.
 pub(crate) type AnimOptsView = crate::native::view::View<RawAnimOpts>;
 
@@ -5075,8 +5100,8 @@ pub(crate) struct InnerBakeContext {
     pub imp: *mut BakedAnimImp,
 }
 
-// Typed interior-mutable VIEW over the `opts` field of `BakeContext`, reinterpreted in
-// place (approach A). The generated ABI-fixed `RawBakeOpts` plays the `Inner` role;
+// Typed interior-mutable view over the `opts` field of `BakeContext`, reinterpreted in
+// place. The generated ABI-fixed `RawBakeOpts` is the inner storage;
 // `MaybeUninit` makes forming `&BakeOptsView` assert no validity — each leaf getter
 // asserts only the field it reads.
 #[cfg(feature = "baking")]
@@ -7957,8 +7982,3 @@ pub(crate) unsafe fn bake_anim_imp(bc: &BakeContext, anim: *const Anim) -> Resul
 
     Ok(())
 }
-
-// CONTINUATION POINT: the `// -- Animation baking` section is complete
-// (ufbx.c:26670-27767); the C `#endif` at ufbx.c:27767 closes the
-// `feature = "baking"` gate above. Next banner: ufbx.c:27769 `// -- NURBS`
-// (owned by `native::nurbs`).

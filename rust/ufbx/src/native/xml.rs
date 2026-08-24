@@ -7,9 +7,8 @@
 //! public entry point of its own: it exists only to feed
 //! `ufbxi_cache_load_xml` in `native::cache`, so there is nothing to keep
 //! callable when the feature is off.
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 #![cfg(feature = "geometry-cache")]
 use core::ffi::{c_void, CStr};
@@ -217,9 +216,7 @@ impl XmlContext {
 
     #[inline(always)]
     pub(crate) fn data_size(&self) -> usize {
-        // SAFETY: `size_of_val` only needs the place's type; the `data` array is
-        // a field of the context this handle owns.
-        unsafe { core::mem::size_of_val(&(*self.get()).data) }
+        core::mem::size_of::<[u8; 4096]>()
     }
 
     #[inline(always)]
@@ -990,7 +987,7 @@ unsafe fn xml_parse_tag_rec(
             // SAFETY: `closing` is an unaliased local out-param; `tag`'s `name`
             // is the NUL-terminated arena string the callee compares the
             // closing tag against.
-            unsafe { xml_parse_tag(xc, depth + 1, &mut closing, tag.name_data())? };
+            unsafe { xml_parse_tag(xc, depth + 1, &raw mut closing, tag.name_data())? };
             if closing {
                 break;
             }
@@ -1026,7 +1023,7 @@ pub(crate) fn xml_parse_root(xc: &XmlContext) -> Result<(), Fail> {
         // SAFETY: `closing` is an unaliased local out-param; a null `name`
         // is the "root has no expected closing tag" sentinel the callee reads
         // as such.
-        unsafe { xml_parse_tag(xc, 0, &mut closing, core::ptr::null())? };
+        unsafe { xml_parse_tag(xc, 0, &raw mut closing, core::ptr::null())? };
         if closing {
             break;
         }
@@ -1135,7 +1132,7 @@ pub(crate) unsafe fn free_xml(doc: *mut XmlDocument) {
     // stale field dies with the storage this call frees.
     let mut buf: Buf = unsafe { core::ptr::read(&raw const (*doc).buf) };
     // SAFETY: `buf` is that live stack copy, the sole owner of the chunk list.
-    unsafe { buf_free(&mut buf) };
+    unsafe { buf_free(&raw mut buf) };
 }
 
 // ufbx.c:7662-7670 `ufbxi_xml_find_child`

@@ -4,7 +4,7 @@
 //! `ufbxi_release_ref` ufbx.c:30249-30300 — C forward-declares the first two
 //! next to `ufbxi_refcount` at ufbx.c:6229-6230 but defines them here).
 //!
-//! Ported so far: the `ufbx_abi_data` globals (ufbx.c:30339-30404), the
+//! Complete coverage includes the `ufbx_abi_data` globals (ufbx.c:30339-30404), the
 //! `ufbx_open_file`/`ufbx_open_memory`/`ufbx_default_open_file` plumbing
 //! (ufbx.c:30406-30495), `ufbx_is_thread_safe` (30497-30500), the
 //! `ufbx_load_*` family (ufbx.c:30502-30576, backed by `ufbxi_load` /
@@ -24,8 +24,7 @@
 //! functions and the whole quaternion math family are ported.
 //! ufbx.c:31723-32095
 //! is then covered in C order: the `ufbx_matrix_*` / `ufbx_transform_*` math
-//! (31723-31926, ported ahead of order by earlier units — this unit adds the
-//! missing `capi.rs` shims), `ufbx_catch_get_skin_vertex_matrix`
+//! (31723-31926), `ufbx_catch_get_skin_vertex_matrix`
 //! (31928-32018) and the blend-shape offset family (32020-32095). The NURBS
 //! evaluation entry points (`ufbx_evaluate_nurbs_basis` / `_curve` /
 //! `_surface`, ufbx.c:32097-32280) and both arms of the tessellation entry
@@ -53,9 +52,8 @@
 //! - The counter starts at 0 (`init_ref` does no self-retain); inc/dec return
 //!   the PREVIOUS value (SeqCst); the object is freed when the previous value
 //!   was 0 (`if dec(...) > 0 { return }`).
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
@@ -78,7 +76,7 @@ use crate::generated::{
     VertexVec3, VertexVec4, Video,
 };
 #[cfg(feature = "geometry-cache")]
-use crate::generated::{CacheDataEncoding, CacheDataFormat, OpenFileType, RawOpenFileCb};
+use crate::generated::{CacheDataEncoding, CacheDataFormat, OpenFileType};
 use crate::generated::{
     EvaluateFlags, Interpolation, PropFlags, RawAnimOpts, RawEvaluateOpts, TransformFlags,
 };
@@ -162,7 +160,7 @@ pub(crate) unsafe fn free_scene_imp(imp: *mut SceneImp) {
     // this `unsafe fn`.
     ufbx_assert!(unsafe { (*imp).magic } == SCENE_IMP_MAGIC);
     // SAFETY: same live `SceneImp`; `string_buf` is its own field.
-    unsafe { buf_free(&mut (*imp).string_buf) };
+    unsafe { buf_free(&raw mut (*imp).string_buf) };
 }
 
 // ufbx.c:30249-30259 `ufbxi_init_ref`
@@ -176,7 +174,7 @@ pub(crate) unsafe fn init_ref(refcount: *mut Refcount, magic: u32, parent: *mut 
 
     // SAFETY: `refcount` points at a live `Refcount` — the raw-pointer contract
     // of this `unsafe fn`; `refcount.refcount` is its own atomic-counter field.
-    unsafe { atomic_counter_init(&mut (*refcount).refcount) };
+    unsafe { atomic_counter_init(&raw mut (*refcount).refcount) };
     // SAFETY: same live `Refcount`; writing its own field.
     unsafe {
         (*refcount).self_magic = REFCOUNT_IMP_MAGIC;
@@ -192,7 +190,7 @@ pub(crate) unsafe fn retain_ref(refcount: *mut Refcount) {
     // of this `unsafe fn`.
     ufbx_assert!(unsafe { (*refcount).self_magic } == REFCOUNT_IMP_MAGIC);
     // SAFETY: same live `Refcount`; `refcount.refcount` is its own atomic field.
-    let count: usize = unsafe { atomic_counter_inc(&mut (*refcount).refcount) };
+    let count: usize = unsafe { atomic_counter_inc(&raw mut (*refcount).refcount) };
     ufbxi_ignore!(count);
     ufbx_assert!(count < usize::MAX / 2);
 }
@@ -206,10 +204,10 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         ufbx_assert!(unsafe { (*refcount).self_magic } == REFCOUNT_IMP_MAGIC);
         // SAFETY: same live `Refcount`; `refcount.refcount` is its own atomic.
         unsafe {
-            if atomic_counter_dec(&mut (*refcount).refcount) > 0 {
+            if atomic_counter_dec(&raw mut (*refcount).refcount) > 0 {
                 return;
             }
-            atomic_counter_free(&mut (*refcount).refcount);
+            atomic_counter_free(&raw mut (*refcount).refcount);
         }
 
         // SAFETY: same live `Refcount`; reading its own fields.
@@ -251,9 +249,9 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         let mut buf: Buf = unsafe { core::ptr::read(&raw const (*refcount).buf) };
         buf.ator = &raw mut ator;
         // SAFETY: `buf` is the just-moved `Buf`, now owning its stack `ator`.
-        unsafe { buf_free(&mut buf) };
+        unsafe { buf_free(&raw mut buf) };
         // SAFETY: `ator` is the stack copy of the refcount's allocator.
-        unsafe { free_ator(&mut ator) };
+        unsafe { free_ator(&raw mut ator) };
 
         refcount = parent;
     }
@@ -558,8 +556,9 @@ pub(crate) unsafe fn open_memory_ctx(
     // C: `ufbxi_file_context fc; // ufbxi_uninit`
     let fc = FileContext(core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()));
     // SAFETY: `fc` is the fresh file context; `ctx` is the caller's handle and
-    // `&(*opts).allocator` addresses the live opts' own allocator field.
-    unsafe { begin_file_context(&fc, ctx, &(*opts).allocator) };
+    // The raw field address preserves C's address-of semantics without creating
+    // a Rust reference or an aliasing claim for the caller-owned options.
+    unsafe { begin_file_context(&fc, ctx, &raw const (*opts).allocator) };
 
     // SAFETY: live `opts` per above; reading its own `no_copy` flag.
     let copy_size: usize = if unsafe { (*opts).no_copy } {
@@ -623,9 +622,9 @@ pub(crate) unsafe fn open_memory_ctx(
             (*mem).parent_ator = fc.parent_ator();
         }
     } else {
-        // SAFETY: `&mut (*mem).local_ator` addresses the live `mem`'s own
+        // SAFETY: the raw field address identifies the live `mem`'s own
         // allocator field, adopted as the file context's parent allocator.
-        unsafe { fc.set_parent_ator(&mut (*mem).local_ator) };
+        unsafe { fc.set_parent_ator(&raw mut (*mem).local_ator) };
     }
 
     // SAFETY: `stream` is the caller's live out-stream; writing its own fields.
@@ -735,8 +734,8 @@ pub(crate) unsafe fn load_stdio_prefix(
     let mut stream: RawStream = unsafe { MaybeUninit::zeroed().assume_init() };
     // SAFETY: `stream` is the fresh zeroed out-stream and `file_void` is the
     // caller's live `FILE*` handle (non-null, checked above).
-    unsafe { stdio_init(&mut stream, file_void, false) };
-    // SAFETY: `&stream` is the just-initialized stdio stream, `prefix`/
+    unsafe { stdio_init(&raw mut stream, file_void, false) };
+    // SAFETY: `stream` is the just-initialized stdio stream, `prefix`/
     // `prefix_size` describe the caller's optional prefix block, and `opts` is
     // null-or-live per this fn's contract.
     unsafe { load_stream_prefix(&stream, prefix, prefix_size, opts) }
@@ -920,11 +919,10 @@ pub(crate) unsafe fn format_error(dst: *mut u8, dst_size: usize, error: *const E
     offset
 }
 
-// ufbx.c:30635-32095 is ported in C order below. Past ufbx.c:32214 some
-// API-section entry points sit out of C order, ahead of their own unit,
-// because the `// -- Scene processing` unit calls `ufbx_get_bone_pose` /
-// `ufbx_euler_to_quat` and friends. All entry points are ported (203/203
-// ufbx_abi exports).
+// ufbx.c:30635-33179 is covered below. The short String API wrappers
+// (ufbx.c:33140-33161) and non-catching geometry wrappers (33163-33179) are
+// grouped beside the implementations they delegate to. All API entry points
+// in the C file are present; `ufbx_inflate` is owned by `native::deflate`.
 
 // ufbx.c:30635-30650 `ufbx_find_prop_len`
 // `name: &[u8]` carries C's `(name, name_len)` pair (the `_len` suffix IS the
@@ -965,7 +963,7 @@ pub(crate) fn find_real_len<M: Mode>(props: &View<Props, M>, name: &[u8], def: R
 }
 
 // ufbx.c:30662-30670 `ufbx_find_vec3_len`
-// Ported ahead of its banner section because `ufbxi_update_constraint`
+// Kept here because `ufbxi_update_constraint`
 // (ufbx.c:23416, `native::scene_process`) calls `ufbx_find_vec3`.
 #[inline(never)]
 pub(crate) fn find_vec3_len<M: Mode>(props: &View<Props, M>, name: &[u8], def: Vec3) -> Vec3 {
@@ -1014,7 +1012,7 @@ pub(crate) fn find_blob_len<M: Mode>(props: &View<Props, M>, name: &[u8], def: B
 }
 
 // ufbx.c:30712-30728 `ufbx_find_prop_concat`
-// Ported ahead of its banner section because `ufbxi_update_constraint`
+// Kept here because `ufbxi_update_constraint`
 // (ufbx.c:23416, `native::scene_process`) calls it.
 pub(crate) unsafe fn find_prop_concat<'a, M: Mode>(
     props: &'a View<Props, M>,
@@ -1075,9 +1073,9 @@ pub(crate) unsafe fn find_element_len(
 
     if index < usize::MAX {
         // SAFETY: `index < count` (a hit), so `elements_by_name.data.add(index)`
-        // addresses the `index`-th live `NameElement`; `&(*..).element` addresses
-        // its own `Ref<Element>` field, which `ref_ptr` follows.
-        unsafe { ref_ptr(&(*(*scene).elements_by_name.data.add(index)).element) }
+        // addresses the `index`-th live `NameElement`; the raw field address
+        // identifies its own `Ref<Element>` field, which `ref_ptr` follows.
+        unsafe { ref_ptr(&raw const (*(*scene).elements_by_name.data.add(index)).element) }
     } else {
         core::ptr::null_mut()
     }
@@ -1099,7 +1097,7 @@ pub(crate) unsafe fn get_prop_element(
     unsafe { fetch_dst_element(element as *mut Element, false, (*prop).name.data, type_) }
 }
 
-// ufbx.c:30750-30757 `ufbx_find_prop_element_len`
+// ufbx.c:30750-30758 `ufbx_find_prop_element_len`
 pub(crate) unsafe fn find_prop_element_len(
     element: *const Element,
     name: *const u8,
@@ -1601,12 +1599,12 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
     if (prop.unwrap().flags().raw() & PropFlags::CONNECTED.raw()) != 0
         && !unsafe { (*anim).ignore_connections }
     {
-        // SAFETY: `&mut result` addresses the local prop, `anim`/`element` are the
+        // SAFETY: the raw address identifies the local prop, `anim`/`element` are the
         // live params, and `prop.unwrap().name().data` is the matched prop's own
         // interned name pointer.
         unsafe {
             evaluate::evaluate_connected_prop(
-                &mut result,
+                &raw mut result,
                 anim,
                 element,
                 prop.unwrap().name().data,
@@ -1616,9 +1614,9 @@ pub(crate) unsafe fn evaluate_prop_flags_len(
         };
     }
 
-    // SAFETY: `anim`/`element` are the live params and `&mut result` addresses the
+    // SAFETY: `anim`/`element` are the live params and the raw address identifies the
     // local prop, evaluated as a one-element buffer.
-    unsafe { evaluate::evaluate_props(anim, element, time, &mut result, 1, flags) };
+    unsafe { evaluate::evaluate_props(anim, element, time, &raw mut result, 1, flags) };
 
     result
 }
@@ -1949,10 +1947,9 @@ pub(crate) unsafe fn evaluate_transform_flags(
 
     // C: `ufbx_prop buf[ufbxi_arraycount(ufbxi_transform_props_all)]; // ufbxi_uninit`
     let mut buf = MaybeUninit::<[Prop; TRANSFORM_PROPS_ALL_COUNT]>::uninit(); // ufbxi_uninit
-                                                                              // SAFETY: `anim` is the live anim, `&raw const (*node).element` addresses the
-                                                                              // live node's own element, `buf` is this frame's scratch storage sized to
-                                                                              // hold the selected props, and `prop_names`/`num_prop_names` describe the
-                                                                              // static name table.
+                                                                              // SAFETY: `anim` is live, the raw field address identifies the node's own
+                                                                              // element, `buf` is this frame's correctly sized scratch storage, and
+                                                                              // `prop_names`/`num_prop_names` describe the static name table.
     let props: Props = unsafe {
         evaluate::evaluate_selected_props(
             anim,
@@ -1965,8 +1962,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
         )
     };
     // C: `(ufbx_rotation_order)ufbxi_find_enum(...)` — clamped to the valid range.
-    // Const view: from the public `&Node` entry the defaults chain in `props`
-    // carries read-only provenance (Miri SB; sweep test TODO(provenance)).
+    // The const view carries the local `props` value's read-only provenance.
     // SAFETY: `find_enum` clamps its result into `[Xyz, Spheric]`, every value of
     // which is a valid `#[repr(u32)]` `RotationOrder` discriminant; `&raw const
     // props` roots a read-only view over the local `props`.
@@ -2071,9 +2067,9 @@ pub(crate) unsafe fn evaluate_blend_weight_flags(
 
     // C: `ufbx_prop buf[ufbxi_arraycount(prop_names)]; // ufbxi_uninit`
     let mut buf = MaybeUninit::<[Prop; NUM_PROP_NAMES]>::uninit(); // ufbxi_uninit
-                                                                   // SAFETY: `anim` is the live anim, `&raw const (*channel).element` addresses
-                                                                   // the live channel's own element, `buf` is this frame's scratch storage sized
-                                                                   // for the one selected prop, and `prop_names` describes the name table.
+                                                                   // SAFETY: `anim` is live, the raw field address identifies the channel's
+                                                                   // own element, `buf` is correctly sized scratch storage, and `prop_names`
+                                                                   // describes the name table.
     let props: Props = unsafe {
         evaluate::evaluate_selected_props(
             anim,
@@ -2683,7 +2679,7 @@ pub(crate) unsafe fn evaluate_baked_quat(keyframes: List<BakedQuat>, time: f64) 
 }
 
 // ufbx.c:31405-31412 `ufbx_get_bone_pose`
-// Was ported ahead of this unit because `ufbxi_update_pose` (ufbx.c:23271,
+// Kept here because `ufbxi_update_pose` (ufbx.c:23271,
 // `native::scene_process`) calls it.
 pub(crate) unsafe fn get_bone_pose(pose: *const Pose, node: *const Node) -> *mut BonePose {
     if pose.is_null() || node.is_null() {
@@ -2702,8 +2698,8 @@ pub(crate) unsafe fn get_bone_pose(pose: *const Pose, node: *const Node) -> *mut
             (*pose).bone_poses.data,
             0,
             (*pose).bone_poses.count,
-            |a| (*ref_ptr(&(*a).bone_node)).element.typed_id < (*node).element.typed_id,
-            |a| std::ptr::eq(ref_ptr(&(*a).bone_node), node),
+            |a| (*ref_ptr(&raw const (*a).bone_node)).element.typed_id < (*node).element.typed_id,
+            |a| std::ptr::eq(ref_ptr(&raw const (*a).bone_node), node),
         )
     };
     if index < usize::MAX {
@@ -2740,8 +2736,8 @@ pub(crate) unsafe fn find_prop_texture_len(material: *const Material, name: &[u8
     }
     if index < usize::MAX {
         // SAFETY: `index < count` here, so `textures.data.add(index)` addresses a
-        // live `MaterialTexture`; `ref_ptr` borrows its own `texture` field.
-        unsafe { ref_ptr(&(*(*material).textures.data.add(index)).texture) }
+        // live `MaterialTexture`; the raw address identifies its own `texture` field.
+        unsafe { ref_ptr(&raw const (*(*material).textures.data.add(index)).texture) }
     } else {
         core::ptr::null_mut()
     }
@@ -2839,7 +2835,7 @@ pub(crate) fn find_shader_texture_input_len<'a, M: Mode>(
 }
 
 // ufbx.c:31478-31490 `ufbx_coordinate_axes_valid`
-// Ported ahead of its banner section because `ufbxi_update_adjust_transforms`
+// Kept here because `ufbxi_update_adjust_transforms`
 // and `ufbxi_update_scene_settings_obj` (ufbx.c:23694/23937,
 // `native::scene_process`) call it.
 //
@@ -2961,7 +2957,7 @@ pub(crate) fn quat_slerp(a: Quat, mut b: Quat, t: Real) -> Quat {
 }
 
 // ufbx.c:31554-31564 `ufbx_quat_rotate_vec3`
-// Was ported ahead of this unit because `ufbxi_mul_rotate` and friends
+// Kept here because `ufbxi_mul_rotate` and friends
 // (ufbx.c:22695+, `native::scene_process`) call it.
 #[inline(never)]
 pub(crate) fn quat_rotate_vec3(q: Quat, v: Vec3) -> Vec3 {
@@ -2979,7 +2975,7 @@ pub(crate) fn quat_rotate_vec3(q: Quat, v: Vec3) -> Vec3 {
 }
 
 // ufbx.c:31566-31620 `ufbx_euler_to_quat`
-// Ported ahead of its banner section because `ufbxi_mul_rotate` /
+// Kept here because `ufbxi_mul_rotate` /
 // `ufbxi_mul_inv_rotate` (ufbx.c:22695/22726, `native::scene_process`) call it.
 #[inline(never)]
 pub(crate) fn euler_to_quat(v: Vec3, order: RotationOrder) -> Quat {
@@ -3187,7 +3183,7 @@ pub(crate) fn quat_to_euler(q: Quat, order: RotationOrder) -> Vec3 {
 }
 
 // ufbx.c:31723-31747 `ufbx_matrix_mul`
-// Was ported ahead of its own unit because `ufbxi_update_node`
+// Kept here because `ufbxi_update_node`
 // (ufbx.c:22955, `native::scene_process`) calls it.
 #[inline(never)]
 pub(crate) unsafe fn matrix_mul(a: *const Matrix, b: *const Matrix) -> Matrix {
@@ -3227,7 +3223,7 @@ pub(crate) unsafe fn matrix_mul(a: *const Matrix, b: *const Matrix) -> Matrix {
 }
 
 // ufbx.c:31749-31754 `ufbx_matrix_determinant`
-// Ported ahead of its banner section because `ufbx_matrix_for_normals` below
+// Kept here because `ufbx_matrix_for_normals` below
 // needs it.
 pub(crate) unsafe fn matrix_determinant(m: *const Matrix) -> Real {
     // SAFETY: `m` points at a live `Matrix` per this fn's contract; every field
@@ -3243,7 +3239,7 @@ pub(crate) unsafe fn matrix_determinant(m: *const Matrix) -> Real {
 }
 
 // ufbx.c:31756-31782 `ufbx_matrix_invert`
-// Ported ahead of its banner section because `ufbxi_update_pose`
+// Kept here because `ufbxi_update_pose`
 // (ufbx.c:23271, `native::scene_process`) calls it.
 pub(crate) unsafe fn matrix_invert(m: *const Matrix) -> Matrix {
     // SAFETY: `m` points at a live `Matrix` per this fn's contract, forwarded
@@ -3304,7 +3300,7 @@ pub(crate) unsafe fn matrix_invert(m: *const Matrix) -> Matrix {
 }
 
 // ufbx.c:31784-31802 `ufbx_matrix_for_normals`
-// Ported ahead of its banner section because `ufbxi_modify_geometry`
+// Kept here because `ufbxi_modify_geometry`
 // (ufbx.c:21165, `native::scene_process`) calls it.
 #[inline(never)]
 pub(crate) unsafe fn matrix_for_normals(m: *const Matrix) -> Matrix {
@@ -3338,7 +3334,7 @@ pub(crate) unsafe fn matrix_for_normals(m: *const Matrix) -> Matrix {
 }
 
 // ufbx.c:31804-31814 `ufbx_transform_position`
-// Ported ahead of its banner section because `ufbxi_transform_vec3_list`
+// Kept here because `ufbxi_transform_vec3_list`
 // (ufbx.c:21049, `native::scene_process`) calls it.
 #[inline(never)]
 pub(crate) unsafe fn transform_position(m: *const Matrix, v: Vec3) -> Vec3 {
@@ -3362,7 +3358,7 @@ pub(crate) unsafe fn transform_position(m: *const Matrix, v: Vec3) -> Vec3 {
 }
 
 // ufbx.c:31816-31826 `ufbx_transform_direction`
-// Ported ahead of its banner section because `ufbxi_update_adjust_transforms`
+// Kept here because `ufbxi_update_adjust_transforms`
 // (ufbx.c:23705, `native::scene_process`) calls it.
 #[inline(never)]
 pub(crate) unsafe fn transform_direction(m: *const Matrix, v: Vec3) -> Vec3 {
@@ -3437,7 +3433,7 @@ pub(crate) unsafe fn transform_to_matrix(t: *const Transform) -> Matrix {
 }
 
 // ufbx.c:31854-31926 `ufbx_matrix_to_transform`
-// Ported ahead of its banner section because `ufbxi_update_skin_cluster`
+// Kept here because `ufbxi_update_skin_cluster`
 // (ufbx.c:23289, `native::scene_process`) calls it.
 #[inline(never)]
 pub(crate) unsafe fn matrix_to_transform(m: *const Matrix) -> Transform {
@@ -3645,7 +3641,7 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
         // C: `const ufbx_node *node = cluster->bone_node; if (!node) continue;`
         // SAFETY: `cluster` is a live `SkinCluster` from the list; `opt_ptr`
         // reads its own `bone_node` field.
-        let node: *const Node = unsafe { opt_ptr(&(*cluster).bone_node) };
+        let node: *const Node = unsafe { opt_ptr(&raw const (*cluster).bone_node) };
         if node.is_null() {
             continue;
         }
@@ -3677,22 +3673,21 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
             };
             let vqe: Quat = mul_quat(vqt, vq0);
             // SAFETY: `q0`/`qe`/`qs` are live stack locals accumulated in place;
-            // `add_weighted_*` write through the exclusive `&mut` references.
+            // Raw addresses preserve C's address-of semantics for the stack locals.
             unsafe {
-                add_weighted_quat(&mut q0, vq0, weight.weight);
-                add_weighted_quat(&mut qe, vqe, weight.weight);
-                add_weighted_vec3(&mut qs, t.scale, weight.weight);
+                add_weighted_quat(&raw mut q0, vq0, weight.weight);
+                add_weighted_quat(&raw mut qe, vqe, weight.weight);
+                add_weighted_vec3(&raw mut qs, t.scale, weight.weight);
             }
         }
 
         if skin_vertex.dq_weight < 1.0 {
-            // SAFETY: `mat` is a live stack local written through `&mut`; `cluster`
-            // is a live `SkinCluster`, so `&(*cluster).geometry_to_world` borrows
-            // its own matrix field.
+            // SAFETY: `mat` is a live stack local and `cluster` is a live
+            // `SkinCluster`; both raw addresses mirror the C operands.
             unsafe {
                 add_weighted_mat(
-                    &mut mat,
-                    &(*cluster).geometry_to_world,
+                    &raw mut mat,
+                    &raw const (*cluster).geometry_to_world,
                     (1.0 - skin_vertex.dq_weight) * weight.weight,
                 )
             };
@@ -3765,13 +3760,13 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
         dqt.translation.x = rcp_len2x2 * (-qe.w * q0.x + qe.x * q0.w - qe.y * q0.z + qe.z * q0.y);
         dqt.translation.y = rcp_len2x2 * (-qe.w * q0.y + qe.x * q0.z + qe.y * q0.w - qe.z * q0.x);
         dqt.translation.z = rcp_len2x2 * (-qe.w * q0.z - qe.x * q0.y + qe.y * q0.x + qe.z * q0.w);
-        // SAFETY: `dqt` is a live, fully written stack `Transform`; `&dqt` is a
-        // valid borrow passed to `transform_to_matrix`.
-        let dqm: Matrix = unsafe { transform_to_matrix(&dqt) };
+        // SAFETY: `dqt` is a live, fully written stack `Transform`; its raw
+        // address is passed to `transform_to_matrix`.
+        let dqm: Matrix = unsafe { transform_to_matrix(&raw const dqt) };
         if skin_vertex.dq_weight < 1.0 {
-            // SAFETY: `mat` is a live stack local written through `&mut`; `&dqm`
-            // borrows the live stack matrix computed above.
-            unsafe { add_weighted_mat(&mut mat, &dqm, skin_vertex.dq_weight) };
+            // SAFETY: `mat` and `dqm` are live stack matrices; their raw
+            // addresses mirror C's address-of operands.
+            unsafe { add_weighted_mat(&raw mut mat, &raw const dqm, skin_vertex.dq_weight) };
         } else {
             mat = dqm;
         }
@@ -3870,13 +3865,13 @@ pub(crate) unsafe fn get_blend_vertex_offset(blend: *const BlendDeformer, vertex
                 continue;
             }
 
-            // SAFETY: same live `BlendKeyframe`; `ref_ptr` borrows its own `shape`
-            // field, and the result feeds `get_blend_shape_vertex_offset`.
+            // SAFETY: same live `BlendKeyframe`; the raw address identifies its
+            // own `shape` field and feeds `get_blend_shape_vertex_offset`.
             let key_offset: Vec3 =
-                unsafe { get_blend_shape_vertex_offset(ref_ptr(&(*key).shape), vertex) };
-            // SAFETY: `offset` is a live stack local written through `&mut`;
+                unsafe { get_blend_shape_vertex_offset(ref_ptr(&raw const (*key).shape), vertex) };
+            // SAFETY: `offset` is a live stack local;
             // reading the same keyframe's `effective_weight`.
-            unsafe { add_weighted_vec3(&mut offset, key_offset, (*key).effective_weight) };
+            unsafe { add_weighted_vec3(&raw mut offset, key_offset, (*key).effective_weight) };
         }
         // SAFETY: `p_chan` is before `p_chan_end`, so stepping one element stays
         // within the channel pointer list (up to one-past-end).
@@ -3972,11 +3967,11 @@ pub(crate) unsafe fn add_blend_vertex_offsets(
             if unsafe { (*key).effective_weight } == 0.0 {
                 continue;
             }
-            // SAFETY: same live `BlendKeyframe`; `ref_ptr` borrows its own `shape`
-            // field and the weight reads its own `effective_weight`.
+            // SAFETY: same live `BlendKeyframe`; the raw address identifies its
+            // own `shape` field and the weight reads its own `effective_weight`.
             unsafe {
                 add_blend_shape_vertex_offsets(
-                    ref_ptr(&(*key).shape),
+                    ref_ptr(&raw const (*key).shape),
                     vertices,
                     num_vertices,
                     weight * (*key).effective_weight,
@@ -4019,9 +4014,9 @@ pub(crate) unsafe fn evaluate_nurbs_basis(
     // Binary search for the knot span `[min_u, max_u]` where `min_u <= u < max_u`
     // C: `ufbx_real_list knots = basis->knot_vector;` — a by-value list copy;
     // `List` is not `Copy`, so read through a pointer to the same data.
-    // SAFETY: same live `NurbsBasis`; `&(*basis).knot_vector` borrows its own
-    // list field, kept as a raw pointer to the same data.
-    let knots: *const List<Real> = unsafe { &(*basis).knot_vector };
+    // SAFETY: same live `NurbsBasis`; the raw field address preserves C's
+    // address-of semantics without creating a Rust reference.
+    let knots: *const List<Real> = unsafe { &raw const (*basis).knot_vector };
     let mut knot: usize = usize::MAX;
 
     // SAFETY: same live `NurbsBasis`; reading its own `t_min` field.
@@ -4163,12 +4158,12 @@ pub(crate) unsafe fn evaluate_nurbs_curve(curve: *const NurbsCurve, u: Real) -> 
         )
     };
     // SAFETY: `curve` is non-null here (checked above) and points at a live
-    // `NurbsCurve` per this fn's contract; `&(*curve).basis` borrows its own
-    // basis field, and `weights`/`derivs` are live stack buffers of length
+    // `NurbsCurve` per this fn's contract; the raw basis-field address and
+    // `weights`/`derivs` are live buffers of length
     // `MAX_NURBS_ORDER`.
     let base: usize = unsafe {
         evaluate_nurbs_basis(
-            &(*curve).basis,
+            &raw const (*curve).basis,
             u,
             weights.as_mut_ptr(),
             MAX_NURBS_ORDER,
@@ -4256,12 +4251,12 @@ pub(crate) unsafe fn evaluate_nurbs_surface(
         )
     };
     // SAFETY: `surface` is non-null here (checked above) and points at a live
-    // `NurbsSurface` per this fn's contract; `&(*surface).basis_u` borrows its
-    // own basis field, and `weights_u`/`derivs_u` are live stack buffers of
+    // `NurbsSurface` per this fn's contract; the raw basis-field address and
+    // `weights_u`/`derivs_u` are live stack buffers of
     // length `MAX_NURBS_ORDER`.
     let base_u: usize = unsafe {
         evaluate_nurbs_basis(
-            &(*surface).basis_u,
+            &raw const (*surface).basis_u,
             u,
             weights_u.as_mut_ptr(),
             MAX_NURBS_ORDER,
@@ -4269,11 +4264,11 @@ pub(crate) unsafe fn evaluate_nurbs_surface(
             MAX_NURBS_ORDER,
         )
     };
-    // SAFETY: same live `NurbsSurface`; `&(*surface).basis_v` borrows its own
-    // basis field, and `weights_v`/`derivs_v` are live stack buffers.
+    // SAFETY: same live `NurbsSurface`; the raw basis-field address and
+    // `weights_v`/`derivs_v` are live stack buffers.
     let base_v: usize = unsafe {
         evaluate_nurbs_basis(
-            &(*surface).basis_v,
+            &raw const (*surface).basis_v,
             v,
             weights_v.as_mut_ptr(),
             MAX_NURBS_ORDER,
@@ -5543,8 +5538,8 @@ pub(crate) unsafe fn read_geometry_cache_real(
         // `stream` plus that filename under its documented contract.
         if !unsafe {
             crate::native::read::open_file(
-                &opts.open_file_cb as *const RawOpenFileCb,
-                &mut stream,
+                &raw const opts.open_file_cb,
+                &raw mut stream,
                 (*frame).filename.data,
                 (*frame).filename.length,
                 core::ptr::null(),
@@ -7389,9 +7384,9 @@ mod tests {
         // Expose the wide allocation so `get_imp` can recover this header via
         // exposed provenance from a (possibly narrowed) public pointer.
         (imp as *mut u8).expose_provenance();
-        // SAFETY: `imp` is a live zeroed `MeshImp`; `&mut (*imp).refcount`
-        // addresses its own refcount header, initialized with `parent`.
-        unsafe { init_ref(&mut (*imp).refcount, MESH_IMP_MAGIC, parent) };
+        // SAFETY: `imp` is a live zeroed `MeshImp`; the raw field address
+        // identifies its own refcount header, initialized with `parent`.
+        unsafe { init_ref(&raw mut (*imp).refcount, MESH_IMP_MAGIC, parent) };
         // SAFETY: same live `imp`; writing its own `magic` field.
         unsafe { (*imp).magic = MESH_IMP_MAGIC };
 
@@ -7443,7 +7438,7 @@ mod tests {
             let mut error = Error::default();
             let parent = make_imp(&mut error, core::ptr::null_mut());
             // Child holds the only reference to the parent (init_ref retains).
-            let child = make_imp(&mut error, &mut (*parent).refcount);
+            let child = make_imp(&mut error, &raw mut (*parent).refcount);
             assert_eq!(
                 (*parent)
                     .refcount
@@ -7454,7 +7449,7 @@ mod tests {
 
             // Releasing the child (count 0) frees it AND iteratively releases
             // the parent, whose count drops from 1 to 0 -> freed too.
-            release_ref(&mut (*child).refcount);
+            release_ref(&raw mut (*child).refcount);
         }
     }
 
@@ -7930,7 +7925,11 @@ mod tests {
             // Expose the wide allocation so `get_imp` can recover this header via
             // exposed provenance from a (possibly narrowed) public pointer.
             (imp as *mut u8).expose_provenance();
-            init_ref(&mut (*imp).refcount, SCENE_IMP_MAGIC, core::ptr::null_mut());
+            init_ref(
+                &raw mut (*imp).refcount,
+                SCENE_IMP_MAGIC,
+                core::ptr::null_mut(),
+            );
             (*imp).magic = SCENE_IMP_MAGIC;
             (*imp).refcount.ator = ator;
             (*imp).refcount.buf = buf;

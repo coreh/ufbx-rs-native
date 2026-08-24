@@ -288,8 +288,8 @@ pub(crate) struct InnerCacheContext {
 #[cfg(feature = "geometry-cache")]
 pub(crate) struct CacheContext(core::cell::UnsafeCell<core::mem::MaybeUninit<InnerCacheContext>>);
 
-// Typed interior-mutable VIEW over the `opts` field, reinterpreted in place
-// (approach A). Generated ABI-fixed `RawGeometryCacheOpts` plays the `Inner` role;
+// Typed interior-mutable view over the `opts` field, reinterpreted in place.
+// Generated ABI-fixed `RawGeometryCacheOpts` is the inner storage;
 // `MaybeUninit` makes forming `&GeometryCacheOptsView` assert no validity — each leaf getter
 // asserts only the field it reads.
 #[cfg(feature = "geometry-cache")]
@@ -328,7 +328,7 @@ impl GeometryCacheOptsView {
     }
 }
 
-// Typed interior-mutable VIEW over `CacheContext.cache` (approach A). List fields
+// Typed interior-mutable view over `CacheContext.cache`. List fields
 // recurse into `ListView`; the whole-`String` field uses value getter + setter.
 #[cfg(feature = "geometry-cache")]
 pub(crate) type GeometryCacheView = crate::native::view::View<GeometryCache>;
@@ -477,7 +477,7 @@ impl CacheContext {
     }
     #[inline(always)]
     pub(crate) fn buffer_size(&self) -> usize {
-        unsafe { core::mem::size_of_val(&(*self.get()).buffer) }
+        core::mem::size_of::<[u8; 128]>()
     }
     // `stream_filename` (String) / `xml_type`/`xml_format` (Copy enums) — value getter/setter.
     #[inline(always)]
@@ -830,9 +830,11 @@ pub(crate) unsafe fn cache_read(
             );
         }
         cc.set_file_offset(cc.file_offset().wrapping_add(num_read as u64));
+        // `num_read` was checked against the current `size`, so both the
+        // subtraction and following pointer advance stay within the caller's
+        // remaining destination span.
         size -= num_read;
-        // SAFETY: `num_read <= size` (checked just above), so the advance stays
-        // within the caller's `size`-byte destination.
+        // SAFETY: justified immediately above.
         dst = unsafe { (dst as *mut u8).add(num_read) } as *mut c_void;
     } else {
         // SAFETY: the stream's `read_fn` is non-null for the whole lifetime of
@@ -875,8 +877,10 @@ pub(crate) unsafe fn cache_read(
         cc.set_file_offset(cc.file_offset().wrapping_add(size as u64));
 
         let num_written: usize = min_sz(size, num_read);
+        // `num_written <= size` before the subtraction, so both it and the
+        // following pointer advance stay within the remaining destination.
         size -= num_written;
-        // SAFETY: `num_written <= size`, the caller's remaining writable bytes.
+        // SAFETY: justified immediately above.
         dst = unsafe { (dst as *mut u8).add(num_written) } as *mut c_void;
     }
 
@@ -1328,7 +1332,7 @@ pub(crate) unsafe fn cache_sort_tmp_channels(
                 cc.ator_tmp(),
                 cc.tmp_arr_mut_ptr(),
                 cc.tmp_arr_size_mut_ptr(),
-                count * size_of::<CacheTmpChannel>()
+                count.wrapping_mul(size_of::<CacheTmpChannel>())
             )
         },
         "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->tmp_arr)), (&cc->tmp_arr), (&cc->tmp_arr_size), (count * sizeof(ufbxi_cache_tmp_channel)))"
@@ -1467,10 +1471,14 @@ pub(crate) fn cache_load_xml_imp(cc: &CacheContext, doc: &XmlDocumentView) -> Re
                 unsafe {
                     (*channel).name = name.value();
                     (*channel).interpretation = interpretation.value();
-                    push_string_place_str(cc.string_pool_mut_ptr(), &mut (*channel).name, false)?;
                     push_string_place_str(
                         cc.string_pool_mut_ptr(),
-                        &mut (*channel).interpretation,
+                        &raw mut (*channel).name,
+                        false,
+                    )?;
+                    push_string_place_str(
+                        cc.string_pool_mut_ptr(),
+                        &raw mut (*channel).interpretation,
                         false,
                     )?;
                 }
@@ -1526,7 +1534,7 @@ pub(crate) fn cache_load_xml(cc: &CacheContext) -> Result<(), Fail> {
     opts.prefix_length = unsafe { to_size(cc.pos_end().offset_from(cc.pos())) };
     // SAFETY: `opts` is a valid local; the error out-pointer is cc's own
     // error storage via its raw-ptr getter.
-    let doc: *mut XmlDocument = unsafe { load_xml(&mut opts, cc.error_mut_ptr()) };
+    let doc: *mut XmlDocument = unsafe { load_xml(&raw mut opts, cc.error_mut_ptr()) };
     ufbxi_check_err!(cc.error_view(), !doc.is_null(), "doc");
 
     // Bridge the raw `load_xml` result once; the view anchors the document for
@@ -1672,7 +1680,7 @@ pub(crate) fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
     }
 
     // Ensure worst case space for `path/filenameFrame123Tick456.mcx`
-    let name_buf_len: usize = cc.xml_filename_view().length() + 64;
+    let name_buf_len: usize = cc.xml_filename_view().length().wrapping_add(64);
     let name_buf: *mut u8 = cc.tmp_view().push(name_buf_len);
     ufbxi_check_err!(cc.error_view(), !name_buf.is_null(), "name_buf");
 
@@ -1711,9 +1719,11 @@ pub(crate) fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
         // writes above/here before `cache_try_open_file` reads it.
         unsafe {
             (*filename).length =
-                prefix_len + ufbxi_snprintf!(suffix_data, suffix_len, ".%s", extension) as usize;
+                prefix_len.wrapping_add(
+                    ufbxi_snprintf!(suffix_data, suffix_len, ".%s", extension) as usize
+                );
             let mut found: bool = false;
-            cache_try_open_file(cc, *filename, core::ptr::null(), &mut found)?;
+            cache_try_open_file(cc, *filename, core::ptr::null(), &raw mut found)?;
         }
     } else if cc.xml_type() == CacheXmlType::FilePerFrame {
         let mut lowest_time: u32 = 0;
@@ -1763,21 +1773,24 @@ pub(crate) fn cache_load_frame_files(cc: &CacheContext) -> Result<(), Fail> {
             // initialized `*filename`.
             unsafe {
                 if tick == 0 {
-                    (*filename).length = prefix_len
-                        + ufbxi_snprintf!(suffix_data, suffix_len, "Frame%u.%s", frame, extension)
-                            as usize;
+                    (*filename).length = prefix_len.wrapping_add(ufbxi_snprintf!(
+                        suffix_data,
+                        suffix_len,
+                        "Frame%u.%s",
+                        frame,
+                        extension
+                    ) as usize);
                 } else {
-                    (*filename).length = prefix_len
-                        + ufbxi_snprintf!(
-                            suffix_data,
-                            suffix_len,
-                            "Frame%uTick%u.%s",
-                            frame,
-                            tick,
-                            extension
-                        ) as usize;
+                    (*filename).length = prefix_len.wrapping_add(ufbxi_snprintf!(
+                        suffix_data,
+                        suffix_len,
+                        "Frame%uTick%u.%s",
+                        frame,
+                        tick,
+                        extension
+                    ) as usize);
                 }
-                cache_try_open_file(cc, *filename, core::ptr::null(), &mut found)?;
+                cache_try_open_file(cc, *filename, core::ptr::null(), &raw mut found)?;
             }
 
             // Update channel status
@@ -1846,7 +1859,7 @@ pub(crate) unsafe fn cache_sort_frames(
                 cc.ator_tmp(),
                 cc.tmp_arr_mut_ptr(),
                 cc.tmp_arr_size_mut_ptr(),
-                count * size_of::<CacheFrame>()
+                count.wrapping_mul(size_of::<CacheFrame>())
             )
         },
         "ufbxi_grow_array_size((cc->ator_tmp), sizeof(**(&cc->tmp_arr)), (&cc->tmp_arr), (&cc->tmp_arr_size), (count * sizeof(ufbx_cache_frame)))"
@@ -1958,7 +1971,7 @@ pub(crate) fn cache_setup_channels(cc: &CacheContext) -> Result<(), Fail> {
                 let name_end: *const CacheInterpretationName =
                     name.add(CACHE_INTERPRETATION_NAMES.len());
                 while name != name_end {
-                    if r#match(&(*chan).interpretation_name, (*name).pattern) {
+                    if r#match(&raw const (*chan).interpretation_name, (*name).pattern) {
                         (*chan).interpretation = (*name).interpretation;
                         break;
                     }
@@ -2030,7 +2043,7 @@ pub(crate) unsafe fn cache_load_imp(
     }
 
     // Make sure the filename we pass to `open_file_fn()` is NULL-terminated
-    let filename_data: *mut u8 = cc.tmp_view().push(filename.length + 1);
+    let filename_data: *mut u8 = cc.tmp_view().push(filename.length.wrapping_add(1));
     ufbxi_check_err!(cc.error_view(), !filename_data.is_null(), "filename_data");
     // SAFETY: `filename_data` is a fresh non-null `length + 1` byte arena
     // allocation (checked above), distinct from the caller's `filename` run of
@@ -2045,7 +2058,7 @@ pub(crate) unsafe fn cache_load_imp(
     let mut found: bool = false;
     // SAFETY: `filename_copy` is the NUL-terminated arena copy built just
     // above, and `&mut found` is a live local out-param.
-    unsafe { cache_try_open_file(cc, filename_copy, core::ptr::null(), &mut found)? };
+    unsafe { cache_try_open_file(cc, filename_copy, core::ptr::null(), &raw mut found)? };
     if !found {
         // SAFETY: `error_mut_ptr` addresses `cc`'s own `Error` field, and
         // `filename.data`/`.length` is the caller's live string run.
@@ -2200,22 +2213,22 @@ pub(crate) unsafe fn load_geometry_cache(
     unsafe {
         init_ator(
             cc.error_mut_ptr(),
-            &mut ator_tmp,
-            &opts.temp_allocator,
+            &raw mut ator_tmp,
+            &raw const opts.temp_allocator,
             c"temp",
         );
         init_ator(
             cc.error_mut_ptr(),
             cc.ator_result_mut_ptr(),
-            &opts.result_allocator,
+            &raw const opts.result_allocator,
             c"result",
         );
     }
-    cc.set_ator_tmp(&mut ator_tmp);
+    cc.set_ator_tmp(&raw mut ator_tmp);
 
     // SAFETY: `&opts` is a live local; the read copies this plain-data struct,
     // which stays valid to use afterwards.
-    cc.set_opts(unsafe { core::ptr::read(&opts) });
+    cc.set_opts(unsafe { core::ptr::read(&raw const opts) });
 
     cc.set_open_file_cb(opts.open_file_cb);
 
@@ -2269,7 +2282,7 @@ pub(crate) unsafe fn free_geometry_cache_imp(imp: *mut GeometryCacheImp) {
     // `string_buf` is that header's own buf, freed once as the cache dies.
     unsafe {
         ufbx_assert!((*imp).magic == CACHE_IMP_MAGIC);
-        buf_free(&mut (*imp).string_buf);
+        buf_free(&raw mut (*imp).string_buf);
     }
 }
 
@@ -2523,7 +2536,7 @@ pub(crate) unsafe fn find_external_file(
     // `ExternalFile`s sorted by the same key the predicates test — what the
     // binary search requires.
     unsafe {
-        macro_lower_bound_eq::<ExternalFile>(32, &mut ix, files, 0, num_files, less, equal);
+        macro_lower_bound_eq::<ExternalFile>(32, &raw mut ix, files, 0, num_files, less, equal);
     }
     if ix != usize::MAX {
         // SAFETY: `ix < num_files` whenever the search set it, so this is an
@@ -2642,12 +2655,12 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
             add_ptr(p_deformer, uc.scene_view().cache_deformers_view().count());
         while p_deformer != p_deformer_end {
             let deformer: *mut CacheDeformer = *p_deformer;
-            let file: *mut CacheFile = opt_ptr(&(*deformer).file);
-            if file.is_null() || opt_ptr(&(*file).external_cache).is_null() {
+            let file: *mut CacheFile = opt_ptr(&raw const (*deformer).file);
+            if file.is_null() || opt_ptr(&raw const (*file).external_cache).is_null() {
                 p_deformer = p_deformer.add(1);
                 continue;
             }
-            let cache: *mut GeometryCache = opt_ptr(&(*file).external_cache);
+            let cache: *mut GeometryCache = opt_ptr(&raw const (*file).external_cache);
             (*deformer).external_cache = Some(Ref::from_ptr(cache));
 
             // HACK: It seems like channels may be connected even if the name is wrong
@@ -2701,8 +2714,8 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
         return;
     }
 
-    // SAFETY: pure value math over a local copy of the matrix.
-    if unsafe { matrix_determinant(&uc.axis_matrix()) } < 0.0f32 as Real {
+    // SAFETY: pure value math over `uc`'s live axis-matrix field.
+    if unsafe { matrix_determinant(uc.axis_matrix_mut_ptr()) } < 0.0f32 as Real {
         if uc.opts_view().handedness_conversion_axis() != MirrorAxis::None {
             let mirror_axis: MirrorAxis = uc.opts_view().handedness_conversion_axis();
             uc.set_mirror_axis(mirror_axis);
@@ -2714,7 +2727,7 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
             // then a pure value read of it.
             unsafe {
                 mirror_matrix_dst(uc.axis_matrix_mut_ptr(), uc.mirror_axis());
-                ufbxi_dev_assert!(matrix_determinant(&uc.axis_matrix()) >= 0.0f32 as Real);
+                ufbxi_dev_assert!(matrix_determinant(uc.axis_matrix_mut_ptr()) >= 0.0f32 as Real);
             }
 
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
@@ -2743,14 +2756,14 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
         // over locals and the root's own transform fields.
         unsafe {
             let root_node: *mut Node = ref_ptr(uc.scene_view().root_node_ptr());
-            if !is_transform_identity(&(*root_node).local_transform) {
-                let root_mat: Matrix = transform_to_matrix(&(*root_node).local_transform);
-                axis_mat = matrix_mul(&root_mat, &axis_mat);
+            if !is_transform_identity(&raw const (*root_node).local_transform) {
+                let root_mat: Matrix = transform_to_matrix(&raw const (*root_node).local_transform);
+                axis_mat = matrix_mul(&raw const root_mat, &raw const axis_mat);
             }
 
-            mirror_matrix(&mut axis_mat, uc.mirror_axis());
+            mirror_matrix(&raw mut axis_mat, uc.mirror_axis());
 
-            (*root_node).local_transform = matrix_to_transform(&axis_mat);
+            (*root_node).local_transform = matrix_to_transform(&raw const axis_mat);
             (*root_node).node_to_parent = axis_mat;
         }
     }
@@ -2797,12 +2810,3 @@ pub(crate) fn scale_units(uc: &Context, mut target_meters: Real) -> Result<(), F
 
     Ok(())
 }
-
-// CONTINUATION POINT: `// -- Geometry caches` (ufbx.c:23946-24785) and
-// `// -- External files` (ufbx.c:24787-25010) are ported in FULL, both feature
-// arms. `ufbxi_load_external_files`, `ufbxi_transform_to_axes` and
-// `ufbxi_scale_units` still have no callers — all three are called only from
-// `ufbxi_load_imp` (ufbx.c:25204+, unported).
-//
-// Next banner: ufbx.c:25012 `// -- Curve evaluation` (owned by
-// `native/evaluate.rs`).

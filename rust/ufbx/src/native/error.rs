@@ -34,13 +34,6 @@
 //!   `__FUNCTION__` always is. Frame values otherwise differ from C by design
 //!   (PORTING.md: the fuzz table is regenerated per-build; the mechanism must
 //!   exist).
-//!
-//! Dormant references: the `uc`-context macros expand to
-//! `$crate::native::parse::fail_imp` / `fail_imp_no_stack`
-//! (C: ufbx.c:6652-6662) which the parse unit must define when `ufbxi_context`
-//! is ported — macro bodies are not resolved until first expansion.
-//!
-//! Phase 1: most items have no consumers yet.
 #![allow(dead_code, unused_macros, unused_imports)]
 use crate::generated::{Error, ErrorFrame, ErrorType, Panic};
 use crate::native::platform::{min_sz, ufbx_assert, ufbxi_ignore};
@@ -289,7 +282,7 @@ pub(crate) unsafe fn vsnprintf(
     // SAFETY: `buffer` describes the caller's `buf`/`buf_size` pair verbatim,
     // and `fmt` carries this fn's NUL-terminated format-string contract — the
     // two obligations `vprint` states.
-    unsafe { vprint(&mut buffer, fmt, args) };
+    unsafe { vprint(&raw mut buffer, fmt, args) };
     // C-parity: `buf_size - 1` — callers never pass buf_size == 0 (wrapping
     // matches the C unsigned underflow if one ever did).
     min_sz(buffer.pos, buf_size.wrapping_sub(1)) as i32
@@ -645,7 +638,7 @@ macro_rules! ufbxi_fmt_err_info {
 }
 pub(crate) use ufbxi_fmt_err_info;
 
-// ufbx.c:3521-3530 `ufbxi_clear_error`
+// ufbx.c:3521-3531 `ufbxi_clear_error`
 #[inline(never)]
 pub(crate) unsafe fn clear_error(err: *mut Error) {
     if err.is_null() {
@@ -1163,7 +1156,7 @@ macro_rules! ufbxi_fail_msg {
 }
 pub(crate) use ufbxi_fail_msg;
 
-// ufbx.c:3559-3614 `ufbxi_fix_error_type`
+// ufbx.c:3559-3612 `ufbxi_fix_error_type`
 // The strcmp ladder, called from the top-level entry points; `default_desc` is
 // the per-entry-point default description ("Failed to load", "Failed to
 // evaluate", ...) substituted when none was set. All literals are part of
@@ -1248,7 +1241,7 @@ pub(crate) unsafe fn fix_error_type(
 // -- Options-validation guards (ufbx.c:30302-30328; C defines these in the
 // `-- Setup` / API prelude — hosted here with the rest of the macro family)
 
-// ufbx.c:30302-30312 `ufbxi_uninitialized_options`
+// ufbx.c:30302-30311 `ufbxi_uninitialized_options`
 #[inline(never)]
 pub(crate) unsafe fn uninitialized_options(p_error: *mut Error) -> *mut core::ffi::c_void {
     if !p_error.is_null() {

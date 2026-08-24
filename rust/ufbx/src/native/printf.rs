@@ -14,9 +14,8 @@
 //! module). `PrintArg` mirrors the exact `va_arg` pulls the C performs:
 //! `int` (for `*` / `.*` widths), `uint32_t` (`%u`), `size_t` (`%zu`) and
 //! `const char *` (`%s`).
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 use crate::native::platform::{ufbxi_dev_assert, ufbxi_unreachable};
 

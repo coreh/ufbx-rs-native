@@ -7,10 +7,7 @@
 //! value/array parsing layer — the inline int/float array readers, the
 //! `ufbxi_ascii_array_task` span scanner, and the base64 decoder
 //! (ufbx.c:9910-10282), and finally the node-level parser
-//! `ufbxi_ascii_parse_node` (ufbx.c:10284-10695).
-//!
-//! CONTINUATION POINT: `// -- DOM retention` (ufbx.c:10696) — the next banner
-//! section, owned by `native::parse`.
+//! `ufbxi_ascii_parse_node` (ufbx.c:10285-10694).
 //!
 //! The `ufbxi_ascii` / `ufbxi_ascii_token` context structs are owned by
 //! `native::parse` (they are declared with the rest of `ufbxi_context` at
@@ -35,9 +32,8 @@
 //! `ufbxi_thread_pool_create_task` / `ufbxi_thread_pool_run_task`
 //! (`native::thread`) and falls back to the inline
 //! `ufbxi_ascii_array_task_imp` when no task slot is available.
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 use core::ffi::c_void;
 
@@ -85,7 +81,7 @@ pub(crate) const ASCII_STRING: u8 = b'S';
 // depends on that byte existing.
 static ASCII_EMPTY_STRING: [u8; 1] = [0];
 
-// ufbx.c:9413-9455 `ufbxi_ascii_refill`
+// ufbx.c:9413-9456 `ufbxi_ascii_refill`
 // `allow(unused_assignments)`: C's `char *dst_buffer = NULL; size_t dst_size = 0;`
 // initializers are kept verbatim even though both branches overwrite them.
 #[allow(unused_assignments)]
@@ -182,7 +178,7 @@ pub(crate) fn ascii_refill(uc: &Context) -> u8 {
     }
 }
 
-// ufbx.c:9457-9478 `ufbxi_ascii_yield`
+// ufbx.c:9458-9479 `ufbxi_ascii_yield`
 #[inline(never)]
 pub(crate) fn ascii_yield(uc: &Context) -> u8 {
     let ua: &AsciiView = uc.ascii_view();
@@ -215,7 +211,7 @@ pub(crate) fn ascii_yield(uc: &Context) -> u8 {
     ret
 }
 
-// ufbx.c:9480-9485 `ufbxi_ascii_peek`
+// ufbx.c:9481-9486 `ufbxi_ascii_peek`
 #[inline(always)]
 pub(crate) fn ascii_peek(uc: &Context) -> u8 {
     let ua: &AsciiView = uc.ascii_view();
@@ -227,7 +223,7 @@ pub(crate) fn ascii_peek(uc: &Context) -> u8 {
     unsafe { *ua.src() }
 }
 
-// ufbx.c:9487-9495 `ufbxi_ascii_next`
+// ufbx.c:9488-9495 `ufbxi_ascii_next`
 #[inline(always)]
 pub(crate) fn ascii_next(uc: &Context) -> u8 {
     let ua: &AsciiView = uc.ascii_view();
@@ -245,7 +241,7 @@ pub(crate) fn ascii_next(uc: &Context) -> u8 {
     unsafe { *ua.src() }
 }
 
-// ufbx.c:9497-9531 `ufbxi_ascii_parse_version`
+// ufbx.c:9497-9534 `ufbxi_ascii_parse_version`
 #[inline(never)]
 pub(crate) fn ascii_parse_version(uc: &Context) -> u32 {
     // C: `uint8_t digits[3];` — written before read (`num_digits` gates every
@@ -294,25 +290,25 @@ pub(crate) fn ascii_parse_version(uc: &Context) -> u32 {
     1000u32 * digits[0] as u32 + 100u32 * digits[1] as u32 + 10u32 * digits[2] as u32
 }
 
-// ufbx.c:9533-9537 `ufbxi_space_mask`
+// ufbx.c:9536-9540 `ufbxi_space_mask`
 pub(crate) const SPACE_MASK: u32 = (1u32 << (b' ' as u32 - 1))
     | (1u32 << (b'\t' as u32 - 1))
     | (1u32 << (b'\r' as u32 - 1))
     | (1u32 << (b'\n' as u32 - 1));
 
-// ufbx.c:9539-9541 `ufbx_static_assert(space_codepoint, ...)`
+// ufbx.c:9542-9544 `ufbx_static_assert(space_codepoint, ...)`
 const _: () = assert!(
     b' ' as u32 <= 32u32 && b'\t' as u32 <= 32u32 && b'\r' as u32 <= 32u32 && b'\n' as u32 <= 32u32
 );
 
-// ufbx.c:9543-9547 `ufbxi_is_space`
+// ufbx.c:9546-9550 `ufbxi_is_space`
 #[inline(always)]
 pub(crate) fn is_space(c: u8) -> bool {
     let v: u32 = (c as u32).wrapping_sub(1);
     v < 32 && ((SPACE_MASK >> v) & 0x1) != 0
 }
 
-// ufbx.c:9549-9610 `ufbxi_ascii_skip_whitespace`
+// ufbx.c:9552-9610 `ufbxi_ascii_skip_whitespace`
 #[inline(never)]
 pub(crate) fn ascii_skip_whitespace(uc: &Context) -> u8 {
     let ua: &AsciiView = uc.ascii_view();
@@ -465,7 +461,7 @@ pub(crate) unsafe fn ascii_push_token_string(
     Ok(())
 }
 
-// ufbx.c:9639-9658 `ufbxi_ascii_skip_until`
+// ufbx.c:9639-9659 `ufbxi_ascii_skip_until`
 #[inline(never)]
 pub(crate) fn ascii_skip_until(uc: &Context, dst: u8) -> Result<(), Fail> {
     let ua: &AsciiView = uc.ascii_view();
@@ -1708,7 +1704,7 @@ pub(crate) unsafe fn decode_base64(
 }
 
 // Recursion limited by check at the start
-// ufbx.c:10284-10695 `ufbxi_ascii_parse_node`
+// ufbx.c:10285-10694 `ufbxi_ascii_parse_node`
 // `ufbxi_recursive_function(int, ufbxi_ascii_parse_node, ..., UFBXI_MAX_NODE_DEPTH + 1, ...)`
 // (ufbx.c:10286-10287): under regression, a thread-local depth guard wraps the
 // recursive body (which C splits into `ufbxi_ascii_parse_node_rec`); otherwise
@@ -2630,7 +2626,7 @@ unsafe fn ascii_parse_node_rec(
 mod tests {
     use super::*;
 
-    // `ufbxi_is_space` (ufbx.c:9543-9547) is context-free: exactly
+    // `ufbxi_is_space` (ufbx.c:9546-9550) is context-free: exactly
     // ' ', '\t', '\r', '\n' and nothing else, including the c == 0 wraparound.
     #[test]
     fn test_is_space() {

@@ -3,15 +3,12 @@
 //! Huffman tree construction (`ufbxi_huff_build_imp` / `ufbxi_huff_build`, the
 //! `ufbxi_trees` overlay), static/dynamic tree init, `ufbxi_adler32`, the
 //! slow/fast inflate block decoders, retain handling and the `ufbx_inflate`
-//! entry point (C ABI shim in capi.rs). Continuation: see the trailing comment
-//! at the end of this file.
+//! entry point (C ABI shim in capi.rs).
 //!
 //! The whole C section is wrapped in `#if !defined(ufbx_inflate)`
 //! (ufbx.c:1850): a compile-time override hook for substituting a custom
 //! inflate implementation. The Rust port does not support that override, so
 //! the guard collapses away (no cfg needed).
-//!
-//! Phase 1: not all items have consumers yet.
 #![allow(dead_code, unused_macros, unused_imports)]
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -1255,7 +1252,7 @@ pub(crate) unsafe fn init_static_huff(trees: *mut Trees, input: *const InflateIn
     ufbx_assert!(err == 0);
 }
 
-// ufbx.c:2540-2601 `ufbxi_decode_dynamic_huff_bits`
+// ufbx.c:2540-2602 `ufbxi_decode_dynamic_huff_bits`
 #[inline(never)]
 pub(crate) unsafe fn decode_dynamic_huff_bits(
     dc: &DeflateContext,
@@ -2131,17 +2128,16 @@ pub(crate) unsafe fn inflate_block_fast(dc: &DeflateContext, trees: *mut Trees) 
 
 // ufbx.c:3094-3101 `ufbxi_inflate_init_retain`
 pub(crate) unsafe fn inflate_init_retain(retain: *mut InflateRetain) {
-    // Sole raw pointer to `*ret_imp` in this function (rule 4): local
-    // exclusive borrow in place of repeated `(*ret_imp).field` derefs.
-    // SAFETY: the caller's contract is that `retain` points at a valid
-    // `InflateRetain`, whose storage is large enough to reinterpret as the
-    // `InflateRetainImp` layout (static-asserted at ufbx.c:2028).
-    let ret_imp = unsafe { &mut *(retain as *mut InflateRetainImp) };
-    if !ret_imp.initialized {
-        // SAFETY: `&mut ret_imp.static_trees` is a live tree field; `init_static_huff`
-        // accepts a null `input`.
-        unsafe { init_static_huff(&mut ret_imp.static_trees, core::ptr::null()) };
-        ret_imp.initialized = true;
+    // SAFETY: the caller provides writable `InflateRetain` storage large
+    // enough for `InflateRetainImp` (layout asserted at ufbx.c:2028). Keep the
+    // projection raw so initializing the cached tree does not assert an
+    // exclusive Rust borrow over caller-owned retain storage.
+    let ret_imp = retain.cast::<InflateRetainImp>();
+    if !unsafe { (*ret_imp).initialized } {
+        unsafe {
+            init_static_huff(&raw mut (*ret_imp).static_trees, core::ptr::null());
+            (*ret_imp).initialized = true;
+        }
     }
 }
 
@@ -2198,7 +2194,7 @@ pub(crate) unsafe fn inflate(
     // uninit fields except `stream.cancel_bits`, which upstream never writes —
     // it is read on cancellation (ufbx.c:2184) as stack garbage. Zero-init pins
     // that read to 0 (benign: cancellation is re-checked after every block).
-    // ACCEPTED DIVERGENCE (fuzz-table ledger): because the block loop checks
+    // PORT DIVERGENCE (ufbx.c:2184): because the block loop checks
     // `err < 0` before `dc.stream_view().cancelled()` (ufbx.c:3242-3245), C's garbage
     // bits can produce a data-dependent decode error (-10/-11/-12/-13) before
     // the -28 cancel return; pinned-0 bits make the mid-block cancellation
@@ -2321,26 +2317,26 @@ pub(crate) unsafe fn inflate(
                 // Static Huffman: Initialize the trees once and cache them in `retain`.
                 // SAFETY: `ret_imp` is the caller's `retain` reinterpreted as
                 // `InflateRetainImp` (layout static-asserted); field reads/writes
-                // and `&mut` of `static_trees` go through this live pointer, and
-                // `init_static_huff` accepts the `input` borrow.
+                // and the raw address of `static_trees` go through this live
+                // pointer; `init_static_huff` accepts the `input` borrow.
                 if !unsafe { (*ret_imp).initialized } {
                     unsafe {
-                        init_static_huff(&mut (*ret_imp).static_trees, input);
+                        init_static_huff(&raw mut (*ret_imp).static_trees, input);
                         (*ret_imp).initialized = true;
                     }
                 }
-                // SAFETY: `ret_imp` is the live retain pointer; taking `&mut` of
-                // its `static_trees` field yields the cached tree pointer.
-                trees = unsafe { &mut (*ret_imp).static_trees };
+                // SAFETY: `ret_imp` is live; `&raw mut` projects the cached tree
+                // without manufacturing a temporary reference.
+                trees = unsafe { &raw mut (*ret_imp).static_trees };
             } else {
                 // Dynamic Huffman
-                // SAFETY: `&dc` is the live context; `&mut tree_data` is the live
-                // local `Trees` just zero-initialized.
-                err = unsafe { init_dynamic_huff(&dc, &mut tree_data) };
+                // SAFETY: `dc` is live and the raw address identifies the local
+                // `Trees` scratch just zero-initialized.
+                err = unsafe { init_dynamic_huff(&dc, &raw mut tree_data) };
                 if err != 0 {
                     return err;
                 }
-                trees = &mut tree_data;
+                trees = &raw mut tree_data;
             }
 
             loop {
@@ -2441,5 +2437,3 @@ pub(crate) unsafe fn inflate(
 }
 
 // ufbx.c:3278 `#endif // !defined(ufbx_inflate)` — END of the DEFLATE section.
-// CONTINUATION POINT for the next unit: ufbx.c:3280 `// -- Printf`
-// (`ufbxi_vprint`/`ufbxi_vsnprintf`/`ufbxi_snprintf`, → native/printf.rs).

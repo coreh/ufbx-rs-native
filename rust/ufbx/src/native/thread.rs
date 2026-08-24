@@ -6,9 +6,8 @@
 //! `_free`, `_create_task` and `_run_task`. The public
 //! `ufbx_thread_pool_run_task` entry point delegating to
 //! `ufbxi_thread_pool_execute` lives in `native::api` with its `capi.rs` shim.
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};

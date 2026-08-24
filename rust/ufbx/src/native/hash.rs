@@ -1,10 +1,8 @@
 //! Port of the `// -- Hash functions` banner section (ufbx.c:4702-4821) and
 //! the `// -- Hash map` banner section (ufbx.c:4356-4700: ufbxi_map struct,
 //! AA-tree overflow storage, open-addressing Robin Hood grow/find/insert, the
-//! `ufbxi_map_cmp_*` comparators). The hash functions come first (they were
-//! ported first); the hash map follows below them.
-//!
-//! Phase 1: not all items have consumers yet.
+//! `ufbxi_map_cmp_*` comparators). The hash functions are kept first in this
+//! module; the hash map follows below them.
 #![allow(dead_code, unused_macros, unused_imports)]
 use core::ffi::c_void;
 use core::mem::size_of;
@@ -12,12 +10,14 @@ use core::mem::size_of;
 use crate::native::allocator::{alloc, free, free_ator, ufbx_free, ufbx_malloc, Allocator};
 use crate::native::buf::{buf_free, push, Buf};
 use crate::native::error::{ufbxi_check_return_err, ufbxi_check_return_err_msg};
-use crate::native::platform::{read_u32, ufbx_assert, ufbxi_maybe_null, ufbxi_regression_assert};
+use crate::native::platform::{
+    read_u32, ufbx_assert, ufbxi_maybe_null, ufbxi_regression_assert, MAP_MAX_SCAN,
+};
 use crate::native::view::view_read;
 
 // ufbx.c:4688-4691 `ufbxi_ptr_id` — key type of the hash-map unit; kept up
 // here (out of C declaration order) because `ufbxi_hash_ptr_id` takes it by
-// value and the hash functions were ported first. The comparator
+// value. The comparator
 // `ufbxi_map_cmp_ptr_id` (ufbx.c:4693-4700) lives with the map port below.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -26,7 +26,7 @@ pub(crate) struct PtrId {
     pub id: u64,
 }
 
-// ufbx.c:4704-4730 `ufbxi_hash_string`
+// ufbx.c:4704-4729 `ufbxi_hash_string`
 #[inline(never)]
 pub(crate) unsafe fn hash_string(mut str_: *const u8, mut length: usize) -> u32 {
     let mut hash = length as u32;
@@ -228,13 +228,6 @@ pub(crate) use hash_ptr;
 //   ufbxi_map_insert() does not support duplicate values, use find first if duplicates are possible!
 //   Inserting duplicate elements fails with an assertion if `UFBX_REGRESSION` is enabled.
 
-// ufbx.c:55 `#define UFBXI_MAP_MAX_SCAN 32`
-#[cfg(not(feature = "regression"))]
-pub(crate) const MAP_MAX_SCAN: u32 = 32;
-// ufbx.c:1004-1005 regression override
-#[cfg(feature = "regression")]
-pub(crate) const MAP_MAX_SCAN: u32 = 2;
-
 // ufbx.c:4366 `typedef int ufbxi_cmp_fn(void *user, const void *a, const void *b);`
 pub(crate) type CmpFn =
     unsafe extern "C" fn(user: *mut c_void, a: *const c_void, b: *const c_void) -> i32;
@@ -325,7 +318,7 @@ impl MapView {
     }
 }
 
-// ufbx.c:4393-4420 `ufbxi_map_init`
+// ufbx.c:4393-4419 `ufbxi_map_init`
 #[inline(never)]
 pub(crate) unsafe fn map_init(
     map: *mut Map,
@@ -377,17 +370,17 @@ pub(crate) unsafe fn map_init(
     }
 }
 
-// ufbx.c:4421-4441 `ufbxi_map_free`
+// ufbx.c:4421-4440 `ufbxi_map_free`
 #[inline(never)]
 pub(crate) unsafe fn map_free(map: *mut Map) {
     #[cfg(feature = "regression")]
     // SAFETY: caller contract — `map` points at a live `Map`.
     let regression_ator: *mut Allocator = unsafe { (*map).aa_buf.ator };
 
-    // SAFETY: `&mut (*map).aa_buf` borrows the map's own AA-tree buffer, freed
-    // through the allocator it was allocated from; `map` is the caller's live
-    // `Map`.
-    unsafe { buf_free(&mut (*map).aa_buf) };
+    // SAFETY: `map` is live and `aa_buf` is its own AA-tree buffer, freed
+    // through the allocator it was allocated from. `&raw mut` preserves the
+    // raw pointer's provenance without manufacturing a temporary reference.
+    unsafe { buf_free(&raw mut (*map).aa_buf) };
     // SAFETY: `entries` is the combined entry/item block `map_grow_size_imp`
     // allocated from `map`'s own allocator with byte length `data_size` (0/null
     // for a never-grown map, which `free` tolerates).
@@ -469,9 +462,9 @@ unsafe fn aa_tree_insert_rec(
 ) -> *mut AaNode {
     let mut node = node;
     if node.is_null() {
-        // SAFETY: `&mut (*map).aa_buf` borrows the map's own AA-tree buffer
-        // (live `map` per caller contract); `push` allocates one `AaNode`.
-        let new_node = unsafe { push::<AaNode>(&mut (*map).aa_buf, 1) };
+        // SAFETY: `map` is live and `aa_buf` is its own AA-tree buffer;
+        // `&raw mut` preserves provenance while `push` allocates one `AaNode`.
+        let new_node = unsafe { push::<AaNode>(&raw mut (*map).aa_buf, 1) };
         if new_node.is_null() {
             return core::ptr::null_mut();
         }

@@ -15,8 +15,6 @@
 //! Warning dedup order and counts are hash-oracle-observable — the
 //! `prev_warnings` bookkeeping and the early-out `count++` path must match C
 //! exactly.
-//!
-//! Phase 1: no consumers yet (`ufbxi_context` / string pool arrive later).
 #![allow(dead_code, unused_macros, unused_imports)]
 
 use crate::generated::{Error, Warning, WarningType};
@@ -124,6 +122,7 @@ pub(crate) fn vwarnf_imp(
 
     // HACK(warning-element): Encode potential deferred element ID into `ufbx_warning.element_id`,
     // `ws->element_id_index_plus_one` contains index to `uc->tmp_element_id`.
+    // NOTE(ufbx-rs-native): the field is `ws->deferred_element_id_plus_one`.
     // Tag deferred indices with the high bit.
     //
     // SAFETY: `ws` comes from a live `WarningsView` (write provenance over
@@ -177,9 +176,10 @@ pub(crate) fn vwarnf_imp(
         "desc_copy"
     );
 
-    // SAFETY: `ws` as above — `tmp_stack` is an owned field of the viewed
-    // `Warnings`, not aliased across this call.
-    let warning: *mut Warning = unsafe { buf::push::<Warning>(&mut (*ws).tmp_stack, 1) };
+    // SAFETY: `ws` is live and `tmp_stack` is its owned buffer. `&raw mut`
+    // preserves the raw pointer's provenance without manufacturing a temporary
+    // reference.
+    let warning: *mut Warning = unsafe { buf::push::<Warning>(&raw mut (*ws).tmp_stack, 1) };
     ufbxi_check_err!(
         unsafe { crate::native::error::ErrorView::from_ptr((*ws).error) },
         !warning.is_null(),
@@ -249,7 +249,7 @@ macro_rules! ufbxi_warnf_tag {
 }
 pub(crate) use ufbxi_warnf_tag;
 
-// ufbx.c:4884-4894 `ufbxi_pop_warnings`
+// ufbx.c:4884-4893 `ufbxi_pop_warnings`
 #[inline(never)]
 pub(crate) unsafe fn pop_warnings(
     ws: *mut Warnings,
@@ -262,7 +262,7 @@ pub(crate) unsafe fn pop_warnings(
     unsafe {
         (*warnings).count = (*ws).tmp_stack.num_items;
         (*warnings).data =
-            buf::push_pop::<Warning>((*ws).result, &mut (*ws).tmp_stack, (*warnings).count);
+            buf::push_pop::<Warning>((*ws).result, &raw mut (*ws).tmp_stack, (*warnings).count);
     }
     ufbxi_check_err!(
         // SAFETY: `(*ws).error` is the context's live error slot (fn
@@ -286,10 +286,6 @@ pub(crate) unsafe fn pop_warnings(
     }
     Ok(())
 }
-
-// CONTINUATION POINT: `// -- Warnings` section complete (ufbx.c:4822-4894).
-// Next banner: ufbx.c:4896 `// -- String pool` (owned by native/string_pool.rs;
-// its `ufbxi_warnf_imp` call at ufbx.c:5070 goes through `ufbxi_warnf_imp!`).
 
 #[cfg(test)]
 mod tests {

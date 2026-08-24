@@ -12,9 +12,8 @@
 //! (tessellated positions/normals feed scene hashes) — operation order and the
 //! C `f`-suffixed literals (`0.0f`, `1.0f`, `0.0000001f` ported as
 //! `0.0f32 as Real`, ...) are verbatim.
-// Dead code with the full `c-abi` + `dev` surface enabled is a porting defect
-// (an orphaned stub that no ported call site reaches); leaner feature sets
-// legitimately strand items, so the lint is only armed for the full build.
+// A full `c-abi` + `dev` build requires every ported item to be reachable;
+// reduced feature sets legitimately leave gated helpers unused.
 #![cfg_attr(not(all(feature = "c-abi", feature = "dev")), allow(dead_code))]
 
 use core::mem::size_of;
@@ -198,7 +197,7 @@ pub(crate) struct InnerTessellateCurveContext {
 // it embeds the public `LineCurve` (enum-bearing) in `line`; `UnsafeCell` gives the
 // interior mutability every `&TessellateCurveContext` site needs. Field is
 // `pub(crate)` — the sole construction site lives in `native::api`.
-// Typed interior-mutable VIEW over the tessellate opts (approach A).
+// Typed interior-mutable view over the tessellation options.
 pub(crate) type TessellateCurveOptsView =
     crate::native::view::View<crate::generated::RawTessellateCurveOpts>;
 
@@ -221,7 +220,7 @@ impl TessellateCurveOptsView {
     }
 }
 
-// Typed interior-mutable VIEW over the tessellate opts (approach A).
+// Typed interior-mutable view over the tessellation options.
 pub(crate) type TessellateSurfaceOptsView =
     crate::native::view::View<crate::generated::RawTessellateSurfaceOpts>;
 
@@ -639,26 +638,28 @@ pub(crate) fn tessellate_nurbs_curve_imp(
         (*segments.add(0)).num_indices = num_indices as u32;
     }
 
-    // SAFETY: `tc.line_mut_ptr()` is tc's own output `LineCurve` slot (tc
-    // construction invariant), not aliased for the rest of this function.
-    let line: &mut LineCurve = unsafe { &mut *line };
-    line.element.name.data = EMPTY_CHAR.as_ptr();
-    line.element.type_ = ElementType::LineCurve;
-    line.element.typed_id = u32::MAX;
-    line.element.element_id = u32::MAX;
+    // SAFETY: `line` is tc's own output `LineCurve` slot (tc construction
+    // invariant). Raw writes preserve C's field-address semantics without
+    // manufacturing an exclusive reference from the context pointer.
+    unsafe {
+        (*line).element.name.data = EMPTY_CHAR.as_ptr();
+        (*line).element.type_ = ElementType::LineCurve;
+        (*line).element.typed_id = u32::MAX;
+        (*line).element.element_id = u32::MAX;
 
-    line.color.x = 1.0f32 as Real;
-    line.color.y = 1.0f32 as Real;
-    line.color.z = 1.0f32 as Real;
+        (*line).color.x = 1.0f32 as Real;
+        (*line).color.y = 1.0f32 as Real;
+        (*line).color.z = 1.0f32 as Real;
 
-    line.control_points.data = vertices as *const Vec3;
-    line.control_points.count = num_vertices;
-    line.point_indices.data = indices as *const u32;
-    line.point_indices.count = num_indices;
-    line.segments.data = segments as *const LineSegment;
-    line.segments.count = 1;
+        (*line).control_points.data = vertices as *const Vec3;
+        (*line).control_points.count = num_vertices;
+        (*line).point_indices.data = indices as *const u32;
+        (*line).point_indices.count = num_indices;
+        (*line).segments.data = segments as *const LineSegment;
+        (*line).segments.count = 1;
 
-    line.from_tessellated_nurbs = true;
+        (*line).from_tessellated_nurbs = true;
+    }
 
     tc.set_imp(tc.result_view().push::<LineCurveImp>(1));
     ufbxi_check_err!(tc.error_view(), !tc.imp().is_null(), "tc->imp");
@@ -676,7 +677,8 @@ pub(crate) fn tessellate_nurbs_curve_imp(
     let finished_imp = unsafe {
         finish_imp(
             tc.imp(),
-            ImpHandle::<SceneImp>::from_payload(ref_ptr(&(*curve).element.scene)).refcount_ptr(),
+            ImpHandle::<SceneImp>::from_payload(ref_ptr(&raw const (*curve).element.scene))
+                .refcount_ptr(),
             tc.line_mut_ptr(),
             tc.ator_result(),
             tc.take_result(),
@@ -1041,61 +1043,59 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         "positions && normals"
     );
 
-    {
-        // SAFETY: `tc.mesh_mut_ptr()` is tc's own output `Mesh` slot (tc
-        // construction invariant), unaliased here; the pointers stored into it
-        // are the result-buf pushes above, which outlive the mesh because they
-        // live in the same result arena.
-        let mesh: &mut Mesh = unsafe { &mut *mesh };
-        mesh.element.name.data = EMPTY_CHAR.as_ptr();
-        mesh.element.type_ = ElementType::Mesh;
-        mesh.element.typed_id = u32::MAX;
-        mesh.element.element_id = u32::MAX;
+    // SAFETY: `mesh` is tc's own output `Mesh` slot. The pointers stored into
+    // it are result-buffer pushes that outlive the mesh; raw field writes avoid
+    // creating an exclusive reference from the context pointer.
+    unsafe {
+        (*mesh).element.name.data = EMPTY_CHAR.as_ptr();
+        (*mesh).element.type_ = ElementType::Mesh;
+        (*mesh).element.typed_id = u32::MAX;
+        (*mesh).element.element_id = u32::MAX;
 
-        mesh.vertices.data = positions as *const Vec3;
-        mesh.vertices.count = num_positions as usize;
-        mesh.num_vertices = num_positions as usize;
-        mesh.vertex_indices.data = vertex_ix as *const u32;
-        mesh.vertex_indices.count = dst_index;
+        (*mesh).vertices.data = positions as *const Vec3;
+        (*mesh).vertices.count = num_positions as usize;
+        (*mesh).num_vertices = num_positions as usize;
+        (*mesh).vertex_indices.data = vertex_ix as *const u32;
+        (*mesh).vertex_indices.count = dst_index;
 
-        mesh.faces.data = faces as *const Face;
-        mesh.faces.count = num_faces;
+        (*mesh).faces.data = faces as *const Face;
+        (*mesh).faces.count = num_faces;
 
-        mesh.vertex_position.exists = true;
-        mesh.vertex_position.values.data = positions as *const Vec3;
-        mesh.vertex_position.values.count = num_positions as usize;
-        mesh.vertex_position.indices.data = vertex_ix as *const u32;
-        mesh.vertex_position.indices.count = dst_index;
-        mesh.vertex_position.unique_per_vertex = true;
+        (*mesh).vertex_position.exists = true;
+        (*mesh).vertex_position.values.data = positions as *const Vec3;
+        (*mesh).vertex_position.values.count = num_positions as usize;
+        (*mesh).vertex_position.indices.data = vertex_ix as *const u32;
+        (*mesh).vertex_position.indices.count = dst_index;
+        (*mesh).vertex_position.unique_per_vertex = true;
 
-        mesh.vertex_uv.exists = true;
-        mesh.vertex_uv.values.data = uvs as *const Vec2;
-        mesh.vertex_uv.values.count = dst_index;
-        mesh.vertex_uv.indices.data = attrib_ix as *const u32;
-        mesh.vertex_uv.indices.count = dst_index;
+        (*mesh).vertex_uv.exists = true;
+        (*mesh).vertex_uv.values.data = uvs as *const Vec2;
+        (*mesh).vertex_uv.values.count = dst_index;
+        (*mesh).vertex_uv.indices.data = attrib_ix as *const u32;
+        (*mesh).vertex_uv.indices.count = dst_index;
 
-        mesh.vertex_normal.exists = true;
-        mesh.vertex_normal.values.data = normals as *const Vec3;
-        mesh.vertex_normal.values.count = num_positions as usize;
-        mesh.vertex_normal.indices.data = vertex_ix as *const u32;
-        mesh.vertex_normal.indices.count = dst_index;
+        (*mesh).vertex_normal.exists = true;
+        (*mesh).vertex_normal.values.data = normals as *const Vec3;
+        (*mesh).vertex_normal.values.count = num_positions as usize;
+        (*mesh).vertex_normal.indices.data = vertex_ix as *const u32;
+        (*mesh).vertex_normal.indices.count = dst_index;
 
-        mesh.vertex_tangent.exists = true;
-        mesh.vertex_tangent.values.data = tangents as *const Vec3;
-        mesh.vertex_tangent.values.count = dst_index;
-        mesh.vertex_tangent.indices.data = attrib_ix as *const u32;
-        mesh.vertex_tangent.indices.count = dst_index;
+        (*mesh).vertex_tangent.exists = true;
+        (*mesh).vertex_tangent.values.data = tangents as *const Vec3;
+        (*mesh).vertex_tangent.values.count = dst_index;
+        (*mesh).vertex_tangent.indices.data = attrib_ix as *const u32;
+        (*mesh).vertex_tangent.indices.count = dst_index;
 
-        mesh.vertex_bitangent.exists = true;
-        mesh.vertex_bitangent.values.data = bitangents as *const Vec3;
-        mesh.vertex_bitangent.values.count = dst_index;
-        mesh.vertex_bitangent.indices.data = attrib_ix as *const u32;
-        mesh.vertex_bitangent.indices.count = dst_index;
+        (*mesh).vertex_bitangent.exists = true;
+        (*mesh).vertex_bitangent.values.data = bitangents as *const Vec3;
+        (*mesh).vertex_bitangent.values.count = dst_index;
+        (*mesh).vertex_bitangent.indices.data = attrib_ix as *const u32;
+        (*mesh).vertex_bitangent.indices.count = dst_index;
 
-        mesh.num_faces = num_faces;
-        mesh.num_triangles = num_triangles;
-        mesh.num_indices = dst_index;
-        mesh.max_face_triangles = 2;
+        (*mesh).num_faces = num_faces;
+        (*mesh).num_triangles = num_triangles;
+        (*mesh).num_indices = dst_index;
+        (*mesh).max_face_triangles = 2;
     }
 
     // SAFETY: `mesh` is tc's own mesh slot, reached through `*mut` off the
@@ -1107,7 +1107,7 @@ pub(crate) fn tessellate_nurbs_surface_imp(
 
     // SAFETY: reading the live surface's material ref (tc construction
     // invariant).
-    if !unsafe { opt_ptr(&(*surface).material) }.is_null() {
+    if !unsafe { opt_ptr(&raw const (*surface).material) }.is_null() {
         mesh_view
             .face_material_view()
             .set_data(tc.result_view().push_zero::<u32>(num_faces) as *const u32);
@@ -1123,7 +1123,7 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         // SAFETY: `mat` is the fresh non-null single-element push just
         // checked; the material it receives is the surface's own live ref.
         unsafe {
-            *mat = opt_ptr(&(*surface).material);
+            *mat = opt_ptr(&raw const (*surface).material);
         }
         mesh_view
             .materials_view()
@@ -1193,7 +1193,8 @@ pub(crate) fn tessellate_nurbs_surface_imp(
     let finished_imp = unsafe {
         finish_imp(
             tc.imp(),
-            ImpHandle::<SceneImp>::from_payload(ref_ptr(&(*surface).element.scene)).refcount_ptr(),
+            ImpHandle::<SceneImp>::from_payload(ref_ptr(&raw const (*surface).element.scene))
+                .refcount_ptr(),
             tc.mesh_mut_ptr(),
             tc.ator_result(),
             tc.take_result(),
