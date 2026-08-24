@@ -6,7 +6,7 @@ use crate::generated::format_error;
 use crate::generated::{
     Error, Progress, ProgressResult, RawAllocator, RawStream, RawVertexStream, Vec2, Vec3, Vec4,
 };
-use crate::native::view::{view_read, view_read_shared, view_write};
+use crate::native::view::{view_raw_mut, view_read, view_read_shared, view_write};
 use crate::{OpenFileInfo, RawThreadPool};
 use std::alloc::{self, GlobalAlloc, Layout, System};
 use std::any::Any;
@@ -517,6 +517,17 @@ impl<T> ListView<T> {
     #[inline(always)]
     pub(crate) fn set_data(&self, data: *const T) {
         view_write!(self, data, data)
+    }
+    /// Address-of-parity projections for the C `&list->data` / `&list->count`
+    /// out-param idiom (`ufbxi_read_truncated_array`): a single-leaf `&raw mut`
+    /// carrying the view's own provenance, so the caller writes no `unsafe`.
+    #[inline(always)]
+    pub(crate) fn data_raw(&self) -> *mut *const T {
+        view_raw_mut!(self, data)
+    }
+    #[inline(always)]
+    pub(crate) fn count_raw(&self) -> *mut usize {
+        view_raw_mut!(self, count)
     }
 }
 

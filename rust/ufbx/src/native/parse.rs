@@ -49,7 +49,7 @@ use crate::native::platform::{
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{SanitizedString, StringPool};
 use crate::native::thread::{ThreadPool, THREAD_GROUP_COUNT};
-use crate::native::view::{view_raw_const, view_raw_mut, view_read, view_write};
+use crate::native::view::{view_raw_const, view_raw_mut, view_read, view_read_shared, view_write};
 use crate::native::view::{Mode, SliceViewIter, View};
 use crate::native::warnings::Warnings;
 use crate::prelude::{Blob, Real, Ref, String};
@@ -114,6 +114,26 @@ pub(crate) struct ValueArray {
     pub data: *mut c_void, // < Pointer to `size` bool/int32_t/int64_t/float/double elements
     pub size: usize,       // < Number of elements
     pub type_: u8,         // < FBX type code: b/i/l/f/d
+}
+
+// Read surface over an array descriptor returned by `get_array`/`find_array`;
+// mode-generic because the descriptor is only ever read (the payload run it
+// names is addressed through the raw `data()` pointer, which carries its own
+// stored provenance).
+#[allow(dead_code)]
+impl<M: Mode> View<ValueArray, M> {
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *mut c_void {
+        view_read_shared!(self, data)
+    }
+    #[inline(always)]
+    pub(crate) fn size(&self) -> usize {
+        view_read_shared!(self, size)
+    }
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> u8 {
+        view_read_shared!(self, type_)
+    }
 }
 
 // ufbx.c:6197-6213 `ufbxi_node`
@@ -802,12 +822,56 @@ pub(crate) struct TmpMeshTexture {
     pub all_same: bool,
 }
 
+#[allow(dead_code)]
+impl View<TmpMeshTexture> {
+    #[inline(always)]
+    pub(crate) fn set_prop_name(&self, value: String) {
+        view_write!(self, prop_name, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_face_texture(&self, value: *mut u32) {
+        view_write!(self, face_texture, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_faces(&self, value: usize) {
+        view_write!(self, num_faces, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_all_same(&self, value: bool) {
+        view_write!(self, all_same, value)
+    }
+}
+
 // ufbx.c:6341-6344 `ufbxi_mesh_extra`
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(crate) struct MeshExtra {
     pub texture_arr: *mut TmpMeshTexture,
     pub texture_count: usize,
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<MeshExtra, M> {
+    #[inline(always)]
+    pub(crate) fn texture_arr(&self) -> *mut TmpMeshTexture {
+        view_read_shared!(self, texture_arr)
+    }
+    #[inline(always)]
+    pub(crate) fn texture_count(&self) -> usize {
+        view_read_shared!(self, texture_count)
+    }
+}
+
+#[allow(dead_code)]
+impl View<MeshExtra> {
+    #[inline(always)]
+    pub(crate) fn set_texture_arr(&self, value: *mut TmpMeshTexture) {
+        view_write!(self, texture_arr, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_texture_count(&self, value: usize) {
+        view_write!(self, texture_count, value)
+    }
 }
 
 // ufbx.c:6346-6350 `ufbxi_tmp_material_texture`
