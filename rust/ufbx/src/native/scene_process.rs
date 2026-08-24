@@ -5851,249 +5851,150 @@ pub(crate) fn finalize_shader_texture<'a>(
 // ufbx.c:20692-20752 `ufbxi_propagate_main_textures`
 #[inline(never)]
 pub(crate) fn propagate_main_textures(scene_view: &SceneView) {
-    let scene: *mut Scene = scene_view.get();
+    let textures: &RefListView<Texture> = scene_view.textures_view();
     // We need to do at least 2^(N-1) passes for N shader textures
-    // SAFETY: `scene` is the scene view's own live, initialized `ufbx_scene`
-    // storage, so its `metadata` is readable.
-    let mut mask: usize = unsafe { (*scene).metadata.num_shader_textures };
+    let mut mask: usize = scene_view.metadata_view().num_shader_textures();
     while mask != 0 {
         mask >>= 1;
 
         // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, scene->textures)`
-        // SAFETY: `scene` is live, so its own texture pointer list is readable.
-        // `data`/`count` describe one arena run.
-        let (mut p_texture, p_texture_count) = unsafe {
-            (
-                (*scene).textures.data as *mut *mut Texture,
-                (*scene).textures.count,
-            )
-        };
-        let p_texture_end: *mut *mut Texture = add_ptr(p_texture, p_texture_count);
-        while p_texture != p_texture_end {
-            // SAFETY: `p_texture != p_texture_end`, so it addresses a live slot of
-            // the scene's texture pointer run.
-            let texture: *mut Texture = unsafe { *p_texture };
-            // SAFETY: the run holds non-null pointers to live scene textures;
-            // `shader` is a live `Ref<ShaderTexture>` field of one.
-            let shader: *mut ShaderTexture = unsafe { opt_ptr(&raw const (*texture).shader) };
-            if shader.is_null() {
-                // SAFETY: `p_texture != p_texture_end`, so the advance lands at or
-                // before the run's one-past-the-end pointer.
-                p_texture = unsafe { p_texture.add(1) };
+        for texture_ix in 0..textures.count() {
+            let texture: &TextureView = textures.at(texture_ix);
+            let Some(shader) = texture.shader() else {
+                continue;
+            };
+            // SAFETY: `shader` is the viewed texture's own non-null
+            // `ufbx_shader_texture` reference, so it names a live scene shader
+            // texture with the scene's write-capable provenance.
+            let shader: &ShaderTextureView = unsafe { ShaderTextureView::from_ptr(shader.ptr()) };
+
+            let Some(main_tex) = shader.main_texture() else {
+                continue;
+            };
+            if shader.main_texture_output_index() != 0 {
                 continue;
             }
 
-            // SAFETY (this group): `shader` is non-null (checked) and points to a live
-            // `ufbx_shader_texture` owned by that texture.
-            let main_tex: *mut Texture = unsafe { opt_ptr(&raw const (*shader).main_texture) };
-            if main_tex.is_null() || unsafe { (*shader).main_texture_output_index } != 0 {
-                // SAFETY: `p_texture != p_texture_end` (see above).
-                p_texture = unsafe { p_texture.add(1) };
+            // SAFETY: `main_tex` is the viewed shader texture's own non-null
+            // `main_texture` reference, so it names a live scene texture with
+            // the scene's write-capable provenance.
+            let main_tex: &TextureView = unsafe { TextureView::from_ptr(main_tex.ptr()) };
+            let Some(main_shader) = main_tex.shader() else {
+                continue;
+            };
+            // SAFETY: `main_shader` is that texture's own non-null
+            // `ufbx_shader_texture` reference (see the `shader` mint above).
+            let main_shader: &ShaderTextureView =
+                unsafe { ShaderTextureView::from_ptr(main_shader.ptr()) };
+            if main_shader.main_texture().is_none() {
                 continue;
             }
 
-            // SAFETY: `main_tex` is non-null (checked) and points to a live scene
-            // texture.
-            let main_shader: *mut ShaderTexture = unsafe { opt_ptr(&raw const (*main_tex).shader) };
-            // SAFETY: `main_shader` is non-null on the right of the `||`
-            // short-circuit and points to a live `ufbx_shader_texture`.
-            if main_shader.is_null()
-                || unsafe { opt_ptr(&raw const (*main_shader).main_texture) }.is_null()
-            {
-                // SAFETY: `p_texture != p_texture_end` (see above).
-                p_texture = unsafe { p_texture.add(1) };
-                continue;
-            }
-
-            // SAFETY: `shader` and `main_shader` are both non-null (checked) and
-            // point to live `ufbx_shader_texture`s.
-            unsafe {
-                (*shader).main_texture = (*main_shader).main_texture;
-                (*shader).main_texture_output_index = (*main_shader).main_texture_output_index;
-            }
-
-            // SAFETY: `p_texture != p_texture_end` (see above).
-            p_texture = unsafe { p_texture.add(1) };
+            shader.set_main_texture(main_shader.main_texture());
+            shader.set_main_texture_output_index(main_shader.main_texture_output_index());
         }
     }
 
     // Remove cyclic main textures
     // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, scene->textures)`
-    // SAFETY: `scene` is live (see above), so its own texture pointer list is
-    // readable.
-    // `data`/`count` describe one arena run.
-    let (mut p_texture, p_texture_count) = unsafe {
-        (
-            (*scene).textures.data as *mut *mut Texture,
-            (*scene).textures.count,
-        )
-    };
-    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, p_texture_count);
-    while p_texture != p_texture_end {
-        // SAFETY: `p_texture != p_texture_end`, so it addresses a live slot of the
-        // scene's texture pointer run.
-        let texture: *mut Texture = unsafe { *p_texture };
-        // SAFETY: the run holds non-null pointers to live scene textures.
-        let shader: *mut ShaderTexture = unsafe { opt_ptr(&raw const (*texture).shader) };
-        // SAFETY: on the right of each `||` short-circuit `shader` is non-null and
-        // points to a live `ufbx_shader_texture`.
-        if shader.is_null()
-            || unsafe { opt_ptr(&raw const (*shader).main_texture) }.is_null()
-            || unsafe { (*shader).main_texture_output_index } != 0
-        {
-            // SAFETY: `p_texture != p_texture_end`, so the advance lands at or
-            // before the run's one-past-the-end pointer.
-            p_texture = unsafe { p_texture.add(1) };
+    for texture_ix in 0..textures.count() {
+        let texture: &TextureView = textures.at(texture_ix);
+        let Some(shader) = texture.shader() else {
+            continue;
+        };
+        // SAFETY: `shader` is the viewed texture's own non-null
+        // `ufbx_shader_texture` reference (see the mint in the pass above).
+        let shader: &ShaderTextureView = unsafe { ShaderTextureView::from_ptr(shader.ptr()) };
+        if shader.main_texture().is_none() || shader.main_texture_output_index() != 0 {
             continue;
         }
-        // SAFETY: `shader` is non-null (the guard above returned early otherwise).
-        let main_tex: *mut Texture = unsafe { opt_ptr(&raw const (*shader).main_texture) };
-        // SAFETY: on the right of each `&&` short-circuit `main_tex` is non-null
-        // and points to a live scene texture, and the inner `opt_ptr` of its
-        // `shader` field is non-null and points to a live `ufbx_shader_texture`.
-        if !main_tex.is_null()
-            && !unsafe { opt_ptr(&raw const (*main_tex).shader) }.is_null()
-            && !unsafe {
-                opt_ptr(&raw const (*opt_ptr(&raw const (*main_tex).shader)).main_texture)
+        // C: `ufbx_texture *main_tex = shader->main_texture;` — the guard above
+        // proved it non-NULL, so C's following `main_tex &&` is the same test.
+        let Some(main_tex) = shader.main_texture() else {
+            continue;
+        };
+        // SAFETY: `main_tex` is the viewed shader texture's own non-null
+        // `main_texture` reference, so it names a live scene texture with the
+        // scene's write-capable provenance.
+        let main_tex: &TextureView = unsafe { TextureView::from_ptr(main_tex.ptr()) };
+        if let Some(main_shader) = main_tex.shader() {
+            // SAFETY: `main_shader` is that texture's own non-null
+            // `ufbx_shader_texture` reference (see the `shader` mint above).
+            let main_shader: &ShaderTextureView =
+                unsafe { ShaderTextureView::from_ptr(main_shader.ptr()) };
+            if main_shader.main_texture().is_some() {
+                // Should have been propagated to `texture`
+                shader.set_main_texture(None);
             }
-            .is_null()
-        {
-            // Should have been propagated to `texture`
-            // SAFETY: `shader` is non-null and points to a live
-            // `ufbx_shader_texture`.
-            unsafe { (*shader).main_texture = None };
         }
-        // SAFETY: `p_texture != p_texture_end` (see above).
-        p_texture = unsafe { p_texture.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, scene->textures)`
-    // SAFETY: `scene` is live (see above), so its own texture pointer list is
-    // readable.
-    // `data`/`count` describe one arena run.
-    let (mut p_texture, p_texture_count) = unsafe {
-        (
-            (*scene).textures.data as *mut *mut Texture,
-            (*scene).textures.count,
-        )
-    };
-    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, p_texture_count);
-    while p_texture != p_texture_end {
-        // SAFETY: `p_texture != p_texture_end`, so it addresses a live slot of the
-        // scene's texture pointer run.
-        let texture: *mut Texture = unsafe { *p_texture };
-        // SAFETY: the run holds non-null pointers to live scene textures.
-        let shader: *mut ShaderTexture = unsafe { opt_ptr(&raw const (*texture).shader) };
-        if shader.is_null() {
-            // SAFETY: `p_texture != p_texture_end`, so the advance lands at or
-            // before the run's one-past-the-end pointer.
-            p_texture = unsafe { p_texture.add(1) };
+    for texture_ix in 0..textures.count() {
+        let texture: &TextureView = textures.at(texture_ix);
+        let Some(shader) = texture.shader() else {
             continue;
-        }
+        };
+        // SAFETY: `shader` is the viewed texture's own non-null
+        // `ufbx_shader_texture` reference (see the mint in the first pass).
+        let shader: &ShaderTextureView = unsafe { ShaderTextureView::from_ptr(shader.ptr()) };
 
         // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
-        // SAFETY: `shader` is non-null (checked) and points to a live
-        // `ufbx_shader_texture`, so its own input list is readable.
-        // `data`/`count` describe one arena run.
-        let (mut input, input_count) = unsafe {
-            (
-                (*shader).inputs.data as *mut ShaderTextureInput,
-                (*shader).inputs.count,
-            )
-        };
-        let input_end: *mut ShaderTextureInput = add_ptr(input, input_count);
-        while input != input_end {
-            // SAFETY: `input != input_end`, so it addresses a live, initialized
-            // entry of the shader's input run.
-            let input_texture: *mut Texture = unsafe { opt_ptr(&raw const (*input).texture) };
-            // SAFETY: on the right of the `||` short-circuit `input_texture` is
-            // non-null and points to a live scene texture.
-            if input_texture.is_null()
-                || unsafe { opt_ptr(&raw const (*input_texture).shader) }.is_null()
-            {
-                // SAFETY: `input != input_end`, so the advance lands at or before
-                // the input run's one-past-the-end pointer.
-                input = unsafe { input.add(1) };
+        let inputs = shader.inputs_view();
+        for input_ix in 0..inputs.count() {
+            let input = inputs.at(input_ix);
+            let Some(input_texture) = input.texture() else {
                 continue;
+            };
+            // SAFETY: `input_texture` is the viewed input's own non-null
+            // texture reference, so it names a live scene texture with the
+            // scene's write-capable provenance.
+            let input_texture: &TextureView = unsafe { TextureView::from_ptr(input_texture.ptr()) };
+            // C: `if (... || !input->texture->shader) continue;` and the
+            // following `input_shader` binding read the same field.
+            let Some(input_shader) = input_texture.shader() else {
+                continue;
+            };
+            // SAFETY: `input_shader` is that texture's own non-null
+            // `ufbx_shader_texture` reference (see the `shader` mint above).
+            let input_shader: &ShaderTextureView =
+                unsafe { ShaderTextureView::from_ptr(input_shader.ptr()) };
+            if input_shader.main_texture().is_some() {
+                input.set_texture(input_shader.main_texture());
+                input.set_texture_output_index(input_shader.main_texture_output_index());
             }
-            // SAFETY: `input_texture` is non-null (the guard above continued
-            // otherwise) and points to a live scene texture.
-            let input_shader: *mut ShaderTexture =
-                unsafe { opt_ptr(&raw const (*input_texture).shader) };
-            // SAFETY: `input_shader` is non-null (the same guard proved its
-            // `opt_ptr` non-null) and points to a live `ufbx_shader_texture`.
-            if !unsafe { opt_ptr(&raw const (*input_shader).main_texture) }.is_null() {
-                // SAFETY: `input` addresses a live entry and `input_shader` a live
-                // `ufbx_shader_texture`.
-                unsafe {
-                    (*input).texture = (*input_shader).main_texture;
-                    (*input).texture_output_index = (*input_shader).main_texture_output_index;
-                }
-            }
-            // SAFETY: `input != input_end` (see above).
-            input = unsafe { input.add(1) };
         }
-
-        // SAFETY: `p_texture != p_texture_end` (see above).
-        p_texture = unsafe { p_texture.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_material, p_material, scene->materials)`
-    // SAFETY: `scene` is live (see above), so its own material pointer list is
-    // readable.
-    // `data`/`count` describe one arena run.
-    let (mut p_material, p_material_count) = unsafe {
-        (
-            (*scene).materials.data as *mut *mut Material,
-            (*scene).materials.count,
-        )
-    };
-    let p_material_end: *mut *mut Material = add_ptr(p_material, p_material_count);
-    while p_material != p_material_end {
-        // SAFETY: `p_material != p_material_end`, so it addresses a live slot of
-        // the scene's material pointer run.
-        let material: *mut Material = unsafe { *p_material };
+    let materials: &RefListView<Material> = scene_view.materials_view();
+    for material_ix in 0..materials.count() {
+        let material: &MaterialView = materials.at(material_ix);
 
         // C: `ufbxi_for_list(ufbx_material_texture, tex, material->textures)`
-        // SAFETY: the run holds non-null pointers to live scene materials, so the
-        // material's own texture list is readable.
-        // `data`/`count` describe one arena run.
-        let (mut tex, tex_count) = unsafe {
-            (
-                (*material).textures.data as *mut MaterialTexture,
-                (*material).textures.count,
-            )
-        };
-        let tex_end: *mut MaterialTexture = add_ptr(tex, tex_count);
-        while tex != tex_end {
-            // SAFETY: `tex != tex_end`, so it addresses a live, initialized entry
-            // of the material's texture run; `ufbx_material_texture.texture` is
-            // non-nullable, so `ref_ptr` resolves it to a live scene texture.
-            let shader: *mut ShaderTexture =
-                unsafe { opt_ptr(&raw const (*ref_ptr(&raw const (*tex).texture)).shader) };
-            // SAFETY: on the right of each `&&` short-circuit `shader` is non-null
-            // and points to a live `ufbx_shader_texture`.
-            if !shader.is_null()
-                && !unsafe { opt_ptr(&raw const (*shader).main_texture) }.is_null()
-                && unsafe { (*shader).main_texture_output_index } == 0
-            {
-                // C: `tex->texture = shader->main_texture;` — `main_texture` is
-                // null-checked non-NULL just above, so the non-nullable
-                // `ufbx_material_texture.texture` stays valid.
-                // SAFETY: `tex` addresses a live entry and `shader`'s
-                // `main_texture` resolves to a non-null live scene texture.
-                unsafe {
-                    (*tex).texture = Ref::from_ptr(opt_ptr(&raw const (*shader).main_texture))
-                };
+        let material_textures = material.textures_view();
+        for tex_ix in 0..material_textures.count() {
+            let tex = material_textures.at(tex_ix);
+            // SAFETY: `ufbx_material_texture.texture` is non-nullable, so the
+            // viewed entry's own reference names a live scene texture with the
+            // scene's write-capable provenance.
+            let tex_texture: &TextureView = unsafe { TextureView::from_ptr(tex.texture().ptr()) };
+            let shader = tex_texture.shader();
+            if let Some(shader) = shader {
+                // SAFETY: `shader` is that texture's own non-null
+                // `ufbx_shader_texture` reference (see the mints above).
+                let shader: &ShaderTextureView =
+                    unsafe { ShaderTextureView::from_ptr(shader.ptr()) };
+                if let Some(main_texture) = shader.main_texture() {
+                    if shader.main_texture_output_index() == 0 {
+                        // C: `tex->texture = shader->main_texture;` —
+                        // `main_texture` is checked non-NULL just above, so the
+                        // non-nullable `ufbx_material_texture.texture` stays valid.
+                        tex.set_texture(main_texture);
+                    }
+                }
             }
-            // SAFETY: `tex != tex_end`, so the advance lands at or before the
-            // texture run's one-past-the-end pointer.
-            tex = unsafe { tex.add(1) };
         }
-
-        // SAFETY: `p_material != p_material_end`, so the advance lands at or
-        // before the material run's one-past-the-end pointer.
-        p_material = unsafe { p_material.add(1) };
     }
 }
 
