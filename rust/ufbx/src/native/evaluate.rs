@@ -92,7 +92,7 @@ use crate::native::parse::{
     MIN_FILE_FORMAT_LOOKAHEAD,
 };
 #[cfg(feature = "baking")]
-use crate::native::parse::{find_prop, is_vec3_zero, PropView, PropsView};
+use crate::native::parse::{find_prop, is_vec3_zero};
 #[cfg(feature = "skinning-eval")]
 use crate::native::platform::max_sz;
 use crate::native::platform::{
@@ -6630,6 +6630,43 @@ pub(crate) unsafe fn push_resampled_times(
     Ok(())
 }
 
+// Rust-port infra (not a ufbx.c type): reinterpret-in-place VIEWs over one
+// baked key of a `ufbx_baked_vec3_list` / `ufbx_baked_quat_list`, so the merge
+// loop below writes `keys.data[ix]` through `View<List<T>, Mut>::at` instead of
+// walking the run with raw pointers. Leaf setters only — the generator emits no
+// view for these two public key structs.
+#[cfg(feature = "baking")]
+impl View<BakedVec3, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_time(&self, time: f64) {
+        view_write!(self, time, time)
+    }
+    #[inline(always)]
+    pub(crate) fn set_value(&self, value: Vec3) {
+        view_write!(self, value, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_flags(&self, flags: BakedKeyFlags) {
+        view_write!(self, flags, flags)
+    }
+}
+
+#[cfg(feature = "baking")]
+impl View<BakedQuat, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_time(&self, time: f64) {
+        view_write!(self, time, time)
+    }
+    #[inline(always)]
+    pub(crate) fn set_value(&self, value: Quat) {
+        view_write!(self, value, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_flags(&self, flags: BakedKeyFlags) {
+        view_write!(self, flags, flags)
+    }
+}
+
 // ufbx.c:27233-27490 `ufbxi_bake_node_imp`
 #[cfg(feature = "baking")]
 #[inline(never)]
@@ -6641,14 +6678,19 @@ pub(crate) unsafe fn bake_node_imp(
 ) -> Result<(), Fail> {
     ufbx_assert!(!bc.baked_nodes().is_null() && !bc.nodes_to_bake().is_null());
 
+    // C: `ufbx_node *node = (ufbx_node*)bc->scene->elements.data[element_id];`
     // SAFETY: `bc.scene()` is the source `ufbx_scene` `bake_anim_imp` stored into
     // `bc`, live for the bake; this `unsafe fn` requires `element_id` to be one
     // of that scene's element ids, so the slot is in bounds of `elements` and
-    // holds a live element pointer.
-    let node: *mut UfbxNode =
-        unsafe { *((*bc.scene()).elements.data as *const *mut UfbxNode).add(element_id as usize) };
-    // SAFETY: `node` is that live scene element.
-    ufbxi_dev_assert!(unsafe { (*node).element.type_ } as u32 == ElementType::Node as u32);
+    // holds a live element pointer, which C downcasts to the `ufbx_node` that
+    // element header opens. The scene is not written during the bake, so the
+    // read-only tag holds for the whole body.
+    let node: &View<UfbxNode, Const> = unsafe {
+        View::<UfbxNode, Const>::from_ptr(
+            *((*bc.scene()).elements.data as *const *const UfbxNode).add(element_id as usize),
+        )
+    };
+    ufbxi_dev_assert!(node.element().type_() as u32 == ElementType::Node as u32);
 
     let mut complex_translation: bool = false;
     let mut complex_rotation: bool = false;
@@ -6661,12 +6703,7 @@ pub(crate) unsafe fn bake_node_imp(
         // string statics, so `strlen` stays inside it and the slice it measures
         // borrows only those bytes.
         let name_bytes: &[u8] = unsafe { core::slice::from_raw_parts(name, strlen(name)) };
-        let prop: Option<&PropView> = find_prop(
-            // SAFETY: the projection addresses the live scene node's own
-            // `element.props`, which outlives the borrow this view carries.
-            unsafe { PropsView::from_ptr(&raw mut (*node).element.props) },
-            name_bytes,
-        );
+        let prop: Option<&View<Prop, Const>> = find_prop(node.element().props(), name_bytes);
         // C: `prop->value_vec3` — the `ufbx_prop` value union's 3-real view
         // over `value_vec4`.
         if prop.is_some_and(|prop| !is_vec3_zero(prop.value_vec3())) {
@@ -6709,45 +6746,57 @@ pub(crate) unsafe fn bake_node_imp(
 
     // Account for the _resampled_ scale helper scale animation to keep the
     // translation scale consistent with the parent scaling.
-    let mut scale_helper_t: *mut BakedNode = ptr::null_mut();
+    let mut scale_helper_t: Option<&View<BakedNode>> = None;
     let mut constant_scale_t: Vec3 = Vec3 {
         x: 1.0,
         y: 1.0,
         z: 1.0,
     };
-    // C: `node->parent` / `node->parent->scale_helper` — short-circuit chain,
-    // so the inner loads only happen when the outer pointer is non-NULL.
-    // SAFETY: `node` is a live scene node, whose `parent` is its own nullable
-    // node ref that `opt_ptr` reads as the element pointer it is.
-    let parent: *mut UfbxNode = unsafe { opt_ptr(&raw const (*node).parent) };
-    let parent_scale_helper: *mut UfbxNode = if !parent.is_null() {
-        // SAFETY: `parent` is non-null (checked) and is a live scene node, whose
-        // `scale_helper` is its own nullable node ref.
-        unsafe { opt_ptr(&raw const (*parent).scale_helper) }
+    // C: `node->parent`, the parent every later `node->parent->…` chain starts
+    // from.
+    let parent: Option<&View<UfbxNode, Const>> = node.parent().map(|parent| {
+        // SAFETY: `parent` is the node's own parent ref — a live element of the
+        // same scene — read as bare pointer bits, never through `Ref::as_ref`.
+        unsafe { View::<UfbxNode, Const>::from_ptr(parent.ptr()) }
+    });
+    // C: `!node->is_scale_helper && node->parent && node->parent->scale_helper`
+    // — a short-circuit chain, so each load only happens once the preceding
+    // test passes.
+    let parent_scale_helper: Option<&View<UfbxNode, Const>> = if !node.is_scale_helper() {
+        parent
+            .and_then(|parent| parent.scale_helper())
+            .map(|scale_helper| {
+                // SAFETY: `scale_helper` is the parent's own node ref — a live
+                // element of the same scene — read as bare pointer bits.
+                unsafe { View::<UfbxNode, Const>::from_ptr(scale_helper.ptr()) }
+            })
     } else {
-        ptr::null_mut()
+        None
     };
-    // SAFETY (this condition): `node` is a live scene node.
-    if !unsafe { (*node).is_scale_helper } && !parent.is_null() && !parent_scale_helper.is_null() {
-        // SAFETY: `parent_scale_helper` is non-null (checked) and is a live scene
-        // node, so its `typed_id` indexes `bc.baked_nodes()`, which `bake_anim`
-        // sizes with one slot per node of the scene.
+    if let Some(parent_scale_helper) = parent_scale_helper {
+        // SAFETY: `parent_scale_helper` is a live scene node, so its `typed_id`
+        // indexes `bc.baked_nodes()`, which `bake_anim` sizes with one slot per
+        // node of the scene; a non-null slot holds the `ufbx_baked_node` already
+        // baked for that helper, pushed onto `bc.tmp_nodes`.
         scale_helper_t = unsafe {
-            *bc.baked_nodes()
-                .add((*parent_scale_helper).element.typed_id as usize)
+            let baked: *mut BakedNode = *bc
+                .baked_nodes()
+                .add(parent_scale_helper.element().typed_id() as usize);
+            if baked.is_null() {
+                None
+            } else {
+                Some(View::<BakedNode>::from_ptr(baked))
+            }
         };
-        if !scale_helper_t.is_null() {
-            // SAFETY: `scale_helper_t` is non-null (checked) and points to the
-            // `ufbx_baked_node` already baked for that helper.
-            if !unsafe { (*scale_helper_t).constant_scale } {
+        if let Some(scale_helper_t) = scale_helper_t {
+            if !scale_helper_t.constant_scale() {
                 resample_translation = true;
             }
-            // SAFETY: as above; `scale_keys` is that baked node's own key list,
-            // which is what `push_resampled_times` reads.
-            unsafe { push_resampled_times(bc, &raw const (*scale_helper_t).scale_keys) }?;
+            // SAFETY: `scale_keys` is that baked node's own key list, which is
+            // what `push_resampled_times` reads.
+            unsafe { push_resampled_times(bc, scale_helper_t.scale_keys_ptr()) }?;
         } else {
-            // SAFETY: `parent_scale_helper` is a live scene node.
-            constant_scale_t = unsafe { (*parent_scale_helper).inherit_scale };
+            constant_scale_t = parent_scale_helper.inherit_scale();
         }
     }
 
@@ -6864,52 +6913,57 @@ pub(crate) unsafe fn bake_node_imp(
     let mut resample_scale: bool = false;
 
     // Account for the resampled scale
-    let mut scale_helper_s: *mut BakedNode = ptr::null_mut();
+    let mut scale_helper_s: Option<&View<BakedNode>> = None;
     let mut constant_scale_s: Vec3 = Vec3 {
         x: 1.0,
         y: 1.0,
         z: 1.0,
     };
-    // C: `node->parent->inherit_scale_node->scale_helper` — short-circuit chain.
-    let parent_inherit_scale_node: *mut UfbxNode = if !parent.is_null() {
-        // SAFETY: `parent` is non-null (checked) and is a live scene node, whose
-        // `inherit_scale_node` is its own nullable node ref.
-        unsafe { opt_ptr(&raw const (*parent).inherit_scale_node) }
+    // C: `node->is_scale_helper && node->parent && node->parent->inherit_scale_node
+    // && node->parent->inherit_scale_node->scale_helper`, then
+    // `ufbx_node *inherit_helper = node->parent->inherit_scale_node->scale_helper;`
+    // — a short-circuit chain, so each load only happens once the preceding
+    // test passes.
+    let inherit_helper: Option<&View<UfbxNode, Const>> = if node.is_scale_helper() {
+        parent
+            .and_then(|parent| parent.inherit_scale_node())
+            .map(|inherit_scale_node| {
+                // SAFETY: `inherit_scale_node` is the parent's own node ref — a
+                // live element of the same scene — read as bare pointer bits.
+                unsafe { View::<UfbxNode, Const>::from_ptr(inherit_scale_node.ptr()) }
+            })
+            .and_then(|inherit_scale_node| inherit_scale_node.scale_helper())
+            .map(|scale_helper| {
+                // SAFETY: `scale_helper` is that node's own node ref — a live
+                // element of the same scene — read as bare pointer bits.
+                unsafe { View::<UfbxNode, Const>::from_ptr(scale_helper.ptr()) }
+            })
     } else {
-        ptr::null_mut()
+        None
     };
-    let parent_inherit_scale_helper: *mut UfbxNode = if !parent_inherit_scale_node.is_null() {
-        // SAFETY: non-null (checked) and a live scene node, whose `scale_helper`
-        // is its own nullable node ref.
-        unsafe { opt_ptr(&raw const (*parent_inherit_scale_node).scale_helper) }
-    } else {
-        ptr::null_mut()
-    };
-    // SAFETY (this condition): `node` is a live scene node.
-    if unsafe { (*node).is_scale_helper }
-        && !parent.is_null()
-        && !parent_inherit_scale_node.is_null()
-        && !parent_inherit_scale_helper.is_null()
-    {
-        let inherit_helper: *mut UfbxNode = parent_inherit_scale_helper;
-        // SAFETY: `inherit_helper` is non-null (checked) and is a live scene
-        // node, so its `typed_id` indexes `bc.baked_nodes()`, which `bake_anim`
-        // sizes with one slot per node of the scene.
+    if let Some(inherit_helper) = inherit_helper {
+        // SAFETY: `inherit_helper` is a live scene node, so its `typed_id`
+        // indexes `bc.baked_nodes()`, which `bake_anim` sizes with one slot per
+        // node of the scene; a non-null slot holds the `ufbx_baked_node` already
+        // baked for that helper, pushed onto `bc.tmp_nodes`.
         scale_helper_s = unsafe {
-            *bc.baked_nodes()
-                .add((*inherit_helper).element.typed_id as usize)
+            let baked: *mut BakedNode = *bc
+                .baked_nodes()
+                .add(inherit_helper.element().typed_id() as usize);
+            if baked.is_null() {
+                None
+            } else {
+                Some(View::<BakedNode>::from_ptr(baked))
+            }
         };
-        if !scale_helper_s.is_null() {
-            // SAFETY: `scale_helper_s` is non-null (checked) and points to the
-            // `ufbx_baked_node` already baked for that helper.
-            if !unsafe { (*scale_helper_s).constant_scale } {
+        if let Some(scale_helper_s) = scale_helper_s {
+            if !scale_helper_s.constant_scale() {
                 resample_scale = true;
             }
-            // SAFETY: as above; `scale_keys` is that baked node's own key list.
-            unsafe { push_resampled_times(bc, &raw const (*scale_helper_s).scale_keys) }?;
+            // SAFETY: `scale_keys` is that baked node's own key list.
+            unsafe { push_resampled_times(bc, scale_helper_s.scale_keys_ptr()) }?;
         } else {
-            // SAFETY: `inherit_helper` is a live scene node.
-            constant_scale_s = unsafe { (*inherit_helper).local_transform.scale };
+            constant_scale_s = inherit_helper.local_transform().scale;
         }
     }
 
@@ -6957,9 +7011,18 @@ pub(crate) unsafe fn bake_node_imp(
     keys_s.data = bc.tmp_prop_view().push::<BakedVec3>(keys_s.count);
     ufbxi_check_err!(bc.error_view(), !keys_s.data.is_null(), "keys_s.data");
 
-    let keys_t_data: *mut BakedVec3 = keys_t.data as *mut BakedVec3;
-    let keys_r_data: *mut BakedQuat = keys_r.data as *mut BakedQuat;
-    let keys_s_data: *mut BakedVec3 = keys_s.data as *mut BakedVec3;
+    // C indexes `keys_t.data[ix_t]` etc. below; each list view addresses its own
+    // local list, so `at(ix)` is the bounds-checked form of that indexing.
+    // SAFETY: each list is a live local `ufbx_baked_*_list` whose `data` is the
+    // non-null (checked) run of `count` slots just pushed onto `bc.tmp_prop`,
+    // arena memory with write-capable provenance.
+    let (keys_t_view, keys_r_view, keys_s_view) = unsafe {
+        (
+            View::<List<BakedVec3>>::from_ptr(&raw mut keys_t),
+            View::<List<BakedQuat>>::from_ptr(&raw mut keys_r),
+            View::<List<BakedVec3>>::from_ptr(&raw mut keys_s),
+        )
+    };
 
     let mut ix_t: usize = 0;
     let mut ix_r: usize = 0;
@@ -7023,22 +7086,18 @@ pub(crate) unsafe fn bake_node_imp(
 
         let eval_time: f64 = bake_time_sample_time(bake_time);
         // SAFETY: `bc.anim()` is the `ufbx_anim` `bake_anim_imp` stored into `bc`
-        // and `node` is a live element of the scene that anim evaluates against.
+        // and `node` views a live element of the scene that anim evaluates
+        // against, so its address is a live `ufbx_node`.
         let mut transform: Transform =
-            unsafe { evaluate_transform_flags(bc.anim(), node, eval_time, flags) };
+            unsafe { evaluate_transform_flags(bc.anim(), node.as_ptr(), eval_time, flags) };
 
         if (flags & TransformFlags::INCLUDE_TRANSLATION.raw()) != 0 {
-            if !scale_helper_t.is_null() {
-                // SAFETY: `scale_helper_t` is non-null (checked) and points to
-                // the baked node for the parent's scale helper; `scale_keys` is
-                // its own list, plain data, so reading it out by value leaves
-                // that field valid.
-                let scale: Vec3 = unsafe {
-                    evaluate_baked_vec3(
-                        ptr::read(&raw const (*scale_helper_t).scale_keys),
-                        eval_time,
-                    )
-                };
+            if let Some(scale_helper_t) = scale_helper_t {
+                // SAFETY: `scale_keys` is read out of the baked node for the
+                // parent's scale helper as the plain pointer/length pair it is,
+                // and `evaluate_baked_vec3` only reads that run.
+                let scale: Vec3 =
+                    unsafe { evaluate_baked_vec3(scale_helper_t.scale_keys(), eval_time) };
                 transform.translation.x *= scale.x;
                 transform.translation.y *= scale.y;
                 transform.translation.z *= scale.z;
@@ -7048,40 +7107,30 @@ pub(crate) unsafe fn bake_node_imp(
             transform.translation.y *= constant_scale_t.y;
             transform.translation.z *= constant_scale_t.z;
 
-            // SAFETY: `INCLUDE_TRANSLATION` is only set where `ix_t` was found
-            // below `times_t.count`, and `keys_t_data` is the run of
-            // `keys_t.count == times_t.count` slots pushed above, so slot `ix_t`
-            // is in bounds; the three writes initialize that one key.
-            unsafe {
-                (*keys_t_data.add(ix_t)).time = bake_time.time;
-                (*keys_t_data.add(ix_t)).value = transform.translation;
-                (*keys_t_data.add(ix_t)).flags = BakedKeyFlags::from_raw(bake_time.flags | flags_t);
-            }
+            // C: `keys_t.data[ix_t]` — `INCLUDE_TRANSLATION` is only set where
+            // `ix_t` was found below `times_t.count`, which is `keys_t.count`.
+            let key: &View<BakedVec3> = keys_t_view.at(ix_t);
+            key.set_time(bake_time.time);
+            key.set_value(transform.translation);
+            key.set_flags(BakedKeyFlags::from_raw(bake_time.flags | flags_t));
             ix_t += 1;
         }
         if (flags & TransformFlags::INCLUDE_ROTATION.raw()) != 0 {
-            // SAFETY: `INCLUDE_ROTATION` is only set where `ix_r` was found below
-            // `times_r.count`, and `keys_r_data` is the run of
-            // `keys_r.count == times_r.count` slots pushed above.
-            unsafe {
-                (*keys_r_data.add(ix_r)).time = bake_time.time;
-                (*keys_r_data.add(ix_r)).value = transform.rotation;
-                (*keys_r_data.add(ix_r)).flags = BakedKeyFlags::from_raw(bake_time.flags | flags_r);
-            }
+            // C: `keys_r.data[ix_r]` — `INCLUDE_ROTATION` is only set where
+            // `ix_r` was found below `times_r.count`, which is `keys_r.count`.
+            let key: &View<BakedQuat> = keys_r_view.at(ix_r);
+            key.set_time(bake_time.time);
+            key.set_value(transform.rotation);
+            key.set_flags(BakedKeyFlags::from_raw(bake_time.flags | flags_r));
             ix_r += 1;
         }
         if (flags & TransformFlags::INCLUDE_SCALE.raw()) != 0 {
-            if !scale_helper_s.is_null() {
-                // SAFETY: `scale_helper_s` is non-null (checked) and points to
-                // the baked node for the inherit-scale helper; `scale_keys` is
-                // its own list, plain data, so reading it out by value leaves
-                // that field valid.
-                let scale: Vec3 = unsafe {
-                    evaluate_baked_vec3(
-                        ptr::read(&raw const (*scale_helper_s).scale_keys),
-                        eval_time,
-                    )
-                };
+            if let Some(scale_helper_s) = scale_helper_s {
+                // SAFETY: `scale_keys` is read out of the baked node for the
+                // inherit-scale helper as the plain pointer/length pair it is,
+                // and `evaluate_baked_vec3` only reads that run.
+                let scale: Vec3 =
+                    unsafe { evaluate_baked_vec3(scale_helper_s.scale_keys(), eval_time) };
                 transform.scale.x *= scale.x;
                 transform.scale.y *= scale.y;
                 transform.scale.z *= scale.z;
@@ -7091,14 +7140,12 @@ pub(crate) unsafe fn bake_node_imp(
             transform.scale.y *= constant_scale_s.y;
             transform.scale.z *= constant_scale_s.z;
 
-            // SAFETY: `INCLUDE_SCALE` is only set where `ix_s` was found below
-            // `times_s.count`, and `keys_s_data` is the run of
-            // `keys_s.count == times_s.count` slots pushed above.
-            unsafe {
-                (*keys_s_data.add(ix_s)).time = bake_time.time;
-                (*keys_s_data.add(ix_s)).value = transform.scale;
-                (*keys_s_data.add(ix_s)).flags = BakedKeyFlags::from_raw(bake_time.flags | flags_s);
-            }
+            // C: `keys_s.data[ix_s]` — `INCLUDE_SCALE` is only set where `ix_s`
+            // was found below `times_s.count`, which is `keys_s.count`.
+            let key: &View<BakedVec3> = keys_s_view.at(ix_s);
+            key.set_time(bake_time.time);
+            key.set_value(transform.scale);
+            key.set_flags(BakedKeyFlags::from_raw(bake_time.flags | flags_s));
             ix_s += 1;
         }
     }
@@ -7107,148 +7154,138 @@ pub(crate) unsafe fn bake_node_imp(
     ufbxi_check_err!(bc.error_view(), !baked_node.is_null(), "baked_node");
 
     // SAFETY: `baked_node` is the non-null (checked) zeroed `ufbx_baked_node`
-    // just pushed onto `bc.tmp_nodes`, and `node` is a live scene node.
-    unsafe {
-        (*baked_node).element_id = (*node).element.element_id;
-        (*baked_node).typed_id = (*node).element.typed_id;
-    }
+    // just pushed onto `bc.tmp_nodes`, arena memory with write-capable
+    // provenance that stays put for the bake.
+    let baked_node_view: &View<BakedNode> = unsafe { View::<BakedNode>::from_ptr(baked_node) };
+
+    baked_node_view.set_element_id(node.element().element_id());
+    baked_node_view.set_typed_id(node.element().typed_id());
     // SAFETY: each pair of projections addresses the pushed baked node's own key
     // list and constant flag, and `keys_t`/`keys_r`/`keys_s` describe the live
     // runs of `ix_t`/`ix_r`/`ix_s` written keys pushed onto `bc.tmp_prop`.
     unsafe {
         bake_postprocess_vec3(
             bc,
-            &raw mut (*baked_node).translation_keys,
-            &raw mut (*baked_node).constant_translation,
+            baked_node_view.translation_keys_raw(),
+            baked_node_view.constant_translation_raw(),
             keys_t,
         )?;
         bake_postprocess_quat(
             bc,
-            &raw mut (*baked_node).rotation_keys,
-            &raw mut (*baked_node).constant_rotation,
+            baked_node_view.rotation_keys_raw(),
+            baked_node_view.constant_rotation_raw(),
             keys_r,
         )?;
         bake_postprocess_vec3(
             bc,
-            &raw mut (*baked_node).scale_keys,
-            &raw mut (*baked_node).constant_scale,
+            baked_node_view.scale_keys_raw(),
+            baked_node_view.constant_scale_raw(),
             keys_s,
         )?;
     }
 
-    // SAFETY: `node` is a live scene node, so its `typed_id` indexes
+    // SAFETY: `node` views a live scene node, so its `typed_id` indexes
     // `bc.baked_nodes()`, which `bake_anim` sizes with one slot per scene node.
-    unsafe { *bc.baked_nodes().add((*node).element.typed_id as usize) = baked_node };
+    unsafe { *bc.baked_nodes().add(node.element().typed_id() as usize) = baked_node };
 
     // SAFETY: `bc.tmp_prop` is `bc`'s own scratch buffer, live for the borrow.
     unsafe { buf_clear(bc.tmp_prop_mut_ptr()) };
 
     // If this node is a scale helper, make sure to bake its siblings and
     // potentially their scale helpers if they are not a part of the animation.
-    // SAFETY: `node` is a live scene node.
-    if unsafe { (*node).is_scale_helper } {
-        ufbx_assert!(!parent.is_null());
-        // C: `ufbxi_for_ptr_list(ufbx_node, p_child, node->parent->children)`
-        // SAFETY: a scale helper always has a parent (asserted above), and
-        // `parent` is a live scene node whose `children` list this walks.
-        let mut p_child: *mut *mut UfbxNode =
-            unsafe { (*parent).children.data as *mut *mut UfbxNode };
-        // SAFETY: as above, for the same list's count.
-        let p_child_end: *mut *mut UfbxNode = unsafe { add_ptr(p_child, (*parent).children.count) };
-        while p_child != p_child_end {
-            // SAFETY: `p_child` walks the parent's children list and stops at
-            // `p_child_end`, so it addresses a live slot holding a scene node.
-            let child: *mut UfbxNode = unsafe { *p_child };
-            if child == node {
-                // SAFETY: `p_child` is inside the list, so `p_child + 1` is at
-                // most one past its end.
-                p_child = unsafe { p_child.add(1) };
-                continue;
-            }
-            // SAFETY (this condition): `child` is a live scene node, so its
-            // `typed_id` indexes `bc.nodes_to_bake()`, which `bake_anim` sizes
-            // with one slot per scene node.
-            if !unsafe { *bc.nodes_to_bake().add((*child).element.typed_id as usize) } {
-                // SAFETY: as above.
-                unsafe { *bc.nodes_to_bake().add((*child).element.typed_id as usize) = true };
-                ufbxi_check_err!(
-                    bc.error_view(),
-                    // SAFETY: `bc.tmp_bake_stack` is `bc`'s own buffer and the
-                    // projection addresses the live child's own `element_id`,
-                    // the single `uint32_t` copied from.
-                    !unsafe {
-                        bc.tmp_bake_stack_view().push_copy_raw::<u32>(1,
-                            &raw const (*child).element.element_id,
-                        )
-                    }
-                    .is_null(),
-                    "((uint32_t*)ufbxi_push_size_copy((&bc->tmp_bake_stack), sizeof(uint32_t), (1), (&child->element_id)))"
-                );
-            }
-            // C: `child->inherit_scale_node && child->inherit_scale_node->scale_helper && child->scale_helper`
-            // SAFETY: `child` is a live scene node, whose `inherit_scale_node` is
-            // its own nullable node ref.
-            let child_inherit_scale_node: *mut UfbxNode =
-                unsafe { opt_ptr(&raw const (*child).inherit_scale_node) };
-            let child_inherit_scale_helper: *mut UfbxNode = if !child_inherit_scale_node.is_null() {
-                // SAFETY: non-null (checked) and a live scene node, whose
-                // `scale_helper` is its own nullable node ref.
-                unsafe { opt_ptr(&raw const (*child_inherit_scale_node).scale_helper) }
-            } else {
-                ptr::null_mut()
-            };
-            // SAFETY: `child` is a live scene node, whose `scale_helper` is its
-            // own nullable node ref.
-            let child_scale_helper: *mut UfbxNode =
-                unsafe { opt_ptr(&raw const (*child).scale_helper) };
-            // SAFETY (the trailing operand): the null checks come first and `&&`
-            // short-circuits, so `child_inherit_scale_helper` is a live scene
-            // node whose `typed_id` indexes `bc.nodes_to_bake()`.
-            if !child_inherit_scale_node.is_null()
-                && !child_inherit_scale_helper.is_null()
-                && !child_scale_helper.is_null()
-                && unsafe {
-                    *bc.nodes_to_bake()
-                        .add((*child_inherit_scale_helper).element.typed_id as usize)
+    if node.is_scale_helper() {
+        ufbx_assert!(parent.is_some());
+        // C: `ufbxi_for_ptr_list(ufbx_node, p_child, node->parent->children)` —
+        // a scale helper always has a parent (asserted above), and the walk is
+        // over that parent's own children ref list.
+        if let Some(parent) = parent {
+            let children = parent.children_view();
+            for i in 0..children.count() {
+                let child: &View<UfbxNode, Const> = children.at(i);
+                if child.as_ptr() == node.as_ptr() {
+                    continue;
                 }
-            {
-                // SAFETY: as above; the same `typed_id` indexes the equally sized
-                // `bc.baked_nodes()`.
-                ufbx_assert!(!unsafe {
-                    *bc.baked_nodes()
-                        .add((*child_inherit_scale_helper).element.typed_id as usize)
-                }
-                .is_null());
-                // SAFETY (this condition): `child_scale_helper` is non-null
-                // (checked above) and a live scene node, so its `typed_id`
-                // indexes `bc.nodes_to_bake()`.
-                if !unsafe {
-                    *bc.nodes_to_bake()
-                        .add((*child_scale_helper).element.typed_id as usize)
-                } {
+                // SAFETY (this condition): `child` is a live scene node, so its
+                // `typed_id` indexes `bc.nodes_to_bake()`, which `bake_anim`
+                // sizes with one slot per scene node.
+                if !unsafe { *bc.nodes_to_bake().add(child.element().typed_id() as usize) } {
                     // SAFETY: as above.
-                    unsafe {
-                        *bc.nodes_to_bake()
-                            .add((*child_scale_helper).element.typed_id as usize) = true
-                    };
+                    unsafe { *bc.nodes_to_bake().add(child.element().typed_id() as usize) = true };
                     ufbxi_check_err!(
                         bc.error_view(),
-                        // SAFETY: `bc.tmp_bake_stack` is `bc`'s own buffer and
-                        // the projection addresses the live helper's own
-                        // `element_id`, the single `uint32_t` copied from.
-                        !unsafe {
-                            bc.tmp_bake_stack_view().push_copy_raw::<u32>(1,
-                                &raw const (*child_scale_helper).element.element_id,
-                            )
-                        }
-                        .is_null(),
-                        "((uint32_t*)ufbxi_push_size_copy((&bc->tmp_bake_stack), sizeof(uint32_t), (1), (&child->scale_helper->element_id)))"
+                        !bc.tmp_bake_stack_view()
+                            .push_copy_ref::<u32>(&child.element().element_id())
+                            .is_null(),
+                        "((uint32_t*)ufbxi_push_size_copy((&bc->tmp_bake_stack), sizeof(uint32_t), (1), (&child->element_id)))"
                     );
                 }
+                // C: `child->inherit_scale_node && child->inherit_scale_node->scale_helper && child->scale_helper
+                // && bc->nodes_to_bake[child->inherit_scale_node->scale_helper->typed_id]`
+                // — one short-circuit chain, nested here because each later
+                // term needs the pointer the earlier one produced.
+                let child_inherit_scale_helper: Option<&View<UfbxNode, Const>> = child
+                    .inherit_scale_node()
+                    .map(|inherit_scale_node| {
+                        // SAFETY: `inherit_scale_node` is the child's own node
+                        // ref — a live element of the same scene — read as bare
+                        // pointer bits.
+                        unsafe { View::<UfbxNode, Const>::from_ptr(inherit_scale_node.ptr()) }
+                    })
+                    .and_then(|inherit_scale_node| inherit_scale_node.scale_helper())
+                    .map(|scale_helper| {
+                        // SAFETY: `scale_helper` is that node's own node ref — a
+                        // live element of the same scene — read as bare pointer
+                        // bits.
+                        unsafe { View::<UfbxNode, Const>::from_ptr(scale_helper.ptr()) }
+                    });
+                let child_scale_helper: Option<&View<UfbxNode, Const>> =
+                    child.scale_helper().map(|scale_helper| {
+                        // SAFETY: `scale_helper` is the child's own node ref — a
+                        // live element of the same scene — read as bare pointer
+                        // bits.
+                        unsafe { View::<UfbxNode, Const>::from_ptr(scale_helper.ptr()) }
+                    });
+                if let (Some(child_inherit_scale_helper), Some(child_scale_helper)) =
+                    (child_inherit_scale_helper, child_scale_helper)
+                {
+                    // SAFETY: `child_inherit_scale_helper` is a live scene node,
+                    // so its `typed_id` indexes `bc.nodes_to_bake()`.
+                    if unsafe {
+                        *bc.nodes_to_bake()
+                            .add(child_inherit_scale_helper.element().typed_id() as usize)
+                    } {
+                        // SAFETY: as above; the same `typed_id` indexes the
+                        // equally sized `bc.baked_nodes()`.
+                        ufbx_assert!(!unsafe {
+                            *bc.baked_nodes()
+                                .add(child_inherit_scale_helper.element().typed_id() as usize)
+                        }
+                        .is_null());
+                        // SAFETY (this condition): `child_scale_helper` is a live
+                        // scene node, so its `typed_id` indexes
+                        // `bc.nodes_to_bake()`.
+                        if !unsafe {
+                            *bc.nodes_to_bake()
+                                .add(child_scale_helper.element().typed_id() as usize)
+                        } {
+                            // SAFETY: as above.
+                            unsafe {
+                                *bc.nodes_to_bake()
+                                    .add(child_scale_helper.element().typed_id() as usize) = true
+                            };
+                            ufbxi_check_err!(
+                                bc.error_view(),
+                                !bc.tmp_bake_stack_view()
+                                    .push_copy_ref::<u32>(
+                                        &child_scale_helper.element().element_id()
+                                    )
+                                    .is_null(),
+                                "((uint32_t*)ufbxi_push_size_copy((&bc->tmp_bake_stack), sizeof(uint32_t), (1), (&child->scale_helper->element_id)))"
+                            );
+                        }
+                    }
+                }
             }
-            // SAFETY: `p_child` is inside the parent's children list, so
-            // `p_child + 1` is at most one past its end.
-            p_child = unsafe { p_child.add(1) };
         }
     }
 
