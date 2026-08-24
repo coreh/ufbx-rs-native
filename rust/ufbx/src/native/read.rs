@@ -101,9 +101,9 @@ use crate::generated::{
     NurbsSurface, NurbsTopology, NurbsTrimBoundary, NurbsTrimSurface, OpenFileInfo, OpenFileType,
     Pose, Prop, PropFlags, PropType, Props, RawOpenFileCb, RawStream, SelectionNode, SelectionSet,
     Shader, ShaderBinding, ShaderPropBinding, SkinCluster, SkinDeformer, SkinningMethod,
-    StereoCamera, SubdivisionBoundary, SubdivisionDisplayMode, Texture, TextureType, Thumbnail,
-    ThumbnailFormat, TimeMode, Transform, Unknown, UvSet, Vec3, Vec4, VertexAttrib, VertexReal,
-    VertexVec2, VertexVec3, VertexVec4, Video, WarningType,
+    StereoCamera, SubdivisionBoundary, SubdivisionDisplayMode, Tangent, Texture, TextureType,
+    Thumbnail, ThumbnailFormat, TimeMode, Transform, Unknown, UvSet, Vec3, Vec4, VertexAttrib,
+    VertexReal, VertexVec2, VertexVec3, VertexVec4, Video, WarningType,
 };
 use crate::native::allocator::{grow_array, Allocator};
 use crate::native::api::{
@@ -144,7 +144,7 @@ use crate::native::view::{view_project, view_raw_mut, view_read_shared, view_wri
 use crate::native::view::{Mode, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::as_f64;
-use crate::prelude::{Blob, List, OpenFileContext, Real, Ref, String};
+use crate::prelude::{slice_from_ptr, Blob, List, ListView, OpenFileContext, Real, Ref, String};
 
 // ufbx.h:3618 `UFBX_ENUM_TYPE(ufbx_thumbnail_format, UFBX_THUMBNAIL_FORMAT, UFBX_THUMBNAIL_FORMAT_RGBA_32);`
 // expanding to `enum { UFBX_THUMBNAIL_FORMAT_COUNT = UFBX_THUMBNAIL_FORMAT_RGBA_32 + 1 }`.
@@ -8040,6 +8040,10 @@ pub(crate) unsafe fn read_take_anim_channel(
     if keys.is_null() {
         return Ok(());
     }
+    // SAFETY: `keys` is non-null (checked above) and `find_array` returns the
+    // node's own array descriptor, live for as long as the parse tree and
+    // reached through `*mut` (write-capable provenance for `Mut`).
+    let keys: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(keys) };
 
     let mut curve_fbx_id: u64 = 0;
     // SAFETY: `&raw mut curve_fbx_id` is a live local `uint64_t` slot, `name` is the
@@ -8055,22 +8059,25 @@ pub(crate) unsafe fn read_take_anim_channel(
         )
     };
     ufbxi_check!(uc, !curve.is_null(), "curve");
+    // SAFETY: `curve` is the fresh non-null element pushed above — a live
+    // `ufbx_anim_curve` in uc's own result arena, reached through `*mut`
+    // (write-capable provenance for `Mut`).
+    let curve: &View<AnimCurve> = unsafe { View::<AnimCurve>::from_ptr(curve) };
 
-    // SAFETY: `curve` is the fresh non-null element pushed above, so its
+    // SAFETY: `connect_op` reads the `prop` string it is handed; `curve`'s
     // `element.name` is the interned scene string the push installed.
-    unsafe { connect_op(uc, curve_fbx_id, value_fbx_id, (*curve).element.name) }?;
+    unsafe { connect_op(uc, curve_fbx_id, value_fbx_id, curve.element().name()) }?;
 
-    // SAFETY: `curve` is the fresh non-null element pushed above, so
-    // `&raw mut (*curve).pre_extrapolation` is a live out-slot; the name is an
-    // interned NUL-terminated string pointer.
+    // SAFETY: each out-slot is a single-field projection of the live curve view,
+    // and the name is an interned NUL-terminated string pointer.
     unsafe {
         read_extrapolation(
-            &raw mut (*curve).pre_extrapolation,
+            curve.pre_extrapolation_raw(),
             node,
             sp::Pre_Extrapolation.as_ptr(),
         );
         read_extrapolation(
-            &raw mut (*curve).post_extrapolation,
+            curve.post_extrapolation_raw(),
             node,
             sp::Post_Extrapolation.as_ptr(),
         );
@@ -8099,16 +8106,10 @@ pub(crate) unsafe fn read_take_anim_channel(
         find_val1::<usize>(node, sp::KeyCount.as_ptr()),
         "ufbxi_find_val1(node, ufbxi_KeyCount, \"Z\", &num_keys)"
     );
-    // SAFETY: `curve` is the fresh non-null element pushed above.
-    unsafe {
-        (*curve).keyframes.data = uc.result_view().push::<Keyframe>(num_keys);
-        (*curve).keyframes.count = num_keys;
-        ufbxi_check!(
-            uc,
-            !(*curve).keyframes.data.is_null(),
-            "curve->keyframes.data"
-        );
-    }
+    let keyframes: &ListView<Keyframe> = curve.keyframes_view();
+    keyframes.set_data(uc.result_view().push::<Keyframe>(num_keys));
+    keyframes.set_count(num_keys);
+    ufbxi_check!(uc, !keyframes.data().is_null(), "curve->keyframes.data");
 
     let mut slope_left: f32 = 0.0f32;
     let mut weight_left: f32 = 0.333333f32;
@@ -8119,69 +8120,39 @@ pub(crate) unsafe fn read_take_anim_channel(
 
     // The pre-7000 keyframe data is stored as a _heterogenous_ array containing 64-bit integers,
     // floating point values, and _bare characters_. We cast all values to double and interpret them.
-    // SAFETY: `keys` is non-null (checked above) and `find_array` returns the
-    // node's own array descriptor, live for as long as the parse tree, whose `'d'`
-    // payload is `size` `double`s — `size` being that payload's element count, so
-    // the step reaches its one-past-the-end.
-    let (mut data, data_end): (*mut f64, *mut f64) = unsafe {
-        let data: *mut f64 = (*keys).data as *mut f64;
-        (data, add_ptr(data, (*keys).size))
-    };
+    // C's `double *data, *data_end` pointer pair is an index cursor into the
+    // payload run: `data` is the current offset, `data_end` the run length, so
+    // `data_end - data` and `data == data_end` read exactly as the C does.
+    // SAFETY: `find_array` matched the `'d'` format code, so the descriptor's
+    // `data` addresses that payload's `size` contiguous `double`s — a
+    // parse-materialized run live and unwritten for as long as the parse tree.
+    let data_all: &[f64] = unsafe { slice_from_ptr(keys.data() as *const f64, keys.size()) };
+    let mut data: usize = 0;
+    let data_end: usize = data_all.len();
 
     if num_keys > 0 {
-        // SAFETY: `data` and `data_end` delimit the same `'d'` payload, so their
-        // difference is well defined.
-        ufbxi_check!(
-            uc,
-            unsafe { data_end.offset_from(data) } >= 2,
-            "data_end - data >= 2"
-        );
-        // SAFETY: the check above leaves at least two doubles between `data` and
-        // `data_end`, so offsets 0 and 1 are in bounds of the payload.
-        unsafe {
-            next_time = *data.add(0) / uc.ktime_sec_double();
-            next_value = *data.add(1);
-        }
+        ufbxi_check!(uc, data_end - data >= 2, "data_end - data >= 2");
+        next_time = data_all[data] / uc.ktime_sec_double();
+        next_value = data_all[data + 1];
     }
 
     for i in 0..num_keys {
-        // SAFETY: `curve->keyframes.data` is the `num_keys`-element run allocated
-        // and checked non-null above, and `i < num_keys` bounds the step.
-        let key: *mut Keyframe = unsafe { ((*curve).keyframes.data as *mut Keyframe).add(i) };
+        let key: &View<Keyframe> = keyframes.at(i);
 
         if i == 0 {
-            // SAFETY: `curve` is the fresh non-null element pushed above.
-            unsafe {
-                (*curve).min_value = next_value as Real;
-                (*curve).max_value = next_value as Real;
-            }
+            curve.set_min_value(next_value as Real);
+            curve.set_max_value(next_value as Real);
         } else {
-            // SAFETY: as above.
-            unsafe {
-                (*curve).min_value = min_real((*curve).min_value, next_value as Real);
-                (*curve).max_value = max_real((*curve).max_value, next_value as Real);
-            }
+            curve.set_min_value(min_real(curve.min_value(), next_value as Real));
+            curve.set_max_value(max_real(curve.max_value(), next_value as Real));
         }
 
         // First three values: Time, Value, InterpolationMode
-        // SAFETY: `data` and `data_end` delimit the same `'d'` payload, so their
-        // difference is well defined.
-        ufbxi_check!(
-            uc,
-            unsafe { data_end.offset_from(data) } >= 3,
-            "data_end - data >= 3"
-        );
-        // SAFETY: `key` is the in-bounds keyframe computed above.
-        unsafe {
-            (*key).time = next_time;
-            (*key).value = next_value as Real;
-        }
-        // SAFETY: the check above leaves at least three doubles between `data` and
-        // `data_end`, so offset 2 is in bounds of the payload.
-        let mode: u8 = double_to_char(unsafe { *data.add(2) });
-        // SAFETY: as above — three doubles remain, so stepping three stays within
-        // the payload (at most one past its end).
-        data = unsafe { data.add(3) };
+        ufbxi_check!(uc, data_end - data >= 3, "data_end - data >= 3");
+        key.set_time(next_time);
+        key.set_value(next_value as Real);
+        let mode: u8 = double_to_char(data_all[data + 2]);
+        data += 3;
 
         let mut slope_right: f32 = 0.0f32;
         let mut weight_right: f32 = 0.333333f32;
@@ -8191,45 +8162,20 @@ pub(crate) unsafe fn read_take_anim_channel(
 
         if mode == b'U' {
             // Cubic interpolation
-            // SAFETY: `key` is the in-bounds keyframe computed above.
-            unsafe {
-                (*key).interpolation = Interpolation::Cubic;
-            }
+            key.set_interpolation(Interpolation::Cubic);
 
-            // SAFETY: `data` and `data_end` delimit the same `'d'` payload, so
-            // their difference is well defined.
-            ufbxi_check!(
-                uc,
-                unsafe { data_end.offset_from(data) } >= 1,
-                "data_end - data >= 1"
-            );
-            // SAFETY: the check above leaves at least one double between `data`
-            // and `data_end`, so offset 0 is in bounds of the payload.
-            let slope_mode: u8 = double_to_char(unsafe { *data.add(0) });
-            // SAFETY: as above — one double remains, so stepping one stays within
-            // the payload (at most one past its end).
-            data = unsafe { data.add(1) };
+            ufbxi_check!(uc, data_end - data >= 1, "data_end - data >= 1");
+            let slope_mode: u8 = double_to_char(data_all[data]);
+            data += 1;
 
             let mut num_weights: usize = 1;
             if slope_mode == b's' || slope_mode == b'b' {
                 // Slope mode 's'/'b' (standard? broken?) always have two explicit slopes
                 // TODO: `b` might actually be some kind of TCB curve
-                // SAFETY: `data` and `data_end` delimit the same `'d'` payload, so
-                // their difference is well defined.
-                ufbxi_check!(
-                    uc,
-                    unsafe { data_end.offset_from(data) } >= 2,
-                    "data_end - data >= 2"
-                );
-                // SAFETY: the check above leaves at least two doubles between
-                // `data` and `data_end`, so offsets 0 and 1 are in bounds of the
-                // payload and stepping two stays within it (at most one past its
-                // end).
-                unsafe {
-                    slope_right = *data.add(0) as f32;
-                    next_slope_left = *data.add(1) as f32;
-                    data = data.add(2);
-                }
+                ufbxi_check!(uc, data_end - data >= 2, "data_end - data >= 2");
+                slope_right = data_all[data] as f32;
+                next_slope_left = data_all[data + 1] as f32;
+                data += 2;
                 // TODO: This looks very suspicious, but we have observed files with
                 // KeyVer=4002 -> followed by 'n', then next key
                 // KeyVer=4003 -> no weight mode, directly followed by key
@@ -8254,17 +8200,8 @@ pub(crate) unsafe fn read_take_anim_channel(
                 // Ignore unknown values for now
                 // TODO: Solve what this is more thoroughly, using auto slope for now to reduce artifacts
                 auto_slope = true;
-                // SAFETY: `data` and `data_end` delimit the same `'d'` payload, so
-                // their difference is well defined.
-                ufbxi_check!(
-                    uc,
-                    unsafe { data_end.offset_from(data) } >= 2,
-                    "data_end - data >= 2"
-                );
-                // SAFETY: the check above leaves at least two doubles between
-                // `data` and `data_end`, so stepping two stays within the payload
-                // (at most one past its end).
-                data = unsafe { data.add(2) };
+                ufbxi_check!(uc, data_end - data >= 2, "data_end - data >= 2");
+                data += 2;
                 if key_ver <= 4004 {
                     num_weights = 1;
                 } else {
@@ -8278,17 +8215,8 @@ pub(crate) unsafe fn read_take_anim_channel(
                 // TODO: This has only been observed with KeyVer=4003/4005, it might have two weights in 4004
                 // TODO: Solve what this is more thoroughly, using auto slope for now to reduce artifacts
                 auto_slope = true;
-                // SAFETY: `data` and `data_end` delimit the same `'d'` payload, so
-                // their difference is well defined.
-                ufbxi_check!(
-                    uc,
-                    unsafe { data_end.offset_from(data) } >= 2,
-                    "data_end - data >= 2"
-                );
-                // SAFETY: the check above leaves at least two doubles between
-                // `data` and `data_end`, so stepping two stays within the payload
-                // (at most one past its end).
-                data = unsafe { data.add(2) };
+                ufbxi_check!(uc, data_end - data >= 2, "data_end - data >= 2");
+                data += 2;
                 if key_ver <= 4004 {
                     num_weights = 1;
                 } else {
@@ -8299,106 +8227,44 @@ pub(crate) unsafe fn read_take_anim_channel(
                 // third value seems _tiny_ (around 1e-30?)
                 // TODO: This looks like simple TCB parameters, currently falling back to auto.
                 auto_slope = true;
-                // SAFETY: `data` and `data_end` delimit the same `'d'` payload, so
-                // their difference is well defined.
-                ufbxi_check!(
-                    uc,
-                    unsafe { data_end.offset_from(data) } >= 3,
-                    "data_end - data >= 3"
-                );
-                // SAFETY: the check above leaves at least three doubles between
-                // `data` and `data_end`, so stepping three stays within the payload
-                // (at most one past its end).
-                data = unsafe { data.add(3) };
+                ufbxi_check!(uc, data_end - data >= 3, "data_end - data >= 3");
+                data += 3;
                 num_weights = 0;
             } else if slope_mode == b'd' {
                 // TODO: What is this mode? It has a single parameter (currently observed `0`)
                 // and a single weight.
                 // TODO: Solve what this is more thoroughly, using auto slope for now to reduce artifacts
                 auto_slope = true;
-                // SAFETY: `data` and `data_end` delimit the same `'d'` payload, so
-                // their difference is well defined.
-                ufbxi_check!(
-                    uc,
-                    unsafe { data_end.offset_from(data) } >= 1,
-                    "data_end - data >= 1"
-                );
-                // SAFETY: the check above leaves at least one double between
-                // `data` and `data_end`, so stepping one stays within the payload
-                // (at most one past its end).
-                data = unsafe { data.add(1) };
+                ufbxi_check!(uc, data_end - data >= 1, "data_end - data >= 1");
+                data += 1;
             } else {
                 ufbxi_fail!(uc, "Unknown slope mode");
             }
 
             // C: `for (; num_weights > 0; num_weights--)`
             while num_weights > 0 {
-                // SAFETY: `data` and `data_end` delimit the same `'d'` payload, so
-                // their difference is well defined.
-                ufbxi_check!(
-                    uc,
-                    unsafe { data_end.offset_from(data) } >= 1,
-                    "data_end - data >= 1"
-                );
-                // SAFETY: the check above leaves at least one double between
-                // `data` and `data_end`, so offset 0 is in bounds of the payload.
-                let weight_mode: u8 = double_to_char(unsafe { *data.add(0) });
-                // SAFETY: as above — one double remains, so stepping one stays
-                // within the payload (at most one past its end).
-                data = unsafe { data.add(1) };
+                ufbxi_check!(uc, data_end - data >= 1, "data_end - data >= 1");
+                let weight_mode: u8 = double_to_char(data_all[data]);
+                data += 1;
 
                 if weight_mode == b'n' {
                     // Automatic weights (0.3333...)
                 } else if weight_mode == b'a' {
                     // Manual weights: RightWeight, NextLeftWeight
-                    // SAFETY: `data` and `data_end` delimit the same `'d'` payload,
-                    // so their difference is well defined.
-                    ufbxi_check!(
-                        uc,
-                        unsafe { data_end.offset_from(data) } >= 2,
-                        "data_end - data >= 2"
-                    );
-                    // SAFETY: the check above leaves at least two doubles between
-                    // `data` and `data_end`, so offsets 0 and 1 are in bounds and
-                    // stepping two stays within the payload (at most one past its
-                    // end).
-                    unsafe {
-                        weight_right = *data.add(0) as f32;
-                        next_weight_left = *data.add(1) as f32;
-                        data = data.add(2);
-                    }
+                    ufbxi_check!(uc, data_end - data >= 2, "data_end - data >= 2");
+                    weight_right = data_all[data] as f32;
+                    next_weight_left = data_all[data + 1] as f32;
+                    data += 2;
                 } else if weight_mode == b'l' {
                     // Next left tangent is weighted
-                    // SAFETY: `data` and `data_end` delimit the same `'d'` payload,
-                    // so their difference is well defined.
-                    ufbxi_check!(
-                        uc,
-                        unsafe { data_end.offset_from(data) } >= 1,
-                        "data_end - data >= 1"
-                    );
-                    // SAFETY: the check above leaves at least one double between
-                    // `data` and `data_end`, so offset 0 is in bounds and stepping
-                    // one stays within the payload (at most one past its end).
-                    unsafe {
-                        next_weight_left = *data.add(0) as f32;
-                        data = data.add(1);
-                    }
+                    ufbxi_check!(uc, data_end - data >= 1, "data_end - data >= 1");
+                    next_weight_left = data_all[data] as f32;
+                    data += 1;
                 } else if weight_mode == b'r' {
                     // Right tangent is weighted
-                    // SAFETY: `data` and `data_end` delimit the same `'d'` payload,
-                    // so their difference is well defined.
-                    ufbxi_check!(
-                        uc,
-                        unsafe { data_end.offset_from(data) } >= 1,
-                        "data_end - data >= 1"
-                    );
-                    // SAFETY: the check above leaves at least one double between
-                    // `data` and `data_end`, so offset 0 is in bounds and stepping
-                    // one stays within the payload (at most one past its end).
-                    unsafe {
-                        weight_right = *data.add(0) as f32;
-                        data = data.add(1);
-                    }
+                    ufbxi_check!(uc, data_end - data >= 1, "data_end - data >= 1");
+                    weight_right = data_all[data] as f32;
+                    data += 1;
                 } else if weight_mode == b'c' {
                     // TODO: What is this mode? At least it has no parameters so let's
                     // just assume automatic weights for the time being (0.3333...)
@@ -8410,36 +8276,19 @@ pub(crate) unsafe fn read_take_anim_channel(
             }
         } else if mode == b'L' {
             // Linear interpolation: No parameters
-            // SAFETY: `key` is the in-bounds keyframe computed above.
-            unsafe {
-                (*key).interpolation = Interpolation::Linear;
-            }
+            key.set_interpolation(Interpolation::Linear);
         } else if mode == b'C' {
             // Constant interpolation: Single parameter (use prev/next)
             if key_ver >= 4004 {
-                // SAFETY: `data` and `data_end` delimit the same `'d'` payload, so
-                // their difference is well defined.
-                ufbxi_check!(
-                    uc,
-                    unsafe { data_end.offset_from(data) } >= 1,
-                    "data_end - data >= 1"
-                );
-                // SAFETY: `key` is the in-bounds keyframe computed above, and the
-                // check above leaves at least one double between `data` and
-                // `data_end`, so offset 0 is in bounds of the payload.
-                unsafe {
-                    (*key).interpolation = if double_to_char(*data.add(0)) == b'n' {
-                        Interpolation::ConstantNext
-                    } else {
-                        Interpolation::ConstantPrev
-                    };
-                    data = data.add(1);
-                }
+                ufbxi_check!(uc, data_end - data >= 1, "data_end - data >= 1");
+                key.set_interpolation(if double_to_char(data_all[data]) == b'n' {
+                    Interpolation::ConstantNext
+                } else {
+                    Interpolation::ConstantPrev
+                });
+                data += 1;
             } else {
-                // SAFETY: `key` is the in-bounds keyframe computed above.
-                unsafe {
-                    (*key).interpolation = Interpolation::ConstantPrev;
-                }
+                key.set_interpolation(Interpolation::ConstantPrev);
             }
         } else {
             ufbxi_fail!(uc, "Unknown key mode");
@@ -8447,35 +8296,23 @@ pub(crate) unsafe fn read_take_anim_channel(
 
         // Retrieve next key and value
         if i + 1 < num_keys {
-            // SAFETY: `data` and `data_end` delimit the same `'d'` payload, so
-            // their difference is well defined.
-            ufbxi_check!(
-                uc,
-                unsafe { data_end.offset_from(data) } >= 2,
-                "data_end - data >= 2"
-            );
-            // SAFETY: the check above leaves at least two doubles between `data`
-            // and `data_end`, so offsets 0 and 1 are in bounds of the payload.
-            unsafe {
-                next_time = *data.add(0) / uc.ktime_sec_double();
-                next_value = *data.add(1);
-            }
+            ufbxi_check!(uc, data_end - data >= 2, "data_end - data >= 2");
+            next_time = data_all[data] / uc.ktime_sec_double();
+            next_value = data_all[data + 1];
         }
 
         if auto_slope {
             if i > 0 {
                 // C: `slope_left = slope_right = ufbxi_solve_auto_tangent(...)`
-                // SAFETY: `key` is the in-bounds keyframe for index `i`, and this
-                // branch runs only for `i > 0`, so `key.offset(-1)` is the
-                // previous keyframe of the same run — also in bounds and already
-                // written by the previous iteration.
+                // C's `key[-1]` is the previous keyframe of the same run, viewed
+                // from the list base — already written by the previous iteration.
                 slope_right = solve_auto_tangent(
                     uc,
                     prev_time,
-                    unsafe { (*key).time },
+                    key.time(),
                     next_time,
-                    unsafe { (*key.offset(-1)).value },
-                    unsafe { (*key).value },
+                    keyframes.at(i - 1).value(),
+                    key.value(),
                     next_value as Real,
                     weight_left,
                     weight_right,
@@ -8491,15 +8328,9 @@ pub(crate) unsafe fn read_take_anim_channel(
         }
 
         // Set up linear cubic tangents if necessary
-        // SAFETY: `key` is the in-bounds keyframe computed above, whose
-        // `interpolation` was written by the mode dispatch earlier in this
-        // iteration.
-        if unsafe { (*key).interpolation } == Interpolation::Linear {
-            // SAFETY: `key` is the in-bounds keyframe computed above, whose `time`
-            // and `value` were written earlier in this iteration.
-            if next_time > unsafe { (*key).time } {
-                let slope: f64 = (next_value - as_f64!(unsafe { (*key).value }))
-                    / (next_time - unsafe { (*key).time });
+        if key.interpolation() == Interpolation::Linear {
+            if next_time > key.time() {
+                let slope: f64 = (next_value - as_f64!(key.value())) / (next_time - key.time());
                 // C: `slope_right = next_slope_left = (float)slope;`
                 next_slope_left = slope as f32;
                 slope_right = next_slope_left;
@@ -8510,49 +8341,41 @@ pub(crate) unsafe fn read_take_anim_channel(
             }
         }
 
-        // SAFETY: `key` is the in-bounds keyframe computed above, whose `time` was
-        // written earlier in this iteration.
-        if unsafe { (*key).time } > prev_time {
-            // SAFETY: as above.
-            let delta: f64 = unsafe { (*key).time } - prev_time;
-            // SAFETY: `key` is the in-bounds keyframe computed above; `left.dx`
-            // is written before it is read on the next line.
-            unsafe {
-                (*key).left.dx = (weight_left as f64 * delta) as f32;
-                (*key).left.dy = (*key).left.dx * slope_left;
-            }
+        if key.time() > prev_time {
+            let delta: f64 = key.time() - prev_time;
+            // C: `key->left.dx = (float)(weight_left * delta);`
+            //    `key->left.dy = key->left.dx * slope_left;`
+            let left_dx: f32 = (weight_left as f64 * delta) as f32;
+            key.set_left(Tangent {
+                dx: left_dx,
+                dy: left_dx * slope_left,
+            });
         } else {
-            // SAFETY: `key` is the in-bounds keyframe computed above.
-            unsafe {
-                (*key).left.dx = 0.0f32;
-                (*key).left.dy = 0.0f32;
-            }
+            key.set_left(Tangent {
+                dx: 0.0f32,
+                dy: 0.0f32,
+            });
         }
 
-        // SAFETY: `key` is the in-bounds keyframe computed above, whose `time` was
-        // written earlier in this iteration.
-        if next_time > unsafe { (*key).time } {
-            // SAFETY: as above.
-            let delta: f64 = next_time - unsafe { (*key).time };
-            // SAFETY: `key` is the in-bounds keyframe computed above; `right.dx`
-            // is written before it is read on the next line.
-            unsafe {
-                (*key).right.dx = (weight_right as f64 * delta) as f32;
-                (*key).right.dy = (*key).right.dx * slope_right;
-            }
+        if next_time > key.time() {
+            let delta: f64 = next_time - key.time();
+            // C: `key->right.dx = (float)(weight_right * delta);`
+            //    `key->right.dy = key->right.dx * slope_right;`
+            let right_dx: f32 = (weight_right as f64 * delta) as f32;
+            key.set_right(Tangent {
+                dx: right_dx,
+                dy: right_dx * slope_right,
+            });
         } else {
-            // SAFETY: `key` is the in-bounds keyframe computed above.
-            unsafe {
-                (*key).right.dx = 0.0f32;
-                (*key).right.dy = 0.0f32;
-            }
+            key.set_right(Tangent {
+                dx: 0.0f32,
+                dy: 0.0f32,
+            });
         }
 
         slope_left = next_slope_left;
         weight_left = next_weight_left;
-        // SAFETY: `key` is the in-bounds keyframe computed above, whose `time` was
-        // written earlier in this iteration.
-        prev_time = unsafe { (*key).time };
+        prev_time = key.time();
     }
 
     ufbxi_check!(uc, data == data_end, "data == data_end");
