@@ -11150,107 +11150,102 @@ pub(crate) fn get_constraint_transform(props: &PropsView) -> Transform {
 // from the public evaluate ABI.
 #[inline(never)]
 pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride]) {
-    let node: *mut Node = node_view.get();
     // C: `(ufbx_rotation_order)ufbxi_find_enum(...)` — `ufbxi_find_enum` clamps
     // the result to `[0, UFBX_ROTATION_ORDER_SPHERIC]`, every value of which is
     // a valid `ufbx_rotation_order`.
-    // SAFETY: `node` is the node view's own storage, so it is live, initialized
-    // and writable; `ufbxi_find_enum` clamps its result to the `[XYZ, SPHERIC]`
-    // range passed, every value of which is a valid `ufbx_rotation_order`.
-    unsafe {
-        (*node).rotation_order = core::mem::transmute::<u32, RotationOrder>(find_enum(
+    // SAFETY: `ufbxi_find_enum` clamps its result to the `[XYZ, SPHERIC]` range
+    // passed, every value of which is a valid `ufbx_rotation_order`
+    // discriminant, so the transmute produces an inhabited enum value.
+    let rotation_order: RotationOrder = unsafe {
+        core::mem::transmute::<u32, RotationOrder>(find_enum(
             node_view.props_view(),
             &sp::RotationOrder,
             RotationOrder::Xyz as i64,
             RotationOrder::Spheric as i64,
         ) as u32)
     };
-    // SAFETY: `node` is the node view's own storage (see above).
-    unsafe {
-        (*node).euler_rotation = find_vec3(node_view.props_view(), &sp::Lcl_Rotation, 0.0, 0.0, 0.0)
-    };
+    node_view.set_rotation_order(rotation_order);
+    node_view.set_euler_rotation(find_vec3(
+        node_view.props_view(),
+        &sp::Lcl_Rotation,
+        0.0,
+        0.0,
+        0.0,
+    ));
 
-    // SAFETY: `node` is the node view's own storage (see above).
-    if !unsafe { (*node).is_root } {
+    if !node_view.is_root() {
         let rotation_active: bool = find_int(node_view.props_view(), &sp::RotationActive, 1) != 0;
         let rotation_limit_only: bool =
             find_int(node_view.props_view(), &sp::RotationSpaceForLimitOnly, 0) != 0;
-        // SAFETY: `node` is the node view's own storage (see above).
-        unsafe { (*node).use_rotation_space = rotation_active && !rotation_limit_only };
+        node_view.set_use_rotation_space(rotation_active && !rotation_limit_only);
 
         let mut transform_scale: *const Vec3 = ptr::null();
-        // C: `if (node->parent && node->parent->scale_helper)` — the field is
-        // re-read in the body, as in C.
-        // SAFETY: `node` is live (see above), so `&raw const (*node).parent` addresses its
-        // own `parent` field, which holds a nullable `ufbx_node*` at the ABI
-        // level.
-        if !unsafe { opt_ptr(&raw const (*node).parent) }.is_null()
-            // SAFETY: the first operand established that `node->parent` is
-            // non-null, and a non-null parent link points to a live, initialized
-            // `ufbx_node` owned by the same scene, so `&raw const (*parent).scale_helper`
-            // addresses that node's own nullable helper link.
-            && !unsafe { opt_ptr(&raw const (*opt_ptr(&raw const (*node).parent)).scale_helper) }.is_null()
-        {
-            // SAFETY: the condition above established that both `node->parent`
-            // and its `scale_helper` are non-null, and each points to a live,
-            // initialized `ufbx_node` of the same scene, so the helper's own
-            // `local_transform.scale` is readable and outlives this call.
-            transform_scale = unsafe {
-                &raw const (*opt_ptr(&raw const (*opt_ptr(&raw const (*node).parent)).scale_helper))
-                    .local_transform
-                    .scale
-            };
+        // C: `if (node->parent && node->parent->scale_helper)` — the helper link
+        // is reached through the parent, as in C.
+        if let Some(parent) = node_view.parent() {
+            // SAFETY: a non-null `parent` link points to a live, initialized
+            // `ufbx_node` of the same scene, allocated from the scene arena
+            // (write-capable provenance, unmoved for the update pass).
+            let parent_view: &NodeView = unsafe { NodeView::from_ptr(parent.ptr()) };
+            if let Some(scale_helper) = parent_view.scale_helper() {
+                // SAFETY: as for `parent_view` — a non-null `scale_helper` link
+                // points to a live, initialized scene node.
+                let scale_helper_view: &NodeView =
+                    unsafe { NodeView::from_ptr(scale_helper.ptr()) };
+                // SAFETY: `local_transform_ptr()` is the helper's own live
+                // transform field, so the nested `scale` member lies inside it;
+                // the projection asserts nothing beyond that (no
+                // `View<Transform>` impl exists to reach the member safely).
+                transform_scale =
+                    unsafe { &raw const (*scale_helper_view.local_transform_ptr()).scale };
+            }
         }
-        // SAFETY: `node` is live and writable (see above); it is passed to
-        // `ufbxi_get_transform` as the node whose transform is composed, and
-        // `transform_scale` is either null or the live scale of the parent's
-        // scale helper (set above).
-        unsafe {
-            (*node).local_transform = get_transform(
+        // SAFETY: `ufbxi_get_transform` takes the node whose transform it
+        // composes by raw pointer and only reads it; `node_view.get()` is the
+        // view's own live storage, and `transform_scale` is either null or the
+        // live scale of the parent's scale helper (set above).
+        let local_transform: Transform = unsafe {
+            get_transform(
                 node_view.props_view(),
-                (*node).rotation_order,
-                node,
+                node_view.rotation_order(),
+                node_view.get(),
                 transform_scale,
             )
         };
-        // SAFETY: `node` is live (see above).
-        if unsafe { (*node).is_scale_helper }
-            // SAFETY: as above, for the node's own `parent` link.
-            && !unsafe { opt_ptr(&raw const (*node).parent) }.is_null()
-            // SAFETY: the operand before established that `node->parent` is
-            // non-null, so it points to a live, initialized `ufbx_node` whose
-            // own `inherit_scale_node` link is readable.
-            && !unsafe { opt_ptr(&raw const (*opt_ptr(&raw const (*node).parent)).inherit_scale_node) }.is_null()
-        {
-            // SAFETY: the condition above established that `node->parent` is
-            // non-null and points to a live `ufbx_node`.
-            let scale_parent: *mut Node = unsafe {
-                opt_ptr(&raw const (*opt_ptr(&raw const (*node).parent)).inherit_scale_node)
-            };
-            // SAFETY: the condition above established that `scale_parent` is
-            // non-null, so it points to a live, initialized `ufbx_node` whose
-            // own `scale_helper` link is readable.
-            if !unsafe { opt_ptr(&raw const (*scale_parent).scale_helper) }.is_null() {
-                // SAFETY: the branch condition established that the helper link
-                // is non-null, so it points to a live, initialized `ufbx_node`
-                // whose own `local_transform` is readable.
-                let inherit_scale: Vec3 = unsafe {
-                    (*opt_ptr(&raw const (*scale_parent).scale_helper))
-                        .local_transform
-                        .scale
-                };
-                // SAFETY: `node` is live and writable (see above).
-                unsafe {
-                    (*node).local_transform.scale.x *= inherit_scale.x;
-                    (*node).local_transform.scale.y *= inherit_scale.y;
-                    (*node).local_transform.scale.z *= inherit_scale.z;
+        node_view.set_local_transform(local_transform);
+        // C: `if (node->is_scale_helper && node->parent && node->parent->inherit_scale_node)`
+        if node_view.is_scale_helper() {
+            if let Some(parent) = node_view.parent() {
+                // SAFETY: a non-null `parent` link points to a live,
+                // initialized scene node (see above).
+                let parent_view: &NodeView = unsafe { NodeView::from_ptr(parent.ptr()) };
+                if let Some(inherit_scale_node) = parent_view.inherit_scale_node() {
+                    // SAFETY: a non-null `inherit_scale_node` link points to a
+                    // live, initialized scene node (see above).
+                    let scale_parent: &NodeView =
+                        unsafe { NodeView::from_ptr(inherit_scale_node.ptr()) };
+                    if let Some(scale_helper) = scale_parent.scale_helper() {
+                        // SAFETY: a non-null `scale_helper` link points to a
+                        // live, initialized scene node (see above).
+                        let scale_helper_view: &NodeView =
+                            unsafe { NodeView::from_ptr(scale_helper.ptr()) };
+                        let inherit_scale: Vec3 = scale_helper_view.local_transform().scale;
+                        // SAFETY: `local_transform_raw()` is the node view's own
+                        // live, writable transform field, so the nested `scale`
+                        // members lie inside it (no `View<Transform>` impl
+                        // exists to reach them safely).
+                        unsafe {
+                            (*node_view.local_transform_raw()).scale.x *= inherit_scale.x;
+                            (*node_view.local_transform_raw()).scale.y *= inherit_scale.y;
+                            (*node_view.local_transform_raw()).scale.z *= inherit_scale.z;
+                        }
+                    }
                 }
             }
         }
 
         if !overrides.is_empty() {
-            // SAFETY: `node` is live (see above).
-            let typed_id: u32 = unsafe { (*node).element.typed_id };
+            let typed_id: u32 = node_view.element().typed_id();
             let mut override_ix: usize = usize::MAX;
             // C: `ufbxi_macro_lower_bound_eq(ufbx_transform_override, 16,
             // &override_ix, overrides, 0, num_overrides,
@@ -11271,80 +11266,74 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
                 )
             };
             if override_ix != usize::MAX {
-                // SAFETY: `node` is live and writable (see above); the index was
-                // written by the in-bounds search over the slice.
-                unsafe { (*node).local_transform = overrides[override_ix].transform };
+                node_view.set_local_transform(overrides[override_ix].transform);
             }
         }
-        // SAFETY: `node` is live and writable (see above), so `&raw const (*node).local_transform`
-        // borrows its own freshly composed local transform.
-        unsafe { (*node).node_to_parent = transform_to_matrix(&raw const (*node).local_transform) };
-        // SAFETY: `node` is live and writable (see above), and it is the node
-        // whose geometry transform `ufbxi_get_geometry_transform` composes.
-        unsafe {
-            (*node).geometry_transform = get_geometry_transform(node_view.props_view(), node)
-        };
+        // SAFETY: `local_transform_ptr()` is the node view's own live,
+        // freshly composed transform field, and `ufbx_transform_to_matrix`
+        // takes it by raw pointer and only reads it.
+        let node_to_parent: Matrix =
+            unsafe { transform_to_matrix(node_view.local_transform_ptr()) };
+        node_view.set_node_to_parent(node_to_parent);
+        // SAFETY: `ufbxi_get_geometry_transform` takes the node whose geometry
+        // transform it composes by raw pointer and only reads it;
+        // `node_view.get()` is the view's own live storage.
+        let geometry_transform: Transform =
+            unsafe { get_geometry_transform(node_view.props_view(), node_view.get()) };
+        node_view.set_geometry_transform(geometry_transform);
     } else {
-        // SAFETY: `node` is the node view's own storage (see above).
-        unsafe { (*node).geometry_transform = IDENTITY_TRANSFORM };
+        node_view.set_geometry_transform(IDENTITY_TRANSFORM);
     }
 
-    // SAFETY: `node` is live (see above), so the raw address points at its own
-    // transform field.
+    // SAFETY: `local_transform_ptr()` is the node view's own live transform
+    // field, read through the raw pointer the helper takes.
     let unscaled_node_to_parent: Matrix =
-        unsafe { unscaled_transform_to_matrix(&raw const (*node).local_transform) };
+        unsafe { unscaled_transform_to_matrix(node_view.local_transform_ptr()) };
 
-    // SAFETY: `node` is live and writable (see above).
-    unsafe { (*node).inherit_scale = (*node).local_transform.scale };
+    node_view.set_inherit_scale(node_view.local_transform().scale);
 
-    // SAFETY: `node` is live (see above), so `&raw const (*node).parent` addresses its own
-    // nullable parent link.
-    let parent: *mut Node = unsafe { opt_ptr(&raw const (*node).parent) };
-    if !parent.is_null() {
-        // SAFETY: `node` is live (see above).
-        if unsafe { (*node).inherit_mode } == InheritMode::Normal {
-            // SAFETY: `parent` is non-null here, so it points to a live,
-            // initialized `ufbx_node` of the same scene; `node` is live and
-            // writable, and `node_to_parent` was composed above.
-            unsafe {
-                (*node).node_to_world = matrix_mul(
-                    &raw const (*parent).node_to_world,
-                    &raw const (*node).node_to_parent,
+    if let Some(parent) = node_view.parent() {
+        // SAFETY: a non-null `parent` link points to a live, initialized
+        // `ufbx_node` of the same scene (see above).
+        let parent_view: &NodeView = unsafe { NodeView::from_ptr(parent.ptr()) };
+        if node_view.inherit_mode() == InheritMode::Normal {
+            // SAFETY: both operands are live matrix fields projected from their
+            // own views, and `ufbx_matrix_mul` takes them by raw pointer and
+            // only reads them; `node_to_parent` was composed above.
+            let node_to_world: Matrix = unsafe {
+                matrix_mul(
+                    parent_view.node_to_world_ptr(),
+                    node_view.node_to_parent_ptr(),
                 )
             };
+            node_view.set_node_to_world(node_to_world);
             // SAFETY: as above; `unscaled_node_to_parent` is a live local.
-            unsafe {
-                (*node).unscaled_node_to_world = matrix_mul(
-                    &raw const (*parent).node_to_world,
+            let unscaled_node_to_world: Matrix = unsafe {
+                matrix_mul(
+                    parent_view.node_to_world_ptr(),
                     &raw const unscaled_node_to_parent,
                 )
             };
+            node_view.set_unscaled_node_to_world(unscaled_node_to_world);
         } else {
-            // SAFETY: `node` is live (see above).
-            let mut transform: Transform = unsafe { (*node).local_transform };
+            let mut transform: Transform = node_view.local_transform();
 
             let mut parent_scale: Vec3 = ONE_VEC3;
-            // SAFETY: `node` is live (see above), so `&raw const (*node).inherit_scale_node`
-            // addresses its own nullable inherit-scale link.
-            if !unsafe { opt_ptr(&raw const (*node).inherit_scale_node) }.is_null() {
-                // SAFETY: the branch condition established that the link is
-                // non-null, so it points to a live, initialized `ufbx_node`
-                // whose `inherit_scale` was computed earlier in this update
-                // pass.
-                parent_scale =
-                    unsafe { (*opt_ptr(&raw const (*node).inherit_scale_node)).inherit_scale };
+            if let Some(inherit_scale_node) = node_view.inherit_scale_node() {
+                // SAFETY: a non-null `inherit_scale_node` link points to a
+                // live, initialized scene node whose `inherit_scale` was
+                // computed earlier in this update pass.
+                let inherit_scale_node_view: &NodeView =
+                    unsafe { NodeView::from_ptr(inherit_scale_node.ptr()) };
+                parent_scale = inherit_scale_node_view.inherit_scale();
             }
 
             transform.scale.x *= parent_scale.x;
             transform.scale.y *= parent_scale.y;
             transform.scale.z *= parent_scale.z;
-            // SAFETY: `parent` is non-null here, so it points to a live,
-            // initialized `ufbx_node` of the same scene.
-            unsafe {
-                transform.translation.x *= (*parent).inherit_scale.x;
-                transform.translation.y *= (*parent).inherit_scale.y;
-                transform.translation.z *= (*parent).inherit_scale.z;
-            }
+            transform.translation.x *= parent_view.inherit_scale().x;
+            transform.translation.y *= parent_view.inherit_scale().y;
+            transform.translation.z *= parent_view.inherit_scale().z;
 
             // SAFETY: both raw pointers address the live, fully initialized local
             // `ufbx_transform`.
@@ -11355,54 +11344,57 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
                 )
             };
 
-            // SAFETY: `node` is live and writable (see above).
-            unsafe { (*node).inherit_scale = transform.scale };
-            // SAFETY: `node` is live and writable, and `parent` is non-null so it
-            // points to a live, initialized `ufbx_node`.
-            unsafe {
-                (*node).node_to_world = matrix_mul(
-                    &raw const (*parent).unscaled_node_to_world,
+            node_view.set_inherit_scale(transform.scale);
+            // SAFETY: the parent's matrix field is projected from its own view
+            // and the other operand is a live local; `ufbx_matrix_mul` takes
+            // both by raw pointer and only reads them.
+            let node_to_world: Matrix = unsafe {
+                matrix_mul(
+                    parent_view.unscaled_node_to_world_ptr(),
                     &raw const node_to_unscaled_parent,
-                );
-                (*node).unscaled_node_to_world = matrix_mul(
-                    &raw const (*parent).unscaled_node_to_world,
+                )
+            };
+            node_view.set_node_to_world(node_to_world);
+            // SAFETY: as above.
+            let unscaled_node_to_world: Matrix = unsafe {
+                matrix_mul(
+                    parent_view.unscaled_node_to_world_ptr(),
                     &raw const unscaled_node_to_unscaled_parent,
-                );
-            }
+                )
+            };
+            node_view.set_unscaled_node_to_world(unscaled_node_to_world);
         }
     } else {
-        // SAFETY: `node` is live and writable (see above).
-        unsafe { (*node).node_to_world = (*node).node_to_parent };
-        // SAFETY: as above; `unscaled_node_to_parent` is a live local.
-        unsafe { (*node).unscaled_node_to_world = unscaled_node_to_parent };
+        node_view.set_node_to_world(node_view.node_to_parent());
+        node_view.set_unscaled_node_to_world(unscaled_node_to_parent);
     }
 
-    // SAFETY: `node` is live (see above), so `&raw const (*node).geometry_transform`
-    // borrows its own geometry transform, set on both arms above.
-    if !unsafe { is_transform_identity(&raw const (*node).geometry_transform) } {
-        // SAFETY: `node` is live and writable (see above).
-        unsafe {
-            (*node).geometry_to_node = transform_to_matrix(&raw const (*node).geometry_transform)
+    // SAFETY: `geometry_transform_ptr()` is the node view's own geometry
+    // transform field, set on both arms above, read through the raw pointer
+    // the helper takes.
+    if !unsafe { is_transform_identity(node_view.geometry_transform_ptr()) } {
+        // SAFETY: as above, for `ufbx_transform_to_matrix`.
+        let geometry_to_node: Matrix =
+            unsafe { transform_to_matrix(node_view.geometry_transform_ptr()) };
+        node_view.set_geometry_to_node(geometry_to_node);
+        // SAFETY: both operands are the node view's own matrix fields, set
+        // above, and `ufbx_matrix_mul` takes them by raw pointer and only
+        // reads them.
+        let geometry_to_world: Matrix = unsafe {
+            matrix_mul(
+                node_view.node_to_world_ptr(),
+                node_view.geometry_to_node_ptr(),
+            )
         };
-        // SAFETY: as above; both operands are the node's own matrices, set above.
-        unsafe {
-            (*node).geometry_to_world = matrix_mul(
-                &raw const (*node).node_to_world,
-                &raw const (*node).geometry_to_node,
-            );
-            (*node).has_geometry_transform = true;
-        }
+        node_view.set_geometry_to_world(geometry_to_world);
+        node_view.set_has_geometry_transform(true);
     } else {
-        // SAFETY: `node` is live and writable (see above).
-        unsafe {
-            (*node).geometry_to_node = IDENTITY_MATRIX;
-            (*node).geometry_to_world = (*node).node_to_world;
-            (*node).has_geometry_transform = false;
-        }
+        node_view.set_geometry_to_node(IDENTITY_MATRIX);
+        node_view.set_geometry_to_world(node_view.node_to_world());
+        node_view.set_has_geometry_transform(false);
     }
 
-    // SAFETY: `node` is live and writable (see above).
-    unsafe { (*node).visible = find_int(node_view.props_view(), &sp::Visibility, 1) != 0 };
+    node_view.set_visible(find_int(node_view.props_view(), &sp::Visibility, 1) != 0);
 }
 
 // ufbx.c:23044-23062 `ufbxi_update_light`
