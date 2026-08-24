@@ -4248,14 +4248,15 @@ pub(crate) unsafe fn fetch_mapping_maps(
     let identity_binding: *mut ShaderPropBinding = identity_binding_storage.as_mut_ptr();
 
     // C: `ufbxi_for(const ufbxi_shader_mapping, mapping, mappings, count)`
-    let mut mapping: *const ShaderMapping = mappings;
-    let mapping_end: *const ShaderMapping = mappings.wrapping_add(count);
-    while mapping != mapping_end {
+    // SAFETY: `mappings`/`count` describe one of the immutable static mapping
+    // tables — `count` contiguous initialized `ShaderMapping` entries that live
+    // for the whole program and are written by nobody, so the shared borrow is
+    // sound for the walk. The table is read-only memory, which is why the run
+    // is a plain slice rather than a `Mut`-mode `SliceViewIter`.
+    let mapping_run: &[ShaderMapping] = unsafe { slice_from_ptr(mappings, count) };
+    for mapping in mapping_run {
         // C: `ufbx_string prop_name = { mapping->prop, mapping->prop_len };`
-        // SAFETY: `mapping` walks `mappings[0..count]`, the caller's table of
-        // `count` initialized `ShaderMapping` entries.
-        let mut prop_name: String =
-            unsafe { String::new_c((*mapping).prop, (*mapping).prop_len as usize) };
+        let mut prop_name: String = String::new_c(mapping.prop, mapping.prop_len as usize);
         if prefix.length > 0 || prefix2.length > 0 || suffix.length > 0 {
             // C: `sizeof(combined_name)` — the array is `char[512]`.
             if prop_name.length + prefix.length + prefix2.length + suffix.length
@@ -4306,24 +4307,21 @@ pub(crate) unsafe fn fetch_mapping_maps(
             }
         }
 
-        // SAFETY: the caller's nullable shader pointer becomes the `Const`
-        // view mint (live scene element, unwritten during the update pass), and
-        // `prop_name` is readable for its length (`as_bytes`) — either the
-        // mapping table's `prop` bytes or the `combined_name` prefix just
-        // written.
-        let mut bindings: List<ShaderPropBinding> = unsafe {
-            find_shader_prop_bindings_len(
-                if shader.is_null() {
-                    None
-                } else {
-                    Some(crate::native::view::View::<
-                        Shader,
-                        crate::native::view::Const,
-                    >::from_ptr(shader))
-                },
-                prop_name.as_bytes(),
-            )
+        // The search key is minted once per mapping.
+        // SAFETY: `prop_name` is a `data`/`length` span readable for its length
+        // — either the mapping table's `prop` bytes or the `combined_name`
+        // prefix just written, neither of which is written again while the
+        // slice is live.
+        let prop_name_bytes: &[u8] = unsafe { prop_name.as_bytes() };
+        // SAFETY: the caller's nullable shader pointer is null or a live scene
+        // element, unwritten during the update pass, so it mints a `Const` view.
+        let shader_view: Option<&View<Shader, Const>> = if shader.is_null() {
+            None
+        } else {
+            Some(unsafe { View::<Shader, Const>::from_ptr(shader) })
         };
+        let mut bindings: List<ShaderPropBinding> =
+            find_shader_prop_bindings_len(shader_view, prop_name_bytes);
         if bindings.count == 0 {
             // SAFETY: `identity_binding` addresses this function's own aligned
             // `ShaderPropBinding` storage; both members are written here before
@@ -4336,36 +4334,42 @@ pub(crate) unsafe fn fetch_mapping_maps(
             bindings.count = 1;
         }
 
-        // SAFETY: `mapping` walks the caller's `count`-entry mapping table.
-        let mapping_flags: u32 = unsafe { (*mapping).flags as u32 };
+        let mapping_flags: u32 = mapping.flags as u32;
         // C: `ufbxi_for_list(ufbx_shader_prop_binding, binding, bindings)`
-        let mut binding: *const ShaderPropBinding = bindings.data;
-        let binding_end: *const ShaderPropBinding = bindings.data.wrapping_add(bindings.count);
-        while binding != binding_end {
-            // SAFETY: `binding` walks `bindings`, either the shader's own binding
-            // span or the single `identity_binding` written just above.
-            let name: String = unsafe { (*binding).material_prop };
+        // SAFETY: `bindings` describes a contiguous run of initialized
+        // `ShaderPropBinding` — either the shader's own binding span, which
+        // nothing in this loop writes, or the single `identity_binding` written
+        // just above.
+        let binding_run: &[ShaderPropBinding] =
+            unsafe { slice_from_ptr(bindings.data, bindings.count) };
+        for binding in binding_run {
+            let name: String = binding.material_prop;
+            // The property key is minted once per binding.
+            // SAFETY: `name` is a `data`/`length` span readable for its length,
+            // pointing at either interned string-pool bytes or the
+            // `combined_name` storage, neither written while the slice is live.
+            let name_bytes: &[u8] = unsafe { name.as_bytes() };
 
             // Read-only `Const` view: `update_material` is reachable from the
             // public anim-eval path where `material` can derive from a caller's
             // read-only `&Material`; every access through `prop` below is a read.
             // SAFETY: `material` points to a live `ufbx_material` (fn contract), so
             // the address of its `element.props` is a readable `ufbx_props` — all a
-            // `Const` view requires — and `name` is a `data`/`length` span readable
-            // for its length.
+            // `Const` view requires.
             let prop: Option<&View<Prop, Const>> = unsafe {
                 find_prop_len(
                     View::<Props, Const>::from_ptr(&raw const (*material).element.props),
-                    name.as_bytes(),
+                    name_bytes,
                 )
             };
             if (flags & MAPPING_FETCH_FEATURE) != 0 {
                 // SAFETY: with `MAPPING_FETCH_FEATURE` the caller's `features`
                 // array is indexed by `mapping->index`, which the mapping tables
-                // keep within the material's feature count; the view reinterprets
-                // that entry in place.
+                // keep within the material's feature count; the entry address is
+                // derived from the array base, and the view reinterprets that
+                // entry in place with the caller's write-capable provenance.
                 let feature: &View<MaterialFeatureInfo> = unsafe {
-                    View::<MaterialFeatureInfo>::from_ptr(features.add((*mapping).index as usize))
+                    View::<MaterialFeatureInfo>::from_ptr(features.add(mapping.index as usize))
                 };
                 // C: `if (prop && prop->type != UFBX_PROP_REFERENCE)`
                 if let Some(prop) = prop.filter(|p| p.type_() != PropType::Reference) {
@@ -4387,126 +4391,109 @@ pub(crate) unsafe fn fetch_mapping_maps(
                     }
                 }
                 if (mapping_flags & SHADER_FEATURE_IF_TEXTURE as u32) != 0 {
-                    // SAFETY: `material` points to a live `ufbx_material` and
-                    // `name` is readable for its length (`as_bytes`).
+                    // SAFETY: `material` points to a live `ufbx_material`, which
+                    // is all this raw-pointer entry point requires.
                     let texture: *mut Texture =
-                        unsafe { find_prop_texture_len(material, name.as_bytes()) };
+                        unsafe { find_prop_texture_len(material, name_bytes) };
                     if !texture.is_null() {
                         feature.set_enabled(true);
                     }
                 }
-                // SAFETY: `binding != binding_end`, so the advance lands at or
-                // before the one-past-the-end pointer of the binding span.
-                binding = unsafe { binding.add(1) };
                 continue;
             }
 
+            // C: `ufbx_material_map *map = &maps[mapping->index];`
             // SAFETY: the caller's `maps` array is indexed by `mapping->index`,
-            // which the mapping tables keep within the material's map count.
-            let map: *mut MaterialMap = unsafe { maps.add((*mapping).index as usize) };
+            // which the mapping tables keep within the material's map count; the
+            // entry address is derived from the array base, and the view
+            // reinterprets that entry in place with the caller's write-capable
+            // provenance.
+            let map: &MaterialMapView =
+                unsafe { MaterialMapView::from_ptr(maps.add(mapping.index as usize)) };
 
             if (flags & MAPPING_FETCH_VALUE) != 0 {
                 // C: `if (prop && prop->type != UFBX_PROP_REFERENCE)`
                 if let Some(prop) = prop.filter(|p| p.type_() != PropType::Reference) {
-                    // SAFETY: `mapping` walks the caller's `count`-entry table.
-                    if unsafe { (*mapping).flags & SHADER_MAPPING_MULTIPLY_VALUE } != 0 {
+                    if (mapping.flags & SHADER_MAPPING_MULTIPLY_VALUE) != 0 {
                         // C: `ufbxi_f64_to_i64(map->value_vec4.x)` — the real
                         // argument promotes to double at the call.
-                        // SAFETY: `map` is in bounds (see above).
-                        unsafe {
-                            (*map).value_vec4.x *= prop.value_vec4().x;
-                            (*map).value_int = f64_to_i64(as_f64!((*map).value_vec4.x));
-                        }
+                        // SAFETY: the map view's own live `value_vec4` field; the
+                        // C statement updates only its `x` lane, which no
+                        // single-level view accessor can address.
+                        unsafe { (*map.value_vec4_raw()).x *= prop.value_vec4().x };
+                        map.set_value_int(f64_to_i64(as_f64!(map.value_vec4().x)));
                     } else {
-                        // SAFETY: `map` is in bounds (see above).
-                        unsafe {
-                            (*map).value_vec4 = prop.value_vec4();
-                            (*map).value_int = prop.value_int();
-                        }
+                        map.set_value_vec4(prop.value_vec4());
+                        map.set_value_int(prop.value_int());
                     }
-                    // SAFETY: `map` is in bounds (see above).
-                    unsafe { (*map).has_value = true };
-                    // SAFETY: `mapping` walks the caller's `count`-entry table.
-                    if unsafe { (*mapping).transform } != 0 {
+                    map.set_has_value(true);
+                    if mapping.transform != 0 {
                         // SAFETY: `mapping->transform` is a `MatTransform`
                         // discriminant below `MatTransform::Count`, and
                         // `MAT_TRANSFORM_FNS` holds a `Some` at every index above
                         // the identity slot 0, which the `!= 0` test excludes.
                         let transform_fn: MatTransformFn = unsafe {
-                            MAT_TRANSFORM_FNS[(*mapping).transform as usize].unwrap_unchecked()
+                            MAT_TRANSFORM_FNS[mapping.transform as usize].unwrap_unchecked()
                         };
-                        // SAFETY: `map` is in bounds (see above), so the argument is
-                        // the live `value_vec4` those callbacks are contracted to
+                        // SAFETY: the argument is the map view's own live
+                        // `value_vec4`, which those callbacks are contracted to
                         // take.
-                        unsafe { transform_fn(&raw mut (*map).value_vec4) };
+                        unsafe { transform_fn(map.value_vec4_raw()) };
                     }
 
                     let prop_flags: u32 = prop.flags().raw();
-                    // SAFETY: `mapping` walks the caller's `count`-entry table.
-                    if unsafe { (*mapping).flags & SHADER_MAPPING_DEFAULT_W_1 } != 0
+                    if (mapping.flags & SHADER_MAPPING_DEFAULT_W_1) != 0
                         && (prop_flags & PropFlags::VALUE_VEC4.raw()) == 0
                     {
-                        // SAFETY: `map` is in bounds (see above).
-                        unsafe { (*map).value_vec4.w = 1.0f32 as Real };
+                        // SAFETY: the map view's own live `value_vec4` field; the
+                        // C statement updates only its `w` lane.
+                        unsafe { (*map.value_vec4_raw()).w = 1.0f32 as Real };
                     }
-                    // SAFETY: `mapping` walks the caller's `count`-entry table.
-                    if unsafe { (*mapping).flags & SHADER_MAPPING_WIDEN_TO_RGB } != 0
+                    if (mapping.flags & SHADER_MAPPING_WIDEN_TO_RGB) != 0
                         && (prop_flags & PropFlags::VALUE_REAL.raw()) != 0
                     {
                         // C-parity: `map->value_vec3` is the `ufbx_material_map`
                         // value union's 3-real view; the generated struct keeps
                         // only `value_vec4`, whose x/y/z overlay it exactly.
-                        // SAFETY: `map` is in bounds (see above).
+                        // SAFETY: the map view's own live `value_vec4` field; the
+                        // C statements update only its `y` and `z` lanes.
                         unsafe {
-                            (*map).value_vec4.y = (*map).value_vec4.x;
-                            (*map).value_vec4.z = (*map).value_vec4.x;
+                            (*map.value_vec4_raw()).y = map.value_vec4().x;
+                            (*map.value_vec4_raw()).z = map.value_vec4().x;
                         }
                     }
-                    // SAFETY: `map` is in bounds (see above).
-                    unsafe {
-                        if (prop_flags & PropFlags::VALUE_REAL.raw()) != 0 {
-                            (*map).value_components = 1;
-                        } else if (prop_flags & PropFlags::VALUE_VEC2.raw()) != 0 {
-                            (*map).value_components = 2;
-                        } else if (prop_flags & PropFlags::VALUE_VEC3.raw()) != 0 {
-                            (*map).value_components = 3;
-                        } else if (prop_flags & PropFlags::VALUE_VEC4.raw()) != 0 {
-                            (*map).value_components = 4;
-                        } else {
-                            (*map).value_components = 0;
-                        }
+                    if (prop_flags & PropFlags::VALUE_REAL.raw()) != 0 {
+                        map.set_value_components(1);
+                    } else if (prop_flags & PropFlags::VALUE_VEC2.raw()) != 0 {
+                        map.set_value_components(2);
+                    } else if (prop_flags & PropFlags::VALUE_VEC3.raw()) != 0 {
+                        map.set_value_components(3);
+                    } else if (prop_flags & PropFlags::VALUE_VEC4.raw()) != 0 {
+                        map.set_value_components(4);
+                    } else {
+                        map.set_value_components(0);
                     }
                 }
             }
 
             if (flags & MAPPING_FETCH_TEXTURE) != 0 {
-                // SAFETY: `material` points to a live `ufbx_material` and `name`
-                // is readable for its length (`as_bytes`).
-                let texture: *mut Texture =
-                    unsafe { find_prop_texture_len(material, name.as_bytes()) };
+                // SAFETY: `material` points to a live `ufbx_material`, which is
+                // all this raw-pointer entry point requires.
+                let texture: *mut Texture = unsafe { find_prop_texture_len(material, name_bytes) };
                 if !texture.is_null() {
-                    // SAFETY: `map` is in bounds (see above) and `texture` is a
-                    // non-null (checked) live `ufbx_texture`.
-                    unsafe {
-                        (*map).texture = opt_ref(texture);
-                        (*map).texture_enabled = true;
-                    }
+                    // SAFETY: `texture` is a non-null (checked) live
+                    // `ufbx_texture`, so it is a valid element reference.
+                    map.set_texture(unsafe { opt_ref(texture) });
+                    map.set_texture_enabled(true);
                 }
             }
 
             if (flags & MAPPING_FETCH_TEXTURE_ENABLED) != 0 {
                 if let Some(prop) = prop {
-                    // SAFETY: `map` is in bounds (see above).
-                    unsafe { (*map).texture_enabled = prop.value_int() != 0 };
+                    map.set_texture_enabled(prop.value_int() != 0);
                 }
             }
-            // SAFETY: `binding != binding_end`, so the advance lands at or before
-            // the one-past-the-end pointer of the binding span.
-            binding = unsafe { binding.add(1) };
         }
-        // SAFETY: `mapping != mapping_end`, so the advance lands at or before the
-        // one-past-the-end pointer of the caller's mapping table.
-        mapping = unsafe { mapping.add(1) };
     }
 }
 
