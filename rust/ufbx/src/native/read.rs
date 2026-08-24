@@ -5744,18 +5744,26 @@ pub(crate) unsafe fn read_animation_curve(
     let curve: *mut AnimCurve =
         unsafe { push_element::<AnimCurve>(uc, info, ElementType::AnimCurve) };
     ufbxi_check!(uc, !curve.is_null(), "curve");
+    // SAFETY: `curve` is the fresh non-null element pushed above, owned by uc's
+    // element buffer — write-capable provenance, live and unmoved for the rest of
+    // the load.
+    let curve: &View<AnimCurve> = unsafe { View::<AnimCurve>::from_ptr(curve) };
 
-    // SAFETY: `curve` is the fresh non-null element pushed above, so
-    // `&raw mut (*curve).pre_extrapolation` is the live out-slot `read_extrapolation`
+    // SAFETY: `pre_extrapolation_raw()` addresses the viewed element's own
+    // `ufbx_extrapolation` field, the live out-slot `read_extrapolation`
     // requires; `sp::Pre_Extrapolation` is a NUL-terminated static name.
     unsafe {
         read_extrapolation(
-            &raw mut (*curve).pre_extrapolation,
+            curve.pre_extrapolation_raw(),
             node,
             sp::Pre_Extrapolation.as_ptr(),
         );
+    }
+    // SAFETY: as above, for the viewed element's own `post_extrapolation` field
+    // and the NUL-terminated `sp::Post_Extrapolation`.
+    unsafe {
         read_extrapolation(
-            &raw mut (*curve).post_extrapolation,
+            curve.post_extrapolation_raw(),
             node,
             sp::Post_Extrapolation.as_ptr(),
         );
@@ -5767,93 +5775,109 @@ pub(crate) unsafe fn read_animation_curve(
 
     // C: `ufbxi_value_array *times, *values, *attr_flags, *attrs, *refs;`
     // — declared uninitialized, each written by the `ufbxi_check(x = ...)`
-    // assignment-in-condition below.
+    // assignment-in-condition below. Each descriptor is minted as a view right
+    // after its own null check.
     let times: *mut ValueArray = find_array(node, sp::KeyTime.as_ptr(), b'l');
     ufbxi_check!(
         uc,
         !times.is_null(),
         "times = ufbxi_find_array(node, ufbxi_KeyTime, 'l')"
     );
+    // SAFETY: `times` is non-null (checked above) and is the parse node's own
+    // arena-owned array descriptor — write-capable provenance, live for as long
+    // as the parse tree.
+    let times: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(times) };
     let values: *mut ValueArray = find_array(node, sp::KeyValueFloat.as_ptr(), b'r');
     ufbxi_check!(
         uc,
         !values.is_null(),
         "values = ufbxi_find_array(node, ufbxi_KeyValueFloat, 'r')"
     );
+    // SAFETY: as for `times` — the node's own live array descriptor.
+    let values: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(values) };
     let attr_flags: *mut ValueArray = find_array(node, sp::KeyAttrFlags.as_ptr(), b'i');
     ufbxi_check!(
         uc,
         !attr_flags.is_null(),
         "attr_flags = ufbxi_find_array(node, ufbxi_KeyAttrFlags, 'i')"
     );
+    // SAFETY: as for `times` — the node's own live array descriptor.
+    let attr_flags: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(attr_flags) };
     let attrs: *mut ValueArray = find_array(node, sp::KeyAttrDataFloat.as_ptr(), b'?');
     ufbxi_check!(
         uc,
         !attrs.is_null(),
         "attrs = ufbxi_find_array(node, ufbxi_KeyAttrDataFloat, '?')"
     );
+    // SAFETY: as for `times` — the node's own live array descriptor.
+    let attrs: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(attrs) };
     let refs: *mut ValueArray = find_array(node, sp::KeyAttrRefCount.as_ptr(), b'i');
     ufbxi_check!(
         uc,
         !refs.is_null(),
         "refs = ufbxi_find_array(node, ufbxi_KeyAttrRefCount, 'i')"
     );
+    // SAFETY: as for `times` — the node's own live array descriptor.
+    let refs: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(refs) };
 
     // Time and value arrays that define the keyframes should be parallel
-    // SAFETY: `times`/`values` are non-null (checked above) and `find_array`
-    // returns the node's own array descriptors, live for as long as the parse
-    // tree.
     ufbxi_check!(
         uc,
-        unsafe { (*times).size } == unsafe { (*values).size },
+        times.size() == values.size(),
         "times->size == values->size"
     );
 
     // Flags and attributes are run-length encoded where KeyAttrRefCount (refs)
     // is an array that describes how many times to repeat a given flag/attribute.
     // Attributes consist of 4 32-bit floating point values per key.
-    // SAFETY: `attr_flags`/`refs` are the live array descriptors checked non-null
-    // above.
     ufbxi_check!(
         uc,
-        unsafe { (*attr_flags).size } == unsafe { (*refs).size },
+        attr_flags.size() == refs.size(),
         "attr_flags->size == refs->size"
     );
-    // SAFETY: `attrs`/`refs` are the live array descriptors checked non-null
-    // above.
     ufbxi_check!(
         uc,
-        unsafe { (*attrs).size } == unsafe { (*refs).size }.wrapping_mul(4u32 as usize),
+        attrs.size() == refs.size().wrapping_mul(4u32 as usize),
         "attrs->size == refs->size * 4u"
     );
 
-    // SAFETY: `times` is the live array descriptor checked non-null above.
-    let num_keys: usize = unsafe { (*times).size };
+    let num_keys: usize = times.size();
     let keys: *mut Keyframe = uc.result_view().push::<Keyframe>(num_keys);
     ufbxi_check!(uc, !keys.is_null(), "keys");
 
-    // SAFETY: `curve` is the fresh non-null element and `keys` is the non-null
-    // `num_keys` run just pushed on the result buffer.
-    unsafe {
-        (*curve).keyframes.data = keys;
-        (*curve).keyframes.count = num_keys;
-    }
+    curve.keyframes_view().set_data(keys);
+    curve.keyframes_view().set_count(num_keys);
 
-    // SAFETY: each descriptor was checked non-null above and is live for as long
-    // as the parse tree; the `'l'`/`'r'`/`'i'`/`'?'` payloads are runs of `size`
-    // `i64`s, reals, `i32`s and `f32`s respectively.
-    let (mut p_time, mut p_value, mut p_flag, mut p_attr, mut p_ref) = unsafe {
-        (
-            (*times).data as *mut i64,
-            (*values).data as *mut Real,
-            (*attr_flags).data as *mut i32,
-            (*attrs).data as *mut f32,
-            (*refs).data as *mut i32,
-        )
-    };
-    // SAFETY: as above — `refs.size` is exactly the length of the `p_ref` run, so
-    // the one-past-the-end pointer is in range.
-    let p_ref_end: *mut i32 = unsafe { add_ptr(p_ref, (*refs).size) };
+    // C: `int64_t *p_time = (int64_t*)times->data;`
+    //    `ufbx_real *p_value = (ufbx_real*)values->data;`
+    //    `int32_t *p_flag = (int32_t*)attr_flags->data;`
+    //    `float *p_attr = (float*)attrs->data;`
+    //    `int32_t *p_ref = (int32_t*)refs->data, *p_ref_end = p_ref + refs->size;`
+    // The five walking cursors are two indices over the payload runs: `i`, the
+    // loop counter the `p_time`/`p_value` cursors advance with (one step per
+    // key), and `run_ix`, the run-length cursor `p_flag`/`p_attr`/`p_ref` share
+    // (`p_attr` addresses the four-float group at `run_ix * 4`). C's
+    // `p_ref < p_ref_end` is `run_ix < refs_data.len()`.
+    // SAFETY: the `'l'` fetch succeeded, so the `times` payload is a run of
+    // `size` `int64_t` written by the array parser (which allocates it
+    // 8-aligned), live for as long as the parse tree and never written again
+    // during this read.
+    let times_data: &[i64] = unsafe { slice_from_ptr(times.data() as *const i64, times.size()) };
+    // SAFETY: as above — the `'r'` fetch makes the `values` payload a run of
+    // `size` `ufbx_real`.
+    let values_data: &[Real] =
+        unsafe { slice_from_ptr(values.data() as *const Real, values.size()) };
+    // SAFETY: as above — the `'i'` fetch makes the `attr_flags` payload a run of
+    // `size` `int32_t`.
+    let flags_data: &[i32] =
+        unsafe { slice_from_ptr(attr_flags.data() as *const i32, attr_flags.size()) };
+    // C-parity: `(float*)attrs->data` reinterprets the `'?'` (any-type) payload.
+    // SAFETY: the array parser types a `KeyAttrDataFloat` array as `'i'` or `'f'`
+    // (ufbx.c:8188-8191), both four-byte elements laid out 8-aligned, so `size`
+    // `f32`s cover exactly the bytes of the payload run.
+    let attrs_data: &[f32] = unsafe { slice_from_ptr(attrs.data() as *const f32, attrs.size()) };
+    // SAFETY: as for `attr_flags` — the `'i'` payload is a run of `size` `int32_t`.
+    let refs_data: &[i32] = unsafe { slice_from_ptr(refs.data() as *const i32, refs.size()) };
 
     // The previous key defines the weight/slope of the left tangent
     let mut slope_left: f32 = 0.0f32;
@@ -5864,67 +5888,51 @@ pub(crate) unsafe fn read_animation_curve(
     let mut next_time: f64 = 0.0;
 
     let mut refs_left: i32 = 0;
+    let mut run_ix: usize = 0;
     if num_keys > 0 {
-        // SAFETY: `p_time` heads the `times` payload of `num_keys` `i64`s, which
-        // is non-empty in this branch.
-        next_time = unsafe { *p_time.add(0) } as f64 / uc.ktime_sec_double();
-        if p_ref < p_ref_end {
-            // SAFETY: `p_ref` is below `p_ref_end`, so it addresses a live entry
-            // of the `refs` payload.
-            refs_left = unsafe { *p_ref };
+        // `times_data` holds `num_keys` entries, which is non-empty in this branch.
+        next_time = times_data[0] as f64 / uc.ktime_sec_double();
+        if run_ix < refs_data.len() {
+            refs_left = refs_data[run_ix];
         }
     }
 
-    let mut i: usize = 0;
-    while i < num_keys {
-        // SAFETY: `keys` is the non-null `num_keys` run pushed above and
-        // `i < num_keys`.
-        let key: *mut Keyframe = unsafe { keys.add(i) };
+    // SAFETY: `keys` is the non-null `num_keys`-element run just pushed on the
+    // result buffer — one contiguous `push`-materialized allocation run, live and
+    // unmoved for the rest of this function.
+    let keys_iter = unsafe { SliceViewIter::<Keyframe>::from_raw_parts(keys, num_keys) };
+    // C: `for (size_t i = 0; i < num_keys; i++) { ufbx_keyframe *key = &keys[i]; ... }`
+    for (i, key) in keys_iter.enumerate() {
         ufbxi_check!(uc, refs_left > 0, "refs_left > 0");
 
-        // SAFETY: `p_value` walks the `values` payload one step per iteration
-        // from its start, so at iteration `i < num_keys` it addresses element
-        // `i` of that `num_keys`-long run.
-        let value: Real = unsafe { *p_value };
+        let value: Real = values_data[i];
         if i == 0 {
-            // SAFETY: `curve` is the fresh non-null element pushed above.
-            unsafe {
-                (*curve).min_value = value;
-                (*curve).max_value = value;
-            }
+            curve.set_min_value(value);
+            curve.set_max_value(value);
         } else {
-            // SAFETY: `curve` is the fresh non-null element.
-            unsafe {
-                (*curve).min_value = min_real((*curve).min_value, value);
-                (*curve).max_value = max_real((*curve).max_value, value);
-            }
+            curve.set_min_value(min_real(curve.min_value(), value));
+            curve.set_max_value(max_real(curve.max_value(), value));
         }
 
-        // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-        unsafe {
-            (*key).time = next_time;
-            (*key).value = value;
-        }
+        key.set_time(next_time);
+        key.set_value(value);
 
         if i + 1 < num_keys {
-            // SAFETY: `p_time` addresses element `i` of the `num_keys`-long
-            // `times` payload, and `i + 1 < num_keys` bounds the next one.
-            next_time = unsafe { *p_time.add(1) } as f64 / uc.ktime_sec_double();
+            next_time = times_data[i + 1] as f64 / uc.ktime_sec_double();
         }
 
-        // SAFETY: `refs_left > 0` (checked above) holds only while `p_ref` is
-        // still below `p_ref_end`, and `p_flag` advances in lockstep with `p_ref`
-        // over the equally long `attr_flags` payload, so it is in bounds.
-        let flags: u32 = unsafe { *p_flag } as u32;
+        // `refs_left > 0` (checked above) holds only while `run_ix` is still
+        // below `refs_data.len()`, and `flags_data`/`attrs_data` are `refs.size`
+        // and `refs.size * 4` long, so the current run's flag and four-float
+        // group are in bounds.
+        let flags: u32 = flags_data[run_ix] as u32;
 
-        // SAFETY: as above, `p_attr` advances four floats per `p_ref` step over
-        // the `attrs` payload of `refs.size * 4` floats, so the current key's
-        // four-float group is in bounds.
-        let mut slope_right: f32 = unsafe { *p_attr.add(0) };
+        // C: `p_attr[k]` — the four-float group of the current run.
+        let attr_ix: usize = run_ix * 4;
+        let mut slope_right: f32 = attrs_data[attr_ix];
         let mut weight_right: f32 = 0.333333f32;
         //float velocity_right = 0.0f;
-        // SAFETY: as above — the second float of the current group.
-        let mut next_slope_left: f32 = unsafe { *p_attr.add(1) };
+        let mut next_slope_left: f32 = attrs_data[attr_ix + 1];
         let mut next_weight_left: f32 = 0.333333f32;
         // float next_velocity_left = 0.0f;
 
@@ -5933,10 +5941,15 @@ pub(crate) unsafe fn read_animation_curve(
             // two 0.4 _decimal_ fixed point values that are packed into 32 bits and
             // interpreted as a 32-bit float.
             // C: `uint32_t packed_weights;` + `memcpy(&packed_weights, &p_attr[2], sizeof(uint32_t));`
-            // SAFETY: `p_attr`'s four-float group is in bounds (see the group
-            // reads above), so its third float is a readable four-byte slot;
-            // `read_unaligned` copies those bytes without an alignment claim.
-            let packed_weights: u32 = unsafe { (p_attr.add(2) as *const u32).read_unaligned() };
+            // SAFETY: `attrs_data[attr_ix + 2]` is an in-bounds element of the
+            // slice vouched above, so its address is a readable four-byte slot;
+            // `read_unaligned` copies those bytes without an alignment claim, the
+            // `memcpy` C performs.
+            let packed_weights: u32 = unsafe {
+                (&raw const attrs_data[attr_ix + 2])
+                    .cast::<u32>()
+                    .read_unaligned()
+            };
 
             if flags & KEY_WEIGHTED_RIGHT != 0 {
                 // Right tangent is weighted
@@ -5973,16 +5986,10 @@ pub(crate) unsafe fn read_animation_curve(
 
             if flags & KEY_CONSTANT_NEXT != 0 {
                 // Take constant value from next key
-                // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-                unsafe {
-                    (*key).interpolation = Interpolation::ConstantNext;
-                }
+                key.set_interpolation(Interpolation::ConstantNext);
             } else {
                 // Take constant value from the previous key
-                // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-                unsafe {
-                    (*key).interpolation = Interpolation::ConstantPrev;
-                }
+                key.set_interpolation(Interpolation::ConstantPrev);
             }
 
             // C: `weight_right = next_weight_left = 0.333333f;`
@@ -5993,47 +6000,38 @@ pub(crate) unsafe fn read_animation_curve(
             slope_right = next_slope_left;
         } else if flags & KEY_INTERPOLATION_CUBIC != 0 {
             // Cubic interpolation
-            // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-            unsafe {
-                (*key).interpolation = Interpolation::Cubic;
-            }
+            key.set_interpolation(Interpolation::Cubic);
 
             if flags & KEY_TANGENT_TCB != 0 {
                 let mut tcb_slope_left: f64 = 0.0;
                 let mut tcb_slope_right: f64 = 0.0;
                 let mut tcb_edge: bool = false;
-                // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-                if i > 0 && unsafe { (*key).time } > prev_time {
-                    // SAFETY: `key` is in bounds, and `p_value` addresses element
-                    // `i` of the `values` payload with `i > 0`, so the preceding
-                    // element is in bounds too.
-                    tcb_slope_left = unsafe {
-                        as_f64!((*key).value - *p_value.offset(-1)) / ((*key).time - prev_time)
-                    };
+                if i > 0 && key.time() > prev_time {
+                    // `i > 0` bounds the element preceding element `i` of the
+                    // `num_keys`-long `values` run.
+                    tcb_slope_left =
+                        as_f64!(key.value() - values_data[i - 1]) / (key.time() - prev_time);
                 } else {
                     tcb_edge = true;
                 }
-                // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-                if i + 1 < num_keys && next_time > unsafe { (*key).time } {
-                    // SAFETY: `key` is in bounds, and `i + 1 < num_keys` bounds
-                    // the next element of the `values` payload.
-                    tcb_slope_right = unsafe {
-                        as_f64!(*p_value.add(1) - (*key).value) / (next_time - (*key).time)
-                    };
+                if i + 1 < num_keys && next_time > key.time() {
+                    // `i + 1 < num_keys` bounds the element following element `i`
+                    // of the `values` run.
+                    tcb_slope_right =
+                        as_f64!(values_data[i + 1] - key.value()) / (next_time - key.time());
                 } else {
                     tcb_edge = true;
                 }
 
-                // SAFETY: `slope_left`/`slope_right` are live `f32` locals, the
-                // out-slots `solve_tcb` writes; `p_attr`'s four-float group is in
-                // bounds (see the group reads above).
+                // SAFETY: `slope_left`/`slope_right` are live `f32` locals — the
+                // out-slots `solve_tcb` writes.
                 unsafe {
                     solve_tcb(
                         &raw mut slope_left,
                         &raw mut slope_right,
-                        *p_attr.add(0) as f64,
-                        *p_attr.add(1) as f64,
-                        *p_attr.add(2) as f64,
+                        attrs_data[attr_ix] as f64,
+                        attrs_data[attr_ix + 1] as f64,
+                        attrs_data[attr_ix + 2] as f64,
                         tcb_slope_left,
                         tcb_slope_right,
                         tcb_edge,
@@ -6056,97 +6054,80 @@ pub(crate) unsafe fn read_animation_curve(
             } else {
                 // TODO: Auto break (0x800)
 
-                // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-                if unsafe {
-                    i > 0 && i + 1 < num_keys && (*key).time > prev_time && next_time > (*key).time
-                } {
+                if i > 0 && i + 1 < num_keys && key.time() > prev_time && next_time > key.time() {
                     if math::fabs((slope_left + slope_right) as f64) <= 0.0001f32 as f64 {
                         // C: `slope_left = slope_right = ufbxi_solve_auto_tangent(...)`
-                        // SAFETY: `key` is in bounds, and `i > 0` /
-                        // `i + 1 < num_keys` bound the neighbouring elements of
-                        // the `values` payload around `p_value`'s element `i`.
-                        slope_right = unsafe {
-                            solve_auto_tangent(
-                                uc,
-                                prev_time,
-                                (*key).time,
-                                next_time,
-                                *p_value.offset(-1),
-                                (*key).value,
-                                *p_value.add(1),
-                                weight_left,
-                                weight_right,
-                                slope_right,
-                                flags,
-                            )
-                        };
-                        slope_left = slope_right;
-                    } else {
-                        // SAFETY: as above.
-                        unsafe {
-                            slope_left = solve_auto_tangent(
-                                uc,
-                                prev_time,
-                                (*key).time,
-                                next_time,
-                                *p_value.offset(-1),
-                                (*key).value,
-                                *p_value.add(1),
-                                weight_left,
-                                weight_right,
-                                -slope_left,
-                                flags,
-                            );
-                            slope_right = solve_auto_tangent(
-                                uc,
-                                prev_time,
-                                (*key).time,
-                                next_time,
-                                *p_value.offset(-1),
-                                (*key).value,
-                                *p_value.add(1),
-                                weight_left,
-                                weight_right,
-                                slope_right,
-                                flags,
-                            );
-                        }
-                    }
-                // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-                } else if i > 0 && unsafe { (*key).time } > prev_time {
-                    // C: `slope_left = slope_right = ufbxi_solve_auto_tangent_left(...)`
-                    // SAFETY: `key` is in bounds and `i > 0` bounds the element
-                    // preceding `p_value`'s element `i` of the `values` payload.
-                    slope_right = unsafe {
-                        solve_auto_tangent_left(
+                        // `i > 0` / `i + 1 < num_keys` bound the neighbouring
+                        // elements of the `values` run around element `i`.
+                        slope_right = solve_auto_tangent(
                             uc,
                             prev_time,
-                            (*key).time,
-                            *p_value.offset(-1),
-                            (*key).value,
-                            weight_left,
-                            -slope_left,
-                            flags,
-                        )
-                    };
-                    slope_left = slope_right;
-                // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-                } else if i + 1 < num_keys && next_time > unsafe { (*key).time } {
-                    // C: `slope_left = slope_right = ufbxi_solve_auto_tangent_right(...)`
-                    // SAFETY: `key` is in bounds and `i + 1 < num_keys` bounds the
-                    // element following `p_value`'s element `i`.
-                    slope_right = unsafe {
-                        solve_auto_tangent_right(
-                            uc,
-                            (*key).time,
+                            key.time(),
                             next_time,
-                            (*key).value,
-                            *p_value.add(1),
+                            values_data[i - 1],
+                            key.value(),
+                            values_data[i + 1],
+                            weight_left,
                             weight_right,
                             slope_right,
                             flags,
-                        )
-                    };
+                        );
+                        slope_left = slope_right;
+                    } else {
+                        slope_left = solve_auto_tangent(
+                            uc,
+                            prev_time,
+                            key.time(),
+                            next_time,
+                            values_data[i - 1],
+                            key.value(),
+                            values_data[i + 1],
+                            weight_left,
+                            weight_right,
+                            -slope_left,
+                            flags,
+                        );
+                        slope_right = solve_auto_tangent(
+                            uc,
+                            prev_time,
+                            key.time(),
+                            next_time,
+                            values_data[i - 1],
+                            key.value(),
+                            values_data[i + 1],
+                            weight_left,
+                            weight_right,
+                            slope_right,
+                            flags,
+                        );
+                    }
+                } else if i > 0 && key.time() > prev_time {
+                    // C: `slope_left = slope_right = ufbxi_solve_auto_tangent_left(...)`
+                    // `i > 0` bounds the element preceding element `i`.
+                    slope_right = solve_auto_tangent_left(
+                        uc,
+                        prev_time,
+                        key.time(),
+                        values_data[i - 1],
+                        key.value(),
+                        weight_left,
+                        -slope_left,
+                        flags,
+                    );
+                    slope_left = slope_right;
+                } else if i + 1 < num_keys && next_time > key.time() {
+                    // C: `slope_left = slope_right = ufbxi_solve_auto_tangent_right(...)`
+                    // `i + 1 < num_keys` bounds the element following element `i`.
+                    slope_right = solve_auto_tangent_right(
+                        uc,
+                        key.time(),
+                        next_time,
+                        key.value(),
+                        values_data[i + 1],
+                        weight_right,
+                        slope_right,
+                        flags,
+                    );
                     slope_left = slope_right;
                 } else {
                     // Only / invalid keyframe: Set both slopes to zero
@@ -6175,25 +6156,19 @@ pub(crate) unsafe fn read_animation_curve(
         } else {
             // Linear or unknown interpolation: Set cubic tangents to match
             // the linear interpolation with weights of 1/3.
-            // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-            unsafe {
-                (*key).interpolation = Interpolation::Linear;
-            }
+            key.set_interpolation(Interpolation::Linear);
 
             weight_right = 0.333333f32;
             next_weight_left = 0.333333f32;
 
-            // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-            if next_time > unsafe { (*key).time } {
-                // SAFETY: `key` is in bounds.
-                let delta_time: f64 = next_time - unsafe { (*key).time };
+            if next_time > key.time() {
+                let delta_time: f64 = next_time - key.time();
                 if delta_time > 0.0 {
-                    // SAFETY: `key` is in bounds; `next_time` still equals
-                    // `(*key).time` on the last key (it is only advanced while
-                    // `i + 1 < num_keys`), so reaching this branch implies
-                    // `i + 1 < num_keys`, bounding `p_value`'s next element.
-                    let slope: f64 =
-                        unsafe { as_f64!(*p_value.add(1) - (*key).value) } / delta_time;
+                    // `next_time` still equals `key.time()` on the last key (it is
+                    // only advanced while `i + 1 < num_keys`), so reaching this
+                    // branch implies `i + 1 < num_keys`, bounding the next element
+                    // of the `values` run.
+                    let slope: f64 = as_f64!(values_data[i + 1] - key.value()) / delta_time;
                     // C: `slope_right = next_slope_left = (float)slope;`
                     next_slope_left = slope as f32;
                     slope_right = next_slope_left;
@@ -6211,74 +6186,57 @@ pub(crate) unsafe fn read_animation_curve(
 
         // Set the tangents based on weights (dx relative to the time difference
         // between the previous/next key) and slope (simply d = slope * dx)
-        // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-        if unsafe { (*key).time } > prev_time {
-            // SAFETY: `key` is in bounds.
-            let delta: f64 = unsafe { (*key).time } - prev_time;
-            // SAFETY: `key` is in bounds.
-            unsafe {
-                (*key).left.dx = (weight_left as f64 * delta) as f32;
-                (*key).left.dy = (*key).left.dx * slope_left;
-            }
+        if key.time() > prev_time {
+            let delta: f64 = key.time() - prev_time;
+            // C: `key->left.dx = (float)(weight_left * delta);`
+            //    `key->left.dy = key->left.dx * slope_left;` — `dx` holds the
+            //    stored `(float)` value the `dy` product reads back.
+            let dx: f32 = (weight_left as f64 * delta) as f32;
+            key.set_left(Tangent {
+                dx,
+                dy: dx * slope_left,
+            });
         } else {
-            // SAFETY: `key` is in bounds.
-            unsafe {
-                (*key).left.dx = 0.0f32;
-                (*key).left.dy = 0.0f32;
-            }
+            key.set_left(Tangent {
+                dx: 0.0f32,
+                dy: 0.0f32,
+            });
         }
 
-        // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-        if next_time > unsafe { (*key).time } {
-            // SAFETY: `key` is in bounds.
-            let delta: f64 = next_time - unsafe { (*key).time };
-            // SAFETY: `key` is in bounds.
-            unsafe {
-                (*key).right.dx = (weight_right as f64 * delta) as f32;
-                (*key).right.dy = (*key).right.dx * slope_right;
-            }
+        if next_time > key.time() {
+            let delta: f64 = next_time - key.time();
+            // C: `key->right.dx = (float)(weight_right * delta);`
+            //    `key->right.dy = key->right.dx * slope_right;`
+            let dx: f32 = (weight_right as f64 * delta) as f32;
+            key.set_right(Tangent {
+                dx,
+                dy: dx * slope_right,
+            });
         } else {
-            // SAFETY: `key` is in bounds.
-            unsafe {
-                (*key).right.dx = 0.0f32;
-                (*key).right.dy = 0.0f32;
-            }
+            key.set_right(Tangent {
+                dx: 0.0f32,
+                dy: 0.0f32,
+            });
         }
 
         slope_left = next_slope_left;
         weight_left = next_weight_left;
         // velocity_left = next_velocity_left;
-        // SAFETY: `key` is the in-bounds `i`-th slot of the `keys` run.
-        prev_time = unsafe { (*key).time };
+        prev_time = key.time();
 
         // Decrement attribute refcount and potentially move to the next one.
         // C: `if (--refs_left == 0)`
         refs_left = refs_left.wrapping_sub(1);
         if refs_left == 0 {
-            // SAFETY: the run this iteration consumed was in bounds (see the
-            // `refs_left > 0` check), so stepping each cursor one run forward
-            // lands at most one past the end of its payload — the `p_ref`
-            // comparison below re-establishes in-bounds before any read.
-            unsafe {
-                p_flag = p_flag.add(1);
-                p_attr = p_attr.add(4);
-                p_ref = p_ref.add(1);
-            }
-            if p_ref < p_ref_end {
-                // SAFETY: `p_ref` is below `p_ref_end`, so it addresses a live
-                // entry of the `refs` payload.
-                refs_left = unsafe { *p_ref };
+            // C: `p_flag++; p_attr += 4; p_ref++;` — the three cursors share
+            // `run_ix`, which the `refs_data.len()` comparison below re-bounds
+            // before any read.
+            run_ix += 1;
+            if run_ix < refs_data.len() {
+                refs_left = refs_data[run_ix];
             }
         }
-        // SAFETY: `p_time`/`p_value` address element `i` of their `num_keys`-long
-        // payloads, so stepping one forward lands at most one past the end — the
-        // `i < num_keys` loop condition re-establishes in-bounds before any read.
-        unsafe {
-            p_time = p_time.add(1);
-            p_value = p_value.add(1);
-        }
-
-        i += 1;
+        // C: `p_time++; p_value++;` — the `enumerate` counter advances both.
     }
 
     Ok(())
