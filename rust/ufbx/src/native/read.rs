@@ -7612,14 +7612,14 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
     let mut batch_index: usize = 0;
     while empty_count < THREAD_GROUP_COUNT {
         // C: `ufbxi_object_batch *batch = &batches[batch_index];` — `batches` is
-        // a loader-thread stack local no pool thread can reach, so the batch is
-        // a plain borrow.
-        let batch: &mut ObjectBatch = &mut batches[batch_index];
+        // a loader-thread stack local no pool thread can reach, and C's `&`
+        // makes no aliasing claim, so the element is addressed in place at each
+        // use rather than bound to a `&mut` held live across the pool calls.
 
         // SAFETY: `uc.thread_pool_mut_ptr()` is uc's own live `thread_pool`.
         unsafe { thread_pool_wait_group(uc.thread_pool_mut_ptr()) }?;
 
-        if batch.num_nodes > 0 {
+        if batches[batch_index].num_nodes > 0 {
             // C: `ufbxi_for_ptr(ufbxi_node, p_node, batch->nodes, batch->num_nodes)`
             // SAFETY: `batch->nodes` is the `push_pop`-materialized contiguous
             // run of `num_nodes` node pointers this batch owns; the group's
@@ -7629,7 +7629,10 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
             // handle, so the borrow coexists with the writes the parse does
             // through uc.
             let p_nodes: &[ScalarView<*mut Node>] = unsafe {
-                slice_from_ptr(batch.nodes as *const ScalarView<*mut Node>, batch.num_nodes)
+                slice_from_ptr(
+                    batches[batch_index].nodes as *const ScalarView<*mut Node>,
+                    batches[batch_index].num_nodes,
+                )
             };
             for p_node in p_nodes {
                 // SAFETY: `uc.tmp_parse_mut_ptr()` is uc's own live `tmp_parse` buf.
@@ -7652,7 +7655,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 uc.warnings_view().set_deferred_element_id_plus_one(0);
                 uc.set_p_element_id(core::ptr::null_mut());
             }
-            batch.num_nodes = 0;
+            batches[batch_index].num_nodes = 0;
         }
 
         let tmp_buf: &BufView = uc.tmp_thread_parse_at(batch_index);
@@ -7760,12 +7763,13 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 }
             }
 
-            batch.num_nodes = num_nodes;
-            batch.nodes = tmp_buf.push_pop::<*mut Node>(uc.tmp_stack_view(), num_nodes);
-            ufbxi_check!(uc, !batch.nodes.is_null(), "batch->nodes");
+            batches[batch_index].num_nodes = num_nodes;
+            batches[batch_index].nodes =
+                tmp_buf.push_pop::<*mut Node>(uc.tmp_stack_view(), num_nodes);
+            ufbxi_check!(uc, !batches[batch_index].nodes.is_null(), "batch->nodes");
             // SAFETY: as for the `start_index` read above — a raw field
             // projection into the pool-shared `thread_pool`.
-            batch.task_index = unsafe { (*uc.get()).thread_pool.start_index };
+            batches[batch_index].task_index = unsafe { (*uc.get()).thread_pool.start_index };
         }
 
         // Not safe to refer to this buffer anymore
@@ -7774,7 +7778,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
         // SAFETY: `uc.thread_pool_mut_ptr()` is uc's own live `thread_pool`.
         unsafe { thread_pool_flush_group(uc.thread_pool_mut_ptr()) };
 
-        if batch.num_nodes == 0 {
+        if batches[batch_index].num_nodes == 0 {
             empty_count += 1;
         }
 
