@@ -16,10 +16,13 @@
 // `std::fs` first keeps the whole parse/allocate/free path under Miri's
 // checker. `load_file` itself is still covered by a `cfg(not(miri))` test.
 //
-// NOT covered here: geometry caches (`ufbx_load_geometry_cache` and the
-// `load_external_files` path resolve sibling files through the same libc
-// stream) and the threaded loader. Both need a Miri-compatible file callback;
-// they stay on the C-suite and hash oracles until then.
+// Geometry caches (`ufbx_load_geometry_cache`, the `load_external_files`
+// path and cache sampling) open sibling files through `open_file_cb`; the
+// tests below install a callback that reads each file with `std::fs` and hands
+// ufbx a memory-backed `Stream`, so those paths run under Miri too. The
+// threaded loader is driven by a `std::thread` pool implementing the raw
+// `ufbx_thread_pool` interface, which puts the ASCII array tasks and the
+// binary DEFLATE tasks under Miri's data-race detector.
 //
 // Miri needs `-Zmiri-disable-isolation` for the `std::fs` reads.
 
@@ -723,4 +726,273 @@ fn public_deform_helpers_from_shared_refs() {
         }
     }
     assert!(acc.is_finite());
+}
+
+// -- Geometry caches (memory-backed file callback)
+
+/// `open_file_cb` that serves every requested file from memory: ufbx's default
+/// stream calls libc `fopen`, which Miri cannot emulate.
+fn open_from_memory(name: &str, _info: &ufbx::OpenFileInfo) -> Option<ufbx::Stream> {
+    let data = std::fs::read(name).ok()?;
+    Some(ufbx::Stream::Read(Box::new(std::io::Cursor::new(data))))
+}
+
+/// Mirrors `ufbxt_test_sine_cache` (test_cache.h): the `pCubeShape1` channel
+/// of each sine cache, sampled at 1/240s steps, follows a known sine.
+fn check_sine_cache(path: &str, begin: f64, end: f64, err_threshold: f64) {
+    let cache = ufbx::load_geometry_cache(
+        &data_path(path),
+        ufbx::GeometryCacheOpts {
+            open_file_cb: ufbx::OpenFileCb::Ref(&open_from_memory),
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("failed to load cache {}: {:?}", path, e));
+    assert_eq!(cache.channels.len(), 2);
+
+    let mut found_cube1 = false;
+    for channel in &cache.channels {
+        assert_eq!(
+            channel.interpretation,
+            ufbx::CacheInterpretation::VertexPosition
+        );
+        if channel.name.as_ref() != "pCubeShape1" {
+            continue;
+        }
+        found_cube1 = true;
+
+        let mut pos = [ufbx::Vec3::default(); 64];
+        let mut time = begin;
+        while time <= end + 0.0001 {
+            let num_verts = ufbx::sample_geometry_cache_vec3(
+                channel,
+                time,
+                &mut pos,
+                ufbx::GeometryCacheDataOpts {
+                    open_file_cb: ufbx::OpenFileCb::Ref(&open_from_memory),
+                    ..Default::default()
+                },
+            );
+            assert_eq!(num_verts, 36);
+
+            let t = (time - 1.0 / 24.0) / (29.0 / 24.0) * 4.0;
+            let pi2 = std::f64::consts::PI * 2.0;
+            for v in &pos[..num_verts] {
+                let sx = ((v.y as f64 + t * 0.5) * pi2).sin() * 0.25;
+                let mut vx = v.x as f64;
+                vx += if vx > 0.0 { -0.5 } else { 0.5 };
+                assert!(
+                    (vx - sx).abs() <= err_threshold,
+                    "{}: t={} vx={} sx={}",
+                    path,
+                    time,
+                    vx,
+                    sx
+                );
+            }
+            time += 0.1 / 24.0;
+        }
+    }
+    assert!(found_cube1);
+}
+
+#[test]
+fn geometry_cache_sine_regular() {
+    check_sine_cache(
+        "caches/sine_mxsf_regular/cache.xml",
+        1.0 / 24.0,
+        29.0 / 24.0,
+        0.008,
+    );
+}
+
+#[test]
+fn geometry_cache_sine_undersample() {
+    check_sine_cache(
+        "caches/sine_mcmf_undersample/cache.xml",
+        1.0 / 24.0,
+        29.0 / 24.0,
+        0.04,
+    );
+}
+
+/// The scene-side path: `load_external_files` resolves the cache next to the
+/// FBX through the callback, `evaluate_caches` applies it to the skinned
+/// vertices, and `evaluate_scene` re-samples it at another time.
+#[test]
+fn geometry_cache_through_scene() {
+    let name = "maya_cache_sine_6100_binary.fbx";
+    let path = data_path(name);
+    let data = read_data(name);
+    let root = ufbx::load_memory(
+        &data,
+        LoadOpts {
+            filename: ufbx::StringOpt::Ref(&path),
+            load_external_files: true,
+            evaluate_caches: true,
+            open_file_cb: ufbx::OpenFileCb::Ref(&open_from_memory),
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("failed to load {}: {:?}", name, e));
+    let scene: &Scene = &root;
+
+    assert!(!scene.cache_deformers.is_empty());
+    for deformer in &scene.cache_deformers {
+        let file = deformer
+            .file
+            .as_ref()
+            .expect("cache deformer resolves its file");
+        assert!(
+            file.external_cache.is_some(),
+            "external cache loaded through the callback"
+        );
+        assert!(deformer.external_cache.is_some());
+    }
+
+    let mut acc = 0.0f64;
+    for mesh in &scene.meshes {
+        if mesh.cache_deformers.is_empty() {
+            continue;
+        }
+        for i in 0..mesh.num_indices {
+            let p = mesh.skinned_position[i];
+            acc += p.x as f64 + p.y as f64 + p.z as f64;
+        }
+    }
+    assert!(acc.is_finite());
+
+    let evaluated = ufbx::evaluate_scene(
+        scene,
+        &scene.anim,
+        0.5,
+        ufbx::EvaluateOpts {
+            evaluate_caches: true,
+            load_external_files: true,
+            open_file_cb: ufbx::OpenFileCb::Ref(&open_from_memory),
+            ..Default::default()
+        },
+    )
+    .expect("evaluate_scene with caches");
+    let mut acc2 = 0.0f64;
+    for mesh in &evaluated.meshes {
+        for i in 0..mesh.num_indices {
+            let p = mesh.skinned_position[i];
+            acc2 += p.x as f64 + p.y as f64 + p.z as f64;
+        }
+    }
+    assert!(acc2.is_finite());
+}
+
+// -- Threaded loader (std::thread pool over the raw `ufbx_thread_pool` interface)
+
+/// One `std::thread` per `run_fn` batch, joined by `wait_fn`. The task indices
+/// of a batch run sequentially on that thread; what Miri checks is that the
+/// per-task buffers ufbx hands the pool are disjoint from the loader thread's.
+#[derive(Default)]
+struct TestThreadPool {
+    groups: Vec<Vec<std::thread::JoinHandle<()>>>,
+    tasks_run: u32,
+}
+
+unsafe extern "C" fn test_pool_run(
+    user: *mut std::ffi::c_void,
+    ctx: ufbx::ThreadPoolContext,
+    group: u32,
+    start_index: u32,
+    count: u32,
+) {
+    // SAFETY: `user` is the `TestThreadPool` the test owns for the whole load,
+    // and ufbx calls the pool from the loader thread only.
+    let pool = unsafe { &mut *(user as *mut TestThreadPool) };
+    pool.tasks_run += count;
+    let group = group as usize;
+    if pool.groups.len() <= group {
+        pool.groups.resize_with(group + 1, Vec::new);
+    }
+    pool.groups[group].push(std::thread::spawn(move || {
+        for index in start_index..start_index + count {
+            // SAFETY: `ctx` is the live pool context ufbx passed to `run_fn`, and
+            // `index` is inside the batch it asked us to run.
+            unsafe { ufbx::thread_pool_run_task(ctx, index) };
+        }
+    }));
+}
+
+unsafe extern "C" fn test_pool_wait(
+    user: *mut std::ffi::c_void,
+    _ctx: ufbx::ThreadPoolContext,
+    group: u32,
+    _max_index: u32,
+) {
+    // SAFETY: as in `test_pool_run`.
+    let pool = unsafe { &mut *(user as *mut TestThreadPool) };
+    if let Some(handles) = pool.groups.get_mut(group as usize) {
+        for handle in handles.drain(..) {
+            handle.join().expect("ufbx task thread panicked");
+        }
+    }
+}
+
+unsafe extern "C" fn test_pool_free(user: *mut std::ffi::c_void, _ctx: ufbx::ThreadPoolContext) {
+    // SAFETY: as in `test_pool_run`.
+    let pool = unsafe { &mut *(user as *mut TestThreadPool) };
+    for handles in &mut pool.groups {
+        for handle in handles.drain(..) {
+            handle.join().expect("ufbx task thread panicked");
+        }
+    }
+}
+
+fn load_threaded(name: &str) -> f64 {
+    let data = read_data(name);
+    let mut pool = TestThreadPool::default();
+    let raw_pool = ufbx::RawThreadPool {
+        init_fn: None,
+        run_fn: Some(test_pool_run),
+        wait_fn: Some(test_pool_wait),
+        free_fn: Some(test_pool_free),
+        user: &raw mut pool as *mut std::ffi::c_void,
+    };
+    let root = ufbx::load_memory(
+        &data,
+        LoadOpts {
+            thread_opts: ufbx::ThreadOpts {
+                // SAFETY: the callbacks above implement the `ufbx_thread_pool`
+                // contract (every index in a batch runs exactly once, `wait_fn`
+                // blocks until the batch is done) and `pool` outlives the load.
+                pool: ufbx::ThreadPool::Raw(unsafe { ufbx::Unsafe::new(raw_pool) }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| panic!("failed to load {} threaded: {:?}", name, e));
+    assert!(
+        pool.groups.iter().all(|g| g.is_empty()),
+        "every batch was waited for"
+    );
+    assert!(
+        pool.tasks_run > 0,
+        "{}: the loader never handed the pool a task",
+        name
+    );
+    walk(&root)
+}
+
+/// The ASCII parser hands array parsing to the pool.
+#[test]
+fn threaded_load_ascii() {
+    let threaded = load_threaded("maya_cube_7500_ascii.fbx");
+    let plain = walk(&load("maya_cube_7500_ascii.fbx"));
+    assert_eq!(threaded.to_bits(), plain.to_bits());
+}
+
+/// The binary parser hands DEFLATE-compressed arrays (256+ encoded bytes,
+/// `UFBXI_MIN_THREADED_DEFLATE_BYTES`) to the pool; this file has six such.
+#[test]
+fn threaded_load_binary() {
+    let threaded = load_threaded("blender_293_instancing_7400_binary.fbx");
+    let plain = walk(&load("blender_293_instancing_7400_binary.fbx"));
+    assert_eq!(threaded.to_bits(), plain.to_bits());
 }

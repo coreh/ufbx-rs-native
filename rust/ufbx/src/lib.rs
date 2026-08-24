@@ -50,9 +50,9 @@
 #![allow(clippy::needless_range_loop)]
 // Unsafe-reduction ratchet (PORTING.md "Unsafe reduction / isolation strategy"):
 // every op inside an `unsafe fn` must sit in an explicit narrow `unsafe {}`
-// block. Files not yet converted carry a file-level allow; a cleaned file
-// deletes its allow, and new code is gated from the start.
-#![warn(unsafe_op_in_unsafe_fn)]
+// block. Every hand-written file is converted; only the generated module keeps
+// its allow below.
+#![deny(unsafe_op_in_unsafe_fn)]
 
 // Generated code keeps C-shaped implicit unsafe fn bodies; the generator owns
 // its emission style (NEVER hand-edit generated.rs — see PORTING.md rule 0).

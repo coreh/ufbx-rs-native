@@ -66,6 +66,13 @@ if [[ "${GATE_MIRI:-0}" == "1" ]]; then
     cargo +nightly miri test --test miri)
   (cd rust && MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-tree-borrows" \
     cargo +nightly miri test --test miri)
+  # The threaded-loader tests are the only nondeterministic ones; GATE_MIRI_SEEDS=1
+  # re-runs them over several scheduler seeds for the data-race detector.
+  if [[ "${GATE_MIRI_SEEDS:-0}" == "1" ]]; then
+    step "Miri many-seeds (threaded loader)"
+    (cd rust && MIRIFLAGS="-Zmiri-disable-isolation -Zmiri-many-seeds=0..8" \
+      cargo +nightly miri test --test miri -- threaded_load)
+  fi
 fi
 
 step "GATE GREEN"
