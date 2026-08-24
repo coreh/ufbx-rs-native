@@ -375,7 +375,8 @@ impl crate::native::view::View<Scene> {
 
 // `ufbxi_update_initial_clusters` (ufbx.c:23523) reads four `ufbx_metadata`
 // leaves whose getters are not among the `SceneMetadataView` accessors in
-// `native/parse.rs`; they live here.
+// `native/parse.rs`; they live here, together with the one `ufbxi_update_camera`
+// needs.
 impl SceneMetadataView {
     #[inline(always)]
     pub(crate) fn space_conversion(&self) -> SpaceConversion {
@@ -392,6 +393,12 @@ impl SceneMetadataView {
     #[inline(always)]
     pub(crate) fn mirror_axis(&self) -> MirrorAxis {
         view_read!(self, mirror_axis)
+    }
+    // `ufbxi_update_camera` (ufbx.c:23093) reads the orthographic size unit,
+    // whose getter is likewise absent from `native/parse.rs`.
+    #[inline(always)]
+    pub(crate) fn ortho_size_unit(&self) -> Real {
+        view_read!(self, ortho_size_unit)
     }
 }
 
@@ -11534,73 +11541,61 @@ static APERTURE_FORMATS: [ApertureFormatInfo; 12] = [
 
 // ufbx.c:23084-23252 `ufbxi_update_camera`
 #[inline(never)]
-// Stays `unsafe fn`: the body is raw end-to-end — ~115 residual raw operations
-// (camera/scene field writes, `ufbxi_find_real` lookups, enum transmutes)
-// interleaved with a dozen escaping locals, so an honest decomposition would
-// need a dozen blocks and tuple-returning wraps that break the C line
-// correspondence.
 pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraView) {
-    let scene: *mut Scene = scene.get();
-    let camera: *mut Camera = camera_view.get();
     // C: `(ufbx_projection_mode)ufbxi_find_enum(...)` etc — `ufbxi_find_enum`
     // clamps each result to its enum's `[0, LAST]` range (same device as
     // `ufbxi_update_light` above).
-    // SAFETY: `camera` is the camera view's own storage, so it is live,
-    // initialized and writable; `ufbxi_find_enum` clamps its result to the
-    // `[0, ORTHOGRAPHIC]` range passed, every value of which is a valid
-    // `ufbx_projection_mode`.
-    unsafe {
-        (*camera).projection_mode = core::mem::transmute::<u32, ProjectionMode>(find_enum(
+    // SAFETY: `ufbxi_find_enum` clamps its result to the `[0, ORTHOGRAPHIC]`
+    // range passed, every value of which is a valid `ufbx_projection_mode`.
+    camera_view.set_projection_mode(unsafe {
+        core::mem::transmute::<u32, ProjectionMode>(find_enum(
             camera_view.props_view(),
             &sp::CameraProjectionType,
             0,
             ProjectionMode::Orthographic as i64,
         ) as u32)
-    };
+    });
     // SAFETY: as above; the clamp range spans the whole `ufbx_aspect_mode` enum.
-    unsafe {
-        (*camera).aspect_mode = core::mem::transmute::<u32, AspectMode>(find_enum(
+    camera_view.set_aspect_mode(unsafe {
+        core::mem::transmute::<u32, AspectMode>(find_enum(
             camera_view.props_view(),
             &sp::AspectRatioMode,
             0,
             AspectMode::FixedHeight as i64,
         ) as u32)
-    };
+    });
     // SAFETY: as above; the clamp range spans the whole `ufbx_aperture_mode`
     // enum.
-    unsafe {
-        (*camera).aperture_mode = core::mem::transmute::<u32, ApertureMode>(find_enum(
+    camera_view.set_aperture_mode(unsafe {
+        core::mem::transmute::<u32, ApertureMode>(find_enum(
             camera_view.props_view(),
             &sp::ApertureMode,
             ApertureMode::Vertical as i64,
             ApertureMode::FocalLength as i64,
         ) as u32)
-    };
+    });
     // SAFETY: as above; the clamp range spans the whole `ufbx_aperture_format`
     // enum.
-    unsafe {
-        (*camera).aperture_format = core::mem::transmute::<u32, ApertureFormat>(find_enum(
+    camera_view.set_aperture_format(unsafe {
+        core::mem::transmute::<u32, ApertureFormat>(find_enum(
             camera_view.props_view(),
             &sp::ApertureFormat,
             ApertureFormat::Custom as i64,
             ApertureFormat::Imax as i64,
         ) as u32)
-    };
+    });
     // SAFETY: as above; the clamp range spans the whole `ufbx_gate_fit` enum.
-    unsafe {
-        (*camera).gate_fit = core::mem::transmute::<u32, GateFit>(find_enum(
+    camera_view.set_gate_fit(unsafe {
+        core::mem::transmute::<u32, GateFit>(find_enum(
             camera_view.props_view(),
             &sp::GateFit,
             0,
             GateFit::Stretch as i64,
         ) as u32)
-    };
+    });
 
-    // SAFETY: `camera` is the camera view's own storage (see above).
-    unsafe {
-        (*camera).near_plane = find_real(camera_view.props_view(), &sp::NearPlane, 0.0);
-        (*camera).far_plane = find_real(camera_view.props_view(), &sp::FarPlane, 0.0);
-    }
+    camera_view.set_near_plane(find_real(camera_view.props_view(), &sp::NearPlane, 0.0));
+    camera_view.set_far_plane(find_real(camera_view.props_view(), &sp::FarPlane, 0.0));
 
     // Search both W/H and Width/Height but prefer the latter
     let mut aspect_x: Real = find_real(camera_view.props_view(), &sp::AspectW, 0.0);
@@ -11613,22 +11608,18 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
     let fov_y: Real = find_real(camera_view.props_view(), &sp::FieldOfViewY, 0.0);
 
     let focal_length: Real = find_real(camera_view.props_view(), &sp::FocalLength, 0.0);
-    // SAFETY: `scene` is the scene view's own storage, so its metadata is live
-    // and initialized.
-    let mut ortho_extent: Real = unsafe { (*scene).metadata.ortho_size_unit }
+    let mut ortho_extent: Real = scene.metadata_view().ortho_size_unit()
         * find_real(camera_view.props_view(), &sp::OrthoZoom, 1.0);
 
-    // SAFETY: `camera` is live (see above); `aperture_format` was assigned above
-    // from a clamped `ufbxi_find_enum`, so it indexes `APERTURE_FORMATS`.
-    let format: ApertureFormatInfo =
-        APERTURE_FORMATS[unsafe { (*camera).aperture_format } as usize];
+    // `aperture_format` was assigned above from a clamped `ufbxi_find_enum`, so
+    // it indexes `APERTURE_FORMATS`.
+    let format: ApertureFormatInfo = APERTURE_FORMATS[camera_view.aperture_format() as usize];
     let mut film_size: Vec2 = Vec2 {
         x: format.film_size_x as Real * (0.001 as Real),
         y: format.film_size_y as Real * (0.001 as Real),
     };
-    // SAFETY: `camera` is live (see above).
     let mut squeeze_ratio: Real =
-        if unsafe { (*camera).aperture_format } == ApertureFormat::E35MmAnamorphic {
+        if camera_view.aperture_format() == ApertureFormat::E35MmAnamorphic {
             2.0
         } else {
             1.0
@@ -11662,55 +11653,47 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
     film_size.y *= squeeze_ratio;
 
     // TODO: Should this be done always?
-    // SAFETY: `scene` is the scene view's own storage (see above).
-    ortho_extent *= unsafe { (*scene).metadata.geometry_scale };
-    // SAFETY: `camera` is live and writable, `scene` is live (see above).
-    unsafe {
-        (*camera).near_plane *= (*scene).metadata.geometry_scale;
-        (*camera).far_plane *= (*scene).metadata.geometry_scale;
-    }
+    ortho_extent *= scene.metadata_view().geometry_scale();
+    camera_view.set_near_plane(camera_view.near_plane() * scene.metadata_view().geometry_scale());
+    camera_view.set_far_plane(camera_view.far_plane() * scene.metadata_view().geometry_scale());
 
-    // SAFETY: `camera` is live and writable (see above).
-    unsafe {
-        (*camera).focal_length_mm = focal_length;
-        (*camera).film_size_inch = film_size;
-        (*camera).squeeze_ratio = squeeze_ratio;
-        (*camera).orthographic_extent = ortho_extent;
-    }
+    camera_view.set_focal_length_mm(focal_length);
+    camera_view.set_film_size_inch(film_size);
+    camera_view.set_squeeze_ratio(squeeze_ratio);
+    camera_view.set_orthographic_extent(ortho_extent);
 
-    // SAFETY: `camera` is live (see above).
-    match unsafe { (*camera).aspect_mode } {
+    // C assigns `resolution.x` and `resolution.y` as separate statements; the
+    // view's leaf field is the whole `ufbx_vec2`, so each arm computes the two
+    // components in C's order and stores the pair in one write. The same holds
+    // for the `ufbx_vec2` leaves of the two matches below.
+    match camera_view.aspect_mode() {
         AspectMode::WindowSize | AspectMode::FixedRatio => {
-            // SAFETY: `camera` is live and writable (see above).
-            unsafe {
-                (*camera).resolution_is_pixels = false;
-                (*camera).resolution.x = aspect_x;
-                (*camera).resolution.y = aspect_y;
-            }
+            camera_view.set_resolution_is_pixels(false);
+            camera_view.set_resolution(Vec2 {
+                x: aspect_x,
+                y: aspect_y,
+            });
         }
         AspectMode::FixedResolution => {
-            // SAFETY: `camera` is live and writable (see above).
-            unsafe {
-                (*camera).resolution_is_pixels = true;
-                (*camera).resolution.x = aspect_x;
-                (*camera).resolution.y = aspect_y;
-            }
+            camera_view.set_resolution_is_pixels(true);
+            camera_view.set_resolution(Vec2 {
+                x: aspect_x,
+                y: aspect_y,
+            });
         }
         AspectMode::FixedWidth => {
-            // SAFETY: `camera` is live and writable (see above).
-            unsafe {
-                (*camera).resolution_is_pixels = true;
-                (*camera).resolution.x = aspect_x;
-                (*camera).resolution.y = aspect_x * aspect_y;
-            }
+            camera_view.set_resolution_is_pixels(true);
+            camera_view.set_resolution(Vec2 {
+                x: aspect_x,
+                y: aspect_x * aspect_y,
+            });
         }
         AspectMode::FixedHeight => {
-            // SAFETY: `camera` is live and writable (see above).
-            unsafe {
-                (*camera).resolution_is_pixels = true;
-                (*camera).resolution.x = aspect_y * aspect_x;
-                (*camera).resolution.y = aspect_y;
-            }
+            camera_view.set_resolution_is_pixels(true);
+            camera_view.set_resolution(Vec2 {
+                x: aspect_y * aspect_x,
+                y: aspect_y,
+            });
         }
         // C `default:` (ufbx.c:23167-23168) — unreachable in Rust because the
         // match above is exhaustive over the enum, but kept for diff parity.
@@ -11720,16 +11703,13 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
         }
     }
 
-    // SAFETY: `camera` is live (see above); `resolution` was assigned on every
-    // arm of the match above.
-    let aspect_ratio: Real = unsafe { (*camera).resolution.x / (*camera).resolution.y };
+    // `resolution` was assigned on every arm of the match above.
+    let aspect_ratio: Real = camera_view.resolution().x / camera_view.resolution().y;
     let film_ratio: Real = film_size.x / film_size.y;
 
-    // SAFETY: `camera` is live and writable (see above).
-    unsafe { (*camera).aspect_ratio = aspect_ratio };
+    camera_view.set_aspect_ratio(aspect_ratio);
 
-    // SAFETY: `camera` is live (see above).
-    let mut effective_fit: GateFit = unsafe { (*camera).gate_fit };
+    let mut effective_fit: GateFit = camera_view.gate_fit();
     if effective_fit == GateFit::Fill {
         effective_fit = if aspect_ratio > film_ratio {
             GateFit::Horizontal
@@ -11746,63 +11726,48 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
 
     match effective_fit {
         GateFit::None => {
-            // SAFETY: `camera` is live and writable (see above); `film_size_inch`
-            // was assigned above.
-            unsafe { (*camera).aperture_size_inch = (*camera).film_size_inch };
-            // SAFETY: `camera` is live and writable (see above).
-            unsafe {
-                (*camera).orthographic_size.x = ortho_extent;
-                (*camera).orthographic_size.y = ortho_extent;
-            }
+            camera_view.set_aperture_size_inch(camera_view.film_size_inch());
+            camera_view.set_orthographic_size(Vec2 {
+                x: ortho_extent,
+                y: ortho_extent,
+            });
         }
         GateFit::Vertical => {
-            // SAFETY: `camera` is live and writable (see above); `film_size_inch`
-            // was assigned above.
-            unsafe {
-                (*camera).aperture_size_inch.x = (*camera).film_size_inch.y * aspect_ratio;
-                (*camera).aperture_size_inch.y = (*camera).film_size_inch.y;
-            }
-            // SAFETY: `camera` is live and writable (see above).
-            unsafe {
-                (*camera).orthographic_size.x = ortho_extent * aspect_ratio;
-                (*camera).orthographic_size.y = ortho_extent;
-            }
+            camera_view.set_aperture_size_inch(Vec2 {
+                x: camera_view.film_size_inch().y * aspect_ratio,
+                y: camera_view.film_size_inch().y,
+            });
+            camera_view.set_orthographic_size(Vec2 {
+                x: ortho_extent * aspect_ratio,
+                y: ortho_extent,
+            });
         }
         GateFit::Horizontal => {
-            // SAFETY: `camera` is live and writable (see above); `film_size_inch`
-            // was assigned above.
-            unsafe {
-                (*camera).aperture_size_inch.x = (*camera).film_size_inch.x;
-                (*camera).aperture_size_inch.y = (*camera).film_size_inch.x / aspect_ratio;
-            }
-            // SAFETY: `camera` is live and writable (see above).
-            unsafe {
-                (*camera).orthographic_size.x = ortho_extent;
-                (*camera).orthographic_size.y = ortho_extent / aspect_ratio;
-            }
+            camera_view.set_aperture_size_inch(Vec2 {
+                x: camera_view.film_size_inch().x,
+                y: camera_view.film_size_inch().x / aspect_ratio,
+            });
+            camera_view.set_orthographic_size(Vec2 {
+                x: ortho_extent,
+                y: ortho_extent / aspect_ratio,
+            });
         }
         GateFit::Fill | GateFit::Overscan => {
-            // SAFETY: `camera` is live and writable (see above); `film_size_inch`
-            // was assigned above.
-            unsafe { (*camera).aperture_size_inch = (*camera).film_size_inch };
-            // SAFETY: `camera` is live and writable (see above).
-            unsafe {
-                (*camera).orthographic_size.x = ortho_extent;
-                (*camera).orthographic_size.y = ortho_extent;
-            }
+            camera_view.set_aperture_size_inch(camera_view.film_size_inch());
+            camera_view.set_orthographic_size(Vec2 {
+                x: ortho_extent,
+                y: ortho_extent,
+            });
             // C: `ufbxi_unreachable(...)` mid-arm — it is NOT a return, the
             // arm's assignments above it already ran (PORTING.md "Asserts").
             ufbxi_unreachable!("Unreachable, set to vertical/horizontal above");
         }
         GateFit::Stretch => {
-            // SAFETY: `camera` is live and writable (see above); `film_size_inch`
-            // was assigned above.
-            unsafe { (*camera).aperture_size_inch = (*camera).film_size_inch };
-            // SAFETY: `camera` is live and writable (see above).
-            unsafe {
-                (*camera).orthographic_size.x = ortho_extent;
-                (*camera).orthographic_size.y = ortho_extent;
-            }
+            camera_view.set_aperture_size_inch(camera_view.film_size_inch());
+            camera_view.set_orthographic_size(Vec2 {
+                x: ortho_extent,
+                y: ortho_extent,
+            });
             // TODO: Not sure what to do here...
         }
         // C `default:` (ufbx.c:23214-23215).
@@ -11812,77 +11777,68 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
         }
     }
 
-    // SAFETY: `camera` is live (see above).
-    match unsafe { (*camera).aperture_mode } {
+    match camera_view.aperture_mode() {
         ApertureMode::HorizontalAndVertical => {
-            // SAFETY: `camera` is live and writable (see above).
-            unsafe {
-                (*camera).field_of_view_deg.x = fov_x;
-                (*camera).field_of_view_deg.y = fov_y;
-            }
+            camera_view.set_field_of_view_deg(Vec2 { x: fov_x, y: fov_y });
             // C: `(ufbx_real)ufbx_tan((double)(...))` — the inner product is
             // real arithmetic, promoted to double only at the `tan` call.
-            // SAFETY: as above.
-            unsafe {
-                (*camera).field_of_view_tan.x =
-                    math::tan((fov_x * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
-                (*camera).field_of_view_tan.y =
-                    math::tan((fov_y * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
-            }
+            camera_view.set_field_of_view_tan(Vec2 {
+                x: math::tan((fov_x * (sp::DEG_TO_RAD * 0.5)) as f64) as Real,
+                y: math::tan((fov_y * (sp::DEG_TO_RAD * 0.5)) as f64) as Real,
+            });
         }
         ApertureMode::Horizontal => {
-            // SAFETY: `camera` is live and writable (see above); each read below
-            // takes the component assigned on the line before it.
-            unsafe {
-                (*camera).field_of_view_deg.x = fov;
-                (*camera).field_of_view_tan.x =
-                    math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
-                (*camera).field_of_view_tan.y = (*camera).field_of_view_tan.x / aspect_ratio;
-                (*camera).field_of_view_deg.y = math::atan(as_f64!((*camera).field_of_view_tan.y))
-                    as Real
-                    * sp::RAD_TO_DEG
-                    * 2.0;
-            }
+            // C assigns one `ufbx_vec2` component per statement and reads back
+            // the component it wrote on the line before, so each assignment is
+            // a read-modify-write of the pair through the leaf accessor.
+            let mut fov_deg: Vec2 = camera_view.field_of_view_deg();
+            fov_deg.x = fov;
+            camera_view.set_field_of_view_deg(fov_deg);
+            let mut fov_tan: Vec2 = camera_view.field_of_view_tan();
+            fov_tan.x = math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
+            camera_view.set_field_of_view_tan(fov_tan);
+            fov_tan.y = camera_view.field_of_view_tan().x / aspect_ratio;
+            camera_view.set_field_of_view_tan(fov_tan);
+            fov_deg.y = math::atan(as_f64!(camera_view.field_of_view_tan().y)) as Real
+                * sp::RAD_TO_DEG
+                * 2.0;
+            camera_view.set_field_of_view_deg(fov_deg);
         }
         ApertureMode::Vertical => {
-            // SAFETY: `camera` is live and writable (see above); each read below
-            // takes the component assigned on the line before it.
-            unsafe {
-                (*camera).field_of_view_deg.y = fov;
-                (*camera).field_of_view_tan.y =
-                    math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
-                (*camera).field_of_view_tan.x = (*camera).field_of_view_tan.y * aspect_ratio;
-                (*camera).field_of_view_deg.x = math::atan(as_f64!((*camera).field_of_view_tan.x))
-                    as Real
-                    * sp::RAD_TO_DEG
-                    * 2.0;
-            }
+            // As the horizontal arm above: one component per C statement, each
+            // read taking the component assigned on the line before it.
+            let mut fov_deg: Vec2 = camera_view.field_of_view_deg();
+            fov_deg.y = fov;
+            camera_view.set_field_of_view_deg(fov_deg);
+            let mut fov_tan: Vec2 = camera_view.field_of_view_tan();
+            fov_tan.y = math::tan((fov * (sp::DEG_TO_RAD * 0.5)) as f64) as Real;
+            camera_view.set_field_of_view_tan(fov_tan);
+            fov_tan.x = camera_view.field_of_view_tan().y * aspect_ratio;
+            camera_view.set_field_of_view_tan(fov_tan);
+            fov_deg.x = math::atan(as_f64!(camera_view.field_of_view_tan().x)) as Real
+                * sp::RAD_TO_DEG
+                * 2.0;
+            camera_view.set_field_of_view_deg(fov_deg);
         }
         ApertureMode::FocalLength => {
-            // SAFETY: `camera` is live and writable (see above);
             // `aperture_size_inch` and `focal_length_mm` were assigned above.
-            unsafe {
-                (*camera).field_of_view_tan.x = (*camera).aperture_size_inch.x
-                    / ((*camera).focal_length_mm * sp::MM_TO_INCH)
-                    * 0.5;
-                (*camera).field_of_view_tan.y = (*camera).aperture_size_inch.y
-                    / ((*camera).focal_length_mm * sp::MM_TO_INCH)
-                    * 0.5;
-            }
-            // SAFETY: as above, reading the `field_of_view_tan.x` assigned above.
-            unsafe {
-                (*camera).field_of_view_deg.x = math::atan(as_f64!((*camera).field_of_view_tan.x))
-                    as Real
+            camera_view.set_field_of_view_tan(Vec2 {
+                x: camera_view.aperture_size_inch().x
+                    / (camera_view.focal_length_mm() * sp::MM_TO_INCH)
+                    * 0.5,
+                y: camera_view.aperture_size_inch().y
+                    / (camera_view.focal_length_mm() * sp::MM_TO_INCH)
+                    * 0.5,
+            });
+            // Reading the `field_of_view_tan` components assigned above.
+            camera_view.set_field_of_view_deg(Vec2 {
+                x: math::atan(as_f64!(camera_view.field_of_view_tan().x)) as Real
                     * sp::RAD_TO_DEG
-                    * 2.0
-            };
-            // SAFETY: as above, reading the `field_of_view_tan.y` assigned above.
-            unsafe {
-                (*camera).field_of_view_deg.y = math::atan(as_f64!((*camera).field_of_view_tan.y))
-                    as Real
+                    * 2.0,
+                y: math::atan(as_f64!(camera_view.field_of_view_tan().y)) as Real
                     * sp::RAD_TO_DEG
-                    * 2.0
-            };
+                    * 2.0,
+            });
         }
         // C `default:` (ufbx.c:23243-23244).
         #[allow(unreachable_patterns)]
@@ -11891,15 +11847,13 @@ pub(crate) fn update_camera<'a>(scene: &'a SceneView, camera_view: &'a CameraVie
         }
     }
 
-    // SAFETY: `camera` is live (see above).
-    if unsafe { (*camera).projection_mode } == ProjectionMode::Perspective {
-        // SAFETY: `camera` is live and writable (see above); `field_of_view_tan`
-        // was assigned on every arm of the match above.
-        unsafe { (*camera).projection_plane = (*camera).field_of_view_tan };
+    if camera_view.projection_mode() == ProjectionMode::Perspective {
+        // `field_of_view_tan` was assigned on every arm of the match above.
+        camera_view.set_projection_plane(camera_view.field_of_view_tan());
     } else {
-        // SAFETY: `camera` is live and writable (see above); `orthographic_size`
-        // was assigned on every arm of the gate-fit match above.
-        unsafe { (*camera).projection_plane = (*camera).orthographic_size };
+        // `orthographic_size` was assigned on every arm of the gate-fit match
+        // above.
+        camera_view.set_projection_plane(camera_view.orthographic_size());
     }
 }
 
