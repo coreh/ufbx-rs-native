@@ -80,11 +80,17 @@ pub(crate) struct ThreadPool {
 
 // ufbx.c:6023-6031 `ufbxi_thread_pool_execute`
 pub(crate) unsafe fn thread_pool_execute(pool: *mut ThreadPool, index: u32) {
-    // SAFETY: `pool` is a live initialized thread pool (fn raw-param contract).
-    let p = unsafe { &*pool };
+    // Runs on a POOL THREAD while the loader thread keeps writing other fields
+    // of the same `ThreadPool` (`flush_group`, `run_task`, ...), so no
+    // reference over the whole struct may be formed here: only the two fields
+    // C reads, which are fixed by `thread_pool_init` for the pool's lifetime.
+    // SAFETY: `pool` is a live initialized thread pool (fn raw-param contract);
+    // `tasks`/`num_tasks` are its own init-time-constant fields.
+    let tasks: *mut TaskImp = unsafe { (*pool).tasks };
+    let num_tasks: u32 = unsafe { (*pool).num_tasks };
     // SAFETY: the index is reduced modulo `num_tasks`, so it addresses inside
     // the `tasks` run `thread_pool_init` allocated with that many entries.
-    let imp: *mut TaskImp = unsafe { p.tasks.add((index % p.num_tasks) as usize) };
+    let imp: *mut TaskImp = unsafe { tasks.add((index % num_tasks) as usize) };
     // SAFETY: `imp` addresses a ring entry a `thread_pool_create_task` call
     // filled in, so `fn_` is `Some`; `&raw mut` takes the task field address
     // without forming a reference (C: `&imp->task`), which is the pointer the
@@ -103,22 +109,31 @@ pub(crate) unsafe fn thread_pool_execute(pool: *mut ThreadPool, index: u32) {
 // ufbx.c:6033-6043 `ufbxi_thread_pool_update_finished`
 #[inline(never)]
 pub(crate) unsafe fn thread_pool_update_finished(pool: *mut ThreadPool, max_index: u32) {
-    // SAFETY: `pool` is a live initialized thread pool (fn raw-param contract).
-    let p = unsafe { &mut *pool };
-    while p.wait_index < max_index {
+    // Other groups' tasks may still be executing on pool threads, so this
+    // touches the loader-owned scalar fields only (never a whole-struct
+    // reference, which would retag the fields those threads read).
+    // SAFETY (this fn's field ops): `pool` is a live initialized thread pool
+    // (fn raw-param contract); every access is one of its own fields.
+    while unsafe { (*pool).wait_index } < max_index {
         // SAFETY: the wait index is reduced modulo `num_tasks`, so it addresses
         // inside the `tasks` run allocated with that many entries.
-        let task: *mut TaskImp = unsafe { p.tasks.add((p.wait_index % p.num_tasks) as usize) };
+        let task: *mut TaskImp = unsafe {
+            (*pool)
+                .tasks
+                .add(((*pool).wait_index % (*pool).num_tasks) as usize)
+        };
         // SAFETY (both reads): `task` addresses an in-bounds ring entry, and the
         // sole caller `thread_pool_wait_imp` reaches this only once `wait_fn`
         // has returned for every index below `max_index`, so the executing
         // thread's write to `task.error` (null, or the failure string
         // `thread_pool_execute` stored) happened-before these reads.
-        if !p.failed && !unsafe { (*task).task.error }.is_null() {
-            p.failed = true;
-            p.error_desc = unsafe { (*task).task.error };
+        if !unsafe { (*pool).failed } && !unsafe { (*task).task.error }.is_null() {
+            unsafe {
+                (*pool).failed = true;
+                (*pool).error_desc = (*task).task.error;
+            }
         }
-        p.wait_index = p.wait_index.wrapping_add(1);
+        unsafe { (*pool).wait_index = (*pool).wait_index.wrapping_add(1) };
     }
 }
 
@@ -305,18 +320,20 @@ pub(crate) unsafe fn thread_pool_free(pool: *mut ThreadPool) {
     // `num_tasks == 0` (`init_fn` failure) `free_size` early-returns, and with
     // `num_tasks != 0` (task-run allocation failure) it stops at its non-null
     // assert — C-parity with ufbx.c:6121; no memory is accessed either way.
-    let p = unsafe { &*pool };
-    unsafe { free::<TaskImp>(p.ator, p.tasks, p.num_tasks as usize) };
+    unsafe { free::<TaskImp>((*pool).ator, (*pool).tasks, (*pool).num_tasks as usize) };
 }
 
 // ufbx.c:6124-6127 `ufbxi_thread_pool_available_tasks`
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn thread_pool_available_tasks(pool: *mut ThreadPool) -> u32 {
-    // SAFETY: `pool` is a live initialized thread pool (fn raw-param contract).
-    let p = unsafe { &*pool };
-    p.num_tasks
-        .wrapping_sub(p.start_index.wrapping_sub(p.wait_index))
+    // SAFETY: `pool` is a live initialized thread pool (fn raw-param contract);
+    // scalar field reads only (pool threads may be executing concurrently).
+    unsafe {
+        (*pool)
+            .num_tasks
+            .wrapping_sub((*pool).start_index.wrapping_sub((*pool).wait_index))
+    }
 }
 
 // ufbx.c:6129-6142 `ufbxi_thread_pool_flush_group`
@@ -357,13 +374,16 @@ pub(crate) unsafe fn thread_pool_flush_group(pool: *mut ThreadPool) {
 #[inline(never)]
 #[must_use]
 pub(crate) unsafe fn thread_pool_create_task(pool: *mut ThreadPool, fn_: TaskFn) -> *mut Task {
-    // SAFETY: `pool` is a live initialized thread pool (fn raw-param contract).
-    let p = unsafe { &*pool };
-    let index: u32 = p.start_index;
-    if index.wrapping_sub(p.wait_index) >= p.num_tasks {
+    // SAFETY (this fn's pool reads): `pool` is a live initialized thread pool
+    // (fn raw-param contract); scalar field reads only, as pool threads may be
+    // executing concurrently.
+    let index: u32 = unsafe { (*pool).start_index };
+    let wait_index: u32 = unsafe { (*pool).wait_index };
+    let num_tasks: u32 = unsafe { (*pool).num_tasks };
+    if index.wrapping_sub(wait_index) >= num_tasks {
         // C-parity: the C nests the same condition twice (ufbx.c:6147-6152) —
         // kept verbatim.
-        if index.wrapping_sub(p.wait_index) >= p.num_tasks {
+        if index.wrapping_sub(wait_index) >= num_tasks {
             // No space left
             return core::ptr::null_mut();
         }
@@ -374,8 +394,8 @@ pub(crate) unsafe fn thread_pool_create_task(pool: *mut ThreadPool, fn_: TaskFn)
 
     // SAFETY: the index is reduced modulo `num_tasks`, so it addresses inside
     // the `tasks` run `thread_pool_init` allocated with that many entries.
-    let imp: *mut TaskImp = unsafe { p.tasks.add((index % p.num_tasks) as usize) };
-    if index < p.num_tasks {
+    let imp: *mut TaskImp = unsafe { (*pool).tasks.add((index % num_tasks) as usize) };
+    if index < num_tasks {
         // SAFETY: `imp` addresses one whole `TaskImp` of that allocation, so
         // zeroing exactly `size_of::<TaskImp>()` bytes stays inside it; all-zero
         // is a valid `TaskImp` (`fn_` is `Option<fn>`, `None` when null).
@@ -394,12 +414,15 @@ pub(crate) unsafe fn thread_pool_create_task(pool: *mut ThreadPool, fn_: TaskFn)
 pub(crate) unsafe fn thread_pool_run_task(pool: *mut ThreadPool, task: *mut Task) {
     // C: `(void)task;` — `task` is only read by the assert below.
     let _ = task;
-    // SAFETY: `pool` is a live initialized thread pool (fn raw-param contract).
-    let p = unsafe { &mut *pool };
-    let index: u32 = p.start_index;
+    // SAFETY (this fn's pool ops): `pool` is a live initialized thread pool
+    // (fn raw-param contract); scalar field accesses only, as pool threads may
+    // be executing concurrently.
+    let index: u32 = unsafe { (*pool).start_index };
     // SAFETY: the index is reduced modulo `num_tasks`, so it addresses inside
     // the `tasks` run allocated with that many entries; `&raw mut` takes the
     // task field address without forming a reference (C: `&...->task`).
-    ufbx_assert!(task == unsafe { &raw mut (*p.tasks.add((index % p.num_tasks) as usize)).task });
-    p.start_index = index.wrapping_add(1);
+    ufbx_assert!(
+        task == unsafe { &raw mut (*(*pool).tasks.add((index % (*pool).num_tasks) as usize)).task }
+    );
+    unsafe { (*pool).start_index = index.wrapping_add(1) };
 }
