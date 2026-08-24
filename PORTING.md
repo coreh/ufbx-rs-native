@@ -214,6 +214,21 @@ Ported byte-for-byte semantics; raw pointers throughout in the 1:1 phase.
   The parent-chain walk is an **iterative loop** (`refcount = parent`), not
   recursion — deliberate (deep ownership chains); keep it iterative.
 
+- **Chunk chains are walked with `buf::ChunkIter`**, never a hand `while
+  !c.is_null()`: it reads the link before yielding (so a body may free the
+  chunk it holds — `free_chunk` is the one retire-and-free site), exposes
+  `cursor()` for the bounded huge-list scans, and the magic asserts stay in the
+  bodies exactly where C has them. The map re-hash walks its old/new entry
+  tables as slices built once from the two allocations.
+- **A view over a flexible-array-member struct covers the header only.**
+  `View<BufChunk>::from_ptr` retags `size_of::<BufChunk>()` bytes; the
+  trailing `data[]` and the allocation as a whole are outside that tag, so a
+  pointer derived from the view can neither address the payload nor free the
+  block (Miri: "attempting deallocation using <tag> … does not exist in the
+  borrow stack"). `ChunkIter` therefore yields `ChunkRef` = header view +
+  the original pointer; `ptr()` / `data()` are the only routes past the
+  header. The same holds for every C `char data[]` tail.
+
 ### Atomics / refcount
 
 `ufbxi_atomic_counter_{inc,dec}` (ufbx.c:645-646) return the **previous** value

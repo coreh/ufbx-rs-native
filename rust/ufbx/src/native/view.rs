@@ -27,8 +27,14 @@
 //! contiguous walk —
 //! morally `slice::Iter` with a reinterpret on the yield — and knows nothing
 //! about the allocator: it is for contiguous `push_pop`-materialized runs ONLY.
-//! Skip-flagged / free-list structures (maps, retired chunks) need an
-//! allocator-aware `ArenaViewIter` (not yet built) or stay raw.
+//! The allocator's own structures get their own walkers with the same shape —
+//! one vouch at construction, safe bodies: `buf::ChunkIter` follows a chunk
+//! chain (`->next` / `->prev`, link read before the yield so a body may free
+//! the chunk it holds) yielding `buf::ChunkRef` — the header as a view plus
+//! the whole-allocation pointer, since a view over a flexible-array-member
+//! struct covers the header bytes only — and the map re-hash walks
+//! its entry tables as plain slices. Neither is a `T`-array, which is why
+//! they are not `SliceViewIter`.
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
