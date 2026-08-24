@@ -392,6 +392,14 @@ impl BufView {
         view_read!(self, num_items)
     }
     #[inline(always)]
+    pub(crate) fn pos(&self) -> usize {
+        view_read!(self, pos)
+    }
+    #[inline(always)]
+    pub(crate) fn pushed_size(&self) -> usize {
+        view_read!(self, pushed_size)
+    }
+    #[inline(always)]
     pub(crate) fn set_unordered(&self, unordered: bool) {
         view_write!(self, unordered, unordered)
     }

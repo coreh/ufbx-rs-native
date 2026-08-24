@@ -123,7 +123,7 @@ use crate::native::parse::{
     find_val2, find_vec3, get_array, get_dom_node, get_name_key, get_prop_type, get_val1, get_val2,
     get_val3, get_val4, get_val5, get_val_at, get_val_type, init_node_prop_names,
     is_node_property_name, is_vec3_one, is_vec3_zero, parse_legacy_toplevel, parse_toplevel,
-    parse_toplevel_child, push_element_extra, retain_toplevel, AsReal, Ascii, Checked, Context,
+    parse_toplevel_child, push_element_extra, retain_toplevel, AsReal, AsciiView, Checked, Context,
     ElementInfo, FbxAttrEntry, FbxIdEntry, Ignore, MeshExtra, Node, NodeView, PropView, PropsView,
     PtrFbxIdEntry, Template, TextureExtra, TmpAnimStack, TmpBonePose, TmpConnection,
     TmpMeshTexture, Unchecked, ValueArray, ValueType,
@@ -7589,14 +7589,13 @@ pub(crate) struct ObjectBatch {
 
 // ufbx.c:15129-15234 `ufbxi_read_objects_threaded`
 //
-// Stays `unsafe fn`: the body is raw end-to-end. It drives a local
-// `ObjectBatch` array through raw `batch` pointers, performs pointer surgery on
-// uc's ASCII source window (`ua->src`/`src_end`/`src_yield` retargeted at
-// `uc->read_buffer` after a `memcpy`), reads `uc->thread_pool` task counters and
-// `tmp_buf` fill levels through raw derefs, and hands `tmp_buf`-allocated node
-// runs to the worker tasks. The obligation that all of that state is coherent —
-// in particular that `tmp_buf` is not cleared while a batch still refers to it —
-// is a whole-function invariant with no narrow seam to name.
+// Stays `unsafe fn`: it drives the thread pool. `ufbxi_thread_pool` is read and
+// written by pool threads while this loop runs, so it is reached ONLY through
+// raw field projections (never a view or a whole-struct reference), and the
+// ASCII source window is retargeted at `uc->read_buffer` by raw pointer
+// arithmetic. The obligation that all of that state is coherent — in particular
+// that `tmp_buf` is not cleared while a batch still refers to it — is a
+// whole-function invariant with no narrow seam to name.
 #[inline(never)]
 pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
     uc.set_parse_threaded(true);
@@ -7612,18 +7611,27 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
     let mut empty_count: usize = 0;
     let mut batch_index: usize = 0;
     while empty_count < THREAD_GROUP_COUNT {
-        let batch: *mut ObjectBatch = &raw mut batches[batch_index];
+        // C: `ufbxi_object_batch *batch = &batches[batch_index];` — `batches` is
+        // a loader-thread stack local no pool thread can reach, so the batch is
+        // a plain borrow.
+        let batch: &mut ObjectBatch = &mut batches[batch_index];
 
         // SAFETY: `uc.thread_pool_mut_ptr()` is uc's own live `thread_pool`.
         unsafe { thread_pool_wait_group(uc.thread_pool_mut_ptr()) }?;
 
-        // SAFETY: `batch` points into the live `batches` local.
-        if unsafe { (*batch).num_nodes } > 0 {
+        if batch.num_nodes > 0 {
             // C: `ufbxi_for_ptr(ufbxi_node, p_node, batch->nodes, batch->num_nodes)`
-            // SAFETY: as above.
-            let (mut p_node, p_node_end) =
-                unsafe { ((*batch).nodes, add_ptr((*batch).nodes, (*batch).num_nodes)) };
-            while p_node != p_node_end {
+            // SAFETY: `batch->nodes` is the `push_pop`-materialized contiguous
+            // run of `num_nodes` node pointers this batch owns; the group's
+            // tasks are joined (`thread_pool_wait_group` above) and `tmp_buf` is
+            // cleared only after the walk, so the run is live and unmoved for
+            // the borrow. `ScalarView` (interior-mutable `Cell`) is the element
+            // handle, so the borrow coexists with the writes the parse does
+            // through uc.
+            let p_nodes: &[ScalarView<*mut Node>] = unsafe {
+                slice_from_ptr(batch.nodes as *const ScalarView<*mut Node>, batch.num_nodes)
+            };
+            for p_node in p_nodes {
                 // SAFETY: `uc.tmp_parse_mut_ptr()` is uc's own live `tmp_parse` buf.
                 unsafe { buf_clear(uc.tmp_parse_mut_ptr()) };
 
@@ -7637,35 +7645,26 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 uc.warnings_view()
                     .set_deferred_element_id_plus_one(uc.tmp_element_id_view().num_items() as u32);
 
-                // SAFETY: `p_node` walks the batch's `num_nodes`-long run of node
-                // pointers and stops at `p_node_end`, so it is in bounds; each
-                // entry points at a `tmp_buf`-allocated parse node kept live until
-                // the batch is retired.
-                read_object(uc, unsafe { NodeView::from_ptr(*p_node) })?;
+                // SAFETY: the run entry points at a `tmp_buf`-allocated parse
+                // node kept live until the batch is retired.
+                read_object(uc, unsafe { NodeView::from_ptr(p_node.get()) })?;
 
                 uc.warnings_view().set_deferred_element_id_plus_one(0);
                 uc.set_p_element_id(core::ptr::null_mut());
-
-                // SAFETY: `p_node` is in bounds of the node-pointer run and
-                // stepping it one past the last entry reaches `p_node_end`, the
-                // one-past-the-end pointer.
-                p_node = unsafe { p_node.add(1) };
             }
-            // SAFETY: `batch` points into the live `batches` local.
-            unsafe {
-                (*batch).num_nodes = 0;
-            }
+            batch.num_nodes = 0;
         }
 
         let tmp_buf: &BufView = uc.tmp_thread_parse_at(batch_index);
 
         // ASCII data may be in `tmp_buf`, so copy it to safety in case
         if uc.ascii_view().src_buf() == tmp_buf.get() {
-            let ua: *mut Ascii = uc.ascii_mut_ptr();
-            // SAFETY: `ua` is uc's own live `ascii` state, whose `src`/`src_end`
-            // delimit one source window, so the two are derived from the same
-            // allocation and their difference is well defined.
-            let size: usize = to_size(unsafe { (*ua).src_end.offset_from((*ua).src) });
+            // C: `ufbxi_ascii *ua = &uc->ascii;`
+            let ua: &AsciiView = uc.ascii_view();
+            // SAFETY: `src`/`src_end` delimit one source window, so the two are
+            // derived from the same allocation and their difference is well
+            // defined.
+            let size: usize = to_size(unsafe { ua.src_end().offset_from(ua.src()) });
             if uc.read_buffer_size() < size {
                 // SAFETY: `uc.ator_tmp_mut_ptr()`, `uc.read_buffer_mut_ptr()` and
                 // `uc.read_buffer_size_mut_ptr()` are uc's own live `ator_tmp`,
@@ -7686,45 +7685,26 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                     "ufbxi_grow_array_size((&uc->ator_tmp), sizeof(**(&uc->read_buffer)), (&uc->read_buffer), (&uc->read_buffer_size), (size))"
                 );
             }
-            // SAFETY: `(*ua).src` spans the `size` bytes computed from the window
+            // SAFETY: `ua.src()` spans the `size` bytes computed from the window
             // above, `uc.read_buffer()` has room for `size` bytes (grown when it
             // was short), and the source window lives in `tmp_buf` while the read
             // buffer is a separate `ator_tmp` allocation, so the two are disjoint.
-            unsafe { core::ptr::copy_nonoverlapping((*ua).src, uc.read_buffer(), size) };
+            unsafe { core::ptr::copy_nonoverlapping(ua.src(), uc.read_buffer(), size) };
             // C: `uc->data = uc->data_begin = ua->src = uc->read_buffer;`
-            // SAFETY: `ua` is uc's own live `ascii` state.
-            unsafe {
-                (*ua).src = uc.read_buffer();
-                uc.set_data_begin((*ua).src);
-            }
+            ua.set_src(uc.read_buffer());
+            uc.set_data_begin(ua.src());
             uc.set_data(uc.data_begin());
-            // SAFETY: `ua` is uc's own live `ascii` state; `read_buffer` holds at
-            // least `size` bytes, so stepping `size` reaches its one-past-the-end.
-            unsafe {
-                (*ua).src_end = uc.read_buffer().add(size);
-            }
-            // SAFETY: `ua` is uc's own live `ascii` state.
-            unsafe {
-                (*ua).src_is_retained = false;
-                (*ua).src_buf = core::ptr::null_mut();
-            }
-            // SAFETY: `src`/`src_end` were just retargeted at the same
-            // `read_buffer` allocation, so their difference is well defined.
-            if to_size(unsafe { (*ua).src_end.offset_from((*ua).src) }) < uc.progress_interval() {
-                // SAFETY: `ua` is uc's own live `ascii` state.
-                unsafe {
-                    (*ua).src_yield = (*ua).src_end;
-                }
+            ua.set_src_end(uc.read_buffer().wrapping_add(size));
+            ua.set_src_is_retained(false);
+            ua.set_src_buf(core::ptr::null_mut());
+            // SAFETY: `src`/`src_end` address the same `read_buffer` allocation,
+            // so their difference is well defined.
+            if to_size(unsafe { ua.src_end().offset_from(ua.src()) }) < uc.progress_interval() {
+                ua.set_src_yield(ua.src_end());
             } else {
-                // SAFETY: `ua` is uc's own live `ascii` state; the branch condition
-                // establishes `progress_interval <= src_end - src`, so the step
-                // stays inside the read buffer.
-                unsafe {
-                    (*ua).src_yield = (*ua).src.add(uc.progress_interval());
-                }
+                ua.set_src_yield(ua.src().wrapping_add(uc.progress_interval()));
             }
-            // SAFETY: `ua` is uc's own live `ascii` state.
-            uc.set_data(unsafe { (*ua).src });
+            uc.set_data(ua.src());
         }
 
         // SAFETY: `tmp_buf` is one of uc's own live `tmp_thread_parse` bufs.
@@ -7733,7 +7713,8 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
         if !parsed_to_end {
             let mut num_nodes: usize = 0;
             // SAFETY: `uc.get()` is the live, initialized context this call runs
-            // on, so its `thread_pool` sub-struct is readable.
+            // on; pool threads read and write the same `thread_pool`, so these
+            // are raw field projections, never a view over the sub-struct.
             let (task_start, mut max_tasks): (u32, u32) = unsafe {
                 (
                     (*uc.get()).thread_pool.start_index,
@@ -7765,34 +7746,26 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
                 );
                 num_nodes += 1;
 
-                // SAFETY: `uc.get()` is the live, initialized context this call
-                // runs on, so its `thread_pool` sub-struct is readable.
+                // SAFETY: as for the `start_index` read above — a raw field
+                // projection into the pool-shared `thread_pool`.
                 let num_tasks: u32 =
                     unsafe { (*uc.get()).thread_pool.start_index }.wrapping_sub(task_start);
                 if num_tasks >= max_tasks {
                     break;
                 }
 
-                // SAFETY: `tmp_buf` is one of uc's own live `tmp_thread_parse`
-                // bufs.
-                let memory_used: usize =
-                    unsafe { (*tmp_buf.get()).pushed_size } + unsafe { (*tmp_buf.get()).pos };
+                let memory_used: usize = tmp_buf.pushed_size() + tmp_buf.pos();
                 if memory_used >= max_memory {
                     break;
                 }
             }
 
-            // SAFETY: `batch` points into the live `batches` local.
-            unsafe {
-                (*batch).num_nodes = num_nodes;
-                (*batch).nodes = tmp_buf.push_pop::<*mut Node>(uc.tmp_stack_view(), num_nodes);
-                ufbxi_check!(uc, !(*batch).nodes.is_null(), "batch->nodes");
-            }
-            // SAFETY: `batch` points into the live `batches` local and `uc.get()`
-            // is the live, initialized context this call runs on.
-            unsafe {
-                (*batch).task_index = (*uc.get()).thread_pool.start_index;
-            }
+            batch.num_nodes = num_nodes;
+            batch.nodes = tmp_buf.push_pop::<*mut Node>(uc.tmp_stack_view(), num_nodes);
+            ufbxi_check!(uc, !batch.nodes.is_null(), "batch->nodes");
+            // SAFETY: as for the `start_index` read above — a raw field
+            // projection into the pool-shared `thread_pool`.
+            batch.task_index = unsafe { (*uc.get()).thread_pool.start_index };
         }
 
         // Not safe to refer to this buffer anymore
@@ -7801,8 +7774,7 @@ pub(crate) unsafe fn read_objects_threaded(uc: &Context) -> Result<(), Fail> {
         // SAFETY: `uc.thread_pool_mut_ptr()` is uc's own live `thread_pool`.
         unsafe { thread_pool_flush_group(uc.thread_pool_mut_ptr()) };
 
-        // SAFETY: `batch` points into the live `batches` local.
-        if unsafe { (*batch).num_nodes } == 0 {
+        if batch.num_nodes == 0 {
             empty_count += 1;
         }
 
