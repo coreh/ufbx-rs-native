@@ -5075,6 +5075,58 @@ impl BakeTimeListView {
     pub(crate) fn set_data(&self, data: *mut BakeTime) {
         view_write!(self, data, data)
     }
+    /// Safe indexed element view over the run this list header describes — the
+    /// internal-list sibling of `View<List<T>, M>::at`.
+    #[inline(always)]
+    pub(crate) fn at(&self, index: usize) -> &BakeTimeView {
+        assert!(index < self.count());
+        // SAFETY: `index` is in bounds of the list's own count (checked
+        // above), so `data + index` addresses a live element of the
+        // contiguous run the header describes; the stored `data` pointer
+        // carries that run's own write-capable provenance.
+        unsafe { View::mint(self.data().add(index)) }
+    }
+}
+
+// Typed interior-mutable VIEW over one `BakeTime` element of such a run
+// (leaf getters + setters over the two Copy fields).
+#[cfg(feature = "baking")]
+pub(crate) type BakeTimeView = crate::native::view::View<BakeTime>;
+
+#[cfg(feature = "baking")]
+impl BakeTimeView {
+    #[inline(always)]
+    pub(crate) fn time(&self) -> f64 {
+        view_read!(self, time)
+    }
+    #[inline(always)]
+    pub(crate) fn flags(&self) -> u32 {
+        view_read!(self, flags)
+    }
+    #[inline(always)]
+    pub(crate) fn set_time(&self, time: f64) {
+        view_write!(self, time, time)
+    }
+    #[inline(always)]
+    pub(crate) fn set_flags(&self, flags: u32) {
+        view_write!(self, flags, flags)
+    }
+    /// The C `ufbxi_bake_time` value copy (`t = times[i]`), assembled from the
+    /// two leaf reads.
+    #[inline(always)]
+    pub(crate) fn value(&self) -> BakeTime {
+        BakeTime {
+            time: self.time(),
+            flags: self.flags(),
+        }
+    }
+    /// The C `ufbxi_bake_time` value assignment (`times[i] = t`), as the two
+    /// leaf writes.
+    #[inline(always)]
+    pub(crate) fn set_value(&self, value: BakeTime) {
+        self.set_time(value.time);
+        self.set_flags(value.flags);
+    }
 }
 
 // ufbx.c:26687-26723 `ufbxi_bake_context`
@@ -6050,16 +6102,28 @@ pub(crate) unsafe fn finalize_bake_times(
     // `sort_bake_times` requires.
     unsafe { sort_bake_times(bc, times, num_times) }?;
 
+    // The run is contiguous (`push_pop`-materialized) and stays put for the
+    // rest of the function, so C's `times[i]` indexing runs through a list
+    // header over it. The header keeps the FULL run length: the passes below
+    // shrink `num_times`, while every index they form stays inside the run.
+    let mut times_run: BakeTimeList = BakeTimeList {
+        data: times,
+        count: num_times,
+    };
+    // SAFETY: `times_run` is a local, initialized, write-capable
+    // `ufbxi_bake_time_list` header, live and unmoved for the rest of this
+    // body (nothing touches it outside the view), describing the non-null
+    // run vouched above.
+    let times_view: &BakeTimeListView =
+        unsafe { View::<BakeTimeList, Mut>::from_ptr(&raw mut times_run) };
+
     // Deduplicate times
     if num_times > 0 {
         let mut dst: usize = 0;
-        // SAFETY: `times` addresses `num_times` live `ufbxi_bake_time`s and
-        // `num_times > 0` here, so slot 0 is in bounds.
-        let mut prev: BakeTime = unsafe { *times.add(0) };
+        let mut prev: BakeTime = times_view.at(0).value();
         let mut src: usize = 1;
         while src < num_times {
-            // SAFETY: `src < num_times`, in bounds of the `times` run.
-            let mut next: BakeTime = unsafe { *times.add(src) };
+            let mut next: BakeTime = times_view.at(src).value();
             // Merge keys with the same time and step flags `(0x1, 0x2)`
             if next.time == prev.time {
                 if ((next.flags ^ prev.flags) & 0x3) == 0 {
@@ -6074,17 +6138,12 @@ pub(crate) unsafe fn finalize_bake_times(
                 }
             }
 
-            // SAFETY: `dst` trails `src` (it advances at most once per loop
-            // iteration, starting one behind), so `dst < num_times` and the slot
-            // is in bounds of the `times` run.
-            unsafe { *times.add(dst) = prev };
+            times_view.at(dst).set_value(prev);
             dst += 1;
             prev = next;
             src += 1;
         }
-        // SAFETY: as above — the loop leaves `dst < num_times`, so this final
-        // slot is in bounds of the `times` run.
-        unsafe { *times.add(dst) = prev };
+        times_view.at(dst).set_value(prev);
         dst += 1;
         num_times = dst;
     }
@@ -6099,29 +6158,23 @@ pub(crate) unsafe fn finalize_bake_times(
 
         let mut dst: usize = 0;
         for src in 0..num_times {
-            // SAFETY: `src < num_times`, in bounds of the `times` run.
-            let cur: BakeTime = unsafe { *times.add(src) };
+            let cur: BakeTime = times_view.at(src).value();
             let mut delta: f64 = math::INFINITY;
 
             let mut keep: bool = true;
             if (cur.flags & keep_flags) == 0 {
                 if dst > 0 {
-                    // SAFETY: `dst > 0` (checked) and `dst <= src < num_times`,
-                    // so `dst - 1` is in bounds of the `times` run.
-                    delta = cur.time - unsafe { (*times.add(dst - 1)).time };
+                    delta = cur.time - times_view.at(dst - 1).time();
                 }
                 if src + 1 < num_times {
-                    // SAFETY: `src + 1 < num_times` (checked), in bounds of the
-                    // `times` run.
-                    delta = math::fmin(delta, unsafe { (*times.add(src + 1)).time } - cur.time);
+                    delta = math::fmin(delta, times_view.at(src + 1).time() - cur.time);
                 }
                 if delta < min_dist {
                     keep = false;
                 }
             }
             if keep {
-                // SAFETY: `dst <= src < num_times`, in bounds of the `times` run.
-                unsafe { *times.add(dst) = cur };
+                times_view.at(dst).set_value(cur);
                 dst += 1;
             }
         }
@@ -6139,37 +6192,25 @@ pub(crate) unsafe fn finalize_bake_times(
 
         // Pre-expand constant keyframes
         for i in 0..num_times {
-            // SAFETY (this condition): `i < num_times`, in bounds of the `times`
-            // run.
-            if (unsafe { (*times.add(i)).flags }
+            if (times_view.at(i).flags()
                 & (BakedKeyFlags::STEP_LEFT.raw() | BakedKeyFlags::STEP_RIGHT.raw()))
                 != 0
             {
-                // SAFETY: as above.
-                let sign: f64 =
-                    if (unsafe { (*times.add(i)).flags } & BakedKeyFlags::STEP_LEFT.raw()) != 0 {
-                        -1.0
-                    } else {
-                        1.0
-                    };
-                // SAFETY: as above.
-                let mut time: f64 = unsafe { (*times.add(i)).time } + sign * max_interval;
+                let sign: f64 = if (times_view.at(i).flags() & BakedKeyFlags::STEP_LEFT.raw()) != 0
+                {
+                    -1.0
+                } else {
+                    1.0
+                };
+                let mut time: f64 = times_view.at(i).time() + sign * max_interval;
                 if i > 0 {
-                    // SAFETY: `i > 0` (checked) and `i < num_times`, so `i - 1`
-                    // is in bounds of the `times` run.
-                    time = math::fmax(time, unsafe { (*times.add(i - 1)).time });
+                    time = math::fmax(time, times_view.at(i - 1).time());
                 }
                 if i + 1 < num_times {
-                    // SAFETY: `i + 1 < num_times` (checked), in bounds of the
-                    // `times` run.
-                    time = math::fmin(time, unsafe { (*times.add(i + 1)).time });
+                    time = math::fmin(time, times_view.at(i + 1).time());
                 }
-                // SAFETY: `i < num_times`, in bounds of the `times` run, and the
-                // pair of writes updates that one element in place.
-                unsafe {
-                    (*times.add(i)).time = time;
-                    (*times.add(i)).flags = BakedKeyFlags::REDUCED.raw();
-                }
+                times_view.at(i).set_time(time);
+                times_view.at(i).set_flags(BakedKeyFlags::REDUCED.raw());
             }
         }
 
@@ -6179,9 +6220,7 @@ pub(crate) unsafe fn finalize_bake_times(
             flags: 0,
         };
         while src < num_times {
-            // SAFETY: `src < num_times` (loop condition), in bounds of the
-            // `times` run.
-            let src_time: BakeTime = unsafe { *times.add(src) };
+            let src_time: BakeTime = times_view.at(src).value();
             src += 1;
 
             let start_src: usize = src;
@@ -6192,9 +6231,7 @@ pub(crate) unsafe fn finalize_bake_times(
             };
             next_time.time = math::ceil(src_time.time * sample_rate - epsilon) / sample_rate;
             next_time.flags = BakedKeyFlags::REDUCED.raw();
-            // SAFETY (this condition): `src < num_times` is checked first and
-            // `&&` short-circuits, so the slot is in bounds of the `times` run.
-            while src < num_times && unsafe { (*times.add(src)).time } <= next_time.time + epsilon {
+            while src < num_times && times_view.at(src).time() <= next_time.time + epsilon {
                 src += 1;
             }
 
@@ -6204,13 +6241,8 @@ pub(crate) unsafe fn finalize_bake_times(
                 prev_time = src_time;
             }
 
-            // SAFETY (this condition): `dst != 0` is established first and `||`
-            // short-circuits, and `dst` trails `src <= num_times`, so `dst - 1`
-            // is in bounds of the `times` run.
-            if dst == 0 || prev_time.time > unsafe { (*times.add(dst - 1)).time } {
-                // SAFETY: `dst` trails `src`, which the loop condition keeps
-                // below `num_times`, so this slot is in bounds of the run.
-                unsafe { *times.add(dst) = prev_time };
+            if dst == 0 || prev_time.time > times_view.at(dst - 1).time() {
+                times_view.at(dst).set_value(prev_time);
                 dst += 1;
             }
         }
@@ -6219,25 +6251,21 @@ pub(crate) unsafe fn finalize_bake_times(
     }
 
     if num_times > 0 {
-        // SAFETY (this condition and the call it guards): `num_times > 0`, so
-        // slot 0 is in bounds of the `times` run.
-        if unsafe { (*times.add(0)).time } < bc.time_min() {
-            bc.set_time_min(unsafe { (*times.add(0)).time });
+        if times_view.at(0).time() < bc.time_min() {
+            bc.set_time_min(times_view.at(0).time());
         }
-        // SAFETY (this condition and the call it guards): `num_times > 0`, so
-        // `num_times - 1` does not underflow and is the run's last slot.
-        if unsafe { (*times.add(num_times - 1)).time } > bc.time_max() {
-            bc.set_time_max(unsafe { (*times.add(num_times - 1)).time });
+        if times_view.at(num_times - 1).time() > bc.time_max() {
+            bc.set_time_max(times_view.at(num_times - 1).time());
         }
     }
 
     // SAFETY: `p_dst` points to the caller's live `ufbxi_bake_time_list` slot —
-    // this `unsafe fn`'s contract — and the pair of writes retargets it at the
+    // this `unsafe fn`'s contract — with write-capable (caller-owned)
+    // provenance, and the pair of writes below retargets it at the
     // deduplicated run.
-    unsafe {
-        (*p_dst).data = times;
-        (*p_dst).count = num_times;
-    }
+    let p_dst_view: &BakeTimeListView = unsafe { View::<BakeTimeList, Mut>::from_ptr(p_dst) };
+    p_dst_view.set_data(times);
+    p_dst_view.set_count(num_times);
 
     Ok(())
 }
