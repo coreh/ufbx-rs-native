@@ -43,8 +43,8 @@ use crate::native::hash::{hash_uptr, Map, PtrId};
 use crate::native::parse_ascii::is_space;
 use crate::native::parse_binary::{BINARY_HEADER_SIZE, BINARY_MAGIC, BINARY_MAGIC_SIZE};
 use crate::native::platform::{
-    add_ptr, min_sz, read_u32, to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_ignore,
-    ufbxi_unreachable, AtomicCounter,
+    add_ptr, min_sz, read_u32, to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable,
+    AtomicCounter,
 };
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{SanitizedString, StringPool};
@@ -4301,9 +4301,12 @@ fn value_type_from_raw(raw: u32) -> ValueType {
 // NUMBER: 'I' int32_t 'L' int64_t 'F' float 'D' double 'R' ufbxi_real 'B' bool 'Z' size_t
 // STRING: 'S' ufbx_string 'C' const char* (checked) 's' ufbx_string 'c' const char * (unchecked) 'b' ufbx_blob
 // ufbx.c:7731-7792 `ufbxi_get_val_at`
+// The untyped dispatcher: `fmt` selects the arm, `v` is the out-slot that arm
+// writes. Reached only through the typed `get_val_at` below, whose `ValOut`
+// bound pins the `fmt`/`v` pairing at compile time.
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn get_val_at(node: &NodeView, ix: usize, fmt: u8, v: *mut c_void) -> bool {
+unsafe fn get_val_at_raw(node: &NodeView, ix: usize, fmt: u8, v: *mut c_void) -> bool {
     ufbxi_dev_assert!(ix < MAX_NON_ARRAY_VALUES);
     // `as i32` mirrors C's promotion of the `uint16_t` mask to `int`.
     let type_: ValueType = value_type_from_raw(
@@ -4511,176 +4514,171 @@ pub(crate) fn get_array(node: &NodeView, fmt: u8) -> *mut ValueArray {
     array
 }
 
+// -- Typed value fetch (port-local layer over `ufbxi_get_val_at`)
+//
+// C pairs a format byte with an untyped out-pointer and the pairing is prose.
+// `ValOut` makes it a type: `T::FMT` is the format byte whose
+// `get_val_at_raw` arm writes exactly one `T`, so a typed fetch cannot be
+// handed a mismatched slot. The source-side checks — does the node hold a
+// number / string at `ix`? — stay in the arms and surface as `None`.
+//
+// # Safety
+// An impl asserts that the `get_val_at_raw` arm selected by `FMT` writes one
+// fully initialized `Self` through its out-pointer whenever it returns `true`
+// and writes nothing when it returns `false`.
+pub(crate) unsafe trait ValOut: Sized {
+    const FMT: u8;
+}
+
+// The checked (`'S'`/`'C'`: sanitized UTF-8 copy when present) and unchecked
+// (`'s'`/`'c'`: raw bytes) string forms write the same Rust type; the markers
+// keep the format byte recoverable from the type.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Checked<T>(pub T);
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Unchecked<T>(pub T);
+// `'R'` `ufbx_real`: a marker because `Real` aliases `f32` or `f64`, whose own
+// impls are the `'F'` / `'D'` formats.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct AsReal(pub Real);
+// `'_'`: skip the slot, write nothing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Ignore;
+
+// SAFETY (each impl): the named arm of `get_val_at_raw` writes exactly one
+// value of this type through `v` on `true` and nothing on `false`.
+unsafe impl ValOut for Ignore {
+    const FMT: u8 = b'_';
+}
+unsafe impl ValOut for i32 {
+    const FMT: u8 = b'I';
+}
+unsafe impl ValOut for i64 {
+    const FMT: u8 = b'L';
+}
+unsafe impl ValOut for f32 {
+    const FMT: u8 = b'F';
+}
+unsafe impl ValOut for f64 {
+    const FMT: u8 = b'D';
+}
+unsafe impl ValOut for AsReal {
+    const FMT: u8 = b'R';
+}
+unsafe impl ValOut for bool {
+    const FMT: u8 = b'B';
+}
+unsafe impl ValOut for usize {
+    const FMT: u8 = b'Z';
+}
+unsafe impl ValOut for Checked<String> {
+    const FMT: u8 = b'S';
+}
+unsafe impl ValOut for Unchecked<String> {
+    const FMT: u8 = b's';
+}
+unsafe impl ValOut for Checked<*const u8> {
+    const FMT: u8 = b'C';
+}
+unsafe impl ValOut for Unchecked<*const u8> {
+    const FMT: u8 = b'c';
+}
+unsafe impl ValOut for Blob {
+    const FMT: u8 = b'b';
+}
+
+// ufbx.c:7731-7792 `ufbxi_get_val_at` — the typed entry point. `None` is C's
+// `false`: the slot is absent, of another kind, or (for `'S'`/`'C'`) an
+// unusable sanitized string; nothing is written in that case.
+#[inline(always)]
+#[must_use]
+pub(crate) fn get_val_at<T: ValOut>(node: &NodeView, ix: usize) -> Option<T> {
+    let mut out = core::mem::MaybeUninit::<T>::uninit();
+    // SAFETY: `ValOut` pins `T::FMT` to the arm that writes exactly one `T`
+    // through `v` (the impl contract); `out` is an unaliased local of that
+    // type, so the write is in bounds, and it is initialized exactly when the
+    // arm reports `true`.
+    unsafe {
+        get_val_at_raw(node, ix, T::FMT, out.as_mut_ptr().cast::<c_void>())
+            .then(|| out.assume_init())
+    }
+}
+
 // ufbx.c:7805-7809 `ufbxi_get_val1`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn get_val1(node: &NodeView, fmt: *const u8, v0: *mut c_void) -> bool {
-    // SAFETY: `fmt` points to a format string with at least one byte, and `v0`
-    // is the caller's out-pointer matching `fmt[0]` — `get_val_at`'s contract.
-    if !unsafe { get_val_at(node, 0, *fmt.add(0), v0) } {
-        return false;
-    }
-    true
+pub(crate) fn get_val1<T0: ValOut>(node: &NodeView) -> Option<T0> {
+    get_val_at::<T0>(node, 0)
 }
 
 // ufbx.c:7811-7816 `ufbxi_get_val2`
+// As in C, slot `i` is fetched only after slots `0..i` succeeded.
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn get_val2(
-    node: &NodeView,
-    fmt: *const u8,
-    v0: *mut c_void,
-    v1: *mut c_void,
-) -> bool {
-    // SAFETY: `fmt` holds at least 2 bytes and `v0`/`v1` are the caller's
-    // out-pointers matching `fmt[0]`/`fmt[1]` — `get_val_at`'s contract.
-    unsafe {
-        if !get_val_at(node, 0, *fmt.add(0), v0) {
-            return false;
-        }
-        if !get_val_at(node, 1, *fmt.add(1), v1) {
-            return false;
-        }
-    }
-    true
+pub(crate) fn get_val2<T0: ValOut, T1: ValOut>(node: &NodeView) -> Option<(T0, T1)> {
+    let v0 = get_val_at::<T0>(node, 0)?;
+    let v1 = get_val_at::<T1>(node, 1)?;
+    Some((v0, v1))
 }
 
 // ufbx.c:7818-7824 `ufbxi_get_val3`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn get_val3(
+pub(crate) fn get_val3<T0: ValOut, T1: ValOut, T2: ValOut>(
     node: &NodeView,
-    fmt: *const u8,
-    v0: *mut c_void,
-    v1: *mut c_void,
-    v2: *mut c_void,
-) -> bool {
-    // SAFETY: `fmt` holds at least 3 bytes and `v0`/`v1`/`v2` are the caller's
-    // out-pointers matching `fmt[0..3]` — `get_val_at`'s contract.
-    unsafe {
-        if !get_val_at(node, 0, *fmt.add(0), v0) {
-            return false;
-        }
-        if !get_val_at(node, 1, *fmt.add(1), v1) {
-            return false;
-        }
-        if !get_val_at(node, 2, *fmt.add(2), v2) {
-            return false;
-        }
-    }
-    true
+) -> Option<(T0, T1, T2)> {
+    let v0 = get_val_at::<T0>(node, 0)?;
+    let v1 = get_val_at::<T1>(node, 1)?;
+    let v2 = get_val_at::<T2>(node, 2)?;
+    Some((v0, v1, v2))
 }
 
 // ufbx.c:7826-7833 `ufbxi_get_val4`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn get_val4(
+pub(crate) fn get_val4<T0: ValOut, T1: ValOut, T2: ValOut, T3: ValOut>(
     node: &NodeView,
-    fmt: *const u8,
-    v0: *mut c_void,
-    v1: *mut c_void,
-    v2: *mut c_void,
-    v3: *mut c_void,
-) -> bool {
-    // SAFETY: `fmt` holds at least 4 bytes and `v0..v3` are the caller's
-    // out-pointers matching `fmt[0..4]` — `get_val_at`'s contract.
-    unsafe {
-        if !get_val_at(node, 0, *fmt.add(0), v0) {
-            return false;
-        }
-        if !get_val_at(node, 1, *fmt.add(1), v1) {
-            return false;
-        }
-        if !get_val_at(node, 2, *fmt.add(2), v2) {
-            return false;
-        }
-        if !get_val_at(node, 3, *fmt.add(3), v3) {
-            return false;
-        }
-    }
-    true
+) -> Option<(T0, T1, T2, T3)> {
+    let v0 = get_val_at::<T0>(node, 0)?;
+    let v1 = get_val_at::<T1>(node, 1)?;
+    let v2 = get_val_at::<T2>(node, 2)?;
+    let v3 = get_val_at::<T3>(node, 3)?;
+    Some((v0, v1, v2, v3))
 }
 
 // ufbx.c:7835-7843 `ufbxi_get_val5`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn get_val5(
+pub(crate) fn get_val5<T0: ValOut, T1: ValOut, T2: ValOut, T3: ValOut, T4: ValOut>(
     node: &NodeView,
-    fmt: *const u8,
-    v0: *mut c_void,
-    v1: *mut c_void,
-    v2: *mut c_void,
-    v3: *mut c_void,
-    v4: *mut c_void,
-) -> bool {
-    // SAFETY: `fmt` holds at least 5 bytes and `v0..v4` are the caller's
-    // out-pointers matching `fmt[0..5]` — `get_val_at`'s contract.
-    unsafe {
-        if !get_val_at(node, 0, *fmt.add(0), v0) {
-            return false;
-        }
-        if !get_val_at(node, 1, *fmt.add(1), v1) {
-            return false;
-        }
-        if !get_val_at(node, 2, *fmt.add(2), v2) {
-            return false;
-        }
-        if !get_val_at(node, 3, *fmt.add(3), v3) {
-            return false;
-        }
-        if !get_val_at(node, 4, *fmt.add(4), v4) {
-            return false;
-        }
-    }
-    true
+) -> Option<(T0, T1, T2, T3, T4)> {
+    let v0 = get_val_at::<T0>(node, 0)?;
+    let v1 = get_val_at::<T1>(node, 1)?;
+    let v2 = get_val_at::<T2>(node, 2)?;
+    let v3 = get_val_at::<T3>(node, 3)?;
+    let v4 = get_val_at::<T4>(node, 4)?;
+    Some((v0, v1, v2, v3, v4))
 }
 
 // ufbx.c:7845-7851 `ufbxi_find_val1`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn find_val1(
-    node: &NodeView,
-    name: *const u8,
-    fmt: *const u8,
-    v0: *mut c_void,
-) -> bool {
-    let child: &NodeView = match find_child(node, name) {
-        Some(child) => child,
-        None => return false,
-    };
-    // SAFETY: `fmt` holds at least one byte and `v0` is the caller's out-pointer
-    // matching `fmt[0]` — `get_val_at`'s contract.
-    if !unsafe { get_val_at(child, 0, *fmt.add(0), v0) } {
-        return false;
-    }
-    true
+pub(crate) fn find_val1<T0: ValOut>(node: &NodeView, name: *const u8) -> Option<T0> {
+    let child: &NodeView = find_child(node, name)?;
+    get_val_at::<T0>(child, 0)
 }
 
 // ufbx.c:7853-7860 `ufbxi_find_val2`
 #[inline(always)]
 #[must_use]
-pub(crate) unsafe fn find_val2(
+pub(crate) fn find_val2<T0: ValOut, T1: ValOut>(
     node: &NodeView,
     name: *const u8,
-    fmt: *const u8,
-    v0: *mut c_void,
-    v1: *mut c_void,
-) -> bool {
-    let child: &NodeView = match find_child(node, name) {
-        Some(child) => child,
-        None => return false,
-    };
-    // SAFETY: `fmt` holds at least 2 bytes and `v0`/`v1` are the caller's
-    // out-pointers matching `fmt[0]`/`fmt[1]` — `get_val_at`'s contract.
-    unsafe {
-        if !get_val_at(child, 0, *fmt.add(0), v0) {
-            return false;
-        }
-        if !get_val_at(child, 1, *fmt.add(1), v1) {
-            return false;
-        }
-    }
-    true
+) -> Option<(T0, T1)> {
+    let child: &NodeView = find_child(node, name)?;
+    let v0 = get_val_at::<T0>(child, 0)?;
+    let v1 = get_val_at::<T1>(child, 1)?;
+    Some((v0, v1))
 }
 
 // ufbx.c:7862-7867 `ufbxi_find_array`
@@ -6122,22 +6120,16 @@ unsafe fn retain_dom_node_rec(
             if mask == ValueType::String as u32 {
                 // SAFETY: `val` is the freshly pushed `DomValue`.
                 unsafe { (*val).type_ = DomValueType::String };
-                // SAFETY: `ix < MAX_NON_ARRAY_VALUES` and the out-pointers
-                // address `val`'s own `value_str`/`value_blob` fields, matching
-                // the `'S'`/`'b'` formats — `get_val_at`'s contract.
+                // SAFETY: `val` is the freshly pushed `DomValue`; each fetch
+                // yields its value, so the only raw ops are the writes into its
+                // own `value_str` / `value_blob` fields.
                 unsafe {
-                    ufbxi_ignore!(get_val_at(
-                        node_view,
-                        ix,
-                        b'S',
-                        &raw mut (*val).value_str as *mut c_void,
-                    ));
-                    ufbxi_ignore!(get_val_at(
-                        node_view,
-                        ix,
-                        b'b',
-                        &raw mut (*val).value_blob as *mut c_void,
-                    ));
+                    if let Some(got) = get_val_at::<Checked<String>>(node_view, ix) {
+                        (*val).value_str = got.0;
+                    }
+                    if let Some(got) = get_val_at::<Blob>(node_view, ix) {
+                        (*val).value_blob = got;
+                    }
                 }
             } else {
                 ufbx_assert!(mask == ValueType::Number as u32);
@@ -8070,119 +8062,40 @@ mod tests {
 
         unsafe {
             let node = NodeView::from_ptr(&mut node);
-            assert!(get_val_at(node, 0, b'_', core::ptr::null_mut()));
+            assert!(get_val_at::<Ignore>(node, 0).is_some());
+            assert_eq!(get_val_at::<i32>(node, 0), Some(-7));
+            assert_eq!(get_val_at::<f32>(node, 0), Some(-3.5f32));
+            assert_eq!(get_val_at::<bool>(node, 0), Some(true));
 
-            let mut i32v: i32 = 0;
-            assert!(get_val_at(
-                node,
-                0,
-                b'I',
-                &mut i32v as *mut i32 as *mut c_void
-            ));
-            assert_eq!(i32v, -7);
-
-            let mut f32v: f32 = 0.0;
-            assert!(get_val_at(
-                node,
-                0,
-                b'F',
-                &mut f32v as *mut f32 as *mut c_void
-            ));
-            assert_eq!(f32v, -3.5f32);
-
-            let mut boolv: bool = false;
-            assert!(get_val_at(
-                node,
-                0,
-                b'B',
-                &mut boolv as *mut bool as *mut c_void
-            ));
-            assert!(boolv);
-
-            // 'Z' rejects negative values without writing.
-            let mut szv: usize = 123;
-            assert!(!get_val_at(
-                node,
-                0,
-                b'Z',
-                &mut szv as *mut usize as *mut c_void
-            ));
-            assert_eq!(szv, 123);
+            // 'Z' rejects negative values.
+            assert_eq!(get_val_at::<usize>(node, 0), None);
 
             // Number formats reject a string value and vice versa.
-            assert!(!get_val_at(
-                node,
-                1,
-                b'I',
-                &mut i32v as *mut i32 as *mut c_void
-            ));
-            let mut strv = String::default();
-            assert!(!get_val_at(
-                node,
-                0,
-                b'S',
-                &mut strv as *mut String as *mut c_void
-            ));
+            assert_eq!(get_val_at::<i32>(node, 1), None);
+            assert!(get_val_at::<Checked<String>>(node, 0).is_none());
 
             // 'S' picks the sanitized UTF-8 copy at `raw_length + 1`.
-            assert!(get_val_at(
-                node,
-                1,
-                b'S',
-                &mut strv as *mut String as *mut c_void
-            ));
+            let Checked(strv) = get_val_at::<Checked<String>>(node, 1).unwrap();
             assert_eq!(
                 core::slice::from_raw_parts(strv.data, strv.length),
                 b"utf8xx"
             );
             // 's' always yields the raw string.
-            assert!(get_val_at(
-                node,
-                1,
-                b's',
-                &mut strv as *mut String as *mut c_void
-            ));
+            let Unchecked(strv) = get_val_at::<Unchecked<String>>(node, 1).unwrap();
             assert_eq!(core::slice::from_raw_parts(strv.data, strv.length), b"raw");
 
-            let mut cstr: *const u8 = core::ptr::null();
-            assert!(get_val_at(
-                node,
-                1,
-                b'C',
-                &mut cstr as *mut *const u8 as *mut c_void
-            ));
+            let Checked(cstr) = get_val_at::<Checked<*const u8>>(node, 1).unwrap();
             assert_eq!(cstr, raw.as_ptr().add(4));
-            assert!(get_val_at(
-                node,
-                1,
-                b'c',
-                &mut cstr as *mut *const u8 as *mut c_void
-            ));
+            let Unchecked(cstr) = get_val_at::<Unchecked<*const u8>>(node, 1).unwrap();
             assert_eq!(cstr, raw.as_ptr());
 
-            let mut blob: Blob = core::mem::zeroed();
-            assert!(get_val_at(
-                node,
-                1,
-                b'b',
-                &mut blob as *mut Blob as *mut c_void
-            ));
+            let blob: Blob = get_val_at::<Blob>(node, 1).unwrap();
             assert_eq!(blob.size, 3);
 
             // `utf8_length == UINT32_MAX` marks an unusable sanitized string.
             (*vals.as_mut_ptr().add(1)).s.utf8_length = u32::MAX;
-            assert!(!get_val_at(
-                node,
-                1,
-                b'S',
-                &mut strv as *mut String as *mut c_void
-            ));
-            assert!(!get_val_at(
-                node,
-                1,
-                b'C',
-                &mut cstr as *mut *const u8 as *mut c_void
-            ));
+            assert!(get_val_at::<Checked<String>>(node, 1).is_none());
+            assert!(get_val_at::<Checked<*const u8>>(node, 1).is_none());
         }
     }
 
@@ -8199,23 +8112,11 @@ mod tests {
         let mut node: Node = unsafe { core::mem::zeroed() };
         node.value_type_mask = ValueType::Number as u16;
         node.content.vals = vals.as_mut_ptr();
-        let mut a: i64 = 0;
-        let mut b: i64 = 0;
         unsafe {
             let node = NodeView::from_ptr(&mut node);
-            assert!(get_val1(
-                node,
-                b"L\0".as_ptr(),
-                &mut a as *mut i64 as *mut c_void
-            ));
-            assert_eq!(a, 1);
+            assert_eq!(get_val1::<i64>(node), Some(1));
             // Value 1 is untyped (NONE), so the second read fails.
-            assert!(!get_val2(
-                node,
-                b"LL\0".as_ptr(),
-                &mut a as *mut i64 as *mut c_void,
-                &mut b as *mut i64 as *mut c_void
-            ));
+            assert!(get_val2::<i64, i64>(node).is_none());
         }
     }
 

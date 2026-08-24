@@ -113,7 +113,8 @@ use crate::native::api::{
 use crate::native::buf::{buf_clear, pop, push_size, BufView};
 use crate::native::error::{
     memchr, memcmp, strcmp, strlen, strncmp, ufbxi_check, ufbxi_check_err, ufbxi_check_msg,
-    ufbxi_check_return, ufbxi_fail, ufbxi_fail_msg, ufbxi_fmt_err_info, Fail, EMPTY_CHAR,
+    ufbxi_check_return, ufbxi_check_some, ufbxi_fail, ufbxi_fail_msg, ufbxi_fmt_err_info, Fail,
+    EMPTY_CHAR,
 };
 use crate::native::float_parse::parse_double;
 use crate::native::hash::{hash64, hash_ptr_id, PtrId};
@@ -122,10 +123,10 @@ use crate::native::parse::{
     find_val2, find_vec3, get_array, get_dom_node, get_name_key, get_prop_type, get_val1, get_val2,
     get_val3, get_val4, get_val5, get_val_at, get_val_type, init_node_prop_names,
     is_node_property_name, is_vec3_one, is_vec3_zero, parse_legacy_toplevel, parse_toplevel,
-    parse_toplevel_child, push_element_extra, retain_toplevel, Ascii, Context, ElementInfo,
-    FbxAttrEntry, FbxIdEntry, MeshExtra, Node, NodeView, PropView, PropsView, PtrFbxIdEntry,
-    Template, TextureExtra, TmpAnimStack, TmpBonePose, TmpConnection, TmpMeshTexture, ValueArray,
-    ValueType,
+    parse_toplevel_child, push_element_extra, retain_toplevel, AsReal, Ascii, Checked, Context,
+    ElementInfo, FbxAttrEntry, FbxIdEntry, Ignore, MeshExtra, Node, NodeView, PropView, PropsView,
+    PtrFbxIdEntry, Template, TextureExtra, TmpAnimStack, TmpBonePose, TmpConnection,
+    TmpMeshTexture, Unchecked, ValueArray, ValueType,
 };
 use crate::native::platform::{
     add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, math, max_real, max_sz, min32,
@@ -232,36 +233,25 @@ pub(crate) unsafe fn read_property(
     // arena (fn contract) — write-capable provenance, stable for this call.
     let prop: &PropView = unsafe { PropView::from_ptr(prop) };
 
-    let mut type_str: *const u8 = core::ptr::null();
     let mut subtype_str: *const u8 = core::ptr::null();
-    ufbxi_check!(
+    let (Checked(name), Checked(type_str)) = ufbxi_check_some!(
         uc,
-        // SAFETY: the format string `"SC"` matches the `name`/`type_str`
-        // out-pointer types that `get_val2` writes through; `name_raw()` is the
-        // viewed prop's own live `ufbx_string` field.
-        unsafe {
-            get_val2(
-                node,
-                b"SC\0".as_ptr(),
-                prop.name_raw() as *mut c_void,
-                &raw mut type_str as *mut c_void,
-            )
-        },
+        get_val2::<Checked<String>, Checked<*const u8>>(node),
         "ufbxi_get_val2(node, \"SC\", &prop->name, (char**)&type_str)"
     );
+    prop.set_name(name);
     let mut val_ix: u32 = 2;
     if version == 70 {
         // C: `ufbxi_get_val_at(node, val_ix++, ...)` — the post-increment
         // happens while evaluating the (single) check condition.
         let ix = val_ix;
         val_ix = val_ix.wrapping_add(1);
-        ufbxi_check!(
+        subtype_str = ufbxi_check_some!(
             uc,
-            // SAFETY: fmt `'C'` pairs with the `*mut *const u8` out-pointer
-            // `&raw mut subtype_str`, which is a live local.
-            unsafe { get_val_at(node, ix as usize, b'C', &raw mut subtype_str as *mut c_void,) },
+            get_val_at::<Checked<*const u8>>(node, ix as usize),
             "ufbxi_get_val_at(node, val_ix++, 'C', (char**)&subtype_str)"
-        );
+        )
+        .0;
     }
 
     let mut flags: u32 = 0;
@@ -270,12 +260,9 @@ pub(crate) unsafe fn read_property(
 
     // C leaves `flags_str` uninitialized; it is only read when the `'S'` fetch
     // below succeeds, which fully writes it.
-    let mut flags_str: String = String::new_c(core::ptr::null(), 0);
     let ix = val_ix;
     val_ix = val_ix.wrapping_add(1);
-    // SAFETY: fmt `'S'` pairs with the `*mut String` out-pointer
-    // `&raw mut flags_str`, which is a live local.
-    if unsafe { get_val_at(node, ix as usize, b'S', &raw mut flags_str as *mut c_void) } {
+    if let Some(Checked(flags_str)) = get_val_at::<Checked<String>>(node, ix as usize) {
         let mut i: usize = 0;
         while i < flags_str.length {
             // C-parity: `char next` reads a `const char *` — signed bytes on
@@ -310,16 +297,11 @@ pub(crate) unsafe fn read_property(
         prop.set_type(get_prop_type(uc, subtype_str));
     }
 
-    // SAFETY: fmt `'L'` pairs with the `*mut i64` out-pointer `value_int_raw()`,
-    // the viewed prop's own live `int64_t` field.
-    if unsafe {
-        get_val_at(
-            node,
-            val_ix as usize,
-            b'L',
-            prop.value_int_raw() as *mut c_void,
-        )
-    } {
+    if let Some(got) = get_val_at::<i64>(node, val_ix as usize) {
+        // SAFETY: `value_int_raw()` addresses the viewed prop's own live `int64_t` field.
+        unsafe {
+            *prop.value_int_raw() = got;
+        }
         flags |= PropFlags::VALUE_INT.raw();
     }
 
@@ -329,16 +311,13 @@ pub(crate) unsafe fn read_property(
     let value_real_arr: *mut Real = prop.value_vec4_raw() as *mut Real;
     let mut real_ix: usize = 0;
     while real_ix < 4 {
-        // SAFETY: `real_ix < 4` keeps `value_real_arr.add(real_ix)` inside the
-        // 4-`Real` value union arm, and fmt `'R'` pairs with a `*mut Real`.
-        if !unsafe {
-            get_val_at(
-                node,
-                (val_ix as usize).wrapping_add(real_ix),
-                b'R',
-                value_real_arr.add(real_ix) as *mut c_void,
-            )
-        } {
+        if let Some(got) = get_val_at::<AsReal>(node, (val_ix as usize).wrapping_add(real_ix)) {
+            // SAFETY: `real_ix < 4` keeps `value_real_arr.add(real_ix)` inside the
+            // 4-`Real` value union arm.
+            unsafe {
+                *value_real_arr.add(real_ix) = got.0;
+            }
+        } else {
             break;
         }
         real_ix += 1;
@@ -355,27 +334,18 @@ pub(crate) unsafe fn read_property(
         val_ix = val_ix.wrapping_add(1);
     }
 
-    // SAFETY: fmt `'S'` pairs with the `*mut String` out-pointer
-    // `value_str_raw()`, the viewed prop's own live `ufbx_string` field.
-    if unsafe {
-        get_val_at(
-            node,
-            val_ix as usize,
-            b'S',
-            prop.value_str_raw() as *mut c_void,
-        )
-    } {
+    if let Some(got) = get_val_at::<Checked<String>>(node, val_ix as usize) {
+        // SAFETY: `value_str_raw()` addresses the viewed prop's own live `ufbx_string` field.
+        unsafe {
+            *prop.value_str_raw() = got.0;
+        }
         if prop.value_str().length > 0 {
-            // SAFETY: fmt `'b'` pairs with the `*mut Blob` out-pointer
-            // `value_blob_raw()`, the viewed prop's own live `ufbx_blob` field.
-            ufbxi_ignore!(unsafe {
-                get_val_at(
-                    node,
-                    val_ix as usize,
-                    b'b',
-                    prop.value_blob_raw() as *mut c_void,
-                )
-            });
+            if let Some(got) = get_val_at::<Blob>(node, val_ix as usize) {
+                // SAFETY: `value_blob_raw()` addresses the viewed prop's own live `ufbx_blob` field.
+                unsafe {
+                    *prop.value_blob_raw() = got;
+                }
+            }
         }
         flags |= PropFlags::VALUE_STR.raw();
     } else {
@@ -576,21 +546,12 @@ pub(crate) unsafe fn read_thumbnail(
         )
     };
 
-    let mut format: i32 = 0;
     // SAFETY: the name is a NUL-terminated literal — `find_child_strcmp`'s
     // contract.
     let format_node = unsafe { find_child_strcmp(node, b"Format\0".as_ptr()) };
-    if format_node.is_some()
-        // SAFETY: `format_node` is `Some` (checked, and `&&` short-circuits);
-        // fmt `"I"` pairs with the `*mut i32` out-pointer `&raw mut format`.
-        && unsafe {
-            get_val1(
-                format_node.unwrap(),
-                b"I\0".as_ptr(),
-                &raw mut format as *mut c_void,
-            )
-        }
-    {
+    // C: `format_node && ufbxi_get_val1(format_node, "I", &format)` — the
+    // `&&` short-circuit becomes `and_then`.
+    if let Some(format) = format_node.and_then(get_val1::<i32>) {
         // C-parity: C's guard is `format >= 0 && format + 1 < UFBX_THUMBNAIL_FORMAT_COUNT`,
         // a *signed* `int32_t` addition. At `format == INT32_MAX` that addition
         // is UB: clang's `nsw` folds the pair of comparisons to
@@ -608,17 +569,7 @@ pub(crate) unsafe fn read_thumbnail(
         }
     }
 
-    let mut size: i32 = 0;
-    // SAFETY: the child name is a NUL-terminated interned string and fmt `"I"`
-    // pairs with the `*mut i32` out-pointer `&raw mut size`.
-    if unsafe {
-        find_val1(
-            node,
-            sp::Size.as_ptr(),
-            b"I\0".as_ptr(),
-            &raw mut size as *mut c_void,
-        )
-    } {
+    if let Some(size) = find_val1::<i32>(node, sp::Size.as_ptr()) {
         if size > 0 {
             // SAFETY: `thumbnail` is the caller's writable slot.
             unsafe {
@@ -699,22 +650,16 @@ pub(crate) fn read_header_extension(uc: &Context) -> Result<(), Fail> {
     // as a `while let` over the `None` end signal.
     while let Some(child) = parse_toplevel_child(uc, None)? {
         if child.name() == sp::Creator.as_ptr() {
-            // SAFETY: `child` is a parse-tree NodeView; the out-param is uc's
-            // own metadata `creator` string slot, reached through its views.
-            ufbxi_ignore!(unsafe {
-                get_val1(
-                    child,
-                    b"S\0".as_ptr(),
-                    uc.scene_view().metadata_view().creator_mut_ptr() as *mut c_void,
-                )
-            });
+            if let Some(got) = get_val1::<Checked<String>>(child) {
+                // SAFETY: `creator_mut_ptr()` addresses uc's own metadata `creator` slot.
+                unsafe {
+                    *uc.scene_view().metadata_view().creator_mut_ptr() = got.0;
+                }
+            }
         }
 
         if uc.version() < 6000 && child.name() == sp::FBXVersion.as_ptr() {
-            let mut version: i32 = 0;
-            // SAFETY: `child` is a parse-tree NodeView; `version` is an
-            // unaliased local matching the `I` format's `int32_t` out-param.
-            if unsafe { get_val1(child, b"I\0".as_ptr(), &raw mut version as *mut c_void) } {
+            if let Some(version) = get_val1::<i32>(child) {
                 if version > 0 && version < 6000 && (version as u32) > uc.version() {
                     uc.set_version(version as u32);
                 }
@@ -722,28 +667,14 @@ pub(crate) fn read_header_extension(uc: &Context) -> Result<(), Fail> {
         }
 
         if child.name() == sp::FBXHeaderVersion.as_ptr() {
-            // SAFETY: `child` is a parse-tree NodeView; `header_version` is an
-            // unaliased local matching the `I` format's `int32_t` out-param.
-            ufbxi_ignore!(unsafe {
-                get_val1(
-                    child,
-                    b"I\0".as_ptr(),
-                    &raw mut header_version as *mut c_void,
-                )
-            });
+            if let Some(got) = get_val1::<i32>(child) {
+                header_version = got;
+            }
         }
 
         if child.name() == sp::OtherFlags.as_ptr() {
-            // SAFETY: `child` is a parse-tree NodeView; `tc_definition` is an
-            // unaliased local matching the `I` format's `int32_t` out-param.
-            if unsafe {
-                find_val1(
-                    child,
-                    sp::TCDefinition.as_ptr(),
-                    b"I\0".as_ptr(),
-                    &raw mut tc_definition as *mut c_void,
-                )
-            } {
+            if let Some(got) = find_val1::<i32>(child, sp::TCDefinition.as_ptr()) {
+                tc_definition = got;
                 has_tc_definition = true;
             }
         }
@@ -959,18 +890,11 @@ pub(crate) fn read_document(uc: &Context) -> Result<(), Fail> {
     // as a `while let` over the `None` end signal.
     while let Some(child) = parse_toplevel_child(uc, None)? {
         if child.name() == sp::Document.as_ptr() && !found_root_id {
-            // Post-7000: Try to find the first document node and root ID.
-            // TODO: Multiple documents / roots?
-            // SAFETY: `child` is a parse-tree NodeView; the out-param is uc's
-            // own `root_id` field, whose `u64` matches the `L` format.
-            if unsafe {
-                find_val1(
-                    child,
-                    sp::RootNode.as_ptr(),
-                    b"L\0".as_ptr(),
-                    uc.root_id_mut_ptr() as *mut c_void,
-                )
-            } {
+            if let Some(got) = find_val1::<i64>(child, sp::RootNode.as_ptr()) {
+                // SAFETY: `root_id_mut_ptr()` addresses uc's own `root_id` field.
+                unsafe {
+                    *uc.root_id_mut_ptr() = got as u64;
+                }
                 found_root_id = true;
             }
         }
@@ -997,39 +921,30 @@ pub(crate) fn read_definitions(uc: &Context) -> Result<(), Fail> {
         let tmpl: *mut Template = uc.tmp_stack_view().push_zero::<Template>(1);
         uc.set_num_templates(uc.num_templates().wrapping_add(1));
         ufbxi_check!(uc, !tmpl.is_null(), "tmpl");
-        // SAFETY: `tmpl` is the fresh non-null push result checked just above,
-        // so its `type` field is a valid out-param for the `C` format; `object`
-        // is a parse-tree NodeView.
-        ufbxi_check!(
-            uc,
-            unsafe {
-                get_val1(
-                    object,
-                    b"C\0".as_ptr(),
-                    &raw mut (*tmpl).type_ as *mut c_void,
-                )
-            },
-            "ufbxi_get_val1(object, \"C\", (char**)&tmpl->type)"
-        );
+        // SAFETY: `tmpl` is the fresh non-null push result above; the fetch
+        // yields the value, so the only raw op is the write into its own field.
+        unsafe {
+            (*tmpl).type_ = ufbxi_check_some!(
+                uc,
+                get_val1::<Checked<*const u8>>(object),
+                "ufbxi_get_val1(object, \"C\", (char**)&tmpl->type)"
+            )
+            .0;
+        }
 
         // Pre-7000 FBX versions don't have property templates, they just have
         // the object counts by themselves.
         let props = find_child(object, sp::PropertyTemplate.as_ptr());
         if let Some(props) = props {
-            // SAFETY: `props` is a child NodeView of `object`; `tmpl` is the
-            // fresh push result above, so `&raw mut (*tmpl).sub_type` is a valid
-            // `ufbx_string` out-param for the `S` format.
-            ufbxi_check!(
-                uc,
-                unsafe {
-                    get_val1(
-                        props,
-                        b"S\0".as_ptr(),
-                        &raw mut (*tmpl).sub_type as *mut c_void,
-                    )
-                },
-                "ufbxi_get_val1(props, \"S\", &tmpl->sub_type)"
-            );
+            // SAFETY: as above, for `tmpl`'s own `sub_type` field.
+            unsafe {
+                (*tmpl).sub_type = ufbxi_check_some!(
+                    uc,
+                    get_val1::<Checked<String>>(props),
+                    "ufbxi_get_val1(props, \"S\", &tmpl->sub_type)"
+                )
+                .0;
+            }
 
             // Remove the "Fbx" prefix from sub-types, remember to re-intern!
             // SAFETY: `tmpl` is the fresh push result above; `sub_type` was
@@ -2426,16 +2341,9 @@ pub(crate) unsafe fn read_vertex_element(
     // C: `const char *mapping = "";` — an anonymous empty literal, never
     // pointer-equal to any interned `ufbxi_*` name constant.
     let mut mapping: *const u8 = EMPTY_CHAR.as_ptr();
-    // SAFETY: the child name is a NUL-terminated interned string and fmt `"C"`
-    // pairs with the `*mut *const u8` out-pointer `&raw mut mapping`.
-    ufbxi_ignore!(unsafe {
-        find_val1(
-            node,
-            sp::MappingInformationType.as_ptr(),
-            b"C\0".as_ptr(),
-            &raw mut mapping as *mut c_void,
-        )
-    });
+    if let Some(got) = find_val1::<Checked<*const u8>>(node, sp::MappingInformationType.as_ptr()) {
+        mapping = got.0;
+    }
 
     // SAFETY: `values_raw()` addresses the viewed attribute's own value list.
     unsafe { (*attrib.values_raw()).count = if num_elems != 0 { num_elems } else { 1 } };
@@ -3164,14 +3072,12 @@ pub(crate) unsafe fn read_synthetic_blend_shapes(
         // read; zero-initialized here (no upstream `ufbxi_uninit` marker).
         // SAFETY: `ufbx_string` is a plain pointer/length pair, for which the
         // all-zero bit pattern is a valid (empty, null-data) value.
-        let mut name: String = unsafe { core::mem::zeroed() };
-        // SAFETY: fmt `'S'` pairs with the `*mut String` out-pointer
-        // `&raw mut name`, which is a live local.
-        ufbxi_check!(
+        let name: String = ufbxi_check_some!(
             uc,
-            unsafe { get_val1(n, b"S\0".as_ptr(), &raw mut name as *mut c_void,) },
+            get_val1::<Checked<String>>(n),
             "ufbxi_get_val1(n, \"S\", &name)"
-        );
+        )
+        .0;
 
         if deformer.is_null() {
             // SAFETY: `deformer_fbx_id` is a live local `u64` out-slot;
@@ -4253,11 +4159,12 @@ pub(crate) unsafe fn read_mesh(
             let layer: *mut TangentLayer = unsafe { bitangents.add(num_bitangents_read) };
             num_bitangents_read += 1;
 
-            // SAFETY: fmt `'I'` pairs with the `*mut u32` out-pointer
-            // `&raw mut (*layer).index`, a field of the in-bounds `layer` slot.
-            ufbxi_ignore!(unsafe {
-                get_val1(n, b"I\0".as_ptr(), &raw mut (*layer).index as *mut c_void)
-            });
+            if let Some(got) = get_val1::<i32>(n) {
+                // SAFETY: `layer` is the in-bounds slot established above.
+                unsafe {
+                    (*layer).index = got as u32;
+                }
+            }
             // SAFETY: `&raw mut (*layer).elem` addresses the in-bounds slot's live
             // `ufbx_vertex_vec3`; the `3` value-real count matches it.
             unsafe {
@@ -4285,11 +4192,12 @@ pub(crate) unsafe fn read_mesh(
             let layer: *mut TangentLayer = unsafe { tangents.add(num_tangents_read) };
             num_tangents_read += 1;
 
-            // SAFETY: fmt `'I'` pairs with the `*mut u32` out-pointer
-            // `&raw mut (*layer).index`, a field of the in-bounds `layer` slot.
-            ufbxi_ignore!(unsafe {
-                get_val1(n, b"I\0".as_ptr(), &raw mut (*layer).index as *mut c_void)
-            });
+            if let Some(got) = get_val1::<i32>(n) {
+                // SAFETY: `layer` is the in-bounds slot established above.
+                unsafe {
+                    (*layer).index = got as u32;
+                }
+            }
             // SAFETY: `&raw mut (*layer).elem` addresses the in-bounds slot's live
             // `ufbx_vertex_vec3`; the `3` value-real count matches it.
             unsafe {
@@ -4318,21 +4226,18 @@ pub(crate) unsafe fn read_mesh(
                 unsafe { (mesh.uv_sets().data as *mut UvSet).add(mesh.uv_sets().count) };
             mesh.uv_sets_view().set_count(mesh.uv_sets().count + 1);
 
-            // SAFETY: fmt `'I'` pairs with the `*mut u32` out-pointer
-            // `&raw mut (*set).index`, a field of the in-bounds `set` slot.
-            ufbxi_ignore!(unsafe {
-                get_val1(n, b"I\0".as_ptr(), &raw mut (*set).index as *mut c_void)
-            });
-            // SAFETY: fmt `'S'` pairs with the `*mut String` out-pointer
-            // `&raw mut (*set).name`, a field of the in-bounds `set` slot.
-            if !unsafe {
-                find_val1(
-                    n,
-                    sp::Name.as_ptr(),
-                    b"S\0".as_ptr(),
-                    &raw mut (*set).name as *mut c_void,
-                )
-            } {
+            if let Some(got) = get_val1::<i32>(n) {
+                // SAFETY: `set` is the in-bounds slot established above.
+                unsafe {
+                    (*set).index = got as u32;
+                }
+            }
+            if let Some(got) = find_val1::<Checked<String>>(n, sp::Name.as_ptr()) {
+                // SAFETY: `set` is the in-bounds slot established above.
+                unsafe {
+                    (*set).name = got.0;
+                }
+            } else {
                 // SAFETY: `set` is that in-bounds slot.
                 unsafe { (*set).name = EMPTY_STRING.0 };
             }
@@ -4366,21 +4271,18 @@ pub(crate) unsafe fn read_mesh(
             mesh.color_sets_view()
                 .set_count(mesh.color_sets().count + 1);
 
-            // SAFETY: fmt `'I'` pairs with the `*mut u32` out-pointer
-            // `&raw mut (*set).index`, a field of the in-bounds `set` slot.
-            ufbxi_ignore!(unsafe {
-                get_val1(n, b"I\0".as_ptr(), &raw mut (*set).index as *mut c_void)
-            });
-            // SAFETY: fmt `'S'` pairs with the `*mut String` out-pointer
-            // `&raw mut (*set).name`, a field of the in-bounds `set` slot.
-            if !unsafe {
-                find_val1(
-                    n,
-                    sp::Name.as_ptr(),
-                    b"S\0".as_ptr(),
-                    &raw mut (*set).name as *mut c_void,
-                )
-            } {
+            if let Some(got) = get_val1::<i32>(n) {
+                // SAFETY: `set` is the in-bounds slot established above.
+                unsafe {
+                    (*set).index = got as u32;
+                }
+            }
+            if let Some(got) = find_val1::<Checked<String>>(n, sp::Name.as_ptr()) {
+                // SAFETY: `set` is the in-bounds slot established above.
+                unsafe {
+                    (*set).name = got.0;
+                }
+            } else {
                 // SAFETY: `set` is that in-bounds slot.
                 unsafe { (*set).name = EMPTY_STRING.0 };
             }
@@ -4424,16 +4326,11 @@ pub(crate) unsafe fn read_mesh(
         } else if n.name() == sp::LayerElementEdgeCrease.as_ptr() {
             // C: `const char *mapping = "";`
             let mut mapping: *const u8 = EMPTY_CHAR.as_ptr();
-            // SAFETY: fmt `'c'` pairs with the `*mut *const u8` out-pointer
-            // `&raw mut mapping`, which is a live local.
-            ufbxi_ignore!(unsafe {
-                find_val1(
-                    n,
-                    sp::MappingInformationType.as_ptr(),
-                    b"c\0".as_ptr(),
-                    &raw mut mapping as *mut c_void,
-                )
-            });
+            if let Some(got) =
+                find_val1::<Unchecked<*const u8>>(n, sp::MappingInformationType.as_ptr())
+            {
+                mapping = got.0;
+            }
             if mapping == sp::ByEdge.as_ptr() {
                 if mesh.edge_crease().count != 0 {
                     continue;
@@ -4461,16 +4358,11 @@ pub(crate) unsafe fn read_mesh(
         } else if n.name() == sp::LayerElementSmoothing.as_ptr() {
             // C: `const char *mapping = "";`
             let mut mapping: *const u8 = EMPTY_CHAR.as_ptr();
-            // SAFETY: fmt `'c'` pairs with the `*mut *const u8` out-pointer
-            // `&raw mut mapping`, which is a live local.
-            ufbxi_ignore!(unsafe {
-                find_val1(
-                    n,
-                    sp::MappingInformationType.as_ptr(),
-                    b"c\0".as_ptr(),
-                    &raw mut mapping as *mut c_void,
-                )
-            });
+            if let Some(got) =
+                find_val1::<Unchecked<*const u8>>(n, sp::MappingInformationType.as_ptr())
+            {
+                mapping = got.0;
+            }
             if mapping == sp::ByEdge.as_ptr() {
                 if mesh.edge_smoothing().count != 0 {
                     continue;
@@ -4517,16 +4409,11 @@ pub(crate) unsafe fn read_mesh(
         } else if n.name() == sp::LayerElementVisibility.as_ptr() {
             // C: `const char *mapping = "";`
             let mut mapping: *const u8 = EMPTY_CHAR.as_ptr();
-            // SAFETY: fmt `'c'` pairs with the `*mut *const u8` out-pointer
-            // `&raw mut mapping`, which is a live local.
-            ufbxi_ignore!(unsafe {
-                find_val1(
-                    n,
-                    sp::MappingInformationType.as_ptr(),
-                    b"c\0".as_ptr(),
-                    &raw mut mapping as *mut c_void,
-                )
-            });
+            if let Some(got) =
+                find_val1::<Unchecked<*const u8>>(n, sp::MappingInformationType.as_ptr())
+            {
+                mapping = got.0;
+            }
             if mapping == sp::ByEdge.as_ptr() {
                 if mesh.edge_visibility().count != 0 {
                     continue;
@@ -4557,16 +4444,11 @@ pub(crate) unsafe fn read_mesh(
             }
             // C: `const char *mapping = "";`
             let mut mapping: *const u8 = EMPTY_CHAR.as_ptr();
-            // SAFETY: fmt `'c'` pairs with the `*mut *const u8` out-pointer
-            // `&raw mut mapping`, which is a live local.
-            ufbxi_ignore!(unsafe {
-                find_val1(
-                    n,
-                    sp::MappingInformationType.as_ptr(),
-                    b"c\0".as_ptr(),
-                    &raw mut mapping as *mut c_void,
-                )
-            });
+            if let Some(got) =
+                find_val1::<Unchecked<*const u8>>(n, sp::MappingInformationType.as_ptr())
+            {
+                mapping = got.0;
+            }
             if mapping == sp::ByPolygon.as_ptr() {
                 // SAFETY: `face_material_raw()` addresses the mesh's own live
                 // list field, so `&raw mut` projects its `data`/`count` slots;
@@ -4632,21 +4514,12 @@ pub(crate) unsafe fn read_mesh(
                 continue;
             }
             // C: `const char *mapping = NULL;`
-            let mut mapping: *const u8 = core::ptr::null();
-            // SAFETY: fmt `'c'` pairs with the `*mut *const u8` out-pointer
-            // `&raw mut mapping`, which is a live local.
-            ufbxi_check!(
+            let mapping: *const u8 = ufbxi_check_some!(
                 uc,
-                unsafe {
-                    find_val1(
-                        n,
-                        sp::MappingInformationType.as_ptr(),
-                        b"c\0".as_ptr(),
-                        &raw mut mapping as *mut c_void,
-                    )
-                },
+                find_val1::<Unchecked<*const u8>>(n, sp::MappingInformationType.as_ptr()),
                 "ufbxi_find_val1(n, ufbxi_MappingInformationType, \"c\", (char**)&mapping)"
-            );
+            )
+            .0;
             if mapping == sp::ByPolygon.as_ptr() {
                 // SAFETY: `face_group_raw()` addresses the mesh's own live
                 // list field, so `&raw mut` projects its `data`/`count` slots;
@@ -4669,21 +4542,12 @@ pub(crate) unsafe fn read_mesh(
                 continue;
             }
             // C: `const char *mapping = NULL;`
-            let mut mapping: *const u8 = core::ptr::null();
-            // SAFETY: fmt `'c'` pairs with the `*mut *const u8` out-pointer
-            // `&raw mut mapping`, which is a live local.
-            ufbxi_check!(
+            let mapping: *const u8 = ufbxi_check_some!(
                 uc,
-                unsafe {
-                    find_val1(
-                        n,
-                        sp::MappingInformationType.as_ptr(),
-                        b"c\0".as_ptr(),
-                        &raw mut mapping as *mut c_void,
-                    )
-                },
+                find_val1::<Unchecked<*const u8>>(n, sp::MappingInformationType.as_ptr()),
                 "ufbxi_find_val1(n, ufbxi_MappingInformationType, \"c\", (char**)&mapping)"
-            );
+            )
+            .0;
             if mapping == sp::ByPolygon.as_ptr() {
                 // SAFETY: `face_hole_raw()` addresses the mesh's own live list
                 // field, so `&raw mut` projects its `data`/`count` slots; the
@@ -4750,17 +4614,9 @@ pub(crate) unsafe fn read_mesh(
                     push_string_place_str(uc.string_pool_mut_ptr(), &raw mut prop_name, false)
                 }?;
                 // C: `const char *mapping = NULL;`
-                let mut mapping: *const u8 = core::ptr::null();
-                // SAFETY: fmt `'c'` pairs with the `*mut *const u8` out-pointer
-                // `&raw mut mapping`, which is a live local.
-                if unsafe {
-                    find_val1(
-                        n,
-                        sp::MappingInformationType.as_ptr(),
-                        b"c\0".as_ptr(),
-                        &raw mut mapping as *mut c_void,
-                    )
-                } {
+                if let Some(Unchecked(mapping)) =
+                    find_val1::<Unchecked<*const u8>>(n, sp::MappingInformationType.as_ptr())
+                {
                     let arr: *mut ValueArray = find_array(n, sp::TextureId.as_ptr(), b'i');
 
                     let tex: *mut TmpMeshTexture =
@@ -4834,38 +4690,18 @@ pub(crate) unsafe fn read_mesh(
         // C: `ufbxi_for (ufbxi_node, c, n->children, n->num_children)`
         // SAFETY: contiguous push_pop child run, valid for `n`'s borrow.
         for c in unsafe { SliceViewIter::from_raw_parts(n.children(), n.num_children() as usize) } {
-            // C: `uint32_t index; const char *type;` — both are fully written by
-            // the guarded `ufbxi_find_val1` calls below before any read; zeroed
-            // here (no upstream `ufbxi_uninit` marker).
-            let mut index: u32 = 0;
-            let mut type_: *const u8 = core::ptr::null();
             if c.name() != sp::LayerElement.as_ptr() {
                 continue;
             }
-            // SAFETY: fmt `'I'` pairs with the `*mut u32` out-pointer
-            // `&raw mut index`, which is a live local.
-            if !unsafe {
-                find_val1(
-                    c,
-                    sp::TypedIndex.as_ptr(),
-                    b"I\0".as_ptr(),
-                    &raw mut index as *mut c_void,
-                )
-            } {
+            // C: `uint32_t index; const char *type;` — both written by the
+            // guarded `ufbxi_find_val1` calls before any read.
+            let Some(index) = find_val1::<i32>(c, sp::TypedIndex.as_ptr()) else {
                 continue;
-            }
-            // SAFETY: fmt `'C'` pairs with the `*mut *const u8` out-pointer
-            // `&raw mut type_`, which is a live local.
-            if !unsafe {
-                find_val1(
-                    c,
-                    sp::Type.as_ptr(),
-                    b"C\0".as_ptr(),
-                    &raw mut type_ as *mut c_void,
-                )
-            } {
+            };
+            let index: u32 = index as u32;
+            let Some(Checked(type_)) = find_val1::<Checked<*const u8>>(c, sp::Type.as_ptr()) else {
                 continue;
-            }
+            };
 
             if type_ == sp::LayerElementUV.as_ptr() {
                 // C: `ufbxi_for(ufbx_uv_set, set, mesh->uv_sets.data, mesh->uv_sets.count)`
@@ -5003,56 +4839,29 @@ pub(crate) unsafe fn read_mesh(
 
     // Subdivision
 
-    // SAFETY: fmt `'I'` pairs with the `*mut u32` out-pointer
-    // `subdivision_preview_levels_raw()`, a field of the fresh non-null element
-    // pushed above.
-    ufbxi_ignore!(unsafe {
-        find_val1(
-            node,
-            sp::PreviewDivisionLevels.as_ptr(),
-            b"I\0".as_ptr(),
-            mesh.subdivision_preview_levels_raw() as *mut c_void,
-        )
-    });
-    // SAFETY: fmt `'I'` pairs with the `*mut u32` out-pointer
-    // `subdivision_render_levels_raw()`, a field of the fresh non-null element.
-    ufbxi_ignore!(unsafe {
-        find_val1(
-            node,
-            sp::RenderDivisionLevels.as_ptr(),
-            b"I\0".as_ptr(),
-            mesh.subdivision_render_levels_raw() as *mut c_void,
-        )
-    });
+    if let Some(got) = find_val1::<i32>(node, sp::PreviewDivisionLevels.as_ptr()) {
+        // SAFETY: `subdivision_preview_levels_raw()` addresses the fresh non-null
+        // mesh's own field.
+        unsafe {
+            *mesh.subdivision_preview_levels_raw() = got as u32;
+        }
+    }
+    if let Some(got) = find_val1::<i32>(node, sp::RenderDivisionLevels.as_ptr()) {
+        // SAFETY: `subdivision_render_levels_raw()` addresses the fresh non-null
+        // mesh's own field.
+        unsafe {
+            *mesh.subdivision_render_levels_raw() = got as u32;
+        }
+    }
 
     // C: `int32_t smoothness, boundary;` — written by the guarded
-    // `ufbxi_find_val1` calls below (no upstream `ufbxi_uninit` marker).
-    let mut smoothness: i32 = 0;
-    let mut boundary: i32 = 0;
-    // SAFETY: fmt `'I'` pairs with the `*mut i32` out-pointer `&raw mut smoothness`,
-    // which is a live local.
-    if unsafe {
-        find_val1(
-            node,
-            sp::Smoothness.as_ptr(),
-            b"I\0".as_ptr(),
-            &raw mut smoothness as *mut c_void,
-        )
-    } {
+    // `ufbxi_find_val1` calls below.
+    if let Some(smoothness) = find_val1::<i32>(node, sp::Smoothness.as_ptr()) {
         if smoothness >= 0 && smoothness <= SubdivisionDisplayMode::Smooth as i32 {
             mesh.set_subdivision_display_mode(subdivision_display_mode_from_raw(smoothness));
         }
     }
-    // SAFETY: fmt `'I'` pairs with the `*mut i32` out-pointer `&raw mut boundary`,
-    // which is a live local.
-    if unsafe {
-        find_val1(
-            node,
-            sp::BoundaryRule.as_ptr(),
-            b"I\0".as_ptr(),
-            &raw mut boundary as *mut c_void,
-        )
-    } {
+    if let Some(boundary) = find_val1::<i32>(node, sp::BoundaryRule.as_ptr()) {
         if boundary >= 0 && boundary < SubdivisionBoundary::SharpCorners as i32 {
             mesh.set_subdivision_boundary(subdivision_boundary_from_raw(boundary + 1));
         }
@@ -5093,44 +4902,21 @@ pub(crate) unsafe fn read_nurbs_curve(
 
     let mut dimension: i32 = 3;
 
-    let mut form: *const u8 = core::ptr::null();
-    // SAFETY: fmt `'I'` pairs with the `*mut u32` out-pointer
-    // `&raw mut (*nurbs).basis.order`, a field of the fresh non-null element pushed
-    // above.
-    ufbxi_check!(
+    // SAFETY: `nurbs` is the fresh non-null element pushed above; the fetch
+    // yields the value, so the only raw op is the write into its own field.
+    unsafe {
+        (*nurbs).basis.order = ufbxi_check_some!(
+            uc,
+            find_val1::<i32>(node, sp::Order.as_ptr()),
+            "ufbxi_find_val1(node, ufbxi_Order, \"I\", &nurbs->basis.order)"
+        ) as u32;
+    }
+    if let Some(got) = find_val1::<i32>(node, sp::Dimension.as_ptr()) {
+        dimension = got;
+    }
+    let Checked(form) = ufbxi_check_some!(
         uc,
-        unsafe {
-            find_val1(
-                node,
-                sp::Order.as_ptr(),
-                b"I\0".as_ptr(),
-                &raw mut (*nurbs).basis.order as *mut c_void,
-            )
-        },
-        "ufbxi_find_val1(node, ufbxi_Order, \"I\", &nurbs->basis.order)"
-    );
-    // SAFETY: fmt `'I'` pairs with the `*mut i32` out-pointer `&raw mut dimension`,
-    // which is a live local.
-    ufbxi_ignore!(unsafe {
-        find_val1(
-            node,
-            sp::Dimension.as_ptr(),
-            b"I\0".as_ptr(),
-            &raw mut dimension as *mut c_void,
-        )
-    });
-    // SAFETY: fmt `'C'` pairs with the `*mut *const u8` out-pointer `&raw mut form`,
-    // which is a live local.
-    ufbxi_check!(
-        uc,
-        unsafe {
-            find_val1(
-                node,
-                sp::Form.as_ptr(),
-                b"C\0".as_ptr(),
-                &raw mut form as *mut c_void,
-            )
-        },
+        find_val1::<Checked<*const u8>>(node, sp::Form.as_ptr()),
         "ufbxi_find_val1(node, ufbxi_Form, \"C\", (char**)&form)"
     );
     // SAFETY: the `'C'` fetch above succeeded (checked), so `form` points at the
@@ -5185,83 +4971,35 @@ pub(crate) unsafe fn read_nurbs_surface(
         unsafe { push_element::<NurbsSurface>(uc, info, ElementType::NurbsSurface) };
     ufbxi_check!(uc, !nurbs.is_null(), "nurbs");
 
-    let mut form_u: *const u8 = core::ptr::null();
-    let mut form_v: *const u8 = core::ptr::null();
-    let mut dimension_u: usize = 0;
-    let mut dimension_v: usize = 0;
-    let mut step_u: i32 = 0;
-    let mut step_v: i32 = 0;
-    // SAFETY: fmt `"II"` pairs with the two `*mut u32` out-pointers
-    // `&raw mut (*nurbs).basis_u.order` / `&raw mut (*nurbs).basis_v.order`, fields of the
-    // fresh non-null element pushed above.
-    ufbxi_check!(
+    let (order_u, order_v) = ufbxi_check_some!(
         uc,
-        unsafe {
-            find_val2(
-                node,
-                sp::NurbsSurfaceOrder.as_ptr(),
-                b"II\0".as_ptr(),
-                &raw mut (*nurbs).basis_u.order as *mut c_void,
-                &raw mut (*nurbs).basis_v.order as *mut c_void,
-            )
-        },
+        find_val2::<i32, i32>(node, sp::NurbsSurfaceOrder.as_ptr()),
         "ufbxi_find_val2(node, ufbxi_NurbsSurfaceOrder, \"II\", &nurbs->basis_u.order, &nurbs->basis_v.order)"
     );
-    // SAFETY: fmt `"ZZ"` pairs with the two `*mut usize` out-pointers
-    // `&raw mut dimension_u` / `&raw mut dimension_v`, which are live locals.
-    ufbxi_check!(
+    // SAFETY: `nurbs` is the fresh non-null element pushed above.
+    unsafe {
+        (*nurbs).basis_u.order = order_u as u32;
+        (*nurbs).basis_v.order = order_v as u32;
+    }
+    let (dimension_u, dimension_v) = ufbxi_check_some!(
         uc,
-        unsafe {
-            find_val2(
-                node,
-                sp::Dimensions.as_ptr(),
-                b"ZZ\0".as_ptr(),
-                &raw mut dimension_u as *mut c_void,
-                &raw mut dimension_v as *mut c_void,
-            )
-        },
+        find_val2::<usize, usize>(node, sp::Dimensions.as_ptr()),
         "ufbxi_find_val2(node, ufbxi_Dimensions, \"ZZ\", &dimension_u, &dimension_v)"
     );
-    // SAFETY: fmt `"II"` pairs with the two `*mut i32` out-pointers
-    // `&raw mut step_u` / `&raw mut step_v`, which are live locals.
-    ufbxi_check!(
+    let (step_u, step_v) = ufbxi_check_some!(
         uc,
-        unsafe {
-            find_val2(
-                node,
-                sp::Step.as_ptr(),
-                b"II\0".as_ptr(),
-                &raw mut step_u as *mut c_void,
-                &raw mut step_v as *mut c_void,
-            )
-        },
+        find_val2::<i32, i32>(node, sp::Step.as_ptr()),
         "ufbxi_find_val2(node, ufbxi_Step, \"II\", &step_u, &step_v)"
     );
-    // SAFETY: fmt `"CC"` pairs with the two `*mut *const u8` out-pointers
-    // `&raw mut form_u` / `&raw mut form_v`, which are live locals.
-    ufbxi_check!(
+    let (Checked(form_u), Checked(form_v)) = ufbxi_check_some!(
         uc,
-        unsafe {
-            find_val2(
-                node,
-                sp::Form.as_ptr(),
-                b"CC\0".as_ptr(),
-                &raw mut form_u as *mut c_void,
-                &raw mut form_v as *mut c_void,
-            )
-        },
+        find_val2::<Checked<*const u8>, Checked<*const u8>>(node, sp::Form.as_ptr()),
         "ufbxi_find_val2(node, ufbxi_Form, \"CC\", (char**)&form_u, (char**)&form_v)"
     );
-    // SAFETY: fmt `'B'` pairs with the `*mut bool` out-pointer
-    // `&raw mut (*nurbs).flip_normals`, a field of the fresh non-null element.
-    ufbxi_ignore!(unsafe {
-        find_val1(
-            node,
-            sp::FlipNormals.as_ptr(),
-            b"B\0".as_ptr(),
-            &raw mut (*nurbs).flip_normals as *mut c_void,
-        )
-    });
+    if let Some(flip_normals) = find_val1::<bool>(node, sp::FlipNormals.as_ptr()) {
+        // SAFETY: `nurbs` is the fresh non-null element pushed above.
+        unsafe { (*nurbs).flip_normals = flip_normals };
+    }
     // SAFETY: the `"CC"` fetch above succeeded (checked), so `form_u`/`form_v`
     // point at NUL-terminated parse-tree strings; `nurbs` is the fresh non-null
     // element pushed above.
@@ -5546,17 +5284,9 @@ pub(crate) unsafe fn read_skin(
     // element buffer — write-capable provenance.
     let skin: &View<SkinDeformer> = unsafe { View::<SkinDeformer>::from_ptr(skin) };
 
-    let mut skinning_type: *const u8 = core::ptr::null();
-    // SAFETY: fmt `'C'` pairs with the `*mut *const u8` out-pointer
-    // `&raw mut skinning_type`, which is a live local.
-    if unsafe {
-        find_val1(
-            node,
-            sp::SkinningType.as_ptr(),
-            b"C\0".as_ptr(),
-            &raw mut skinning_type as *mut c_void,
-        )
-    } {
+    if let Some(Checked(skinning_type)) =
+        find_val1::<Checked<*const u8>>(node, sp::SkinningType.as_ptr())
+    {
         // SAFETY: the `'C'` fetch succeeded, so `skinning_type` points at the
         // NUL-terminated parse-tree string `strcmp` requires.
         unsafe {
@@ -5727,16 +5457,12 @@ pub(crate) unsafe fn read_blend_channel(
                 // union's first real (`value_vec4.x` in the generated struct).
                 (*shape_props.add(0)).value_vec4.x = 100.0 as Real;
             }
-            // SAFETY: fmt `'R'` pairs with the `*mut Real` out-pointer
-            // `&raw mut (*shape_props.add(0)).value_vec4.x`, a field of the
-            // one-element run's only entry.
-            ufbxi_ignore!(unsafe {
-                get_val1(
-                    deform_percent,
-                    b"R\0".as_ptr(),
-                    &raw mut (*shape_props.add(0)).value_vec4.x as *mut c_void,
-                )
-            });
+            if let Some(got) = get_val1::<AsReal>(deform_percent) {
+                // SAFETY: `shape_props` is the non-null one-element run pushed above.
+                unsafe {
+                    (*shape_props.add(0)).value_vec4.x = got.0;
+                }
+            }
             // SAFETY: `channel` is the fresh non-null element and `shape_props`
             // is the result-owned run of `num_shape_props` props filled in above.
             unsafe {
@@ -5987,17 +5713,7 @@ pub(crate) unsafe fn read_extrapolation(
     if let Some(child) = child {
         // C: `int32_t mode_ch;` — uninitialized, only read when
         // `ufbxi_find_val1()` succeeded and wrote it.
-        let mut mode_ch: i32 = 0;
-        // SAFETY: fmt `'I'` pairs with the `*mut i32` out-pointer `&raw mut mode_ch`,
-        // which is a live local.
-        if unsafe {
-            find_val1(
-                child,
-                sp::Type.as_ptr(),
-                b"I\0".as_ptr(),
-                &raw mut mode_ch as *mut c_void,
-            )
-        } {
+        if let Some(mode_ch) = find_val1::<i32>(child, sp::Type.as_ptr()) {
             // C `switch (mode_ch)` over character literals; Rust patterns
             // cannot contain casts, so the `case` labels are named consts.
             const CASE_A: i32 = b'A' as i32;
@@ -6013,16 +5729,8 @@ pub(crate) unsafe fn read_extrapolation(
                 CASE_R => mode = ExtrapolationMode::Repeat,
                 _ => { /* Unknown */ }
             }
-            // SAFETY: fmt `'I'` pairs with the `*mut i32` out-pointer
-            // `&raw mut repeat_count`, which is a live local.
-            if unsafe {
-                find_val1(
-                    child,
-                    sp::Repetition.as_ptr(),
-                    b"I\0".as_ptr(),
-                    &raw mut repeat_count as *mut c_void,
-                )
-            } {
+            if let Some(got) = find_val1::<i32>(child, sp::Repetition.as_ptr()) {
+                repeat_count = got;
                 if repeat_count < 0 {
                     repeat_count = -1;
                 }
@@ -6603,17 +6311,12 @@ pub(crate) unsafe fn read_material(
         unsafe { push_element::<Material>(uc, info, ElementType::Material) };
     ufbxi_check!(uc, !material.is_null(), "material");
 
-    // SAFETY: fmt `'S'` pairs with the `*mut String` out-pointer
-    // `&raw mut (*material).shading_model_name`, a field of the fresh non-null
-    // element pushed above.
-    if !unsafe {
-        find_val1(
-            node,
-            sp::ShadingModel.as_ptr(),
-            b"S\0".as_ptr(),
-            &raw mut (*material).shading_model_name as *mut c_void,
-        )
-    } {
+    if let Some(got) = find_val1::<Checked<String>>(node, sp::ShadingModel.as_ptr()) {
+        // SAFETY: `material` is the fresh non-null element pushed above.
+        unsafe {
+            (*material).shading_model_name = got.0;
+        }
+    } else {
         // SAFETY: `material` is the fresh non-null element.
         unsafe {
             (*material).shading_model_name = EMPTY_STRING.0;
@@ -6649,71 +6352,43 @@ pub(crate) unsafe fn read_texture(
         (*texture).relative_filename = EMPTY_STRING.0;
     }
 
-    // SAFETY: fmt `'S'` pairs with the `*mut String` out-pointer
-    // `&raw mut (*texture).absolute_filename`, a field of the fresh non-null element.
+    // SAFETY: `texture` is the fresh non-null element pushed above; each fetch
+    // yields its value, so the only raw op is the write into its own field.
     unsafe {
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::FileName.as_ptr(),
-            b"S\0".as_ptr(),
-            &raw mut (*texture).absolute_filename as *mut c_void,
-        ));
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::Filename.as_ptr(),
-            b"S\0".as_ptr(),
-            &raw mut (*texture).absolute_filename as *mut c_void,
-        ));
+        if let Some(got) = find_val1::<Checked<String>>(node, sp::FileName.as_ptr()) {
+            (*texture).absolute_filename = got.0;
+        }
+        if let Some(got) = find_val1::<Checked<String>>(node, sp::Filename.as_ptr()) {
+            (*texture).absolute_filename = got.0;
+        }
     }
-    // SAFETY: as above, with the `*mut String` out-pointer
-    // `&raw mut (*texture).relative_filename`.
+    // SAFETY: as above.
     unsafe {
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::RelativeFileName.as_ptr(),
-            b"S\0".as_ptr(),
-            &raw mut (*texture).relative_filename as *mut c_void,
-        ));
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::RelativeFilename.as_ptr(),
-            b"S\0".as_ptr(),
-            &raw mut (*texture).relative_filename as *mut c_void,
-        ));
+        if let Some(got) = find_val1::<Checked<String>>(node, sp::RelativeFileName.as_ptr()) {
+            (*texture).relative_filename = got.0;
+        }
+        if let Some(got) = find_val1::<Checked<String>>(node, sp::RelativeFilename.as_ptr()) {
+            (*texture).relative_filename = got.0;
+        }
     }
 
-    // SAFETY: fmt `'b'` pairs with the `*mut Blob` out-pointer
-    // `&raw mut (*texture).raw_absolute_filename`, a field of the fresh non-null
-    // element.
+    // SAFETY: as above.
     unsafe {
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::FileName.as_ptr(),
-            b"b\0".as_ptr(),
-            &raw mut (*texture).raw_absolute_filename as *mut c_void,
-        ));
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::Filename.as_ptr(),
-            b"b\0".as_ptr(),
-            &raw mut (*texture).raw_absolute_filename as *mut c_void,
-        ));
+        if let Some(got) = find_val1::<Blob>(node, sp::FileName.as_ptr()) {
+            (*texture).raw_absolute_filename = got;
+        }
+        if let Some(got) = find_val1::<Blob>(node, sp::Filename.as_ptr()) {
+            (*texture).raw_absolute_filename = got;
+        }
     }
-    // SAFETY: as above, with the `*mut Blob` out-pointer
-    // `&raw mut (*texture).raw_relative_filename`.
+    // SAFETY: as above.
     unsafe {
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::RelativeFileName.as_ptr(),
-            b"b\0".as_ptr(),
-            &raw mut (*texture).raw_relative_filename as *mut c_void,
-        ));
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::RelativeFilename.as_ptr(),
-            b"b\0".as_ptr(),
-            &raw mut (*texture).raw_relative_filename as *mut c_void,
-        ));
+        if let Some(got) = find_val1::<Blob>(node, sp::RelativeFileName.as_ptr()) {
+            (*texture).raw_relative_filename = got;
+        }
+        if let Some(got) = find_val1::<Blob>(node, sp::RelativeFilename.as_ptr()) {
+            (*texture).raw_relative_filename = got;
+        }
     }
 
     Ok(())
@@ -6790,71 +6465,43 @@ pub(crate) unsafe fn read_video(
         (*video).relative_filename = EMPTY_STRING.0;
     }
 
-    // SAFETY: fmt `'S'` pairs with the `*mut String` out-pointer
-    // `&raw mut (*video).absolute_filename`, a field of the fresh non-null element.
+    // SAFETY: `video` is the fresh non-null element pushed above; each fetch
+    // yields its value, so the only raw op is the write into its own field.
     unsafe {
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::FileName.as_ptr(),
-            b"S\0".as_ptr(),
-            &raw mut (*video).absolute_filename as *mut c_void,
-        ));
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::Filename.as_ptr(),
-            b"S\0".as_ptr(),
-            &raw mut (*video).absolute_filename as *mut c_void,
-        ));
+        if let Some(got) = find_val1::<Checked<String>>(node, sp::FileName.as_ptr()) {
+            (*video).absolute_filename = got.0;
+        }
+        if let Some(got) = find_val1::<Checked<String>>(node, sp::Filename.as_ptr()) {
+            (*video).absolute_filename = got.0;
+        }
     }
-    // SAFETY: as above, with the `*mut String` out-pointer
-    // `&raw mut (*video).relative_filename`.
+    // SAFETY: as above.
     unsafe {
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::RelativeFileName.as_ptr(),
-            b"S\0".as_ptr(),
-            &raw mut (*video).relative_filename as *mut c_void,
-        ));
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::RelativeFilename.as_ptr(),
-            b"S\0".as_ptr(),
-            &raw mut (*video).relative_filename as *mut c_void,
-        ));
+        if let Some(got) = find_val1::<Checked<String>>(node, sp::RelativeFileName.as_ptr()) {
+            (*video).relative_filename = got.0;
+        }
+        if let Some(got) = find_val1::<Checked<String>>(node, sp::RelativeFilename.as_ptr()) {
+            (*video).relative_filename = got.0;
+        }
     }
 
-    // SAFETY: fmt `'b'` pairs with the `*mut Blob` out-pointer
-    // `&raw mut (*video).raw_absolute_filename`, a field of the fresh non-null
-    // element.
+    // SAFETY: as above.
     unsafe {
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::FileName.as_ptr(),
-            b"b\0".as_ptr(),
-            &raw mut (*video).raw_absolute_filename as *mut c_void,
-        ));
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::Filename.as_ptr(),
-            b"b\0".as_ptr(),
-            &raw mut (*video).raw_absolute_filename as *mut c_void,
-        ));
+        if let Some(got) = find_val1::<Blob>(node, sp::FileName.as_ptr()) {
+            (*video).raw_absolute_filename = got;
+        }
+        if let Some(got) = find_val1::<Blob>(node, sp::Filename.as_ptr()) {
+            (*video).raw_absolute_filename = got;
+        }
     }
-    // SAFETY: as above, with the `*mut Blob` out-pointer
-    // `&raw mut (*video).raw_relative_filename`.
+    // SAFETY: as above.
     unsafe {
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::RelativeFileName.as_ptr(),
-            b"b\0".as_ptr(),
-            &raw mut (*video).raw_relative_filename as *mut c_void,
-        ));
-        ufbxi_ignore!(find_val1(
-            node,
-            sp::RelativeFilename.as_ptr(),
-            b"b\0".as_ptr(),
-            &raw mut (*video).raw_relative_filename as *mut c_void,
-        ));
+        if let Some(got) = find_val1::<Blob>(node, sp::RelativeFileName.as_ptr()) {
+            (*video).raw_relative_filename = got;
+        }
+        if let Some(got) = find_val1::<Blob>(node, sp::RelativeFilename.as_ptr()) {
+            (*video).raw_relative_filename = got;
+        }
     }
 
     let content_node = find_child(node, sp::Content.as_ptr());
@@ -6937,37 +6584,20 @@ pub(crate) unsafe fn read_pose(
         }
 
         // Bones are linked with FBX names/IDs bypassing the connection system (!?)
-        let mut fbx_id: u64 = 0;
+        // C: `uint64_t fbx_id;` — written on every path that does not `continue`.
+        let mut fbx_id: u64;
         if uc.version() < 7000 {
-            let mut name: *mut u8 = core::ptr::null_mut();
-            // SAFETY: fmt `'c'` pairs with the `*mut *mut u8` out-pointer
-            // `&raw mut name`, which is a live local.
-            if !unsafe {
-                find_val1(
-                    n,
-                    sp::Node.as_ptr(),
-                    b"c\0".as_ptr(),
-                    &raw mut name as *mut c_void,
-                )
-            } {
+            let Some(Unchecked(name)) = find_val1::<Unchecked<*const u8>>(n, sp::Node.as_ptr())
+            else {
                 continue;
-            }
+            };
             fbx_id = synthetic_id_from_string(uc, name);
             ufbxi_check!(uc, fbx_id != 0, "fbx_id");
         } else {
-            // SAFETY: fmt `'L'` writes one 64-bit integer through the
-            // out-pointer, and `&raw mut fbx_id` is a live `u64` local of that
-            // layout (C passes the `uint64_t` slot the same way).
-            if !unsafe {
-                find_val1(
-                    n,
-                    sp::Node.as_ptr(),
-                    b"L\0".as_ptr(),
-                    &raw mut fbx_id as *mut c_void,
-                )
-            } {
+            let Some(got) = find_val1::<i64>(n, sp::Node.as_ptr()) else {
                 continue;
-            }
+            };
+            fbx_id = got as u64;
             // SAFETY: `&raw mut fbx_id` is a live `u64` local, the in/out slot
             // `validate_fbx_id` reads and rewrites.
             unsafe { validate_fbx_id(uc, &raw mut fbx_id) }?;
@@ -7087,29 +6717,13 @@ pub(crate) unsafe fn read_binding_table(
             continue;
         }
 
-        // C: `ufbx_string src, dst;` — fully written by `ufbxi_get_val4` before
-        // any read; zero-initialized here (no upstream `ufbxi_uninit` marker).
-        // SAFETY: `ufbx_string` is a plain pointer/length pair, for which the
-        // all-zero bit pattern is a valid (empty, null-data) value.
-        let (mut src, mut dst): (String, String) =
-            unsafe { (core::mem::zeroed(), core::mem::zeroed()) };
-        let mut src_type: *const u8 = core::ptr::null();
-        let mut dst_type: *const u8 = core::ptr::null();
-        // SAFETY: fmt `"SCSC"` pairs with the `*mut String` / `*mut *const u8`
-        // out-pointers `&raw mut src`, `&raw mut src_type`, `&raw mut dst`, `&raw mut dst_type`,
-        // which are live locals in that order.
-        if !unsafe {
-            get_val4(
-                n,
-                b"SCSC\0".as_ptr(),
-                &raw mut src as *mut c_void,
-                &raw mut src_type as *mut c_void,
-                &raw mut dst as *mut c_void,
-                &raw mut dst_type as *mut c_void,
-            )
-        } {
+        // C: `ufbx_string src, dst; const char *src_type, *dst_type;` — all
+        // four written by the `"SCSC"` fetch before any read.
+        let Some((Checked(src), Checked(src_type), Checked(dst), Checked(dst_type))) =
+            get_val4::<Checked<String>, Checked<*const u8>, Checked<String>, Checked<*const u8>>(n)
+        else {
             continue;
-        }
+        };
 
         if src_type == sp::FbxPropertyEntry.as_ptr() && dst_type == sp::FbxSemanticEntry.as_ptr() {
             let bind: *mut ShaderPropBinding = uc.tmp_stack_view().push::<ShaderPropBinding>(1);
@@ -7212,17 +6826,12 @@ pub(crate) unsafe fn read_selection_node(
     ufbxi_check!(uc, !sel.is_null(), "sel");
 
     let mut in_set: i32 = 0;
-    // SAFETY: fmt `'I'` pairs with the `*mut i32` out-pointer `&raw mut in_set`, which
-    // is a live local.
-    if unsafe {
-        find_val1(
-            node,
-            sp::IsTheNodeInSet.as_ptr(),
-            b"I\0".as_ptr(),
-            &raw mut in_set as *mut c_void,
-        )
-    } && in_set != 0
-    {
+    if let Some(got) = find_val1::<i32>(node, sp::IsTheNodeInSet.as_ptr()) {
+        in_set = got;
+    }
+    // C: `if (ufbxi_find_val1(...) && in_set != 0)` — the write above happens
+    // exactly when the fetch succeeds, so the combined test reads as follows.
+    if in_set != 0 {
         // SAFETY: `sel` is the fresh non-null element pushed above.
         unsafe {
             (*sel).include_node = true;
@@ -7349,17 +6958,12 @@ pub(crate) unsafe fn read_constraint(
         unsafe { push_element::<Constraint>(uc, info, ElementType::Constraint) };
     ufbxi_check!(uc, !constraint.is_null(), "constraint");
 
-    // SAFETY: fmt `'S'` pairs with the `*mut ufbx_string` out-pointer
-    // `&raw mut (*constraint).type_name`, a field of the fresh non-null element pushed
-    // above.
-    if !unsafe {
-        find_val1(
-            node,
-            sp::Type.as_ptr(),
-            b"S\0".as_ptr(),
-            &raw mut (*constraint).type_name as *mut c_void,
-        )
-    } {
+    if let Some(got) = find_val1::<Checked<String>>(node, sp::Type.as_ptr()) {
+        // SAFETY: `constraint` is the fresh non-null element pushed above.
+        unsafe {
+            (*constraint).type_name = got.0;
+        }
+    } else {
         // SAFETY: `constraint` is the fresh non-null element pushed above.
         unsafe {
             (*constraint).type_name = EMPTY_STRING.0;
@@ -7436,17 +7040,9 @@ pub(crate) unsafe fn read_synthetic_attribute(
     // before any read; zero-initialized here (no upstream `ufbxi_uninit` marker).
     // SAFETY: `ufbx_string` is a plain pointer/length pair, for which the all-zero
     // bit pattern is a valid (empty, null-data) value.
-    let mut type_and_name: String = unsafe { core::mem::zeroed() };
-    // SAFETY: fmt `'s'` pairs with the `*mut ufbx_string` out-pointer
-    // `&raw mut type_and_name`, which is a live local.
-    if unsafe {
-        find_val1(
-            node,
-            sp::NodeAttributeName.as_ptr(),
-            b"s\0".as_ptr(),
-            &raw mut type_and_name as *mut c_void,
-        )
-    } {
+    if let Some(Unchecked(type_and_name)) =
+        find_val1::<Unchecked<String>>(node, sp::NodeAttributeName.as_ptr())
+    {
         // C: `ufbx_string attrib_type_str, attrib_name_str;` — both written by
         // `ufbxi_split_type_and_name`; zero-initialized here.
         // SAFETY: `ufbx_string` is a plain pointer/length pair, for which the
@@ -7689,45 +7285,39 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
         return Ok(());
     }
 
-    // C: `ufbx_string type_and_name, sub_type_str;` — both fully written by the
-    // `ufbxi_get_val*` calls below before any read (a partial failure returns
-    // early); zero-initialized here (no upstream `ufbxi_uninit` marker).
-    // SAFETY: `ufbx_string` is a `{ data, length }` pair, so all-zero (a null
-    // pointer and a zero length) is a valid bit pattern.
-    let mut type_and_name: String = unsafe { core::mem::zeroed() };
-    let mut sub_type_str: String = unsafe { core::mem::zeroed() };
+    // C: `ufbx_string type_and_name, sub_type_str;` — both written by the
+    // `ufbxi_get_val*` fetches below before any read (a failed fetch returns
+    // early).
+    let type_and_name: String;
+    let mut sub_type_str: String;
 
     // Failing to parse the object properties is not an error since
     // there's some weird objects mixed in every now and then.
     // FBX version 7000 and up uses 64-bit unique IDs per object,
     // older FBX versions just use name/type pairs, which we can
     // use as IDs since all strings are interned into a string pool.
-    // SAFETY: `node` is a parse-tree NodeView; the `Lss` / `ss` out-params are
-    // unaliased locals (and `info`'s own `fbx_id`) of exactly the `uint64_t` /
-    // `ufbx_string` types those format characters write. On success
-    // `type_and_name.data` is a pooled, NUL-terminated string, which is what
-    // the synthetic-id hash below reads.
+    // SAFETY: `node` is a parse-tree NodeView; on success `type_and_name.data`
+    // is a pooled, NUL-terminated string, which is what the synthetic-id hash
+    // below reads, and the id validator takes `info`'s own `fbx_id` slot.
     unsafe {
         if uc.version() >= 7000 {
-            if !get_val3(
-                node,
-                b"Lss\0".as_ptr(),
-                &raw mut info.fbx_id as *mut c_void,
-                &raw mut type_and_name as *mut c_void,
-                &raw mut sub_type_str as *mut c_void,
-            ) {
+            let Some((fbx_id, Unchecked(tn), Unchecked(st))) =
+                get_val3::<i64, Unchecked<String>, Unchecked<String>>(node)
+            else {
                 return Ok(());
-            }
+            };
+            info.fbx_id = fbx_id as u64;
+            type_and_name = tn;
+            sub_type_str = st;
             validate_fbx_id(uc, &raw mut info.fbx_id)?;
         } else {
-            if !get_val2(
-                node,
-                b"ss\0".as_ptr(),
-                &raw mut type_and_name as *mut c_void,
-                &raw mut sub_type_str as *mut c_void,
-            ) {
+            let Some((Unchecked(tn), Unchecked(st))) =
+                get_val2::<Unchecked<String>, Unchecked<String>>(node)
+            else {
                 return Ok(());
-            }
+            };
+            type_and_name = tn;
+            sub_type_str = st;
             info.fbx_id = synthetic_id_from_string(uc, type_and_name.data);
             ufbxi_check!(uc, info.fbx_id != 0, "info.fbx_id");
         }
@@ -8263,74 +7853,80 @@ pub(crate) fn read_connections(uc: &Context) -> Result<(), Fail> {
     // as in the C call; the C `for(;;) { ...; if (!node) break; ... }` loop reads
     // as a `while let` over the `None` end signal.
     while let Some(node) = parse_toplevel_child(uc, None)? {
-        // C: `char *type;` — written by the `ufbxi_get_val1` guards below.
-        let mut type_: *const u8 = core::ptr::null();
-
-        let mut src_id: u64 = 0;
-        let mut dst_id: u64 = 0;
+        // C: `uint64_t src_id, dst_id;` — written on every path that does not
+        // `continue`.
+        let mut src_id: u64;
+        let mut dst_id: u64;
         let mut src_prop: String = EMPTY_STRING.0;
         let mut dst_prop: String = EMPTY_STRING.0;
 
         if uc.version() < 7000 {
-            let mut src_name: *const u8 = core::ptr::null();
-            let mut dst_name: *const u8 = core::ptr::null();
+            // C: `const char *src_name, *dst_name;` — written on every path
+            // that does not `continue`.
+            let src_name: *const u8;
+            let dst_name: *const u8;
             // Pre-7000 versions use Type::Name pairs as identifiers
 
-            // SAFETY (this branch): `node` is a parse-tree NodeView; every
-            // out-param is an unaliased local of exactly the type its format
-            // character writes (`c` → `char*`, `s` → `ufbx_string`, `_` →
-            // skipped, so the matching NULL is never written). The strings the
-            // reads produce are pooled and NUL-terminated, which is what the
+            // SAFETY (this branch): `node` is a parse-tree NodeView; the strings
+            // the fetches yield are pooled and NUL-terminated, which is what the
             // re-intern and the synthetic-id hashes below require.
             unsafe {
-                if !get_val1(node, b"c\0".as_ptr(), &raw mut type_ as *mut c_void) {
+                let Some(Unchecked(type_)) = get_val1::<Unchecked<*const u8>>(node) else {
                     continue;
-                }
+                };
 
                 if type_ == sp::OO.as_ptr() {
-                    if !get_val3(
-                        node,
-                        b"_cc\0".as_ptr(),
-                        core::ptr::null_mut(),
-                        &raw mut src_name as *mut c_void,
-                        &raw mut dst_name as *mut c_void,
-                    ) {
+                    let Some((Ignore, Unchecked(v1), Unchecked(v2))) =
+                        get_val3::<Ignore, Unchecked<*const u8>, Unchecked<*const u8>>(node)
+                    else {
                         continue;
-                    }
+                    };
+                    src_name = v1;
+                    dst_name = v2;
                 } else if type_ == sp::OP.as_ptr() {
-                    if !get_val4(
-                        node,
-                        b"_ccs\0".as_ptr(),
-                        core::ptr::null_mut(),
-                        &raw mut src_name as *mut c_void,
-                        &raw mut dst_name as *mut c_void,
-                        &raw mut dst_prop as *mut c_void,
-                    ) {
+                    let Some((Ignore, Unchecked(v1), Unchecked(v2), Unchecked(v3))) =
+                        get_val4::<
+                            Ignore,
+                            Unchecked<*const u8>,
+                            Unchecked<*const u8>,
+                            Unchecked<String>,
+                        >(node)
+                    else {
                         continue;
-                    }
+                    };
+                    src_name = v1;
+                    dst_name = v2;
+                    dst_prop = v3;
                 } else if type_ == sp::PO.as_ptr() {
-                    if !get_val4(
-                        node,
-                        b"_csc\0".as_ptr(),
-                        core::ptr::null_mut(),
-                        &raw mut src_name as *mut c_void,
-                        &raw mut src_prop as *mut c_void,
-                        &raw mut dst_name as *mut c_void,
-                    ) {
+                    let Some((Ignore, Unchecked(v1), Unchecked(v2), Unchecked(v3))) =
+                        get_val4::<
+                            Ignore,
+                            Unchecked<*const u8>,
+                            Unchecked<String>,
+                            Unchecked<*const u8>,
+                        >(node)
+                    else {
                         continue;
-                    }
+                    };
+                    src_name = v1;
+                    src_prop = v2;
+                    dst_name = v3;
                 } else if type_ == sp::PP.as_ptr() {
-                    if !get_val5(
-                        node,
-                        b"_cscs\0".as_ptr(),
-                        core::ptr::null_mut(),
-                        &raw mut src_name as *mut c_void,
-                        &raw mut src_prop as *mut c_void,
-                        &raw mut dst_name as *mut c_void,
-                        &raw mut dst_prop as *mut c_void,
-                    ) {
+                    let Some((Ignore, Unchecked(v1), Unchecked(v2), Unchecked(v3), Unchecked(v4))) =
+                        get_val5::<
+                            Ignore,
+                            Unchecked<*const u8>,
+                            Unchecked<String>,
+                            Unchecked<*const u8>,
+                            Unchecked<String>,
+                        >(node)
+                    else {
                         continue;
-                    }
+                    };
+                    src_name = v1;
+                    src_prop = v2;
+                    dst_name = v3;
+                    dst_prop = v4;
                 } else {
                     // TODO: Strict mode?
                     continue;
@@ -8350,60 +7946,48 @@ pub(crate) fn read_connections(uc: &Context) -> Result<(), Fail> {
         } else {
             // Post-7000 versions use proper unique 64-bit IDs
 
-            // SAFETY (this branch): `node` is a parse-tree NodeView; every
-            // out-param is an unaliased local of exactly the type its format
-            // character writes (`C` → `char*`, `L` → `uint64_t`, `S` →
-            // `ufbx_string`, `_` → skipped, so the matching NULL is never
-            // written), and the id validators take those same locals.
+            // SAFETY (this branch): `node` is a parse-tree NodeView; the strings
+            // the fetches yield are pooled and NUL-terminated, and the id
+            // validators take the locals the fetches filled.
             unsafe {
-                if !get_val1(node, b"C\0".as_ptr(), &raw mut type_ as *mut c_void) {
+                let Some(Checked(type_)) = get_val1::<Checked<*const u8>>(node) else {
                     continue;
-                }
+                };
 
                 if type_ == sp::OO.as_ptr() {
-                    if !get_val3(
-                        node,
-                        b"_LL\0".as_ptr(),
-                        core::ptr::null_mut(),
-                        &raw mut src_id as *mut c_void,
-                        &raw mut dst_id as *mut c_void,
-                    ) {
+                    let Some((Ignore, v1, v2)) = get_val3::<Ignore, i64, i64>(node) else {
                         continue;
-                    }
+                    };
+                    src_id = v1 as u64;
+                    dst_id = v2 as u64;
                 } else if type_ == sp::OP.as_ptr() {
-                    if !get_val4(
-                        node,
-                        b"_LLS\0".as_ptr(),
-                        core::ptr::null_mut(),
-                        &raw mut src_id as *mut c_void,
-                        &raw mut dst_id as *mut c_void,
-                        &raw mut dst_prop as *mut c_void,
-                    ) {
+                    let Some((Ignore, v1, v2, Checked(v3))) =
+                        get_val4::<Ignore, i64, i64, Checked<String>>(node)
+                    else {
                         continue;
-                    }
+                    };
+                    src_id = v1 as u64;
+                    dst_id = v2 as u64;
+                    dst_prop = v3;
                 } else if type_ == sp::PO.as_ptr() {
-                    if !get_val4(
-                        node,
-                        b"_LSL\0".as_ptr(),
-                        core::ptr::null_mut(),
-                        &raw mut src_id as *mut c_void,
-                        &raw mut src_prop as *mut c_void,
-                        &raw mut dst_id as *mut c_void,
-                    ) {
+                    let Some((Ignore, v1, Checked(v2), v3)) =
+                        get_val4::<Ignore, i64, Checked<String>, i64>(node)
+                    else {
                         continue;
-                    }
+                    };
+                    src_id = v1 as u64;
+                    src_prop = v2;
+                    dst_id = v3 as u64;
                 } else if type_ == sp::PP.as_ptr() {
-                    if !get_val5(
-                        node,
-                        b"_LSLS\0".as_ptr(),
-                        core::ptr::null_mut(),
-                        &raw mut src_id as *mut c_void,
-                        &raw mut src_prop as *mut c_void,
-                        &raw mut dst_id as *mut c_void,
-                        &raw mut dst_prop as *mut c_void,
-                    ) {
+                    let Some((Ignore, v1, Checked(v2), v3, Checked(v4))) =
+                        get_val5::<Ignore, i64, Checked<String>, i64, Checked<String>>(node)
+                    else {
                         continue;
-                    }
+                    };
+                    src_id = v1 as u64;
+                    src_prop = v2;
+                    dst_id = v3 as u64;
+                    dst_prop = v4;
                 } else {
                     // TODO: Strict mode?
                     continue;
@@ -8458,16 +8042,12 @@ pub(crate) unsafe fn read_take_anim_channel(
     name: *const u8,
     p_default: *mut Real,
 ) -> Result<(), Fail> {
-    // SAFETY: fmt `'R'` pairs with the `*mut ufbx_real` out-pointer `p_default`,
-    // which is the caller's live, writable default slot (fn contract).
-    ufbxi_ignore!(unsafe {
-        find_val1(
-            node,
-            sp::Default.as_ptr(),
-            b"R\0".as_ptr(),
-            p_default as *mut c_void,
-        )
-    });
+    if let Some(got) = find_val1::<AsReal>(node, sp::Default.as_ptr()) {
+        // SAFETY: `p_default` is the caller's live, writable default slot (fn contract).
+        unsafe {
+            *p_default = got.0;
+        }
+    }
 
     // Find the key array, early return with success if not found as we may have only a default
     let keys: *mut ValueArray = find_array(node, sp::Key.as_ptr(), b'd');
@@ -8515,16 +8095,9 @@ pub(crate) unsafe fn read_take_anim_channel(
     }
 
     let mut key_ver: i32 = 0;
-    // SAFETY: fmt `'I'` pairs with the `*mut i32` out-pointer `&raw mut key_ver`,
-    // which is a live local.
-    ufbxi_ignore!(unsafe {
-        find_val1(
-            node,
-            sp::KeyVer.as_ptr(),
-            b"I\0".as_ptr(),
-            &raw mut key_ver as *mut c_void,
-        )
-    });
+    if let Some(got) = find_val1::<i32>(node, sp::KeyVer.as_ptr()) {
+        key_ver = got;
+    }
     if key_ver <= 0 {
         if uc.version() < 5000 {
             key_ver = 4003;
@@ -8535,19 +8108,9 @@ pub(crate) unsafe fn read_take_anim_channel(
         }
     }
 
-    let mut num_keys: usize = 0;
-    // SAFETY: fmt `'Z'` pairs with the `*mut usize` out-pointer `&raw mut num_keys`,
-    // which is a live local.
-    ufbxi_check!(
+    let num_keys: usize = ufbxi_check_some!(
         uc,
-        unsafe {
-            find_val1(
-                node,
-                sp::KeyCount.as_ptr(),
-                b"Z\0".as_ptr(),
-                &raw mut num_keys as *mut c_void,
-            )
-        },
+        find_val1::<usize>(node, sp::KeyCount.as_ptr()),
         "ufbxi_find_val1(node, ufbxi_KeyCount, \"Z\", &num_keys)"
     );
     // SAFETY: `curve` is the fresh non-null element pushed above.
@@ -9074,14 +8637,12 @@ unsafe fn read_take_prop_channel_rec(
                 continue;
             }
 
-            let mut old_name: *const u8 = core::ptr::null();
-            // SAFETY: fmt `'C'` pairs with the `*mut *const u8` out-pointer
-            // `&raw mut old_name`, which is a live local.
-            ufbxi_check!(
+            let old_name: *const u8 = ufbxi_check_some!(
                 uc,
-                unsafe { get_val1(child, b"C\0".as_ptr(), &raw mut old_name as *mut c_void,) },
+                get_val1::<Checked<*const u8>>(child),
                 "ufbxi_get_val1(child, \"C\", (char**)&old_name)"
-            );
+            )
+            .0;
 
             // C: `ufbx_string new_name;` — both fields written in every branch
             // that does not `continue`.
@@ -9158,17 +8719,9 @@ unsafe fn read_take_prop_channel_rec(
                 {
                     continue;
                 }
-                // SAFETY: fmt `'C'` pairs with the `*mut *const u8` out-pointer
-                // `&raw mut channel_names[num_channel_nodes]`, an element of a live
-                // local array — `num_channel_nodes < 3` holds because the loop
-                // breaks as soon as it reaches 3.
-                if !unsafe {
-                    get_val1(
-                        child,
-                        b"C\0".as_ptr(),
-                        &raw mut channel_names[num_channel_nodes] as *mut c_void,
-                    )
-                } {
+                if let Some(got) = get_val1::<Checked<*const u8>>(child) {
+                    channel_names[num_channel_nodes] = got.0;
+                } else {
                     continue;
                 }
                 channel_nodes[num_channel_nodes] = Some(child);
@@ -9246,15 +8799,12 @@ pub(crate) fn read_take_object(
     // Takes are used only in pre-7000 FBX versions so objects are identified
     // by their unique Type::Name pair that we use as unique IDs through the
     // pooled interned string pointers.
-    let mut type_and_name: *const u8 = core::ptr::null();
-    // SAFETY: `node` is a parse-tree NodeView and `type_and_name` is an
-    // unaliased local `char*` slot, matching the `c` format; on success it
-    // holds a pooled NUL-terminated string, which is what the id hash reads.
-    ufbxi_check!(
+    let type_and_name: *const u8 = ufbxi_check_some!(
         uc,
-        unsafe { get_val1(node, b"c\0".as_ptr(), &raw mut type_and_name as *mut c_void,) },
+        get_val1::<Unchecked<*const u8>>(node),
         "ufbxi_get_val1(node, \"c\", (char**)&type_and_name)"
-    );
+    )
+    .0;
     let target_fbx_id: u64 = synthetic_id_from_string(uc, type_and_name);
     ufbxi_check!(uc, target_fbx_id != 0, "target_fbx_id");
 
@@ -9269,14 +8819,13 @@ pub(crate) fn read_take_object(
         // `node`'s own child run and `name` is an unaliased local of exactly
         // the type the `S` format writes, so on success it is pooled and safe
         // to hand to the channel reader.
-        let mut name: String = unsafe { core::mem::zeroed() };
         if child.name() != sp::Channel.as_ptr() {
             continue;
         }
         unsafe {
-            if !get_val1(child, b"S\0".as_ptr(), &raw mut name as *mut c_void) {
+            let Some(Checked(name)) = get_val1::<Checked<String>>(child) else {
                 continue;
-            }
+            };
 
             read_take_prop_channel(uc, child, target_fbx_id, layer_fbx_id, name)?;
         }
@@ -9293,20 +8842,12 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     let mut tmp_props: [Prop; 4] = unsafe { core::mem::zeroed() };
     let mut num_props: u32 = 0;
 
-    let mut start: i64 = 0;
-    let mut stop: i64 = 0;
-    // SAFETY: `node` is a parse-tree NodeView; `start`/`stop` are unaliased
-    // locals of the `int64_t` type the `LL` format writes, and the synthetic
-    // props are initialized in place into the local `tmp_props` array — at most
-    // four are ever written, which is its length — from static pooled names.
+    // C: `int64_t start, stop;` — written by each successful `"LL"` fetch.
+    // SAFETY: the synthetic props are initialized in place into the local
+    // `tmp_props` array — at most four are ever written, which is its length —
+    // from static pooled names.
     unsafe {
-        if find_val2(
-            node,
-            sp::LocalTime.as_ptr(),
-            b"LL\0".as_ptr(),
-            &raw mut start as *mut c_void,
-            &raw mut stop as *mut c_void,
-        ) {
+        if let Some((start, stop)) = find_val2::<i64, i64>(node, sp::LocalTime.as_ptr()) {
             init_synthetic_int_prop(
                 &raw mut tmp_props[num_props as usize],
                 sp::LocalStart.as_ptr(),
@@ -9322,13 +8863,7 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             );
             num_props += 1;
         }
-        if find_val2(
-            node,
-            sp::ReferenceTime.as_ptr(),
-            b"LL\0".as_ptr(),
-            &raw mut start as *mut c_void,
-            &raw mut stop as *mut c_void,
-        ) {
+        if let Some((start, stop)) = find_val2::<i64, i64>(node, sp::ReferenceTime.as_ptr()) {
             init_synthetic_int_prop(
                 &raw mut tmp_props[num_props as usize],
                 sp::ReferenceStart.as_ptr(),
@@ -9347,14 +8882,12 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     }
 
     // C: `const char *name;` — written by the `ufbxi_get_val1` check below.
-    let mut name: *const u8 = core::ptr::null();
-    // SAFETY: `node` is a parse-tree NodeView and `name` is an unaliased local
-    // `char*` slot, matching the `C` format; on success it is a pooled string.
-    ufbxi_check!(
+    let name: *const u8 = ufbxi_check_some!(
         uc,
-        unsafe { get_val1(node, b"C\0".as_ptr(), &raw mut name as *mut c_void,) },
+        get_val1::<Checked<*const u8>>(node),
         "ufbxi_get_val1(node, \"C\", (char**)&name)"
-    );
+    )
+    .0;
 
     // Hack: For post-7000 files we are only interested in the animation times
     // for fallback in case the information is missing in the stacks.
@@ -9488,10 +9021,11 @@ pub(crate) fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), 
         // double parse and the end-of-string compare stay inside it. The two
         // synthetic props are written into the local 2-element `tmp_props`.
         unsafe {
-            if !get_val1(frame_rate, b"D\0".as_ptr(), &raw mut fps as *mut c_void) {
+            if let Some(got) = get_val1::<f64>(frame_rate) {
+                fps = got;
+            } else {
                 // C: `ufbx_string str;` — written by the `ufbxi_get_val1()` below.
-                let mut str_: String = core::mem::zeroed();
-                if get_val1(frame_rate, b"S\0".as_ptr(), &raw mut str_ as *mut c_void) {
+                if let Some(Checked(str_)) = get_val1::<Checked<String>>(frame_rate) {
                     // C: `char *end;` — written by `ufbxi_parse_double()`.
                     let mut end: *const u8 = core::ptr::null();
                     let val: f64 = parse_double(
@@ -9627,13 +9161,12 @@ pub(crate) fn read_root(uc: &Context) -> Result<(), Fail> {
         // metadata `creator` string slot.
         unsafe { parse_toplevel(uc, sp::Creator.as_ptr())? };
         if let Some(top_node) = uc.top_node_view() {
-            ufbxi_ignore!(unsafe {
-                get_val1(
-                    top_node,
-                    b"S\0".as_ptr(),
-                    uc.scene_view().metadata_view().creator_mut_ptr() as *mut core::ffi::c_void,
-                )
-            });
+            if let Some(got) = get_val1::<Checked<String>>(top_node) {
+                // SAFETY: `creator_mut_ptr()` addresses uc's own metadata `creator` slot.
+                unsafe {
+                    *uc.scene_view().metadata_view().creator_mut_ptr() = got.0;
+                }
+            }
         }
     }
 
@@ -9996,9 +9529,12 @@ pub(crate) unsafe fn read_legacy_prop(
         match c {
             b'L' => {
                 ufbx_assert!(value_ix == 0);
-                // SAFETY: fmt `'L'` pairs with the `*mut i64` out-pointer
-                // `value_int_raw()`, the viewed prop's own `int64_t` field.
-                if !unsafe { get_val_at(node, fmt_ix, b'L', prop.value_int_raw() as *mut c_void) } {
+                if let Some(got) = get_val_at::<i64>(node, fmt_ix) {
+                    // SAFETY: `value_int_raw()` addresses the viewed prop's own live `int64_t` field.
+                    unsafe {
+                        *prop.value_int_raw() = got;
+                    }
+                } else {
                     return false;
                 }
                 // SAFETY: `value_real_arr` spans the prop's four-`ufbx_real` union
@@ -10016,19 +9552,14 @@ pub(crate) unsafe fn read_legacy_prop(
             }
             b'R' => {
                 ufbx_assert!(value_ix < 4);
-                // SAFETY: fmt `'R'` pairs with a `*mut ufbx_real` out-pointer, and
-                // `value_ix < 4` bounds the step inside the prop's four-`ufbx_real`
-                // union arm: the `'R'` arm is the only one that advances `value_ix`
-                // past 1, and the longest `node_fmt` in the legacy-prop tables is
-                // `b"RRR\0"`, so `value_ix` reaches at most 2 at this point.
-                if !unsafe {
-                    get_val_at(
-                        node,
-                        fmt_ix,
-                        b'R',
-                        value_real_arr.add(value_ix) as *mut c_void,
-                    )
-                } {
+                if let Some(got) = get_val_at::<AsReal>(node, fmt_ix) {
+                    // SAFETY: `value_real_arr` spans the prop's four-`ufbx_real` union arm and
+                    // `value_ix` reaches at most 2 here (the longest legacy `node_fmt` is
+                    // `b"RRR\0"`).
+                    unsafe {
+                        *value_real_arr.add(value_ix) = got.0;
+                    }
+                } else {
                     return false;
                 }
                 if value_ix == 0 {
@@ -10055,20 +9586,20 @@ pub(crate) unsafe fn read_legacy_prop(
             }
             b'S' => {
                 ufbx_assert!(value_ix == 0);
-                // SAFETY: fmt `'S'` pairs with the `*mut ufbx_string` out-pointer
-                // `value_str_raw()`, the viewed prop's own `ufbx_string` field.
-                if !unsafe { get_val_at(node, fmt_ix, b'S', prop.value_str_raw() as *mut c_void) } {
+                if let Some(got) = get_val_at::<Checked<String>>(node, fmt_ix) {
+                    // SAFETY: `value_str_raw()` addresses the viewed prop's own live `ufbx_string` field.
+                    unsafe {
+                        *prop.value_str_raw() = got.0;
+                    }
+                } else {
                     return false;
                 }
                 if prop.value_str().length > 0 {
-                    // SAFETY: fmt `'b'` pairs with the `*mut ufbx_blob`
-                    // out-pointer `value_blob_raw()`, the viewed prop's own
-                    // `ufbx_blob` field.
-                    let found: bool = unsafe {
-                        get_val_at(node, fmt_ix, b'b', prop.value_blob_raw() as *mut c_void)
-                    };
-                    ufbxi_ignore!(found);
-                    ufbx_assert!(found);
+                    let found: Option<Blob> = get_val_at::<Blob>(node, fmt_ix);
+                    if let Some(blob) = found {
+                        prop.set_value_blob(blob);
+                    }
+                    ufbx_assert!(found.is_some());
                 } else {
                     prop.set_value_blob(EMPTY_BLOB.0);
                 }
@@ -10623,21 +10154,12 @@ pub(crate) unsafe fn read_legacy_mesh(
     // Material indices
     {
         // C: `const char *mapping = NULL;`
-        let mut mapping: *const u8 = core::ptr::null();
-        // SAFETY: fmt `'C'` pairs with the `*mut *const u8` out-pointer
-        // `&raw mut mapping`, which is a live local.
-        ufbxi_check!(
+        let mapping: *const u8 = ufbxi_check_some!(
             uc,
-            unsafe {
-                find_val1(
-                    node,
-                    sp::MaterialAssignation.as_ptr(),
-                    b"C\0".as_ptr(),
-                    &raw mut mapping as *mut c_void,
-                )
-            },
+            find_val1::<Checked<*const u8>>(node, sp::MaterialAssignation.as_ptr()),
             "ufbxi_find_val1(node, ufbxi_MaterialAssignation, \"C\", (char**)&mapping)"
-        );
+        )
+        .0;
         if mapping == sp::ByPolygon.as_ptr() {
             // SAFETY: `face_material_raw()` addresses the mesh's own live list
             // field, so `&raw mut` projects the `data`/`count` slots the `'i'`
@@ -10705,27 +10227,15 @@ pub(crate) unsafe fn read_legacy_mesh(
     {
         if child.name() == sp::Material.as_ptr() {
             let mut fbx_id: u64 = 0;
-            // C: `ufbx_string type_and_name, type, name;` — written below.
+            // C: `ufbx_string type_and_name, type, name;` — `type`/`name` are
+            // written by `split_type_and_name` below.
             // SAFETY: `ufbx_string` is a plain pointer/length pair, for which
             // the all-zero bit pattern is a valid (empty, null-data) value.
-            let (mut type_and_name, mut type_, mut name): (String, String, String) = unsafe {
-                (
-                    core::mem::zeroed(),
-                    core::mem::zeroed(),
-                    core::mem::zeroed(),
-                )
-            };
-            // SAFETY: fmt `'s'` pairs with the `*mut ufbx_string` out-pointer
-            // `&raw mut type_and_name`, which is a live local.
-            ufbxi_check!(
+            let (mut type_, mut name): (String, String) =
+                unsafe { (core::mem::zeroed(), core::mem::zeroed()) };
+            let Unchecked(type_and_name) = ufbxi_check_some!(
                 uc,
-                unsafe {
-                    get_val1(
-                        child,
-                        b"s\0".as_ptr(),
-                        &raw mut type_and_name as *mut c_void,
-                    )
-                },
+                get_val1::<Unchecked<String>>(child),
                 "ufbxi_get_val1(child, \"s\", &type_and_name)"
             );
             // SAFETY: `type_and_name` was fully written by the `'s'` fetch above,
@@ -10739,27 +10249,15 @@ pub(crate) unsafe fn read_legacy_mesh(
             connect_oo(uc, fbx_id, unsafe { (*info).fbx_id })?;
         } else if child.name() == sp::Link.as_ptr() {
             let mut fbx_id: u64 = 0;
-            // C: `ufbx_string type_and_name, type, name;` — written below.
+            // C: `ufbx_string type_and_name, type, name;` — `type`/`name` are
+            // written by `split_type_and_name` below.
             // SAFETY: `ufbx_string` is a plain pointer/length pair, for which
             // the all-zero bit pattern is a valid (empty, null-data) value.
-            let (mut type_and_name, mut type_, mut name): (String, String, String) = unsafe {
-                (
-                    core::mem::zeroed(),
-                    core::mem::zeroed(),
-                    core::mem::zeroed(),
-                )
-            };
-            // SAFETY: fmt `'s'` pairs with the `*mut ufbx_string` out-pointer
-            // `&raw mut type_and_name`, which is a live local.
-            ufbxi_check!(
+            let (mut type_, mut name): (String, String) =
+                unsafe { (core::mem::zeroed(), core::mem::zeroed()) };
+            let Unchecked(type_and_name) = ufbxi_check_some!(
                 uc,
-                unsafe {
-                    get_val1(
-                        child,
-                        b"s\0".as_ptr(),
-                        &raw mut type_and_name as *mut c_void,
-                    )
-                },
+                get_val1::<Unchecked<String>>(child),
                 "ufbxi_get_val1(child, \"s\", &type_and_name)"
             );
             // SAFETY: `type_and_name` was fully written by the `'s'` fetch above,
@@ -10826,15 +10324,12 @@ pub(crate) fn read_legacy_media(uc: &Context, node: &NodeView) -> Result<(), Fai
             // lookup expects.
             unsafe {
                 let mut video_info: ElementInfo = core::mem::zeroed();
-                ufbxi_check!(
+                video_info.name = ufbxi_check_some!(
                     uc,
-                    get_val1(
-                        child,
-                        b"S\0".as_ptr(),
-                        &raw mut video_info.name as *mut c_void
-                    ),
+                    get_val1::<Checked<String>>(child),
                     "ufbxi_get_val1(child, \"S\", &video_info.name)"
-                );
+                )
+                .0;
                 video_info.fbx_id = push_synthetic_id(uc);
                 video_info.dom_node = get_dom_node(uc, Some(node));
 
@@ -10855,14 +10350,14 @@ pub(crate) fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fai
     // NodeView and `type_and_name` is an unaliased local of exactly the type
     // the `s` format writes, so on success it is a pooled `data`/`length` pair
     // — which is what the split and the synthetic-id hash below read.
-    let mut type_and_name: String = unsafe { core::mem::zeroed() };
     let mut type_: String = unsafe { core::mem::zeroed() };
     let mut name: String = unsafe { core::mem::zeroed() };
-    ufbxi_check!(
+    let type_and_name: String = ufbxi_check_some!(
         uc,
-        unsafe { get_val1(node, b"s\0".as_ptr(), &raw mut type_and_name as *mut c_void,) },
+        get_val1::<Unchecked<String>>(node),
         "ufbxi_get_val1(node, \"s\", &type_and_name)"
-    );
+    )
+    .0;
     unsafe { split_type_and_name(uc, type_and_name, &raw mut type_, &raw mut name)? };
 
     // SAFETY: all-zero is a valid `ufbxi_element_info`; `info` is an unaliased
@@ -10900,17 +10395,9 @@ pub(crate) fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fai
     connect_oo(uc, attrib_info.fbx_id, info.fbx_id)?;
 
     let mut attrib_type: *const u8 = EMPTY_CHAR.as_ptr();
-    // SAFETY: `node` is a parse-tree NodeView; `attrib_type` is an unaliased
-    // local `char*` slot matching the `C` format, left at the static empty
-    // string when the child is absent.
-    ufbxi_ignore!(unsafe {
-        find_val1(
-            node,
-            sp::Type.as_ptr(),
-            b"C\0".as_ptr(),
-            &raw mut attrib_type as *mut c_void,
-        )
-    });
+    if let Some(got) = find_val1::<Checked<*const u8>>(node, sp::Type.as_ptr()) {
+        attrib_type = got.0;
+    }
 
     // SAFETY (this dispatch): each arm hands the same parse-tree NodeView and
     // the local `&raw mut attrib_info` to the legacy attribute reader selected by
@@ -10966,8 +10453,7 @@ pub(crate) fn read_legacy_model(uc: &Context, node: &NodeView) -> Result<(), Fai
             // local of exactly the type the `S` format writes, so on success it
             // is pooled and safe to hand to the channel reader.
             unsafe {
-                let mut channel_name: String = core::mem::zeroed();
-                if get_val1(child, b"S\0".as_ptr(), &raw mut channel_name as *mut c_void) {
+                if let Some(Checked(channel_name)) = get_val1::<Checked<String>>(child) {
                     if uc.legacy_implicit_anim_layer_id() == 0 {
                         // Defer creation so we won't be the first animation stack..
                         uc.set_legacy_implicit_anim_layer_id(push_synthetic_id(uc));

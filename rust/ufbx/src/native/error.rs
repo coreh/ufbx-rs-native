@@ -1015,6 +1015,28 @@ macro_rules! ufbxi_check {
 }
 pub(crate) use ufbxi_check;
 
+// Port-local: `ufbxi_check(cond)` over an `Option`. The typed value fetches
+// (`get_val*` / `find_val*`) return the value instead of writing an
+// out-pointer, so the check yields it on `Some` and fails exactly as
+// `ufbxi_check` does on `None`. The trailing literal is the verbatim C
+// condition text (see `ufbxi_cond_str`).
+macro_rules! ufbxi_check_some {
+    ($uc:expr, $opt:expr, $c_cond_str:literal) => {{
+        match $opt {
+            Some(v) => v,
+            None => {
+                return Err($crate::native::error::ufbxi_fail_no_msg!(
+                    $uc,
+                    Some($crate::native::error::FailStr::new(
+                        $crate::native::error::ufbxi_cond_str!($opt, $c_cond_str).as_bytes(),
+                    ))
+                ));
+            }
+        }
+    }};
+}
+pub(crate) use ufbxi_check_some;
+
 // ufbx.c:6665 `ufbxi_check_return(cond, ret)`
 // Optional trailing literal: the verbatim C condition text (see `ufbxi_cond_str`).
 macro_rules! ufbxi_check_return {

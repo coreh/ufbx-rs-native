@@ -138,6 +138,40 @@ boundary only:
   the entry's exact write pattern (the error bytes are covered by the error
   parity rules above).
 
+### Format-byte + `void *` out-params → typed `Option<T>` fetches
+
+`ufbxi_get_val_at` / `ufbxi_get_valN` / `ufbxi_find_valN` (ufbx.c:7731-7860)
+pair a format byte (`'I'`, `'L'`, `'S'`, `'C'`, `'c'`, `'b'`, …) with an
+untyped out-pointer; the pairing is prose in C, and every call site vouched for
+it. The Rust mapping makes the pairing a type:
+
+- **`ValOut` (native/parse.rs) pins `T::FMT`** to the `get_val_at_raw` arm
+  that writes exactly one `T`. The typed entries `get_val_at::<T>(node, ix)`,
+  `get_valN::<T0, …>(node)` and `find_valN::<T0, …>(node, name)` return
+  `Option<T>` / `Option<(T0, …)>`; `None` is C's `false`. The untyped
+  dispatcher stays private — every fetch goes through the typed layer.
+- **Markers where one Rust type serves two format bytes:** `Checked<String>`
+  (`'S'`) vs `Unchecked<String>` (`'s'`), `Checked<*const u8>` (`'C'`) vs
+  `Unchecked<*const u8>` (`'c'`), `AsReal` (`'R'`, because `Real` aliases the
+  `'F'`/`'D'` impls), `Ignore` (`'_'`). Destructure them at the binding
+  (`let Some(Checked(name)) = … else { … }`).
+- **Source-side validation is unchanged.** "Does the node hold a number /
+  string at `ix`?" is still decided at runtime inside the arms (the C
+  `type_ == Number` checks), and the `'I'` arm keeps C's truncating
+  `(int32_t)` cast; the type only guarantees the destination slot matches the
+  format byte.
+- **Call-site shapes:** `ufbxi_ignore(get_val…)` → `if let Some(v) = … { dst =
+  v; }`; `if (!get_val…) { <diverge> }` → `let Some(v) = … else { … };`;
+  `ufbxi_check(get_val…)` → `ufbxi_check_some!(uc, …, "<C text>")`, which fails
+  exactly like `ufbxi_check` and yields the value. C targets of a different
+  width class (`uint32_t` written by `'I'`, `uint64_t` by `'L'`) take an
+  explicit `as u32` / `as u64` at the binding — the same bits C stores.
+- **Partial writes in `get_valN` are not observable:** C writes slot `i` before
+  fetching slot `i+1`, so a failure leaves earlier slots written; every C
+  caller diverges or ignores them on failure (verified per site), so the
+  all-or-nothing tuple is equivalent. Re-verify if a new caller reads an
+  earlier slot after a failed multi-slot fetch.
+
 ### Asserts (three distinct gates — do NOT collapse)
 
 | C (line) | Gate | Rust |
