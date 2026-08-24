@@ -214,12 +214,15 @@ Ported byte-for-byte semantics; raw pointers throughout in the 1:1 phase.
   The parent-chain walk is an **iterative loop** (`refcount = parent`), not
   recursion — deliberate (deep ownership chains); keep it iterative.
 
-- **Chunk chains are walked with `buf::ChunkIter`**, never a hand `while
-  !c.is_null()`: it reads the link before yielding (so a body may free the
-  chunk it holds — `free_chunk` is the one retire-and-free site), exposes
-  `cursor()` for the bounded huge-list scans, and the magic asserts stay in the
-  bodies exactly where C has them. The map re-hash walks its old/new entry
-  tables as slices built once from the two allocations.
+- **Null-terminated chunk-chain walks use `buf::ChunkIter`**, not a hand
+  `while !c.is_null()`: it reads the link before yielding (so a body may free
+  the chunk it holds — `free_chunk(ator, chunk_ref)` is the one retire-and-free
+  site and consumes the ref), exposes `cursor()` for the bounded huge-list
+  scans, and the magic asserts stay in the bodies exactly where C has them.
+  The exception is `pop_size`: its `->prev` walk is `bytes_left`-driven and
+  deliberately dereferences a null `prev` on over-pop (C parity), so it stays
+  raw. The map re-hash walks its old/new entry tables as slices built once
+  from the two allocations.
 - **A view over a flexible-array-member struct covers the header only.**
   `View<BufChunk>::from_ptr` retags `size_of::<BufChunk>()` bytes; the
   trailing `data[]` and the allocation as a whole are outside that tag, so a

@@ -174,7 +174,13 @@ impl<'a> ChunkIter<'a> {
     /// `head` is null or a live `BufChunk` whose chain in `dir` consists of
     /// live chunks ending in null, each staying alive at least until the walk
     /// has yielded it (the link is read before the yield, so a body may free
-    /// the chunk it holds but no earlier one).
+    /// the chunk it holds but no earlier one). `'a` is unconstrained by the
+    /// raw `head`: the caller must not let a `ChunkRef` outlive the chain —
+    /// there is no borrow for the compiler to tie it to.
+    ///
+    /// Reading the link before the yield also means a corrupted chunk has its
+    /// link read before the body's `magic` assert fires (C's two scan loops
+    /// assert first); the tripwire is weaker only on already-invalid memory.
     #[inline]
     unsafe fn new(head: *mut BufChunk, dir: ChunkDir) -> Self {
         Self {
@@ -232,13 +238,17 @@ impl<'a> Iterator for ChunkIter<'a> {
 // The one place a chunk is retired and returned to its allocator.
 // C at every site: `ufbx_assert(chunk->magic == MAGIC); chunk->magic = 0;
 // ufbxi_free_size(ator, 1, chunk, sizeof(ufbxi_buf_chunk) + chunk->size);`.
+// Takes the `ChunkRef` by value: after the free the body cannot touch the
+// chunk through its (now dangling) accessors without a compile error.
 //
 // # Safety
-// `chunk` is a live `BufChunk` allocated from `ator` with
-// `size_of::<BufChunk>() + size` bytes, and nothing uses it afterwards.
+// `chunk` was yielded by a `ChunkIter` whose chain is allocated from `ator`
+// (each chunk `size_of::<BufChunk>() + size` bytes) and is live at this point.
 #[inline]
-unsafe fn free_chunk(ator: *mut Allocator, chunk: *mut BufChunk) {
-    // SAFETY: the fn contract above — a live chunk of exactly that allocation.
+unsafe fn free_chunk(ator: *mut Allocator, chunk: ChunkRef<'_>) {
+    let chunk: *mut BufChunk = chunk.ptr();
+    // SAFETY: the fn contract above — a live chunk of exactly that allocation,
+    // reached through its whole-allocation pointer.
     unsafe {
         ufbx_assert!((*chunk).magic == BUF_CHUNK_IMP_MAGIC as usize);
         (*chunk).magic = 0;
@@ -885,7 +895,7 @@ pub(crate) unsafe fn buf_free_unused(b: *mut Buf) {
     // `->next` chain holds live chunks allocated from `(*b).ator` — the
     // `free_chunk` contract for each, freed on its own iteration only.
     for c in unsafe { ChunkIter::forward((*chunk).next) } {
-        unsafe { free_chunk((*b).ator, c.ptr()) };
+        unsafe { free_chunk((*b).ator, c) };
     }
     // SAFETY: `chunk` is `b`'s live active chunk; unlinking its freed tail.
     unsafe { (*chunk).next = core::ptr::null_mut() };
@@ -900,7 +910,7 @@ pub(crate) unsafe fn buf_free_unused(b: *mut Buf) {
             break;
         };
         let prev = c.prev();
-        unsafe { free_chunk((*b).ator, c.ptr()) };
+        unsafe { free_chunk((*b).ator, c) };
         unsafe { (*b).chunks[0] = prev };
         if !prev.is_null() {
             unsafe {
@@ -1117,7 +1127,7 @@ pub(crate) unsafe fn buf_free(buf: *mut Buf) {
         let chunk = unsafe { (*buf).chunks[i] };
         if !chunk.is_null() {
             for c in unsafe { ChunkIter::forward((*chunk).root) } {
-                unsafe { free_chunk((*buf).ator, c.ptr()) };
+                unsafe { free_chunk((*buf).ator, c) };
             }
         }
         unsafe { (*buf).chunks[i] = core::ptr::null_mut() };
@@ -1194,7 +1204,7 @@ pub(crate) unsafe fn buf_clear(buf: *mut Buf) {
             // SAFETY: the unreachable tail is a live chain allocated from
             // `(*buf).ator`; each chunk is freed on its own iteration only.
             for c in unsafe { ChunkIter::forward(huge) } {
-                unsafe { free_chunk((*buf).ator, c.ptr()) };
+                unsafe { free_chunk((*buf).ator, c) };
             }
         }
     }
@@ -1298,9 +1308,9 @@ mod tests {
     }
 
     fn free_all_chunks(b: &mut Buf) {
-        // Test-only teardown (kept separate from `buf_free` above so these
-        // tests don't depend on it): walk both chunk lists from their roots
-        // and free every chunk.
+        // Test-only teardown (separate from `buf_free` above so these tests
+        // don't depend on it, sharing only `free_chunk`): walk both chunk
+        // lists from their roots and free every chunk.
         for list_ix in 0..2 {
             let chunk = b.chunks[list_ix];
             if chunk.is_null() {
@@ -1313,7 +1323,7 @@ mod tests {
             // holds these chunks, so freeing them here is the last use.
             unsafe {
                 for c in ChunkIter::forward((*chunk).root) {
-                    free_chunk(b.ator, c.ptr());
+                    free_chunk(b.ator, c);
                 }
             }
             b.chunks[list_ix] = core::ptr::null_mut();
