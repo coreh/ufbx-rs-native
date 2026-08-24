@@ -103,7 +103,7 @@ use crate::generated::{
     Shader, ShaderBinding, ShaderPropBinding, SkinCluster, SkinDeformer, SkinningMethod,
     StereoCamera, SubdivisionBoundary, SubdivisionDisplayMode, Tangent, Texture, TextureType,
     Thumbnail, ThumbnailFormat, TimeMode, Transform, Unknown, UvSet, Vec3, Vec4, VertexAttrib,
-    VertexReal, VertexVec2, VertexVec3, VertexVec4, Video, WarningType,
+    VertexReal, VertexVec2, VertexVec3, VertexVec4, Video, VoidList, WarningType,
 };
 use crate::native::allocator::{grow_array, Allocator};
 use crate::native::api::{
@@ -2298,6 +2298,42 @@ pub(crate) unsafe fn warn_polygon_mapping(
     Ok(())
 }
 
+// Navigation surface over a `ufbx_void_list` field — the type-erased sibling of
+// `View<List<T>>`. The generator emits list views for the typed `ufbx_*_list`
+// members only, so `ufbx_vertex_attrib.values` gets its accessors by hand.
+#[allow(dead_code)]
+impl<M: Mode> View<VoidList, M> {
+    #[inline(always)]
+    pub(crate) fn data(&self) -> *mut c_void {
+        view_read_shared!(self, data)
+    }
+    #[inline(always)]
+    pub(crate) fn count(&self) -> usize {
+        view_read_shared!(self, count)
+    }
+}
+
+#[allow(dead_code)]
+impl View<VoidList> {
+    #[inline(always)]
+    pub(crate) fn set_data(&self, value: *mut c_void) {
+        view_write!(self, data, value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_count(&self, value: usize) {
+        view_write!(self, count, value)
+    }
+}
+
+// In-place projection of the untyped value list, which the generated
+// `View<VertexAttrib, M>` surface reaches only as a raw pointer (`values_raw`).
+impl<M: Mode> View<VertexAttrib, M> {
+    #[inline(always)]
+    pub(crate) fn values_view(&self) -> &View<VoidList, M> {
+        view_project!(self, values)
+    }
+}
+
 // ufbx.c:12741-12926 `ufbxi_read_vertex_element`
 #[inline(never)]
 pub(crate) unsafe fn read_vertex_element(
@@ -2316,10 +2352,10 @@ pub(crate) unsafe fn read_vertex_element(
     // tmp-stack tangent layer, or result-arena UV/color set), so write-capable
     // provenance.
     let attrib: &View<VertexAttrib> = unsafe { View::<VertexAttrib>::from_ptr(attrib) };
-    // SAFETY: `values_raw()` addresses the viewed attribute's own value list, so
-    // the projection addresses its `data` slot.
-    let p_dst_data: *mut *mut Real =
-        unsafe { &raw mut (*attrib.values_raw()).data } as *mut *mut Real;
+    // C: `ufbx_real **p_dst_data = (ufbx_real**)&attrib->values.data;` — the
+    // destination is the attribute's own `values.data` slot, reached in place;
+    // the `ufbx_real**` cast survives at the two writes through it below.
+    let p_dst_data: &View<VoidList> = attrib.values_view();
 
     let data: *mut ValueArray = find_array(node, data_name, data_type);
     let indices: *mut ValueArray = find_array(node, index_name, b'i');
@@ -2331,16 +2367,24 @@ pub(crate) unsafe fn read_vertex_element(
     }
 
     ufbxi_check!(uc, !data.is_null(), "data");
+    // SAFETY: `data` is non-null (checked just above) and `find_array` returns
+    // the node's own array descriptor, live for as long as the parse tree and
+    // reached through `*mut` (write-capable provenance for `Mut`).
+    let data: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(data) };
+    // SAFETY: the view is minted only in the non-null arm, where `indices` is
+    // likewise a live parse-tree array descriptor reached through `*mut`.
+    let indices: Option<&View<ValueArray>> = if indices.is_null() {
+        None
+    } else {
+        Some(unsafe { View::<ValueArray>::from_ptr(indices) })
+    };
     ufbxi_check!(
         uc,
-        // SAFETY: `data` is non-null (checked just above) and points at the
-        // node's own array descriptor, live for as long as the parse tree.
-        unsafe { (*data).size } % num_components == 0,
+        data.size() % num_components == 0,
         "data->size % num_components == 0"
     );
 
-    // SAFETY: as above — `data` is a live, non-null array descriptor.
-    let num_elems: usize = unsafe { (*data).size } / num_components;
+    let num_elems: usize = data.size() / num_components;
 
     // HACK: If there's no elements at all keep the attribute as NULL
     // TODO: Strict mode for this?
@@ -2355,10 +2399,7 @@ pub(crate) unsafe fn read_vertex_element(
     );
 
     attrib.set_exists(true);
-    // SAFETY: `indices_raw()` addresses the viewed attribute's own index list.
-    unsafe {
-        (*attrib.indices_raw()).count = mesh.num_indices();
-    }
+    attrib.indices_view().set_count(mesh.num_indices());
 
     // C: `const char *mapping = "";` — an anonymous empty literal, never
     // pointer-equal to any interned `ufbxi_*` name constant.
@@ -2367,29 +2408,27 @@ pub(crate) unsafe fn read_vertex_element(
         mapping = got.0;
     }
 
-    // SAFETY: `values_raw()` addresses the viewed attribute's own value list.
-    unsafe { (*attrib.values_raw()).count = if num_elems != 0 { num_elems } else { 1 } };
+    attrib
+        .values_view()
+        .set_count(if num_elems != 0 { num_elems } else { 1 });
 
     // Data array is always used as-is, if empty set the data to a global
     // zero buffer so invalid zero index can point to some valid data.
     // The zero data is offset by 4 elements to accommodate for invalid index (-1)
     if num_elems > 0 {
-        // SAFETY: `p_dst_data` is the attribute's own `values.data` slot and
-        // `data` is the live, non-null array descriptor checked above.
-        unsafe { *p_dst_data = (*data).data as *mut Real };
+        p_dst_data.set_data(data.data() as *mut Real as *mut c_void);
     } else {
         // SAFETY: `ZERO_ELEMENT` is a static 8-`Real` buffer, so offsetting by
-        // 4 stays inside it; `p_dst_data` is the attribute's own slot.
-        unsafe { *p_dst_data = (ZERO_ELEMENT.0.get() as *mut Real).add(4) };
+        // 4 stays inside it.
+        let zero: *mut Real = unsafe { (ZERO_ELEMENT.0.get() as *mut Real).add(4) };
+        p_dst_data.set_data(zero as *mut c_void);
     }
 
     // HACK: Some old exporters seem to use ByPolygon to mean ByPolygonVertex,
     // it should be quite safe to remap this
     if mapping == sp::ByPolygon.as_ptr() {
-        let num_indices: usize = if !indices.is_null() {
-            // SAFETY: `indices` is non-null (checked) and points at the node's
-            // own array descriptor.
-            unsafe { (*indices).size }
+        let num_indices: usize = if let Some(indices) = indices {
+            indices.size()
         } else {
             num_elems
         };
@@ -2398,21 +2437,20 @@ pub(crate) unsafe fn read_vertex_element(
         }
     }
 
-    if !indices.is_null() {
-        // SAFETY: `indices` is non-null (checked) and points at the node's own
-        // array descriptor, whose `data` spans `size` `int32_t` indices.
-        let (num_indices, index_data): (usize, *mut u32) =
-            unsafe { ((*indices).size, (*indices).data as *mut u32) };
+    if let Some(indices) = indices {
+        let num_indices: usize = indices.size();
+        // The `'i'` array's payload is a run of `size` `u32`s.
+        let index_data: *mut u32 = indices.data() as *mut u32;
 
         if mapping == sp::ByPolygonVertex.as_ptr() {
             // Indexed by polygon vertex: We can use the provided indices directly.
-            // SAFETY: the out-pointer is the attribute's own `indices.data`
-            // slot and `index_data` spans `num_indices` `u32`s (the array
-            // descriptor's payload).
+            // SAFETY: `index_data` spans `num_indices` `u32`s (the array
+            // descriptor's payload); the out-pointer is the attribute's own
+            // `indices.data` slot.
             unsafe {
                 check_indices(
                     uc,
-                    &raw mut (*attrib.indices_raw()).data as *mut *mut u32,
+                    attrib.indices_view().data_raw() as *mut *mut u32,
                     index_data,
                     true,
                     num_indices,
@@ -2425,16 +2463,21 @@ pub(crate) unsafe fn read_vertex_element(
             let new_index_data: *mut u32 = uc.result_view().push::<u32>(mesh.num_indices());
             ufbxi_check!(uc, !new_index_data.is_null(), "new_index_data");
 
-            let vert_ix: *mut u32 = mesh.vertex_indices().data as *mut u32;
+            // SAFETY: `mesh->vertex_indices` names the mesh's own contiguous run
+            // of `mesh->num_indices` vertex indices, live and unmoved; the loop
+            // writes only the disjoint fresh `new_index_data` run.
+            let vert_ix: &[u32] =
+                unsafe { slice_from_ptr(mesh.vertex_indices().data, mesh.num_indices()) };
+            // SAFETY: `index_data` is the array descriptor's own contiguous
+            // payload of `num_indices` `u32`s, live for the parse tree and
+            // likewise unwritten by the loop.
+            let index_run: &[u32] = unsafe { slice_from_ptr(index_data, num_indices) };
             for i in 0..mesh.num_indices() {
-                // SAFETY: `i < mesh.num_indices`, the length of the run at
-                // `vert_ix`.
-                let ix: u32 = unsafe { *vert_ix.add(i) };
+                let ix: u32 = vert_ix[i];
                 if (ix as usize) < num_indices {
                     // SAFETY: `i < mesh.num_indices` bounds the write inside
-                    // the fresh `new_index_data` run, and `ix < num_indices`
-                    // bounds the read inside `index_data`.
-                    unsafe { *new_index_data.add(i) = *index_data.add(ix as usize) };
+                    // the fresh `new_index_data` run.
+                    unsafe { *new_index_data.add(i) = index_run[ix as usize] };
                 } else {
                     // SAFETY: `i < mesh.num_indices`, so `new_index_data.add(i)`
                     // is a writable slot of the fresh run.
@@ -2442,13 +2485,13 @@ pub(crate) unsafe fn read_vertex_element(
                 }
             }
 
-            // SAFETY: the out-pointer is the attribute's own `indices.data`
-            // slot and `new_index_data` is the fresh `num_indices`-long run
-            // filled in by the loop above.
+            // SAFETY: `new_index_data` is the fresh `num_indices`-long run
+            // filled in by the loop above; the out-pointer is the attribute's
+            // own `indices.data` slot.
             unsafe {
                 check_indices(
                     uc,
-                    &raw mut (*attrib.indices_raw()).data as *mut *mut u32,
+                    attrib.indices_view().data_raw() as *mut *mut u32,
                     new_index_data,
                     true,
                     mesh.num_indices(),
@@ -2463,15 +2506,19 @@ pub(crate) unsafe fn read_vertex_element(
             ufbxi_check!(uc, !new_index_data.is_null(), "new_index_data");
 
             let num_faces: usize = mesh.num_faces();
+            // SAFETY: `mesh->faces` names the mesh's own contiguous run of
+            // `num_faces` faces, live and unmoved; the loop writes only the
+            // disjoint fresh `new_index_data` run.
+            let faces: &[Face] = unsafe { slice_from_ptr(mesh.faces().data, num_faces) };
+            // SAFETY: `index_data` is the array descriptor's own contiguous
+            // payload of `num_indices` `u32`s, live for the parse tree and
+            // likewise unwritten by the loop.
+            let index_run: &[u32] = unsafe { slice_from_ptr(index_data, num_indices) };
             for face_ix in 0..num_faces {
-                // SAFETY: `face_ix < num_faces`, the length of the mesh's own
-                // `faces` run.
-                let face: Face = unsafe { *mesh.faces().data.add(face_ix) };
+                let face: Face = faces[face_ix];
                 let mut index: u32 = NO_INDEX;
                 if face_ix < num_indices {
-                    // SAFETY: `face_ix < num_indices`, the length of the run at
-                    // `index_data`.
-                    index = unsafe { *index_data.add(face_ix) };
+                    index = index_run[face_ix];
                 }
                 if index as usize >= num_elems {
                     // SAFETY: `&raw mut index` is an unaliased local — a writable
@@ -2486,20 +2533,13 @@ pub(crate) unsafe fn read_vertex_element(
                 }
             }
 
-            // SAFETY: `indices_raw()` addresses the viewed attribute's own
-            // index list.
-            unsafe { (*attrib.indices_raw()).data = new_index_data };
+            attrib.indices_view().set_data(new_index_data);
         } else if mapping == sp::AllSame.as_ptr() {
             // Indexed by all same: ??? This could be possibly used for making
             // holes with invalid indices, but that seems really fringe.
             // Just use the shared zero index buffer for this.
             uc.set_max_zero_indices(max_sz(uc.max_zero_indices(), mesh.num_indices()));
-            // SAFETY: `indices_raw()` addresses the viewed attribute's own
-            // index list; the sentinel is a static compared by address, never
-            // dereferenced.
-            unsafe {
-                (*attrib.indices_raw()).data = SENTINEL_INDEX_ZERO.as_ptr();
-            }
+            attrib.indices_view().set_data(SENTINEL_INDEX_ZERO.as_ptr());
             attrib.set_unique_per_vertex(true);
         } else {
             // SAFETY: `get()` addresses the viewed attribute, so its own
@@ -2522,9 +2562,9 @@ pub(crate) unsafe fn read_vertex_element(
                     uc.max_consecutive_indices(),
                     mesh.num_indices(),
                 ));
-                // SAFETY: `indices_raw()` addresses the viewed attribute's
-                // own index list; the sentinel is a static compared by address.
-                unsafe { (*attrib.indices_raw()).data = SENTINEL_INDEX_CONSECUTIVE.as_ptr() };
+                attrib
+                    .indices_view()
+                    .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
             } else {
                 let index_data: *mut u32 = uc.result_view().push::<u32>(mesh.num_indices());
                 ufbxi_check!(uc, !index_data.is_null(), "index_data");
@@ -2533,13 +2573,13 @@ pub(crate) unsafe fn read_vertex_element(
                     // run at `index_data`.
                     unsafe { *index_data.add(i) = i as u32 };
                 }
-                // SAFETY: the out-pointer is the attribute's own `indices.data`
-                // slot and `index_data` is the fresh `num_indices`-long run
-                // filled in by the loop above.
+                // SAFETY: `index_data` is the fresh `num_indices`-long run
+                // filled in by the loop above; the out-pointer is the
+                // attribute's own `indices.data` slot.
                 unsafe {
                     check_indices(
                         uc,
-                        &raw mut (*attrib.indices_raw()).data as *mut *mut u32,
+                        attrib.indices_view().data_raw() as *mut *mut u32,
                         index_data,
                         true,
                         mesh.num_indices(),
@@ -2550,14 +2590,14 @@ pub(crate) unsafe fn read_vertex_element(
             }
         } else if mapping == sp::ByVertex.as_ptr() || mapping == sp::ByVertice.as_ptr() {
             // Direct by vertex: We can re-use the position indices..
-            // SAFETY: the out-pointer is the attribute's own `indices.data`
-            // slot; the mesh's `vertex_position.indices` spans its own
+            // SAFETY: the mesh's `vertex_position.indices` spans its own
             // `num_indices` entries and stays owned by the mesh
-            // (`owns_indices` is `false`).
+            // (`owns_indices` is `false`); the out-pointer is the attribute's
+            // own `indices.data` slot.
             unsafe {
                 check_indices(
                     uc,
-                    &raw mut (*attrib.indices_raw()).data as *mut *mut u32,
+                    attrib.indices_view().data_raw() as *mut *mut u32,
                     mesh.vertex_position().indices().data as *mut u32,
                     false,
                     mesh.num_indices(),
@@ -2572,10 +2612,12 @@ pub(crate) unsafe fn read_vertex_element(
             ufbxi_check!(uc, !new_index_data.is_null(), "new_index_data");
 
             let num_faces: u32 = mesh.num_faces() as u32;
+            // SAFETY: `mesh->faces` names the mesh's own contiguous run of
+            // `num_faces` faces, live and unmoved; the loop writes only the
+            // disjoint fresh `new_index_data` run.
+            let faces: &[Face] = unsafe { slice_from_ptr(mesh.faces().data, num_faces as usize) };
             for face_ix in 0..num_faces {
-                // SAFETY: `face_ix < num_faces`, the length of the mesh's own
-                // `faces` run.
-                let face: Face = unsafe { *mesh.faces().data.add(face_ix as usize) };
+                let face: Face = faces[face_ix as usize];
                 for i in 0..face.num_indices as usize {
                     // SAFETY: every face's `index_begin + num_indices` stays
                     // within the mesh's `num_indices`, the length of the fresh
@@ -2584,13 +2626,13 @@ pub(crate) unsafe fn read_vertex_element(
                 }
             }
 
-            // SAFETY: the out-pointer is the attribute's own `indices.data`
-            // slot and `new_index_data` is the fresh `num_indices`-long run
-            // filled in by the loop above.
+            // SAFETY: `new_index_data` is the fresh `num_indices`-long run
+            // filled in by the loop above; the out-pointer is the attribute's
+            // own `indices.data` slot.
             unsafe {
                 check_indices(
                     uc,
-                    &raw mut (*attrib.indices_raw()).data as *mut *mut u32,
+                    attrib.indices_view().data_raw() as *mut *mut u32,
                     new_index_data,
                     true,
                     mesh.num_indices(),
@@ -2601,12 +2643,7 @@ pub(crate) unsafe fn read_vertex_element(
         } else if mapping == sp::AllSame.as_ptr() {
             // Direct by all same: This cannot fail as the index list is just zero.
             uc.set_max_zero_indices(max_sz(uc.max_zero_indices(), mesh.num_indices()));
-            // SAFETY: `indices_raw()` addresses the viewed attribute's own
-            // index list; the sentinel is a static compared by address, never
-            // dereferenced.
-            unsafe {
-                (*attrib.indices_raw()).data = SENTINEL_INDEX_ZERO.as_ptr();
-            }
+            attrib.indices_view().set_data(SENTINEL_INDEX_ZERO.as_ptr());
             attrib.set_unique_per_vertex(true);
         } else {
             // SAFETY: `get()` addresses the viewed attribute, so its own
@@ -2625,16 +2662,14 @@ pub(crate) unsafe fn read_vertex_element(
     if uc.opts_view().retain_vertex_attrib_w() && !w_name.is_null() {
         let w_data: *mut ValueArray = find_array(node, w_name, b'r');
         if !w_data.is_null() {
-            // SAFETY: `w_data` is non-null (checked) and points at the node's
-            // own array descriptor.
-            if unsafe { (*w_data).size } == num_elems {
-                // SAFETY: as above; `values_w_raw()` addresses the viewed
-                // attribute's own W list, and the `'r'` array's payload is a run
-                // of `size` `ufbx_real` values.
-                unsafe {
-                    (*attrib.values_w_raw()).count = (*w_data).size;
-                    (*attrib.values_w_raw()).data = (*w_data).data as *mut Real;
-                }
+            // SAFETY: `w_data` is non-null (checked just above) and `find_array`
+            // returns the node's own array descriptor, live for as long as the
+            // parse tree and reached through `*mut` (write-capable provenance).
+            let w_data: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(w_data) };
+            if w_data.size() == num_elems {
+                // The `'r'` array's payload is a run of `size` `ufbx_real`s.
+                attrib.values_w_view().set_count(w_data.size());
+                attrib.values_w_view().set_data(w_data.data() as *mut Real);
             } else {
                 ufbxi_check!(
                     uc,
@@ -2643,9 +2678,7 @@ pub(crate) unsafe fn read_vertex_element(
                         WarningType::BadVertexWAttribute,
                         "Bad W array size %s=%zu, %s=%zu",
                         w_name,
-                        // SAFETY: `w_data` is the non-null array descriptor
-                        // checked above.
-                        unsafe { (*w_data).size },
+                        w_data.size(),
                         data_name,
                         num_elems,
                     )
