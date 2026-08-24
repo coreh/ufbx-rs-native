@@ -194,6 +194,17 @@ pub(crate) fn find_cubic_bezier_t(p1: f64, p2: f64, x0: f64) -> f64 {
     t
 }
 
+// Hand view accessor for `ufbxi_evaluate_skinning`: `ufbx_cache_channel`
+// carries no generated `View` impl, so the one field this function navigates
+// (C: `channel->interpretation`) gets a single-level leaf accessor here.
+#[cfg(feature = "skinning-eval")]
+impl View<CacheChannel, Mut> {
+    #[inline(always)]
+    pub(crate) fn interpretation(&self) -> CacheInterpretation {
+        view_read!(self, interpretation)
+    }
+}
+
 // ufbx.c:25055-25169 `ufbxi_evaluate_skinning`
 // C forks on `#if UFBXI_FEATURE_SKINNING_EVALUATION` inside the function; the
 // arms are split into cfg-gated fns (the same split `ufbxi_obj_load` uses in
@@ -209,81 +220,51 @@ pub(crate) unsafe fn evaluate_skinning(
     load_caches: bool,
     cache_opts: *mut RawGeometryCacheDataOpts,
 ) -> Result<(), Fail> {
+    // SAFETY: `scene` is the caller's live `ufbx_scene` — the raw-pointer
+    // contract of this `unsafe fn` — reached through `*mut`, i.e. with
+    // write-capable provenance for `Mut`.
+    let scene = unsafe { View::<Scene>::from_ptr(scene) };
+    // SAFETY: `error` is the caller's live `ufbx_error` slot — the same
+    // raw-pointer contract — and is the target every `ufbxi_check_err!` below
+    // records into.
+    let error: &crate::native::error::ErrorView =
+        unsafe { crate::native::error::ErrorView::from_ptr(error) };
+
     let mut max_skinned_indices: usize = 0;
 
     // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, scene->meshes)`
-    // SAFETY: `scene` is the caller's live `ufbx_scene` — the raw-pointer
-    // contract of this `unsafe fn`.
-    let mut p_mesh: *mut *mut Mesh = unsafe { (*scene).meshes.data as *mut *mut Mesh };
-    // SAFETY: as above, reading the same live scene's mesh-list count.
-    let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, unsafe { (*scene).meshes.count });
-    while p_mesh != p_mesh_end {
-        // SAFETY: `p_mesh` walks the scene's mesh pointer list and stops at
-        // `p_mesh_end`, so it addresses a live slot holding a scene-owned mesh.
-        let mesh: *mut Mesh = unsafe { *p_mesh };
-        // SAFETY: `mesh` is the scene-owned `ufbx_mesh` just read out of the
-        // scene's element list — a live, initialized mesh in the scene's result
-        // arena, reached through `*mut` (write-capable provenance for `Mut`).
-        let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
+    let meshes = scene.meshes_view();
+    for i_mesh in 0..meshes.count() {
+        let mesh = meshes.at(i_mesh);
         if mesh.blend_deformers().count == 0
             && mesh.skin_deformers().count == 0
             && (mesh.cache_deformers().count == 0 || !load_caches)
         {
-            // SAFETY: `p_mesh` is inside the list, so `p_mesh + 1` is at most
-            // one past its end.
-            p_mesh = unsafe { p_mesh.add(1) };
             continue;
         }
         max_skinned_indices = max_sz(max_skinned_indices, mesh.num_indices());
-        // SAFETY: `p_mesh` is inside the list, so `p_mesh + 1` is at most one
-        // past its end.
-        p_mesh = unsafe { p_mesh.add(1) };
     }
 
     let topo: *mut TopoEdge = buf_tmp.push::<TopoEdge>(max_skinned_indices);
-    ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr(error) },
-        !topo.is_null(),
-        "topo"
-    );
+    ufbxi_check_err!(error, !topo.is_null(), "topo");
 
     // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, scene->meshes)`
-    // SAFETY: `scene` is the caller's live `ufbx_scene` — the raw-pointer
-    // contract of this `unsafe fn`.
-    let mut p_mesh: *mut *mut Mesh = unsafe { (*scene).meshes.data as *mut *mut Mesh };
-    // SAFETY: as above, reading the same live scene's mesh-list count.
-    let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, unsafe { (*scene).meshes.count });
-    while p_mesh != p_mesh_end {
-        // SAFETY: `p_mesh` walks the scene's mesh pointer list and stops at
-        // `p_mesh_end`, so it addresses a live slot holding a scene-owned mesh.
-        let mesh: *mut Mesh = unsafe { *p_mesh };
-        // SAFETY: `mesh` is the scene-owned `ufbx_mesh` just read out of the
-        // scene's element list — a live, initialized mesh in the scene's result
-        // arena, reached through `*mut` (write-capable provenance for `Mut`).
-        let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
+    let meshes = scene.meshes_view();
+    for i_mesh in 0..meshes.count() {
+        let mesh = meshes.at(i_mesh);
         if mesh.blend_deformers().count == 0
             && mesh.skin_deformers().count == 0
             && (mesh.cache_deformers().count == 0 || !load_caches)
         {
-            // SAFETY: `p_mesh` is inside the list, so `p_mesh + 1` is at most
-            // one past its end.
-            p_mesh = unsafe { p_mesh.add(1) };
             continue;
         }
         if mesh.num_vertices() == 0 {
-            // SAFETY: `p_mesh` is inside the list, so `p_mesh + 1` is at most
-            // one past its end.
-            p_mesh = unsafe { p_mesh.add(1) };
             continue;
         }
 
         let num_vertices: usize = mesh.num_vertices();
         let mut result_pos: *mut Vec3 = buf_result.push::<Vec3>(num_vertices.wrapping_add(1));
-        ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
-            !result_pos.is_null(),
-            "result_pos"
-        );
+        ufbxi_check_err!(error, !result_pos.is_null(), "result_pos");
 
         // C: `result_pos[0] = ufbx_zero_vec3; result_pos++;`
         // SAFETY: valid mesh counts satisfy the C allocation invariant
@@ -298,29 +279,21 @@ pub(crate) unsafe fn evaluate_skinning(
         let mut cached_normals: bool = false;
         if load_caches && mesh.cache_deformers().count > 0 {
             // C: `ufbxi_for_ptr_list(ufbx_cache_deformer, p_cache, mesh->cache_deformers)`
-            let mut p_cache: *mut *mut CacheDeformer =
-                mesh.cache_deformers().data as *mut *mut CacheDeformer;
-            let p_cache_end: *mut *mut CacheDeformer =
-                add_ptr(p_cache, mesh.cache_deformers().count);
-            while p_cache != p_cache_end {
-                // SAFETY: `p_cache` walks the mesh's cache-deformer pointer list
-                // and stops at `p_cache_end`, so it addresses a live slot holding
-                // a scene-owned `ufbx_cache_deformer`; `external_channel` is that
-                // deformer's own `Option<Ref<CacheChannel>>` field, which
-                // `opt_ptr` reads as the nullable element pointer it is.
-                let channel: *mut CacheChannel =
-                    unsafe { opt_ptr(&raw const (*(*p_cache)).external_channel) };
-                if channel.is_null() {
-                    // SAFETY: `p_cache` is inside the list, so `p_cache + 1` is at
-                    // most one past its end.
-                    p_cache = unsafe { p_cache.add(1) };
+            let cache_deformers = mesh.cache_deformers_view();
+            for i_cache in 0..cache_deformers.count() {
+                let p_cache = cache_deformers.at(i_cache);
+                // C: `ufbx_cache_channel *channel = (*p_cache)->external_channel;
+                // if (!channel) continue;` — the nullable ref reads as `None`.
+                let Some(channel) = p_cache.external_channel() else {
                     continue;
-                }
+                };
+                // SAFETY: a non-null `Ref` names a live scene-owned
+                // `ufbx_cache_channel`, whose stored pointer carries the
+                // scene arena's write-capable provenance.
+                let channel_view = unsafe { View::<CacheChannel>::from_ptr(channel.ptr()) };
 
-                // SAFETY (this condition): `channel` is a non-null (checked just
-                // above) scene-owned `ufbx_cache_channel`.
-                if (unsafe { (*channel).interpretation } == CacheInterpretation::VertexPosition
-                    || unsafe { (*channel).interpretation } == CacheInterpretation::Points)
+                if (channel_view.interpretation() == CacheInterpretation::VertexPosition
+                    || channel_view.interpretation() == CacheInterpretation::Points)
                     && !cached_position
                 {
                     // SAFETY: `channel` is a live scene-owned cache channel,
@@ -330,7 +303,7 @@ pub(crate) unsafe fn evaluate_skinning(
                     // contract.
                     let num_read: usize = unsafe {
                         sample_geometry_cache_vec3(
-                            channel,
+                            channel.ptr(),
                             time,
                             result_pos,
                             num_vertices,
@@ -341,19 +314,14 @@ pub(crate) unsafe fn evaluate_skinning(
                         mesh.set_skinned_is_local(true);
                         cached_position = true;
                     }
-                // SAFETY: `channel` is a non-null scene-owned cache channel.
-                } else if unsafe { (*channel).interpretation } == CacheInterpretation::VertexNormal
+                } else if channel_view.interpretation() == CacheInterpretation::VertexNormal
                     && !cached_normals
                 {
                     // TODO: Is this right at all?
                     let num_normals: usize = mesh.skinned_normal().values().count;
                     let mut normal_data: *mut Vec3 =
                         buf_result.push::<Vec3>(num_normals.wrapping_add(1));
-                    ufbxi_check_err!(
-                        unsafe { crate::native::error::ErrorView::from_ptr(error) },
-                        !normal_data.is_null(),
-                        "normal_data"
-                    );
+                    ufbxi_check_err!(error, !normal_data.is_null(), "normal_data");
                     // C: `normal_data[0] = ufbx_zero_vec3; normal_data++;`
                     // SAFETY: valid attribute counts satisfy the C allocation
                     // invariant `num_normals < SIZE_MAX`; the checked non-null
@@ -369,7 +337,7 @@ pub(crate) unsafe fn evaluate_skinning(
                     // caller's options pointer.
                     let num_read: usize = unsafe {
                         sample_geometry_cache_vec3(
-                            channel,
+                            channel.ptr(),
                             time,
                             normal_data,
                             num_normals,
@@ -378,18 +346,11 @@ pub(crate) unsafe fn evaluate_skinning(
                     };
                     if num_read == num_normals {
                         cached_normals = true;
-                        // SAFETY: `values_raw` projects the mesh's own
-                        // `skinned_normal.values` list, inheriting the view's
-                        // write-capable provenance, so its `data` field is
-                        // writable in place.
-                        unsafe {
-                            (*mesh.skinned_normal().values_raw()).data = normal_data as *const Vec3;
-                        }
+                        mesh.skinned_normal()
+                            .values_view()
+                            .set_data(normal_data as *const Vec3);
                     }
                 }
-                // SAFETY: `p_cache` is inside the deformer list, so `p_cache + 1`
-                // is at most one past its end.
-                p_cache = unsafe { p_cache.add(1) };
             }
         }
 
@@ -401,22 +362,21 @@ pub(crate) unsafe fn evaluate_skinning(
             // allocation, which as a fresh push cannot overlap the previously
             // allocated source vertex run (even when both live in the same
             // result buffer, as on the load path).
-            unsafe { ptr::copy_nonoverlapping(mesh.vertices().data, result_pos, num_vertices) };
+            unsafe {
+                ptr::copy_nonoverlapping(mesh.vertices_view().data(), result_pos, num_vertices)
+            };
 
             // C: `ufbxi_for_ptr_list(ufbx_blend_deformer, p_blend, mesh->blend_deformers)`
-            let mut p_blend: *mut *mut BlendDeformer =
-                mesh.blend_deformers().data as *mut *mut BlendDeformer;
-            let p_blend_end: *mut *mut BlendDeformer =
-                add_ptr(p_blend, mesh.blend_deformers().count);
-            while p_blend != p_blend_end {
-                // SAFETY: `p_blend` walks the mesh's blend-deformer pointer list
-                // and stops at `p_blend_end`, so it addresses a live slot holding
-                // a scene-owned `ufbx_blend_deformer`; `result_pos` addresses
-                // `num_vertices` writable `ufbx_vec3` slots.
-                unsafe { add_blend_vertex_offsets(*p_blend, result_pos, num_vertices, 1.0) };
-                // SAFETY: `p_blend` is inside the list, so `p_blend + 1` is at
-                // most one past its end.
-                p_blend = unsafe { p_blend.add(1) };
+            let blend_deformers = mesh.blend_deformers_view();
+            for i_blend in 0..blend_deformers.count() {
+                let p_blend = blend_deformers.at(i_blend);
+                // SAFETY: `p_blend` views a live scene-owned
+                // `ufbx_blend_deformer` of the mesh's own deformer list and
+                // `result_pos` addresses `num_vertices` writable `ufbx_vec3`
+                // slots — `add_blend_vertex_offsets`'s contract.
+                unsafe {
+                    add_blend_vertex_offsets(p_blend.as_ptr(), result_pos, num_vertices, 1.0)
+                };
             }
 
             // TODO: What should we do about multiple skins??
@@ -424,38 +384,24 @@ pub(crate) unsafe fn evaluate_skinning(
                 // C: `ufbx_matrix *fallback = mesh->instances.count > 0 ? &mesh->instances.data[0]->geometry_to_world : NULL;`
                 // (`mesh->instances` reads through the anonymous `ufbx_element`
                 // union member; the generated bindings spell it out.)
-                // SAFETY: the `count > 0` guard puts index 0 inside the mesh's
-                // instance list, whose slots hold scene-owned `ufbx_node` refs,
-                // so the projection addresses that node's own
-                // `geometry_to_world` field.
-                let fallback: *mut Matrix = if mesh.element().instances().count > 0 {
-                    unsafe {
-                        &raw mut (*ref_ptr::<UfbxNode>(mesh.element().instances().data.add(0)))
-                            .geometry_to_world
-                    }
+                let fallback: *mut Matrix = if mesh.element().instances_view().count() > 0 {
+                    mesh.element()
+                        .instances_view()
+                        .at(0)
+                        .geometry_to_world_raw()
                 } else {
                     ptr::null_mut()
                 };
-                // SAFETY: `skin_deformers.count > 0` (checked above) puts index 0
-                // inside the mesh's skin-deformer list, whose slots hold
-                // scene-owned `ufbx_skin_deformer` refs.
-                let skin: *mut SkinDeformer = unsafe { ref_ptr(mesh.skin_deformers().data.add(0)) };
+                let skin = mesh.skin_deformers_view().at(0);
                 for i in 0..num_vertices {
                     // C: `ufbx_get_skin_vertex_matrix(skin, i, fallback)` — the
                     // `ufbx_inline` wrapper in ufbx.h (5601-5603) forwarding to
                     // the catch impl with a NULL panic.
-                    // SAFETY: `skin` is the live scene-owned deformer minted
-                    // above, so the `Const` view reads a readable pointee, and
-                    // `fallback` is either null or the live instance node's
-                    // matrix — `catch_get_skin_vertex_matrix`'s contract.
-                    let mat: Matrix = unsafe {
-                        catch_get_skin_vertex_matrix(
-                            None,
-                            crate::native::view::View::<SkinDeformer, crate::native::view::Const>::from_ptr(skin),
-                            i,
-                            fallback,
-                        )
-                    };
+                    // SAFETY: `fallback` is either null or the live instance
+                    // node's own matrix — `catch_get_skin_vertex_matrix`'s
+                    // raw-pointer contract (`skin` is a view, not a raw param).
+                    let mat: Matrix =
+                        unsafe { catch_get_skin_vertex_matrix(None, skin, i, fallback) };
                     // SAFETY: `i < num_vertices`, so `result_pos + i` is inside
                     // the pushed result allocation, readable and writable;
                     // the `*const Matrix` `transform_position` reads is derived
@@ -469,19 +415,14 @@ pub(crate) unsafe fn evaluate_skinning(
             }
         }
 
-        // SAFETY: `values_raw` projects the mesh's own
-        // `skinned_position.values` list, inheriting the view's write-capable
-        // provenance, so its `data` field is writable in place.
-        unsafe { (*mesh.skinned_position().values_raw()).data = result_pos as *const Vec3 };
+        mesh.skinned_position()
+            .values_view()
+            .set_data(result_pos as *const Vec3);
 
         if !cached_normals {
             let num_indices: usize = mesh.num_indices();
             let normal_indices: *mut u32 = buf_result.push::<u32>(num_indices);
-            ufbxi_check_err!(
-                unsafe { crate::native::error::ErrorView::from_ptr(error) },
-                !normal_indices.is_null(),
-                "normal_indices"
-            );
+            ufbxi_check_err!(error, !normal_indices.is_null(), "normal_indices");
 
             // SAFETY: `mesh.as_ptr()` addresses the scene-owned mesh this view
             // was minted over (read-only use) and `topo` is the non-null
@@ -508,11 +449,7 @@ pub(crate) unsafe fn evaluate_skinning(
             }
 
             let mut normal_data: *mut Vec3 = buf_result.push::<Vec3>(num_normals.wrapping_add(1));
-            ufbxi_check_err!(
-                unsafe { crate::native::error::ErrorView::from_ptr(error) },
-                !normal_data.is_null(),
-                "normal_data"
-            );
+            ufbxi_check_err!(error, !normal_data.is_null(), "normal_data");
 
             // C: `normal_data[0] = ufbx_zero_vec3; normal_data++;`
             // SAFETY: valid attribute counts satisfy the C allocation invariant
@@ -541,21 +478,16 @@ pub(crate) unsafe fn evaluate_skinning(
 
             mesh.set_generated_normals(true);
             mesh.skinned_normal().set_exists(true);
-            // SAFETY (the four writes below): `values_raw`/`indices_raw` project
-            // the mesh's own `skinned_normal` lists, inheriting the view's
-            // write-capable provenance; the buffers stored into them are the
-            // result allocations pushed above, which live as long as the result
-            // buffer the scene keeps.
-            unsafe { (*mesh.skinned_normal().values_raw()).data = normal_data as *const Vec3 };
-            unsafe { (*mesh.skinned_normal().values_raw()).count = num_normals };
-            unsafe { (*mesh.skinned_normal().indices_raw()).data = normal_indices as *const u32 };
-            unsafe { (*mesh.skinned_normal().indices_raw()).count = num_indices };
+            mesh.skinned_normal()
+                .values_view()
+                .set_data(normal_data as *const Vec3);
+            mesh.skinned_normal().values_view().set_count(num_normals);
+            mesh.skinned_normal()
+                .indices_view()
+                .set_data(normal_indices as *const u32);
+            mesh.skinned_normal().indices_view().set_count(num_indices);
             mesh.skinned_normal().set_value_reals(3);
         }
-
-        // SAFETY: `p_mesh` is inside the mesh list, so `p_mesh + 1` is at most
-        // one past its end.
-        p_mesh = unsafe { p_mesh.add(1) };
     }
 
     Ok(())
