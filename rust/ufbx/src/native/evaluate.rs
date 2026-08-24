@@ -1912,6 +1912,21 @@ pub(crate) unsafe fn anim_layer_might_contain_id(layer: *const AnimLayer, id: u3
     ok
 }
 
+// Sentinel-tolerant read of `ufbx_anim_prop.element`: `layer->anim_props` is
+// terminated by a zeroed sentinel entry (ufbx.c:22257, `num_anim_props + 1`)
+// whose `element` slot is NULL, so the walk in `evaluate_props` reads the field
+// as bare pointer bits instead of through the non-null `Ref<Element>`.
+impl<M: Mode> View<AnimProp, M> {
+    #[inline(always)]
+    pub(crate) fn element_target_ptr(&self) -> *mut Element {
+        // SAFETY: `element_ptr()` addresses the viewed prop's own `element`
+        // field, which is `repr(transparent)` over `NonNull<Element>`, so
+        // reading it as `*mut Element` reinterprets the same bytes in place and
+        // tolerates the run's NULL sentinel.
+        unsafe { ref_ptr(self.element_ptr()) }
+    }
+}
+
 // ufbx.c:25759-25818 `ufbxi_evaluate_props`
 #[inline(never)]
 pub(crate) unsafe fn evaluate_props(
@@ -1931,16 +1946,25 @@ pub(crate) unsafe fn evaluate_props(
         has_rotation_order: false,
     };
 
-    // SAFETY (every `*anim`, `*element` and `*layer` access in this fn): `anim`
-    // and `element` are the caller's live scene objects and every layer comes out
-    // of `anim`'s own layer list — the raw-pointer contract of this `unsafe fn`.
-    let element_id: u32 = unsafe { (*element).element_id };
-    let num_layers: usize = unsafe { (*anim).layers.count };
+    // SAFETY: `anim` is the caller's live `ufbx_anim` — the raw-pointer contract
+    // of this `unsafe fn` — and evaluation only reads it, so the frozen `Const`
+    // tag stays valid for the whole body.
+    let anim_view: &View<Anim, Const> = unsafe { View::<Anim, Const>::from_ptr(anim) };
+
+    let element_id: u32 = {
+        // SAFETY: `element` is the caller's live `ufbx_element` (the same
+        // raw-pointer contract) and this projection only reads its header.
+        let element_view: &View<Element, Const> =
+            unsafe { View::<Element, Const>::from_ptr(element) };
+        element_view.element_id()
+    };
+    let num_layers: usize = anim_view.layers_view().count();
     for layer_ix in 0..num_layers {
-        // SAFETY: `layer_ix < num_layers == anim->layers.count`, so the indexed
-        // slot is inside the anim's layer list and holds a scene-owned layer.
-        let layer: *mut AnimLayer =
-            unsafe { *((*anim).layers.data as *mut *mut AnimLayer).add(layer_ix) };
+        // C: `ufbx_anim_layer *layer = anim->layers.data[layer_ix];`
+        let layer_view: &View<AnimLayer, Const> = anim_view.layers_view().at(layer_ix);
+        // The raw layer pointer the read-only `ufbxi_*` helpers below take; the
+        // view's own address, so it names the same scene-owned layer.
+        let layer: *mut AnimLayer = layer_view.as_ptr().cast_mut();
         // SAFETY: `layer` is that scene-owned `ufbx_anim_layer`.
         if !unsafe { anim_layer_might_contain_id(layer, element_id) } {
             continue;
@@ -1948,30 +1972,34 @@ pub(crate) unsafe fn evaluate_props(
 
         // Find the weight for the current layer
         // TODO: Should this be searched from multiple layers?
-        let mut weight: Real = if layer_ix < unsafe { (*anim).override_layer_weights.count } {
+        let mut weight: Real = if layer_ix < anim_view.override_layer_weights_view().count() {
             // SAFETY: the branch condition bounds `layer_ix` inside the anim's
-            // override-weight run.
-            unsafe { *(*anim).override_layer_weights.data.add(layer_ix) }
+            // override-weight run, and the offset is taken from that list's own
+            // base pointer, so it stays inside the run.
+            unsafe { *anim_view.override_layer_weights_view().data().add(layer_ix) }
         } else {
-            unsafe { (*layer).weight }
+            layer_view.weight()
         };
-        if unsafe { (*layer).weight_is_animated } && unsafe { (*layer).blended } {
+        if layer_view.weight_is_animated() && layer_view.blended() {
+            // C: `ufbx_anim_prop *weight_aprop = ufbxi_find_anim_prop_start(layer, &layer->element);`
             // SAFETY: `layer` is the scene-owned layer and the projection
             // addresses its own `element` header, which is the key
             // `find_anim_prop_start` searches its anim props for.
             let weight_aprop: *mut AnimProp =
-                unsafe { find_anim_prop_start(layer, &raw const (*layer).element) };
+                unsafe { find_anim_prop_start(layer, layer_view.element().as_ptr()) };
             if !weight_aprop.is_null() {
-                // C: `weight = ufbx_evaluate_anim_value_real_flags(...) / (ufbx_real)100.0;`
                 // SAFETY: `weight_aprop` is a non-null (checked above) anim prop
-                // of `layer`, so `anim_value` is its own field and holds a
-                // scene-owned `ufbx_anim_value` — live and unwritten during
-                // evaluation, the `Const` view mint's contract.
+                // of `layer` — live and unwritten during evaluation, the `Const`
+                // view mint's contract.
+                let weight_aprop_view: &View<AnimProp, Const> =
+                    unsafe { View::<AnimProp, Const>::from_ptr(weight_aprop) };
+                // C: `weight = ufbx_evaluate_anim_value_real_flags(...) / (ufbx_real)100.0;`
+                // SAFETY: `anim_value` is the viewed prop's own non-null field
+                // and names a scene-owned `ufbx_anim_value` — live and unwritten
+                // during evaluation, the `Const` view mint's contract.
                 weight = evaluate_anim_value_real_flags(
                     Some(unsafe {
-                        View::<AnimValue, Const>::from_ptr(ref_ptr(
-                            &raw const (*weight_aprop).anim_value,
-                        ))
+                        View::<AnimValue, Const>::from_ptr(weight_aprop_view.anim_value().ptr())
                     }),
                     time,
                     flags,
@@ -1996,57 +2024,65 @@ pub(crate) unsafe fn evaluate_props(
             continue;
         }
 
-        for i in 0..num_props {
-            // SAFETY: `i < num_props`, which is the length the caller declares
-            // for the `props` run; it is the caller's output buffer, reached
-            // through `*mut` (write-capable provenance for `Mut`).
-            let prop: &View<Prop> = unsafe { View::<Prop>::from_ptr(props.add(i)) };
-
+        // C: `for (size_t i = 0; i < num_props; i++) { ufbx_prop *prop = &props[i]; ... }`
+        // SAFETY: `props`/`num_props` is the caller's contiguous `num_props`-element
+        // prop run, reached through `*mut` (write-capable provenance for `Mut`).
+        for prop in unsafe { SliceViewIter::<Prop>::from_raw_parts(props, num_props) } {
             // Don't evaluate on top of overridden properties
             if (prop.flags().raw() & PropFlags::OVERRIDDEN.raw()) != 0 {
                 continue;
             }
 
             // Connections override animation by default
-            // SAFETY: `anim` is the caller's live anim.
             if (prop.flags().raw() & PropFlags::CONNECTED.raw()) != 0
-                && !unsafe { (*anim).ignore_connections }
+                && !anim_view.ignore_connections()
             {
                 continue;
             }
 
             // Skip until we reach `aprop >= prop`
             // NOTE: No need to check for end as `anim_props` is terminated with a NULL sentinel.
-            // SAFETY (both loops below): `aprop` starts inside `layer`'s sorted
-            // anim-prop run and only advances while its `element` still matches,
-            // which the NULL-element sentinel terminating that run stops, so
-            // every access stays inside the run.
-            while std::ptr::eq(unsafe { ref_ptr(&raw const (*aprop).element) }, element)
-                && unsafe { (*aprop)._internal_key } < prop._internal_key()
+            // SAFETY: `aprop` is inside `layer`'s sorted anim-prop run — live
+            // and unwritten during evaluation, the `Const` view mint's contract.
+            let mut aprop_view: &View<AnimProp, Const> =
+                unsafe { View::<AnimProp, Const>::from_ptr(aprop) };
+            while std::ptr::eq(aprop_view.element_target_ptr(), element)
+                && aprop_view._internal_key() < prop._internal_key()
             {
+                // SAFETY: the condition just matched a non-sentinel entry of
+                // the run, so the next slot is still inside it; `aprop` carries
+                // the anim-prop run's own provenance.
                 aprop = unsafe { aprop.add(1) };
+                // SAFETY: as above — `aprop` addresses an entry of `layer`'s
+                // anim-prop run, live and unwritten during evaluation.
+                aprop_view = unsafe { View::<AnimProp, Const>::from_ptr(aprop) };
             }
-            if unsafe { (*aprop).prop_name.data } != prop.name().data {
-                while std::ptr::eq(unsafe { ref_ptr(&raw const (*aprop).element) }, element)
+            if aprop_view.prop_name_view().data() != prop.name().data {
+                while std::ptr::eq(aprop_view.element_target_ptr(), element)
                     // SAFETY: both names are string-pool `ufbx_string`s, which
                     // are stored NUL-terminated.
-                    && unsafe { strcmp((*aprop).prop_name.data, prop.name().data) } < 0
+                    && unsafe { strcmp(aprop_view.prop_name_view().data(), prop.name().data) } < 0
                 {
+                    // SAFETY: the condition just matched a non-sentinel entry of
+                    // the run, so the next slot is still inside it; `aprop`
+                    // carries the anim-prop run's own provenance.
                     aprop = unsafe { aprop.add(1) };
+                    // SAFETY: as above — `aprop` addresses an entry of `layer`'s
+                    // anim-prop run, live and unwritten during evaluation.
+                    aprop_view = unsafe { View::<AnimProp, Const>::from_ptr(aprop) };
                 }
             }
 
             // TODO: Should we skip the blending for the first layer _per property_
             // This could be done by having `UFBX_PROP_FLAG_ANIMATION_EVALUATED`
             // that gets set for the first layer of animation that is applied.
-            if unsafe { (*aprop).prop_name.data } == prop.name().data {
-                // SAFETY: `aprop` is inside `layer`'s anim-prop run, so
-                // `anim_value` is its own field and holds a scene-owned
-                // `ufbx_anim_value` — live and unwritten during evaluation, the
-                // `Const` view mint's contract.
+            if aprop_view.prop_name_view().data() == prop.name().data {
+                // SAFETY: `anim_value` is the viewed prop's own non-null field
+                // and names a scene-owned `ufbx_anim_value` — live and unwritten
+                // during evaluation, the `Const` view mint's contract.
                 let v: Vec3 = evaluate_anim_value_vec3_flags(
                     Some(unsafe {
-                        View::<AnimValue, Const>::from_ptr(ref_ptr(&raw const (*aprop).anim_value))
+                        View::<AnimValue, Const>::from_ptr(aprop_view.anim_value().ptr())
                     }),
                     time,
                     flags,
