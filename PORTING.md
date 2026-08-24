@@ -317,6 +317,15 @@ The public callback structs (`ufbx_open_file_cb`, `ufbx_close_memory_cb`,
 - `ufbxi_macro_lower_bound_eq` (1188) **does not write the result on miss**
   (callers pre-initialize, e.g. `index = SIZE_MAX;` 13362); `upper_bound_eq`
   (1206) always writes. Keep the out-param shape; do NOT return `Option`.
+- **Comparators and probes are safe fns over views.** `macro_stable_sort_views`
+  / `macro_stable_sort_ptr_views` (native/platform.rs) are the one place the
+  merge's raw element pointers become `&View<T, Const>` — minted afresh per
+  comparison, so nothing outlives the element moves the merge does between
+  calls — and `View<List<T>, M>::lower_bound_eq` / `upper_bound_eq` (prelude)
+  do the same for search probes. A comparator therefore takes `&View<T, M>`
+  (`cmp_node_less`, `cmp_anim_prop_less`, `prop_less`, …) and carries no
+  `unsafe`; a C-string query key is minted once by the caller as `&[u8]` and
+  compared with `c_strcmp`. Do not hand-mint views inside a comparator.
 
 ### Unions and flexible array members
 
@@ -360,6 +369,16 @@ Narrowing provenance is the same class: a raw pointer derived from a *field*
 may only address that field, so C's `(&a->src)[index]` idiom must be derived
 from `a`. Reviewers: Miri under Stacked/Tree Borrows is the detector; the
 `tests/miri.rs` harness is the gate.
+
+**Across threads the whole-struct reference is the bug even without a
+narrowing.** `let p = &*pool;` inside `ufbxi_thread_pool_execute` (a pool
+thread) retags every byte of `ufbxi_thread_pool` while the loader thread writes
+`pool->groups[g].max_index` — a data race under Rust's model although the two
+sides never touch the same field, and although C is fine. A struct that
+another thread accesses concurrently is read and written **field by field
+through the raw pointer** (`(*pool).tasks`, `(*pool).num_tasks`), exactly the
+fields C touches, on both threads. Miri's data-race detector over the
+`threaded_load_*` tests is the gate for this.
 
 ### Branch hints
 

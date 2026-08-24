@@ -383,6 +383,8 @@ view_accessor_structs = [
     "ufbx_shader_binding",
     "ufbx_shader_texture",
     "ufbx_shader_texture_input",
+    "ufbx_name_element",
+    "ufbx_node",
 ]
 
 # `(struct, field)` pairs whose READ accessor is hand-written instead of

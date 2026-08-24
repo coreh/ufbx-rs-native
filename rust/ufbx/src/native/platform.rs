@@ -997,6 +997,61 @@ pub(crate) unsafe fn macro_upper_bound_eq<T>(
     unsafe { *result_ptr = lo };
 }
 
+// Port-local adapters over `macro_stable_sort`: the ONE place where the raw
+// element pointers the merge hands its comparator become view references, so
+// comparators are safe fns over `&View<T, Const>`. A view is minted afresh for
+// each comparison and dropped before the merge moves elements again, and
+// `Const` is exactly "a comparator never writes".
+#[inline(always)]
+pub(crate) unsafe fn macro_stable_sort_views<T: Copy>(
+    linear_size: usize,
+    data: *mut T,
+    tmp: *mut T,
+    size: usize,
+    mut less: impl FnMut(
+        &crate::native::view::View<T, crate::native::view::Const>,
+        &crate::native::view::View<T, crate::native::view::Const>,
+    ) -> bool,
+) {
+    // SAFETY: the caller contract is `macro_stable_sort`'s, forwarded; inside,
+    // `a`/`b` point at live, initialized elements of `data`/`tmp` for the
+    // duration of the call, which is all a read-only view needs.
+    unsafe {
+        macro_stable_sort::<T>(linear_size, data, tmp, size, |a, b| {
+            less(
+                crate::native::view::View::<T, crate::native::view::Const>::from_ptr(a),
+                crate::native::view::View::<T, crate::native::view::Const>::from_ptr(b),
+            )
+        })
+    }
+}
+
+// As above over a run of element POINTERS (`ufbx_node **` and friends): the
+// comparator sees the pointees. Every slot holds a non-null pointer to a live
+// `T` (caller contract).
+#[inline(always)]
+pub(crate) unsafe fn macro_stable_sort_ptr_views<T>(
+    linear_size: usize,
+    data: *mut *mut T,
+    tmp: *mut *mut T,
+    size: usize,
+    mut less: impl FnMut(
+        &crate::native::view::View<T, crate::native::view::Const>,
+        &crate::native::view::View<T, crate::native::view::Const>,
+    ) -> bool,
+) {
+    // SAFETY: as in `macro_stable_sort_views`; the extra deref reads the
+    // pointer each in-bounds slot holds.
+    unsafe {
+        macro_stable_sort::<*mut T>(linear_size, data, tmp, size, |a, b| {
+            less(
+                crate::native::view::View::<T, crate::native::view::Const>::from_ptr(*a),
+                crate::native::view::View::<T, crate::native::view::Const>::from_ptr(*b),
+            )
+        })
+    }
+}
+
 // ufbx.c:1231 `typedef bool ufbxi_less_fn(void *user, const void *a, const void *b);`
 // C passes function designators (`&ufbxi_uv_set_less`) — fn pointers, never
 // closures (PORTING.md "Callbacks").

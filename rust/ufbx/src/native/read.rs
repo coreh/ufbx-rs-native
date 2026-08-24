@@ -112,9 +112,9 @@ use crate::native::api::{
 };
 use crate::native::buf::{buf_clear, pop, push_size, BufView};
 use crate::native::error::{
-    memchr, memcmp, strcmp, strlen, strncmp, ufbxi_check, ufbxi_check_err, ufbxi_check_msg,
-    ufbxi_check_return, ufbxi_check_some, ufbxi_fail, ufbxi_fail_msg, ufbxi_fmt_err_info, Fail,
-    EMPTY_CHAR,
+    c_strcmp, memchr, memcmp, strcmp, strlen, strncmp, ufbxi_check, ufbxi_check_err,
+    ufbxi_check_msg, ufbxi_check_return, ufbxi_check_some, ufbxi_fail, ufbxi_fail_msg,
+    ufbxi_fmt_err_info, Fail, EMPTY_CHAR,
 };
 use crate::native::float_parse::parse_double;
 use crate::native::hash::{hash64, hash_ptr_id, PtrId};
@@ -129,10 +129,10 @@ use crate::native::parse::{
     TmpMeshTexture, Unchecked, ValueArray, ValueType,
 };
 use crate::native::platform::{
-    add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, math, max_real, max_sz, min32,
-    min_real, min_sz, pack_version, stable_sort, to_size, ufbx_assert, ufbxi_dev_assert,
-    ufbxi_ignore, ufbxi_maybe_null, ufbxi_unreachable, unstable_sort, FACE_GROUP_HASH_BITS,
-    NO_INDEX,
+    add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, macro_stable_sort_views, math,
+    max_real, max_sz, min32, min_real, min_sz, pack_version, stable_sort, to_size, ufbx_assert,
+    ufbxi_dev_assert, ufbxi_ignore, ufbxi_maybe_null, ufbxi_unreachable, unstable_sort,
+    FACE_GROUP_HASH_BITS, NO_INDEX,
 };
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{push_string_place_blob, push_string_place_str};
@@ -140,7 +140,7 @@ use crate::native::thread::{
     thread_pool_available_tasks, thread_pool_flush_group, thread_pool_wait_all,
     thread_pool_wait_group, THREAD_GROUP_COUNT,
 };
-use crate::native::view::{Const, SliceViewIter, View};
+use crate::native::view::{Mode, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::as_f64;
 use crate::prelude::{Blob, List, OpenFileContext, Real, Ref, String};
@@ -367,27 +367,18 @@ pub(crate) unsafe fn read_property(
 }
 
 // ufbx.c:11871-11876 `ufbxi_prop_less`
+// Comparator over views: the sort adapter mints them (PORTING.md "Sorting").
 #[inline(always)]
-pub(crate) unsafe fn prop_less(a: *mut Prop, b: *mut Prop) -> bool {
-    // SAFETY: `a` and `b` are live `ufbx_prop` elements handed to the sort
-    // comparator from the property array being sorted (fn contract). The sorts
-    // hand them out through `&T`-derived pointers, so they may only anchor
-    // read-only `Const` views; the comparator never writes.
-    let (a, b): (&View<Prop, Const>, &View<Prop, Const>) = unsafe {
-        (
-            View::<Prop, Const>::from_ptr(a),
-            View::<Prop, Const>::from_ptr(b),
-        )
-    };
+pub(crate) fn prop_less<M: Mode>(a: &View<Prop, M>, b: &View<Prop, M>) -> bool {
     if a._internal_key() < b._internal_key() {
         return true;
     }
     if a._internal_key() > b._internal_key() {
         return false;
     }
-    // SAFETY: both `name.data` pointers are NUL-terminated strings interned in
-    // the string pool — `strcmp`'s contract.
-    let cmp: i32 = unsafe { strcmp(a.name().data, b.name().data) };
+    // C: `strcmp(a->name.data, b->name.data)` over interned (NUL-terminated)
+    // names — `c_strcmp` stops at the first NUL like `strcmp`.
+    let cmp: i32 = c_strcmp(a.name_view().bytes(), b.name_view().bytes());
     cmp < 0
 }
 
@@ -418,9 +409,7 @@ pub(crate) unsafe fn sort_properties(
     // scratch, so both the input run and the merge buffer are in bounds; the
     // comparator only ever sees elements of that run.
     unsafe {
-        macro_stable_sort::<Prop>(32, props, uc.tmp_arr() as *mut Prop, count, |a, b| {
-            prop_less(a as *mut Prop, b as *mut Prop)
-        })
+        macro_stable_sort_views::<Prop>(32, props, uc.tmp_arr() as *mut Prop, count, prop_less)
     };
     Ok(())
 }

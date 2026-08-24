@@ -238,9 +238,10 @@ use crate::native::parse::{
 #[cfg(feature = "regression")]
 use crate::native::parse::{is_quat_equal, is_vec3_equal};
 use crate::native::platform::{
-    add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, math, max32, max_sz, min32,
-    min_sz, pack_version, stable_sort, to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_ignore,
-    ufbxi_regression_assert, ufbxi_string_literal, ufbxi_unreachable, unstable_sort, NO_INDEX,
+    add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, macro_stable_sort_ptr_views,
+    macro_stable_sort_views, math, max32, max_sz, min32, min_sz, pack_version, stable_sort,
+    to_size, ufbx_assert, ufbxi_dev_assert, ufbxi_ignore, ufbxi_regression_assert,
+    ufbxi_string_literal, ufbxi_unreachable, unstable_sort, NO_INDEX,
 };
 use crate::native::read::{
     deduplicate_properties, find_fbx_id, fix_index, init_synthetic_vec3_prop, mesh_part_add_face,
@@ -1139,22 +1140,22 @@ pub(crate) fn find_element_by_fbx_id(uc: &Context, fbx_id: u64) -> *mut Element 
 }
 
 // ufbx.c:18556-18562 `ufbxi_cmp_name_element_less`
+// Comparator over views: the sort adapter mints them (PORTING.md "Sorting").
 #[inline(always)]
-pub(crate) unsafe fn cmp_name_element_less(a: *const NameElement, b: *const NameElement) -> bool {
-    // SAFETY: `a` and `b` point to live, initialized `NameElement`s — the two
-    // elements the sort hands its comparator (fn contract); `name.data` of an
-    // interned `ufbx_string` is a NUL-terminated C string, which is what
-    // `strcmp` walks.
-    unsafe {
-        if (*a)._internal_key != (*b)._internal_key {
-            return (*a)._internal_key < (*b)._internal_key;
-        }
-        let cmp: i32 = strcmp((*a).name.data, (*b).name.data);
-        if cmp != 0 {
-            return cmp < 0;
-        }
-        ((*a).type_ as u32) < (*b).type_ as u32
+pub(crate) fn cmp_name_element_less<M: crate::native::view::Mode>(
+    a: &View<NameElement, M>,
+    b: &View<NameElement, M>,
+) -> bool {
+    if a._internal_key() != b._internal_key() {
+        return a._internal_key() < b._internal_key();
     }
+    // C: `strcmp(a->name.data, b->name.data)` over interned (NUL-terminated)
+    // names — `c_strcmp` stops at the first NUL like `strcmp`.
+    let cmp: i32 = c_strcmp(a.name_view().bytes(), b.name_view().bytes());
+    if cmp != 0 {
+        return cmp < 0;
+    }
+    (a.type_() as u32) < (b.type_() as u32)
 }
 
 // ufbx.c:18564-18570 `ufbxi_cmp_name_element_less_ref`
@@ -1236,63 +1237,50 @@ pub(crate) unsafe fn sort_name_elements(
     // bytes, so the two disjoint runs `macro_stable_sort` needs are in place; it
     // hands the comparator pointers to live elements of those runs.
     unsafe {
-        macro_stable_sort::<NameElement>(
+        macro_stable_sort_views::<NameElement>(
             32,
             name_elems,
             uc.tmp_arr() as *mut NameElement,
             count,
-            |a, b| cmp_name_element_less(a, b),
+            cmp_name_element_less,
         )
     };
     Ok(())
 }
 
 // ufbx.c:18592-18610 `ufbxi_cmp_node_less`
+// Comparator over views: the sort adapter mints them (PORTING.md "Sorting").
+// `parent` links resolve through `Ref`'s safe deref: a non-null parent is a
+// live scene node for the whole sort.
 #[inline(never)]
-pub(crate) unsafe fn cmp_node_less(a: *mut Node, b: *mut Node) -> bool {
-    // SAFETY: `a` and `b` point to live, initialized `Node`s — the two nodes the
-    // sort hands its comparator (fn contract).
-    unsafe {
-        if (*a).node_depth != (*b).node_depth {
-            return (*a).node_depth < (*b).node_depth;
+pub(crate) fn cmp_node_less<M: crate::native::view::Mode>(
+    a: &View<Node, M>,
+    b: &View<Node, M>,
+) -> bool {
+    if a.node_depth() != b.node_depth() {
+        return a.node_depth() < b.node_depth();
+    }
+    match (a.parent(), b.parent()) {
+        (Some(a_parent), Some(b_parent)) => {
+            let a_pid: u32 = a_parent.element.element_id;
+            let b_pid: u32 = b_parent.element.element_id;
+            if a_pid != b_pid {
+                return a_pid < b_pid;
+            }
+        }
+        (a_parent, b_parent) => {
+            ufbx_assert!(a_parent.is_none() && b_parent.is_none());
         }
     }
-    // SAFETY: as above; `parent` is a live `Ref<Node>` field of each node, which
-    // `opt_ptr` reads as a nullable pointer.
-    let (a_parent, b_parent) = unsafe {
-        (
-            opt_ptr(&raw const (*a).parent),
-            opt_ptr(&raw const (*b).parent),
-        )
-    };
-    if !a_parent.is_null() && !b_parent.is_null() {
-        // SAFETY: both are non-null (checked) and a `parent` link points at a
-        // live scene `Node`.
-        let (a_pid, b_pid) = unsafe {
-            (
-                (*a_parent).element.element_id,
-                (*b_parent).element.element_id,
-            )
-        };
-        if a_pid != b_pid {
-            return a_pid < b_pid;
-        }
-    } else {
-        ufbx_assert!(a_parent.is_null() && b_parent.is_null());
+    if a.is_geometry_transform_helper() != b.is_geometry_transform_helper() {
+        // Sort geometry transform helpers always before rest of the children.
+        return a.is_geometry_transform_helper() as u32 > b.is_geometry_transform_helper() as u32;
     }
-    // SAFETY: `a` and `b` point to live, initialized `Node`s (fn contract).
-    unsafe {
-        if (*a).is_geometry_transform_helper != (*b).is_geometry_transform_helper {
-            // Sort geometry transform helpers always before rest of the children.
-            return (*a).is_geometry_transform_helper as u32
-                > (*b).is_geometry_transform_helper as u32;
-        }
-        if (*a).is_scale_helper != (*b).is_scale_helper {
-            // Sort scale helpers after geometry transform helpers.
-            return (*a).is_scale_helper as u32 > (*b).is_scale_helper as u32;
-        }
-        (*a).element.element_id < (*b).element.element_id
+    if a.is_scale_helper() != b.is_scale_helper() {
+        // Sort scale helpers after geometry transform helpers.
+        return a.is_scale_helper() as u32 > b.is_scale_helper() as u32;
     }
+    a.element().element_id() < b.element().element_id()
 }
 
 // ufbx.c:18612-18618 `ufbxi_sort_node_ptrs`
@@ -1322,9 +1310,13 @@ pub(crate) unsafe fn sort_node_ptrs(
     // comparator receives pointers into those runs, each holding a live `Node`
     // pointer.
     unsafe {
-        macro_stable_sort::<*mut Node>(32, nodes, uc.tmp_arr() as *mut *mut Node, count, |a, b| {
-            cmp_node_less(*a, *b)
-        })
+        macro_stable_sort_ptr_views::<Node>(
+            32,
+            nodes,
+            uc.tmp_arr() as *mut *mut Node,
+            count,
+            cmp_node_less,
+        )
     };
     Ok(())
 }
@@ -2871,18 +2863,20 @@ pub(crate) unsafe fn fetch_texture_layers(
 }
 
 // ufbx.c:19264-19269 `ufbxi_prop_connection_less`
+// Probe over a view (the list-impl search mints it); `prop: &[u8]` carries C's
+// NUL-terminated query string, minted once by the caller.
 #[inline(always)]
-pub(crate) unsafe fn prop_connection_less(a: *const Connection, prop: *const u8) -> bool {
-    // SAFETY: `a` points to a live `Connection` whose `dst_prop` is an interned
-    // (NUL-terminated) span, and `prop` is a NUL-terminated C string — both fn
-    // contracts, and what `strcmp` walks.
-    unsafe {
-        let cmp: i32 = strcmp((*a).dst_prop.data, prop);
-        if cmp != 0 {
-            return cmp < 0;
-        }
-        (*a).src_prop.length == 0
+pub(crate) fn prop_connection_less<M: crate::native::view::Mode>(
+    a: &View<Connection, M>,
+    prop: &[u8],
+) -> bool {
+    // C: `strcmp(a->dst_prop.data, prop)` over an interned (NUL-terminated)
+    // span — `c_strcmp` stops at the first NUL like `strcmp`.
+    let cmp: i32 = c_strcmp(a.dst_prop_view().bytes(), prop);
+    if cmp != 0 {
+        return cmp < 0;
     }
+    a.src_prop_view().length() == 0
 }
 
 // ufbx.c:19271-19283 `ufbxi_find_prop_connection`
@@ -2897,32 +2891,28 @@ pub(crate) unsafe fn find_prop_connection(
         prop = EMPTY_CHAR.as_ptr();
     }
 
-    let mut index: usize = usize::MAX;
-
     // SAFETY: `element` points to a live scene element (fn contract). It is a
     // `*const` parameter, so it anchors a read-only `Const` view; nothing writes
     // the element while the search below runs.
     let element_view: &View<Element, Const> = unsafe { View::<Element, Const>::from_ptr(element) };
+    // SAFETY: `prop` is a NUL-terminated C string (fn contract; the null case
+    // was substituted above), minted once as the probes' query span.
+    let prop_bytes: &[u8] = unsafe { crate::prelude::slice_from_ptr(prop, strlen(prop)) };
 
-    // SAFETY: `connections_dst` is that element's own `data`/`count` span of
-    // initialized `Connection`s, so the search range `0..count` is in bounds and
-    // every probe pointer the two closures receive addresses a live connection.
-    unsafe {
-        macro_lower_bound_eq(
-            32,
-            &mut index,
-            element_view.connections_dst().data,
-            0,
-            element_view.connections_dst().count,
-            |a| prop_connection_less(a, prop),
-            |a| (*a).dst_prop.data == prop && (*a).src_prop.length > 0,
-        )
-    };
+    let index: Option<usize> = element_view.connections_dst_view().lower_bound_eq(
+        32,
+        |a| prop_connection_less(a, prop_bytes),
+        |a| a.dst_prop_view().data() == prop && a.src_prop_view().length() > 0,
+    );
 
-    if index < usize::MAX {
-        // SAFETY: `index` is a hit position within `0..connections_dst.count`, so
-        // the offset stays inside the element's connection array.
-        unsafe { element_view.connections_dst().data.add(index) as *mut Connection }
+    if let Some(index) = index {
+        // `index` is a hit position within `0..connections_dst.count`; the
+        // result is derived from the list's own base so it keeps whole-run
+        // provenance.
+        element_view
+            .connections_dst_view()
+            .data()
+            .wrapping_add(index) as *mut Connection
     } else {
         ptr::null_mut()
     }
@@ -2943,28 +2933,22 @@ pub(crate) unsafe fn patch_index_pointer(uc: &Context, p_index: *mut *mut u32) {
 }
 
 // ufbx.c:19294-19299 `ufbxi_cmp_anim_prop_less`
+// Comparator over views: the sort adapter mints them (PORTING.md "Sorting").
 #[must_use]
-pub(crate) unsafe fn cmp_anim_prop_less(a: *const AnimProp, b: *const AnimProp) -> bool {
-    // SAFETY: `a` and `b` point to live, initialized `AnimProp`s — the two
-    // records the sort hands its comparator (fn contract) — and each `element`
-    // ref names a live scene element.
-    let (a_element, b_element) = unsafe {
-        (
-            ref_ptr(&raw const (*a).element),
-            ref_ptr(&raw const (*b).element),
-        )
-    };
+pub(crate) fn cmp_anim_prop_less<M: crate::native::view::Mode>(
+    a: &View<AnimProp, M>,
+    b: &View<AnimProp, M>,
+) -> bool {
+    // C: `if (a->element != b->element) return a->element < b->element;` —
+    // element pointer identity and address order.
+    let (a_element, b_element) = (a.element().ptr(), b.element().ptr());
     if a_element != b_element {
         return a_element < b_element;
     }
-    // SAFETY: as above; both `prop_name`s are interned string-pool spans, which
-    // is what `str_less` compares.
-    unsafe {
-        if (*a)._internal_key != (*b)._internal_key {
-            return (*a)._internal_key < (*b)._internal_key;
-        }
-        str_less((*a).prop_name.as_bytes(), (*b).prop_name.as_bytes())
+    if a._internal_key() != b._internal_key() {
+        return a._internal_key() < b._internal_key();
     }
+    str_less(a.prop_name_view().bytes(), b.prop_name_view().bytes())
 }
 
 // ufbx.c:19301-19306 `ufbxi_sort_anim_props`
@@ -2993,9 +2977,13 @@ pub(crate) unsafe fn sort_anim_props(
     // the two disjoint runs `macro_stable_sort` needs are in place; it hands the
     // comparator pointers to live elements of those runs.
     unsafe {
-        macro_stable_sort::<AnimProp>(32, aprops, uc.tmp_arr() as *mut AnimProp, count, |a, b| {
-            cmp_anim_prop_less(a, b)
-        })
+        macro_stable_sort_views::<AnimProp>(
+            32,
+            aprops,
+            uc.tmp_arr() as *mut AnimProp,
+            count,
+            cmp_anim_prop_less,
+        )
     };
     Ok(())
 }
