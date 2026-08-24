@@ -129,10 +129,10 @@ use crate::native::parse::{
     TmpMeshTexture, Unchecked, ValueArray, ValueType,
 };
 use crate::native::platform::{
-    add_ptr, f64_to_i64, macro_lower_bound_eq, macro_stable_sort, macro_stable_sort_views, math,
-    max_real, max_sz, min32, min_real, min_sz, pack_version, stable_sort, to_size, ufbx_assert,
-    ufbxi_dev_assert, ufbxi_ignore, ufbxi_maybe_null, ufbxi_unreachable, unstable_sort,
-    FACE_GROUP_HASH_BITS, NO_INDEX,
+    add_ptr, f64_to_i64, macro_stable_sort, macro_stable_sort_views, math, max_real, max_sz, min32,
+    min_real, min_sz, pack_version, stable_sort, to_size, ufbx_assert, ufbxi_dev_assert,
+    ufbxi_ignore, ufbxi_maybe_null, ufbxi_unreachable, unstable_sort, FACE_GROUP_HASH_BITS,
+    NO_INDEX,
 };
 use crate::native::string_pool as sp;
 use crate::native::string_pool::{push_string_place_blob, push_string_place_str};
@@ -144,7 +144,9 @@ use crate::native::view::{view_project, view_raw_mut, view_read_shared, view_wri
 use crate::native::view::{Mode, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::as_f64;
-use crate::prelude::{slice_from_ptr, Blob, List, ListView, OpenFileContext, Real, Ref, String};
+use crate::prelude::{
+    slice_from_ptr, Blob, List, ListView, OpenFileContext, Real, Ref, ScalarView, String,
+};
 
 // ufbx.h:3618 `UFBX_ENUM_TYPE(ufbx_thumbnail_format, UFBX_THUMBNAIL_FORMAT, UFBX_THUMBNAIL_FORMAT_RGBA_32);`
 // expanding to `enum { UFBX_THUMBNAIL_FORMAT_COUNT = UFBX_THUMBNAIL_FORMAT_RGBA_32 + 1 }`.
@@ -3577,14 +3579,24 @@ pub(crate) unsafe fn assign_face_groups(
     let mut seed: u32 = 2654435769u32;
     let mut rehash_threshold: u32 = 256;
 
+    // The mesh's own `count`-long run of `uint32_t` group IDs, as per-element
+    // scalar handles: C walks it three times (`ufbxi_for_list`), reading and
+    // rewriting entries in place.
+    // SAFETY: `face_group` is a contiguous run of `count` live, initialized
+    // `uint32_t`s owned by the mesh, reached through a write-capable mesh view;
+    // the only write to that memory NOT going through these handles is the
+    // `memset` on the single-group path below, which returns immediately.
+    let face_group: &[ScalarView<u32>] = unsafe {
+        slice_from_ptr(
+            mesh.face_group().data as *const ScalarView<u32>,
+            mesh.face_group().count,
+        )
+    };
+
     // Loosely deduplicate group IDs
     // C: `ufbxi_for_list(uint32_t, p_id, mesh->face_group)`
-    // `face_group` is the mesh's own `count`-long run of `uint32_t`.
-    let mut p_id: *mut u32 = mesh.face_group().data as *mut u32;
-    let p_id_end = add_ptr(p_id, mesh.face_group().count);
-    while p_id != p_id_end {
-        // SAFETY: `p_id` is inside the `face_group` run, short of `p_id_end`.
-        let id: u32 = unsafe { *p_id };
+    for p_id in face_group {
+        let id: u32 = p_id.get();
         let id_hash: u32 = id.wrapping_mul(seed) >> (32u32 - FACE_GROUP_HASH_BITS);
         let slot = &mut seen_ids[id_hash as usize];
         if slot.id != id || slot.index == 0 {
@@ -3598,13 +3610,12 @@ pub(crate) unsafe fn assign_face_groups(
             // C: `ids[num_ids++] = id;`
             // SAFETY: `ids` is the non-null `num_faces`-long run pushed above;
             // this write happens at most once per `face_group` entry and
-            // `face_group.count == num_faces`, so `num_ids < num_faces`.
+            // `face_group.count == num_faces`, so `num_ids < num_faces`. The
+            // run is uninitialized until written, so it is filled through the
+            // raw pointer — a scalar handle's `set` would read the old value.
             unsafe { *ids.add(num_ids as usize) = id };
             num_ids = num_ids.wrapping_add(1);
         }
-        // SAFETY: `p_id` is before `p_id_end`, so the advance lands at most one
-        // past the run's end.
-        p_id = unsafe { p_id.add(1) };
     }
 
     // Sort and deduplicate remaining IDs
@@ -3620,22 +3631,26 @@ pub(crate) unsafe fn assign_face_groups(
         )
     };
 
+    // The written prefix of `ids`, as per-element scalar handles.
+    // SAFETY: the loop above initialized `ids[0..num_ids]` and the sort left
+    // exactly that prefix live and initialized; the handles are minted after
+    // the sort's own writes through `ids`, and every later parent write to the
+    // run happens after their last use.
+    let id_slots: &[ScalarView<u32>] =
+        unsafe { slice_from_ptr(ids as *const ScalarView<u32>, num_ids as usize) };
+
     let mut num_groups: usize = 0;
     let mut i: usize = 0;
     while i < num_ids as usize {
-        // SAFETY: `i < num_ids <= num_faces` bounds the read in the `ids` run.
-        let id: u32 = unsafe { *ids.add(i) };
-        // C: `ids[num_groups++] = id;`
-        // SAFETY: `num_groups <= i < num_ids`, since it advances at most once
-        // per outer iteration, so the write is in the `ids` run.
-        unsafe { *ids.add(num_groups) = id };
+        let id: u32 = id_slots[i].get();
+        // C: `ids[num_groups++] = id;` — `num_groups <= i < num_ids` since it
+        // advances at most once per outer iteration.
+        id_slots[num_groups].set(id);
         num_groups += 1;
         // C: `do { i++; } while (i < num_ids && ids[i] == id);`
         loop {
             i += 1;
-            // SAFETY: the `i < num_ids` test short-circuits before the read, so
-            // `.add(i)` stays inside the `ids` run.
-            if !(i < num_ids as usize && unsafe { *ids.add(i) } == id) {
+            if !(i < num_ids as usize && id_slots[i].get() == id) {
                 break;
             }
         }
@@ -3648,13 +3663,14 @@ pub(crate) unsafe fn assign_face_groups(
         !groups.is_null(),
         "groups"
     );
-    for i in 0..num_groups {
-        // SAFETY: `groups` is the non-null `num_groups`-long run pushed above
-        // and `num_groups <= num_ids <= num_faces` bounds `ids.add(i)` too.
-        unsafe {
-            (*groups.add(i)).id = *ids.add(i) as i32;
-            (*groups.add(i)).name.data = EMPTY_CHAR.as_ptr();
-        }
+    // C: `for (size_t i = 0; i < num_groups; i++)` — `num_groups <= num_ids <=
+    // num_faces`, so the zip stops at `num_groups`.
+    // SAFETY: `groups` is the non-null contiguous `num_groups`-long
+    // `ufbx_face_group` run just pushed into `buf`, live for this call.
+    let group_views = unsafe { SliceViewIter::<FaceGroup>::from_raw_parts(groups, num_groups) };
+    for (group, id) in group_views.zip(id_slots.iter()) {
+        group.set_id(id.get() as i32);
+        group.name_view().set_data(EMPTY_CHAR.as_ptr());
     }
 
     // `groups` is the `num_groups`-long run pushed on `buf`.
@@ -3681,17 +3697,18 @@ pub(crate) unsafe fn assign_face_groups(
         unsafe { core::ptr::write_bytes(mesh.face_group().data as *mut u32, 0, num_faces) };
 
         if !parts.is_null() {
-            // SAFETY: `parts` is non-null (checked) with `num_groups == 1`
-            // entry, so index `0` is in bounds.
-            unsafe {
-                (*parts.add(0)).face_indices.data = SENTINEL_INDEX_CONSECUTIVE.as_ptr() as *mut u32;
-                (*parts.add(0)).face_indices.count = num_faces;
-                (*parts.add(0)).num_empty_faces = mesh.num_empty_faces();
-                (*parts.add(0)).num_point_faces = mesh.num_point_faces();
-                (*parts.add(0)).num_line_faces = mesh.num_line_faces();
-                (*parts.add(0)).num_faces = num_faces;
-                (*parts.add(0)).num_triangles = mesh.num_triangles();
-            }
+            // C: `parts[0]` — `num_groups == 1` here.
+            // SAFETY: `parts` is the non-null `num_groups`-long run pushed
+            // above, so it addresses a live, initialized `ufbx_mesh_part`.
+            let part: &View<MeshPart> = unsafe { View::<MeshPart>::from_ptr(parts) };
+            part.face_indices_view()
+                .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
+            part.face_indices_view().set_count(num_faces);
+            part.set_num_empty_faces(mesh.num_empty_faces());
+            part.set_num_point_faces(mesh.num_point_faces());
+            part.set_num_line_faces(mesh.num_line_faces());
+            part.set_num_faces(num_faces);
+            part.set_num_triangles(mesh.num_triangles());
         }
 
         // SAFETY: `p_consecutive_indices` is non-null (checked) and is the
@@ -3705,63 +3722,52 @@ pub(crate) unsafe fn assign_face_groups(
     unsafe { core::ptr::write_bytes(seen_ids.as_mut_ptr(), 0, SEEN_IDS_COUNT) };
 
     // Count faces and triangles per group and reassign IDs
-    // `faces` is the mesh's own `num_faces`-long run and `face_group` its
-    // `count`-long `uint32_t` run (checked equal to `num_faces` above).
-    let mut p_face: *const Face = mesh.faces().data;
+    // C: `const ufbx_face *p_face = mesh->faces.data;` — advanced in lockstep
+    // with the `face_group` walk below, whose count equals `num_faces`.
+    // SAFETY: `faces` is the mesh's own contiguous run of `num_faces` live,
+    // initialized `ufbx_face`s.
+    let p_faces =
+        unsafe { SliceViewIter::<Face>::from_raw_parts(mesh.faces().data as *mut Face, num_faces) };
+    // `face_groups` holds the `groups` run assigned above; `face_group_parts`
+    // holds `parts` where `retain_parts` is set.
+    let face_groups = mesh.face_groups_view();
+    let part_list = mesh.face_group_parts_view();
     // C: `ufbxi_for_list(uint32_t, p_id, mesh->face_group)`
-    let mut p_id: *mut u32 = mesh.face_group().data as *mut u32;
-    let p_id_end = add_ptr(p_id, mesh.face_group().count);
-    while p_id != p_id_end {
-        // SAFETY: `p_id` is inside the `face_group` run, short of `p_id_end`.
-        let id: u32 = unsafe { *p_id };
+    for (p_id, p_face) in face_group.iter().zip(p_faces) {
+        let id: u32 = p_id.get();
         let id_hash: u32 = id.wrapping_mul(seed) >> (32u32 - FACE_GROUP_HASH_BITS);
 
-        // SAFETY: `p_face` advances in lockstep with `p_id`, so it stays inside
-        // the equally long `faces` run.
-        let num_indices: u32 = unsafe { (*p_face).num_indices };
+        let num_indices: u32 = p_face.num_indices();
 
         let mut index: usize;
         if seen_ids[id_hash as usize].id == id && seen_ids[id_hash as usize].index > 0 {
             index = (seen_ids[id_hash as usize].index - 1) as usize;
-            // SAFETY: `p_id` addresses a live, writable `face_group` entry.
-            unsafe { *p_id = index as u32 };
+            p_id.set(index as u32);
         } else {
             let signed_id: i32 = id as i32;
             index = usize::MAX;
-            // SAFETY: `groups` is the non-null `num_groups`-long run pushed
-            // above, so the `[0, num_groups)` search window is in bounds, and
-            // the two predicates only read the `id` field of an element the
-            // search hands them from inside that window.
-            unsafe {
-                macro_lower_bound_eq::<FaceGroup>(
-                    8,
-                    &raw mut index,
-                    groups,
-                    0,
-                    num_groups,
-                    |a| (*a).id < signed_id,
-                    |a| (*a).id == signed_id,
-                )
-            };
+            // C: `ufbxi_macro_lower_bound_eq(ufbx_face_group, 8, &index, groups,
+            // 0, num_groups, ...)` — the search window is the whole `groups`
+            // run, which `mesh->face_groups` was just set to. C leaves `index`
+            // untouched on a miss.
+            if let Some(found) =
+                face_groups.lower_bound_eq(8, |a| a.id() < signed_id, |a| a.id() == signed_id)
+            {
+                index = found;
+            }
             ufbx_assert!(index < num_groups);
             seen_ids[id_hash as usize].id = id;
             seen_ids[id_hash as usize].index = (index as u32).wrapping_add(1);
         }
 
         if !parts.is_null() {
-            // SAFETY: `parts` is non-null (checked) with `num_groups` entries
-            // and `index < num_groups` — the `groups` slot the id resolved to.
-            unsafe { mesh_part_add_face(parts.add(index), num_indices) };
+            // C: `ufbxi_mesh_part_add_face(&parts[index], num_indices);`
+            // SAFETY: `at` yields the live `parts` element `index` addresses,
+            // and `mesh_part_add_face` touches only that one part's fields.
+            unsafe { mesh_part_add_face(part_list.at(index).get(), num_indices) };
         }
 
-        // SAFETY: `p_id` addresses a live, writable `face_group` entry.
-        unsafe { *p_id = index as u32 };
-        // SAFETY: `p_face` is short of the `faces` run's end, so the advance
-        // lands at most one past it.
-        p_face = unsafe { p_face.add(1) };
-        // SAFETY: `p_id` is before `p_id_end`, so the advance lands at most one
-        // past the run's end.
-        p_id = unsafe { p_id.add(1) };
+        p_id.set(index as u32);
     }
 
     if parts.is_null() {
@@ -3777,12 +3783,9 @@ pub(crate) unsafe fn assign_face_groups(
     for part in unsafe { SliceViewIter::<MeshPart>::from_raw_parts(parts, num_groups) } {
         part.set_index(part_index);
         part_index = part_index.wrapping_add(1);
-        // SAFETY: `face_indices_raw()` addresses the part's own index list;
         // `face_indices` sub-divides the `num_faces`-long `ids` run, whose total
         // length is the sum of the parts' `num_faces`.
-        unsafe {
-            (*part.face_indices_raw()).data = face_indices;
-        }
+        part.face_indices_view().set_data(face_indices);
         face_indices = add_ptr(face_indices, part.num_faces());
     }
     ufbx_assert!(face_indices == add_ptr(ids, num_faces));
@@ -3790,27 +3793,19 @@ pub(crate) unsafe fn assign_face_groups(
     // Collect per-group faces
     let mut face_index: u32 = 0;
     // C: `ufbxi_for_list(uint32_t, p_id, mesh->face_group)`
-    // `face_group` is the mesh's own `count`-long run of `uint32_t`.
-    let mut p_id: *mut u32 = mesh.face_group().data as *mut u32;
-    let p_id_end = add_ptr(p_id, mesh.face_group().count);
-    while p_id != p_id_end {
-        // SAFETY: `p_id` is inside the `face_group` run, short of `p_id_end`,
-        // and the loop above rewrote every entry to a group index below
-        // `num_groups`, which bounds it in the `parts` run.
-        let part: &View<MeshPart> =
-            unsafe { View::<MeshPart>::from_ptr(parts.add(*p_id as usize)) };
+    for p_id in face_group {
+        // C: `ufbx_mesh_part *part = &parts[*p_id];` — the loop above rewrote
+        // every entry to a group index below `num_groups`.
+        let part_face_indices = part_list.at(p_id.get() as usize).face_indices_view();
         // C: `part->face_indices.data[part->face_indices.count++] = face_index++;`
-        // SAFETY: `part`'s `face_indices` is the sub-range of `ids` assigned
+        // SAFETY: the part's `face_indices` is the sub-range of `ids` assigned
         // above, sized to the part's `num_faces`; `count` starts at zero and is
         // bumped once per face belonging to this part, so it stays within it.
         unsafe {
-            *(part.face_indices().data as *mut u32).add(part.face_indices().count) = face_index;
-            (*part.face_indices_raw()).count += 1;
+            *(part_face_indices.data() as *mut u32).add(part_face_indices.count()) = face_index;
         }
+        part_face_indices.set_count(part_face_indices.count() + 1);
         face_index = face_index.wrapping_add(1);
-        // SAFETY: `p_id` is before `p_id_end`, so the advance lands at most one
-        // past the run's end.
-        p_id = unsafe { p_id.add(1) };
     }
 
     Ok(())
