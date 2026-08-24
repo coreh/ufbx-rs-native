@@ -9788,41 +9788,38 @@ pub(crate) unsafe fn read_legacy_mesh(
         !vertices.is_null() && !indices.is_null(),
         "vertices && indices"
     );
-    // SAFETY: `vertices` is non-null (checked above) and `get_array` returns the
-    // node's own array descriptor, live for as long as the parse tree.
-    ufbxi_check!(
-        uc,
-        unsafe { (*vertices).size } % 3 == 0,
-        "vertices->size % 3 == 0"
-    );
+    // SAFETY: `vertices` and `indices` are non-null (checked above) and
+    // `get_array` returns the node's own array descriptor, live for as long as
+    // the parse tree and reached through `*mut` (write-capable provenance for
+    // `Mut`).
+    let vertices: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(vertices) };
+    // SAFETY: as above, for the `'i'` descriptor.
+    let indices: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(indices) };
+    ufbxi_check!(uc, vertices.size() % 3 == 0, "vertices->size % 3 == 0");
 
-    // SAFETY: `vertices` is the live array descriptor whose `'r'` payload holds
-    // `size` reals, a multiple of 3 (checked), hence `size / 3` `ufbx_vec3`
-    // positions; `indices` is likewise a live descriptor checked non-null above.
-    unsafe {
-        mesh.set_num_vertices((*vertices).size / 3);
-        mesh.set_num_indices((*indices).size);
-    }
+    // `vertices`'s `'r'` payload holds `size` reals, a multiple of 3 (checked),
+    // hence `size / 3` `ufbx_vec3` positions.
+    mesh.set_num_vertices(vertices.size() / 3);
+    mesh.set_num_indices(indices.size());
 
-    // SAFETY: as above — `indices`'s `'i'` payload is `size` `uint32_t`.
-    let mut index_data: *mut u32 = unsafe { (*indices).data } as *mut u32;
+    // The `'i'` array's payload is a run of `size` `u32`s.
+    let mut index_data: *mut u32 = indices.data() as *mut u32;
 
     // Duplicate `index_data` for modification if we retain DOM
     if uc.opts_view().retain_dom() {
         // SAFETY: `uc.result_mut_ptr()` is uc's own live `result` buf and
-        // `index_data` spans the `(*indices).size` `uint32_t` values copied.
+        // `index_data` spans the `indices->size` `uint32_t` values copied.
         index_data = unsafe {
             uc.result_view()
-                .push_copy_raw::<u32>((*indices).size, index_data)
+                .push_copy_raw::<u32>(indices.size(), index_data)
         };
         ufbxi_check!(uc, !index_data.is_null(), "index_data");
     }
 
-    // SAFETY (both `vertices` reads): `vertices`'s payload is the
-    // `num_vertices` `ufbx_vec3` run and `index_data` the `num_indices` index
-    // run.
+    // `vertices`'s payload is the `num_vertices` `ufbx_vec3` run and
+    // `index_data` the `num_indices` index run.
     mesh.vertices_view()
-        .set_data(unsafe { (*vertices).data } as *const Vec3);
+        .set_data(vertices.data() as *const Vec3);
     mesh.vertex_indices_view().set_data(index_data);
     mesh.vertices_view().set_count(mesh.num_vertices());
     mesh.vertex_indices_view().set_count(mesh.num_indices());
@@ -9830,7 +9827,7 @@ pub(crate) unsafe fn read_legacy_mesh(
     mesh.vertex_position().set_exists(true);
     mesh.vertex_position()
         .values_view()
-        .set_data(unsafe { (*vertices).data } as *const Vec3);
+        .set_data(vertices.data() as *const Vec3);
     mesh.vertex_position()
         .values_view()
         .set_count(mesh.num_vertices());
@@ -9865,8 +9862,10 @@ pub(crate) unsafe fn read_legacy_mesh(
     let normals: *mut ValueArray = find_array(node, sp::Normals.as_ptr(), b'r');
     if !normals.is_null() {
         // SAFETY: `normals` is non-null (checked) and `find_array` returns the
-        // node's own array descriptor, live for as long as the parse tree.
-        let num_normals: usize = unsafe { (*normals).size } / 3;
+        // node's own array descriptor, live for as long as the parse tree and
+        // reached through `*mut` (write-capable provenance for `Mut`).
+        let normals: &View<ValueArray> = unsafe { View::<ValueArray>::from_ptr(normals) };
+        let num_normals: usize = normals.size() / 3;
         let per_vertex: bool = num_normals == mesh.num_vertices();
         let per_index: bool = num_normals == mesh.num_indices();
         if per_vertex && (!per_index || uc.version() == 5000) {
@@ -9879,11 +9878,9 @@ pub(crate) unsafe fn read_legacy_mesh(
                 .indices_view()
                 .set_count(mesh.num_indices());
             mesh.vertex_normal().set_unique_per_vertex(true);
-            // SAFETY: `normals` is the live array descriptor checked non-null
-            // above.
             mesh.vertex_normal()
                 .values_view()
-                .set_data(unsafe { (*normals).data } as *const Vec3);
+                .set_data(normals.data() as *const Vec3);
             mesh.vertex_normal()
                 .indices_view()
                 .set_data(mesh.vertex_indices().data);
@@ -9901,11 +9898,9 @@ pub(crate) unsafe fn read_legacy_mesh(
                 .indices_view()
                 .set_count(mesh.num_indices());
             mesh.vertex_normal().set_unique_per_vertex(false);
-            // SAFETY: `normals` is the live array descriptor checked non-null
-            // above.
             mesh.vertex_normal()
                 .values_view()
-                .set_data(unsafe { (*normals).data } as *const Vec3);
+                .set_data(normals.data() as *const Vec3);
             mesh.vertex_normal()
                 .indices_view()
                 .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
@@ -9917,20 +9912,21 @@ pub(crate) unsafe fn read_legacy_mesh(
     if let Some(uv_info) = uv_info {
         let set: *mut UvSet = uc.result_view().push_zero::<UvSet>(1);
         ufbxi_check!(uc, !set.is_null(), "set");
-        // SAFETY: `set` is the fresh zeroed `ufbx_uv_set` pushed above, checked
-        // non-null.
-        unsafe {
-            (*set).index = 0;
-            (*set).name.data = EMPTY_CHAR.as_ptr();
-        }
-        // SAFETY: `&raw mut (*set).vertex_uv` is the `ufbx_vertex_vec2` slot of the
+        // SAFETY: `set` is the fresh zeroed `ufbx_uv_set` pushed into uc's own
+        // `result` buf above, checked non-null — live and unmoved for the rest
+        // of the load, and reached through `*mut` (write-capable provenance for
+        // `Mut`).
+        let set: &View<UvSet> = unsafe { View::<UvSet>::from_ptr(set) };
+        set.set_index(0);
+        set.name_view().set_data(EMPTY_CHAR.as_ptr());
+        // SAFETY: `set.vertex_uv_raw()` is the `ufbx_vertex_vec2` slot of the
         // fresh non-null set, which the `'r'`/2 attribute shape matches.
         unsafe {
             read_vertex_element(
                 uc,
                 mesh,
                 uv_info,
-                &raw mut (*set).vertex_uv as *mut VertexAttrib,
+                set.vertex_uv_raw() as *mut VertexAttrib,
                 sp::TextureUV.as_ptr(),
                 sp::TextureUVVerticeIndex.as_ptr(),
                 core::ptr::null(),
@@ -9940,15 +9936,16 @@ pub(crate) unsafe fn read_legacy_mesh(
         }?;
 
         // `set` is the fresh single-element UV-set allocation pushed above.
-        mesh.uv_sets_view().set_data(set);
+        mesh.uv_sets_view().set_data(set.get());
         mesh.uv_sets_view().set_count(1);
         // C: `mesh->vertex_uv = set->vertex_uv;` — struct assignment is a
         // memcpy; `VertexVec2` is not `Copy` in `generated.rs`.
-        // SAFETY: `set` is the live single-element allocation, distinct from the
-        // mesh; its `vertex_uv` is initialized — zeroed by the `push_zero` above,
-        // then possibly overwritten by `read_vertex_element` (which returns Ok
-        // without touching it when the UV data array is missing or empty).
-        mesh.set_vertex_uv(unsafe { core::ptr::read(&raw const (*set).vertex_uv) });
+        // SAFETY: `set.vertex_uv_ptr()` names the live set's own `vertex_uv`
+        // slot, distinct from the mesh; it is initialized — zeroed by the
+        // `push_zero` above, then possibly overwritten by `read_vertex_element`
+        // (which returns Ok without touching it when the UV data array is
+        // missing or empty).
+        mesh.set_vertex_uv(unsafe { core::ptr::read(set.vertex_uv_ptr()) });
     }
 
     // Material indices
@@ -9961,14 +9958,14 @@ pub(crate) unsafe fn read_legacy_mesh(
         )
         .0;
         if mapping == sp::ByPolygon.as_ptr() {
-            // SAFETY: `face_material_raw()` addresses the mesh's own live list
-            // field, so `&raw mut` projects the `data`/`count` slots the `'i'`
-            // element type matches.
+            // SAFETY: the `data`/`count` out-slots are the mesh's own live
+            // `face_material` list field, whose element type the `'i'` array
+            // shape matches.
             unsafe {
                 read_truncated_array(
                     uc,
-                    &raw mut (*mesh.face_material_raw()).data as *mut c_void,
-                    &raw mut (*mesh.face_material_raw()).count,
+                    mesh.face_material_view().data_raw() as *mut c_void,
+                    mesh.face_material_view().count_raw(),
                     node,
                     sp::Materials.as_ptr(),
                     b'i',
@@ -9977,13 +9974,23 @@ pub(crate) unsafe fn read_legacy_mesh(
             }?;
         } else if mapping == sp::AllSame.as_ptr() {
             let arr: *mut ValueArray = find_array(node, sp::Materials.as_ptr(), b'i');
+            // SAFETY: the view is minted only in the non-null arm, where
+            // `find_array` returned the node's own array descriptor, live for
+            // as long as the parse tree and reached through `*mut`
+            // (write-capable provenance for `Mut`).
+            let arr: Option<&View<ValueArray>> = if arr.is_null() {
+                None
+            } else {
+                Some(unsafe { View::<ValueArray>::from_ptr(arr) })
+            };
             let mut material: u32 = 0;
-            // SAFETY: `arr` is non-null (checked) and `find_array` returns the
-            // node's own array descriptor, live for as long as the parse tree.
-            if !arr.is_null() && unsafe { (*arr).size } >= 1 {
-                // SAFETY: as above — the `'i'` payload holds `size >= 1`
-                // `uint32_t`, so its first element is in bounds.
-                material = unsafe { *((*arr).data as *mut u32) };
+            if arr.is_some_and(|arr| arr.size() >= 1) {
+                // The guard above admits only a live descriptor with `size >= 1`,
+                // whose `'i'` payload is a run of `size` `u32`s.
+                let arr: &View<ValueArray> = arr.unwrap();
+                // SAFETY: `arr.data()` names that `size >= 1` run of `u32`, so
+                // its first element is readable.
+                material = unsafe { *(arr.data() as *mut u32) };
             }
 
             mesh.face_material_view().set_count(mesh.num_faces());
