@@ -3439,8 +3439,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // for the pushed run, then a safe walk.
         // SAFETY: `keys` is the contiguous `keyframes.count`-element allocation
         // just pushed (non-null, checked above), reached through `*mut` —
-        // write-capable provenance for `Mut`; its bytes are not yet initialized,
-        // which the views' `MaybeUninit` storage tolerates.
+        // write-capable provenance for `Mut`; `from_raw_parts` admits such a
+        // still-uninitialized run, and the loop below initializes every slot
+        // before reading it.
         let keys_run = unsafe {
             SliceViewIter::<BlendKeyframe>::from_raw_parts(keys, chan.keyframes_view().count())
         };
@@ -3538,8 +3539,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // for the pushed run, then a safe walk.
         // SAFETY: `textures` is the contiguous `textures.count`-element
         // allocation just pushed (non-null, checked above), reached through
-        // `*mut` — write-capable provenance for `Mut`; its bytes are not yet
-        // initialized, which the views' `MaybeUninit` storage tolerates.
+        // `*mut` — write-capable provenance for `Mut`; `from_raw_parts` admits
+        // such a still-uninitialized run, and the loop below initializes every
+        // slot before reading it.
         let textures_run = unsafe {
             SliceViewIter::<MaterialTexture>::from_raw_parts(
                 textures,
@@ -3593,8 +3595,9 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         // for the pushed run, then a safe walk.
         // SAFETY: `layers` is the contiguous `layers.count`-element allocation
         // just pushed (non-null, checked above), reached through `*mut` —
-        // write-capable provenance for `Mut`; its bytes are not yet initialized,
-        // which the views' `MaybeUninit` storage tolerates.
+        // write-capable provenance for `Mut`; `from_raw_parts` admits such a
+        // still-uninitialized run, and the loop below initializes every slot
+        // before reading it.
         let layers_run = unsafe {
             SliceViewIter::<TextureLayer>::from_raw_parts(layers, texture.layers_view().count())
         };

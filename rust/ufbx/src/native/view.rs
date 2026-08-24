@@ -304,12 +304,16 @@ pub(crate) struct SliceViewIter<'a, T> {
 
 impl<'a, T> SliceViewIter<'a, T> {
     /// # Safety
-    /// `base` must point to `count` contiguous, valid, initialized `T` that stay
-    /// alive and unmoved for `'a` — one arena allocation run (e.g.
-    /// `tag->children` / `tag->num_children`). The run must be genuinely
-    /// contiguous (`push_pop`-materialized), not skip-flagged. When `count == 0`
-    /// `base` is never offset or dereferenced, so null-with-zero is allowed
-    /// (unlike `slice::from_raw_parts`).
+    /// `base` must point to `count` contiguous, allocated, write-capable `T`
+    /// slots that stay alive and unmoved for `'a` — one arena allocation run
+    /// (e.g. `tag->children` / `tag->num_children`, or a freshly pushed run).
+    /// The run must be genuinely contiguous (`push_pop`-materialized), not
+    /// skip-flagged. The slots need NOT hold initialized `T`: the yielded
+    /// `View<T, Mut>` stores `UnsafeCell<MaybeUninit<T>>`, so an
+    /// `ufbxi_push`-fresh, still-uninitialized run is a legal vouch — the
+    /// caller owes initialization before any read through `get()`. When
+    /// `count == 0` `base` is never offset or dereferenced, so null-with-zero
+    /// is allowed (unlike `slice::from_raw_parts`).
     #[inline]
     pub(crate) unsafe fn from_raw_parts(base: *mut T, count: usize) -> Self {
         Self {
@@ -330,7 +334,9 @@ impl<'a, T> Iterator for SliceViewIter<'a, T> {
             return None;
         }
         // SAFETY: `idx < count`, so `base + idx` is in-bounds of the run vouched
-        // at `new`; that element is a valid/initialized/stable `T` for 'a.
+        // at `from_raw_parts`; that slot is an allocated, write-capable, stable
+        // `T` slot for 'a — possibly uninitialized, which the `Mut` view's
+        // `MaybeUninit` storage tolerates.
         let elem = unsafe { self.base.add(self.idx) };
         self.idx += 1;
         Some(unsafe { View::<T>::from_ptr(elem) })
