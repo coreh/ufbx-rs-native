@@ -31,7 +31,7 @@ use crate::generated::{
     Error, ErrorType, Extrapolation, ExtrapolationMode, FileFormat, IndexErrorHandling,
     InflateRetain, Keyframe, OpenFileInfo, OpenFileType, Prop, PropFlags, PropOverride, PropType,
     Quat, RawAnimOpts, RawGeometryCacheDataOpts, RawLoadOpts, RawOpenFileOpts, RawPropOverrideDesc,
-    RawStream, RotationOrder, Scene, Tangent, TransformOverride, UnicodeErrorHandling, Vec3,
+    RawStream, RotationOrder, Scene, Tangent, TransformOverride, UnicodeErrorHandling, Vec3, Vec4,
     Warning, WarningType,
 };
 #[cfg(feature = "scene-eval")]
@@ -122,7 +122,9 @@ use crate::native::string_pool::{
 };
 use crate::native::thread::{thread_pool_free, thread_pool_init, THREAD_GROUP_COUNT};
 use crate::native::view::SliceViewIter;
-use crate::native::view::{view_raw_const, view_raw_mut, view_read, view_write};
+use crate::native::view::{
+    view_raw_const, view_raw_mut, view_raw_shared, view_read, view_read_shared, view_write,
+};
 use crate::native::view::{Const, Mode, Mut, View};
 use crate::native::warnings::{pop_warnings, ufbxi_warnf};
 use crate::prelude::as_f64;
@@ -4357,6 +4359,15 @@ impl CreateAnimContext {
         view_raw_mut!(self, anim)
     }
 
+    // `anim` — typed VIEW handle (reinterpret-in-place); accessors on the
+    // generated `View<Anim, M>` surface.
+    #[inline(always)]
+    pub(crate) fn anim_view(&self) -> &View<Anim> {
+        // SAFETY: reinterpret the `anim` field in place inside this context's
+        // outer UnsafeCell; shared interior-mutable view, asserts no validity.
+        unsafe { &*(&raw mut (*self.get()).anim as *mut View<Anim>) }
+    }
+
     // `imp` — scalar value accessor.
     #[inline(always)]
     pub(crate) fn imp(&self) -> *mut AnimImp {
@@ -4377,6 +4388,34 @@ impl CreateAnimContext {
     #[inline(always)]
     pub(crate) fn set_scene(&self, scene: *const Scene) {
         view_write!(self, scene, scene)
+    }
+}
+
+// Typed view over one caller-supplied `ufbx_prop_override_desc`
+// (`ac->opts.prop_overrides.data[i]`). The generator emits views for the public
+// `ufbx_*` structs only, so the `Raw*` boundary twin carries hand accessors:
+// one leaf each, mode-generic so the frozen `Const` mint over caller memory is
+// served by the same surface.
+impl<M: Mode> View<RawPropOverrideDesc, M> {
+    #[inline(always)]
+    pub(crate) fn element_id(&self) -> u32 {
+        view_read_shared!(self, element_id)
+    }
+    #[inline(always)]
+    pub(crate) fn prop_name_ptr(&self) -> *const crate::prelude::RawString {
+        view_raw_shared!(self, prop_name)
+    }
+    #[inline(always)]
+    pub(crate) fn value(&self) -> Vec4 {
+        view_read_shared!(self, value)
+    }
+    #[inline(always)]
+    pub(crate) fn value_str_ptr(&self) -> *const crate::prelude::RawString {
+        view_raw_shared!(self, value_str)
+    }
+    #[inline(always)]
+    pub(crate) fn value_int(&self) -> i64 {
+        view_read_shared!(self, value_int)
     }
 }
 
@@ -4522,7 +4561,7 @@ pub(crate) unsafe extern "C" fn transform_override_less(
 #[inline(never)]
 pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<AnimImp>, Fail> {
     let scene: *const Scene = ac.scene();
-    let anim: *mut Anim = ac.anim_mut_ptr();
+    let anim: &View<Anim> = ac.anim_view();
 
     // SAFETY: initializing ac's own result allocator from ac's own error slot
     // and the caller's opts allocator descriptor, named by a `'static`
@@ -4538,23 +4577,16 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
     ac.result_view().set_unordered(true);
     ac.result_view().set_ator(ac.ator_result_mut_ptr());
 
-    // SAFETY: `anim` is ac's own output `Anim` slot (ac construction
-    // invariant); the layer array is pushed onto ac's own result buf with one
-    // slot per requested layer id.
-    unsafe {
-        (*anim).ignore_connections = ac.opts_view().ignore_connections();
-        (*anim).custom = true;
-    }
+    anim.set_ignore_connections(ac.opts_view().ignore_connections());
+    anim.set_custom(true);
 
     let num_layers: usize = ac.opts_view().layer_ids_view().count();
-    unsafe {
-        (*anim).layers.count = num_layers;
-        (*anim).layers.data =
-            ac.result_view().push_zero::<*mut AnimLayer>(num_layers) as *const Ref<AnimLayer>;
-    }
+    anim.layers_view().set_count(num_layers);
+    anim.layers_view()
+        .set_data(ac.result_view().push_zero::<*mut AnimLayer>(num_layers) as *const Ref<AnimLayer>);
     ufbxi_check_err!(
         ac.error_view(),
-        !unsafe { (*anim).layers.data }.is_null(),
+        !anim.layers_view().data().is_null(),
         "anim->layers.data"
     );
 
@@ -4568,35 +4600,46 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
         // SAFETY: `override_layer_weights` was just checked to hold exactly
         // `num_layers` entries, so the copy reads that whole caller run into a
         // fresh push on ac's own result buf.
-        unsafe {
-            (*anim).override_layer_weights.data = ac.result_view().push_copy_raw::<Real>(
+        anim.override_layer_weights_view().set_data(unsafe {
+            ac.result_view().push_copy_raw::<Real>(
                 num_layers,
                 ac.opts_view().override_layer_weights_view().data(),
-            );
-        }
+            )
+        });
         ufbxi_check_err!(
             ac.error_view(),
-            !unsafe { (*anim).override_layer_weights.data }.is_null(),
+            !anim.override_layer_weights_view().data().is_null(),
             "anim->override_layer_weights.data"
         );
-        unsafe { (*anim).override_layer_weights.count = num_layers };
+        anim.override_layer_weights_view().set_count(num_layers);
     }
 
+    // C: `scene->anim_layers` — the scene is the caller's finished, immutable
+    // scene, so the list field is read through a frozen view.
+    // SAFETY: `scene` points at the live scene this anim is created for (ac
+    // construction invariant); the projection covers only the `anim_layers`
+    // field, which nothing writes for the duration of this call.
+    let scene_anim_layers: &View<crate::prelude::RefList<AnimLayer>, Const> = unsafe {
+        View::<crate::prelude::RefList<AnimLayer>, Const>::from_ptr(&raw const (*scene).anim_layers)
+    };
+
     for i in 0..num_layers {
-        // SAFETY: `i < num_layers` is the opts' own `layer_ids` count.
+        // SAFETY: `i < num_layers` is the opts' own `layer_ids` count, so the
+        // read stays inside the caller's `layer_ids` run.
         let index: u32 = unsafe { *ac.opts_view().layer_ids_view().data().add(i) };
         ufbxi_check_err_msg!(
             ac.error_view(),
-            (index as usize) < unsafe { (*scene).anim_layers.count },
+            (index as usize) < scene_anim_layers.count(),
             "layer_ids out of bounds",
             "index < scene->anim_layers.count"
         );
         // C: `anim->layers.data[i] = ac->scene->anim_layers.data[index];`
         // SAFETY: `index` was just bounds-checked against the live scene's
-        // `anim_layers`, and `i < num_layers` indexes the fresh layer push.
+        // `anim_layers`, and `i < num_layers` indexes the fresh layer push;
+        // both element addresses are derived from their own list base.
         unsafe {
-            *((*anim).layers.data as *mut *mut AnimLayer).add(i) =
-                *((*scene).anim_layers.data as *mut *mut AnimLayer).add(index as usize);
+            *(anim.layers_view().data() as *mut *mut AnimLayer).add(i) =
+                *(scene_anim_layers.data() as *const *mut AnimLayer).add(index as usize);
         }
     }
 
@@ -4605,117 +4648,151 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
     let prop_overrides: crate::prelude::RawList<RawPropOverrideDesc> =
         unsafe { ptr::read(ac.opts_view().prop_overrides_ptr()) };
     if prop_overrides.count > 0 {
-        // SAFETY: `anim` is the caller's own out-parameter; the push reserves
-        // one destination slot per caller-supplied override.
-        unsafe {
-            (*anim).prop_overrides.count = prop_overrides.count;
-            (*anim).prop_overrides.data = ac
-                .result_view()
-                .push_zero::<PropOverride>(prop_overrides.count);
-        }
+        anim.prop_overrides_view().set_count(prop_overrides.count);
+        anim.prop_overrides_view().set_data(
+            ac.result_view()
+                .push_zero::<PropOverride>(prop_overrides.count),
+        );
         ufbxi_check_err!(
             ac.error_view(),
-            !unsafe { (*anim).prop_overrides.data }.is_null(),
+            !anim.prop_overrides_view().data().is_null(),
             "anim->prop_overrides.data"
         );
 
         for i in 0..prop_overrides.count {
-            // SAFETY: `i < prop_overrides.count` indexes both the caller's own
-            // override run and the fresh non-null push of the same length; the
-            // two string fields written are `dst`'s own, read from `src`'s.
-            unsafe {
-                let src: *const RawPropOverrideDesc = prop_overrides.data.add(i);
-                let dst: *mut PropOverride =
-                    ((*anim).prop_overrides.data as *mut PropOverride).add(i);
+            // C: `const ufbx_prop_override_desc *src = &prop_overrides.data[i];`
+            // SAFETY: `i < prop_overrides.count` indexes the caller's own
+            // override run from its list base; the frozen view covers that one
+            // descriptor, which nothing writes during this call.
+            let src: &View<RawPropOverrideDesc, Const> =
+                unsafe { View::<RawPropOverrideDesc, Const>::from_ptr(prop_overrides.data.add(i)) };
+            // C: `ufbx_prop_override *dst = &anim->prop_overrides.data[i];`
+            let dst: &View<PropOverride> = anim.prop_overrides_view().at(i);
 
-                (*dst).element_id = (*src).element_id;
-                (*dst).value = (*src).value;
-                (*dst).value_int = (*src).value_int;
+            dst.set_element_id(src.element_id());
+            dst.set_value(src.value());
+            dst.set_value_int(src.value_int());
 
-                if (*dst).value.x != 0.0 && (*dst).value_int == 0 {
-                    // C: `(int64_t)dst->value.x` — bare float→int cast; Rust `as`
-                    // saturates (PORTING.md integer-semantics table, accepted
-                    // divergence class).
-                    (*dst).value_int = (*dst).value.x as i64;
-                } else if (*dst).value_int != 0 && (*dst).value.x == 0.0 {
-                    (*dst).value.x = (*dst).value_int as Real;
+            if dst.value().x != 0.0 && dst.value_int() == 0 {
+                // C: `(int64_t)dst->value.x` — bare float→int cast; Rust `as`
+                // saturates (PORTING.md integer-semantics table, accepted
+                // divergence class).
+                dst.set_value_int(dst.value().x as i64);
+            } else if dst.value_int() != 0 && dst.value().x == 0.0 {
+                // C assigns the single `.x` lane; the view surface carries no
+                // sub-field setter for it, so the write goes through the
+                // element's own `value` place.
+                // SAFETY: `value_raw()` is this element view's own `Vec4`
+                // field address, write-capable by the view's `Mut` mode.
+                unsafe {
+                    (*dst.value_raw()).x = dst.value_int() as Real;
                 }
-
-                // C: `ufbxi_check_err(&ac->error, ufbxi_check_string(&ac->error, &dst->prop_name, &src->prop_name));`
-                check_string(
-                    ac.error_mut_ptr(),
-                    &raw mut (*dst).prop_name,
-                    &raw const (*src).prop_name as *const String,
-                )?;
-                check_string(
-                    ac.error_mut_ptr(),
-                    &raw mut (*dst).value_str,
-                    &raw const (*src).value_str as *const String,
-                )?;
-
-                (*dst)._internal_key = get_name_key((*dst).prop_name.as_bytes());
             }
+
+            // C: `ufbxi_check_err(&ac->error, ufbxi_check_string(&ac->error, &dst->prop_name, &src->prop_name));`
+            // SAFETY: `check_string`'s contract is a live destination and
+            // source `ufbx_string`; both are field addresses projected from
+            // the two element views above (`RawString` is the layout twin of
+            // `String`), and ac's error slot is its own.
+            unsafe {
+                check_string(
+                    ac.error_mut_ptr(),
+                    dst.prop_name_raw(),
+                    src.prop_name_ptr() as *const String,
+                )?;
+                check_string(
+                    ac.error_mut_ptr(),
+                    dst.value_str_raw(),
+                    src.value_str_ptr() as *const String,
+                )?;
+            }
+
+            dst.set_internal_key(get_name_key(dst.prop_name_view().bytes()));
         }
 
         // Sort `anim->prop_overrides` first by `prop_name` only so we can deduplicate and
         // convert them to global strings in `ufbxi_strings[]` if possible.
         // SAFETY: the run is the fresh non-null push of `prop_overrides.count`
-        // elements; neither comparator takes user data, so the null `user` is
-        // what they expect. The walk then stays inside that run, and
-        // `global_str` walks the `'static` `STRINGS` table between its own
-        // bounds. `str_equal`/`str_less` read the NUL-free `data`/`length`
-        // runs of interned or caller strings already validated by
-        // `check_string` above.
+        // elements addressed from its own list base; the comparator takes no
+        // user data, so the null `user` is what it expects.
         unsafe {
             unstable_sort(
-                (*anim).prop_overrides.data as *mut PropOverride as *mut c_void,
-                (*anim).prop_overrides.count,
+                anim.prop_overrides_view().data() as *mut PropOverride as *mut c_void,
+                anim.prop_overrides_view().count(),
                 size_of::<PropOverride>(),
                 prop_override_prop_name_less,
                 ptr::null_mut(),
             );
+        }
 
-            let mut global_str: *const String = STRINGS.0.as_ptr();
-            let global_end: *const String = global_str.add(STRINGS.0.len());
-            // C: `ufbx_string prev_name = { ufbxi_empty_char };`
-            let mut prev_name: String = String::new_c(EMPTY_CHAR.as_ptr(), 0);
-            // C: `ufbxi_for_list(ufbx_prop_override, over, anim->prop_overrides)`
-            let mut over: *mut PropOverride = (*anim).prop_overrides.data as *mut PropOverride;
-            let over_end: *mut PropOverride = add_ptr(over, (*anim).prop_overrides.count);
-            while over != over_end {
-                if (*over).value_str.length > 0 {
-                    // C: `ufbxi_check_err(&ac->error, ufbxi_push_anim_string(ac, &over->value_str));`
-                    push_anim_string(ac, &raw mut (*over).value_str)?;
-                }
-
-                if str_equal((*over).prop_name.as_bytes(), prev_name.as_bytes()) {
-                    (*over).prop_name = prev_name;
-                    over = over.add(1);
-                    continue;
-                }
-
-                while global_str != global_end
-                    && str_less((*global_str).as_bytes(), (*over).prop_name.as_bytes())
-                {
-                    global_str = global_str.add(1);
-                }
-
-                if global_str != global_end
-                    && str_equal((*global_str).as_bytes(), (*over).prop_name.as_bytes())
-                {
-                    (*over).prop_name = *global_str;
-                } else {
-                    push_anim_string(ac, &raw mut (*over).prop_name)?;
-                }
-
-                prev_name = (*over).prop_name;
-                over = over.add(1);
+        // C: `const ufbx_string *global_str = ufbxi_strings, *global_end = global_str + ufbxi_arraycount(ufbxi_strings);`
+        // The C cursor pair becomes an index pair over the table viewed as
+        // frozen strings.
+        // SAFETY: `STRINGS` is a `'static` table of valid `ufbx_string`s that
+        // nothing ever writes, so its whole run reinterprets in place as
+        // frozen string views.
+        let globals: &[View<String, Const>] = unsafe {
+            crate::prelude::slice_from_ptr(
+                STRINGS.0.as_ptr() as *const View<String, Const>,
+                STRINGS.0.len(),
+            )
+        };
+        let mut global_str: usize = 0;
+        let global_end: usize = globals.len();
+        // C: `ufbx_string prev_name = { ufbxi_empty_char };`
+        let mut prev_name: String = String::new_c(EMPTY_CHAR.as_ptr(), 0);
+        // C: `ufbxi_for_list(ufbx_prop_override, over, anim->prop_overrides)`
+        // SAFETY: the list run is the contiguous `push_zero` allocation checked
+        // above — fully initialized by the copy loop — live and unmoved on ac's
+        // own result buf, and write-capable as a result-buf allocation.
+        let overs = unsafe {
+            SliceViewIter::<PropOverride>::from_raw_parts(
+                anim.prop_overrides_view().data() as *mut PropOverride,
+                anim.prop_overrides_view().count(),
+            )
+        };
+        for over in overs {
+            if over.value_str_view().length() > 0 {
+                // C: `ufbxi_check_err(&ac->error, ufbxi_push_anim_string(ac, &over->value_str));`
+                // SAFETY: `push_anim_string`'s contract is a live `ufbx_string`
+                // slot; this is the element view's own `value_str` field.
+                unsafe { push_anim_string(ac, over.value_str_raw())? };
             }
 
-            // Sort `anim->prop_overrides` to the actual order expected by evaluation.
+            // SAFETY: `prev_name` is the empty-string literal or a `prop_name`
+            // interned earlier in this walk — live and unwritten here.
+            if str_equal(over.prop_name_view().bytes(), unsafe {
+                prev_name.as_bytes()
+            }) {
+                over.set_prop_name(prev_name);
+                continue;
+            }
+
+            while global_str != global_end
+                && str_less(globals[global_str].bytes(), over.prop_name_view().bytes())
+            {
+                global_str += 1;
+            }
+
+            if global_str != global_end
+                && str_equal(globals[global_str].bytes(), over.prop_name_view().bytes())
+            {
+                over.set_prop_name(STRINGS.0[global_str]);
+            } else {
+                // SAFETY: as above — the element view's own `prop_name` field.
+                unsafe { push_anim_string(ac, over.prop_name_raw())? };
+            }
+
+            prev_name = over.prop_name();
+        }
+
+        // Sort `anim->prop_overrides` to the actual order expected by evaluation.
+        // SAFETY: as for the first sort — the same fresh run, addressed from
+        // its own list base, with a user-data-free comparator.
+        unsafe {
             unstable_sort(
-                (*anim).prop_overrides.data as *mut PropOverride as *mut c_void,
-                (*anim).prop_overrides.count,
+                anim.prop_overrides_view().data() as *mut PropOverride as *mut c_void,
+                anim.prop_overrides_view().count(),
                 size_of::<PropOverride>(),
                 prop_override_less,
                 ptr::null_mut(),
@@ -4723,52 +4800,50 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
         }
 
         for i in 1..prop_overrides.count {
-            // SAFETY: `1 <= i < prop_overrides.count`, so both `i - 1` and `i`
-            // index the pushed run; `prop_name.data` is the NUL-terminated
-            // interned name the duplicate message formats.
-            unsafe {
-                let prev: *const PropOverride = (*anim).prop_overrides.data.add(i - 1);
-                let next: *const PropOverride = (*anim).prop_overrides.data.add(i);
-                if (*prev).element_id == (*next).element_id
-                    && (*prev).prop_name.data == (*next).prop_name.data
-                {
+            // C: `const ufbx_prop_override *prev/next = &anim->prop_overrides.data[i - 1 / i];`
+            let prev: &View<PropOverride> = anim.prop_overrides_view().at(i - 1);
+            let next: &View<PropOverride> = anim.prop_overrides_view().at(i);
+            if prev.element_id() == next.element_id()
+                && prev.prop_name_view().data() == next.prop_name_view().data()
+            {
+                // SAFETY: `fmt_err_info` writes ac's own error slot, and the
+                // `%s` argument is `prev`'s interned, NUL-terminated
+                // `prop_name.data`.
+                unsafe {
                     ufbxi_fmt_err_info!(
                         ac.error_mut_ptr(),
                         "element %u prop \"%s\"",
-                        (*prev).element_id,
-                        (*prev).prop_name.data
-                    );
-                    ufbxi_fail_err_msg!(
-                        ac.error_view(),
-                        "Duplicate override",
-                        "Duplicate override"
+                        prev.element_id(),
+                        prev.prop_name_view().data()
                     );
                 }
+                ufbxi_fail_err_msg!(ac.error_view(), "Duplicate override", "Duplicate override");
             }
         }
     }
 
     if ac.opts_view().transform_overrides_view().count() > 0 {
+        anim.transform_overrides_view()
+            .set_count(ac.opts_view().transform_overrides_view().count());
         // SAFETY: the copy reads exactly the caller's own transform-override
         // run into a fresh push of the same length on ac's own result buf.
-        unsafe {
-            (*anim).transform_overrides.count = ac.opts_view().transform_overrides_view().count();
-            (*anim).transform_overrides.data = ac.result_view().push_copy_raw::<TransformOverride>(
-                (*anim).transform_overrides.count,
+        anim.transform_overrides_view().set_data(unsafe {
+            ac.result_view().push_copy_raw::<TransformOverride>(
+                anim.transform_overrides_view().count(),
                 ac.opts_view().transform_overrides_view().data(),
-            );
-        }
+            )
+        });
         ufbxi_check_err!(
             ac.error_view(),
-            !unsafe { (*anim).transform_overrides.data }.is_null(),
+            !anim.transform_overrides_view().data().is_null(),
             "anim->transform_overrides.data"
         );
         // SAFETY: sorting the fresh non-null run just checked, over its own
-        // count; the comparator takes no user data.
+        // count and from its own list base; the comparator takes no user data.
         unsafe {
             unstable_sort(
-                (*anim).transform_overrides.data as *mut TransformOverride as *mut c_void,
-                (*anim).transform_overrides.count,
+                anim.transform_overrides_view().data() as *mut TransformOverride as *mut c_void,
+                anim.transform_overrides_view().count(),
                 size_of::<TransformOverride>(),
                 transform_override_less,
                 ptr::null_mut(),
