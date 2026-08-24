@@ -253,10 +253,12 @@ use crate::native::read::{
 use crate::native::string_pool::{
     self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
 };
-use crate::native::view::{Const, Mode, SliceViewIter, View};
+use crate::native::view::{view_read, Const, Mode, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::as_f64;
-use crate::prelude::{slice_from_ptr, Blob, List, ListView, Real, Ref, RefList, String};
+use crate::prelude::{
+    slice_from_ptr, Blob, List, ListView, Real, Ref, RefList, RefListView, String,
+};
 
 // Rust-port infrastructure (not a ufbx.c section): reinterpret-in-place VIEWS
 // over the scene-graph element structs the `ufbxi_update_*` family mutates.
@@ -325,6 +327,55 @@ impl crate::native::view::View<Element> {
         // `&mut`, so writes through the element view do not retag it);
         // interior-mutable, asserts no validity, correlated to `&self` (<= uc).
         unsafe { PropsView::from_ptr(&raw mut (*self.get()).props) }
+    }
+}
+
+// C indexes `uc->scene.elements_by_type[type]`, the `ufbx_element_list` array
+// view of the `ufbx_scene` per-type list union (ufbx.h:4015); the generated
+// struct keeps only the named branch, whose first member (`unknowns`) is the
+// array base. The finalize pass reaches every branch through that base, so the
+// index lives here once rather than at each walk.
+impl crate::native::view::View<Scene> {
+    #[inline(always)]
+    pub(crate) fn elements_by_type_at(
+        &self,
+        type_: usize,
+    ) -> &crate::prelude::RefListView<Element> {
+        assert!(type_ < ELEMENT_TYPE_COUNT);
+        // SAFETY: `unknowns_mut_ptr` addresses the first of the scene's
+        // `ELEMENT_TYPE_COUNT` per-type list members, which share one flat
+        // layout of identically shaped `ufbx_element_list`s, so the
+        // bounds-checked index stays inside the scene's own allocation and
+        // inherits its write-capable provenance.
+        unsafe {
+            crate::prelude::RefListView::<Element>::from_ptr(
+                (self.unknowns_mut_ptr() as *mut RefList<Element>).add(type_),
+            )
+        }
+    }
+}
+
+// `ufbxi_node_extra` (ufbx.c:12507-12510) is an internal scratch record rather
+// than a public element, so it has no generated view; the finalize pass reads
+// one leaf field out of it.
+impl crate::native::view::View<NodeExtra> {
+    #[inline(always)]
+    pub(crate) fn scale_helper_id(&self) -> u32 {
+        view_read!(self, scale_helper_id)
+    }
+}
+
+// `ufbxi_tmp_bone_pose` (ufbx.c:6329-6332) is likewise an internal scratch
+// record with no generated view; the bind-pose filter reads both of its fields
+// out of the run stashed in `pose->bone_poses`.
+impl crate::native::view::View<TmpBonePose> {
+    #[inline(always)]
+    pub(crate) fn bone_fbx_id(&self) -> u64 {
+        view_read!(self, bone_fbx_id)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_to_world(&self) -> Matrix {
+        view_read!(self, bone_to_world)
     }
 }
 
@@ -8087,43 +8138,57 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     // offset buffer.
     unsafe { buf_free(uc.tmp_element_offsets_mut_ptr()) };
     ufbxi_check!(uc, !element_offsets.is_null(), "element_offsets");
+    // The offsets are the one `ufbxi_push_pop`-materialized block popped above,
+    // one `size_t` per element: `ufbxi_push_element_size` pushes exactly one
+    // offset per `uc->num_elements++` (ufbx.c:12357-12360), so the run holds
+    // `num_elements` entries and every element id indexes it. Nothing writes it
+    // while the walk below reads it.
+    // SAFETY: the run is non-null (checked above), contiguous, and holds
+    // `num_element_offsets` initialized `size_t`s that stay live for the walk.
+    let element_offsets_run: &[usize] =
+        unsafe { slice_from_ptr(element_offsets as *const usize, num_element_offsets) };
+    // C stores into `uc->scene.elements.data[i]`; the destination run is derived
+    // from the list base, which the check above proved non-null.
+    let scene_elements: *mut *mut Element =
+        uc.scene_view().elements_view().data() as *mut *mut Element;
     for i in 0..num_elements {
-        // SAFETY: `element_offsets` is the non-null run popped above, holding one
-        // byte offset per element, so `i < num_elements` indexes it; each offset
-        // addresses that element's header inside the `element_data` blob, which was
-        // popped with `tmp_element_byte_offset()` bytes.
+        // SAFETY: offset `i` addresses that element's header inside the
+        // `element_data` blob, which was popped with `tmp_element_byte_offset()`
+        // bytes, so the sum heads a live, initialized `ufbx_element`.
         let element: *mut Element =
-            unsafe { element_data.add(*element_offsets.add(i)) } as *mut Element;
+            unsafe { element_data.add(element_offsets_run[i]) } as *mut Element;
 
-        // SAFETY: `element` addresses a live, initialized `ufbx_element` header in
-        // the arena element blob (see above), so it anchors an `ElementView`.
+        // SAFETY: `element` heads a live `ufbx_element` in the arena element blob
+        // (see above), so it anchors an `ElementView`.
         let element_view: &ElementView = unsafe { ElementView::from_ptr(element) };
         if element_view.type_() == ElementType::Node {
-            let node: *mut Node = element as *mut Node;
-            // SAFETY: `type_ == Node`, so `element` heads a live `ufbx_node`, and
-            // `&raw const (*node).scale_helper` addresses its own field.
-            if !unsafe { opt_ptr(&raw const (*node).scale_helper) }.is_null() {
-                // SAFETY: `node` is live (see above).
+            // SAFETY: `type_ == Node`, so `element` heads a live `ufbx_node`; the
+            // node view is minted from the blob pointer, not from the
+            // header-sized element view.
+            let node: &NodeView = unsafe { NodeView::from_ptr(element as *mut Node) };
+            if node.scale_helper().is_some() {
                 let extra: *mut NodeExtra =
-                    get_element_extra(uc, unsafe { (*node).element.element_id }) as *mut NodeExtra;
+                    get_element_extra(uc, node.element().element_id()) as *mut NodeExtra;
                 ufbx_assert!(!extra.is_null());
-                // SAFETY: `extra` is the non-null per-element extra just fetched, so
-                // its `scale_helper_id` is readable; that id is an element index
-                // below `num_elements`, so it indexes `element_offsets` and the
-                // resulting byte offset addresses that element inside the blob;
-                // `node` is live, so the assignment targets its own field.
-                unsafe {
-                    (*node).scale_helper = opt_ref(
-                        element_data.add(*element_offsets.add((*extra).scale_helper_id as usize))
+                // SAFETY: `extra` is the non-null per-element extra just fetched,
+                // so it heads a live `ufbxi_node_extra`.
+                let extra_view: &View<NodeExtra> = unsafe { View::<NodeExtra>::from_ptr(extra) };
+                // SAFETY: `scale_helper_id` is an element index below
+                // `num_elements`, so the byte offset it selects addresses that
+                // element's header inside the blob, and that element is a
+                // `ufbx_node` (the scale helper `ufbxi_setup_scale_helper` made).
+                node.set_scale_helper(unsafe {
+                    opt_ref(
+                        element_data.add(element_offsets_run[extra_view.scale_helper_id() as usize])
                             as *mut Node,
                     )
-                };
+                });
             }
         }
 
         // SAFETY: the scene's element array was pushed with `num_elements` slots
         // and checked non-null above, so `i < num_elements` stays inside it.
-        unsafe { *(uc.scene_view().elements_view().data() as *mut *mut Element).add(i) = element };
+        unsafe { *scene_elements.add(i) = element };
     }
 
     uc.scene_view().elements_view().set_count(num_elements);
@@ -8172,39 +8237,26 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         // buffer for `type_`.
         unsafe { buf_free(uc.tmp_typed_element_offsets_mut_ptr(type_)) };
         ufbxi_check!(uc, !typed_offsets.is_null(), "typed_offsets");
+        // SAFETY: the run is the non-null `ufbxi_push_pop`-materialized block
+        // popped above, holding `num_typed` initialized byte offsets; nothing
+        // writes it while the fill below reads it.
+        let typed_offsets_run: &[usize] =
+            unsafe { slice_from_ptr(typed_offsets as *const usize, num_typed) };
 
-        // C indexes `uc->scene.elements_by_type[type]`, the `ufbx_element_list`
-        // array view of the `ufbx_scene` per-type list union (ufbx.h:4015); the
-        // generated struct keeps only the named branch, whose first member
-        // (`unknowns`) is the array base.
-        // SAFETY: `unknowns_mut_ptr` addresses the first of the scene's
-        // `ELEMENT_TYPE_COUNT` per-type list members, which share one flat layout,
-        // and `type_ < ELEMENT_TYPE_COUNT`.
-        let typed_elems: *mut RefList<Element> =
-            unsafe { (uc.scene_view().unknowns_mut_ptr() as *mut RefList<Element>).add(type_) };
-        // SAFETY: `typed_elems` addresses the scene's own per-type list (see
-        // above); `result_view()` is `uc`'s own result buffer.
-        unsafe {
-            (*typed_elems).count = num_typed;
-            (*typed_elems).data =
-                uc.result_view().push::<*mut Element>(num_typed) as *const Ref<Element>;
-        }
-        // SAFETY: as above.
-        ufbxi_check!(
-            uc,
-            !unsafe { (*typed_elems).data }.is_null(),
-            "typed_elems->data"
-        );
+        let typed_elems: &RefListView<Element> = uc.scene_view().elements_by_type_at(type_);
+        typed_elems.set_count(num_typed);
+        typed_elems
+            .set_data(uc.result_view().push::<*mut Element>(num_typed) as *const Ref<Element>);
+        ufbxi_check!(uc, !typed_elems.data().is_null(), "typed_elems->data");
 
+        // C stores into `typed_elems->data[i]`; the destination run is derived
+        // from the list base, which the check above proved non-null.
+        let typed_data: *mut *mut Element = typed_elems.data() as *mut *mut Element;
         for i in 0..num_typed {
             // SAFETY: the run just pushed into `typed_elems.data` is non-null and
-            // `num_typed` slots long; `typed_offsets` is the non-null run popped
-            // above with one byte offset per typed element, each addressing that
-            // element's header inside the `element_data` blob.
-            unsafe {
-                *((*typed_elems).data as *mut *mut Element).add(i) =
-                    element_data.add(*typed_offsets.add(i)) as *mut Element
-            };
+            // `num_typed` slots long, and offset `i` addresses that element's
+            // header inside the `element_data` blob.
+            unsafe { *typed_data.add(i) = element_data.add(typed_offsets_run[i]) as *mut Element };
         }
 
         // SAFETY: the accessor hands out `uc`'s own live typed-element-offset
@@ -8225,27 +8277,30 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         "uc->scene.elements_by_name.data"
     );
 
-    for i in 0..num_elements {
-        // SAFETY: the scene's element array holds `num_elements` live element
-        // pointers (filled in above), so `i < num_elements` indexes it.
-        let elem: *mut Element =
-            unsafe { *(uc.scene_view().elements_view().data() as *mut *mut Element).add(i) };
-        // SAFETY: the `elements_by_name` run was pushed with `num_elements` slots
-        // and checked non-null above.
-        let name_elem: *mut NameElement =
-            unsafe { (uc.scene_view().elements_by_name_view().data() as *mut NameElement).add(i) };
+    // SAFETY: the scene's element array is the result-buffer run filled by the
+    // pass above: `num_elements` initialized, non-null `Ref<ufbx_element>` slots
+    // that stay live and unwritten for this walk.
+    let element_refs: &[Ref<Element>] =
+        unsafe { slice_from_ptr(uc.scene_view().elements_view().data(), num_elements) };
+    // C writes `&uc->scene.elements_by_name.data[i]`; the destination run is
+    // derived from the list base, which the check above proved non-null.
+    let name_elems: *mut NameElement =
+        uc.scene_view().elements_by_name_view().data() as *mut NameElement;
 
-        // SAFETY: `name_elem` addresses a slot of that run and `elem` a live
-        // element header (both above).
-        unsafe {
-            (*name_elem).name = (*elem).name;
-            (*name_elem).type_ = (*elem).type_;
-        }
-        // SAFETY: as above; `elem`'s name is an interned pool string, so
-        // `name.data` addresses `name.length` readable bytes.
-        unsafe { (*name_elem)._internal_key = get_name_key((*elem).name.as_bytes()) };
-        // SAFETY: as above; `elem` is non-null, being a live element header.
-        unsafe { (*name_elem).element = Ref::from_ptr(elem) };
+    for i in 0..num_elements {
+        let elem: Ref<Element> = element_refs[i];
+        // SAFETY: the slot names a live element header in the arena element blob
+        // (see above), so it anchors an `ElementView`.
+        let elem_view: &ElementView = unsafe { ElementView::from_ptr(elem.ptr()) };
+        // SAFETY: the `elements_by_name` run was pushed with `num_elements` slots
+        // and checked non-null above, so `i < num_elements` stays inside it.
+        let name_elem: &View<NameElement> =
+            unsafe { View::<NameElement>::from_ptr(name_elems.add(i)) };
+
+        name_elem.set_name(elem_view.name());
+        name_elem.set_type(elem_view.type_());
+        name_elem.set_internal_key(get_name_key(elem_view.name_view().bytes()));
+        name_elem.set_element(elem);
     }
 
     // SAFETY: the `elements_by_name` run is non-null and `num_elements` entries
@@ -8260,75 +8315,68 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
     // Setup node children arrays and attribute pointers/lists
     // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
-    let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
-    let p_node_end: *mut *mut Node = add_ptr(p_node, uc.scene_view().nodes_view().count());
-    while p_node != p_node_end {
-        // SAFETY: `p_node != p_node_end`, so it addresses a live, initialized slot
-        // of the scene's node-pointer run.
-        let node: *mut Node = unsafe { *p_node };
-        // SAFETY: `node` is a live `ufbx_node` of the scene (see above), so
-        // `&raw const (*node).parent` addresses its own field.
-        let parent: *mut Node = unsafe { opt_ptr(&raw const (*node).parent) };
-        if !parent.is_null() {
-            // SAFETY (this group): a non-null `parent` is another live `ufbx_node` of the same
-            // scene.
-            unsafe { (*parent).children.count += 1 };
-            if unsafe { (*parent).children.data }.is_null() {
-                // SAFETY: as above; `linearize_nodes` ordered the node-pointer run
-                // so each parent's children are contiguous, and `p_node` is the
-                // first of them.
-                unsafe { (*parent).children.data = p_node as *const Ref<Node> };
+    let scene_nodes: &RefListView<Node> = uc.scene_view().nodes_view();
+    for node_ix in 0..scene_nodes.count() {
+        let node: &NodeView = scene_nodes.at(node_ix);
+        // C keeps the ITERATOR itself as `parent->children.data`, so the slot
+        // pointer is derived from the list base rather than from `node`.
+        let p_node: *const Ref<Node> = scene_nodes.data().wrapping_add(node_ix);
+        // SAFETY: `node_ix < count()`, so the slot is inside the scene's own
+        // node run and holds the same non-null `Ref<ufbx_node>` that `at` read.
+        let node_ref: Ref<Node> = unsafe { *p_node };
+        if let Some(parent_ref) = node.parent() {
+            // SAFETY: a non-null `parent` names another live `ufbx_node` of the
+            // same scene.
+            let parent: &NodeView = unsafe { NodeView::from_ptr(parent_ref.ptr()) };
+            parent
+                .children_view()
+                .set_count(parent.children_view().count() + 1);
+            if parent.children_view().data().is_null() {
+                // `linearize_nodes` ordered the node-pointer run so each parent's
+                // children are contiguous, and `p_node` is the first of them.
+                parent.children_view().set_data(p_node);
             }
 
-            // SAFETY: `node` is live (see above).
-            if unsafe { (*node).is_geometry_transform_helper } {
-                // SAFETY: `parent` is live (see above); `node` is non-null.
-                unsafe { (*parent).geometry_transform_helper = opt_ref(node) };
+            if node.is_geometry_transform_helper() {
+                parent.set_geometry_transform_helper(Some(node_ref));
             }
 
             // Force top-level nodes to have `UFBX_INHERIT_MODE_NORMAL` to make unit scaling work.
-            // SAFETY: `parent` is live (see above).
-            if unsafe { (*parent).is_root }
+            if parent.is_root()
                 && uc.opts_view().space_conversion() == SpaceConversion::TransformRoot
                 && uc.opts_view().inherit_mode_handling() == InheritModeHandling::Preserve
             {
-                // SAFETY: `node` is live (see above).
-                unsafe {
-                    (*node).original_inherit_mode = InheritMode::Normal;
-                    (*node).inherit_mode = InheritMode::Normal;
-                }
+                node.set_original_inherit_mode(InheritMode::Normal);
+                node.set_inherit_mode(InheritMode::Normal);
             }
 
             // RrSs nodes inherit scale from their parent, Rrs ignore the scale of
             // their _immediate_ parent, potentially multiple if chained.
-            // SAFETY: `node` is live (see above).
-            if unsafe { (*node).original_inherit_mode } == InheritMode::ComponentwiseScale {
-                // SAFETY: `node` is live and `parent` is non-null (see above).
-                unsafe { (*node).inherit_scale_node = opt_ref(parent) };
-            // SAFETY: `node` is live (see above).
-            } else if unsafe { (*node).original_inherit_mode } == InheritMode::IgnoreParentScale {
-                // SAFETY: `node` and `parent` are both live (see above).
-                unsafe { (*node).inherit_scale_node = (*parent).inherit_scale_node };
+            if node.original_inherit_mode() == InheritMode::ComponentwiseScale {
+                node.set_inherit_scale_node(Some(parent_ref));
+            } else if node.original_inherit_mode() == InheritMode::IgnoreParentScale {
+                node.set_inherit_scale_node(parent.inherit_scale_node());
             }
         }
 
-        // SAFETY: `node` is live (see above), so `&raw mut (*node).element` addresses
-        // its own element header.
+        // SAFETY: `element_raw` addresses the node's own element header, which is
+        // what `ufbxi_find_dst_connections` reads (fn contract).
         let conns: List<Connection> =
-            unsafe { find_dst_connections(&raw mut (*node).element, ptr::null()) };
+            unsafe { find_dst_connections(node.element_raw(), ptr::null()) };
 
-        // C: `ufbxi_for_list(ufbx_connection, conn, conns)` — indexed here
-        // because the body `continue`s (the C `for` advances in its increment
-        // clause).
-        for conn_ix in 0..conns.count {
-            // SAFETY: `conns` is the connection run `find_dst_connections` returned
-            // for this node, so `conn_ix < conns.count` indexes it.
-            let conn: *mut Connection = unsafe { (conns.data as *mut Connection).add(conn_ix) };
-            // SAFETY: `conn` addresses a live, initialized connection (see above),
-            // whose `src` is a non-null element pointer.
-            let elem: *mut Element = unsafe { ref_ptr(&raw const (*conn).src) };
-            // SAFETY: `elem` is a live element of the scene (see above).
-            let type_: ElementType = unsafe { (*elem).type_ };
+        // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
+        // SAFETY: `conns` is the contiguous subrange of this element's
+        // `push_pop`-materialized connection run that `find_dst_connections`
+        // returned, live and unwritten for the walk.
+        for conn in unsafe {
+            SliceViewIter::<Connection>::from_raw_parts(conns.data as *mut Connection, conns.count)
+        } {
+            let elem_ref: Ref<Element> = conn.src();
+            let elem: *mut Element = elem_ref.ptr();
+            // SAFETY: a connection's `src` names a live element of the scene, so
+            // it anchors an `ElementView`.
+            let elem_view: &ElementView = unsafe { ElementView::from_ptr(elem) };
+            let type_: ElementType = elem_view.type_();
             if !(type_ as u32 >= ELEMENT_TYPE_FIRST_ATTRIB
                 && type_ as u32 <= ELEMENT_TYPE_LAST_ATTRIB)
             {
@@ -8337,24 +8385,21 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
             // C: `size_t index = node->all_attribs.count++;` — the
             // pre-increment value.
-            // SAFETY (this group): `node` is live (see above).
-            let index: usize = unsafe { (*node).all_attribs.count };
-            unsafe { (*node).all_attribs.count += 1 };
+            let index: usize = node.all_attribs_view().count();
+            node.all_attribs_view().set_count(index + 1);
             if index == 0 {
-                // SAFETY: `node` is live and `elem` is non-null (see above).
-                unsafe { (*node).attrib = opt_ref(elem) };
-                // SAFETY: `node` is live (see above).
-                unsafe { (*node).attrib_type = type_ };
+                node.set_attrib(Some(elem_ref));
+                node.set_attrib_type(type_);
             } else {
                 if index == 1 {
                     ufbxi_check!(
                         uc,
-                        // SAFETY: `tmp_stack_mut_ptr` hands out `uc`'s own live tmp
-                        // stack, and `&raw const (*node).attrib` addresses the live
-                        // node's own single element-pointer field.
+                        // SAFETY: `attrib_ptr` addresses the live node's own single
+                        // element-pointer field, which is niche-packed to the bare
+                        // `ufbx_element*` the copy reads.
                         !unsafe {
                             uc.tmp_stack_view().push_copy_raw::<*mut Element>(1,
-                                &raw const (*node).attrib as *const *mut Element,
+                                node.attrib_ptr() as *const *mut Element,
                             )
                         }
                         .is_null(),
@@ -8368,159 +8413,166 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 );
             }
 
-            // SAFETY (this group): `elem` is a live element of the scene (see
-            // above) and each arm pins its type, so it heads a live element of
-            // that type; `node` is live.
-            match unsafe { (*elem).type_ } {
-                ElementType::Mesh => unsafe { (*node).mesh = opt_ref(elem as *mut Mesh) },
-                ElementType::Light => unsafe { (*node).light = opt_ref(elem as *mut Light) },
-                ElementType::Camera => unsafe { (*node).camera = opt_ref(elem as *mut Camera) },
-                ElementType::Bone => unsafe { (*node).bone = opt_ref(elem as *mut Bone) },
+            match elem_view.type_() {
+                // SAFETY: the arm pins the type, so the non-null `src` element
+                // header is the head of a live `ufbx_mesh`.
+                ElementType::Mesh => {
+                    node.set_mesh(Some(unsafe { Ref::from_ptr(elem as *mut Mesh) }))
+                }
+                // SAFETY: the arm pins the type, so the non-null `src` element
+                // header is the head of a live `ufbx_light`.
+                ElementType::Light => {
+                    node.set_light(Some(unsafe { Ref::from_ptr(elem as *mut Light) }))
+                }
+                // SAFETY: the arm pins the type, so the non-null `src` element
+                // header is the head of a live `ufbx_camera`.
+                ElementType::Camera => {
+                    node.set_camera(Some(unsafe { Ref::from_ptr(elem as *mut Camera) }))
+                }
+                // SAFETY: the arm pins the type, so the non-null `src` element
+                // header is the head of a live `ufbx_bone`.
+                ElementType::Bone => {
+                    node.set_bone(Some(unsafe { Ref::from_ptr(elem as *mut Bone) }))
+                }
                 _ => { /* No shorthand */ }
             }
         }
 
-        // SAFETY: `node` is live (see above).
-        if unsafe { (*node).all_attribs.count } > 1 {
-            // SAFETY: as above; the attribute pointers were pushed onto `uc`'s tmp
-            // stack by the loop above, `all_attribs.count` of them, and are popped
-            // into `uc`'s own result buffer here.
-            unsafe {
-                (*node).all_attribs.data = uc
-                    .result_view()
-                    .push_pop::<*mut Element>(uc.tmp_stack_view(), (*node).all_attribs.count)
-                    as *const Ref<Element>
-            };
+        if node.all_attribs_view().count() > 1 {
+            node.all_attribs_view().set_data(
+                uc.result_view()
+                    .push_pop::<*mut Element>(uc.tmp_stack_view(), node.all_attribs_view().count())
+                    as *const Ref<Element>,
+            );
             ufbxi_check!(
                 uc,
-                // SAFETY: `node` is live (see above).
-                !unsafe { (*node).all_attribs.data }.is_null(),
+                !node.all_attribs_view().data().is_null(),
                 "node->all_attribs.data"
             );
-        // SAFETY: `node` is live (see above).
-        } else if unsafe { (*node).all_attribs.count } == 1 {
-            // SAFETY: as above, so `&raw const (*node).attrib` addresses the node's
-            // own single element-pointer field — the one attribute.
-            unsafe { (*node).all_attribs.data = &raw const (*node).attrib as *const Ref<Element> };
+        } else if node.all_attribs_view().count() == 1 {
+            // The node's own single element-pointer field IS the one-entry list.
+            node.all_attribs_view()
+                .set_data(node.attrib_ptr() as *const Ref<Element>);
         }
 
-        // SAFETY: `node` is live (see above), so the projections address its own
-        // `materials` list header and element header.
+        // SAFETY: `ufbxi_fetch_dst_elements` fills the list header it is handed
+        // from the destination connections of the element it is handed (fn
+        // contract); both are projections of this node's own view.
         unsafe {
             fetch_dst_elements(
                 uc,
-                &raw mut (*node).materials as *mut c_void,
-                &raw mut (*node).element,
+                node.materials_raw() as *mut c_void,
+                node.element_raw(),
                 false,
                 false,
                 ptr::null(),
                 ElementType::Material,
             )
         }?;
-        // SAFETY: `p_node != p_node_end`, so the advance lands at or before the
-        // run's one-past-the-end pointer.
-        p_node = unsafe { p_node.add(1) };
     }
 
     // Resolve bind pose bones that don't use the normal connection system
     // C: `ufbxi_for_ptr_list(ufbx_pose, p_pose, uc->scene.poses)`
-    let mut p_pose: *mut *mut Pose = uc.scene_view().poses_view().data() as *mut *mut Pose;
-    let p_pose_end: *mut *mut Pose = add_ptr(p_pose, uc.scene_view().poses_view().count());
-    while p_pose != p_pose_end {
-        // SAFETY: `p_pose != p_pose_end`, so it addresses a live, initialized slot
-        // of the scene's pose-pointer run.
-        let pose: *mut Pose = unsafe { *p_pose };
+    let scene_poses: &RefListView<Pose> = uc.scene_view().poses_view();
+    for pose_ix in 0..scene_poses.count() {
+        let pose: &View<Pose> = scene_poses.at(pose_ix);
+        // SAFETY: `pose_ix < count()`, so the slot is inside the scene's own pose
+        // run and holds the same non-null `Ref<ufbx_pose>` that `at` read.
+        let pose_ref: Ref<Pose> = unsafe { *scene_poses.data().add(pose_ix) };
 
         // HACK: Transport `ufbxi_tmp_bone_pose` array through the `ufbx_bone_pose` pointer
-        // SAFETY: `pose` is a live `ufbx_pose` of the scene (see above).
-        let num_bones: usize = unsafe { (*pose).bone_poses.count };
-        // SAFETY: as above; the parse pass stashed the `num_bones`-long tmp bone
-        // pose run in this field, as the comment above records.
-        let tmp_poses: *mut TmpBonePose = unsafe { (*pose).bone_poses.data } as *mut TmpBonePose;
-        // SAFETY: `pose` is live (see above); `result_view()` is `uc`'s own result
-        // buffer.
-        unsafe { (*pose).bone_poses.data = uc.result_view().push::<BonePose>(num_bones) };
+        let num_bones: usize = pose.bone_poses_view().count();
+        let tmp_poses: *mut TmpBonePose = pose.bone_poses_view().data() as *mut TmpBonePose;
+        pose.bone_poses_view()
+            .set_data(uc.result_view().push::<BonePose>(num_bones));
         ufbxi_check!(
             uc,
-            // SAFETY: `pose` is live (see above).
-            !unsafe { (*pose).bone_poses.data }.is_null(),
+            !pose.bone_poses_view().data().is_null(),
             "pose->bone_poses.data"
         );
 
         // Filter only found bones
-        // SAFETY: `pose` is live (see above).
-        unsafe { (*pose).bone_poses.count = 0 };
-        for i in 0..num_bones {
-            // SAFETY: `tmp_poses` addresses `num_bones` live, initialized tmp bone
-            // poses (see above) and `i < num_bones`.
-            let elem: *mut Element =
-                find_element_by_fbx_id(uc, unsafe { (*tmp_poses.add(i)).bone_fbx_id });
-            // SAFETY: a non-null `elem` is a live element of the scene.
-            if elem.is_null() || unsafe { (*elem).type_ } != ElementType::Node {
+        pose.bone_poses_view().set_count(0);
+        // SAFETY: the stashed run is the one `ufbxi_push_pop`-materialized block
+        // the pose parse left in this field (ufbx.c:14683), `num_bones`
+        // contiguous initialized records, live and unwritten for the walk.
+        for tmp_pose in
+            unsafe { SliceViewIter::<TmpBonePose>::from_raw_parts(tmp_poses, num_bones) }
+        {
+            let elem: *mut Element = find_element_by_fbx_id(uc, tmp_pose.bone_fbx_id());
+            if elem.is_null() {
+                continue;
+            }
+            // SAFETY: a non-null `elem` names a live element of the scene, so it
+            // anchors an `ElementView`.
+            let elem_view: &ElementView = unsafe { ElementView::from_ptr(elem) };
+            if elem_view.type_() != ElementType::Node {
                 continue;
             }
 
-            let node: *mut Node = elem as *mut Node;
+            // SAFETY: `type_ == Node`, so `elem` heads a live `ufbx_node`; the node
+            // view is minted from the element pointer, not from the header-sized
+            // element view.
+            let node: &NodeView = unsafe { NodeView::from_ptr(elem as *mut Node) };
             // C: `&pose->bone_poses.data[pose->bone_poses.count++]`
-            // SAFETY: `pose` is live; the `bone_poses` run was pushed with
-            // `num_bones` entries and `bone_poses.count` counts the bones filled in
-            // so far, one per loop iteration, so it stays below `num_bones`.
-            let bone: *mut BonePose =
-                unsafe { ((*pose).bone_poses.data as *mut BonePose).add((*pose).bone_poses.count) };
-            // SAFETY: `pose` is live (see above).
-            unsafe { (*pose).bone_poses.count += 1 };
-            // SAFETY: `bone` addresses a slot of that run (see above) and `node` is
-            // the non-null element checked above.
-            unsafe { (*bone).bone_node = Ref::from_ptr(node) };
-            // SAFETY: as above; `i < num_bones` indexes the tmp bone pose run.
-            unsafe { (*bone).bone_to_world = (*tmp_poses.add(i)).bone_to_world };
+            let bone_ix: usize = pose.bone_poses_view().count();
+            // SAFETY: the `bone_poses` run was pushed with `num_bones` entries and
+            // `bone_poses.count` counts the bones filled in so far, one per loop
+            // iteration, so it stays below `num_bones`; the slot is derived from
+            // the list base.
+            let bone: &View<BonePose> = unsafe {
+                View::<BonePose>::from_ptr(
+                    (pose.bone_poses_view().data() as *mut BonePose).add(bone_ix),
+                )
+            };
+            pose.bone_poses_view().set_count(bone_ix + 1);
+            // SAFETY: `elem` is the non-null element checked above, whose type
+            // pins it to a live `ufbx_node`.
+            bone.set_bone_node(unsafe { Ref::from_ptr(elem as *mut Node) });
+            bone.set_bone_to_world(tmp_pose.bone_to_world());
 
-            // SAFETY: `pose` is live (see above).
-            if unsafe { (*pose).is_bind_pose } {
-                // SAFETY: `type_ == Node`, so `node` heads a live `ufbx_node` and
-                // `&raw const (*node).bind_pose` addresses its own field.
-                if unsafe { opt_ptr(&raw const (*node).bind_pose) }.is_null() {
-                    // SAFETY: `node` is live (see above) and `pose` is non-null.
-                    unsafe { (*node).bind_pose = opt_ref(pose) };
+            if pose.is_bind_pose() {
+                if node.bind_pose().is_none() {
+                    node.set_bind_pose(Some(pose_ref));
                 }
 
-                // SAFETY: `elem` is a live element of the scene (see above).
+                // SAFETY: `elem` names a live element of the scene, which is what
+                // `ufbxi_find_src_connections` reads (fn contract).
                 let node_conns: List<Connection> =
                     unsafe { find_src_connections(elem, ptr::null()) };
                 // C: `ufbxi_for_list(ufbx_connection, conn, node_conns)`
-                for conn_ix in 0..node_conns.count {
-                    // SAFETY: `node_conns` is the connection run
-                    // `find_src_connections` returned for this element, so
-                    // `conn_ix < node_conns.count` indexes it.
-                    let conn: *mut Connection =
-                        unsafe { (node_conns.data as *mut Connection).add(conn_ix) };
-                    // SAFETY: `conn` addresses a live, initialized connection (see
-                    // above), whose `dst` is a non-null live element pointer.
-                    if unsafe { (*ref_ptr(&raw const (*conn).dst)).type_ }
-                        != ElementType::SkinCluster
-                    {
+                // SAFETY: `node_conns` is the contiguous subrange of this element's
+                // `push_pop`-materialized connection run that
+                // `find_src_connections` returned, live and unwritten for the walk.
+                for conn in unsafe {
+                    SliceViewIter::<Connection>::from_raw_parts(
+                        node_conns.data as *mut Connection,
+                        node_conns.count,
+                    )
+                } {
+                    let dst_ref: Ref<Element> = conn.dst();
+                    // SAFETY: a connection's `dst` names a live element of the
+                    // scene, so it anchors an `ElementView`.
+                    let dst_view: &ElementView = unsafe { ElementView::from_ptr(dst_ref.ptr()) };
+                    if dst_view.type_() != ElementType::SkinCluster {
                         continue;
                     }
-                    // SAFETY: as above, and the check pins the destination's type,
-                    // so it heads a live `ufbx_skin_cluster`.
-                    let cluster: *mut SkinCluster =
-                        unsafe { ref_ptr(&raw const (*conn).dst) } as *mut SkinCluster;
-                    // SAFETY: `cluster` is live (see above), so `&raw const (*cluster).
-                    // bind_to_world` addresses its own field.
-                    if unsafe { matrix_all_zero(&raw const (*cluster).bind_to_world) } {
-                        // SAFETY: `cluster` is live and `bone` addresses a slot of
-                        // the pose's own bone run (both above).
-                        unsafe { (*cluster).bind_to_world = (*bone).bone_to_world };
+                    // SAFETY: the check pins the destination's type, so its
+                    // non-null header is the head of a live `ufbx_skin_cluster`.
+                    let cluster: &View<SkinCluster> =
+                        unsafe { View::<SkinCluster>::from_ptr(dst_ref.ptr() as *mut SkinCluster) };
+                    // SAFETY: `bind_to_world_ptr` addresses the cluster's own
+                    // matrix field, which `ufbxi_matrix_all_zero` reads (fn
+                    // contract).
+                    if unsafe { matrix_all_zero(cluster.bind_to_world_ptr()) } {
+                        cluster.set_bind_to_world(bone.bone_to_world());
                     }
                 }
             }
         }
-        // SAFETY: `pose` is a live `ufbx_pose` whose `bone_poses` run holds its
+        // SAFETY: `pose` names a live `ufbx_pose` whose `bone_poses` run holds its
         // `count` initialized entries (see above).
-        unsafe { sort_bone_poses(uc, pose) }?;
-        // SAFETY: `p_pose != p_pose_end`, so the advance lands at or before the
-        // run's one-past-the-end pointer.
-        p_pose = unsafe { p_pose.add(1) };
+        unsafe { sort_bone_poses(uc, pose.get()) }?;
     }
 
     // Fetch pointers that may break elements
@@ -8529,43 +8581,26 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     // C: `for (int type = UFBX_ELEMENT_TYPE_FIRST_ATTRIB; type <= UFBX_ELEMENT_TYPE_LAST_ATTRIB; type++)`
     let mut attrib_type: u32 = ELEMENT_TYPE_FIRST_ATTRIB;
     while attrib_type <= ELEMENT_TYPE_LAST_ATTRIB {
-        // SAFETY: `unknowns_mut_ptr` addresses the first of the scene's
-        // `ELEMENT_TYPE_COUNT` per-type list members, which share one flat layout,
-        // and `attrib_type <= ELEMENT_TYPE_LAST_ATTRIB < ELEMENT_TYPE_COUNT`.
-        let typed_elems: *mut RefList<Element> = unsafe {
-            (uc.scene_view().unknowns_mut_ptr() as *mut RefList<Element>).add(attrib_type as usize)
-        };
+        let typed_elems: &RefListView<Element> =
+            uc.scene_view().elements_by_type_at(attrib_type as usize);
         // C: `ufbxi_for_ptr_list(ufbx_element, p_elem, uc->scene.elements_by_type[type])`
-        // SAFETY: `typed_elems` addresses the scene's own per-type list (see
-        // above), filled in by the pass above.
-        // `data`/`count` describe one result-buffer run.
-        let (mut p_elem, p_elem_count) = unsafe {
-            (
-                (*typed_elems).data as *mut *mut Element,
-                (*typed_elems).count,
-            )
-        };
-        let p_elem_end: *mut *mut Element = add_ptr(p_elem, p_elem_count);
-        while p_elem != p_elem_end {
-            // SAFETY: `p_elem != p_elem_end`, so it addresses a live, initialized
-            // slot of that run.
-            let elem: *mut Element = unsafe { *p_elem };
-            // SAFETY: `elem` is a live element of the scene (see above), so
-            // `&raw mut (*elem).instances` addresses its own list header.
+        for elem_ix in 0..typed_elems.count() {
+            let elem: &ElementView = typed_elems.at(elem_ix);
+            // SAFETY: `ufbxi_fetch_src_elements` fills the list header it is handed
+            // from the source connections of the element it is handed (fn
+            // contract); both are projections of this element's own view, and the
+            // fn touches only `ufbx_element` header fields through the latter.
             unsafe {
                 fetch_src_elements(
                     uc,
-                    &raw mut (*elem).instances as *mut c_void,
-                    elem,
+                    elem.instances_raw() as *mut c_void,
+                    elem.get(),
                     false,
                     true,
                     ptr::null(),
                     ElementType::Node,
                 )
             }?;
-            // SAFETY: `p_elem != p_elem_end`, so the advance lands at or before the
-            // run's one-past-the-end pointer.
-            p_elem = unsafe { p_elem.add(1) };
         }
         attrib_type += 1;
     }
@@ -8573,47 +8608,35 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
     let search_node: bool = uc.version() < 7000;
 
     // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, uc->scene.skin_clusters)`
-    let mut p_cluster: *mut *mut SkinCluster =
-        uc.scene_view().skin_clusters_view().data() as *mut *mut SkinCluster;
-    let p_cluster_end: *mut *mut SkinCluster =
-        add_ptr(p_cluster, uc.scene_view().skin_clusters_view().count());
-    while p_cluster != p_cluster_end {
-        // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live, initialized
-        // slot of the scene's skin-cluster-pointer run.
-        let cluster: *mut SkinCluster = unsafe { *p_cluster };
-        // SAFETY: `cluster` is a live `ufbx_skin_cluster` of the scene (see above),
-        // so `&raw mut (*cluster).element` addresses its own element header; the
-        // fetched destination is null or a live `ufbx_node`.
-        unsafe {
-            (*cluster).bone_node = opt_ref(fetch_dst_element(
-                &raw mut (*cluster).element,
-                false,
-                ptr::null(),
-                ElementType::Node,
-            ) as *mut Node)
-        };
-        // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or before
-        // the run's one-past-the-end pointer.
-        p_cluster = unsafe { p_cluster.add(1) };
+    let scene_skin_clusters: &RefListView<SkinCluster> = uc.scene_view().skin_clusters_view();
+    for cluster_ix in 0..scene_skin_clusters.count() {
+        let cluster: &View<SkinCluster> = scene_skin_clusters.at(cluster_ix);
+        // SAFETY: `element_raw` addresses the cluster's own element header, which
+        // is what `ufbxi_fetch_dst_element` reads (fn contract); the fetched
+        // destination is null or a live `ufbx_node`.
+        cluster.set_bone_node(unsafe {
+            opt_ref(
+                fetch_dst_element(cluster.element_raw(), false, ptr::null(), ElementType::Node)
+                    as *mut Node,
+            )
+        });
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_skin_deformer, p_skin, uc->scene.skin_deformers)`
-    let mut p_skin: *mut *mut SkinDeformer =
-        uc.scene_view().skin_deformers_view().data() as *mut *mut SkinDeformer;
-    let p_skin_end: *mut *mut SkinDeformer =
-        add_ptr(p_skin, uc.scene_view().skin_deformers_view().count());
-    while p_skin != p_skin_end {
-        // SAFETY: `p_skin != p_skin_end`, so it addresses a live, initialized slot
-        // of the scene's skin-deformer-pointer run.
-        let skin: *mut SkinDeformer = unsafe { *p_skin };
-        // SAFETY: `skin` is a live `ufbx_skin_deformer` of the scene (see above),
-        // so the projections address its own `clusters` list header and element
-        // header.
+    let scene_skin_deformers: &RefListView<SkinDeformer> = uc.scene_view().skin_deformers_view();
+    for skin_ix in 0..scene_skin_deformers.count() {
+        let skin_view: &View<SkinDeformer> = scene_skin_deformers.at(skin_ix);
+        // The rest of this pass still walks the deformer through the raw cursor C
+        // carries in `ufbxi_for_ptr_list`.
+        let skin: *mut SkinDeformer = skin_view.get();
+        // SAFETY: `ufbxi_fetch_dst_elements` fills the list header it is handed
+        // from the destination connections of the element it is handed (fn
+        // contract); both are projections of this deformer's own view.
         unsafe {
             fetch_dst_elements(
                 uc,
-                &raw mut (*skin).clusters as *mut c_void,
-                &raw mut (*skin).element,
+                skin_view.clusters_raw() as *mut c_void,
+                skin_view.element_raw(),
                 false,
                 true,
                 ptr::null(),
@@ -8623,134 +8646,107 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
         // Remove clusters without a valid `bone`
         if !uc.opts_view().connect_broken_elements() {
-            // SAFETY: `skin` is live (see above), and the fetch above filled its
-            // `clusters` list.
-            let (clusters, num_clusters) = unsafe {
-                (
-                    (*skin).clusters.data as *mut *mut SkinCluster,
-                    (*skin).clusters.count,
-                )
-            };
+            let clusters: &RefListView<SkinCluster> = skin_view.clusters_view();
+            let num_clusters: usize = clusters.count();
+            // C compacts `skin->clusters.data[i - num_broken] = ...[i]`; both ends
+            // are derived from the list base.
+            let clusters_data: *mut Ref<SkinCluster> = clusters.data() as *mut Ref<SkinCluster>;
             let mut num_broken: usize = 0;
             for i in 0..num_clusters {
-                // SAFETY: `i` is below the cluster run's length, so it addresses a
-                // live slot holding a live `ufbx_skin_cluster`, whose `bone_node`
-                // field `&raw const (**clusters.add(i)).bone_node` projects.
-                if unsafe { opt_ptr(&raw const (**clusters.add(i)).bone_node) }.is_null() {
+                if clusters.at(i).bone_node().is_none() {
                     num_broken += 1;
                 } else if num_broken > 0 {
-                    // SAFETY: `i` indexes the cluster run (see above) and
+                    // SAFETY: `i` indexes the deformer's own cluster run and
                     // `num_broken <= i`, so the compacted destination is inside it
                     // too.
-                    unsafe { *clusters.add(i - num_broken) = *clusters.add(i) };
+                    unsafe { *clusters_data.add(i - num_broken) = *clusters_data.add(i) };
                 }
             }
-            // SAFETY: `skin` is live (see above); `num_broken` counts entries of
-            // its own cluster list.
-            unsafe { (*skin).clusters.count -= num_broken };
+            clusters.set_count(num_clusters - num_broken);
         }
 
         let mut total_weights: usize = 0;
         // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, skin->clusters)`
-        // SAFETY: `skin` is live (see above).
-        // `data`/`count` describe one run.
-        let (mut p_cluster, p_cluster_count) = unsafe {
-            (
-                (*skin).clusters.data as *mut *mut SkinCluster,
-                (*skin).clusters.count,
-            )
-        };
-        let p_cluster_end: *mut *mut SkinCluster = add_ptr(p_cluster, p_cluster_count);
-        while p_cluster != p_cluster_end {
-            // SAFETY: `p_cluster != p_cluster_end`, so it addresses a live,
-            // initialized slot of that run.
-            let cluster: *mut SkinCluster = unsafe { *p_cluster };
-            // SAFETY: `cluster` is a live `ufbx_skin_cluster` (see above).
-            let num_weights: usize = unsafe { (*cluster).num_weights };
+        let clusters: &RefListView<SkinCluster> = skin_view.clusters_view();
+        for cluster_ix in 0..clusters.count() {
+            let num_weights: usize = clusters.at(cluster_ix).num_weights();
             ufbxi_check!(
                 uc,
                 usize::MAX - total_weights > num_weights,
                 "SIZE_MAX - total_weights > cluster->num_weights"
             );
             total_weights += num_weights;
-            // SAFETY: `p_cluster != p_cluster_end`, so the advance lands at or
-            // before the run's one-past-the-end pointer.
-            p_cluster = unsafe { p_cluster.add(1) };
         }
 
         let mut num_vertices: usize = 0;
 
         // Iterate through meshes so we can pad the vertices to the largest one
         {
-            // SAFETY: `skin` is live (see above), so `&raw mut (*skin).element`
-            // addresses its own element header.
+            // SAFETY: `element_raw` addresses the deformer's own element header,
+            // which is what `ufbxi_find_src_connections` reads (fn contract).
             let conns: List<Connection> =
-                unsafe { find_src_connections(&raw mut (*skin).element, ptr::null()) };
+                unsafe { find_src_connections(skin_view.element_raw(), ptr::null()) };
             // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
-            for conn_ix in 0..conns.count {
-                // SAFETY: `conns` is the connection run `find_src_connections`
-                // returned, so `conn_ix < conns.count` indexes it.
-                let conn: *mut Connection = unsafe { (conns.data as *mut Connection).add(conn_ix) };
-                let mut mesh: *mut Mesh = ptr::null_mut();
-                // SAFETY: `conn` addresses a live, initialized connection (see
-                // above).
-                if unsafe { (*conn).dst_prop.length } > 0 {
+            // SAFETY: `conns` is the contiguous subrange of this element's
+            // `push_pop`-materialized connection run that `find_src_connections`
+            // returned, live and unwritten for the walk.
+            for conn in unsafe {
+                SliceViewIter::<Connection>::from_raw_parts(
+                    conns.data as *mut Connection,
+                    conns.count,
+                )
+            } {
+                let mut mesh: Option<Ref<Mesh>> = None;
+                if conn.dst_prop_view().length() > 0 {
                     continue;
                 }
-                // SAFETY: as above; a connection's `dst` is a non-null live element
-                // pointer.
-                let dst: *mut Element = unsafe { ref_ptr(&raw const (*conn).dst) };
-                // SAFETY: `dst` is a live arena element of the scene (see above),
+                let dst_ref: Ref<Element> = conn.dst();
+                // SAFETY: a connection's `dst` names a live element of the scene,
                 // so it anchors an `ElementView`.
-                let dst_view: &ElementView = unsafe { ElementView::from_ptr(dst) };
+                let dst_view: &ElementView = unsafe { ElementView::from_ptr(dst_ref.ptr()) };
                 if dst_view.type_() == ElementType::Mesh {
-                    mesh = dst as *mut Mesh;
+                    // SAFETY: the check pins the type, so the non-null header is
+                    // the head of a live `ufbx_mesh`.
+                    mesh = Some(unsafe { Ref::from_ptr(dst_ref.ptr() as *mut Mesh) });
                 } else if dst_view.type_() == ElementType::Node {
-                    let mut node: *mut Node = dst as *mut Node;
-                    // SAFETY: `type_ == Node`, so `dst` heads a live `ufbx_node` and
-                    // `&raw const (*node).geometry_transform_helper` addresses its own field.
-                    if !unsafe { opt_ptr(&raw const (*node).geometry_transform_helper) }.is_null() {
-                        // SAFETY: as above; a non-null helper is another live
-                        // `ufbx_node`.
-                        node = unsafe { opt_ptr(&raw const (*node).geometry_transform_helper) };
+                    // SAFETY: the check pins the type, so the non-null header is
+                    // the head of a live `ufbx_node`.
+                    let mut node: &NodeView =
+                        unsafe { NodeView::from_ptr(dst_ref.ptr() as *mut Node) };
+                    if let Some(helper) = node.geometry_transform_helper() {
+                        // SAFETY: a non-null helper names another live `ufbx_node`
+                        // of the same scene.
+                        node = unsafe { NodeView::from_ptr(helper.ptr()) };
                     }
-                    // SAFETY: `node` is a live `ufbx_node` (see above), so
-                    // `&raw const (*node).mesh` addresses its own field.
-                    mesh = unsafe { opt_ptr(&raw const (*node).mesh) };
+                    mesh = node.mesh();
                 }
-                if mesh.is_null() {
+                let Some(mesh) = mesh else {
                     continue;
-                }
-                // SAFETY: a non-null `mesh` is a live `ufbx_mesh` of the scene, so
-                // its arena pointer anchors a mesh view.
-                let mesh_view: &View<Mesh> = unsafe { View::<Mesh>::from_ptr(mesh) };
+                };
+                // SAFETY: `mesh` names a live `ufbx_mesh` of the scene (see above).
+                let mesh_view: &View<Mesh> = unsafe { View::<Mesh>::from_ptr(mesh.ptr()) };
                 num_vertices = max_sz(num_vertices, mesh_view.num_vertices());
             }
         }
 
         if !uc.opts_view().skip_skin_vertices() {
-            // SAFETY: `skin` is live (see above); `result_view()` is `uc`'s own
-            // result buffer.
-            unsafe {
-                (*skin).vertices.count = num_vertices;
-                (*skin).vertices.data = uc.result_view().push_zero::<SkinVertex>(num_vertices);
-            }
-            // SAFETY: `skin` is live (see above).
+            skin_view.vertices_view().set_count(num_vertices);
+            skin_view
+                .vertices_view()
+                .set_data(uc.result_view().push_zero::<SkinVertex>(num_vertices));
             ufbxi_check!(
                 uc,
-                !unsafe { (*skin).vertices.data }.is_null(),
+                !skin_view.vertices_view().data().is_null(),
                 "skin->vertices.data"
             );
 
-            // SAFETY: as the `vertices` fill above.
-            unsafe {
-                (*skin).weights.count = total_weights;
-                (*skin).weights.data = uc.result_view().push_zero::<SkinWeight>(total_weights);
-            }
-            // SAFETY: `skin` is live (see above).
+            skin_view.weights_view().set_count(total_weights);
+            skin_view
+                .weights_view()
+                .set_data(uc.result_view().push_zero::<SkinWeight>(total_weights));
             ufbxi_check!(
                 uc,
-                !unsafe { (*skin).weights.data }.is_null(),
+                !skin_view.weights_view().data().is_null(),
                 "skin->weights.data"
             );
 
@@ -8912,9 +8908,6 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             // `weights` runs are filled in above.
             unsafe { sort_skin_weights(uc, skin) }?;
         }
-        // SAFETY: `p_skin != p_skin_end`, so the advance lands at or before the
-        // run's one-past-the-end pointer.
-        p_skin = unsafe { p_skin.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_deformer, p_blend, uc->scene.blend_deformers)`
