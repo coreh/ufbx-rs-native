@@ -1960,11 +1960,21 @@ pub(crate) unsafe fn evaluate_props(
     };
     let num_layers: usize = anim_view.layers_view().count();
     for layer_ix in 0..num_layers {
-        // C: `ufbx_anim_layer *layer = anim->layers.data[layer_ix];`
-        let layer_view: &View<AnimLayer, Const> = anim_view.layers_view().at(layer_ix);
-        // The raw layer pointer the read-only `ufbxi_*` helpers below take; the
-        // view's own address, so it names the same scene-owned layer.
-        let layer: *mut AnimLayer = layer_view.as_ptr().cast_mut();
+        // C: `ufbx_anim_layer *layer = anim->layers.data[layer_ix];` — loaded
+        // as the STORED pointer out of the ref list (never re-derived from a
+        // read-only view), so it keeps the scene's write-capable provenance
+        // that the callees' non-const `ufbx_anim_layer *` parameters
+        // (ufbx.c:19329, ufbx.c:25699) are entitled to.
+        // SAFETY: `layer_ix < num_layers` is the anim's own layer count, so the
+        // slot is inside the list's `[data, data + count)` run; the non-null
+        // `Ref<AnimLayer>` is read as bare pointer bits and names a live
+        // scene-owned layer.
+        let layer: *mut AnimLayer =
+            unsafe { *(anim_view.layers_view().data() as *const *mut AnimLayer).add(layer_ix) };
+        // SAFETY: `layer` is that live, unmoved scene-owned `ufbx_anim_layer`,
+        // reached through the stored `*mut` — write-capable provenance, the
+        // `Mut` mint's contract — and no `&mut` to it is ever formed.
+        let layer_view: &View<AnimLayer> = unsafe { View::<AnimLayer>::from_ptr(layer) };
         // SAFETY: `layer` is that scene-owned `ufbx_anim_layer`.
         if !unsafe { anim_layer_might_contain_id(layer, element_id) } {
             continue;
