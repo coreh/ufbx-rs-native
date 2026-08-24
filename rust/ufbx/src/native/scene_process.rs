@@ -5452,129 +5452,112 @@ static FILE_SHADERS: [FileShader; 6] = [
 // ufbx.c:20496-20535 `ufbxi_update_shader_texture`
 #[inline(never)]
 pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &ShaderTextureView) {
-    let texture: *mut Texture = texture_view.get();
-    let shader: *mut ShaderTexture = shader_view.get();
     // C: `ufbxi_for_list(ufbx_shader_texture_input, input, shader->inputs)`
-    // SAFETY: `shader` is the shader view's own live, initialized
-    // `ufbx_shader_texture` — the texture's shader record — so its own input
-    // list is readable.
-    // `data`/`count` describe one arena run.
-    let (mut input, input_count) = unsafe {
-        (
-            (*shader).inputs.data as *mut ShaderTextureInput,
-            (*shader).inputs.count,
+    let inputs: &ListView<ShaderTextureInput> = shader_view.inputs_view();
+    // SAFETY: `data`/`count` describe the shader's own input run — one
+    // contiguous arena allocation of live, initialized
+    // `ufbx_shader_texture_input`, arena-stable for the walk.
+    let input_iter = unsafe {
+        SliceViewIter::<ShaderTextureInput>::from_raw_parts(
+            inputs.data() as *mut ShaderTextureInput,
+            inputs.count(),
         )
     };
-    let input_end: *mut ShaderTextureInput = add_ptr(input, input_count);
-    while input != input_end {
+    for input in input_iter {
         // C: `ufbx_prop *prop = input->prop;`
-        // SAFETY: `input != input_end`, so it addresses a live, initialized entry
-        // of the shader's input run; `prop` is a live `Ref<Prop>` field of it,
-        // which `opt_ptr` reads as a nullable pointer.
-        let mut prop: *mut Prop = unsafe { opt_ptr(&raw const (*input).prop) };
-        if !prop.is_null() {
-            // SAFETY: `prop` is non-null (checked) and points to a live `ufbx_prop`
-            // of this texture's own prop list, so its `name` span is readable.
-            prop = unsafe { find_prop_len(texture_view.props_view(), (*prop).name.as_bytes()) }
-                .map_or(ptr::null_mut(), PropView::get);
-            // SAFETY: `input` addresses a live entry; `prop` is null or a live
-            // prop of the texture's list, which is what `opt_ref` wraps.
-            unsafe { (*input).prop = opt_ref(prop) };
+        if let Some(prop) = input.prop() {
+            // SAFETY: the `prop` field holds a live `ufbx_prop` of this
+            // texture's own prop list — an arena element reached through a
+            // pointer stored in arena memory, which carries the write-capable
+            // provenance the mint asks for.
+            let prop: &PropView = unsafe { PropView::from_ptr(prop.ptr()) };
+            let found: Option<&PropView> =
+                find_prop_len(texture_view.props_view(), prop.name_view().bytes());
+            // SAFETY: `PropView::get` yields the matched prop's own arena
+            // address, or null on a miss, which is what `opt_ref` wraps.
+            input.set_prop(unsafe { opt_ref(found.map_or(ptr::null_mut(), PropView::get)) });
             // C-parity: the re-lookup keys on the name of a prop that came from
             // this same prop list, so it always resolves (ufbx.c:20502-20506
             // dereferences it unconditionally).
-            // SAFETY: `prop` resolves to that same live `ufbx_prop`, and `input`
-            // addresses a live entry of the input run.
-            unsafe {
-                (*input).value_vec4 = (*prop).value_vec4;
-                (*input).value_int = (*prop).value_int;
-                (*input).value_str = (*prop).value_str;
-                (*input).value_blob = (*prop).value_blob;
-            }
-            // SAFETY: `texture` is the texture view's own live storage, so
-            // `&raw const (*texture).element` addresses its element header; `input.prop` was
-            // just set to that live prop, and `opt_ref` wraps the nullable
-            // element the lookup returns.
-            unsafe {
-                (*input).texture = opt_ref(get_prop_element(
-                    &raw const (*texture).element,
-                    opt_ptr(&raw const (*input).prop),
+            // SAFETY: the lookup resolves (see above), so `found` holds the
+            // matched live `ufbx_prop`.
+            let prop: &PropView = unsafe { found.unwrap_unchecked() };
+            input.set_value_vec4(prop.value_vec4());
+            input.set_value_int(prop.value_int());
+            input.set_value_str(prop.value_str());
+            input.set_value_blob(prop.value_blob());
+            // SAFETY: `element_ptr()` addresses the texture's own live element
+            // header and the `prop` field was just set to that live prop, which
+            // is `get_prop_element`'s raw-pointer contract.
+            let tex: *mut Texture = unsafe {
+                get_prop_element(
+                    texture_view.element_ptr(),
+                    input.prop().map_or(ptr::null(), |p| p.ptr() as *const Prop),
                     ElementType::Texture,
-                ) as *mut Texture)
+                ) as *mut Texture
             };
+            // SAFETY: the lookup returns null or the live element it found,
+            // here the `ufbx_texture` its element type pins it to.
+            input.set_texture(unsafe { opt_ref(tex) });
         }
 
-        // SAFETY: `input` addresses a live entry (see above); `texture_prop` is a
-        // live `Ref<Prop>` field of it.
-        prop = unsafe { opt_ptr(&raw const (*input).texture_prop) };
-        if !prop.is_null() {
-            // SAFETY: `prop` is non-null (checked) and points to a live `ufbx_prop`
-            // of this texture's own prop list, so its `name` span is readable.
-            prop = unsafe { find_prop_len(texture_view.props_view(), (*prop).name.as_bytes()) }
-                .map_or(ptr::null_mut(), PropView::get);
-            // SAFETY: `input` addresses a live entry; `prop` is null or a live
-            // prop of the texture's list.
-            unsafe { (*input).texture_prop = opt_ref(prop) };
-            // SAFETY: `texture` is the view's own live storage, so
-            // `&raw const (*texture).element` addresses its element header; `prop` is null or
-            // a live prop of that element's list.
+        // C: `prop = input->texture_prop;`
+        if let Some(prop) = input.texture_prop() {
+            // SAFETY: the `texture_prop` field holds a live `ufbx_prop` of this
+            // texture's own prop list (see the `prop` field above).
+            let prop: &PropView = unsafe { PropView::from_ptr(prop.ptr()) };
+            let found: Option<&PropView> =
+                find_prop_len(texture_view.props_view(), prop.name_view().bytes());
+            let prop: *mut Prop = found.map_or(ptr::null_mut(), PropView::get);
+            // SAFETY: `prop` is null or the matched prop's own arena address,
+            // which is what `opt_ref` wraps.
+            input.set_texture_prop(unsafe { opt_ref(prop) });
+            // SAFETY: `element_ptr()` addresses the texture's own live element
+            // header; `prop` is null or a live prop of that element's list.
             let tex: *mut Texture = unsafe {
-                get_prop_element(&raw const (*texture).element, prop, ElementType::Texture)
+                get_prop_element(texture_view.element_ptr(), prop, ElementType::Texture)
                     as *mut Texture
             };
             if !tex.is_null() {
-                // SAFETY: `input` addresses a live entry and `tex` is a non-null
-                // (checked) live `ufbx_texture`.
-                unsafe { (*input).texture = opt_ref(tex) };
+                // SAFETY: `tex` is non-null (checked) and a live `ufbx_texture`.
+                input.set_texture(unsafe { opt_ref(tex) });
             }
         }
 
-        // SAFETY: `input` addresses a live entry; `texture` is a live
-        // `Ref<Texture>` field of it, which `opt_ptr` reads as a nullable
-        // pointer.
-        unsafe { (*input).texture_enabled = !opt_ptr(&raw const (*input).texture).is_null() };
-        // SAFETY: as above, for the `texture_enabled_prop` field.
-        prop = unsafe { opt_ptr(&raw const (*input).texture_enabled_prop) };
-        if !prop.is_null() {
-            // SAFETY: `prop` is non-null (checked) and points to a live `ufbx_prop`
-            // of this texture's own prop list, so its `name` span is readable.
-            prop = unsafe { find_prop_len(texture_view.props_view(), (*prop).name.as_bytes()) }
-                .map_or(ptr::null_mut(), PropView::get);
-            // SAFETY: `input` addresses a live entry; `prop` is null or a live
-            // prop of the texture's list.
-            unsafe { (*input).texture_enabled_prop = opt_ref(prop) };
+        input.set_texture_enabled(input.texture().is_some());
+        // C: `prop = input->texture_enabled_prop;`
+        if let Some(prop) = input.texture_enabled_prop() {
+            // SAFETY: the `texture_enabled_prop` field holds a live `ufbx_prop`
+            // of this texture's own prop list (see the `prop` field above).
+            let prop: &PropView = unsafe { PropView::from_ptr(prop.ptr()) };
+            let found: Option<&PropView> =
+                find_prop_len(texture_view.props_view(), prop.name_view().bytes());
+            // SAFETY: `PropView::get` yields the matched prop's own arena
+            // address, or null on a miss, which is what `opt_ref` wraps.
+            input.set_texture_enabled_prop(unsafe {
+                opt_ref(found.map_or(ptr::null_mut(), PropView::get))
+            });
             // C-parity: the re-lookup keys on the name of a prop from this same
             // list, so it always resolves (ufbx.c:20519-20520 dereferences it
             // unconditionally).
-            // SAFETY: `prop` resolves to that same live `ufbx_prop`.
-            unsafe { (*input).texture_enabled = (*prop).value_int != 0 };
+            // SAFETY: the lookup resolves (see above), so `found` holds the
+            // matched live `ufbx_prop`.
+            let prop: &PropView = unsafe { found.unwrap_unchecked() };
+            input.set_texture_enabled(prop.value_int() != 0);
         }
-        // SAFETY: `input != input_end`, so the advance lands at or before the
-        // input run's one-past-the-end pointer.
-        input = unsafe { input.add(1) };
     }
 
-    // SAFETY: `shader` is live (see above).
-    if unsafe { (*shader).type_ } == ShaderTextureType::SelectOutput {
-        // SAFETY: `shader` is live and the literal is NUL-terminated, which is
-        // what the by-name lookup walks.
-        let map: *mut ShaderTextureInput =
-            unsafe { find_shader_texture_input(shader, b"sourceMap\0".as_ptr()) };
-        // SAFETY: as above.
-        let index: *mut ShaderTextureInput =
-            unsafe { find_shader_texture_input(shader, b"outputChannelIndex\0".as_ptr()) };
-        if !index.is_null() {
-            // SAFETY: `index` is non-null (checked) and addresses a live entry of
-            // the shader's input run; `shader` is live.
-            unsafe { (*shader).main_texture_output_index = (*index).value_int };
+    if shader_view.type_() == ShaderTextureType::SelectOutput {
+        let map: Option<&View<ShaderTextureInput>> =
+            find_shader_texture_input_len(shader_view, b"sourceMap");
+        let index: Option<&View<ShaderTextureInput>> =
+            find_shader_texture_input_len(shader_view, b"outputChannelIndex");
+        if let Some(index) = index {
+            shader_view.set_main_texture_output_index(index.value_int());
         }
-        if !map.is_null() {
-            // SAFETY: `map` is non-null (checked) and addresses a live entry of
-            // the shader's input run; `shader` is live.
-            unsafe {
-                (*shader).main_texture = (*map).texture;
-                (*map).texture_output_index = (*shader).main_texture_output_index;
-            }
+        if let Some(map) = map {
+            shader_view.set_main_texture(map.texture());
+            map.set_texture_output_index(shader_view.main_texture_output_index());
         }
     }
 }
