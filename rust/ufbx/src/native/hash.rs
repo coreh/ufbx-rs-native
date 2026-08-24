@@ -652,49 +652,56 @@ pub(crate) unsafe fn map_grow_size_imp(map: *mut Map, item_size: usize, min_size
     // SAFETY: `new_entries` is the `alloc_size`-byte entry region, room for
     // `num_entries` `u64`s, so zeroing that many is in bounds.
     unsafe { core::ptr::write_bytes(new_entries, 0, num_entries) };
-    if old_mask != 0 {
-        for i in 0..=old_mask {
-            let mut entry: u64;
-            // SAFETY: `i <= old_mask`, and the old entry table held
-            // `old_mask + 1` `u64` slots, so slot `i` is in bounds.
-            let mut new_entry = unsafe { *old_entries.add(i as usize) };
-            if new_entry == 0 {
-                continue;
-            }
-
-            // Reconstruct the hash of the old entry at `i`
-            let old_scan = (new_entry as u32 & old_mask).wrapping_sub(1);
-            let hash = ((new_entry as u32) & !old_mask) | (i.wrapping_sub(old_scan) & old_mask);
-            let mut slot = hash & new_mask;
-            new_entry &= !(new_mask as u64);
-
-            // Scan forward until we find an empty slot, potentially swapping
-            // `new_element` if it has a shorter scan distance (Robin Hood).
-            let mut scan: u32 = 1;
-            loop {
-                // SAFETY: `slot` is masked with `new_mask`, so it indexes one of
-                // the `new_mask + 1` (= `num_entries`) `u64` slots in the new
-                // entry table.
-                entry = unsafe { *new_entries.add(slot as usize) };
-                if entry == 0 {
-                    break;
-                }
-                let entry_scan = (entry & new_mask as u64) as u32;
-                if entry_scan < scan {
-                    // SAFETY: `slot & new_mask` is in bounds of the new entry
-                    // table, as above.
-                    unsafe {
-                        *new_entries.add(slot as usize) = new_entry.wrapping_add(scan as u64)
-                    };
-                    new_entry = entry & !(new_mask as u64);
-                    scan = entry_scan;
-                }
-                scan = scan.wrapping_add(1);
-                slot = slot.wrapping_add(1) & new_mask;
-            }
-            // SAFETY: `slot & new_mask` is in bounds of the new entry table.
-            unsafe { *new_entries.add(slot as usize) = new_entry.wrapping_add(scan as u64) };
+    // The two entry tables as slices — the ONE vouch for the whole re-hash:
+    // `old_entries` holds `old_mask + 1` initialized `u64`s (the map's own
+    // table, exclusively ours until it is freed below) and `new_entries` holds
+    // `num_entries` `u64`s just zeroed, a distinct allocation whose item region
+    // lies beyond the slice. Every index below is then bounds-checked safe code.
+    // SAFETY: as just stated; `old_mask != 0` guards the `null, 0`-length case.
+    let (old, new): (&[u64], &mut [u64]) = unsafe {
+        (
+            if old_mask != 0 {
+                core::slice::from_raw_parts(old_entries, old_mask as usize + 1)
+            } else {
+                &[]
+            },
+            core::slice::from_raw_parts_mut(new_entries, num_entries),
+        )
+    };
+    for (i, &old_entry) in old.iter().enumerate() {
+        let i = i as u32;
+        let mut entry: u64;
+        let mut new_entry: u64 = old_entry;
+        if new_entry == 0 {
+            continue;
         }
+
+        // Reconstruct the hash of the old entry at `i`
+        let old_scan = (new_entry as u32 & old_mask).wrapping_sub(1);
+        let hash = ((new_entry as u32) & !old_mask) | (i.wrapping_sub(old_scan) & old_mask);
+        let mut slot = hash & new_mask;
+        new_entry &= !(new_mask as u64);
+
+        // Scan forward until we find an empty slot, potentially swapping
+        // `new_element` if it has a shorter scan distance (Robin Hood).
+        let mut scan: u32 = 1;
+        loop {
+            // `slot` is masked with `new_mask`, so it indexes one of the
+            // `new_mask + 1` (= `num_entries`) slots.
+            entry = new[slot as usize];
+            if entry == 0 {
+                break;
+            }
+            let entry_scan = (entry & new_mask as u64) as u32;
+            if entry_scan < scan {
+                new[slot as usize] = new_entry.wrapping_add(scan as u64);
+                new_entry = entry & !(new_mask as u64);
+                scan = entry_scan;
+            }
+            scan = scan.wrapping_add(1);
+            slot = slot.wrapping_add(1) & new_mask;
+        }
+        new[slot as usize] = new_entry.wrapping_add(scan as u64);
     }
 
     // And finally free the previous allocation
