@@ -24,7 +24,7 @@ use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 use core::ptr;
 
-#[cfg(any(feature = "skinning-eval", feature = "scene-eval", feature = "baking"))]
+#[cfg(any(feature = "scene-eval", feature = "baking"))]
 use crate::generated::Node as UfbxNode;
 use crate::generated::{
     Anim, AnimCurve, AnimLayer, AnimProp, AnimValue, BakedAnim, Connection, DomNode, Element,
@@ -46,7 +46,7 @@ use crate::generated::{
     BakeStepHandling, BakedElement, BakedKeyFlags, BakedNode, BakedProp, BakedQuat, BakedVec3,
     ElementType, EvaluateFlags, Interpolation, RawBakeOpts, Transform, TransformFlags,
 };
-#[cfg(any(feature = "skinning-eval", feature = "scene-eval"))]
+#[cfg(feature = "scene-eval")]
 use crate::generated::{BlendDeformer, CacheDeformer, Mesh, SkinDeformer};
 #[cfg(feature = "skinning-eval")]
 use crate::generated::{CacheChannel, CacheInterpretation, Matrix, TopoEdge};
@@ -101,7 +101,7 @@ use crate::native::platform::{
 };
 #[cfg(feature = "baking")]
 use crate::native::platform::{macro_stable_sort, ufbxi_unreachable};
-#[cfg(any(feature = "skinning-eval", feature = "scene-eval", feature = "baking"))]
+#[cfg(feature = "scene-eval")]
 use crate::native::read::opt_ptr;
 use crate::native::read::{
     init_file_paths, open_file, read_legacy_root, read_root, ref_ptr, supports_version,
