@@ -253,7 +253,7 @@ use crate::native::read::{
 use crate::native::string_pool::{
     self as sp, add3, concat_str_cmp, min3, neg3, normalize3, str_cmp, str_less, sub3, ONE_VEC3,
 };
-use crate::native::view::{view_read, view_write, Const, Mode, SliceViewIter, View};
+use crate::native::view::{view_project, view_read, view_write, Const, Mode, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf_tag;
 use crate::prelude::as_f64;
 use crate::prelude::{
@@ -352,6 +352,24 @@ impl crate::native::view::View<Scene> {
                 (self.unknowns_mut_ptr() as *mut RefList<Element>).add(type_),
             )
         }
+    }
+}
+
+// `ufbxi_update_scene` (ufbx.c:23806) dispatches over the scene's per-type
+// element lists; the three whose `*_view()` projections are not among the
+// `SceneView` accessors in `native/parse.rs` live here.
+impl crate::native::view::View<Scene> {
+    #[inline(always)]
+    pub(crate) fn lights_view(&self) -> &crate::prelude::RefListView<Light> {
+        view_project!(self, lights)
+    }
+    #[inline(always)]
+    pub(crate) fn cameras_view(&self) -> &crate::prelude::RefListView<Camera> {
+        view_project!(self, cameras)
+    }
+    #[inline(always)]
+    pub(crate) fn bones_view(&self) -> &crate::prelude::RefListView<Bone> {
+        view_project!(self, bones)
     }
 }
 
@@ -13209,12 +13227,11 @@ pub(crate) unsafe fn update_scene<'a>(
 ) {
     // The scene VIEW is the uc-anchored dispatch root: `scene_view` is
     // `<= uc` (minted by the caller from `uc.scene_view()`), and every element
-    // view minted below carries an explicit `&'a` annotation that forces its
-    // reinterpret lifetime to unify with `'a` — so the property tables reached
-    // through them stay provably within the `uc` arena scope. The raw `scene`
-    // pointer is used only to walk the typed `*mut *mut T` element runs, exactly
-    // as C's `ufbxi_for_ptr_list` does.
-    let scene: *mut Scene = scene_view.get();
+    // view dispatched below is projected out of it — each per-type list as a
+    // `RefListView` whose `at()` yields the element view — so the property
+    // tables reached through them stay provably within the `uc` arena scope.
+    // Indexing a list view over its own `count()`, bound once before the loop,
+    // is C's `ufbxi_for_ptr_list` walk of the `*mut *mut T` run.
 
     // The raw (`transform_overrides`, `num_transform_overrides`) pair crosses
     // the public evaluate ABI; make the slice exactly once at this boundary.
@@ -13229,201 +13246,100 @@ pub(crate) unsafe fn update_scene<'a>(
     };
 
     // C: `ufbxi_for_ptr_list(ufbx_node, p_node, scene->nodes)`
-    // SAFETY: `scene` is `scene_view`'s own live, initialized `ufbx_scene`
-    // storage, so its element lists are readable.
-    let mut p_node: *mut *mut Node = unsafe { (*scene).nodes.data } as *mut *mut Node;
-    // SAFETY: `scene` is live (see above).
-    let p_node_end: *mut *mut Node = add_ptr(p_node, unsafe { (*scene).nodes.count });
-    while p_node != p_node_end {
-        // SAFETY: `p_node` addresses an element of the `scene->nodes` run (loop
-        // condition), which holds `count` pointers to live `ufbx_node`s in the
-        // same arena that `scene_view` is anchored to.
-        let node: &'a NodeView = unsafe { NodeView::from_ptr(*p_node) };
-        update_node(node, overrides);
-        // SAFETY: `p_node` is inside the run (loop condition), so stepping one
-        // element lands at most one past its end.
-        p_node = unsafe { p_node.add(1) };
+    let nodes: &'a RefListView<Node> = scene_view.nodes_view();
+    let num_nodes: usize = nodes.count();
+    for i in 0..num_nodes {
+        update_node(nodes.at(i), overrides);
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_light, p_light, scene->lights)`
-    // SAFETY: `scene` is live (see above).
-    let mut p_light: *mut *mut Light = unsafe { (*scene).lights.data } as *mut *mut Light;
-    // SAFETY: `scene` is live (see above).
-    let p_light_end: *mut *mut Light = add_ptr(p_light, unsafe { (*scene).lights.count });
-    while p_light != p_light_end {
-        // SAFETY: as for the node run, for `scene->lights` and `ufbx_light`.
-        let light: &'a LightView = unsafe { LightView::from_ptr(*p_light) };
-        update_light(light);
-        // SAFETY: `p_light` is inside the run (loop condition).
-        p_light = unsafe { p_light.add(1) };
+    let lights: &'a RefListView<Light> = scene_view.lights_view();
+    let num_lights: usize = lights.count();
+    for i in 0..num_lights {
+        update_light(lights.at(i));
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_camera, p_camera, scene->cameras)`
-    // SAFETY: `scene` is live (see above).
-    let mut p_camera: *mut *mut Camera = unsafe { (*scene).cameras.data } as *mut *mut Camera;
-    // SAFETY: `scene` is live (see above).
-    let p_camera_end: *mut *mut Camera = add_ptr(p_camera, unsafe { (*scene).cameras.count });
-    while p_camera != p_camera_end {
-        // SAFETY: as for the node run, for `scene->cameras` and `ufbx_camera`.
-        let camera: &'a CameraView = unsafe { CameraView::from_ptr(*p_camera) };
-        update_camera(scene_view, camera);
-        // SAFETY: `p_camera` is inside the run (loop condition).
-        p_camera = unsafe { p_camera.add(1) };
+    let cameras: &'a RefListView<Camera> = scene_view.cameras_view();
+    let num_cameras: usize = cameras.count();
+    for i in 0..num_cameras {
+        update_camera(scene_view, cameras.at(i));
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_bone, p_bone, scene->bones)`
-    // SAFETY: `scene` is live (see above).
-    let mut p_bone: *mut *mut Bone = unsafe { (*scene).bones.data } as *mut *mut Bone;
-    // SAFETY: `scene` is live (see above).
-    let p_bone_end: *mut *mut Bone = add_ptr(p_bone, unsafe { (*scene).bones.count });
-    while p_bone != p_bone_end {
-        // SAFETY: as for the node run, for `scene->bones` and `ufbx_bone`.
-        let bone: &'a BoneView = unsafe { BoneView::from_ptr(*p_bone) };
-        update_bone(scene_view, bone);
-        // SAFETY: `p_bone` is inside the run (loop condition).
-        p_bone = unsafe { p_bone.add(1) };
+    let bones: &'a RefListView<Bone> = scene_view.bones_view();
+    let num_bones: usize = bones.count();
+    for i in 0..num_bones {
+        update_bone(scene_view, bones.at(i));
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_line_curve, p_line, scene->line_curves)`
-    // SAFETY: `scene` is live (see above).
-    let mut p_line: *mut *mut LineCurve =
-        unsafe { (*scene).line_curves.data } as *mut *mut LineCurve;
-    // SAFETY: `scene` is live (see above).
-    let p_line_end: *mut *mut LineCurve = add_ptr(p_line, unsafe { (*scene).line_curves.count });
-    while p_line != p_line_end {
-        // SAFETY: as for the node run, for `scene->line_curves` and
-        // `ufbx_line_curve`.
-        let line: &'a LineCurveView = unsafe { LineCurveView::from_ptr(*p_line) };
-        update_line_curve(line);
-        // SAFETY: `p_line` is inside the run (loop condition).
-        p_line = unsafe { p_line.add(1) };
+    let line_curves: &'a RefListView<LineCurve> = scene_view.line_curves_view();
+    let num_line_curves: usize = line_curves.count();
+    for i in 0..num_line_curves {
+        update_line_curve(line_curves.at(i));
     }
 
     if initial {
         update_initial_clusters(scene_view);
 
         // C: `ufbxi_for_ptr_list(ufbx_pose, p_pose, scene->poses)`
-        // SAFETY: `scene` is live (see above).
-        let mut p_pose: *mut *mut Pose = unsafe { (*scene).poses.data } as *mut *mut Pose;
-        // SAFETY: `scene` is live (see above).
-        let p_pose_end: *mut *mut Pose = add_ptr(p_pose, unsafe { (*scene).poses.count });
-        while p_pose != p_pose_end {
-            // SAFETY: as for the node run, for `scene->poses` and `ufbx_pose`.
-            let pose: &'a PoseView = unsafe { PoseView::from_ptr(*p_pose) };
-            update_pose(pose);
-            // SAFETY: `p_pose` is inside the run (loop condition).
-            p_pose = unsafe { p_pose.add(1) };
+        let poses: &'a RefListView<Pose> = scene_view.poses_view();
+        let num_poses: usize = poses.count();
+        for i in 0..num_poses {
+            update_pose(poses.at(i));
         }
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, scene->skin_clusters)`
-    // SAFETY: `scene` is live (see above).
-    let mut p_cluster: *mut *mut SkinCluster =
-        unsafe { (*scene).skin_clusters.data } as *mut *mut SkinCluster;
-    // SAFETY: `scene` is live (see above).
-    let p_cluster_end: *mut *mut SkinCluster =
-        add_ptr(p_cluster, unsafe { (*scene).skin_clusters.count });
-    while p_cluster != p_cluster_end {
-        // SAFETY: as for the node run, for `scene->skin_clusters` and
-        // `ufbx_skin_cluster`.
-        let cluster: &'a SkinClusterView = unsafe { SkinClusterView::from_ptr(*p_cluster) };
-        update_skin_cluster(cluster);
-        // SAFETY: `p_cluster` is inside the run (loop condition).
-        p_cluster = unsafe { p_cluster.add(1) };
+    let skin_clusters: &'a RefListView<SkinCluster> = scene_view.skin_clusters_view();
+    let num_skin_clusters: usize = skin_clusters.count();
+    for i in 0..num_skin_clusters {
+        update_skin_cluster(skin_clusters.at(i));
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_channel, p_channel, scene->blend_channels)`
-    // SAFETY: `scene` is live (see above).
-    let mut p_channel: *mut *mut BlendChannel =
-        unsafe { (*scene).blend_channels.data } as *mut *mut BlendChannel;
-    // SAFETY: `scene` is live (see above).
-    let p_channel_end: *mut *mut BlendChannel =
-        add_ptr(p_channel, unsafe { (*scene).blend_channels.count });
-    while p_channel != p_channel_end {
-        // SAFETY: as for the node run, for `scene->blend_channels` and
-        // `ufbx_blend_channel`.
-        let channel: &'a BlendChannelView = unsafe { BlendChannelView::from_ptr(*p_channel) };
-        update_blend_channel(channel);
-        // SAFETY: `p_channel` is inside the run (loop condition).
-        p_channel = unsafe { p_channel.add(1) };
+    let blend_channels: &'a RefListView<BlendChannel> = scene_view.blend_channels_view();
+    let num_blend_channels: usize = blend_channels.count();
+    for i in 0..num_blend_channels {
+        update_blend_channel(blend_channels.at(i));
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, scene->textures)`
-    // SAFETY: `scene` is live (see above).
-    let mut p_texture: *mut *mut Texture = unsafe { (*scene).textures.data } as *mut *mut Texture;
-    // SAFETY: `scene` is live (see above).
-    let p_texture_end: *mut *mut Texture = add_ptr(p_texture, unsafe { (*scene).textures.count });
-    while p_texture != p_texture_end {
-        // SAFETY: as for the node run, for `scene->textures` and `ufbx_texture`.
-        let texture: &'a TextureView = unsafe { TextureView::from_ptr(*p_texture) };
-        update_texture(texture);
-        // SAFETY: `p_texture` is inside the run (loop condition).
-        p_texture = unsafe { p_texture.add(1) };
+    let textures: &'a RefListView<Texture> = scene_view.textures_view();
+    let num_textures: usize = textures.count();
+    for i in 0..num_textures {
+        update_texture(textures.at(i));
     }
 
     propagate_main_textures(scene_view);
 
     // C: `ufbxi_for_ptr_list(ufbx_material, p_material, scene->materials)`
-    // SAFETY: `scene` is live (see above).
-    let mut p_material: *mut *mut Material =
-        unsafe { (*scene).materials.data } as *mut *mut Material;
-    // SAFETY: `scene` is live (see above).
-    let p_material_end: *mut *mut Material =
-        add_ptr(p_material, unsafe { (*scene).materials.count });
-    while p_material != p_material_end {
-        // SAFETY: as for the node run, for `scene->materials` and
-        // `ufbx_material`.
-        let material: &'a MaterialView = unsafe { MaterialView::from_ptr(*p_material) };
-        update_material(scene_view, material);
-        // SAFETY: `p_material` is inside the run (loop condition).
-        p_material = unsafe { p_material.add(1) };
+    let materials: &'a RefListView<Material> = scene_view.materials_view();
+    let num_materials: usize = materials.count();
+    for i in 0..num_materials {
+        update_material(scene_view, materials.at(i));
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_anim_stack, p_stack, scene->anim_stacks)`
-    // SAFETY: `scene` is live (see above).
-    let mut p_stack: *mut *mut AnimStack =
-        unsafe { (*scene).anim_stacks.data } as *mut *mut AnimStack;
-    // SAFETY: `scene` is live (see above).
-    let p_stack_end: *mut *mut AnimStack = add_ptr(p_stack, unsafe { (*scene).anim_stacks.count });
-    while p_stack != p_stack_end {
-        // SAFETY: as for the node run, for `scene->anim_stacks` and
-        // `ufbx_anim_stack`.
-        let stack: &'a AnimStackView = unsafe { AnimStackView::from_ptr(*p_stack) };
-        update_anim_stack(scene_view, stack);
-        // SAFETY: `p_stack` is inside the run (loop condition).
-        p_stack = unsafe { p_stack.add(1) };
+    let anim_stacks: &'a RefListView<AnimStack> = scene_view.anim_stacks_view();
+    let num_anim_stacks: usize = anim_stacks.count();
+    for i in 0..num_anim_stacks {
+        update_anim_stack(scene_view, anim_stacks.at(i));
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_display_layer, p_layer, scene->display_layers)`
-    // SAFETY: `scene` is live (see above).
-    let mut p_layer: *mut *mut DisplayLayer =
-        unsafe { (*scene).display_layers.data } as *mut *mut DisplayLayer;
-    // SAFETY: `scene` is live (see above).
-    let p_layer_end: *mut *mut DisplayLayer =
-        add_ptr(p_layer, unsafe { (*scene).display_layers.count });
-    while p_layer != p_layer_end {
-        // SAFETY: as for the node run, for `scene->display_layers` and
-        // `ufbx_display_layer`.
-        let layer: &'a DisplayLayerView = unsafe { DisplayLayerView::from_ptr(*p_layer) };
-        update_display_layer(layer);
-        // SAFETY: `p_layer` is inside the run (loop condition).
-        p_layer = unsafe { p_layer.add(1) };
+    let display_layers: &'a RefListView<DisplayLayer> = scene_view.display_layers_view();
+    let num_display_layers: usize = display_layers.count();
+    for i in 0..num_display_layers {
+        update_display_layer(display_layers.at(i));
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_constraint, p_constraint, scene->constraints)`
-    // SAFETY: `scene` is live (see above).
-    let mut p_constraint: *mut *mut Constraint =
-        unsafe { (*scene).constraints.data } as *mut *mut Constraint;
-    // SAFETY: `scene` is live (see above).
-    let p_constraint_end: *mut *mut Constraint =
-        add_ptr(p_constraint, unsafe { (*scene).constraints.count });
-    while p_constraint != p_constraint_end {
-        // SAFETY: as for the node run, for `scene->constraints` and
-        // `ufbx_constraint`.
-        let constraint: &'a ConstraintView = unsafe { ConstraintView::from_ptr(*p_constraint) };
-        update_constraint(constraint);
-        // SAFETY: `p_constraint` is inside the run (loop condition).
-        p_constraint = unsafe { p_constraint.add(1) };
+    let constraints: &'a RefListView<Constraint> = scene_view.constraints_view();
+    let num_constraints: usize = constraints.count();
+    for i in 0..num_constraints {
+        update_constraint(constraints.at(i));
     }
 
     update_anim(scene_view);
