@@ -5118,3 +5118,4734 @@ impl View<Node, Mut> {
         view_raw_mut!(self, node_depth)
     }
 }
+
+#[allow(dead_code)]
+impl<M: Mode> View<Texture, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> TextureType {
+        view_read_shared!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn type_ptr(&self) -> *const TextureType {
+        view_raw_shared!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn filename(&self) -> String {
+        view_read_shared!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_view(&self) -> &View<String, M> {
+        view_project!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename(&self) -> String {
+        view_read_shared!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_view(&self) -> &View<String, M> {
+        view_project!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename(&self) -> String {
+        view_read_shared!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_view(&self) -> &View<String, M> {
+        view_project!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename(&self) -> Blob {
+        view_read_shared!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename(&self) -> Blob {
+        view_read_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename(&self) -> Blob {
+        view_read_shared!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn content(&self) -> Blob {
+        view_read_shared!(self, content)
+    }
+    #[inline(always)]
+    pub(crate) fn content_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, content)
+    }
+    #[inline(always)]
+    pub(crate) fn video(&self) -> Option<Ref<Video>> {
+        view_read_shared!(self, video)
+    }
+    #[inline(always)]
+    pub(crate) fn video_ptr(&self) -> *const Option<Ref<Video>> {
+        view_raw_shared!(self, video)
+    }
+    #[inline(always)]
+    pub(crate) fn file_index(&self) -> u32 {
+        view_read_shared!(self, file_index)
+    }
+    #[inline(always)]
+    pub(crate) fn file_index_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, file_index)
+    }
+    #[inline(always)]
+    pub(crate) fn has_file(&self) -> bool {
+        view_read_shared!(self, has_file)
+    }
+    #[inline(always)]
+    pub(crate) fn has_file_ptr(&self) -> *const bool {
+        view_raw_shared!(self, has_file)
+    }
+    #[inline(always)]
+    pub(crate) fn layers(&self) -> List<TextureLayer> {
+        view_read_shared!(self, layers)
+    }
+    #[inline(always)]
+    pub(crate) fn layers_view(&self) -> &View<List<TextureLayer>, M> {
+        view_project!(self, layers)
+    }
+    #[inline(always)]
+    pub(crate) fn layers_ptr(&self) -> *const List<TextureLayer> {
+        view_raw_shared!(self, layers)
+    }
+    #[inline(always)]
+    pub(crate) fn shader(&self) -> Option<Ref<ShaderTexture>> {
+        view_read_shared!(self, shader)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_ptr(&self) -> *const Option<Ref<ShaderTexture>> {
+        view_raw_shared!(self, shader)
+    }
+    #[inline(always)]
+    pub(crate) fn file_textures(&self) -> RefList<Texture> {
+        view_read_shared!(self, file_textures)
+    }
+    #[inline(always)]
+    pub(crate) fn file_textures_view(&self) -> &View<RefList<Texture>, M> {
+        view_project!(self, file_textures)
+    }
+    #[inline(always)]
+    pub(crate) fn file_textures_ptr(&self) -> *const RefList<Texture> {
+        view_raw_shared!(self, file_textures)
+    }
+    #[inline(always)]
+    pub(crate) fn uv_set(&self) -> String {
+        view_read_shared!(self, uv_set)
+    }
+    #[inline(always)]
+    pub(crate) fn uv_set_view(&self) -> &View<String, M> {
+        view_project!(self, uv_set)
+    }
+    #[inline(always)]
+    pub(crate) fn uv_set_ptr(&self) -> *const String {
+        view_raw_shared!(self, uv_set)
+    }
+    #[inline(always)]
+    pub(crate) fn wrap_u(&self) -> WrapMode {
+        view_read_shared!(self, wrap_u)
+    }
+    #[inline(always)]
+    pub(crate) fn wrap_u_ptr(&self) -> *const WrapMode {
+        view_raw_shared!(self, wrap_u)
+    }
+    #[inline(always)]
+    pub(crate) fn wrap_v(&self) -> WrapMode {
+        view_read_shared!(self, wrap_v)
+    }
+    #[inline(always)]
+    pub(crate) fn wrap_v_ptr(&self) -> *const WrapMode {
+        view_raw_shared!(self, wrap_v)
+    }
+    #[inline(always)]
+    pub(crate) fn has_uv_transform(&self) -> bool {
+        view_read_shared!(self, has_uv_transform)
+    }
+    #[inline(always)]
+    pub(crate) fn has_uv_transform_ptr(&self) -> *const bool {
+        view_raw_shared!(self, has_uv_transform)
+    }
+    #[inline(always)]
+    pub(crate) fn uv_transform(&self) -> Transform {
+        view_read_shared!(self, uv_transform)
+    }
+    #[inline(always)]
+    pub(crate) fn uv_transform_ptr(&self) -> *const Transform {
+        view_raw_shared!(self, uv_transform)
+    }
+    #[inline(always)]
+    pub(crate) fn texture_to_uv(&self) -> Matrix {
+        view_read_shared!(self, texture_to_uv)
+    }
+    #[inline(always)]
+    pub(crate) fn texture_to_uv_ptr(&self) -> *const Matrix {
+        view_raw_shared!(self, texture_to_uv)
+    }
+    #[inline(always)]
+    pub(crate) fn uv_to_texture(&self) -> Matrix {
+        view_read_shared!(self, uv_to_texture)
+    }
+    #[inline(always)]
+    pub(crate) fn uv_to_texture_ptr(&self) -> *const Matrix {
+        view_raw_shared!(self, uv_to_texture)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Texture, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_type(&self, value: TextureType) {
+        view_write!(self, type_, value)
+    }
+    #[inline(always)]
+    pub(crate) fn type_raw(&self) -> *mut TextureType {
+        view_raw_mut!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn set_filename(&self, value: String) {
+        view_write!(self, filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_absolute_filename(&self, value: String) {
+        view_write!(self, absolute_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_relative_filename(&self, value: String) {
+        view_write!(self, relative_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_filename(&self, value: Blob) {
+        view_write!(self, raw_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_absolute_filename(&self, value: Blob) {
+        view_write!(self, raw_absolute_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_relative_filename(&self, value: Blob) {
+        view_write!(self, raw_relative_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_content(&self, value: Blob) {
+        view_write!(self, content, value)
+    }
+    #[inline(always)]
+    pub(crate) fn content_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, content)
+    }
+    #[inline(always)]
+    pub(crate) fn set_video(&self, value: Option<Ref<Video>>) {
+        view_write!(self, video, value)
+    }
+    #[inline(always)]
+    pub(crate) fn video_raw(&self) -> *mut Option<Ref<Video>> {
+        view_raw_mut!(self, video)
+    }
+    #[inline(always)]
+    pub(crate) fn set_file_index(&self, value: u32) {
+        view_write!(self, file_index, value)
+    }
+    #[inline(always)]
+    pub(crate) fn file_index_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, file_index)
+    }
+    #[inline(always)]
+    pub(crate) fn set_has_file(&self, value: bool) {
+        view_write!(self, has_file, value)
+    }
+    #[inline(always)]
+    pub(crate) fn has_file_raw(&self) -> *mut bool {
+        view_raw_mut!(self, has_file)
+    }
+    #[inline(always)]
+    pub(crate) fn set_layers(&self, value: List<TextureLayer>) {
+        view_write!(self, layers, value)
+    }
+    #[inline(always)]
+    pub(crate) fn layers_raw(&self) -> *mut List<TextureLayer> {
+        view_raw_mut!(self, layers)
+    }
+    #[inline(always)]
+    pub(crate) fn set_shader(&self, value: Option<Ref<ShaderTexture>>) {
+        view_write!(self, shader, value)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_raw(&self) -> *mut Option<Ref<ShaderTexture>> {
+        view_raw_mut!(self, shader)
+    }
+    #[inline(always)]
+    pub(crate) fn set_file_textures(&self, value: RefList<Texture>) {
+        view_write!(self, file_textures, value)
+    }
+    #[inline(always)]
+    pub(crate) fn file_textures_raw(&self) -> *mut RefList<Texture> {
+        view_raw_mut!(self, file_textures)
+    }
+    #[inline(always)]
+    pub(crate) fn set_uv_set(&self, value: String) {
+        view_write!(self, uv_set, value)
+    }
+    #[inline(always)]
+    pub(crate) fn uv_set_raw(&self) -> *mut String {
+        view_raw_mut!(self, uv_set)
+    }
+    #[inline(always)]
+    pub(crate) fn set_wrap_u(&self, value: WrapMode) {
+        view_write!(self, wrap_u, value)
+    }
+    #[inline(always)]
+    pub(crate) fn wrap_u_raw(&self) -> *mut WrapMode {
+        view_raw_mut!(self, wrap_u)
+    }
+    #[inline(always)]
+    pub(crate) fn set_wrap_v(&self, value: WrapMode) {
+        view_write!(self, wrap_v, value)
+    }
+    #[inline(always)]
+    pub(crate) fn wrap_v_raw(&self) -> *mut WrapMode {
+        view_raw_mut!(self, wrap_v)
+    }
+    #[inline(always)]
+    pub(crate) fn set_has_uv_transform(&self, value: bool) {
+        view_write!(self, has_uv_transform, value)
+    }
+    #[inline(always)]
+    pub(crate) fn has_uv_transform_raw(&self) -> *mut bool {
+        view_raw_mut!(self, has_uv_transform)
+    }
+    #[inline(always)]
+    pub(crate) fn set_uv_transform(&self, value: Transform) {
+        view_write!(self, uv_transform, value)
+    }
+    #[inline(always)]
+    pub(crate) fn uv_transform_raw(&self) -> *mut Transform {
+        view_raw_mut!(self, uv_transform)
+    }
+    #[inline(always)]
+    pub(crate) fn set_texture_to_uv(&self, value: Matrix) {
+        view_write!(self, texture_to_uv, value)
+    }
+    #[inline(always)]
+    pub(crate) fn texture_to_uv_raw(&self) -> *mut Matrix {
+        view_raw_mut!(self, texture_to_uv)
+    }
+    #[inline(always)]
+    pub(crate) fn set_uv_to_texture(&self, value: Matrix) {
+        view_write!(self, uv_to_texture, value)
+    }
+    #[inline(always)]
+    pub(crate) fn uv_to_texture_raw(&self) -> *mut Matrix {
+        view_raw_mut!(self, uv_to_texture)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<SkinCluster, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_node(&self) -> Option<Ref<Node>> {
+        view_read_shared!(self, bone_node)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_node_ptr(&self) -> *const Option<Ref<Node>> {
+        view_raw_shared!(self, bone_node)
+    }
+    #[inline(always)]
+    pub(crate) fn geometry_to_bone(&self) -> Matrix {
+        view_read_shared!(self, geometry_to_bone)
+    }
+    #[inline(always)]
+    pub(crate) fn geometry_to_bone_ptr(&self) -> *const Matrix {
+        view_raw_shared!(self, geometry_to_bone)
+    }
+    #[inline(always)]
+    pub(crate) fn mesh_node_to_bone(&self) -> Matrix {
+        view_read_shared!(self, mesh_node_to_bone)
+    }
+    #[inline(always)]
+    pub(crate) fn mesh_node_to_bone_ptr(&self) -> *const Matrix {
+        view_raw_shared!(self, mesh_node_to_bone)
+    }
+    #[inline(always)]
+    pub(crate) fn bind_to_world(&self) -> Matrix {
+        view_read_shared!(self, bind_to_world)
+    }
+    #[inline(always)]
+    pub(crate) fn bind_to_world_ptr(&self) -> *const Matrix {
+        view_raw_shared!(self, bind_to_world)
+    }
+    #[inline(always)]
+    pub(crate) fn geometry_to_world(&self) -> Matrix {
+        view_read_shared!(self, geometry_to_world)
+    }
+    #[inline(always)]
+    pub(crate) fn geometry_to_world_ptr(&self) -> *const Matrix {
+        view_raw_shared!(self, geometry_to_world)
+    }
+    #[inline(always)]
+    pub(crate) fn geometry_to_world_transform(&self) -> Transform {
+        view_read_shared!(self, geometry_to_world_transform)
+    }
+    #[inline(always)]
+    pub(crate) fn geometry_to_world_transform_ptr(&self) -> *const Transform {
+        view_raw_shared!(self, geometry_to_world_transform)
+    }
+    #[inline(always)]
+    pub(crate) fn num_weights(&self) -> usize {
+        view_read_shared!(self, num_weights)
+    }
+    #[inline(always)]
+    pub(crate) fn num_weights_ptr(&self) -> *const usize {
+        view_raw_shared!(self, num_weights)
+    }
+    #[inline(always)]
+    pub(crate) fn vertices(&self) -> List<u32> {
+        view_read_shared!(self, vertices)
+    }
+    #[inline(always)]
+    pub(crate) fn vertices_view(&self) -> &View<List<u32>, M> {
+        view_project!(self, vertices)
+    }
+    #[inline(always)]
+    pub(crate) fn vertices_ptr(&self) -> *const List<u32> {
+        view_raw_shared!(self, vertices)
+    }
+    #[inline(always)]
+    pub(crate) fn weights(&self) -> List<Real> {
+        view_read_shared!(self, weights)
+    }
+    #[inline(always)]
+    pub(crate) fn weights_view(&self) -> &View<List<Real>, M> {
+        view_project!(self, weights)
+    }
+    #[inline(always)]
+    pub(crate) fn weights_ptr(&self) -> *const List<Real> {
+        view_raw_shared!(self, weights)
+    }
+}
+
+#[allow(dead_code)]
+impl View<SkinCluster, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_bone_node(&self, value: Option<Ref<Node>>) {
+        view_write!(self, bone_node, value)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_node_raw(&self) -> *mut Option<Ref<Node>> {
+        view_raw_mut!(self, bone_node)
+    }
+    #[inline(always)]
+    pub(crate) fn set_geometry_to_bone(&self, value: Matrix) {
+        view_write!(self, geometry_to_bone, value)
+    }
+    #[inline(always)]
+    pub(crate) fn geometry_to_bone_raw(&self) -> *mut Matrix {
+        view_raw_mut!(self, geometry_to_bone)
+    }
+    #[inline(always)]
+    pub(crate) fn set_mesh_node_to_bone(&self, value: Matrix) {
+        view_write!(self, mesh_node_to_bone, value)
+    }
+    #[inline(always)]
+    pub(crate) fn mesh_node_to_bone_raw(&self) -> *mut Matrix {
+        view_raw_mut!(self, mesh_node_to_bone)
+    }
+    #[inline(always)]
+    pub(crate) fn set_bind_to_world(&self, value: Matrix) {
+        view_write!(self, bind_to_world, value)
+    }
+    #[inline(always)]
+    pub(crate) fn bind_to_world_raw(&self) -> *mut Matrix {
+        view_raw_mut!(self, bind_to_world)
+    }
+    #[inline(always)]
+    pub(crate) fn set_geometry_to_world(&self, value: Matrix) {
+        view_write!(self, geometry_to_world, value)
+    }
+    #[inline(always)]
+    pub(crate) fn geometry_to_world_raw(&self) -> *mut Matrix {
+        view_raw_mut!(self, geometry_to_world)
+    }
+    #[inline(always)]
+    pub(crate) fn set_geometry_to_world_transform(&self, value: Transform) {
+        view_write!(self, geometry_to_world_transform, value)
+    }
+    #[inline(always)]
+    pub(crate) fn geometry_to_world_transform_raw(&self) -> *mut Transform {
+        view_raw_mut!(self, geometry_to_world_transform)
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_weights(&self, value: usize) {
+        view_write!(self, num_weights, value)
+    }
+    #[inline(always)]
+    pub(crate) fn num_weights_raw(&self) -> *mut usize {
+        view_raw_mut!(self, num_weights)
+    }
+    #[inline(always)]
+    pub(crate) fn set_vertices(&self, value: List<u32>) {
+        view_write!(self, vertices, value)
+    }
+    #[inline(always)]
+    pub(crate) fn vertices_raw(&self) -> *mut List<u32> {
+        view_raw_mut!(self, vertices)
+    }
+    #[inline(always)]
+    pub(crate) fn set_weights(&self, value: List<Real>) {
+        view_write!(self, weights, value)
+    }
+    #[inline(always)]
+    pub(crate) fn weights_raw(&self) -> *mut List<Real> {
+        view_raw_mut!(self, weights)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Material, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn fbx(&self) -> MaterialFbxMaps {
+        view_read_shared!(self, fbx)
+    }
+    #[inline(always)]
+    pub(crate) fn fbx_ptr(&self) -> *const MaterialFbxMaps {
+        view_raw_shared!(self, fbx)
+    }
+    #[inline(always)]
+    pub(crate) fn pbr(&self) -> MaterialPbrMaps {
+        view_read_shared!(self, pbr)
+    }
+    #[inline(always)]
+    pub(crate) fn pbr_ptr(&self) -> *const MaterialPbrMaps {
+        view_raw_shared!(self, pbr)
+    }
+    #[inline(always)]
+    pub(crate) fn features(&self) -> MaterialFeatures {
+        view_read_shared!(self, features)
+    }
+    #[inline(always)]
+    pub(crate) fn features_ptr(&self) -> *const MaterialFeatures {
+        view_raw_shared!(self, features)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_type(&self) -> ShaderType {
+        view_read_shared!(self, shader_type)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_type_ptr(&self) -> *const ShaderType {
+        view_raw_shared!(self, shader_type)
+    }
+    #[inline(always)]
+    pub(crate) fn shader(&self) -> Option<Ref<Shader>> {
+        view_read_shared!(self, shader)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_ptr(&self) -> *const Option<Ref<Shader>> {
+        view_raw_shared!(self, shader)
+    }
+    #[inline(always)]
+    pub(crate) fn shading_model_name(&self) -> String {
+        view_read_shared!(self, shading_model_name)
+    }
+    #[inline(always)]
+    pub(crate) fn shading_model_name_view(&self) -> &View<String, M> {
+        view_project!(self, shading_model_name)
+    }
+    #[inline(always)]
+    pub(crate) fn shading_model_name_ptr(&self) -> *const String {
+        view_raw_shared!(self, shading_model_name)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_prop_prefix(&self) -> String {
+        view_read_shared!(self, shader_prop_prefix)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_prop_prefix_view(&self) -> &View<String, M> {
+        view_project!(self, shader_prop_prefix)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_prop_prefix_ptr(&self) -> *const String {
+        view_raw_shared!(self, shader_prop_prefix)
+    }
+    #[inline(always)]
+    pub(crate) fn textures(&self) -> List<MaterialTexture> {
+        view_read_shared!(self, textures)
+    }
+    #[inline(always)]
+    pub(crate) fn textures_view(&self) -> &View<List<MaterialTexture>, M> {
+        view_project!(self, textures)
+    }
+    #[inline(always)]
+    pub(crate) fn textures_ptr(&self) -> *const List<MaterialTexture> {
+        view_raw_shared!(self, textures)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Material, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_fbx(&self, value: MaterialFbxMaps) {
+        view_write!(self, fbx, value)
+    }
+    #[inline(always)]
+    pub(crate) fn fbx_raw(&self) -> *mut MaterialFbxMaps {
+        view_raw_mut!(self, fbx)
+    }
+    #[inline(always)]
+    pub(crate) fn set_pbr(&self, value: MaterialPbrMaps) {
+        view_write!(self, pbr, value)
+    }
+    #[inline(always)]
+    pub(crate) fn pbr_raw(&self) -> *mut MaterialPbrMaps {
+        view_raw_mut!(self, pbr)
+    }
+    #[inline(always)]
+    pub(crate) fn set_features(&self, value: MaterialFeatures) {
+        view_write!(self, features, value)
+    }
+    #[inline(always)]
+    pub(crate) fn features_raw(&self) -> *mut MaterialFeatures {
+        view_raw_mut!(self, features)
+    }
+    #[inline(always)]
+    pub(crate) fn set_shader_type(&self, value: ShaderType) {
+        view_write!(self, shader_type, value)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_type_raw(&self) -> *mut ShaderType {
+        view_raw_mut!(self, shader_type)
+    }
+    #[inline(always)]
+    pub(crate) fn set_shader(&self, value: Option<Ref<Shader>>) {
+        view_write!(self, shader, value)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_raw(&self) -> *mut Option<Ref<Shader>> {
+        view_raw_mut!(self, shader)
+    }
+    #[inline(always)]
+    pub(crate) fn set_shading_model_name(&self, value: String) {
+        view_write!(self, shading_model_name, value)
+    }
+    #[inline(always)]
+    pub(crate) fn shading_model_name_raw(&self) -> *mut String {
+        view_raw_mut!(self, shading_model_name)
+    }
+    #[inline(always)]
+    pub(crate) fn set_shader_prop_prefix(&self, value: String) {
+        view_write!(self, shader_prop_prefix, value)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_prop_prefix_raw(&self) -> *mut String {
+        view_raw_mut!(self, shader_prop_prefix)
+    }
+    #[inline(always)]
+    pub(crate) fn set_textures(&self, value: List<MaterialTexture>) {
+        view_write!(self, textures, value)
+    }
+    #[inline(always)]
+    pub(crate) fn textures_raw(&self) -> *mut List<MaterialTexture> {
+        view_raw_mut!(self, textures)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Video, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn filename(&self) -> String {
+        view_read_shared!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_view(&self) -> &View<String, M> {
+        view_project!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename(&self) -> String {
+        view_read_shared!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_view(&self) -> &View<String, M> {
+        view_project!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename(&self) -> String {
+        view_read_shared!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_view(&self) -> &View<String, M> {
+        view_project!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename(&self) -> Blob {
+        view_read_shared!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename(&self) -> Blob {
+        view_read_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename(&self) -> Blob {
+        view_read_shared!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn content(&self) -> Blob {
+        view_read_shared!(self, content)
+    }
+    #[inline(always)]
+    pub(crate) fn content_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, content)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Video, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_filename(&self, value: String) {
+        view_write!(self, filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_absolute_filename(&self, value: String) {
+        view_write!(self, absolute_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_relative_filename(&self, value: String) {
+        view_write!(self, relative_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_filename(&self, value: Blob) {
+        view_write!(self, raw_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_absolute_filename(&self, value: Blob) {
+        view_write!(self, raw_absolute_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_relative_filename(&self, value: Blob) {
+        view_write!(self, raw_relative_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_content(&self, value: Blob) {
+        view_write!(self, content, value)
+    }
+    #[inline(always)]
+    pub(crate) fn content_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, content)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Pose, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn is_bind_pose(&self) -> bool {
+        view_read_shared!(self, is_bind_pose)
+    }
+    #[inline(always)]
+    pub(crate) fn is_bind_pose_ptr(&self) -> *const bool {
+        view_raw_shared!(self, is_bind_pose)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_poses(&self) -> List<BonePose> {
+        view_read_shared!(self, bone_poses)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_poses_view(&self) -> &View<List<BonePose>, M> {
+        view_project!(self, bone_poses)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_poses_ptr(&self) -> *const List<BonePose> {
+        view_raw_shared!(self, bone_poses)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Pose, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_is_bind_pose(&self, value: bool) {
+        view_write!(self, is_bind_pose, value)
+    }
+    #[inline(always)]
+    pub(crate) fn is_bind_pose_raw(&self) -> *mut bool {
+        view_raw_mut!(self, is_bind_pose)
+    }
+    #[inline(always)]
+    pub(crate) fn set_bone_poses(&self, value: List<BonePose>) {
+        view_write!(self, bone_poses, value)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_poses_raw(&self) -> *mut List<BonePose> {
+        view_raw_mut!(self, bone_poses)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<BonePose, M> {
+    #[inline(always)]
+    pub(crate) fn bone_node(&self) -> Ref<Node> {
+        view_read_shared!(self, bone_node)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_node_ptr(&self) -> *const Ref<Node> {
+        view_raw_shared!(self, bone_node)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_to_world(&self) -> Matrix {
+        view_read_shared!(self, bone_to_world)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_to_world_ptr(&self) -> *const Matrix {
+        view_raw_shared!(self, bone_to_world)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_to_parent(&self) -> Matrix {
+        view_read_shared!(self, bone_to_parent)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_to_parent_ptr(&self) -> *const Matrix {
+        view_raw_shared!(self, bone_to_parent)
+    }
+}
+
+#[allow(dead_code)]
+impl View<BonePose, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_bone_node(&self, value: Ref<Node>) {
+        view_write!(self, bone_node, value)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_node_raw(&self) -> *mut Ref<Node> {
+        view_raw_mut!(self, bone_node)
+    }
+    #[inline(always)]
+    pub(crate) fn set_bone_to_world(&self, value: Matrix) {
+        view_write!(self, bone_to_world, value)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_to_world_raw(&self) -> *mut Matrix {
+        view_raw_mut!(self, bone_to_world)
+    }
+    #[inline(always)]
+    pub(crate) fn set_bone_to_parent(&self, value: Matrix) {
+        view_write!(self, bone_to_parent, value)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_to_parent_raw(&self) -> *mut Matrix {
+        view_raw_mut!(self, bone_to_parent)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<BlendKeyframe, M> {
+    #[inline(always)]
+    pub(crate) fn shape(&self) -> Ref<BlendShape> {
+        view_read_shared!(self, shape)
+    }
+    #[inline(always)]
+    pub(crate) fn shape_ptr(&self) -> *const Ref<BlendShape> {
+        view_raw_shared!(self, shape)
+    }
+    #[inline(always)]
+    pub(crate) fn target_weight(&self) -> Real {
+        view_read_shared!(self, target_weight)
+    }
+    #[inline(always)]
+    pub(crate) fn target_weight_ptr(&self) -> *const Real {
+        view_raw_shared!(self, target_weight)
+    }
+    #[inline(always)]
+    pub(crate) fn effective_weight(&self) -> Real {
+        view_read_shared!(self, effective_weight)
+    }
+    #[inline(always)]
+    pub(crate) fn effective_weight_ptr(&self) -> *const Real {
+        view_raw_shared!(self, effective_weight)
+    }
+}
+
+#[allow(dead_code)]
+impl View<BlendKeyframe, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_shape(&self, value: Ref<BlendShape>) {
+        view_write!(self, shape, value)
+    }
+    #[inline(always)]
+    pub(crate) fn shape_raw(&self) -> *mut Ref<BlendShape> {
+        view_raw_mut!(self, shape)
+    }
+    #[inline(always)]
+    pub(crate) fn set_target_weight(&self, value: Real) {
+        view_write!(self, target_weight, value)
+    }
+    #[inline(always)]
+    pub(crate) fn target_weight_raw(&self) -> *mut Real {
+        view_raw_mut!(self, target_weight)
+    }
+    #[inline(always)]
+    pub(crate) fn set_effective_weight(&self, value: Real) {
+        view_write!(self, effective_weight, value)
+    }
+    #[inline(always)]
+    pub(crate) fn effective_weight_raw(&self) -> *mut Real {
+        view_raw_mut!(self, effective_weight)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<BlendChannel, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn weight(&self) -> Real {
+        view_read_shared!(self, weight)
+    }
+    #[inline(always)]
+    pub(crate) fn weight_ptr(&self) -> *const Real {
+        view_raw_shared!(self, weight)
+    }
+    #[inline(always)]
+    pub(crate) fn keyframes(&self) -> List<BlendKeyframe> {
+        view_read_shared!(self, keyframes)
+    }
+    #[inline(always)]
+    pub(crate) fn keyframes_view(&self) -> &View<List<BlendKeyframe>, M> {
+        view_project!(self, keyframes)
+    }
+    #[inline(always)]
+    pub(crate) fn keyframes_ptr(&self) -> *const List<BlendKeyframe> {
+        view_raw_shared!(self, keyframes)
+    }
+    #[inline(always)]
+    pub(crate) fn target_shape(&self) -> Option<Ref<BlendShape>> {
+        view_read_shared!(self, target_shape)
+    }
+    #[inline(always)]
+    pub(crate) fn target_shape_ptr(&self) -> *const Option<Ref<BlendShape>> {
+        view_raw_shared!(self, target_shape)
+    }
+}
+
+#[allow(dead_code)]
+impl View<BlendChannel, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_weight(&self, value: Real) {
+        view_write!(self, weight, value)
+    }
+    #[inline(always)]
+    pub(crate) fn weight_raw(&self) -> *mut Real {
+        view_raw_mut!(self, weight)
+    }
+    #[inline(always)]
+    pub(crate) fn set_keyframes(&self, value: List<BlendKeyframe>) {
+        view_write!(self, keyframes, value)
+    }
+    #[inline(always)]
+    pub(crate) fn keyframes_raw(&self) -> *mut List<BlendKeyframe> {
+        view_raw_mut!(self, keyframes)
+    }
+    #[inline(always)]
+    pub(crate) fn set_target_shape(&self, value: Option<Ref<BlendShape>>) {
+        view_write!(self, target_shape, value)
+    }
+    #[inline(always)]
+    pub(crate) fn target_shape_raw(&self) -> *mut Option<Ref<BlendShape>> {
+        view_raw_mut!(self, target_shape)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<BlendShape, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn num_offsets(&self) -> usize {
+        view_read_shared!(self, num_offsets)
+    }
+    #[inline(always)]
+    pub(crate) fn num_offsets_ptr(&self) -> *const usize {
+        view_raw_shared!(self, num_offsets)
+    }
+    #[inline(always)]
+    pub(crate) fn offset_vertices(&self) -> List<u32> {
+        view_read_shared!(self, offset_vertices)
+    }
+    #[inline(always)]
+    pub(crate) fn offset_vertices_view(&self) -> &View<List<u32>, M> {
+        view_project!(self, offset_vertices)
+    }
+    #[inline(always)]
+    pub(crate) fn offset_vertices_ptr(&self) -> *const List<u32> {
+        view_raw_shared!(self, offset_vertices)
+    }
+    #[inline(always)]
+    pub(crate) fn position_offsets(&self) -> List<Vec3> {
+        view_read_shared!(self, position_offsets)
+    }
+    #[inline(always)]
+    pub(crate) fn position_offsets_view(&self) -> &View<List<Vec3>, M> {
+        view_project!(self, position_offsets)
+    }
+    #[inline(always)]
+    pub(crate) fn position_offsets_ptr(&self) -> *const List<Vec3> {
+        view_raw_shared!(self, position_offsets)
+    }
+    #[inline(always)]
+    pub(crate) fn normal_offsets(&self) -> List<Vec3> {
+        view_read_shared!(self, normal_offsets)
+    }
+    #[inline(always)]
+    pub(crate) fn normal_offsets_view(&self) -> &View<List<Vec3>, M> {
+        view_project!(self, normal_offsets)
+    }
+    #[inline(always)]
+    pub(crate) fn normal_offsets_ptr(&self) -> *const List<Vec3> {
+        view_raw_shared!(self, normal_offsets)
+    }
+    #[inline(always)]
+    pub(crate) fn offset_weights(&self) -> List<Real> {
+        view_read_shared!(self, offset_weights)
+    }
+    #[inline(always)]
+    pub(crate) fn offset_weights_view(&self) -> &View<List<Real>, M> {
+        view_project!(self, offset_weights)
+    }
+    #[inline(always)]
+    pub(crate) fn offset_weights_ptr(&self) -> *const List<Real> {
+        view_raw_shared!(self, offset_weights)
+    }
+}
+
+#[allow(dead_code)]
+impl View<BlendShape, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_offsets(&self, value: usize) {
+        view_write!(self, num_offsets, value)
+    }
+    #[inline(always)]
+    pub(crate) fn num_offsets_raw(&self) -> *mut usize {
+        view_raw_mut!(self, num_offsets)
+    }
+    #[inline(always)]
+    pub(crate) fn set_offset_vertices(&self, value: List<u32>) {
+        view_write!(self, offset_vertices, value)
+    }
+    #[inline(always)]
+    pub(crate) fn offset_vertices_raw(&self) -> *mut List<u32> {
+        view_raw_mut!(self, offset_vertices)
+    }
+    #[inline(always)]
+    pub(crate) fn set_position_offsets(&self, value: List<Vec3>) {
+        view_write!(self, position_offsets, value)
+    }
+    #[inline(always)]
+    pub(crate) fn position_offsets_raw(&self) -> *mut List<Vec3> {
+        view_raw_mut!(self, position_offsets)
+    }
+    #[inline(always)]
+    pub(crate) fn set_normal_offsets(&self, value: List<Vec3>) {
+        view_write!(self, normal_offsets, value)
+    }
+    #[inline(always)]
+    pub(crate) fn normal_offsets_raw(&self) -> *mut List<Vec3> {
+        view_raw_mut!(self, normal_offsets)
+    }
+    #[inline(always)]
+    pub(crate) fn set_offset_weights(&self, value: List<Real>) {
+        view_write!(self, offset_weights, value)
+    }
+    #[inline(always)]
+    pub(crate) fn offset_weights_raw(&self) -> *mut List<Real> {
+        view_raw_mut!(self, offset_weights)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<BlendDeformer, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn channels(&self) -> RefList<BlendChannel> {
+        view_read_shared!(self, channels)
+    }
+    #[inline(always)]
+    pub(crate) fn channels_view(&self) -> &View<RefList<BlendChannel>, M> {
+        view_project!(self, channels)
+    }
+    #[inline(always)]
+    pub(crate) fn channels_ptr(&self) -> *const RefList<BlendChannel> {
+        view_raw_shared!(self, channels)
+    }
+}
+
+#[allow(dead_code)]
+impl View<BlendDeformer, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_channels(&self, value: RefList<BlendChannel>) {
+        view_write!(self, channels, value)
+    }
+    #[inline(always)]
+    pub(crate) fn channels_raw(&self) -> *mut RefList<BlendChannel> {
+        view_raw_mut!(self, channels)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<AnimStack, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn time_begin(&self) -> f64 {
+        view_read_shared!(self, time_begin)
+    }
+    #[inline(always)]
+    pub(crate) fn time_begin_ptr(&self) -> *const f64 {
+        view_raw_shared!(self, time_begin)
+    }
+    #[inline(always)]
+    pub(crate) fn time_end(&self) -> f64 {
+        view_read_shared!(self, time_end)
+    }
+    #[inline(always)]
+    pub(crate) fn time_end_ptr(&self) -> *const f64 {
+        view_raw_shared!(self, time_end)
+    }
+    #[inline(always)]
+    pub(crate) fn layers(&self) -> RefList<AnimLayer> {
+        view_read_shared!(self, layers)
+    }
+    #[inline(always)]
+    pub(crate) fn layers_view(&self) -> &View<RefList<AnimLayer>, M> {
+        view_project!(self, layers)
+    }
+    #[inline(always)]
+    pub(crate) fn layers_ptr(&self) -> *const RefList<AnimLayer> {
+        view_raw_shared!(self, layers)
+    }
+    #[inline(always)]
+    pub(crate) fn anim(&self) -> Ref<Anim> {
+        view_read_shared!(self, anim)
+    }
+    #[inline(always)]
+    pub(crate) fn anim_ptr(&self) -> *const Ref<Anim> {
+        view_raw_shared!(self, anim)
+    }
+}
+
+#[allow(dead_code)]
+impl View<AnimStack, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_time_begin(&self, value: f64) {
+        view_write!(self, time_begin, value)
+    }
+    #[inline(always)]
+    pub(crate) fn time_begin_raw(&self) -> *mut f64 {
+        view_raw_mut!(self, time_begin)
+    }
+    #[inline(always)]
+    pub(crate) fn set_time_end(&self, value: f64) {
+        view_write!(self, time_end, value)
+    }
+    #[inline(always)]
+    pub(crate) fn time_end_raw(&self) -> *mut f64 {
+        view_raw_mut!(self, time_end)
+    }
+    #[inline(always)]
+    pub(crate) fn set_layers(&self, value: RefList<AnimLayer>) {
+        view_write!(self, layers, value)
+    }
+    #[inline(always)]
+    pub(crate) fn layers_raw(&self) -> *mut RefList<AnimLayer> {
+        view_raw_mut!(self, layers)
+    }
+    #[inline(always)]
+    pub(crate) fn set_anim(&self, value: Ref<Anim>) {
+        view_write!(self, anim, value)
+    }
+    #[inline(always)]
+    pub(crate) fn anim_raw(&self) -> *mut Ref<Anim> {
+        view_raw_mut!(self, anim)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Anim, M> {
+    #[inline(always)]
+    pub(crate) fn time_begin(&self) -> f64 {
+        view_read_shared!(self, time_begin)
+    }
+    #[inline(always)]
+    pub(crate) fn time_begin_ptr(&self) -> *const f64 {
+        view_raw_shared!(self, time_begin)
+    }
+    #[inline(always)]
+    pub(crate) fn time_end(&self) -> f64 {
+        view_read_shared!(self, time_end)
+    }
+    #[inline(always)]
+    pub(crate) fn time_end_ptr(&self) -> *const f64 {
+        view_raw_shared!(self, time_end)
+    }
+    #[inline(always)]
+    pub(crate) fn layers(&self) -> RefList<AnimLayer> {
+        view_read_shared!(self, layers)
+    }
+    #[inline(always)]
+    pub(crate) fn layers_view(&self) -> &View<RefList<AnimLayer>, M> {
+        view_project!(self, layers)
+    }
+    #[inline(always)]
+    pub(crate) fn layers_ptr(&self) -> *const RefList<AnimLayer> {
+        view_raw_shared!(self, layers)
+    }
+    #[inline(always)]
+    pub(crate) fn override_layer_weights(&self) -> List<Real> {
+        view_read_shared!(self, override_layer_weights)
+    }
+    #[inline(always)]
+    pub(crate) fn override_layer_weights_view(&self) -> &View<List<Real>, M> {
+        view_project!(self, override_layer_weights)
+    }
+    #[inline(always)]
+    pub(crate) fn override_layer_weights_ptr(&self) -> *const List<Real> {
+        view_raw_shared!(self, override_layer_weights)
+    }
+    #[inline(always)]
+    pub(crate) fn prop_overrides(&self) -> List<PropOverride> {
+        view_read_shared!(self, prop_overrides)
+    }
+    #[inline(always)]
+    pub(crate) fn prop_overrides_view(&self) -> &View<List<PropOverride>, M> {
+        view_project!(self, prop_overrides)
+    }
+    #[inline(always)]
+    pub(crate) fn prop_overrides_ptr(&self) -> *const List<PropOverride> {
+        view_raw_shared!(self, prop_overrides)
+    }
+    #[inline(always)]
+    pub(crate) fn transform_overrides(&self) -> List<TransformOverride> {
+        view_read_shared!(self, transform_overrides)
+    }
+    #[inline(always)]
+    pub(crate) fn transform_overrides_view(&self) -> &View<List<TransformOverride>, M> {
+        view_project!(self, transform_overrides)
+    }
+    #[inline(always)]
+    pub(crate) fn transform_overrides_ptr(&self) -> *const List<TransformOverride> {
+        view_raw_shared!(self, transform_overrides)
+    }
+    #[inline(always)]
+    pub(crate) fn ignore_connections(&self) -> bool {
+        view_read_shared!(self, ignore_connections)
+    }
+    #[inline(always)]
+    pub(crate) fn ignore_connections_ptr(&self) -> *const bool {
+        view_raw_shared!(self, ignore_connections)
+    }
+    #[inline(always)]
+    pub(crate) fn custom(&self) -> bool {
+        view_read_shared!(self, custom)
+    }
+    #[inline(always)]
+    pub(crate) fn custom_ptr(&self) -> *const bool {
+        view_raw_shared!(self, custom)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Anim, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_time_begin(&self, value: f64) {
+        view_write!(self, time_begin, value)
+    }
+    #[inline(always)]
+    pub(crate) fn time_begin_raw(&self) -> *mut f64 {
+        view_raw_mut!(self, time_begin)
+    }
+    #[inline(always)]
+    pub(crate) fn set_time_end(&self, value: f64) {
+        view_write!(self, time_end, value)
+    }
+    #[inline(always)]
+    pub(crate) fn time_end_raw(&self) -> *mut f64 {
+        view_raw_mut!(self, time_end)
+    }
+    #[inline(always)]
+    pub(crate) fn set_layers(&self, value: RefList<AnimLayer>) {
+        view_write!(self, layers, value)
+    }
+    #[inline(always)]
+    pub(crate) fn layers_raw(&self) -> *mut RefList<AnimLayer> {
+        view_raw_mut!(self, layers)
+    }
+    #[inline(always)]
+    pub(crate) fn set_override_layer_weights(&self, value: List<Real>) {
+        view_write!(self, override_layer_weights, value)
+    }
+    #[inline(always)]
+    pub(crate) fn override_layer_weights_raw(&self) -> *mut List<Real> {
+        view_raw_mut!(self, override_layer_weights)
+    }
+    #[inline(always)]
+    pub(crate) fn set_prop_overrides(&self, value: List<PropOverride>) {
+        view_write!(self, prop_overrides, value)
+    }
+    #[inline(always)]
+    pub(crate) fn prop_overrides_raw(&self) -> *mut List<PropOverride> {
+        view_raw_mut!(self, prop_overrides)
+    }
+    #[inline(always)]
+    pub(crate) fn set_transform_overrides(&self, value: List<TransformOverride>) {
+        view_write!(self, transform_overrides, value)
+    }
+    #[inline(always)]
+    pub(crate) fn transform_overrides_raw(&self) -> *mut List<TransformOverride> {
+        view_raw_mut!(self, transform_overrides)
+    }
+    #[inline(always)]
+    pub(crate) fn set_ignore_connections(&self, value: bool) {
+        view_write!(self, ignore_connections, value)
+    }
+    #[inline(always)]
+    pub(crate) fn ignore_connections_raw(&self) -> *mut bool {
+        view_raw_mut!(self, ignore_connections)
+    }
+    #[inline(always)]
+    pub(crate) fn set_custom(&self, value: bool) {
+        view_write!(self, custom, value)
+    }
+    #[inline(always)]
+    pub(crate) fn custom_raw(&self) -> *mut bool {
+        view_raw_mut!(self, custom)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Light, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn color(&self) -> Vec3 {
+        view_read_shared!(self, color)
+    }
+    #[inline(always)]
+    pub(crate) fn color_ptr(&self) -> *const Vec3 {
+        view_raw_shared!(self, color)
+    }
+    #[inline(always)]
+    pub(crate) fn intensity(&self) -> Real {
+        view_read_shared!(self, intensity)
+    }
+    #[inline(always)]
+    pub(crate) fn intensity_ptr(&self) -> *const Real {
+        view_raw_shared!(self, intensity)
+    }
+    #[inline(always)]
+    pub(crate) fn local_direction(&self) -> Vec3 {
+        view_read_shared!(self, local_direction)
+    }
+    #[inline(always)]
+    pub(crate) fn local_direction_ptr(&self) -> *const Vec3 {
+        view_raw_shared!(self, local_direction)
+    }
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> LightType {
+        view_read_shared!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn type_ptr(&self) -> *const LightType {
+        view_raw_shared!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn decay(&self) -> LightDecay {
+        view_read_shared!(self, decay)
+    }
+    #[inline(always)]
+    pub(crate) fn decay_ptr(&self) -> *const LightDecay {
+        view_raw_shared!(self, decay)
+    }
+    #[inline(always)]
+    pub(crate) fn area_shape(&self) -> LightAreaShape {
+        view_read_shared!(self, area_shape)
+    }
+    #[inline(always)]
+    pub(crate) fn area_shape_ptr(&self) -> *const LightAreaShape {
+        view_raw_shared!(self, area_shape)
+    }
+    #[inline(always)]
+    pub(crate) fn inner_angle(&self) -> Real {
+        view_read_shared!(self, inner_angle)
+    }
+    #[inline(always)]
+    pub(crate) fn inner_angle_ptr(&self) -> *const Real {
+        view_raw_shared!(self, inner_angle)
+    }
+    #[inline(always)]
+    pub(crate) fn outer_angle(&self) -> Real {
+        view_read_shared!(self, outer_angle)
+    }
+    #[inline(always)]
+    pub(crate) fn outer_angle_ptr(&self) -> *const Real {
+        view_raw_shared!(self, outer_angle)
+    }
+    #[inline(always)]
+    pub(crate) fn cast_light(&self) -> bool {
+        view_read_shared!(self, cast_light)
+    }
+    #[inline(always)]
+    pub(crate) fn cast_light_ptr(&self) -> *const bool {
+        view_raw_shared!(self, cast_light)
+    }
+    #[inline(always)]
+    pub(crate) fn cast_shadows(&self) -> bool {
+        view_read_shared!(self, cast_shadows)
+    }
+    #[inline(always)]
+    pub(crate) fn cast_shadows_ptr(&self) -> *const bool {
+        view_raw_shared!(self, cast_shadows)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Light, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_color(&self, value: Vec3) {
+        view_write!(self, color, value)
+    }
+    #[inline(always)]
+    pub(crate) fn color_raw(&self) -> *mut Vec3 {
+        view_raw_mut!(self, color)
+    }
+    #[inline(always)]
+    pub(crate) fn set_intensity(&self, value: Real) {
+        view_write!(self, intensity, value)
+    }
+    #[inline(always)]
+    pub(crate) fn intensity_raw(&self) -> *mut Real {
+        view_raw_mut!(self, intensity)
+    }
+    #[inline(always)]
+    pub(crate) fn set_local_direction(&self, value: Vec3) {
+        view_write!(self, local_direction, value)
+    }
+    #[inline(always)]
+    pub(crate) fn local_direction_raw(&self) -> *mut Vec3 {
+        view_raw_mut!(self, local_direction)
+    }
+    #[inline(always)]
+    pub(crate) fn set_type(&self, value: LightType) {
+        view_write!(self, type_, value)
+    }
+    #[inline(always)]
+    pub(crate) fn type_raw(&self) -> *mut LightType {
+        view_raw_mut!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn set_decay(&self, value: LightDecay) {
+        view_write!(self, decay, value)
+    }
+    #[inline(always)]
+    pub(crate) fn decay_raw(&self) -> *mut LightDecay {
+        view_raw_mut!(self, decay)
+    }
+    #[inline(always)]
+    pub(crate) fn set_area_shape(&self, value: LightAreaShape) {
+        view_write!(self, area_shape, value)
+    }
+    #[inline(always)]
+    pub(crate) fn area_shape_raw(&self) -> *mut LightAreaShape {
+        view_raw_mut!(self, area_shape)
+    }
+    #[inline(always)]
+    pub(crate) fn set_inner_angle(&self, value: Real) {
+        view_write!(self, inner_angle, value)
+    }
+    #[inline(always)]
+    pub(crate) fn inner_angle_raw(&self) -> *mut Real {
+        view_raw_mut!(self, inner_angle)
+    }
+    #[inline(always)]
+    pub(crate) fn set_outer_angle(&self, value: Real) {
+        view_write!(self, outer_angle, value)
+    }
+    #[inline(always)]
+    pub(crate) fn outer_angle_raw(&self) -> *mut Real {
+        view_raw_mut!(self, outer_angle)
+    }
+    #[inline(always)]
+    pub(crate) fn set_cast_light(&self, value: bool) {
+        view_write!(self, cast_light, value)
+    }
+    #[inline(always)]
+    pub(crate) fn cast_light_raw(&self) -> *mut bool {
+        view_raw_mut!(self, cast_light)
+    }
+    #[inline(always)]
+    pub(crate) fn set_cast_shadows(&self, value: bool) {
+        view_write!(self, cast_shadows, value)
+    }
+    #[inline(always)]
+    pub(crate) fn cast_shadows_raw(&self) -> *mut bool {
+        view_raw_mut!(self, cast_shadows)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Camera, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn projection_mode(&self) -> ProjectionMode {
+        view_read_shared!(self, projection_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn projection_mode_ptr(&self) -> *const ProjectionMode {
+        view_raw_shared!(self, projection_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn resolution_is_pixels(&self) -> bool {
+        view_read_shared!(self, resolution_is_pixels)
+    }
+    #[inline(always)]
+    pub(crate) fn resolution_is_pixels_ptr(&self) -> *const bool {
+        view_raw_shared!(self, resolution_is_pixels)
+    }
+    #[inline(always)]
+    pub(crate) fn resolution(&self) -> Vec2 {
+        view_read_shared!(self, resolution)
+    }
+    #[inline(always)]
+    pub(crate) fn resolution_ptr(&self) -> *const Vec2 {
+        view_raw_shared!(self, resolution)
+    }
+    #[inline(always)]
+    pub(crate) fn field_of_view_deg(&self) -> Vec2 {
+        view_read_shared!(self, field_of_view_deg)
+    }
+    #[inline(always)]
+    pub(crate) fn field_of_view_deg_ptr(&self) -> *const Vec2 {
+        view_raw_shared!(self, field_of_view_deg)
+    }
+    #[inline(always)]
+    pub(crate) fn field_of_view_tan(&self) -> Vec2 {
+        view_read_shared!(self, field_of_view_tan)
+    }
+    #[inline(always)]
+    pub(crate) fn field_of_view_tan_ptr(&self) -> *const Vec2 {
+        view_raw_shared!(self, field_of_view_tan)
+    }
+    #[inline(always)]
+    pub(crate) fn orthographic_extent(&self) -> Real {
+        view_read_shared!(self, orthographic_extent)
+    }
+    #[inline(always)]
+    pub(crate) fn orthographic_extent_ptr(&self) -> *const Real {
+        view_raw_shared!(self, orthographic_extent)
+    }
+    #[inline(always)]
+    pub(crate) fn orthographic_size(&self) -> Vec2 {
+        view_read_shared!(self, orthographic_size)
+    }
+    #[inline(always)]
+    pub(crate) fn orthographic_size_ptr(&self) -> *const Vec2 {
+        view_raw_shared!(self, orthographic_size)
+    }
+    #[inline(always)]
+    pub(crate) fn projection_plane(&self) -> Vec2 {
+        view_read_shared!(self, projection_plane)
+    }
+    #[inline(always)]
+    pub(crate) fn projection_plane_ptr(&self) -> *const Vec2 {
+        view_raw_shared!(self, projection_plane)
+    }
+    #[inline(always)]
+    pub(crate) fn aspect_ratio(&self) -> Real {
+        view_read_shared!(self, aspect_ratio)
+    }
+    #[inline(always)]
+    pub(crate) fn aspect_ratio_ptr(&self) -> *const Real {
+        view_raw_shared!(self, aspect_ratio)
+    }
+    #[inline(always)]
+    pub(crate) fn near_plane(&self) -> Real {
+        view_read_shared!(self, near_plane)
+    }
+    #[inline(always)]
+    pub(crate) fn near_plane_ptr(&self) -> *const Real {
+        view_raw_shared!(self, near_plane)
+    }
+    #[inline(always)]
+    pub(crate) fn far_plane(&self) -> Real {
+        view_read_shared!(self, far_plane)
+    }
+    #[inline(always)]
+    pub(crate) fn far_plane_ptr(&self) -> *const Real {
+        view_raw_shared!(self, far_plane)
+    }
+    #[inline(always)]
+    pub(crate) fn projection_axes(&self) -> CoordinateAxes {
+        view_read_shared!(self, projection_axes)
+    }
+    #[inline(always)]
+    pub(crate) fn projection_axes_ptr(&self) -> *const CoordinateAxes {
+        view_raw_shared!(self, projection_axes)
+    }
+    #[inline(always)]
+    pub(crate) fn aspect_mode(&self) -> AspectMode {
+        view_read_shared!(self, aspect_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn aspect_mode_ptr(&self) -> *const AspectMode {
+        view_raw_shared!(self, aspect_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn aperture_mode(&self) -> ApertureMode {
+        view_read_shared!(self, aperture_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn aperture_mode_ptr(&self) -> *const ApertureMode {
+        view_raw_shared!(self, aperture_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn gate_fit(&self) -> GateFit {
+        view_read_shared!(self, gate_fit)
+    }
+    #[inline(always)]
+    pub(crate) fn gate_fit_ptr(&self) -> *const GateFit {
+        view_raw_shared!(self, gate_fit)
+    }
+    #[inline(always)]
+    pub(crate) fn aperture_format(&self) -> ApertureFormat {
+        view_read_shared!(self, aperture_format)
+    }
+    #[inline(always)]
+    pub(crate) fn aperture_format_ptr(&self) -> *const ApertureFormat {
+        view_raw_shared!(self, aperture_format)
+    }
+    #[inline(always)]
+    pub(crate) fn focal_length_mm(&self) -> Real {
+        view_read_shared!(self, focal_length_mm)
+    }
+    #[inline(always)]
+    pub(crate) fn focal_length_mm_ptr(&self) -> *const Real {
+        view_raw_shared!(self, focal_length_mm)
+    }
+    #[inline(always)]
+    pub(crate) fn film_size_inch(&self) -> Vec2 {
+        view_read_shared!(self, film_size_inch)
+    }
+    #[inline(always)]
+    pub(crate) fn film_size_inch_ptr(&self) -> *const Vec2 {
+        view_raw_shared!(self, film_size_inch)
+    }
+    #[inline(always)]
+    pub(crate) fn aperture_size_inch(&self) -> Vec2 {
+        view_read_shared!(self, aperture_size_inch)
+    }
+    #[inline(always)]
+    pub(crate) fn aperture_size_inch_ptr(&self) -> *const Vec2 {
+        view_raw_shared!(self, aperture_size_inch)
+    }
+    #[inline(always)]
+    pub(crate) fn squeeze_ratio(&self) -> Real {
+        view_read_shared!(self, squeeze_ratio)
+    }
+    #[inline(always)]
+    pub(crate) fn squeeze_ratio_ptr(&self) -> *const Real {
+        view_raw_shared!(self, squeeze_ratio)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Camera, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_projection_mode(&self, value: ProjectionMode) {
+        view_write!(self, projection_mode, value)
+    }
+    #[inline(always)]
+    pub(crate) fn projection_mode_raw(&self) -> *mut ProjectionMode {
+        view_raw_mut!(self, projection_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn set_resolution_is_pixels(&self, value: bool) {
+        view_write!(self, resolution_is_pixels, value)
+    }
+    #[inline(always)]
+    pub(crate) fn resolution_is_pixels_raw(&self) -> *mut bool {
+        view_raw_mut!(self, resolution_is_pixels)
+    }
+    #[inline(always)]
+    pub(crate) fn set_resolution(&self, value: Vec2) {
+        view_write!(self, resolution, value)
+    }
+    #[inline(always)]
+    pub(crate) fn resolution_raw(&self) -> *mut Vec2 {
+        view_raw_mut!(self, resolution)
+    }
+    #[inline(always)]
+    pub(crate) fn set_field_of_view_deg(&self, value: Vec2) {
+        view_write!(self, field_of_view_deg, value)
+    }
+    #[inline(always)]
+    pub(crate) fn field_of_view_deg_raw(&self) -> *mut Vec2 {
+        view_raw_mut!(self, field_of_view_deg)
+    }
+    #[inline(always)]
+    pub(crate) fn set_field_of_view_tan(&self, value: Vec2) {
+        view_write!(self, field_of_view_tan, value)
+    }
+    #[inline(always)]
+    pub(crate) fn field_of_view_tan_raw(&self) -> *mut Vec2 {
+        view_raw_mut!(self, field_of_view_tan)
+    }
+    #[inline(always)]
+    pub(crate) fn set_orthographic_extent(&self, value: Real) {
+        view_write!(self, orthographic_extent, value)
+    }
+    #[inline(always)]
+    pub(crate) fn orthographic_extent_raw(&self) -> *mut Real {
+        view_raw_mut!(self, orthographic_extent)
+    }
+    #[inline(always)]
+    pub(crate) fn set_orthographic_size(&self, value: Vec2) {
+        view_write!(self, orthographic_size, value)
+    }
+    #[inline(always)]
+    pub(crate) fn orthographic_size_raw(&self) -> *mut Vec2 {
+        view_raw_mut!(self, orthographic_size)
+    }
+    #[inline(always)]
+    pub(crate) fn set_projection_plane(&self, value: Vec2) {
+        view_write!(self, projection_plane, value)
+    }
+    #[inline(always)]
+    pub(crate) fn projection_plane_raw(&self) -> *mut Vec2 {
+        view_raw_mut!(self, projection_plane)
+    }
+    #[inline(always)]
+    pub(crate) fn set_aspect_ratio(&self, value: Real) {
+        view_write!(self, aspect_ratio, value)
+    }
+    #[inline(always)]
+    pub(crate) fn aspect_ratio_raw(&self) -> *mut Real {
+        view_raw_mut!(self, aspect_ratio)
+    }
+    #[inline(always)]
+    pub(crate) fn set_near_plane(&self, value: Real) {
+        view_write!(self, near_plane, value)
+    }
+    #[inline(always)]
+    pub(crate) fn near_plane_raw(&self) -> *mut Real {
+        view_raw_mut!(self, near_plane)
+    }
+    #[inline(always)]
+    pub(crate) fn set_far_plane(&self, value: Real) {
+        view_write!(self, far_plane, value)
+    }
+    #[inline(always)]
+    pub(crate) fn far_plane_raw(&self) -> *mut Real {
+        view_raw_mut!(self, far_plane)
+    }
+    #[inline(always)]
+    pub(crate) fn set_projection_axes(&self, value: CoordinateAxes) {
+        view_write!(self, projection_axes, value)
+    }
+    #[inline(always)]
+    pub(crate) fn projection_axes_raw(&self) -> *mut CoordinateAxes {
+        view_raw_mut!(self, projection_axes)
+    }
+    #[inline(always)]
+    pub(crate) fn set_aspect_mode(&self, value: AspectMode) {
+        view_write!(self, aspect_mode, value)
+    }
+    #[inline(always)]
+    pub(crate) fn aspect_mode_raw(&self) -> *mut AspectMode {
+        view_raw_mut!(self, aspect_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn set_aperture_mode(&self, value: ApertureMode) {
+        view_write!(self, aperture_mode, value)
+    }
+    #[inline(always)]
+    pub(crate) fn aperture_mode_raw(&self) -> *mut ApertureMode {
+        view_raw_mut!(self, aperture_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn set_gate_fit(&self, value: GateFit) {
+        view_write!(self, gate_fit, value)
+    }
+    #[inline(always)]
+    pub(crate) fn gate_fit_raw(&self) -> *mut GateFit {
+        view_raw_mut!(self, gate_fit)
+    }
+    #[inline(always)]
+    pub(crate) fn set_aperture_format(&self, value: ApertureFormat) {
+        view_write!(self, aperture_format, value)
+    }
+    #[inline(always)]
+    pub(crate) fn aperture_format_raw(&self) -> *mut ApertureFormat {
+        view_raw_mut!(self, aperture_format)
+    }
+    #[inline(always)]
+    pub(crate) fn set_focal_length_mm(&self, value: Real) {
+        view_write!(self, focal_length_mm, value)
+    }
+    #[inline(always)]
+    pub(crate) fn focal_length_mm_raw(&self) -> *mut Real {
+        view_raw_mut!(self, focal_length_mm)
+    }
+    #[inline(always)]
+    pub(crate) fn set_film_size_inch(&self, value: Vec2) {
+        view_write!(self, film_size_inch, value)
+    }
+    #[inline(always)]
+    pub(crate) fn film_size_inch_raw(&self) -> *mut Vec2 {
+        view_raw_mut!(self, film_size_inch)
+    }
+    #[inline(always)]
+    pub(crate) fn set_aperture_size_inch(&self, value: Vec2) {
+        view_write!(self, aperture_size_inch, value)
+    }
+    #[inline(always)]
+    pub(crate) fn aperture_size_inch_raw(&self) -> *mut Vec2 {
+        view_raw_mut!(self, aperture_size_inch)
+    }
+    #[inline(always)]
+    pub(crate) fn set_squeeze_ratio(&self, value: Real) {
+        view_write!(self, squeeze_ratio, value)
+    }
+    #[inline(always)]
+    pub(crate) fn squeeze_ratio_raw(&self) -> *mut Real {
+        view_raw_mut!(self, squeeze_ratio)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<TextureLayer, M> {
+    #[inline(always)]
+    pub(crate) fn texture(&self) -> Ref<Texture> {
+        view_read_shared!(self, texture)
+    }
+    #[inline(always)]
+    pub(crate) fn texture_ptr(&self) -> *const Ref<Texture> {
+        view_raw_shared!(self, texture)
+    }
+    #[inline(always)]
+    pub(crate) fn blend_mode(&self) -> BlendMode {
+        view_read_shared!(self, blend_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn blend_mode_ptr(&self) -> *const BlendMode {
+        view_raw_shared!(self, blend_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn alpha(&self) -> Real {
+        view_read_shared!(self, alpha)
+    }
+    #[inline(always)]
+    pub(crate) fn alpha_ptr(&self) -> *const Real {
+        view_raw_shared!(self, alpha)
+    }
+}
+
+#[allow(dead_code)]
+impl View<TextureLayer, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_texture(&self, value: Ref<Texture>) {
+        view_write!(self, texture, value)
+    }
+    #[inline(always)]
+    pub(crate) fn texture_raw(&self) -> *mut Ref<Texture> {
+        view_raw_mut!(self, texture)
+    }
+    #[inline(always)]
+    pub(crate) fn set_blend_mode(&self, value: BlendMode) {
+        view_write!(self, blend_mode, value)
+    }
+    #[inline(always)]
+    pub(crate) fn blend_mode_raw(&self) -> *mut BlendMode {
+        view_raw_mut!(self, blend_mode)
+    }
+    #[inline(always)]
+    pub(crate) fn set_alpha(&self, value: Real) {
+        view_write!(self, alpha, value)
+    }
+    #[inline(always)]
+    pub(crate) fn alpha_raw(&self) -> *mut Real {
+        view_raw_mut!(self, alpha)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<TextureFile, M> {
+    #[inline(always)]
+    pub(crate) fn index(&self) -> u32 {
+        view_read_shared!(self, index)
+    }
+    #[inline(always)]
+    pub(crate) fn index_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, index)
+    }
+    #[inline(always)]
+    pub(crate) fn filename(&self) -> String {
+        view_read_shared!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_view(&self) -> &View<String, M> {
+        view_project!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename(&self) -> String {
+        view_read_shared!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_view(&self) -> &View<String, M> {
+        view_project!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename(&self) -> String {
+        view_read_shared!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_view(&self) -> &View<String, M> {
+        view_project!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename(&self) -> Blob {
+        view_read_shared!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename(&self) -> Blob {
+        view_read_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename(&self) -> Blob {
+        view_read_shared!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn content(&self) -> Blob {
+        view_read_shared!(self, content)
+    }
+    #[inline(always)]
+    pub(crate) fn content_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, content)
+    }
+}
+
+#[allow(dead_code)]
+impl View<TextureFile, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_index(&self, value: u32) {
+        view_write!(self, index, value)
+    }
+    #[inline(always)]
+    pub(crate) fn index_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, index)
+    }
+    #[inline(always)]
+    pub(crate) fn set_filename(&self, value: String) {
+        view_write!(self, filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_absolute_filename(&self, value: String) {
+        view_write!(self, absolute_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_relative_filename(&self, value: String) {
+        view_write!(self, relative_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_filename(&self, value: Blob) {
+        view_write!(self, raw_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_absolute_filename(&self, value: Blob) {
+        view_write!(self, raw_absolute_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_relative_filename(&self, value: Blob) {
+        view_write!(self, raw_relative_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_content(&self, value: Blob) {
+        view_write!(self, content, value)
+    }
+    #[inline(always)]
+    pub(crate) fn content_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, content)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Bone, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn radius(&self) -> Real {
+        view_read_shared!(self, radius)
+    }
+    #[inline(always)]
+    pub(crate) fn radius_ptr(&self) -> *const Real {
+        view_raw_shared!(self, radius)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_length(&self) -> Real {
+        view_read_shared!(self, relative_length)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_length_ptr(&self) -> *const Real {
+        view_raw_shared!(self, relative_length)
+    }
+    #[inline(always)]
+    pub(crate) fn is_root(&self) -> bool {
+        view_read_shared!(self, is_root)
+    }
+    #[inline(always)]
+    pub(crate) fn is_root_ptr(&self) -> *const bool {
+        view_raw_shared!(self, is_root)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Bone, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_radius(&self, value: Real) {
+        view_write!(self, radius, value)
+    }
+    #[inline(always)]
+    pub(crate) fn radius_raw(&self) -> *mut Real {
+        view_raw_mut!(self, radius)
+    }
+    #[inline(always)]
+    pub(crate) fn set_relative_length(&self, value: Real) {
+        view_write!(self, relative_length, value)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_length_raw(&self) -> *mut Real {
+        view_raw_mut!(self, relative_length)
+    }
+    #[inline(always)]
+    pub(crate) fn set_is_root(&self, value: bool) {
+        view_write!(self, is_root, value)
+    }
+    #[inline(always)]
+    pub(crate) fn is_root_raw(&self) -> *mut bool {
+        view_raw_mut!(self, is_root)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<CacheFile, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn filename(&self) -> String {
+        view_read_shared!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_view(&self) -> &View<String, M> {
+        view_project!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename(&self) -> String {
+        view_read_shared!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_view(&self) -> &View<String, M> {
+        view_project!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename(&self) -> String {
+        view_read_shared!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_view(&self) -> &View<String, M> {
+        view_project!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename(&self) -> Blob {
+        view_read_shared!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename(&self) -> Blob {
+        view_read_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename(&self) -> Blob {
+        view_read_shared!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn format(&self) -> CacheFileFormat {
+        view_read_shared!(self, format)
+    }
+    #[inline(always)]
+    pub(crate) fn format_ptr(&self) -> *const CacheFileFormat {
+        view_raw_shared!(self, format)
+    }
+    #[inline(always)]
+    pub(crate) fn external_cache(&self) -> Option<Ref<GeometryCache>> {
+        view_read_shared!(self, external_cache)
+    }
+    #[inline(always)]
+    pub(crate) fn external_cache_ptr(&self) -> *const Option<Ref<GeometryCache>> {
+        view_raw_shared!(self, external_cache)
+    }
+}
+
+#[allow(dead_code)]
+impl View<CacheFile, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_filename(&self, value: String) {
+        view_write!(self, filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_absolute_filename(&self, value: String) {
+        view_write!(self, absolute_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_relative_filename(&self, value: String) {
+        view_write!(self, relative_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_filename(&self, value: Blob) {
+        view_write!(self, raw_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_absolute_filename(&self, value: Blob) {
+        view_write!(self, raw_absolute_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_relative_filename(&self, value: Blob) {
+        view_write!(self, raw_relative_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_format(&self, value: CacheFileFormat) {
+        view_write!(self, format, value)
+    }
+    #[inline(always)]
+    pub(crate) fn format_raw(&self) -> *mut CacheFileFormat {
+        view_raw_mut!(self, format)
+    }
+    #[inline(always)]
+    pub(crate) fn set_external_cache(&self, value: Option<Ref<GeometryCache>>) {
+        view_write!(self, external_cache, value)
+    }
+    #[inline(always)]
+    pub(crate) fn external_cache_raw(&self) -> *mut Option<Ref<GeometryCache>> {
+        view_raw_mut!(self, external_cache)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Constraint, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> ConstraintType {
+        view_read_shared!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn type_ptr(&self) -> *const ConstraintType {
+        view_raw_shared!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn type_name(&self) -> String {
+        view_read_shared!(self, type_name)
+    }
+    #[inline(always)]
+    pub(crate) fn type_name_view(&self) -> &View<String, M> {
+        view_project!(self, type_name)
+    }
+    #[inline(always)]
+    pub(crate) fn type_name_ptr(&self) -> *const String {
+        view_raw_shared!(self, type_name)
+    }
+    #[inline(always)]
+    pub(crate) fn node(&self) -> Option<Ref<Node>> {
+        view_read_shared!(self, node)
+    }
+    #[inline(always)]
+    pub(crate) fn node_ptr(&self) -> *const Option<Ref<Node>> {
+        view_raw_shared!(self, node)
+    }
+    #[inline(always)]
+    pub(crate) fn targets(&self) -> List<ConstraintTarget> {
+        view_read_shared!(self, targets)
+    }
+    #[inline(always)]
+    pub(crate) fn targets_view(&self) -> &View<List<ConstraintTarget>, M> {
+        view_project!(self, targets)
+    }
+    #[inline(always)]
+    pub(crate) fn targets_ptr(&self) -> *const List<ConstraintTarget> {
+        view_raw_shared!(self, targets)
+    }
+    #[inline(always)]
+    pub(crate) fn weight(&self) -> Real {
+        view_read_shared!(self, weight)
+    }
+    #[inline(always)]
+    pub(crate) fn weight_ptr(&self) -> *const Real {
+        view_raw_shared!(self, weight)
+    }
+    #[inline(always)]
+    pub(crate) fn active(&self) -> bool {
+        view_read_shared!(self, active)
+    }
+    #[inline(always)]
+    pub(crate) fn active_ptr(&self) -> *const bool {
+        view_raw_shared!(self, active)
+    }
+    #[inline(always)]
+    pub(crate) fn constrain_translation(&self) -> [bool; 3] {
+        view_read_shared!(self, constrain_translation)
+    }
+    #[inline(always)]
+    pub(crate) fn constrain_translation_ptr(&self) -> *const [bool; 3] {
+        view_raw_shared!(self, constrain_translation)
+    }
+    #[inline(always)]
+    pub(crate) fn constrain_rotation(&self) -> [bool; 3] {
+        view_read_shared!(self, constrain_rotation)
+    }
+    #[inline(always)]
+    pub(crate) fn constrain_rotation_ptr(&self) -> *const [bool; 3] {
+        view_raw_shared!(self, constrain_rotation)
+    }
+    #[inline(always)]
+    pub(crate) fn constrain_scale(&self) -> [bool; 3] {
+        view_read_shared!(self, constrain_scale)
+    }
+    #[inline(always)]
+    pub(crate) fn constrain_scale_ptr(&self) -> *const [bool; 3] {
+        view_raw_shared!(self, constrain_scale)
+    }
+    #[inline(always)]
+    pub(crate) fn transform_offset(&self) -> Transform {
+        view_read_shared!(self, transform_offset)
+    }
+    #[inline(always)]
+    pub(crate) fn transform_offset_ptr(&self) -> *const Transform {
+        view_raw_shared!(self, transform_offset)
+    }
+    #[inline(always)]
+    pub(crate) fn aim_vector(&self) -> Vec3 {
+        view_read_shared!(self, aim_vector)
+    }
+    #[inline(always)]
+    pub(crate) fn aim_vector_ptr(&self) -> *const Vec3 {
+        view_raw_shared!(self, aim_vector)
+    }
+    #[inline(always)]
+    pub(crate) fn aim_up_type(&self) -> ConstraintAimUpType {
+        view_read_shared!(self, aim_up_type)
+    }
+    #[inline(always)]
+    pub(crate) fn aim_up_type_ptr(&self) -> *const ConstraintAimUpType {
+        view_raw_shared!(self, aim_up_type)
+    }
+    #[inline(always)]
+    pub(crate) fn aim_up_node(&self) -> Option<Ref<Node>> {
+        view_read_shared!(self, aim_up_node)
+    }
+    #[inline(always)]
+    pub(crate) fn aim_up_node_ptr(&self) -> *const Option<Ref<Node>> {
+        view_raw_shared!(self, aim_up_node)
+    }
+    #[inline(always)]
+    pub(crate) fn aim_up_vector(&self) -> Vec3 {
+        view_read_shared!(self, aim_up_vector)
+    }
+    #[inline(always)]
+    pub(crate) fn aim_up_vector_ptr(&self) -> *const Vec3 {
+        view_raw_shared!(self, aim_up_vector)
+    }
+    #[inline(always)]
+    pub(crate) fn ik_effector(&self) -> Option<Ref<Node>> {
+        view_read_shared!(self, ik_effector)
+    }
+    #[inline(always)]
+    pub(crate) fn ik_effector_ptr(&self) -> *const Option<Ref<Node>> {
+        view_raw_shared!(self, ik_effector)
+    }
+    #[inline(always)]
+    pub(crate) fn ik_end_node(&self) -> Option<Ref<Node>> {
+        view_read_shared!(self, ik_end_node)
+    }
+    #[inline(always)]
+    pub(crate) fn ik_end_node_ptr(&self) -> *const Option<Ref<Node>> {
+        view_raw_shared!(self, ik_end_node)
+    }
+    #[inline(always)]
+    pub(crate) fn ik_pole_vector(&self) -> Vec3 {
+        view_read_shared!(self, ik_pole_vector)
+    }
+    #[inline(always)]
+    pub(crate) fn ik_pole_vector_ptr(&self) -> *const Vec3 {
+        view_raw_shared!(self, ik_pole_vector)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Constraint, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_type(&self, value: ConstraintType) {
+        view_write!(self, type_, value)
+    }
+    #[inline(always)]
+    pub(crate) fn type_raw(&self) -> *mut ConstraintType {
+        view_raw_mut!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn set_type_name(&self, value: String) {
+        view_write!(self, type_name, value)
+    }
+    #[inline(always)]
+    pub(crate) fn type_name_raw(&self) -> *mut String {
+        view_raw_mut!(self, type_name)
+    }
+    #[inline(always)]
+    pub(crate) fn set_node(&self, value: Option<Ref<Node>>) {
+        view_write!(self, node, value)
+    }
+    #[inline(always)]
+    pub(crate) fn node_raw(&self) -> *mut Option<Ref<Node>> {
+        view_raw_mut!(self, node)
+    }
+    #[inline(always)]
+    pub(crate) fn set_targets(&self, value: List<ConstraintTarget>) {
+        view_write!(self, targets, value)
+    }
+    #[inline(always)]
+    pub(crate) fn targets_raw(&self) -> *mut List<ConstraintTarget> {
+        view_raw_mut!(self, targets)
+    }
+    #[inline(always)]
+    pub(crate) fn set_weight(&self, value: Real) {
+        view_write!(self, weight, value)
+    }
+    #[inline(always)]
+    pub(crate) fn weight_raw(&self) -> *mut Real {
+        view_raw_mut!(self, weight)
+    }
+    #[inline(always)]
+    pub(crate) fn set_active(&self, value: bool) {
+        view_write!(self, active, value)
+    }
+    #[inline(always)]
+    pub(crate) fn active_raw(&self) -> *mut bool {
+        view_raw_mut!(self, active)
+    }
+    #[inline(always)]
+    pub(crate) fn set_constrain_translation(&self, value: [bool; 3]) {
+        view_write!(self, constrain_translation, value)
+    }
+    #[inline(always)]
+    pub(crate) fn constrain_translation_raw(&self) -> *mut [bool; 3] {
+        view_raw_mut!(self, constrain_translation)
+    }
+    #[inline(always)]
+    pub(crate) fn set_constrain_rotation(&self, value: [bool; 3]) {
+        view_write!(self, constrain_rotation, value)
+    }
+    #[inline(always)]
+    pub(crate) fn constrain_rotation_raw(&self) -> *mut [bool; 3] {
+        view_raw_mut!(self, constrain_rotation)
+    }
+    #[inline(always)]
+    pub(crate) fn set_constrain_scale(&self, value: [bool; 3]) {
+        view_write!(self, constrain_scale, value)
+    }
+    #[inline(always)]
+    pub(crate) fn constrain_scale_raw(&self) -> *mut [bool; 3] {
+        view_raw_mut!(self, constrain_scale)
+    }
+    #[inline(always)]
+    pub(crate) fn set_transform_offset(&self, value: Transform) {
+        view_write!(self, transform_offset, value)
+    }
+    #[inline(always)]
+    pub(crate) fn transform_offset_raw(&self) -> *mut Transform {
+        view_raw_mut!(self, transform_offset)
+    }
+    #[inline(always)]
+    pub(crate) fn set_aim_vector(&self, value: Vec3) {
+        view_write!(self, aim_vector, value)
+    }
+    #[inline(always)]
+    pub(crate) fn aim_vector_raw(&self) -> *mut Vec3 {
+        view_raw_mut!(self, aim_vector)
+    }
+    #[inline(always)]
+    pub(crate) fn set_aim_up_type(&self, value: ConstraintAimUpType) {
+        view_write!(self, aim_up_type, value)
+    }
+    #[inline(always)]
+    pub(crate) fn aim_up_type_raw(&self) -> *mut ConstraintAimUpType {
+        view_raw_mut!(self, aim_up_type)
+    }
+    #[inline(always)]
+    pub(crate) fn set_aim_up_node(&self, value: Option<Ref<Node>>) {
+        view_write!(self, aim_up_node, value)
+    }
+    #[inline(always)]
+    pub(crate) fn aim_up_node_raw(&self) -> *mut Option<Ref<Node>> {
+        view_raw_mut!(self, aim_up_node)
+    }
+    #[inline(always)]
+    pub(crate) fn set_aim_up_vector(&self, value: Vec3) {
+        view_write!(self, aim_up_vector, value)
+    }
+    #[inline(always)]
+    pub(crate) fn aim_up_vector_raw(&self) -> *mut Vec3 {
+        view_raw_mut!(self, aim_up_vector)
+    }
+    #[inline(always)]
+    pub(crate) fn set_ik_effector(&self, value: Option<Ref<Node>>) {
+        view_write!(self, ik_effector, value)
+    }
+    #[inline(always)]
+    pub(crate) fn ik_effector_raw(&self) -> *mut Option<Ref<Node>> {
+        view_raw_mut!(self, ik_effector)
+    }
+    #[inline(always)]
+    pub(crate) fn set_ik_end_node(&self, value: Option<Ref<Node>>) {
+        view_write!(self, ik_end_node, value)
+    }
+    #[inline(always)]
+    pub(crate) fn ik_end_node_raw(&self) -> *mut Option<Ref<Node>> {
+        view_raw_mut!(self, ik_end_node)
+    }
+    #[inline(always)]
+    pub(crate) fn set_ik_pole_vector(&self, value: Vec3) {
+        view_write!(self, ik_pole_vector, value)
+    }
+    #[inline(always)]
+    pub(crate) fn ik_pole_vector_raw(&self) -> *mut Vec3 {
+        view_raw_mut!(self, ik_pole_vector)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<ConstraintTarget, M> {
+    #[inline(always)]
+    pub(crate) fn node(&self) -> Ref<Node> {
+        view_read_shared!(self, node)
+    }
+    #[inline(always)]
+    pub(crate) fn node_ptr(&self) -> *const Ref<Node> {
+        view_raw_shared!(self, node)
+    }
+    #[inline(always)]
+    pub(crate) fn weight(&self) -> Real {
+        view_read_shared!(self, weight)
+    }
+    #[inline(always)]
+    pub(crate) fn weight_ptr(&self) -> *const Real {
+        view_raw_shared!(self, weight)
+    }
+    #[inline(always)]
+    pub(crate) fn transform(&self) -> Transform {
+        view_read_shared!(self, transform)
+    }
+    #[inline(always)]
+    pub(crate) fn transform_ptr(&self) -> *const Transform {
+        view_raw_shared!(self, transform)
+    }
+}
+
+#[allow(dead_code)]
+impl View<ConstraintTarget, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_node(&self, value: Ref<Node>) {
+        view_write!(self, node, value)
+    }
+    #[inline(always)]
+    pub(crate) fn node_raw(&self) -> *mut Ref<Node> {
+        view_raw_mut!(self, node)
+    }
+    #[inline(always)]
+    pub(crate) fn set_weight(&self, value: Real) {
+        view_write!(self, weight, value)
+    }
+    #[inline(always)]
+    pub(crate) fn weight_raw(&self) -> *mut Real {
+        view_raw_mut!(self, weight)
+    }
+    #[inline(always)]
+    pub(crate) fn set_transform(&self, value: Transform) {
+        view_write!(self, transform, value)
+    }
+    #[inline(always)]
+    pub(crate) fn transform_raw(&self) -> *mut Transform {
+        view_raw_mut!(self, transform)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<NurbsBasis, M> {
+    #[inline(always)]
+    pub(crate) fn order(&self) -> u32 {
+        view_read_shared!(self, order)
+    }
+    #[inline(always)]
+    pub(crate) fn order_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, order)
+    }
+    #[inline(always)]
+    pub(crate) fn topology(&self) -> NurbsTopology {
+        view_read_shared!(self, topology)
+    }
+    #[inline(always)]
+    pub(crate) fn topology_ptr(&self) -> *const NurbsTopology {
+        view_raw_shared!(self, topology)
+    }
+    #[inline(always)]
+    pub(crate) fn knot_vector(&self) -> List<Real> {
+        view_read_shared!(self, knot_vector)
+    }
+    #[inline(always)]
+    pub(crate) fn knot_vector_view(&self) -> &View<List<Real>, M> {
+        view_project!(self, knot_vector)
+    }
+    #[inline(always)]
+    pub(crate) fn knot_vector_ptr(&self) -> *const List<Real> {
+        view_raw_shared!(self, knot_vector)
+    }
+    #[inline(always)]
+    pub(crate) fn t_min(&self) -> Real {
+        view_read_shared!(self, t_min)
+    }
+    #[inline(always)]
+    pub(crate) fn t_min_ptr(&self) -> *const Real {
+        view_raw_shared!(self, t_min)
+    }
+    #[inline(always)]
+    pub(crate) fn t_max(&self) -> Real {
+        view_read_shared!(self, t_max)
+    }
+    #[inline(always)]
+    pub(crate) fn t_max_ptr(&self) -> *const Real {
+        view_raw_shared!(self, t_max)
+    }
+    #[inline(always)]
+    pub(crate) fn spans(&self) -> List<Real> {
+        view_read_shared!(self, spans)
+    }
+    #[inline(always)]
+    pub(crate) fn spans_view(&self) -> &View<List<Real>, M> {
+        view_project!(self, spans)
+    }
+    #[inline(always)]
+    pub(crate) fn spans_ptr(&self) -> *const List<Real> {
+        view_raw_shared!(self, spans)
+    }
+    #[inline(always)]
+    pub(crate) fn is_2d(&self) -> bool {
+        view_read_shared!(self, is_2d)
+    }
+    #[inline(always)]
+    pub(crate) fn is_2d_ptr(&self) -> *const bool {
+        view_raw_shared!(self, is_2d)
+    }
+    #[inline(always)]
+    pub(crate) fn num_wrap_control_points(&self) -> usize {
+        view_read_shared!(self, num_wrap_control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn num_wrap_control_points_ptr(&self) -> *const usize {
+        view_raw_shared!(self, num_wrap_control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn valid(&self) -> bool {
+        view_read_shared!(self, valid)
+    }
+    #[inline(always)]
+    pub(crate) fn valid_ptr(&self) -> *const bool {
+        view_raw_shared!(self, valid)
+    }
+}
+
+#[allow(dead_code)]
+impl View<NurbsBasis, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_order(&self, value: u32) {
+        view_write!(self, order, value)
+    }
+    #[inline(always)]
+    pub(crate) fn order_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, order)
+    }
+    #[inline(always)]
+    pub(crate) fn set_topology(&self, value: NurbsTopology) {
+        view_write!(self, topology, value)
+    }
+    #[inline(always)]
+    pub(crate) fn topology_raw(&self) -> *mut NurbsTopology {
+        view_raw_mut!(self, topology)
+    }
+    #[inline(always)]
+    pub(crate) fn set_knot_vector(&self, value: List<Real>) {
+        view_write!(self, knot_vector, value)
+    }
+    #[inline(always)]
+    pub(crate) fn knot_vector_raw(&self) -> *mut List<Real> {
+        view_raw_mut!(self, knot_vector)
+    }
+    #[inline(always)]
+    pub(crate) fn set_t_min(&self, value: Real) {
+        view_write!(self, t_min, value)
+    }
+    #[inline(always)]
+    pub(crate) fn t_min_raw(&self) -> *mut Real {
+        view_raw_mut!(self, t_min)
+    }
+    #[inline(always)]
+    pub(crate) fn set_t_max(&self, value: Real) {
+        view_write!(self, t_max, value)
+    }
+    #[inline(always)]
+    pub(crate) fn t_max_raw(&self) -> *mut Real {
+        view_raw_mut!(self, t_max)
+    }
+    #[inline(always)]
+    pub(crate) fn set_spans(&self, value: List<Real>) {
+        view_write!(self, spans, value)
+    }
+    #[inline(always)]
+    pub(crate) fn spans_raw(&self) -> *mut List<Real> {
+        view_raw_mut!(self, spans)
+    }
+    #[inline(always)]
+    pub(crate) fn set_is_2d(&self, value: bool) {
+        view_write!(self, is_2d, value)
+    }
+    #[inline(always)]
+    pub(crate) fn is_2d_raw(&self) -> *mut bool {
+        view_raw_mut!(self, is_2d)
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_wrap_control_points(&self, value: usize) {
+        view_write!(self, num_wrap_control_points, value)
+    }
+    #[inline(always)]
+    pub(crate) fn num_wrap_control_points_raw(&self) -> *mut usize {
+        view_raw_mut!(self, num_wrap_control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn set_valid(&self, value: bool) {
+        view_write!(self, valid, value)
+    }
+    #[inline(always)]
+    pub(crate) fn valid_raw(&self) -> *mut bool {
+        view_raw_mut!(self, valid)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<NurbsCurve, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn basis(&self) -> &View<NurbsBasis, M> {
+        view_project!(self, basis)
+    }
+    #[inline(always)]
+    pub(crate) fn basis_ptr(&self) -> *const NurbsBasis {
+        view_raw_shared!(self, basis)
+    }
+    #[inline(always)]
+    pub(crate) fn control_points(&self) -> List<Vec4> {
+        view_read_shared!(self, control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn control_points_view(&self) -> &View<List<Vec4>, M> {
+        view_project!(self, control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn control_points_ptr(&self) -> *const List<Vec4> {
+        view_raw_shared!(self, control_points)
+    }
+}
+
+#[allow(dead_code)]
+impl View<NurbsCurve, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_basis(&self, value: NurbsBasis) {
+        view_write!(self, basis, value)
+    }
+    #[inline(always)]
+    pub(crate) fn basis_raw(&self) -> *mut NurbsBasis {
+        view_raw_mut!(self, basis)
+    }
+    #[inline(always)]
+    pub(crate) fn set_control_points(&self, value: List<Vec4>) {
+        view_write!(self, control_points, value)
+    }
+    #[inline(always)]
+    pub(crate) fn control_points_raw(&self) -> *mut List<Vec4> {
+        view_raw_mut!(self, control_points)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<NurbsSurface, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn basis_u(&self) -> &View<NurbsBasis, M> {
+        view_project!(self, basis_u)
+    }
+    #[inline(always)]
+    pub(crate) fn basis_u_ptr(&self) -> *const NurbsBasis {
+        view_raw_shared!(self, basis_u)
+    }
+    #[inline(always)]
+    pub(crate) fn basis_v(&self) -> &View<NurbsBasis, M> {
+        view_project!(self, basis_v)
+    }
+    #[inline(always)]
+    pub(crate) fn basis_v_ptr(&self) -> *const NurbsBasis {
+        view_raw_shared!(self, basis_v)
+    }
+    #[inline(always)]
+    pub(crate) fn num_control_points_u(&self) -> usize {
+        view_read_shared!(self, num_control_points_u)
+    }
+    #[inline(always)]
+    pub(crate) fn num_control_points_u_ptr(&self) -> *const usize {
+        view_raw_shared!(self, num_control_points_u)
+    }
+    #[inline(always)]
+    pub(crate) fn num_control_points_v(&self) -> usize {
+        view_read_shared!(self, num_control_points_v)
+    }
+    #[inline(always)]
+    pub(crate) fn num_control_points_v_ptr(&self) -> *const usize {
+        view_raw_shared!(self, num_control_points_v)
+    }
+    #[inline(always)]
+    pub(crate) fn control_points(&self) -> List<Vec4> {
+        view_read_shared!(self, control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn control_points_view(&self) -> &View<List<Vec4>, M> {
+        view_project!(self, control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn control_points_ptr(&self) -> *const List<Vec4> {
+        view_raw_shared!(self, control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn span_subdivision_u(&self) -> u32 {
+        view_read_shared!(self, span_subdivision_u)
+    }
+    #[inline(always)]
+    pub(crate) fn span_subdivision_u_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, span_subdivision_u)
+    }
+    #[inline(always)]
+    pub(crate) fn span_subdivision_v(&self) -> u32 {
+        view_read_shared!(self, span_subdivision_v)
+    }
+    #[inline(always)]
+    pub(crate) fn span_subdivision_v_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, span_subdivision_v)
+    }
+    #[inline(always)]
+    pub(crate) fn flip_normals(&self) -> bool {
+        view_read_shared!(self, flip_normals)
+    }
+    #[inline(always)]
+    pub(crate) fn flip_normals_ptr(&self) -> *const bool {
+        view_raw_shared!(self, flip_normals)
+    }
+    #[inline(always)]
+    pub(crate) fn material(&self) -> Option<Ref<Material>> {
+        view_read_shared!(self, material)
+    }
+    #[inline(always)]
+    pub(crate) fn material_ptr(&self) -> *const Option<Ref<Material>> {
+        view_raw_shared!(self, material)
+    }
+}
+
+#[allow(dead_code)]
+impl View<NurbsSurface, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_basis_u(&self, value: NurbsBasis) {
+        view_write!(self, basis_u, value)
+    }
+    #[inline(always)]
+    pub(crate) fn basis_u_raw(&self) -> *mut NurbsBasis {
+        view_raw_mut!(self, basis_u)
+    }
+    #[inline(always)]
+    pub(crate) fn set_basis_v(&self, value: NurbsBasis) {
+        view_write!(self, basis_v, value)
+    }
+    #[inline(always)]
+    pub(crate) fn basis_v_raw(&self) -> *mut NurbsBasis {
+        view_raw_mut!(self, basis_v)
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_control_points_u(&self, value: usize) {
+        view_write!(self, num_control_points_u, value)
+    }
+    #[inline(always)]
+    pub(crate) fn num_control_points_u_raw(&self) -> *mut usize {
+        view_raw_mut!(self, num_control_points_u)
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_control_points_v(&self, value: usize) {
+        view_write!(self, num_control_points_v, value)
+    }
+    #[inline(always)]
+    pub(crate) fn num_control_points_v_raw(&self) -> *mut usize {
+        view_raw_mut!(self, num_control_points_v)
+    }
+    #[inline(always)]
+    pub(crate) fn set_control_points(&self, value: List<Vec4>) {
+        view_write!(self, control_points, value)
+    }
+    #[inline(always)]
+    pub(crate) fn control_points_raw(&self) -> *mut List<Vec4> {
+        view_raw_mut!(self, control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn set_span_subdivision_u(&self, value: u32) {
+        view_write!(self, span_subdivision_u, value)
+    }
+    #[inline(always)]
+    pub(crate) fn span_subdivision_u_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, span_subdivision_u)
+    }
+    #[inline(always)]
+    pub(crate) fn set_span_subdivision_v(&self, value: u32) {
+        view_write!(self, span_subdivision_v, value)
+    }
+    #[inline(always)]
+    pub(crate) fn span_subdivision_v_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, span_subdivision_v)
+    }
+    #[inline(always)]
+    pub(crate) fn set_flip_normals(&self, value: bool) {
+        view_write!(self, flip_normals, value)
+    }
+    #[inline(always)]
+    pub(crate) fn flip_normals_raw(&self) -> *mut bool {
+        view_raw_mut!(self, flip_normals)
+    }
+    #[inline(always)]
+    pub(crate) fn set_material(&self, value: Option<Ref<Material>>) {
+        view_write!(self, material, value)
+    }
+    #[inline(always)]
+    pub(crate) fn material_raw(&self) -> *mut Option<Ref<Material>> {
+        view_raw_mut!(self, material)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<LineCurve, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn color(&self) -> Vec3 {
+        view_read_shared!(self, color)
+    }
+    #[inline(always)]
+    pub(crate) fn color_ptr(&self) -> *const Vec3 {
+        view_raw_shared!(self, color)
+    }
+    #[inline(always)]
+    pub(crate) fn control_points(&self) -> List<Vec3> {
+        view_read_shared!(self, control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn control_points_view(&self) -> &View<List<Vec3>, M> {
+        view_project!(self, control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn control_points_ptr(&self) -> *const List<Vec3> {
+        view_raw_shared!(self, control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn point_indices(&self) -> List<u32> {
+        view_read_shared!(self, point_indices)
+    }
+    #[inline(always)]
+    pub(crate) fn point_indices_view(&self) -> &View<List<u32>, M> {
+        view_project!(self, point_indices)
+    }
+    #[inline(always)]
+    pub(crate) fn point_indices_ptr(&self) -> *const List<u32> {
+        view_raw_shared!(self, point_indices)
+    }
+    #[inline(always)]
+    pub(crate) fn segments(&self) -> List<LineSegment> {
+        view_read_shared!(self, segments)
+    }
+    #[inline(always)]
+    pub(crate) fn segments_view(&self) -> &View<List<LineSegment>, M> {
+        view_project!(self, segments)
+    }
+    #[inline(always)]
+    pub(crate) fn segments_ptr(&self) -> *const List<LineSegment> {
+        view_raw_shared!(self, segments)
+    }
+    #[allow(clippy::wrong_self_convention)]
+    #[inline(always)]
+    pub(crate) fn from_tessellated_nurbs(&self) -> bool {
+        view_read_shared!(self, from_tessellated_nurbs)
+    }
+    #[allow(clippy::wrong_self_convention)]
+    #[inline(always)]
+    pub(crate) fn from_tessellated_nurbs_ptr(&self) -> *const bool {
+        view_raw_shared!(self, from_tessellated_nurbs)
+    }
+}
+
+#[allow(dead_code)]
+impl View<LineCurve, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_color(&self, value: Vec3) {
+        view_write!(self, color, value)
+    }
+    #[inline(always)]
+    pub(crate) fn color_raw(&self) -> *mut Vec3 {
+        view_raw_mut!(self, color)
+    }
+    #[inline(always)]
+    pub(crate) fn set_control_points(&self, value: List<Vec3>) {
+        view_write!(self, control_points, value)
+    }
+    #[inline(always)]
+    pub(crate) fn control_points_raw(&self) -> *mut List<Vec3> {
+        view_raw_mut!(self, control_points)
+    }
+    #[inline(always)]
+    pub(crate) fn set_point_indices(&self, value: List<u32>) {
+        view_write!(self, point_indices, value)
+    }
+    #[inline(always)]
+    pub(crate) fn point_indices_raw(&self) -> *mut List<u32> {
+        view_raw_mut!(self, point_indices)
+    }
+    #[inline(always)]
+    pub(crate) fn set_segments(&self, value: List<LineSegment>) {
+        view_write!(self, segments, value)
+    }
+    #[inline(always)]
+    pub(crate) fn segments_raw(&self) -> *mut List<LineSegment> {
+        view_raw_mut!(self, segments)
+    }
+    #[inline(always)]
+    pub(crate) fn set_from_tessellated_nurbs(&self, value: bool) {
+        view_write!(self, from_tessellated_nurbs, value)
+    }
+    #[allow(clippy::wrong_self_convention)]
+    #[inline(always)]
+    pub(crate) fn from_tessellated_nurbs_raw(&self) -> *mut bool {
+        view_raw_mut!(self, from_tessellated_nurbs)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<LineSegment, M> {
+    #[inline(always)]
+    pub(crate) fn index_begin(&self) -> u32 {
+        view_read_shared!(self, index_begin)
+    }
+    #[inline(always)]
+    pub(crate) fn index_begin_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, index_begin)
+    }
+    #[inline(always)]
+    pub(crate) fn num_indices(&self) -> u32 {
+        view_read_shared!(self, num_indices)
+    }
+    #[inline(always)]
+    pub(crate) fn num_indices_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, num_indices)
+    }
+}
+
+#[allow(dead_code)]
+impl View<LineSegment, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_index_begin(&self, value: u32) {
+        view_write!(self, index_begin, value)
+    }
+    #[inline(always)]
+    pub(crate) fn index_begin_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, index_begin)
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_indices(&self, value: u32) {
+        view_write!(self, num_indices, value)
+    }
+    #[inline(always)]
+    pub(crate) fn num_indices_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, num_indices)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<LodGroup, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_distances(&self) -> bool {
+        view_read_shared!(self, relative_distances)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_distances_ptr(&self) -> *const bool {
+        view_raw_shared!(self, relative_distances)
+    }
+    #[inline(always)]
+    pub(crate) fn lod_levels(&self) -> List<LodLevel> {
+        view_read_shared!(self, lod_levels)
+    }
+    #[inline(always)]
+    pub(crate) fn lod_levels_view(&self) -> &View<List<LodLevel>, M> {
+        view_project!(self, lod_levels)
+    }
+    #[inline(always)]
+    pub(crate) fn lod_levels_ptr(&self) -> *const List<LodLevel> {
+        view_raw_shared!(self, lod_levels)
+    }
+    #[inline(always)]
+    pub(crate) fn ignore_parent_transform(&self) -> bool {
+        view_read_shared!(self, ignore_parent_transform)
+    }
+    #[inline(always)]
+    pub(crate) fn ignore_parent_transform_ptr(&self) -> *const bool {
+        view_raw_shared!(self, ignore_parent_transform)
+    }
+    #[inline(always)]
+    pub(crate) fn use_distance_limit(&self) -> bool {
+        view_read_shared!(self, use_distance_limit)
+    }
+    #[inline(always)]
+    pub(crate) fn use_distance_limit_ptr(&self) -> *const bool {
+        view_raw_shared!(self, use_distance_limit)
+    }
+    #[inline(always)]
+    pub(crate) fn distance_limit_min(&self) -> Real {
+        view_read_shared!(self, distance_limit_min)
+    }
+    #[inline(always)]
+    pub(crate) fn distance_limit_min_ptr(&self) -> *const Real {
+        view_raw_shared!(self, distance_limit_min)
+    }
+    #[inline(always)]
+    pub(crate) fn distance_limit_max(&self) -> Real {
+        view_read_shared!(self, distance_limit_max)
+    }
+    #[inline(always)]
+    pub(crate) fn distance_limit_max_ptr(&self) -> *const Real {
+        view_raw_shared!(self, distance_limit_max)
+    }
+}
+
+#[allow(dead_code)]
+impl View<LodGroup, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_relative_distances(&self, value: bool) {
+        view_write!(self, relative_distances, value)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_distances_raw(&self) -> *mut bool {
+        view_raw_mut!(self, relative_distances)
+    }
+    #[inline(always)]
+    pub(crate) fn set_lod_levels(&self, value: List<LodLevel>) {
+        view_write!(self, lod_levels, value)
+    }
+    #[inline(always)]
+    pub(crate) fn lod_levels_raw(&self) -> *mut List<LodLevel> {
+        view_raw_mut!(self, lod_levels)
+    }
+    #[inline(always)]
+    pub(crate) fn set_ignore_parent_transform(&self, value: bool) {
+        view_write!(self, ignore_parent_transform, value)
+    }
+    #[inline(always)]
+    pub(crate) fn ignore_parent_transform_raw(&self) -> *mut bool {
+        view_raw_mut!(self, ignore_parent_transform)
+    }
+    #[inline(always)]
+    pub(crate) fn set_use_distance_limit(&self, value: bool) {
+        view_write!(self, use_distance_limit, value)
+    }
+    #[inline(always)]
+    pub(crate) fn use_distance_limit_raw(&self) -> *mut bool {
+        view_raw_mut!(self, use_distance_limit)
+    }
+    #[inline(always)]
+    pub(crate) fn set_distance_limit_min(&self, value: Real) {
+        view_write!(self, distance_limit_min, value)
+    }
+    #[inline(always)]
+    pub(crate) fn distance_limit_min_raw(&self) -> *mut Real {
+        view_raw_mut!(self, distance_limit_min)
+    }
+    #[inline(always)]
+    pub(crate) fn set_distance_limit_max(&self, value: Real) {
+        view_write!(self, distance_limit_max, value)
+    }
+    #[inline(always)]
+    pub(crate) fn distance_limit_max_raw(&self) -> *mut Real {
+        view_raw_mut!(self, distance_limit_max)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<LodLevel, M> {
+    #[inline(always)]
+    pub(crate) fn distance(&self) -> Real {
+        view_read_shared!(self, distance)
+    }
+    #[inline(always)]
+    pub(crate) fn distance_ptr(&self) -> *const Real {
+        view_raw_shared!(self, distance)
+    }
+    #[inline(always)]
+    pub(crate) fn display(&self) -> LodDisplay {
+        view_read_shared!(self, display)
+    }
+    #[inline(always)]
+    pub(crate) fn display_ptr(&self) -> *const LodDisplay {
+        view_raw_shared!(self, display)
+    }
+}
+
+#[allow(dead_code)]
+impl View<LodLevel, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_distance(&self, value: Real) {
+        view_write!(self, distance, value)
+    }
+    #[inline(always)]
+    pub(crate) fn distance_raw(&self) -> *mut Real {
+        view_raw_mut!(self, distance)
+    }
+    #[inline(always)]
+    pub(crate) fn set_display(&self, value: LodDisplay) {
+        view_write!(self, display, value)
+    }
+    #[inline(always)]
+    pub(crate) fn display_raw(&self) -> *mut LodDisplay {
+        view_raw_mut!(self, display)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Empty, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Empty, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Marker, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> MarkerType {
+        view_read_shared!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn type_ptr(&self) -> *const MarkerType {
+        view_raw_shared!(self, type_)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Marker, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_type(&self, value: MarkerType) {
+        view_write!(self, type_, value)
+    }
+    #[inline(always)]
+    pub(crate) fn type_raw(&self) -> *mut MarkerType {
+        view_raw_mut!(self, type_)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<SelectionSet, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn nodes(&self) -> RefList<SelectionNode> {
+        view_read_shared!(self, nodes)
+    }
+    #[inline(always)]
+    pub(crate) fn nodes_view(&self) -> &View<RefList<SelectionNode>, M> {
+        view_project!(self, nodes)
+    }
+    #[inline(always)]
+    pub(crate) fn nodes_ptr(&self) -> *const RefList<SelectionNode> {
+        view_raw_shared!(self, nodes)
+    }
+}
+
+#[allow(dead_code)]
+impl View<SelectionSet, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_nodes(&self, value: RefList<SelectionNode>) {
+        view_write!(self, nodes, value)
+    }
+    #[inline(always)]
+    pub(crate) fn nodes_raw(&self) -> *mut RefList<SelectionNode> {
+        view_raw_mut!(self, nodes)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<SelectionNode, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn target_node(&self) -> Option<Ref<Node>> {
+        view_read_shared!(self, target_node)
+    }
+    #[inline(always)]
+    pub(crate) fn target_node_ptr(&self) -> *const Option<Ref<Node>> {
+        view_raw_shared!(self, target_node)
+    }
+    #[inline(always)]
+    pub(crate) fn target_mesh(&self) -> Option<Ref<Mesh>> {
+        view_read_shared!(self, target_mesh)
+    }
+    #[inline(always)]
+    pub(crate) fn target_mesh_ptr(&self) -> *const Option<Ref<Mesh>> {
+        view_raw_shared!(self, target_mesh)
+    }
+    #[inline(always)]
+    pub(crate) fn include_node(&self) -> bool {
+        view_read_shared!(self, include_node)
+    }
+    #[inline(always)]
+    pub(crate) fn include_node_ptr(&self) -> *const bool {
+        view_raw_shared!(self, include_node)
+    }
+    #[inline(always)]
+    pub(crate) fn vertices(&self) -> List<u32> {
+        view_read_shared!(self, vertices)
+    }
+    #[inline(always)]
+    pub(crate) fn vertices_view(&self) -> &View<List<u32>, M> {
+        view_project!(self, vertices)
+    }
+    #[inline(always)]
+    pub(crate) fn vertices_ptr(&self) -> *const List<u32> {
+        view_raw_shared!(self, vertices)
+    }
+    #[inline(always)]
+    pub(crate) fn edges(&self) -> List<u32> {
+        view_read_shared!(self, edges)
+    }
+    #[inline(always)]
+    pub(crate) fn edges_view(&self) -> &View<List<u32>, M> {
+        view_project!(self, edges)
+    }
+    #[inline(always)]
+    pub(crate) fn edges_ptr(&self) -> *const List<u32> {
+        view_raw_shared!(self, edges)
+    }
+    #[inline(always)]
+    pub(crate) fn faces(&self) -> List<u32> {
+        view_read_shared!(self, faces)
+    }
+    #[inline(always)]
+    pub(crate) fn faces_view(&self) -> &View<List<u32>, M> {
+        view_project!(self, faces)
+    }
+    #[inline(always)]
+    pub(crate) fn faces_ptr(&self) -> *const List<u32> {
+        view_raw_shared!(self, faces)
+    }
+}
+
+#[allow(dead_code)]
+impl View<SelectionNode, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_target_node(&self, value: Option<Ref<Node>>) {
+        view_write!(self, target_node, value)
+    }
+    #[inline(always)]
+    pub(crate) fn target_node_raw(&self) -> *mut Option<Ref<Node>> {
+        view_raw_mut!(self, target_node)
+    }
+    #[inline(always)]
+    pub(crate) fn set_target_mesh(&self, value: Option<Ref<Mesh>>) {
+        view_write!(self, target_mesh, value)
+    }
+    #[inline(always)]
+    pub(crate) fn target_mesh_raw(&self) -> *mut Option<Ref<Mesh>> {
+        view_raw_mut!(self, target_mesh)
+    }
+    #[inline(always)]
+    pub(crate) fn set_include_node(&self, value: bool) {
+        view_write!(self, include_node, value)
+    }
+    #[inline(always)]
+    pub(crate) fn include_node_raw(&self) -> *mut bool {
+        view_raw_mut!(self, include_node)
+    }
+    #[inline(always)]
+    pub(crate) fn set_vertices(&self, value: List<u32>) {
+        view_write!(self, vertices, value)
+    }
+    #[inline(always)]
+    pub(crate) fn vertices_raw(&self) -> *mut List<u32> {
+        view_raw_mut!(self, vertices)
+    }
+    #[inline(always)]
+    pub(crate) fn set_edges(&self, value: List<u32>) {
+        view_write!(self, edges, value)
+    }
+    #[inline(always)]
+    pub(crate) fn edges_raw(&self) -> *mut List<u32> {
+        view_raw_mut!(self, edges)
+    }
+    #[inline(always)]
+    pub(crate) fn set_faces(&self, value: List<u32>) {
+        view_write!(self, faces, value)
+    }
+    #[inline(always)]
+    pub(crate) fn faces_raw(&self) -> *mut List<u32> {
+        view_raw_mut!(self, faces)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<DisplayLayer, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn nodes(&self) -> RefList<Node> {
+        view_read_shared!(self, nodes)
+    }
+    #[inline(always)]
+    pub(crate) fn nodes_view(&self) -> &View<RefList<Node>, M> {
+        view_project!(self, nodes)
+    }
+    #[inline(always)]
+    pub(crate) fn nodes_ptr(&self) -> *const RefList<Node> {
+        view_raw_shared!(self, nodes)
+    }
+    #[inline(always)]
+    pub(crate) fn visible(&self) -> bool {
+        view_read_shared!(self, visible)
+    }
+    #[inline(always)]
+    pub(crate) fn visible_ptr(&self) -> *const bool {
+        view_raw_shared!(self, visible)
+    }
+    #[inline(always)]
+    pub(crate) fn frozen(&self) -> bool {
+        view_read_shared!(self, frozen)
+    }
+    #[inline(always)]
+    pub(crate) fn frozen_ptr(&self) -> *const bool {
+        view_raw_shared!(self, frozen)
+    }
+    #[inline(always)]
+    pub(crate) fn ui_color(&self) -> Vec3 {
+        view_read_shared!(self, ui_color)
+    }
+    #[inline(always)]
+    pub(crate) fn ui_color_ptr(&self) -> *const Vec3 {
+        view_raw_shared!(self, ui_color)
+    }
+}
+
+#[allow(dead_code)]
+impl View<DisplayLayer, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_nodes(&self, value: RefList<Node>) {
+        view_write!(self, nodes, value)
+    }
+    #[inline(always)]
+    pub(crate) fn nodes_raw(&self) -> *mut RefList<Node> {
+        view_raw_mut!(self, nodes)
+    }
+    #[inline(always)]
+    pub(crate) fn set_visible(&self, value: bool) {
+        view_write!(self, visible, value)
+    }
+    #[inline(always)]
+    pub(crate) fn visible_raw(&self) -> *mut bool {
+        view_raw_mut!(self, visible)
+    }
+    #[inline(always)]
+    pub(crate) fn set_frozen(&self, value: bool) {
+        view_write!(self, frozen, value)
+    }
+    #[inline(always)]
+    pub(crate) fn frozen_raw(&self) -> *mut bool {
+        view_raw_mut!(self, frozen)
+    }
+    #[inline(always)]
+    pub(crate) fn set_ui_color(&self, value: Vec3) {
+        view_write!(self, ui_color, value)
+    }
+    #[inline(always)]
+    pub(crate) fn ui_color_raw(&self) -> *mut Vec3 {
+        view_raw_mut!(self, ui_color)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<AudioClip, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn filename(&self) -> String {
+        view_read_shared!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_view(&self) -> &View<String, M> {
+        view_project!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename(&self) -> String {
+        view_read_shared!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_view(&self) -> &View<String, M> {
+        view_project!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename(&self) -> String {
+        view_read_shared!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_view(&self) -> &View<String, M> {
+        view_project!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_ptr(&self) -> *const String {
+        view_raw_shared!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename(&self) -> Blob {
+        view_read_shared!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename(&self) -> Blob {
+        view_read_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename(&self) -> Blob {
+        view_read_shared!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn content(&self) -> Blob {
+        view_read_shared!(self, content)
+    }
+    #[inline(always)]
+    pub(crate) fn content_ptr(&self) -> *const Blob {
+        view_raw_shared!(self, content)
+    }
+}
+
+#[allow(dead_code)]
+impl View<AudioClip, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_filename(&self, value: String) {
+        view_write!(self, filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_absolute_filename(&self, value: String) {
+        view_write!(self, absolute_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn absolute_filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_relative_filename(&self, value: String) {
+        view_write!(self, relative_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn relative_filename_raw(&self) -> *mut String {
+        view_raw_mut!(self, relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_filename(&self, value: Blob) {
+        view_write!(self, raw_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_absolute_filename(&self, value: Blob) {
+        view_write!(self, raw_absolute_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_absolute_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_absolute_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_raw_relative_filename(&self, value: Blob) {
+        view_write!(self, raw_relative_filename, value)
+    }
+    #[inline(always)]
+    pub(crate) fn raw_relative_filename_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, raw_relative_filename)
+    }
+    #[inline(always)]
+    pub(crate) fn set_content(&self, value: Blob) {
+        view_write!(self, content, value)
+    }
+    #[inline(always)]
+    pub(crate) fn content_raw(&self) -> *mut Blob {
+        view_raw_mut!(self, content)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<AudioLayer, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn clips(&self) -> RefList<AudioClip> {
+        view_read_shared!(self, clips)
+    }
+    #[inline(always)]
+    pub(crate) fn clips_view(&self) -> &View<RefList<AudioClip>, M> {
+        view_project!(self, clips)
+    }
+    #[inline(always)]
+    pub(crate) fn clips_ptr(&self) -> *const RefList<AudioClip> {
+        view_raw_shared!(self, clips)
+    }
+}
+
+#[allow(dead_code)]
+impl View<AudioLayer, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_clips(&self, value: RefList<AudioClip>) {
+        view_write!(self, clips, value)
+    }
+    #[inline(always)]
+    pub(crate) fn clips_raw(&self) -> *mut RefList<AudioClip> {
+        view_raw_mut!(self, clips)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Character, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Character, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<StereoCamera, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn left(&self) -> Option<Ref<Camera>> {
+        view_read_shared!(self, left)
+    }
+    #[inline(always)]
+    pub(crate) fn left_ptr(&self) -> *const Option<Ref<Camera>> {
+        view_raw_shared!(self, left)
+    }
+    #[inline(always)]
+    pub(crate) fn right(&self) -> Option<Ref<Camera>> {
+        view_read_shared!(self, right)
+    }
+    #[inline(always)]
+    pub(crate) fn right_ptr(&self) -> *const Option<Ref<Camera>> {
+        view_raw_shared!(self, right)
+    }
+}
+
+#[allow(dead_code)]
+impl View<StereoCamera, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_left(&self, value: Option<Ref<Camera>>) {
+        view_write!(self, left, value)
+    }
+    #[inline(always)]
+    pub(crate) fn left_raw(&self) -> *mut Option<Ref<Camera>> {
+        view_raw_mut!(self, left)
+    }
+    #[inline(always)]
+    pub(crate) fn set_right(&self, value: Option<Ref<Camera>>) {
+        view_write!(self, right, value)
+    }
+    #[inline(always)]
+    pub(crate) fn right_raw(&self) -> *mut Option<Ref<Camera>> {
+        view_raw_mut!(self, right)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<CameraSwitcher, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl View<CameraSwitcher, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<Unknown, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn type_(&self) -> String {
+        view_read_shared!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn type_view(&self) -> &View<String, M> {
+        view_project!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn type_ptr(&self) -> *const String {
+        view_raw_shared!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn super_type(&self) -> String {
+        view_read_shared!(self, super_type)
+    }
+    #[inline(always)]
+    pub(crate) fn super_type_view(&self) -> &View<String, M> {
+        view_project!(self, super_type)
+    }
+    #[inline(always)]
+    pub(crate) fn super_type_ptr(&self) -> *const String {
+        view_raw_shared!(self, super_type)
+    }
+    #[inline(always)]
+    pub(crate) fn sub_type(&self) -> String {
+        view_read_shared!(self, sub_type)
+    }
+    #[inline(always)]
+    pub(crate) fn sub_type_view(&self) -> &View<String, M> {
+        view_project!(self, sub_type)
+    }
+    #[inline(always)]
+    pub(crate) fn sub_type_ptr(&self) -> *const String {
+        view_raw_shared!(self, sub_type)
+    }
+}
+
+#[allow(dead_code)]
+impl View<Unknown, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn set_type(&self, value: String) {
+        view_write!(self, type_, value)
+    }
+    #[inline(always)]
+    pub(crate) fn type_raw(&self) -> *mut String {
+        view_raw_mut!(self, type_)
+    }
+    #[inline(always)]
+    pub(crate) fn set_super_type(&self, value: String) {
+        view_write!(self, super_type, value)
+    }
+    #[inline(always)]
+    pub(crate) fn super_type_raw(&self) -> *mut String {
+        view_raw_mut!(self, super_type)
+    }
+    #[inline(always)]
+    pub(crate) fn set_sub_type(&self, value: String) {
+        view_write!(self, sub_type, value)
+    }
+    #[inline(always)]
+    pub(crate) fn sub_type_raw(&self) -> *mut String {
+        view_raw_mut!(self, sub_type)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<MetadataObject, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl View<MetadataObject, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<ProceduralGeometry, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl View<ProceduralGeometry, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<NurbsTrimSurface, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl View<NurbsTrimSurface, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<NurbsTrimBoundary, M> {
+    #[inline(always)]
+    pub(crate) fn element(&self) -> &View<Element, M> {
+        view_project!(self, element)
+    }
+    #[inline(always)]
+    pub(crate) fn element_ptr(&self) -> *const Element {
+        view_raw_shared!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl View<NurbsTrimBoundary, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element(&self, value: Element) {
+        view_write!(self, element, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_raw(&self) -> *mut Element {
+        view_raw_mut!(self, element)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<SkinVertex, M> {
+    #[inline(always)]
+    pub(crate) fn weight_begin(&self) -> u32 {
+        view_read_shared!(self, weight_begin)
+    }
+    #[inline(always)]
+    pub(crate) fn weight_begin_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, weight_begin)
+    }
+    #[inline(always)]
+    pub(crate) fn num_weights(&self) -> u32 {
+        view_read_shared!(self, num_weights)
+    }
+    #[inline(always)]
+    pub(crate) fn num_weights_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, num_weights)
+    }
+    #[inline(always)]
+    pub(crate) fn dq_weight(&self) -> Real {
+        view_read_shared!(self, dq_weight)
+    }
+    #[inline(always)]
+    pub(crate) fn dq_weight_ptr(&self) -> *const Real {
+        view_raw_shared!(self, dq_weight)
+    }
+}
+
+#[allow(dead_code)]
+impl View<SkinVertex, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_weight_begin(&self, value: u32) {
+        view_write!(self, weight_begin, value)
+    }
+    #[inline(always)]
+    pub(crate) fn weight_begin_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, weight_begin)
+    }
+    #[inline(always)]
+    pub(crate) fn set_num_weights(&self, value: u32) {
+        view_write!(self, num_weights, value)
+    }
+    #[inline(always)]
+    pub(crate) fn num_weights_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, num_weights)
+    }
+    #[inline(always)]
+    pub(crate) fn set_dq_weight(&self, value: Real) {
+        view_write!(self, dq_weight, value)
+    }
+    #[inline(always)]
+    pub(crate) fn dq_weight_raw(&self) -> *mut Real {
+        view_raw_mut!(self, dq_weight)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<SkinWeight, M> {
+    #[inline(always)]
+    pub(crate) fn cluster_index(&self) -> u32 {
+        view_read_shared!(self, cluster_index)
+    }
+    #[inline(always)]
+    pub(crate) fn cluster_index_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, cluster_index)
+    }
+    #[inline(always)]
+    pub(crate) fn weight(&self) -> Real {
+        view_read_shared!(self, weight)
+    }
+    #[inline(always)]
+    pub(crate) fn weight_ptr(&self) -> *const Real {
+        view_raw_shared!(self, weight)
+    }
+}
+
+#[allow(dead_code)]
+impl View<SkinWeight, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_cluster_index(&self, value: u32) {
+        view_write!(self, cluster_index, value)
+    }
+    #[inline(always)]
+    pub(crate) fn cluster_index_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, cluster_index)
+    }
+    #[inline(always)]
+    pub(crate) fn set_weight(&self, value: Real) {
+        view_write!(self, weight, value)
+    }
+    #[inline(always)]
+    pub(crate) fn weight_raw(&self) -> *mut Real {
+        view_raw_mut!(self, weight)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<BakedNode, M> {
+    #[inline(always)]
+    pub(crate) fn typed_id(&self) -> u32 {
+        view_read_shared!(self, typed_id)
+    }
+    #[inline(always)]
+    pub(crate) fn typed_id_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, typed_id)
+    }
+    #[inline(always)]
+    pub(crate) fn element_id(&self) -> u32 {
+        view_read_shared!(self, element_id)
+    }
+    #[inline(always)]
+    pub(crate) fn element_id_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, element_id)
+    }
+    #[inline(always)]
+    pub(crate) fn constant_translation(&self) -> bool {
+        view_read_shared!(self, constant_translation)
+    }
+    #[inline(always)]
+    pub(crate) fn constant_translation_ptr(&self) -> *const bool {
+        view_raw_shared!(self, constant_translation)
+    }
+    #[inline(always)]
+    pub(crate) fn constant_rotation(&self) -> bool {
+        view_read_shared!(self, constant_rotation)
+    }
+    #[inline(always)]
+    pub(crate) fn constant_rotation_ptr(&self) -> *const bool {
+        view_raw_shared!(self, constant_rotation)
+    }
+    #[inline(always)]
+    pub(crate) fn constant_scale(&self) -> bool {
+        view_read_shared!(self, constant_scale)
+    }
+    #[inline(always)]
+    pub(crate) fn constant_scale_ptr(&self) -> *const bool {
+        view_raw_shared!(self, constant_scale)
+    }
+    #[inline(always)]
+    pub(crate) fn translation_keys(&self) -> List<BakedVec3> {
+        view_read_shared!(self, translation_keys)
+    }
+    #[inline(always)]
+    pub(crate) fn translation_keys_view(&self) -> &View<List<BakedVec3>, M> {
+        view_project!(self, translation_keys)
+    }
+    #[inline(always)]
+    pub(crate) fn translation_keys_ptr(&self) -> *const List<BakedVec3> {
+        view_raw_shared!(self, translation_keys)
+    }
+    #[inline(always)]
+    pub(crate) fn rotation_keys(&self) -> List<BakedQuat> {
+        view_read_shared!(self, rotation_keys)
+    }
+    #[inline(always)]
+    pub(crate) fn rotation_keys_view(&self) -> &View<List<BakedQuat>, M> {
+        view_project!(self, rotation_keys)
+    }
+    #[inline(always)]
+    pub(crate) fn rotation_keys_ptr(&self) -> *const List<BakedQuat> {
+        view_raw_shared!(self, rotation_keys)
+    }
+    #[inline(always)]
+    pub(crate) fn scale_keys(&self) -> List<BakedVec3> {
+        view_read_shared!(self, scale_keys)
+    }
+    #[inline(always)]
+    pub(crate) fn scale_keys_view(&self) -> &View<List<BakedVec3>, M> {
+        view_project!(self, scale_keys)
+    }
+    #[inline(always)]
+    pub(crate) fn scale_keys_ptr(&self) -> *const List<BakedVec3> {
+        view_raw_shared!(self, scale_keys)
+    }
+}
+
+#[allow(dead_code)]
+impl View<BakedNode, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_typed_id(&self, value: u32) {
+        view_write!(self, typed_id, value)
+    }
+    #[inline(always)]
+    pub(crate) fn typed_id_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, typed_id)
+    }
+    #[inline(always)]
+    pub(crate) fn set_element_id(&self, value: u32) {
+        view_write!(self, element_id, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_id_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, element_id)
+    }
+    #[inline(always)]
+    pub(crate) fn set_constant_translation(&self, value: bool) {
+        view_write!(self, constant_translation, value)
+    }
+    #[inline(always)]
+    pub(crate) fn constant_translation_raw(&self) -> *mut bool {
+        view_raw_mut!(self, constant_translation)
+    }
+    #[inline(always)]
+    pub(crate) fn set_constant_rotation(&self, value: bool) {
+        view_write!(self, constant_rotation, value)
+    }
+    #[inline(always)]
+    pub(crate) fn constant_rotation_raw(&self) -> *mut bool {
+        view_raw_mut!(self, constant_rotation)
+    }
+    #[inline(always)]
+    pub(crate) fn set_constant_scale(&self, value: bool) {
+        view_write!(self, constant_scale, value)
+    }
+    #[inline(always)]
+    pub(crate) fn constant_scale_raw(&self) -> *mut bool {
+        view_raw_mut!(self, constant_scale)
+    }
+    #[inline(always)]
+    pub(crate) fn set_translation_keys(&self, value: List<BakedVec3>) {
+        view_write!(self, translation_keys, value)
+    }
+    #[inline(always)]
+    pub(crate) fn translation_keys_raw(&self) -> *mut List<BakedVec3> {
+        view_raw_mut!(self, translation_keys)
+    }
+    #[inline(always)]
+    pub(crate) fn set_rotation_keys(&self, value: List<BakedQuat>) {
+        view_write!(self, rotation_keys, value)
+    }
+    #[inline(always)]
+    pub(crate) fn rotation_keys_raw(&self) -> *mut List<BakedQuat> {
+        view_raw_mut!(self, rotation_keys)
+    }
+    #[inline(always)]
+    pub(crate) fn set_scale_keys(&self, value: List<BakedVec3>) {
+        view_write!(self, scale_keys, value)
+    }
+    #[inline(always)]
+    pub(crate) fn scale_keys_raw(&self) -> *mut List<BakedVec3> {
+        view_raw_mut!(self, scale_keys)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<BakedElement, M> {
+    #[inline(always)]
+    pub(crate) fn element_id(&self) -> u32 {
+        view_read_shared!(self, element_id)
+    }
+    #[inline(always)]
+    pub(crate) fn element_id_ptr(&self) -> *const u32 {
+        view_raw_shared!(self, element_id)
+    }
+    #[inline(always)]
+    pub(crate) fn props(&self) -> List<BakedProp> {
+        view_read_shared!(self, props)
+    }
+    #[inline(always)]
+    pub(crate) fn props_view(&self) -> &View<List<BakedProp>, M> {
+        view_project!(self, props)
+    }
+    #[inline(always)]
+    pub(crate) fn props_ptr(&self) -> *const List<BakedProp> {
+        view_raw_shared!(self, props)
+    }
+}
+
+#[allow(dead_code)]
+impl View<BakedElement, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_element_id(&self, value: u32) {
+        view_write!(self, element_id, value)
+    }
+    #[inline(always)]
+    pub(crate) fn element_id_raw(&self) -> *mut u32 {
+        view_raw_mut!(self, element_id)
+    }
+    #[inline(always)]
+    pub(crate) fn set_props(&self, value: List<BakedProp>) {
+        view_write!(self, props, value)
+    }
+    #[inline(always)]
+    pub(crate) fn props_raw(&self) -> *mut List<BakedProp> {
+        view_raw_mut!(self, props)
+    }
+}
+
+#[allow(dead_code)]
+impl<M: Mode> View<BakedProp, M> {
+    #[inline(always)]
+    pub(crate) fn name(&self) -> String {
+        view_read_shared!(self, name)
+    }
+    #[inline(always)]
+    pub(crate) fn name_view(&self) -> &View<String, M> {
+        view_project!(self, name)
+    }
+    #[inline(always)]
+    pub(crate) fn name_ptr(&self) -> *const String {
+        view_raw_shared!(self, name)
+    }
+    #[inline(always)]
+    pub(crate) fn constant_value(&self) -> bool {
+        view_read_shared!(self, constant_value)
+    }
+    #[inline(always)]
+    pub(crate) fn constant_value_ptr(&self) -> *const bool {
+        view_raw_shared!(self, constant_value)
+    }
+    #[inline(always)]
+    pub(crate) fn keys(&self) -> List<BakedVec3> {
+        view_read_shared!(self, keys)
+    }
+    #[inline(always)]
+    pub(crate) fn keys_view(&self) -> &View<List<BakedVec3>, M> {
+        view_project!(self, keys)
+    }
+    #[inline(always)]
+    pub(crate) fn keys_ptr(&self) -> *const List<BakedVec3> {
+        view_raw_shared!(self, keys)
+    }
+}
+
+#[allow(dead_code)]
+impl View<BakedProp, Mut> {
+    #[inline(always)]
+    pub(crate) fn set_name(&self, value: String) {
+        view_write!(self, name, value)
+    }
+    #[inline(always)]
+    pub(crate) fn name_raw(&self) -> *mut String {
+        view_raw_mut!(self, name)
+    }
+    #[inline(always)]
+    pub(crate) fn set_constant_value(&self, value: bool) {
+        view_write!(self, constant_value, value)
+    }
+    #[inline(always)]
+    pub(crate) fn constant_value_raw(&self) -> *mut bool {
+        view_raw_mut!(self, constant_value)
+    }
+    #[inline(always)]
+    pub(crate) fn set_keys(&self, value: List<BakedVec3>) {
+        view_write!(self, keys, value)
+    }
+    #[inline(always)]
+    pub(crate) fn keys_raw(&self) -> *mut List<BakedVec3> {
+        view_raw_mut!(self, keys)
+    }
+}
