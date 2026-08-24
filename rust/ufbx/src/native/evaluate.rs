@@ -3034,21 +3034,25 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
     // the array base (same treatment as `native::scene_process`).
     let by_type: *mut crate::prelude::RefList<Element> =
         ec.scene_view().unknowns_mut_ptr() as *mut crate::prelude::RefList<Element>;
-    for i in 0..ELEMENT_TYPE_COUNT {
-        // SAFETY: `by_type` is the destination scene's `ELEMENT_TYPE_COUNT`-long
-        // per-type list array and `i` is in range, so slot `i` is a live
-        // `ufbx_element_list`: its count is read, then it is retargeted at the
-        // array just pushed for it.
-        unsafe {
-            (*by_type.add(i)).data = ec
-                .result_view()
-                .push::<*mut Element>((*by_type.add(i)).count)
-                as *const Ref<Element>;
-        }
+    // C: `for (size_t i = 0; i < UFBX_ELEMENT_TYPE_COUNT; i++)` — one vouch for
+    // the whole run, then a safe walk.
+    // SAFETY: `by_type` is the destination scene's `ELEMENT_TYPE_COUNT`-long
+    // per-type list array, a contiguous run of live `ufbx_element_list`s inside
+    // `ec`'s own scene struct, reached through `*mut` — write-capable
+    // provenance for `Mut`.
+    let by_type_run = unsafe {
+        SliceViewIter::<crate::prelude::RefList<Element>>::from_raw_parts(
+            by_type,
+            ELEMENT_TYPE_COUNT,
+        )
+    };
+    for list in by_type_run {
+        // Slot `i`'s count is read, then it is retargeted at the array just
+        // pushed for it.
+        list.set_data(ec.result_view().push::<*mut Element>(list.count()) as *const Ref<Element>);
         ufbxi_check_err!(
             ec.error_view(),
-            // SAFETY: as above, slot `i` of the per-type list array is live.
-            !unsafe { (*by_type.add(i)).data }.is_null(),
+            !list.data().is_null(),
             "ec->scene.elements_by_type[i].data"
         );
     }
@@ -3071,52 +3075,50 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
         "ec->scene.connections_dst.data"
     );
     for i in 0..num_connections {
-        // SAFETY: both destination connection arrays were pushed with
-        // `num_connections` elements (non-null, checked just above) and
-        // `i < num_connections`, so slot `i` is in bounds of each.
-        let (src, dst): (*mut Connection, *mut Connection) = unsafe {
-            (
-                (ec.scene_view().connections_src_view().data() as *mut Connection).add(i),
-                (ec.scene_view().connections_dst_view().data() as *mut Connection).add(i),
-            )
-        };
+        // C: `ufbx_connection *src = &ec->scene.connections_src.data[i];` and
+        // the `connections_dst` sibling — the destination slots as views: both
+        // runs were pushed with `num_connections` elements (non-null, checked
+        // just above) and per the source-scene premise both lists carry that
+        // count, so the indexing is in bounds of each.
+        let src: &View<Connection> = ec.scene_view().connections_src_view().at(i);
+        let dst: &View<Connection> = ec.scene_view().connections_dst_view().at(i);
         // C: `*src = ec->src_scene.connections_src.data[i];` (struct assignment)
         // SAFETY: per the source-scene premise the source `connections_src` run
         // holds `num_connections` live `ufbx_connection`s, so slot `i` is
-        // readable; `src` addresses the matching slot of the freshly pushed
+        // readable; `src` views the matching slot of the freshly pushed
         // destination run, a separate allocation; the same holds for the
         // `connections_dst` runs.
         unsafe {
             ptr::copy_nonoverlapping(
                 ec.src_scene_view().connections_src_view().data().add(i),
-                src,
+                src.get(),
                 1,
             );
             ptr::copy_nonoverlapping(
                 ec.src_scene_view().connections_dst_view().data().add(i),
-                dst,
+                dst.get(),
                 1,
             );
         }
-        // SAFETY (these four stores): `src` and `dst` address live connection
-        // slots holding the copies made just above, whose `src`/`dst` are
-        // non-null `Ref`s to source-scene elements — `translate_element`'s
-        // contract — read through `ref_ptr` and written back in place.
+        // SAFETY (these four stores): `src` and `dst` view live connection slots
+        // holding the copies made just above, whose `src`/`dst` are non-null
+        // `Ref`s to source-scene elements — `translate_element`'s contract —
+        // read through `ref_ptr` and written back in place.
         unsafe {
-            *(&raw mut (*src).src as *mut *mut Element) =
-                translate_element(ec, ref_ptr(&raw const (*src).src) as *mut c_void);
+            *(src.src_raw() as *mut *mut Element) =
+                translate_element(ec, ref_ptr(src.src_ptr()) as *mut c_void);
         }
         unsafe {
-            *(&raw mut (*src).dst as *mut *mut Element) =
-                translate_element(ec, ref_ptr(&raw const (*src).dst) as *mut c_void);
+            *(src.dst_raw() as *mut *mut Element) =
+                translate_element(ec, ref_ptr(src.dst_ptr()) as *mut c_void);
         }
         unsafe {
-            *(&raw mut (*dst).src as *mut *mut Element) =
-                translate_element(ec, ref_ptr(&raw const (*dst).src) as *mut c_void);
+            *(dst.src_raw() as *mut *mut Element) =
+                translate_element(ec, ref_ptr(dst.src_ptr()) as *mut c_void);
         }
         unsafe {
-            *(&raw mut (*dst).dst as *mut *mut Element) =
-                translate_element(ec, ref_ptr(&raw const (*dst).dst) as *mut c_void);
+            *(dst.dst_raw() as *mut *mut Element) =
+                translate_element(ec, ref_ptr(dst.dst_ptr()) as *mut c_void);
         }
     }
 
@@ -3177,181 +3179,182 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
                 .add((*src).typed_id as usize) = dst;
         }
 
+        // The destination element copy as a view for the field work below. A
+        // view over an element covers the `ufbx_element` HEADER only — which is
+        // where every field touched from here on lives — so the whole-element
+        // `memcpy` above stays on the raw pointer.
+        // SAFETY: `dst` addresses the element copy written just above, reached
+        // through `*mut` from the freshly pushed destination buffer —
+        // write-capable provenance for `Mut`.
+        let dst_view: &View<Element> = unsafe { View::<Element>::from_ptr(dst) };
+
         // C: `dst->connections_src.data = ec->scene.connections_src.data + (dst->connections_src.data - ec->src_scene.connections_src.data);`
         // SAFETY: `dst` holds the byte copy of `src` made above, so its
         // `connections_src`/`connections_dst` data still points into the source
         // scene's matching run — one allocation with the base being subtracted,
         // making `offset_from` well defined — and the same index lands inside the
         // equally sized destination run pushed above.
-        unsafe {
-            (*dst).connections_src.data = ec.scene_view().connections_src_view().data().offset(
-                (*dst)
-                    .connections_src
-                    .data
+        let connections_src_data: *const Connection = unsafe {
+            ec.scene_view().connections_src_view().data().offset(
+                dst_view
+                    .connections_src_view()
+                    .data()
                     .offset_from(ec.src_scene_view().connections_src_view().data()),
-            );
-            (*dst).connections_dst.data = ec.scene_view().connections_dst_view().data().offset(
-                (*dst)
-                    .connections_dst
-                    .data
+            )
+        };
+        dst_view
+            .connections_src_view()
+            .set_data(connections_src_data);
+        // SAFETY: as above, for the `connections_dst` runs.
+        let connections_dst_data: *const Connection = unsafe {
+            ec.scene_view().connections_dst_view().data().offset(
+                dst_view
+                    .connections_dst_view()
+                    .data()
                     .offset_from(ec.src_scene_view().connections_dst_view().data()),
-            );
-        }
-        // SAFETY: `dst` is the live destination element copy, so `instances` is a
-        // live `ufbx_element_list` of source-scene elements —
-        // `translate_element_list`'s contract.
-        if unsafe { (*dst).instances.count } > 0 {
-            // SAFETY: as above.
-            unsafe { translate_element_list(ec, &raw mut (*dst).instances as *mut c_void) }?;
+            )
+        };
+        dst_view
+            .connections_dst_view()
+            .set_data(connections_dst_data);
+        if dst_view.instances_view().count() > 0 {
+            // SAFETY: `instances` is the destination element copy's own
+            // `ufbx_element_list`, whose byte copy still lists source-scene
+            // elements — `translate_element_list`'s contract.
+            unsafe { translate_element_list(ec, dst_view.instances_raw() as *mut c_void) }?;
         }
 
         // C: `ufbx_name_element named = ec->src_scene.elements_by_name.data[i];`
         // then `named.element = ...; ec->scene.elements_by_name.data[i] = named;`
         // — copied straight into the destination slot here (same writes).
-        // SAFETY: the destination `elements_by_name` array was pushed with
-        // `num_elements` entries (non-null, checked above) and `i < num_elements`.
-        let named: *mut NameElement =
-            unsafe { (ec.scene_view().elements_by_name_view().data() as *mut NameElement).add(i) };
+        // The destination entry as a view: the array was pushed with
+        // `num_elements` entries (non-null, checked above) and per the
+        // source-scene premise the list carries that count, so the indexing is
+        // in bounds.
+        let named: &View<NameElement> = ec.scene_view().elements_by_name_view().at(i);
         // SAFETY: per the source-scene premise the source `elements_by_name` run
         // holds `num_elements` live entries, so slot `i` is readable; `named`
-        // addresses the matching slot of the freshly pushed destination array, a
+        // views the matching slot of the freshly pushed destination array, a
         // separate allocation.
         unsafe {
             ptr::copy_nonoverlapping(
                 ec.src_scene_view().elements_by_name_view().data().add(i),
-                named,
+                named.get(),
                 1,
             );
         }
-        // SAFETY: `named` addresses the live entry copied just above, whose
+        // SAFETY: `named` views the live entry copied just above, whose
         // `element` is a non-null `Ref` to a source-scene element —
         // `translate_element`'s contract — read through `ref_ptr` and written
         // back in place.
         unsafe {
-            *(&raw mut (*named).element as *mut *mut Element) =
-                translate_element(ec, ref_ptr(&raw const (*named).element) as *mut c_void);
+            *(named.element_raw() as *mut *mut Element) =
+                translate_element(ec, ref_ptr(named.element_ptr()) as *mut c_void);
         }
     }
 
-    // C: `ufbxi_for_ptr_list(ufbx_node, p_node, ec->scene.nodes)`
-    let mut p_node: *mut *mut UfbxNode = ec.scene_view().nodes_view().data() as *mut *mut UfbxNode;
-    let p_node_end: *mut *mut UfbxNode = add_ptr(p_node, ec.scene_view().nodes_view().count());
-    while p_node != p_node_end {
-        // SAFETY: `p_node` walks the destination scene's node pointer list and
-        // stops at `p_node_end`, so it addresses a live slot holding one of the
-        // element copies the loop above wrote into the destination buffer.
-        let node: *mut UfbxNode = unsafe { *p_node };
-        // SAFETY (this store and the ones below it): `node` is that live
-        // destination node; each named field is its own nullable
-        // `Option<Ref<..>>`, which `opt_ptr` reads as the element pointer it is.
-        // The byte copy left every one of them still pointing at the source-scene
-        // element it named — `translate_element`'s contract — and the translated
-        // pointer is written back into the same field.
+    // C: `ufbxi_for_ptr_list(ufbx_node, p_node, ec->scene.nodes)` — the walk is
+    // the destination scene's own node list, so each `*p_node` is one of the
+    // element copies the loop above wrote into the destination buffer, viewed
+    // in place.
+    let nodes = ec.scene_view().nodes_view();
+    for i in 0..nodes.count() {
+        // C: `ufbx_node *node = *p_node;`
+        let node: &View<UfbxNode> = nodes.at(i);
+        // SAFETY (this store and the ones below it): each named field is
+        // `node`'s own nullable `Option<Ref<..>>`, which `opt_ptr` reads as the
+        // element pointer it is. The byte copy left every one of them still
+        // pointing at the source-scene element it named — `translate_element`'s
+        // contract — and the translated pointer is written back into the same
+        // field.
         unsafe {
-            *(&raw mut (*node).parent as *mut *mut UfbxNode) =
-                translate_element(ec, opt_ptr(&raw const (*node).parent) as *mut c_void)
-                    as *mut UfbxNode;
+            *(node.parent_raw() as *mut *mut UfbxNode) =
+                translate_element(ec, opt_ptr(node.parent_ptr()) as *mut c_void) as *mut UfbxNode;
         }
-        // SAFETY: `children` is the live node's own `ufbx_element_list`, still
+        // SAFETY: `children` is the node's own `ufbx_element_list`, still
         // listing source-scene elements — `translate_element_list`'s contract.
-        unsafe { translate_element_list(ec, &raw mut (*node).children as *mut c_void) }?;
+        unsafe { translate_element_list(ec, node.children_raw() as *mut c_void) }?;
 
         // SAFETY: as for `parent` above.
         unsafe {
-            *(&raw mut (*node).attrib as *mut *mut Element) =
-                translate_element(ec, opt_ptr(&raw const (*node).attrib) as *mut c_void);
+            *(node.attrib_raw() as *mut *mut Element) =
+                translate_element(ec, opt_ptr(node.attrib_ptr()) as *mut c_void);
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(&raw mut (*node).mesh as *mut *mut Mesh) =
-                translate_element(ec, opt_ptr(&raw const (*node).mesh) as *mut c_void) as *mut Mesh;
+            *(node.mesh_raw() as *mut *mut Mesh) =
+                translate_element(ec, opt_ptr(node.mesh_ptr()) as *mut c_void) as *mut Mesh;
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(&raw mut (*node).light as *mut *mut crate::generated::Light) =
-                translate_element(ec, opt_ptr(&raw const (*node).light) as *mut c_void)
+            *(node.light_raw() as *mut *mut crate::generated::Light) =
+                translate_element(ec, opt_ptr(node.light_ptr()) as *mut c_void)
                     as *mut crate::generated::Light;
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(&raw mut (*node).camera as *mut *mut Camera) =
-                translate_element(ec, opt_ptr(&raw const (*node).camera) as *mut c_void)
-                    as *mut Camera;
+            *(node.camera_raw() as *mut *mut Camera) =
+                translate_element(ec, opt_ptr(node.camera_ptr()) as *mut c_void) as *mut Camera;
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(&raw mut (*node).bone as *mut *mut crate::generated::Bone) =
-                translate_element(ec, opt_ptr(&raw const (*node).bone) as *mut c_void)
+            *(node.bone_raw() as *mut *mut crate::generated::Bone) =
+                translate_element(ec, opt_ptr(node.bone_ptr()) as *mut c_void)
                     as *mut crate::generated::Bone;
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(&raw mut (*node).inherit_scale_node as *mut *mut UfbxNode) = translate_element(
-                ec,
-                opt_ptr(&raw const (*node).inherit_scale_node) as *mut c_void,
-            )
-                as *mut UfbxNode;
-        }
-        // SAFETY: as for `parent` above.
-        unsafe {
-            *(&raw mut (*node).scale_helper as *mut *mut UfbxNode) =
-                translate_element(ec, opt_ptr(&raw const (*node).scale_helper) as *mut c_void)
+            *(node.inherit_scale_node_raw() as *mut *mut UfbxNode) =
+                translate_element(ec, opt_ptr(node.inherit_scale_node_ptr()) as *mut c_void)
                     as *mut UfbxNode;
         }
         // SAFETY: as for `parent` above.
         unsafe {
-            *(&raw mut (*node).bind_pose as *mut *mut Pose) =
-                translate_element(ec, opt_ptr(&raw const (*node).bind_pose) as *mut c_void)
-                    as *mut Pose;
+            *(node.scale_helper_raw() as *mut *mut UfbxNode) =
+                translate_element(ec, opt_ptr(node.scale_helper_ptr()) as *mut c_void)
+                    as *mut UfbxNode;
+        }
+        // SAFETY: as for `parent` above.
+        unsafe {
+            *(node.bind_pose_raw() as *mut *mut Pose) =
+                translate_element(ec, opt_ptr(node.bind_pose_ptr()) as *mut c_void) as *mut Pose;
         }
 
-        // SAFETY: `all_attribs` is the live node's own `ufbx_element_list`.
-        if unsafe { (*node).all_attribs.count } > 1 {
-            // SAFETY: that list still names source-scene elements —
-            // `translate_element_list`'s contract.
-            unsafe { translate_element_list(ec, &raw mut (*node).all_attribs as *mut c_void) }?;
-        // SAFETY: as above, reading the same live node's list count.
-        } else if unsafe { (*node).all_attribs.count } == 1 {
-            // C: `node->all_attribs.data = &node->attrib;`
-            // SAFETY: both fields belong to the live destination node, so the
-            // single-element list is retargeted at that node's own already
-            // translated `attrib` slot.
-            unsafe {
-                (*node).all_attribs.data = &raw const (*node).attrib as *const Ref<Element>;
-            }
+        if node.all_attribs_view().count() > 1 {
+            // SAFETY: `all_attribs` is the node's own `ufbx_element_list`, still
+            // naming source-scene elements — `translate_element_list`'s
+            // contract.
+            unsafe { translate_element_list(ec, node.all_attribs_raw() as *mut c_void) }?;
+        } else if node.all_attribs_view().count() == 1 {
+            // C: `node->all_attribs.data = &node->attrib;` — the single-element
+            // list is retargeted at that node's own already translated `attrib`
+            // slot, addressed through the node's own view.
+            node.all_attribs_view()
+                .set_data(node.attrib_ptr() as *const Ref<Element>);
         }
 
         // SAFETY: as for `parent` above.
         unsafe {
-            *(&raw mut (*node).geometry_transform_helper as *mut *mut UfbxNode) = translate_element(
+            *(node.geometry_transform_helper_raw() as *mut *mut UfbxNode) = translate_element(
                 ec,
-                opt_ptr(&raw const (*node).geometry_transform_helper) as *mut c_void,
+                opt_ptr(node.geometry_transform_helper_ptr()) as *mut c_void,
             )
                 as *mut UfbxNode;
         }
 
-        // SAFETY: `materials` is the live node's own `ufbx_element_list`, still
+        // SAFETY: `materials` is the node's own `ufbx_element_list`, still
         // listing source-scene elements — `translate_element_list`'s contract.
-        unsafe { translate_element_list(ec, &raw mut (*node).materials as *mut c_void) }?;
-        // SAFETY: `p_node` is inside the node list, so `p_node + 1` is at most
-        // one past its end.
-        p_node = unsafe { p_node.add(1) };
+        unsafe { translate_element_list(ec, node.materials_raw() as *mut c_void) }?;
     }
 
-    // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, ec->scene.meshes)`
-    let mut p_mesh: *mut *mut Mesh = ec.scene_view().meshes_view().data() as *mut *mut Mesh;
-    let p_mesh_end: *mut *mut Mesh = add_ptr(p_mesh, ec.scene_view().meshes_view().count());
-    while p_mesh != p_mesh_end {
-        // SAFETY: `p_mesh` walks the destination scene's mesh pointer list and
-        // stops at `p_mesh_end`, so it addresses a live slot holding one of the
-        // element copies written into the destination buffer above.
-        let mesh: *mut Mesh = unsafe { *p_mesh };
-        // SAFETY: `mesh` is one of the element copies written into the
-        // destination scene's result buffer above — a live, initialized mesh
-        // reached through `*mut` (write-capable provenance for `Mut`).
-        let mesh = unsafe { View::<Mesh>::from_ptr(mesh) };
+    // C: `ufbxi_for_ptr_list(ufbx_mesh, p_mesh, ec->scene.meshes)` — see the
+    // node walk above for the list-view iteration.
+    let meshes = ec.scene_view().meshes_view();
+    for i in 0..meshes.count() {
+        // C: `ufbx_mesh *mesh = *p_mesh;`
+        let mesh: &View<Mesh> = meshes.at(i);
 
-        // SAFETY (these five calls): each `*_raw` projection addresses the live
+        // SAFETY (these five calls): each `*_raw` projection addresses the
         // destination mesh's own `ufbx_element_list`, whose byte copy still
         // lists source-scene elements — `translate_element_list`'s contract.
         unsafe {
@@ -3361,326 +3364,282 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             translate_element_list(ec, mesh.cache_deformers_raw() as *mut c_void)?;
             translate_element_list(ec, mesh.all_deformers_raw() as *mut c_void)?;
         }
-        // SAFETY: `p_mesh` is inside the mesh list, so `p_mesh + 1` is at most
-        // one past its end.
-        p_mesh = unsafe { p_mesh.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_stereo_camera, p_stereo, ec->scene.stereo_cameras)`
-    let mut p_stereo: *mut *mut StereoCamera =
-        ec.scene_view().stereo_cameras_view().data() as *mut *mut StereoCamera;
-    let p_stereo_end: *mut *mut StereoCamera =
-        add_ptr(p_stereo, ec.scene_view().stereo_cameras_view().count());
-    while p_stereo != p_stereo_end {
-        // SAFETY: `p_stereo` walks the destination scene's stereo-camera pointer
-        // list and stops at `p_stereo_end`, so it addresses a live slot holding
-        // one of the element copies written into the destination buffer above.
-        let stereo: *mut StereoCamera = unsafe { *p_stereo };
-        // SAFETY (both stores): `left`/`right` are the live stereo camera's own
+    let stereo_cameras = ec.scene_view().stereo_cameras_view();
+    for i in 0..stereo_cameras.count() {
+        // C: `ufbx_stereo_camera *stereo = *p_stereo;`
+        let stereo: &View<StereoCamera> = stereo_cameras.at(i);
+        // SAFETY (both stores): `left`/`right` are the stereo camera's own
         // nullable `Option<Ref<Camera>>` fields, which `opt_ptr` reads as element
         // pointers; the byte copy left them naming source-scene elements —
         // `translate_element`'s contract — and the result is written back in
         // place.
         unsafe {
-            *(&raw mut (*stereo).left as *mut *mut Camera) =
-                translate_element(ec, opt_ptr(&raw const (*stereo).left) as *mut c_void)
-                    as *mut Camera;
-            *(&raw mut (*stereo).right as *mut *mut Camera) =
-                translate_element(ec, opt_ptr(&raw const (*stereo).right) as *mut c_void)
-                    as *mut Camera;
+            *(stereo.left_raw() as *mut *mut Camera) =
+                translate_element(ec, opt_ptr(stereo.left_ptr()) as *mut c_void) as *mut Camera;
+            *(stereo.right_raw() as *mut *mut Camera) =
+                translate_element(ec, opt_ptr(stereo.right_ptr()) as *mut c_void) as *mut Camera;
         }
-        // SAFETY: `p_stereo` is inside the list, so `p_stereo + 1` is at most one
-        // past its end.
-        p_stereo = unsafe { p_stereo.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_skin_deformer, p_skin, ec->scene.skin_deformers)`
-    let mut p_skin: *mut *mut SkinDeformer =
-        ec.scene_view().skin_deformers_view().data() as *mut *mut SkinDeformer;
-    let p_skin_end: *mut *mut SkinDeformer =
-        add_ptr(p_skin, ec.scene_view().skin_deformers_view().count());
-    while p_skin != p_skin_end {
-        // SAFETY: `p_skin` walks the destination scene's skin-deformer pointer
-        // list and stops at `p_skin_end`, so it addresses a live slot holding one
-        // of the element copies written into the destination buffer above.
-        let skin: *mut SkinDeformer = unsafe { *p_skin };
-        // SAFETY: `clusters` is that live deformer's own `ufbx_element_list`,
-        // whose byte copy still lists source-scene elements —
+    let skin_deformers = ec.scene_view().skin_deformers_view();
+    for i in 0..skin_deformers.count() {
+        // C: `ufbx_skin_deformer *skin = *p_skin;`
+        let skin: &View<SkinDeformer> = skin_deformers.at(i);
+        // SAFETY: `clusters` is that deformer's own `ufbx_element_list`, whose
+        // byte copy still lists source-scene elements —
         // `translate_element_list`'s contract.
-        unsafe { translate_element_list(ec, &raw mut (*skin).clusters as *mut c_void) }?;
-        // SAFETY: `p_skin` is inside the list, so `p_skin + 1` is at most one
-        // past its end.
-        p_skin = unsafe { p_skin.add(1) };
+        unsafe { translate_element_list(ec, skin.clusters_raw() as *mut c_void) }?;
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_skin_cluster, p_cluster, ec->scene.skin_clusters)`
-    let mut p_cluster: *mut *mut SkinCluster =
-        ec.scene_view().skin_clusters_view().data() as *mut *mut SkinCluster;
-    let p_cluster_end: *mut *mut SkinCluster =
-        add_ptr(p_cluster, ec.scene_view().skin_clusters_view().count());
-    while p_cluster != p_cluster_end {
-        // SAFETY: `p_cluster` walks the destination scene's skin-cluster pointer
-        // list and stops at `p_cluster_end`, so it addresses a live slot holding
-        // one of the element copies written into the destination buffer above.
-        let cluster: *mut SkinCluster = unsafe { *p_cluster };
-        // SAFETY: `bone_node` is that live cluster's own nullable
+    let skin_clusters = ec.scene_view().skin_clusters_view();
+    for i in 0..skin_clusters.count() {
+        // C: `ufbx_skin_cluster *cluster = *p_cluster;`
+        let cluster: &View<SkinCluster> = skin_clusters.at(i);
+        // SAFETY: `bone_node` is that cluster's own nullable
         // `Option<Ref<UfbxNode>>` field, which `opt_ptr` reads as the element
         // pointer it is; the byte copy left it naming a source-scene element —
         // `translate_element`'s contract — and the result is written back in
         // place.
         unsafe {
-            *(&raw mut (*cluster).bone_node as *mut *mut UfbxNode) =
-                translate_element(ec, opt_ptr(&raw const (*cluster).bone_node) as *mut c_void)
+            *(cluster.bone_node_raw() as *mut *mut UfbxNode) =
+                translate_element(ec, opt_ptr(cluster.bone_node_ptr()) as *mut c_void)
                     as *mut UfbxNode;
         }
-        // SAFETY: `p_cluster` is inside the list, so `p_cluster + 1` is at most
-        // one past its end.
-        p_cluster = unsafe { p_cluster.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_deformer, p_blend, ec->scene.blend_deformers)`
-    let mut p_blend: *mut *mut BlendDeformer =
-        ec.scene_view().blend_deformers_view().data() as *mut *mut BlendDeformer;
-    let p_blend_end: *mut *mut BlendDeformer =
-        add_ptr(p_blend, ec.scene_view().blend_deformers_view().count());
-    while p_blend != p_blend_end {
-        // SAFETY: `p_blend` walks the destination scene's blend-deformer pointer
-        // list and stops at `p_blend_end`, so it addresses a live slot holding
-        // one of the element copies written into the destination buffer above.
-        let blend: *mut BlendDeformer = unsafe { *p_blend };
-        // SAFETY: `channels` is that live deformer's own `ufbx_element_list`,
-        // whose byte copy still lists source-scene elements —
+    let blend_deformers = ec.scene_view().blend_deformers_view();
+    for i in 0..blend_deformers.count() {
+        // C: `ufbx_blend_deformer *blend = *p_blend;`
+        let blend: &View<BlendDeformer> = blend_deformers.at(i);
+        // SAFETY: `channels` is that deformer's own `ufbx_element_list`, whose
+        // byte copy still lists source-scene elements —
         // `translate_element_list`'s contract.
-        unsafe { translate_element_list(ec, &raw mut (*blend).channels as *mut c_void) }?;
-        // SAFETY: `p_blend` is inside the list, so `p_blend + 1` is at most one
-        // past its end.
-        p_blend = unsafe { p_blend.add(1) };
+        unsafe { translate_element_list(ec, blend.channels_raw() as *mut c_void) }?;
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_blend_channel, p_chan, ec->scene.blend_channels)`
-    let mut p_chan: *mut *mut BlendChannel =
-        ec.scene_view().blend_channels_view().data() as *mut *mut BlendChannel;
-    let p_chan_end: *mut *mut BlendChannel =
-        add_ptr(p_chan, ec.scene_view().blend_channels_view().count());
-    while p_chan != p_chan_end {
-        // SAFETY: `p_chan` walks the destination scene's blend-channel pointer
-        // list and stops at `p_chan_end`, so it addresses a live slot holding one
-        // of the element copies written into the destination buffer above.
-        let chan: *mut BlendChannel = unsafe { *p_chan };
+    let blend_channels = ec.scene_view().blend_channels_view();
+    for i_chan in 0..blend_channels.count() {
+        // C: `ufbx_blend_channel *chan = *p_chan;`
+        let chan: &View<BlendChannel> = blend_channels.at(i_chan);
 
-        // SAFETY: `keyframes` is that live channel's own list, whose byte copy
-        // still describes the source scene's keyframe run.
+        // `keyframes` is that channel's own list, whose byte copy still
+        // describes the source scene's keyframe run.
         let keys: *mut BlendKeyframe = ec
             .result_view()
-            .push::<BlendKeyframe>(unsafe { (*chan).keyframes.count });
+            .push::<BlendKeyframe>(chan.keyframes_view().count());
         ufbxi_check_err!(ec.error_view(), !keys.is_null(), "keys");
-        // SAFETY: as above, reading the same live channel's keyframe count.
-        for i in 0..unsafe { (*chan).keyframes.count } {
+        // C: `for (size_t i = 0; i < chan->keyframes.count; i++)` — one vouch
+        // for the pushed run, then a safe walk.
+        // SAFETY: `keys` is the contiguous `keyframes.count`-element allocation
+        // just pushed (non-null, checked above), reached through `*mut` —
+        // write-capable provenance for `Mut`; its bytes are not yet initialized,
+        // which the views' `MaybeUninit` storage tolerates.
+        let keys_run = unsafe {
+            SliceViewIter::<BlendKeyframe>::from_raw_parts(keys, chan.keyframes_view().count())
+        };
+        for (i, key) in keys_run.enumerate() {
             // C: `keys[i] = chan->keyframes.data[i];` (struct assignment)
-            // SAFETY: `i` is below that count, so slot `i` is in bounds of the
-            // source keyframe run and of the equally sized allocation pushed into
-            // `keys` (non-null, checked above); the two are separate allocations.
-            unsafe { ptr::copy_nonoverlapping((*chan).keyframes.data.add(i), keys.add(i), 1) };
+            // SAFETY: `i` is below the keyframe count, so slot `i` is in bounds
+            // of the source keyframe run; `key` views the matching slot of the
+            // pushed allocation, a separate one.
+            unsafe {
+                ptr::copy_nonoverlapping(chan.keyframes_view().data().add(i), key.get(), 1);
+            }
             // SAFETY: `keys[i]` holds the copy made just above, whose `shape` is a
             // non-null `Ref` to a source-scene element — `translate_element`'s
             // contract — read through `ref_ptr` and written back in place.
             unsafe {
-                *(&raw mut (*keys.add(i)).shape as *mut *mut BlendShape) =
-                    translate_element(ec, ref_ptr(&raw const (*keys.add(i)).shape) as *mut c_void)
+                *(key.shape_raw() as *mut *mut BlendShape) =
+                    translate_element(ec, ref_ptr(key.shape_ptr()) as *mut c_void)
                         as *mut BlendShape;
             }
         }
-        // SAFETY: `chan` is the live destination channel, retargeted at the
-        // translated keyframe array.
-        unsafe { (*chan).keyframes.data = keys };
-        // SAFETY: `target_shape` is that live channel's own nullable
+        // C: `chan->keyframes.data = keys;` — the destination channel retargeted
+        // at the translated keyframe array.
+        chan.keyframes_view().set_data(keys);
+        // SAFETY: `target_shape` is that channel's own nullable
         // `Option<Ref<BlendShape>>` field, which `opt_ptr` reads as the element
         // pointer it is; the byte copy left it naming a source-scene element —
         // `translate_element`'s contract — and the result is written back in
         // place.
         unsafe {
-            *(&raw mut (*chan).target_shape as *mut *mut BlendShape) =
-                translate_element(ec, opt_ptr(&raw const (*chan).target_shape) as *mut c_void)
+            *(chan.target_shape_raw() as *mut *mut BlendShape) =
+                translate_element(ec, opt_ptr(chan.target_shape_ptr()) as *mut c_void)
                     as *mut BlendShape;
         }
-        // SAFETY: `p_chan` is inside the list, so `p_chan + 1` is at most one
-        // past its end.
-        p_chan = unsafe { p_chan.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_cache_deformer, p_deformer, ec->scene.cache_deformers)`
-    let mut p_deformer: *mut *mut CacheDeformer =
-        ec.scene_view().cache_deformers_view().data() as *mut *mut CacheDeformer;
-    let p_deformer_end: *mut *mut CacheDeformer =
-        add_ptr(p_deformer, ec.scene_view().cache_deformers_view().count());
-    while p_deformer != p_deformer_end {
-        // SAFETY: `p_deformer` walks the destination scene's cache-deformer
-        // pointer list and stops at `p_deformer_end`, so it addresses a live slot
-        // holding one of the element copies written into the destination buffer
-        // above.
-        let deformer: *mut CacheDeformer = unsafe { *p_deformer };
-        // SAFETY: `file` is that live deformer's own nullable
+    let cache_deformers = ec.scene_view().cache_deformers_view();
+    for i in 0..cache_deformers.count() {
+        // C: `ufbx_cache_deformer *deformer = *p_deformer;`
+        let deformer: &View<CacheDeformer> = cache_deformers.at(i);
+        // SAFETY: `file` is that deformer's own nullable
         // `Option<Ref<CacheFile>>` field, which `opt_ptr` reads as the element
         // pointer it is; the byte copy left it naming a source-scene element —
         // `translate_element`'s contract — and the result is written back in
         // place.
         unsafe {
-            *(&raw mut (*deformer).file as *mut *mut CacheFile) =
-                translate_element(ec, opt_ptr(&raw const (*deformer).file) as *mut c_void)
+            *(deformer.file_raw() as *mut *mut CacheFile) =
+                translate_element(ec, opt_ptr(deformer.file_ptr()) as *mut c_void)
                     as *mut CacheFile;
         }
-        // SAFETY: `p_deformer` is inside the list, so `p_deformer + 1` is at most
-        // one past its end.
-        p_deformer = unsafe { p_deformer.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_material, p_material, ec->scene.materials)`
-    let mut p_material: *mut *mut Material =
-        ec.scene_view().materials_view().data() as *mut *mut Material;
-    let p_material_end: *mut *mut Material =
-        add_ptr(p_material, ec.scene_view().materials_view().count());
-    while p_material != p_material_end {
-        // SAFETY: `p_material` walks the destination scene's material pointer
-        // list and stops at `p_material_end`, so it addresses a live slot holding
-        // one of the element copies written into the destination buffer above.
-        let material: *mut Material = unsafe { *p_material };
+    let materials = ec.scene_view().materials_view();
+    for i_material in 0..materials.count() {
+        // C: `ufbx_material *material = *p_material;`
+        let material: &View<Material> = materials.at(i_material);
 
-        // SAFETY: `shader` is that live material's own nullable
+        // SAFETY: `shader` is that material's own nullable
         // `Option<Ref<Shader>>` field, which `opt_ptr` reads as the element
         // pointer it is; the byte copy left it naming a source-scene element —
         // `translate_element`'s contract — and the result is written back in
         // place.
         unsafe {
-            *(&raw mut (*material).shader as *mut *mut Shader) =
-                translate_element(ec, opt_ptr(&raw const (*material).shader) as *mut c_void)
-                    as *mut Shader;
+            *(material.shader_raw() as *mut *mut Shader) =
+                translate_element(ec, opt_ptr(material.shader_ptr()) as *mut c_void) as *mut Shader;
         }
         // C: `material->fbx.maps` / `material->pbr.maps` — the flat `maps[]`
         // union view; the generated struct keeps only the named branch, whose
         // base is the aggregate itself (layout pinned in `native::scene_process`).
         // SAFETY: each aggregate is `MATERIAL_FBX_MAP_COUNT` /
-        // `MATERIAL_PBR_MAP_COUNT` live `ufbx_material_map`s of the live
-        // destination material, still naming source-scene textures —
-        // `translate_maps`' contract.
+        // `MATERIAL_PBR_MAP_COUNT` live `ufbx_material_map`s of the destination
+        // material, still naming source-scene textures — `translate_maps`'
+        // contract.
         unsafe {
             translate_maps(
                 ec,
-                &raw mut (*material).fbx as *mut MaterialMap,
+                material.fbx_raw() as *mut MaterialMap,
                 MATERIAL_FBX_MAP_COUNT,
             );
             translate_maps(
                 ec,
-                &raw mut (*material).pbr as *mut MaterialMap,
+                material.pbr_raw() as *mut MaterialMap,
                 MATERIAL_PBR_MAP_COUNT,
             );
         }
 
-        // SAFETY: `textures` is that live material's own list, whose byte copy
-        // still describes the source scene's material-texture run.
+        // `textures` is that material's own list, whose byte copy still
+        // describes the source scene's material-texture run.
         let textures: *mut MaterialTexture = ec
             .result_view()
-            .push::<MaterialTexture>(unsafe { (*material).textures.count });
+            .push::<MaterialTexture>(material.textures_view().count());
         ufbxi_check_err!(ec.error_view(), !textures.is_null(), "textures");
-        // SAFETY: as above, reading the same live material's texture count.
-        for i in 0..unsafe { (*material).textures.count } {
+        // C: `for (size_t i = 0; i < material->textures.count; i++)` — one vouch
+        // for the pushed run, then a safe walk.
+        // SAFETY: `textures` is the contiguous `textures.count`-element
+        // allocation just pushed (non-null, checked above), reached through
+        // `*mut` — write-capable provenance for `Mut`; its bytes are not yet
+        // initialized, which the views' `MaybeUninit` storage tolerates.
+        let textures_run = unsafe {
+            SliceViewIter::<MaterialTexture>::from_raw_parts(
+                textures,
+                material.textures_view().count(),
+            )
+        };
+        for (i, texture) in textures_run.enumerate() {
             // C: `textures[i] = material->textures.data[i];` (struct assignment)
-            // SAFETY: `i` is below that count, so slot `i` is in bounds of the
-            // source run and of the equally sized allocation pushed into
-            // `textures` (non-null, checked above); the two are separate
-            // allocations.
+            // SAFETY: `i` is below the texture count, so slot `i` is in bounds
+            // of the source run; `texture` views the matching slot of the pushed
+            // allocation, a separate one.
             unsafe {
-                ptr::copy_nonoverlapping((*material).textures.data.add(i), textures.add(i), 1);
+                ptr::copy_nonoverlapping(material.textures_view().data().add(i), texture.get(), 1);
             }
             // SAFETY: `textures[i]` holds the copy made just above, whose
             // `texture` is a non-null `Ref` to a source-scene element —
             // `translate_element`'s contract — read through `ref_ptr` and written
             // back in place.
             unsafe {
-                *(&raw mut (*textures.add(i)).texture as *mut *mut Texture) = translate_element(
-                    ec,
-                    ref_ptr(&raw const (*textures.add(i)).texture) as *mut c_void,
-                )
-                    as *mut Texture;
+                *(texture.texture_raw() as *mut *mut Texture) =
+                    translate_element(ec, ref_ptr(texture.texture_ptr()) as *mut c_void)
+                        as *mut Texture;
             }
         }
-        // SAFETY: `material` is the live destination material, retargeted at the
-        // translated texture array.
-        unsafe { (*material).textures.data = textures };
-        // SAFETY: `p_material` is inside the list, so `p_material + 1` is at most
-        // one past its end.
-        p_material = unsafe { p_material.add(1) };
+        // C: `material->textures.data = textures;` — the destination material
+        // retargeted at the translated texture array.
+        material.textures_view().set_data(textures);
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_texture, p_texture, ec->scene.textures)`
-    let mut p_texture: *mut *mut Texture =
-        ec.scene_view().textures_view().data() as *mut *mut Texture;
-    let p_texture_end: *mut *mut Texture =
-        add_ptr(p_texture, ec.scene_view().textures_view().count());
-    while p_texture != p_texture_end {
-        // SAFETY: `p_texture` walks the destination scene's texture pointer list
-        // and stops at `p_texture_end`, so it addresses a live slot holding one
-        // of the element copies written into the destination buffer above.
-        let texture: *mut Texture = unsafe { *p_texture };
-        // SAFETY: `video` is that live texture's own nullable
-        // `Option<Ref<Video>>` field, which `opt_ptr` reads as the element
-        // pointer it is; the byte copy left it naming a source-scene element —
-        // `translate_element`'s contract — and the result is written back in
-        // place.
+    let textures = ec.scene_view().textures_view();
+    for i_texture in 0..textures.count() {
+        // C: `ufbx_texture *texture = *p_texture;`
+        let texture: &View<Texture> = textures.at(i_texture);
+        // SAFETY: `video` is that texture's own nullable `Option<Ref<Video>>`
+        // field, which `opt_ptr` reads as the element pointer it is; the byte
+        // copy left it naming a source-scene element — `translate_element`'s
+        // contract — and the result is written back in place.
         unsafe {
-            *(&raw mut (*texture).video as *mut *mut Video) =
-                translate_element(ec, opt_ptr(&raw const (*texture).video) as *mut c_void)
-                    as *mut Video;
+            *(texture.video_raw() as *mut *mut Video) =
+                translate_element(ec, opt_ptr(texture.video_ptr()) as *mut c_void) as *mut Video;
         }
 
-        // SAFETY: `layers` is that live texture's own list, whose byte copy still
-        // describes the source scene's texture-layer run.
+        // `layers` is that texture's own list, whose byte copy still describes
+        // the source scene's texture-layer run.
         let layers: *mut TextureLayer = ec
             .result_view()
-            .push::<TextureLayer>(unsafe { (*texture).layers.count });
+            .push::<TextureLayer>(texture.layers_view().count());
         ufbxi_check_err!(ec.error_view(), !layers.is_null(), "layers");
-        // SAFETY: as above, reading the same live texture's layer count.
-        for i in 0..unsafe { (*texture).layers.count } {
+        // C: `for (size_t i = 0; i < texture->layers.count; i++)` — one vouch
+        // for the pushed run, then a safe walk.
+        // SAFETY: `layers` is the contiguous `layers.count`-element allocation
+        // just pushed (non-null, checked above), reached through `*mut` —
+        // write-capable provenance for `Mut`; its bytes are not yet initialized,
+        // which the views' `MaybeUninit` storage tolerates.
+        let layers_run = unsafe {
+            SliceViewIter::<TextureLayer>::from_raw_parts(layers, texture.layers_view().count())
+        };
+        for (i, layer) in layers_run.enumerate() {
             // C: `layers[i] = texture->layers.data[i];` (struct assignment)
-            // SAFETY: `i` is below that count, so slot `i` is in bounds of the
-            // source run and of the equally sized allocation pushed into `layers`
-            // (non-null, checked above); the two are separate allocations.
-            unsafe { ptr::copy_nonoverlapping((*texture).layers.data.add(i), layers.add(i), 1) };
+            // SAFETY: `i` is below the layer count, so slot `i` is in bounds of
+            // the source run; `layer` views the matching slot of the pushed
+            // allocation, a separate one.
+            unsafe {
+                ptr::copy_nonoverlapping(texture.layers_view().data().add(i), layer.get(), 1);
+            }
             // SAFETY: `layers[i]` holds the copy made just above, whose `texture`
             // is a non-null `Ref` to a source-scene element —
             // `translate_element`'s contract — read through `ref_ptr` and written
             // back in place.
             unsafe {
-                *(&raw mut (*layers.add(i)).texture as *mut *mut Texture) = translate_element(
-                    ec,
-                    ref_ptr(&raw const (*layers.add(i)).texture) as *mut c_void,
-                )
-                    as *mut Texture;
+                *(layer.texture_raw() as *mut *mut Texture) =
+                    translate_element(ec, ref_ptr(layer.texture_ptr()) as *mut c_void)
+                        as *mut Texture;
             }
         }
-        // SAFETY: `texture` is the live destination texture, retargeted at the
-        // translated layer array.
-        unsafe { (*texture).layers.data = layers };
+        // C: `texture->layers.data = layers;` — the destination texture
+        // retargeted at the translated layer array.
+        texture.layers_view().set_data(layers);
 
-        // SAFETY: `file_textures` is that live texture's own `ufbx_element_list`,
+        // SAFETY: `file_textures` is that texture's own `ufbx_element_list`,
         // whose byte copy still lists source-scene elements —
         // `translate_element_list`'s contract.
-        unsafe { translate_element_list(ec, &raw mut (*texture).file_textures as *mut c_void) }?;
+        unsafe { translate_element_list(ec, texture.file_textures_raw() as *mut c_void) }?;
 
         // C: `if (texture->shader) { ... }`
-        // SAFETY: `shader` is the live texture's own nullable
+        // SAFETY: `shader` is the texture's own nullable
         // `Option<Ref<ShaderTexture>>` field, which `opt_ptr` reads as the
         // pointer it is.
-        if !unsafe { opt_ptr(&raw const (*texture).shader) }.is_null() {
+        if !unsafe { opt_ptr(texture.shader_ptr()) }.is_null() {
             // SAFETY: as above.
-            let mut shader: *mut ShaderTexture = unsafe { opt_ptr(&raw const (*texture).shader) };
+            let mut shader: *mut ShaderTexture = unsafe { opt_ptr(texture.shader_ptr()) };
             // SAFETY: `ec.result_mut_ptr()` is the eval context's own result
             // buffer and `shader` is the non-null (checked just above)
             // source-scene shader texture `push_copy` copies.
             shader = unsafe { ec.result_view().push_copy_raw::<ShaderTexture>(1, shader) };
             ufbxi_check_err!(ec.error_view(), !shader.is_null(), "shader");
-            // SAFETY: `texture` is the live destination texture, retargeted at the
+            // SAFETY: `texture` views the destination texture, retargeted at the
             // copy just pushed.
-            unsafe { *(&raw mut (*texture).shader as *mut *mut ShaderTexture) = shader };
+            unsafe { *(texture.shader_raw() as *mut *mut ShaderTexture) = shader };
 
             // SAFETY: `shader` is the non-null (checked just above) freshly
             // pushed copy, so its `inputs` list still describes the source
@@ -3696,9 +3655,6 @@ pub(crate) unsafe fn evaluate_imp(ec: &EvalContext) -> Result<(), Fail> {
             // array.
             unsafe { (*shader).inputs.data = inputs };
         }
-        // SAFETY: `p_texture` is inside the list, so `p_texture + 1` is at most
-        // one past its end.
-        p_texture = unsafe { p_texture.add(1) };
     }
 
     // C: `ufbxi_for_ptr_list(ufbx_shader, p_shader, ec->scene.shaders)`
