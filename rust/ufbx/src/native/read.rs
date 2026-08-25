@@ -5566,23 +5566,18 @@ pub(crate) fn read_skin_cluster(
 
 // ufbx.c:14054-14086 `ufbxi_read_blend_channel`
 #[inline(never)]
-pub(crate) unsafe fn read_blend_channel(
+pub(crate) fn read_blend_channel(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &ElementInfoView,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `BlendChannel` is the element struct for `ElementType::BlendChannel`.
-    let channel: *mut BlendChannel = unsafe {
-        push_element::<BlendChannel>(
-            uc,
-            View::<ElementInfo>::from_ptr(info),
-            ElementType::BlendChannel,
-        )
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `BlendChannel` is the element struct for
+    // `ElementType::BlendChannel`.
+    let channel: *mut BlendChannel =
+        unsafe { push_element::<BlendChannel>(uc, info, ElementType::BlendChannel) };
     ufbxi_check!(uc, !channel.is_null(), "channel");
 
     // C: `ufbx_real_list list = { NULL, 0 };`
@@ -7824,7 +7819,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                     ElementType::BlendDeformer,
                 )?;
             } else if sub_type == sp::BlendShapeChannel.as_ptr() {
-                read_blend_channel(uc, node, &raw mut info)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+                // write-capable provenance, live and unmoved across the call.
+                read_blend_channel(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
             } else if sub_type == sp::VertexCacheDeformer.as_ptr() {
                 read_element(
                     uc,
