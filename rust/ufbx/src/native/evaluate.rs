@@ -2271,6 +2271,37 @@ pub(crate) struct PropIter {
     pub tmp: Prop,
 }
 
+impl View<PropIter, Mut> {
+    #[inline(always)]
+    pub(crate) fn prop(&self) -> *const Prop {
+        view_read!(self, prop)
+    }
+    #[inline(always)]
+    pub(crate) fn set_prop(&self, prop: *const Prop) {
+        view_write!(self, prop, prop)
+    }
+    #[inline(always)]
+    pub(crate) fn prop_end(&self) -> *const Prop {
+        view_read!(self, prop_end)
+    }
+    #[inline(always)]
+    pub(crate) fn over(&self) -> *const PropOverride {
+        view_read!(self, over)
+    }
+    #[inline(always)]
+    pub(crate) fn set_over(&self, over: *const PropOverride) {
+        view_write!(self, over, over)
+    }
+    #[inline(always)]
+    pub(crate) fn over_end(&self) -> *const PropOverride {
+        view_read!(self, over_end)
+    }
+    #[inline(always)]
+    pub(crate) fn tmp_view(&self) -> &View<Prop, Mut> {
+        view_project!(self, tmp)
+    }
+}
+
 // ufbx.c:25853-25864 `ufbxi_init_prop_iter_slow`
 #[inline(never)]
 pub(crate) unsafe fn init_prop_iter_slow(
@@ -2337,27 +2368,26 @@ pub(crate) unsafe fn init_prop_iter(
 
 // ufbx.c:25876-25914 `ufbxi_next_prop_slow`
 #[inline(never)]
-pub(crate) unsafe fn next_prop_slow(iter: *mut PropIter) -> *const Prop {
-    // SAFETY (every `*iter` access in this fn): `iter` is the caller's live
-    // `PropIter` — the raw-pointer contract of this `unsafe fn` — as initialized
-    // by `init_prop_iter`, so its `prop`/`over` cursors sit inside the element's
-    // prop run and the anim's override run and stop at the matching `*_end`.
-    let prop: *const Prop = unsafe { (*iter).prop };
-    let over: *const PropOverride = unsafe { (*iter).over };
-    if prop == unsafe { (*iter).prop_end } && over == unsafe { (*iter).over_end } {
+pub(crate) fn next_prop_slow(iter: &View<PropIter, Mut>) -> *const Prop {
+    // The `prop`/`over` cursors are as `init_prop_iter` left them: inside the
+    // element's prop run and the anim's override run, stopping at the matching
+    // `*_end`.
+    let prop: *const Prop = iter.prop();
+    let over: *const PropOverride = iter.over();
+    if prop == iter.prop_end() && over == iter.over_end() {
         return ptr::null();
     }
 
     // We can use `UINT32_MAX` as a terminating key (aka prefix) as prop names must
     // be valid UTF-8 and the byte sequence "\xff\xff\xff\xff" is not valid.
-    let prop_key: u32 = if prop != unsafe { (*iter).prop_end } {
+    let prop_key: u32 = if prop != iter.prop_end() {
         // SAFETY: `prop` is short of `prop_end`, so it addresses an element of
         // the prop run.
         unsafe { (*prop)._internal_key }
     } else {
         u32::MAX
     };
-    let over_key: u32 = if over != unsafe { (*iter).over_end } {
+    let over_key: u32 = if over != iter.over_end() {
         // SAFETY: `over` is short of `over_end`, so it addresses an element of
         // the override run.
         unsafe { (*over)._internal_key }
@@ -2378,37 +2408,41 @@ pub(crate) unsafe fn next_prop_slow(iter: *mut PropIter) -> *const Prop {
     }
 
     if cmp >= 0 {
-        // SAFETY: the projection addresses `iter`'s own `tmp` prop.
-        let dst: *mut Prop = unsafe { &raw mut (*iter).tmp };
-        // SAFETY (every write below): `dst` is `iter`'s own `tmp` field and
-        // `over` addresses an element of the override run — `cmp >= 0` is only
-        // reachable when `over_key` was read from a live element, since a
-        // `UINT32_MAX` `over_key` with a live `prop` compares greater.
-        unsafe {
-            (*dst).name = (*over).prop_name;
-            (*dst)._internal_key = (*over)._internal_key;
-            (*dst).type_ = PropType::Unknown;
-            (*dst).flags = PropFlags::OVERRIDDEN;
-            (*dst).value_str = (*over).value_str;
-            (*dst).value_blob.data = (*dst).value_str.data;
-            (*dst).value_blob.size = (*dst).value_str.length;
-            (*dst).value_int = (*over).value_int;
-            (*dst).value_vec4 = (*over).value;
-        }
+        // C: `ufbx_prop *dst = &iter->tmp;`
+        let dst: &View<Prop, Mut> = iter.tmp_view();
+        // SAFETY: `over` addresses an element of the override run — `cmp >= 0`
+        // is only reachable when `over_key` was read from a live element, since
+        // a `UINT32_MAX` `over_key` with a live `prop` compares greater. The
+        // override run is scene memory that outlives this call, and this fn
+        // writes only `iter`'s own `tmp`, so the frozen tag stays valid.
+        let over_view: &View<PropOverride, Const> =
+            unsafe { View::<PropOverride, Const>::from_ptr(over) };
+        dst.set_name(over_view.prop_name());
+        dst.set_internal_key(over_view._internal_key());
+        dst.set_type(PropType::Unknown);
+        dst.set_flags(PropFlags::OVERRIDDEN);
+        dst.set_value_str(over_view.value_str());
+        // C: `dst->value_blob.data = dst->value_str.data;` + `.size = ....length;`
+        let mut blob = dst.value_blob();
+        blob.data = dst.value_str().data;
+        blob.size = dst.value_str().length;
+        dst.set_value_blob(blob);
+        dst.set_value_int(over_view.value_int());
+        dst.set_value_vec4(over_view.value());
         // SAFETY: `over` is inside the override run, so `over + 1` is at most
         // one past its end.
-        unsafe { (*iter).over = over.add(1) };
+        iter.set_over(unsafe { over.add(1) });
         if cmp == 0 {
             // SAFETY: `cmp == 0` came from comparing live names, so `prop` is
             // inside the prop run and `prop + 1` is at most one past its end.
-            unsafe { (*iter).prop = prop.add(1) };
+            iter.set_prop(unsafe { prop.add(1) });
         }
-        dst
+        dst.as_ptr()
     } else {
         // SAFETY: `cmp < 0` requires a `prop_key` read from a live element, so
         // `prop` is inside the prop run and `prop + 1` is at most one past its
         // end.
-        unsafe { (*iter).prop = prop.add(1) };
+        iter.set_prop(unsafe { prop.add(1) });
         prop
     }
 }
@@ -2430,9 +2464,11 @@ pub(crate) unsafe fn next_prop(iter: *mut PropIter) -> *const Prop {
         unsafe { (*iter).prop = prop.add(1) };
         prop
     } else {
-        // SAFETY: `iter` is forwarded unchanged, so the callee inherits the
-        // caller's contract.
-        unsafe { next_prop_slow(iter) }
+        // SAFETY: `iter` is the caller's live `PropIter` — the raw-pointer
+        // contract of this `unsafe fn` — reached through `*mut`, so its
+        // provenance is write-capable.
+        let iter_view: &View<PropIter, Mut> = unsafe { View::<PropIter, Mut>::from_ptr(iter) };
+        next_prop_slow(iter_view)
     }
 }
 
