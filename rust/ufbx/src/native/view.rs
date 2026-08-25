@@ -120,8 +120,13 @@ impl<T> View<T, Mut> {
     /// Reinterpret a raw arena pointer as an interior-mutable view reference.
     ///
     /// # Safety
-    /// `ptr` must point to a valid, initialized `T` that stays alive and unmoved
-    /// for `'a` (the arena-stability invariant), and its PROVENANCE must be
+    /// `ptr` must point to a `T`-sized, `T`-aligned slot that stays alive and
+    /// unmoved for `'a` (the arena-stability invariant). The slot's bytes need
+    /// NOT be initialized — the storage is `MaybeUninit`, so the mint asserts no
+    /// whole-value validity (module invariant above) and a freshly pushed arena
+    /// run may be minted before anything is written into it; it is each READ
+    /// accessor that asserts the field it touches is initialized. The
+    /// PROVENANCE must be
     /// write-capable: it must trace to context/arena-owned memory via `*mut`
     /// (or FFI ingress), NEVER to a `&T` — forming `&View<T, Mut>` (an
     /// `&UnsafeCell`) retags SharedReadWrite, which is UB over a read-only
