@@ -1260,12 +1260,18 @@ pub(crate) fn fix_error_type(
         .set_length(desc.iter().position(|&b| b == 0).unwrap_or(desc.len()));
     if let Some(p_error) = p_error {
         // memcpy(p_error, error, sizeof(ufbx_error));
+        // Every call site passes two distinct objects (the context error vs.
+        // the caller's out-slot), which `debug_assert_ne!` pins down; the copy
+        // itself is a `copy` (memmove), not `copy_nonoverlapping`, so that the
+        // SAFE signature carries no unwritable non-overlap obligation — a
+        // shared `&ErrorView` cannot express distinctness, and the two
+        // primitives agree byte-for-byte whenever the slots are disjoint.
+        debug_assert_ne!(error.get(), p_error.get());
         // SAFETY: both views were minted over live, write-capable `Error`
         // objects (the `View::from_ptr` contract), so each addresses
-        // `size_of::<Error>()` accessible bytes; the two are distinct objects
-        // at every call site (the context error vs. the caller's out-slot), so
-        // the copy is non-overlapping.
-        unsafe { core::ptr::copy_nonoverlapping(error.get() as *const Error, p_error.get(), 1) };
+        // `size_of::<Error>()` accessible bytes; `copy` is defined for any
+        // overlap, so no aliasing precondition is left to the caller.
+        unsafe { core::ptr::copy(error.get() as *const Error, p_error.get(), 1) };
     }
 }
 
