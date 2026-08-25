@@ -2738,11 +2738,13 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
     if !coordinate_axes_valid(uc.scene_view().settings_view().axes()) {
         return;
     }
-    // SAFETY: writes uc's own `axis_matrix` storage through its raw-ptr
-    // getter; the axes arguments are by-value.
+    // SAFETY: `axis_matrix_mut_ptr()` projects uc's own live, initialized,
+    // write-capable `axis_matrix` storage. The axis contract holds: the source
+    // axes passed `coordinate_axes_valid` above, and `dst_axes` is the caller's
+    // validated conversion target.
     if !unsafe {
         axis_matrix(
-            uc.axis_matrix_mut_ptr(),
+            View::<Matrix>::from_ptr(uc.axis_matrix_mut_ptr()),
             uc.scene_view().settings_view().axes(),
             dst_axes,
         )

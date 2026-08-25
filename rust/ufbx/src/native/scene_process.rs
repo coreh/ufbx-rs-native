@@ -12754,9 +12754,18 @@ static TIME_MODE_FPS: [Real; 18] = [
 
 // ufbx.c:23655-23674 `ufbxi_axis_matrix`
 // Returns whether a non-identity matrix was needed
+///
+/// # Safety
+/// `src` and `dst` must both be valid coordinate axes (`coordinate_axes_valid`,
+/// i.e. every member in `UFBX_COORDINATE_AXIS_POSITIVE_X ..=
+/// UFBX_COORDINATE_AXIS_NEGATIVE_Z`, never `UFBX_COORDINATE_AXIS_UNKNOWN`), as
+/// every C call site checks. The column/element indices below are `axis >> 1`
+/// with no clamping, so an `UNKNOWN` (6) member indexes one past the matrix's
+/// twelve `ufbx_real`s. The `CoordinateAxis` enum cannot express the bound, so
+/// it stays a caller obligation.
 #[inline(never)]
 pub(crate) unsafe fn axis_matrix(
-    mat: *mut Matrix,
+    mat: &View<Matrix>,
     src: CoordinateAxes,
     dst: CoordinateAxes,
 ) -> bool {
@@ -12772,14 +12781,14 @@ pub(crate) unsafe fn axis_matrix(
     }
 
     // Remap axes (axis enum divided by 2) potentially flipping if the signs (enum parity) doesn't match
-    // SAFETY: `mat` points to writable — possibly uninitialized — storage for
-    // one `ufbx_matrix` (fn contract), so the `size_of::<Matrix>()` bytes it
-    // covers may be zeroed.
-    unsafe { ptr::write_bytes(mat as *mut u8, 0, size_of::<Matrix>()) };
+    // SAFETY: the view covers writable — possibly uninitialized — storage for
+    // one `ufbx_matrix`, so the `size_of::<Matrix>()` bytes it covers may be
+    // zeroed.
+    unsafe { ptr::write_bytes(mat.get() as *mut u8, 0, size_of::<Matrix>()) };
     // C: `mat->cols[i].v[j]` — the `cols[4]` / `v[3]` union overlay.
-    let cols: *mut Vec3 = mat as *mut Vec3;
-    // SAFETY: `mat` is writable `ufbx_matrix` storage (fn contract) laid out as
-    // four consecutive `ufbx_vec3` columns, and `src`/`dst` carry real axes (fn
+    let cols: *mut Vec3 = mat.get() as *mut Vec3;
+    // SAFETY: the view covers writable `ufbx_matrix` storage laid out as four
+    // consecutive `ufbx_vec3` columns, and `src`/`dst` carry real axes (fn
     // contract: not `UFBX_COORDINATE_AXIS_UNKNOWN`), so `src_x >> 1` is in
     // `0..3` and selects a column in bounds.
     let cx: *mut Real = unsafe { cols.add((src_x >> 1) as usize) } as *mut Real;
@@ -12853,10 +12862,19 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
             up: CoordinateAxis::NegativeZ,
             front: CoordinateAxis::PositiveY,
         };
-        // SAFETY: `mat` is a local uninit `Matrix`; `axis_matrix` fully writes it
-        // before returning true, so the reads below are of initialized memory.
+        // SAFETY: `mat` is a local uninit `Matrix`, so its address is
+        // write-capable and stays valid for the call, and the `Mut` view's
+        // `MaybeUninit` storage tolerates the uninitialized pointee;
+        // `axis_matrix` fully writes it before returning true, so the reads
+        // below are of initialized memory. Its axis contract holds: the source
+        // axes passed `coordinate_axes_valid` above and `light_axes` is a
+        // literal of real axes.
         unsafe {
-            if axis_matrix(mat, uc.opts_view().target_light_axes(), light_axes) {
+            if axis_matrix(
+                View::<Matrix>::from_ptr(mat),
+                uc.opts_view().target_light_axes(),
+                light_axes,
+            ) {
                 light_post_rotation = matrix_to_transform(mat).rotation;
 
                 let inv: Matrix = matrix_invert(mat);
@@ -12874,10 +12892,19 @@ pub(crate) fn update_adjust_transforms<'a>(uc: &'a Context, scene: &'a SceneView
             up: CoordinateAxis::PositiveY,
             front: CoordinateAxis::NegativeX,
         };
-        // SAFETY: `mat` is a local uninit `Matrix`; `axis_matrix` fully writes it
-        // before returning true, so the read below is of initialized memory.
+        // SAFETY: `mat` is a local uninit `Matrix`, so its address is
+        // write-capable and stays valid for the call, and the `Mut` view's
+        // `MaybeUninit` storage tolerates the uninitialized pointee;
+        // `axis_matrix` fully writes it before returning true, so the read
+        // below is of initialized memory. Its axis contract holds: the source
+        // axes passed `coordinate_axes_valid` above and `camera_axes` is a
+        // literal of real axes.
         unsafe {
-            if axis_matrix(mat, uc.opts_view().target_camera_axes(), camera_axes) {
+            if axis_matrix(
+                View::<Matrix>::from_ptr(mat),
+                uc.opts_view().target_camera_axes(),
+                camera_axes,
+            ) {
                 camera_post_rotation = matrix_to_transform(mat).rotation;
                 has_camera_transform = true;
             }
