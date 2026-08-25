@@ -3945,14 +3945,10 @@ fn subdivision_boundary_from_raw(raw: i32) -> SubdivisionBoundary {
 // C-parity: the C local is `ufbx_mesh *ufbxi_restrict mesh` — `restrict` has no
 // Rust analogue and collapses away.
 #[inline(never)]
-pub(crate) unsafe fn read_mesh(
-    uc: &Context,
-    node: &NodeView,
-    info: *mut ElementInfo,
-) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `Mesh` is the
-    // element struct for `ElementType::Mesh`.
-    let mesh: *mut Mesh = unsafe { push_element::<Mesh>(uc, info, ElementType::Mesh) };
+pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -> Result<(), Fail> {
+    // SAFETY: `info` views the caller's live `ufbxi_element_info` and `Mesh` is
+    // the element struct for `ElementType::Mesh`.
+    let mesh: *mut Mesh = unsafe { push_element::<Mesh>(uc, info.get(), ElementType::Mesh) };
     ufbxi_check!(uc, !mesh.is_null(), "mesh");
     // SAFETY: `mesh` is the fresh non-null element just pushed into uc's
     // `tmp_elements` arena (elements live there until finalize copies them into
@@ -3963,11 +3959,7 @@ pub(crate) unsafe fn read_mesh(
 
     // In up to version 7100 FBX files blend shapes are contained within the same geometry node
     if uc.version() <= 7100 {
-        // SAFETY: `info` is the caller's live `ufbxi_element_info` —
-        // write-capable provenance, live and unmoved across the call.
-        read_synthetic_blend_shapes(uc, node, unsafe {
-            View::<ElementInfo, Mut>::from_ptr(info)
-        })?;
+        read_synthetic_blend_shapes(uc, node, info)?;
     }
 
     patch_mesh_reals(mesh);
@@ -7149,7 +7141,14 @@ pub(crate) unsafe fn read_synthetic_attribute(
     // arm pairs `size_of::<T>()` with `T`'s own `ElementType`.
     unsafe {
         if sub_type == sp::Mesh.as_ptr() {
-            read_mesh(uc, node, &raw mut attrib_info)?;
+            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
+            // local — write-capable provenance, live and unmoved across the
+            // call.
+            read_mesh(
+                uc,
+                node,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+            )?;
         } else if sub_type == sp::Light.as_ptr() {
             read_element(
                 uc,
@@ -7471,7 +7470,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             }
         } else if name == sp::Geometry.as_ptr() {
             if sub_type == sp::Mesh.as_ptr() {
-                read_mesh(uc, node, &raw mut info)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+                // write-capable provenance, live and unmoved across the call.
+                read_mesh(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
             } else if sub_type == sp::Shape.as_ptr() {
                 // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
                 // write-capable provenance, live and unmoved across the call.
