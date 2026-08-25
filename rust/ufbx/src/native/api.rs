@@ -2176,8 +2176,13 @@ pub(crate) unsafe fn evaluate_scene(
     // slot writes).
     let mut error: Error = Error::default();
     // SAFETY: `&raw mut error` is this frame's live `Error` slot the `%s`-less
-    // format writes into.
-    unsafe { ufbxi_fmt_err_info!(&raw mut error, "UFBX_ENABLE_SCENE_EVALUATION") };
+    // format writes into (a write-capable mint).
+    unsafe {
+        ufbxi_fmt_err_info!(
+            Some(crate::native::error::ErrorView::from_ptr(&raw mut error)),
+            "UFBX_ENABLE_SCENE_EVALUATION"
+        )
+    };
     ufbxi_report_err_msg!(
         // SAFETY: same live local `Error` slot, minted as a view for the report.
         unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
@@ -2394,8 +2399,13 @@ pub(crate) unsafe fn bake_anim(
     // slot writes).
     let mut error: Error = Error::default();
     // SAFETY: `&raw mut error` is this frame's live `Error` slot the `%s`-less
-    // format writes into.
-    unsafe { ufbxi_fmt_err_info!(&raw mut error, "UFBX_ENABLE_ANIMATION_BAKING") };
+    // format writes into (a write-capable mint).
+    unsafe {
+        ufbxi_fmt_err_info!(
+            Some(crate::native::error::ErrorView::from_ptr(&raw mut error)),
+            "UFBX_ENABLE_ANIMATION_BAKING"
+        )
+    };
     ufbxi_report_err_msg!(
         // SAFETY: same live local `Error` slot, minted as a view for the report.
         unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
@@ -4521,8 +4531,13 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
     // slot writes).
     let mut error: Error = Error::default();
     // SAFETY: `&raw mut error` is this frame's live `Error` slot the `%s`-less
-    // format writes into.
-    unsafe { ufbxi_fmt_err_info!(&raw mut error, "UFBX_ENABLE_TESSELLATION") };
+    // format writes into (a write-capable mint).
+    unsafe {
+        ufbxi_fmt_err_info!(
+            Some(crate::native::error::ErrorView::from_ptr(&raw mut error)),
+            "UFBX_ENABLE_TESSELLATION"
+        )
+    };
     ufbxi_report_err_msg!(
         // SAFETY: same live local `Error` slot, minted as a view for the report.
         unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
@@ -7980,7 +7995,14 @@ mod tests {
             assert_eq!(len, out.len());
 
             // `info_length > 0` switches to the "%s (%.*s)" form.
-            crate::native::error::set_err_info(&mut error, b"some info\0".as_ptr(), 9);
+            // SAFETY: `error` is this frame's own live, unmoved `Error`, taken
+            // with `&raw mut` — a write-capable mint dropped before the `&error`
+            // read below; the info run is a 9-byte literal.
+            crate::native::error::set_err_info(
+                Some(crate::native::error::ErrorView::from_ptr(&raw mut error)),
+                b"some info\0".as_ptr(),
+                9,
+            );
             let (_, out) = fmt_error(&mut dst, &error);
             assert_eq!(out, "ufbx v0.23.0 error: Test error (some info)\n");
 

@@ -146,9 +146,18 @@ pub(crate) unsafe fn generate_indices(
             // addresses `num_streams` streams (fn raw-param contract) and
             // `i < num_streams`.
             if unsafe { (*user_streams.add(i)).vertex_count } < num_indices {
-                // SAFETY: `error` is the caller's error slot (nullable, checked
-                // inside `fmt_err_info`).
-                unsafe { ufbxi_fmt_err_info!(error, "%zu", i) };
+                // SAFETY: `error` is non-null and points at a live `Error` —
+                // the sole caller (`api::generate_indices`) substitutes a local
+                // error slot for null — so this is a write-capable mint of the
+                // caller's slot; the single `%zu` conversion is matched by the
+                // `usize` argument.
+                unsafe {
+                    ufbxi_fmt_err_info!(
+                        Some(crate::native::error::ErrorView::from_ptr(error)),
+                        "%zu",
+                        i
+                    )
+                };
                 ufbxi_report_err_msg!(
                     unsafe { crate::native::error::ErrorView::from_ptr(error) },
                     "user_streams[i].vertex_count < num_indices",
@@ -396,8 +405,15 @@ pub(crate) unsafe fn generate_indices(
         // it addresses `size_of::<Error>()` writable bytes; all-zero bits are a
         // valid `Error` (C: `memset` of the same struct).
         unsafe { core::ptr::write_bytes(error as *mut u8, 0, size_of::<Error>()) };
-        // SAFETY: `error` addresses the zeroed error struct above.
-        unsafe { ufbxi_fmt_err_info!(error, "UFBX_ENABLE_INDEX_GENERATION") };
+        // SAFETY: `error` addresses the zeroed error struct above (non-null
+        // per the guard), so this is a write-capable mint of the caller's slot;
+        // the format string is a literal with no conversions.
+        unsafe {
+            ufbxi_fmt_err_info!(
+                Some(crate::native::error::ErrorView::from_ptr(error)),
+                "UFBX_ENABLE_INDEX_GENERATION"
+            )
+        };
         ufbxi_report_err_msg!(
             unsafe { crate::native::error::ErrorView::from_ptr(error) },
             "UFBXI_FEATURE_INDEX_GENERATION",

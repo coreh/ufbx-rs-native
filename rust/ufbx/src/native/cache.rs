@@ -2063,9 +2063,8 @@ pub(crate) unsafe fn cache_load_imp(
     // above.
     unsafe { cache_try_open_file(cc, filename_copy, None, &mut found)? };
     if !found {
-        // SAFETY: `error_mut_ptr` addresses `cc`'s own `Error` field, and
-        // `filename.data`/`.length` is the caller's live string run.
-        unsafe { set_err_info(cc.error_mut_ptr(), filename.data, filename.length) };
+        // SAFETY: `filename.data`/`.length` is the caller's live string run.
+        unsafe { set_err_info(Some(cc.error_view()), filename.data, filename.length) };
         ufbxi_fail_err_msg!(cc.error_view(), "open_file_fn()", "File not found");
     }
 
@@ -2337,8 +2336,14 @@ pub(crate) unsafe fn load_geometry_cache(
     // slot writes).
     let mut error: Error = Error::default();
     // SAFETY: `&raw mut error` is this frame's live `Error` slot the format
-    // writes into.
-    unsafe { ufbxi_fmt_err_info!(&raw mut error, "UFBX_ENABLE_GEOMETRY_CACHE") };
+    // writes into (a write-capable mint), and the format string is a literal
+    // with no conversions.
+    unsafe {
+        ufbxi_fmt_err_info!(
+            Some(crate::native::error::ErrorView::from_ptr(&raw mut error)),
+            "UFBX_ENABLE_GEOMETRY_CACHE"
+        )
+    };
     ufbxi_report_err_msg!(
         // SAFETY: same live local `Error` slot, minted as a view for the report.
         unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },
@@ -2533,9 +2538,8 @@ pub(crate) fn load_external_cache(uc: &Context, file: &ExternalFileView) -> Resu
         return Ok(());
     }
 
-    // SAFETY: `uc.error_mut_ptr()` addresses the context's own live `Error`,
-    // unaliased here, and the format string is a literal.
-    unsafe { ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_GEOMETRY_CACHE") };
+    // SAFETY: the format string is a literal with no conversions.
+    unsafe { ufbxi_fmt_err_info!(Some(uc.error_view()), "UFBX_ENABLE_GEOMETRY_CACHE") };
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_GEOMETRY_CACHE", "Feature disabled");
 }
 

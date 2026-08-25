@@ -505,10 +505,9 @@ pub(crate) fn evaluate_skinning(
 ) -> Result<(), Fail> {
     // C: all parameters other than `error` are unreferenced in the `#else` arm.
     let _ = (scene, buf_result, buf_tmp, time, load_caches, cache_opts);
-    // SAFETY: `error.get()` addresses the live `ufbx_error` this view borrows,
-    // which is what the macro formats into; the format string is a NUL-
-    // terminated literal.
-    unsafe { ufbxi_fmt_err_info!(error.get(), "UFBX_ENABLE_SKINNING_EVALUATION") };
+    // SAFETY: the format string is a NUL-terminated literal with no
+    // conversions.
+    unsafe { ufbxi_fmt_err_info!(Some(error), "UFBX_ENABLE_SKINNING_EVALUATION") };
     Err(ufbxi_report_err_msg!(
         error,
         "UFBXI_FEATURE_SKINNING_EVALUATION",
@@ -773,9 +772,9 @@ pub(crate) unsafe fn load_imp(uc: &Context) -> Result<(), Fail> {
                 // and the two are distinct allocations.
                 unsafe { ptr::copy_nonoverlapping(&raw const error, uc.error_mut_ptr(), 1) };
             } else {
-                // SAFETY: `uc`'s error field is live for the borrow and
-                // `filename`/`filename_len` describe the caller's filename run.
-                unsafe { set_err_info(uc.error_mut_ptr(), filename, filename_len) };
+                // SAFETY: `filename`/`filename_len` describe the caller's
+                // filename run.
+                unsafe { set_err_info(Some(uc.error_view()), filename, filename_len) };
             }
             ufbxi_fail_msg!(uc, "open_file_fn()", "File not found");
         }
@@ -1575,8 +1574,15 @@ pub(crate) unsafe fn load(
             );
             fixed.type_ = ErrorType::UnsupportedVersion;
             // SAFETY: `&raw mut fixed` is this frame's live error slot the
-            // `%u` format writes into.
-            unsafe { ufbxi_fmt_err_info!(&raw mut fixed, "%u", uc.version()) };
+            // `%u` format writes into (a write-capable mint), and the single
+            // `%u` conversion is matched by the `u32` argument.
+            unsafe {
+                ufbxi_fmt_err_info!(
+                    Some(crate::native::error::ErrorView::from_ptr(&raw mut fixed)),
+                    "%u",
+                    uc.version()
+                )
+            };
         }
         free_result(uc);
         Err(fixed)
@@ -5127,12 +5133,11 @@ pub(crate) fn create_anim_imp(ac: &CreateAnimContext) -> Result<FinishedImp<Anim
             if prev.element_id() == next.element_id()
                 && prev.prop_name_view().data() == next.prop_name_view().data()
             {
-                // SAFETY: `fmt_err_info` writes ac's own error slot, and the
-                // `%s` argument is `prev`'s interned, NUL-terminated
-                // `prop_name.data`.
+                // SAFETY: the `%s` argument is `prev`'s interned,
+                // NUL-terminated `prop_name.data`.
                 unsafe {
                     ufbxi_fmt_err_info!(
-                        ac.error_mut_ptr(),
+                        Some(ac.error_view()),
                         "element %u prop \"%s\"",
                         prev.element_id(),
                         prev.prop_name_view().data()

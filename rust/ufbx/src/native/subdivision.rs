@@ -3346,8 +3346,14 @@ pub(crate) unsafe fn subdivide_mesh(
     // slot writes).
     let mut error: Error = Error::default();
     // SAFETY: `&raw mut error` is this frame's live `Error` slot whose info
-    // buffer the macro formats into.
-    unsafe { ufbxi_fmt_err_info!(&raw mut error, "UFBX_ENABLE_SUBDIVISION") };
+    // buffer the macro formats into (a write-capable mint), and the format
+    // string is a literal with no conversions.
+    unsafe {
+        ufbxi_fmt_err_info!(
+            Some(crate::native::error::ErrorView::from_ptr(&raw mut error)),
+            "UFBX_ENABLE_SUBDIVISION"
+        )
+    };
     ufbxi_report_err_msg!(
         // SAFETY: same live local `Error` slot, minted as a view for the report.
         unsafe { crate::native::error::ErrorView::from_ptr(&raw mut error) },

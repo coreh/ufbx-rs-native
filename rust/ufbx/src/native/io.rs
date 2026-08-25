@@ -711,9 +711,9 @@ pub(crate) unsafe fn fopen(
         unsafe { free::<u16>(fc.ator_mut_ptr(), wpath, path_len + 1) };
     }
     if file.is_null() {
-        // SAFETY: `fc`'s own `error` field, plus the caller's `path`/`path_len`
-        // readable range per the fn contract.
-        unsafe { set_err_info(fc.error_mut_ptr(), path, path_len) };
+        // SAFETY: the caller's `path`/`path_len` readable range per the fn
+        // contract.
+        unsafe { set_err_info(Some(fc.error_view()), path, path_len) };
         ufbxi_report_err_msg!(fc.error_view(), "file", "File not found");
     }
     file
@@ -760,9 +760,9 @@ pub(crate) unsafe fn fopen(
         unsafe { free::<u8>(fc.ator_mut_ptr(), copy, path_len + 1) };
     }
     if file.is_null() {
-        // SAFETY: `fc`'s own `error` field, plus the caller's `path`/`path_len`
-        // readable range per the fn contract.
-        unsafe { set_err_info(fc.error_mut_ptr(), path, path_len) };
+        // SAFETY: the caller's `path`/`path_len` readable range per the fn
+        // contract.
+        unsafe { set_err_info(Some(fc.error_view()), path, path_len) };
         ufbxi_report_err_msg!(fc.error_view(), "file", "File not found");
     }
     file

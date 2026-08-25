@@ -2629,7 +2629,7 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
     } else if needs_stream && !uc.opts_view().ignore_missing_external_files() {
         // SAFETY: records the attempted path (`data .. data + size` of the
         // blob set alongside `needs_stream`) into uc's own error state.
-        unsafe { set_err_info(uc.error_mut_ptr(), stream_path.data, stream_path.size) };
+        unsafe { set_err_info(Some(uc.error_view()), stream_path.data, stream_path.size) };
         ufbxi_fail_msg!(uc, "ufbxi_obj_load_mtl()", "External file not found");
     }
 
@@ -2663,7 +2663,8 @@ pub(crate) fn mtl_load(uc: &Context) -> Result<(), Fail> {
 #[cfg(not(feature = "obj"))]
 #[inline(always)]
 pub(crate) fn obj_load(uc: &Context) -> Result<(), Fail> {
-    unsafe { ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_FORMAT_OBJ") };
+    // SAFETY: the format string is a literal with no conversions.
+    unsafe { ufbxi_fmt_err_info!(Some(uc.error_view()), "UFBX_ENABLE_FORMAT_OBJ") };
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_FORMAT_OBJ", "Feature disabled");
 }
 
@@ -2671,7 +2672,8 @@ pub(crate) fn obj_load(uc: &Context) -> Result<(), Fail> {
 #[cfg(not(feature = "obj"))]
 #[inline(always)]
 pub(crate) fn mtl_load(uc: &Context) -> Result<(), Fail> {
-    unsafe { ufbxi_fmt_err_info!(uc.error_mut_ptr(), "UFBX_ENABLE_FORMAT_OBJ") };
+    // SAFETY: the format string is a literal with no conversions.
+    unsafe { ufbxi_fmt_err_info!(Some(uc.error_view()), "UFBX_ENABLE_FORMAT_OBJ") };
     ufbxi_fail_msg!(uc, "UFBXI_FEATURE_FORMAT_OBJ", "Feature disabled");
 }
 

@@ -574,57 +574,68 @@ pub(crate) unsafe fn clean_string_utf8(str_: *mut u8, length: usize) {
 }
 
 // ufbx.c:3498-3508 `ufbxi_set_err_info`
+// C's nullable `ufbx_error *err` is an `Option<&ErrorView>`; the `!err`
+// early-out is the `None` arm.
+//
+// # Safety
+// `data` must be readable for `length` bytes — or, when `length` is
+// `usize::MAX` (C's `SIZE_MAX` sentinel), NUL-terminated. That extent is a
+// caller promise no parameter type carries.
 #[inline(never)]
-pub(crate) unsafe fn set_err_info(err: *mut Error, data: *const u8, mut length: usize) {
-    if err.is_null() {
+pub(crate) unsafe fn set_err_info(err: Option<&ErrorView>, data: *const u8, mut length: usize) {
+    let Some(err) = err else {
         return;
-    }
+    };
 
-    // SAFETY: `err` is non-null (checked above) and the caller's contract is
-    // that it points at a live, unaliased `Error`.
-    let err = unsafe { &mut *err };
     if length == usize::MAX {
         // SAFETY: `usize::MAX` is C's `SIZE_MAX` sentinel meaning "measure it",
         // which callers only pass for a NUL-terminated `data`.
         length = unsafe { strlen(data) };
     }
-    let info = err.info_buf.data.as_mut_ptr() as *mut u8;
+    let info = err.info_mut_ptr();
     let to_copy = min_sz(ERROR_INFO_LENGTH - 1, length);
-    // SAFETY: `to_copy <= length`, so the source run is readable per the
-    // caller's `data`/`length` contract; `info` is the error's own
-    // ERROR_INFO_LENGTH buffer and `to_copy <= ERROR_INFO_LENGTH - 1`. The two
-    // buffers are distinct objects, so the copy is non-overlapping.
+    // SAFETY: `to_copy <= length`, so the source run is readable per this fn's
+    // `data`/`length` contract; `info` is the error's own ERROR_INFO_LENGTH
+    // buffer, inside the live `Error` the view was minted over (its mint
+    // invariant), and `to_copy <= ERROR_INFO_LENGTH - 1`. The two buffers are
+    // distinct objects, so the copy is non-overlapping.
     unsafe { core::ptr::copy_nonoverlapping(data, info, to_copy) };
     // SAFETY: `to_copy <= ERROR_INFO_LENGTH - 1`, so this NUL lands on the last
     // byte of the info buffer at worst.
     unsafe { *info.add(to_copy) = b'\0' };
-    err.info_length = to_copy;
+    err.set_info_length(to_copy);
     // SAFETY: `info` is writable for `info_length` bytes with the terminating
     // NUL written just above at `info[info_length]` — the scan bound
     // `clean_string_utf8` needs.
-    unsafe { clean_string_utf8(info, err.info_length) };
+    unsafe { clean_string_utf8(info, err.info_length()) };
 }
 
 // ufbx.c:3510-3519 `ufbxi_fmt_err_info` (variadic entry point — see
 // `ufbxi_fmt_err_info!`).
 // C: `va_list args; // ufbxi_uninit` (ufbx.c:3514) — collapsed into `args`.
+// C's nullable `ufbx_error *err` is an `Option<&ErrorView>`; the `!err`
+// early-out is the `None` arm.
+//
+// # Safety
+// `fmt` must be a NUL-terminated format string whose conversions match `args`
+// one-for-one — including every `%s` argument being a NUL-terminated run. That
+// pairing is prose in C and no parameter type carries it.
 #[inline(never)]
-pub(crate) unsafe fn fmt_err_info(err: *mut Error, fmt: *const u8, args: &[PrintArg]) {
-    if err.is_null() {
+pub(crate) unsafe fn fmt_err_info(err: Option<&ErrorView>, fmt: *const u8, args: &[PrintArg]) {
+    let Some(err) = err else {
         return;
-    }
+    };
 
-    // SAFETY: `err` is non-null (checked above) and the caller's contract is
-    // that it points at a live, unaliased `Error`.
-    let err = unsafe { &mut *err };
-    let info = err.info_buf.data.as_mut_ptr() as *mut u8;
+    let info = err.info_mut_ptr();
     // SAFETY: `info` is the error's own buffer, exactly ERROR_INFO_LENGTH
-    // bytes; `fmt` carries this fn's NUL-terminated format-string contract.
-    err.info_length = unsafe { vsnprintf(info, ERROR_INFO_LENGTH, fmt, args) } as usize;
+    // bytes, inside the live `Error` the view was minted over (its mint
+    // invariant); `fmt`/`args` carry this fn's format-string contract.
+    let info_length = unsafe { vsnprintf(info, ERROR_INFO_LENGTH, fmt, args) } as usize;
+    err.set_info_length(info_length);
     // SAFETY: `vsnprintf` returns at most `ERROR_INFO_LENGTH - 1` and
     // NUL-terminates at that length, so `info` is writable for `info_length`
     // bytes with the terminator `clean_string_utf8` scans to.
-    unsafe { clean_string_utf8(info, err.info_length) };
+    unsafe { clean_string_utf8(info, err.info_length()) };
 }
 
 // Call-site wrapper building the `&[PrintArg]` argument pack.
@@ -1403,6 +1414,10 @@ impl ErrorView {
         }
     }
     #[inline(always)]
+    pub(crate) fn info_length(&self) -> usize {
+        view_read!(self, info_length)
+    }
+    #[inline(always)]
     pub(crate) fn set_info_length(&self, info_length: usize) {
         view_write!(self, info_length, info_length)
     }
@@ -1622,13 +1637,19 @@ mod tests {
             assert_eq!(err.description.length, 0);
             assert_eq!(err.info(), "");
 
-            ufbxi_fmt_err_info!(&mut err as *mut Error, "%u (max %u)", 5u32, 3u32);
+            // SAFETY: `err` is this frame's own live, unmoved `Error`, taken
+            // with `&raw mut` — a write-capable mint; the view is dropped
+            // before the `&mut err` uses below.
+            let view = ErrorView::from_ptr(&raw mut err);
+            ufbxi_fmt_err_info!(Some(view), "%u (max %u)", 5u32, 3u32);
             assert_eq!(err.info(), "5 (max 3)");
 
-            set_err_info(&mut err, b"UFBX_ENABLE_FORMAT_OBJ".as_ptr(), 22);
+            let view = ErrorView::from_ptr(&raw mut err);
+            set_err_info(Some(view), b"UFBX_ENABLE_FORMAT_OBJ".as_ptr(), 22);
             assert_eq!(err.info(), "UFBX_ENABLE_FORMAT_OBJ");
             // SIZE_MAX length -> strlen
-            set_err_info(&mut err, b"abc\0".as_ptr(), usize::MAX);
+            let view = ErrorView::from_ptr(&raw mut err);
+            set_err_info(Some(view), b"abc\0".as_ptr(), usize::MAX);
             assert_eq!(err.info(), "abc");
         }
     }

@@ -2197,12 +2197,12 @@ pub(crate) fn fix_index(
             // C-parity: `one_past_max_val` is a `size_t` passed through `%u`,
             // which reads an `unsigned int` — the low 32 bits on the oracle
             // targets. The `as u32` narrowing reproduces that exactly.
-            // SAFETY: the error slot is uc's own `ufbx_error` and the format
-            // string is a NUL-terminated literal whose two `%u` conversions are
-            // matched by the two `u32` arguments — `fmt_err_info`'s contract.
+            // SAFETY: the format string is a NUL-terminated literal whose two
+            // `%u` conversions are matched by the two `u32` arguments —
+            // `fmt_err_info`'s contract.
             unsafe {
                 ufbxi_fmt_err_info!(
-                    uc.error_mut_ptr(),
+                    Some(uc.error_view()),
                     "%u (max %u)",
                     index,
                     (if one_past_max_val != 0 {
