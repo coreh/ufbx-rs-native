@@ -12279,27 +12279,47 @@ pub(crate) fn update_display_layer(layer_view: &DisplayLayerView) {
     }
 }
 
+// Rust-port infrastructure (not a ufbx.c section): the three `bool[3]` axis
+// flags `ufbxi_find_bool3` fills, projected in place so the `bool *dst`
+// out-parameter travels as a view over constraint (scene-arena) memory.
+impl View<Constraint> {
+    #[inline(always)]
+    pub(crate) fn constrain_translation_view(&self) -> &View<[bool; 3]> {
+        view_project!(self, constrain_translation)
+    }
+
+    #[inline(always)]
+    pub(crate) fn constrain_rotation_view(&self) -> &View<[bool; 3]> {
+        view_project!(self, constrain_rotation)
+    }
+
+    #[inline(always)]
+    pub(crate) fn constrain_scale_view(&self) -> &View<[bool; 3]> {
+        view_project!(self, constrain_scale)
+    }
+}
+
 // ufbx.c:23397-23414 `ufbxi_find_bool3`
 #[inline(never)]
-pub(crate) unsafe fn find_bool3(
-    dst: *mut bool,
+pub(crate) fn find_bool3(
+    dst: &View<[bool; 3]>,
     props: &PropsView,
-    name: *const u8,
+    name: &[u8],
     default_value: bool,
 ) {
-    // SAFETY: `name` is a NUL-terminated property-name literal (fn contract) —
-    // `strlen`'s contract.
-    let name_len: usize = unsafe { strlen(name) };
+    // C: `size_t name_len = strlen(name);` — the name-slice convention carries
+    // the length the C recomputes from the NUL terminator.
+    let name_len: usize = name.len();
     // C: `char local[64];` — an uninitialized local; only `local[0..name_len]`
     // is ever read back (`local_len == name_len + 1` bytes are written first).
     let mut local_storage = MaybeUninit::<[u8; 64]>::uninit();
     let local: *mut u8 = local_storage.as_mut_ptr() as *mut u8;
     // C: `ufbx_assert(name_len < sizeof(local) - 2);`
     ufbx_assert!(name_len < size_of::<[u8; 64]>() - 2);
-    // SAFETY: `name` addresses `name_len` readable bytes (its own NUL-terminated
-    // spelling), the assert above established `name_len < 62`, so the copy fits
-    // in the 64-byte local, and the two regions are distinct objects.
-    unsafe { ptr::copy_nonoverlapping(name, local, name_len) };
+    // SAFETY: `name` addresses `name_len` readable bytes (its own slice run),
+    // the assert above established `name_len < 62`, so the copy fits in the
+    // 64-byte local, and the two regions are distinct objects.
+    unsafe { ptr::copy_nonoverlapping(name.as_ptr(), local, name_len) };
 
     let local_len: usize = name_len + 1;
     // SAFETY: the assert above established `name_len < 62`, so
@@ -12309,18 +12329,25 @@ pub(crate) unsafe fn find_bool3(
     let def: i64 = if default_value { 1 } else { 0 };
     // SAFETY: `name_len < 62` (asserted above) indexes inside the 64-byte local.
     unsafe { *local.add(name_len) = b'X' };
-    // SAFETY: `dst` addresses three writable `bool`s (fn contract); `local` holds
-    // `local_len` initialized bytes followed by a NUL, which is what
-    // `ufbx_find_int_len` reads.
-    unsafe { *dst.add(0) = api_find_int_len(props, slice_from_ptr(local, local_len), def) != 0 };
+    // SAFETY: `dst.get()` addresses the viewed `[bool; 3]` (view mint invariant),
+    // so element 0 is a live writable place; `local` holds `local_len`
+    // initialized bytes followed by a NUL, which is what `ufbx_find_int_len`
+    // reads.
+    unsafe {
+        (*dst.get())[0] = api_find_int_len(props, slice_from_ptr(local, local_len), def) != 0;
+    };
     // SAFETY: as above, for the `Y` suffix.
     unsafe { *local.add(name_len) = b'Y' };
-    // SAFETY: as above, for the second `bool` of `dst`.
-    unsafe { *dst.add(1) = api_find_int_len(props, slice_from_ptr(local, local_len), def) != 0 };
+    // SAFETY: as above, for element 1 of `dst`.
+    unsafe {
+        (*dst.get())[1] = api_find_int_len(props, slice_from_ptr(local, local_len), def) != 0;
+    };
     // SAFETY: as above, for the `Z` suffix.
     unsafe { *local.add(name_len) = b'Z' };
-    // SAFETY: as above, for the third `bool` of `dst`.
-    unsafe { *dst.add(2) = api_find_int_len(props, slice_from_ptr(local, local_len), def) != 0 };
+    // SAFETY: as above, for element 2 of `dst`.
+    unsafe {
+        (*dst.get())[2] = api_find_int_len(props, slice_from_ptr(local, local_len), def) != 0;
+    };
 }
 
 // ufbx.c:23416-23488 `ufbxi_update_constraint`
@@ -12390,17 +12417,16 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
         }
     }
 
-    // SAFETY: `constraint` and `props` are the constraint view's own storage;
-    // every lookup name is a NUL-terminated literal, `find_bool3` writes exactly
-    // the three `bool`s of the `[bool; 3]` field it is handed, and the transmute
-    // is guarded by the explicit `[0, LAST)` range check above it.
+    // SAFETY: `constraint` and `props` are the constraint view's own storage,
+    // and the transmute is guarded by the explicit `[0, LAST)` range check
+    // above it.
     unsafe {
         (*constraint).active = api_find_int_len(props, b"Active", 1) != 0;
         if constraint_type == ConstraintType::Aim {
             find_bool3(
-                (*constraint).constrain_rotation.as_mut_ptr(),
+                constraint_view.constrain_rotation_view(),
                 props,
-                b"Affect\0".as_ptr(),
+                b"Affect",
                 true,
             );
 
@@ -12426,42 +12452,42 @@ pub(crate) fn update_constraint(constraint_view: &ConstraintView) {
             (*constraint).aim_up_vector = api_find_vec3_len(props, b"UpVector", default_up);
         } else if constraint_type == ConstraintType::Parent {
             find_bool3(
-                (*constraint).constrain_translation.as_mut_ptr(),
+                constraint_view.constrain_translation_view(),
                 props,
-                b"AffectTranslation\0".as_ptr(),
+                b"AffectTranslation",
                 true,
             );
             find_bool3(
-                (*constraint).constrain_rotation.as_mut_ptr(),
+                constraint_view.constrain_rotation_view(),
                 props,
-                b"AffectRotation\0".as_ptr(),
+                b"AffectRotation",
                 true,
             );
             find_bool3(
-                (*constraint).constrain_scale.as_mut_ptr(),
+                constraint_view.constrain_scale_view(),
                 props,
-                b"AffectScale\0".as_ptr(),
+                b"AffectScale",
                 false,
             );
         } else if constraint_type == ConstraintType::Position {
             find_bool3(
-                (*constraint).constrain_translation.as_mut_ptr(),
+                constraint_view.constrain_translation_view(),
                 props,
-                b"Affect\0".as_ptr(),
+                b"Affect",
                 true,
             );
         } else if constraint_type == ConstraintType::Rotation {
             find_bool3(
-                (*constraint).constrain_rotation.as_mut_ptr(),
+                constraint_view.constrain_rotation_view(),
                 props,
-                b"Affect\0".as_ptr(),
+                b"Affect",
                 true,
             );
         } else if constraint_type == ConstraintType::Scale {
             find_bool3(
-                (*constraint).constrain_scale.as_mut_ptr(),
+                constraint_view.constrain_scale_view(),
                 props,
-                b"Affect\0".as_ptr(),
+                b"Affect",
                 true,
             );
         } else if constraint_type == ConstraintType::SingleChainIk {
