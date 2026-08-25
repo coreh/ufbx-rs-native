@@ -194,19 +194,18 @@ use crate::generated::{
     AspectMode, AudioClip, AudioLayer, BlendChannel, BlendDeformer, BlendKeyframe, BlendMode,
     BlendShape, Bone, BonePose, CacheDeformer, CacheFile, CacheFileFormat, Camera, ColorSet,
     Connection, Constraint, ConstraintAimUpType, ConstraintTarget, ConstraintType, CoordinateAxes,
-    CoordinateAxis, DisplayLayer, Edge, Element, ElementType, Error, Exporter, Face, FileFormat,
-    GateFit, GeometryTransformHandling, IndexErrorHandling, InheritMode, InheritModeHandling,
-    Light, LightAreaShape, LightDecay, LightType, LineCurve, LodDisplay, LodGroup, LodLevel,
-    Material, MaterialFbxMap, MaterialFbxMaps, MaterialFeature, MaterialFeatureInfo,
-    MaterialFeatures, MaterialMap, MaterialPbrMap, MaterialPbrMaps, MaterialTexture, Matrix, Mesh,
-    MeshPart, Metadata, MirrorAxis, NameElement, Node, NurbsBasis, NurbsCurve, NurbsSurface,
-    NurbsTopology, PivotHandling, Pose, ProjectionMode, Prop, PropFlags, PropType, Props, Quat,
-    RotationOrder, Scene, SceneSettings, SelectionNode, SelectionSet, Shader, ShaderBinding,
-    ShaderPropBinding, ShaderTexture, ShaderTextureInput, ShaderTextureType, ShaderType,
-    SkinCluster, SkinDeformer, SkinVertex, SkinWeight, SkinningMethod, SnapMode, SpaceConversion,
-    StereoCamera, Texture, TextureFile, TextureLayer, TextureType, TimeMode, TimeProtocol,
-    TopoEdge, Transform, TransformOverride, UvSet, Vec2, Vec3, Vec4, Video, VoidList, WarningType,
-    WrapMode,
+    CoordinateAxis, DisplayLayer, Edge, Element, ElementType, Exporter, Face, FileFormat, GateFit,
+    GeometryTransformHandling, IndexErrorHandling, InheritMode, InheritModeHandling, Light,
+    LightAreaShape, LightDecay, LightType, LineCurve, LodDisplay, LodGroup, LodLevel, Material,
+    MaterialFbxMap, MaterialFbxMaps, MaterialFeature, MaterialFeatureInfo, MaterialFeatures,
+    MaterialMap, MaterialPbrMap, MaterialPbrMaps, MaterialTexture, Matrix, Mesh, MeshPart,
+    Metadata, MirrorAxis, NameElement, Node, NurbsBasis, NurbsCurve, NurbsSurface, NurbsTopology,
+    PivotHandling, Pose, ProjectionMode, Prop, PropFlags, PropType, Props, Quat, RotationOrder,
+    Scene, SceneSettings, SelectionNode, SelectionSet, Shader, ShaderBinding, ShaderPropBinding,
+    ShaderTexture, ShaderTextureInput, ShaderTextureType, ShaderType, SkinCluster, SkinDeformer,
+    SkinVertex, SkinWeight, SkinningMethod, SnapMode, SpaceConversion, StereoCamera, Texture,
+    TextureFile, TextureLayer, TextureType, TimeMode, TimeProtocol, TopoEdge, Transform,
+    TransformOverride, UvSet, Vec2, Vec3, Vec4, Video, VoidList, WarningType, WrapMode,
 };
 use crate::native::allocator::grow_array;
 use crate::native::api::{
@@ -8054,9 +8053,9 @@ pub(crate) unsafe extern "C" fn material_part_usage_less(
 
 // ufbx.c:21561-21621 `ufbxi_finalize_mesh_material`
 #[inline(never)]
-pub(crate) unsafe fn finalize_mesh_material(
+pub(crate) fn finalize_mesh_material(
     buf: &BufView,
-    error: *mut Error,
+    error: &crate::native::error::ErrorView,
     mesh: &View<Mesh>,
 ) -> Result<(), Fail> {
     let num_materials: usize = mesh.materials().count;
@@ -8124,7 +8123,7 @@ pub(crate) unsafe fn finalize_mesh_material(
             part.face_indices_view()
                 .set_data(buf.push::<u32>(part.num_faces()));
             ufbxi_check_err!(
-                unsafe { crate::native::error::ErrorView::from_ptr(error) },
+                error,
                 !part.face_indices_view().data().is_null(),
                 "part->face_indices.data"
             );
@@ -8160,7 +8159,7 @@ pub(crate) unsafe fn finalize_mesh_material(
         // `buf` is the result buffer the finalized lists are pushed into.
         usage_order.set_data(buf.push::<u32>(num_parts));
         ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            error,
             !usage_order.data().is_null(),
             "mesh->material_part_usage_order.data"
         );
@@ -9426,9 +9425,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                     mesh.face_material_view().set_count(0);
                 }
             } else if mesh.materials().count > 0 {
-                // SAFETY: `result_view()`/`error_mut_ptr()` are `uc`'s own
-                // result buffer and error slot.
-                unsafe { finalize_mesh_material(uc.result_view(), uc.error_mut_ptr(), mesh) }?;
+                finalize_mesh_material(uc.result_view(), uc.error_view(), mesh)?;
             }
 
             // Fetch deformers

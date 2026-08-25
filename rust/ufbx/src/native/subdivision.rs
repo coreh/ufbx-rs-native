@@ -3042,11 +3042,7 @@ pub(crate) unsafe fn subdivide_mesh_level(
     // Will be filled in by `ufbxi_finalize_mesh()`.
     result.vertex_first_index_view().set_count(0);
 
-    // SAFETY: `error_mut_ptr()` is `sc`'s own live error slot, the finalize
-    // contract.
-    unsafe {
-        finalize_mesh_material(sc.result_view(), sc.error_mut_ptr(), result)?;
-    }
+    finalize_mesh_material(sc.result_view(), sc.error_view(), result)?;
     finalize_mesh(sc.result_view(), sc.error_view(), result)?;
     update_face_groups(sc.result_view(), sc.error_view(), result, true)?;
 

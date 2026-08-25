@@ -1155,11 +1155,7 @@ pub(crate) fn tessellate_nurbs_surface_imp(
         );
     }
 
-    // SAFETY: the finalizer operates on tc's own mesh slot, filled above,
-    // using tc's own result buf and error slot.
-    unsafe {
-        finalize_mesh_material(tc.result_view(), tc.error_mut_ptr(), mesh_view)?;
-    }
+    finalize_mesh_material(tc.result_view(), tc.error_view(), mesh_view)?;
     finalize_mesh(tc.result_view(), tc.error_view(), mesh_view)?;
 
     // SAFETY: the normal computation operates on tc's own mesh slot;
