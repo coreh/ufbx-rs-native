@@ -507,15 +507,17 @@ pub(crate) unsafe fn grow_array_size(
 
 // ufbx.c:3789-3798 `ufbxi_free_ator`
 #[inline(never)]
-pub(crate) unsafe fn free_ator(ator: *mut Allocator) {
-    // SAFETY: `ator` points at a live `Allocator` — the raw-pointer contract of
-    // this `unsafe fn`; the shared reborrow only reads its fields.
-    let a = unsafe { &*ator };
-    ufbx_assert!(a.current_size == 0);
+pub(crate) fn free_ator(ator: &AllocatorView) {
+    ufbx_assert!(ator.current_size() == 0);
 
-    let free_fn = a.ator.allocator.free_allocator_fn;
+    // SAFETY: the view is minted over a live, unmoved `Allocator` (its
+    // `from_ptr` mint invariant); the callback slot is reached as a raw field
+    // place through `get()` — no reference to the containing struct is formed.
+    let free_fn = unsafe { (*ator.get()).ator.allocator.free_allocator_fn };
     if let Some(free_fn) = free_fn {
-        let user = a.ator.allocator.user;
+        // SAFETY: same mint invariant; the `user` slot sits beside the callback
+        // in the same `ufbx_allocator`, reached as a raw field place.
+        let user = unsafe { (*ator.get()).ator.allocator.user };
         // SAFETY: `free_allocator_fn` is invoked with the `user` pointer stored
         // beside it in the same `ufbx_allocator` — the callback pairing contract.
         unsafe { free_fn(user) };
@@ -723,7 +725,8 @@ mod tests {
 
             free::<u32>(&mut ator, p, 32);
             assert_eq!(ator.current_size, 0);
-            free_ator(&mut ator);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
+            free_ator(AllocatorView::from_ptr(&raw mut ator));
         }
     }
 

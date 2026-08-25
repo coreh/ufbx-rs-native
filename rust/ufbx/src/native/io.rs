@@ -22,7 +22,7 @@ use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 
 use crate::generated::{Error, RawAllocatorOpts, RawCloseMemoryCb, RawStream};
-use crate::native::allocator::{alloc, free, free_ator, init_ator, Allocator};
+use crate::native::allocator::{alloc, free, free_ator, init_ator, Allocator, AllocatorView};
 use crate::native::error::{
     fix_error_type, set_err_info, ufbxi_check, ufbxi_check_msg, ufbxi_check_return,
     ufbxi_check_return_msg, ufbxi_report_err_msg, Fail,
@@ -540,9 +540,9 @@ pub(crate) unsafe fn end_file_context(fc: &FileContext, ok: bool) -> Result<(), 
             .set_error(unsafe { (*fc.parent_ator()).error });
         unsafe { *fc.parent_ator() = fc.ator() };
     } else {
-        // SAFETY: with no parent, `fc` owns its `ator` field, which is live for
-        // the duration of the `&FileContext` borrow.
-        unsafe { free_ator(fc.ator_mut_ptr()) };
+        // With no parent, `fc` owns its `ator` field, which is live for the
+        // duration of the `&FileContext` borrow.
+        free_ator(fc.ator_view());
     }
     if !ok {
         // C fixes into the caller's slot when one is present; the `Result`
@@ -1029,7 +1029,9 @@ pub(crate) unsafe extern "C" fn memory_close(user: *mut c_void) {
         // of `self_size` bytes came from it; `free_ator` then tears down an
         // allocator with zero live bytes.
         unsafe { free::<u8>(&raw mut ator, stream as *mut u8, (*stream).self_size) };
-        unsafe { free_ator(&raw mut ator) };
+        // SAFETY: `ator` is this frame's live, unmoved stack copy of the
+        // stream's allocator, which holds zero live bytes at this point.
+        free_ator(unsafe { AllocatorView::from_ptr(&raw mut ator) });
     }
 }
 
@@ -1130,7 +1132,9 @@ mod tests {
             assert_eq!(desc, b"Truncated file");
 
             free(&mut uc.ator_tmp, uc.read_buffer, uc.read_buffer_size);
-            free_ator(&mut uc.ator_tmp);
+            // SAFETY: `uc.ator_tmp` is the live, unmoved temp allocator field of
+            // the test's own context.
+            free_ator(AllocatorView::from_ptr(&raw mut uc.ator_tmp));
         }
     }
 
@@ -1174,7 +1178,9 @@ mod tests {
             assert_eq!(uc.data_offset, 24);
 
             free(&mut uc.ator_tmp, uc.read_buffer, uc.read_buffer_size);
-            free_ator(&mut uc.ator_tmp);
+            // SAFETY: `uc.ator_tmp` is the live, unmoved temp allocator field of
+            // the test's own context.
+            free_ator(AllocatorView::from_ptr(&raw mut uc.ator_tmp));
         }
     }
 

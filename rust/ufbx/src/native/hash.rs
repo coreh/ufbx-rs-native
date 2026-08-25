@@ -404,8 +404,10 @@ pub(crate) unsafe fn map_free(map: *mut Map) {
             // SAFETY: `regression_ator` is the private allocator `map_init`
             // installed under regression, non-null here; freeing then releasing
             // its own backing block matches `map_init`'s `ufbx_malloc`.
+            free_ator(unsafe {
+                crate::native::allocator::AllocatorView::from_ptr(regression_ator)
+            });
             unsafe {
-                free_ator(regression_ator);
                 ufbx_free(regression_ator as *mut c_void, size_of::<Allocator>());
             }
         }

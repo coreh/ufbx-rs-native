@@ -3314,8 +3314,8 @@ pub(crate) unsafe fn subdivide_mesh(
     }
 
     if let Ok(finished_imp) = result {
-        // SAFETY: `ator_tmp_mut_ptr()` is `sc`'s own live temp allocator.
-        unsafe { free_ator(sc.ator_tmp_mut_ptr()) };
+        // `ator_tmp_view()` is `sc`'s own live temp allocator.
+        free_ator(sc.ator_tmp_view());
 
         // C: `return &sc->imp->mesh;` — commit the finished imp across the ABI.
         // (The success-path `clear_error` of the caller's slot lives in the
@@ -3333,11 +3333,9 @@ pub(crate) unsafe fn subdivide_mesh(
         }
         // SAFETY: `result` is `sc`'s own live scratch buf.
         unsafe { buf_free(sc.result_mut_ptr()) };
-        // SAFETY: both allocators are `sc`'s own live temp/result allocators.
-        unsafe {
-            free_ator(sc.ator_tmp_mut_ptr());
-            free_ator(sc.ator_result_mut_ptr());
-        }
+        // Both allocators are `sc`'s own live temp/result allocators.
+        free_ator(sc.ator_tmp_view());
+        free_ator(sc.ator_result_view());
         Err(fixed)
     }
 }

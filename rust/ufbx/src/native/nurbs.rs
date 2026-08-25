@@ -325,10 +325,28 @@ impl TessellateCurveContext {
         view_raw_mut!(self, ator_result)
     }
 
+    // `ator_result` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_result_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).ator_result as *mut crate::native::allocator::AllocatorView)
+        }
+    }
+
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
         view_raw_mut!(self, ator_tmp)
+    }
+
+    // `ator_tmp` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_tmp_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).ator_tmp as *mut crate::native::allocator::AllocatorView)
+        }
     }
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -478,10 +496,28 @@ impl TessellateSurfaceContext {
         view_raw_mut!(self, ator_result)
     }
 
+    // `ator_result` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_result_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).ator_result as *mut crate::native::allocator::AllocatorView)
+        }
+    }
+
     // `ator_tmp` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn ator_tmp_mut_ptr(&self) -> *mut Allocator {
         view_raw_mut!(self, ator_tmp)
+    }
+
+    // `ator_tmp` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_tmp_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).ator_tmp as *mut crate::native::allocator::AllocatorView)
+        }
     }
 
     // `opts` — raw-ptr getter (address of field for out-param/mutation sites).

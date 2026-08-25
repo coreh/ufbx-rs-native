@@ -21,7 +21,7 @@ use crate::generated::{
     SpaceConversion, WarningType,
 };
 use crate::native::allocator::{
-    free, free_ator, grow_array, init_ator, Allocator, CACHE_IMP_MAGIC,
+    free, free_ator, grow_array, init_ator, Allocator, AllocatorView, CACHE_IMP_MAGIC,
 };
 use crate::native::api::{
     coordinate_axes_valid, matrix_determinant, matrix_mul, matrix_to_transform,
@@ -630,6 +630,15 @@ impl CacheContext {
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
         view_raw_mut!(self, ator_result)
+    }
+
+    // `ator_result` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_result_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).ator_result as *mut crate::native::allocator::AllocatorView)
+        }
     }
 
     // `imp` — scalar value accessor.
@@ -2161,8 +2170,10 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
         // single release of that state.
         unsafe {
             string_pool_temp_free(cc.string_pool_mut_ptr());
-            free_ator(cc.ator_tmp());
         }
+        // SAFETY: `cc.ator_tmp()` is that same live temp allocator, owned by
+        // `cc` alone here and unmoved for the duration of the call.
+        free_ator(unsafe { AllocatorView::from_ptr(cc.ator_tmp()) });
     }
 
     if let Ok(finished_imp) = result {
@@ -2183,7 +2194,7 @@ pub(crate) unsafe fn cache_load(cc: &CacheContext, filename: String) -> *mut Geo
             // `imp`, so `cc` still owns the string-pool buf and the result
             // allocator — both its own fields, freed exactly once here.
             unsafe { buf_free(cc.string_pool_view().buf_mut_ptr()) };
-            unsafe { free_ator(cc.ator_result_mut_ptr()) };
+            free_ator(cc.ator_result_view());
         }
         core::ptr::null_mut()
     }

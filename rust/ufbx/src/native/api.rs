@@ -85,7 +85,7 @@ use crate::generated::{RawTessellateCurveOpts, RawTessellateSurfaceOpts};
 #[cfg(feature = "baking")]
 use crate::native::allocator::free;
 use crate::native::allocator::{
-    align_to_mask, alloc, free_ator, Allocator, CACHE_IMP_MAGIC, REFCOUNT_IMP_MAGIC,
+    align_to_mask, alloc, free_ator, Allocator, AllocatorView, CACHE_IMP_MAGIC, REFCOUNT_IMP_MAGIC,
     SCENE_IMP_MAGIC,
 };
 use crate::native::buf::{buf_free, Buf};
@@ -251,8 +251,9 @@ pub(crate) unsafe fn release_ref(mut refcount: *mut Refcount) {
         buf.ator = &raw mut ator;
         // SAFETY: `buf` is the just-moved `Buf`, now owning its stack `ator`.
         unsafe { buf_free(&raw mut buf) };
-        // SAFETY: `ator` is the stack copy of the refcount's allocator.
-        unsafe { free_ator(&raw mut ator) };
+        // SAFETY: `ator` is this frame's live, unmoved stack copy of the
+        // refcount's allocator.
+        free_ator(unsafe { AllocatorView::from_ptr(&raw mut ator) });
 
         refcount = parent;
     }
@@ -2243,8 +2244,8 @@ pub(crate) unsafe fn create_anim(
         }
         // SAFETY: `ac.result_mut_ptr()` is the context's own result buffer.
         unsafe { buf_free(ac.result_mut_ptr()) };
-        // SAFETY: `ac.ator_result_mut_ptr()` is the context's own result allocator.
-        unsafe { free_ator(ac.ator_result_mut_ptr()) };
+        // `ac.ator_result_view()` is the context's own result allocator.
+        free_ator(ac.ator_result_view());
         Err(fixed)
     }
 }
@@ -2353,8 +2354,8 @@ pub(crate) unsafe fn bake_anim(
     // SAFETY: `bc.ator_tmp_mut_ptr()` is the context's own temp allocator and
     // `bc.tmp_arr()`/`bc.tmp_arr_size()` the block it allocated from it.
     unsafe { free::<u8>(bc.ator_tmp_mut_ptr(), bc.tmp_arr(), bc.tmp_arr_size()) };
-    // SAFETY: `bc.ator_tmp_mut_ptr()` is the context's own temp allocator.
-    unsafe { free_ator(bc.ator_tmp_mut_ptr()) };
+    // `bc.ator_tmp_view()` is the context's own temp allocator.
+    free_ator(bc.ator_tmp_view());
 
     if ok.is_ok() {
         let imp: *mut BakedAnimImp = bc.imp();
@@ -2374,8 +2375,8 @@ pub(crate) unsafe fn bake_anim(
         }
         // SAFETY: `bc.result_mut_ptr()` is the context's own result buffer.
         unsafe { buf_free(bc.result_mut_ptr()) };
-        // SAFETY: `bc.ator_result_mut_ptr()` is the context's own result allocator.
-        unsafe { free_ator(bc.ator_result_mut_ptr()) };
+        // `bc.ator_result_view()` is the context's own result allocator.
+        free_ator(bc.ator_result_view());
         Err(fixed)
     }
 }
@@ -4477,8 +4478,8 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
     // `FinishedImp` carries the finished imp through the teardown to the return.
     let result = tessellate_nurbs_curve_imp(&tc);
 
-    // SAFETY: `ator_tmp_mut_ptr()` addresses `tc`'s own temp allocator.
-    unsafe { free_ator(tc.ator_tmp_mut_ptr()) };
+    // `ator_tmp_view()` addresses `tc`'s own temp allocator.
+    free_ator(tc.ator_tmp_view());
 
     if let Ok(finished_imp) = result {
         // C: `return &tc->imp->curve;` — commit the finished imp across the ABI. (The
@@ -4497,12 +4498,12 @@ pub(crate) unsafe fn tessellate_nurbs_curve(
                 &raw mut fixed,
             );
         }
-        // SAFETY: `result_mut_ptr()`/`ator_result_mut_ptr()` address `tc`'s own
-        // result buffer and result allocator.
+        // SAFETY: `result_mut_ptr()` addresses `tc`'s own result buffer;
+        // `ator_result_view()` its own result allocator.
         unsafe {
             buf_free(tc.result_mut_ptr());
-            free_ator(tc.ator_result_mut_ptr());
         }
+        free_ator(tc.ator_result_view());
         Err(fixed)
     }
 }
@@ -4569,13 +4570,13 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
     // `FinishedImp` carries the finished imp through the teardown to the return.
     let result = tessellate_nurbs_surface_imp(&tc);
 
-    // SAFETY: these accessors address `tc`'s own temp buffer, position map, and
-    // temp allocator.
+    // SAFETY: these accessors address `tc`'s own temp buffer and position map.
     unsafe {
         buf_free(tc.tmp_mut_ptr());
         map_free(tc.position_map_mut_ptr());
-        free_ator(tc.ator_tmp_mut_ptr());
     }
+    // `ator_tmp_view()` addresses `tc`'s own temp allocator.
+    free_ator(tc.ator_tmp_view());
 
     if let Ok(finished_imp) = result {
         // C: `return &tc->imp->mesh;` — commit the finished imp across the ABI. (The
@@ -4594,12 +4595,12 @@ pub(crate) unsafe fn tessellate_nurbs_surface(
                 &raw mut fixed,
             );
         }
-        // SAFETY: `result_mut_ptr()`/`ator_result_mut_ptr()` address `tc`'s own
-        // result buffer and result allocator.
+        // SAFETY: `result_mut_ptr()` addresses `tc`'s own result buffer;
+        // `ator_result_view()` its own result allocator.
         unsafe {
             buf_free(tc.result_mut_ptr());
-            free_ator(tc.ator_result_mut_ptr());
         }
+        free_ator(tc.ator_result_view());
         Err(fixed)
     }
 }

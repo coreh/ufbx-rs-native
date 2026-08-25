@@ -21,7 +21,7 @@
 use crate::generated::{Error, RawAllocatorOpts, RawVertexStream};
 #[cfg(feature = "index-gen")]
 use crate::native::allocator::{
-    align_to_mask, alloc, free, free_ator, init_ator, size_align_mask, Allocator,
+    align_to_mask, alloc, free, free_ator, init_ator, size_align_mask, Allocator, AllocatorView,
 };
 #[cfg(feature = "index-gen")]
 use crate::native::error::{clear_error, fix_error_type, ufbxi_fmt_err_info, ufbxi_report_err_msg};
@@ -372,7 +372,8 @@ pub(crate) unsafe fn generate_indices(
     // is freed through the allocator that owns its storage before that allocator
     // itself is torn down.
     unsafe { map_free(&raw mut map) };
-    unsafe { free_ator(&raw mut ator) };
+    // SAFETY: `ator` is that same live, unmoved local allocator.
+    free_ator(unsafe { AllocatorView::from_ptr(&raw mut ator) });
 
     result_vertices
 }

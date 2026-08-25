@@ -1259,22 +1259,22 @@ pub(crate) fn free_temp(uc: &Context) {
         free::<u8>(uc.ator_tmp_mut_ptr(), uc.swap_arr(), uc.swap_arr_size());
 
         obj_free(uc);
-
-        free_ator(uc.ator_tmp_mut_ptr());
     }
+
+    free_ator(uc.ator_tmp_view());
 }
 
 // ufbx.c:25464-25470 `ufbxi_free_result`
 #[inline(never)]
 pub(crate) fn free_result(uc: &Context) {
-    // SAFETY: the buffer/allocator pointers come from `uc` accessors and are
-    // valid by construction; mirrors C `ufbxi_free_result`'s teardown.
+    // SAFETY: the buffer pointers come from `uc` accessors and are valid by
+    // construction; mirrors C `ufbxi_free_result`'s teardown.
     unsafe {
         buf_free(uc.result_mut_ptr());
         buf_free(uc.string_pool_view().buf_mut_ptr());
-
-        free_ator(uc.ator_result_mut_ptr());
     }
+
+    free_ator(uc.ator_result_view());
 }
 
 // ufbx.c:25472-25625 `ufbxi_load`
@@ -3003,6 +3003,15 @@ impl EvalContext {
         view_raw_mut!(self, ator_result)
     }
 
+    // `ator_result` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_result_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).ator_result as *mut crate::native::allocator::AllocatorView)
+        }
+    }
+
     // `anim` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn anim_mut_ptr(&self) -> *mut *mut Anim {
@@ -4497,8 +4506,8 @@ pub(crate) unsafe fn evaluate_scene(
         // for the borrow, and this is the last use of each.
         unsafe {
             buf_free(ec.tmp_mut_ptr());
-            free_ator(ec.ator_tmp_mut_ptr());
         }
+        free_ator(ec.ator_tmp_view());
         // SAFETY: `evaluate_imp` succeeded, and its last act is storing the
         // retained `ufbxi_scene_imp` into `ec`, so `scene_imp()` is the live
         // result-buffer header whose own `scene` field is projected here.
@@ -4519,9 +4528,9 @@ pub(crate) unsafe fn evaluate_scene(
         unsafe {
             buf_free(ec.tmp_mut_ptr());
             buf_free(ec.result_mut_ptr());
-            free_ator(ec.ator_tmp_mut_ptr());
-            free_ator(ec.ator_result_mut_ptr());
         }
+        free_ator(ec.ator_tmp_view());
+        free_ator(ec.ator_result_view());
         Err(fixed)
     }
 }
@@ -4671,6 +4680,15 @@ impl CreateAnimContext {
     #[inline(always)]
     pub(crate) fn ator_result_mut_ptr(&self) -> *mut Allocator {
         view_raw_mut!(self, ator_result)
+    }
+
+    // `ator_result` (Allocator) — typed VIEW handle (reinterpret-in-place); accessors on AllocatorView.
+    #[inline(always)]
+    pub(crate) fn ator_result_view(&self) -> &crate::native::allocator::AllocatorView {
+        // SAFETY: reinterpret the owned Allocator field in place; interior-mutable, no validity asserted.
+        unsafe {
+            &*(&raw mut (*self.get()).ator_result as *mut crate::native::allocator::AllocatorView)
+        }
     }
 
     // `anim` — raw-ptr getter (address of field for out-param/mutation sites).
