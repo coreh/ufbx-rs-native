@@ -355,11 +355,15 @@ unsafe fn kd_check_slow_rec(
 // `ufbxi_recursive_function(bool, ufbxi_kd_check_fast, ...,
 // UFBXI_KD_FAST_DEPTH, ...)` (ufbx.c:28346-28347) — same guard split as
 // `ufbxi_kd_check_slow` above.
+// Stays `unsafe fn`: the KD-tree node fields it forwards (`slow_left`,
+// `slow_right`, `slow_end`, `index_plus_one`) are unchecked index contracts on
+// `nc`'s built KD tree — `kd_check_slow`'s run vouch and `kd_check_point`'s
+// in-range corner index — which `&NgonContext` cannot express.
 #[cfg(feature = "triangulation")]
 #[inline(never)]
 pub(crate) unsafe fn kd_check_fast(
     nc: &NgonContext,
-    tri: *const KdTriangle,
+    tri: &KdTriangle,
     kd_index: u32,
     axis: u32,
     depth: u32,
@@ -373,16 +377,16 @@ pub(crate) unsafe fn kd_check_fast(
             ufbx_assert!(d.get() < KD_FAST_DEPTH as u32);
             d.set(d.get() + 1);
         });
-        // SAFETY: forwards the caller's `nc`/`tri` validity contract to the
-        // recursive body unchanged.
+        // SAFETY: forwards the caller's `nc` KD-tree contract to the recursive
+        // body unchanged.
         let ret = unsafe { kd_check_fast_rec(nc, tri, kd_index, axis, depth) };
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
         ret
     }
     #[cfg(not(feature = "regression"))]
     {
-        // SAFETY: forwards the caller's `nc`/`tri` validity contract to the
-        // recursive body unchanged.
+        // SAFETY: forwards the caller's `nc` KD-tree contract to the recursive
+        // body unchanged.
         unsafe { kd_check_fast_rec(nc, tri, kd_index, axis, depth) }
     }
 }
@@ -391,7 +395,7 @@ pub(crate) unsafe fn kd_check_fast(
 #[cfg(feature = "triangulation")]
 unsafe fn kd_check_fast_rec(
     nc: &NgonContext,
-    tri: *const KdTriangle,
+    tri: &KdTriangle,
     kd_index: u32,
     axis: u32,
     depth: u32,
@@ -399,10 +403,6 @@ unsafe fn kd_check_fast_rec(
     let mut kd_index = kd_index;
     let mut axis = axis;
     let mut depth = depth;
-
-    // SAFETY: `tri` points to a valid, live `KdTriangle` (caller contract); the
-    // borrow is read-only and nothing writes through `tri` while it is held.
-    let tri: &KdTriangle = unsafe { &*tri };
 
     loop {
         let node: KdNode = nc.kd_nodes_at(kd_index as usize).get();
@@ -441,7 +441,9 @@ unsafe fn kd_check_fast_rec(
                     return true;
                 }
             } else {
-                // SAFETY: forwards the caller's `tri` validity to `kd_check_fast`.
+                // SAFETY: `child_kd_index + 1` is a child of a live node in
+                // `nc`'s KD tree, so `nc`'s tree contract carries into the
+                // recursive `kd_check_fast`.
                 if unsafe {
                     kd_check_fast(
                         nc,
@@ -525,8 +527,7 @@ pub(crate) unsafe fn kd_check(nc: &NgonContext, points: *const Vec2, indices: *c
             (*points.add(2)).y,
         );
     }
-    // SAFETY: `&tri` is a live local `KdTriangle`; forwards the caller's `nc`
-    // validity to `kd_check_fast`.
+    // SAFETY: forwards the caller's `nc` KD-tree contract to `kd_check_fast`.
     unsafe { kd_check_fast(nc, &tri, 0, 0, 0) }
 }
 
