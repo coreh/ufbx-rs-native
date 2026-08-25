@@ -1178,10 +1178,10 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             let fbx_id: u64 = *fbx_ids.add(i);
 
             if element_view.type_() == ElementType::Node {
-                // The widening cast to `*mut Node` uses the arena pointer, whose
-                // provenance spans the whole node; `element_view` only covers the
+                // The widening view over the arena pointer carries provenance
+                // spanning the whole node; `element_view` only covers the
                 // `Element` header and so serves solely as the `type_()` reader.
-                let node: *mut Node = *elements.add(i) as *mut Node;
+                let node: &View<Node> = View::<Node>::from_ptr(*elements.add(i) as *mut Node);
                 let mut requires_helper_node: bool = false;
                 if uc.opts_view().geometry_transform_handling()
                     == GeometryTransformHandling::HelperNodes

@@ -1718,15 +1718,12 @@ pub(crate) struct NodeExtra {
 
 // ufbx.c:12512-12546 `ufbxi_setup_geometry_transform_helper`
 #[inline(never)]
-pub(crate) unsafe fn setup_geometry_transform_helper(
+pub(crate) fn setup_geometry_transform_helper(
     uc: &Context,
-    node: *mut UfbxNode,
+    node: &View<UfbxNode, Mut>,
     node_fbx_id: u64,
 ) -> Result<(), Fail> {
-    // SAFETY: `node` is the caller's live `ufbx_node` (fn contract), so the
-    // projection addresses its own `element.props`, which `PropsView::from_ptr`
-    // mints a view over.
-    let node_props: &PropsView = unsafe { PropsView::from_ptr(&raw mut (*node).element.props) };
+    let node_props: &PropsView = node.element().props();
     let geo_translation: Vec3 = find_vec3(node_props, &sp::GeometricTranslation, 0.0, 0.0, 0.0);
     let geo_rotation: Vec3 = find_vec3(node_props, &sp::GeometricRotation, 0.0, 0.0, 0.0);
     let geo_scaling: Vec3 = find_vec3(node_props, &sp::GeometricScaling, 1.0, 1.0, 1.0);
@@ -1760,11 +1757,11 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
         );
         // C: `geo_node->element.dom_node = node->element.dom_node;` — pointer
         // copy; `Option<Ref<T>>` is niche-packed to a bare pointer.
-        // SAFETY: both projections address live `dom_node` fields — `node` is
-        // the caller's node and `geo_node` the fresh element above; the field
-        // has no drop glue, so the bitwise read duplicates it safely.
+        // SAFETY: the projection addresses `geo_node`'s own live `dom_node`
+        // field — `geo_node` is the fresh element above; the field has no drop
+        // glue, so the bitwise copy stores safely.
         unsafe {
-            (*geo_node).element.dom_node = core::ptr::read(&raw const (*node).element.dom_node);
+            (*geo_node).element.dom_node = node.element().dom_node();
         }
 
         let props: *mut Prop = uc.result_view().push_zero::<Prop>(3);
@@ -1801,16 +1798,14 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
             (*geo_node).element.props.props.count = 3;
         }
 
-        // SAFETY: `node` is the caller's live `ufbx_node`.
-        unsafe { (*node).has_geometry_transform = true };
+        node.set_has_geometry_transform(true);
         // SAFETY: `geo_node` is the fresh non-null element above.
         unsafe { (*geo_node).is_geometry_transform_helper = true };
 
         connect_oo(uc, geo_fbx_id, node_fbx_id)?;
         uc.set_has_geometry_transform_nodes(true);
 
-        // SAFETY: `node` is the caller's live `ufbx_node`.
-        let extra: *mut NodeExtra = push_element_extra(uc, unsafe { (*node).element.element_id });
+        let extra: *mut NodeExtra = push_element_extra(uc, node.element().element_id());
         ufbxi_check!(uc, !extra.is_null(), "extra");
         // SAFETY: `extra` is the fresh non-null extra-data slot checked above
         // and `geo_node` the fresh element above.
