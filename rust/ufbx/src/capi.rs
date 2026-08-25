@@ -73,7 +73,8 @@ pub unsafe extern "C" fn ufbx_open_file(
             if !error.is_null() {
                 // SAFETY: `error` is non-null (checked) and the caller's live
                 // slot per this shim's contract; C clears it on success.
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             true
         }
@@ -105,7 +106,8 @@ pub unsafe extern "C" fn ufbx_open_file_ctx(
             if !error.is_null() {
                 // SAFETY: `error` is non-null (checked) and the caller's live
                 // slot per this shim's contract; C clears it on success.
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             true
         }
@@ -136,7 +138,8 @@ pub unsafe extern "C" fn ufbx_open_memory(
             if !error.is_null() {
                 // SAFETY: `error` is non-null (checked) and the caller's live
                 // slot per this shim's contract; C clears it on success.
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             true
         }
@@ -168,7 +171,8 @@ pub unsafe extern "C" fn ufbx_open_memory_ctx(
             if !error.is_null() {
                 // SAFETY: `error` is non-null (checked) and the caller's live
                 // slot per this shim's contract; C clears it on success.
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             true
         }
@@ -206,7 +210,8 @@ pub unsafe extern "C" fn ufbx_load_memory(
                 // slot per this shim's contract; C clears it on success (and
                 // leaves it untouched on the silent-NULL paths, which arrive
                 // here as a null `Ok` payload).
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -237,7 +242,8 @@ pub unsafe extern "C" fn ufbx_load_file(
                 // slot per this shim's contract; C clears it on success (and
                 // leaves it untouched on the silent-NULL paths, which arrive
                 // here as a null `Ok` payload).
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -269,7 +275,8 @@ pub unsafe extern "C" fn ufbx_load_file_len(
                 // slot per this shim's contract; C clears it on success (and
                 // leaves it untouched on the silent-NULL paths, which arrive
                 // here as a null `Ok` payload).
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -300,7 +307,8 @@ pub unsafe extern "C" fn ufbx_load_stdio(
                 // slot per this shim's contract; C clears it on success (and
                 // leaves it untouched on the silent-NULL paths, which arrive
                 // here as a null `Ok` payload).
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -333,7 +341,8 @@ pub unsafe extern "C" fn ufbx_load_stdio_prefix(
                 // slot per this shim's contract; C clears it on success (and
                 // leaves it untouched on the silent-NULL paths, which arrive
                 // here as a null `Ok` payload).
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -364,7 +373,8 @@ pub unsafe extern "C" fn ufbx_load_stream(
                 // slot per this shim's contract; C clears it on success (and
                 // leaves it untouched on the silent-NULL paths, which arrive
                 // here as a null `Ok` payload).
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -397,7 +407,8 @@ pub unsafe extern "C" fn ufbx_load_stream_prefix(
                 // slot per this shim's contract; C clears it on success (and
                 // leaves it untouched on the silent-NULL paths, which arrive
                 // here as a null `Ok` payload).
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -1116,7 +1127,8 @@ pub unsafe extern "C" fn ufbx_evaluate_scene(
             if !error.is_null() {
                 // SAFETY: `error` is non-null (checked) and the caller's live
                 // slot per this shim's contract.
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -1147,7 +1159,8 @@ pub unsafe extern "C" fn ufbx_create_anim(
                 // slot per this shim's contract; C clears it on success (and
                 // leaves it untouched on the silent-NULL paths, which arrive
                 // here as a null `Ok` payload).
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -1198,7 +1211,8 @@ pub unsafe extern "C" fn ufbx_bake_anim(
                 // slot per this shim's contract; C clears it on success (and
                 // leaves it untouched on the silent-NULL paths, which arrive
                 // here as a null `Ok` payload).
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -1840,7 +1854,8 @@ pub unsafe extern "C" fn ufbx_tessellate_nurbs_curve(
                 // slot per this shim's contract; C clears it on success (and
                 // leaves it untouched on the silent-NULL paths, which arrive
                 // here as a null `Ok` payload).
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -1872,7 +1887,8 @@ pub unsafe extern "C" fn ufbx_tessellate_nurbs_surface(
                 // slot per this shim's contract; C clears it on success (and
                 // leaves it untouched on the silent-NULL paths, which arrive
                 // here as a null `Ok` payload).
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -2162,7 +2178,8 @@ pub unsafe extern "C" fn ufbx_subdivide_mesh(
             if !core::ptr::eq(result, mesh) && !error.is_null() {
                 // SAFETY: `error` is non-null (checked) and the caller's live
                 // slot per this shim's contract.
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -2210,7 +2227,8 @@ pub unsafe extern "C" fn ufbx_load_geometry_cache(
             if !result.is_null() && !error.is_null() {
                 // SAFETY: `error` is non-null (checked) and the caller's live
                 // slot per this shim's contract; C clears it on success.
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -2241,7 +2259,8 @@ pub unsafe extern "C" fn ufbx_load_geometry_cache_len(
             if !result.is_null() && !error.is_null() {
                 // SAFETY: `error` is non-null (checked) and the caller's live
                 // slot per this shim's contract; C clears it on success.
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }
@@ -2379,7 +2398,8 @@ pub unsafe extern "C" fn ufbx_generate_indices(
             if !error.is_null() {
                 // SAFETY: `error` is non-null (checked) and the caller's live
                 // slot per this shim's contract; C leaves it cleared on success.
-                unsafe { crate::native::error::clear_error(error) };
+                let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+                crate::native::error::clear_error(Some(err));
             }
             result
         }

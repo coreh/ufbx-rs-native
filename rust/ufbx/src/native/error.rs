@@ -38,7 +38,7 @@
 use crate::generated::{Error, ErrorFrame, ErrorType, Panic};
 use crate::native::platform::{min_sz, ufbx_assert, ufbxi_ignore};
 use crate::native::printf::{vprint, PrintArg, PrintBuffer};
-use crate::native::view::{view_read, view_write};
+use crate::native::view::{view_raw_mut, view_read, view_write};
 
 // Zero-sized failure token: the C `return 0` failure channel. The actual
 // `ufbx_error` lives in the context, as in C (PORTING.md "Error threading").
@@ -639,23 +639,24 @@ macro_rules! ufbxi_fmt_err_info {
 pub(crate) use ufbxi_fmt_err_info;
 
 // ufbx.c:3521-3531 `ufbxi_clear_error`
+// C's nullable `ufbx_error *err` is an `Option<&ErrorView>`; the `!err`
+// early-out is the `None` arm.
 #[inline(never)]
-pub(crate) unsafe fn clear_error(err: *mut Error) {
-    if err.is_null() {
+pub(crate) fn clear_error(err: Option<&ErrorView>) {
+    let Some(err) = err else {
         return;
-    }
+    };
 
-    // SAFETY: `err` is non-null (checked above) and the caller's contract is
-    // that it points at a live, unaliased `Error`.
-    let err = unsafe { &mut *err };
-    err.type_ = ErrorType::None;
-    err.description.data = EMPTY_CHAR.as_ptr();
-    err.description.length = 0;
-    err.stack_size = 0;
+    err.set_type_(ErrorType::None);
+    let description = err.description_view();
+    description.set_data(EMPTY_CHAR.as_ptr());
+    description.set_length(0);
+    err.set_stack_size(0);
     // SAFETY: writing the first byte of the error's own info buffer, which is
-    // ERROR_INFO_LENGTH (>= 1) bytes long.
-    unsafe { *(err.info_buf.data.as_mut_ptr() as *mut u8) = b'\0' };
-    err.info_length = 0;
+    // ERROR_INFO_LENGTH (>= 1) bytes long and sits inside the live `Error` this
+    // view was minted from (the view's write-capable mint invariant).
+    unsafe { *err.info_mut_ptr() = b'\0' };
+    err.set_info_length(0);
 }
 
 // ufbx.c:3532-3541
@@ -1373,6 +1374,20 @@ impl ErrorView {
         view_write!(self, type_, type_)
     }
     #[inline(always)]
+    pub(crate) fn set_stack_size(&self, stack_size: u32) {
+        view_write!(self, stack_size, stack_size)
+    }
+    #[inline(always)]
+    pub(crate) fn set_info_length(&self, info_length: usize) {
+        view_write!(self, info_length, info_length)
+    }
+    /// The error's own inline info buffer, as a writable byte pointer
+    /// (ERROR_INFO_LENGTH bytes).
+    #[inline(always)]
+    pub(crate) fn info_mut_ptr(&self) -> *mut u8 {
+        view_raw_mut!(self, info_buf) as *mut u8
+    }
+    #[inline(always)]
     pub(crate) fn description_view(&self) -> &crate::prelude::StringView {
         // SAFETY: `View` is `#[repr(transparent)]` over its storage, so the
         // field pointer reinterprets in place as a `StringView`; the field sits
@@ -1555,7 +1570,10 @@ mod tests {
     fn test_clear_error_and_fmt_err_info() {
         unsafe {
             let mut err = Error::default();
-            clear_error(&mut err);
+            // SAFETY: `err` is this frame's own live, unmoved `Error`, and the
+            // address is taken with `&raw mut` — a write-capable mint, dropped
+            // before the `&mut err` uses below.
+            clear_error(Some(ErrorView::from_ptr(&raw mut err)));
             assert_eq!(err.type_, ErrorType::None);
             assert_eq!(err.description.data, EMPTY_CHAR.as_ptr());
             assert_eq!(err.description.length, 0);

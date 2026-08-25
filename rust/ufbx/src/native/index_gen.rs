@@ -336,8 +336,11 @@ pub(crate) unsafe fn generate_indices(
             si += 1;
         }
 
-        // SAFETY: `error` is the caller's error slot (nullable, checked inside).
-        unsafe { clear_error(error) };
+        // SAFETY: `error` is non-null and points at a live `Error` — the sole
+        // caller (`api::generate_indices`) substitutes a local error slot for
+        // null — so this is a write-capable mint of the caller's slot.
+        let err = unsafe { crate::native::error::ErrorView::from_ptr(error) };
+        clear_error(Some(err));
     } else {
         // SAFETY: `error` is non-null and points at a live `Error` — the sole
         // caller (`api::generate_indices`) substitutes a local error slot for
