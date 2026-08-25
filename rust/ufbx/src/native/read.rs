@@ -141,7 +141,7 @@ use crate::native::thread::{
     thread_pool_wait_group, THREAD_GROUP_COUNT,
 };
 use crate::native::view::{view_project, view_raw_mut, view_read_shared, view_write};
-use crate::native::view::{Mode, SliceViewIter, View};
+use crate::native::view::{Mode, Mut, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::as_f64;
 use crate::prelude::{
@@ -1948,15 +1948,16 @@ pub(crate) unsafe fn setup_scale_helper(
 
 // ufbx.c:12601-12627 `ufbxi_read_model`
 #[inline(never)]
-pub(crate) unsafe fn read_model(
+pub(crate) fn read_model(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
     ufbxi_ignore!(node);
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` and `UfbxNode`
+    // SAFETY: `info` views the caller's live `ufbxi_element_info` and `UfbxNode`
     // is the element struct for `ElementType::Node`.
-    let elem_node: *mut UfbxNode = unsafe { push_element::<UfbxNode>(uc, info, ElementType::Node) };
+    let elem_node: *mut UfbxNode =
+        unsafe { push_element::<UfbxNode>(uc, info.get(), ElementType::Node) };
     ufbxi_check!(uc, !elem_node.is_null(), "elem_node");
     ufbxi_check!(
         uc,
@@ -7318,7 +7319,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             if uc.version() < 7000 {
                 read_synthetic_attribute(uc, node, &raw mut info, type_str, sub_type, name)?;
             }
-            read_model(uc, node, &raw mut info)?;
+            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+            // write-capable provenance, live and unmoved across the call.
+            read_model(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::NodeAttribute.as_ptr() {
             if sub_type == sp::Light.as_ptr() {
                 read_element(
