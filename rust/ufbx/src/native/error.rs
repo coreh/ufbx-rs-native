@@ -38,7 +38,7 @@
 use crate::generated::{Error, ErrorFrame, ErrorType, Panic};
 use crate::native::platform::{min_sz, ufbx_assert, ufbxi_ignore};
 use crate::native::printf::{vprint, PrintArg, PrintBuffer};
-use crate::native::view::{view_raw_mut, view_read, view_write};
+use crate::native::view::{view_project, view_raw_mut, view_read, view_write};
 
 // Zero-sized failure token: the C `return 0` failure channel. The actual
 // `ufbx_error` lives in the context, as in C (PORTING.md "Error threading").
@@ -411,26 +411,24 @@ pub(crate) use ufbxi_error_msg_cond;
 // ufbx.c:3411-3444 `ufbxi_fail_imp_err`
 #[allow(unused_mut, unused_variables)]
 #[inline(never)]
-pub(crate) unsafe fn fail_imp_err(
-    err: *mut Error,
+pub(crate) fn fail_imp_err(
+    err: &ErrorView,
     cond: Option<FailStr>,
     func: Option<FailStr>,
     line: u32,
 ) -> i32 {
     let mut cond: *const u8 = fail_str_ptr(cond);
     let func: *const u8 = fail_str_ptr(func);
-    // SAFETY: the caller's contract is that `err` points at a live, initialized
-    // `Error` that no other borrow aliases for the duration of this call.
-    let err = unsafe { &mut *err };
     // SAFETY: `cond` is non-null on the right of the `&&`, and it comes from a
     // `FailStr` — a NUL-terminated 'static run — so the first byte is readable.
     if !cond.is_null() && unsafe { *cond } == b'$' {
-        if err.description.data.is_null() {
+        let description = err.description_view();
+        if description.data().is_null() {
             // SAFETY: the leading byte read above is `'$'`, so the FailStr run
             // holds at least one more byte (its NUL), and `strlen` then walks
             // that same NUL-terminated run.
-            err.description.data = unsafe { cond.add(1) };
-            err.description.length = unsafe { strlen(err.description.data) };
+            description.set_data(unsafe { cond.add(1) });
+            description.set_length(unsafe { strlen(description.data()) });
         }
 
         #[cfg(feature = "error-stack")]
@@ -449,22 +447,23 @@ pub(crate) unsafe fn fail_imp_err(
     {
         ufbx_assert!(!cond.is_null());
         ufbx_assert!(!func.is_null());
-        if (err.stack_size as usize) < ERROR_STACK_MAX_DEPTH {
+        let stack_size = err.stack_size();
+        if (stack_size as usize) < ERROR_STACK_MAX_DEPTH {
             // C: `&err->stack[err->stack_size++]` — decomposed.
-            let frame: *mut ErrorFrame = &mut err.stack[err.stack_size as usize];
-            err.stack_size += 1;
-            // SAFETY (all five writes): `frame` is the address of
-            // `err.stack[..]` at the index the check above bounded by
-            // ERROR_STACK_MAX_DEPTH, so it points at a live `ErrorFrame` inside
-            // the `Error` borrowed as `err`.
+            // SAFETY: `stack_frame_view` requires an in-bounds index, which the
+            // `< ERROR_STACK_MAX_DEPTH` check above establishes.
+            let frame = unsafe { err.stack_frame_view(stack_size as usize) };
+            err.set_stack_size(stack_size + 1);
+            let description = frame.description_view();
+            let function = frame.function_view();
             // SAFETY (both `strlen` calls): `cond` and `func` are non-null
             // (asserted above) and come from `FailStr` carriers, whose
             // invariant is a NUL-terminated 'static run.
-            unsafe { (*frame).description.data = cond };
-            unsafe { (*frame).description.length = strlen(cond) };
-            unsafe { (*frame).function.data = func };
-            unsafe { (*frame).function.length = strlen(func) };
-            unsafe { (*frame).source_line = line };
+            description.set_data(cond);
+            description.set_length(unsafe { strlen(cond) });
+            function.set_data(func);
+            function.set_length(unsafe { strlen(func) });
+            frame.set_source_line(line);
         }
     }
     #[cfg(not(feature = "error-stack"))]
@@ -476,12 +475,11 @@ pub(crate) unsafe fn fail_imp_err(
     0
 }
 
-// Safe wrapper over `fail_imp_err` taking an anchored `&ErrorView` instead of a
-// raw `*mut Error`. The `unsafe {}` block encapsulates the message-pointer
-// unsafe inside `fail_imp_err`; `cond`/`func` are already-safe `FailStr`
-// carriers, and `err.get()` is a valid, initialized `Error` by construction.
-// This lets the error-target check macros be free of unsafe ops at safe call
-// sites (mirrors the uc-form `fail_imp` in parse.rs).
+// `Fail`-minting wrapper over `fail_imp_err`: the C body returns `0` (the
+// int-shaped failure), the Rust callers need the `Fail` witness that an error
+// was written to the target. `cond`/`func` are already-safe `FailStr` carriers
+// and the target is an anchored `&ErrorView`, so the call carries no unsafe
+// (mirrors the uc-form `fail_imp` in parse.rs).
 #[inline]
 pub(crate) fn fail_err(
     err: &ErrorView,
@@ -489,7 +487,7 @@ pub(crate) fn fail_err(
     func: Option<FailStr>,
     line: u32,
 ) -> Fail {
-    unsafe { fail_imp_err(err.get(), cond, func, line) };
+    fail_imp_err(err, cond, func, line);
     Fail(())
 }
 
@@ -768,9 +766,11 @@ pub(crate) use ufbxi_fail_err_no_msg;
 #[cfg(not(feature = "error-stack"))]
 #[inline(never)]
 pub(crate) unsafe fn fail_imp_err_no_stack(err: *mut Error) -> i32 {
-    // SAFETY: `err` is forwarded unchanged, so this fn's own live-`Error`
-    // contract is exactly what `fail_imp_err` requires of it.
-    unsafe { fail_imp_err(err, None, None, 0) }
+    // SAFETY: this fn's own contract — `err` points at a live, write-capable
+    // `Error` that stays alive and unmoved for the call — is exactly the
+    // `ErrorView::from_ptr` mint invariant.
+    let err = unsafe { ErrorView::from_ptr(err) };
+    fail_imp_err(err, None, None, 0)
 }
 
 // Safe wrapper over `fail_imp_err_no_stack` taking an anchored `&ErrorView`.
@@ -1374,8 +1374,33 @@ impl ErrorView {
         view_write!(self, type_, type_)
     }
     #[inline(always)]
+    pub(crate) fn stack_size(&self) -> u32 {
+        view_read!(self, stack_size)
+    }
+    #[inline(always)]
     pub(crate) fn set_stack_size(&self, stack_size: u32) {
         view_write!(self, stack_size, stack_size)
+    }
+    /// One frame of the error's own `stack` array, as a view (C:
+    /// `&err->stack[index]`).
+    ///
+    /// # Safety
+    /// `index` must be `< ERROR_STACK_MAX_DEPTH` — the array extent, which the
+    /// leaf macros cannot bound because the place is a field *and* an index.
+    #[inline(always)]
+    pub(crate) unsafe fn stack_frame_view(&self, index: usize) -> &ErrorFrameView {
+        // SAFETY: `stack` is an `[ErrorFrame; ERROR_STACK_MAX_DEPTH]` inside the
+        // live, write-capable `Error` this view was minted over (the mint
+        // invariant), so the array projection plus an in-bounds `index` (fn
+        // contract above) addresses one live `ErrorFrame` slot in the same
+        // allocation.
+        unsafe {
+            ErrorFrameView::from_ptr(
+                (&raw mut (*self.get()).stack)
+                    .cast::<ErrorFrame>()
+                    .add(index),
+            )
+        }
     }
     #[inline(always)]
     pub(crate) fn set_info_length(&self, info_length: usize) {
@@ -1394,6 +1419,24 @@ impl ErrorView {
         // inside the live `Error` this view was minted from, keeping the derived
         // `&StringView` valid for the lifetime of `&self`.
         unsafe { &*(&raw mut (*self.get()).description as *mut crate::prelude::StringView) }
+    }
+}
+
+// Typed interior-mutable VIEW over one `ErrorFrame` of an `Error`'s stack.
+pub(crate) type ErrorFrameView = crate::native::view::View<ErrorFrame>;
+
+impl ErrorFrameView {
+    #[inline(always)]
+    pub(crate) fn set_source_line(&self, source_line: u32) {
+        view_write!(self, source_line, source_line)
+    }
+    #[inline(always)]
+    pub(crate) fn function_view(&self) -> &crate::prelude::StringView {
+        view_project!(self, function)
+    }
+    #[inline(always)]
+    pub(crate) fn description_view(&self) -> &crate::prelude::StringView {
+        view_project!(self, description)
     }
 }
 
