@@ -5943,23 +5943,17 @@ pub(crate) fn read_extrapolation(
 
 // ufbx.c:14257-14532 `ufbxi_read_animation_curve`
 #[inline(never)]
-pub(crate) unsafe fn read_animation_curve(
+pub(crate) fn read_animation_curve(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `AnimCurve` is the element struct for `ElementType::AnimCurve`.
-    let curve: *mut AnimCurve = unsafe {
-        push_element::<AnimCurve>(
-            uc,
-            View::<ElementInfo>::from_ptr(info),
-            ElementType::AnimCurve,
-        )
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `AnimCurve` is the element struct for `ElementType::AnimCurve`.
+    let curve: *mut AnimCurve =
+        unsafe { push_element::<AnimCurve>(uc, info, ElementType::AnimCurve) };
     ufbxi_check!(uc, !curve.is_null(), "curve");
     // SAFETY: `curve` is the fresh non-null element pushed above, owned by uc's
     // element buffer — write-capable provenance, live and unmoved for the rest of
@@ -7882,7 +7876,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 ElementType::AnimValue,
             )?;
         } else if name == sp::AnimationCurve.as_ptr() {
-            read_animation_curve(uc, node, &raw mut info)?;
+            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+            // write-capable provenance, live and unmoved across the call.
+            read_animation_curve(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::Pose.as_ptr() {
             read_pose(uc, node, &raw mut info, sub_type)?;
         } else if name == sp::Implementation.as_ptr() {
