@@ -437,11 +437,20 @@ pub(crate) struct BufState {
 }
 
 // ufbx.c:3878-4020 `ufbxi_push_size_new_block`
+//
+// Safe fn: the buf handle carries its own liveness and write-provenance in the
+// type (the `BufView` mint invariant), and the chunk this allocates is reached
+// through the buf's stored allocator back-pointer — the same standing the
+// `BufView` push family relies on. The returned block is uninitialized memory
+// handed back as a raw pointer; DEREFERENCING it is the caller's obligation,
+// under its own narrow `unsafe`. The raw field and chunk ops below carry their
+// own per-leaf vouches.
 #[inline(never)]
-pub(crate) unsafe fn push_size_new_block(b: *mut Buf, size: usize) -> *mut c_void {
-    // SAFETY: `b` addresses a live, initialized `Buf` (this fn's raw-pointer
-    // contract) and `(*b).ator` is its live stored allocator back-pointer;
-    // reading `huge_size` off that allocator.
+pub(crate) fn push_size_new_block(view: &BufView, size: usize) -> *mut c_void {
+    let b: *mut Buf = view.get();
+    // SAFETY: `b` is the view's write-provenance pointer to a live `Buf` (the
+    // mint) and `(*b).ator` is its live stored allocator back-pointer; reading
+    // `huge_size` off that allocator.
     let huge = size >= unsafe { (*(*b).ator).huge_size };
 
     // Use the second chunk "list" for huge unordered chunks.
@@ -740,9 +749,11 @@ pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_voi
             }
             (unsafe { (padding as *mut u8).add(16) }) as *mut c_void
         } else {
-            // SAFETY: forwarding this fn's live-`Buf` contract to
-            // `push_size_new_block`.
-            unsafe { push_size_new_block(b, total) }
+            // SAFETY: `b` addresses a live, initialized `Buf` in
+            // context/arena-owned memory with write-capable provenance (this
+            // fn's raw-pointer contract) — the `BufView::from_ptr` mint
+            // invariant.
+            push_size_new_block(unsafe { BufView::from_ptr(b) }, total)
         }
     } else {
         // Try to push to the current block. Allocate a new block
@@ -763,9 +774,11 @@ pub(crate) unsafe fn push_size(b: *mut Buf, size: usize, n: usize) -> *mut c_voi
             unsafe { (*b).pos = pos + total };
             (unsafe { chunk_data((*b).chunks[0]).add(pos) }) as *mut c_void
         } else {
-            // SAFETY: forwarding this fn's live-`Buf` contract to
-            // `push_size_new_block`.
-            unsafe { push_size_new_block(b, total) }
+            // SAFETY: `b` addresses a live, initialized `Buf` in
+            // context/arena-owned memory with write-capable provenance (this
+            // fn's raw-pointer contract) — the `BufView::from_ptr` mint
+            // invariant.
+            push_size_new_block(unsafe { BufView::from_ptr(b) }, total)
         }
     }
 }
@@ -822,9 +835,10 @@ pub(crate) unsafe fn push_size_fast(b: *mut Buf, size: usize, n: usize) -> *mut 
         unsafe { (*b).pos = pos + total };
         (unsafe { chunk_data((*b).chunks[0]).add(pos) }) as *mut c_void
     } else {
-        // SAFETY: forwarding this fn's live-`Buf` contract to
-        // `push_size_new_block`.
-        unsafe { push_size_new_block(b, total) }
+        // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
+        // memory with write-capable provenance (this fn's raw-pointer contract)
+        // — the `BufView::from_ptr` mint invariant.
+        push_size_new_block(unsafe { BufView::from_ptr(b) }, total)
     }
 }
 
