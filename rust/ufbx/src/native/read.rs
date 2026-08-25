@@ -6592,19 +6592,16 @@ pub(crate) fn read_layered_texture(
 
 // ufbx.c:14601-14624 `ufbxi_read_video`
 #[inline(never)]
-pub(crate) unsafe fn read_video(
+pub(crate) fn read_video(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `Video` is the element struct for `ElementType::Video`.
-    let video: *mut Video = unsafe {
-        push_element::<Video>(uc, View::<ElementInfo>::from_ptr(info), ElementType::Video)
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `Video` is the element struct for `ElementType::Video`.
+    let video: *mut Video = unsafe { push_element::<Video>(uc, info, ElementType::Video) };
     ufbxi_check!(uc, !video.is_null(), "video");
 
     // SAFETY: `video` is the fresh non-null element pushed above.
@@ -7842,7 +7839,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             // write-capable provenance, live and unmoved across the call.
             read_layered_texture(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::Video.as_ptr() {
-            read_video(uc, node, &raw mut info)?;
+            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+            // write-capable provenance, live and unmoved across the call.
+            read_video(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::AnimationStack.as_ptr() {
             read_anim_stack(uc, node, &raw mut info)?;
         } else if name == sp::AnimationLayer.as_ptr() {
@@ -10524,9 +10523,10 @@ pub(crate) fn read_legacy_media(uc: &Context, node: &NodeView) -> Result<(), Fai
         } {
             // SAFETY: all-zero is a valid `ufbxi_element_info`; `child` is a
             // NodeView from `videos`'s own child run, `video_info` is an
-            // unaliased local whose `name` is exactly the `ufbx_string` the `S`
-            // format writes, and `node` is the parse-tree NodeView the DOM
-            // lookup expects.
+            // unaliased local — write-capable provenance, live and unmoved
+            // across the view mint and the call — whose `name` is exactly the
+            // `ufbx_string` the `S` format writes, and `node` is the parse-tree
+            // NodeView the DOM lookup expects.
             unsafe {
                 let mut video_info: ElementInfo = core::mem::zeroed();
                 video_info.name = ufbxi_check_some!(
@@ -10538,7 +10538,11 @@ pub(crate) fn read_legacy_media(uc: &Context, node: &NodeView) -> Result<(), Fai
                 video_info.fbx_id = push_synthetic_id(uc);
                 video_info.dom_node = get_dom_node(uc, Some(node));
 
-                read_video(uc, child, &raw mut video_info)?;
+                read_video(
+                    uc,
+                    child,
+                    View::<ElementInfo, Mut>::from_ptr(&raw mut video_info),
+                )?;
             }
         }
     }
