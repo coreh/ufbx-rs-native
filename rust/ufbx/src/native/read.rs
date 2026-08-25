@@ -6707,25 +6707,25 @@ pub(crate) fn read_anim_stack(
 
 // ufbx.c:14645-14687 `ufbxi_read_pose`
 #[inline(never)]
-pub(crate) unsafe fn read_pose(
+pub(crate) fn read_pose(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
-    sub_type: *const u8,
+    info: &ElementInfoView,
+    sub_type: &[u8],
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `Pose` is the element struct for `ElementType::Pose`.
-    let pose: *mut Pose =
-        unsafe { push_element::<Pose>(uc, View::<ElementInfo>::from_ptr(info), ElementType::Pose) };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `Pose` is the element struct for `ElementType::Pose`.
+    let pose: *mut Pose = unsafe { push_element::<Pose>(uc, info, ElementType::Pose) };
     ufbxi_check!(uc, !pose.is_null(), "pose");
 
     // TODO: What are the actual other types?
+    // C-parity: `sub_type` is matched by POINTER IDENTITY against the interned
+    // `ufbxi_BindPose` constant, so compare the borrowed run's own address.
     // SAFETY: `pose` is the fresh non-null element pushed above.
     unsafe {
-        (*pose).is_bind_pose = sub_type == sp::BindPose.as_ptr();
+        (*pose).is_bind_pose = sub_type.as_ptr() == sp::BindPose.as_ptr();
     }
 
     let mut num_bones: usize = 0;
@@ -7861,7 +7861,14 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             // write-capable provenance, live and unmoved across the call.
             read_animation_curve(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::Pose.as_ptr() {
-            read_pose(uc, node, &raw mut info, sub_type)?;
+            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+            // write-capable provenance, live and unmoved across the call.
+            read_pose(
+                uc,
+                node,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                sub_type_bytes,
+            )?;
         } else if name == sp::Implementation.as_ptr() {
             read_element(
                 uc,
