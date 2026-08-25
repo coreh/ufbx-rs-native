@@ -955,10 +955,10 @@ pub(crate) fn ascii_accept(uc: &Context, type_: u8) -> bool {
 
 // ufbx.c:9910-9964 `ufbxi_ascii_read_int_array`
 #[inline(never)]
-pub(crate) unsafe fn ascii_read_int_array(
+pub(crate) fn ascii_read_int_array(
     uc: &Context,
     type_: u8,
-    p_num_read: *mut usize,
+    p_num_read: &mut usize,
 ) -> Result<(), Fail> {
     let ua: *mut Ascii = uc.ascii_mut_ptr();
     // SAFETY: `ua` is `uc`'s own live `ascii` sub-context (via `ascii_mut_ptr`);
@@ -1049,10 +1049,7 @@ pub(crate) unsafe fn ascii_read_int_array(
         }
     }
 
-    // SAFETY: `p_num_read` is the caller's valid out-param.
-    unsafe {
-        *p_num_read = uc.tmp_stack_view().num_items() - initial_items;
-    }
+    *p_num_read = uc.tmp_stack_view().num_items() - initial_items;
     Ok(())
 }
 
@@ -1932,10 +1929,7 @@ unsafe fn ascii_parse_node_rec(
                     ascii_read_float_array(uc, arr_type, &raw mut num_read)?;
                 }
             } else if arr_type == b'i' || arr_type == b'l' {
-                // SAFETY: as above.
-                unsafe {
-                    ascii_read_int_array(uc, arr_type, &raw mut num_read)?;
-                }
+                ascii_read_int_array(uc, arr_type, &mut num_read)?;
             }
             ufbxi_check!(
                 uc,
