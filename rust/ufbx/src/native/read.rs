@@ -6850,23 +6850,18 @@ pub(crate) unsafe fn sort_shader_prop_bindings(
 
 // ufbx.c:14698-14735 `ufbxi_read_binding_table`
 #[inline(never)]
-pub(crate) unsafe fn read_binding_table(
+pub(crate) fn read_binding_table(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `ShaderBinding` is the element struct for `ElementType::ShaderBinding`.
-    let bindings: *mut ShaderBinding = unsafe {
-        push_element::<ShaderBinding>(
-            uc,
-            View::<ElementInfo>::from_ptr(info),
-            ElementType::ShaderBinding,
-        )
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `ShaderBinding` is the element struct for
+    // `ElementType::ShaderBinding`.
+    let bindings: *mut ShaderBinding =
+        unsafe { push_element::<ShaderBinding>(uc, info, ElementType::ShaderBinding) };
     ufbxi_check!(uc, !bindings.is_null(), "bindings");
 
     let mut num_entries: usize = 0;
@@ -7878,7 +7873,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 ElementType::Shader,
             )?;
         } else if name == sp::BindingTable.as_ptr() {
-            read_binding_table(uc, node, &raw mut info)?;
+            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+            // write-capable provenance, live and unmoved across the call.
+            read_binding_table(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::Collection.as_ptr() {
             if sub_type == sp::SelectionSet.as_ptr() {
                 read_selection_set(uc, node, &raw mut info)?;
