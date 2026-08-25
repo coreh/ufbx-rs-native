@@ -792,6 +792,20 @@ pub(crate) fn push_size(view: &BufView, size: usize, n: usize) -> *mut c_void {
 // push family rely on. The returned block is uninitialized memory handed back
 // as a raw pointer; DEREFERENCING it is the caller's obligation, under its own
 // narrow `unsafe`. The raw field ops below carry their own per-leaf vouches.
+//
+// The `size > 0 && n > 0` domain (ufbx.c:4077-4078) is a CALLER contract that
+// the signature cannot carry: C states it with `ufbxi_regression_assert`, so
+// outside `UFBX_REGRESSION` a `size == 0` / `n == 0` call reaches
+// `b->chunks[0]->data + pos` with `total == 0`, and on a buf that owns no chunk
+// yet (`b.size == 0`, `chunks[0] == NULL`) that is C's own `NULL + 16`.
+// `ufbxi_push_size` is the entry point that tolerates `n == 0` (ufbx.c:4025, it
+// returns the shared zero-size buffer); the fast path deliberately does not.
+// Since the safe signature admits those arguments, the fast-path return below
+// forms its pointer with wrapping arithmetic instead of `chunk_data`'s
+// in-bounds `add`: inside the domain the two are the same address, and outside
+// it the Rust stays defined (and bit-identical to what C computes) rather than
+// resting on an unenforced precondition. The result is still never
+// dereferenced there — a zero-item push has no items to write.
 #[inline(always)]
 pub(crate) fn push_size_fast(view: &BufView, size: usize, n: usize) -> *mut c_void {
     let b: *mut Buf = view.get();
@@ -836,13 +850,18 @@ pub(crate) fn push_size_fast(view: &BufView, size: usize, n: usize) -> *mut c_vo
     // unreachable since `pos <= b->size` always holds).
     // SAFETY: `b` is the live `Buf`; reading its current chunk size.
     if total <= unsafe { (*b).size }.wrapping_sub(pos) {
-        // SAFETY: `b` is the live `Buf`; `total >= 1` (size > 0, n > 0) and the
-        // check above force `b.size >= 1`, so `chunks[0]` is the live active
-        // chunk (`b.size == chunks[0]->size`, 0 only when null), and `pos +
-        // total <= b.size` keeps the returned pointer in-bounds of its `data`
-        // array.
+        // SAFETY: `b` is the live `Buf`; updating its push position and reading
+        // its active chunk pointer. In the documented domain (size > 0, n > 0)
+        // `total >= 1`, so the check above forces `b.size >= 1` and `chunks[0]`
+        // is the live active chunk (`b.size == chunks[0]->size`, 0 only when
+        // null), `pos + total <= b.size` keeps the address in-bounds of its
+        // `data` array, and the offsets below are `chunk_data(..).add(pos)`.
+        // Outside the domain the wrapping form keeps this defined (see the
+        // header comment) — no chunk is dereferenced either way.
         unsafe { (*b).pos = pos + total };
-        (unsafe { chunk_data((*b).chunks[0]).add(pos) }) as *mut c_void
+        (unsafe { (*b).chunks[0] } as *mut u8)
+            .wrapping_add(size_of::<BufChunk>())
+            .wrapping_add(pos) as *mut c_void
     } else {
         push_size_new_block(view, total)
     }
