@@ -1529,72 +1529,75 @@ pub(crate) unsafe fn connect_pp(
 }
 
 // ufbx.c:12451-12463 `ufbxi_init_synthetic_int_prop`
+// `name` is the interned static run itself: its pointer is stored into
+// `dst->name.data` (the pointer-identity carrier) and its length is measured by
+// `strlen`, exactly as C does.
+//
+// # Safety
+// `name` must be NUL-terminated within its own run and at least 4 bytes long —
+// `strlen` walks it from `name.as_ptr()` and the key read takes its first 4
+// bytes. Neither obligation is carried by `&[u8]`.
 #[inline(never)]
 pub(crate) unsafe fn init_synthetic_int_prop(
-    dst: *mut Prop,
-    name: *const u8,
+    dst: &mut Prop,
+    name: &[u8],
     value: i64,
     type_: PropType,
 ) {
-    // SAFETY: `dst` is the caller's writable `ufbx_prop` slot and `name` is a
-    // NUL-terminated interned string (fn contract) — `strlen`'s contract.
-    unsafe {
-        (*dst).type_ = type_;
-        (*dst).name.data = name;
-        (*dst).name.length = strlen(name);
-    }
+    dst.type_ = type_;
+    dst.name.data = name.as_ptr();
+    // SAFETY: `name` is a NUL-terminated interned string (fn contract) —
+    // `strlen`'s contract.
+    dst.name.length = unsafe { strlen(name.as_ptr()) };
     // C-parity: `dst->value_real` is the `ufbx_prop` value union's first real
     // (`value_vec4.x` in the generated struct).
-    // SAFETY: `dst` is the caller's writable `ufbx_prop` slot.
-    unsafe {
-        (*dst).value_vec4.x = value as Real;
-        (*dst).flags = PropFlags::from_raw(
-            PropFlags::SYNTHETIC.raw() | PropFlags::VALUE_REAL.raw() | PropFlags::VALUE_INT.raw(),
-        );
-        (*dst).value_int = value;
-        (*dst).value_str.data = EMPTY_CHAR.as_ptr();
-    }
+    dst.value_vec4.x = value as Real;
+    dst.flags = PropFlags::from_raw(
+        PropFlags::SYNTHETIC.raw() | PropFlags::VALUE_REAL.raw() | PropFlags::VALUE_INT.raw(),
+    );
+    dst.value_int = value;
+    dst.value_str.data = EMPTY_CHAR.as_ptr();
 
-    // SAFETY: `dst.name.length` was written just above.
-    ufbxi_dev_assert!(unsafe { (*dst).name.length } >= 4);
+    ufbxi_dev_assert!(dst.name.length >= 4);
     // SAFETY: every caller passes a `ufbxi_*` interned property name of at
     // least 4 characters (the dev assert above guards that contract), so the
     // 4-byte key read stays inside `name`.
-    unsafe { (*dst)._internal_key = get_name_key(crate::prelude::slice_from_ptr(name, 4)) };
+    dst._internal_key = get_name_key(unsafe { crate::prelude::slice_from_ptr(name.as_ptr(), 4) });
 }
 
 // ufbx.c:12465-12477 `ufbxi_init_synthetic_real_prop`
+// `name` is the interned static run itself: its pointer is stored into
+// `dst->name.data` (the pointer-identity carrier) and its length is measured by
+// `strlen`, exactly as C does.
+//
+// # Safety
+// `name` must be NUL-terminated within its own run and at least 4 bytes long —
+// `strlen` walks it from `name.as_ptr()` and the key read takes its first 4
+// bytes. Neither obligation is carried by `&[u8]`.
 #[inline(never)]
 pub(crate) unsafe fn init_synthetic_real_prop(
-    dst: *mut Prop,
-    name: *const u8,
+    dst: &mut Prop,
+    name: &[u8],
     value: Real,
     type_: PropType,
 ) {
-    // SAFETY: `dst` is the caller's writable `ufbx_prop` slot and `name` is a
-    // NUL-terminated interned string (fn contract) — `strlen`'s contract.
-    unsafe {
-        (*dst).type_ = type_;
-        (*dst).name.data = name;
-        (*dst).name.length = strlen(name);
-    }
+    dst.type_ = type_;
+    dst.name.data = name.as_ptr();
+    // SAFETY: `name` is a NUL-terminated interned string (fn contract) —
+    // `strlen`'s contract.
+    dst.name.length = unsafe { strlen(name.as_ptr()) };
     // C-parity: bare `(int64_t)` cast on a float operand — `as` (saturating),
     // per PORTING.md "Integer semantics".
-    // SAFETY: `dst` is the caller's writable `ufbx_prop` slot.
-    unsafe {
-        (*dst).value_vec4.x = value;
-        (*dst).flags =
-            PropFlags::from_raw(PropFlags::SYNTHETIC.raw() | PropFlags::VALUE_REAL.raw());
-        (*dst).value_int = value as i64;
-        (*dst).value_str.data = EMPTY_CHAR.as_ptr();
-    }
+    dst.value_vec4.x = value;
+    dst.flags = PropFlags::from_raw(PropFlags::SYNTHETIC.raw() | PropFlags::VALUE_REAL.raw());
+    dst.value_int = value as i64;
+    dst.value_str.data = EMPTY_CHAR.as_ptr();
 
-    // SAFETY: `dst.name.length` was written just above.
-    ufbxi_dev_assert!(unsafe { (*dst).name.length } >= 4);
+    ufbxi_dev_assert!(dst.name.length >= 4);
     // SAFETY: every caller passes a `ufbxi_*` interned property name of at
     // least 4 characters (the dev assert above guards that contract), so the
     // 4-byte key read stays inside `name`.
-    unsafe { (*dst)._internal_key = get_name_key(crate::prelude::slice_from_ptr(name, 4)) };
+    dst._internal_key = get_name_key(unsafe { crate::prelude::slice_from_ptr(name.as_ptr(), 4) });
 }
 
 // ufbx.c:12479-12491 `ufbxi_init_synthetic_vec3_prop`
@@ -8591,19 +8594,20 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     // C: `int64_t start, stop;` — written by each successful `"LL"` fetch.
     // SAFETY: the synthetic props are initialized in place into the local
     // `tmp_props` array — at most four are ever written, which is its length —
-    // from static pooled names.
+    // from `sp::*` statics, each a NUL-terminated interned run of at least four
+    // bytes (`init_synthetic_int_prop`'s name contract).
     unsafe {
         if let Some((start, stop)) = find_val2::<i64, i64>(node, sp::LocalTime.as_ptr()) {
             init_synthetic_int_prop(
-                &raw mut tmp_props[num_props as usize],
-                sp::LocalStart.as_ptr(),
+                &mut tmp_props[num_props as usize],
+                &sp::LocalStart,
                 start,
                 PropType::Integer,
             );
             num_props += 1;
             init_synthetic_int_prop(
-                &raw mut tmp_props[num_props as usize],
-                sp::LocalStop.as_ptr(),
+                &mut tmp_props[num_props as usize],
+                &sp::LocalStop,
                 stop,
                 PropType::Integer,
             );
@@ -8611,15 +8615,15 @@ pub(crate) fn read_take(uc: &Context, node: &NodeView) -> Result<(), Fail> {
         }
         if let Some((start, stop)) = find_val2::<i64, i64>(node, sp::ReferenceTime.as_ptr()) {
             init_synthetic_int_prop(
-                &raw mut tmp_props[num_props as usize],
-                sp::ReferenceStart.as_ptr(),
+                &mut tmp_props[num_props as usize],
+                &sp::ReferenceStart,
                 start,
                 PropType::Integer,
             );
             num_props += 1;
             init_synthetic_int_prop(
-                &raw mut tmp_props[num_props as usize],
-                sp::ReferenceStop.as_ptr(),
+                &mut tmp_props[num_props as usize],
+                &sp::ReferenceStop,
                 stop,
                 PropType::Integer,
             );
@@ -8765,7 +8769,9 @@ pub(crate) fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), 
         // are unaliased locals of exactly the types the `D` / `S` formats
         // write, and on success `str_` is a pooled `data`/`length` pair, so the
         // double parse and the end-of-string compare stay inside it. The two
-        // synthetic props are written into the local 2-element `tmp_props`.
+        // synthetic props are written into the local 2-element `tmp_props` from
+        // `sp::*` statics, each a NUL-terminated interned run of at least four
+        // bytes (`init_synthetic_real_prop`'s name contract).
         unsafe {
             if let Some(got) = get_val1::<f64>(frame_rate) {
                 fps = got;
@@ -8787,15 +8793,15 @@ pub(crate) fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), 
             }
             if fps > 0.0 {
                 init_synthetic_real_prop(
-                    &raw mut tmp_props[num_props as usize],
-                    sp::CustomFrameRate.as_ptr(),
+                    &mut tmp_props[num_props as usize],
+                    &sp::CustomFrameRate,
                     fps as Real,
                     PropType::Number,
                 );
                 num_props += 1;
                 init_synthetic_real_prop(
-                    &raw mut tmp_props[num_props as usize],
-                    sp::TimeMode.as_ptr(),
+                    &mut tmp_props[num_props as usize],
+                    &sp::TimeMode,
                     // C: `UFBX_TIME_MODE_CUSTOM` implicitly converted to `ufbx_real`.
                     TimeMode::Custom as u32 as Real,
                     PropType::Integer,
