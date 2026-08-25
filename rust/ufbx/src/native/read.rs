@@ -3560,35 +3560,28 @@ const SEEN_IDS_COUNT: usize = 1usize << FACE_GROUP_HASH_BITS;
 
 // ufbx.c:13267-13397 `ufbxi_assign_face_groups`
 #[inline(never)]
-pub(crate) unsafe fn assign_face_groups(
+pub(crate) fn assign_face_groups(
     buf: &BufView,
-    error: *mut Error,
+    error: &crate::native::error::ErrorView,
     mesh: &View<Mesh>,
-    p_consecutive_indices: *mut usize,
+    p_consecutive_indices: Option<&ScalarView<usize>>,
     retain_parts: bool,
 ) -> Result<(), Fail> {
     let num_faces: usize = mesh.num_faces();
+    ufbxi_check_err!(error, num_faces > 0);
     ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr(error) },
-        num_faces > 0
-    );
-    ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr(error) },
+        error,
         num_faces < u32::MAX as usize,
         "num_faces < UINT32_MAX"
     );
     ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr(error) },
+        error,
         mesh.face_group().count == num_faces,
         "mesh->face_group.count == num_faces"
     );
 
     let ids: *mut u32 = buf.push::<u32>(num_faces);
-    ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr(error) },
-        !ids.is_null(),
-        "ids"
-    );
+    ufbxi_check_err!(error, !ids.is_null(), "ids");
 
     let mut num_ids: u32 = 0;
 
@@ -3682,11 +3675,7 @@ pub(crate) unsafe fn assign_face_groups(
 
     // Allocate group info structs
     let groups: *mut FaceGroup = buf.push_zero::<FaceGroup>(num_groups);
-    ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr(error) },
-        !groups.is_null(),
-        "groups"
-    );
+    ufbxi_check_err!(error, !groups.is_null(), "groups");
     // C: `for (size_t i = 0; i < num_groups; i++)` — `num_groups <= num_ids <=
     // num_faces`, so the zip stops at `num_groups`.
     // SAFETY: `groups` is the non-null contiguous `num_groups`-long
@@ -3704,41 +3693,39 @@ pub(crate) unsafe fn assign_face_groups(
     let mut parts: *mut MeshPart = core::ptr::null_mut();
     if retain_parts {
         parts = buf.push_zero::<MeshPart>(num_groups);
-        ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
-            !parts.is_null(),
-            "parts"
-        );
+        ufbxi_check_err!(error, !parts.is_null(), "parts");
         // `parts` is the non-null `num_groups`-long run just pushed on `buf`.
         mesh.face_group_parts_view().set_data(parts);
         mesh.face_group_parts_view().set_count(num_groups);
     }
 
     // Optimization: Use `consecutive_indices` for a single group
-    if !p_consecutive_indices.is_null() && num_groups == 1 {
-        // SAFETY: `face_group` was checked above to hold exactly `num_faces`
-        // writable `uint32_t`s.
-        unsafe { core::ptr::write_bytes(mesh.face_group().data as *mut u32, 0, num_faces) };
+    // C: `if (p_consecutive_indices && num_groups == 1)` — the nullable slot's
+    // presence is the `Option` discriminant, tested first as C short-circuits.
+    if let Some(p_consecutive_indices) = p_consecutive_indices {
+        if num_groups == 1 {
+            // SAFETY: `face_group` was checked above to hold exactly `num_faces`
+            // writable `uint32_t`s.
+            unsafe { core::ptr::write_bytes(mesh.face_group().data as *mut u32, 0, num_faces) };
 
-        if !parts.is_null() {
-            // C: `parts[0]` — `num_groups == 1` here.
-            // SAFETY: `parts` is the non-null `num_groups`-long run pushed
-            // above, so it addresses a live, initialized `ufbx_mesh_part`.
-            let part: &View<MeshPart> = unsafe { View::<MeshPart>::from_ptr(parts) };
-            part.face_indices_view()
-                .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
-            part.face_indices_view().set_count(num_faces);
-            part.set_num_empty_faces(mesh.num_empty_faces());
-            part.set_num_point_faces(mesh.num_point_faces());
-            part.set_num_line_faces(mesh.num_line_faces());
-            part.set_num_faces(num_faces);
-            part.set_num_triangles(mesh.num_triangles());
+            if !parts.is_null() {
+                // C: `parts[0]` — `num_groups == 1` here.
+                // SAFETY: `parts` is the non-null `num_groups`-long run pushed
+                // above, so it addresses a live, initialized `ufbx_mesh_part`.
+                let part: &View<MeshPart> = unsafe { View::<MeshPart>::from_ptr(parts) };
+                part.face_indices_view()
+                    .set_data(SENTINEL_INDEX_CONSECUTIVE.as_ptr());
+                part.face_indices_view().set_count(num_faces);
+                part.set_num_empty_faces(mesh.num_empty_faces());
+                part.set_num_point_faces(mesh.num_point_faces());
+                part.set_num_line_faces(mesh.num_line_faces());
+                part.set_num_faces(num_faces);
+                part.set_num_triangles(mesh.num_triangles());
+            }
+
+            p_consecutive_indices.set(max_sz(p_consecutive_indices.get(), num_faces));
+            return Ok(());
         }
-
-        // SAFETY: `p_consecutive_indices` is non-null (checked) and is the
-        // caller's writable `size_t` slot.
-        unsafe { *p_consecutive_indices = max_sz(*p_consecutive_indices, num_faces) };
-        return Ok(());
     }
 
     // SAFETY: `seen_ids` is a live local array of exactly `SEEN_IDS_COUNT`
@@ -4875,17 +4862,20 @@ pub(crate) unsafe fn read_mesh(
     patch_mesh_reals(mesh);
 
     if mesh.face_group().count > 0 && mesh.face_groups().count == 0 {
-        // SAFETY: `uc.error_mut_ptr()`/`max_consecutive_indices_mut_ptr()` are
-        // uc's own live error and counter slots.
-        unsafe {
-            assign_face_groups(
-                uc.result_view(),
-                uc.error_mut_ptr(),
-                mesh,
-                uc.max_consecutive_indices_mut_ptr(),
-                uc.retain_mesh_parts(),
-            )
-        }?;
+        // C: `&uc->max_consecutive_indices` — uc's own live, initialized
+        // `size_t` counter slot.
+        // SAFETY: `max_consecutive_indices_mut_ptr()` addresses that slot with
+        // write-capable provenance, and `ScalarView` is `repr(transparent)`
+        // interior-mutable storage over a `usize`.
+        let p_consecutive_indices: &ScalarView<usize> =
+            unsafe { &*(uc.max_consecutive_indices_mut_ptr() as *const ScalarView<usize>) };
+        assign_face_groups(
+            uc.result_view(),
+            uc.error_view(),
+            mesh,
+            Some(p_consecutive_indices),
+            uc.retain_mesh_parts(),
+        )?;
     }
 
     // Sort UV and color sets by set index
