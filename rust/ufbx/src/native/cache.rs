@@ -2765,9 +2765,9 @@ pub(crate) fn transform_to_axes(uc: &Context, dst_axes: CoordinateAxes) {
                 unsafe { View::<Matrix>::from_ptr(uc.axis_matrix_mut_ptr()) };
             mirror_matrix_dst(axis_matrix_view, uc.mirror_axis());
             // SAFETY: a pure value read of uc's own live axis-matrix field.
-            unsafe {
-                ufbxi_dev_assert!(matrix_determinant(uc.axis_matrix_mut_ptr()) >= 0.0f32 as Real);
-            }
+            ufbxi_dev_assert!(
+                unsafe { matrix_determinant(uc.axis_matrix_mut_ptr()) } >= 0.0f32 as Real
+            );
 
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
             // SAFETY: walking the stored `nodes` element-pointer run of the
