@@ -741,17 +741,15 @@ pub(crate) unsafe fn binary_parse_multivalue_array(
 // C: `ufbxi_nodiscard ufbxi_noinline static void *` — returns NULL on failure.
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn push_array_data(
+pub(crate) fn push_array_data(
     uc: &Context,
-    info: *const ArrayInfo,
+    info: &ArrayInfo,
     mut size: usize,
     tmp_buf: &BufView,
 ) -> *mut c_void {
-    // SAFETY: `info` points to a live `ArrayInfo` (caller contract); read its
-    // `type_` and `flags` fields.
-    let elem_size: usize = array_type_size(unsafe { (*info).type_ });
+    let elem_size: usize = array_type_size(info.type_);
     // C: `uint32_t flags = info->flags;` (widened from the `uint8_t` field).
-    let flags: u32 = unsafe { (*info).flags } as u32;
+    let flags: u32 = info.flags as u32;
     if flags & ARRAY_FLAG_PAD_BEGIN as u32 != 0 {
         size += 4;
     }
@@ -1127,10 +1125,12 @@ unsafe fn binary_parse_node_rec(
             let decoded_data_size: usize = src_elem_size.wrapping_mul(size as usize);
 
             // Allocate `size` elements for the array.
-            // SAFETY: `arr_info` is the initialized `ArrayInfo`; `push_array_data`
-            // reads it and allocates `size` elements into `uc`'s buffers.
+            // SAFETY: `arr_info` addresses the local `ArrayInfo`, initialized by
+            // the `is_array_node` call above; nothing writes through the raw
+            // pointer while this borrow is live.
+            let arr_info_ref: &ArrayInfo = unsafe { &*arr_info };
             let arr_data: *mut u8 =
-                unsafe { push_array_data(uc, arr_info, size as usize, tmp_buf) } as *mut u8;
+                push_array_data(uc, arr_info_ref, size as usize, tmp_buf) as *mut u8;
             ufbxi_check!(uc, !arr_data.is_null(), "arr_data");
 
             let arr_begin: u64 = get_read_offset(uc);
@@ -1410,10 +1410,12 @@ unsafe fn binary_parse_node_rec(
             }
         } else {
             // Allocate `num_values` elements for the array and parse single values into it.
-            // SAFETY: `arr_info` is the initialized `ArrayInfo`; `push_array_data`
-            // allocates `num_values` elements into `uc`'s buffers.
+            // SAFETY: `arr_info` addresses the local `ArrayInfo`, initialized by
+            // the `is_array_node` call above; nothing writes through the raw
+            // pointer while this borrow is live.
+            let arr_info_ref: &ArrayInfo = unsafe { &*arr_info };
             let arr_data: *mut u8 =
-                unsafe { push_array_data(uc, arr_info, num_values as usize, tmp_buf) } as *mut u8;
+                push_array_data(uc, arr_info_ref, num_values as usize, tmp_buf) as *mut u8;
             ufbxi_check!(uc, !arr_data.is_null(), "arr_data");
             // SAFETY: `arr_data` is the `num_values`-element destination just
             // allocated; the multivalue reader parses single values into it.
