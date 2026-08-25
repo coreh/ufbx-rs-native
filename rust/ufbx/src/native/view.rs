@@ -117,6 +117,19 @@ impl<T> View<T, Mut> {
         cell.get().cast()
     }
 
+    /// The viewed element as a storable `Ref<T>` (the inverse of
+    /// [`crate::prelude::Ref::view`]): the safe way to write a `ufbx_element*`
+    /// field from a view. `Mut` only — a `Ref` promises write-capable arena
+    /// provenance to every later reader, which a `Const` mint (possibly
+    /// `&`-derived) cannot supply.
+    #[inline(always)]
+    pub(crate) fn to_ref(&self) -> crate::prelude::Ref<T> {
+        // SAFETY: a `Mut` view is minted (its `from_ptr`/`mint` contract) over
+        // a live, unmoved `T` with write-capable provenance, so `get()` is
+        // non-null and satisfies the `Ref::from_ptr` contract.
+        unsafe { crate::prelude::Ref::from_ptr(self.get()) }
+    }
+
     /// Reinterpret a raw arena pointer as an interior-mutable view reference.
     ///
     /// # Safety

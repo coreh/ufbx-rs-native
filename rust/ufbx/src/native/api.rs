@@ -945,7 +945,7 @@ pub(crate) fn find_prop_len<'a, M: Mode>(
             return Some(run.at(index));
         }
 
-        props = cur.defaults();
+        props = cur.defaults_view();
     }
 
     None
@@ -1036,7 +1036,7 @@ pub(crate) unsafe fn find_prop_concat<'a, M: Mode>(
             return Some(run.at(index));
         }
 
-        props = cur.defaults();
+        props = cur.defaults_view();
     }
 
     None

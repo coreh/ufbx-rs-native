@@ -173,9 +173,41 @@ impl<T> Ref<T> {
         self.ptr.as_ptr()
     }
 
+    /// View over the referenced element (native-port navigation): the safe
+    /// `Ref` → `&View` bridge, so following a stored `ufbx_element*` needs no
+    /// raw deref at the call site.
+    ///
+    /// Safe because the `Ref` invariant (`from_ptr` contract) is exactly the
+    /// view mint contract: the pointer is non-null, addresses a live and
+    /// unmoved `T` in the owning scene's result arena, and carries that arena's
+    /// write-capable provenance — adequate for both [`Mut`] and [`Const`]
+    /// (`crate::native::view::Mode`). The returned lifetime is unbounded, like
+    /// the raw `from_ptr` mints, on the arena-stability invariant. The aliasing
+    /// discipline is the view's own: no `&mut` over the element while a `Mut`
+    /// view is in use, and a `Const` view is not held across a write.
+    ///
+    /// By value (`Ref` is `Copy`) so a `Ref` read out of viewed memory can be
+    /// followed without forming an `&Ref` over the arena.
+    #[inline(always)]
+    pub(crate) fn view<'a, M: crate::native::view::Mode>(
+        self,
+    ) -> &'a crate::native::view::View<T, M> {
+        // SAFETY: liveness, stability, and write-capable provenance are the
+        // `Ref` invariant, established by `from_ptr`'s contract (above).
+        unsafe { crate::native::view::View::mint(self.ptr.as_ptr()) }
+    }
+
     // pub(crate): the native port stores raw result-buffer pointers into
     // `ufbx_*` reference fields (C: `uc->scene.dom_root = dom_root;`); the
     // pointer is null-checked by the surrounding `ufbxi_check` first.
+    //
+    /// # Safety
+    /// `ptr` must be non-null and address a live `T` in the owning scene's
+    /// result arena — one that stays alive and unmoved for as long as any copy
+    /// of the returned `Ref` (or the scene that embeds it) exists — reached
+    /// through that arena's write-capable provenance (a result-buffer `*mut`,
+    /// never a `&T`). This is the `Ref` invariant that the safe [`Ref::view`]
+    /// mint and the public `Deref` rely on.
     pub(crate) unsafe fn from_ptr(ptr: *mut T) -> Ref<T> {
         Ref {
             // SAFETY: the caller vouches `ptr` is non-null — typically a

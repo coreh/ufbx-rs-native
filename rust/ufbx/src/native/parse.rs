@@ -227,27 +227,6 @@ impl<M: Mode> View<Props, M> {
         // SAFETY: reading the `props.count` field of a valid arena `Props`.
         unsafe { (*self.as_ptr()).props.count }
     }
-    /// The `defaults` fallback table, viewed with the same lifetime and MODE as
-    /// `self` (a chain rooted `Const` stays `Const`).
-    #[inline(always)]
-    pub(crate) fn defaults(&self) -> Option<&View<Props, M>> {
-        // SAFETY: reads the `defaults: Option<Ref<Props>>` field as its
-        // niche-packed bare pointer (like `read::opt_ptr`), NOT through
-        // `Ref::as_ref`. `as_ref` would form a SharedReadOnly `&Props` and then
-        // reinterpreting THAT as an interior-mutable view retags for write and
-        // trips Stacked Borrows; reading the pointer bits keeps the STORED
-        // provenance (write-capable for arena tables), which is adequate for
-        // either mode. The viewed table lives as long as `self`.
-        unsafe {
-            let defaults_ptr: *mut Props =
-                *(&raw const (*self.as_ptr()).defaults as *const *mut Props);
-            if defaults_ptr.is_null() {
-                None
-            } else {
-                Some(View::<Props, M>::mint(defaults_ptr))
-            }
-        }
-    }
 }
 
 // The plain `Prop` field reads (`value_vec4`/`value_int`/`value_str`/
@@ -7557,7 +7536,7 @@ pub(crate) fn find_prop_with_key<'a, M: Mode>(
             begin += 1;
         }
 
-        props = cur.defaults();
+        props = cur.defaults_view();
     }
 
     None

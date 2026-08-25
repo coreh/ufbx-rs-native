@@ -436,18 +436,15 @@ view_accessor_structs = [
 
 # `(struct, field)` pairs whose READ accessor is hand-written instead of
 # generated (the Mut setter / raw-pointer accessors are still emitted):
-#   * `ufbx_props.defaults`: the sound read is the mode-preserving
-#     `Option<&View<Props, M>>` nav accessor in native/parse.rs (niche-packed
-#     bare-pointer read; see its SAFETY comment) — a plain by-value read of
-#     `Option<Ref<Props>>` would push call sites back through `Ref::as_ref`,
-#     whose `&Props` formation is the Stacked Borrows trap the view avoids.
 #   * `ufbx_anim_value.curves`: the sound read is the indexed
 #     `Option<&View<AnimCurve, M>>` nav accessor `curve_view` in native/api.rs
 #     (niche-packed bare-pointer read of one slot) — a by-value read of the
 #     whole `[Option<Ref<AnimCurve>>; 3]` array would push call sites back
-#     through `Ref::as_ref`, the same Stacked Borrows trap as above.
+#     through `Ref::as_ref`, whose `&AnimCurve` formation is the Stacked
+#     Borrows trap the view avoids. (Scalar `Ref`/`Option<Ref>` fields need no
+#     such entry: their generated `*_view` projection follows the `Ref` via
+#     the safe `Ref::view` bridge.)
 view_accessor_skip_read = {
-    ("ufbx_props", "defaults"),
     ("ufbx_anim_value", "curves"),
 }
 
@@ -2544,6 +2541,24 @@ def emit_view_impls(rs: RustStruct):
                 emit(f"view_read_shared!(self, {field.name})")
                 unindent()
                 emit("}")
+        if field.type.kind == "pointer" and field.type.ir.inner != "void":
+            # Element-reference projection: follows the stored `ufbx_element*`
+            # (`Ref<T>` / `Option<Ref<T>>`) into a view of the referenced
+            # element via the safe `Ref::view` bridge (prelude.rs), mode
+            # propagating from the receiver; the by-value read above serves
+            # identity compares and stores.
+            inner = field.type.inner.fmt_member("")
+            emit("#[inline(always)]")
+            if field.type.ir.is_nullable:
+                emit(f"pub(crate) fn {base}_view(&self) -> Option<&View<{inner}, M>> {{")
+                indent()
+                emit(f"self.{field.name}().map(Ref::view)")
+            else:
+                emit(f"pub(crate) fn {base}_view(&self) -> &View<{inner}, M> {{")
+                indent()
+                emit(f"self.{field.name}().view()")
+            unindent()
+            emit("}")
         if field.type.is_string:
             # In-place string projection: the anchored carrier for the safe
             # `bytes()` read (prelude.rs `View<String, M>`); the by-value read
@@ -2618,6 +2633,7 @@ def emit_views_file():
     emit("// Crate-internal `View<T, M>` field accessors over the generated public")
     emit("// structs (`view_accessor_structs` in generate_rust.py): a by-value read")
     emit("// per leaf field, an in-place `&View` projection per aggregate and list")
+    emit("// (`*_view`) field, a followed-`Ref` projection per element-reference")
     emit("// (`*_view`) field, a `*_ptr` read-address projection per field, and")
     emit("// `Mut`-only setters / raw field pointers. Soundness model (mint vouch,")
     emit("// `Mut`/`Const` provenance): src/native/view.rs.")

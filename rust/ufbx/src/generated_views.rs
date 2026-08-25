@@ -6,6 +6,7 @@
 // Crate-internal `View<T, M>` field accessors over the generated public
 // structs (`view_accessor_structs` in generate_rust.py): a by-value read
 // per leaf field, an in-place `&View` projection per aggregate and list
+// (`*_view`) field, a followed-`Ref` projection per element-reference
 // (`*_view`) field, a `*_ptr` read-address projection per field, and
 // `Mut`-only setters / raw field pointers. Soundness model (mint vouch,
 // `Mut`/`Const` provenance): src/native/view.rs.
@@ -103,12 +104,20 @@ impl<M: Mode> View<Element, M> {
         view_read_shared!(self, dom_node)
     }
     #[inline(always)]
+    pub(crate) fn dom_node_view(&self) -> Option<&View<DomNode, M>> {
+        self.dom_node().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn dom_node_ptr(&self) -> *const Option<Ref<DomNode>> {
         view_raw_shared!(self, dom_node)
     }
     #[inline(always)]
     pub(crate) fn scene(&self) -> Ref<Scene> {
         view_read_shared!(self, scene)
+    }
+    #[inline(always)]
+    pub(crate) fn scene_view(&self) -> &View<Scene, M> {
+        self.scene().view()
     }
     #[inline(always)]
     pub(crate) fn scene_ptr(&self) -> *const Ref<Scene> {
@@ -221,6 +230,14 @@ impl<M: Mode> View<Props, M> {
     #[inline(always)]
     pub(crate) fn num_animated_ptr(&self) -> *const usize {
         view_raw_shared!(self, num_animated)
+    }
+    #[inline(always)]
+    pub(crate) fn defaults(&self) -> Option<Ref<Props>> {
+        view_read_shared!(self, defaults)
+    }
+    #[inline(always)]
+    pub(crate) fn defaults_view(&self) -> Option<&View<Props, M>> {
+        self.defaults().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn defaults_ptr(&self) -> *const Option<Ref<Props>> {
@@ -1883,6 +1900,10 @@ impl<M: Mode> View<Mesh, M> {
         view_read_shared!(self, subdivision_result)
     }
     #[inline(always)]
+    pub(crate) fn subdivision_result_view(&self) -> Option<&View<SubdivisionResult, M>> {
+        self.subdivision_result().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn subdivision_result_ptr(&self) -> *const Option<Ref<SubdivisionResult>> {
         view_raw_shared!(self, subdivision_result)
     }
@@ -2678,6 +2699,10 @@ impl<M: Mode> View<CacheDeformer, M> {
         view_read_shared!(self, file)
     }
     #[inline(always)]
+    pub(crate) fn file_view(&self) -> Option<&View<CacheFile, M>> {
+        self.file().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn file_ptr(&self) -> *const Option<Ref<CacheFile>> {
         view_raw_shared!(self, file)
     }
@@ -2686,12 +2711,20 @@ impl<M: Mode> View<CacheDeformer, M> {
         view_read_shared!(self, external_cache)
     }
     #[inline(always)]
+    pub(crate) fn external_cache_view(&self) -> Option<&View<GeometryCache, M>> {
+        self.external_cache().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn external_cache_ptr(&self) -> *const Option<Ref<GeometryCache>> {
         view_raw_shared!(self, external_cache)
     }
     #[inline(always)]
     pub(crate) fn external_channel(&self) -> Option<Ref<CacheChannel>> {
         view_read_shared!(self, external_channel)
+    }
+    #[inline(always)]
+    pub(crate) fn external_channel_view(&self) -> Option<&View<CacheChannel, M>> {
+        self.external_channel().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn external_channel_ptr(&self) -> *const Option<Ref<CacheChannel>> {
@@ -2764,6 +2797,10 @@ impl<M: Mode> View<MaterialMap, M> {
     #[inline(always)]
     pub(crate) fn texture(&self) -> Option<Ref<Texture>> {
         view_read_shared!(self, texture)
+    }
+    #[inline(always)]
+    pub(crate) fn texture_view(&self) -> Option<&View<Texture, M>> {
+        self.texture().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn texture_ptr(&self) -> *const Option<Ref<Texture>> {
@@ -2932,6 +2969,10 @@ impl<M: Mode> View<MaterialTexture, M> {
     #[inline(always)]
     pub(crate) fn texture(&self) -> Ref<Texture> {
         view_read_shared!(self, texture)
+    }
+    #[inline(always)]
+    pub(crate) fn texture_view(&self) -> &View<Texture, M> {
+        self.texture().view()
     }
     #[inline(always)]
     pub(crate) fn texture_ptr(&self) -> *const Ref<Texture> {
@@ -3482,12 +3523,20 @@ impl<M: Mode> View<Connection, M> {
         view_read_shared!(self, src)
     }
     #[inline(always)]
+    pub(crate) fn src_view(&self) -> &View<Element, M> {
+        self.src().view()
+    }
+    #[inline(always)]
     pub(crate) fn src_ptr(&self) -> *const Ref<Element> {
         view_raw_shared!(self, src)
     }
     #[inline(always)]
     pub(crate) fn dst(&self) -> Ref<Element> {
         view_read_shared!(self, dst)
+    }
+    #[inline(always)]
+    pub(crate) fn dst_view(&self) -> &View<Element, M> {
+        self.dst().view()
     }
     #[inline(always)]
     pub(crate) fn dst_ptr(&self) -> *const Ref<Element> {
@@ -3642,6 +3691,10 @@ impl<M: Mode> View<AnimLayer, M> {
         view_read_shared!(self, anim)
     }
     #[inline(always)]
+    pub(crate) fn anim_view(&self) -> &View<Anim, M> {
+        self.anim().view()
+    }
+    #[inline(always)]
     pub(crate) fn anim_ptr(&self) -> *const Ref<Anim> {
         view_raw_shared!(self, anim)
     }
@@ -3786,6 +3839,10 @@ impl<M: Mode> View<AnimProp, M> {
         view_read_shared!(self, element)
     }
     #[inline(always)]
+    pub(crate) fn element_view(&self) -> &View<Element, M> {
+        self.element().view()
+    }
+    #[inline(always)]
     pub(crate) fn element_ptr(&self) -> *const Ref<Element> {
         view_raw_shared!(self, element)
     }
@@ -3812,6 +3869,10 @@ impl<M: Mode> View<AnimProp, M> {
     #[inline(always)]
     pub(crate) fn anim_value(&self) -> Ref<AnimValue> {
         view_read_shared!(self, anim_value)
+    }
+    #[inline(always)]
+    pub(crate) fn anim_value_view(&self) -> &View<AnimValue, M> {
+        self.anim_value().view()
     }
     #[inline(always)]
     pub(crate) fn anim_value_ptr(&self) -> *const Ref<AnimValue> {
@@ -4026,6 +4087,10 @@ impl<M: Mode> View<ShaderTexture, M> {
         view_read_shared!(self, main_texture)
     }
     #[inline(always)]
+    pub(crate) fn main_texture_view(&self) -> Option<&View<Texture, M>> {
+        self.main_texture().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn main_texture_ptr(&self) -> *const Option<Ref<Texture>> {
         view_raw_shared!(self, main_texture)
     }
@@ -4182,6 +4247,10 @@ impl<M: Mode> View<ShaderTextureInput, M> {
         view_read_shared!(self, texture)
     }
     #[inline(always)]
+    pub(crate) fn texture_view(&self) -> Option<&View<Texture, M>> {
+        self.texture().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn texture_ptr(&self) -> *const Option<Ref<Texture>> {
         view_raw_shared!(self, texture)
     }
@@ -4206,6 +4275,10 @@ impl<M: Mode> View<ShaderTextureInput, M> {
         view_read_shared!(self, prop)
     }
     #[inline(always)]
+    pub(crate) fn prop_view(&self) -> Option<&View<Prop, M>> {
+        self.prop().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn prop_ptr(&self) -> *const Option<Ref<Prop>> {
         view_raw_shared!(self, prop)
     }
@@ -4214,12 +4287,20 @@ impl<M: Mode> View<ShaderTextureInput, M> {
         view_read_shared!(self, texture_prop)
     }
     #[inline(always)]
+    pub(crate) fn texture_prop_view(&self) -> Option<&View<Prop, M>> {
+        self.texture_prop().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn texture_prop_ptr(&self) -> *const Option<Ref<Prop>> {
         view_raw_shared!(self, texture_prop)
     }
     #[inline(always)]
     pub(crate) fn texture_enabled_prop(&self) -> Option<Ref<Prop>> {
         view_read_shared!(self, texture_enabled_prop)
+    }
+    #[inline(always)]
+    pub(crate) fn texture_enabled_prop_view(&self) -> Option<&View<Prop, M>> {
+        self.texture_enabled_prop().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn texture_enabled_prop_ptr(&self) -> *const Option<Ref<Prop>> {
@@ -4354,6 +4435,10 @@ impl<M: Mode> View<NameElement, M> {
         view_read_shared!(self, element)
     }
     #[inline(always)]
+    pub(crate) fn element_view(&self) -> &View<Element, M> {
+        self.element().view()
+    }
+    #[inline(always)]
     pub(crate) fn element_ptr(&self) -> *const Ref<Element> {
         view_raw_shared!(self, element)
     }
@@ -4410,6 +4495,10 @@ impl<M: Mode> View<Node, M> {
         view_read_shared!(self, parent)
     }
     #[inline(always)]
+    pub(crate) fn parent_view(&self) -> Option<&View<Node, M>> {
+        self.parent().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn parent_ptr(&self) -> *const Option<Ref<Node>> {
         view_raw_shared!(self, parent)
     }
@@ -4430,12 +4519,20 @@ impl<M: Mode> View<Node, M> {
         view_read_shared!(self, mesh)
     }
     #[inline(always)]
+    pub(crate) fn mesh_view(&self) -> Option<&View<Mesh, M>> {
+        self.mesh().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn mesh_ptr(&self) -> *const Option<Ref<Mesh>> {
         view_raw_shared!(self, mesh)
     }
     #[inline(always)]
     pub(crate) fn light(&self) -> Option<Ref<Light>> {
         view_read_shared!(self, light)
+    }
+    #[inline(always)]
+    pub(crate) fn light_view(&self) -> Option<&View<Light, M>> {
+        self.light().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn light_ptr(&self) -> *const Option<Ref<Light>> {
@@ -4446,12 +4543,20 @@ impl<M: Mode> View<Node, M> {
         view_read_shared!(self, camera)
     }
     #[inline(always)]
+    pub(crate) fn camera_view(&self) -> Option<&View<Camera, M>> {
+        self.camera().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn camera_ptr(&self) -> *const Option<Ref<Camera>> {
         view_raw_shared!(self, camera)
     }
     #[inline(always)]
     pub(crate) fn bone(&self) -> Option<Ref<Bone>> {
         view_read_shared!(self, bone)
+    }
+    #[inline(always)]
+    pub(crate) fn bone_view(&self) -> Option<&View<Bone, M>> {
+        self.bone().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn bone_ptr(&self) -> *const Option<Ref<Bone>> {
@@ -4462,6 +4567,10 @@ impl<M: Mode> View<Node, M> {
         view_read_shared!(self, attrib)
     }
     #[inline(always)]
+    pub(crate) fn attrib_view(&self) -> Option<&View<Element, M>> {
+        self.attrib().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn attrib_ptr(&self) -> *const Option<Ref<Element>> {
         view_raw_shared!(self, attrib)
     }
@@ -4470,12 +4579,20 @@ impl<M: Mode> View<Node, M> {
         view_read_shared!(self, geometry_transform_helper)
     }
     #[inline(always)]
+    pub(crate) fn geometry_transform_helper_view(&self) -> Option<&View<Node, M>> {
+        self.geometry_transform_helper().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn geometry_transform_helper_ptr(&self) -> *const Option<Ref<Node>> {
         view_raw_shared!(self, geometry_transform_helper)
     }
     #[inline(always)]
     pub(crate) fn scale_helper(&self) -> Option<Ref<Node>> {
         view_read_shared!(self, scale_helper)
+    }
+    #[inline(always)]
+    pub(crate) fn scale_helper_view(&self) -> Option<&View<Node, M>> {
+        self.scale_helper().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn scale_helper_ptr(&self) -> *const Option<Ref<Node>> {
@@ -4544,6 +4661,10 @@ impl<M: Mode> View<Node, M> {
     #[inline(always)]
     pub(crate) fn inherit_scale_node(&self) -> Option<Ref<Node>> {
         view_read_shared!(self, inherit_scale_node)
+    }
+    #[inline(always)]
+    pub(crate) fn inherit_scale_node_view(&self) -> Option<&View<Node, M>> {
+        self.inherit_scale_node().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn inherit_scale_node_ptr(&self) -> *const Option<Ref<Node>> {
@@ -4676,6 +4797,10 @@ impl<M: Mode> View<Node, M> {
     #[inline(always)]
     pub(crate) fn bind_pose(&self) -> Option<Ref<Pose>> {
         view_read_shared!(self, bind_pose)
+    }
+    #[inline(always)]
+    pub(crate) fn bind_pose_view(&self) -> Option<&View<Pose, M>> {
+        self.bind_pose().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn bind_pose_ptr(&self) -> *const Option<Ref<Pose>> {
@@ -5210,6 +5335,10 @@ impl<M: Mode> View<Texture, M> {
         view_read_shared!(self, video)
     }
     #[inline(always)]
+    pub(crate) fn video_view(&self) -> Option<&View<Video, M>> {
+        self.video().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn video_ptr(&self) -> *const Option<Ref<Video>> {
         view_raw_shared!(self, video)
     }
@@ -5244,6 +5373,10 @@ impl<M: Mode> View<Texture, M> {
     #[inline(always)]
     pub(crate) fn shader(&self) -> Option<Ref<ShaderTexture>> {
         view_read_shared!(self, shader)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_view(&self) -> Option<&View<ShaderTexture, M>> {
+        self.shader().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn shader_ptr(&self) -> *const Option<Ref<ShaderTexture>> {
@@ -5518,6 +5651,10 @@ impl<M: Mode> View<SkinCluster, M> {
         view_read_shared!(self, bone_node)
     }
     #[inline(always)]
+    pub(crate) fn bone_node_view(&self) -> Option<&View<Node, M>> {
+        self.bone_node().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn bone_node_ptr(&self) -> *const Option<Ref<Node>> {
         view_raw_shared!(self, bone_node)
     }
@@ -5724,6 +5861,10 @@ impl<M: Mode> View<Material, M> {
     #[inline(always)]
     pub(crate) fn shader(&self) -> Option<Ref<Shader>> {
         view_read_shared!(self, shader)
+    }
+    #[inline(always)]
+    pub(crate) fn shader_view(&self) -> Option<&View<Shader, M>> {
+        self.shader().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn shader_ptr(&self) -> *const Option<Ref<Shader>> {
@@ -6058,6 +6199,10 @@ impl<M: Mode> View<BonePose, M> {
         view_read_shared!(self, bone_node)
     }
     #[inline(always)]
+    pub(crate) fn bone_node_view(&self) -> &View<Node, M> {
+        self.bone_node().view()
+    }
+    #[inline(always)]
     pub(crate) fn bone_node_ptr(&self) -> *const Ref<Node> {
         view_raw_shared!(self, bone_node)
     }
@@ -6112,6 +6257,10 @@ impl<M: Mode> View<BlendKeyframe, M> {
     #[inline(always)]
     pub(crate) fn shape(&self) -> Ref<BlendShape> {
         view_read_shared!(self, shape)
+    }
+    #[inline(always)]
+    pub(crate) fn shape_view(&self) -> &View<BlendShape, M> {
+        self.shape().view()
     }
     #[inline(always)]
     pub(crate) fn shape_ptr(&self) -> *const Ref<BlendShape> {
@@ -6196,6 +6345,10 @@ impl<M: Mode> View<BlendChannel, M> {
     #[inline(always)]
     pub(crate) fn target_shape(&self) -> Option<Ref<BlendShape>> {
         view_read_shared!(self, target_shape)
+    }
+    #[inline(always)]
+    pub(crate) fn target_shape_view(&self) -> Option<&View<BlendShape, M>> {
+        self.target_shape().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn target_shape_ptr(&self) -> *const Option<Ref<BlendShape>> {
@@ -6444,6 +6597,10 @@ impl<M: Mode> View<AnimStack, M> {
     #[inline(always)]
     pub(crate) fn anim(&self) -> Ref<Anim> {
         view_read_shared!(self, anim)
+    }
+    #[inline(always)]
+    pub(crate) fn anim_view(&self) -> &View<Anim, M> {
+        self.anim().view()
     }
     #[inline(always)]
     pub(crate) fn anim_ptr(&self) -> *const Ref<Anim> {
@@ -7182,6 +7339,10 @@ impl<M: Mode> View<TextureLayer, M> {
         view_read_shared!(self, texture)
     }
     #[inline(always)]
+    pub(crate) fn texture_view(&self) -> &View<Texture, M> {
+        self.texture().view()
+    }
+    #[inline(always)]
     pub(crate) fn texture_ptr(&self) -> *const Ref<Texture> {
         view_raw_shared!(self, texture)
     }
@@ -7534,6 +7695,10 @@ impl<M: Mode> View<CacheFile, M> {
         view_read_shared!(self, external_cache)
     }
     #[inline(always)]
+    pub(crate) fn external_cache_view(&self) -> Option<&View<GeometryCache, M>> {
+        self.external_cache().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn external_cache_ptr(&self) -> *const Option<Ref<GeometryCache>> {
         view_raw_shared!(self, external_cache)
     }
@@ -7650,6 +7815,10 @@ impl<M: Mode> View<Constraint, M> {
         view_read_shared!(self, node)
     }
     #[inline(always)]
+    pub(crate) fn node_view(&self) -> Option<&View<Node, M>> {
+        self.node().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn node_ptr(&self) -> *const Option<Ref<Node>> {
         view_raw_shared!(self, node)
     }
@@ -7734,6 +7903,10 @@ impl<M: Mode> View<Constraint, M> {
         view_read_shared!(self, aim_up_node)
     }
     #[inline(always)]
+    pub(crate) fn aim_up_node_view(&self) -> Option<&View<Node, M>> {
+        self.aim_up_node().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn aim_up_node_ptr(&self) -> *const Option<Ref<Node>> {
         view_raw_shared!(self, aim_up_node)
     }
@@ -7750,12 +7923,20 @@ impl<M: Mode> View<Constraint, M> {
         view_read_shared!(self, ik_effector)
     }
     #[inline(always)]
+    pub(crate) fn ik_effector_view(&self) -> Option<&View<Node, M>> {
+        self.ik_effector().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn ik_effector_ptr(&self) -> *const Option<Ref<Node>> {
         view_raw_shared!(self, ik_effector)
     }
     #[inline(always)]
     pub(crate) fn ik_end_node(&self) -> Option<Ref<Node>> {
         view_read_shared!(self, ik_end_node)
+    }
+    #[inline(always)]
+    pub(crate) fn ik_end_node_view(&self) -> Option<&View<Node, M>> {
+        self.ik_end_node().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn ik_end_node_ptr(&self) -> *const Option<Ref<Node>> {
@@ -7924,6 +8105,10 @@ impl<M: Mode> View<ConstraintTarget, M> {
     #[inline(always)]
     pub(crate) fn node(&self) -> Ref<Node> {
         view_read_shared!(self, node)
+    }
+    #[inline(always)]
+    pub(crate) fn node_view(&self) -> &View<Node, M> {
+        self.node().view()
     }
     #[inline(always)]
     pub(crate) fn node_ptr(&self) -> *const Ref<Node> {
@@ -8276,6 +8461,10 @@ impl<M: Mode> View<NurbsSurface, M> {
     #[inline(always)]
     pub(crate) fn material(&self) -> Option<Ref<Material>> {
         view_read_shared!(self, material)
+    }
+    #[inline(always)]
+    pub(crate) fn material_view(&self) -> Option<&View<Material, M>> {
+        self.material().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn material_ptr(&self) -> *const Option<Ref<Material>> {
@@ -8813,12 +9002,20 @@ impl<M: Mode> View<SelectionNode, M> {
         view_read_shared!(self, target_node)
     }
     #[inline(always)]
+    pub(crate) fn target_node_view(&self) -> Option<&View<Node, M>> {
+        self.target_node().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn target_node_ptr(&self) -> *const Option<Ref<Node>> {
         view_raw_shared!(self, target_node)
     }
     #[inline(always)]
     pub(crate) fn target_mesh(&self) -> Option<Ref<Mesh>> {
         view_read_shared!(self, target_mesh)
+    }
+    #[inline(always)]
+    pub(crate) fn target_mesh_view(&self) -> Option<&View<Mesh, M>> {
+        self.target_mesh().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn target_mesh_ptr(&self) -> *const Option<Ref<Mesh>> {
@@ -9253,12 +9450,20 @@ impl<M: Mode> View<StereoCamera, M> {
         view_read_shared!(self, left)
     }
     #[inline(always)]
+    pub(crate) fn left_view(&self) -> Option<&View<Camera, M>> {
+        self.left().map(Ref::view)
+    }
+    #[inline(always)]
     pub(crate) fn left_ptr(&self) -> *const Option<Ref<Camera>> {
         view_raw_shared!(self, left)
     }
     #[inline(always)]
     pub(crate) fn right(&self) -> Option<Ref<Camera>> {
         view_read_shared!(self, right)
+    }
+    #[inline(always)]
+    pub(crate) fn right_view(&self) -> Option<&View<Camera, M>> {
+        self.right().map(Ref::view)
     }
     #[inline(always)]
     pub(crate) fn right_ptr(&self) -> *const Option<Ref<Camera>> {
