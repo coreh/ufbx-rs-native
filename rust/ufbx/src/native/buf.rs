@@ -959,10 +959,26 @@ pub(crate) unsafe fn push_size_copy_fast(
 }
 
 // ufbx.c:4138-4171 `ufbxi_buf_free_unused`
+//
+// Idempotent teardown like `buf_free`/`buf_clear`, hence a safe fn: the C nulls
+// what it frees — the retired `->next` tail is unlinked from the active chunk,
+// and each rewound chunk is dropped from `b->chunks[0]` — so a second call
+// finds either a null chunk head or an active chunk with no `->next` and a
+// non-zero `pos`, and does nothing. Dangling of pointers or views the push
+// family handed out of the freed chunks is NOT this fn's obligation: every raw
+// deref sits under its own `SAFETY:` vouch, and every view minted out of the
+// buffer promised liveness for its own lifetime only (the `View::from_ptr`
+// contract) — exactly as `drop(Box)` is a safe call in Rust while a raw pointer
+// into the box may still exist. The raw field and chunk ops below carry their
+// own per-leaf vouches.
 #[inline(never)]
-pub(crate) unsafe fn buf_free_unused(b: *mut Buf) {
-    // SAFETY: `b` addresses a live `Buf` (this fn's raw-pointer contract);
-    // reading its `unordered` flag and `chunks[0]` head.
+pub(crate) fn buf_free_unused(view: &BufView) {
+    let b: *mut Buf = view.get();
+    // SAFETY: `b` is the view's write-provenance pointer to a live `Buf` (the
+    // mint); its `unordered` flag and `chunks[0]` head are initialized, every
+    // `Buf` reaching this fn being one the port constructed (context init /
+    // zeroed construction), which is the same per-field assertion each
+    // generated read accessor makes.
     ufbx_assert!(!unsafe { (*b).unordered });
 
     // SAFETY: `b` is the live `Buf`; reading its active chunk.
@@ -1150,10 +1166,12 @@ pub(crate) unsafe fn pop_size(b: *mut Buf, size: usize, n: usize, dst: *mut c_vo
         // Immediately free popped items if all the allocations are huge
         // as it means we want to have dedicated allocations for each push.
         // SAFETY: `b` is the live `Buf` and `(*b).ator` its live allocator;
-        // reading `huge_size`, then forwarding the live-`Buf` contract to
-        // `buf_free_unused`.
+        // reading `huge_size`, then minting over the same live, initialized
+        // `Buf` in context/arena-owned memory with write-capable provenance
+        // (this fn's raw-pointer contract) — the `BufView::from_ptr` mint
+        // invariant.
         if unsafe { (*(*b).ator).huge_size } <= 1 {
-            unsafe { buf_free_unused(b) };
+            buf_free_unused(unsafe { BufView::from_ptr(b) });
         }
     }
 }
@@ -1799,9 +1817,9 @@ mod tests {
         assert_eq!(buf.pos, 0);
 
         // Frees the empty head chunks and the retired next-chain entirely.
-        unsafe {
-            buf_free_unused(&mut buf);
-        }
+        // SAFETY: a live stack-local `Buf` owned by this test; minting the
+        // `BufView` `buf_free_unused` takes over that local.
+        buf_free_unused(unsafe { BufView::from_ptr(&raw mut buf) });
         assert!(buf.chunks[0].is_null());
         assert_eq!(buf.size, 0);
         assert_eq!(unsafe { (*ator).current_size }, 0);
