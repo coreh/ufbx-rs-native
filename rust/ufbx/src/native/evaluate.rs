@@ -2159,6 +2159,19 @@ pub(crate) unsafe fn evaluate_connected_prop(
     time: f64,
     flags: u32,
 ) {
+    // SAFETY (every mint below): `prop` is the caller's live `ufbx_prop`, reached
+    // through `*mut` (write-capable provenance for `Mut`); `anim`/`element` are
+    // the caller's live anim and element, read-only for the whole call (nothing
+    // below writes either), so they anchor frozen `Const` views; `name` is the
+    // caller's NUL-terminated prop name, so `strlen` stays inside it and the
+    // slice borrows exactly those bytes, keeping the run's own address — which is
+    // what `find_prop_connection` matches interned names on. All four are this
+    // `unsafe fn`'s own raw-pointer contract.
+    let prop: &View<Prop, Mut> = unsafe { View::<Prop, Mut>::from_ptr(prop) };
+    let anim: &View<Anim, Const> = unsafe { View::<Anim, Const>::from_ptr(anim) };
+    let element: &View<Element, Const> = unsafe { View::<Element, Const>::from_ptr(element) };
+    let name: &[u8] = unsafe { core::slice::from_raw_parts(name, strlen(name)) };
+
     #[cfg(feature = "regression")]
     {
         std::thread_local! {
@@ -2168,13 +2181,13 @@ pub(crate) unsafe fn evaluate_connected_prop(
             ufbx_assert!(d.get() < 3);
             d.set(d.get() + 1);
         });
-        // SAFETY: every pointer is forwarded unchanged from this fn's own
-        // parameters, so the callee inherits the caller's contract.
+        // SAFETY: `name` is NUL-terminated (the mint above measured it with
+        // `strlen`), which is the callee's remaining untyped obligation.
         unsafe { evaluate_connected_prop_rec(prop, anim, element, name, time, flags) };
         UFBXI_RECURSION_DEPTH.with(|d| d.set(d.get() - 1));
     }
-    // SAFETY: every pointer is forwarded unchanged from this fn's own
-    // parameters, so the callee inherits the caller's contract.
+    // SAFETY: `name` is NUL-terminated (the mint above measured it with
+    // `strlen`), which is the callee's remaining untyped obligation.
     #[cfg(not(feature = "regression"))]
     unsafe {
         evaluate_connected_prop_rec(prop, anim, element, name, time, flags)
@@ -2183,18 +2196,25 @@ pub(crate) unsafe fn evaluate_connected_prop(
 
 // ufbx.c:25826-25845 `ufbxi_evaluate_connected_prop` body (the `_rec` half of
 // the `ufbxi_recursive_function` body; see the wrapper above)
+//
+// # Safety
+// `name` must be NUL-terminated. `find_prop_connection` measures it with
+// `strlen` and matches interned prop names by ADDRESS, so the search runs off
+// the slice's own pointer rather than its length — an obligation `&[u8]` cannot
+// carry.
 #[inline(never)]
 unsafe fn evaluate_connected_prop_rec(
-    prop: *mut Prop,
-    anim: *const Anim,
-    element: *const Element,
-    name: *const u8,
+    prop: &View<Prop, Mut>,
+    anim: &View<Anim, Const>,
+    element: &View<Element, Const>,
+    name: &[u8],
     time: f64,
     flags: u32,
 ) {
-    // SAFETY: `element` is the caller's live element and `name` its prop-name run
-    // — the raw-pointer contract of this `unsafe fn`.
-    let mut conn: *mut Connection = unsafe { find_prop_connection(element, name) };
+    // SAFETY: `element` borrows the caller's live element and `name` its
+    // prop-name run, NUL-terminated per this `unsafe fn`'s contract.
+    let mut conn: *mut Connection =
+        unsafe { find_prop_connection(element.as_ptr(), name.as_ptr()) };
 
     // C: `for (size_t i = 0; i < 1000 && conn; i++)`
     let mut i: usize = 0;
@@ -2218,12 +2238,12 @@ unsafe fn evaluate_connected_prop_rec(
         && unsafe { find_prop_connection(ref_ptr(&raw const (*conn).src), (*conn).src_prop.data) }
             .is_null()
     {
-        // SAFETY: `anim` is the caller's live anim and `conn` the scene-owned
-        // connection reached above, whose `src` element and `src_prop` name run
-        // are what the evaluation reads.
+        // SAFETY: `anim` borrows the caller's live anim and `conn` is the
+        // scene-owned connection reached above, whose `src` element and
+        // `src_prop` name run are what the evaluation reads.
         let ep: Prop = unsafe {
             evaluate_prop_flags_len(
-                anim,
+                anim.as_ptr(),
                 ref_ptr(&raw const (*conn).src),
                 (*conn).src_prop.data,
                 (*conn).src_prop.length,
@@ -2231,19 +2251,15 @@ unsafe fn evaluate_connected_prop_rec(
                 flags,
             )
         };
-        // SAFETY (every write below): `prop` is the caller's live `ufbx_prop`.
-        unsafe {
-            (*prop).value_vec4 = ep.value_vec4;
-            (*prop).value_int = ep.value_int;
-            (*prop).value_str = ep.value_str;
-            (*prop).value_blob = ep.value_blob;
-        }
+        prop.set_value_vec4(ep.value_vec4);
+        prop.set_value_int(ep.value_int);
+        prop.set_value_str(ep.value_str);
+        prop.set_value_blob(ep.value_blob);
     } else {
         // Connection not found, maybe it's animated?
-        // SAFETY: `prop` is the caller's live `ufbx_prop`.
-        unsafe {
-            (*prop).flags = PropFlags::from_raw((*prop).flags.raw() & !PropFlags::CONNECTED.raw())
-        };
+        prop.set_flags(PropFlags::from_raw(
+            prop.flags().raw() & !PropFlags::CONNECTED.raw(),
+        ));
     }
 }
 
