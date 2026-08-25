@@ -2260,22 +2260,6 @@ pub(crate) fn linearize_nodes(uc: &Context) -> Result<(), Fail> {
     Ok(())
 }
 
-// `ufbxi_find_dst_connections` / `ufbxi_find_src_connections` read the
-// `element` header of a typed element; these project it in place, so a caller
-// holding the typed view passes the header without re-minting a pointer.
-impl<M: Mode> View<Node, M> {
-    #[inline(always)]
-    pub(crate) fn element_view(&self) -> &View<Element, M> {
-        view_project!(self, element)
-    }
-}
-impl<M: Mode> View<SkinDeformer, M> {
-    #[inline(always)]
-    pub(crate) fn element_view(&self) -> &View<Element, M> {
-        view_project!(self, element)
-    }
-}
-
 // ufbx.c:18997-19014 `ufbxi_find_dst_connections`
 // `prop: Option<&[u8]>` carries C's nullable `const char *prop`: `None` is C's
 // `NULL`, `Some` the NUL-terminated interned name minted once by the caller.
@@ -8494,7 +8478,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             }
         }
 
-        let conns: List<Connection> = find_dst_connections(node.element_view(), None);
+        let conns: List<Connection> = find_dst_connections(node.element(), None);
 
         // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
         // SAFETY: `conns` is the contiguous subrange of this element's
@@ -8808,7 +8792,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
         // Iterate through meshes so we can pad the vertices to the largest one
         {
-            let conns: List<Connection> = find_src_connections(skin_view.element_view(), None);
+            let conns: List<Connection> = find_src_connections(skin_view.element(), None);
             // C: `ufbxi_for_list(ufbx_connection, conn, conns)`
             // SAFETY: `conns` is the contiguous subrange of this element's
             // `push_pop`-materialized connection run that `find_src_connections`
