@@ -4925,17 +4925,15 @@ pub(crate) fn read_mesh(uc: &Context, node: &NodeView, info: &ElementInfoView) -
 
 // ufbx.c:13813-13823 `ufbxi_read_nurbs_topology`
 #[inline(never)]
-pub(crate) unsafe fn read_nurbs_topology(form: *const u8) -> NurbsTopology {
-    // SAFETY: `form` is a NUL-terminated string (fn contract) — callers pass the
-    // `'C'` value fetched from the parse tree, whose payload is NUL-terminated.
-    unsafe {
-        if strcmp(form, b"Open\0".as_ptr()) == 0 {
-            return NurbsTopology::Open;
-        } else if strcmp(form, b"Closed\0".as_ptr()) == 0 {
-            return NurbsTopology::Closed;
-        } else if strcmp(form, b"Periodic\0".as_ptr()) == 0 {
-            return NurbsTopology::Periodic;
-        }
+pub(crate) fn read_nurbs_topology(form: &[u8]) -> NurbsTopology {
+    // C: `strcmp(form, "Open")` over the NUL-terminated `'C'` value — `c_strcmp`
+    // stops at the first NUL like `strcmp`, and an exhausted slice reads as NUL.
+    if c_strcmp(form, b"Open\0") == 0 {
+        return NurbsTopology::Open;
+    } else if c_strcmp(form, b"Closed\0") == 0 {
+        return NurbsTopology::Closed;
+    } else if c_strcmp(form, b"Periodic\0") == 0 {
+        return NurbsTopology::Periodic;
     }
     NurbsTopology::Open
 }
@@ -4973,8 +4971,10 @@ pub(crate) unsafe fn read_nurbs_curve(
         "ufbxi_find_val1(node, ufbxi_Form, \"C\", (char**)&form)"
     );
     // SAFETY: the `'C'` fetch above succeeded (checked), so `form` points at the
-    // NUL-terminated parse-tree string `read_nurbs_topology` requires; `nurbs` is
-    // the fresh non-null element pushed above.
+    // NUL-terminated parse-tree string, whose terminator bounds `strlen` and
+    // whose bytes stay live and unwritten for the parse tree's lifetime.
+    let form: &[u8] = unsafe { slice_from_ptr(form, strlen(form)) };
+    // SAFETY: `nurbs` is the fresh non-null element pushed above.
     unsafe {
         (*nurbs).basis.topology = read_nurbs_topology(form);
     }
@@ -5054,8 +5054,13 @@ pub(crate) unsafe fn read_nurbs_surface(
         unsafe { (*nurbs).flip_normals = flip_normals };
     }
     // SAFETY: the `"CC"` fetch above succeeded (checked), so `form_u`/`form_v`
-    // point at NUL-terminated parse-tree strings; `nurbs` is the fresh non-null
-    // element pushed above.
+    // point at NUL-terminated parse-tree strings, whose terminators bound
+    // `strlen` and whose bytes stay live and unwritten for the parse tree's
+    // lifetime.
+    let form_u: &[u8] = unsafe { slice_from_ptr(form_u, strlen(form_u)) };
+    // SAFETY: as `form_u` — the same checked `"CC"` fetch.
+    let form_v: &[u8] = unsafe { slice_from_ptr(form_v, strlen(form_v)) };
+    // SAFETY: `nurbs` is the fresh non-null element pushed above.
     unsafe {
         (*nurbs).basis_u.topology = read_nurbs_topology(form_u);
         (*nurbs).basis_v.topology = read_nurbs_topology(form_v);
