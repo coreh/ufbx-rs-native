@@ -2893,10 +2893,18 @@ pub(crate) unsafe fn fetch_mesh_materials(
 }
 
 // ufbx.c:19199-19219 `ufbxi_fetch_deformers`
+//
+// # Safety
+// `element` heads a live, arena-owned `ufbx_element`. With `search_node` set,
+// its provenance must additionally span the ENCLOSING element struct: the walk
+// then reaches `ufbxi_get_element_node`, which reads `ufbx_node` fields past
+// `size_of::<Element>()`, so a pointer derived from a header-only
+// `&View<Element>` may not address them. With `search_node` clear the walk
+// stays within the `ufbx_element` header, where header-only provenance suffices.
 #[inline(never)]
 pub(crate) unsafe fn fetch_deformers(
     uc: &Context,
-    list: *mut RefList<Element>,
+    list: &RefListView<Element>,
     element: *mut Element,
     search_node: bool,
 ) -> Result<(), Fail> {
@@ -2951,15 +2959,13 @@ pub(crate) unsafe fn fetch_deformers(
         }
     }
 
-    // SAFETY: `list` is the caller's out-list (fn contract).
-    unsafe {
-        (*list).data = uc
-            .result_view()
+    list.set_data(
+        uc.result_view()
             .push_pop::<*mut Element>(uc.tmp_stack_view(), num_deformers)
-            as *const Ref<Element>;
-        (*list).count = num_deformers;
-        ufbxi_check!(uc, !(*list).data.is_null(), "list->data");
-    }
+            as *const Ref<Element>,
+    );
+    list.set_count(num_deformers);
+    ufbxi_check!(uc, !list.data().is_null(), "list->data");
 
     Ok(())
 }
@@ -9535,7 +9541,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
             unsafe {
                 fetch_deformers(
                     uc,
-                    mesh.all_deformers_raw(),
+                    mesh.all_deformers_view(),
                     mesh.element_raw(),
                     search_node,
                 )
