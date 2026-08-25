@@ -7161,28 +7161,38 @@ pub(crate) fn read_constraint(
 }
 
 // ufbx.c:14837-14939 `ufbxi_read_synthetic_attribute`
+//
+// # Safety
+// `sub_type` and `super_type` must each be NUL-terminated within their own run:
+// `strlen` walks `sub_type` from `as_ptr()` for the unknown-attribute fallback
+// and `read_unknown` walks `super_type` the same way — an obligation `&[u8]`
+// does not carry.
 #[inline(never)]
 pub(crate) unsafe fn read_synthetic_attribute(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &ElementInfoView,
     type_str: String,
-    sub_type: *const u8,
-    super_type: *const u8,
+    sub_type: &[u8],
+    super_type: &[u8],
 ) -> Result<(), Fail> {
-    let mut sub_type = sub_type;
+    let mut sub_type: &[u8] = sub_type;
 
     // Some legacy (version 6000) files store mesh nodes without any `sub_type`
     // There seems to be no robust indicator, so detect it from `Vertices` and `PolygonVertexIndex`
-    if sub_type == EMPTY_CHAR.as_ptr() {
+    // C-parity: `sub_type` is matched by POINTER IDENTITY against the interned
+    // constants, so compare the borrowed run's own address; the interned
+    // `ufbxi_Mesh` static carries its own terminator, matching the run-plus-NUL
+    // span this parameter takes.
+    if sub_type.as_ptr() == EMPTY_CHAR.as_ptr() {
         let node_vertices = find_child(node, sp::Vertices.as_ptr());
         let node_indices = find_child(node, sp::PolygonVertexIndex.as_ptr());
         if node_vertices.is_some() && node_indices.is_some() {
-            sub_type = sp::Mesh.as_ptr();
+            sub_type = &sp::Mesh[..];
         }
     }
 
-    if (sub_type == EMPTY_CHAR.as_ptr() || sub_type == sp::Model.as_ptr())
+    if (sub_type.as_ptr() == EMPTY_CHAR.as_ptr() || sub_type.as_ptr() == sp::Model.as_ptr())
         && type_str.data == sp::Model.as_ptr()
     {
         // Plain model
@@ -7191,11 +7201,11 @@ pub(crate) unsafe fn read_synthetic_attribute(
 
     // C: `ufbxi_element_info attrib_info = *info;` — struct assignment is a
     // memcpy; `ufbxi_element_info` has no Rust `Copy` (it embeds the generated
-    // `ufbx_props`), so read the bytes through the pointer instead.
-    // SAFETY: `info` is the caller's live, initialized `ufbxi_element_info`; the
-    // bitwise copy mirrors the C struct assignment and both copies stay in scope
-    // only for the duration of this call, matching C's aliasing of the two.
-    let mut attrib_info: ElementInfo = unsafe { core::ptr::read(info) };
+    // `ufbx_props`), so read the bytes through the view instead.
+    // SAFETY: `info` views the caller's live, initialized `ufbxi_element_info`;
+    // the bitwise copy mirrors the C struct assignment and both copies stay in
+    // scope only for the duration of this call, matching C's aliasing of the two.
+    let mut attrib_info: ElementInfo = unsafe { core::ptr::read(info.get()) };
 
     attrib_info.fbx_id = push_synthetic_id(uc);
 
@@ -7227,8 +7237,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
             attrib_info.name = attrib_name_str;
             let attrib_id: u64 = synthetic_id_from_string(uc, type_and_name.data);
             ufbxi_check!(uc, attrib_id != 0, "attrib_id");
-            // SAFETY: `info` is the caller's live `ufbxi_element_info`.
-            if unsafe { (*info).fbx_id } != attrib_id && !fbx_id_exists(uc, attrib_id) {
+            if info.fbx_id() != attrib_id && !fbx_id_exists(uc, attrib_id) {
                 attrib_info.fbx_id = attrib_id;
             }
         }
@@ -7236,17 +7245,14 @@ pub(crate) unsafe fn read_synthetic_attribute(
 
     // 6x00: Link the node to the node attribute so property connections can be
     // redirected from connections if necessary.
-    // SAFETY: `info` is the caller's live `ufbxi_element_info`.
-    insert_fbx_attr(uc, unsafe { (*info).fbx_id }, attrib_info.fbx_id)?;
+    insert_fbx_attr(uc, info.fbx_id(), attrib_info.fbx_id)?;
 
     // Split properties between the node and the attribute.
     // Consider all user properties as node properties.
-    // SAFETY: `info` is the caller's live `ufbxi_element_info`.
-    let ps: *mut Prop = unsafe { (*info).props.props.data } as *mut Prop;
+    let ps: *mut Prop = info.props_view().props_data();
     let mut dst: usize = 0;
     let mut src: usize = 0;
-    // SAFETY: as above.
-    let end: usize = unsafe { (*info).props.props.count };
+    let end: usize = info.props_view().props_count();
     while src < end {
         // SAFETY: `src < end` bounds `ps.add(src)` inside the `end`-element prop
         // run `info->props.props` points at, and each prop's `name.data` is a
@@ -7286,27 +7292,20 @@ pub(crate) unsafe fn read_synthetic_attribute(
         !attrib_info.props.props.data.is_null(),
         "attrib_info.props.props.data"
     );
-    // SAFETY: `info` is the caller's live `ufbxi_element_info`.
+    // SAFETY: `info` views the caller's live `ufbxi_element_info` with
+    // write-capable provenance, so the `props.props.count` leaf inside it is
+    // writable through the view's pointer.
     unsafe {
-        (*info).props.props.count = dst;
+        (*info.get()).props.props.count = dst;
     }
-
-    // `read_bone` matches on the interned run's ADDRESS, so borrow the bytes
-    // `sub_type` already points at; `slice::from_raw_parts` (not
-    // `slice_from_ptr`) keeps a zero-length run's own pointer, which the
-    // identity comparison needs.
-    // SAFETY: `sub_type` is an interned NUL-terminated string — a pool string,
-    // one of the `ufbxi_*` statics, or `EMPTY_CHAR` — readable for its own
-    // `strlen` bytes, and interned runs are never moved or rewritten.
-    let sub_type_bytes: &[u8] = unsafe { core::slice::from_raw_parts(sub_type, strlen(sub_type)) };
 
     // SAFETY (this whole dispatch): every arm hands the same parse-tree NodeView
     // `node`, the local `&raw mut attrib_info`, and interned NUL-terminated
-    // `type_str` / `sub_type` / `super_type` string pointers to the per-type
-    // reader selected by the pointer-identity comparisons; each `read_element`
-    // arm pairs `size_of::<T>()` with `T`'s own `ElementType`.
+    // `type_str` / `sub_type` / `super_type` strings to the per-type reader
+    // selected by the pointer-identity comparisons; each `read_element` arm
+    // pairs `size_of::<T>()` with `T`'s own `ElementType`.
     unsafe {
-        if sub_type == sp::Mesh.as_ptr() {
+        if sub_type.as_ptr() == sp::Mesh.as_ptr() {
             // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
             // local — write-capable provenance, live and unmoved across the
             // call.
@@ -7315,7 +7314,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 node,
                 View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
             )?;
-        } else if sub_type == sp::Light.as_ptr() {
+        } else if sub_type.as_ptr() == sp::Light.as_ptr() {
             read_element(
                 uc,
                 node,
@@ -7323,7 +7322,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 size_of::<Light>(),
                 ElementType::Light,
             )?;
-        } else if sub_type == sp::Camera.as_ptr() {
+        } else if sub_type.as_ptr() == sp::Camera.as_ptr() {
             read_element(
                 uc,
                 node,
@@ -7331,9 +7330,9 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 size_of::<Camera>(),
                 ElementType::Camera,
             )?;
-        } else if sub_type == sp::LimbNode.as_ptr()
-            || sub_type == sp::Limb.as_ptr()
-            || sub_type == sp::Root.as_ptr()
+        } else if sub_type.as_ptr() == sp::LimbNode.as_ptr()
+            || sub_type.as_ptr() == sp::Limb.as_ptr()
+            || sub_type.as_ptr() == sp::Root.as_ptr()
         {
             // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
             // local — write-capable provenance, live and unmoved across the
@@ -7342,9 +7341,10 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 uc,
                 node,
                 View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
-                sub_type_bytes,
+                sub_type,
             )?;
-        } else if sub_type == sp::Null.as_ptr() || sub_type == sp::Marker.as_ptr() {
+        } else if sub_type.as_ptr() == sp::Null.as_ptr() || sub_type.as_ptr() == sp::Marker.as_ptr()
+        {
             read_element(
                 uc,
                 node,
@@ -7352,7 +7352,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 size_of::<Empty>(),
                 ElementType::Empty,
             )?;
-        } else if sub_type == sp::NurbsCurve.as_ptr() {
+        } else if sub_type.as_ptr() == sp::NurbsCurve.as_ptr() {
             if find_child(node, sp::KnotVector.as_ptr()).is_none() {
                 return Ok(());
             }
@@ -7364,7 +7364,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 node,
                 View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
             )?;
-        } else if sub_type == sp::NurbsSurface.as_ptr() {
+        } else if sub_type.as_ptr() == sp::NurbsSurface.as_ptr() {
             if find_child(node, sp::KnotVectorU.as_ptr()).is_none() {
                 return Ok(());
             }
@@ -7379,7 +7379,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 node,
                 View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
             )?;
-        } else if sub_type == sp::Line.as_ptr() {
+        } else if sub_type.as_ptr() == sp::Line.as_ptr() {
             if find_child(node, sp::Points.as_ptr()).is_none() {
                 return Ok(());
             }
@@ -7394,7 +7394,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 node,
                 View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
             )?;
-        } else if sub_type == sp::TrimNurbsSurface.as_ptr() {
+        } else if sub_type.as_ptr() == sp::TrimNurbsSurface.as_ptr() {
             if find_child(node, sp::Layer.as_ptr()).is_none() {
                 return Ok(());
             }
@@ -7405,7 +7405,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 size_of::<NurbsTrimSurface>(),
                 ElementType::NurbsTrimSurface,
             )?;
-        } else if sub_type == sp::Boundary.as_ptr() {
+        } else if sub_type.as_ptr() == sp::Boundary.as_ptr() {
             read_element(
                 uc,
                 node,
@@ -7413,7 +7413,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 size_of::<NurbsTrimBoundary>(),
                 ElementType::NurbsTrimBoundary,
             )?;
-        } else if sub_type == sp::CameraStereo.as_ptr() {
+        } else if sub_type.as_ptr() == sp::CameraStereo.as_ptr() {
             read_element(
                 uc,
                 node,
@@ -7421,7 +7421,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 size_of::<StereoCamera>(),
                 ElementType::StereoCamera,
             )?;
-        } else if sub_type == sp::CameraSwitcher.as_ptr() {
+        } else if sub_type.as_ptr() == sp::CameraSwitcher.as_ptr() {
             read_element(
                 uc,
                 node,
@@ -7429,7 +7429,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 size_of::<CameraSwitcher>(),
                 ElementType::CameraSwitcher,
             )?;
-        } else if sub_type == sp::FKEffector.as_ptr() {
+        } else if sub_type.as_ptr() == sp::FKEffector.as_ptr() {
             // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
             // local — write-capable provenance, live and unmoved across the
             // call.
@@ -7437,19 +7437,19 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 uc,
                 node,
                 View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
-                sub_type_bytes,
+                sub_type,
                 MarkerType::FkEffector,
             )?;
-        } else if sub_type == sp::IKEffector.as_ptr() {
+        } else if sub_type.as_ptr() == sp::IKEffector.as_ptr() {
             // SAFETY: as above.
             read_marker(
                 uc,
                 node,
                 View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
-                sub_type_bytes,
+                sub_type,
                 MarkerType::IkEffector,
             )?;
-        } else if sub_type == sp::LodGroup.as_ptr() {
+        } else if sub_type.as_ptr() == sp::LodGroup.as_ptr() {
             read_element(
                 uc,
                 node,
@@ -7458,25 +7458,25 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 ElementType::LodGroup,
             )?;
         } else {
-            let sub_type_str: String = String::new_c(sub_type, strlen(sub_type));
+            // C-parity: the length is `strlen`, not the borrowed run's own
+            // length; `sub_type` is NUL-terminated within its run (fn contract).
+            let sub_type_str: String = String::new_c(sub_type.as_ptr(), strlen(sub_type.as_ptr()));
             // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
             // local — write-capable provenance, live and unmoved across the
-            // call; `super_type` is the caller's NUL-terminated interned node
-            // name, so the borrowed run spans it and its terminator, which is
-            // what `read_unknown`'s `strlen` walks.
+            // call; `super_type` is NUL-terminated within its own run (fn
+            // contract), which is what `read_unknown`'s `strlen` walks.
             read_unknown(
                 uc,
                 node,
                 View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
                 type_str,
                 sub_type_str,
-                crate::prelude::slice_from_ptr(super_type, strlen(super_type) + 1),
+                super_type,
             )?;
         }
     }
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info`.
-    connect_oo(uc, attrib_info.fbx_id, unsafe { (*info).fbx_id })?;
+    connect_oo(uc, attrib_info.fbx_id, info.fbx_id())?;
     Ok(())
 }
 
@@ -7578,6 +7578,12 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     // SAFETY: as above.
     let sub_type_bytes: &[u8] =
         unsafe { core::slice::from_raw_parts(sub_type, sub_type_str.length) };
+    // `read_synthetic_attribute` measures `sub_type` with `strlen`, so its
+    // borrow spans the pooled run plus the terminator that walk ends on.
+    // SAFETY: as above, plus the trailing NUL the string pool writes after every
+    // interned run.
+    let sub_type_run: &[u8] =
+        unsafe { core::slice::from_raw_parts(sub_type, sub_type_str.length + 1) };
     // SAFETY: the template lookup's result points into uc's own template array
     // (or is null, mapped to `None`), which outlives `info`.
     unsafe {
@@ -7592,7 +7598,18 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
     unsafe {
         if name == sp::Model.as_ptr() {
             if uc.version() < 7000 {
-                read_synthetic_attribute(uc, node, &raw mut info, type_str, sub_type, name)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info`
+                // local — write-capable provenance, live and unmoved across the
+                // call; `sub_type_run` and `name_run` each span a pooled run
+                // plus the terminator the callee's `strlen` walks end on.
+                read_synthetic_attribute(
+                    uc,
+                    node,
+                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    type_str,
+                    sub_type_run,
+                    name_run,
+                )?;
             }
             // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
             // write-capable provenance, live and unmoved across the call.
