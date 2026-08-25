@@ -7710,9 +7710,7 @@ pub(crate) fn resolve_filenames(
         }?;
     }
 
-    // SAFETY: `filename`/`relative_filename` view live strblobs of the element
-    // being resolved (view mint invariant).
-    unsafe { resolve_relative_filename(uc, filename.get(), relative_filename.as_ptr(), raw) }?;
+    resolve_relative_filename(uc, filename, relative_filename, raw)?;
 
     Ok(())
 }

@@ -141,7 +141,7 @@ use crate::native::thread::{
     thread_pool_wait_group, THREAD_GROUP_COUNT,
 };
 use crate::native::view::{view_project, view_raw_mut, view_read, view_read_shared, view_write};
-use crate::native::view::{Const, Mode, Mut, SliceViewIter, View};
+use crate::native::view::{Mode, Mut, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::as_f64;
 use crate::prelude::{
@@ -11044,20 +11044,14 @@ pub(crate) unsafe fn is_absolute_path(path: *const u8, length: usize) -> bool {
 
 // ufbx.c:16567-16650 `ufbxi_resolve_relative_filename`
 #[inline(never)]
-pub(crate) unsafe fn resolve_relative_filename(
+pub(crate) fn resolve_relative_filename<M: Mode>(
     uc: &Context,
-    p_dst: *mut Strblob,
-    p_src: *const Strblob,
+    p_dst: &View<Strblob>,
+    p_src: &View<Strblob, M>,
     raw: bool,
 ) -> Result<(), Fail> {
-    let (mut src, mut src_length): (*const u8, usize) = {
-        // SAFETY: `p_src` is the caller's live `ufbxi_strblob` source (fn
-        // contract), read through the member selected by the same `raw` flag
-        // the caller threads everywhere; the read-only tag ends with this
-        // block, before anything writes through `p_dst`.
-        let p_src: &View<Strblob, Const> = unsafe { View::<_, Const>::from_ptr(p_src) };
-        (strblob_data(p_src, raw), strblob_length(p_src, raw))
-    };
+    let (mut src, mut src_length): (*const u8, usize) =
+        (strblob_data(p_src, raw), strblob_length(p_src, raw));
 
     // Skip leading directory separators and early return if the relative path is empty
     // SAFETY: `src` .. `src + src_length` is the source path run described by
@@ -11069,9 +11063,6 @@ pub(crate) unsafe fn resolve_relative_filename(
         src_length -= 1;
     }
     if src_length == 0 {
-        // SAFETY: `p_dst` is the caller's live, write-capable `ufbxi_strblob`
-        // destination (fn contract).
-        let p_dst: &View<Strblob> = unsafe { View::<_, Mut>::from_ptr(p_dst) };
         strblob_set(p_dst, core::ptr::null(), 0, raw);
         return Ok(());
     }
@@ -11213,9 +11204,6 @@ pub(crate) unsafe fn resolve_relative_filename(
         pop::<u8>(uc.tmp_stack_mut_ptr(), result_cap, core::ptr::null_mut());
     }
 
-    // SAFETY: `p_dst` is the caller's live, write-capable `ufbxi_strblob`
-    // destination (fn contract).
-    let p_dst: &View<Strblob> = unsafe { View::<_, Mut>::from_ptr(p_dst) };
     // `dst` is the interned string, which outlives the popped scratch run.
     strblob_set(p_dst, dst.data, dst.length, raw);
 

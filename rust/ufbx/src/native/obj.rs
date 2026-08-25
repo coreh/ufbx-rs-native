@@ -2497,15 +2497,21 @@ pub(crate) fn obj_load_mtl(uc: &Context) -> Result<(), Fail> {
             let dst: *mut Blob = dst.as_mut_ptr();
             // SAFETY: `dst` is the unaliased local out-param the resolver
             // fully writes before Ok, so the open below reads an initialized
-            // blob; the relative path is the obj context's own stored one, and
-            // `stream` is likewise an unaliased local.
+            // blob; `Mut` storage tolerates the still-uninitialized slot. The
+            // relative path is the obj context's own stored one, a distinct
+            // live strblob of matching `raw`-ness.
+            let (p_dst, p_src): (&View<Strblob>, &View<Strblob>) = unsafe {
+                (
+                    View::<Strblob, Mut>::from_ptr(dst as *mut Strblob),
+                    View::<Strblob, Mut>::from_ptr(
+                        uc.obj().mtllib_relative_path_mut_ptr() as *mut Strblob
+                    ),
+                )
+            };
+            resolve_relative_filename(uc, p_dst, p_src, true)?;
+            // SAFETY: `stream` is an unaliased local, and `dst` is initialized
+            // by the resolver above.
             unsafe {
-                resolve_relative_filename(
-                    uc,
-                    dst as *mut Strblob,
-                    uc.obj().mtllib_relative_path_mut_ptr() as *const Strblob,
-                    true,
-                )?;
                 has_stream = open_file(
                     uc.opts_view().open_file_cb_ptr(),
                     &raw mut stream,
