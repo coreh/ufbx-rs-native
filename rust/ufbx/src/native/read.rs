@@ -448,14 +448,11 @@ pub(crate) unsafe fn deduplicate_properties(list: *mut List<Prop>) {
 
 // ufbx.c:11903-11932 `ufbxi_read_properties`
 #[inline(never)]
-pub(crate) unsafe fn read_properties(
+pub(crate) fn read_properties(
     uc: &Context,
     parent: &NodeView,
-    props: *mut Props,
+    props: &PropsView,
 ) -> Result<(), Fail> {
-    // SAFETY: `props` is the caller's writable `ufbx_props` slot (fn contract),
-    // owned by uc's result arena — write-capable provenance, stable for this call.
-    let props: &PropsView = unsafe { PropsView::from_ptr(props) };
     props.set_defaults(None);
 
     let mut version: i32 = 70;
@@ -514,18 +511,14 @@ pub(crate) unsafe fn read_properties(
 
 // Rust-port infrastructure (not a ufbx.c section): the write surface
 // `ufbxi_read_thumbnail` needs over the scene metadata's `ufbx_thumbnail` slot
-// — the property table it fills (as a sub-view, and as an addr-of parity site
-// for `read_properties`), the scalar leaves and the `data` blob.
+// — the property table it fills (as a sub-view, which is what
+// `read_properties` takes), the scalar leaves and the `data` blob.
 pub(crate) type ThumbnailView = View<Thumbnail>;
 
 impl ThumbnailView {
     #[inline(always)]
     pub(crate) fn props_view(&self) -> &PropsView {
         view_project!(self, props)
-    }
-    #[inline(always)]
-    pub(crate) fn props_mut_ptr(&self) -> *mut Props {
-        view_raw_mut!(self, props)
     }
     #[inline(always)]
     pub(crate) fn set_width(&self, width: u32) {
@@ -552,9 +545,7 @@ pub(crate) fn read_thumbnail(
     node: &NodeView,
     thumbnail: &ThumbnailView,
 ) -> Result<(), Fail> {
-    // SAFETY: `props_mut_ptr()` is the viewed thumbnail's own live `props`
-    // field, in uc's result arena — `read_properties`' writable-slot contract.
-    unsafe { read_properties(uc, node, thumbnail.props_mut_ptr()) }?;
+    read_properties(uc, node, thumbnail.props_view())?;
 
     let props: &PropsView = thumbnail.props_view();
     let custom_width: i64 = api_find_int_len(props, b"CustomWidth", 0);
@@ -620,15 +611,7 @@ fn thumbnail_format_from_raw(raw: i32) -> ThumbnailFormat {
 // ufbx.c:11969-11979 `ufbxi_read_scene_info`
 #[inline(never)]
 pub(crate) fn read_scene_info(uc: &Context, node: &NodeView) -> Result<(), Fail> {
-    // SAFETY: `node` is a parse-tree NodeView and the destination is uc's own
-    // scene metadata `props` slot, reached through its element views.
-    unsafe {
-        read_properties(
-            uc,
-            node,
-            uc.scene_view().metadata_view().scene_props_mut_ptr(),
-        )?;
-    }
+    read_properties(uc, node, uc.scene_view().metadata_view().props_view())?;
 
     let thumbnail = find_child(node, sp::Thumbnail.as_ptr());
     if let Some(thumbnail) = thumbnail {
@@ -977,7 +960,10 @@ pub(crate) fn read_definitions(uc: &Context) -> Result<(), Fail> {
                     )?;
                 }
 
-                read_properties(uc, props, &raw mut (*tmpl).props)?;
+                // SAFETY: `&raw mut (*tmpl).props` addresses the freshly pushed
+                // template's own `ufbx_props` field in uc's tmp stack —
+                // write-capable provenance, stable for this call.
+                read_properties(uc, props, PropsView::from_ptr(&raw mut (*tmpl).props))?;
             }
         }
     }
@@ -7247,9 +7233,7 @@ pub(crate) unsafe fn read_synthetic_attribute(
 // ufbx.c:14941-14945 `ufbxi_read_global_settings`
 #[inline(never)]
 pub(crate) fn read_global_settings(uc: &Context, node: &NodeView) -> Result<(), Fail> {
-    // SAFETY: `node` is a parse-tree NodeView and the destination is uc's own
-    // scene settings `props` slot, reached through its element views.
-    unsafe { read_properties(uc, node, uc.scene_view().settings_view().props_mut_ptr())? };
+    read_properties(uc, node, uc.scene_view().settings_view().props_view())?;
     Ok(())
 }
 
@@ -7326,12 +7310,13 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
 
     let name: *const u8 = node.name();
     let sub_type: *const u8 = sub_type_str.data;
-    // SAFETY: `node` is a parse-tree NodeView and `&raw mut info.props` is a local
-    // `ufbx_props` out-param; `name`/`sub_type` are pooled strings, which is
-    // what the template lookup compares by pointer identity, and its result
-    // points into uc's own template array (or is null, mapped to `None`).
+    // SAFETY: `&raw mut info.props` is a local `ufbx_props` out-param, exclusively
+    // owned by this frame — write-capable provenance, stable for the call;
+    // `name`/`sub_type` are pooled strings, which is what the template lookup
+    // compares by pointer identity, and its result points into uc's own template
+    // array (or is null, mapped to `None`).
     unsafe {
-        read_properties(uc, node, &raw mut info.props)?;
+        read_properties(uc, node, PropsView::from_ptr(&raw mut info.props))?;
         info.props.defaults = opt_ref(find_template(uc, name, sub_type));
     }
 

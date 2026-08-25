@@ -2728,10 +2728,6 @@ impl SceneMetadataView {
         view_raw_const!(self, scene_props)
     }
     #[inline(always)]
-    pub(crate) fn scene_props_mut_ptr(&self) -> *mut crate::generated::Props {
-        view_raw_mut!(self, scene_props)
-    }
-    #[inline(always)]
     pub(crate) fn thumbnail_view(&self) -> &crate::native::read::ThumbnailView {
         view_project!(self, thumbnail)
     }
