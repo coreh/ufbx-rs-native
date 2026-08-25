@@ -6438,23 +6438,17 @@ pub(crate) fn read_animation_curve(
 
 // ufbx.c:14534-14546 `ufbxi_read_material`
 #[inline(never)]
-pub(crate) unsafe fn read_material(
+pub(crate) fn read_material(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `Material` is the element struct for `ElementType::Material`.
-    let material: *mut Material = unsafe {
-        push_element::<Material>(
-            uc,
-            View::<ElementInfo>::from_ptr(info),
-            ElementType::Material,
-        )
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `Material` is the element struct for `ElementType::Material`.
+    let material: *mut Material =
+        unsafe { push_element::<Material>(uc, info, ElementType::Material) };
     ufbxi_check!(uc, !material.is_null(), "material");
 
     if let Some(got) = find_val1::<Checked<String>>(node, sp::ShadingModel.as_ptr()) {
@@ -7850,7 +7844,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 )?;
             }
         } else if name == sp::Material.as_ptr() {
-            read_material(uc, node, &raw mut info)?;
+            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+            // write-capable provenance, live and unmoved across the call.
+            read_material(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::Texture.as_ptr() {
             read_texture(uc, node, &raw mut info)?;
         } else if name == sp::LayeredTexture.as_ptr() {
