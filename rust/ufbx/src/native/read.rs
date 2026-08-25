@@ -7011,25 +7011,19 @@ pub(crate) fn read_selection_node(
 
 // ufbx.c:14773-14783 `ufbxi_read_character`
 #[inline(never)]
-pub(crate) unsafe fn read_character(
+pub(crate) fn read_character(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `Character` is the element struct for `ElementType::Character`.
-    let character: *mut Character = unsafe {
-        push_element::<Character>(
-            uc,
-            View::<ElementInfo>::from_ptr(info),
-            ElementType::Character,
-        )
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `Character` is the element struct for `ElementType::Character`.
+    let character: *mut Character =
+        unsafe { push_element::<Character>(uc, info, ElementType::Character) };
     ufbxi_check!(uc, !character.is_null(), "character");
 
     // TODO: There's some extremely cursed all-caps data in characters
@@ -7039,23 +7033,17 @@ pub(crate) unsafe fn read_character(
 
 // ufbx.c:14785-14798 `ufbxi_read_audio_clip`
 #[inline(never)]
-pub(crate) unsafe fn read_audio_clip(
+pub(crate) fn read_audio_clip(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `AudioClip` is the element struct for `ElementType::AudioClip`.
-    let audio: *mut AudioClip = unsafe {
-        push_element::<AudioClip>(
-            uc,
-            View::<ElementInfo>::from_ptr(info),
-            ElementType::AudioClip,
-        )
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `AudioClip` is the element struct for `ElementType::AudioClip`.
+    let audio: *mut AudioClip =
+        unsafe { push_element::<AudioClip>(uc, info, ElementType::AudioClip) };
     ufbxi_check!(uc, !audio.is_null(), "audio");
 
     // SAFETY: `audio` is the fresh non-null element pushed above.
@@ -7881,7 +7869,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             read_selection_node(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::Constraint.as_ptr() {
             if sub_type == sp::Character.as_ptr() {
-                read_character(uc, node, &raw mut info)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+                // write-capable provenance, live and unmoved across the call.
+                read_character(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
             } else {
                 read_constraint(uc, node, &raw mut info)?;
             }
@@ -7912,7 +7902,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 ElementType::AudioLayer,
             )?;
         } else if name == sp::Audio.as_ptr() {
-            read_audio_clip(uc, node, &raw mut info)?;
+            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+            // write-capable provenance, live and unmoved across the call.
+            read_audio_clip(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else {
             // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
             // write-capable provenance, live and unmoved across the call.
