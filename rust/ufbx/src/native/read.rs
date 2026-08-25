@@ -9279,14 +9279,19 @@ pub(crate) fn read_legacy_settings(uc: &Context, node: &NodeView) -> Result<(), 
 
 // ufbx.c:15818-15825 `ufbxi_unscaled_transform_to_matrix`
 #[inline(never)]
-pub(crate) unsafe fn unscaled_transform_to_matrix(t: *const Transform) -> Matrix {
-    // SAFETY: `t` is a live, initialized `ufbx_transform` (fn contract).
-    let mut transform: Transform = unsafe { *t };
+pub(crate) fn unscaled_transform_to_matrix<M: Mode>(t: &View<Transform, M>) -> Matrix {
+    // C: `ufbx_transform transform = *t;` — the three leaves copied off the view.
+    let mut transform: Transform = Transform {
+        translation: t.translation(),
+        rotation: t.rotation(),
+        scale: t.scale(),
+    };
     transform.scale.x = 1.0;
     transform.scale.y = 1.0;
     transform.scale.z = 1.0;
-    // SAFETY: `&transform` is a live, fully initialized local.
-    unsafe { transform_to_matrix(&transform) }
+    // SAFETY: the pointer addresses the live, fully initialized local, and
+    // `ufbx_transform_to_matrix` takes it by raw pointer and only reads it.
+    unsafe { transform_to_matrix(&raw const transform) }
 }
 
 // ufbx.c:15827-15837 `ufbxi_setup_root_node`
