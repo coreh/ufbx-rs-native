@@ -656,6 +656,10 @@ impl AsciiTokenView {
     pub(crate) fn type_(&self) -> u8 {
         view_read!(self, type_)
     }
+    #[inline(always)]
+    pub(crate) fn set_type_(&self, type_: u8) {
+        view_write!(self, type_, type_);
+    }
 }
 
 // ufbx.c:6267-6271 (anonymous `value` union inside `ufbxi_ascii_token`) —

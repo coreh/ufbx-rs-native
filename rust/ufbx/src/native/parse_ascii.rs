@@ -598,14 +598,11 @@ pub(crate) unsafe fn ascii_store_array(uc: &Context, tmp_buf: &BufView) -> Resul
 // C `ufbxi_nodiscard` -> `#[must_use]`.
 #[must_use]
 #[inline(never)]
-pub(crate) unsafe fn ascii_try_ignore_string(uc: &Context, token: *mut AsciiToken) -> bool {
+pub(crate) fn ascii_try_ignore_string(uc: &Context, token: &AsciiTokenView) -> bool {
     let ua: *mut Ascii = uc.ascii_mut_ptr();
 
     let c: u8 = ascii_skip_whitespace(uc);
-    // SAFETY: `token` points to a valid, live `AsciiToken` (caller contract).
-    unsafe {
-        (*token).str_len = 0;
-    }
+    token.set_str_len(0);
 
     if c == b'"' {
         // Replace `prev_token` with `token` but swap the buffers so `token` uses
@@ -621,10 +618,7 @@ pub(crate) unsafe fn ascii_try_ignore_string(uc: &Context, token: *mut AsciiToke
             (*ua).token.str_cap = swap_cap;
         }
 
-        // SAFETY: `token` points to a valid, live `AsciiToken` (caller contract).
-        unsafe {
-            (*token).type_ = ASCII_STRING;
-        }
+        token.set_type_(ASCII_STRING);
         // Skip opening quote
         ascii_next(uc);
         ufbxi_check_return!(
@@ -1897,9 +1891,7 @@ unsafe fn ascii_parse_node_rec(
         // HACK: If we are parsing an "array" that should be ignored, ie. `Content` when
         // `opts.ignore_embedded == true` try to skip the next token string if possible.
         if arr_type == b'-' {
-            // SAFETY: `ua` is `uc`'s own live `ascii` sub-context; the `&raw mut`
-            // projects its own `token` field as the ignore/retokenize out-param.
-            if !unsafe { ascii_try_ignore_string(uc, &raw mut (*ua).token) } {
+            if !ascii_try_ignore_string(uc, uc.ascii_view().token_view()) {
                 // SAFETY: as above — retokenizes `ua`'s own `token` in place.
                 unsafe {
                     ascii_next_token(uc, &raw mut (*ua).token)?;
