@@ -10933,12 +10933,15 @@ pub(crate) fn get_scale<M: Mode>(props: &View<Props, M>, node: &View<Node, Const
 }
 
 // ufbx.c:22836-22905 `ufbxi_get_transform`
+// `node` is C's non-nullable `const ufbx_node *` as a read-only view (the same
+// shape the `ufbxi_get_rotation`/`ufbxi_get_scale` fast paths take);
+// `translation_scale` carries C's nullable `const ufbx_vec3 *`.
 #[inline(never)]
-pub(crate) unsafe fn get_transform<M: Mode>(
+pub(crate) fn get_transform<M: Mode>(
     props: &View<Props, M>,
     order: RotationOrder,
-    node: *const Node,
-    translation_scale: *const Vec3,
+    node: &View<Node, Const>,
+    translation_scale: Option<&Vec3>,
 ) -> Transform {
     let scale_pivot: Vec3 = find_vec3(props, &sp::ScalingPivot, 0.0, 0.0, 0.0);
     let rot_pivot: Vec3 = find_vec3(props, &sp::RotationPivot, 0.0, 0.0, 0.0);
@@ -10975,23 +10978,15 @@ pub(crate) unsafe fn get_transform<M: Mode>(
     // WorldTransform = ParentWorldTransform * T * Roff * Rp * Rpre * R * Rpost * Rp-1 * Soff * Sp * S * Sp-1
     // NOTE: Rpost is inverted (!) after converting from PostRotation Euler angles
 
-    if !translation_scale.is_null() {
-        // SAFETY: `translation_scale` is non-null here, and the fn contract is
-        // that a non-null one points to a live, initialized `ufbx_vec3`.
-        unsafe {
-            translation.x *= (*translation_scale).x;
-            translation.y *= (*translation_scale).y;
-            translation.z *= (*translation_scale).z;
-        }
+    if let Some(translation_scale) = translation_scale {
+        translation.x *= translation_scale.x;
+        translation.y *= translation_scale.y;
+        translation.z *= translation_scale.z;
     }
 
-    // SAFETY: `node` points to the live, initialized `ufbx_node` whose transform
-    // is being composed (fn contract).
-    unsafe {
-        if (*node).has_adjust_transform {
-            mul_rotate_quat(&mut t, (*node).adjust_post_rotation);
-            mul_scale_real(&mut t, (*node).adjust_post_scale);
-        }
+    if node.has_adjust_transform() {
+        mul_rotate_quat(&mut t, node.adjust_post_rotation());
+        mul_scale_real(&mut t, node.adjust_post_scale());
     }
 
     sub_translate(&mut t, scale_pivot);
@@ -11001,8 +10996,7 @@ pub(crate) unsafe fn get_transform<M: Mode>(
     add_translate(&mut t, scale_offset);
 
     sub_translate(&mut t, rot_pivot);
-    // SAFETY: `node` is live (see above).
-    if unsafe { (*node).use_rotation_space } {
+    if node.use_rotation_space() {
         mul_inv_rotate(&mut t, post_rotation, RotationOrder::Xyz);
         mul_rotate(&mut t, rotation, order);
         mul_rotate(&mut t, pre_rotation, RotationOrder::Xyz);
@@ -11015,40 +11009,26 @@ pub(crate) unsafe fn get_transform<M: Mode>(
 
     add_translate(&mut t, translation);
 
-    // SAFETY: `node` is live (see above).
-    unsafe {
-        if (*node).has_adjust_transform {
-            add_translate(&mut t, (*node).adjust_pre_translation);
-            mul_rotate_quat(&mut t, (*node).adjust_pre_rotation);
-            mul_scale_real(&mut t, (*node).adjust_pre_scale);
-            t.translation.x *= (*node).adjust_translation_scale;
-            t.translation.y *= (*node).adjust_translation_scale;
-            t.translation.z *= (*node).adjust_translation_scale;
-        }
+    if node.has_adjust_transform() {
+        add_translate(&mut t, node.adjust_pre_translation());
+        mul_rotate_quat(&mut t, node.adjust_pre_rotation());
+        mul_scale_real(&mut t, node.adjust_pre_scale());
+        t.translation.x *= node.adjust_translation_scale();
+        t.translation.y *= node.adjust_translation_scale();
+        t.translation.z *= node.adjust_translation_scale();
     }
 
     // C: `if (node->adjust_mirror_axis)` — enum truthiness.
-    // SAFETY: `node` is live (see above); the branch condition established that
-    // the axis is not `None`, which is `ufbxi_mirror_translation`'s contract.
-    unsafe {
-        if (*node).adjust_mirror_axis != MirrorAxis::None {
-            mirror_translation(&mut t.translation, (*node).adjust_mirror_axis);
-            mirror_rotation(&mut t.rotation, (*node).adjust_mirror_axis);
-        }
+    if node.adjust_mirror_axis() != MirrorAxis::None {
+        // SAFETY: the branch condition established that the axis is not `None`,
+        // which is `ufbxi_mirror_translation`'s contract.
+        unsafe { mirror_translation(&mut t.translation, node.adjust_mirror_axis()) };
+        mirror_rotation(&mut t.rotation, node.adjust_mirror_axis());
     }
 
     // Make sure the fast paths are identical to this function.
-    // SAFETY: `node` is the same argument this fn received — live and unmoved,
-    // and nothing writes through it while the read-only view is held.
-    ufbxi_regression_assert!(is_quat_equal(
-        t.rotation,
-        get_rotation(props, order, unsafe { View::<Node, Const>::from_ptr(node) })
-    ));
-    // SAFETY: as above, for the scale-only fast path.
-    ufbxi_regression_assert!(is_vec3_equal(
-        t.scale,
-        get_scale(props, unsafe { View::<Node, Const>::from_ptr(node) })
-    ));
+    ufbxi_regression_assert!(is_quat_equal(t.rotation, get_rotation(props, order, node)));
+    ufbxi_regression_assert!(is_vec3_equal(t.scale, get_scale(props, node)));
 
     t
 }
@@ -11186,7 +11166,7 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
             find_int(node_view.props_view(), &sp::RotationSpaceForLimitOnly, 0) != 0;
         node_view.set_use_rotation_space(rotation_active && !rotation_limit_only);
 
-        let mut transform_scale: *const Vec3 = ptr::null();
+        let mut transform_scale: Option<&Vec3> = None;
         // C: `if (node->parent && node->parent->scale_helper)` — the helper link
         // is reached through the parent, as in C.
         if let Some(parent) = node_view.parent() {
@@ -11201,24 +11181,22 @@ pub(crate) fn update_node(node_view: &NodeView, overrides: &[TransformOverride])
                     unsafe { NodeView::from_ptr(scale_helper.ptr()) };
                 // SAFETY: `local_transform_ptr()` is the helper's own live
                 // transform field, so the nested `scale` member lies inside it;
-                // the projection asserts nothing beyond that (no
-                // `View<Transform>` impl exists to reach the member safely).
+                // the borrow asserts nothing beyond that (no `View<Transform>`
+                // impl exists to reach the member safely), and it is read-only
+                // and dead before anything writes the helper's transform.
                 transform_scale =
-                    unsafe { &raw const (*scale_helper_view.local_transform_ptr()).scale };
+                    Some(unsafe { &(*scale_helper_view.local_transform_ptr()).scale });
             }
         }
-        // SAFETY: `ufbxi_get_transform` takes the node whose transform it
-        // composes by raw pointer and only reads it; `node_view.get()` is the
-        // view's own live storage, and `transform_scale` is either null or the
-        // live scale of the parent's scale helper (set above).
-        let local_transform: Transform = unsafe {
-            get_transform(
-                node_view.props_view(),
-                node_view.rotation_order(),
-                node_view.get(),
-                transform_scale,
-            )
-        };
+        // SAFETY: `node_view.get()` is the view's own live, initialized storage,
+        // read-only for the composition; nothing writes through the node while
+        // the read-only view is held.
+        let local_transform: Transform = get_transform(
+            node_view.props_view(),
+            node_view.rotation_order(),
+            unsafe { View::<Node, Const>::from_ptr(node_view.get()) },
+            transform_scale,
+        );
         node_view.set_local_transform(local_transform);
         // C: `if (node->is_scale_helper && node->parent && node->parent->inherit_scale_node)`
         if node_view.is_scale_helper() {

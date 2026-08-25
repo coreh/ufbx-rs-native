@@ -1875,7 +1875,7 @@ pub(crate) unsafe fn evaluate_transform_flags(
         return IDENTITY_TRANSFORM;
     }
 
-    let mut translation_scale: *const Vec3 = core::ptr::null();
+    let mut translation_scale: Option<&Vec3> = None;
     let mut helper_scale = MaybeUninit::<Prop>::uninit(); // ufbxi_uninit
     let mut scale_factor: Vec3 = ONE_VEC3;
     let mut use_scale_factor: bool = false;
@@ -1971,8 +1971,9 @@ pub(crate) unsafe fn evaluate_transform_flags(
             }
             // C: `translation_scale = &helper_scale.value_vec3;`
             // SAFETY: `&raw const (*hs).value_vec4` addresses the local prop's own
-            // value, reinterpreted as the `Vec3` translation scale.
-            translation_scale = unsafe { &raw const (*hs).value_vec4 as *const Vec3 };
+            // value, reinterpreted as the `Vec3` translation scale; the borrow is
+            // read-only and the local is not written through `hs` after it.
+            translation_scale = Some(unsafe { &*(&raw const (*hs).value_vec4 as *const Vec3) });
         }
     }
 
@@ -2015,16 +2016,17 @@ pub(crate) unsafe fn evaluate_transform_flags(
     let mut transform = MaybeUninit::<Transform>::uninit(); // ufbxi_uninit
     let t: *mut Transform = transform.as_mut_ptr();
     if (components & TransformFlags::INCLUDE_TRANSLATION.raw()) != 0 {
-        // SAFETY: `t` is the local transform storage; `get_transform` reads a
-        // read-only view over the local `props` and the live `node`, and the
-        // result is written into `t`.
+        // SAFETY: `t` is the local transform storage; `get_transform` reads
+        // read-only views over the local `props` and the live `node`, neither
+        // written through while the views are held, and the result is written
+        // into `t`.
         unsafe {
             core::ptr::write(
                 t,
                 get_transform(
                     View::<Props, Const>::from_ptr(&raw const props),
                     order,
-                    node,
+                    View::<Node, Const>::from_ptr(node),
                     translation_scale,
                 ),
             );
