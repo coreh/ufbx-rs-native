@@ -1030,10 +1030,17 @@ pub(crate) fn buf_free_unused(view: &BufView) {
 }
 
 // ufbx.c:4173-4260 `ufbxi_pop_size`
+//
+// # Safety
+//
+// `dst` is either null or a writable run of `size * n` bytes — an untyped
+// destination whose length is a promise the caller makes and the parameter
+// types cannot carry, so this stays an `unsafe fn`.
 #[inline(never)]
-pub(crate) unsafe fn pop_size(b: *mut Buf, size: usize, n: usize, dst: *mut c_void, peek: bool) {
-    // SAFETY: `b` addresses a live `Buf` (this fn's raw-pointer contract);
-    // reading its `unordered` flag and `num_items`.
+pub(crate) unsafe fn pop_size(view: &BufView, size: usize, n: usize, dst: *mut c_void, peek: bool) {
+    let b: *mut Buf = view.get();
+    // SAFETY: `b` is the view's write-provenance pointer to a live `Buf` (the
+    // mint); reading its `unordered` flag and `num_items`.
     ufbx_assert!(!unsafe { (*b).unordered });
     ufbx_assert!(size > 0);
     ufbx_assert!(unsafe { (*b).num_items } >= n);
@@ -1166,12 +1173,9 @@ pub(crate) unsafe fn pop_size(b: *mut Buf, size: usize, n: usize, dst: *mut c_vo
         // Immediately free popped items if all the allocations are huge
         // as it means we want to have dedicated allocations for each push.
         // SAFETY: `b` is the live `Buf` and `(*b).ator` its live allocator;
-        // reading `huge_size`, then minting over the same live, initialized
-        // `Buf` in context/arena-owned memory with write-capable provenance
-        // (this fn's raw-pointer contract) — the `BufView::from_ptr` mint
-        // invariant.
+        // reading `huge_size`.
         if unsafe { (*(*b).ator).huge_size } <= 1 {
-            buf_free_unused(unsafe { BufView::from_ptr(b) });
+            buf_free_unused(view);
         }
     }
 }
@@ -1191,11 +1195,13 @@ pub(crate) unsafe fn push_pop_size(
     if data.is_null() {
         return core::ptr::null_mut();
     }
-    // SAFETY: `src` is a live `Buf`; `data` is non-null and valid as
+    // SAFETY: `src` addresses a live, initialized `Buf` in context/arena-owned
+    // memory with write-capable provenance (this fn's raw-pointer contract) —
+    // the `BufView::from_ptr` mint invariant; `data` is non-null and valid as
     // `pop_size`'s destination for `size * n` bytes — the fresh region
     // `push_size` allocated in `dst`, or, when `n == 0`, the static
     // `ZERO_SIZE_BUFFER` into which `pop_size` writes zero bytes.
-    unsafe { pop_size(src, size, n, data, false) };
+    unsafe { pop_size(BufView::from_ptr(src), size, n, data, false) };
     data
 }
 
@@ -1214,11 +1220,13 @@ pub(crate) unsafe fn push_peek_size(
     if data.is_null() {
         return core::ptr::null_mut();
     }
-    // SAFETY: `src` is a live `Buf`; `data` is non-null and valid as
+    // SAFETY: `src` addresses a live, initialized `Buf` in context/arena-owned
+    // memory with write-capable provenance (this fn's raw-pointer contract) —
+    // the `BufView::from_ptr` mint invariant; `data` is non-null and valid as
     // `pop_size`'s destination for `size * n` bytes — the fresh region
     // `push_size` allocated in `dst`, or, when `n == 0`, the static
     // `ZERO_SIZE_BUFFER` into which `pop_size` writes zero bytes.
-    unsafe { pop_size(src, size, n, data, true) };
+    unsafe { pop_size(BufView::from_ptr(src), size, n, data, true) };
     data
 }
 
@@ -1430,9 +1438,19 @@ pub(crate) unsafe fn push_fast<T>(b: *mut Buf, n: usize) -> *mut T {
 // ufbx.c:4351 `#define ufbxi_pop(b, type, n, dst)`
 #[inline(always)]
 pub(crate) unsafe fn pop<T>(b: *mut Buf, n: usize, dst: *mut T) {
-    // SAFETY: forwarding this fn's live-`Buf` and writable-`dst` contract to
-    // `pop_size`.
-    unsafe { pop_size(b, size_of::<T>(), n, dst as *mut c_void, false) }
+    // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
+    // memory with write-capable provenance (this fn's raw-pointer contract) —
+    // the `BufView::from_ptr` mint invariant; and this fn's writable-`dst`
+    // contract is `pop_size`'s run contract for `size_of::<T>() * n` bytes.
+    unsafe {
+        pop_size(
+            BufView::from_ptr(b),
+            size_of::<T>(),
+            n,
+            dst as *mut c_void,
+            false,
+        )
+    }
 }
 
 // ufbx.c:4352 `#define ufbxi_peek(b, type, n, dst)`
@@ -1441,9 +1459,19 @@ pub(crate) unsafe fn pop<T>(b: *mut Buf, n: usize, dst: *mut T) {
 #[allow(dead_code)]
 #[inline(always)]
 pub(crate) unsafe fn peek<T>(b: *mut Buf, n: usize, dst: *mut T) {
-    // SAFETY: forwarding this fn's live-`Buf` and writable-`dst` contract to
-    // `pop_size`.
-    unsafe { pop_size(b, size_of::<T>(), n, dst as *mut c_void, true) }
+    // SAFETY: `b` addresses a live, initialized `Buf` in context/arena-owned
+    // memory with write-capable provenance (this fn's raw-pointer contract) —
+    // the `BufView::from_ptr` mint invariant; and this fn's writable-`dst`
+    // contract is `pop_size`'s run contract for `size_of::<T>() * n` bytes.
+    unsafe {
+        pop_size(
+            BufView::from_ptr(b),
+            size_of::<T>(),
+            n,
+            dst as *mut c_void,
+            true,
+        )
+    }
 }
 
 // ufbx.c:4353 `#define ufbxi_push_pop(dst, src, type, n)`
@@ -1737,8 +1765,16 @@ mod tests {
         assert_eq!(unsafe { (*buf.chunks[0]).padding_pos }, 16 + 16 + 1);
 
         // Discarding pop (dst == NULL) rewinds through the padding record.
+        // SAFETY: a live stack-local `Buf` owned by this test; minting the
+        // `BufView` the pop takes, with a null destination run.
         unsafe {
-            pop_size(&mut buf, 8, 1, core::ptr::null_mut(), false);
+            pop_size(
+                BufView::from_ptr(&raw mut buf),
+                8,
+                1,
+                core::ptr::null_mut(),
+                false,
+            );
         }
         assert_eq!(buf.pos, 12);
         assert_eq!(unsafe { (*buf.chunks[0]).padding_pos }, 0);
@@ -1810,9 +1846,23 @@ mod tests {
         // `BufView` the push takes.
         let _ = push_size(unsafe { BufView::from_ptr(&raw mut buf) }, 1, 1000);
         assert!(unsafe { !(*buf.chunks[0]).prev.is_null() });
+        // SAFETY: a live stack-local `Buf` owned by this test; minting the
+        // `BufView` the pops take, with null destination runs.
         unsafe {
-            pop_size(&mut buf, 1, 1000, core::ptr::null_mut(), false);
-            pop_size(&mut buf, 1, n1, core::ptr::null_mut(), false);
+            pop_size(
+                BufView::from_ptr(&raw mut buf),
+                1,
+                1000,
+                core::ptr::null_mut(),
+                false,
+            );
+            pop_size(
+                BufView::from_ptr(&raw mut buf),
+                1,
+                n1,
+                core::ptr::null_mut(),
+                false,
+            );
         }
         assert_eq!(buf.pos, 0);
 

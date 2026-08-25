@@ -2425,12 +2425,12 @@ fn ascii_parse_node_rec(
                 );
                 // Pop any previously pushed values
                 if num_values > 0 {
-                    // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own live temp stack; it
-                    // holds `num_values` pushed elements, popped into the front of
-                    // the just-reserved `arr_data` run.
+                    // SAFETY: `uc`'s temp stack holds `num_values` pushed
+                    // elements, popped into the front of the just-reserved
+                    // `arr_data` run — `pop_size`'s destination contract.
                     unsafe {
                         pop_size(
-                            uc.tmp_stack_mut_ptr(),
+                            uc.tmp_stack_view(),
                             arr_elem_size,
                             num_values as usize,
                             arr_data,
@@ -2439,11 +2439,11 @@ fn ascii_parse_node_rec(
                     }
                 }
             } else if arr_error {
-                // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own live temp stack holding
-                // `num_values` pushed elements, discarded here (null destination).
+                // SAFETY: `uc`'s temp stack holds `num_values` pushed elements,
+                // discarded here (null destination run).
                 unsafe {
                     pop_size(
-                        uc.tmp_stack_mut_ptr(),
+                        uc.tmp_stack_view(),
                         arr_elem_size,
                         num_values as usize,
                         core::ptr::null_mut(),
@@ -2487,10 +2487,10 @@ fn ascii_parse_node_rec(
             }
 
             // Pop alignment helper
-            // SAFETY: `tmp_stack_mut_ptr` is `uc`'s own live temp stack; pops the
-            // single 8-byte alignment element pushed at array setup.
+            // SAFETY: pops the single 8-byte alignment element pushed at array
+            // setup off `uc`'s temp stack (null destination run).
             unsafe {
-                pop_size(uc.tmp_stack_mut_ptr(), 8, 1, core::ptr::null_mut(), false);
+                pop_size(uc.tmp_stack_view(), 8, 1, core::ptr::null_mut(), false);
             }
 
             // Deferred parsing
