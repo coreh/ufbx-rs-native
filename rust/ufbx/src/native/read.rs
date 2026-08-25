@@ -686,57 +686,47 @@ pub(crate) fn read_header_extension(uc: &Context) -> Result<(), Fail> {
 }
 
 // ufbx.c:12035-12082 `ufbxi_match_version_string`
-pub(crate) unsafe fn match_version_string(
-    fmt: *const u8,
-    str_: String,
-    p_version: *mut u32,
-) -> bool {
+//
+// `p_version` holds one slot per `?` marker a pattern can carry (three); C
+// indexes the caller's `uint32_t version[3]` the same way.
+pub(crate) fn match_version_string(fmt: &[u8], str_: &[u8], p_version: &mut [u32; 3]) -> bool {
     let mut num_ix: usize = 0;
     let mut pos: usize = 0;
+    // C-parity: an exhausted `fmt` slice reads as the NUL terminator, so this
+    // walks the pattern exactly as C's `while (*fmt)` over a `const char *`.
     let mut fmt = fmt;
-    // SAFETY: `fmt` walks a NUL-terminated pattern string (fn contract), so
-    // every byte up to and including the terminator is readable.
-    while unsafe { *fmt } != 0 {
+    while !fmt.is_empty() && fmt[0] != 0 {
         // C-parity: `char c = *fmt++;` / `char s = str.data[pos];` are `const
         // char *` dereferences — signed bytes on the oracle targets
         // (PORTING.md `char` value row).
-        // SAFETY: as above — `fmt` addresses a non-NUL pattern byte.
-        let c: i8 = unsafe { *(fmt as *const i8) };
-        // SAFETY: the byte at `fmt` is not the terminator, so the advance stays
-        // inside the pattern string.
-        fmt = unsafe { fmt.add(1) };
+        let c: i8 = fmt[0] as i8;
+        fmt = &fmt[1..];
         if c >= b'a' as i8 && c <= b'z' as i8 {
-            if pos >= str_.length {
+            if pos >= str_.len() {
                 return false;
             }
-            // SAFETY: `str_` is the caller's string, so `data` spans `length`
-            // readable bytes, and `pos < length` (checked just above).
-            let s: i8 = unsafe { *(str_.data.add(pos) as *const i8) };
+            let s: i8 = str_[pos] as i8;
             if s != c && s as i32 + (b'a' as i32 - b'A' as i32) != c as i32 {
                 return false;
             }
             pos += 1;
         } else if c == b' ' as i8 {
-            while pos < str_.length {
-                // SAFETY: `pos < str_.length` bounds the read inside the
-                // caller's string.
-                let s: i8 = unsafe { *(str_.data.add(pos) as *const i8) };
+            while pos < str_.len() {
+                let s: i8 = str_[pos] as i8;
                 if s != b' ' as i8 && s != b'\t' as i8 {
                     break;
                 }
                 pos += 1;
             }
         } else if c == b'-' as i8 {
-            while pos < str_.length {
-                // SAFETY: `pos < str_.length` bounds the read inside the
-                // caller's string.
-                let s: i8 = unsafe { *(str_.data.add(pos) as *const i8) };
+            while pos < str_.len() {
+                let s: i8 = str_[pos] as i8;
                 if s == b'-' as i8 {
                     break;
                 }
                 pos += 1;
             }
-            if pos >= str_.length {
+            if pos >= str_.len() {
                 return false;
             }
             pos += 1;
@@ -746,22 +736,18 @@ pub(crate) unsafe fn match_version_string(
             || c == b')' as i8
             || c == b'_' as i8
         {
-            if pos >= str_.length {
+            if pos >= str_.len() {
                 return false;
             }
-            // SAFETY: `pos < str_.length` (checked just above) bounds the read
-            // inside the caller's string.
-            if unsafe { *(str_.data.add(pos) as *const i8) } != c {
+            if str_[pos] as i8 != c {
                 return false;
             }
             pos += 1;
         } else if c == b'?' as i8 {
             let mut num: u32 = 0;
             let mut len: usize = 0;
-            while pos < str_.length {
-                // SAFETY: `pos < str_.length` bounds the read inside the
-                // caller's string.
-                let s: i8 = unsafe { *(str_.data.add(pos) as *const i8) };
+            while pos < str_.len() {
+                let s: i8 = str_[pos] as i8;
                 if !(s >= b'0' as i8 && s <= b'9' as i8) {
                     break;
                 }
@@ -774,10 +760,7 @@ pub(crate) unsafe fn match_version_string(
             if len == 0 {
                 return false;
             }
-            // SAFETY: `num_ix` counts the `?` markers consumed from `fmt` so
-            // far, and `p_version` points at storage for at least as many
-            // `u32`s as `fmt` holds `?` markers (fn contract).
-            unsafe { *p_version.add(num_ix) = num };
+            p_version[num_ix] = num;
             num_ix += 1;
         } else {
             ufbxi_unreachable!("Unhandled match character");
@@ -792,61 +775,50 @@ pub(crate) unsafe fn match_version_string(
 pub(crate) fn match_exporter(uc: &Context) -> Result<(), Fail> {
     let creator: String = uc.scene_view().metadata_view().creator();
     let mut version: [u32; 3] = [0; 3];
-    // SAFETY (this whole chain): every `fmt` is a NUL-terminated byte-string
-    // literal, `creator` is uc's own pooled metadata string (data/length pair
-    // maintained by the string pool), and `version` is an unaliased local
-    // 3-element array — each pattern holds at most three `?` numbers, so the
-    // `p_version` writes stay inside it.
-    unsafe {
-        if match_version_string(b"blender-- ?.?.?\0".as_ptr(), creator, version.as_mut_ptr()) {
-            uc.set_exporter(Exporter::BlenderBinary);
-            uc.set_exporter_version(pack_version(version[0], version[1], version[2]));
-        } else if match_version_string(b"blender- ?.?\0".as_ptr(), creator, version.as_mut_ptr()) {
-            uc.set_exporter(Exporter::BlenderBinary);
-            uc.set_exporter_version(pack_version(version[0], version[1], 0));
-        } else if match_version_string(
-            b"blender version ?.?\0".as_ptr(),
-            creator,
-            version.as_mut_ptr(),
-        ) {
-            uc.set_exporter(Exporter::BlenderAscii);
-            uc.set_exporter_version(pack_version(version[0], version[1], 0));
-        } else if match_version_string(
-            b"fbx sdk/fbx plugins version ?.?\0".as_ptr(),
-            creator,
-            version.as_mut_ptr(),
-        ) {
-            uc.set_exporter(Exporter::FbxSdk);
-            uc.set_exporter_version(pack_version(version[0], version[1], 0));
-        } else if match_version_string(
-            b"fbx sdk/fbx plugins build ?\0".as_ptr(),
-            creator,
-            version.as_mut_ptr(),
-        ) {
-            uc.set_exporter(Exporter::FbxSdk);
-            uc.set_exporter_version(pack_version(
-                version[0] / 10000u32,
-                version[0] / 100u32 % 100u32,
-                version[0] % 100u32,
-            ));
-        } else if match_version_string(
-            b"motionbuilder version ?.?\0".as_ptr(),
-            creator,
-            version.as_mut_ptr(),
-        ) {
-            uc.set_exporter(Exporter::MotionBuilder);
-            uc.set_exporter_version(pack_version(version[0], version[1], 0));
-        } else if match_version_string(
-            b"motionbuilder/mocap/online version ?.?\0".as_ptr(),
-            creator,
-            version.as_mut_ptr(),
-        ) {
-            uc.set_exporter(Exporter::MotionBuilder);
-            uc.set_exporter_version(pack_version(version[0], version[1], 0));
-        } else if match_version_string(b"ufbx_write\0".as_ptr(), creator, version.as_mut_ptr()) {
-            uc.set_exporter(Exporter::UfbxWrite);
-            uc.set_exporter_version(pack_version(0, 0, 1));
-        }
+    // SAFETY: `creator` is uc's own pooled metadata string, so its data/length
+    // pair addresses interned pool bytes that stay live and unwritten for the
+    // match chain below (ufbx.c:4897).
+    let creator_bytes: &[u8] = unsafe { creator.as_bytes() };
+    if match_version_string(b"blender-- ?.?.?\0", creator_bytes, &mut version) {
+        uc.set_exporter(Exporter::BlenderBinary);
+        uc.set_exporter_version(pack_version(version[0], version[1], version[2]));
+    } else if match_version_string(b"blender- ?.?\0", creator_bytes, &mut version) {
+        uc.set_exporter(Exporter::BlenderBinary);
+        uc.set_exporter_version(pack_version(version[0], version[1], 0));
+    } else if match_version_string(b"blender version ?.?\0", creator_bytes, &mut version) {
+        uc.set_exporter(Exporter::BlenderAscii);
+        uc.set_exporter_version(pack_version(version[0], version[1], 0));
+    } else if match_version_string(
+        b"fbx sdk/fbx plugins version ?.?\0",
+        creator_bytes,
+        &mut version,
+    ) {
+        uc.set_exporter(Exporter::FbxSdk);
+        uc.set_exporter_version(pack_version(version[0], version[1], 0));
+    } else if match_version_string(
+        b"fbx sdk/fbx plugins build ?\0",
+        creator_bytes,
+        &mut version,
+    ) {
+        uc.set_exporter(Exporter::FbxSdk);
+        uc.set_exporter_version(pack_version(
+            version[0] / 10000u32,
+            version[0] / 100u32 % 100u32,
+            version[0] % 100u32,
+        ));
+    } else if match_version_string(b"motionbuilder version ?.?\0", creator_bytes, &mut version) {
+        uc.set_exporter(Exporter::MotionBuilder);
+        uc.set_exporter_version(pack_version(version[0], version[1], 0));
+    } else if match_version_string(
+        b"motionbuilder/mocap/online version ?.?\0",
+        creator_bytes,
+        &mut version,
+    ) {
+        uc.set_exporter(Exporter::MotionBuilder);
+        uc.set_exporter_version(pack_version(version[0], version[1], 0));
+    } else if match_version_string(b"ufbx_write\0", creator_bytes, &mut version) {
+        uc.set_exporter(Exporter::UfbxWrite);
+        uc.set_exporter_version(pack_version(0, 0, 1));
     }
 
     uc.scene_view().metadata_view().set_exporter(uc.exporter());
