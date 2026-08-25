@@ -360,9 +360,25 @@ pub(crate) fn alloc_size(ator: &AllocatorView, size: usize, n: usize) -> *mut c_
 
 // ufbx.c:3699-3740 `ufbxi_realloc_size`
 // (C forward-declares `ufbxi_free_size` at 3698; no Rust analogue needed.)
+//
+// The `&AllocatorView` param carries the allocator's liveness and write-capable
+// provenance, and the `Allocator` type invariant established by `init_ator`
+// (ufbx.c:6936-6953 — live `error` slot, `'static` NUL-terminated `name`,
+// caller-supplied callbacks valid for the allocator's lifetime; see
+// `alloc_size`) covers the slot reads and callback dispatch below.
+//
+// The fn stays `unsafe` for the `old_ptr`/`old_n` pair: a raw block pointer
+// plus a count, whose "live block of this allocator" contract no parameter
+// type expresses (runs are out of scope for the view layer).
+//
+// # Safety
+//
+// When `old_n > 0`, `old_ptr` must point at a live block of `size * old_n`
+// bytes obtained from `ator`, readable in full and releasable through the
+// allocator's callbacks.
 #[inline(never)]
 pub(crate) unsafe fn realloc_size(
-    ator: *mut Allocator,
+    ator: &AllocatorView,
     size: usize,
     old_ptr: *mut c_void,
     old_n: usize,
@@ -371,14 +387,13 @@ pub(crate) unsafe fn realloc_size(
     ufbx_assert!(size > 0);
     // realloc() with zero old/new size is equivalent to alloc()/free()
     if old_n == 0 {
-        // SAFETY: `ator` points at a live, unmoved `Allocator` — the raw-pointer
-        // contract of this `unsafe fn`; the mint hands that vouch to `alloc_size`.
-        return alloc_size(unsafe { AllocatorView::from_ptr(ator) }, size, n);
+        return alloc_size(ator, size, n);
     }
     if n == 0 {
-        // SAFETY: forwarding this fn's `ator` contract, plus `old_ptr`/`old_n`
-        // describing a live block from this same allocator (caller obligation).
-        unsafe { free_size(ator, size, old_ptr, old_n) };
+        // SAFETY: `get()` is the view's own live, unmoved `Allocator` (its
+        // `from_ptr` mint invariant); `old_ptr`/`old_n` describe a live block
+        // from this same allocator (this fn's `old_ptr` contract).
+        unsafe { free_size(ator.get(), size, old_ptr, old_n) };
         return core::ptr::null_mut();
     }
 
@@ -387,60 +402,58 @@ pub(crate) unsafe fn realloc_size(
 
     // The old values have been checked by a previous allocate call
     ufbx_assert!(!does_overflow(old_total, size, old_n));
-    // SAFETY: `ator` points at a live `Allocator` — the raw-pointer contract of
-    // this `unsafe fn`.
-    ufbx_assert!(old_total <= unsafe { (*ator).current_size });
+    ufbx_assert!(old_total <= ator.current_size());
 
     ufbxi_check_return_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
+        // SAFETY: `error` is the allocator's own error slot — a live
+        // `ufbx_error` wired at `init_ator` and outliving the allocator.
+        unsafe { crate::native::error::ErrorView::from_ptr(ator.error()) },
         !does_overflow(total, size, n),
         core::ptr::null_mut(),
         "!ufbxi_does_overflow(total, size, n)"
     );
     // Make sure it's always safe to double allocations
     ufbxi_check_return_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
+        // SAFETY: the allocator's own error slot, as above.
+        unsafe { crate::native::error::ErrorView::from_ptr(ator.error()) },
         total <= usize::MAX / 2,
         core::ptr::null_mut(),
         "total <= SIZE_MAX / 2"
     );
     ufbxi_check_return_err_msg!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
-        // SAFETY: live `Allocator` per the fn contract; the two size counters
-        // are read together as one snapshot.
-        total <= unsafe { (*ator).max_size - (*ator).current_size },
+        // SAFETY: the allocator's own error slot, as above.
+        unsafe { crate::native::error::ErrorView::from_ptr(ator.error()) },
+        total <= ator.max_size() - ator.current_size(),
         core::ptr::null_mut(),
         "Memory limit exceeded",
         "total <= ator->max_size - ator->current_size"
     );
     ufbxi_check_return_err_msg!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
-        // SAFETY: live `Allocator` per the fn contract; the two allocation
-        // counters are read together as one snapshot.
-        unsafe { (*ator).num_allocs < (*ator).max_allocs },
+        // SAFETY: the allocator's own error slot, as above.
+        unsafe { crate::native::error::ErrorView::from_ptr(ator.error()) },
+        ator.num_allocs() < ator.max_allocs(),
         core::ptr::null_mut(),
         "Allocation limit exceeded",
         "ator->num_allocs < ator->max_allocs"
     );
-    // SAFETY: live `Allocator` per the fn contract; bumping its own counter.
-    unsafe {
-        (*ator).num_allocs += 1;
-    }
+    ator.set_num_allocs(ator.num_allocs() + 1);
 
     let ptr: *mut c_void;
-    // SAFETY: live `Allocator` per the fn contract; every callback-slot and
-    // `user` read in this dispatch chain goes through it, and each callback is
+    // SAFETY (this dispatch chain): the view is minted over a live, unmoved
+    // `Allocator` (its `from_ptr` mint invariant); every callback slot and
+    // `user` read is reached as a raw field place through `get()` — no
+    // reference to the containing struct is formed — and each callback is
     // invoked with the `user` pointer stored beside it in the same
     // `ufbx_allocator` (the user-callback pairing contract).
-    if let Some(realloc_fn) = unsafe { (*ator).ator.allocator.realloc_fn } {
-        ptr = unsafe { realloc_fn((*ator).ator.allocator.user, old_ptr, old_total, total) };
-    } else if let Some(alloc_fn) = unsafe { (*ator).ator.allocator.alloc_fn } {
+    if let Some(realloc_fn) = unsafe { (*ator.get()).ator.allocator.realloc_fn } {
+        ptr = unsafe { realloc_fn((*ator.get()).ator.allocator.user, old_ptr, old_total, total) };
+    } else if let Some(alloc_fn) = unsafe { (*ator.get()).ator.allocator.alloc_fn } {
         // Use user-provided alloc_fn() and free_fn()
-        ptr = unsafe { alloc_fn((*ator).ator.allocator.user, total) };
+        ptr = unsafe { alloc_fn((*ator.get()).ator.allocator.user, total) };
         if !ptr.is_null() {
             // SAFETY: `old_ptr` is valid for reads of `old_total` bytes (a live
-            // block of this allocator, per the caller's `old_ptr`/`old_n`
-            // obligation); `copy_nonoverlapping` is an untyped copy, so a
+            // block of this allocator, per this fn's `old_ptr`/`old_n`
+            // contract); `copy_nonoverlapping` is an untyped copy, so a
             // partially-initialized old block is fine. `ptr` is a distinct
             // fresh writable block of `total` bytes, with `total >= old_total`
             // because the only live caller (`grow_array_size`) never shrinks —
@@ -451,10 +464,10 @@ pub(crate) unsafe fn realloc_size(
                 core::ptr::copy_nonoverlapping(old_ptr as *const u8, ptr as *mut u8, old_total)
             };
         }
-        if let Some(free_fn) = unsafe { (*ator).ator.allocator.free_fn } {
+        if let Some(free_fn) = unsafe { (*ator.get()).ator.allocator.free_fn } {
             // SAFETY: `old_ptr`/`old_total` describe the live block being
             // replaced, allocated through this same callback set.
-            unsafe { free_fn((*ator).ator.allocator.user, old_ptr, old_total) };
+            unsafe { free_fn((*ator.get()).ator.allocator.user, old_ptr, old_total) };
         }
     } else {
         // SAFETY: `old_ptr` is a live block from the default libc allocator
@@ -463,7 +476,8 @@ pub(crate) unsafe fn realloc_size(
     }
 
     ufbxi_check_return_err_msg!(
-        unsafe { crate::native::error::ErrorView::from_ptr((*ator).error) },
+        // SAFETY: the allocator's own error slot, as above.
+        unsafe { crate::native::error::ErrorView::from_ptr(ator.error()) },
         !ptr.is_null(),
         core::ptr::null_mut(),
         "Out of memory",
@@ -475,11 +489,8 @@ pub(crate) unsafe fn realloc_size(
     // provenance the old block's exposure does not carry over to.
     (ptr as *mut u8).expose_provenance();
 
-    // SAFETY: live `Allocator` per the fn contract; the reborrow is the only
-    // reference to it here and is used solely for its own size accounting.
-    let a = unsafe { &mut *ator };
-    a.current_size += total;
-    a.current_size -= old_total;
+    ator.set_current_size(ator.current_size() + total);
+    ator.set_current_size(ator.current_size() - old_total);
 
     ptr
 }
@@ -565,11 +576,12 @@ pub(crate) unsafe fn grow_array_size(
         return true;
     }
     let new_n = max_sz(old_n.wrapping_mul(2), n);
-    // SAFETY: forwarding this fn's `ator` contract; `ptr`/`old_n` are the
-    // caller's pointer/capacity pair — either a live block of this allocator or
-    // `(null, 0)` for a fresh array, which `realloc_size` routes to plain
-    // allocation without reading `ptr`.
-    let new_ptr = unsafe { realloc_size(ator, size, ptr, old_n, new_n) };
+    // SAFETY: `ator` points at a live, unmoved `Allocator` — the raw-pointer
+    // contract of this `unsafe fn`; the mint hands that vouch to `realloc_size`.
+    // `ptr`/`old_n` are the caller's pointer/capacity pair — either a live block
+    // of this allocator or `(null, 0)` for a fresh array, which `realloc_size`
+    // routes to plain allocation without reading `ptr`.
+    let new_ptr = unsafe { realloc_size(AllocatorView::from_ptr(ator), size, ptr, old_n, new_n) };
     if new_ptr.is_null() {
         return false;
     }
@@ -647,10 +659,17 @@ pub(crate) unsafe fn realloc<T>(
     old_n: usize,
     n: usize,
 ) -> *mut T {
-    // SAFETY: forwarding this fn's `ator` contract plus the caller's
-    // `old_ptr`/`old_n` live-block obligation to `realloc_size`.
+    // SAFETY: `ator` points at a live, unmoved `Allocator` — the raw-pointer
+    // contract of this `unsafe fn`; the mint hands that vouch to `realloc_size`,
+    // as does the caller's `old_ptr`/`old_n` live-block obligation.
     ufbxi_maybe_null!(unsafe {
-        realloc_size(ator, size_of::<T>(), old_ptr as *mut c_void, old_n, n)
+        realloc_size(
+            AllocatorView::from_ptr(ator),
+            size_of::<T>(),
+            old_ptr as *mut c_void,
+            old_n,
+            n,
+        )
     } as *mut T)
 }
 
