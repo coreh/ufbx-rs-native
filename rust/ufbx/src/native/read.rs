@@ -1628,53 +1628,59 @@ pub(crate) unsafe fn init_synthetic_real_prop(
 }
 
 // ufbx.c:12479-12491 `ufbxi_init_synthetic_vec3_prop`
+// `name` is the interned static run itself: its pointer is stored into
+// `dst->name.data` (the pointer-identity carrier) and its length is measured by
+// `strlen`, exactly as C does.
+//
+// # Safety
+// `name` must be NUL-terminated within its own run and at least 4 bytes long —
+// `strlen` walks it from `name.as_ptr()` and the key read takes its first 4
+// bytes. Neither obligation is carried by `&[u8]`.
 #[inline(never)]
 pub(crate) unsafe fn init_synthetic_vec3_prop(
-    dst: *mut Prop,
-    name: *const u8,
-    value: *const Vec3,
+    dst: &PropView,
+    name: &[u8],
+    value: &Vec3,
     type_: PropType,
 ) {
-    // SAFETY: `dst` is the caller's writable `ufbx_prop` slot and `name` is a
-    // NUL-terminated interned string (fn contract) — `strlen`'s contract.
-    unsafe {
-        (*dst).type_ = type_;
-        (*dst).name.data = name;
-        (*dst).name.length = strlen(name);
-    }
+    dst.set_type(type_);
+    dst.name_view().set_data(name.as_ptr());
+    // SAFETY: `name` is a NUL-terminated interned string (fn contract) —
+    // `strlen`'s contract.
+    dst.name_view().set_length(unsafe { strlen(name.as_ptr()) });
     // C: `dst->value_vec3 = *value;` writes only x/y/z of the value union.
-    // SAFETY: `value` points at a live `ufbx_vec3` (fn contract); `Vec3` is the
-    // 3-real prefix of the `Vec4` value union arm in `dst`'s writable slot, so
-    // the projected write stays inside it.
-    unsafe { *(&raw mut (*dst).value_vec4 as *mut Vec3) = *value };
+    // SAFETY: `value_vec4_raw()` addresses `dst`'s own 4-`Real` value union
+    // arm; `Vec3` is its 3-real prefix, so the projected write stays inside it.
+    unsafe { *(dst.value_vec4_raw() as *mut Vec3) = *value };
+    dst.set_flags(PropFlags::from_raw(
+        PropFlags::SYNTHETIC.raw() | PropFlags::VALUE_VEC3.raw(),
+    ));
     // C: `ufbxi_f64_to_i64(dst->value_real)` — `ufbx_real` argument promoted to
     // the `double` parameter.
-    // SAFETY: `dst` is the caller's writable `ufbx_prop` slot, whose
-    // `value_vec4.x` was written by the vec3 store above.
-    unsafe {
-        (*dst).flags =
-            PropFlags::from_raw(PropFlags::SYNTHETIC.raw() | PropFlags::VALUE_VEC3.raw());
-        (*dst).value_int = f64_to_i64(as_f64!((*dst).value_vec4.x));
-        (*dst).value_str.data = EMPTY_CHAR.as_ptr();
-    }
+    // SAFETY: `value_vec4_raw()` addresses `dst`'s own value union arm, whose
+    // `x` (C's `value_real`) the vec3 store above wrote.
+    let value_real: Real = unsafe { (*dst.value_vec4_raw()).x };
+    dst.set_value_int(f64_to_i64(as_f64!(value_real)));
+    dst.value_str_view().set_data(EMPTY_CHAR.as_ptr());
 
-    // SAFETY: `dst.name.length` was written just above.
-    ufbxi_dev_assert!(unsafe { (*dst).name.length } >= 4);
+    ufbxi_dev_assert!(dst.name_view().length() >= 4);
     // SAFETY: every caller passes a `ufbxi_*` interned property name of at
     // least 4 characters (the dev assert above guards that contract), so the
     // 4-byte key read stays inside `name`.
-    unsafe { (*dst)._internal_key = get_name_key(crate::prelude::slice_from_ptr(name, 4)) };
+    dst.set_internal_key(get_name_key(unsafe {
+        crate::prelude::slice_from_ptr(name.as_ptr(), 4)
+    }));
 }
 
 // ufbx.c:12493-12505 `ufbxi_set_own_prop_vec3_uniform`
 #[inline(never)]
-pub(crate) unsafe fn set_own_prop_vec3_uniform(props: *mut Props, name: &[u8], value: Real) {
+pub(crate) fn set_own_prop_vec3_uniform(props: &PropsView, name: &[u8], value: Real) {
     // C: `ufbx_props local_props = *props;` — struct memcpy; `Props` is not
     // `Copy` but has no drop glue.
-    // SAFETY: `props` addresses the caller's live `ufbx_props` (fn contract);
-    // `Props` has no drop glue, so the bitwise read duplicates it without
-    // double-free (the copy is forgotten below).
-    let mut local_props: Props = unsafe { core::ptr::read(props) };
+    // SAFETY: `props.get()` addresses the viewed live `ufbx_props` (the view's
+    // mint vouch); `Props` has no drop glue, so the bitwise read duplicates it
+    // without double-free (the copy is forgotten below).
+    let mut local_props: Props = unsafe { core::ptr::read(props.get()) };
     local_props.defaults = None;
     // `name` is the interned static run itself — `find_prop`'s
     // pointer-identity carrier (its length is never read).
@@ -1764,24 +1770,26 @@ pub(crate) unsafe fn setup_geometry_transform_helper(
         let props: *mut Prop = uc.result_view().push_zero::<Prop>(3);
         ufbxi_check!(uc, !props.is_null(), "props");
         // SAFETY: `props` is the fresh non-null 3-element zeroed run checked
-        // above, so indices 0..3 are live `ufbx_prop` slots; each name is an
-        // interned `ufbxi_*` string and each value a live local `Vec3`.
+        // above, so indices 0..3 are live `ufbx_prop` slots with the result
+        // arena's write-capable provenance — each anchors a `PropView`; each
+        // name is an interned `ufbxi_*` string, NUL-terminated and at least 4
+        // bytes (`init_synthetic_vec3_prop`'s name contract).
         unsafe {
             init_synthetic_vec3_prop(
-                props.add(0),
-                sp::Lcl_Rotation.as_ptr(),
+                PropView::from_ptr(props.add(0)),
+                &sp::Lcl_Rotation,
                 &geo_rotation,
                 PropType::Rotation,
             );
             init_synthetic_vec3_prop(
-                props.add(1),
-                sp::Lcl_Scaling.as_ptr(),
+                PropView::from_ptr(props.add(1)),
+                &sp::Lcl_Scaling,
                 &geo_scaling,
                 PropType::Scaling,
             );
             init_synthetic_vec3_prop(
-                props.add(2),
-                sp::Lcl_Translation.as_ptr(),
+                PropView::from_ptr(props.add(2)),
+                &sp::Lcl_Translation,
                 &geo_translation,
                 PropType::Translation,
             );

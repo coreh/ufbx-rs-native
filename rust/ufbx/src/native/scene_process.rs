@@ -1034,22 +1034,22 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             );
 
                             init_synthetic_vec3_prop(
-                                new_props.add(new_prop_count),
-                                sp::RotationPivot.as_ptr(),
+                                PropView::from_ptr(new_props.add(new_prop_count)),
+                                &sp::RotationPivot,
                                 &ZERO_VEC3,
                                 PropType::Vector,
                             );
                             new_prop_count += 1;
                             init_synthetic_vec3_prop(
-                                new_props.add(new_prop_count),
-                                sp::ScalingPivot.as_ptr(),
+                                PropView::from_ptr(new_props.add(new_prop_count)),
+                                &sp::ScalingPivot,
                                 &ZERO_VEC3,
                                 PropType::Vector,
                             );
                             new_prop_count += 1;
                             init_synthetic_vec3_prop(
-                                new_props.add(new_prop_count),
-                                sp::GeometricTranslation.as_ptr(),
+                                PropView::from_ptr(new_props.add(new_prop_count)),
+                                &sp::GeometricTranslation,
                                 &geometric_translation,
                                 PropType::Vector,
                             );
@@ -1100,22 +1100,22 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             );
 
                             init_synthetic_vec3_prop(
-                                new_props.add(new_prop_count),
-                                sp::RotationPivot.as_ptr(),
+                                PropView::from_ptr(new_props.add(new_prop_count)),
+                                &sp::RotationPivot,
                                 &ZERO_VEC3,
                                 PropType::Vector,
                             );
                             new_prop_count += 1;
                             init_synthetic_vec3_prop(
-                                new_props.add(new_prop_count),
-                                sp::ScalingPivot.as_ptr(),
+                                PropView::from_ptr(new_props.add(new_prop_count)),
+                                &sp::ScalingPivot,
                                 &new_scaling_pivot,
                                 PropType::Vector,
                             );
                             new_prop_count += 1;
                             init_synthetic_vec3_prop(
-                                new_props.add(new_prop_count),
-                                sp::ScalingOffset.as_ptr(),
+                                PropView::from_ptr(new_props.add(new_prop_count)),
+                                &sp::ScalingOffset,
                                 &new_scaling_offset,
                                 PropType::Vector,
                             );
@@ -1123,8 +1123,8 @@ pub(crate) fn pre_finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                             if !skip_geometry_transform {
                                 geometric_translation = add3(geometric_translation, child_offset);
                                 init_synthetic_vec3_prop(
-                                    new_props.add(new_prop_count),
-                                    sp::GeometricTranslation.as_ptr(),
+                                    PropView::from_ptr(new_props.add(new_prop_count)),
+                                    &sp::GeometricTranslation,
                                     &geometric_translation,
                                     PropType::Vector,
                                 );
@@ -7403,8 +7403,9 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
         // Reset all geometry transforms if we're not preserving them
         let mut defaults: *mut Props = ptr::null_mut();
         // SAFETY: walks the stored `nodes` element-pointer run of the uc-owned scene
-        // (`count` entries); `set_own_prop_vec3_uniform` receives a `&raw mut` of that
-        // node's own props (or the null-checked shared `defaults` table).
+        // (`count` entries); each `PropsView` is minted over that node's own props
+        // (or the null-checked shared `defaults` table), arena memory with
+        // write-capable provenance, live for the mint's use.
         unsafe {
             // C: `ufbxi_for_ptr_list(ufbx_node, p_node, uc->scene.nodes)`
             let mut p_node: *mut *mut Node = uc.scene_view().nodes_view().data() as *mut *mut Node;
@@ -7416,26 +7417,17 @@ pub(crate) fn modify_geometry<'a>(uc: &'a Context) -> Result<(), Fail> {
                 }
 
                 if (*node).has_geometry_transform {
-                    set_own_prop_vec3_uniform(
-                        &raw mut (*node).element.props,
-                        &sp::GeometricTranslation,
-                        0.0,
-                    );
-                    set_own_prop_vec3_uniform(
-                        &raw mut (*node).element.props,
-                        &sp::GeometricRotation,
-                        0.0,
-                    );
-                    set_own_prop_vec3_uniform(
-                        &raw mut (*node).element.props,
-                        &sp::GeometricScaling,
-                        1.0,
-                    );
+                    let node_props: &PropsView =
+                        PropsView::from_ptr(&raw mut (*node).element.props);
+                    set_own_prop_vec3_uniform(node_props, &sp::GeometricTranslation, 0.0);
+                    set_own_prop_vec3_uniform(node_props, &sp::GeometricRotation, 0.0);
+                    set_own_prop_vec3_uniform(node_props, &sp::GeometricScaling, 1.0);
                 }
                 p_node = p_node.add(1);
             }
 
             if !defaults.is_null() {
+                let defaults: &PropsView = PropsView::from_ptr(defaults);
                 set_own_prop_vec3_uniform(defaults, &sp::GeometricTranslation, 0.0);
                 set_own_prop_vec3_uniform(defaults, &sp::GeometricRotation, 0.0);
                 set_own_prop_vec3_uniform(defaults, &sp::GeometricScaling, 1.0);
