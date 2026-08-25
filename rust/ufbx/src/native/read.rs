@@ -5295,48 +5295,108 @@ pub(crate) fn read_line(uc: &Context, node: &NodeView, info: &ElementInfoView) -
     Ok(())
 }
 
+// Rust-port infrastructure (not a ufbx.c section): the write surface
+// `read_transform_matrix` needs on the `ufbx_matrix` destination its callers
+// hand it — the twelve leaves C assigns.
+pub(crate) type MatrixView = View<Matrix>;
+
+impl MatrixView {
+    #[inline(always)]
+    pub(crate) fn set_m00(&self, value: Real) {
+        view_write!(self, m00, value);
+    }
+    #[inline(always)]
+    pub(crate) fn set_m10(&self, value: Real) {
+        view_write!(self, m10, value);
+    }
+    #[inline(always)]
+    pub(crate) fn set_m20(&self, value: Real) {
+        view_write!(self, m20, value);
+    }
+    #[inline(always)]
+    pub(crate) fn set_m01(&self, value: Real) {
+        view_write!(self, m01, value);
+    }
+    #[inline(always)]
+    pub(crate) fn set_m11(&self, value: Real) {
+        view_write!(self, m11, value);
+    }
+    #[inline(always)]
+    pub(crate) fn set_m21(&self, value: Real) {
+        view_write!(self, m21, value);
+    }
+    #[inline(always)]
+    pub(crate) fn set_m02(&self, value: Real) {
+        view_write!(self, m02, value);
+    }
+    #[inline(always)]
+    pub(crate) fn set_m12(&self, value: Real) {
+        view_write!(self, m12, value);
+    }
+    #[inline(always)]
+    pub(crate) fn set_m22(&self, value: Real) {
+        view_write!(self, m22, value);
+    }
+    #[inline(always)]
+    pub(crate) fn set_m03(&self, value: Real) {
+        view_write!(self, m03, value);
+    }
+    #[inline(always)]
+    pub(crate) fn set_m13(&self, value: Real) {
+        view_write!(self, m13, value);
+    }
+    #[inline(always)]
+    pub(crate) fn set_m23(&self, value: Real) {
+        view_write!(self, m23, value);
+    }
+}
+
 // ufbx.c:13957-13963 `ufbxi_read_transform_matrix`
+///
+/// # Safety
+/// `data` must point at a run of at least 16 `ufbx_real` — the 4x4
+/// column-major transform its callers check the array size for before calling.
+/// A run length is not carried by the parameter types.
 #[inline(never)]
-pub(crate) unsafe fn read_transform_matrix(m: *mut Matrix, data: *mut Real) {
-    // SAFETY: `m` points at a live `ufbx_matrix` and `data` at a run of at least
-    // 16 reals — the 4x4 column-major transform its callers check for before
-    // calling (fn contract).
+pub(crate) unsafe fn read_transform_matrix(m: &MatrixView, data: *mut Real) {
+    // SAFETY: `data` points at a run of at least 16 reals (fn contract), so
+    // every index read below is in bounds.
     unsafe {
-        (*m).m00 = *data.add(0);
-        (*m).m10 = *data.add(1);
-        (*m).m20 = *data.add(2);
-        (*m).m01 = *data.add(4);
-        (*m).m11 = *data.add(5);
-        (*m).m21 = *data.add(6);
-        (*m).m02 = *data.add(8);
-        (*m).m12 = *data.add(9);
-        (*m).m22 = *data.add(10);
-        (*m).m03 = *data.add(12);
-        (*m).m13 = *data.add(13);
-        (*m).m23 = *data.add(14);
+        m.set_m00(*data.add(0));
+        m.set_m10(*data.add(1));
+        m.set_m20(*data.add(2));
+        m.set_m01(*data.add(4));
+        m.set_m11(*data.add(5));
+        m.set_m21(*data.add(6));
+        m.set_m02(*data.add(8));
+        m.set_m12(*data.add(9));
+        m.set_m22(*data.add(10));
+        m.set_m03(*data.add(12));
+        m.set_m13(*data.add(13));
+        m.set_m23(*data.add(14));
     }
 }
 
 // ufbx.c:13965-13977 `ufbxi_read_bone`
 #[inline(never)]
-pub(crate) unsafe fn read_bone(
+pub(crate) fn read_bone(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
-    sub_type: *const u8,
+    info: &ElementInfoView,
+    sub_type: &[u8],
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `Bone` is the element struct for `ElementType::Bone`.
-    let bone: *mut Bone =
-        unsafe { push_element::<Bone>(uc, View::<ElementInfo>::from_ptr(info), ElementType::Bone) };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `Bone` is the element struct for `ElementType::Bone`.
+    let bone: *mut Bone = unsafe { push_element::<Bone>(uc, info, ElementType::Bone) };
     ufbxi_check!(uc, !bone.is_null(), "bone");
 
-    if sub_type == sp::Root.as_ptr() {
+    // C-parity: `sub_type` is matched by POINTER IDENTITY against the interned
+    // `ufbxi_Root` constant, so compare the borrowed run's own address.
+    if sub_type.as_ptr() == sp::Root.as_ptr() {
         // SAFETY: `bone` is the fresh non-null element pushed above.
         unsafe {
             (*bone).is_root = true;
@@ -5348,24 +5408,21 @@ pub(crate) unsafe fn read_bone(
 
 // ufbx.c:13979-13990 `ufbxi_read_marker`
 #[inline(never)]
-pub(crate) unsafe fn read_marker(
+pub(crate) fn read_marker(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
-    sub_type: *const u8,
+    info: &ElementInfoView,
+    sub_type: &[u8],
     type_: MarkerType,
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
     let _ = sub_type; // C: `(void)sub_type;`
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `Marker` is the element struct for `ElementType::Marker`.
-    let marker: *mut Marker = unsafe {
-        push_element::<Marker>(uc, View::<ElementInfo>::from_ptr(info), ElementType::Marker)
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `Marker` is the element struct for `ElementType::Marker`.
+    let marker: *mut Marker = unsafe { push_element::<Marker>(uc, info, ElementType::Marker) };
     ufbxi_check!(uc, !marker.is_null(), "marker");
 
     // SAFETY: `marker` is the fresh non-null element pushed above.
@@ -5501,17 +5558,18 @@ pub(crate) unsafe fn read_skin_cluster(
             "transform_link->size >= 16"
         );
 
-        // SAFETY: `cluster` is the fresh non-null element, so the raw addresses
-        // address its live `ufbx_matrix` fields; the `transform` and
-        // `transform_link` payloads each hold `size >= 16` reals (just checked),
-        // the runs `read_transform_matrix` requires.
+        // SAFETY: `cluster` is the fresh non-null element, so the field
+        // projections view its live `ufbx_matrix` fields with the element's own
+        // write-capable provenance; the `transform` and `transform_link`
+        // payloads each hold `size >= 16` reals (just checked), the runs
+        // `read_transform_matrix` requires.
         unsafe {
             read_transform_matrix(
-                &raw mut (*cluster).mesh_node_to_bone,
+                View::<Matrix>::from_ptr(&raw mut (*cluster).mesh_node_to_bone),
                 (*transform).data as *mut Real,
             );
             read_transform_matrix(
-                &raw mut (*cluster).bind_to_world,
+                View::<Matrix>::from_ptr(&raw mut (*cluster).bind_to_world),
                 (*transform_link).data as *mut Real,
             );
         }
@@ -6756,12 +6814,13 @@ pub(crate) unsafe fn read_pose(
         unsafe {
             (*tmp_pose).bone_fbx_id = fbx_id;
         }
-        // SAFETY: `tmp_pose` is non-null, so `&raw mut (*tmp_pose).bone_to_world` is
-        // a live `ufbx_matrix`; the `matrix` payload holds `size >= 16` reals
-        // (just checked), the run `read_transform_matrix` requires.
+        // SAFETY: `tmp_pose` is non-null, so the field projection views a live
+        // `ufbx_matrix` with the pushed slot's own write-capable provenance;
+        // the `matrix` payload holds `size >= 16` reals (just checked), the run
+        // `read_transform_matrix` requires.
         unsafe {
             read_transform_matrix(
-                &raw mut (*tmp_pose).bone_to_world,
+                View::<Matrix>::from_ptr(&raw mut (*tmp_pose).bone_to_world),
                 (*matrix).data as *mut Real,
             )
         };
@@ -7312,6 +7371,15 @@ pub(crate) unsafe fn read_synthetic_attribute(
         (*info).props.props.count = dst;
     }
 
+    // `read_bone` matches on the interned run's ADDRESS, so borrow the bytes
+    // `sub_type` already points at; `slice::from_raw_parts` (not
+    // `slice_from_ptr`) keeps a zero-length run's own pointer, which the
+    // identity comparison needs.
+    // SAFETY: `sub_type` is an interned NUL-terminated string — a pool string,
+    // one of the `ufbxi_*` statics, or `EMPTY_CHAR` — readable for its own
+    // `strlen` bytes, and interned runs are never moved or rewritten.
+    let sub_type_bytes: &[u8] = unsafe { core::slice::from_raw_parts(sub_type, strlen(sub_type)) };
+
     // SAFETY (this whole dispatch): every arm hands the same parse-tree NodeView
     // `node`, the local `&raw mut attrib_info`, and interned NUL-terminated
     // `type_str` / `sub_type` / `super_type` string pointers to the per-type
@@ -7347,7 +7415,15 @@ pub(crate) unsafe fn read_synthetic_attribute(
             || sub_type == sp::Limb.as_ptr()
             || sub_type == sp::Root.as_ptr()
         {
-            read_bone(uc, node, &raw mut attrib_info, sub_type)?;
+            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
+            // local — write-capable provenance, live and unmoved across the
+            // call.
+            read_bone(
+                uc,
+                node,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+                sub_type_bytes,
+            )?;
         } else if sub_type == sp::Null.as_ptr() || sub_type == sp::Marker.as_ptr() {
             read_element(
                 uc,
@@ -7434,19 +7510,23 @@ pub(crate) unsafe fn read_synthetic_attribute(
                 ElementType::CameraSwitcher,
             )?;
         } else if sub_type == sp::FKEffector.as_ptr() {
+            // SAFETY: `attrib_info` is this frame's own `ufbxi_element_info`
+            // local — write-capable provenance, live and unmoved across the
+            // call.
             read_marker(
                 uc,
                 node,
-                &raw mut attrib_info,
-                sub_type,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+                sub_type_bytes,
                 MarkerType::FkEffector,
             )?;
         } else if sub_type == sp::IKEffector.as_ptr() {
+            // SAFETY: as above.
             read_marker(
                 uc,
                 node,
-                &raw mut attrib_info,
-                sub_type,
+                View::<ElementInfo, Mut>::from_ptr(&raw mut attrib_info),
+                sub_type_bytes,
                 MarkerType::IkEffector,
             )?;
         } else if sub_type == sp::LodGroup.as_ptr() {
@@ -7618,7 +7698,15 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 || sub_type == sp::Limb.as_ptr()
                 || sub_type == sp::Root.as_ptr()
             {
-                read_bone(uc, node, &raw mut info, sub_type)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info`
+                // local — write-capable provenance, live and unmoved across the
+                // call.
+                read_bone(
+                    uc,
+                    node,
+                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    sub_type_bytes,
+                )?;
             } else if sub_type == sp::Null.as_ptr() || sub_type == sp::Marker.as_ptr() {
                 read_element(
                     uc,
@@ -7644,9 +7732,25 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                     ElementType::CameraSwitcher,
                 )?;
             } else if sub_type == sp::FKEffector.as_ptr() {
-                read_marker(uc, node, &raw mut info, sub_type, MarkerType::FkEffector)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info`
+                // local — write-capable provenance, live and unmoved across the
+                // call.
+                read_marker(
+                    uc,
+                    node,
+                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    sub_type_bytes,
+                    MarkerType::FkEffector,
+                )?;
             } else if sub_type == sp::IKEffector.as_ptr() {
-                read_marker(uc, node, &raw mut info, sub_type, MarkerType::IkEffector)?;
+                // SAFETY: as above.
+                read_marker(
+                    uc,
+                    node,
+                    View::<ElementInfo, Mut>::from_ptr(&raw mut info),
+                    sub_type_bytes,
+                    MarkerType::IkEffector,
+                )?;
             } else if sub_type == sp::LodGroup.as_ptr() {
                 read_element(
                     uc,
@@ -9887,16 +9991,18 @@ pub(crate) unsafe fn read_legacy_link(
             "transform_link->size >= 16"
         );
 
-        // SAFETY: `cluster` is the fresh non-null element pushed above, and
-        // `transform`'s `'r'` payload holds at least 16 reals (checked), the
-        // matrix element count `read_transform_matrix` reads.
+        // SAFETY: `cluster` is the fresh non-null element pushed above, so the
+        // field projections view its live `ufbx_matrix` fields with the
+        // element's own write-capable provenance, and `transform`'s `'r'`
+        // payload holds at least 16 reals (checked), the matrix element count
+        // `read_transform_matrix` reads.
         unsafe {
             read_transform_matrix(
-                &raw mut (*cluster).mesh_node_to_bone,
+                View::<Matrix>::from_ptr(&raw mut (*cluster).mesh_node_to_bone),
                 (*transform).data as *mut Real,
             );
             read_transform_matrix(
-                &raw mut (*cluster).bind_to_world,
+                View::<Matrix>::from_ptr(&raw mut (*cluster).bind_to_world),
                 (*transform_link).data as *mut Real,
             );
         }
