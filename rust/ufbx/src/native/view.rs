@@ -118,15 +118,25 @@ impl<T> View<T, Mut> {
     }
 
     /// The viewed element as a storable `Ref<T>` (the inverse of
-    /// [`crate::prelude::Ref::view`]): the safe way to write a `ufbx_element*`
-    /// field from a view. `Mut` only — a `Ref` promises write-capable arena
-    /// provenance to every later reader, which a `Const` mint (possibly
-    /// `&`-derived) cannot supply.
+    /// [`crate::prelude::Ref::view`]), for writing a `ufbx_element*` field
+    /// from a view. `Mut` only — a `Ref` promises write-capable provenance to
+    /// every later reader, which a `Const` mint (possibly `&`-derived) cannot
+    /// supply.
+    ///
+    /// # Safety
+    /// The view's own contract covers liveness only for the view's lifetime,
+    /// and a `Mut` view may legitimately be minted over a stack local. A `Ref`
+    /// promises more: the viewed `T` must live in a stable allocation that
+    /// stays alive and unmoved for as long as any copy of the `Ref`, or the
+    /// struct it is stored into, exists (the [`crate::prelude::Ref::from_ptr`]
+    /// contract) — i.e. the receiver must be minted over arena/result-buffer
+    /// (or externally retained) storage, never a stack local.
     #[inline(always)]
-    pub(crate) fn to_ref(&self) -> crate::prelude::Ref<T> {
-        // SAFETY: a `Mut` view is minted (its `from_ptr`/`mint` contract) over
-        // a live, unmoved `T` with write-capable provenance, so `get()` is
-        // non-null and satisfies the `Ref::from_ptr` contract.
+    pub(crate) unsafe fn to_ref(&self) -> crate::prelude::Ref<T> {
+        // SAFETY: a `Mut` view is minted over a live `T` with write-capable
+        // provenance (its `from_ptr`/`mint` contract), so `get()` is non-null;
+        // the storage-lifetime half of the `Ref::from_ptr` contract is the
+        // caller's (fn contract above).
         unsafe { crate::prelude::Ref::from_ptr(self.get()) }
     }
 

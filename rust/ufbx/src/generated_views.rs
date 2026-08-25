@@ -116,10 +116,6 @@ impl<M: Mode> View<Element, M> {
         view_read_shared!(self, scene)
     }
     #[inline(always)]
-    pub(crate) fn scene_view(&self) -> &View<Scene, M> {
-        self.scene().view()
-    }
-    #[inline(always)]
     pub(crate) fn scene_ptr(&self) -> *const Ref<Scene> {
         view_raw_shared!(self, scene)
     }
@@ -3837,10 +3833,6 @@ impl<M: Mode> View<AnimProp, M> {
     #[inline(always)]
     pub(crate) fn element(&self) -> Ref<Element> {
         view_read_shared!(self, element)
-    }
-    #[inline(always)]
-    pub(crate) fn element_view(&self) -> &View<Element, M> {
-        self.element().view()
     }
     #[inline(always)]
     pub(crate) fn element_ptr(&self) -> *const Ref<Element> {

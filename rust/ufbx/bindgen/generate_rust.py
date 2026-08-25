@@ -448,6 +448,22 @@ view_accessor_skip_read = {
     ("ufbx_anim_value", "curves"),
 }
 
+# Non-nullable `Ref<T>` fields that ufbx nevertheless leaves NULL on some path
+# (see the `ref_ptr` comment in native/read.rs): no followed-`Ref` `*_view`
+# projection is generated for them, since a safe `Ref::view` over NULL bits
+# would be an invalid value. The by-value read is emitted as for any field;
+# these slots must be read as bare pointer bits (`read::ref_ptr`) instead.
+#   * `ufbx_anim_prop.element`: the zeroed sentinel that terminates every
+#     `anim_props` run (ufbx.c:22252-22259).
+#   * `ufbx_scene.anim`: the default-anim push at load is not `ufbxi_check`ed
+#     (ufbx.c:25350-25353), so an allocation failure leaves it NULL.
+#   * `ufbx_element.scene`: never set on a standalone tessellated mesh.
+view_accessor_skip_ref_view = {
+    ("ufbx_anim_prop", "element"),
+    ("ufbx_scene", "anim"),
+    ("ufbx_element", "scene"),
+}
+
 ignore_non_raw = {
     "ufbx_open_file",
     "ufbx_open_memory",
@@ -2507,6 +2523,10 @@ def is_view_projection_field(field: RustField) -> bool:
 
 def emit_view_impls(rs: RustStruct):
     typ = types[rs.ir.name]
+    for field in rs.fields:
+        if (rs.ir.name, field.ir.name) in view_accessor_skip_ref_view:
+            assert field.type.kind == "pointer" and not field.type.ir.is_nullable, \
+                f"{rs.ir.name}.{field.ir.name} is no longer a non-nullable pointer, drop the skip"
     assert not typ.needs_lifetime and not typ.rust_needs_lifetime, \
         f"view accessors assume a lifetime-free struct, got {rs.ir.name}"
     name = rs.name
@@ -2541,7 +2561,11 @@ def emit_view_impls(rs: RustStruct):
                 emit(f"view_read_shared!(self, {field.name})")
                 unindent()
                 emit("}")
-        if field.type.kind == "pointer" and field.type.ir.inner != "void":
+        if (
+            field.type.kind == "pointer"
+            and field.type.ir.inner != "void"
+            and (rs.ir.name, field.ir.name) not in view_accessor_skip_ref_view
+        ):
             # Element-reference projection: follows the stored `ufbx_element*`
             # (`Ref<T>` / `Option<Ref<T>>`) into a view of the referenced
             # element via the safe `Ref::view` bridge (prelude.rs), mode

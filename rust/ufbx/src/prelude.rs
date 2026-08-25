@@ -179,7 +179,7 @@ impl<T> Ref<T> {
     ///
     /// Safe because the `Ref` invariant (`from_ptr` contract) is exactly the
     /// view mint contract: the pointer is non-null, addresses a live and
-    /// unmoved `T` in the owning scene's result arena, and carries that arena's
+    /// unmoved `T` in a stable allocation, and carries that allocation's
     /// write-capable provenance — adequate for both [`Mut`] and [`Const`]
     /// (`crate::native::view::Mode`). The returned lifetime is unbounded, like
     /// the raw `from_ptr` mints, on the arena-stability invariant. The aliasing
@@ -202,12 +202,14 @@ impl<T> Ref<T> {
     // pointer is null-checked by the surrounding `ufbxi_check` first.
     //
     /// # Safety
-    /// `ptr` must be non-null and address a live `T` in the owning scene's
-    /// result arena — one that stays alive and unmoved for as long as any copy
-    /// of the returned `Ref` (or the scene that embeds it) exists — reached
-    /// through that arena's write-capable provenance (a result-buffer `*mut`,
-    /// never a `&T`). This is the `Ref` invariant that the safe [`Ref::view`]
-    /// mint and the public `Deref` rely on.
+    /// `ptr` must be non-null and address a live `T` in a stable, write-capable
+    /// allocation — a scene/subdivide/tessellate result arena, an externally
+    /// retained cache, or (test scaffolding) storage the test keeps alive — that
+    /// stays alive and unmoved for as long as any copy of the returned `Ref`,
+    /// or the struct that embeds it, exists; and `ptr` must carry that
+    /// allocation's write-capable provenance (a `*mut` into it, never a `&T`).
+    /// This is the `Ref` invariant that the safe [`Ref::view`] mint and the
+    /// public `Deref` rely on.
     pub(crate) unsafe fn from_ptr(ptr: *mut T) -> Ref<T> {
         Ref {
             // SAFETY: the caller vouches `ptr` is non-null — typically a

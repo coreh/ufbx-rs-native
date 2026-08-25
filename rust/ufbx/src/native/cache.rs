@@ -2702,6 +2702,9 @@ pub(crate) fn load_external_files(uc: &Context) -> Result<(), Fail> {
                 continue;
             };
             let cache: *mut GeometryCache = cache_view.get();
+            // `cache_view` views the file's retained external cache, which the
+            // scene keeps alive for the deformer that stores the ref (`to_ref`
+            // contract).
             deformer_view.set_external_cache(Some(cache_view.to_ref()));
 
             // HACK: It seems like channels may be connected even if the name is wrong

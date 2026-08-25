@@ -4458,9 +4458,11 @@ pub(crate) unsafe fn evaluate_scene(
     ec.set_anim(if !anim.is_null() {
         anim as *mut Anim
     } else {
-        // SAFETY: `scene` is the caller's live scene, whose `anim` field is a
-        // non-null `Ref` to the scene's own default animation.
-        unsafe { ptr::read(&raw const (*scene).anim) }.ptr()
+        // SAFETY: `scene` is the caller's live scene; its `anim` slot is read
+        // as bare pointer bits (`ref_ptr`), NOT as a `Ref`, because the
+        // unchecked default-anim push at load (`ufbxi_push_zero`, no
+        // `ufbxi_check`) can leave it NULL — C copies the NULL along here.
+        unsafe { ref_ptr(&raw const (*scene).anim) }
     });
     ec.set_time(time);
 

@@ -38,7 +38,7 @@ use crate::native::platform::{
     max_sz, min_sz, ufbx_assert, ufbxi_dev_assert, ufbxi_unreachable, unstable_sort, NO_INDEX,
 };
 #[cfg(feature = "subdivision")]
-use crate::native::read::{finalize_mesh, patch_mesh_reals, update_face_groups};
+use crate::native::read::{finalize_mesh, patch_mesh_reals, ref_ptr, update_face_groups};
 #[cfg(feature = "subdivision")]
 use crate::native::scene_process::finalize_mesh_material;
 #[cfg(feature = "subdivision")]
@@ -2551,11 +2551,11 @@ pub(crate) unsafe fn subdivide_mesh_level(
     let result_sub: *mut SubdivisionResult = sc.result_view().push_zero::<SubdivisionResult>(1);
     ufbxi_check_err!(sc.error_view(), !result_sub.is_null(), "result_sub");
     // SAFETY: `result_sub` is the fresh non-null result-arena push above, so the
-    // view carries that buffer's write-capable provenance; the ref it yields is
-    // stored into the destination mesh.
-    result.set_subdivision_result(Some(
-        unsafe { View::<SubdivisionResult>::from_ptr(result_sub) }.to_ref(),
-    ));
+    // view carries that buffer's write-capable provenance, and the result arena
+    // outlives the destination mesh the ref is stored into (`to_ref` contract).
+    result.set_subdivision_result(Some(unsafe {
+        View::<SubdivisionResult>::from_ptr(result_sub).to_ref()
+    }));
 
     if sc.opts_view().evaluate_source_vertices() || sc.opts_view().evaluate_skin_weights() {
         // The source mesh's previous-level result is read-only in this scope, so
@@ -3215,12 +3215,15 @@ pub(crate) fn subdivide_mesh_imp(
     // SAFETY: when the source is an evaluated tessellated-NURBS mesh its wide
     // allocation is a `MeshImp`, otherwise it belongs to a scene whose
     // `SceneImp` owns it — the same discrimination C's `ufbxi_get_imp` calls
-    // encode, and either parent outlives this call.
+    // encode, and either parent outlives this call. `element.scene` is read as
+    // bare pointer bits (`ref_ptr`), NOT as a `Ref`: a standalone tessellated
+    // mesh never has it set, and C feeds the NULL into the same arithmetic.
     let parent: *mut Refcount = unsafe {
         if src_mesh.subdivision_evaluated() && src_mesh.from_tessellated_nurbs() {
             ImpHandle::<MeshImp>::from_payload(sc.src_mesh_ptr()).refcount_ptr()
         } else {
-            ImpHandle::<SceneImp>::from_payload(src_mesh.element().scene().ptr()).refcount_ptr()
+            ImpHandle::<SceneImp>::from_payload(ref_ptr(src_mesh.element().scene_ptr()))
+                .refcount_ptr()
         }
     };
 

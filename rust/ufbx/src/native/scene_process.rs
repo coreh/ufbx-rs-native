@@ -5174,12 +5174,16 @@ pub(crate) fn add_constraint_prop(
             cprop = unsafe { cprop.add(1) };
             continue;
         }
-        // SAFETY: `cprop` addresses a live table entry (see above).
+        // SAFETY: `cprop` addresses a live table entry (see above), and `node`
+        // views a scene-arena `ufbx_node` (the caller's resolved connection
+        // endpoint), which outlives the constraint the ref is stored into
+        // (`to_ref` contract).
+        let node_ref = unsafe { node.to_ref() };
         match unsafe { (*cprop).type_ } {
-            ConstraintPropType::Node => constraint.set_node(Some(node.to_ref())),
-            ConstraintPropType::IkEffector => constraint.set_ik_effector(Some(node.to_ref())),
-            ConstraintPropType::IkEndNode => constraint.set_ik_end_node(Some(node.to_ref())),
-            ConstraintPropType::AimUp => constraint.set_aim_up_node(Some(node.to_ref())),
+            ConstraintPropType::Node => constraint.set_node(Some(node_ref)),
+            ConstraintPropType::IkEffector => constraint.set_ik_effector(Some(node_ref)),
+            ConstraintPropType::IkEndNode => constraint.set_ik_end_node(Some(node_ref)),
+            ConstraintPropType::AimUp => constraint.set_aim_up_node(Some(node_ref)),
             ConstraintPropType::Target => {
                 let target: *mut ConstraintTarget = uc.tmp_stack_view().push_zero(1);
                 ufbxi_check!(uc, !target.is_null(), "target");
@@ -5711,7 +5715,9 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
             let prop: &PropView = unsafe { PropView::from_ptr(prop.ptr()) };
             let found: Option<&PropView> =
                 find_prop_len(texture_view.props_view(), prop.name_view().bytes());
-            input.set_prop(found.map(PropView::to_ref));
+            // SAFETY: `found` is an entry of the texture's scene-arena prop table,
+            // which outlives the input the ref is stored into (`to_ref` contract).
+            input.set_prop(found.map(|p| unsafe { p.to_ref() }));
             // C-parity: the re-lookup keys on the name of a prop that came from
             // this same prop list, so it always resolves (ufbx.c:20502-20506
             // dereferences it unconditionally).
@@ -5745,7 +5751,9 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
             let found: Option<&PropView> =
                 find_prop_len(texture_view.props_view(), prop.name_view().bytes());
             let prop: *mut Prop = found.map_or(ptr::null_mut(), PropView::get);
-            input.set_texture_prop(found.map(PropView::to_ref));
+            // SAFETY: `found` is an entry of the texture's scene-arena prop table,
+            // which outlives the input the ref is stored into (`to_ref` contract).
+            input.set_texture_prop(found.map(|p| unsafe { p.to_ref() }));
             // SAFETY: `element_ptr()` addresses the texture's own live element
             // header; `prop` is null or a live prop of that element's list.
             let tex: *mut Texture = unsafe {
@@ -5766,7 +5774,9 @@ pub(crate) fn update_shader_texture(texture_view: &TextureView, shader_view: &Sh
             let prop: &PropView = unsafe { PropView::from_ptr(prop.ptr()) };
             let found: Option<&PropView> =
                 find_prop_len(texture_view.props_view(), prop.name_view().bytes());
-            input.set_texture_enabled_prop(found.map(PropView::to_ref));
+            // SAFETY: `found` is an entry of the texture's scene-arena prop table,
+            // which outlives the input the ref is stored into (`to_ref` contract).
+            input.set_texture_enabled_prop(found.map(|p| unsafe { p.to_ref() }));
             // C-parity: the re-lookup keys on the name of a prop from this same
             // list, so it always resolves (ufbx.c:20519-20520 dereferences it
             // unconditionally).
@@ -5930,7 +5940,9 @@ pub(crate) fn finalize_shader_texture<'a>(
     // SAFETY: walks the texture's own property table (`count` entries); the
     // growth targets uc's own paired `tmp_arr`/`tmp_arr_size` state, `input` is
     // the entry the grow just made room for (and is zeroed before use), and every
-    // `base` is null-checked before its deref.
+    // `base` is null-checked before its deref. Each stored `prop.to_ref()` refers
+    // to an entry of that scene-arena property table, which outlives the inputs
+    // (`to_ref` contract).
     unsafe {
         // C: `ufbxi_for_list(ufbx_prop, prop, texture->props.props)`
         let props = SliceViewIter::<Prop>::from_raw_parts(

@@ -1211,8 +1211,9 @@ pub(crate) unsafe fn opt_ref<T>(ptr: *mut T) -> Option<Ref<T>> {
 // Reads a non-optional `Ref<T>` field (C: a plain `ufbx_element*`) back as the
 // bare pointer it is at the ABI level, WITHOUT asserting the `NonNull`
 // invariant — for the slots ufbx leaves NULL despite the non-nullable public
-// type (the sentinel-terminated `anim_props` run's `element`, and `scene.anim`
-// on the forced-NULL test path). Following a valid `Ref<T>` is `Ref::view`.
+// type: the sentinel-terminated `anim_props` run's `element`, `scene.anim`
+// after an unchecked default-anim push, and `element.scene` on a standalone
+// tessellated mesh. Following a valid `Ref<T>` is `Ref::view`.
 #[inline(always)]
 pub(crate) unsafe fn ref_ptr<T>(p: *const Ref<T>) -> *mut T {
     // SAFETY: `p` addresses a live `Ref<T>` field (fn contract), which is

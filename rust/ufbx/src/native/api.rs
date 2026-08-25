@@ -82,7 +82,6 @@ use crate::generated::{
 };
 #[cfg(feature = "tessellation")]
 use crate::generated::{RawTessellateCurveOpts, RawTessellateSurfaceOpts};
-#[cfg(feature = "baking")]
 use crate::native::allocator::free;
 use crate::native::allocator::{
     align_to_mask, alloc, free_ator, Allocator, CACHE_IMP_MAGIC, REFCOUNT_IMP_MAGIC,
@@ -97,6 +96,8 @@ use crate::native::error::{
 };
 #[cfg(feature = "geometry-cache")]
 use crate::native::platform::{min64, to_size, MAX_SKIP_SIZE};
+#[cfg(feature = "baking")]
+use crate::native::read::ref_ptr;
 use crate::native::thread::ThreadPool;
 use crate::native::view::view_read_shared;
 use crate::native::view::{Const, Mode, Mut, View};
@@ -2309,10 +2310,11 @@ pub(crate) unsafe fn bake_anim(
     let mut anim = anim;
     if anim.is_null() {
         // SAFETY: `scene` is non-null (asserted) and points at a live `Scene` —
-        // the raw-pointer contract of this `unsafe fn`; `&raw const (*scene).anim`
-        // addresses its own default anim ref, read out by value (`Ref` is `Copy`)
-        // and forwarded as the bare C pointer.
-        anim = unsafe { core::ptr::read(&raw const (*scene).anim) }.ptr();
+        // the raw-pointer contract of this `unsafe fn`; its `anim` slot is read
+        // as bare pointer bits (`ref_ptr`), NOT as a `Ref`, because the
+        // unchecked default-anim push at load can leave it NULL — C forwards
+        // the NULL along here.
+        anim = unsafe { ref_ptr(&raw const (*scene).anim) };
     }
 
     // C: `ufbxi_bake_context bc = { UFBX_ERROR_NONE };`
