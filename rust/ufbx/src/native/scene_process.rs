@@ -7516,15 +7516,21 @@ pub(crate) unsafe fn absolute_to_relative_path(
     p_src: *const Strblob,
     raw: bool,
 ) -> Result<(), Fail> {
-    // SAFETY: `p_rel` points to a live, initialized `ufbx_strblob` (fn contract),
-    // so the `raw`-selected member's data pointer is readable.
-    let rel: *const u8 = unsafe { strblob_data(p_rel, raw) };
-    // SAFETY: as above, for `p_src`.
-    let src: *const u8 = unsafe { strblob_data(p_src, raw) };
-    // SAFETY: as above; the length comes from the same strblob member.
-    let mut rel_length: usize = unsafe { strblob_length(p_rel, raw) };
-    // SAFETY: as above, for `p_src`.
-    let src_length: usize = unsafe { strblob_length(p_src, raw) };
+    let (rel, src, mut rel_length, src_length): (*const u8, *const u8, usize, usize) = {
+        // SAFETY: `p_rel` points to a live, initialized `ufbx_strblob` (fn
+        // contract), so the `raw`-selected member's data pointer is readable;
+        // the read-only tag ends with this block, before anything writes
+        // through `p_dst`.
+        let p_rel: &View<Strblob, Const> = unsafe { View::<_, Const>::from_ptr(p_rel) };
+        // SAFETY: as above, for `p_src`.
+        let p_src: &View<Strblob, Const> = unsafe { View::<_, Const>::from_ptr(p_src) };
+        (
+            strblob_data(p_rel, raw),
+            strblob_data(p_src, raw),
+            strblob_length(p_rel, raw),
+            strblob_length(p_src, raw),
+        )
+    };
 
     if rel_length == 0 || src_length == 0 {
         return Ok(());
@@ -7664,9 +7670,11 @@ pub(crate) unsafe fn absolute_to_relative_path(
     };
     ufbxi_check!(uc, !dst.is_null(), "dst");
 
-    // SAFETY: `p_dst` points to a live `ufbx_strblob` to write (fn contract), and
+    // SAFETY: `p_dst` points to a live, write-capable `ufbx_strblob` to write
+    // (fn contract).
+    let p_dst: &View<Strblob> = unsafe { View::<_, Mut>::from_ptr(p_dst) };
     // `dst`/`tmp_length` describe the string just interned in `uc`'s pool.
-    unsafe { strblob_set(p_dst, dst, tmp_length, raw) };
+    strblob_set(p_dst, dst, tmp_length, raw);
 
     Ok(())
 }
@@ -7680,9 +7688,7 @@ pub(crate) fn resolve_filenames(
     relative_filename: &View<Strblob>,
     raw: bool,
 ) -> Result<(), Fail> {
-    // SAFETY: `relative_filename` views a live `ufbx_strblob` — the element
-    // field being resolved (view mint invariant).
-    if unsafe { strblob_length(relative_filename.as_ptr(), raw) } == 0 {
+    if strblob_length(relative_filename, raw) == 0 {
         let original_file_path: *const Strblob = if raw {
             uc.scene_view().metadata_view().raw_original_file_path_ptr() as *const Strblob
         } else {

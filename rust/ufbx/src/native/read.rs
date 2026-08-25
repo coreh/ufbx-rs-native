@@ -141,7 +141,7 @@ use crate::native::thread::{
     thread_pool_wait_group, THREAD_GROUP_COUNT,
 };
 use crate::native::view::{view_project, view_raw_mut, view_read, view_read_shared, view_write};
-use crate::native::view::{Mode, Mut, SliceViewIter, View};
+use crate::native::view::{Const, Mode, Mut, SliceViewIter, View};
 use crate::native::warnings::ufbxi_warnf;
 use crate::prelude::as_f64;
 use crate::prelude::{
@@ -10981,52 +10981,45 @@ const _: () = assert!(size_of::<Strblob>() == size_of::<Blob>());
 
 // ufbx.c:16536-16545 `ufbxi_strblob_set`
 #[inline(never)]
-pub(crate) unsafe fn strblob_set(dst: *mut Strblob, data: *const u8, length: usize, raw: bool) {
-    // SAFETY: `dst` is the caller's live `ufbxi_strblob`; the two members are
-    // layout-identical pointer/length pairs (asserted above); callers thread
-    // the same `raw` discriminator through the matching reads.
-    unsafe {
-        if raw {
-            (*dst).blob.data = data;
-            (*dst).blob.size = length;
+pub(crate) fn strblob_set(dst: &View<Strblob>, data: *const u8, length: usize, raw: bool) {
+    // The two members are layout-identical pointer/length pairs (asserted
+    // above) overlaid at offset zero, so either projection covers the whole
+    // union; callers thread the same `raw` discriminator through the matching
+    // reads.
+    if raw {
+        let blob: &BlobView = view_project!(dst, blob);
+        blob.set_data(data);
+        blob.set_size(length);
+    } else {
+        let str_: &StringView = view_project!(dst, str_);
+        str_.set_data(if length == 0 {
+            EMPTY_CHAR.as_ptr()
         } else {
-            (*dst).str_.data = if length == 0 {
-                EMPTY_CHAR.as_ptr()
-            } else {
-                data
-            };
-            (*dst).str_.length = length;
-        }
+            data
+        });
+        str_.set_length(length);
     }
 }
 
 // ufbx.c:16547-16550 `ufbxi_strblob_data`
 #[inline(always)]
-pub(crate) unsafe fn strblob_data(strblob: *const Strblob, raw: bool) -> *const u8 {
-    // SAFETY: `strblob` is the caller's live `ufbxi_strblob`; the two members
-    // are layout-identical pointer/length pairs (asserted above), and `raw`
-    // selects the same member used by `strblob_set`.
-    unsafe {
-        if raw {
-            (*strblob).blob.data
-        } else {
-            (*strblob).str_.data
-        }
+pub(crate) fn strblob_data<M: Mode>(strblob: &View<Strblob, M>, raw: bool) -> *const u8 {
+    // `raw` selects the same member used by `strblob_set`.
+    if raw {
+        view_read_shared!(strblob, blob).data
+    } else {
+        view_read_shared!(strblob, str_).data
     }
 }
 
 // ufbx.c:16552-16555 `ufbxi_strblob_length`
 #[inline(always)]
-pub(crate) unsafe fn strblob_length(strblob: *const Strblob, raw: bool) -> usize {
-    // SAFETY: `strblob` is the caller's live `ufbxi_strblob`; the two members
-    // are layout-identical pointer/length pairs (asserted above), and `raw`
-    // selects the same member used by `strblob_set`.
-    unsafe {
-        if raw {
-            (*strblob).blob.size
-        } else {
-            (*strblob).str_.length
-        }
+pub(crate) fn strblob_length<M: Mode>(strblob: &View<Strblob, M>, raw: bool) -> usize {
+    // `raw` selects the same member used by `strblob_set`.
+    if raw {
+        view_read_shared!(strblob, blob).size
+    } else {
+        view_read_shared!(strblob, str_).length
     }
 }
 
@@ -11057,10 +11050,14 @@ pub(crate) unsafe fn resolve_relative_filename(
     p_src: *const Strblob,
     raw: bool,
 ) -> Result<(), Fail> {
-    // SAFETY: `p_src` is the caller's live `ufbxi_strblob` source, read through
-    // the member selected by the same `raw` flag the caller threads everywhere.
-    let (mut src, mut src_length): (*const u8, usize) =
-        unsafe { (strblob_data(p_src, raw), strblob_length(p_src, raw)) };
+    let (mut src, mut src_length): (*const u8, usize) = {
+        // SAFETY: `p_src` is the caller's live `ufbxi_strblob` source (fn
+        // contract), read through the member selected by the same `raw` flag
+        // the caller threads everywhere; the read-only tag ends with this
+        // block, before anything writes through `p_dst`.
+        let p_src: &View<Strblob, Const> = unsafe { View::<_, Const>::from_ptr(p_src) };
+        (strblob_data(p_src, raw), strblob_length(p_src, raw))
+    };
 
     // Skip leading directory separators and early return if the relative path is empty
     // SAFETY: `src` .. `src + src_length` is the source path run described by
@@ -11072,11 +11069,10 @@ pub(crate) unsafe fn resolve_relative_filename(
         src_length -= 1;
     }
     if src_length == 0 {
-        // SAFETY: `p_dst` is the caller's live `ufbxi_strblob` destination,
-        // written through the member selected by `raw`.
-        unsafe {
-            strblob_set(p_dst, core::ptr::null(), 0, raw);
-        }
+        // SAFETY: `p_dst` is the caller's live, write-capable `ufbxi_strblob`
+        // destination (fn contract).
+        let p_dst: &View<Strblob> = unsafe { View::<_, Mut>::from_ptr(p_dst) };
+        strblob_set(p_dst, core::ptr::null(), 0, raw);
         return Ok(());
     }
 
@@ -11217,12 +11213,11 @@ pub(crate) unsafe fn resolve_relative_filename(
         pop::<u8>(uc.tmp_stack_mut_ptr(), result_cap, core::ptr::null_mut());
     }
 
-    // SAFETY: `p_dst` is the caller's live `ufbxi_strblob` destination, written
-    // through the member selected by `raw`; `dst` is the interned string, which
-    // outlives the popped scratch run.
-    unsafe {
-        strblob_set(p_dst, dst.data, dst.length, raw);
-    }
+    // SAFETY: `p_dst` is the caller's live, write-capable `ufbxi_strblob`
+    // destination (fn contract).
+    let p_dst: &View<Strblob> = unsafe { View::<_, Mut>::from_ptr(p_dst) };
+    // `dst` is the interned string, which outlives the popped scratch run.
+    strblob_set(p_dst, dst.data, dst.length, raw);
 
     Ok(())
 }
