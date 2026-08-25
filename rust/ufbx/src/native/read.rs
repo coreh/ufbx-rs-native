@@ -9272,26 +9272,19 @@ pub(crate) unsafe fn unscaled_transform_to_matrix(t: *const Transform) -> Matrix
 
 // ufbx.c:15827-15837 `ufbxi_setup_root_node`
 #[inline(never)]
-pub(crate) unsafe fn setup_root_node(uc: &Context, root: *mut UfbxNode) {
+pub(crate) fn setup_root_node(uc: &Context, root: &View<UfbxNode, Mut>) {
     if uc.opts_view().use_root_transform() {
-        // SAFETY: `root` is the caller's live root `ufbx_node` (fn contract);
-        // `root_transform_ptr()` points at uc's own live, initialized
+        root.set_local_transform(uc.opts_view().root_transform());
+        // SAFETY: `root_transform_ptr()` points at uc's own live, initialized
         // `opts.root_transform`.
-        unsafe {
-            (*root).local_transform = uc.opts_view().root_transform();
-            (*root).node_to_parent = transform_to_matrix(uc.opts_view().root_transform_ptr());
-        }
+        root.set_node_to_parent(unsafe {
+            transform_to_matrix(uc.opts_view().root_transform_ptr())
+        });
     } else {
-        // SAFETY: `root` is the caller's live root `ufbx_node` (fn contract).
-        unsafe {
-            (*root).local_transform = IDENTITY_TRANSFORM;
-            (*root).node_to_parent = IDENTITY_MATRIX;
-        }
+        root.set_local_transform(IDENTITY_TRANSFORM);
+        root.set_node_to_parent(IDENTITY_MATRIX);
     }
-    // SAFETY: as above.
-    unsafe {
-        (*root).is_root = true;
-    }
+    root.set_is_root(true);
 }
 
 // ufbx.c:15839-15842 `ufbxi_supports_version`
@@ -9386,7 +9379,9 @@ pub(crate) fn read_root(uc: &Context) -> Result<(), Fail> {
                 ElementType::Node,
             );
             ufbxi_check!(uc, !root.is_null(), "root");
-            setup_root_node(uc, root);
+            // SAFETY: `root` is the fresh non-null element the push returns,
+            // living in uc's own write-capable element arena.
+            setup_root_node(uc, View::<UfbxNode>::from_ptr(root));
             ufbxi_check!(
             uc,
             !uc.tmp_node_ids_view()
@@ -10715,7 +10710,9 @@ pub(crate) fn read_legacy_root(uc: &Context) -> Result<(), Fail> {
                 ElementType::Node,
             );
             ufbxi_check!(uc, !root.is_null(), "root");
-            setup_root_node(uc, root);
+            // SAFETY: `root` is the fresh non-null element the push returns,
+            // living in uc's own write-capable element arena.
+            setup_root_node(uc, View::<UfbxNode>::from_ptr(root));
             ufbxi_check!(
             uc,
             !uc.tmp_node_ids_view()

@@ -443,8 +443,9 @@ pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
             )
         };
         ufbxi_check!(uc, !root.is_null(), "root");
-        // SAFETY: `root` is the fresh non-null element push result.
-        unsafe { setup_root_node(uc, root) };
+        // SAFETY: `root` is the fresh non-null element push result, living in
+        // uc's own write-capable element arena.
+        setup_root_node(uc, unsafe { View::<UfbxNode>::from_ptr(root) });
         ufbxi_check!(
             uc,
             // Copies `root`'s own `element_id` field onto uc's `tmp_node_ids`
