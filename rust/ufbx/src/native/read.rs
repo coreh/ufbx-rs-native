@@ -223,16 +223,12 @@ pub(crate) fn read_embedded_blob(
 
 // ufbx.c:11798-11869 `ufbxi_read_property`
 #[inline(never)]
-pub(crate) unsafe fn read_property(
+pub(crate) fn read_property(
     uc: &Context,
     node: &NodeView,
-    prop: *mut Prop,
+    prop: &PropView,
     version: i32,
 ) -> Result<(), Fail> {
-    // SAFETY: `prop` is the caller's writable `ufbx_prop` slot in the result
-    // arena (fn contract) — write-capable provenance, stable for this call.
-    let prop: &PropView = unsafe { PropView::from_ptr(prop) };
-
     let mut subtype_str: *const u8 = core::ptr::null();
     let (Checked(name), Checked(type_str)) = ufbxi_check_some!(
         uc,
@@ -494,15 +490,16 @@ pub(crate) unsafe fn read_properties(
     while i < props.props_count() {
         // SAFETY: `count` equals `node.num_children()`, so `i` indexes both a
         // live child of `node` and a live element of the zeroed `Prop` run
-        // pushed above; `NodeView::from_ptr` mints a view over that child.
-        unsafe {
-            read_property(
-                uc,
+        // pushed above; `NodeView::from_ptr` mints a view over that child and
+        // `PropView::from_ptr` one over that element — both write-capable
+        // result-arena memory, stable for the call.
+        let (child, prop): (&NodeView, &PropView) = unsafe {
+            (
                 NodeView::from_ptr(node.children().add(i)),
-                props.props_data().add(i),
-                version,
+                PropView::from_ptr(props.props_data().add(i)),
             )
-        }?;
+        };
+        read_property(uc, child, prop, version)?;
         i += 1;
     }
 
