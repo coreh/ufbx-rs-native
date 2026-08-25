@@ -6937,65 +6937,60 @@ pub(crate) fn read_binding_table(
 
 // ufbx.c:14737-14745 `ufbxi_read_selection_set`
 #[inline(never)]
-pub(crate) unsafe fn read_selection_set(
+pub(crate) fn read_selection_set(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
     let _ = node; // C: `(void)node;`
 
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `SelectionSet` is the element struct for `ElementType::SelectionSet`.
-    let set: *mut SelectionSet = unsafe {
-        push_element::<SelectionSet>(
-            uc,
-            View::<ElementInfo>::from_ptr(info),
-            ElementType::SelectionSet,
-        )
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `SelectionSet` is the element struct for
+    // `ElementType::SelectionSet`.
+    let set: *mut SelectionSet =
+        unsafe { push_element::<SelectionSet>(uc, info, ElementType::SelectionSet) };
     ufbxi_check!(uc, !set.is_null(), "set");
 
     Ok(())
 }
 
 // ufbx.c:14747-14754 `ufbxi_find_uint32_list`
+// `name` stays a raw `*const u8`: it is an interned pooled-string pointer
+// compared by IDENTITY inside `find_child` (never dereferenced), the same
+// convention `find_array`/`find_val1` carry as safe fns.
 #[inline(never)]
-pub(crate) unsafe fn find_uint32_list(dst: *mut List<u32>, node: &NodeView, name: *const u8) {
+pub(crate) fn find_uint32_list(dst: &View<List<u32>, Mut>, node: &NodeView, name: *const u8) {
     let arr: *mut ValueArray = find_array(node, name, b'i');
     if !arr.is_null() {
-        // SAFETY: `dst` is the caller's live `ufbx_uint32_list`; `arr` is non-null
-        // (checked) and `find_array` returns the node's own array descriptor, live
-        // for as long as the parse tree, whose `'i'` payload is `size` `uint32_t`.
-        unsafe {
-            (*dst).data = (*arr).data as *const u32;
-            (*dst).count = (*arr).size;
-        }
+        // SAFETY: `arr` is non-null (checked) and `find_array` returns the node's
+        // own array descriptor — arena memory, live and unmoved for as long as
+        // the parse tree, with write-capable provenance.
+        let arr: &View<ValueArray, Mut> = unsafe { View::<ValueArray, Mut>::from_ptr(arr) };
+        dst.set_data(arr.data() as *const u32);
+        dst.set_count(arr.size());
     }
 }
 
 // ufbx.c:14756-14771 `ufbxi_read_selection_node`
 #[inline(never)]
-pub(crate) unsafe fn read_selection_node(
+pub(crate) fn read_selection_node(
     uc: &Context,
     node: &NodeView,
-    info: *mut ElementInfo,
+    info: &View<ElementInfo, Mut>,
 ) -> Result<(), Fail> {
-    // SAFETY: `info` is the caller's live `ufbxi_element_info` — write-capable
-    // provenance, live and unmoved across the call — whose `name` is a pooled
-    // NUL-terminated string and whose `props`/`dom_node` point into uc's own
-    // buffers, so all three survive being stored into the element by pointer;
-    // `SelectionNode` is the element struct for `ElementType::SelectionNode`.
-    let sel: *mut SelectionNode = unsafe {
-        push_element::<SelectionNode>(
-            uc,
-            View::<ElementInfo>::from_ptr(info),
-            ElementType::SelectionNode,
-        )
-    };
+    // SAFETY: `info` views the caller's live `ufbxi_element_info`, whose `name`
+    // is a pooled NUL-terminated string and whose `props`/`dom_node` point into
+    // uc's own buffers, so all three survive being stored into the element by
+    // pointer; `SelectionNode` is the element struct for
+    // `ElementType::SelectionNode`.
+    let sel: *mut SelectionNode =
+        unsafe { push_element::<SelectionNode>(uc, info, ElementType::SelectionNode) };
     ufbxi_check!(uc, !sel.is_null(), "sel");
+    // SAFETY: `sel` is the fresh non-null element pushed above (checked) — scene
+    // arena memory, live and unmoved, with write-capable provenance.
+    let sel: &View<SelectionNode, Mut> = unsafe { View::<SelectionNode, Mut>::from_ptr(sel) };
 
     let mut in_set: i32 = 0;
     if let Some(got) = find_val1::<i32>(node, sp::IsTheNodeInSet.as_ptr()) {
@@ -7004,24 +6999,12 @@ pub(crate) unsafe fn read_selection_node(
     // C: `if (ufbxi_find_val1(...) && in_set != 0)` — the write above happens
     // exactly when the fetch succeeds, so the combined test reads as follows.
     if in_set != 0 {
-        // SAFETY: `sel` is the fresh non-null element pushed above.
-        unsafe {
-            (*sel).include_node = true;
-        }
+        sel.set_include_node(true);
     }
 
-    // SAFETY: `sel` is the fresh non-null element pushed above, so
-    // `&raw mut (*sel).vertices` is a live `ufbx_uint32_list`; the name is a
-    // NUL-terminated interned string pointer.
-    unsafe {
-        find_uint32_list(
-            &raw mut (*sel).vertices,
-            node,
-            sp::VertexIndexArray.as_ptr(),
-        );
-        find_uint32_list(&raw mut (*sel).edges, node, sp::EdgeIndexArray.as_ptr());
-        find_uint32_list(&raw mut (*sel).faces, node, sp::PolygonIndexArray.as_ptr());
-    }
+    find_uint32_list(sel.vertices_view(), node, sp::VertexIndexArray.as_ptr());
+    find_uint32_list(sel.edges_view(), node, sp::EdgeIndexArray.as_ptr());
+    find_uint32_list(sel.faces_view(), node, sp::PolygonIndexArray.as_ptr());
 
     Ok(())
 }
@@ -7878,7 +7861,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
             read_binding_table(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::Collection.as_ptr() {
             if sub_type == sp::SelectionSet.as_ptr() {
-                read_selection_set(uc, node, &raw mut info)?;
+                // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+                // write-capable provenance, live and unmoved across the call.
+                read_selection_set(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
             }
         } else if name == sp::CollectionExclusive.as_ptr() {
             if sub_type == sp::DisplayLayer.as_ptr() {
@@ -7891,7 +7876,9 @@ pub(crate) fn read_object(uc: &Context, node: &NodeView) -> Result<(), Fail> {
                 )?;
             }
         } else if name == sp::SelectionNode.as_ptr() {
-            read_selection_node(uc, node, &raw mut info)?;
+            // SAFETY: `info` is this frame's own `ufbxi_element_info` local —
+            // write-capable provenance, live and unmoved across the call.
+            read_selection_node(uc, node, View::<ElementInfo, Mut>::from_ptr(&raw mut info))?;
         } else if name == sp::Constraint.as_ptr() {
             if sub_type == sp::Character.as_ptr() {
                 read_character(uc, node, &raw mut info)?;
