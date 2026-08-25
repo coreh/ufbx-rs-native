@@ -1847,9 +1847,9 @@ mod tests {
     #![allow(clippy::assertions_on_constants)]
     use super::*;
     use crate::generated::UnicodeErrorHandling;
-    use crate::native::allocator::{init_ator, Allocator};
+    use crate::native::allocator::{init_ator, Allocator, AllocatorView};
     use crate::native::buf::{buf_free, BufView};
-    use crate::native::hash::map_init;
+    use crate::native::hash::{map_init, MapView};
     use core::mem::MaybeUninit;
 
     struct Fixture {
@@ -1878,17 +1878,16 @@ mod tests {
         fx.pool.error = &mut fx.err;
         fx.pool.buf.ator = ator;
         // C: `ufbxi_map_init(&uc->string_pool.map, &uc->ator_tmp, &ufbxi_map_cmp_string, NULL)`
-        // SAFETY: initializing the fixture's own zeroed map against the
-        // fixture's own allocator; `map_cmp_string` takes no user data, so the
-        // null `user` is what it expects.
-        unsafe {
-            map_init(
-                &mut fx.pool.map,
-                ator,
-                map_cmp_string,
-                core::ptr::null_mut(),
-            );
-        }
+        // SAFETY: the views are minted over the fixture's own zeroed map and
+        // its own allocator, both live for the fixture's lifetime;
+        // `map_cmp_string` takes no user data, so the null `user` is what it
+        // expects.
+        map_init(
+            unsafe { MapView::from_ptr(&raw mut fx.pool.map) },
+            unsafe { AllocatorView::from_ptr(ator) },
+            map_cmp_string,
+            core::ptr::null_mut(),
+        );
         fx.pool.initial_size = 64; // ufbx.c:7192 `string_pool.initial_size = 1024` (smaller for tests)
         fx.pool.error_handling = handling;
         fx.pool.warnings = core::ptr::null_mut();

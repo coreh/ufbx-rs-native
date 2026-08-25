@@ -215,18 +215,16 @@ pub(crate) unsafe fn generate_indices(
     // (`Option<CmpFn>`, `None` when zeroed via the null-fn niche), matching the
     // C zero-initializer.
     let mut map: Map = unsafe { MaybeUninit::<Map>::zeroed().assume_init() };
-    // SAFETY: the raw addresses identify the zeroed map and initialized
-    // allocator, and the user pointer identifies `packed_size`, a local that
-    // outlives every comparator call (all of which happen below, before this fn
-    // returns).
-    unsafe {
-        map_init(
-            &raw mut map,
-            &raw mut ator,
-            map_cmp_vertex,
-            (&raw mut packed_size).cast::<c_void>(),
-        )
-    };
+    // SAFETY: the two views are minted over the zeroed map and the initialized
+    // allocator, both locals that outlive every use of the map below. The user
+    // pointer identifies `packed_size`, a local that outlives every comparator
+    // call (all of which happen below, before this fn returns).
+    map_init(
+        unsafe { MapView::from_ptr(&raw mut map) },
+        unsafe { AllocatorView::from_ptr(&raw mut ator) },
+        map_cmp_vertex,
+        (&raw mut packed_size).cast::<c_void>(),
+    );
 
     // SAFETY: the raw address identifies the map initialized above.
     if num_indices > 0 && !unsafe { map_grow_size(&raw mut map, packed_size, num_indices) } {

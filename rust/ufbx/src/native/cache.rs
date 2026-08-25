@@ -2230,17 +2230,14 @@ pub(crate) unsafe fn load_geometry_cache(
     cc.set_open_file_cb(opts.open_file_cb);
 
     cc.string_pool_view().set_error(cc.error_mut_ptr());
-    // SAFETY: the map addressed is `cc`'s own string-pool map, paired with
-    // `cc`'s temp allocator (initialized above) — the pairing `map_init`
-    // requires; `map_cmp_string` is the comparator for its string keys.
-    unsafe {
-        map_init(
-            cc.string_pool_view().map_mut_ptr(),
-            cc.ator_tmp(),
-            map_cmp_string,
-            core::ptr::null_mut(),
-        );
-    }
+    map_init(
+        cc.string_pool_view().map_view(),
+        // SAFETY: `cc.ator_tmp()` is `cc`'s temp allocator (initialized above),
+        // live and write-capable for the duration of the cache load.
+        unsafe { AllocatorView::from_ptr(cc.ator_tmp()) },
+        map_cmp_string,
+        core::ptr::null_mut(),
+    );
     cc.string_pool_view()
         .buf_view()
         .set_ator(cc.ator_result_mut_ptr());

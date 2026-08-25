@@ -1397,17 +1397,12 @@ pub(crate) unsafe fn load(
     uc.set_synthetic_id_counter(SYNTHETIC_ID_START);
 
     uc.string_pool_view().set_error(uc.error_mut_ptr());
-    // SAFETY: the string pool's map and `ator_tmp` are `uc`'s own fields, live
-    // for the `&Context` borrow; the comparator is a plain fn item taking the
-    // null user pointer `map_init` stores alongside it.
-    unsafe {
-        map_init(
-            uc.string_pool_view().map_mut_ptr(),
-            uc.ator_tmp_mut_ptr(),
-            map_cmp_string,
-            ptr::null_mut(),
-        )
-    };
+    map_init(
+        uc.string_pool_view().map_view(),
+        uc.ator_tmp_view(),
+        map_cmp_string,
+        ptr::null_mut(),
+    );
     uc.string_pool_view()
         .buf_view()
         .set_ator(uc.ator_result_mut_ptr());
@@ -1416,73 +1411,54 @@ pub(crate) unsafe fn load(
     uc.string_pool_view()
         .set_error_handling(uc.opts_view().unicode_error_handling());
 
-    // SAFETY (every `map_init` below): the map and `ator_tmp` are `uc`'s own
-    // fields, live for the `&Context` borrow; each comparator is a plain fn item
-    // taking the null user pointer `map_init` stores alongside it.
-    unsafe {
-        map_init(
-            uc.prop_type_map_mut_ptr(),
-            uc.ator_tmp_mut_ptr(),
-            map_cmp_const_char_ptr,
-            ptr::null_mut(),
-        )
-    };
-    unsafe {
-        map_init(
-            uc.fbx_id_map_mut_ptr(),
-            uc.ator_tmp_mut_ptr(),
-            map_cmp_uint64,
-            ptr::null_mut(),
-        )
-    };
-    unsafe {
-        map_init(
-            uc.ptr_fbx_id_map_mut_ptr(),
-            uc.ator_tmp_mut_ptr(),
-            map_cmp_ptr_id,
-            ptr::null_mut(),
-        )
-    };
-    unsafe {
-        map_init(
-            uc.texture_file_map_mut_ptr(),
-            uc.ator_tmp_mut_ptr(),
-            map_cmp_const_char_ptr,
-            ptr::null_mut(),
-        )
-    };
-    unsafe {
-        map_init(
-            uc.anim_stack_map_mut_ptr(),
-            uc.ator_tmp_mut_ptr(),
-            map_cmp_const_char_ptr,
-            ptr::null_mut(),
-        )
-    };
-    unsafe {
-        map_init(
-            uc.fbx_attr_map_mut_ptr(),
-            uc.ator_tmp_mut_ptr(),
-            map_cmp_uint64,
-            ptr::null_mut(),
-        )
-    };
-    unsafe {
-        map_init(
-            uc.node_prop_set_mut_ptr(),
-            uc.ator_tmp_mut_ptr(),
-            map_cmp_const_char_ptr,
-            ptr::null_mut(),
-        )
-    };
-    unsafe {
-        map_init(
-            uc.dom_node_map_mut_ptr(),
-            uc.ator_tmp_mut_ptr(),
-            map_cmp_uintptr,
-            ptr::null_mut(),
-        )
-    };
+    map_init(
+        uc.prop_type_map_view(),
+        uc.ator_tmp_view(),
+        map_cmp_const_char_ptr,
+        ptr::null_mut(),
+    );
+    map_init(
+        uc.fbx_id_map_view(),
+        uc.ator_tmp_view(),
+        map_cmp_uint64,
+        ptr::null_mut(),
+    );
+    map_init(
+        uc.ptr_fbx_id_map_view(),
+        uc.ator_tmp_view(),
+        map_cmp_ptr_id,
+        ptr::null_mut(),
+    );
+    map_init(
+        uc.texture_file_map_view(),
+        uc.ator_tmp_view(),
+        map_cmp_const_char_ptr,
+        ptr::null_mut(),
+    );
+    map_init(
+        uc.anim_stack_map_view(),
+        uc.ator_tmp_view(),
+        map_cmp_const_char_ptr,
+        ptr::null_mut(),
+    );
+    map_init(
+        uc.fbx_attr_map_view(),
+        uc.ator_tmp_view(),
+        map_cmp_uint64,
+        ptr::null_mut(),
+    );
+    map_init(
+        uc.node_prop_set_view(),
+        uc.ator_tmp_view(),
+        map_cmp_const_char_ptr,
+        ptr::null_mut(),
+    );
+    map_init(
+        uc.dom_node_map_view(),
+        uc.ator_tmp_view(),
+        map_cmp_uintptr,
+        ptr::null_mut(),
+    );
 
     uc.tmp_view().set_ator(uc.ator_tmp_mut_ptr());
     uc.tmp_parse_view().set_ator(uc.ator_tmp_mut_ptr());

@@ -7,13 +7,15 @@
 use core::ffi::c_void;
 use core::mem::size_of;
 
-use crate::native::allocator::{alloc, free, free_ator, ufbx_free, ufbx_malloc, Allocator};
+use crate::native::allocator::{
+    alloc, free, free_ator, ufbx_free, ufbx_malloc, Allocator, AllocatorView,
+};
 use crate::native::buf::{buf_free, push, Buf, BufView};
 use crate::native::error::{ufbxi_check_return_err, ufbxi_check_return_err_msg};
 use crate::native::platform::{
     read_u32, ufbx_assert, ufbxi_maybe_null, ufbxi_regression_assert, MAP_MAX_SCAN,
 };
-use crate::native::view::view_read;
+use crate::native::view::{view_project, view_read, view_write};
 
 // ufbx.c:4688-4691 `ufbxi_ptr_id` — key type of the hash-map unit; kept up
 // here (out of C declaration order) because `ufbxi_hash_ptr_id` takes it by
@@ -285,6 +287,23 @@ impl MapView {
     pub(crate) fn ator(&self) -> *mut Allocator {
         view_read!(self, ator)
     }
+    #[inline(always)]
+    pub(crate) fn set_ator(&self, ator: *mut Allocator) {
+        view_write!(self, ator, ator)
+    }
+    #[inline(always)]
+    pub(crate) fn set_cmp_fn(&self, cmp_fn: Option<CmpFn>) {
+        view_write!(self, cmp_fn, cmp_fn)
+    }
+    #[inline(always)]
+    pub(crate) fn set_cmp_user(&self, cmp_user: *mut c_void) {
+        view_write!(self, cmp_user, cmp_user)
+    }
+    // `aa_buf` (Buf) — typed VIEW handle (reinterpret-in-place); accessors on BufView.
+    #[inline(always)]
+    pub(crate) fn aa_buf_view(&self) -> &BufView {
+        view_project!(self, aa_buf)
+    }
 
     // Safe typed map operations over the view (ufbx.c:4657-4659 macros).
     //
@@ -324,14 +343,8 @@ impl MapView {
 
 // ufbx.c:4393-4419 `ufbxi_map_init`
 #[inline(never)]
-pub(crate) unsafe fn map_init(
-    map: *mut Map,
-    ator: *mut Allocator,
-    cmp_fn: CmpFn,
-    cmp_user: *mut c_void,
-) {
-    // SAFETY: caller contract — `map` points at a live, writable `Map`.
-    unsafe { (*map).ator = ator };
+pub(crate) fn map_init(map: &MapView, ator: &AllocatorView, cmp_fn: CmpFn, cmp_user: *mut c_void) {
+    map.set_ator(ator.get());
     #[cfg(feature = "regression")]
     {
         // HACK: Maps contain pointers that are not stable between runs, in regression
@@ -349,29 +362,26 @@ pub(crate) unsafe fn map_init(
                 core::ptr::write_bytes(regression_ator as *mut u8, 0, size_of::<Allocator>())
             };
             // SAFETY: `regression_ator` is the freshly allocated, zeroed
-            // `Allocator` just proven non-null; `ator` is the caller's live
-            // allocator being read from.
+            // `Allocator` just proven non-null; the source reads are single-leaf
+            // reads of the caller's allocator, live per the view's mint
+            // invariant.
             unsafe {
                 (*regression_ator).name = b"regression\0".as_ptr();
-                (*regression_ator).error = (*ator).error;
-                (*regression_ator).huge_size = (*ator).huge_size;
+                (*regression_ator).error = (*ator.get()).error;
+                (*regression_ator).huge_size = (*ator.get()).huge_size;
                 (*regression_ator).max_size = usize::MAX;
                 (*regression_ator).max_allocs = usize::MAX;
                 (*regression_ator).chunk_max = 0x1000000;
-                (*map).aa_buf.ator = regression_ator;
             }
+            map.aa_buf_view().set_ator(regression_ator);
         }
     }
     #[cfg(not(feature = "regression"))]
     {
-        // SAFETY: caller contract — `map` points at a live, writable `Map`.
-        unsafe { (*map).aa_buf.ator = ator };
+        map.aa_buf_view().set_ator(ator.get());
     }
-    // SAFETY: caller contract — `map` points at a live, writable `Map`.
-    unsafe {
-        (*map).cmp_fn = Some(cmp_fn);
-        (*map).cmp_user = cmp_user;
-    }
+    map.set_cmp_fn(Some(cmp_fn));
+    map.set_cmp_user(cmp_user);
 }
 
 // ufbx.c:4421-4440 `ufbxi_map_free`
@@ -1140,9 +1150,15 @@ mod tests {
         // SAFETY: an all-zero bit pattern is a valid `Map` (raw pointers null,
         // integers zero, `Option<CmpFn>` None).
         let mut map = unsafe { MaybeUninit::<Map>::zeroed().assume_init() };
-        // SAFETY: `&mut map` is a live, writable `Map`; `ator` is the caller's
-        // allocator to install.
-        unsafe { map_init(&mut map, ator, cmp_fn, core::ptr::null_mut()) };
+        // SAFETY: `&raw mut map` addresses the live, writable local `Map`, and
+        // `ator` is the caller's live allocator (fn contract); both views are
+        // minted over memory that outlives this call.
+        map_init(
+            unsafe { MapView::from_ptr(&raw mut map) },
+            unsafe { AllocatorView::from_ptr(ator) },
+            cmp_fn,
+            core::ptr::null_mut(),
+        );
         map
     }
 

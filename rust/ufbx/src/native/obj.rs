@@ -411,17 +411,12 @@ pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
     uc.obj().object_view().set_data(EMPTY_CHAR.as_ptr());
     uc.obj().group_view().set_data(EMPTY_CHAR.as_ptr());
 
-    // SAFETY: initializing the obj parser's own group map with uc's temp
-    // allocator, both taken through their raw-ptr getters (`uc.obj()` / `uc`
-    // construction invariants).
-    unsafe {
-        map_init(
-            uc.obj().group_map_mut_ptr(),
-            uc.ator_tmp_mut_ptr(),
-            map_cmp_const_char_ptr,
-            core::ptr::null_mut(),
-        );
-    }
+    map_init(
+        uc.obj().group_map_view(),
+        uc.ator_tmp_view(),
+        map_cmp_const_char_ptr,
+        core::ptr::null_mut(),
+    );
 
     // Add a nameless root node with the root ID
     {

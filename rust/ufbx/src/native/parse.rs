@@ -1118,10 +1118,6 @@ impl ObjContext {
     }
 
     #[inline(always)]
-    pub(crate) fn group_map_mut_ptr(&self) -> *mut Map {
-        view_raw_mut!(self, group_map)
-    }
-    #[inline(always)]
     pub(crate) fn group_map_view(&self) -> &crate::native::hash::MapView {
         unsafe { &*(&raw mut (*self.get()).group_map as *mut crate::native::hash::MapView) }
     }
@@ -3110,58 +3106,10 @@ impl Context {
         }
     }
 
-    // `ptr_fbx_id_map` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn ptr_fbx_id_map_mut_ptr(&self) -> *mut Map {
-        view_raw_mut!(self, ptr_fbx_id_map)
-    }
-
-    // `texture_file_map` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn texture_file_map_mut_ptr(&self) -> *mut Map {
-        view_raw_mut!(self, texture_file_map)
-    }
-
-    // `node_prop_set` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn node_prop_set_mut_ptr(&self) -> *mut Map {
-        view_raw_mut!(self, node_prop_set)
-    }
-
-    // `prop_type_map` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn prop_type_map_mut_ptr(&self) -> *mut Map {
-        view_raw_mut!(self, prop_type_map)
-    }
-
-    // `dom_node_map` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn dom_node_map_mut_ptr(&self) -> *mut Map {
-        view_raw_mut!(self, dom_node_map)
-    }
-
-    // `anim_stack_map` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn anim_stack_map_mut_ptr(&self) -> *mut Map {
-        view_raw_mut!(self, anim_stack_map)
-    }
-
-    // `fbx_id_map` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn fbx_id_map_mut_ptr(&self) -> *mut Map {
-        view_raw_mut!(self, fbx_id_map)
-    }
-
     // `scene` — raw-ptr getter (address of field for out-param/mutation sites).
     #[inline(always)]
     pub(crate) fn scene_mut_ptr(&self) -> *mut Scene {
         view_raw_mut!(self, scene)
-    }
-
-    // `fbx_attr_map` — raw-ptr getter (address of field for out-param/mutation sites).
-    #[inline(always)]
-    pub(crate) fn fbx_attr_map_mut_ptr(&self) -> *mut Map {
-        view_raw_mut!(self, fbx_attr_map)
     }
 
     // `thread_pool` — raw-ptr getter (address of field for out-param/mutation sites).
@@ -8192,7 +8140,7 @@ mod tests {
 
     #[test]
     fn test_retain_dom_node_tree() {
-        use crate::native::allocator::init_ator;
+        use crate::native::allocator::{init_ator, AllocatorView};
         use crate::native::buf::{buf_free, BufView};
         use crate::native::hash::{map_cmp_uintptr, map_free, map_init, MapView};
         use crate::native::string_pool::{map_cmp_string, string_pool_temp_free, StringPoolView};
@@ -8215,14 +8163,14 @@ mod tests {
             uc.string_pool.buf.ator = ator_tmp;
             uc.string_pool.initial_size = 64;
             map_init(
-                &mut uc.string_pool.map,
-                ator_tmp,
+                MapView::from_ptr(&raw mut uc.string_pool.map),
+                AllocatorView::from_ptr(ator_tmp),
                 map_cmp_string,
                 core::ptr::null_mut(),
             );
             map_init(
-                &mut uc.dom_node_map,
-                ator_tmp,
+                MapView::from_ptr(&raw mut uc.dom_node_map),
+                AllocatorView::from_ptr(ator_tmp),
                 map_cmp_uintptr,
                 core::ptr::null_mut(),
             );
