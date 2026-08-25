@@ -3879,9 +3879,9 @@ pub(crate) fn assign_face_groups(
 
 // ufbx.c:13399-13432 `ufbxi_update_face_groups`
 #[inline(never)]
-pub(crate) unsafe fn update_face_groups(
+pub(crate) fn update_face_groups(
     buf: &BufView,
-    error: *mut Error,
+    error: &crate::native::error::ErrorView,
     mesh: &View<Mesh>,
     need_copy: bool,
 ) -> Result<(), Fail> {
@@ -3895,18 +3895,14 @@ pub(crate) unsafe fn update_face_groups(
         mesh.face_group_parts_view()
             .set_data(buf.push_zero::<MeshPart>(num_groups));
         ufbxi_check_err!(
-            unsafe { crate::native::error::ErrorView::from_ptr(error) },
+            error,
             !mesh.face_group_parts().data.is_null(),
             "mesh->face_group_parts.data"
         );
     }
 
     let mut face_indices: *mut u32 = buf.push::<u32>(num_faces);
-    ufbxi_check_err!(
-        unsafe { crate::native::error::ErrorView::from_ptr(error) },
-        !face_indices.is_null(),
-        "face_indices"
-    );
+    ufbxi_check_err!(error, !face_indices.is_null(), "face_indices");
 
     // C: `ufbxi_nounroll for (size_t i = 0; i < num_faces; i++)`
     for i in 0..num_faces {

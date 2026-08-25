@@ -1901,9 +1901,7 @@ pub(crate) fn obj_pop_meshes(uc: &Context) -> Result<(), Fail> {
         }
 
         if mesh.num_groups() > 1 {
-            // SAFETY: this mesh's own element is updated in place with its
-            // face-group part data pushed onto uc's result arena.
-            unsafe { update_face_groups(uc.result_view(), uc.error_mut_ptr(), fbx_mesh, false)? };
+            update_face_groups(uc.result_view(), uc.error_view(), fbx_mesh, false)?;
         } else if mesh.num_groups() == 1 {
             fbx_mesh
                 .face_group_view()
