@@ -390,13 +390,9 @@ pub(crate) unsafe fn realloc_size(
         return alloc_size(ator, size, n);
     }
     if n == 0 {
-        // SAFETY: `get()` is the view's own live, unmoved `Allocator` (its
-        // `from_ptr` mint invariant); `old_ptr`/`old_n` describe a live block
-        // from this same allocator (this fn's `old_ptr` contract). `ator` stays
-        // live across this call, which is why `free_size` does its
-        // `current_size` bookkeeping through a raw field place: a
-        // `&mut Allocator` there would pop this view's tag.
-        unsafe { free_size(ator.get(), size, old_ptr, old_n) };
+        // SAFETY: `old_ptr`/`old_n` describe a live block from this same
+        // allocator (this fn's `old_ptr` contract), handed over for release.
+        unsafe { free_size(ator, size, old_ptr, old_n) };
         return core::ptr::null_mut();
     }
 
@@ -499,8 +495,24 @@ pub(crate) unsafe fn realloc_size(
 }
 
 // ufbx.c:3742-3766 `ufbxi_free_size`
+//
+// The `&AllocatorView` param carries the allocator's liveness and write-capable
+// provenance, and the `Allocator` type invariant established by `init_ator`
+// (ufbx.c:6936-6953 — caller-supplied callbacks valid for the allocator's
+// lifetime; see `alloc_size`) covers the slot reads and callback dispatch
+// below.
+//
+// The fn stays `unsafe` for the `ptr`/`n` pair: a raw block pointer plus a
+// count, whose "live block of this allocator" contract no parameter type
+// expresses (runs are out of scope for the view layer).
+//
+// # Safety
+//
+// When `n > 0`, `ptr` must point at a live block of `size * n` bytes obtained
+// from `ator`, releasable through the allocator's callbacks, and this must be
+// its last use.
 #[inline(never)]
-pub(crate) unsafe fn free_size(ator: *mut Allocator, size: usize, ptr: *mut c_void, n: usize) {
+pub(crate) unsafe fn free_size(ator: &AllocatorView, size: usize, ptr: *mut c_void, n: usize) {
     ufbx_assert!(size > 0);
     if n == 0 {
         return;
@@ -511,30 +523,26 @@ pub(crate) unsafe fn free_size(ator: *mut Allocator, size: usize, ptr: *mut c_vo
 
     // The old values have been checked by a previous allocate call
     ufbx_assert!(!does_overflow(total, size, n));
-    // SAFETY: `ator` points at a live `Allocator` — the raw-pointer contract of
-    // this `unsafe fn`. The size bookkeeping goes through a raw field place
-    // rather than a `&mut Allocator`: `realloc_size` calls this fn while its
-    // caller's `AllocatorView` over the same allocator is live, and a `&mut`
-    // retag here would pop that view's tag for the rest of the call.
-    let p_current_size = unsafe { core::ptr::addr_of_mut!((*ator).current_size) };
-    // SAFETY: `p_current_size` is that live field place.
-    ufbx_assert!(total <= unsafe { *p_current_size });
-    // SAFETY: as above; mirrors C `ator->current_size -= total`.
-    unsafe { *p_current_size -= total };
+    ufbx_assert!(total <= ator.current_size());
 
-    // SAFETY: live `Allocator` per the fn contract; every callback-slot and
-    // `user` read in this dispatch chain goes through it, and each callback is
+    ator.set_current_size(ator.current_size() - total);
+
+    // SAFETY (this dispatch chain): the view is minted over a live, unmoved
+    // `Allocator` (its `from_ptr` mint invariant); every callback slot and
+    // `user` read is reached as a raw field place through `get()` — no
+    // reference to the containing struct is formed — and each callback is
     // invoked with the `user` pointer stored beside it in the same
     // `ufbx_allocator` (the user-callback pairing contract). `ptr`/`total`
     // describe the live block the caller hands over for release.
     if unsafe {
-        (*ator).ator.allocator.alloc_fn.is_some() || (*ator).ator.allocator.realloc_fn.is_some()
+        (*ator.get()).ator.allocator.alloc_fn.is_some()
+            || (*ator.get()).ator.allocator.realloc_fn.is_some()
     } {
         // Don't call default free() if there is an user-provided `alloc_fn()`
-        if let Some(free_fn) = unsafe { (*ator).ator.allocator.free_fn } {
-            unsafe { free_fn((*ator).ator.allocator.user, ptr, total) };
-        } else if let Some(realloc_fn) = unsafe { (*ator).ator.allocator.realloc_fn } {
-            unsafe { realloc_fn((*ator).ator.allocator.user, ptr, total, 0) };
+        if let Some(free_fn) = unsafe { (*ator.get()).ator.allocator.free_fn } {
+            unsafe { free_fn((*ator.get()).ator.allocator.user, ptr, total) };
+        } else if let Some(realloc_fn) = unsafe { (*ator.get()).ator.allocator.realloc_fn } {
+            unsafe { realloc_fn((*ator.get()).ator.allocator.user, ptr, total, 0) };
         }
     } else {
         // SAFETY: with no user callbacks installed the block came from the
@@ -684,9 +692,26 @@ pub(crate) unsafe fn realloc<T>(
 // ufbx.c:3804 `ufbxi_free(ator, type, ptr, n)`
 #[inline(always)]
 pub(crate) unsafe fn free<T>(ator: *mut Allocator, ptr: *mut T, n: usize) {
-    // SAFETY: forwarding this fn's `ator` contract plus the caller's `ptr`/`n`
-    // live-block obligation to `free_size`.
-    unsafe { free_size(ator, size_of::<T>(), ptr as *mut c_void, n) }
+    ufbx_assert!(size_of::<T>() > 0);
+    // C-parity: `ufbxi_free_size` returns before it reads `ator` when `n == 0`,
+    // and `ufbxi_map_free` (ufbx.c:4421) relies on that — a never-grown map
+    // releases its zero-length entry block through a NULL `ator` slot. Minting
+    // the view demands a live allocator, so the empty case short-circuits ahead
+    // of the mint; `free_size` takes the same `n == 0` return.
+    if n == 0 {
+        return;
+    }
+    // SAFETY: `ator` points at a live, unmoved `Allocator` — the raw-pointer
+    // contract of this `unsafe fn`; the mint hands that vouch to `free_size`,
+    // as does the caller's `ptr`/`n` live-block obligation.
+    unsafe {
+        free_size(
+            AllocatorView::from_ptr(ator),
+            size_of::<T>(),
+            ptr as *mut c_void,
+            n,
+        )
+    }
 }
 
 // ufbx.c:3806 `ufbxi_grow_array(ator, p_ptr, p_cap, n)` — `sizeof(**(p_ptr))`
@@ -910,7 +935,9 @@ mod tests {
             // SAFETY: `ator` is this frame's live, unmoved `Allocator` local.
             let p = alloc_size(AllocatorView::from_ptr(&raw mut ator), 1, 99);
             assert!(!p.is_null());
-            free_size(&mut ator, 1, p, 99);
+            // SAFETY: `ator` is this frame's live, unmoved `Allocator` local;
+            // `p` is the 99-byte block it just handed out, freed once here.
+            free_size(AllocatorView::from_ptr(&raw mut ator), 1, p, 99);
         }
     }
 

@@ -8084,7 +8084,7 @@ mod tests {
             // `BufView` `buf_free` takes over that field.
             buf_free(BufView::from_ptr(&raw mut uc.tmp));
             crate::native::allocator::free_size(
-                &mut uc.ator_tmp,
+                uc_ptr.ator_tmp_view(),
                 size_of::<*mut c_void>(),
                 uc.element_extra_arr as *mut c_void,
                 uc.element_extra_cap,

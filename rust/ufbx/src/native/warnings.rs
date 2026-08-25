@@ -367,16 +367,18 @@ mod tests {
                 continue;
             }
             // SAFETY: `b` is a test fixture buf the caller owns exclusively;
+            // `b.ator` is the live, unmoved `Allocator` it was wired to, and
             // `chunks[list_ix]` is a live chunk of the `root`-linked list this
             // buf pushed, each allocated from `b.ator` with
             // `sizeof(BufChunk) + size` bytes, and this teardown is their last
             // use.
             unsafe {
+                let ator = crate::native::allocator::AllocatorView::from_ptr(b.ator);
                 let mut c = (*chunk).root;
                 while !c.is_null() {
                     let next = (*c).next;
                     crate::native::allocator::free_size(
-                        b.ator,
+                        ator,
                         1,
                         c as *mut core::ffi::c_void,
                         core::mem::size_of::<crate::native::buf::BufChunk>() + (*c).size,

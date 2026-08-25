@@ -261,14 +261,14 @@ impl<'a> Iterator for ChunkIter<'a> {
 unsafe fn free_chunk(ator: &AllocatorView, chunk: ChunkRef<'_>) {
     let chunk: *mut BufChunk = chunk.ptr();
     // SAFETY: the fn contract above — a live chunk of exactly that allocation,
-    // reached through its whole-allocation pointer; `ator.get()` is the view's
-    // write-provenance pointer to the live `Allocator` it was minted over (the
-    // `View::from_ptr` mint invariant), which is `free_size`'s raw contract.
+    // reached through its whole-allocation pointer; `ator` views the live,
+    // unmoved `Allocator` the chain was allocated from (the `View::from_ptr`
+    // mint invariant), which is `free_size`'s contract.
     unsafe {
         ufbx_assert!((*chunk).magic == BUF_CHUNK_IMP_MAGIC as usize);
         (*chunk).magic = 0;
         free_size(
-            ator.get(),
+            ator,
             1,
             chunk as *mut c_void,
             size_of::<BufChunk>() + (*chunk).size,
