@@ -782,6 +782,14 @@ pub fn evaluate_anim_value_vec3_flags(anim_value: &AnimValue, time: f64, flags: 
 }
 """
 
+override_functions["ufbx_get_blend_shape_offset_index"] = """
+pub fn get_blend_shape_offset_index(shape: &BlendShape, vertex: usize) -> u32 {
+    crate::native::api::get_blend_shape_offset_index(Some(unsafe {
+        crate::native::view::View::<BlendShape, crate::native::view::Const>::from_ptr(shape as *const BlendShape)
+    }), vertex)
+}
+"""
+
 override_functions["ufbx_dom_is_array"] = """
 pub fn dom_is_array(node: &DomNode) -> bool {
     crate::native::api::dom_is_array(Some(unsafe {

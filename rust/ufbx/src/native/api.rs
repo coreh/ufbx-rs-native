@@ -3787,27 +3787,33 @@ pub(crate) unsafe fn catch_get_skin_vertex_matrix<M: Mode>(
 }
 
 // ufbx.c:32020-32033 `ufbx_get_blend_shape_offset_index`
+// C's null-or-live `const ufbx_blend_shape *` param arrives as
+// `Option<&View<_, M>>` (the boundary shims mint the view from the caller's
+// pointer).
 #[inline(never)]
-pub(crate) unsafe fn get_blend_shape_offset_index(shape: *const BlendShape, vertex: usize) -> u32 {
-    ufbx_assert!(!shape.is_null());
-    if shape.is_null() {
+pub(crate) fn get_blend_shape_offset_index<M: Mode>(
+    shape: Option<&View<BlendShape, M>>,
+    vertex: usize,
+) -> u32 {
+    ufbx_assert!(shape.is_some());
+    // C: `if (!shape) return UFBX_NO_INDEX;` — the null arm is the `None` case.
+    let Some(shape) = shape else {
         return NO_INDEX;
-    }
+    };
 
     let mut index: usize = usize::MAX;
     let vertex_ix: u32 = vertex as u32;
 
-    // SAFETY: `shape` is non-null here (checked above) and points at a live
-    // `BlendShape` per this fn's contract; `offset_vertices.data`/`num_offsets`
-    // are its own fields, and each closure derefs a `u32` the search keeps
-    // within `[0, num_offsets)`.
+    // SAFETY: `offset_vertices.data`/`num_offsets` are the viewed shape's own
+    // fields, so the list addresses `num_offsets` live `u32`s, and each closure
+    // derefs a `u32` the search keeps within `[0, num_offsets)`.
     unsafe {
         macro_lower_bound_eq::<u32>(
             16,
             &mut index,
-            (*shape).offset_vertices.data,
+            shape.offset_vertices().data,
             0,
-            (*shape).num_offsets,
+            shape.num_offsets(),
             |a| *a < vertex_ix,
             |a| *a == vertex_ix,
         );
@@ -3826,9 +3832,20 @@ pub(crate) unsafe fn get_blend_shape_vertex_offset(
     shape: *const BlendShape,
     vertex: usize,
 ) -> Vec3 {
-    // SAFETY: `shape`/`vertex` are this fn's params, forwarded unchanged to
-    // `get_blend_shape_offset_index` under its same contract.
-    let index: u32 = unsafe { get_blend_shape_offset_index(shape, vertex) };
+    // SAFETY: `shape` is this `unsafe fn`'s own param — null or a live
+    // `BlendShape` per its contract — so a non-null pointer roots a read-only
+    // `View<_, Const>` for the offset-index lookup (the `None` arm carries C's
+    // null case).
+    let index: u32 = unsafe {
+        get_blend_shape_offset_index(
+            if shape.is_null() {
+                None
+            } else {
+                Some(View::<BlendShape, Const>::from_ptr(shape))
+            },
+            vertex,
+        )
+    };
     if index == NO_INDEX {
         return ZERO_VEC3;
     }
@@ -8606,12 +8623,13 @@ mod tests {
 
             // `ufbxi_macro_lower_bound_eq` does NOT write the out-param on a
             // miss, so the pre-seeded `SIZE_MAX` is what turns into NO_INDEX.
-            assert_eq!(get_blend_shape_offset_index(shape, 1), 0);
-            assert_eq!(get_blend_shape_offset_index(shape, 3), 1);
-            assert_eq!(get_blend_shape_offset_index(shape, 7), 2);
-            assert_eq!(get_blend_shape_offset_index(shape, 0), NO_INDEX);
-            assert_eq!(get_blend_shape_offset_index(shape, 2), NO_INDEX);
-            assert_eq!(get_blend_shape_offset_index(shape, 8), NO_INDEX);
+            let view = View::<BlendShape, Const>::from_ptr(shape);
+            assert_eq!(get_blend_shape_offset_index(Some(view), 1), 0);
+            assert_eq!(get_blend_shape_offset_index(Some(view), 3), 1);
+            assert_eq!(get_blend_shape_offset_index(Some(view), 7), 2);
+            assert_eq!(get_blend_shape_offset_index(Some(view), 0), NO_INDEX);
+            assert_eq!(get_blend_shape_offset_index(Some(view), 2), NO_INDEX);
+            assert_eq!(get_blend_shape_offset_index(Some(view), 8), NO_INDEX);
 
             assert_eq!(get_blend_shape_vertex_offset(shape, 3).y, 2.0);
             let zero = get_blend_shape_vertex_offset(shape, 2);

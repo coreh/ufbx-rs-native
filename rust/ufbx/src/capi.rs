@@ -1691,10 +1691,23 @@ pub unsafe extern "C" fn ufbx_get_blend_shape_offset_index(
     shape: *const crate::generated::BlendShape,
     vertex: usize,
 ) -> u32 {
-    // SAFETY: an ABI shim; the raw-pointer arguments carry this `unsafe fn`'s
-    // own raw-pointer contract and are forwarded unchanged to the native impl,
-    // whose contract is identical.
-    unsafe { crate::native::api::get_blend_shape_offset_index(shape, vertex) }
+    crate::native::api::get_blend_shape_offset_index(
+        if shape.is_null() {
+            None
+        } else {
+            // SAFETY: C-ABI root; `from_ptr` reinterprets the caller's pointer
+            // as a read-only `View<_, Const>`, sound for any readable
+            // provenance, over a pointee the caller owns per this `unsafe fn`'s
+            // contract.
+            Some(unsafe {
+                crate::native::view::View::<
+                    crate::generated::BlendShape,
+                    crate::native::view::Const,
+                >::from_ptr(shape)
+            })
+        },
+        vertex,
+    )
 }
 
 // ufbx.c:32035-32040 `ufbx_get_blend_shape_vertex_offset`

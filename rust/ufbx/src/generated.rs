@@ -5531,12 +5531,15 @@ pub fn get_skin_vertex_matrix(skin: &SkinDeformer, vertex: usize, fallback: &Mat
     result
 }
 
-#[allow(clippy::let_and_return)]
 pub fn get_blend_shape_offset_index(shape: &BlendShape, vertex: usize) -> u32 {
-    let result = unsafe {
-        crate::native::api::get_blend_shape_offset_index(shape as *const BlendShape, vertex)
-    };
-    result
+    crate::native::api::get_blend_shape_offset_index(
+        Some(unsafe {
+            crate::native::view::View::<BlendShape, crate::native::view::Const>::from_ptr(
+                shape as *const BlendShape,
+            )
+        }),
+        vertex,
+    )
 }
 
 #[allow(clippy::let_and_return)]
