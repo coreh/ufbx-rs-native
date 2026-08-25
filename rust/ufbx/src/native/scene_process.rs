@@ -3106,55 +3106,49 @@ pub(crate) fn prop_connection_less<M: crate::native::view::Mode>(
 }
 
 // ufbx.c:19271-19283 `ufbxi_find_prop_connection`
+// `element: &View<Element, Const>` carries C's `const ufbx_element *`;
+// `prop: Option<&[u8]>` carries C's nullable `const char *prop`: `None` is C's
+// `NULL`, `Some` the NUL-terminated interned name minted once by the caller
+// (see `find_dst_connections`).
 #[inline(never)]
 #[must_use]
-pub(crate) unsafe fn find_prop_connection(
-    element: *const Element,
-    prop: *const u8,
+pub(crate) fn find_prop_connection(
+    element: &View<Element, Const>,
+    prop: Option<&[u8]>,
 ) -> *mut Connection {
-    let mut prop: *const u8 = prop;
-    if prop.is_null() {
-        prop = EMPTY_CHAR.as_ptr();
-    }
+    // C: `if (!prop) prop = ufbxi_empty_char;` — the empty span's base address
+    // is `ufbxi_empty_char` itself, which the identity probe below compares.
+    let prop: &[u8] = prop.unwrap_or(&EMPTY_CHAR[..0]);
+    // C compares `a->dst_prop.data == prop` by interned-pointer identity; the
+    // ordering probe compares the same span as bytes.
+    let prop_data: *const u8 = prop.as_ptr();
 
-    // SAFETY: `element` points to a live scene element (fn contract). It is a
-    // `*const` parameter, so it anchors a read-only `Const` view; nothing writes
-    // the element while the search below runs.
-    let element_view: &View<Element, Const> = unsafe { View::<Element, Const>::from_ptr(element) };
-    // SAFETY: `prop` is a NUL-terminated C string (fn contract; the null case
-    // was substituted above), minted once as the probes' query span.
-    let prop_bytes: &[u8] = unsafe { crate::prelude::slice_from_ptr(prop, strlen(prop)) };
-
-    let index: Option<usize> = element_view.connections_dst_view().lower_bound_eq(
+    let index: Option<usize> = element.connections_dst_view().lower_bound_eq(
         32,
-        |a| prop_connection_less(a, prop_bytes),
-        |a| a.dst_prop_view().data() == prop && a.src_prop_view().length() > 0,
+        |a| prop_connection_less(a, prop),
+        |a| a.dst_prop_view().data() == prop_data && a.src_prop_view().length() > 0,
     );
 
     if let Some(index) = index {
         // `index` is a hit position within `0..connections_dst.count`; the
         // result is derived from the list's own base so it keeps whole-run
         // provenance.
-        element_view
-            .connections_dst_view()
-            .data()
-            .wrapping_add(index) as *mut Connection
+        element.connections_dst_view().data().wrapping_add(index) as *mut Connection
     } else {
         ptr::null_mut()
     }
 }
 
 // ufbx.c:19285-19292 `ufbxi_patch_index_pointer`
+// `p_index: &ListView<u32>` carries C's `uint32_t **p_index`: the out-slot is
+// the `data` leaf of an index list living in scene memory, so the write goes
+// through the list view's own setter rather than an `&mut` over arena memory.
 #[inline(always)]
-pub(crate) unsafe fn patch_index_pointer(uc: &Context, p_index: *mut *mut u32) {
-    // SAFETY: `p_index` points to a live index-pointer slot of a scene attribute
-    // (fn contract).
-    unsafe {
-        if std::ptr::eq(*p_index, SENTINEL_INDEX_ZERO.as_ptr()) {
-            *p_index = uc.zero_indices();
-        } else if std::ptr::eq(*p_index, SENTINEL_INDEX_CONSECUTIVE.as_ptr()) {
-            *p_index = uc.consecutive_indices();
-        }
+pub(crate) fn patch_index_pointer(uc: &Context, p_index: &ListView<u32>) {
+    if std::ptr::eq(p_index.data(), SENTINEL_INDEX_ZERO.as_ptr()) {
+        p_index.set_data(uc.zero_indices());
+    } else if std::ptr::eq(p_index.data(), SENTINEL_INDEX_CONSECUTIVE.as_ptr()) {
+        p_index.set_data(uc.consecutive_indices());
     }
 }
 
@@ -9231,61 +9225,15 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
         for mesh_ix in 0..scene_meshes.count() {
             let mesh: &View<Mesh> = scene_meshes.at(mesh_ix);
 
-            // SAFETY: `indices_raw()` addresses the viewed mesh's own attribute
-            // index-list header, so `&raw mut (*..).data` is its data pointer.
-            unsafe {
-                patch_index_pointer(
-                    uc,
-                    &raw mut (*mesh.vertex_position().indices_raw()).data as *mut *mut u32,
-                )
-            };
-            // SAFETY: as above, for the mesh's own `vertex_normal` indices.
-            unsafe {
-                patch_index_pointer(
-                    uc,
-                    &raw mut (*mesh.vertex_normal().indices_raw()).data as *mut *mut u32,
-                )
-            };
-            // SAFETY: as above, for the mesh's own `vertex_color` indices.
-            unsafe {
-                patch_index_pointer(
-                    uc,
-                    &raw mut (*mesh.vertex_color().indices_raw()).data as *mut *mut u32,
-                )
-            };
-            // SAFETY: as above, for the mesh's own `vertex_crease` indices.
-            unsafe {
-                patch_index_pointer(
-                    uc,
-                    &raw mut (*mesh.vertex_crease().indices_raw()).data as *mut *mut u32,
-                )
-            };
-            // SAFETY: as above, for the mesh's own `face_material` list.
-            unsafe {
-                patch_index_pointer(
-                    uc,
-                    &raw mut (*mesh.face_material_raw()).data as *mut *mut u32,
-                )
-            };
-            // SAFETY: as above, for the mesh's own `face_group` list.
-            unsafe {
-                patch_index_pointer(uc, &raw mut (*mesh.face_group_raw()).data as *mut *mut u32)
-            };
+            patch_index_pointer(uc, mesh.vertex_position().indices_view());
+            patch_index_pointer(uc, mesh.vertex_normal().indices_view());
+            patch_index_pointer(uc, mesh.vertex_color().indices_view());
+            patch_index_pointer(uc, mesh.vertex_crease().indices_view());
+            patch_index_pointer(uc, mesh.face_material_view());
+            patch_index_pointer(uc, mesh.face_group_view());
 
-            // SAFETY: as above, for the mesh's own `skinned_position` indices.
-            unsafe {
-                patch_index_pointer(
-                    uc,
-                    &raw mut (*mesh.skinned_position().indices_raw()).data as *mut *mut u32,
-                )
-            };
-            // SAFETY: as above, for the mesh's own `skinned_normal` indices.
-            unsafe {
-                patch_index_pointer(
-                    uc,
-                    &raw mut (*mesh.skinned_normal().indices_raw()).data as *mut *mut u32,
-                )
-            };
+            patch_index_pointer(uc, mesh.skinned_position().indices_view());
+            patch_index_pointer(uc, mesh.skinned_normal().indices_view());
 
             // C: `ufbxi_for_list(ufbx_uv_set, set, mesh->uv_sets)`
             // SAFETY: `uv_sets` describes one contiguous arena run of the mesh's
@@ -9297,28 +9245,9 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 )
             };
             for set in sets {
-                // SAFETY: `indices_raw()` addresses this live `UvSet`'s own
-                // index-list header, so `&raw mut (*..).data` is its data pointer.
-                unsafe {
-                    patch_index_pointer(
-                        uc,
-                        &raw mut (*set.vertex_uv().indices_raw()).data as *mut *mut u32,
-                    )
-                };
-                // SAFETY: as above, for this set's `vertex_bitangent` indices.
-                unsafe {
-                    patch_index_pointer(
-                        uc,
-                        &raw mut (*set.vertex_bitangent().indices_raw()).data as *mut *mut u32,
-                    )
-                };
-                // SAFETY: as above, for this set's `vertex_tangent` indices.
-                unsafe {
-                    patch_index_pointer(
-                        uc,
-                        &raw mut (*set.vertex_tangent().indices_raw()).data as *mut *mut u32,
-                    )
-                };
+                patch_index_pointer(uc, set.vertex_uv().indices_view());
+                patch_index_pointer(uc, set.vertex_bitangent().indices_view());
+                patch_index_pointer(uc, set.vertex_tangent().indices_view());
             }
 
             // C: `ufbxi_for_list(ufbx_color_set, set, mesh->color_sets)`
@@ -9331,14 +9260,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
                 )
             };
             for cset in csets {
-                // SAFETY: `indices_raw()` addresses this live `ColorSet`'s own
-                // index-list header, so `&raw mut (*..).data` is its data pointer.
-                unsafe {
-                    patch_index_pointer(
-                        uc,
-                        &raw mut (*cset.vertex_color().indices_raw()).data as *mut *mut u32,
-                    )
-                };
+                patch_index_pointer(uc, cset.vertex_color().indices_view());
             }
 
             // Generate normals if necessary
@@ -9394,14 +9316,7 @@ pub(crate) unsafe fn finalize_scene<'a>(uc: &'a Context) -> Result<(), Fail> {
 
             if mesh.face_group_parts().count == 1 {
                 let part: &View<MeshPart> = mesh.face_group_parts_view().at(0);
-                // SAFETY: `face_indices_raw()` addresses that part's own
-                // index-list header, so `&raw mut (*..).data` is its data pointer.
-                unsafe {
-                    patch_index_pointer(
-                        uc,
-                        &raw mut (*part.face_indices_raw()).data as *mut *mut u32,
-                    )
-                };
+                patch_index_pointer(uc, part.face_indices_view());
             }
 
             // SAFETY: `element_raw()` addresses the viewed mesh's own element

@@ -2214,18 +2214,44 @@ unsafe fn evaluate_connected_prop_rec(
     time: f64,
     flags: u32,
 ) {
-    // SAFETY: `element` borrows the caller's live element and `name` is its
-    // prop-name run, NUL-terminated per this `unsafe fn`'s contract.
-    let mut conn: *mut Connection = unsafe { find_prop_connection(element.as_ptr(), name) };
+    // C: `if (!prop) prop = ufbxi_empty_char;` inside
+    // `ufbxi_find_prop_connection` — the null case travels as `None`.
+    // SAFETY: `name` is NUL-terminated per this `unsafe fn`'s contract, so the
+    // measure and the measured run are that same string; the span is formed
+    // directly (not via `slice_from_ptr`) so it keeps `name`'s own base
+    // address, which the callee's interned-identity probe compares.
+    let name_bytes: Option<&[u8]> = unsafe {
+        if name.is_null() {
+            None
+        } else {
+            Some(core::slice::from_raw_parts(name, strlen(name)))
+        }
+    };
+    let mut conn: *mut Connection = find_prop_connection(element, name_bytes);
 
     // C: `for (size_t i = 0; i < 1000 && conn; i++)`
     let mut i: usize = 0;
     while i < 1000 && !conn.is_null() {
         // SAFETY: `conn` is non-null (loop condition) and points to a
         // scene-owned `ufbx_connection`, so `src` holds a scene-owned element
-        // and `src_prop` is its own NUL-terminated string-pool name.
-        let next_conn: *mut Connection =
-            unsafe { find_prop_connection(ref_ptr(&raw const (*conn).src), (*conn).src_prop.data) };
+        // — read-only for this search — and `src_prop` is its own
+        // NUL-terminated string-pool name, whose base address the callee's
+        // interned-identity probe compares.
+        let (src, src_prop): (&View<Element, Const>, Option<&[u8]>) = unsafe {
+            let src_prop_data: *const u8 = (*conn).src_prop.data;
+            (
+                View::<Element, Const>::from_ptr(ref_ptr(&raw const (*conn).src)),
+                if src_prop_data.is_null() {
+                    None
+                } else {
+                    Some(core::slice::from_raw_parts(
+                        src_prop_data,
+                        strlen(src_prop_data),
+                    ))
+                },
+            )
+        };
+        let next_conn: *mut Connection = find_prop_connection(src, src_prop);
         if next_conn.is_null() {
             break;
         }
@@ -2234,12 +2260,27 @@ unsafe fn evaluate_connected_prop_rec(
     }
 
     // Found a non-cyclic connection
-    // SAFETY: `conn` is non-null (checked first, and `&&` short-circuits) and
-    // points to a scene-owned connection, so `src`/`src_prop` are its own fields.
-    if !conn.is_null()
-        && unsafe { find_prop_connection(ref_ptr(&raw const (*conn).src), (*conn).src_prop.data) }
-            .is_null()
-    {
+    if !conn.is_null() && {
+        // SAFETY: `conn` is non-null (checked first, and `&&`
+        // short-circuits) and points to a scene-owned connection, so
+        // `src`/`src_prop` are its own fields — the element read-only for
+        // this search, the name run NUL-terminated in the string pool.
+        let (src, src_prop): (&View<Element, Const>, Option<&[u8]>) = unsafe {
+            let src_prop_data: *const u8 = (*conn).src_prop.data;
+            (
+                View::<Element, Const>::from_ptr(ref_ptr(&raw const (*conn).src)),
+                if src_prop_data.is_null() {
+                    None
+                } else {
+                    Some(core::slice::from_raw_parts(
+                        src_prop_data,
+                        strlen(src_prop_data),
+                    ))
+                },
+            )
+        };
+        find_prop_connection(src, src_prop).is_null()
+    } {
         // SAFETY: `anim` borrows the caller's live anim and `conn` is the
         // scene-owned connection reached above, whose `src` element and
         // `src_prop` name run are what the evaluation reads.
