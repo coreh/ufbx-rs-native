@@ -363,6 +363,14 @@ impl MapView {
         view_read!(self, items)
     }
     #[inline(always)]
+    pub(crate) fn entries(&self) -> *mut u64 {
+        view_read!(self, entries)
+    }
+    #[inline(always)]
+    pub(crate) fn mask(&self) -> u32 {
+        view_read!(self, mask)
+    }
+    #[inline(always)]
     pub(crate) fn ator(&self) -> *mut Allocator {
         view_read!(self, ator)
     }
@@ -910,17 +918,23 @@ pub(crate) unsafe fn map_grow_size(map: &MapView, size: usize, min_size: usize) 
 }
 
 // ufbx.c:4590-4617 `ufbxi_map_find_size`
+//
+// # Safety
+// `size` is the map's element stride — the size the map's other typed
+// operations use for the same map; the map is item-type-erased in C (`items` is
+// a `void *`) and stays so here, so the stride is not expressible in the
+// signature. `value` is the untyped key the map's `cmp_fn` was initialized for:
+// the comparator may dereference pointers inside it (see `map_init`), a
+// pointee-and-liveness contract no Rust type carries.
 #[inline(never)]
 pub(crate) unsafe fn map_find_size(
-    map: *mut Map,
+    map: &MapView,
     size: usize,
     hash: u32,
     value: *const c_void,
 ) -> *mut c_void {
-    // SAFETY: caller contract — `map` points at a live `Map`.
-    let entries = unsafe { (*map).entries };
-    // SAFETY: caller contract — `map` points at a live `Map`.
-    let mask = unsafe { (*map).mask };
+    let entries = map.entries();
+    let mask = map.mask();
     let mut scan: u32 = 0;
 
     let ref_ = hash & !mask;
@@ -943,25 +957,21 @@ pub(crate) unsafe fn map_find_size(
             // `items`, whose element stride is the matching `size`, so `data`
             // lands inside `items`.
             let data =
-                unsafe { ((*map).items as *mut u8).add(size * index as usize) as *mut c_void };
+                unsafe { (map.items() as *mut u8).add(size * index as usize) as *mut c_void };
             // C-parity: C calls through the raw `cmp_fn` pointer without a null check.
             // SAFETY: `map.cmp_fn` is the non-null comparator installed by
             // `map_init`; calling it with `cmp_user` and the two
             // same-key-discipline pointers `value`/`data` is the C-callback
             // contract.
-            let cmp = unsafe { ((*map).cmp_fn.unwrap_unchecked())((*map).cmp_user, value, data) };
+            let cmp = unsafe { (map.cmp_fn().unwrap_unchecked())(map.cmp_user(), value, data) };
             if cmp == 0 {
                 return data;
             }
         } else if (entry & mask as u64) < scan as u64 {
-            // SAFETY: caller contract — `map` points at a live `Map`.
-            if unsafe { !(*map).aa_root.is_null() } {
-                // SAFETY: the mint carries this fn's caller contract (live,
-                // writable `Map`) into the view.
-                let map_view = unsafe { MapView::from_ptr(map) };
+            if map.aa_root_view().is_some() {
                 // SAFETY: forwards this fn's contract (`value` key-compatible,
                 // `size` the element stride) to the AA-tree fallback lookup.
-                return unsafe { aa_tree_find(map_view, value, size) };
+                return unsafe { aa_tree_find(map, value, size) };
             } else {
                 return core::ptr::null_mut();
             }
@@ -984,10 +994,15 @@ pub(crate) unsafe fn map_insert_size(
         return core::ptr::null_mut();
     }
 
-    // SAFETY (regression only): forwards this fn's contract to the find used by
-    // the duplicate-insert assertion; under non-regression the tokens are
-    // dropped unexpanded.
-    ufbxi_regression_assert!(unsafe { map_find_size(map, size, hash, value) }.is_null());
+    ufbxi_regression_assert!(unsafe {
+        // SAFETY: the mint carries this fn's caller contract (live, writable
+        // `Map`) into the view; the call forwards this fn's contract (`size` the
+        // element stride, `value` a key of the map's discipline) to the find
+        // used by the duplicate-insert assertion. Under non-regression the
+        // tokens are dropped unexpanded.
+        map_find_size(MapView::from_ptr(map), size, hash, value)
+    }
+    .is_null());
 
     // C: `uint32_t index = map->size++;`
     // SAFETY: caller contract — `map` points at a live, writable `Map`.
@@ -1079,9 +1094,12 @@ pub(crate) unsafe fn map_grow<T>(map: *mut Map, min_size: usize) -> bool {
 // with ufbxi_fbx_id_entry at ufbx.c:12310), so `value` is *const c_void here.
 #[inline(always)]
 pub(crate) unsafe fn map_find<T>(map: *mut Map, hash: u32, value: *const c_void) -> *mut T {
-    // SAFETY: forwards this fn's contract (live `map`, `value` a key of the
-    // map's discipline) to the size-generic find with `T`'s size as the stride.
-    ufbxi_maybe_null!(unsafe { map_find_size(map, size_of::<T>(), hash, value) } as *mut T)
+    // SAFETY: the mint carries this fn's caller contract (live, writable `Map`)
+    // into the view; the call forwards this fn's contract (`value` a key of the
+    // map's discipline) with `T`'s size as the stride.
+    ufbxi_maybe_null!(
+        unsafe { map_find_size(MapView::from_ptr(map), size_of::<T>(), hash, value) } as *mut T
+    )
 }
 
 // ufbx.c:4659 `ufbxi_map_insert(map, type, hash, value)`

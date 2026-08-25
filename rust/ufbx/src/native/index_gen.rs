@@ -273,12 +273,13 @@ pub(crate) unsafe fn generate_indices(
             // all initialized — zeroed by the `write_bytes` above, with the
             // stream loop overwriting the non-padding ranges each iteration.
             let hash: u32 = unsafe { hash_string(packed_vertex, packed_size) };
-            // SAFETY: the raw address identifies the initialized map, whose item size
-            // is the `packed_size` it was grown with, and the key addresses
+            // SAFETY: the mint addresses the initialized stack-local map, live and
+            // unmoved for the rest of this fn; the map's item size is the
+            // `packed_size` it was grown with, and the key addresses
             // `packed_size` readable bytes.
             let mut entry: *mut c_void = unsafe {
                 map_find_size(
-                    &raw mut map,
+                    MapView::from_ptr(&raw mut map),
                     packed_size,
                     hash,
                     packed_vertex as *const c_void,
