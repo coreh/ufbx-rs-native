@@ -431,7 +431,10 @@ pub(crate) fn obj_init(uc: &Context) -> Result<(), Fail> {
         root_info.name = EMPTY_STRING.0;
         // SAFETY: `root_info` is an unaliased local — write-capable provenance,
         // live and unmoved across the call — passed as the element-push
-        // out-param; the push targets uc's own element arenas.
+        // out-param; the push targets uc's own element arenas. Its `name` is the
+        // static NUL-terminated empty string and its `props`/`dom_node` are
+        // zeroed, so the pointers the element stores outlive the scene;
+        // `UfbxNode` is the element struct for `ElementType::Node`.
         let root: *mut UfbxNode = unsafe {
             push_element::<UfbxNode>(
                 uc,
@@ -1304,7 +1307,10 @@ pub(crate) fn obj_parse_material(uc: &Context) -> Result<(), Fail> {
 
         // SAFETY: `info` is an unaliased local — write-capable provenance, live
         // and unmoved across the call — out-param for the element push onto uc's
-        // own element arenas.
+        // own element arenas. Its `name` is the pooled NUL-terminated material
+        // name and its `props`/`dom_node` are zeroed, so the pointers the element
+        // stores outlive the scene; `Material` is the element struct for
+        // `ElementType::Material`.
         let material: *mut Material = unsafe {
             push_element::<Material>(
                 uc,
