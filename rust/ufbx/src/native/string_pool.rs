@@ -93,6 +93,10 @@ impl StringPoolView {
         view_write!(self, initial_size, initial_size)
     }
     #[inline(always)]
+    pub(crate) fn error_handling(&self) -> UnicodeErrorHandling {
+        view_read!(self, error_handling)
+    }
+    #[inline(always)]
     pub(crate) fn set_error_handling(&self, error_handling: UnicodeErrorHandling) {
         view_write!(self, error_handling, error_handling)
     }
@@ -382,9 +386,14 @@ pub(crate) unsafe fn string_pool_temp_free(pool: &StringPoolView) {
 
 // ufbx.c:5034-5063 `ufbxi_add_replacement_char`
 // C: `ufbxi_nodiscard static size_t` — infallible, plain return value.
-pub(crate) unsafe fn add_replacement_char(pool: *mut StringPool, dst: *mut u8, c: u8) -> usize {
-    // SAFETY: the caller vouches `pool` addresses a live `StringPool`.
-    match unsafe { (*pool).error_handling } {
+///
+/// # Safety
+///
+/// `dst` must be writable for the bytes the selected arm writes: up to 3 for
+/// `ReplacementCharacter`, 1 for the single-byte arms. The count is chosen by
+/// `pool`'s error handling, so the type cannot carry the length.
+pub(crate) unsafe fn add_replacement_char(pool: &StringPoolView, dst: *mut u8, c: u8) -> usize {
+    match pool.error_handling() {
         UnicodeErrorHandling::ReplacementCharacter => {
             // SAFETY: the caller vouches `dst` has room for the up-to-3-byte
             // replacement this arm writes (`sanitize_string` keeps >= 16 free
@@ -623,9 +632,11 @@ pub(crate) unsafe fn sanitize_string(
             }
         }
 
-        // SAFETY: `pool` is live and `dst[dst_len]` has >= 16 free bytes, room for
-        // the up-to-3-byte replacement `add_replacement_char` writes.
-        dst_len += unsafe { add_replacement_char(pool, dst.add(dst_len), c) };
+        // SAFETY: `pool` addresses the live, context-owned `StringPool` this call
+        // operates on, and `dst[dst_len]` has >= 16 free bytes, room for the
+        // up-to-3-byte replacement `add_replacement_char` writes.
+        dst_len +=
+            unsafe { add_replacement_char(StringPoolView::from_ptr(pool), dst.add(dst_len), c) };
         index += 1;
     }
 
