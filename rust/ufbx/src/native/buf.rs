@@ -1168,9 +1168,12 @@ pub(crate) fn buf_free(buf: &BufView) {
     // the chain from its `->root` are live chunks allocated from `(*buf).ator`
     // (the `Buf` construction invariant, the same standing the `BufView` push
     // family relies on) — the `free_chunk` contract for each. That stored
-    // allocator back-pointer is context-owned, so it carries write-capable
-    // provenance and stays alive for this call: the `AllocatorView` mint. It is
-    // reached only where a chunk list is non-empty, matching C, which touches
+    // allocator back-pointer addresses an `Allocator` alive and write-capable
+    // for the duration of this call: a context field, or the caller's own stack
+    // copy, as in `release_ref`, which rewrites `buf.ator` to a stack
+    // `Allocator` precisely because the `Refcount` holding the original is
+    // allocated from the very buffer being freed — the `AllocatorView` mint. It
+    // is reached only where a chunk list is non-empty, matching C, which touches
     // `buf->ator` only through the `ufbxi_free_size` calls in the loop body.
     for i in 0..2usize {
         let chunk = unsafe { (*buf).chunks[i] };
